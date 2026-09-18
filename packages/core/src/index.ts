@@ -1,1 +1,1 @@
-export const packageName: string = "@bounda-dev/core";
+export * from "./contracts/index.ts";
