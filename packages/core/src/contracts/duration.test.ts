@@ -25,8 +25,8 @@ describe("parseDuration", () => {
   });
 
   it("rejects malformed strings with a readable message", () => {
-    expect(() => parseDuration("7 days" as never)).toThrow('Invalid duration: "7 days"');
-    expect(() => parseDuration("m5" as never)).toThrow(ValidationError);
-    expect(() => parseDuration("" as never)).toThrow(ValidationError);
+    expect(() => parseDuration("7 days")).toThrow('Invalid duration: "7 days"');
+    expect(() => parseDuration("m5")).toThrow(ValidationError);
+    expect(() => parseDuration("")).toThrow(ValidationError);
   });
 });

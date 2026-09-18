@@ -12,6 +12,11 @@ reports/
 .env
 .env.*
 !.env.example
-.claude/settings.local.json
-.claude/worktrees/
-.claude/mind.mv2*
+
+# Editor and agent state. Only the shared files of the root .claude folder are tracked.
+**/.claude/
+!/.claude/
+/.claude/*
+!/.claude/CLAUDE.md
+!/.claude/settings.json
+!/.claude/skills

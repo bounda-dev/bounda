@@ -1,0 +1,75 @@
+import type { DurationInput } from "../contracts/duration.ts";
+import type { EmptyPayload, InferPayload, PayloadArgs } from "./payload.ts";
+
+/**
+ * What a process `config` returns. Event names are the PascalCase type names of the aggregate's
+ * events; a typo does not compile.
+ */
+export interface ProcessConfig<EventName extends string = string> {
+  readonly startedBy: readonly EventName[];
+  readonly completedBy?: readonly EventName[];
+  readonly timeout?: DurationInput;
+}
+
+/**
+ * Arguments of a process `config`: the event names of the aggregate, as `events.OrderPlaced`.
+ */
+export interface ProcessConfigArgs<EventName extends string> {
+  readonly events: { readonly [Name in EventName]: Name };
+}
+
+/**
+ * Arguments of a process `state` schema function.
+ */
+export type ProcessStateArgs = PayloadArgs;
+
+/**
+ * The shape of a process `index.ts`: a `config` and an optional `state` schema.
+ */
+export interface ProcessModule {
+  readonly config: (args: never) => ProcessConfig;
+  readonly state?: (args: PayloadArgs) => unknown;
+}
+
+/**
+ * The shape of an `on-<event>.ts` or `on-timeout.ts` handler module.
+ */
+export interface ProcessHandlerModule {
+  readonly handler: (args: never) => unknown;
+}
+
+/**
+ * A process in the registry: its module, one handler module per event it reacts to, keyed by the
+ * event's camelCase name, and the optional timeout handler.
+ */
+export interface ProcessEntry {
+  readonly module: ProcessModule;
+  readonly handlers: Readonly<Record<string, ProcessHandlerModule>>;
+  readonly timeout?: ProcessHandlerModule;
+}
+
+/**
+ * The state type of a process: inferred from its `state` schema, empty when absent.
+ */
+export type ProcessStateOf<Module> = Module extends { readonly state: infer F }
+  ? InferPayload<F>
+  : EmptyPayload;
+
+/**
+ * Arguments of an `on-<event>.ts` handler. The handler returns the new process state.
+ */
+export interface ProcessHandlerArgs<Event, State, Commands> {
+  readonly event: Event;
+  readonly state: Readonly<State>;
+  readonly aggregateId: string;
+  readonly commands: Commands;
+}
+
+/**
+ * Arguments of an `on-timeout.ts` handler. The handler returns the new process state.
+ */
+export interface ProcessTimeoutArgs<State, Commands> {
+  readonly state: Readonly<State>;
+  readonly aggregateId: string;
+  readonly commands: Commands;
+}
