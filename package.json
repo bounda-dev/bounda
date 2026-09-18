@@ -1,0 +1,46 @@
+{
+  "name": "bounda",
+  "private": true,
+  "type": "module",
+  "description": "Event sourcing and CQRS for TypeScript without the ceremony",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bounda-dev/bounda.git"
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "12.4.2",
+      "onFail": "error"
+    }
+  },
+  "scripts": {
+    "build": "pnpm -r --filter './packages/*' run build",
+    "typecheck": "pnpm -r --filter './packages/*' run typecheck",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "test": "vitest run",
+    "test:types": "vitest run --typecheck.only",
+    "check": "pnpm lint && pnpm typecheck && pnpm build && pnpm test",
+    "changeset": "changeset",
+    "release": "pnpm build && changeset publish",
+    "docs:dev": "pnpm --filter @bounda-dev/docs dev",
+    "docs:build": "pnpm --filter @bounda-dev/docs build",
+    "prepare": "lefthook install"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "catalog:",
+    "@biomejs/biome": "catalog:",
+    "@changesets/cli": "catalog:",
+    "@types/node": "catalog:",
+    "lefthook": "catalog:",
+    "publint": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

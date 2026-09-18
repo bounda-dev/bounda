@@ -1,0 +1,38 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:best-practices", ":semanticCommitsDisabled"],
+  "schedule": ["before 6am on monday"],
+  "timezone": "Europe/Madrid",
+  "rangeStrategy": "pin",
+  "packageRules": [
+    {
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "automerge": true
+    },
+    {
+      "groupName": "vitest",
+      "matchPackageNames": ["vitest", "@vitest/**"]
+    },
+    {
+      "groupName": "biome",
+      "matchPackageNames": ["@biomejs/**"]
+    },
+    {
+      "groupName": "typescript",
+      "matchPackageNames": ["typescript"]
+    },
+    {
+      "groupName": "astro",
+      "matchPackageNames": ["astro", "@astrojs/**", "starlight-**"]
+    },
+    {
+      "groupName": "react-router",
+      "matchPackageNames": ["react-router", "@react-router/**"]
+    },
+    {
+      "groupName": "stryker",
+      "matchPackageNames": ["@stryker-mutator/**"]
+    }
+  ]
+}

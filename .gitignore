@@ -1,0 +1,17 @@
+node_modules/
+dist/
+coverage/
+.vitest/
+.stryker-tmp/
+reports/
+.bounda/
+.astro/
+.turbo/
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example
+.claude/settings.local.json
+.claude/worktrees/
+.claude/mind.mv2*

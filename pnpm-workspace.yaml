@@ -1,0 +1,41 @@
+packages:
+  - packages/*
+  - examples/*
+  - docs
+
+catalogMode: strict
+
+catalog:
+  "@arethetypeswrong/cli": 0.18.5
+  "@astrojs/starlight": 0.42.2
+  "@biomejs/biome": 2.5.14
+  "@changesets/cli": 3.0.3
+  "@clack/prompts": 1.8.1
+  "@libsql/client": 0.18.0
+  "@react-router/dev": 8.4.0
+  "@stryker-mutator/core": 10.0.0
+  "@stryker-mutator/vitest-runner": 10.0.0
+  "@testcontainers/postgresql": 12.1.0
+  "@types/node": 26.6.1
+  "@vitest/coverage-v8": 5.0.1
+  astro: 7.3.3
+  commander: 15.0.0
+  lefthook: 2.1.14
+  postgres: 3.4.9
+  publint: 0.3.24
+  react-router: 8.4.0
+  starlight-llms-txt: 0.12.0
+  testcontainers: 12.1.0
+  tsdown: 0.23.0
+  typescript: 7.0.2
+  uuid: 14.0.2
+  vite: 8.3.0
+  vitest: 5.0.1
+  zod: 4.6.5
+
+minimumReleaseAgeExclude:
+  - '@astrojs/starlight@0.42.2'
+
+allowBuilds:
+  esbuild: true
+  lefthook: true

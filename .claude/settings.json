@@ -1,0 +1,19 @@
+{
+  "enabledPlugins": {
+    "context7@claude-plugins-official": true,
+    "typescript-lsp@claude-plugins-official": true
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "FILE=$(jq -r '.tool_input.file_path // empty') && [ -n \"$FILE\" ] && case \"$FILE\" in *.ts|*.tsx|*.js|*.mjs|*.json|*.jsonc|*.md|*.mdx|*.astro|*.css) pnpm exec biome check --write \"$FILE\" || true;; esac"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "name": "@bounda-dev/react-router",
+  "version": "0.1.0-alpha.0",
+  "description": "React Router framework-mode integration for Bounda",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bounda-dev/bounda.git",
+    "directory": "packages/react-router"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run --passWithNoTests"
+  },
+  "peerDependencies": {
+    "@bounda-dev/core": "workspace:*",
+    "react-router": ">=7"
+  },
+  "devDependencies": {
+    "@bounda-dev/core": "workspace:*",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

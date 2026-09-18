@@ -1,0 +1,32 @@
+---
+title: Bounda
+description: Event sourcing and CQRS for TypeScript without the ceremony.
+template: splash
+hero:
+  tagline: Event sourcing without the ceremony. Your events, your logic, zero boilerplate.
+  actions:
+    - text: Get started
+      link: /getting-started/
+      icon: right-arrow
+    - text: GitHub
+      link: https://github.com/bounda-dev/bounda
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from "@astrojs/starlight/components";
+
+<CardGrid stagger>
+  <Card title="The setup is on us" icon="setting">
+    Command buses, aggregate repositories, event dispatchers and projection runners are wired for you. You write handlers, appliers and projections.
+  </Card>
+  <Card title="Types inferred, never written" icon="approve-check">
+    Payloads, state and query results are typed from your code. Change a field and the compiler points at every place that breaks.
+  </Card>
+  <Card title="Processes are first-class" icon="random">
+    Multi-step workflows with timeouts, retries and compensation live in dedicated processes and policies, not in ad-hoc state machines.
+  </Card>
+  <Card title="One database is all your infra" icon="seti:db">
+    Events, read models, scheduling and dead letters on a single Postgres or SQLite. No brokers, no queues to operate.
+  </Card>
+</CardGrid>

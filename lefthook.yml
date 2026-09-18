@@ -1,0 +1,6 @@
+pre-commit:
+  jobs:
+    - name: biome
+      glob: "*.{ts,tsx,js,mjs,json,jsonc,md,mdx,astro,css}"
+      run: pnpm exec biome check --write --no-errors-on-unmatched {staged_files}
+      stage_fixed: true
