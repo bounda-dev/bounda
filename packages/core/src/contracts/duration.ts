@@ -2,9 +2,15 @@ import { ValidationError } from "./errors.ts";
 
 /**
  * A duration as users write it: a number of milliseconds or a string such as `"30s"`, `"5m"`,
- * `"2h"`, `"7d"`.
+ * `"2h"`, `"7d"`. Strings are validated at boot, not by the compiler, so object literals in
+ * user modules keep their natural types.
  */
-export type DurationInput = number | `${number}${DurationUnit}`;
+export type DurationInput = number | string;
+
+/**
+ * The string form of a duration.
+ */
+export type DurationString = `${number}${DurationUnit}`;
 
 export type DurationUnit = "ms" | "s" | "m" | "h" | "d";
 
