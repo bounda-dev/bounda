@@ -18,6 +18,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./config": {
+      "types": "./dist/config/index.d.ts",
+      "default": "./dist/config/index.js"
+    },
     "./adapter": {
       "types": "./dist/adapter/index.d.ts",
       "default": "./dist/adapter/index.js"

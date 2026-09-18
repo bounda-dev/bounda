@@ -69,7 +69,9 @@ const validateReadModel = (
   }
 };
 
-export type ValidateRegistryFunction = (registry: Registry) => void;
+export interface ValidateRegistryFunction {
+  (registry: Registry): void;
+}
 
 /**
  * Checks that every module in the registry exports what its kind requires. Throws one

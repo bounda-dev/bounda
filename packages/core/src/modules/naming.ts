@@ -11,7 +11,9 @@ export type CapitalizeFunction = <Name extends string>(name: Name) => Capitalize
 export const capitalize: CapitalizeFunction = (name) =>
   `${name.charAt(0).toUpperCase()}${name.slice(1)}` as Capitalize<typeof name>;
 
-export type ToCamelCaseFunction = (name: string) => string;
+export interface ToCamelCaseFunction {
+  (name: string): string;
+}
 
 /**
  * Converts a kebab-case file name to the camelCase key the registry uses: `order-placed` →

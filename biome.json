@@ -31,7 +31,8 @@
       },
       "style": {
         "useImportType": "error",
-        "useExportType": "error"
+        "useExportType": "error",
+        "useShorthandFunctionType": "off"
       }
     }
   },

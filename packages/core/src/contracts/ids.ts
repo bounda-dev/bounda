@@ -19,9 +19,9 @@ export interface CreateSequentialIdGeneratorArgs {
   readonly prefix?: string;
 }
 
-export type CreateSequentialIdGeneratorFunction = (
-  args?: CreateSequentialIdGeneratorArgs,
-) => IdGenerator;
+export interface CreateSequentialIdGeneratorFunction {
+  (args?: CreateSequentialIdGeneratorArgs): IdGenerator;
+}
 
 /**
  * A deterministic generator for tests: `prefix-1`, `prefix-2`, and so on.
