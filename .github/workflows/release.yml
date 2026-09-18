@@ -16,6 +16,7 @@ permissions:
 jobs:
   release:
     name: Version or publish
+    if: vars.RELEASE_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
