@@ -9,6 +9,7 @@
     "src/**/*.test.ts",
     "src/**/*.test-d.ts",
     "src/**/test-support.ts",
-    "src/**/reactive-harness.ts"
+    "src/**/reactive-harness.ts",
+    "src/**/fixtures/**"
   ]
 }

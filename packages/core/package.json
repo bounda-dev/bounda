@@ -34,6 +34,14 @@
       "types": "./dist/memory/index.d.ts",
       "default": "./dist/memory/index.js"
     },
+    "./node": {
+      "types": "./dist/node/index.d.ts",
+      "default": "./dist/node/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "default": "./dist/testing/index.js"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {
@@ -47,9 +55,12 @@
     "build": "tsdown",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run --passWithNoTests",
-    "test:types": "vitest run --typecheck.only"
+    "test:types": "vitest run --typecheck.only",
+    "test:coverage": "vitest run --coverage"
   },
   "devDependencies": {
+    "@types/node": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

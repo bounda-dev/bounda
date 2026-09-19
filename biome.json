@@ -38,7 +38,7 @@
   },
   "overrides": [
     {
-      "includes": ["packages/cli/**", "packages/create-bounda/**"],
+      "includes": ["packages/cli/**", "packages/create-bounda/**", "packages/core/src/node/**"],
       "linter": {
         "rules": {
           "suspicious": {
