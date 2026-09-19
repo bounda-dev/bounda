@@ -26,6 +26,14 @@
       "types": "./dist/adapter/index.d.ts",
       "default": "./dist/adapter/index.js"
     },
+    "./adapter/testing": {
+      "types": "./dist/adapter/testing/index.d.ts",
+      "default": "./dist/adapter/testing/index.js"
+    },
+    "./memory": {
+      "types": "./dist/memory/index.d.ts",
+      "default": "./dist/memory/index.js"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {
@@ -49,5 +57,13 @@
   "dependencies": {
     "uuid": "catalog:",
     "zod": "catalog:"
+  },
+  "peerDependencies": {
+    "vitest": ">=4"
+  },
+  "peerDependenciesMeta": {
+    "vitest": {
+      "optional": true
+    }
   }
 }
