@@ -12,8 +12,11 @@ import { createCommandPipeline } from "./command/pipeline.ts";
 import { createDispatcher, type Dispatcher } from "./dispatch/dispatcher.ts";
 import { buildPolicies } from "./policy/build-policies.ts";
 import { createPolicySubscriber } from "./policy/runner.ts";
+import { buildProcesses } from "./process/build-processes.ts";
+import { createProcessRunner, type ProcessRunner } from "./process/runner.ts";
 import { createProjectionSubscriber } from "./projection/runner.ts";
 import { buildReadModels, type ReadModelsRuntime } from "./read-model/build-read-models.ts";
+import { createScheduledCommandWorker, type ScheduledCommandWorker } from "./scheduler/worker.ts";
 
 export interface ReactiveHarness {
   readonly storage: StoragePorts;
@@ -27,6 +30,8 @@ export interface ReactiveHarness {
    */
   createDispatcher(): Dispatcher;
   readonly dispatcher: Dispatcher;
+  readonly processes: ProcessRunner;
+  readonly worker: ScheduledCommandWorker;
 }
 
 export interface CreateReactiveHarnessArgs {
@@ -67,6 +72,26 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     logger: silentLogger,
   });
   const policies = buildPolicies({ registry });
+  const processes = createProcessRunner({
+    processes: buildProcesses({ registry, config }),
+    aggregates,
+    pipeline,
+    storage,
+    config,
+    ids,
+    clock,
+    logger: silentLogger,
+  });
+  const worker = createScheduledCommandWorker({
+    storage,
+    aggregates,
+    pipeline,
+    processes,
+    config,
+    ids,
+    clock,
+    logger: silentLogger,
+  });
   const makeDispatcher = (): Dispatcher =>
     createDispatcher({
       eventStore: storage.eventStore,
@@ -86,6 +111,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
           clock,
           logger: silentLogger,
         }),
+        processes,
       ],
       batchSize: config.runtime.dispatcher.batchSize,
       pollIntervalMs: config.runtime.dispatcher.pollIntervalMs,
@@ -100,5 +126,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     clock,
     createDispatcher: makeDispatcher,
     dispatcher: makeDispatcher(),
+    processes,
+    worker,
   };
 };

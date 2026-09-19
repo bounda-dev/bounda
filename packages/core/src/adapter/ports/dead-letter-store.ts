@@ -1,4 +1,4 @@
-export type DeadLetterKind = "policy" | "process" | "projection";
+export type DeadLetterKind = "policy" | "process" | "projection" | "command";
 
 export type DeadLetterErrorType = "terminal" | "retriable_exhausted";
 
