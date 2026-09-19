@@ -32,7 +32,9 @@ export interface StreamIdentity {
   readonly aggregateId: string;
 }
 
-export type StreamIdFunction = (identity: StreamIdentity) => string;
+export interface StreamIdFunction {
+  (identity: StreamIdentity): string;
+}
 
 /**
  * Builds the canonical stream id for an aggregate.
@@ -45,10 +47,9 @@ export const streamId: StreamIdFunction = ({ aggregateType, aggregateId }) =>
  */
 export const PROCESS_STREAM_PREFIX: "process" = "process";
 
-export type ProcessStreamIdFunction = (args: {
-  readonly processType: string;
-  readonly aggregateId: string;
-}) => string;
+export interface ProcessStreamIdFunction {
+  (args: { readonly processType: string; readonly aggregateId: string }): string;
+}
 
 /**
  * Builds the stream id of a process instance. A process is keyed by its type and the aggregate

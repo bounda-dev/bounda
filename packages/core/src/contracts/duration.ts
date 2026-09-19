@@ -1,18 +1,23 @@
 import { ValidationError } from "./errors.ts";
 
-/**
- * A duration as users write it: a number of milliseconds or a string such as `"30s"`, `"5m"`,
- * `"2h"`, `"7d"`. Strings are validated at boot, not by the compiler, so object literals in
- * user modules keep their natural types.
- */
-export type DurationInput = number | string;
+export type DurationUnit = "ms" | "s" | "m" | "h" | "d";
 
 /**
- * The string form of a duration.
+ * The string form of a duration: `"250ms"`, `"30s"`, `"5m"`, `"2h"`, `"7d"`.
  */
 export type DurationString = `${number}${DurationUnit}`;
 
-export type DurationUnit = "ms" | "s" | "m" | "h" | "d";
+/**
+ * A duration as users write it in `bounda.config.ts`: milliseconds or a duration string. The
+ * compiler checks the unit because the config object is contextually typed.
+ */
+export type DurationInput = number | DurationString;
+
+/**
+ * A duration where the compiler cannot check the string, such as the object a process `config`
+ * returns. Validated at boot.
+ */
+export type LooseDurationInput = number | string;
 
 const MILLISECONDS_PER_UNIT: Readonly<Record<DurationUnit, number>> = {
   ms: 1,
@@ -24,7 +29,9 @@ const MILLISECONDS_PER_UNIT: Readonly<Record<DurationUnit, number>> = {
 
 const DURATION_PATTERN = /^(\d+(?:\.\d+)?)(ms|s|m|h|d)$/;
 
-export type ParseDurationFunction = (input: DurationInput) => number;
+export interface ParseDurationFunction {
+  (input: LooseDurationInput): number;
+}
 
 /**
  * Converts a duration input to milliseconds. Throws `ValidationError` on malformed strings or

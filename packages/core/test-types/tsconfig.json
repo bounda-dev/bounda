@@ -5,7 +5,9 @@
     "declaration": false,
     "types": [],
     "paths": {
-      "@bounda-dev/core": ["../src/index.ts"]
+      "@bounda-dev/core": ["../src/index.ts"],
+      "@bounda-dev/core/config": ["../src/config/index.ts"],
+      "@bounda-dev/core/adapter": ["../src/adapter/index.ts"]
     }
   },
   "include": ["."]

@@ -17,7 +17,9 @@ export interface FixedClock extends Clock {
   advance(milliseconds: number): void;
 }
 
-export type CreateFixedClockFunction = (start?: Date) => FixedClock;
+export interface CreateFixedClockFunction {
+  (start?: Date): FixedClock;
+}
 
 /**
  * A clock that only moves when told to. For tests.

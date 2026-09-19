@@ -1,4 +1,4 @@
-import type { DurationInput } from "../contracts/duration.ts";
+import type { LooseDurationInput } from "../contracts/duration.ts";
 import type { EmptyPayload, InferPayload, PayloadArgs } from "./payload.ts";
 
 /**
@@ -8,7 +8,7 @@ import type { EmptyPayload, InferPayload, PayloadArgs } from "./payload.ts";
 export interface ProcessConfig<EventName extends string = string> {
   readonly startedBy: readonly EventName[];
   readonly completedBy?: readonly EventName[];
-  readonly timeout?: DurationInput;
+  readonly timeout?: LooseDurationInput;
 }
 
 /**

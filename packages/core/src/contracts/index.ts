@@ -5,6 +5,7 @@ export type {
   DurationInput,
   DurationString,
   DurationUnit,
+  LooseDurationInput,
   ParseDurationFunction,
 } from "./duration.ts";
 export { parseDuration } from "./duration.ts";
