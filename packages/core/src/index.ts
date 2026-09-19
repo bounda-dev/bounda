@@ -1,4 +1,11 @@
 export type { FindManyArgs, ReadClient, Table, TableOrder } from "./adapter/ports/table.ts";
 export * from "./contracts/index.ts";
 export type { Query } from "./contracts/query.ts";
+export type { BoundaApp, CreateAppArgs, CreateAppFunction } from "./kernel/app.ts";
+export { createApp } from "./kernel/app.ts";
+export type { DispatcherLag, SubscriberLag } from "./kernel/dispatch/dispatcher.ts";
+export type { ProcessStatus } from "./kernel/process/lifecycle.ts";
+export { PROCESS_EVENTS } from "./kernel/process/lifecycle.ts";
+export type { CommandFailedPayload } from "./kernel/system-events.ts";
+export { COMMAND_FAILED_EVENT } from "./kernel/system-events.ts";
 export * from "./modules/index.ts";

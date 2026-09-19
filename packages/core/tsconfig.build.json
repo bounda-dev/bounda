@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "isolatedDeclarations": true,
+    "noEmit": false,
+    "emitDeclarationOnly": true
+  },
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/*.test-d.ts",
+    "src/**/test-support.ts",
+    "src/**/reactive-harness.ts"
+  ]
+}

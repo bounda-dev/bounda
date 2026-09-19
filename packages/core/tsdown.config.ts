@@ -8,6 +8,7 @@ export default defineConfig({
     "src/adapter/testing/index.ts",
     "src/memory/index.ts",
   ],
+  tsconfig: "tsconfig.build.json",
   unbundle: true,
   dts: true,
   platform: "neutral",
