@@ -12,6 +12,7 @@ reports/
 .env
 .env.*
 !.env.example
+!packages/core/src/node/fixtures/project/.env
 
 # Editor and agent state. Only the shared files of the root .claude folder are tracked.
 **/.claude/

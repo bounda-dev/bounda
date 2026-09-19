@@ -8,7 +8,9 @@
       "@bounda-dev/core": ["../src/index.ts"],
       "@bounda-dev/core/config": ["../src/config/index.ts"],
       "@bounda-dev/core/adapter": ["../src/adapter/index.ts"],
-      "@bounda-dev/core/memory": ["../src/memory/index.ts"]
+      "@bounda-dev/core/memory": ["../src/memory/index.ts"],
+      "@bounda-dev/core/node": ["../src/node/index.ts"],
+      "@bounda-dev/core/testing": ["../src/testing/index.ts"]
     }
   },
   "include": ["."]
