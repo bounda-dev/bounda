@@ -46,6 +46,32 @@ export type {
 } from "./policy/runner.ts";
 export { createPolicySubscriber, POLICIES_SUBSCRIBER } from "./policy/runner.ts";
 export type {
+  BuildProcessesArgs,
+  BuildProcessesFunction,
+  ProcessesRuntime,
+  ProcessRuntime,
+} from "./process/build-processes.ts";
+export { buildProcesses } from "./process/build-processes.ts";
+export type {
+  FoldProcessArgs,
+  FoldProcessFunction,
+  ProcessAggregateTypeFunction,
+  ProcessInstance,
+  ProcessStatus,
+} from "./process/lifecycle.ts";
+export { foldProcess, PROCESS_EVENTS, processAggregateType } from "./process/lifecycle.ts";
+export type {
+  CreateProcessRunnerArgs,
+  CreateProcessRunnerFunction,
+  ProcessRunner,
+  ProcessTimeoutPayload,
+} from "./process/runner.ts";
+export {
+  createProcessRunner,
+  PROCESS_TIMEOUT_COMMAND,
+  PROCESSES_SUBSCRIBER,
+} from "./process/runner.ts";
+export type {
   CreateProjectionSubscriberArgs,
   CreateProjectionSubscriberFunction,
   ProjectionSubscriberNameFunction,
@@ -59,6 +85,12 @@ export type {
   ReadModelsRuntime,
 } from "./read-model/build-read-models.ts";
 export { buildReadModels } from "./read-model/build-read-models.ts";
+export type {
+  CreateScheduledCommandWorkerArgs,
+  CreateScheduledCommandWorkerFunction,
+  ScheduledCommandWorker,
+} from "./scheduler/worker.ts";
+export { createScheduledCommandWorker } from "./scheduler/worker.ts";
 export type { CreateMutexFunction, Mutex } from "./shared/mutex.ts";
 export { createMutex } from "./shared/mutex.ts";
 export type {
@@ -71,3 +103,9 @@ export type {
 export { classifyFailure, errorDetails, retryDelayMs } from "./shared/retry.ts";
 export type { WithTimeoutArgs, WithTimeoutFunction } from "./shared/timeout.ts";
 export { HandlerTimeoutError, withTimeout } from "./shared/timeout.ts";
+export type {
+  AppendSystemEventArgs,
+  AppendSystemEventFunction,
+  CommandFailedPayload,
+} from "./system-events.ts";
+export { appendSystemEvent, COMMAND_FAILED_EVENT } from "./system-events.ts";
