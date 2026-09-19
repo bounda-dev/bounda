@@ -45,7 +45,9 @@ export interface Registry {
 export type CommandInvoker<Module> =
   HasPayload<Module> extends true
     ? (payload: PayloadOf<Module>, options?: DispatchOptions) => Promise<DispatchResult>
-    : (options?: DispatchOptions) => Promise<DispatchResult>;
+    : "payload" extends keyof Module
+      ? (payload?: unknown, options?: DispatchOptions) => Promise<DispatchResult>
+      : (options?: DispatchOptions) => Promise<DispatchResult>;
 
 /**
  * `app.commands` typed from a map of command modules. The generator emits this map with
@@ -76,7 +78,9 @@ export type CommandsFacade<R extends Registry> = Simplify<
 export type QueryInvoker<Module> =
   HasPayload<Module> extends true
     ? (payload: PayloadOf<Module>) => Promise<QueryResultOf<Module>>
-    : () => Promise<QueryResultOf<Module>>;
+    : "payload" extends keyof Module
+      ? (payload?: unknown) => Promise<QueryResultOf<Module>>
+      : () => Promise<QueryResultOf<Module>>;
 
 /**
  * `app.queries` typed from a map of query modules.

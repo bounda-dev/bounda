@@ -8,6 +8,8 @@ export type {
   CommandRuntime,
   EventRuntime,
 } from "./aggregate/runtime.ts";
+export type { BoundaApp, CreateAppArgs, CreateAppFunction } from "./app.ts";
+export { createApp } from "./app.ts";
 export type {
   CommandsFacadeRuntime,
   CreateCommandsFacadeArgs,
@@ -77,6 +79,21 @@ export type {
   ProjectionSubscriberNameFunction,
 } from "./projection/runner.ts";
 export { createProjectionSubscriber, projectionSubscriberName } from "./projection/runner.ts";
+export type {
+  BuildQueriesArgs,
+  BuildQueriesFunction,
+  QueriesRuntime,
+  QueryRuntime,
+} from "./query/build-queries.ts";
+export { buildQueries } from "./query/build-queries.ts";
+export type {
+  CreateQueryRunnerArgs,
+  CreateQueryRunnerFunction,
+  QueriesFacadeRuntime,
+  QueryRunner,
+  RunQueryArgs,
+} from "./query/runner.ts";
+export { createQueryRunner } from "./query/runner.ts";
 export type {
   BuildReadModelsArgs,
   BuildReadModelsFunction,
