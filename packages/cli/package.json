@@ -35,6 +35,9 @@
   "bin": {
     "bounda": "./dist/cli.js"
   },
+  "dependencies": {
+    "commander": "catalog:"
+  },
   "peerDependencies": {
     "@bounda-dev/core": "workspace:*",
     "typescript": ">=7.0.0"

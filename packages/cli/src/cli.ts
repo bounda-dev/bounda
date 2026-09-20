@@ -1,4 +1,15 @@
 #!/usr/bin/env node
-import { packageName } from "./index.ts";
+import { runCli } from "./run.ts";
 
-console.log(`${packageName} is not implemented yet`);
+const controller = new AbortController();
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.once(signal, () => controller.abort());
+}
+
+process.exitCode = await runCli({
+  argv: process.argv.slice(2),
+  cwd: process.cwd(),
+  stdout: process.stdout,
+  stderr: process.stderr,
+  signal: controller.signal,
+});
