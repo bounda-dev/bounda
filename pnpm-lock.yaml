@@ -331,6 +331,9 @@ importers:
       '@bounda-dev/core':
         specifier: workspace:*
         version: link:../core
+      '@stryker-mutator/core':
+        specifier: 'catalog:'
+        version: 10.0.0(@types/node@26.6.1)
       '@types/node':
         specifier: 'catalog:'
         version: 26.6.1

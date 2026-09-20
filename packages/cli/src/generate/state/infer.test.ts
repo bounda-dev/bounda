@@ -97,8 +97,10 @@ describe("generate with state inference (golden on order-app-inferred)", () => {
 };`);
   });
 
-  it("is idempotent on the committed fixture", async () => {
-    const report = await generate({ root: fixtureRoot });
+  it("writes nothing on a second run", async () => {
+    const root = await freshProject();
+    await generate({ root });
+    const report = await generate({ root });
     expect(report.written).toEqual([]);
     expect(report.removed).toEqual([]);
     expect(report.unchanged.length).toBeGreaterThan(0);

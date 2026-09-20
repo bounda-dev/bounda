@@ -155,6 +155,9 @@ const emitReadModel = (readModel: ReadModelModel, aliases: Aliases): string => {
   ].join("\n");
 };
 
+const group = (name: string, entries: readonly string[]): readonly string[] =>
+  entries.length === 0 ? [`  ${name}: {},`] : [`  ${name}: {`, ...entries, "  },"];
+
 export interface EmitRegistryArgs {
   readonly model: ProjectModel;
   /**
@@ -178,12 +181,14 @@ export const emitRegistry: EmitRegistryFunction = ({ model, path }) => {
     ...aliases.lines,
     "",
     "export const registry = {",
-    "  aggregates: {",
-    ...model.aggregates.map((aggregate) => emitAggregate(aggregate, aliases)),
-    "  },",
-    "  readModels: {",
-    ...model.readModels.map((readModel) => emitReadModel(readModel, aliases)),
-    "  },",
+    ...group(
+      "aggregates",
+      model.aggregates.map((aggregate) => emitAggregate(aggregate, aliases)),
+    ),
+    ...group(
+      "readModels",
+      model.readModels.map((readModel) => emitReadModel(readModel, aliases)),
+    ),
     "} as const satisfies Registry;",
     "",
   ].join("\n");

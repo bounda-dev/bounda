@@ -14,6 +14,5 @@ export const registry = {
       processes: {},
     },
   },
-  readModels: {
-  },
+  readModels: {},
 } as const satisfies Registry;

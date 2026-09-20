@@ -11,10 +11,30 @@ export interface WriteGeneratedFileFunction {
   (path: string, content: string): Promise<"written" | "unchanged">;
 }
 
+const GENERATED_SEGMENTS: ReadonlySet<string> = new Set(["+types", ".bounda"]);
+
+export interface IsGeneratedPathFunction {
+  (path: string): boolean;
+}
+
+/**
+ * Whether a path lies under a `+types` or `.bounda` directory: the only places the generator may
+ * write to.
+ */
+export const isGeneratedPath: IsGeneratedPathFunction = (path) =>
+  dirname(path)
+    .split(/[\\/]/)
+    .some((segment) => GENERATED_SEGMENTS.has(segment));
+
 /**
  * Writes a file only when its content differs, so watchers downstream see no spurious change.
+ * Refuses any path outside `+types` and `.bounda`: user modules are never touched, whatever the
+ * generator computed.
  */
 export const writeGeneratedFile: WriteGeneratedFileFunction = async (path, content) => {
+  if (!isGeneratedPath(path)) {
+    throw new Error(`refusing to write ${path}: only +types and .bounda files are generated`);
+  }
   const current = await readFile(path, "utf8").catch(() => null);
   if (current === content) return "unchanged";
   await mkdir(dirname(path), { recursive: true });
