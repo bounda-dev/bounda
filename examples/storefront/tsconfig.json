@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "isolatedDeclarations": false,
+    "declaration": false
+  },
+  "include": ["app", "src", "tests", ".bounda", "bounda.config.ts", "vitest.config.ts"]
+}

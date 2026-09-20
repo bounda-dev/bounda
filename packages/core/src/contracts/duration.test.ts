@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseDuration } from "./duration.ts";
+import { asDuration, parseDuration } from "./duration.ts";
 import { ValidationError } from "./errors.ts";
 
 describe("parseDuration", () => {
@@ -28,5 +28,13 @@ describe("parseDuration", () => {
     expect(() => parseDuration("7 days")).toThrow('Invalid duration: "7 days"');
     expect(() => parseDuration("m5")).toThrow(ValidationError);
     expect(() => parseDuration("")).toThrow(ValidationError);
+  });
+});
+
+describe("asDuration", () => {
+  it("returns a valid duration unchanged and rejects a malformed one", () => {
+    expect(asDuration("24h")).toBe("24h");
+    expect(asDuration(1_500)).toBe(1_500);
+    expect(() => asDuration("soon")).toThrow(ValidationError);
   });
 });

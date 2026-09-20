@@ -1,0 +1,25 @@
+{
+  "name": "@bounda-dev/example-storefront",
+  "private": true,
+  "description": "A small storefront on Bounda: Node, SQLite, one aggregate, two read models",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "generate": "bounda generate",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "start": "node src/main.ts"
+  },
+  "dependencies": {
+    "@bounda-dev/adapter-sqlite": "workspace:*",
+    "@bounda-dev/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@bounda-dev/cli": "workspace:*",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

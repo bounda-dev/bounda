@@ -9,7 +9,7 @@
     "url": "git+https://github.com/bounda-dev/bounda.git"
   },
   "engines": {
-    "node": ">=22.12"
+    "node": ">=22.18"
   },
   "devEngines": {
     "packageManager": {
@@ -20,12 +20,13 @@
   },
   "scripts": {
     "build": "pnpm -r --filter './packages/*' run build",
-    "typecheck": "pnpm -r --filter './packages/*' run typecheck",
+    "generate": "pnpm -r --filter './examples/*' run generate",
+    "typecheck": "pnpm -r --filter './packages/*' --filter './examples/*' run typecheck",
     "lint": "biome check .",
     "format": "biome format --write .",
     "test": "vitest run",
     "test:types": "vitest run --typecheck.only",
-    "check": "pnpm lint && pnpm build && pnpm typecheck && pnpm test",
+    "check": "pnpm lint && pnpm build && pnpm generate && pnpm typecheck && pnpm test",
     "changeset": "changeset",
     "release": "pnpm build && changeset publish",
     "docs:dev": "pnpm --filter @bounda-dev/docs dev",

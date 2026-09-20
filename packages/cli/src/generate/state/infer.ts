@@ -62,7 +62,12 @@ const renderState = (fields: Fields): string => {
   if (names.length === 0) return "Record<never, never>";
   const lines = names.map((name) => {
     const members = [...(fields.get(name) as FieldTypes).members].sort();
-    return `  readonly ${name}?: ${members.join(" | ")};`;
+    const type = members
+      .join(" | ")
+      .split("\n")
+      .map((line, index) => (index === 0 || line.startsWith(" ") ? line : `  ${line}`))
+      .join("\n");
+    return `  readonly ${name}?: ${type};`;
   });
   return `{\n${lines.join("\n")}\n}`;
 };
