@@ -179,6 +179,23 @@ export const registry = {
   });
 });
 
+describe("emitRegistry with one empty side", () => {
+  it("renders the empty group on one line", () => {
+    const { content } = emitRegistry({
+      model: { ...model, readModels: [] },
+      path: "/project/.bounda/registry.ts",
+    });
+    expect(content).toContain("\n  readModels: {},\n} as const satisfies Registry;\n");
+    const empty = emitRegistry({
+      model: { ...model, aggregates: [] },
+      path: "/project/.bounda/registry.ts",
+    });
+    expect(empty.content).toContain(
+      "export const registry = {\n  aggregates: {},\n  readModels: {\n",
+    );
+  });
+});
+
 describe("emitTypes", () => {
   it("falls back to UnknownState, uses inferred states when given and handles empty maps", () => {
     const { content } = emitTypes({
