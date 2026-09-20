@@ -18,7 +18,6 @@
     "low": 80,
     "break": 80
   },
-  "concurrency": 8,
   "tsconfigFile": "stryker.no-tsconfig.json",
   "warnings": {
     "unknownOptions": false
