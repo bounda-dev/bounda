@@ -228,7 +228,7 @@ describe("discoverProject convention problems", () => {
   it("fails when the application directory is missing", async () => {
     const root = await project([]);
     expect(await problemsOf(root)).toEqual([
-      "app: the application directory does not exist; expected app/ under " + root,
+      `app: the application directory does not exist; expected app/ under ${root}`,
     ]);
   });
 
