@@ -7,7 +7,34 @@ import {
   NotFoundError,
   ValidationError,
 } from "../../contracts/errors.ts";
-import { createKernelHarness, sentMessages } from "../test-support.ts";
+import type { Registry } from "../../modules/registry.ts";
+import { createKernelHarness, orderRegistry, sentMessages } from "../test-support.ts";
+
+const withTickets: Registry = {
+  aggregates: {
+    ...orderRegistry.aggregates,
+    ticket: {
+      events: {
+        ticketOpened: { apply: ({ state }: { state: object }) => state },
+        ticketTagged: { apply: ({ state }: { state: object }) => state },
+      },
+      commands: {
+        openTicket: {
+          module: {
+            handler: ({ events }: { events: Record<string, (payload?: unknown) => unknown> }) => [
+              events.ticketOpened?.(),
+              events.ticketTagged?.(),
+            ],
+          },
+        },
+        touchTicket: { module: { handler: () => undefined } },
+      },
+      policies: {},
+      processes: {},
+    },
+  },
+  readModels: {},
+};
 
 describe("command pipeline", () => {
   it("validates, runs the handler with collaborators and appends with the loaded version", async () => {
@@ -101,6 +128,38 @@ describe("command pipeline", () => {
     const { pipeline, storage } = await createKernelHarness();
     const result = await pipeline.dispatch({ type: "TouchOrder", payload: { orderId: "o-1" } });
     expect(result).toEqual({ scheduled: false, aggregateId: "o-1", version: 0, eventIds: [] });
+    expect(await storage.eventStore.lastPosition()).toBe(0);
+  });
+
+  it("numbers the events of one command consecutively after the loaded version", async () => {
+    const { pipeline, storage } = await createKernelHarness({ registry: withTickets });
+    const result = await pipeline.dispatch({ type: "OpenTicket", payload: { ticketId: "t-1" } });
+    expect(result).toMatchObject({ version: 2, eventIds: ["id-2", "id-3"] });
+    const loaded = await storage.eventStore.load({ aggregateType: "ticket", aggregateId: "t-1" });
+    expect(loaded.events.map((event) => [event.type, event.version])).toEqual([
+      ["TicketOpened", 1],
+      ["TicketTagged", 2],
+    ]);
+  });
+
+  it("requires a string aggregate id even without a payload schema", async () => {
+    const { pipeline } = await createKernelHarness({ registry: withTickets });
+    await expect(
+      pipeline.dispatch({ type: "OpenTicket", payload: { ticketId: 42 } }),
+    ).rejects.toMatchObject({
+      message: 'Command for "ticket" has no aggregate id',
+      issues: [{ path: ["ticketId"], message: "Expected a non-empty string" }],
+    });
+  });
+
+  it("treats a handler that returns nothing as producing no events", async () => {
+    const { pipeline, storage } = await createKernelHarness({ registry: withTickets });
+    expect(await pipeline.dispatch({ type: "TouchTicket", payload: { ticketId: "t-1" } })).toEqual({
+      scheduled: false,
+      aggregateId: "t-1",
+      version: 0,
+      eventIds: [],
+    });
     expect(await storage.eventStore.lastPosition()).toBe(0);
   });
 

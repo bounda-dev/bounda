@@ -66,9 +66,9 @@ const timeoutKey = (process: ProcessRuntime, aggregateId: string): string =>
 /**
  * Runs processes as internal aggregates: each instance is a stream of lifecycle events under
  * `process:<Type>:<aggregateId>`, appended with optimistic concurrency. An event that starts a
- * process writes `ProcessStarted` and schedules the timeout; an event with a handler runs it and
- * writes `ProcessHandled` with the new state; a completing event writes `ProcessCompleted` and
- * cancels the timeout. Failures follow the same rules as policies: terminal ones are recorded as
+ * process writes `ProcessStarted` and schedules the timeout; an event with a handler, the starting
+ * one included, runs it and writes `ProcessHandled` with the new state; a completing event writes
+ * `ProcessCompleted` and cancels the timeout. Failures follow the same rules as policies: terminal ones are recorded as
  * `ProcessFailed` and dead-lettered, retriable ones hold the checkpoint and are retried with
  * back-off through the inbox ledger.
  */
@@ -186,12 +186,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
       executeAt: new Date(clock.now().getTime() + process.timeoutMs),
       context,
     });
-    return {
-      ...instance,
-      exists: true,
-      version: instance.version + 1,
-      handledEventIds: new Set([...instance.handledEventIds, event.id]),
-    };
+    return { ...instance, exists: true, version: instance.version + 1 };
   };
 
   const handle = async (

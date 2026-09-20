@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ConcurrencyError, DomainError } from "../../contracts/errors.ts";
 import { createReactiveHarness } from "../reactive-harness.ts";
 import { COMMAND_FAILED_EVENT } from "../system-events.ts";
-import { orderRegistry, sentMessages } from "../test-support.ts";
+import { createRecordingLogger, orderRegistry, sentMessages } from "../test-support.ts";
 
 describe("scheduled command worker", () => {
   it("runs due commands with their stored context and completes them", async () => {
@@ -100,8 +100,131 @@ describe("scheduled command worker", () => {
         errorType: "retriable_exhausted",
         attempts: 2,
         errorMessage: "db unavailable",
+        errorStack: expect.stringContaining("db unavailable"),
       },
     ]);
+  });
+
+  it("drops a retriable failure at once when retries are off", async () => {
+    const harness = await createReactiveHarness({
+      registry: orderRegistry,
+      config: { runtime: { policies: { retry: { strategy: "none" } } } },
+    });
+    const original = harness.pipeline.dispatch.bind(harness.pipeline);
+    harness.pipeline.dispatch = async () => {
+      const bare = new Error("db unavailable");
+      Reflect.deleteProperty(bare, "stack");
+      throw bare;
+    };
+    await original({
+      type: "PlaceOrder",
+      payload: { orderId: "o-1", total: 10 },
+      options: { delay: 0 },
+    });
+    expect(await harness.worker.runOnce()).toBe(1);
+    expect(await harness.storage.scheduler.list()).toEqual([]);
+    const [letter] = await harness.storage.deadLetterStore.list();
+    expect(letter).toMatchObject({
+      errorType: "retriable_exhausted",
+      attempts: 1,
+      errorMessage: "db unavailable",
+    });
+    expect(letter).not.toHaveProperty("errorStack");
+  });
+
+  it("claims due commands with a lease of twice the handler timeout", async () => {
+    const harness = await createReactiveHarness({
+      registry: orderRegistry,
+      config: { runtime: { policies: { timeout: "10s" } } },
+    });
+    const leases: number[] = [];
+    const original = harness.storage.scheduler.claimDue.bind(harness.storage.scheduler);
+    harness.storage.scheduler.claimDue = async (args) => {
+      leases.push(args.leaseMs);
+      return original(args);
+    };
+    await harness.worker.runOnce();
+    expect(leases).toEqual([20_000]);
+  });
+
+  it("arms one timer per interval, re-arms after each run and leaves nothing behind on stop", async () => {
+    vi.useFakeTimers();
+    try {
+      const harness = await createReactiveHarness({ registry: orderRegistry });
+      const scheduler = harness.storage.scheduler;
+      const original = scheduler.claimDue.bind(scheduler);
+      let release: () => void = () => undefined;
+      let claims = 0;
+      scheduler.claimDue = async (args) => {
+        claims += 1;
+        if (claims === 2) {
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        }
+        return original(args);
+      };
+      const interval = harness.config.runtime.dispatcher.pollIntervalMs;
+      harness.worker.start();
+      harness.worker.start();
+      expect(vi.getTimerCount()).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(interval);
+      expect(claims).toBe(1);
+      expect(vi.getTimerCount()).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(interval);
+      expect(claims).toBe(2);
+      expect(vi.getTimerCount()).toBe(0);
+
+      const stopping = harness.worker.stop();
+      release();
+      await stopping;
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(interval * 5);
+      expect(claims).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports a failing run and keeps polling", async () => {
+    vi.useFakeTimers();
+    try {
+      const { logger, entries } = createRecordingLogger();
+      const harness = await createReactiveHarness({ registry: orderRegistry, logger });
+      sentMessages.length = 0;
+      const scheduler = harness.storage.scheduler;
+      const original = scheduler.claimDue.bind(scheduler);
+      let failures = 1;
+      scheduler.claimDue = async (args) => {
+        if (failures > 0) {
+          failures -= 1;
+          throw new Error("scheduler unavailable");
+        }
+        return original(args);
+      };
+      await harness.pipeline.dispatch({
+        type: "PlaceOrder",
+        payload: { orderId: "o-1", total: 10 },
+        options: { delay: 0 },
+      });
+      const interval = harness.config.runtime.dispatcher.pollIntervalMs;
+      harness.worker.start();
+      await vi.advanceTimersByTimeAsync(interval);
+      expect(entries).toEqual([
+        {
+          level: "error",
+          message: "scheduled command worker failed",
+          fields: { message: "scheduler unavailable", stack: expect.any(String) },
+        },
+      ]);
+      await vi.advanceTimersByTimeAsync(interval);
+      expect(sentMessages).toEqual(["placed o-1 v0"]);
+      await harness.worker.stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("treats a concurrency conflict from the pipeline as transient", async () => {

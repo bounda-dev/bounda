@@ -43,7 +43,25 @@ describe("foldProcess", () => {
       status: "completed",
       state: { reminders: 1 },
       version: 3,
-      handledEventIds: new Set(["e1", "e2"]),
+      handledEventIds: new Set(["e2"]),
+    });
+  });
+
+  it("only counts handled events with an id and names every lifecycle event", () => {
+    const instance = foldProcess({
+      initialState: {},
+      events: [
+        lifecycle(PROCESS_EVENTS.started, { state: {}, eventId: "e1" }, 1),
+        lifecycle(PROCESS_EVENTS.handled, { state: { n: 1 } }, 2),
+      ],
+    });
+    expect(instance).toMatchObject({ state: { n: 1 }, handledEventIds: new Set() });
+    expect(PROCESS_EVENTS).toEqual({
+      started: "ProcessStarted",
+      handled: "ProcessHandled",
+      completed: "ProcessCompleted",
+      timedOut: "ProcessTimedOut",
+      failed: "ProcessFailed",
     });
   });
 

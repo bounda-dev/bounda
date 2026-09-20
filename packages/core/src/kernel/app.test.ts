@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { Adapter, CreateReadModelArgs, CreateStorageArgs } from "../adapter/adapter.ts";
 import type { Table } from "../adapter/ports/table.ts";
 import { createFixedClock } from "../contracts/clock.ts";
 import { ConfigurationError, DomainError } from "../contracts/errors.ts";
@@ -112,13 +113,50 @@ const registry = {
   },
 } as const satisfies Registry;
 
-const start = async (role: "web" | "worker" | "all" = "all") => {
+interface CountingAdapter {
+  readonly adapter: Adapter;
+  readonly closes: () => { readonly storage: number; readonly readModels: number };
+}
+
+const countingAdapter = (): CountingAdapter => {
+  const base = memory();
+  let storage = 0;
+  let readModels = 0;
+  return {
+    adapter: {
+      ...base,
+      createStorage: async (args: CreateStorageArgs) => {
+        const ports = await base.createStorage(args);
+        return {
+          ...ports,
+          close: async () => {
+            storage += 1;
+            await ports.close();
+          },
+        };
+      },
+      createReadModel: async <Row extends object>(args: CreateReadModelArgs) => {
+        const ports = await base.createReadModel<Row>(args);
+        return {
+          ...ports,
+          close: async () => {
+            readModels += 1;
+            await ports.close();
+          },
+        };
+      },
+    },
+    closes: () => ({ storage, readModels }),
+  };
+};
+
+const start = async (role: "web" | "worker" | "all" = "all", storage: Adapter = memory()) => {
   sentMessages.length = 0;
   const clock = createFixedClock();
   const app = await createApp({
     registry,
     config: {
-      storage: memory(),
+      storage,
       runtime: { role },
       commands: { placeOrder: { notifier: { use: "memory" } } },
     },
@@ -168,25 +206,52 @@ describe("createApp", () => {
   });
 
   it("does not start background work in the web role but still serves commands and queries", async () => {
-    const { app } = await start("web");
-    expect(app.role).toBe("web");
-    app.start();
-    await app.commands.placeOrder({ orderId: "o-1", total: 10 });
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(await app.queries.getOrder({ orderId: "o-1" })).toBeNull();
-    await app.processUntilIdle();
-    expect(await app.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "placed" });
-    await app.stop();
+    vi.useFakeTimers();
+    try {
+      const { app } = await start("web");
+      expect(app.role).toBe("web");
+      app.start();
+      expect(vi.getTimerCount()).toBe(0);
+      await app.commands.placeOrder({ orderId: "o-1", total: 10 });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(await app.queries.getOrder({ orderId: "o-1" })).toBeNull();
+      await app.processUntilIdle();
+      expect(await app.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "placed" });
+      await app.stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
-  it("polls in the background in the worker role", async () => {
+  it("polls the stream and the schedule in the background in the worker role", async () => {
     const { app } = await start("worker");
     app.start();
     await app.commands.placeOrder({ orderId: "o-1", total: 10 });
+    await app.commands.placeOrder({ orderId: "o-2", total: 20 }, { delay: 0 });
     await new Promise((resolve) => setTimeout(resolve, 350));
     expect(await app.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "placed" });
+    expect(await app.queries.getOrder({ orderId: "o-2" })).toMatchObject({ status: "placed" });
     await app.stop();
-    await app.stop();
+  });
+
+  it("stops background work, closes storage and read models once, and never restarts", async () => {
+    vi.useFakeTimers();
+    try {
+      const { adapter, closes } = countingAdapter();
+      const { app } = await start("all", adapter);
+      app.start();
+      app.start();
+      expect(vi.getTimerCount()).toBe(2);
+      await app.stop();
+      expect(vi.getTimerCount()).toBe(0);
+      expect(closes()).toEqual({ storage: 1, readModels: 1 });
+      await app.stop();
+      app.start();
+      expect(vi.getTimerCount()).toBe(0);
+      expect(closes()).toEqual({ storage: 1, readModels: 1 });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("validates the registry and requires a real adapter", async () => {

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  ChainDepthExceededError,
   ConcurrencyError,
+  ConfigurationError,
   DomainError,
   NotFoundError,
   ValidationError,
@@ -12,6 +14,8 @@ describe("classifyFailure", () => {
     expect(classifyFailure(new DomainError("no"))).toBe("terminal");
     expect(classifyFailure(new ValidationError("no", []))).toBe("terminal");
     expect(classifyFailure(new NotFoundError("no"))).toBe("terminal");
+    expect(classifyFailure(new ConfigurationError("no"))).toBe("terminal");
+    expect(classifyFailure(new ChainDepthExceededError(3, 2))).toBe("terminal");
     expect(classifyFailure(new Error("socket hang up"))).toBe("retriable");
     expect(classifyFailure("string")).toBe("retriable");
     expect(
@@ -43,5 +47,12 @@ describe("errorDetails", () => {
     expect(details.message).toBe("boom");
     expect(details.stack).toContain("boom");
     expect(errorDetails(42)).toEqual({ message: "42" });
+  });
+
+  it("omits the stack when the error has none", () => {
+    const bare = new Error("bare");
+    Reflect.deleteProperty(bare, "stack");
+    expect(errorDetails(bare)).toEqual({ message: "bare" });
+    expect(errorDetails(bare)).not.toHaveProperty("stack");
   });
 });

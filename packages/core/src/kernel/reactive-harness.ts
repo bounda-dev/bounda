@@ -3,7 +3,7 @@ import { resolveConfig } from "../config/schema.ts";
 import type { Config, ResolvedConfig } from "../config/types.ts";
 import { createFixedClock, type FixedClock } from "../contracts/clock.ts";
 import { createSequentialIdGenerator } from "../contracts/ids.ts";
-import { silentLogger } from "../contracts/logger.ts";
+import { type Logger, silentLogger } from "../contracts/logger.ts";
 import { memory } from "../memory/index.ts";
 import type { Registry } from "../modules/registry.ts";
 import { buildAggregates } from "./aggregate/build-aggregates.ts";
@@ -37,6 +37,7 @@ export interface ReactiveHarness {
 export interface CreateReactiveHarnessArgs {
   readonly registry: Registry;
   readonly config?: Partial<Omit<Config, "storage">>;
+  readonly logger?: Logger;
 }
 
 export interface CreateReactiveHarnessFunction {
@@ -50,9 +51,10 @@ export interface CreateReactiveHarnessFunction {
 export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
   registry,
   config: overrides = {},
+  logger = silentLogger,
 }) => {
   const adapter = memory();
-  const storage = await adapter.createStorage({ logger: silentLogger });
+  const storage = await adapter.createStorage({ logger });
   const config = resolveConfig({
     storage: adapter,
     commands: { placeOrder: { notifier: { use: "memory" } } },
@@ -61,7 +63,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
   const ids = createSequentialIdGenerator();
   const clock = createFixedClock();
   const aggregates = buildAggregates({ registry, config });
-  const readModels = await buildReadModels({ registry, config, logger: silentLogger });
+  const readModels = await buildReadModels({ registry, config, logger });
   const pipeline = createCommandPipeline({
     aggregates,
     eventStore: storage.eventStore,
@@ -69,7 +71,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     config,
     ids,
     clock,
-    logger: silentLogger,
+    logger,
   });
   const policies = buildPolicies({ registry });
   const processes = createProcessRunner({
@@ -80,7 +82,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     config,
     ids,
     clock,
-    logger: silentLogger,
+    logger,
   });
   const worker = createScheduledCommandWorker({
     storage,
@@ -90,7 +92,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     config,
     ids,
     clock,
-    logger: silentLogger,
+    logger,
   });
   const makeDispatcher = (): Dispatcher =>
     createDispatcher({
@@ -98,7 +100,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
       checkpointStore: storage.checkpointStore,
       subscribers: [
         ...Object.values(readModels.byName).map((readModel) =>
-          createProjectionSubscriber({ readModel, logger: silentLogger }),
+          createProjectionSubscriber({ readModel, logger }),
         ),
         createPolicySubscriber({
           policies,
@@ -109,13 +111,13 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
           config,
           ids,
           clock,
-          logger: silentLogger,
+          logger,
         }),
         processes,
       ],
       batchSize: config.runtime.dispatcher.batchSize,
       pollIntervalMs: config.runtime.dispatcher.pollIntervalMs,
-      logger: silentLogger,
+      logger,
     });
   return {
     storage,
