@@ -88,7 +88,9 @@ export const sqliteDialect: SqlDialect = {
 };
 
 /**
- * PostgreSQL: `$n` placeholders, native booleans and timestamps, JSON as `jsonb`.
+ * PostgreSQL: `$n` placeholders, native booleans and timestamps, JSON as `jsonb`. JSON values are
+ * handed to the driver as they are: Postgres.js infers `jsonb` from the statement and serialises
+ * them itself, so a pre-serialised string would arrive double-encoded.
  */
 export const postgresqlDialect: SqlDialect = {
   name: "postgresql",
@@ -96,14 +98,7 @@ export const postgresqlDialect: SqlDialect = {
   columnType: (type) => POSTGRESQL_TYPES[type],
   encode: (type, value) => {
     if (value === undefined || value === null) return null;
-    switch (type) {
-      case "date":
-        return toDate(value);
-      case "json":
-        return JSON.stringify(value);
-      default:
-        return value;
-    }
+    return type === "date" ? toDate(value) : value;
   },
   decode: (type, value) =>
     value === null || value === undefined ? undefined : decodeCommon(type, value),
