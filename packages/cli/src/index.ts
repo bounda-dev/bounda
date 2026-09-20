@@ -21,6 +21,8 @@ export {
   importPath,
   plusTypesPath,
 } from "./generate/emit/index.ts";
+export type { GenerateArgs, GenerateFunction, GenerateReport } from "./generate/generate.ts";
+export { generate } from "./generate/generate.ts";
 export type {
   AggregateModel,
   CollaboratorModel,
@@ -37,5 +39,21 @@ export type {
 } from "./generate/model.ts";
 export type { Problem } from "./generate/problems.ts";
 export { ConventionError } from "./generate/problems.ts";
+
+export type {
+  InferStatesArgs,
+  InferStatesFunction,
+  InferStatesResult,
+  StateWarning,
+} from "./generate/state/infer.ts";
+export { inferStates } from "./generate/state/infer.ts";
+export type {
+  RemoveOrphansArgs,
+  RemoveOrphansFunction,
+  WriteGeneratedFileFunction,
+  WriteGeneratedFilesFunction,
+  WriteReport,
+} from "./generate/write.ts";
+export { removeOrphans, writeGeneratedFile, writeGeneratedFiles } from "./generate/write.ts";
 
 export const packageName: string = "@bounda-dev/cli";
