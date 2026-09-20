@@ -30,7 +30,8 @@
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "test:mutation": "stryker run"
   },
   "dependencies": {
     "postgres": "catalog:"
@@ -40,6 +41,7 @@
   },
   "devDependencies": {
     "@bounda-dev/core": "workspace:*",
+    "@stryker-mutator/core": "catalog:",
     "@testcontainers/postgresql": "catalog:",
     "@types/node": "catalog:",
     "tsdown": "catalog:",

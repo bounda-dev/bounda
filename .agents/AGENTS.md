@@ -20,7 +20,7 @@ pnpm 12 (workspace catalog, `catalogMode: strict`), TypeScript 7, Biome (lint an
 | `pnpm changeset` | add a changeset (required when a published package changes) |
 | `pnpm docs:dev` / `pnpm docs:build` | Starlight site |
 | `pnpm --filter @bounda-dev/core test` | one package |
-| `pnpm --filter @bounda-dev/core test:mutation` | Stryker on `kernel/` (slow; CI runs it on `main` only) |
+| `pnpm --filter <package> test:mutation` | Stryker (`core`, `adapter-sqlite`, `adapter-postgresql`); slow, CI runs it on `main` only. Build `core` first: adapters test against its `dist` |
 
 ## How to work
 
