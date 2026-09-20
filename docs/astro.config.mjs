@@ -12,6 +12,7 @@ export default defineConfig({
       plugins: [starlightLlmsTxt()],
       sidebar: [
         { label: "Getting started", items: [{ autogenerate: { directory: "getting-started" } }] },
+        { label: "Adapters", items: [{ autogenerate: { directory: "adapters" } }] },
       ],
     }),
   ],

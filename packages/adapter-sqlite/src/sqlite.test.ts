@@ -107,14 +107,22 @@ describe("sqlite adapter on a file", () => {
 
   it("evolves a read model table additively and refuses destructive changes", async () => {
     const path = freshPath();
+    const logs: unknown[] = [];
+    const logger = {
+      ...silentLogger,
+      info: (message: string, fields?: unknown) => {
+        logs.push([message, fields]);
+      },
+    };
     const v1 = { id: f.string().primaryKey(), total: f.number() };
     const first = await sqlite({ path }).createReadModel<{ id: string; total: number }>({
       name: "orders",
       fields: v1,
-      logger: silentLogger,
+      logger,
     });
     await first.table.insert({ id: "o-1", total: 5 });
     await first.close();
+    expect(logs).toEqual([]);
 
     const v2 = { ...v1, note: f.string().optional(), paid: f.boolean().index() };
     const second = await sqlite({ path }).createReadModel<{
@@ -122,7 +130,17 @@ describe("sqlite adapter on a file", () => {
       total: number;
       note?: string;
       paid: boolean;
-    }>({ name: "orders", fields: v2, logger: silentLogger });
+    }>({ name: "orders", fields: v2, logger });
+    expect(logs).toEqual([
+      ["read model table evolved", { readModel: "orders", table: "bounda_orders", added: 3 }],
+    ]);
+    const unchanged = await sqlite({ path }).createReadModel({
+      name: "orders",
+      fields: v2,
+      logger,
+    });
+    await unchanged.close();
+    expect(logs).toHaveLength(1);
     expect(await second.table.findOne({ id: "o-1" })).toEqual({ id: "o-1", total: 5 });
     await second.table.upsert({ id: "o-1", total: 5, paid: true, note: "hi" });
     expect(await second.table.findOne({ id: "o-1" })).toEqual({
@@ -147,6 +165,38 @@ describe("sqlite adapter on a file", () => {
         logger: silentLogger,
       }),
     ).rejects.toThrow(/Changing a field's type is not supported yet/);
+  });
+});
+
+describe("sqlite storage details", () => {
+  it("reports the stream version even when loading past its end", async () => {
+    const { eventStore } = await openStorage();
+    await eventStore.append({
+      aggregateType: "order",
+      aggregateId: "1",
+      expectedVersion: 0,
+      events: [1, 2, 3].map((version) => pendingEvent({ aggregateId: "1", version })),
+    });
+    expect(
+      await eventStore.load({ aggregateType: "order", aggregateId: "1", fromVersion: 5 }),
+    ).toEqual({
+      events: [],
+      version: 3,
+    });
+    expect(
+      await eventStore.load({ aggregateType: "order", aggregateId: "1", fromVersion: 2 }),
+    ).toMatchObject({
+      version: 3,
+    });
+  });
+
+  it("leaves lastError out of a claim that never failed", async () => {
+    const { inboxLedger } = await openStorage();
+    const key = { subscriber: "policies", eventId: "e-1" };
+    await inboxLedger.tryClaim({ ...key, now: new Date(), leaseMs: 1_000 });
+    expect(await inboxLedger.get(key)).not.toHaveProperty("lastError");
+    await inboxLedger.fail({ ...key, error: "boom" });
+    expect(await inboxLedger.get(key)).toMatchObject({ lastError: "boom" });
   });
 });
 
