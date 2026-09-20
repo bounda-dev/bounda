@@ -36,5 +36,8 @@ minimumReleaseAgeExclude:
   - '@astrojs/starlight@0.42.2'
 
 allowBuilds:
+  cpu-features: false
   esbuild: true
   lefthook: true
+  protobufjs: false
+  ssh2: false

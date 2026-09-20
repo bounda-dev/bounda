@@ -57,11 +57,12 @@ describe("postgresqlDialect", () => {
     ]);
   });
 
-  it("keeps booleans and dates native and serialises json", () => {
+  it("keeps booleans, dates and json native for the driver to serialise", () => {
     expect(postgresqlDialect.encode("boolean", true)).toBe(true);
     expect(postgresqlDialect.encode("date", when)).toBe(when);
     expect(postgresqlDialect.encode("date", "2026-01-02T03:04:05.000Z")).toEqual(when);
-    expect(postgresqlDialect.encode("json", [1, 2])).toBe("[1,2]");
+    const tags = [1, 2];
+    expect(postgresqlDialect.encode("json", tags)).toBe(tags);
     expect(postgresqlDialect.encode("number", undefined)).toBeNull();
   });
 

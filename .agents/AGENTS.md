@@ -47,7 +47,7 @@ User-facing inference must never regress. `packages/core/test-types/` holds `exp
 ## Testing
 
 - Co-located `*.test.ts`. Behavior tests over implementation-coupled mocks.
-- Adapters test against real databases (testcontainers for PostgreSQL, file or memory for SQLite).
+- Adapters test against real databases (testcontainers for PostgreSQL, file or memory for SQLite). The PostgreSQL suite starts a `postgres:17` container and skips itself when Docker is not running, so start Docker before `pnpm check` to run it.
 - Coverage must not decrease. Mutation testing with Stryker validates test quality.
 - A new package goes into `pnpm-workspace.yaml`, the root `tsconfig.json` references, and the CI workflow.
 

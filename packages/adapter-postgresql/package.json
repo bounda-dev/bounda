@@ -32,11 +32,15 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run --passWithNoTests"
   },
+  "dependencies": {
+    "postgres": "catalog:"
+  },
   "peerDependencies": {
     "@bounda-dev/core": "workspace:*"
   },
   "devDependencies": {
     "@bounda-dev/core": "workspace:*",
+    "@testcontainers/postgresql": "catalog:",
     "@types/node": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:",
