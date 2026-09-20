@@ -194,6 +194,9 @@ catalogs:
     astro:
       specifier: 7.3.3
       version: 7.3.3
+    commander:
+      specifier: 15.0.0
+      version: 15.0.0
     lefthook:
       specifier: 2.1.14
       version: 2.1.14
@@ -320,6 +323,10 @@ importers:
         version: 5.0.1(@types/node@26.6.1)(@vitest/coverage-v8@5.0.1)(vite@8.3.0(@types/node@26.6.1)(esbuild@0.28.2)(yaml@2.9.1))
 
   packages/cli:
+    dependencies:
+      commander:
+        specifier: 'catalog:'
+        version: 15.0.0
     devDependencies:
       '@bounda-dev/core':
         specifier: workspace:*
@@ -2449,6 +2456,10 @@ packages:
   commander@14.0.3:
     resolution: {integrity: sha512-H+y0Jo/T1RZ9qPP4Eh1pkcQcLRglraJaSLoyOtHxu6AapkjWVCy2Sit1QQ4x3Dng8qDlSsZEet7g5Pq06MvTgw==}
     engines: {node: '>=20'}
+
+  commander@15.0.0:
+    resolution: {integrity: sha512-z67u4ZhzCL/Tydu1lJARtEZYWbWaN7oYLHbsuzocr6y4N6WZAagG3RQ4FW61V1/0+jImpj293XfrcYnd1qxtPg==}
+    engines: {node: '>=22.12.0'}
 
   common-ancestor-path@2.0.0:
     resolution: {integrity: sha512-dnN3ibLeoRf2HNC+OlCiNc5d2zxbLJXOtiZUudNFSXZrNSydxcCsSpRzXwfu7BBWCIfHPw+xTayeBvJCP/D8Ng==}
@@ -6343,6 +6354,8 @@ snapshots:
   commander@11.1.0: {}
 
   commander@14.0.3: {}
+
+  commander@15.0.0: {}
 
   common-ancestor-path@2.0.0: {}
 

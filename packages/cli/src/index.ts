@@ -47,6 +47,8 @@ export type {
   StateWarning,
 } from "./generate/state/infer.ts";
 export { inferStates } from "./generate/state/infer.ts";
+export type { WatchProjectArgs, WatchProjectFunction } from "./generate/watch.ts";
+export { watchProject } from "./generate/watch.ts";
 export type {
   RemoveOrphansArgs,
   RemoveOrphansFunction,
@@ -55,5 +57,13 @@ export type {
   WriteReport,
 } from "./generate/write.ts";
 export { removeOrphans, writeGeneratedFile, writeGeneratedFiles } from "./generate/write.ts";
-
-export const packageName: string = "@bounda-dev/cli";
+export type {
+  FormatConventionErrorArgs,
+  FormatConventionErrorFunction,
+  FormatReportArgs,
+  FormatReportFunction,
+  FormatWarningsFunction,
+} from "./reporter.ts";
+export { formatConventionError, formatReport, formatWarnings } from "./reporter.ts";
+export type { Output, RunCliArgs, RunCliFunction } from "./run.ts";
+export { EXIT_CONVENTION, EXIT_FAILURE, EXIT_OK, runCli } from "./run.ts";
