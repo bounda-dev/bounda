@@ -30,6 +30,10 @@
       "types": "./dist/adapter/testing/index.d.ts",
       "default": "./dist/adapter/testing/index.js"
     },
+    "./adapter/sql": {
+      "types": "./dist/adapter/sql/index.d.ts",
+      "default": "./dist/adapter/sql/index.js"
+    },
     "./memory": {
       "types": "./dist/memory/index.d.ts",
       "default": "./dist/memory/index.js"
