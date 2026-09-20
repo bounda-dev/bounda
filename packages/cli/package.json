@@ -36,7 +36,13 @@
     "bounda": "./dist/cli.js"
   },
   "peerDependencies": {
-    "@bounda-dev/core": "workspace:*"
+    "@bounda-dev/core": "workspace:*",
+    "typescript": ">=7.0.0"
+  },
+  "peerDependenciesMeta": {
+    "typescript": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@bounda-dev/core": "workspace:*",
