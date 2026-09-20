@@ -1,5 +1,5 @@
 import type { Dirent } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
 import type {
   AggregateModel,
@@ -154,6 +154,7 @@ const discoverCommands = async (
       typeName: typeNameOf(keyOf(name)),
       directory: null,
       collaborators: [],
+      declaresCollaborators: false,
     });
   }
   for (const name of listing.directories) {
@@ -171,12 +172,14 @@ const discoverCommands = async (
       );
       continue;
     }
+    const collaborators = await discoverCollaborators(context, commandDirectory);
     commands.push({
       ...moduleRef(context, index),
       key: keyOf(name),
       typeName: typeNameOf(keyOf(name)),
       directory: commandDirectory,
-      collaborators: await discoverCollaborators(context, commandDirectory),
+      collaborators,
+      declaresCollaborators: collaborators.length > 0 && (await declaresCollaborators(index)),
     });
   }
   return commands.sort(byKey);
@@ -406,6 +409,11 @@ const discoverReadModel = async (
     queries: has("queries") ? await discoverQueries(context, join(directory, "queries")) : [],
   };
 };
+
+const COLLABORATORS_DECLARATION = /^export\s+(?:type|interface)\s+Collaborators\b/m;
+
+const declaresCollaborators = async (modulePath: string): Promise<boolean> =>
+  COLLABORATORS_DECLARATION.test(await readFile(modulePath, "utf8"));
 
 const exists = async (path: string): Promise<boolean> => {
   try {

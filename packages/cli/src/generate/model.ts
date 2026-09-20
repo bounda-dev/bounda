@@ -35,6 +35,12 @@ export interface CommandModel extends ModuleRef {
    */
   readonly directory: string | null;
   readonly collaborators: readonly CollaboratorModel[];
+  /**
+   * Whether the module exports a `Collaborators` type of its own. Only checked when the command
+   * has collaborator files; the generated types then use the declaration instead of inferring
+   * the type from the implementations.
+   */
+  readonly declaresCollaborators: boolean;
 }
 
 export interface PolicyModel extends ModuleRef {

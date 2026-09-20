@@ -7,6 +7,8 @@ import type {
   Table,
 } from "@bounda-dev/core";
 import { describe, expectTypeOf, it } from "vitest";
+import type { registry } from "./fixtures/order-app/.bounda/registry.ts";
+import type { Commands, Queries } from "./fixtures/order-app/.bounda/types.ts";
 import type { Event as CustomerRegistered } from "./fixtures/order-app/app/domain/customer/+types/customer-registered.ts";
 import type { Event as OrderPlaced } from "./fixtures/order-app/app/domain/order/+types/order-placed.ts";
 import type { Command as PayOrder } from "./fixtures/order-app/app/domain/order/commands/+types/pay-order.ts";
@@ -20,8 +22,6 @@ import type { Projection as ProjectOrderPaid } from "./fixtures/order-app/app/re
 import type { Query as CustomerOverview } from "./fixtures/order-app/app/read/order-summary/queries/+types/customer-overview.ts";
 import type { Query as GetOrder } from "./fixtures/order-app/app/read/order-summary/queries/+types/get-order.ts";
 import type { Query as ListUnpaidOrders } from "./fixtures/order-app/app/read/order-summary/queries/+types/list-unpaid-orders.ts";
-import type { Commands, Queries } from "./fixtures/order-app/generated/types.ts";
-import type { registry } from "./fixtures/order-app/registry.ts";
 
 type Registry = typeof registry;
 type OrderStatus = "new" | "placed" | "paid" | "cancelled";

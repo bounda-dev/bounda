@@ -5,6 +5,7 @@ coverage/
 .stryker-tmp/
 reports/
 .bounda/
+!packages/core/test-types/fixtures/**/.bounda/
 .astro/
 .turbo/
 *.log
