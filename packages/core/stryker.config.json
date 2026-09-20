@@ -3,8 +3,9 @@
   "testRunner": "command",
   "mutate": [
     "src/kernel/**/*.ts",
-    "!src/kernel/**/*.test.ts",
-    "!src/kernel/**/index.ts",
+    "src/adapter/sql/**/*.ts",
+    "!src/**/*.test.ts",
+    "!src/**/index.ts",
     "!src/kernel/test-support.ts",
     "!src/kernel/reactive-harness.ts"
   ],
