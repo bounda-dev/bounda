@@ -12,7 +12,7 @@ pnpm 12 (workspace catalog, `catalogMode: strict`), TypeScript 7, Biome (lint an
 
 | Command | What it does |
 |---|---|
-| `pnpm check` | lint, typecheck, build, test — run before every commit |
+| `pnpm check` | lint, build, typecheck, test — run before every commit (build first: packages type-check against the `dist` of their workspace dependencies) |
 | `pnpm lint` / `pnpm format` | Biome check / write |
 | `pnpm typecheck` | `tsc -p` in every package |
 | `pnpm build` | tsdown in every package |
