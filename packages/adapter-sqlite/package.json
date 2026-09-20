@@ -32,6 +32,9 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run --passWithNoTests"
   },
+  "dependencies": {
+    "@libsql/client": "catalog:"
+  },
   "peerDependencies": {
     "@bounda-dev/core": "workspace:*"
   },
