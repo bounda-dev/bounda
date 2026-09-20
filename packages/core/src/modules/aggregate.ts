@@ -27,3 +27,9 @@ export type StateOf<Module> = Module extends { readonly initialState: infer Stat
  * The state a command handler receives: the aggregate state plus identity and version.
  */
 export type HandlerState<State extends object> = Readonly<State> & AggregateMeta;
+
+/**
+ * The state of an aggregate whose shape the generator could not determine: no `state.ts` and no
+ * inference result. Every field is unknown; add a `state.ts` with `initialState` to fix it.
+ */
+export type UnknownState = Record<string, unknown>;

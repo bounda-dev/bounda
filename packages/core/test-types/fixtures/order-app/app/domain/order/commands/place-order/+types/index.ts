@@ -1,5 +1,5 @@
 import type * as core from "@bounda-dev/core";
-import type * as generated from "../../../../../../generated/types.ts";
+import type * as generated from "../../../../../../.bounda/types.ts";
 
 type Module = typeof import("../index.ts");
 

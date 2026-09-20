@@ -1,4 +1,10 @@
-export type { AggregateMeta, HandlerState, StateModule, StateOf } from "./aggregate.ts";
+export type {
+  AggregateMeta,
+  HandlerState,
+  StateModule,
+  StateOf,
+  UnknownState,
+} from "./aggregate.ts";
 export type {
   CollaboratorImplementations,
   CommandEntry,

@@ -6,7 +6,15 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!**/dist", "!**/.astro", "!**/.bounda", "!**/.vitest", "!**/coverage"]
+    "includes": [
+      "**",
+      "!**/dist",
+      "!**/.astro",
+      "!**/.bounda",
+      "!**/+types",
+      "!**/.vitest",
+      "!**/coverage"
+    ]
   },
   "formatter": {
     "enabled": true,

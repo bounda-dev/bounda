@@ -53,6 +53,7 @@ const relativePaths = (model: ProjectModel): Record<string, unknown> => ({
       typeName: command.typeName,
       path: command.relativePath,
       directory: command.directory === null ? null : command.directory.slice(model.root.length + 1),
+      declaresCollaborators: command.declaresCollaborators,
       collaborators: command.collaborators.map((collaborator) => [
         collaborator.name,
         collaborator.implementation,
@@ -103,6 +104,7 @@ describe("discoverProject on the order-app fixture", () => {
           commands: [
             {
               key: "registerCustomer",
+              declaresCollaborators: false,
               typeName: "RegisterCustomer",
               path: "app/domain/customer/commands/register-customer.ts",
               directory: null,
@@ -123,6 +125,7 @@ describe("discoverProject on the order-app fixture", () => {
           commands: [
             {
               key: "cancelOrder",
+              declaresCollaborators: false,
               typeName: "CancelOrder",
               path: "app/domain/order/commands/cancel-order/index.ts",
               directory: "app/domain/order/commands/cancel-order",
@@ -136,6 +139,7 @@ describe("discoverProject on the order-app fixture", () => {
             },
             {
               key: "payOrder",
+              declaresCollaborators: false,
               typeName: "PayOrder",
               path: "app/domain/order/commands/pay-order.ts",
               directory: null,
@@ -143,6 +147,7 @@ describe("discoverProject on the order-app fixture", () => {
             },
             {
               key: "placeOrder",
+              declaresCollaborators: true,
               typeName: "PlaceOrder",
               path: "app/domain/order/commands/place-order/index.ts",
               directory: "app/domain/order/commands/place-order",
