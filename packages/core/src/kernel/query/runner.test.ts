@@ -136,4 +136,25 @@ describe("buildQueries", () => {
       new ConfigurationError('Query "getOrder" is defined in both "a" and "b"'),
     );
   });
+
+  it("rejects payload functions that do not return a schema", async () => {
+    const broken: Registry = {
+      aggregates: {},
+      readModels: {
+        a: {
+          view,
+          projections: {},
+          queries: { getOrder: { payload: (() => "nope") as never, handler: () => null } },
+        },
+      },
+    };
+    const readModels = await buildReadModels({
+      registry: broken,
+      config: resolveConfig({ storage: memory() }),
+      logger: silentLogger,
+    });
+    expect(() => buildQueries({ readModels })).toThrow(
+      new ConfigurationError("readModels.a.queries.getOrder: payload must return a Zod schema"),
+    );
+  });
 });

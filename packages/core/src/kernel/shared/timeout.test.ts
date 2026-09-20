@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { HandlerTimeoutError, withTimeout } from "./timeout.ts";
 
 describe("withTimeout", () => {
@@ -26,5 +26,21 @@ describe("withTimeout", () => {
     await expect(
       withTimeout({ run: () => Promise.reject(new Error("boom")), timeoutMs: 50, subject: "x" }),
     ).rejects.toThrow("boom");
+  });
+
+  it("clears its timer whichever side wins", async () => {
+    vi.useFakeTimers();
+    try {
+      await withTimeout({ run: () => 1, timeoutMs: 1_000, subject: "x" });
+      expect(vi.getTimerCount()).toBe(0);
+      await withTimeout({
+        run: () => Promise.reject(new Error("boom")),
+        timeoutMs: 1_000,
+        subject: "x",
+      }).catch(() => undefined);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

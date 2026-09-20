@@ -35,7 +35,8 @@ export const processAggregateType: ProcessAggregateTypeFunction = (processType) 
 
 /**
  * A process instance as folded from its stream. `version` is the stream version, used for
- * optimistic concurrency on the next lifecycle append.
+ * optimistic concurrency on the next lifecycle append. `handledEventIds` holds the events whose
+ * handler already ran; the starting event is among them only if it has a handler of its own.
  */
 export interface ProcessInstance {
   readonly exists: boolean;
@@ -69,6 +70,8 @@ export const foldProcess: FoldProcessFunction = ({ initialState, events }) => {
   for (const event of events) {
     switch (event.type) {
       case PROCESS_EVENTS.started:
+        state = stateOf(event, state);
+        break;
       case PROCESS_EVENTS.handled: {
         state = stateOf(event, state);
         const payload = event.payload as { readonly eventId?: string };

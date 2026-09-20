@@ -4,7 +4,7 @@ import type { Config, ResolvedConfig } from "../config/types.ts";
 import { createFixedClock, type FixedClock } from "../contracts/clock.ts";
 import { DomainError } from "../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../contracts/ids.ts";
-import { silentLogger } from "../contracts/logger.ts";
+import { type LogFields, type Logger, silentLogger } from "../contracts/logger.ts";
 import { memory } from "../memory/index.ts";
 import type { PayloadArgs } from "../modules/payload.ts";
 import type { Registry } from "../modules/registry.ts";
@@ -127,6 +127,42 @@ export const orderRegistry: Registry = {
  * Messages sent through the in-memory notifier collaborator, reset by `createKernelHarness`.
  */
 export const sentMessages: string[] = [];
+
+export interface LogEntry {
+  readonly level: "debug" | "info" | "warn" | "error";
+  readonly message: string;
+  readonly fields?: LogFields;
+}
+
+export interface RecordingLogger {
+  readonly logger: Logger;
+  readonly entries: LogEntry[];
+}
+
+export interface CreateRecordingLoggerFunction {
+  (): RecordingLogger;
+}
+
+/**
+ * A logger that keeps every line, for tests that assert on what the kernel reports.
+ */
+export const createRecordingLogger: CreateRecordingLoggerFunction = () => {
+  const entries: LogEntry[] = [];
+  const record =
+    (level: LogEntry["level"]) =>
+    (message: string, fields?: LogFields): void => {
+      entries.push(fields === undefined ? { level, message } : { level, message, fields });
+    };
+  return {
+    logger: {
+      debug: record("debug"),
+      info: record("info"),
+      warn: record("warn"),
+      error: record("error"),
+    },
+    entries,
+  };
+};
 
 export interface KernelHarness {
   readonly storage: StoragePorts;

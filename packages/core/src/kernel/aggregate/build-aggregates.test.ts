@@ -62,6 +62,20 @@ describe("buildAggregates", () => {
     expect(() => buildAggregates({ registry, config })).toThrow(
       new ConfigurationError("aggregates.order.events.broken: payload must return a Zod schema"),
     );
+    const brokenCommand: Registry = {
+      aggregates: {
+        order: {
+          events: {},
+          commands: { ship: { module: { payload: (() => "nope") as never, handler: () => [] } } },
+          policies: {},
+          processes: {},
+        },
+      },
+      readModels: {},
+    };
+    expect(() => buildAggregates({ registry: brokenCommand, config })).toThrow(
+      new ConfigurationError("aggregates.order.commands.ship: payload must return a Zod schema"),
+    );
   });
 
   it("rejects the same command type in two aggregates", () => {

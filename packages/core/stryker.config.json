@@ -1,0 +1,31 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "testRunner": "command",
+  "mutate": [
+    "src/kernel/**/*.ts",
+    "!src/kernel/**/*.test.ts",
+    "!src/kernel/**/index.ts",
+    "!src/kernel/test-support.ts",
+    "!src/kernel/reactive-harness.ts"
+  ],
+  "ignoreStatic": true,
+  "incremental": true,
+  "incrementalFile": ".stryker-tmp/incremental.json",
+  "tempDirName": ".stryker-tmp",
+  "reporters": ["clear-text", "progress"],
+  "thresholds": {
+    "high": 90,
+    "low": 80,
+    "break": 80
+  },
+  "tsconfigFile": "stryker.no-tsconfig.json",
+  "warnings": {
+    "unknownOptions": false
+  },
+  "_comment": "tsconfigFile points at a file that does not exist on purpose: Stryker would read tsconfig.json through the TypeScript JavaScript API, which TypeScript 7 no longer ships. Vitest resolves TypeScript on its own. The command runner starts a fresh Vitest per mutant: @stryker-mutator/vitest-runner 10 does not activate mutants under Vitest 5 (every mutant survives, only part of the suite runs). Revisit when the runner supports Vitest 5.",
+  "inPlace": true,
+  "commandRunner": {
+    "command": "pnpm exec vitest run --config vitest.stryker.config.ts"
+  },
+  "timeoutMS": 60000
+}

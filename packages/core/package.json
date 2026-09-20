@@ -56,9 +56,11 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run --passWithNoTests",
     "test:types": "vitest run --typecheck.only",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "test:mutation": "stryker run"
   },
   "devDependencies": {
+    "@stryker-mutator/core": "catalog:",
     "@types/node": "catalog:",
     "@vitest/coverage-v8": "catalog:",
     "tsdown": "catalog:",

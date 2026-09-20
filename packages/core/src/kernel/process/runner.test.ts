@@ -6,9 +6,10 @@ import type { PayloadArgs } from "../../modules/payload.ts";
 import type { ProcessConfigArgs } from "../../modules/process.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { createReactiveHarness } from "../reactive-harness.ts";
-import { orderAggregateEntry } from "../test-support.ts";
+import { createRecordingLogger, orderAggregateEntry } from "../test-support.ts";
 import { buildProcesses } from "./build-processes.ts";
 import { PROCESS_EVENTS } from "./lifecycle.ts";
+import { PROCESS_TIMEOUT_COMMAND } from "./runner.ts";
 
 interface HandlerArgs {
   readonly event: { aggregateId: string; payload: { method?: string } };
@@ -18,7 +19,7 @@ interface HandlerArgs {
 }
 
 const calls: string[] = [];
-let mode: "ok" | "domain" | "flaky" = "ok";
+let mode: "ok" | "domain" | "flaky" | "void" = "ok";
 let flakyFailures = 0;
 
 const registry: Registry = {
@@ -46,6 +47,7 @@ const registry: Registry = {
               handler: ({ event, state }: HandlerArgs) => {
                 calls.push(`paid:${event.aggregateId}`);
                 if (mode === "domain") throw new DomainError("bad payment");
+                if (mode === "void") return undefined;
                 if (mode === "flaky" && flakyFailures > 0) {
                   flakyFailures -= 1;
                   throw new Error("network");
@@ -114,6 +116,51 @@ describe("buildProcesses", () => {
       config: resolveConfig({ storage: memory(), runtime: { processes: { timeout: "1h" } } }),
     });
     expect(built.all[0]?.timeoutMs).toBe(3_600_000);
+    expect(built.all[0]).toMatchObject({
+      initialState: {},
+      stateSchema: null,
+      timeoutHandler: null,
+    });
+  });
+
+  it("rejects state factories that do not return a schema and handlers for unknown events", () => {
+    const badStateShape: Registry = {
+      aggregates: {
+        order: {
+          ...orderAggregateEntry(),
+          processes: {
+            p: {
+              module: {
+                config: () => ({ startedBy: ["OrderPlaced"] }),
+                state: (() => "nope") as never,
+              },
+              handlers: {},
+            },
+          },
+        },
+      },
+      readModels: {},
+    };
+    expect(() => buildProcesses({ registry: badStateShape, config })).toThrow(
+      "aggregates.order.processes.p: state must return a Zod schema",
+    );
+    const badHandler: Registry = {
+      aggregates: {
+        order: {
+          ...orderAggregateEntry(),
+          processes: {
+            p: {
+              module: { config: () => ({ startedBy: ["OrderPlaced"] }) },
+              handlers: { orderShipped: { handler: () => undefined } },
+            },
+          },
+        },
+      },
+      readModels: {},
+    };
+    expect(() => buildProcesses({ registry: badHandler, config })).toThrow(
+      'aggregates.order.processes.p.handlers.orderShipped: "OrderShipped" is not an event of this aggregate',
+    );
   });
 
   it("rejects unknown events and state schemas without defaults", () => {
@@ -167,6 +214,12 @@ describe("process runner", () => {
     expect((await harness.storage.scheduler.list()).map((entry) => entry.dedupeKey)).toEqual([
       "process-timeout:order.orderPayment:o-1",
     ]);
+    expect((await harness.storage.scheduler.list())[0]?.command).toEqual({
+      type: "bounda.ProcessTimeout",
+      aggregateId: "o-1",
+      payload: { process: "order.orderPayment", aggregateId: "o-1" },
+    });
+    expect(PROCESS_TIMEOUT_COMMAND).toBe("bounda.ProcessTimeout");
 
     await harness.pipeline.dispatch({
       type: "PayOrder",
@@ -264,6 +317,7 @@ describe("process runner", () => {
         subscriber: "order.orderPayment",
         errorType: "terminal",
         errorMessage: "bad payment",
+        errorStack: expect.stringContaining("bad payment"),
       },
     ]);
     expect(await harness.storage.scheduler.list()).toEqual([]);
@@ -324,5 +378,275 @@ describe("process runner", () => {
     expect((await harness.storage.scheduler.list()).map((entry) => entry.dedupeKey)).toEqual([
       "process-timeout:order.orderPayment:o-1",
     ]);
+  });
+
+  it("runs the handler declared for the starting event exactly once", async () => {
+    const totals: number[] = [];
+    const startHandled: Registry = {
+      aggregates: {
+        order: {
+          ...orderAggregateEntry(),
+          processes: {
+            orderTotals: {
+              module: {
+                config: ({ events }: ProcessConfigArgs<"OrderPlaced" | "OrderPaid">) => ({
+                  startedBy: [events.OrderPlaced],
+                  completedBy: [events.OrderPaid],
+                }),
+                state: ({ z }: PayloadArgs) => z.object({ total: z.number().default(0) }),
+              },
+              handlers: {
+                orderPlaced: {
+                  handler: ({
+                    event,
+                    state,
+                  }: {
+                    event: { payload: { total: number } };
+                    state: { total: number };
+                  }) => {
+                    totals.push(event.payload.total);
+                    return { ...state, total: event.payload.total };
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      readModels: {},
+    };
+    const harness = await createReactiveHarness({ registry: startHandled });
+    const load = () =>
+      harness.storage.eventStore.load({ aggregateType: "process:OrderTotals", aggregateId: "o-1" });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.dispatcher.processUntilIdle();
+    let stream = await load();
+    expect(stream.events.map((event) => event.type)).toEqual([
+      PROCESS_EVENTS.started,
+      PROCESS_EVENTS.handled,
+    ]);
+    expect(stream.events[1]?.payload).toMatchObject({
+      state: { total: 10 },
+      eventType: "OrderPlaced",
+    });
+    expect(totals).toEqual([10]);
+
+    await harness.storage.checkpointStore.set("processes", 0);
+    await harness.dispatcher.processUntilIdle();
+    stream = await load();
+    expect(stream.events).toHaveLength(2);
+    expect(totals).toEqual([10]);
+  });
+
+  it("keeps the state when a handler returns nothing", async () => {
+    reset("void");
+    const harness = await createReactiveHarness({ registry });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.pipeline.dispatch({
+      type: "PayOrder",
+      payload: { orderId: "o-1", method: "card" },
+    });
+    await harness.dispatcher.processUntilIdle();
+    const stream = await processStream(harness);
+    expect(stream.events.map((event) => event.type)).toEqual([
+      PROCESS_EVENTS.started,
+      PROCESS_EVENTS.handled,
+      PROCESS_EVENTS.completed,
+    ]);
+    expect(stream.events[1]?.payload).toEqual({
+      state: { reminders: 0, method: null },
+      eventId: expect.any(String),
+      eventType: "OrderPaid",
+    });
+  });
+
+  it("dead-letters a retriable failure once the configured attempts are used up", async () => {
+    reset("flaky", 5);
+    const { logger, entries } = createRecordingLogger();
+    const harness = await createReactiveHarness({
+      registry,
+      logger,
+      config: {
+        runtime: { processes: { retry: { strategy: "fixed", maxAttempts: 2, baseDelay: "1s" } } },
+      },
+    });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.pipeline.dispatch({
+      type: "PayOrder",
+      payload: { orderId: "o-1", method: "card" },
+    });
+    await harness.dispatcher.processUntilIdle();
+    expect(calls).toEqual(["paid:o-1"]);
+    expect(entries).toEqual([
+      {
+        level: "warn",
+        message: "process handler failed; will retry",
+        fields: { process: "order.orderPayment", eventId: expect.any(String), attempts: 1 },
+      },
+    ]);
+
+    harness.clock.advance(1_000);
+    await harness.dispatcher.processUntilIdle();
+    expect(calls).toEqual(["paid:o-1", "paid:o-1"]);
+    const stream = await processStream(harness);
+    expect(stream.events.map((event) => event.type)).toEqual([
+      PROCESS_EVENTS.started,
+      PROCESS_EVENTS.failed,
+    ]);
+    expect(await harness.storage.deadLetterStore.list()).toMatchObject([
+      {
+        kind: "process",
+        errorType: "retriable_exhausted",
+        attempts: 2,
+        errorMessage: "network",
+        errorStack: expect.stringContaining("network"),
+      },
+    ]);
+    expect(entries[1]).toEqual({
+      level: "warn",
+      message: "process dead-lettered",
+      fields: {
+        process: "order.orderPayment",
+        eventId: expect.any(String),
+        errorType: "retriable_exhausted",
+        attempts: 2,
+      },
+    });
+    expect(await harness.storage.scheduler.list()).toEqual([]);
+    expect((await harness.dispatcher.getLag()).maxLag).toBe(0);
+  });
+
+  it("dead-letters a retriable failure at once when retries are off", async () => {
+    reset("flaky", 5);
+    const harness = await createReactiveHarness({
+      registry,
+      config: { runtime: { processes: { retry: { strategy: "none" } } } },
+    });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.pipeline.dispatch({
+      type: "PayOrder",
+      payload: { orderId: "o-1", method: "card" },
+    });
+    await harness.dispatcher.processUntilIdle();
+    expect(calls).toEqual(["paid:o-1"]);
+    expect(await harness.storage.deadLetterStore.list()).toMatchObject([
+      { errorType: "retriable_exhausted", attempts: 1 },
+    ]);
+    expect((await harness.dispatcher.getLag()).maxLag).toBe(0);
+  });
+
+  it("claims each handler run with a lease of twice the handler timeout", async () => {
+    reset("ok");
+    const harness = await createReactiveHarness({
+      registry,
+      config: { runtime: { policies: { timeout: "10s" } } },
+    });
+    const leases: number[] = [];
+    const original = harness.storage.inboxLedger.tryClaim.bind(harness.storage.inboxLedger);
+    harness.storage.inboxLedger.tryClaim = async (args) => {
+      leases.push(args.leaseMs);
+      return original(args);
+    };
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.pipeline.dispatch({
+      type: "PayOrder",
+      payload: { orderId: "o-1", method: "card" },
+    });
+    await harness.dispatcher.processUntilIdle();
+    expect(leases).toEqual([20_000]);
+  });
+
+  it("holds and redelivers when another instance moved the process stream first", async () => {
+    reset("ok");
+    const { logger, entries } = createRecordingLogger();
+    const harness = await createReactiveHarness({ registry, logger });
+    const original = harness.storage.eventStore.append.bind(harness.storage.eventStore);
+    let interfered = false;
+    harness.storage.eventStore.append = async (args) => {
+      if (!interfered && args.aggregateType === "process:OrderPayment") {
+        interfered = true;
+        await original({
+          ...args,
+          events: args.events.map((event) => ({ ...event, id: "sneaky" })),
+        });
+      }
+      return original(args);
+    };
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.dispatcher.processOnce();
+    expect(await harness.storage.checkpointStore.get("processes")).toBe(0);
+    expect(entries).toEqual([
+      {
+        level: "debug",
+        message: "process stream moved; will redeliver",
+        fields: { process: "order.orderPayment", eventId: expect.any(String) },
+      },
+    ]);
+
+    await harness.dispatcher.processUntilIdle();
+    expect(await harness.storage.checkpointStore.get("processes")).toBe(
+      await harness.storage.eventStore.lastPosition(),
+    );
+    expect((await processStream(harness)).events.map((event) => event.id)).toEqual(["sneaky"]);
+  });
+
+  it("lets storage failures reach the dispatcher", async () => {
+    reset("ok");
+    const { logger, entries } = createRecordingLogger();
+    const harness = await createReactiveHarness({ registry, logger });
+    const original = harness.storage.eventStore.load.bind(harness.storage.eventStore);
+    harness.storage.eventStore.load = async (args) => {
+      if (args.aggregateType.startsWith("process:")) throw new Error("db down");
+      return original(args);
+    };
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.dispatcher.processOnce();
+    expect(await harness.storage.checkpointStore.get("processes")).toBe(0);
+    expect(entries).toEqual([
+      {
+        level: "error",
+        message: "subscriber failed; batch will be redelivered",
+        fields: {
+          subscriber: "processes",
+          afterPosition: 0,
+          message: "db down",
+          stack: expect.any(String),
+        },
+      },
+    ]);
+  });
+
+  it("ignores time-outs for unknown processes and for instances that are not running", async () => {
+    reset("ok");
+    const harness = await createReactiveHarness({ registry });
+    const context = { correlationId: "c", causationId: "c", depth: 0 };
+    await expect(
+      harness.processes.handleTimeout({
+        payload: { process: "order.nope", aggregateId: "o-1" },
+        context,
+      }),
+    ).resolves.toBeUndefined();
+    await harness.processes.handleTimeout({
+      payload: { process: "order.orderPayment", aggregateId: "never" },
+      context,
+    });
+    expect((await processStream(harness, "never")).events).toEqual([]);
+
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.pipeline.dispatch({
+      type: "PayOrder",
+      payload: { orderId: "o-1", method: "card" },
+    });
+    await harness.dispatcher.processUntilIdle();
+    await harness.processes.handleTimeout({
+      payload: { process: "order.orderPayment", aggregateId: "o-1" },
+      context,
+    });
+    expect((await processStream(harness)).events.map((event) => event.type)).toEqual([
+      PROCESS_EVENTS.started,
+      PROCESS_EVENTS.handled,
+      PROCESS_EVENTS.completed,
+    ]);
+    expect(calls).toEqual(["paid:o-1"]);
   });
 });
