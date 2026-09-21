@@ -7,7 +7,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { bounda } from "./vite.ts";
 
 const repoRoot = resolve(import.meta.dirname, "../../..");
-const fixtureRoot = join(repoRoot, "packages/core/test-types/fixtures/order-app-inferred");
+const fixtures = join(repoRoot, "packages/core/test-types/fixtures");
 const temporary: string[] = [];
 
 afterAll(async () => {
@@ -19,10 +19,10 @@ afterAll(async () => {
   );
 });
 
-const project = async (): Promise<string> => {
+const project = async (fixture = "order-app-inferred"): Promise<string> => {
   const root = await mkdtemp(join(tmpdir(), "bounda-vite-"));
   temporary.push(root);
-  await cp(join(fixtureRoot, "app"), join(root, "app"), {
+  await cp(join(fixtures, fixture, "app"), join(root, "app"), {
     recursive: true,
     filter: (source) => !source.includes("/+types"),
   });
@@ -136,6 +136,7 @@ const until = async (condition: () => Promise<boolean>, timeoutMs = 15_000): Pro
 describe("bounda() Vite plugin", () => {
   it("resolves the app module and nothing else, before Vite's own resolver", () => {
     const { plugin, resolve: resolveId } = harness("/project");
+    expect(plugin.name).toBe("bounda");
     expect(plugin.enforce).toBe("pre");
     expect(resolveId("@bounda-dev/react-router/app")).toBe("\0@bounda-dev/react-router/app");
     expect(resolveId("@bounda-dev/react-router")).toBeNull();
@@ -146,10 +147,19 @@ describe("bounda() Vite plugin", () => {
     const { configure, load } = harness("/project");
     configure("serve");
     const code = load("\0@bounda-dev/react-router/app", "server");
-    expect(code).toContain('import { registry } from "/project/.bounda/registry.ts";');
-    expect(code).toContain('boot: () => boot({ root: "/project", registry })');
-    expect(code).toContain('consistency: "immediate"');
-    expect(code).toContain("export const { bounda, boundaMiddleware, dispose } = createBounda(");
+    expect(code).toBe(
+      [
+        'import { boot } from "@bounda-dev/core/node";',
+        'import { createBounda } from "@bounda-dev/react-router";',
+        'import { registry } from "/project/.bounda/registry.ts";',
+        "",
+        "export const { bounda, boundaMiddleware, dispose } = createBounda({",
+        '  boot: () => boot({ root: "/project", registry }),',
+        '  consistency: "immediate",',
+        "});",
+        "",
+      ].join("\n"),
+    );
     expect(load("\0other", "server")).toBeNull();
   });
 
@@ -163,7 +173,17 @@ describe("bounda() Vite plugin", () => {
     const { configure, load } = harness("/project");
     configure("serve");
     const code = load("\0@bounda-dev/react-router/app", "client") as string;
-    expect(code).not.toContain("registry");
+    expect(code).toBe(
+      [
+        "const serverOnly = () => {",
+        '  throw new Error("@bounda-dev/react-router/app is server-only: use it in loaders, actions and middleware, not in components");',
+        "};",
+        "export const bounda = new Proxy({}, { get: serverOnly });",
+        "export const boundaMiddleware = serverOnly;",
+        "export const dispose = serverOnly;",
+        "",
+      ].join("\n"),
+    );
     const module = (await import(`data:text/javascript,${encodeURIComponent(code)}`)) as {
       bounda: { defaultValue?: unknown };
       boundaMiddleware: () => unknown;
@@ -186,6 +206,16 @@ describe("bounda() Vite plugin", () => {
     expect(await exists(join(root, ".bounda/register.d.ts"))).toBe(true);
     expect(await exists(join(root, "app/domain/order/+types/order-placed.ts"))).toBe(true);
     expect(recorded.warnings.join("\n")).toContain("[bounda] warning: order:");
+    expect(recorded.errors).toEqual([]);
+  });
+
+  it("stays quiet when there is nothing to warn about", async () => {
+    const root = await project("order-app");
+    const { configure, start, recorded } = harness(root);
+    configure("serve");
+    await start();
+    expect(await exists(join(root, ".bounda/registry.ts"))).toBe(true);
+    expect(recorded.warnings).toEqual([]);
     expect(recorded.errors).toEqual([]);
   });
 
@@ -275,6 +305,24 @@ describe("bounda() Vite plugin", () => {
     expect(await exists(join(root, ".bounda/registry.ts"))).toBe(true);
   });
 
+  it("reports a generator failure that is not about conventions and keeps watching", async () => {
+    const root = await project();
+    const { configure, start, serve, recorded } = harness(root, { debounceMs: 20 });
+    configure("serve");
+    await start();
+    const watcher = serve();
+
+    await rm(join(root, ".bounda"), { recursive: true });
+    await writeFile(join(root, ".bounda"), "not a directory\n");
+    watcher.emit("change", join(root, "app/domain/order/order-paid.ts"));
+    await until(async () => recorded.errors.length > 0);
+    expect(recorded.errors[0]).toMatch(/^\[bounda\] .*(ENOTDIR|EEXIST|not a directory)/i);
+
+    await rm(join(root, ".bounda"));
+    watcher.emit("change", join(root, "app/domain/order/order-paid.ts"));
+    await until(() => exists(join(root, ".bounda/registry.ts")));
+  });
+
   it("keeps serving after a change that breaks a convention, and recovers", async () => {
     const root = await project();
     const { configure, start, serve, recorded } = harness(root, { debounceMs: 20 });
@@ -285,6 +333,7 @@ describe("bounda() Vite plugin", () => {
     await writeFile(join(root, "app/domain/order/Loose.ts"), "export {};\n");
     watcher.emit("add", join(root, "app/domain/order/Loose.ts"));
     await until(async () => recorded.errors.join("\n").includes("Loose.ts"));
+    expect(recorded.errors[0]).toMatch(/^\[bounda\] error: 1 problem in the project layout\n/);
 
     await rm(join(root, "app/domain/order/Loose.ts"));
     await rm(join(root, ".bounda/registry.ts"));

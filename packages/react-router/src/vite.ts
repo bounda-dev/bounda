@@ -5,10 +5,6 @@ import type { Consistency } from "./create-bounda.ts";
 
 export interface BoundaVitePluginOptions {
   /**
-   * The application directory under the Vite root, with `domain/` and `read/`. Defaults to `app`.
-   */
-  readonly appDir?: string;
-  /**
    * Passed to `createBounda`. Defaults to `"immediate"`: the app in the context reads its own
    * writes.
    */
@@ -25,6 +21,7 @@ export interface BoundaVitePluginFunction {
 }
 
 const RESOLVED_ID = `\0${APP_MODULE_ID}`;
+const APP_DIRECTORY = "app";
 const WATCHED = ["domain", "read"];
 const EVENTS = ["add", "change", "unlink", "addDir", "unlinkDir"] as const;
 
@@ -54,20 +51,14 @@ const clientModule = (): string =>
 
 interface Generation {
   readonly root: string;
-  readonly appDir: string;
   readonly logger: Logger;
   readonly failOnConvention: boolean;
 }
 
-const regenerate = async ({
-  root,
-  appDir,
-  logger,
-  failOnConvention,
-}: Generation): Promise<void> => {
+const regenerate = async ({ root, logger, failOnConvention }: Generation): Promise<void> => {
   const cli = await import("@bounda-dev/cli");
   try {
-    const report = await cli.generate({ root, appDir });
+    const report = await cli.generate({ root });
     const warnings = cli.formatWarnings(report);
     if (warnings !== "") logger.warn(`[bounda] ${warnings}`);
   } catch (error) {
@@ -94,14 +85,13 @@ const regenerate = async ({
  * export default defineConfig({ plugins: [bounda(), reactRouter()] });
  */
 export const bounda: BoundaVitePluginFunction = ({
-  appDir = "app",
   consistency = "immediate",
   debounceMs = 100,
 } = {}) => {
   let generation: Generation | undefined;
   let queue: Promise<void> = Promise.resolve();
   const isWatched = (root: string, file: string): boolean =>
-    WATCHED.some((directory) => file.startsWith(resolve(root, appDir, directory) + sep)) &&
+    WATCHED.some((directory) => file.startsWith(resolve(root, APP_DIRECTORY, directory) + sep)) &&
     !file.split(sep).includes("+types");
 
   return {
@@ -110,7 +100,6 @@ export const bounda: BoundaVitePluginFunction = ({
     configResolved(config) {
       generation = {
         root: config.root,
-        appDir,
         logger: config.logger,
         failOnConvention: config.command === "build",
       };

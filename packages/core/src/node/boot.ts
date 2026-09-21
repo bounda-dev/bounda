@@ -91,8 +91,8 @@ const loadEnv = (root: string, logger: Logger): void => {
 
 /**
  * Boots a Bounda app in Node: loads `.env`, imports `bounda.config.ts` and the generated
- * registry from the project root, creates the app and stops it on `SIGINT` or `SIGTERM`. Every
- * piece can be supplied directly instead of imported.
+ * registry from the project root, creates the app and stops it on `SIGINT` or `SIGTERM`; stopping
+ * the app removes those listeners again. Every piece can be supplied directly instead of imported.
  */
 export const boot: BootFunction = async <R extends Registry = AppRegistry>({
   root = process.cwd(),
@@ -130,15 +130,17 @@ export const boot: BootFunction = async <R extends Registry = AppRegistry>({
     ...(clock === undefined ? {} : { clock }),
   });
 
-  if (signals) {
-    const onSignal = (signal: NodeJS.Signals): void => {
-      logger.info("stopping", { signal });
-      process.off("SIGINT", onSignal);
-      process.off("SIGTERM", onSignal);
-      void app.stop();
-    };
-    process.once("SIGINT", onSignal);
-    process.once("SIGTERM", onSignal);
-  }
-  return app;
+  if (!signals) return app;
+  const onSignal = (signal: NodeJS.Signals): void => {
+    logger.info("stopping", { signal });
+    void stop();
+  };
+  const stop = async (): Promise<void> => {
+    process.off("SIGINT", onSignal);
+    process.off("SIGTERM", onSignal);
+    await app.stop();
+  };
+  process.once("SIGINT", onSignal);
+  process.once("SIGTERM", onSignal);
+  return { ...app, stop };
 };

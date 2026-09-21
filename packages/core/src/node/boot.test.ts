@@ -72,6 +72,21 @@ describe("boot", () => {
     ).rejects.toThrow(/does not export the registry/);
   });
 
+  it("removes its signal listeners once the app is stopped", async () => {
+    const before = process.listenerCount("SIGTERM");
+    const app = await boot<typeof registry>({
+      root,
+      registryPath: "registry.ts",
+      logger: silentLogger,
+    });
+    expect(process.listenerCount("SIGTERM")).toBe(before + 1);
+    expect(process.listenerCount("SIGINT")).toBeGreaterThan(0);
+    await app.stop();
+    expect(process.listenerCount("SIGTERM")).toBe(before);
+    await app.stop();
+    expect(process.listenerCount("SIGTERM")).toBe(before);
+  });
+
   it("stops the app on SIGTERM", async () => {
     const app = await boot<typeof registry>({
       root,
