@@ -8,6 +8,7 @@
     "url": "git+https://github.com/bounda-dev/bounda.git",
     "directory": "packages/create-bounda"
   },
+  "homepage": "https://docs.bounda.dev",
   "type": "module",
   "sideEffects": false,
   "files": [

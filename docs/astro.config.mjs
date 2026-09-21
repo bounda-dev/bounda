@@ -3,7 +3,7 @@ import { defineConfig } from "astro/config";
 import starlightLlmsTxt from "starlight-llms-txt";
 
 export default defineConfig({
-  site: "https://bounda.dev",
+  site: "https://docs.bounda.dev",
   integrations: [
     starlight({
       title: "Bounda",

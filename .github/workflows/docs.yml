@@ -1,0 +1,44 @@
+name: Docs
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: docs
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  deploy:
+    name: Build and deploy
+    if: vars.DOCS_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.4.2
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm docs:build
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: docs/dist
+      - id: deployment
+        uses: actions/deploy-pages@v4
