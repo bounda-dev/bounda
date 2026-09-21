@@ -51,6 +51,7 @@
     "@bounda-dev/cli": "workspace:*",
     "@bounda-dev/core": "workspace:*",
     "@stryker-mutator/core": "catalog:",
+    "@stryker-mutator/vitest-runner": "catalog:",
     "@types/node": "catalog:",
     "react": "catalog:",
     "react-router": "catalog:",

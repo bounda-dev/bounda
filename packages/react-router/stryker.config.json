@@ -1,8 +1,9 @@
 {
   "$schema": "../../node_modules/@stryker-mutator/core/schema/stryker-schema.json",
-  "testRunner": "command",
-  "commandRunner": {
-    "command": "pnpm exec vitest run"
+  "testRunner": "vitest",
+  "plugins": ["@stryker-mutator/vitest-runner"],
+  "vitest": {
+    "configFile": "vitest.config.ts"
   },
   "mutate": ["src/**/*.ts", "!src/**/*.test.ts", "!src/index.ts"],
   "ignoreStatic": true,
@@ -19,7 +20,7 @@
   "warnings": {
     "unknownOptions": false
   },
-  "_comment": "Same runner set-up as packages/core: the command runner because @stryker-mutator/vitest-runner does not activate mutants under Vitest 5, and a deliberately missing tsconfigFile because TypeScript 7 has no JavaScript API for Stryker to read it with.",
+  "_comment": "Stryker's vitest runner, patched in patches/@stryker-mutator__vitest-runner@10.0.0.patch: Vitest 5 joins suite and test names with ' > ' and the runner joined them with a space, so its testNamePattern matched nothing and every mutant survived. inPlace because tsconfig.json extends ../../tsconfig.base.json, which a sandbox copy cannot reach. tsconfigFile points at a file that does not exist on purpose: Stryker would read tsconfig.json through the TypeScript JavaScript API, which TypeScript 7 no longer ships; Vitest resolves TypeScript on its own.",
   "inPlace": true,
   "timeoutMS": 60000
 }

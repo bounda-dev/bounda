@@ -3,6 +3,7 @@ dist/
 coverage/
 .vitest/
 .stryker-tmp/
+stryker-setup-*.js
 reports/
 .bounda/
 !packages/core/test-types/fixtures/**/.bounda/
