@@ -26,5 +26,22 @@ describe("createConsoleLogger", () => {
     expect(warn).toHaveBeenCalledTimes(1);
     createConsoleLogger({ level: "debug" }).debug("loud");
     expect(debug).toHaveBeenCalledTimes(1);
+    expect(debug).toHaveBeenCalledWith("[bounda] debug loud");
+    expect(warn).toHaveBeenCalledWith("[bounda] warn careful");
+  });
+
+  it("gates every level, including info and warn", () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const quiet = createConsoleLogger({ level: "error" });
+    quiet.info("skipped", { a: 1 });
+    quiet.warn("skipped too");
+    quiet.error("kept", { code: 1 });
+    expect(info).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith('[bounda] error kept {"code":1}');
+    createConsoleLogger({ level: "warn" }).info("also skipped");
+    expect(info).not.toHaveBeenCalled();
   });
 });

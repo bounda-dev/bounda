@@ -73,6 +73,13 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       expect(await store.count({ status: "replayed" })).toBe(1);
       const page = await store.list({ limit: 1, offset: 1 });
       expect(page).toHaveLength(1);
+      expect(await store.list({ offset: 2 })).toHaveLength(1);
+      expect(await store.list({ limit: 2 })).toHaveLength(2);
+    });
+
+    it("ignores a status update for a letter it does not hold", async () => {
+      await expect(store.updateStatus("missing", "replayed")).resolves.toBeUndefined();
+      expect(await store.get("missing")).toBeNull();
     });
 
     it("updates status and removes letters", async () => {

@@ -87,7 +87,7 @@ jobs:
 
   mutation:
     name: Mutation (${{ matrix.package }})
-    needs: changes
+    needs: [changes, check]
     if: needs.changes.outputs.packages != '[]'
     runs-on: ubuntu-latest
     timeout-minutes: 30

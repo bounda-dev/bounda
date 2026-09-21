@@ -98,6 +98,15 @@ export const tableContract: TableContractFunction = ({ create }) => {
       });
       expect(page.map((entry) => entry.orderId)).toEqual(["3"]);
       expect(await table.count({ customerId: "c-1" })).toBe(2);
+      expect(await table.count()).toBe(3);
+      const narrowed = await table.findMany({ where: { customerId: "c-2", total: 10 } });
+      expect(narrowed.map((entry) => entry.orderId)).toEqual(["2"]);
+      expect(await table.findMany({ where: { customerId: "c-2", total: 99 } })).toEqual([]);
+      const equalTotals = await table.findMany({
+        where: { customerId: "c-1" },
+        orderBy: { field: "customerId", direction: "desc" },
+      });
+      expect(equalTotals.map((entry) => entry.orderId).sort()).toEqual(["1", "3"]);
       expect(await table.findOne({ orderId: "missing" })).toBeNull();
     });
 

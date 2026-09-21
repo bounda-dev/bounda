@@ -19,6 +19,12 @@ describe("toSnakeCase / fromSnakeCase", () => {
     expect(toSnakeCase(name)).toBe(snake);
   });
 
+  it("folds runs of dashes and underscores", () => {
+    expect(toSnakeCase("order--summary")).toBe("order_summary");
+    expect(fromSnakeCase("paid__at")).toBe("paidAt");
+    expect(fromSnakeCase("line_2_total")).toBe("line2Total");
+  });
+
   it("round-trips camelCase names", () => {
     for (const name of ["orderId", "paidAt", "a1B2", "plain"]) {
       expect(fromSnakeCase(toSnakeCase(name))).toBe(name);

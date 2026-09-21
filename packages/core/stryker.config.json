@@ -6,12 +6,15 @@
     "configFile": "vitest.stryker.config.ts"
   },
   "mutate": [
-    "src/kernel/**/*.ts",
-    "src/adapter/sql/**/*.ts",
+    "src/**/*.ts",
     "!src/**/*.test.ts",
+    "!src/**/*.test-d.ts",
     "!src/**/index.ts",
     "!src/kernel/test-support.ts",
-    "!src/kernel/reactive-harness.ts"
+    "!src/kernel/reactive-harness.ts",
+    "!src/adapter/testing/**",
+    "!src/testing/**",
+    "!src/node/fixtures/**"
   ],
   "ignoreStatic": true,
   "incremental": true,
