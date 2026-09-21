@@ -1,4 +1,9 @@
 #!/usr/bin/env node
-import { packageName } from "./index.ts";
+import { runCreate } from "./run.ts";
 
-console.log(`${packageName} is not implemented yet`);
+process.exitCode = await runCreate({
+  argv: process.argv.slice(2),
+  cwd: process.cwd(),
+  stdout: process.stdout,
+  stderr: process.stderr,
+});

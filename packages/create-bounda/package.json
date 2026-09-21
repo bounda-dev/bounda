@@ -11,7 +11,8 @@
   "type": "module",
   "sideEffects": false,
   "files": [
-    "dist"
+    "dist",
+    "template"
   ],
   "exports": {
     ".": {
@@ -30,12 +31,18 @@
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "test:mutation": "stryker run"
   },
   "bin": {
     "create-bounda": "./dist/cli.js"
   },
+  "dependencies": {
+    "@clack/prompts": "catalog:",
+    "commander": "catalog:"
+  },
   "devDependencies": {
+    "@stryker-mutator/core": "catalog:",
     "@types/node": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:",
