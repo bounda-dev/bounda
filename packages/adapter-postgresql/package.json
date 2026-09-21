@@ -42,6 +42,7 @@
   "devDependencies": {
     "@bounda-dev/core": "workspace:*",
     "@stryker-mutator/core": "catalog:",
+    "@stryker-mutator/vitest-runner": "catalog:",
     "@testcontainers/postgresql": "catalog:",
     "@types/node": "catalog:",
     "tsdown": "catalog:",
