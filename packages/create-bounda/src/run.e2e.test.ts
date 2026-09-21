@@ -131,11 +131,20 @@ const until = async (
   }
 };
 
+/** The whole group: `react-router dev` relaunches itself, so the listener outlives the child. */
 const stop = async (child: ChildProcess): Promise<void> => {
-  if (child.exitCode !== null || child.signalCode !== null) return;
+  const { pid } = child;
+  if (pid === undefined || child.exitCode !== null || child.signalCode !== null) return;
   const exited = new Promise<void>((done) => child.once("exit", () => done()));
-  child.kill("SIGTERM");
-  await Promise.race([exited, settle(3_000).then(() => void child.kill("SIGKILL"))]);
+  const signal = (name: NodeJS.Signals): void => {
+    try {
+      process.kill(-pid, name);
+    } catch {
+      child.kill(name);
+    }
+  };
+  signal("SIGTERM");
+  await Promise.race([exited, settle(3_000).then(() => signal("SIGKILL"))]);
 };
 
 interface DevServer {
@@ -146,11 +155,17 @@ interface DevServer {
 /**
  * The bug that made this test install tarballs only showed up in dev: the production build
  * resolved the app module through the plugin and succeeded while every request 500ed.
+ *
+ * Readiness is a request that answers, not a line in the log: the banner's wording is Vite's to
+ * change. Both addresses are tried because the dev server binds the `localhost` hostname, which
+ * resolves to `::1` on some hosts and to `127.0.0.1` on others.
  */
 const devServer = async (project: string, bin: string): Promise<DevServer> => {
-  const child = spawn(process.execPath, [bin, "dev", "--port", String(await freePort())], {
+  const port = await freePort();
+  const child = spawn(process.execPath, [bin, "dev", "--port", String(port)], {
     cwd: project,
     stdio: ["ignore", "pipe", "pipe"],
+    detached: true,
   });
   let output = "";
   const record = (chunk: Buffer): void => {
@@ -158,18 +173,30 @@ const devServer = async (project: string, bin: string): Promise<DevServer> => {
   };
   child.stdout.on("data", record);
   child.stderr.on("data", record);
-  const listening = /localhost:(\d+)/;
+  const candidates = [`http://localhost:${port}`, `http://127.0.0.1:${port}`];
+  let url = "";
+  const answers = async (): Promise<boolean> => {
+    for (const candidate of candidates) {
+      const answered = await fetch(candidate).then(
+        () => true,
+        () => false,
+      );
+      if (answered) {
+        url = candidate;
+        return true;
+      }
+    }
+    return false;
+  };
   await until(
-    () => listening.test(output),
-    () => `the dev server never started:\n${output}`,
+    answers,
+    () => `the dev server never answered on ${port} (exit ${child.exitCode}):\n${output}`,
+    90_000,
   ).catch(async (error: Error) => {
     await stop(child);
     throw error;
   });
-  return {
-    url: `http://localhost:${listening.exec(output)?.[1]}`,
-    stop: () => stop(child),
-  };
+  return { url, stop: () => stop(child) };
 };
 
 const freePort = (): Promise<number> =>
