@@ -27,8 +27,17 @@
       "matchPackageNames": ["astro", "@astrojs/**", "starlight-**"]
     },
     {
-      "groupName": "react-router",
-      "matchPackageNames": ["react-router", "@react-router/**"]
+      "groupName": "react-router stack",
+      "matchPackageNames": [
+        "react-router",
+        "@react-router/**",
+        "react",
+        "react-dom",
+        "@types/react",
+        "@types/react-dom",
+        "vite",
+        "isbot"
+      ]
     },
     {
       "groupName": "stryker",

@@ -23,5 +23,8 @@
   "_comment": "Stryker's vitest runner, patched in patches/@stryker-mutator__vitest-runner@10.0.0.patch: Vitest 5 joins suite and test names with ' > ' and the runner joined them with a space, so its testNamePattern matched nothing and every mutant survived. inPlace because tsconfig.json extends ../../tsconfig.base.json, which a sandbox copy cannot reach. tsconfigFile points at a file that does not exist on purpose: Stryker would read tsconfig.json through the TypeScript JavaScript API, which TypeScript 7 no longer ships; Vitest resolves TypeScript on its own.",
   "inPlace": true,
   "concurrency": 4,
-  "timeoutMS": 120000
+  "timeoutMS": 120000,
+  "dashboard": {
+    "module": "cli"
+  }
 }
