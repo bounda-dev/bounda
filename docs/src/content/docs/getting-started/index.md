@@ -157,13 +157,14 @@ npm test
 ## Run it for real
 
 `src/main.ts` shows the production path: `boot()` reads `bounda.config.ts` and the generated
-registry, opens the database and returns the app.
+registry, opens the database and returns the app. It is typed for your project: the generator's
+`.bounda/register.d.ts` registers the registry type with `@bounda-dev/core/register`, so `app.commands`
+knows your commands without a type argument.
 
 ```ts
 import { boot } from "@bounda-dev/core/node";
-import type { registry } from "../.bounda/registry.ts";
 
-const app = await boot<typeof registry>();
+const app = await boot();
 await app.commands.placeOrder({ orderId: crypto.randomUUID(), customerId: "ada", total: 42 });
 await app.processUntilIdle();
 ```

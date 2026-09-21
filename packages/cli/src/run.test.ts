@@ -62,13 +62,13 @@ describe("bounda generate", () => {
     expect(first.stdout).toContain("  written  .bounda/registry.ts");
     expect(first.stdout).toContain("  written  app/domain/order/+types/order-placed.ts");
     expect(first.stdout).toMatch(
-      /1 aggregate, 0 read models, 7 files \(7 written, 0 unchanged, 0 removed\)$/m,
+      /1 aggregate, 0 read models, 8 files \(8 written, 0 unchanged, 0 removed\)$/m,
     );
 
     const second = await cli(["generate", "--root", root], repoRoot);
     expect(second.code).toBe(EXIT_OK);
     expect(second.stdout).toBe(
-      "1 aggregate, 0 read models, 7 files (0 written, 7 unchanged, 0 removed)\n",
+      "1 aggregate, 0 read models, 8 files (0 written, 8 unchanged, 0 removed)\n",
     );
   });
 

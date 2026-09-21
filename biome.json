@@ -60,6 +60,16 @@
           }
         }
       }
+    },
+    {
+      "includes": ["packages/core/src/register/index.ts"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noEmptyInterface": "off"
+          }
+        }
+      }
     }
   ]
 }

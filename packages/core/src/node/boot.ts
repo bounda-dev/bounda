@@ -9,9 +9,10 @@ import type { IdGenerator } from "../contracts/ids.ts";
 import type { Logger } from "../contracts/logger.ts";
 import { type BoundaApp, createApp } from "../kernel/app.ts";
 import type { Registry } from "../modules/registry.ts";
+import type { AppRegistry } from "../register/index.ts";
 import { createConsoleLogger } from "./console-logger.ts";
 
-export interface BootArgs<R extends Registry = Registry> {
+export interface BootArgs<R extends Registry = AppRegistry> {
   /**
    * The project root. Defaults to the current working directory.
    */
@@ -47,7 +48,7 @@ export interface BootArgs<R extends Registry = Registry> {
 }
 
 export interface BootFunction {
-  <R extends Registry = Registry>(args?: BootArgs<R>): Promise<BoundaApp<R>>;
+  <R extends Registry = AppRegistry>(args?: BootArgs<R>): Promise<BoundaApp<R>>;
 }
 
 const exists = async (path: string): Promise<boolean> => {
@@ -93,7 +94,7 @@ const loadEnv = (root: string, logger: Logger): void => {
  * registry from the project root, creates the app and stops it on `SIGINT` or `SIGTERM`. Every
  * piece can be supplied directly instead of imported.
  */
-export const boot: BootFunction = async <R extends Registry = Registry>({
+export const boot: BootFunction = async <R extends Registry = AppRegistry>({
   root = process.cwd(),
   configPath = "bounda.config.ts",
   registryPath = ".bounda/registry.ts",

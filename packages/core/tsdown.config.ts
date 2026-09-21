@@ -9,6 +9,7 @@ export default defineConfig({
     "src/adapter/sql/index.ts",
     "src/memory/index.ts",
     "src/node/index.ts",
+    "src/register/index.ts",
     "src/testing/index.ts",
   ],
   tsconfig: "tsconfig.build.json",

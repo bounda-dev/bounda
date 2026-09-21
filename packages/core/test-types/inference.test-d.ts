@@ -1,4 +1,6 @@
 import type {
+  AppRegistry,
+  BoundaApp,
   CommandsFacade,
   DispatchOptions,
   DispatchResult,
@@ -176,6 +178,12 @@ describe("facades", () => {
   it("match the facades derived from the runtime registry", () => {
     expectTypeOf<CommandsFacade<Registry>>().toEqualTypeOf<Commands>();
     expectTypeOf<QueriesFacade<Registry>>().toEqualTypeOf<Queries>();
+  });
+
+  it("are the project's through register.d.ts, without a type argument", () => {
+    expectTypeOf<AppRegistry>().toEqualTypeOf<Registry>();
+    expectTypeOf<BoundaApp["commands"]>().toEqualTypeOf<Commands>();
+    expectTypeOf<BoundaApp["queries"]>().toEqualTypeOf<Queries>();
   });
 
   it("expose every query with the result type its handler returns", () => {

@@ -11,7 +11,7 @@
   "include": [
     "app",
     "tests",
-    ".bounda",
+    ".bounda/**/*",
     ".react-router/types",
     "bounda.config.ts",
     "react-router.config.ts",

@@ -7,6 +7,7 @@ import { type IdGenerator, uuidV7IdGenerator } from "../contracts/ids.ts";
 import { type Logger, silentLogger } from "../contracts/logger.ts";
 import type { CommandsFacade, QueriesFacade, Registry } from "../modules/registry.ts";
 import { validateRegistry } from "../modules/validate.ts";
+import type { AppRegistry } from "../register/index.ts";
 import { buildAggregates } from "./aggregate/build-aggregates.ts";
 import { createCommandsFacade } from "./command/facade.ts";
 import { createCommandPipeline } from "./command/pipeline.ts";
@@ -24,7 +25,7 @@ import { createScheduledCommandWorker } from "./scheduler/worker.ts";
 /**
  * A running Bounda application.
  */
-export interface BoundaApp<R extends Registry = Registry> {
+export interface BoundaApp<R extends Registry = AppRegistry> {
   readonly commands: CommandsFacade<R>;
   readonly queries: QueriesFacade<R>;
   readonly config: ResolvedConfig;

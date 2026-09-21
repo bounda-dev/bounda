@@ -5,7 +5,6 @@ import { sqlite } from "@bounda-dev/adapter-sqlite";
 import { silentLogger } from "@bounda-dev/core";
 import { boot } from "@bounda-dev/core/node";
 import { afterAll, describe, expect, it } from "vitest";
-import type { registry } from "../.bounda/registry.ts";
 
 const root = resolve(import.meta.dirname, "..");
 const temporary: string[] = [];
@@ -18,7 +17,7 @@ describe("boot", () => {
   it("starts the app from the generated registry on a SQLite file and serves a full cycle", async () => {
     const directory = await mkdtemp(join(tmpdir(), "storefront-"));
     temporary.push(directory);
-    const app = await boot<typeof registry>({
+    const app = await boot({
       root,
       config: {
         storage: sqlite({ path: join(directory, "storefront.db") }),
@@ -40,7 +39,7 @@ describe("boot", () => {
     });
     await app.stop();
 
-    const again = await boot<typeof registry>({
+    const again = await boot({
       root,
       config: {
         storage: sqlite({ path: join(directory, "storefront.db") }),

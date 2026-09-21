@@ -1,4 +1,4 @@
-import { type BoundaApp, type Registry, readYourWrites } from "@bounda-dev/core";
+import { type AppRegistry, type BoundaApp, type Registry, readYourWrites } from "@bounda-dev/core";
 import { boot } from "@bounda-dev/core/node";
 import { createContext, type MiddlewareFunction, type RouterContext } from "react-router";
 
@@ -16,7 +16,7 @@ export interface BootBoundaFunction<R extends Registry> {
  */
 export type Consistency = "immediate" | "eventual";
 
-export interface CreateBoundaArgs<R extends Registry> {
+export interface CreateBoundaArgs<R extends Registry = AppRegistry> {
   /**
    * How to boot the app. Defaults to `boot()` from `@bounda-dev/core/node`, which reads
    * `bounda.config.ts` and `.bounda/registry.ts` from the working directory.
@@ -47,7 +47,7 @@ export interface DisposeBoundaFunction {
   (): Promise<void>;
 }
 
-export interface Bounda<R extends Registry> {
+export interface Bounda<R extends Registry = AppRegistry> {
   /**
    * The context that holds the app in loaders and actions: `context.get(bounda)`.
    */
@@ -57,7 +57,7 @@ export interface Bounda<R extends Registry> {
 }
 
 export interface CreateBoundaFunction {
-  <R extends Registry>(args?: CreateBoundaArgs<R>): Bounda<R>;
+  <R extends Registry = AppRegistry>(args?: CreateBoundaArgs<R>): Bounda<R>;
 }
 
 interface Slot<R extends Registry> {
@@ -125,7 +125,7 @@ const load = <R extends Registry>(
  * export const action = async ({ request, context }: Route.ActionArgs) =>
  *   context.get(bounda).commands.registerUser(await payloadOf(request));
  */
-export const createBounda: CreateBoundaFunction = <R extends Registry>({
+export const createBounda: CreateBoundaFunction = <R extends Registry = AppRegistry>({
   boot: bootApp = () => boot<R>(),
   key = DEFAULT_KEY,
   consistency = "immediate",
