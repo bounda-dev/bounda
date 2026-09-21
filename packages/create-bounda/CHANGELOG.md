@@ -1,5 +1,19 @@
 # create-bounda
 
+## 0.1.0-alpha.4
+
+### Minor Changes
+
+- 18bfc64: Take the tool versions written into a generated project from `create-bounda`'s own dev
+  dependencies, which the workspace catalog resolves, instead of a second copy kept in step by a
+  test. `TOOL_VERSIONS` is no longer exported: `currentVersions()` returns the same versions and is
+  the supported way to read them.
+
+### Patch Changes
+
+- 881e03d: Add the mutation score badge to each package's README, linked to its report on the Stryker
+  dashboard.
+
 ## 0.1.0-alpha.3
 
 ### Patch Changes
