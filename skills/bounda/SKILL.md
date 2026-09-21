@@ -210,5 +210,7 @@ export const loader = ({ context }: Route.LoaderArgs) => context.get(bounda).que
 - `boot()` from `@bounda-dev/core/node` is typed for the project without a type argument:
   `.bounda/register.d.ts` registers the registry type with `@bounda-dev/core/register`. Never write
   `boot<typeof registry>()`.
+- New project: `npm create bounda@alpha <dir> -- --database sqlite|postgresql --framework node|react-router`
+  (`--yes` takes the defaults: SQLite, Node).
 - Storage: `sqlite({ path })`, `sqlite({ memory: true })` or `postgresql({ url })` in
   `bounda.config.ts`; read models can point at a different adapter with `readModels`.

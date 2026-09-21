@@ -58,7 +58,7 @@ describe("create-bounda", () => {
     const { calls, exec } = recorder();
     const result = await cli(["shop"], cwd, { exec });
     expect(result.code).toBe(EXIT_OK);
-    expect(result.stdout).toContain("created shop in shop (14 files, sqlite)");
+    expect(result.stdout).toContain("created shop in shop (14 files, sqlite, node)");
     expect(result.stdout).toContain("initialised a git repository");
     expect(result.stdout).toContain("installing dependencies with pnpm");
     expect(result.stdout).toContain("next:\n  cd shop\n  pnpm test\n  pnpm start\n");
@@ -78,7 +78,7 @@ describe("create-bounda", () => {
       { exec },
     );
     expect(result.code).toBe(EXIT_OK);
-    expect(result.stdout).toContain("(15 files, postgresql)");
+    expect(result.stdout).toContain("(15 files, postgresql, node)");
     expect(result.stdout).toContain("next:\n  cd shop\n  npm install\n  npm test\n  npm start\n");
     expect(calls).toEqual([]);
   });
@@ -98,7 +98,7 @@ describe("create-bounda", () => {
     const cwd = await workspace();
     const prompts: Prompts = {
       text: async () => "asked-shop",
-      select: async () => "sqlite" as never,
+      select: async (message) => (message.startsWith("How") ? "node" : "sqlite") as never,
     };
     const result = await cli(["--no-git", "--no-install"], cwd, { prompts });
     expect(result.code).toBe(EXIT_OK);
@@ -115,7 +115,7 @@ describe("create-bounda", () => {
     const cwd = await workspace();
     const first = await cli(["--yes", "--no-git", "--no-install"], cwd);
     expect(first.code).toBe(EXIT_OK);
-    expect(first.stdout).toContain("created bounda-app in bounda-app (14 files, sqlite)");
+    expect(first.stdout).toContain("created bounda-app in bounda-app (14 files, sqlite, node)");
     const again = await cli(["bounda-app", "--yes", "--no-git", "--no-install"], cwd);
     expect(again.code).toBe(EXIT_FAILURE);
     expect(again.stderr).toMatch(/^error: .*bounda-app exists and is not empty\n$/);
@@ -144,6 +144,18 @@ describe("create-bounda", () => {
     expect(stderr.text()).toBe("");
   });
 
+  it("scaffolds a React Router app and points at the dev server", async () => {
+    const cwd = await workspace();
+    const result = await cli(
+      ["web", "--framework", "react-router", "--no-git", "--no-install"],
+      cwd,
+    );
+    expect(result.code).toBe(EXIT_OK);
+    expect(result.stdout).toContain("created web in web (21 files, sqlite, react-router)");
+    expect(result.stdout).toContain("next:\n  cd web\n  pnpm install\n  pnpm test\n  pnpm dev\n");
+    expect(await readdir(join(cwd, "web", "app", "routes"))).toEqual(["home.tsx"]);
+  });
+
   it("rejects bad flag values and prints help", async () => {
     const cwd = await workspace();
     const bad = await cli(["shop", "--database", "mongo", "--no-git", "--no-install"], cwd);
@@ -152,5 +164,9 @@ describe("create-bounda", () => {
     const help = await cli(["--help"], cwd);
     expect(help.code).toBe(EXIT_OK);
     expect(help.stdout).toContain("--database <name>");
+    expect(help.stdout).toContain("--framework <name>");
+    const framework = await cli(["shop", "--framework", "next", "--no-git", "--no-install"], cwd);
+    expect(framework.code).toBe(EXIT_FAILURE);
+    expect(framework.stderr).toContain("--framework must be one of node, react-router");
   });
 });

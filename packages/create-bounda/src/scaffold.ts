@@ -5,7 +5,8 @@ import type { Versions } from "./versions.ts";
 
 export interface ScaffoldProjectArgs {
   /**
-   * The `template/` directory shipped with the package: `base/` plus one overlay per database.
+   * The `template/` directory shipped with the package: `base/`, one overlay per database and one
+   * per framework.
    */
   readonly templateRoot: string;
   readonly options: CreateOptions;
@@ -88,8 +89,9 @@ const isEmptyDirectory = async (directory: string): Promise<boolean> => {
 };
 
 /**
- * Copies `base/` and the database overlay into the project directory, rendering `*.tpl` files
- * and renaming `_gitignore`. The directory must not exist or be empty.
+ * Copies `base/`, the database overlay and the framework overlay into the project directory, in
+ * that order, rendering `*.tpl` files and renaming `_gitignore`. The directory must not exist or
+ * be empty.
  */
 export const scaffoldProject: ScaffoldProjectFunction = async ({
   templateRoot,
@@ -107,8 +109,17 @@ export const scaffoldProject: ScaffoldProjectFunction = async ({
     typescriptVersion: versions.typescript,
     vitestVersion: versions.vitest,
     typesNodeVersion: versions.typesNode,
+    reactVersion: versions.react,
+    reactRouterVersion: versions.reactRouter,
+    viteVersion: versions.vite,
+    isbotVersion: versions.isbot,
+    typesReactVersion: versions.typesReact,
   };
-  const layers = [join(templateRoot, "base"), join(templateRoot, options.database)];
+  const layers = [
+    join(templateRoot, "base"),
+    join(templateRoot, options.database),
+    join(templateRoot, options.framework),
+  ];
   const sources = new Map<string, string>();
   for (const layer of layers) {
     for (const file of await listFiles(layer)) sources.set(targetNameOf(file), join(layer, file));

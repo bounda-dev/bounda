@@ -1,9 +1,11 @@
 import { basename, resolve } from "node:path";
 
 export type Database = "sqlite" | "postgresql";
+export type Framework = "node" | "react-router";
 export type PackageManager = "pnpm" | "npm" | "yarn" | "bun";
 
 export const DATABASES: readonly Database[] = ["sqlite", "postgresql"];
+export const FRAMEWORKS: readonly Framework[] = ["node", "react-router"];
 export const PACKAGE_MANAGERS: readonly PackageManager[] = ["pnpm", "npm", "yarn", "bun"];
 export const DEFAULT_DIRECTORY: string = "bounda-app";
 
@@ -13,6 +15,7 @@ export const DEFAULT_DIRECTORY: string = "bounda-app";
 export interface RawOptions {
   readonly directory?: string;
   readonly database?: string;
+  readonly framework?: string;
   readonly packageManager?: string;
   readonly install: boolean;
   readonly git: boolean;
@@ -26,6 +29,7 @@ export interface CreateOptions {
   readonly directory: string;
   readonly name: string;
   readonly database: Database;
+  readonly framework: Framework;
   readonly packageManager: PackageManager;
   readonly install: boolean;
   readonly git: boolean;
@@ -86,6 +90,9 @@ export interface ResolveOptionsFunction {
 const isDatabase = (value: string | undefined): value is Database =>
   DATABASES.some((candidate) => candidate === value);
 
+const isFramework = (value: string | undefined): value is Framework =>
+  FRAMEWORKS.some((candidate) => candidate === value);
+
 const isPackageManager = (value: string | undefined): value is PackageManager =>
   PACKAGE_MANAGERS.some((candidate) => candidate === value);
 
@@ -96,6 +103,9 @@ const isPackageManager = (value: string | undefined): value is PackageManager =>
 export const resolveOptions: ResolveOptionsFunction = async ({ raw, cwd, userAgent, prompts }) => {
   if (raw.database !== undefined && !isDatabase(raw.database)) {
     throw new Error(`--database must be one of ${DATABASES.join(", ")}; got "${raw.database}"`);
+  }
+  if (raw.framework !== undefined && !isFramework(raw.framework)) {
+    throw new Error(`--framework must be one of ${FRAMEWORKS.join(", ")}; got "${raw.framework}"`);
   }
   if (raw.packageManager !== undefined && !isPackageManager(raw.packageManager)) {
     throw new Error(
@@ -127,10 +137,24 @@ export const resolveOptions: ResolveOptionsFunction = async ({ raw, cwd, userAge
     }
   }
 
+  let framework: Framework | undefined = raw.framework;
+  if (framework === undefined) {
+    if (ask === null) framework = "node";
+    else {
+      const answer = await ask.select("How will the app run?", [
+        { value: "node" as const, label: "Node", hint: "a script, a worker or your own server" },
+        { value: "react-router" as const, label: "React Router", hint: "framework mode, Vite" },
+      ]);
+      if (answer === null) return "cancelled";
+      framework = answer;
+    }
+  }
+
   return {
     directory: resolve(cwd, directory),
     name: projectNameOf(resolve(cwd, directory)),
     database,
+    framework,
     packageManager: raw.packageManager ?? detectPackageManager(userAgent),
     install: raw.install,
     git: raw.git,

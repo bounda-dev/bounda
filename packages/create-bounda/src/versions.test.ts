@@ -18,6 +18,13 @@ describe("versions", () => {
     expect(TOOL_VERSIONS.typescript).toBe(`^${await catalogVersion("typescript")}`);
     expect(TOOL_VERSIONS.vitest).toBe(`^${await catalogVersion("vitest")}`);
     expect(TOOL_VERSIONS.typesNode).toBe(`^${await catalogVersion("@types/node")}`);
+    expect(TOOL_VERSIONS.react).toBe(`^${await catalogVersion("react")}`);
+    expect(TOOL_VERSIONS.react).toBe(`^${await catalogVersion("react-dom")}`);
+    expect(TOOL_VERSIONS.reactRouter).toBe(`^${await catalogVersion("react-router")}`);
+    expect(TOOL_VERSIONS.reactRouter).toBe(`^${await catalogVersion("@react-router/dev")}`);
+    expect(TOOL_VERSIONS.vite).toBe(`^${await catalogVersion("vite")}`);
+    expect(TOOL_VERSIONS.isbot).toBe(`^${await catalogVersion("isbot")}`);
+    expect(TOOL_VERSIONS.typesReact).toBe(`^${await catalogVersion("@types/react")}`);
   });
 
   it("uses its own version for the Bounda packages", async () => {

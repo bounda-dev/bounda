@@ -2,7 +2,11 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { detectPackageManager, type Prompts, projectNameOf, resolveOptions } from "./options.ts";
 
-const answers = (text: string | null, select: string | null): Prompts & { asked: string[] } => {
+const answers = (
+  text: string | null,
+  select: string | null,
+  framework: string | null = "node",
+): Prompts & { asked: string[] } => {
   const asked: string[] = [];
   return {
     asked,
@@ -12,7 +16,7 @@ const answers = (text: string | null, select: string | null): Prompts & { asked:
     },
     select: async (message) => {
       asked.push(message);
-      return select as never;
+      return (message.startsWith("How") ? framework : select) as never;
     },
   };
 };
@@ -46,6 +50,7 @@ describe("resolveOptions", () => {
       raw: {
         directory: "shop",
         database: "postgresql",
+        framework: "react-router",
         packageManager: "bun",
         install: false,
         git: true,
@@ -59,6 +64,7 @@ describe("resolveOptions", () => {
       directory: resolve(cwd, "shop"),
       name: "shop",
       database: "postgresql",
+      framework: "react-router",
       packageManager: "bun",
       install: false,
       git: true,
@@ -67,7 +73,7 @@ describe("resolveOptions", () => {
   });
 
   it("asks for what is missing and trims the answer", async () => {
-    const prompts = answers("  my shop  ", "postgresql");
+    const prompts = answers("  my shop  ", "postgresql", "react-router");
     const options = await resolveOptions({
       raw: { install: true, git: true, yes: false },
       cwd,
@@ -78,9 +84,14 @@ describe("resolveOptions", () => {
       directory: resolve(cwd, "my shop"),
       name: "my-shop",
       database: "postgresql",
+      framework: "react-router",
       packageManager: "yarn",
     });
-    expect(prompts.asked).toEqual(["Where should the project go?", "Which database?"]);
+    expect(prompts.asked).toEqual([
+      "Where should the project go?",
+      "Which database?",
+      "How will the app run?",
+    ]);
   });
 
   it("uses the defaults with --yes or without a terminal, including an empty answer", async () => {
@@ -90,14 +101,19 @@ describe("resolveOptions", () => {
       userAgent: undefined,
       prompts: answers("nope", "postgresql"),
     });
-    expect(yes).toMatchObject({ name: "bounda-app", database: "sqlite", packageManager: "npm" });
+    expect(yes).toMatchObject({
+      name: "bounda-app",
+      database: "sqlite",
+      framework: "node",
+      packageManager: "npm",
+    });
     const quiet = await resolveOptions({
       raw: { install: true, git: true, yes: false },
       cwd,
       userAgent: undefined,
       prompts: null,
     });
-    expect(quiet).toMatchObject({ name: "bounda-app", database: "sqlite" });
+    expect(quiet).toMatchObject({ name: "bounda-app", database: "sqlite", framework: "node" });
     const empty = await resolveOptions({
       raw: { install: true, git: true, yes: false },
       cwd,
@@ -124,6 +140,25 @@ describe("resolveOptions", () => {
         prompts: answers("x", null),
       }),
     ).toBe("cancelled");
+    expect(
+      await resolveOptions({
+        raw: { directory: "x", database: "sqlite", install: true, git: true, yes: false },
+        cwd,
+        userAgent: undefined,
+        prompts: answers("x", "sqlite", null),
+      }),
+    ).toBe("cancelled");
+  });
+
+  it("rejects unknown frameworks", async () => {
+    await expect(
+      resolveOptions({
+        raw: { framework: "next", install: true, git: true, yes: true },
+        cwd,
+        userAgent: undefined,
+        prompts: null,
+      }),
+    ).rejects.toThrow('--framework must be one of node, react-router; got "next"');
   });
 
   it("rejects unknown databases and package managers", async () => {

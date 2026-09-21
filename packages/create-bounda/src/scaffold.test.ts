@@ -6,7 +6,17 @@ import { renderTemplate, scaffoldProject } from "./scaffold.ts";
 
 const templateRoot = resolve(import.meta.dirname, "../template");
 const temporary: string[] = [];
-const versions = { bounda: "^0.1.0-alpha.0", typescript: "^7", vitest: "^5", typesNode: "^26" };
+const versions = {
+  bounda: "^0.1.0-alpha.0",
+  typescript: "^7",
+  vitest: "^5",
+  typesNode: "^26",
+  react: "^19",
+  reactRouter: "^8",
+  vite: "^8",
+  isbot: "^5",
+  typesReact: "^19",
+};
 
 const directory = async (): Promise<string> => {
   const root = await mkdtemp(join(tmpdir(), "create-bounda-"));
@@ -38,6 +48,7 @@ describe("scaffoldProject", () => {
         directory: target,
         name: "shop",
         database: "sqlite",
+        framework: "node",
         packageManager: "pnpm",
         install: true,
         git: true,
@@ -85,6 +96,7 @@ describe("scaffoldProject", () => {
         directory: target,
         name: "shop",
         database: "postgresql",
+        framework: "node",
         packageManager: "npm",
         install: true,
         git: true,
@@ -102,6 +114,69 @@ describe("scaffoldProject", () => {
     });
   });
 
+  it("lays the react-router overlay over the base and the database", async () => {
+    const target = await directory();
+    const report = await scaffoldProject({
+      templateRoot,
+      options: {
+        directory: target,
+        name: "shop",
+        database: "sqlite",
+        framework: "react-router",
+        packageManager: "pnpm",
+        install: true,
+        git: true,
+      },
+      versions,
+    });
+    expect(report.files).toEqual([
+      ".gitignore",
+      "README.md",
+      "app/app.css",
+      "app/domain/order/commands/place-order.ts",
+      "app/domain/order/order-placed.ts",
+      "app/domain/order/state.ts",
+      "app/errors.server.ts",
+      "app/read/orders/projections/order-placed.ts",
+      "app/read/orders/queries/list-orders.ts",
+      "app/read/orders/view.ts",
+      "app/root.tsx",
+      "app/routes.ts",
+      "app/routes/home.tsx",
+      "bounda.config.ts",
+      "package.json",
+      "public/favicon.svg",
+      "react-router.config.ts",
+      "tests/orders.test.ts",
+      "tsconfig.json",
+      "vite.config.ts",
+      "vitest.config.ts",
+    ]);
+    const manifest = JSON.parse(await readFile(join(target, "package.json"), "utf8")) as {
+      scripts: Record<string, string>;
+      dependencies: Record<string, string>;
+      devDependencies: Record<string, string>;
+    };
+    expect(manifest.scripts.dev).toBe("react-router dev");
+    expect(manifest.scripts.typecheck).toBe(
+      "react-router typegen && tsc --noEmit -p tsconfig.json",
+    );
+    expect(manifest.dependencies).toMatchObject({
+      "@bounda-dev/react-router": "^0.1.0-alpha.0",
+      "@bounda-dev/adapter-sqlite": "^0.1.0-alpha.0",
+      "react-router": "^8",
+      react: "^19",
+      isbot: "^5",
+    });
+    expect(manifest.devDependencies).toMatchObject({
+      "@react-router/dev": "^8",
+      "@types/react": "^19",
+      vite: "^8",
+    });
+    expect(await readFile(join(target, ".gitignore"), "utf8")).toContain(".react-router/");
+    expect(await readFile(join(target, "README.md"), "utf8")).toContain("pnpm run dev");
+  });
+
   it("accepts an empty directory and refuses a non-empty one", async () => {
     const target = await directory();
     await mkdir(target, { recursive: true });
@@ -109,6 +184,7 @@ describe("scaffoldProject", () => {
       directory: target,
       name: "shop",
       database: "sqlite" as const,
+      framework: "node" as const,
       packageManager: "pnpm" as const,
       install: true,
       git: true,

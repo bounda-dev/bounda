@@ -61,6 +61,7 @@ const clackPrompts: Prompts = {
 
 interface Flags {
   readonly database?: string;
+  readonly framework?: string;
   readonly pm?: string;
   readonly install: boolean;
   readonly git: boolean;
@@ -73,7 +74,7 @@ const nextSteps = (options: CreateOptions, cwd: string): string => {
   if (!options.install) lines.push(runCommand(options.packageManager, "install"));
   lines.push(
     runCommand(options.packageManager, "test"),
-    runCommand(options.packageManager, "start"),
+    runCommand(options.packageManager, options.framework === "react-router" ? "dev" : "start"),
   );
   return lines.map((line) => `  ${line}`).join("\n");
 };
@@ -100,6 +101,7 @@ const create = async (
     raw: {
       ...(directory === undefined ? {} : { directory }),
       ...(flags.database === undefined ? {} : { database: flags.database }),
+      ...(flags.framework === undefined ? {} : { framework: flags.framework }),
       ...(flags.pm === undefined ? {} : { packageManager: flags.pm }),
       install: flags.install,
       git: flags.git,
@@ -119,7 +121,7 @@ const create = async (
     versions: currentVersions(),
   });
   stdout.write(
-    `created ${resolved.name} in ${relative(cwd, resolved.directory) || "."} (${report.files.length} files, ${resolved.database})\n`,
+    `created ${resolved.name} in ${relative(cwd, resolved.directory) || "."} (${report.files.length} files, ${resolved.database}, ${resolved.framework})\n`,
   );
   if (resolved.git) {
     try {
@@ -165,6 +167,7 @@ export const runCreate: RunCreateFunction = async ({
     .description("Create a Bounda project")
     .argument("[directory]", "where to create it (default: bounda-app, or asked)")
     .option("--database <name>", "sqlite or postgresql (default: sqlite, or asked)")
+    .option("--framework <name>", "node or react-router (default: node, or asked)")
     .option(
       "--pm <name>",
       "package manager: pnpm, npm, yarn or bun (default: the one running this)",
