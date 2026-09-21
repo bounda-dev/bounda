@@ -1,5 +1,18 @@
 # @bounda-dev/react-router
 
+## 0.1.0-alpha.2
+
+### Patch Changes
+
+- 3e75b91: Keep the package out of Vite's server externals so the `bounda()` plugin serves
+  `@bounda-dev/react-router/app` when the package is installed from a registry. Vite matches
+  `noExternal` against the package, not the subpath, so a pattern for the subpath alone left the
+  real module to be loaded by Node, and every request failed with the "served by the bounda() Vite
+  plugin" error. A workspace link is never externalised, which is why the examples in this
+  repository worked.
+- @bounda-dev/cli@0.1.0-alpha.2
+  - @bounda-dev/core@0.1.0-alpha.2
+
 ## 0.1.0-alpha.1
 
 ### Minor Changes
