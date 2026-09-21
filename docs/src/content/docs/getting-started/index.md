@@ -5,10 +5,10 @@ sidebar:
   order: 0
 ---
 
-:::caution[Pre-alpha]
-Bounda is being rebuilt in the open. The `@bounda-dev/*` packages are not on npm yet, so the
-commands below do not work outside the repository for now. The repository's
-`examples/storefront` is the same app, ready to run.
+:::caution[Alpha]
+The packages are published under the `alpha` tag, so every install needs it:
+`npm create bounda@alpha`, `npm install @bounda-dev/core@alpha`. The API can change between
+alphas without a deprecation cycle, and each package carries its own changelog.
 :::
 
 ## Create a project
