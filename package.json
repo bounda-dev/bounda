@@ -28,7 +28,7 @@
     "test:types": "vitest run --typecheck.only",
     "check": "pnpm lint && pnpm build && pnpm generate && pnpm typecheck && pnpm test",
     "changeset": "changeset",
-    "release": "pnpm build && changeset publish --tag alpha",
+    "release": "pnpm build && changeset publish",
     "docs:dev": "pnpm --filter @bounda-dev/docs dev",
     "docs:build": "pnpm --filter @bounda-dev/docs build",
     "prepare": "lefthook install"
