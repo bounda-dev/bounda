@@ -21,7 +21,7 @@ pnpm 12 (workspace catalog, `catalogMode: strict`), TypeScript 7, Biome (lint an
 | `pnpm changeset` | add a changeset (required when a published package changes) |
 | `pnpm docs:dev` / `pnpm docs:build` | Starlight site |
 | `pnpm --filter @bounda-dev/core test` | one package |
-| `pnpm --filter <package> test:mutation` | Stryker with the vitest runner (`core`, `adapter-sqlite`, `adapter-postgresql`, `cli`, `react-router`, `create-bounda`). Run it locally on the package you touched before opening a PR; CI does not run it while the repository is private. Build `core` first: the other packages test against its `dist`. Stryker rewrites the package's sources in place while it runs (`inPlace`): never run it in the background, never edit or test the package meanwhile, and if a run is interrupted restore `src/` from `.stryker-tmp/backup-*` |
+| `pnpm --filter <package> test:mutation` | Stryker with the vitest runner (`core`, `adapter-sqlite`, `adapter-postgresql`, `cli`, `react-router`, `create-bounda`). Run it locally on the package you touched before opening a PR; CI runs it too, one job per package changed by the PR (every package when the toolchain changes), with the score in the job summary and the HTML report as an artifact. Build `core` first: the other packages test against its `dist`. Stryker rewrites the package's sources in place while it runs (`inPlace`): never run it in the background, never edit or test the package meanwhile, and if a run is interrupted restore `src/` from `.stryker-tmp/backup-*` |
 | `UPDATE_GOLDEN=1 pnpm --filter @bounda-dev/cli exec vitest run src/generate` | regenerate the `order-app` and `order-app-inferred` fixtures under `packages/core/test-types/fixtures` after changing the generator's output |
 
 ## How to work

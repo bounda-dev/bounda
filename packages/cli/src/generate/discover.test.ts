@@ -284,6 +284,68 @@ describe("discoverProject convention problems", () => {
     ]);
   });
 
+  it("checks names and stray files in every kind of directory", async () => {
+    const root = await project([
+      "app/domain/order/order-placed.ts",
+      "app/domain/order/commands/Bad.ts",
+      "app/domain/order/commands/notes.md",
+      "app/domain/order/commands/pay-order/index.ts",
+      "app/domain/order/commands/pay-order/README.md",
+      "app/domain/order/policies/Bad.ts",
+      "app/domain/order/policies/notes.md",
+      "app/domain/order/processes/Bad/index.ts",
+      "app/domain/order/processes/notes.md",
+      "app/domain/order/processes/payment/index.ts",
+      "app/domain/order/processes/payment/notes.md",
+      "app/read/order-summary/view.ts",
+      "app/read/order-summary/projections/Bad.ts",
+      "app/read/order-summary/projections/notes.md",
+      "app/read/order-summary/queries/Bad.ts",
+      "app/read/order-summary/queries/notes.md",
+      "app/read/Bad/view.ts",
+    ]);
+    const problems = await problemsOf(root);
+    expect(problems).toHaveLength(13);
+    expect(problems).toEqual(
+      expect.arrayContaining([
+        "app/domain/order/commands/Bad.ts: Command names must be kebab-case (lower-case letters, digits and dashes)",
+        "app/domain/order/commands/notes.md: only .ts modules are allowed here",
+        "app/domain/order/commands/pay-order/README.md: only .ts modules are allowed here",
+        "app/domain/order/policies/Bad.ts: Policy names must be kebab-case (lower-case letters, digits and dashes)",
+        "app/domain/order/policies/notes.md: only .ts modules are allowed here",
+        "app/domain/order/processes/Bad: Process names must be kebab-case (lower-case letters, digits and dashes)",
+        "app/domain/order/processes/notes.md: only .ts modules are allowed here",
+        "app/domain/order/processes/payment/notes.md: only .ts modules are allowed here",
+        "app/read/Bad: Read model names must be kebab-case (lower-case letters, digits and dashes)",
+        "app/read/order-summary/projections/Bad.ts: Projection names must be kebab-case (lower-case letters, digits and dashes)",
+        "app/read/order-summary/projections/notes.md: only .ts modules are allowed here",
+        "app/read/order-summary/queries/Bad.ts: Query names must be kebab-case (lower-case letters, digits and dashes)",
+        "app/read/order-summary/queries/notes.md: only .ts modules are allowed here",
+      ]),
+    );
+  });
+
+  it("marks a command as declaring collaborators only when it has some", async () => {
+    const root = await project([
+      "app/domain/order/order-placed.ts",
+      "app/domain/order/commands/declared-alone/index.ts",
+      "app/domain/order/commands/declared-with/index.ts",
+      "app/domain/order/commands/declared-with/audit.memory.ts",
+      "app/domain/order/commands/undeclared-with/index.ts",
+      "app/domain/order/commands/undeclared-with/audit.memory.ts",
+    ]);
+    const declaration = "export type Collaborators = { audit: unknown };\n";
+    await writeFile(join(root, "app/domain/order/commands/declared-alone/index.ts"), declaration);
+    await writeFile(join(root, "app/domain/order/commands/declared-with/index.ts"), declaration);
+    const model = await discoverProject({ root });
+    const commands = model.aggregates[0]?.commands ?? [];
+    expect(commands.map((command) => [command.key, command.declaresCollaborators])).toEqual([
+      ["declaredAlone", false],
+      ["declaredWith", true],
+      ["undeclaredWith", false],
+    ]);
+  });
+
   it("rejects a command defined twice and command directories without index.ts", async () => {
     const root = await project([
       "app/domain/order/commands/pay-order.ts",

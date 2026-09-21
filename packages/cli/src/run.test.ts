@@ -125,6 +125,69 @@ describe("bounda generate", () => {
     expect(unknown.code).toBe(EXIT_CONVENTION);
   });
 
+  it("documents every option of generate in its help", async () => {
+    const root = await project();
+    const help = await cli(["generate", "--help"], root);
+    expect(help.code).toBe(EXIT_OK);
+    const flattened = help.stdout.replace(/\s+/g, " ");
+    for (const text of [
+      "write .bounda/registry.ts, .bounda/types.ts and the +types of every module",
+      "--root <dir>",
+      "project root (default: current directory)",
+      "--app-dir <dir>",
+      "application directory under the root",
+      '(default: "app")',
+      "--tsconfig <file>",
+      "tsconfig used to infer state (default: <root>/tsconfig.json)",
+      "--no-infer",
+      "do not infer state for aggregates without state.ts",
+      "--watch",
+      "regenerate when a module changes",
+    ]) {
+      expect(flattened).toContain(text);
+    }
+    const program = await cli(["--help"], root);
+    expect(program.stdout).toContain("Bounda: event sourcing and CQRS for TypeScript");
+    expect(program.stdout).toContain("-v, --version");
+  });
+
+  it("does not start watching when the first generation fails outright", async () => {
+    const root = await project();
+    await writeFile(join(root, ".bounda"), "not a directory\n");
+    const result = await cli(["generate", "--no-infer", "--watch"], root);
+    expect(result.code).toBe(EXIT_FAILURE);
+    expect(result.stdout).not.toContain("watching");
+  });
+
+  it("reports a failure of a later generation while watching and goes on", async () => {
+    const root = await project();
+    const controller = new AbortController();
+    const stdout = capture();
+    const stderr = capture();
+    const running = runCli({
+      argv: ["generate", "--no-infer", "--watch"],
+      cwd: root,
+      stdout,
+      stderr,
+      signal: controller.signal,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await rm(join(root, ".bounda"), { recursive: true });
+    await writeFile(join(root, ".bounda"), "not a directory\n");
+    await writeFile(
+      join(root, "app/domain/order/order-shipped.ts"),
+      "export const apply = () => ({});\n",
+    );
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline && !stderr.text().includes("error: ")) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    controller.abort();
+    await running;
+    expect(stderr.text()).toMatch(/error: /);
+    expect(stdout.text()).toContain("watching app/ for changes");
+  });
+
   it("regenerates on changes in --watch mode until aborted", async () => {
     const root = await project();
     const controller = new AbortController();

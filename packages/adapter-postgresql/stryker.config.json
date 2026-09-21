@@ -10,7 +10,7 @@
   "incremental": true,
   "incrementalFile": ".stryker-tmp/incremental.json",
   "tempDirName": ".stryker-tmp",
-  "reporters": ["clear-text", "progress"],
+  "reporters": ["clear-text", "progress", "html"],
   "thresholds": {
     "high": 90,
     "low": 80,
