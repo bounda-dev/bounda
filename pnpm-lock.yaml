@@ -176,6 +176,9 @@ catalogs:
     '@changesets/cli':
       specifier: 3.0.3
       version: 3.0.3
+    '@clack/prompts':
+      specifier: 1.8.1
+      version: 1.8.1
     '@libsql/client':
       specifier: 0.18.0
       version: 0.18.0
@@ -398,7 +401,17 @@ importers:
         version: 5.0.1(@types/node@26.6.1)(@vitest/coverage-v8@5.0.1)(vite@8.3.0(@types/node@26.6.1)(esbuild@0.28.2)(yaml@2.9.1))
 
   packages/create-bounda:
+    dependencies:
+      '@clack/prompts':
+        specifier: 'catalog:'
+        version: 1.8.1
+      commander:
+        specifier: 'catalog:'
+        version: 15.0.0
     devDependencies:
+      '@stryker-mutator/core':
+        specifier: 'catalog:'
+        version: 10.0.0(@types/node@26.6.1)
       '@types/node':
         specifier: 'catalog:'
         version: 26.6.1

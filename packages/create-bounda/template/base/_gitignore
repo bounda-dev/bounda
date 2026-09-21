@@ -1,0 +1,5 @@
+node_modules/
+.bounda/
+**/+types/
+data/
+.env

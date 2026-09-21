@@ -21,7 +21,7 @@ pnpm 12 (workspace catalog, `catalogMode: strict`), TypeScript 7, Biome (lint an
 | `pnpm changeset` | add a changeset (required when a published package changes) |
 | `pnpm docs:dev` / `pnpm docs:build` | Starlight site |
 | `pnpm --filter @bounda-dev/core test` | one package |
-| `pnpm --filter <package> test:mutation` | Stryker (`core`, `adapter-sqlite`, `adapter-postgresql`, `cli`); slow, CI runs it on `main` only. Build `core` first: the other packages test against its `dist` |
+| `pnpm --filter <package> test:mutation` | Stryker (`core`, `adapter-sqlite`, `adapter-postgresql`, `cli`, `create-bounda`); slow, CI runs it on `main` only. Build `core` first: the other packages test against its `dist` |
 | `UPDATE_GOLDEN=1 pnpm --filter @bounda-dev/cli exec vitest run src/generate` | regenerate the `order-app` and `order-app-inferred` fixtures under `packages/core/test-types/fixtures` after changing the generator's output |
 
 ## How to work
@@ -45,6 +45,10 @@ pnpm 12 (workspace catalog, `catalogMode: strict`), TypeScript 7, Biome (lint an
 ## The generator
 
 `packages/cli` holds `bounda generate`: it reads `app/domain` and `app/read` by file and directory names only (no module is imported or parsed), and writes `.bounda/registry.ts`, `.bounda/types.ts` and one `+types/<name>.ts` next to every module. Its output has a canonical layout that Biome does not touch (`**/+types/**` and `.bounda/` are excluded); the fixtures under `packages/core/test-types/fixtures` are literally that output and the golden tests compare them byte for byte. State for aggregates without `state.ts` is inferred with the TypeScript 7 API in `packages/cli/src/generate/state/infer.ts`, the only module that touches that API. When the generator's output changes, regenerate the fixtures and check `pnpm test:types` still passes.
+
+## create-bounda
+
+`packages/create-bounda/template/` is a real project: `base/` plus one overlay per database. `*.tpl` files are rendered (`{{name}}`, versions), `_gitignore` becomes `.gitignore`, everything else is copied. Its end-to-end test scaffolds a project, links the workspace packages into it and runs `bounda generate`, `tsc` and `vitest` there, so a template that does not compile fails CI. Tool versions written into generated projects live in `src/versions.ts` and a test keeps them equal to the catalog.
 
 ## Types are the product
 
