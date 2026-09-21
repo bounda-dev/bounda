@@ -1,5 +1,15 @@
 # @bounda-dev/adapter-postgresql
 
+## 0.1.0-alpha.3
+
+### Patch Changes
+
+- 9e26090: Document installing without a dist-tag. While every published version is a prerelease, changesets
+  publishes to `latest`, so `npm create bounda@alpha` resolved to an older alpha than a plain
+  `npm create bounda`.
+- Updated dependencies [9e26090]
+  - @bounda-dev/core@0.1.0-alpha.3
+
 ## 0.1.0-alpha.2
 
 ### Patch Changes
