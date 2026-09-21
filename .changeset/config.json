@@ -2,7 +2,16 @@
   "$schema": "https://unpkg.com/@changesets/config@3.0.3/schema.json",
   "changelog": "@changesets/cli/changelog",
   "commit": false,
-  "fixed": [["@bounda-dev/*", "create-bounda"]],
+  "fixed": [
+    [
+      "@bounda-dev/core",
+      "@bounda-dev/cli",
+      "@bounda-dev/adapter-sqlite",
+      "@bounda-dev/adapter-postgresql",
+      "@bounda-dev/react-router",
+      "create-bounda"
+    ]
+  ],
   "linked": [],
   "access": "public",
   "baseBranch": "main",
