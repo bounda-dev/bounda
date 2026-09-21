@@ -151,7 +151,7 @@ describe("create-bounda", () => {
       cwd,
     );
     expect(result.code).toBe(EXIT_OK);
-    expect(result.stdout).toContain("created web in web (21 files, sqlite, react-router)");
+    expect(result.stdout).toContain("created web in web (22 files, sqlite, react-router)");
     expect(result.stdout).toContain("next:\n  cd web\n  pnpm install\n  pnpm test\n  pnpm dev\n");
     expect(await readdir(join(cwd, "web", "app", "routes"))).toEqual(["home.tsx"]);
   });

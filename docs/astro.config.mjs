@@ -7,6 +7,7 @@ export default defineConfig({
   integrations: [
     starlight({
       title: "Bounda",
+      favicon: "/favicon.svg",
       description: "Event sourcing and CQRS for TypeScript without the ceremony.",
       social: [{ icon: "github", label: "GitHub", href: "https://github.com/bounda-dev/bounda" }],
       plugins: [starlightLlmsTxt()],

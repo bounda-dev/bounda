@@ -145,6 +145,7 @@ describe("scaffoldProject", () => {
       "app/routes/home.tsx",
       "bounda.config.ts",
       "package.json",
+      "public/favicon.ico",
       "public/favicon.svg",
       "react-router.config.ts",
       "tests/orders.test.ts",
