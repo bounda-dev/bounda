@@ -1,7 +1,8 @@
-import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import { type ChildProcess, execFile, spawn } from "node:child_process";
+import { mkdir, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, describe, expect, it } from "vitest";
 import { runCreate } from "./run.ts";
@@ -11,43 +12,180 @@ const templateRoot = resolve(import.meta.dirname, "../template");
 const run = promisify(execFile);
 const temporary: string[] = [];
 
+const packs = new Map<string, Promise<string>>();
+const packDirectory = mkdtemp(join(tmpdir(), "create-bounda-packs-")).then((directory) => {
+  temporary.push(directory);
+  return directory;
+});
+
+/** The tarball npm would publish, `files` and all. Packed once per package per run. */
+const tarballOf = (name: string): Promise<string> => {
+  const packed =
+    packs.get(name) ??
+    packDirectory.then(async (destination) => {
+      const { stdout } = await run("pnpm", ["pack", "--pack-destination", destination], {
+        cwd: join(repoRoot, "packages", name),
+      });
+      return stdout.trim().split("\n").at(-1) as string;
+    });
+  packs.set(name, packed);
+  return packed;
+};
+
+const link = async (target: string, path: string): Promise<void> => {
+  await mkdir(dirname(path), { recursive: true });
+  await symlink(target, path).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "EEXIST") throw error;
+  });
+};
+
+const dependenciesOf = async (name: string): Promise<readonly string[]> => {
+  const path = join(repoRoot, "packages", name, "package.json");
+  const manifest = JSON.parse(await readFile(path, "utf8")) as {
+    readonly dependencies?: Readonly<Record<string, string>>;
+  };
+  return Object.keys(manifest.dependencies ?? {});
+};
+
 /**
- * Stands in for `npm install` while the packages are not published: links the workspace
- * packages and the tools into the project's node_modules. The React Router dependencies come
- * from the onboarding example, which already has them installed.
+ * Installs the workspace packages the way `npm install` would: the published tarball extracted
+ * into the project's own node_modules. Vite then resolves them inside node_modules and
+ * externalises them for the server environment, exactly as in a project created from the
+ * registry. A symlink resolves to a path outside node_modules and stays internal, which is how a
+ * plugin that only worked for linked packages reached the first alpha.
  */
-const linkWorkspace = async (
-  project: string,
-  framework: "node" | "react-router",
-): Promise<void> => {
+const install = async (project: string, names: readonly string[]): Promise<void> => {
   const modules = join(project, "node_modules");
-  const example = join(repoRoot, "examples/onboarding/node_modules");
-  await mkdir(join(modules, "@bounda-dev"), { recursive: true });
-  await mkdir(join(modules, "@types"), { recursive: true });
-  const packages = [
-    "core",
-    "adapter-sqlite",
-    "cli",
-    ...(framework === "react-router" ? ["react-router"] : []),
-  ];
-  for (const name of packages) {
-    await symlink(join(repoRoot, "packages", name), join(modules, "@bounda-dev", name));
-  }
-  await symlink(join(repoRoot, "node_modules/vitest"), join(modules, "vitest"));
-  await symlink(join(repoRoot, "node_modules/@types/node"), join(modules, "@types/node"));
-  if (framework === "react-router") {
-    await mkdir(join(modules, "@react-router"), { recursive: true });
-    for (const name of ["react", "react-dom", "react-router", "vite", "isbot"]) {
-      await symlink(join(example, name), join(modules, name));
-    }
-    for (const name of ["dev", "node", "serve"]) {
-      await symlink(join(example, "@react-router", name), join(modules, "@react-router", name));
-    }
-    for (const name of ["react", "react-dom"]) {
-      await symlink(join(example, "@types", name), join(modules, "@types", name));
+  for (const name of names) {
+    const destination = join(modules, "@bounda-dev", name);
+    await mkdir(destination, { recursive: true });
+    await run("tar", ["-xzf", await tarballOf(name), "-C", destination, "--strip-components=1"]);
+    for (const dependency of await dependenciesOf(name)) {
+      await link(
+        join(repoRoot, "packages", name, "node_modules", dependency),
+        join(modules, dependency),
+      );
     }
   }
 };
+
+/**
+ * The tools and the third-party dependencies the template declares. The React Router ones come
+ * from the onboarding example, which already has them installed.
+ */
+const linkTools = async (project: string, framework: "node" | "react-router"): Promise<void> => {
+  const modules = join(project, "node_modules");
+  const example = join(repoRoot, "examples/onboarding/node_modules");
+  for (const name of ["vitest", "typescript", "@types/node"]) {
+    await link(join(repoRoot, "node_modules", name), join(modules, name));
+  }
+  if (framework !== "react-router") return;
+  for (const name of ["react", "react-dom", "react-router", "vite", "isbot"]) {
+    await link(join(example, name), join(modules, name));
+  }
+  for (const name of ["dev", "node", "serve"]) {
+    await link(join(example, "@react-router", name), join(modules, "@react-router", name));
+  }
+  for (const name of ["react", "react-dom"]) {
+    await link(join(example, "@types", name), join(modules, "@types", name));
+  }
+};
+
+const scaffold = async (
+  argv: readonly string[],
+  framework: "node" | "react-router",
+): Promise<string> => {
+  const cwd = await mkdtemp(join(tmpdir(), "create-bounda-e2e-"));
+  temporary.push(cwd);
+  const code = await runCreate({
+    argv: [...argv],
+    cwd,
+    stdout: { write: () => undefined },
+    stderr: { write: (text: string) => process.stderr.write(text) },
+    templateRoot,
+    prompts: null,
+  });
+  expect(code).toBe(0);
+  const project = join(cwd, argv[0] as string);
+  await install(project, [
+    "core",
+    "cli",
+    "adapter-sqlite",
+    ...(framework === "react-router" ? ["react-router"] : []),
+  ]);
+  await linkTools(project, framework);
+  return project;
+};
+
+const settle = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));
+
+const until = async (
+  condition: () => boolean | Promise<boolean>,
+  describeFailure: () => string,
+  timeoutMs = 30_000,
+): Promise<void> => {
+  const deadline = Date.now() + timeoutMs;
+  while (!(await condition())) {
+    if (Date.now() > deadline) throw new Error(describeFailure());
+    await settle(50);
+  }
+};
+
+const stop = async (child: ChildProcess): Promise<void> => {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const exited = new Promise<void>((done) => child.once("exit", () => done()));
+  child.kill("SIGTERM");
+  await Promise.race([exited, settle(3_000).then(() => void child.kill("SIGKILL"))]);
+};
+
+interface DevServer {
+  readonly url: string;
+  readonly stop: () => Promise<void>;
+}
+
+/**
+ * The bug that made this test install tarballs only showed up in dev: the production build
+ * resolved the app module through the plugin and succeeded while every request 500ed.
+ */
+const devServer = async (project: string, bin: string): Promise<DevServer> => {
+  const child = spawn(process.execPath, [bin, "dev", "--port", String(await freePort())], {
+    cwd: project,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let output = "";
+  const record = (chunk: Buffer): void => {
+    output += chunk.toString();
+  };
+  child.stdout.on("data", record);
+  child.stderr.on("data", record);
+  const listening = /localhost:(\d+)/;
+  await until(
+    () => listening.test(output),
+    () => `the dev server never started:\n${output}`,
+  ).catch(async (error: Error) => {
+    await stop(child);
+    throw error;
+  });
+  return {
+    url: `http://localhost:${listening.exec(output)?.[1]}`,
+    stop: () => stop(child),
+  };
+};
+
+const freePort = (): Promise<number> =>
+  new Promise((done, fail) => {
+    const server = createServer();
+    server.on("error", fail);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address !== null ? address.port : 0;
+      server.close(() => done(port));
+    });
+  });
+
+/** React renders a comment between adjacent expressions; the text reads as written without them. */
+const rendered = async (response: Response): Promise<string> =>
+  (await response.text()).replaceAll(/<!--.*?-->/g, "");
 
 afterAll(async () => {
   await Promise.all(temporary.map((root) => rm(root, { recursive: true, force: true })));
@@ -55,27 +193,12 @@ afterAll(async () => {
 
 describe("a project created by create-bounda", () => {
   it("generates, type-checks and passes its own test", async () => {
-    const cwd = await mkdtemp(join(tmpdir(), "create-bounda-e2e-"));
-    temporary.push(cwd);
-    const out = { write: () => undefined };
-    const code = await runCreate({
-      argv: ["shop", "--yes", "--no-git", "--no-install"],
-      cwd,
-      stdout: out,
-      stderr: { write: (text: string) => process.stderr.write(text) },
-      templateRoot,
-      prompts: null,
-    });
-    expect(code).toBe(0);
-    const project = join(cwd, "shop");
-    await linkWorkspace(project, "node");
+    const project = await scaffold(["shop", "--yes", "--no-git", "--no-install"], "node");
 
     const generated = await run(
       process.execPath,
-      [join(repoRoot, "packages/cli/dist/cli.js"), "generate"],
-      {
-        cwd: project,
-      },
+      [join(project, "node_modules/@bounda-dev/cli/dist/cli.js"), "generate"],
+      { cwd: project },
     );
     expect(generated.stdout).toMatch(/1 aggregate, 1 read model, \d+ files/);
 
@@ -89,28 +212,20 @@ describe("a project created by create-bounda", () => {
       { cwd: project, env: { ...process.env, CI: "1" } },
     );
     expect(`${tested.stdout}${tested.stderr}`).toMatch(/1 passed/);
-  }, 120_000);
+  }, 180_000);
 
-  it("scaffolds a React Router app that generates, type-checks, tests and builds", async () => {
-    const cwd = await mkdtemp(join(tmpdir(), "create-bounda-e2e-rr-"));
-    temporary.push(cwd);
-    const out = { write: () => undefined };
-    const code = await runCreate({
-      argv: ["web", "--framework", "react-router", "--yes", "--no-git", "--no-install"],
-      cwd,
-      stdout: out,
-      stderr: { write: (text: string) => process.stderr.write(text) },
-      templateRoot,
-      prompts: null,
-    });
-    expect(code).toBe(0);
-    const project = join(cwd, "web");
-    await linkWorkspace(project, "react-router");
+  it("scaffolds a React Router app that generates, type-checks, tests, builds and serves", async () => {
+    const project = await scaffold(
+      ["web", "--framework", "react-router", "--yes", "--no-git", "--no-install"],
+      "react-router",
+    );
     const reactRouter = join(project, "node_modules/@react-router/dev/bin.cjs");
 
-    await run(process.execPath, [join(repoRoot, "packages/cli/dist/cli.js"), "generate"], {
-      cwd: project,
-    });
+    await run(
+      process.execPath,
+      [join(project, "node_modules/@bounda-dev/cli/dist/cli.js"), "generate"],
+      { cwd: project },
+    );
     await run(process.execPath, [reactRouter, "typegen"], { cwd: project });
     await run(join(repoRoot, "node_modules/.bin/tsc"), ["--noEmit", "-p", "tsconfig.json"], {
       cwd: project,
@@ -123,5 +238,25 @@ describe("a project created by create-bounda", () => {
     expect(`${tested.stdout}${tested.stderr}`).toMatch(/1 passed/);
     const built = await run(process.execPath, [reactRouter, "build"], { cwd: project });
     expect(`${built.stdout}${built.stderr}`).toMatch(/built in/);
-  }, 180_000);
+
+    const server = await devServer(project, reactRouter);
+    try {
+      const home = await fetch(`${server.url}/`);
+      expect(home.status).toBe(200);
+      expect(await rendered(home)).toContain("ada: 0 order(s), 0 in total");
+
+      const placed = await fetch(`${server.url}/?index`, {
+        method: "POST",
+        body: new URLSearchParams({ customerId: "grace", total: "99" }),
+        redirect: "manual",
+      });
+      expect(placed.status).toBe(302);
+      expect(placed.headers.get("location")).toContain("/?customer=grace");
+
+      const grace = await fetch(`${server.url}/?customer=grace`);
+      expect(await rendered(grace)).toContain("grace: 1 order(s), 99 in total");
+    } finally {
+      await server.stop();
+    }
+  }, 300_000);
 });
