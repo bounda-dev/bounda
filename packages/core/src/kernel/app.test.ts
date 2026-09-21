@@ -11,6 +11,7 @@ import type { Registry } from "../modules/registry.ts";
 import type { FieldsArgs } from "../modules/view.ts";
 import { createApp } from "./app.ts";
 import { PROCESS_EVENTS } from "./process/lifecycle.ts";
+import { readYourWrites } from "./read-your-writes.ts";
 import { orderAggregateEntry, sentMessages } from "./test-support.ts";
 
 interface Row {
@@ -203,6 +204,48 @@ describe("createApp", () => {
       "projection:orderSummary",
     ]);
     await app.stop();
+  });
+
+  it("catches up the read models without running policies, processes or the schedule", async () => {
+    const { app } = await start("web");
+    await app.commands.placeOrder({ orderId: "o-1", total: 10 });
+    await app.commands.payOrder({ orderId: "o-1", method: "card" });
+    await app.catchUpReadModels();
+
+    expect(await app.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "paid" });
+    const lag = await app.getLag();
+    const lagOf = (subscriber: string) =>
+      lag.subscribers.find((entry) => entry.subscriber === subscriber)?.lag;
+    expect(lagOf("projection:orderSummary")).toBe(0);
+    expect(lagOf("policies")).toBe(2);
+    expect(lagOf("processes")).toBe(2);
+    await app.stop();
+  });
+
+  it("reads its own writes through readYourWrites, leaving the rest to the background", async () => {
+    const { app } = await start("web");
+    const catchUps = vi.fn(app.catchUpReadModels);
+    const spied: typeof app = { ...app, catchUpReadModels: catchUps };
+    const fresh = readYourWrites(spied);
+    const placed = await fresh.commands.placeOrder({ orderId: "o-1", total: 10 });
+    expect(placed).toMatchObject({ scheduled: false, version: 1 });
+    await fresh.commands.payOrder({ orderId: "o-1", method: "card" });
+    expect(await fresh.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "paid" });
+
+    await fresh.commands.placeOrder({ orderId: "o-2", total: 20 });
+    const scheduled = await fresh.commands.payOrder(
+      { orderId: "o-2", method: "card" },
+      { delay: "1h" },
+    );
+    expect(scheduled).toMatchObject({ scheduled: true });
+    expect(await fresh.queries.getOrder({ orderId: "o-2" })).toMatchObject({ status: "placed" });
+    expect(catchUps).toHaveBeenCalledTimes(3);
+
+    expect((await fresh.getLag()).maxLag).toBeGreaterThan(0);
+    await fresh.processUntilIdle();
+    expect((await fresh.getLag()).maxLag).toBe(0);
+    expect(fresh.role).toBe("web");
+    await fresh.stop();
   });
 
   it("does not start background work in the web role but still serves commands and queries", async () => {

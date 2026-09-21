@@ -3,7 +3,7 @@ import type { StateModule } from "./aggregate.ts";
 import type { CommandEntry, CommandModule } from "./command.ts";
 import type { EventModules } from "./event.ts";
 import type { Simplify, UnionToIntersection } from "./naming.ts";
-import type { HasPayload, PayloadOf } from "./payload.ts";
+import type { HasPayload, PayloadInputOf } from "./payload.ts";
 import type { PolicyModule } from "./policy.ts";
 import type { ProcessEntry } from "./process.ts";
 import type { ProjectionModule } from "./projection.ts";
@@ -44,7 +44,7 @@ export interface Registry {
  */
 export type CommandInvoker<Module> =
   HasPayload<Module> extends true
-    ? (payload: PayloadOf<Module>, options?: DispatchOptions) => Promise<DispatchResult>
+    ? (payload: PayloadInputOf<Module>, options?: DispatchOptions) => Promise<DispatchResult>
     : "payload" extends keyof Module
       ? (payload?: unknown, options?: DispatchOptions) => Promise<DispatchResult>
       : (options?: DispatchOptions) => Promise<DispatchResult>;
@@ -77,7 +77,7 @@ export type CommandsFacade<R extends Registry> = Simplify<
  */
 export type QueryInvoker<Module> =
   HasPayload<Module> extends true
-    ? (payload: PayloadOf<Module>) => Promise<QueryResultOf<Module>>
+    ? (payload: PayloadInputOf<Module>) => Promise<QueryResultOf<Module>>
     : "payload" extends keyof Module
       ? (payload?: unknown) => Promise<QueryResultOf<Module>>
       : () => Promise<QueryResultOf<Module>>;

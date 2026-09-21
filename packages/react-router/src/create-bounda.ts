@@ -1,4 +1,4 @@
-import type { BoundaApp, Registry } from "@bounda-dev/core";
+import { type BoundaApp, type Registry, readYourWrites } from "@bounda-dev/core";
 import { boot } from "@bounda-dev/core/node";
 import { createContext, type MiddlewareFunction, type RouterContext } from "react-router";
 
@@ -9,6 +9,13 @@ export interface BootBoundaFunction<R extends Registry> {
   (): Promise<BoundaApp<R>>;
 }
 
+/**
+ * What a loader sees right after an action dispatched a command. `immediate` (the default) brings
+ * the read models up to date before the command resolves, so the page a redirect lands on already
+ * reflects it. `eventual` leaves projections to the background and reads may lag behind.
+ */
+export type Consistency = "immediate" | "eventual";
+
 export interface CreateBoundaArgs<R extends Registry> {
   /**
    * How to boot the app. Defaults to `boot()` from `@bounda-dev/core/node`, which reads
@@ -16,11 +23,13 @@ export interface CreateBoundaArgs<R extends Registry> {
    */
   readonly boot?: BootBoundaFunction<R>;
   /**
-   * The key under which the running app is kept on `globalThis`. A reload of the module that
-   * called `createBounda` in development finds the app there instead of booting a second one.
-   * Defaults to `"bounda.app"`; one app per key.
+   * The key under which the running app is kept on `globalThis`, so that it survives a reload of
+   * the module that called `createBounda` in development. Calling `createBounda` again with the
+   * same key stops the app booted by the previous call; the next request boots a fresh one from
+   * the reloaded modules. Defaults to `"bounda.app"`; one app per key.
    */
   readonly key?: string;
+  readonly consistency?: Consistency;
 }
 
 /**
@@ -32,8 +41,7 @@ export interface BoundaMiddleware {
 }
 
 /**
- * Stops the running app, if any, and forgets it, so that the next request boots again. Pass it to
- * `import.meta.hot?.dispose` in the module that calls `createBounda`.
+ * Stops the running app, if any, and forgets it, so that the next request boots again.
  */
 export interface DisposeBoundaFunction {
   (): Promise<void>;
@@ -73,12 +81,23 @@ const started = <R extends Registry>(app: BoundaApp<R>): BoundaApp<R> => {
   return app;
 };
 
+const stop = async <R extends Registry>(slot: Slot<R>): Promise<void> => {
+  const running = slot.app;
+  slot.app = undefined;
+  if (running === undefined) return;
+  const app = await running.catch(() => undefined);
+  await app?.stop();
+};
+
 const load = <R extends Registry>(
   slot: Slot<R>,
   bootApp: BootBoundaFunction<R>,
+  consistency: Consistency,
 ): Promise<BoundaApp<R>> => {
   if (slot.app !== undefined) return slot.app;
-  const starting = bootApp().then(started);
+  const starting = bootApp()
+    .then(started)
+    .then((app) => (consistency === "immediate" ? readYourWrites(app) : app));
   slot.app = starting;
   starting.catch(() => {
     if (slot.app === starting) slot.app = undefined;
@@ -88,13 +107,16 @@ const load = <R extends Registry>(
 
 /**
  * Wires Bounda into a React Router app: a context for the running app and the middleware that
- * boots it once and provides it to every loader and action. Declare it once in a server module
- * with the registry's type, and mount the middleware in `root.tsx`.
+ * boots it once and provides it to every loader and action. By default the app in the context
+ * reads its own writes: a command resolves once the read models reflect it, so the page a redirect
+ * lands on is fresh. Declare it once in a server module and mount the middleware in `root.tsx`.
+ * In development the server
+ * module is re-evaluated when the code changes; the app booted before is stopped and the next
+ * request boots one from the new modules.
  *
  * @example
  * // app/bounda.server.ts
- * export const { bounda, boundaMiddleware, dispose } = createBounda<typeof registry>();
- * import.meta.hot?.dispose(dispose);
+ * export const { bounda, boundaMiddleware } = createBounda({ boot: () => boot({ registry }) });
  *
  * // app/root.tsx
  * export const middleware = [boundaMiddleware];
@@ -106,22 +128,18 @@ const load = <R extends Registry>(
 export const createBounda: CreateBoundaFunction = <R extends Registry>({
   boot: bootApp = () => boot<R>(),
   key = DEFAULT_KEY,
+  consistency = "immediate",
 }: CreateBoundaArgs<R> = {}): Bounda<R> => {
   const bounda = createContext<BoundaApp<R>>();
   const slot = slotFor<R>(key);
+  void stop(slot);
 
   const boundaMiddleware: BoundaMiddleware = async ({ context }, next) => {
-    context.set(bounda, await load(slot, bootApp));
+    context.set(bounda, await load(slot, bootApp, consistency));
     return next();
   };
 
-  const dispose: DisposeBoundaFunction = async () => {
-    const running = slot.app;
-    slot.app = undefined;
-    if (running === undefined) return;
-    const app = await running.catch(() => undefined);
-    await app?.stop();
-  };
+  const dispose: DisposeBoundaFunction = () => stop(slot);
 
   return { bounda, boundaMiddleware, dispose };
 };

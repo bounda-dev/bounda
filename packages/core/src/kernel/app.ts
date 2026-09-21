@@ -43,6 +43,11 @@ export interface BoundaApp<R extends Registry = Registry> {
    * dispatching commands. Works in every role.
    */
   processUntilIdle(): Promise<void>;
+  /**
+   * Runs the projections until every read model reflects the events stored so far. Policies,
+   * processes and scheduled commands are left to the background. Works in every role.
+   */
+  catchUpReadModels(): Promise<void>;
   getLag(): Promise<DispatcherLag>;
 }
 
@@ -167,6 +172,7 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
         if (!advanced && ran === 0) return;
       }
     },
+    catchUpReadModels: () => dispatcher.catchUp("projection"),
     getLag: () => dispatcher.getLag(),
   };
 };

@@ -10,8 +10,15 @@ import { errorDetails } from "../shared/retry.ts";
  * the checkpoint may advance past the batch; returning `false` or throwing makes the dispatcher
  * deliver the same batch again on the next pass.
  */
+/**
+ * What a subscriber does with the events it receives: keep a read model up to date, run policies
+ * or drive processes.
+ */
+export type SubscriberKind = "projection" | "policy" | "process";
+
 export interface Subscriber {
   readonly name: string;
+  readonly kind: SubscriberKind;
   process(events: readonly StoredEvent[]): Promise<boolean>;
 }
 
@@ -44,6 +51,10 @@ export interface Dispatcher {
    * Passes until a full pass advances nothing. What tests await after dispatching commands.
    */
   processUntilIdle(): Promise<void>;
+  /**
+   * Runs passes for the subscribers of one kind until none of them moves.
+   */
+  catchUp(kind: SubscriberKind): Promise<void>;
   getLag(): Promise<DispatcherLag>;
 }
 
@@ -96,9 +107,10 @@ export const createDispatcher: CreateDispatcherFunction = ({
     return true;
   };
 
-  const pass = async (): Promise<boolean> => {
+  const pass = async (only?: SubscriberKind): Promise<boolean> => {
     let advanced = false;
     for (const subscriber of subscribers) {
+      if (only !== undefined && subscriber.kind !== only) continue;
       advanced = (await deliver(subscriber)) || advanced;
     }
     return advanced;
@@ -107,9 +119,11 @@ export const createDispatcher: CreateDispatcherFunction = ({
   const schedule = (): void => {
     if (!running) return;
     timer = setTimeout(async () => {
-      await mutex.run(pass).catch((error: unknown) => {
-        logger.error("dispatcher pass failed", errorDetails(error));
-      });
+      await mutex
+        .run(() => pass())
+        .catch((error: unknown) => {
+          logger.error("dispatcher pass failed", errorDetails(error));
+        });
       schedule();
     }, pollIntervalMs);
   };
@@ -125,9 +139,14 @@ export const createDispatcher: CreateDispatcherFunction = ({
       if (timer !== undefined) clearTimeout(timer);
       await mutex.drain();
     },
-    processOnce: () => mutex.run(pass),
+    processOnce: () => mutex.run(() => pass()),
     processUntilIdle: async () => {
-      while (await mutex.run(pass)) {
+      while (await mutex.run(() => pass())) {
+        // keep passing until nothing moves
+      }
+    },
+    catchUp: async (kind) => {
+      while (await mutex.run(() => pass(kind))) {
         // keep passing until nothing moves
       }
     },

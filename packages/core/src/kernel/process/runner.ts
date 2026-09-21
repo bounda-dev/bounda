@@ -307,6 +307,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
 
   return {
     name: PROCESSES_SUBSCRIBER,
+    kind: "process",
     process: async (events) => {
       let hold = false;
       for (const event of events) {

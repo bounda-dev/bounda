@@ -1,0 +1,39 @@
+{
+  "name": "@bounda-dev/example-onboarding",
+  "private": true,
+  "description": "User onboarding on Bounda and React Router: register, welcome, activate, list",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "generate": "bounda generate",
+    "typecheck": "react-router typegen && tsc -p tsconfig.json",
+    "build": "react-router build",
+    "dev": "react-router dev",
+    "start": "react-router-serve ./build/server/index.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@bounda-dev/adapter-postgresql": "workspace:*",
+    "@bounda-dev/adapter-sqlite": "workspace:*",
+    "@bounda-dev/core": "workspace:*",
+    "@bounda-dev/react-router": "workspace:*",
+    "@react-router/node": "catalog:",
+    "@react-router/serve": "catalog:",
+    "isbot": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "react-router": "catalog:"
+  },
+  "devDependencies": {
+    "@bounda-dev/cli": "workspace:*",
+    "@react-router/dev": "catalog:",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:"
+  }
+}

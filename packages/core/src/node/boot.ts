@@ -67,7 +67,10 @@ const importModule = async <T>(
   if (!(await exists(path))) {
     throw new ConfigurationError(`Cannot find ${what} at ${path}`);
   }
-  const module = (await import(pathToFileURL(path).href)) as Record<string, unknown>;
+  const module = (await import(/* @vite-ignore */ pathToFileURL(path).href)) as Record<
+    string,
+    unknown
+  >;
   const value = pick(module);
   if (value === undefined) {
     throw new ConfigurationError(`${path} does not export ${what}`);
