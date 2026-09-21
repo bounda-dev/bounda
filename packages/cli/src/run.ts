@@ -113,8 +113,6 @@ export const runCli: RunCliFunction = async ({ argv, cwd, stdout, stderr, signal
         onChange: async () => {
           exitCode = await runGenerate(options, cwd, stdout, stderr);
         },
-        onError: (error) =>
-          line(stderr, `error: ${error instanceof Error ? error.message : String(error)}`),
       });
     });
 

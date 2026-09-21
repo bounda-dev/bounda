@@ -1,6 +1,6 @@
-import { cp, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { generate } from "../generate.ts";
 
@@ -140,5 +140,119 @@ describe("generate with state inference (golden on order-app-inferred)", () => {
       join(root, ".bounda/registry.ts"),
       join(root, ".bounda/types.ts"),
     ]);
+  });
+});
+
+const syntheticProject = async (
+  files: Readonly<Record<string, string>>,
+  tsconfig: Readonly<Record<string, unknown>> = { include: [".", ".bounda/**/*"] },
+): Promise<string> => {
+  const root = await mkdtemp(join(tmpdir(), "bounda-infer-edge-"));
+  temporary.push(root);
+  for (const [path, content] of Object.entries(files)) {
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), content);
+  }
+  await writeFile(
+    join(root, "tsconfig.json"),
+    JSON.stringify({
+      extends: join(repoRoot, "tsconfig.base.json"),
+      compilerOptions: {
+        isolatedDeclarations: false,
+        declaration: false,
+        types: [],
+        paths: { "@bounda-dev/core": [join(repoRoot, "packages/core/src/index.ts")] },
+      },
+      ...tsconfig,
+    }),
+  );
+  return root;
+};
+
+describe("state inference on the edges", () => {
+  it("reads function declarations, skips a non-exported apply, warns on one that is not a function and sorts members", async () => {
+    const root = await syntheticProject({
+      "app/domain/ticket/a-first.ts":
+        'export function apply() {\n  return { status: "zeta" as const, opened: true };\n}\n',
+      "app/domain/ticket/b-second.ts":
+        'export const apply = () => ({ status: "alpha" as const });\n',
+      "app/domain/ticket/c-quiet.ts":
+        "const apply = () => ({ hidden: true });\nexport const note = apply;\n",
+      "app/domain/ticket/d-broken.ts": "export const apply = 42;\n",
+      "app/domain/blank/blank-made.ts": "export const apply = () => ({});\n",
+    });
+    const report = await generate({ root });
+    expect(report.warnings).toEqual([
+      {
+        aggregate: "ticket",
+        message: "app/domain/ticket/d-broken.ts: apply has no call signature, so it was skipped",
+      },
+    ]);
+    const types = await readFile(join(root, ".bounda/types.ts"), "utf8");
+    expect(types).toContain(`export type TicketState = {
+  readonly opened?: boolean;
+  readonly status?: "alpha" | "zeta";
+};`);
+    expect(types).toContain("export type BlankState = Record<never, never>;");
+    expect(types).not.toContain("hidden");
+  });
+
+  it("downgrades every field whose type is not visible, once, across aggregates", async () => {
+    const root = await syntheticProject({
+      "app/domain/alpha/alpha-made.ts": [
+        "interface Hidden {",
+        "  readonly x: number;",
+        "}",
+        "export const apply = (): { secret: Hidden; other: Hidden; plain: string } => ({",
+        '  secret: { x: 1 }, other: { x: 2 }, plain: "p",',
+        "});",
+        "",
+      ].join("\n"),
+      "app/domain/alpha/alpha-touched.ts":
+        "interface Hidden {\n  readonly x: number;\n}\nexport const apply = (): { secret: Hidden } => ({ secret: { x: 3 } });\n",
+      "app/domain/beta/beta-made.ts":
+        'interface Private {\n  readonly y: string;\n}\nexport const apply = (): { token: Private; count: number } => ({ token: { y: "t" }, count: 1 });\n',
+    });
+    const report = await generate({ root });
+    const messages = report.warnings.map((warning) => `${warning.aggregate}: ${warning.message}`);
+    expect(messages).toHaveLength(3);
+    expect(messages[0]).toMatch(
+      /^alpha: field "other" \(set by alphaMade\) has a type that is not visible from \.bounda\/types\.ts \(.*\); it is typed as unknown\. Export the type or add state\.ts$/,
+    );
+    expect(messages[1]).toMatch(
+      /^alpha: field "secret" \(set by alphaMade, alphaTouched\) has a type that is not visible/,
+    );
+    expect(messages[2]).toMatch(
+      /^beta: field "token" \(set by betaMade\) has a type that is not visible/,
+    );
+    const types = await readFile(join(root, ".bounda/types.ts"), "utf8");
+    expect(types).toContain(`export type AlphaState = {
+  readonly other?: unknown;
+  readonly plain?: string;
+  readonly secret?: unknown;
+};`);
+    expect(types).toContain(`export type BetaState = {
+  readonly count?: number;
+  readonly token?: unknown;
+};`);
+  });
+
+  it("explains when the generated types are not part of the TypeScript project", async () => {
+    const root = await syntheticProject(
+      { "app/domain/solo/solo-made.ts": "export const apply = () => ({ done: true });\n" },
+      { files: ["app/domain/solo/solo-made.ts"] },
+    );
+    const report = await generate({ root });
+    expect(report.warnings).toEqual([
+      {
+        aggregate: "solo",
+        message: expect.stringMatching(
+          /^.*\.bounda\/types\.ts is not part of the TypeScript project at .*tsconfig\.json; include it so state can be inferred\. State stays core\.UnknownState; add app\/domain\/solo\/state\.ts to type it$/,
+        ),
+      },
+    ]);
+    expect(await readFile(join(root, ".bounda/types.ts"), "utf8")).toContain(
+      "export type SoloState = core.UnknownState;",
+    );
   });
 });

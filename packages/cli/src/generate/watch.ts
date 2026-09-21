@@ -1,5 +1,10 @@
-import { watch } from "node:fs/promises";
+import { watch as watchDirectory } from "node:fs/promises";
 import { join } from "node:path";
+
+/**
+ * `fs.watch` from `node:fs/promises`, or a stand-in for tests.
+ */
+export type WatchFunction = typeof watchDirectory;
 
 export interface WatchProjectArgs {
   readonly root: string;
@@ -21,6 +26,7 @@ export interface WatchProjectArgs {
    * Aborting it ends the watch.
    */
   readonly signal: AbortSignal;
+  readonly watch?: WatchFunction;
 }
 
 export interface WatchProjectFunction {
@@ -41,6 +47,7 @@ export const watchProject: WatchProjectFunction = async ({
   onError = () => undefined,
   debounceMs = 100,
   signal,
+  watch = watchDirectory,
 }) => {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let running: Promise<void> = Promise.resolve();

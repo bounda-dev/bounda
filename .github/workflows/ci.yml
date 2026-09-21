@@ -50,3 +50,92 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm docs:build
+
+  changes:
+    name: Changed packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      packages: ${{ steps.list.outputs.packages }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - id: list
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="origin/${{ github.base_ref }}"
+          elif [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ] && git cat-file -e "${{ github.event.before }}" 2>/dev/null; then
+            base="${{ github.event.before }}"
+          else
+            base="HEAD~1"
+          fi
+          changed=$(git diff --name-only "$base" HEAD)
+          all="core adapter-sqlite adapter-postgresql cli react-router create-bounda"
+          if echo "$changed" | grep -qE '^(pnpm-workspace\.yaml|pnpm-lock\.yaml|patches/|\.github/workflows/ci\.yml|tsconfig\.base\.json)'; then
+            selected="$all"
+          else
+            selected=""
+            for package in $all; do
+              if echo "$changed" | grep -q "^packages/$package/"; then selected="$selected $package"; fi
+            done
+          fi
+          packages=$(printf '%s\n' $selected | sed '/^$/d' | jq -R . | jq -sc .)
+          echo "packages=$packages" >> "$GITHUB_OUTPUT"
+          echo "Mutation testing for: $packages"
+
+  mutation:
+    name: Mutation (${{ matrix.package }})
+    needs: changes
+    if: needs.changes.outputs.packages != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJSON(needs.changes.outputs.packages) }}
+    env:
+      BOUNDA_PG_REUSE: "1"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.4.2
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/cache/restore@v4
+        with:
+          path: packages/${{ matrix.package }}/.stryker-tmp/incremental.json
+          key: stryker-${{ matrix.package }}-${{ github.sha }}
+          restore-keys: stryker-${{ matrix.package }}-
+      - run: pnpm --filter @bounda-dev/core build
+      - run: pnpm --filter "./packages/${{ matrix.package }}" test:mutation 2>&1 | tee mutation.log
+        shell: bash
+      - if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Mutation testing: ${{ matrix.package }}"
+            echo
+            echo '```text'
+            sed -n '/^-*|/,/^-*|$/p' mutation.log | head -60
+            grep -E "Final mutation score" mutation.log | sed 's/.*INFO MutationTestReportHelper//' || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: packages/${{ matrix.package }}/.stryker-tmp/incremental.json
+          key: stryker-${{ matrix.package }}-${{ github.sha }}
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-${{ matrix.package }}
+          path: packages/${{ matrix.package }}/reports/mutation/mutation.html
+          if-no-files-found: ignore
+          retention-days: 14
+
