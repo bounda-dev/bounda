@@ -6,6 +6,8 @@ coverage/
 reports/
 .bounda/
 !packages/core/test-types/fixtures/**/.bounda/
+examples/**/+types/
+examples/*/data/
 .astro/
 .turbo/
 *.log

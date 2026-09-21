@@ -1,11 +1,26 @@
 {
   "files": [],
   "references": [
-    { "path": "packages/core" },
-    { "path": "packages/cli" },
-    { "path": "packages/adapter-sqlite" },
-    { "path": "packages/adapter-postgresql" },
-    { "path": "packages/react-router" },
-    { "path": "packages/create-bounda" }
+    {
+      "path": "packages/core"
+    },
+    {
+      "path": "packages/cli"
+    },
+    {
+      "path": "packages/adapter-sqlite"
+    },
+    {
+      "path": "packages/adapter-postgresql"
+    },
+    {
+      "path": "packages/react-router"
+    },
+    {
+      "path": "packages/create-bounda"
+    },
+    {
+      "path": "examples/storefront"
+    }
   ]
 }

@@ -12,10 +12,11 @@ pnpm 12 (workspace catalog, `catalogMode: strict`), TypeScript 7, Biome (lint an
 
 | Command | What it does |
 |---|---|
-| `pnpm check` | lint, build, typecheck, test — run before every commit (build first: packages type-check against the `dist` of their workspace dependencies) |
+| `pnpm check` | lint, build, generate, typecheck, test — run before every commit (build first: packages and examples type-check against the `dist` of their workspace dependencies; `generate` runs `bounda generate` in every example) |
 | `pnpm lint` / `pnpm format` | Biome check / write |
 | `pnpm typecheck` | `tsc -p` in every package |
 | `pnpm build` | tsdown in every package |
+| `pnpm generate` | `bounda generate` in every example (`examples/*`), needs `build` first |
 | `pnpm test` / `pnpm test:types` | Vitest / Vitest typecheck-only |
 | `pnpm changeset` | add a changeset (required when a published package changes) |
 | `pnpm docs:dev` / `pnpm docs:build` | Starlight site |

@@ -55,3 +55,18 @@ export const parseDuration: ParseDurationFunction = (input) => {
   const [, amount, unit] = match;
   return Number(amount) * MILLISECONDS_PER_UNIT[unit as DurationUnit];
 };
+
+export interface AsDurationFunction {
+  (input: LooseDurationInput): DurationInput;
+}
+
+/**
+ * Checks a duration that the compiler could not, such as one read from an environment variable,
+ * and returns it typed for places that want a `DurationInput`:
+ * `{ delay: asDuration(process.env.REMINDER_DELAY ?? "24h") }`. Throws `ValidationError` when
+ * the string is malformed.
+ */
+export const asDuration: AsDurationFunction = (input) => {
+  parseDuration(input);
+  return input as DurationInput;
+};
