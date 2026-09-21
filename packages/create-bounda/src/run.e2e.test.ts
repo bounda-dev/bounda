@@ -70,24 +70,29 @@ const install = async (project: string, names: readonly string[]): Promise<void>
 };
 
 /**
- * The tools and the third-party dependencies the template declares. The React Router ones come
- * from the onboarding example, which already has them installed.
+ * The tools the template declares, taken from this package's own dev dependencies: the same
+ * versions it writes into the generated manifest.
  */
 const linkTools = async (project: string, framework: "node" | "react-router"): Promise<void> => {
   const modules = join(project, "node_modules");
-  const example = join(repoRoot, "examples/onboarding/node_modules");
+  const own = join(repoRoot, "packages/create-bounda/node_modules");
   for (const name of ["vitest", "typescript", "@types/node"]) {
-    await link(join(repoRoot, "node_modules", name), join(modules, name));
+    await link(join(own, name), join(modules, name));
   }
   if (framework !== "react-router") return;
-  for (const name of ["react", "react-dom", "react-router", "vite", "isbot"]) {
-    await link(join(example, name), join(modules, name));
-  }
-  for (const name of ["dev", "node", "serve"]) {
-    await link(join(example, "@react-router", name), join(modules, "@react-router", name));
-  }
-  for (const name of ["react", "react-dom"]) {
-    await link(join(example, "@types", name), join(modules, "@types", name));
+  for (const name of [
+    "react",
+    "react-dom",
+    "react-router",
+    "vite",
+    "isbot",
+    "@react-router/dev",
+    "@react-router/node",
+    "@react-router/serve",
+    "@types/react",
+    "@types/react-dom",
+  ]) {
+    await link(join(own, name), join(modules, name));
   }
 };
 
