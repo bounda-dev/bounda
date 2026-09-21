@@ -30,4 +30,4 @@ export { renderTemplate, scaffoldProject } from "./scaffold.ts";
 export type { Exec, InstallCommandFunction, RunCommandFunction } from "./steps.ts";
 export { installCommand, realExec, runCommand } from "./steps.ts";
 export type { CurrentVersionsFunction, Versions } from "./versions.ts";
-export { currentVersions, TOOL_VERSIONS } from "./versions.ts";
+export { currentVersions } from "./versions.ts";
