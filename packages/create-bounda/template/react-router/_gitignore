@@ -1,0 +1,7 @@
+node_modules/
+.bounda/
+**/+types/
+.react-router/
+build/
+data/
+.env

@@ -9,8 +9,17 @@ sidebar:
 works with React Router 8 in framework mode; the middleware boots the app on the first request and
 loaders and actions read it with `context.get(bounda)`.
 
+The quickest start is a new project:
+
 ```bash
-npm install @bounda-dev/react-router
+npm create bounda@alpha my-app -- --framework react-router
+```
+
+To add Bounda to an existing React Router app:
+
+```bash
+npm install @bounda-dev/core @bounda-dev/react-router @bounda-dev/adapter-sqlite
+npm install -D @bounda-dev/cli
 ```
 
 ## One line in `vite.config.ts`

@@ -10,12 +10,22 @@ export interface Versions {
   readonly typescript: string;
   readonly vitest: string;
   readonly typesNode: string;
+  readonly react: string;
+  readonly reactRouter: string;
+  readonly vite: string;
+  readonly isbot: string;
+  readonly typesReact: string;
 }
 
 export const TOOL_VERSIONS: Omit<Versions, "bounda"> = {
   typescript: "^7.0.2",
   vitest: "^5.0.1",
   typesNode: "^26.6.1",
+  react: "^19.3.0",
+  reactRouter: "^8.4.0",
+  vite: "^8.3.0",
+  isbot: "^5.2.2",
+  typesReact: "^19.3.0",
 };
 
 export interface CurrentVersionsFunction {

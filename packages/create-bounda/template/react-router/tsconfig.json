@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "module": "esnext",
+    "target": "es2024",
+    "lib": ["dom", "dom.iterable", "es2024"],
+    "jsx": "react-jsx",
+    "moduleResolution": "bundler",
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+    "noEmit": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "rootDirs": [".", "./.react-router/types"],
+    "types": ["node", "vite/client"],
+    "skipLibCheck": true
+  },
+  "include": [
+    "app",
+    "tests",
+    ".bounda/**/*",
+    ".react-router/types/**/*",
+    "bounda.config.ts",
+    "react-router.config.ts",
+    "vite.config.ts",
+    "vitest.config.ts"
+  ]
+}

@@ -49,7 +49,7 @@ pnpm 12 (workspace catalog, `catalogMode: strict`), TypeScript 7, Biome (lint an
 
 ## create-bounda
 
-`packages/create-bounda/template/` is a real project: `base/` plus one overlay per database. `*.tpl` files are rendered (`{{name}}`, versions), `_gitignore` becomes `.gitignore`, everything else is copied. Its end-to-end test scaffolds a project, links the workspace packages into it and runs `bounda generate`, `tsc` and `vitest` there, so a template that does not compile fails CI. Tool versions written into generated projects live in `src/versions.ts` and a test keeps them equal to the catalog.
+`packages/create-bounda/template/` is a real project: `base/` (the domain, the read model, the test), one overlay per database (`sqlite/`, `postgresql/`) and one per framework (`node/`: script and manifest; `react-router/`: Vite config, routes, manifest), applied in that order. `*.tpl` files are rendered (`{{name}}`, versions), `_gitignore` becomes `.gitignore`, everything else is copied. Its end-to-end test scaffolds a project, links the workspace packages into it and runs `bounda generate`, `tsc` and `vitest` there, so a template that does not compile fails CI. Tool versions written into generated projects live in `src/versions.ts` and a test keeps them equal to the catalog.
 
 ## Types are the product
 

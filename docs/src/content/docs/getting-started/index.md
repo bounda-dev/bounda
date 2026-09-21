@@ -18,7 +18,10 @@ npm create bounda@alpha my-shop
 cd my-shop
 ```
 
-You get a project with one aggregate, one read model and a test, on SQLite:
+The command asks for a database (SQLite or PostgreSQL) and how the app runs: a Node script, or a
+[React Router](/guides/react-router/) app with a page that dispatches from an action and reads from
+a loader. Pass `--database` and `--framework` to skip the questions. With the defaults you get a
+project with one aggregate, one read model and a test, on SQLite:
 
 ```
 app/domain/order/           the order aggregate
