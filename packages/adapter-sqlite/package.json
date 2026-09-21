@@ -8,6 +8,7 @@
     "url": "git+https://github.com/bounda-dev/bounda.git",
     "directory": "packages/adapter-sqlite"
   },
+  "homepage": "https://docs.bounda.dev",
   "type": "module",
   "sideEffects": false,
   "files": [
