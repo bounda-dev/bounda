@@ -4,13 +4,13 @@ Scaffolds a [Bounda](https://docs.bounda.dev) project: one aggregate, one read m
 the generator wired up.
 
 ```bash
-npm create bounda@alpha my-app
+npm create bounda my-app
 ```
 
 It asks for a database and how the app runs, or takes both as flags:
 
 ```bash
-npm create bounda@alpha my-app -- --database postgresql --framework react-router
+npm create bounda my-app -- --database postgresql --framework react-router
 ```
 
 | Flag | Values | Default |
@@ -29,7 +29,8 @@ test passes straight away.
 
 ## Alpha
 
-Published under the `alpha` tag. The API can change between alphas without a deprecation cycle.
+Every published version is a prerelease. The API can change between alphas without a deprecation
+cycle.
 
 Docs: [docs.bounda.dev/getting-started](https://docs.bounda.dev/getting-started/). Source and
 issues: [github.com/bounda-dev/bounda](https://github.com/bounda-dev/bounda).

@@ -7,15 +7,15 @@ conventions and inferred types. Your business logic lives in small modules that 
 of functions. The runtime does the wiring and runs on a single database.
 
 ```bash
-npm create bounda@alpha my-app
+npm create bounda my-app
 ```
 
 Documentation: [docs.bounda.dev](https://docs.bounda.dev).
 
 ## Status
 
-Alpha. The packages are on npm under the `alpha` tag; the API can change between alphas without a
-deprecation cycle. Each package has its own changelog.
+Alpha. Every version on npm is a prerelease, so a plain install gets one; the API can change
+between alphas without a deprecation cycle. Each package has its own changelog.
 
 ## Packages
 

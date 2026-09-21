@@ -6,7 +6,7 @@ boots the app and every loader and action reads it from the router context.
 The quickest start is a new project:
 
 ```bash
-npm create bounda@alpha my-app -- --framework react-router
+npm create bounda my-app -- --framework react-router
 ```
 
 In an app you already have, add the Vite plugin:
@@ -47,7 +47,8 @@ the same thing without the plugin, for a server module of your own.
 
 ## Alpha
 
-Published under the `alpha` tag. The API can change between alphas without a deprecation cycle.
+Every published version is a prerelease. The API can change between alphas without a deprecation
+cycle.
 
 Docs: [docs.bounda.dev/guides/react-router](https://docs.bounda.dev/guides/react-router/). Source
 and issues: [github.com/bounda-dev/bounda](https://github.com/bounda-dev/bounda).
