@@ -143,6 +143,27 @@ describe("bounda() Vite plugin", () => {
     expect(resolveId("./app.ts")).toBeNull();
   });
 
+  it("keeps the package inside the server bundle and out of the client pre-bundle", () => {
+    const plugin = bounda();
+    const configEnvironment = hookOf(plugin, "configEnvironment") as unknown as (
+      this: unknown,
+      name: string,
+    ) => {
+      readonly resolve?: { readonly noExternal?: readonly RegExp[] };
+      readonly optimizeDeps?: { readonly exclude?: readonly string[] };
+    };
+    const server = configEnvironment.call({}, "ssr");
+    const pattern = server.resolve?.noExternal?.[0] as RegExp;
+    expect(pattern.test("@bounda-dev/react-router/app")).toBe(true);
+    expect(pattern.test("@bounda-dev/react-router")).toBe(true);
+    expect(pattern.test("@bounda-dev/react-router-other")).toBe(false);
+    expect(pattern.test("not-@bounda-dev/react-router")).toBe(false);
+    expect(configEnvironment.call({}, "client").optimizeDeps?.exclude).toEqual([
+      "@bounda-dev/react-router",
+    ]);
+    expect(configEnvironment.call({}, "client").resolve).toBeUndefined();
+  });
+
   it("serves the server module wired to the project's registry, reading its own writes", () => {
     const { configure, load } = harness("/project");
     configure("serve");

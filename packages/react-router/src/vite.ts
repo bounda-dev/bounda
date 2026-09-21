@@ -21,6 +21,15 @@ export interface BoundaVitePluginFunction {
 }
 
 const RESOLVED_ID = `\0${APP_MODULE_ID}`;
+const PACKAGE_ID = "@bounda-dev/react-router";
+/**
+ * Vite externalises anything it finds in `node_modules` when it renders on the server, and an
+ * externalised import is loaded by Node without passing through a plugin, so `resolveId` below
+ * would never get to serve the app module. `noExternal` is matched against the package, not
+ * against the subpath, hence the whole package. A workspace link is internal already, which is
+ * why this only shows up once the package is installed from a registry.
+ */
+const PACKAGE_PATTERN = /^@bounda-dev\/react-router(\/|$)/;
 const APP_DIRECTORY = "app";
 const WATCHED = ["domain", "read"];
 const EVENTS = ["add", "change", "unlink", "addDir", "unlinkDir"] as const;
@@ -97,6 +106,10 @@ export const bounda: BoundaVitePluginFunction = ({
   return {
     name: "bounda",
     enforce: "pre",
+    configEnvironment: (name) =>
+      name === "client"
+        ? { optimizeDeps: { exclude: [PACKAGE_ID] } }
+        : { resolve: { noExternal: [PACKAGE_PATTERN] } },
     configResolved(config) {
       generation = {
         root: config.root,
