@@ -155,7 +155,8 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
 - Projections write through `table` (`upsert`, `insert`, `update`, `delete`, `findOne`,
   `findMany`, `count`); every write is idempotent, so redelivery is safe.
 - Queries compose: a handler receives `queries` and may call other queries.
-- Delayed commands: `commands.remindCustomer(payload, { delay: "24h" })`.
+- Delayed commands: `commands.remindCustomer(payload, { delay: "24h" })`. A duration from the
+  environment is a `string`; wrap it: `{ delay: asDuration(process.env.DELAY ?? "24h") }`.
 
 ## Working in a Bounda repo
 
