@@ -1,7 +1,7 @@
 import { defineConfig } from "tsdown";
 
 export default defineConfig({
-  entry: ["src/index.ts"],
+  entry: ["src/index.ts", "src/vite.ts", "src/app.ts"],
   tsconfig: "tsconfig.build.json",
   unbundle: true,
   dts: true,

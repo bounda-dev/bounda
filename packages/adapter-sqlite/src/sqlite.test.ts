@@ -72,6 +72,13 @@ describe("sqlite adapter on a file", () => {
     create: async () => (await openStorage(sqlite({ path: freshPath() }))).scheduler,
   });
 
+  it("creates the directory of a file that does not exist yet", async () => {
+    const adapter = sqlite({ path: join(directory, "nested", "deeper", "app.db") });
+    const storage = await adapter.createStorage({ logger: silentLogger });
+    expect(await storage.eventStore.lastPosition()).toBe(0);
+    await storage.close();
+  });
+
   it("keeps data across adapters pointing at the same file and prefixes tables", async () => {
     const path = freshPath();
     const first = await openStorage(sqlite({ path, tablePrefix: "app_" }));

@@ -18,6 +18,14 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./vite": {
+      "types": "./dist/vite.d.ts",
+      "default": "./dist/vite.js"
+    },
+    "./app": {
+      "types": "./dist/app.d.ts",
+      "default": "./dist/app.js"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {
@@ -34,10 +42,13 @@
     "test:mutation": "stryker run"
   },
   "peerDependencies": {
+    "@bounda-dev/cli": "workspace:*",
     "@bounda-dev/core": "workspace:*",
-    "react-router": ">=8"
+    "react-router": ">=8",
+    "vite": ">=7"
   },
   "devDependencies": {
+    "@bounda-dev/cli": "workspace:*",
     "@bounda-dev/core": "workspace:*",
     "@stryker-mutator/core": "catalog:",
     "@types/node": "catalog:",
@@ -45,6 +56,15 @@
     "react-router": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:",
+    "vite": "catalog:",
     "vitest": "catalog:"
+  },
+  "peerDependenciesMeta": {
+    "@bounda-dev/cli": {
+      "optional": true
+    },
+    "vite": {
+      "optional": true
+    }
   }
 }

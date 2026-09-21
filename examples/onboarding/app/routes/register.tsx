@@ -1,5 +1,5 @@
+import { bounda } from "@bounda-dev/react-router/app";
 import { Form, redirect, useNavigation } from "react-router";
-import { bounda } from "../bounda.server.ts";
 import { failure, field } from "../errors.server.ts";
 import type { Route } from "./+types/register";
 

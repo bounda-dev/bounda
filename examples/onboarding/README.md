@@ -22,18 +22,18 @@ DATABASE_URL=postgres://postgres:postgres@localhost:5432/onboarding pnpm dev
 
 ## How Bounda gets into the routes
 
-`app/bounda.server.ts` declares the integration once:
+`vite.config.ts` is the whole integration:
 
 ```ts
-export const { bounda, boundaMiddleware } = createBounda({ boot: () => boot({ registry }) });
+export default defineConfig({ plugins: [bounda(), reactRouter()] });
 ```
 
-`root.tsx` mounts `boundaMiddleware`, which boots the app on the first request and puts it in
-the router context. Loaders and actions read it with `context.get(bounda)`. Importing the
-registry by value keeps the running app in step with your code in development: editing a module
-under `app/domain` or `app/read` re-evaluates `bounda.server.ts`, which stops the old app, and the
-next request boots a fresh one from the new modules.
-
+The plugin runs `bounda generate` when the dev server or the build starts and after every change
+under `app/domain` and `app/read`, and serves `@bounda-dev/react-router/app`: the `bounda`
+context, the `boundaMiddleware` that `root.tsx` mounts, and `dispose`. Loaders and actions read
+the app with `context.get(bounda)`. The served module imports the generated registry by value, so
+editing a domain module re-evaluates it and the next request boots an app from the new code.
+`register.d.ts`, also generated, types `bounda` for this project.
 ## Reading what you just wrote
 
 Projections run in the background, so a redirect straight after a command could reach the page

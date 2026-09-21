@@ -165,21 +165,21 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
 
 ## Bounda with React Router
 
-`@bounda-dev/react-router` boots the app from a middleware and puts it in the router context.
-Bounda's `app/domain` and `app/read` live next to `app/routes`; the generator ignores the rest.
+`@bounda-dev/react-router` integrates through a Vite plugin. Bounda's `app/domain` and `app/read`
+live next to `app/routes`; the generator ignores the rest.
 
 ```ts
-// app/bounda.server.ts
-import { boot } from "@bounda-dev/core/node";
-import { createBounda } from "@bounda-dev/react-router";
-import { registry } from "../.bounda/registry.ts";
-
-export const { bounda, boundaMiddleware } = createBounda({ boot: () => boot({ registry }) });
+// vite.config.ts
+import { bounda } from "@bounda-dev/react-router/vite";
+import { reactRouter } from "@react-router/dev/vite";
+export default defineConfig({ plugins: [bounda(), reactRouter()] });
 
 // app/root.tsx
+import { boundaMiddleware } from "@bounda-dev/react-router/app";
 export const middleware: Route.MiddlewareFunction[] = [boundaMiddleware];
 
 // a route: actions dispatch, loaders query
+import { bounda } from "@bounda-dev/react-router/app";
 export const action = async ({ request, context }: Route.ActionArgs) => {
   await context.get(bounda).commands.registerUser(await payloadOf(request));
   return redirect("/users");
@@ -187,10 +187,13 @@ export const action = async ({ request, context }: Route.ActionArgs) => {
 export const loader = ({ context }: Route.LoaderArgs) => context.get(bounda).queries.listUsers({});
 ```
 
-- Import the registry by value in `bounda.server.ts`: in development a change under `app/domain`
-  or `app/read` re-evaluates the module and the app reboots from the new code.
-- The app in the context reads its own writes by default (`consistency: "immediate"`): a page
-  reached right after a command sees its read models. Never call `processUntilIdle()` in a route.
+- The plugin runs `bounda generate` on start and on every change under `app/domain` and
+  `app/read`; do not run `bounda generate --watch` alongside it. Keep `bounda generate` as a script
+  for CI, because `react-router typegen && tsc` needs the generated files first.
+- `@bounda-dev/react-router/app` is server-only: loaders, actions, middleware. Never in components.
+- The app in the context reads its own writes by default (`bounda({ consistency: "immediate" })`):
+  a page reached right after a command sees its read models. Never call `processUntilIdle()` in a
+  route.
 - Map `ValidationError` to a 400 with `error.issues` and `DomainError` to a 409 in one helper;
   let anything else reach the `ErrorBoundary`.
 - Typecheck with `react-router typegen && tsc`; `.react-router/types` holds the route types and

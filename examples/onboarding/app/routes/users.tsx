@@ -1,5 +1,6 @@
+import { bounda } from "@bounda-dev/react-router/app";
 import { Link } from "react-router";
-import { bounda } from "../bounda.server.ts";
+import { formatDate } from "../format.ts";
 import type { Route } from "./+types/users";
 
 export const loader = ({ request, context }: Route.LoaderArgs) => {
@@ -38,7 +39,7 @@ export default function Users({ loaderData }: Route.ComponentProps) {
                   {user.status}
                 </span>
               </td>
-              <td>{new Date(user.registeredAt).toLocaleString()}</td>
+              <td>{formatDate(user.registeredAt)}</td>
             </tr>
           ))}
         </tbody>
