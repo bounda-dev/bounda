@@ -29,7 +29,14 @@ const ADAPTER_PACKAGES = {
 } as const;
 
 const TEMPLATE_SUFFIX = ".tpl";
-const RENAMES: Readonly<Record<string, string>> = { _gitignore: ".gitignore" };
+/**
+ * Files that cannot travel under their real name: npm drops `.gitignore` from packages and the
+ * repository ignores `.env.*`.
+ */
+const RENAMES: Readonly<Record<string, string>> = {
+  _gitignore: ".gitignore",
+  "_env.example": ".env.example",
+};
 
 const listFiles = async (root: string): Promise<readonly string[]> => {
   const found: string[] = [];
@@ -46,11 +53,10 @@ const listFiles = async (root: string): Promise<readonly string[]> => {
 
 const targetNameOf = (source: string): string => {
   const base = source.split("/").pop() ?? source;
-  const renamed = RENAMES[base] ?? base;
-  const withoutSuffix = renamed.endsWith(TEMPLATE_SUFFIX)
-    ? renamed.slice(0, -TEMPLATE_SUFFIX.length)
-    : renamed;
-  return join(dirname(source), withoutSuffix);
+  const withoutSuffix = base.endsWith(TEMPLATE_SUFFIX)
+    ? base.slice(0, -TEMPLATE_SUFFIX.length)
+    : base;
+  return join(dirname(source), RENAMES[withoutSuffix] ?? withoutSuffix);
 };
 
 export interface RenderTemplateArgs {
