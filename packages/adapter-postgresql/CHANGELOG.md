@@ -1,5 +1,11 @@
 # @bounda-dev/adapter-postgresql
 
+## 0.1.0-alpha.2
+
+### Patch Changes
+
+- @bounda-dev/core@0.1.0-alpha.2
+
 ## 0.1.0-alpha.1
 
 ### Minor Changes
