@@ -1,5 +1,7 @@
 # create-bounda
 
+[![Mutation score](https://img.shields.io/endpoint?style=flat&url=https%3A%2F%2Fbadge-api.stryker-mutator.io%2Fgithub.com%2Fbounda-dev%2Fbounda%2Fmain%3Fmodule%3Dcreate-bounda)](https://dashboard.stryker-mutator.io/reports/github.com/bounda-dev/bounda/main?module=create-bounda)
+
 Scaffolds a [Bounda](https://docs.bounda.dev) project: one aggregate, one read model, a test and
 the generator wired up.
 

@@ -1,5 +1,7 @@
 # @bounda-dev/cli
 
+[![Mutation score](https://img.shields.io/endpoint?style=flat&url=https%3A%2F%2Fbadge-api.stryker-mutator.io%2Fgithub.com%2Fbounda-dev%2Fbounda%2Fmain%3Fmodule%3Dcli)](https://dashboard.stryker-mutator.io/reports/github.com/bounda-dev/bounda/main?module=cli)
+
 The `bounda` command line. It reads your project layout and writes the registry and every
 argument type, so a Bounda app has no file to keep in sync by hand.
 

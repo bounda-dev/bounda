@@ -1,5 +1,7 @@
 # @bounda-dev/adapter-postgresql
 
+[![Mutation score](https://img.shields.io/endpoint?style=flat&url=https%3A%2F%2Fbadge-api.stryker-mutator.io%2Fgithub.com%2Fbounda-dev%2Fbounda%2Fmain%3Fmodule%3Dadapter-postgresql)](https://dashboard.stryker-mutator.io/reports/github.com/bounda-dev/bounda/main?module=adapter-postgresql)
+
 PostgreSQL storage for [Bounda](https://docs.bounda.dev), for when one process is not enough.
 
 ```bash
