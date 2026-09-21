@@ -21,7 +21,7 @@ pnpm 12 (workspace catalog, `catalogMode: strict`), TypeScript 7, Biome (lint an
 | `pnpm changeset` | add a changeset (required when a published package changes) |
 | `pnpm docs:dev` / `pnpm docs:build` | Starlight site |
 | `pnpm --filter @bounda-dev/core test` | one package |
-| `pnpm --filter <package> test:mutation` | Stryker (`core`, `adapter-sqlite`, `adapter-postgresql`, `cli`, `create-bounda`); slow, CI runs it on `main` only. Build `core` first: the other packages test against its `dist` |
+| `pnpm --filter <package> test:mutation` | Stryker (`core`, `adapter-sqlite`, `adapter-postgresql`, `cli`, `react-router`, `create-bounda`); slow, CI runs it on `main` only. Build `core` first: the other packages test against its `dist` |
 | `UPDATE_GOLDEN=1 pnpm --filter @bounda-dev/cli exec vitest run src/generate` | regenerate the `order-app` and `order-app-inferred` fixtures under `packages/core/test-types/fixtures` after changing the generator's output |
 
 ## How to work
