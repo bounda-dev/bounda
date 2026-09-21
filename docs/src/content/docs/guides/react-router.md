@@ -126,6 +126,8 @@ from `@bounda-dev/core`.
   in the terminal and the last good registry keeps serving. `react-router build` fails on it.
 - `react-router typegen && tsc` still needs the generated files first, so keep
   `bounda generate` as a script for CI and fresh clones.
+- `.env` is read when the app boots and never overrides a variable that is already set, so a
+  change to it needs the dev server restarted.
 - A component that touches `@bounda-dev/react-router/app` gets a clear error: the client build
   receives a stub. Loaders, actions and middleware are where it belongs.
 - In production `react-router-serve` runs the app with `runtime.role: "all"` unless
@@ -141,7 +143,6 @@ from `@bounda-dev/core`.
 
 | Option | Default | What it does |
 |---|---|---|
-| `appDir` | `"app"` | The directory with `domain/` and `read/`, under the Vite root. |
 | `consistency` | `"immediate"` | `"immediate"` reads its own writes; `"eventual"` serves the app as booted. |
 | `debounceMs` | `100` | Quiet time after a change before regenerating. |
 
