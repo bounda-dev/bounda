@@ -6,15 +6,15 @@ sidebar:
 ---
 
 :::caution[Alpha]
-The packages are published under the `alpha` tag, so every install needs it:
-`npm create bounda@alpha`, `npm install @bounda-dev/core@alpha`. The API can change between
-alphas without a deprecation cycle, and each package carries its own changelog.
+Every published version is a prerelease, so a plain install gets one: `npm create bounda`,
+`npm install @bounda-dev/core`. The API can change between alphas without a deprecation
+cycle, and each package carries its own changelog.
 :::
 
 ## Create a project
 
 ```bash
-npm create bounda@alpha my-shop
+npm create bounda my-shop
 cd my-shop
 ```
 

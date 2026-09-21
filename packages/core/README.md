@@ -47,7 +47,8 @@ returns the running app, typed for your project. `createTestApp()` from
 
 ## Alpha
 
-Published under the `alpha` tag. The API can change between alphas without a deprecation cycle.
+Every published version is a prerelease. The API can change between alphas without a deprecation
+cycle.
 
 Docs: [docs.bounda.dev](https://docs.bounda.dev). Source and issues:
 [github.com/bounda-dev/bounda](https://github.com/bounda-dev/bounda).

@@ -29,7 +29,8 @@ generator inside Vite instead.
 
 ## Alpha
 
-Published under the `alpha` tag. The API can change between alphas without a deprecation cycle.
+Every published version is a prerelease. The API can change between alphas without a deprecation
+cycle.
 
 Docs: [docs.bounda.dev/reference/cli](https://docs.bounda.dev/reference/cli/). Source and issues:
 [github.com/bounda-dev/bounda](https://github.com/bounda-dev/bounda).

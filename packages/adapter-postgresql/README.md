@@ -25,7 +25,8 @@ without stepping on each other.
 
 ## Alpha
 
-Published under the `alpha` tag. The API can change between alphas without a deprecation cycle.
+Every published version is a prerelease. The API can change between alphas without a deprecation
+cycle.
 
 Docs: [docs.bounda.dev/adapters/postgresql](https://docs.bounda.dev/adapters/postgresql/). Source
 and issues: [github.com/bounda-dev/bounda](https://github.com/bounda-dev/bounda).
