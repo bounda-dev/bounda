@@ -6,14 +6,12 @@ import type { Route } from "./+types/register";
 export const action = async ({ request, context }: Route.ActionArgs) => {
   const form = await request.formData();
   const userId = crypto.randomUUID();
-  const app = context.get(bounda);
   try {
-    await app.commands.registerUser({
+    await context.get(bounda).commands.registerUser({
       userId,
       email: field(form, "email"),
       name: field(form, "name"),
     });
-    await app.processUntilIdle();
   } catch (error) {
     return failure(error);
   }

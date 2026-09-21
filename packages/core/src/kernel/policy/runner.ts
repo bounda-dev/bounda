@@ -139,6 +139,7 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
 
   return {
     name: POLICIES_SUBSCRIBER,
+    kind: "policy",
     process: async (events) => {
       let hold = false;
       for (const event of events) {

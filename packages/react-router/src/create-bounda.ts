@@ -1,4 +1,4 @@
-import type { BoundaApp, Registry } from "@bounda-dev/core";
+import { type BoundaApp, type Registry, readYourWrites } from "@bounda-dev/core";
 import { boot } from "@bounda-dev/core/node";
 import { createContext, type MiddlewareFunction, type RouterContext } from "react-router";
 
@@ -8,6 +8,13 @@ import { createContext, type MiddlewareFunction, type RouterContext } from "reac
 export interface BootBoundaFunction<R extends Registry> {
   (): Promise<BoundaApp<R>>;
 }
+
+/**
+ * What a loader sees right after an action dispatched a command. `immediate` (the default) brings
+ * the read models up to date before the command resolves, so the page a redirect lands on already
+ * reflects it. `eventual` leaves projections to the background and reads may lag behind.
+ */
+export type Consistency = "immediate" | "eventual";
 
 export interface CreateBoundaArgs<R extends Registry> {
   /**
@@ -22,6 +29,7 @@ export interface CreateBoundaArgs<R extends Registry> {
    * the reloaded modules. Defaults to `"bounda.app"`; one app per key.
    */
   readonly key?: string;
+  readonly consistency?: Consistency;
 }
 
 /**
@@ -84,9 +92,12 @@ const stop = async <R extends Registry>(slot: Slot<R>): Promise<void> => {
 const load = <R extends Registry>(
   slot: Slot<R>,
   bootApp: BootBoundaFunction<R>,
+  consistency: Consistency,
 ): Promise<BoundaApp<R>> => {
   if (slot.app !== undefined) return slot.app;
-  const starting = bootApp().then(started);
+  const starting = bootApp()
+    .then(started)
+    .then((app) => (consistency === "immediate" ? readYourWrites(app) : app));
   slot.app = starting;
   starting.catch(() => {
     if (slot.app === starting) slot.app = undefined;
@@ -96,8 +107,10 @@ const load = <R extends Registry>(
 
 /**
  * Wires Bounda into a React Router app: a context for the running app and the middleware that
- * boots it once and provides it to every loader and action. Declare it once in a server module
- * with the registry's type, and mount the middleware in `root.tsx`. In development the server
+ * boots it once and provides it to every loader and action. By default the app in the context
+ * reads its own writes: a command resolves once the read models reflect it, so the page a redirect
+ * lands on is fresh. Declare it once in a server module and mount the middleware in `root.tsx`.
+ * In development the server
  * module is re-evaluated when the code changes; the app booted before is stopped and the next
  * request boots one from the new modules.
  *
@@ -115,13 +128,14 @@ const load = <R extends Registry>(
 export const createBounda: CreateBoundaFunction = <R extends Registry>({
   boot: bootApp = () => boot<R>(),
   key = DEFAULT_KEY,
+  consistency = "immediate",
 }: CreateBoundaArgs<R> = {}): Bounda<R> => {
   const bounda = createContext<BoundaApp<R>>();
   const slot = slotFor<R>(key);
   void stop(slot);
 
   const boundaMiddleware: BoundaMiddleware = async ({ context }, next) => {
-    context.set(bounda, await load(slot, bootApp));
+    context.set(bounda, await load(slot, bootApp, consistency));
     return next();
   };
 

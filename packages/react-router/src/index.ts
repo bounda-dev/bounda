@@ -2,6 +2,7 @@ export type {
   BootBoundaFunction,
   Bounda,
   BoundaMiddleware,
+  Consistency,
   CreateBoundaArgs,
   CreateBoundaFunction,
   DisposeBoundaFunction,

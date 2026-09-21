@@ -5,10 +5,8 @@ import type { Route } from "./+types/activate";
 
 export const action = async ({ request, context }: Route.ActionArgs) => {
   const userId = field(await request.formData(), "userId");
-  const app = context.get(bounda);
   try {
-    await app.commands.activateUser({ userId });
-    await app.processUntilIdle();
+    await context.get(bounda).commands.activateUser({ userId });
   } catch (error) {
     return failure(error);
   }

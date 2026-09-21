@@ -22,10 +22,14 @@ const appendMany = async (
   });
 };
 
-const recorder = (name: string): Subscriber & { readonly seen: number[][] } => {
+const recorder = (
+  name: string,
+  kind: Subscriber["kind"] = "projection",
+): Subscriber & { readonly seen: number[][] } => {
   const seen: number[][] = [];
   return {
     name,
+    kind,
     seen,
     process: async (events) => {
       seen.push(events.map((event) => event.position));
@@ -68,12 +72,39 @@ describe("createDispatcher", () => {
     });
   });
 
+  it("catches up the subscribers of one kind and leaves the others where they were", async () => {
+    const { eventStore, checkpointStore } = await storage();
+    await appendMany(eventStore, 3);
+    const projection = recorder("projection:orders");
+    const policies = recorder("policies", "policy");
+    const dispatcher = createDispatcher({
+      eventStore,
+      checkpointStore,
+      subscribers: [projection, policies],
+      batchSize: 2,
+      pollIntervalMs: 1_000,
+      logger: silentLogger,
+    });
+
+    await dispatcher.catchUp("projection");
+    expect(projection.seen).toEqual([[1, 2], [3]]);
+    expect(policies.seen).toEqual([]);
+    expect(await checkpointStore.get("projection:orders")).toBe(3);
+    expect(await checkpointStore.get("policies")).toBe(0);
+
+    await dispatcher.catchUp("process");
+    expect(policies.seen).toEqual([]);
+    expect(await dispatcher.processOnce()).toBe(true);
+    expect(policies.seen).toEqual([[1, 2]]);
+  });
+
   it("holds the checkpoint when a subscriber throws or declines, and redelivers", async () => {
     const { eventStore, checkpointStore } = await storage();
     await appendMany(eventStore, 2);
     let failures = 2;
     const flaky: Subscriber = {
       name: "flaky",
+      kind: "projection",
       process: async () => {
         if (failures > 0) {
           failures -= 1;
@@ -120,6 +151,7 @@ describe("createDispatcher", () => {
     let overlap = false;
     const slow: Subscriber = {
       name: "slow",
+      kind: "projection",
       process: async () => {
         inside += 1;
         overlap = overlap || inside > 1;
@@ -157,6 +189,7 @@ describe("createDispatcher", () => {
       subscribers: [
         {
           name: "bg",
+          kind: "projection",
           process: async (events) => {
             seen.push(...events);
             return true;
@@ -205,6 +238,7 @@ describe("createDispatcher", () => {
       let passes = 0;
       const gated: Subscriber = {
         name: "gated",
+        kind: "projection",
         process: async () => {
           passes += 1;
           if (passes === 2)

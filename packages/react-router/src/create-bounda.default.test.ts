@@ -5,6 +5,7 @@ import { createBounda } from "./create-bounda.ts";
 
 const started: string[] = [];
 const app = {
+  commands: {},
   start: () => {
     started.push("start");
   },
@@ -28,7 +29,7 @@ describe("createBounda without arguments", () => {
     );
 
     expect(boot).toHaveBeenCalledTimes(1);
-    expect(context.get(bounda)).toBe(app);
+    expect(context.get(bounda).start).toBe(app.start);
     expect(Symbol.for("bounda.app") in globalThis).toBe(true);
     await dispose();
     expect(started).toEqual(["start", "stop"]);

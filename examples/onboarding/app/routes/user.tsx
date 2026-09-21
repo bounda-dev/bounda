@@ -10,10 +10,8 @@ export const loader = async ({ params, context }: Route.LoaderArgs) => {
 };
 
 export const action = async ({ params, context }: Route.ActionArgs) => {
-  const app = context.get(bounda);
   try {
-    await app.commands.activateUser({ userId: params.userId });
-    await app.processUntilIdle();
+    await context.get(bounda).commands.activateUser({ userId: params.userId });
   } catch (error) {
     return failure(error);
   }

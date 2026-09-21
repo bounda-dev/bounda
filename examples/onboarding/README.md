@@ -36,7 +36,8 @@ next request boots a fresh one from the new modules.
 
 ## Reading what you just wrote
 
-Projections run in the background, so a redirect straight after a command can reach the page
-before the read model has the row. The actions call `processUntilIdle()` after dispatching: it
-runs every pending projection, policy and process, and the page that follows sees the result.
-Under load, prefer showing the command's outcome directly and letting the read model catch up.
+Projections run in the background, so a redirect straight after a command could reach the page
+before the read model has the row. The app the middleware puts in the context reads its own
+writes: a command resolves once the read models reflect it, and the page that follows sees the
+result. Policies, processes and scheduled commands still run in the background. Pass
+`consistency: "eventual"` to `createBounda` to leave projections to the background as well.

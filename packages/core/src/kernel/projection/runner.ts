@@ -33,6 +33,7 @@ export const createProjectionSubscriber: CreateProjectionSubscriberFunction = ({
   logger,
 }) => ({
   name: projectionSubscriberName(readModel.name),
+  kind: "projection",
   process: async (events) => {
     for (const event of events) {
       for (const projection of readModel.projectionsByEvent[event.type] ?? []) {

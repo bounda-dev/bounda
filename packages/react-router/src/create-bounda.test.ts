@@ -12,6 +12,15 @@ const fakeApp = (name: string): FakeApp => {
   const calls: string[] = [];
   const app = {
     name,
+    commands: {
+      placeOrder: async () => {
+        calls.push("placeOrder");
+        return { scheduled: false, aggregateId: "o-1", version: 1, eventIds: [] };
+      },
+    },
+    catchUpReadModels: async () => {
+      calls.push("catchUp");
+    },
     start: () => {
       calls.push("start");
     },
@@ -21,6 +30,10 @@ const fakeApp = (name: string): FakeApp => {
   } as unknown as BoundaApp;
   return { app, calls };
 };
+
+interface OrderCommands {
+  readonly placeOrder: () => Promise<unknown>;
+}
 
 let keys = 0;
 const uniqueKey = (): string => `bounda.test.${process.pid}.${++keys}`;
@@ -33,10 +46,43 @@ const middlewareArgs = () => {
 };
 
 describe("createBounda", () => {
+  it("serves an app that reads its own writes by default", async () => {
+    const fake = fakeApp("one");
+    const { bounda, boundaMiddleware } = createBounda({
+      key: uniqueKey(),
+      boot: async () => fake.app,
+    });
+    const { context, args } = middlewareArgs();
+    await boundaMiddleware(args, async () => undefined);
+
+    const served = context.get(bounda);
+    expect(served).not.toBe(fake.app);
+    await (served.commands as unknown as OrderCommands).placeOrder();
+    expect(fake.calls).toEqual(["start", "placeOrder", "catchUp"]);
+    await served.stop();
+    expect(fake.calls).toEqual(["start", "placeOrder", "catchUp", "stop"]);
+  });
+
+  it("serves the app as booted with eventual consistency", async () => {
+    const fake = fakeApp("one");
+    const { bounda, boundaMiddleware } = createBounda({
+      key: uniqueKey(),
+      consistency: "eventual",
+      boot: async () => fake.app,
+    });
+    const { context, args } = middlewareArgs();
+    await boundaMiddleware(args, async () => undefined);
+
+    expect(context.get(bounda)).toBe(fake.app);
+    await (context.get(bounda).commands as unknown as OrderCommands).placeOrder();
+    expect(fake.calls).toEqual(["start", "placeOrder"]);
+  });
+
   it("boots once, starts the app and provides it to every request", async () => {
     const fake = fakeApp("one");
     let boots = 0;
     const { bounda, boundaMiddleware } = createBounda({
+      consistency: "eventual",
       key: uniqueKey(),
       boot: async () => {
         boots += 1;
@@ -61,6 +107,7 @@ describe("createBounda", () => {
 
   it("returns what next returns, awaiting it", async () => {
     const { boundaMiddleware } = createBounda({
+      consistency: "eventual",
       key: uniqueKey(),
       boot: async () => fakeApp("one").app,
     });
@@ -74,6 +121,7 @@ describe("createBounda", () => {
     const fake = fakeApp("one");
     let release: () => void = () => undefined;
     const { bounda, boundaMiddleware } = createBounda({
+      consistency: "eventual",
       key: uniqueKey(),
       boot: () =>
         new Promise<BoundaApp>((resolve) => {
@@ -93,6 +141,7 @@ describe("createBounda", () => {
     const fake = fakeApp("one");
     let attempts = 0;
     const { bounda, boundaMiddleware } = createBounda({
+      consistency: "eventual",
       key: uniqueKey(),
       boot: async () => {
         attempts += 1;
@@ -115,10 +164,10 @@ describe("createBounda", () => {
     const key = uniqueKey();
     const first = fakeApp("first");
     const second = fakeApp("second");
-    const before = createBounda({ key, boot: async () => first.app });
+    const before = createBounda({ consistency: "eventual", key, boot: async () => first.app });
     await before.boundaMiddleware(middlewareArgs().args, async () => undefined);
 
-    const after = createBounda({ key, boot: async () => second.app });
+    const after = createBounda({ consistency: "eventual", key, boot: async () => second.app });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(first.calls).toEqual(["start", "stop"]);
 
@@ -133,6 +182,7 @@ describe("createBounda", () => {
     const first = fakeApp("first");
     let release: () => void = () => undefined;
     const before = createBounda({
+      consistency: "eventual",
       key,
       boot: () =>
         new Promise<BoundaApp>((resolve) => {
@@ -141,7 +191,7 @@ describe("createBounda", () => {
     });
     const pending = before.boundaMiddleware(middlewareArgs().args, async () => undefined);
 
-    createBounda({ key, boot: async () => fakeApp("second").app });
+    createBounda({ consistency: "eventual", key, boot: async () => fakeApp("second").app });
     release();
     await pending;
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -151,8 +201,16 @@ describe("createBounda", () => {
   it("keeps apps under different keys apart", async () => {
     const one = fakeApp("one");
     const two = fakeApp("two");
-    const first = createBounda({ key: uniqueKey(), boot: async () => one.app });
-    const second = createBounda({ key: uniqueKey(), boot: async () => two.app });
+    const first = createBounda({
+      consistency: "eventual",
+      key: uniqueKey(),
+      boot: async () => one.app,
+    });
+    const second = createBounda({
+      consistency: "eventual",
+      key: uniqueKey(),
+      boot: async () => two.app,
+    });
 
     const a = middlewareArgs();
     const b = middlewareArgs();
@@ -168,6 +226,7 @@ describe("createBounda", () => {
     const second = fakeApp("second");
     const apps = [first, second];
     const { bounda, boundaMiddleware, dispose } = createBounda({
+      consistency: "eventual",
       key: uniqueKey(),
       boot: async () => {
         const next = apps.shift();
@@ -190,6 +249,7 @@ describe("createBounda", () => {
     const fake = fakeApp("one");
     let release: () => void = () => undefined;
     const { boundaMiddleware, dispose } = createBounda({
+      consistency: "eventual",
       key: uniqueKey(),
       boot: () =>
         new Promise<BoundaApp>((resolve) => {
@@ -209,6 +269,7 @@ describe("createBounda", () => {
     let failFirst: (error: Error) => void = () => undefined;
     let boots = 0;
     const { bounda, boundaMiddleware, dispose } = createBounda({
+      consistency: "eventual",
       key: uniqueKey(),
       boot: () => {
         boots += 1;
@@ -235,11 +296,16 @@ describe("createBounda", () => {
   });
 
   it("disposes quietly when nothing booted or the boot failed", async () => {
-    const idle = createBounda({ key: uniqueKey(), boot: async () => fakeApp("idle").app });
+    const idle = createBounda({
+      consistency: "eventual",
+      key: uniqueKey(),
+      boot: async () => fakeApp("idle").app,
+    });
     await expect(idle.dispose()).resolves.toBeUndefined();
 
     let release: (error: Error) => void = () => undefined;
     const failing = createBounda({
+      consistency: "eventual",
       key: uniqueKey(),
       boot: () =>
         new Promise<BoundaApp>((_, reject) => {
