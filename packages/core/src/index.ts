@@ -11,3 +11,4 @@ export { readYourWrites } from "./kernel/read-your-writes.ts";
 export type { CommandFailedPayload } from "./kernel/system-events.ts";
 export { COMMAND_FAILED_EVENT } from "./kernel/system-events.ts";
 export * from "./modules/index.ts";
+export type { AppRegistry, Register } from "./register/index.ts";

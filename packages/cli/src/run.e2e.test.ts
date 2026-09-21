@@ -25,9 +25,12 @@ const project = async (): Promise<string> => {
         isolatedDeclarations: false,
         declaration: false,
         types: [],
-        paths: { "@bounda-dev/core": [join(repoRoot, "packages/core/src/index.ts")] },
+        paths: {
+          "@bounda-dev/core": [join(repoRoot, "packages/core/src/index.ts")],
+          "@bounda-dev/core/register": [join(repoRoot, "packages/core/src/register/index.ts")],
+        },
       },
-      include: ["."],
+      include: [".", ".bounda/**/*"],
     }),
   );
   return root;
@@ -45,7 +48,7 @@ describe("bounda binary end to end", () => {
       cwd: root,
       env: { ...process.env, NODE_NO_WARNINGS: "1" },
     });
-    expect(stdout).toContain("7 files (7 written");
+    expect(stdout).toContain("8 files (8 written");
     await run(
       join(repoRoot, "node_modules/.bin/tsc"),
       ["--noEmit", "-p", join(root, "tsconfig.json")],

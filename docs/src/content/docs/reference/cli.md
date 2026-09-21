@@ -16,7 +16,7 @@ aggregates without `state.ts`.
 
 ## `bounda generate`
 
-Reads the project layout and writes `.bounda/registry.ts`, `.bounda/types.ts` and one
+Reads the project layout and writes `.bounda/registry.ts`, `.bounda/register.d.ts`, `.bounda/types.ts` and one
 `+types/<name>.ts` next to every module. Files whose content did not change are left alone;
 `+types` files whose module is gone are removed.
 
@@ -39,7 +39,7 @@ Output lists every file written or removed, then a summary:
 ```
   written  .bounda/registry.ts
   written  app/domain/order/+types/order-placed.ts
-1 aggregate, 1 read model, 9 files (2 written, 7 unchanged, 0 removed)
+1 aggregate, 1 read model, 10 files (2 written, 8 unchanged, 0 removed)
 ```
 
 Warnings from state inference go to stderr and do not change the exit code:

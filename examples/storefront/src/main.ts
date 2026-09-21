@@ -1,10 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { boot } from "@bounda-dev/core/node";
-import type { registry } from "../.bounda/registry.ts";
 
 await mkdir("./data", { recursive: true });
-const app = await boot<typeof registry>({ signals: false });
+const app = await boot({ signals: false });
 
 const fulfilled = randomUUID();
 const abandoned = randomUUID();

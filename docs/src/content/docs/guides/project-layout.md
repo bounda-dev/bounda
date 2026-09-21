@@ -230,10 +230,13 @@ always present in the handler: callers see the schema's input type, handlers its
 | Path | Holds |
 | --- | --- |
 | `.bounda/registry.ts` | Every module, grouped as the runtime needs it. `boot()` imports it |
+| `.bounda/register.d.ts` | Registers the registry type with `@bounda-dev/core/register`, so `boot()` and `BoundaApp` are typed for the project without a type argument |
 | `.bounda/types.ts` | The state, events, commands, rows and queries maps the `+types` build on |
 | `**/+types/<name>.ts` | The argument types each module imports |
 
-They are derived from your code, so they are not versioned. Add to `.gitignore`:
+They are derived from your code, so they are not versioned. `tsconfig.json` must include them as
+`.bounda/**/*` (TypeScript skips a bare `.bounda` entry because the directory starts with a dot);
+`create-bounda` sets this up. Add to `.gitignore`:
 
 ```
 .bounda/

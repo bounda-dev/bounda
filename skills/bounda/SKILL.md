@@ -204,5 +204,8 @@ export const loader = ({ context }: Route.LoaderArgs) => context.get(bounda).que
   in-memory adapter with a fixed clock (`clock.advance(ms)`) and sequential ids; call
   `await app.processUntilIdle()` after dispatching to run policies, processes and projections.
   `import { registry } from "../.bounda/registry.ts"`.
+- `boot()` from `@bounda-dev/core/node` is typed for the project without a type argument:
+  `.bounda/register.d.ts` registers the registry type with `@bounda-dev/core/register`. Never write
+  `boot<typeof registry>()`.
 - Storage: `sqlite({ path })`, `sqlite({ memory: true })` or `postgresql({ url })` in
   `bounda.config.ts`; read models can point at a different adapter with `readModels`.

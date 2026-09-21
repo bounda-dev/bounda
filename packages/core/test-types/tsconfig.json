@@ -11,8 +11,9 @@
       "@bounda-dev/core/adapter/sql": ["../src/adapter/sql/index.ts"],
       "@bounda-dev/core/memory": ["../src/memory/index.ts"],
       "@bounda-dev/core/node": ["../src/node/index.ts"],
-      "@bounda-dev/core/testing": ["../src/testing/index.ts"]
+      "@bounda-dev/core/testing": ["../src/testing/index.ts"],
+      "@bounda-dev/core/register": ["../src/register/index.ts"]
     }
   },
-  "include": ["."]
+  "include": [".", "fixtures/order-app/.bounda/**/*"]
 }
