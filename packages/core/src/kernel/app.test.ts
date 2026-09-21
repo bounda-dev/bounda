@@ -225,7 +225,8 @@ describe("createApp", () => {
   it("reads its own writes through readYourWrites, leaving the rest to the background", async () => {
     const { app } = await start("web");
     const catchUps = vi.fn(app.catchUpReadModels);
-    const fresh = readYourWrites({ ...app, catchUpReadModels: catchUps });
+    const spied: typeof app = { ...app, catchUpReadModels: catchUps };
+    const fresh = readYourWrites(spied);
     const placed = await fresh.commands.placeOrder({ orderId: "o-1", total: 10 });
     expect(placed).toMatchObject({ scheduled: false, version: 1 });
     await fresh.commands.payOrder({ orderId: "o-1", method: "card" });
