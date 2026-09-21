@@ -1,3 +1,4 @@
+import { boundaMiddleware } from "@bounda-dev/react-router/app";
 import type { ReactNode } from "react";
 import {
   isRouteErrorResponse,
@@ -9,7 +10,6 @@ import {
   ScrollRestoration,
 } from "react-router";
 import type { Route } from "./+types/root";
-import { boundaMiddleware } from "./bounda.server.ts";
 import "./app.css";
 
 export const middleware: Route.MiddlewareFunction[] = [boundaMiddleware];

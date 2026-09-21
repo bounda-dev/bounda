@@ -1,3 +1,5 @@
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import type { Adapter, CreateReadModelArgs } from "@bounda-dev/core/adapter";
 import { type Client, createClient } from "@libsql/client";
 import { createSqliteCheckpointStore } from "./checkpoint-store.ts";
@@ -27,7 +29,8 @@ interface Connection {
 }
 
 /**
- * SQLite storage through libSQL: a local file (`{ path }`), memory (`{ memory: true }`) or a
+ * SQLite storage through libSQL: a local file (`{ path }`, its directory is created), memory
+ * (`{ memory: true }`) or a
  * libSQL server such as Turso (`{ url, authToken }`). Storage and read models opened from the
  * same adapter share one connection, closed when the last of them closes.
  */
@@ -37,6 +40,7 @@ export const sqlite: SqliteFunction = (options) => {
 
   const open = (): Connection => {
     if (connection === null) {
+      if ("path" in options) mkdirSync(dirname(options.path), { recursive: true });
       const client = createClient({ url, ...(authToken === undefined ? {} : { authToken }) });
       connection = { client, db: createSqliteDatabase(client), uses: 0 };
     }

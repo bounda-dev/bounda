@@ -31,8 +31,9 @@ pnpm dev
 
 ## Things worth copying
 
-**The integration in two lines.** `app/bounda.server.ts` declares the context and the middleware;
-`root.tsx` mounts it. Nothing else in the app knows how Bounda boots.
+**The integration in one line.** `vite.config.ts` adds `bounda()` before `reactRouter()`; the
+plugin generates the types and serves `@bounda-dev/react-router/app`, which `root.tsx` and the
+routes import. Nothing in the app knows how Bounda boots.
 
 **Storage from the environment.** `bounda.config.ts` picks the adapter:
 

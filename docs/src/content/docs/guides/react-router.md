@@ -13,32 +13,32 @@ loaders and actions read it with `context.get(bounda)`.
 npm install @bounda-dev/react-router
 ```
 
-## Declare it once
-
-Bounda's modules live in the same `app/` directory as your routes: `app/domain` and `app/read`
-next to `app/routes`, `app/root.tsx` and `app/routes.ts`. `bounda generate` only looks at those
-two directories and ignores the rest.
+## One line in `vite.config.ts`
 
 ```ts
-// app/bounda.server.ts
-import { boot } from "@bounda-dev/core/node";
-import { createBounda } from "@bounda-dev/react-router";
-import { registry } from "../.bounda/registry.ts";
+import { bounda } from "@bounda-dev/react-router/vite";
+import { reactRouter } from "@react-router/dev/vite";
+import { defineConfig } from "vite";
 
-export const { bounda, boundaMiddleware } = createBounda({ boot: () => boot({ registry }) });
+export default defineConfig({ plugins: [bounda(), reactRouter()] });
 ```
 
-`boot()` loads `.env`, imports `bounda.config.ts` and creates the app. Passing the registry
-imported by value, instead of letting `boot()` import it, matters in development: editing a module
-under `app/domain` or `app/read` re-evaluates `bounda.server.ts`, and `createBounda` stops the
-app booted before so that the next request boots one from the new modules.
+The plugin does two things. It runs `bounda generate` when the dev server or the build starts and
+after every change under `app/domain` and `app/read`, so there is no generator to keep running on
+the side. And it serves `@bounda-dev/react-router/app`: the `bounda` context, the
+`boundaMiddleware` and a `dispose()`, wired to the generated registry and typed for your project
+through `.bounda/register.d.ts`.
+
+Bounda's modules live in the same `app/` directory as your routes: `app/domain` and `app/read`
+next to `app/routes`, `app/root.tsx` and `app/routes.ts`. The generator only looks at those two
+directories and ignores the rest.
 
 Mount the middleware in the root route:
 
 ```tsx
 // app/root.tsx
+import { boundaMiddleware } from "@bounda-dev/react-router/app";
 import type { Route } from "./+types/root";
-import { boundaMiddleware } from "./bounda.server.ts";
 
 export const middleware: Route.MiddlewareFunction[] = [boundaMiddleware];
 ```
@@ -47,9 +47,9 @@ export const middleware: Route.MiddlewareFunction[] = [boundaMiddleware];
 
 ```tsx
 // app/routes/register.tsx
+import { bounda } from "@bounda-dev/react-router/app";
 import { redirect } from "react-router";
 import type { Route } from "./+types/register";
-import { bounda } from "../bounda.server.ts";
 
 export const action = async ({ request, context }: Route.ActionArgs) => {
   const form = await request.formData();
@@ -65,9 +65,9 @@ export const action = async ({ request, context }: Route.ActionArgs) => {
 
 ```tsx
 // app/routes/user.tsx
+import { bounda } from "@bounda-dev/react-router/app";
 import { data } from "react-router";
 import type { Route } from "./+types/user";
-import { bounda } from "../bounda.server.ts";
 
 export const loader = async ({ params, context }: Route.LoaderArgs) => {
   const user = await context.get(bounda).queries.getUserDetails({ userId: params.userId });
@@ -110,7 +110,7 @@ lands on a page that already shows them. Policies, processes and scheduled comma
 the background.
 
 ```ts
-createBounda({ boot: () => boot({ registry }), consistency: "eventual" });
+bounda({ consistency: "eventual" });
 ```
 
 `consistency: "eventual"` serves the app exactly as booted, and reads may lag behind writes. Use
@@ -120,8 +120,14 @@ from `@bounda-dev/core`.
 
 ## Development and production
 
-- `react-router dev` boots the app on the first request and reboots it when your modules change.
-  Nothing to restart.
+- `react-router dev` boots the app on the first request. A change under `app/domain` or
+  `app/read` regenerates the types, and the next request boots an app from the new modules.
+  Nothing to restart, no second generator process; a layout that breaks a convention is reported
+  in the terminal and the last good registry keeps serving. `react-router build` fails on it.
+- `react-router typegen && tsc` still needs the generated files first, so keep
+  `bounda generate` as a script for CI and fresh clones.
+- A component that touches `@bounda-dev/react-router/app` gets a clear error: the client build
+  receives a stub. Loaders, actions and middleware are where it belongs.
 - In production `react-router-serve` runs the app with `runtime.role: "all"` unless
   `bounda.config.ts` says otherwise: the web process also runs the dispatcher and the scheduler.
   To split them, set `runtime: { role: "web" }` in the web deployment and run a second process with
@@ -131,13 +137,34 @@ from `@bounda-dev/core`.
 
 ## Options
 
+`bounda()` takes:
+
 | Option | Default | What it does |
 |---|---|---|
-| `boot` | `() => boot()` | How to create the app. Return `boot({ registry, ... })` to pass options or a registry. |
+| `appDir` | `"app"` | The directory with `domain/` and `read/`, under the Vite root. |
 | `consistency` | `"immediate"` | `"immediate"` reads its own writes; `"eventual"` serves the app as booted. |
-| `key` | `"bounda.app"` | Where the running app is kept on `globalThis`. One app per key. |
+| `debounceMs` | `100` | Quiet time after a change before regenerating. |
 
-`createBounda` also returns `dispose()`, which stops the running app and forgets it; the next
-request boots again.
+## Without the plugin
+
+`createBounda()` from `@bounda-dev/react-router` is what the served module calls, and you can call
+it yourself in a server module when the plugin does not fit:
+
+```ts
+// app/bounda.server.ts
+import { boot } from "@bounda-dev/core/node";
+import { createBounda } from "@bounda-dev/react-router";
+import { registry } from "../.bounda/registry.ts";
+
+export const { bounda, boundaMiddleware, dispose } = createBounda({
+  boot: () => boot({ registry }),
+});
+```
+
+Import the registry by value, as above, so that a change in your modules re-evaluates this file
+in development; `createBounda` then stops the app booted before and the next request boots a new
+one. Its options are `boot` (how to create the app, `boot()` by default), `consistency` and `key`
+(where the running app is kept on `globalThis`, one app per key). `dispose()` stops the running
+app and forgets it.
 
 The [onboarding example](/guides/onboarding-example/) is a complete app built this way.

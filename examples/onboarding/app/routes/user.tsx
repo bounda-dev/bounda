@@ -1,6 +1,7 @@
+import { bounda } from "@bounda-dev/react-router/app";
 import { data, Form, useNavigation } from "react-router";
-import { bounda } from "../bounda.server.ts";
 import { failure } from "../errors.server.ts";
+import { formatDate } from "../format.ts";
 import type { Route } from "./+types/user";
 
 export const loader = async ({ params, context }: Route.LoaderArgs) => {
@@ -17,8 +18,6 @@ export const action = async ({ params, context }: Route.ActionArgs) => {
   }
   return null;
 };
-
-const when = (date: Date | undefined) => (date ? new Date(date).toLocaleString() : "—");
 
 export default function User({ loaderData: user, actionData }: Route.ComponentProps) {
   const navigation = useNavigation();
@@ -39,13 +38,13 @@ export default function User({ loaderData: user, actionData }: Route.ComponentPr
           </span>
         </dd>
         <dt>Registered</dt>
-        <dd>{when(user.registeredAt)}</dd>
+        <dd>{formatDate(user.registeredAt)}</dd>
         <dt>Welcome email</dt>
-        <dd>{when(user.welcomeEmailSentAt)}</dd>
+        <dd>{formatDate(user.welcomeEmailSentAt)}</dd>
         <dt>Activated</dt>
-        <dd>{when(user.activatedAt)}</dd>
+        <dd>{formatDate(user.activatedAt)}</dd>
         <dt>Expired</dt>
-        <dd>{when(user.expiredAt)}</dd>
+        <dd>{formatDate(user.expiredAt)}</dd>
       </dl>
       {user.status === "registered" && (
         <Form method="post">
