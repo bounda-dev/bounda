@@ -148,6 +148,11 @@ export const handler = async ({ event, commands }: Policy.HandlerArgs) => {
 };
 ```
 
+Policies dispatch through `commands`, the typed facade of every command in the app. A command can
+be delayed: `commands.sendReminder({ orderId }, { delay: "24h" })`. The compiler checks a literal
+duration; for one that comes from the environment, `asDuration` from `@bounda-dev/core` checks it
+at the call site and returns it typed.
+
 ### Processes: `processes/<name>/`
 
 A process follows an aggregate instance over time. `index.ts` says which events start and complete
