@@ -31,6 +31,7 @@ pnpm 12 (workspace catalog, `catalogMode: strict`), TypeScript 7, Biome (lint an
 - Prefer the smallest change that solves the problem. Scope discipline beats "fix everything you see"; note unrelated findings instead of fixing them inline.
 - Use Context7 for library and API documentation before guessing.
 - Think about what else a change touches: docs pages, the public skill in `skills/bounda`, `create-bounda` templates, examples.
+- Two examples: `examples/storefront` (plain Node, SQLite) and `examples/onboarding` (React Router 8, PostgreSQL or SQLite). Request-level concerns such as read-your-writes belong to the host package (`@bounda-dev/react-router`), never to `core` as a default; `core` only offers the primitives (`catchUpReadModels`, `readYourWrites`).
 
 ## Code style
 

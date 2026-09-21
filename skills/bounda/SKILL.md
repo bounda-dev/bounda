@@ -157,6 +157,44 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
 - Queries compose: a handler receives `queries` and may call other queries.
 - Delayed commands: `commands.remindCustomer(payload, { delay: "24h" })`. A duration from the
   environment is a `string`; wrap it: `{ delay: asDuration(process.env.DELAY ?? "24h") }`.
+- Payload fields with `.default()` are optional for callers (`commands.x()`, `queries.x()` take
+  the schema's input type) and always present in handlers (output type).
+- A command resolves when its events are stored; read models catch up in the background.
+  `app.catchUpReadModels()` runs the projections now; `readYourWrites(app)` returns an app whose
+  commands do that before resolving. Hosts such as the React Router package apply it for you.
+
+## Bounda with React Router
+
+`@bounda-dev/react-router` boots the app from a middleware and puts it in the router context.
+Bounda's `app/domain` and `app/read` live next to `app/routes`; the generator ignores the rest.
+
+```ts
+// app/bounda.server.ts
+import { boot } from "@bounda-dev/core/node";
+import { createBounda } from "@bounda-dev/react-router";
+import { registry } from "../.bounda/registry.ts";
+
+export const { bounda, boundaMiddleware } = createBounda({ boot: () => boot({ registry }) });
+
+// app/root.tsx
+export const middleware: Route.MiddlewareFunction[] = [boundaMiddleware];
+
+// a route: actions dispatch, loaders query
+export const action = async ({ request, context }: Route.ActionArgs) => {
+  await context.get(bounda).commands.registerUser(await payloadOf(request));
+  return redirect("/users");
+};
+export const loader = ({ context }: Route.LoaderArgs) => context.get(bounda).queries.listUsers({});
+```
+
+- Import the registry by value in `bounda.server.ts`: in development a change under `app/domain`
+  or `app/read` re-evaluates the module and the app reboots from the new code.
+- The app in the context reads its own writes by default (`consistency: "immediate"`): a page
+  reached right after a command sees its read models. Never call `processUntilIdle()` in a route.
+- Map `ValidationError` to a 400 with `error.issues` and `DomainError` to a 409 in one helper;
+  let anything else reach the `ErrorBoundary`.
+- Typecheck with `react-router typegen && tsc`; `.react-router/types` holds the route types and
+  Bounda's `+types` sit next to the modules. They do not clash.
 
 ## Working in a Bounda repo
 

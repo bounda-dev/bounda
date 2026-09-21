@@ -78,3 +78,6 @@ export const repository: Query.RepositoryFunction = ({ customerId, client }) =>
     [customerId],
   );
 ```
+
+Placeholders are the driver's: `?` on SQLite, `$1`, `$2` on PostgreSQL. A query written in SQL
+is tied to one of them; `table` (`findMany`, `count`, ...) works on both.
