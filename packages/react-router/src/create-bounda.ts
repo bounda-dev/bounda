@@ -16,9 +16,10 @@ export interface CreateBoundaArgs<R extends Registry> {
    */
   readonly boot?: BootBoundaFunction<R>;
   /**
-   * The key under which the running app is kept on `globalThis`. A reload of the module that
-   * called `createBounda` in development finds the app there instead of booting a second one.
-   * Defaults to `"bounda.app"`; one app per key.
+   * The key under which the running app is kept on `globalThis`, so that it survives a reload of
+   * the module that called `createBounda` in development. Calling `createBounda` again with the
+   * same key stops the app booted by the previous call; the next request boots a fresh one from
+   * the reloaded modules. Defaults to `"bounda.app"`; one app per key.
    */
   readonly key?: string;
 }
@@ -32,8 +33,7 @@ export interface BoundaMiddleware {
 }
 
 /**
- * Stops the running app, if any, and forgets it, so that the next request boots again. Pass it to
- * `import.meta.hot?.dispose` in the module that calls `createBounda`.
+ * Stops the running app, if any, and forgets it, so that the next request boots again.
  */
 export interface DisposeBoundaFunction {
   (): Promise<void>;
@@ -73,6 +73,14 @@ const started = <R extends Registry>(app: BoundaApp<R>): BoundaApp<R> => {
   return app;
 };
 
+const stop = async <R extends Registry>(slot: Slot<R>): Promise<void> => {
+  const running = slot.app;
+  slot.app = undefined;
+  if (running === undefined) return;
+  const app = await running.catch(() => undefined);
+  await app?.stop();
+};
+
 const load = <R extends Registry>(
   slot: Slot<R>,
   bootApp: BootBoundaFunction<R>,
@@ -89,12 +97,13 @@ const load = <R extends Registry>(
 /**
  * Wires Bounda into a React Router app: a context for the running app and the middleware that
  * boots it once and provides it to every loader and action. Declare it once in a server module
- * with the registry's type, and mount the middleware in `root.tsx`.
+ * with the registry's type, and mount the middleware in `root.tsx`. In development the server
+ * module is re-evaluated when the code changes; the app booted before is stopped and the next
+ * request boots one from the new modules.
  *
  * @example
  * // app/bounda.server.ts
- * export const { bounda, boundaMiddleware, dispose } = createBounda<typeof registry>();
- * import.meta.hot?.dispose(dispose);
+ * export const { bounda, boundaMiddleware } = createBounda({ boot: () => boot({ registry }) });
  *
  * // app/root.tsx
  * export const middleware = [boundaMiddleware];
@@ -109,19 +118,14 @@ export const createBounda: CreateBoundaFunction = <R extends Registry>({
 }: CreateBoundaArgs<R> = {}): Bounda<R> => {
   const bounda = createContext<BoundaApp<R>>();
   const slot = slotFor<R>(key);
+  void stop(slot);
 
   const boundaMiddleware: BoundaMiddleware = async ({ context }, next) => {
     context.set(bounda, await load(slot, bootApp));
     return next();
   };
 
-  const dispose: DisposeBoundaFunction = async () => {
-    const running = slot.app;
-    slot.app = undefined;
-    if (running === undefined) return;
-    const app = await running.catch(() => undefined);
-    await app?.stop();
-  };
+  const dispose: DisposeBoundaFunction = () => stop(slot);
 
   return { bounda, boundaMiddleware, dispose };
 };

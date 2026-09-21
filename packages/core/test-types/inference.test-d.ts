@@ -185,6 +185,13 @@ describe("facades", () => {
     >();
     expectTypeOf<Queries["listUnpaidOrders"]>()
       .parameter(0)
-      .toEqualTypeOf<{ customerId: string }>();
+      .toEqualTypeOf<{ customerId: string; limit?: number | undefined }>();
+  });
+
+  it("apply defaults before the repository and the handler see the payload", () => {
+    expectTypeOf<ListUnpaidOrders.RepositoryArgs["limit"]>().toEqualTypeOf<number>();
+    expectTypeOf<
+      ListUnpaidOrders.HandlerArgs["query"]["payload"]["limit"]
+    >().toEqualTypeOf<number>();
   });
 });

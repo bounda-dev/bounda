@@ -1,0 +1,21 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node", "vite/client"],
+    "lib": ["dom", "dom.iterable", "es2024"],
+    "jsx": "react-jsx",
+    "rootDirs": [".", "./.react-router/types"],
+    "isolatedDeclarations": false,
+    "declaration": false
+  },
+  "include": [
+    "app",
+    "tests",
+    ".bounda",
+    ".react-router/types",
+    "bounda.config.ts",
+    "react-router.config.ts",
+    "vite.config.ts",
+    "vitest.config.ts"
+  ]
+}

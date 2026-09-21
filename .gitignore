@@ -8,6 +8,8 @@ reports/
 !packages/core/test-types/fixtures/**/.bounda/
 examples/**/+types/
 examples/*/data/
+examples/*/build/
+.react-router/
 .astro/
 .turbo/
 *.log

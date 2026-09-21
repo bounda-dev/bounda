@@ -12,6 +12,7 @@
       "!**/.astro",
       "!**/.bounda",
       "!**/+types",
+      "!**/.react-router",
       "!**/.vitest",
       "!**/coverage"
     ]

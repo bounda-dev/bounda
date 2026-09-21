@@ -111,24 +111,41 @@ describe("createBounda", () => {
     expect(fake.calls).toEqual(["start"]);
   });
 
-  it("shares the running app between two declarations with the same key", async () => {
+  it("stops the app of a previous declaration with the same key and boots afresh", async () => {
     const key = uniqueKey();
-    const fake = fakeApp("shared");
-    let boots = 0;
-    const bootOnce = async () => {
-      boots += 1;
-      return fake.app;
-    };
-    const before = createBounda({ key, boot: bootOnce });
+    const first = fakeApp("first");
+    const second = fakeApp("second");
+    const before = createBounda({ key, boot: async () => first.app });
     await before.boundaMiddleware(middlewareArgs().args, async () => undefined);
 
-    const after = createBounda({ key, boot: bootOnce });
+    const after = createBounda({ key, boot: async () => second.app });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(first.calls).toEqual(["start", "stop"]);
+
     const { context, args } = middlewareArgs();
     await after.boundaMiddleware(args, async () => undefined);
+    expect(context.get(after.bounda)).toBe(second.app);
+    expect(second.calls).toEqual(["start"]);
+  });
 
-    expect(boots).toBe(1);
-    expect(context.get(after.bounda)).toBe(fake.app);
-    expect(fake.calls).toEqual(["start"]);
+  it("stops a boot still in flight when it is declared again", async () => {
+    const key = uniqueKey();
+    const first = fakeApp("first");
+    let release: () => void = () => undefined;
+    const before = createBounda({
+      key,
+      boot: () =>
+        new Promise<BoundaApp>((resolve) => {
+          release = () => resolve(first.app);
+        }),
+    });
+    const pending = before.boundaMiddleware(middlewareArgs().args, async () => undefined);
+
+    createBounda({ key, boot: async () => fakeApp("second").app });
+    release();
+    await pending;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(first.calls).toEqual(["start", "stop"]);
   });
 
   it("keeps apps under different keys apart", async () => {

@@ -21,6 +21,9 @@
     },
     {
       "path": "examples/storefront"
+    },
+    {
+      "path": "examples/onboarding"
     }
   ]
 }

@@ -1,0 +1,5 @@
+.bounda/
+**/+types/
+.react-router/
+build/
+data/

@@ -37,8 +37,10 @@ export type {
   EmptyPayload,
   HasPayload,
   InferPayload,
+  InferPayloadInput,
   PayloadArgs,
   PayloadFunction,
+  PayloadInputOf,
   PayloadOf,
   ZodApi,
 } from "./payload.ts";
