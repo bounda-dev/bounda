@@ -30,14 +30,19 @@
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "test:mutation": "stryker run"
   },
   "peerDependencies": {
     "@bounda-dev/core": "workspace:*",
-    "react-router": ">=7"
+    "react-router": ">=8"
   },
   "devDependencies": {
     "@bounda-dev/core": "workspace:*",
+    "@stryker-mutator/core": "catalog:",
+    "@types/node": "catalog:",
+    "react": "catalog:",
+    "react-router": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

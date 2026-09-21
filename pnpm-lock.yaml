@@ -209,6 +209,12 @@ catalogs:
     publint:
       specifier: 0.3.24
       version: 0.3.24
+    react:
+      specifier: 19.3.0
+      version: 19.3.0
+    react-router:
+      specifier: 8.4.0
+      version: 8.4.0
     starlight-llms-txt:
       specifier: 0.12.0
       version: 0.12.0
@@ -426,14 +432,22 @@ importers:
         version: 5.0.1(@types/node@26.6.1)(@vitest/coverage-v8@5.0.1)(vite@8.3.0(@types/node@26.6.1)(esbuild@0.28.2)(yaml@2.9.1))
 
   packages/react-router:
-    dependencies:
-      react-router:
-        specifier: '>=7'
-        version: 8.4.0(react@19.3.0)
     devDependencies:
       '@bounda-dev/core':
         specifier: workspace:*
         version: link:../core
+      '@stryker-mutator/core':
+        specifier: 'catalog:'
+        version: 10.0.0(@types/node@26.6.1)
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.6.1
+      react:
+        specifier: 'catalog:'
+        version: 19.3.0
+      react-router:
+        specifier: 'catalog:'
+        version: 8.4.0(react@19.3.0)
       tsdown:
         specifier: 'catalog:'
         version: 0.23.0(@arethetypeswrong/core@0.18.5)(publint@0.3.24)(typescript@7.0.2)

@@ -5,7 +5,8 @@ export default defineConfig({
   tsconfig: "tsconfig.build.json",
   unbundle: true,
   dts: true,
-  platform: "neutral",
+  platform: "node",
+  fixedExtension: false,
   publint: true,
   attw: true,
 });

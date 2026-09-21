@@ -462,12 +462,6 @@ export const discoverProject: DiscoverProjectFunction = async ({ root, appDir = 
     );
     problems.throwIfAny();
   }
-  const appListing = await list(app);
-  for (const name of appListing.directories) {
-    if (name !== DOMAIN && name !== READ) {
-      problems.add(join(app, name), "the application directory holds domain/ and read/");
-    }
-  }
   const aggregates = await discoverGroup(
     context,
     join(app, DOMAIN),
