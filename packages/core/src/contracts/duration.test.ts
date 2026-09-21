@@ -22,12 +22,28 @@ describe("parseDuration", () => {
   it("rejects negative and non-finite numbers", () => {
     expect(() => parseDuration(-1)).toThrow(ValidationError);
     expect(() => parseDuration(Number.POSITIVE_INFINITY)).toThrow(ValidationError);
+    const failure = (): unknown => parseDuration(-1);
+    expect(failure).toThrow("Invalid duration: -1");
+    try {
+      failure();
+    } catch (error) {
+      expect((error as ValidationError).issues).toEqual([
+        { path: [], message: "Duration must be a non-negative finite number of milliseconds" },
+      ]);
+    }
   });
 
   it("rejects malformed strings with a readable message", () => {
     expect(() => parseDuration("7 days")).toThrow('Invalid duration: "7 days"');
     expect(() => parseDuration("m5")).toThrow(ValidationError);
     expect(() => parseDuration("")).toThrow(ValidationError);
+    try {
+      parseDuration("soon");
+    } catch (error) {
+      expect((error as ValidationError).issues).toEqual([
+        { path: [], message: 'Expected a number followed by one of "ms", "s", "m", "h", "d"' },
+      ]);
+    }
   });
 });
 

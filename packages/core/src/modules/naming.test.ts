@@ -10,6 +10,11 @@ describe("capitalize", () => {
 });
 
 describe("toCamelCase", () => {
+  it("swallows repeated dashes and keeps digits after them", () => {
+    expect(toCamelCase("order--placed")).toBe("orderPlaced");
+    expect(toCamelCase("step-2-done")).toBe("step2Done");
+  });
+
   it("converts kebab-case file names to registry keys", () => {
     expect(toCamelCase("order-placed")).toBe("orderPlaced");
     expect(toCamelCase("send-receipt-on-order-paid")).toBe("sendReceiptOnOrderPaid");

@@ -53,12 +53,23 @@ export const inboxLedgerContract: InboxLedgerContractFunction = ({ create }) => 
         lastError: "boom",
       });
       expect(await ledger.tryClaim({ ...key, now: later(1_000), leaseMs: 60_000 })).toBe(true);
-      expect(await ledger.get(key)).toMatchObject({ status: "pending", attempts: 2 });
+      expect(await ledger.get(key)).toMatchObject({
+        status: "pending",
+        attempts: 2,
+        lastError: "boom",
+      });
+    });
+
+    it("ignores completions and failures of claims it never handed out", async () => {
+      await expect(ledger.complete(key)).resolves.toBeUndefined();
+      await expect(ledger.fail({ ...key, error: "late" })).resolves.toBeUndefined();
+      expect(await ledger.get(key)).toBeNull();
     });
 
     it("hands out an abandoned pending claim once its lease expires", async () => {
       await ledger.tryClaim({ ...key, now, leaseMs: 60_000 });
       expect(await ledger.tryClaim({ ...key, now: later(59_999), leaseMs: 60_000 })).toBe(false);
+      expect(await ledger.tryClaim({ ...key, now: later(60_000), leaseMs: 60_000 })).toBe(false);
       expect(await ledger.tryClaim({ ...key, now: later(60_001), leaseMs: 60_000 })).toBe(true);
       expect(await ledger.get(key)).toMatchObject({ status: "pending", attempts: 2 });
     });
