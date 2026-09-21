@@ -1,5 +1,12 @@
 # @bounda-dev/core
 
+## 0.1.0-alpha.4
+
+### Patch Changes
+
+- 881e03d: Add the mutation score badge to each package's README, linked to its report on the Stryker
+  dashboard.
+
 ## 0.1.0-alpha.3
 
 ### Patch Changes

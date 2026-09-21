@@ -1,6 +1,6 @@
 {
   "name": "@bounda-dev/core",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0-alpha.4",
   "description": "Bounda runtime: aggregates, commands, events, policies, processes, read models",
   "license": "Apache-2.0",
   "repository": {
