@@ -7,7 +7,8 @@ sidebar:
 
 A Bounda app is a tree of small modules. Each file is one concept and exports the functions that
 concept needs; the folder it sits in and its name say what it is. `bounda generate` reads the tree
-and writes the registry and the types, so there is no central file to keep in sync.
+and writes the registry and the types, so there is no central file to keep in sync. Only `app/domain` and
+`app/read` are read; anything else in `app/`, such as the routes of a web framework, is ignored.
 
 ```
 app/
@@ -218,6 +219,9 @@ export const repository = ({ table, orderId }: Query.RepositoryArgs) => table.fi
 
 export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData;
 ```
+
+Payload fields with a `.default()` are optional for whoever calls the command or query and
+always present in the handler: callers see the schema's input type, handlers its output type.
 
 ## Generated files
 

@@ -176,4 +176,6 @@ See [adapters](/adapters/).
 - [Project layout](/guides/project-layout/): every kind of module, with a template each.
 - [The storefront example](/guides/storefront-example/): policies, a process with a time-out,
   collaborators and hand-written SQL in one small app.
+- [Bounda with React Router](/guides/react-router/): actions that dispatch, loaders that query,
+  and the [onboarding example](/guides/onboarding-example/) that puts it together.
 - [CLI](/reference/cli/): `bounda generate` and how state is inferred when there is no `state.ts`.
