@@ -75,4 +75,5 @@ jobs:
       - run: pnpm --filter @bounda-dev/adapter-sqlite test:mutation
       - run: pnpm --filter @bounda-dev/adapter-postgresql test:mutation
       - run: pnpm --filter @bounda-dev/cli test:mutation
+      - run: pnpm --filter @bounda-dev/react-router test:mutation
       - run: pnpm --filter create-bounda test:mutation

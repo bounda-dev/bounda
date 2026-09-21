@@ -221,6 +221,21 @@ describe("discoverProject on the order-app fixture", () => {
     expect(model.readModels[0]?.projections).toEqual([]);
   });
 
+  it("ignores what is not domain/ or read/ at the application root", async () => {
+    const root = await project([
+      "app/domain/order/order-placed.ts",
+      "app/read/summary/view.ts",
+      "app/routes/home.tsx",
+      "app/routes.ts",
+      "app/root.tsx",
+      "app/app.css",
+      "app/bounda.server.ts",
+    ]);
+    const model = await discoverProject({ root });
+    expect(model.aggregates.map((aggregate) => aggregate.name)).toEqual(["order"]);
+    expect(model.readModels.map((readModel) => readModel.name)).toEqual(["summary"]);
+  });
+
   it("accepts an app with only one side and a custom appDir", async () => {
     const root = await project(["src/read/summary/view.ts"]);
     const model = await discoverProject({ root, appDir: "src" });
@@ -250,12 +265,10 @@ describe("discoverProject convention problems", () => {
       "app/read/order-summary/README.md",
       "app/read/order-summary/extra.ts",
       "app/read/order-summary/lists/x.ts",
-      "app/other/x.ts",
       "app/read/broken/projections/order-placed.ts",
       "app/domain/loose.ts",
     ]);
     expect(await problemsOf(root)).toEqual([
-      "app/other: the application directory holds domain/ and read/",
       "app/domain/loose.ts: Aggregates are directories, not modules",
       "app/domain/order/notes.md: only .ts modules are allowed here",
       "app/domain/order/orderPlaced.ts: Event names must be kebab-case (lower-case letters, digits and dashes)",
