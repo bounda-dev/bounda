@@ -11,7 +11,12 @@ const fixtureRoot = join(repoRoot, "packages/core/test-types/fixtures/order-app-
 const temporary: string[] = [];
 
 afterAll(async () => {
-  await Promise.all(temporary.map((directory) => rm(directory, { recursive: true, force: true })));
+  await settle(300);
+  await Promise.all(
+    temporary.map((directory) =>
+      rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }),
+    ),
+  );
 });
 
 const project = async (): Promise<string> => {
@@ -120,6 +125,14 @@ const exists = (path: string): Promise<boolean> =>
 
 const settle = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));
 
+const until = async (condition: () => Promise<boolean>, timeoutMs = 15_000): Promise<void> => {
+  const deadline = Date.now() + timeoutMs;
+  while (!(await condition())) {
+    if (Date.now() > deadline) throw new Error("condition not met in time");
+    await settle(25);
+  }
+};
+
 describe("bounda() Vite plugin", () => {
   it("resolves the app module and nothing else, before Vite's own resolver", () => {
     const { plugin, resolve: resolveId } = harness("/project");
@@ -209,20 +222,22 @@ describe("bounda() Vite plugin", () => {
     );
     watcher.emit("add", join(root, "app/domain/order/order-shipped.ts"));
     watcher.emit("change", join(root, "app/domain/order/order-shipped.ts"));
-    await settle(400);
-    expect(await exists(join(root, "app/domain/order/+types/order-shipped.ts"))).toBe(true);
-    expect(await readFile(join(root, ".bounda/registry.ts"), "utf8")).toContain("order-shipped");
+    await until(() => exists(join(root, "app/domain/order/+types/order-shipped.ts")));
+    await until(async () =>
+      (await readFile(join(root, ".bounda/registry.ts"), "utf8")).includes("order-shipped"),
+    );
 
     watcher.emit("change", join(root, "app/domain/order/+types/order-shipped.ts"));
     watcher.emit("change", join(root, "app/routes/home.tsx"));
     watcher.emit("change", join(root, "bounda.config.ts"));
     await rm(join(root, "app/domain/order/order-shipped.ts"));
-    await settle(400);
+    await settle(500);
     expect(await exists(join(root, "app/domain/order/+types/order-shipped.ts"))).toBe(true);
 
     watcher.emit("unlink", join(root, "app/domain/order/order-shipped.ts"));
-    await settle(400);
-    expect(await exists(join(root, "app/domain/order/+types/order-shipped.ts"))).toBe(false);
+    await until(
+      async () => !(await exists(join(root, "app/domain/order/+types/order-shipped.ts"))),
+    );
     expect(recorded.errors).toEqual([]);
   });
 
@@ -233,7 +248,7 @@ describe("bounda() Vite plugin", () => {
     expect(() =>
       earlyWatcher.emit("change", join(root, "app/domain/order/order-paid.ts")),
     ).not.toThrow();
-    await settle(200);
+    await settle(500);
     expect(await exists(join(root, ".bounda/registry.ts"))).toBe(false);
 
     const { configure, start, serve } = harness(root, { debounceMs: 20 });
@@ -250,15 +265,14 @@ describe("bounda() Vite plugin", () => {
     ]) {
       watcher.emit("change", join(root, file));
     }
-    await settle(300);
+    await settle(500);
     expect(await exists(join(root, ".bounda/registry.ts"))).toBe(false);
 
     await mkdir(join(root, "app/read/summary"), { recursive: true });
     await writeFile(join(root, "app/read/summary/view.ts"), "export const fields = () => ({});\n");
     watcher.emit("addDir", join(root, "app/read/summary"));
-    await settle(300);
+    await until(() => exists(join(root, "app/read/summary/+types/view.ts")));
     expect(await exists(join(root, ".bounda/registry.ts"))).toBe(true);
-    expect(await exists(join(root, "app/read/summary/+types/view.ts"))).toBe(true);
   });
 
   it("keeps serving after a change that breaks a convention, and recovers", async () => {
@@ -270,12 +284,11 @@ describe("bounda() Vite plugin", () => {
 
     await writeFile(join(root, "app/domain/order/Loose.ts"), "export {};\n");
     watcher.emit("add", join(root, "app/domain/order/Loose.ts"));
-    await settle(400);
-    expect(recorded.errors.join("\n")).toContain("Loose.ts");
+    await until(async () => recorded.errors.join("\n").includes("Loose.ts"));
 
     await rm(join(root, "app/domain/order/Loose.ts"));
+    await rm(join(root, ".bounda/registry.ts"));
     watcher.emit("unlink", join(root, "app/domain/order/Loose.ts"));
-    await settle(400);
-    expect(await exists(join(root, ".bounda/registry.ts"))).toBe(true);
+    await until(() => exists(join(root, ".bounda/registry.ts")));
   });
 });
