@@ -24,6 +24,19 @@ Handlers are declared per aggregate: a policy lives under `app/domain/order/poli
 types come from that aggregate's events. But it is **fed from the log**, not from the aggregate.
 The distinction matters for everything below.
 
+<figure>
+  <img
+    src="/flow-light.svg"
+    alt="A command handler decides from state and returns events, the events are appended to the event store, which keeps them in one ordered log, and read models, policies and processes subscribe to that log while policies and processes dispatch new commands"
+    class="dark:sl-hidden"
+  />
+  <img
+    src="/flow-dark.svg"
+    alt="A command handler decides from state and returns events, the events are appended to the event store, which keeps them in one ordered log, and read models, policies and processes subscribe to that log while policies and processes dispatch new commands"
+    class="light:sl-hidden"
+  />
+</figure>
+
 ## Why a single order
 
 - **Read models cross aggregates.** A table of orders per customer needs `CustomerRegistered`
