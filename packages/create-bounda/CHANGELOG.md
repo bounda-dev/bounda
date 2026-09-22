@@ -1,5 +1,15 @@
 # create-bounda
 
+## 0.1.0-alpha.6
+
+### Patch Changes
+
+- 9887e04: The prompts ask how the app will run before which database it uses. `--framework cloudflare`
+  scaffolds a Worker with a Bounda Durable Object; it is not offered in the prompt yet, because the
+  adapter it depends on is not published.
+- 19dbca5: Show the Bounda wordmark at the top of each package's README, served from the documentation site so
+  it renders on npm as well as on GitHub.
+
 ## 0.1.0-alpha.5
 
 ### Patch Changes

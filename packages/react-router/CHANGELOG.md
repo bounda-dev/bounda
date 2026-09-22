@@ -1,5 +1,17 @@
 # @bounda-dev/react-router
 
+## 0.1.0-alpha.6
+
+### Patch Changes
+
+- 19dbca5: Show the Bounda wordmark at the top of each package's README, served from the documentation site so
+  it renders on npm as well as on GitHub.
+- Updated dependencies [176975a]
+- Updated dependencies [19dbca5]
+- Updated dependencies [5000433]
+  - @bounda-dev/core@0.1.0-alpha.6
+  - @bounda-dev/cli@0.1.0-alpha.6
+
 ## 0.1.0-alpha.5
 
 ### Patch Changes
