@@ -24,7 +24,7 @@
     "typecheck": "pnpm -r --filter './packages/*' --filter './examples/*' run typecheck",
     "lint": "biome check .",
     "format": "biome format --write .",
-    "test": "vitest run",
+    "test": "vitest run && pnpm --filter @bounda-dev/adapter-cloudflare test",
     "test:types": "vitest run --typecheck.only",
     "check": "pnpm lint && pnpm build && pnpm generate && pnpm typecheck && pnpm test",
     "changeset": "changeset",

@@ -1,0 +1,24 @@
+{
+  "name": "@bounda-dev/adapter-cloudflare",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Cloudflare Durable Objects storage adapter for Bounda (spike, not published)",
+  "license": "Apache-2.0",
+  "type": "module",
+  "sideEffects": false,
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run --passWithNoTests"
+  },
+  "peerDependencies": {
+    "@bounda-dev/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@bounda-dev/core": "workspace:*",
+    "@cloudflare/vitest-plugin": "catalog:",
+    "@cloudflare/workers-types": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:cloudflare",
+    "wrangler": "catalog:"
+  }
+}

@@ -9,6 +9,8 @@ catalog:
   "@arethetypeswrong/cli": 0.18.5
   "@astrojs/starlight": 0.42.2
   "@biomejs/biome": 2.5.14
+  "@cloudflare/vitest-plugin": 1.2.3
+  "@cloudflare/workers-types": 5.20260922.1
   "@opentelemetry/api": 1.9.1
   "@changesets/cli": 3.0.3
   "@clack/prompts": 1.8.1
@@ -39,10 +41,18 @@ catalog:
   uuid: 14.0.2
   vite: 8.3.0
   vitest: 5.0.1
+  wrangler: 4.136.3
   zod: 4.6.5
 
 minimumReleaseAgeExclude:
   - '@astrojs/starlight@0.42.2'
+  - '@cloudflare/vitest-plugin@1.2.3'
+  - '@cloudflare/workers-types@5.20260922.1'
+  - wrangler@4.136.3
+
+catalogs:
+  cloudflare:
+    vitest: 4.1.11
 
 allowBuilds:
   cpu-features: false
@@ -50,6 +60,7 @@ allowBuilds:
   lefthook: true
   protobufjs: false
   ssh2: false
+  workerd: true
 
 patchedDependencies:
   '@stryker-mutator/vitest-runner@10.0.0': patches/@stryker-mutator__vitest-runner@10.0.0.patch
