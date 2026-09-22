@@ -1,5 +1,21 @@
 # @bounda-dev/react-router
 
+## 0.1.0-alpha.5
+
+### Patch Changes
+
+- 9be9de3: Document `npm create bounda@latest`. Without the tag, npx can reuse a `create-bounda` it cached
+  earlier, and that older scaffolder pins the Bounda packages to the version it shipped with.
+- Updated dependencies [43f0f96]
+- Updated dependencies [01642b8]
+- Updated dependencies [d8c06fa]
+- Updated dependencies [02e45fd]
+- Updated dependencies [789ac78]
+- Updated dependencies [78f9b01]
+- Updated dependencies [138ac4a]
+  - @bounda-dev/core@0.1.0-alpha.5
+  - @bounda-dev/cli@0.1.0-alpha.5
+
 ## 0.1.0-alpha.4
 
 ### Patch Changes

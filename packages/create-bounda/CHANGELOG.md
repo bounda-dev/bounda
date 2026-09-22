@@ -1,5 +1,12 @@
 # create-bounda
 
+## 0.1.0-alpha.5
+
+### Patch Changes
+
+- 9be9de3: Document `npm create bounda@latest`. Without the tag, npx can reuse a `create-bounda` it cached
+  earlier, and that older scaffolder pins the Bounda packages to the version it shipped with.
+
 ## 0.1.0-alpha.4
 
 ### Minor Changes
