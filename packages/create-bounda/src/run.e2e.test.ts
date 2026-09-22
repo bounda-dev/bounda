@@ -337,6 +337,10 @@ describe("a project created by create-bounda", () => {
         body: JSON.stringify(body),
       });
     try {
+      const page = await fetch(`${server.url}/`);
+      expect(page.status).toBe(200);
+      expect(page.headers.get("content-type")).toContain("text/html");
+      expect(await page.text()).toContain("<title>Bounda on Cloudflare</title>");
       const placed = await post("/commands/placeOrder", {
         orderId: "018f6a5e-4c3c-7c1e-9d4b-0b2c4a1d8e01",
         customerId: "ada",

@@ -11,7 +11,8 @@ object's own SQLite. Nothing else to run.
 {{pm}} run deploy       # wrangler deploy, to your Cloudflare account
 ```
 
-Try it once `dev` is running:
+Open http://localhost:8787 once `dev` is running: `public/index.html` places orders and lists
+them through the API. Or from a terminal:
 
 ```bash
 curl -X POST localhost:8787/commands/placeOrder \
@@ -29,6 +30,7 @@ app/domain/order/           the order aggregate
 app/read/orders/            a read model
 bounda.config.ts            storage: cloudflare()
 src/worker.ts               the Durable Object class and the HTTP API
+public/index.html           a page that uses the API, served as a static asset
 wrangler.jsonc              the binding and the SQLite migration for the object
 tests/orders.test.ts        the app on an in-memory adapter
 ```
