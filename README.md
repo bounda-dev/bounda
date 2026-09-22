@@ -84,15 +84,15 @@ the schema above it, `state` from the aggregate, `events` only offers this aggre
 
 ## How it runs
 
-Every event goes to one ordered log. Read models, policies and processes are subscribers with a
-checkpoint each, so a read model can be rebuilt and a policy can be retried without touching the
-events. The [how it runs](https://docs.bounda.dev/guides/how-it-runs/) guide has the numbers and
-the ceiling.
+Every event a store holds gets a position in one global order. Read models, policies and
+processes are subscribers of that log, with a checkpoint each, so a read model can be rebuilt and
+a policy can be retried without touching the events. The
+[how it runs](https://docs.bounda.dev/guides/how-it-runs/) guide has the numbers and the ceiling.
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/flow-dark.svg" />
-    <img src="docs/src/assets/flow-light.svg" alt="A command handler decides from state and returns events; the events are appended to one ordered log; read models, policies and processes subscribe to that log, and policies and processes dispatch new commands" width="900" />
+    <img src="docs/src/assets/flow-light.svg" alt="A command handler decides from state and returns events; the events are appended to the event store, which keeps them in one ordered log; read models, policies and processes subscribe to that log, and policies and processes dispatch new commands" width="900" />
   </picture>
 </p>
 
