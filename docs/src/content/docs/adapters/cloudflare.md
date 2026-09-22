@@ -14,6 +14,14 @@ deploy or to keep running.
 npm create bounda@latest my-app -- --framework cloudflare
 ```
 
+Or deploy the same project to your account without cloning anything:
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/bounda-dev/bounda-cloudflare-template)
+
+The button forks [bounda-cloudflare-template](https://github.com/bounda-dev/bounda-cloudflare-template)
+into your GitHub account, creates the Durable Object and deploys it; every push to the fork
+deploys again.
+
 That gives you the order app of [Getting started](/getting-started/) with three extra files:
 
 ```ts
@@ -39,13 +47,16 @@ export default createWorker({ binding: "STORE" });
 {
   "name": "my-app",
   "main": "src/worker.ts",
+  "assets": { "directory": "./public" },
   "compatibility_date": "2026-09-21",
   "durable_objects": { "bindings": [{ "name": "STORE", "class_name": "Store" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Store"] }]
 }
 ```
 
-`npm run dev` starts `wrangler dev`; `npm run deploy` deploys to your account.
+`public/index.html` is a page that places orders and lists them through the API, served as a
+static asset. `npm run dev` starts `wrangler dev` on http://localhost:8787; `npm run deploy`
+deploys to your account.
 
 ## How it runs
 
