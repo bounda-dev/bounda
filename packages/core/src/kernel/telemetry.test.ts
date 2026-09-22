@@ -251,6 +251,25 @@ describe("telemetry", () => {
       status: { code: SpanStatusCode.ERROR, message: "no mail today" },
       exceptions: ["no mail today"],
     });
+    expect(telemetry.instruments).toEqual(
+      expect.arrayContaining([
+        {
+          metric: METRICS.commands,
+          description: "Commands dispatched, by type and outcome",
+          unit: "{command}",
+        },
+        {
+          metric: METRICS.lag,
+          description: "Events each subscriber is behind the head of the stream",
+          unit: "{event}",
+        },
+        {
+          metric: METRICS.deadLetters,
+          description: "Handler runs that gave up, by kind, subscriber and error type",
+          unit: "{letter}",
+        },
+      ]),
+    );
     expect(telemetry.counts).toContainEqual({
       metric: METRICS.deadLetters,
       value: 1,

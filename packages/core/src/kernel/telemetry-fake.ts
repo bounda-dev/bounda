@@ -4,6 +4,7 @@ import {
   context,
   type Meter,
   type MeterProvider,
+  type MetricOptions,
   metrics,
   type ObservableCallback,
   type ObservableGauge,
@@ -35,9 +36,19 @@ export interface RecordedCount {
   readonly attributes: Attributes;
 }
 
+/**
+ * What the fake meter remembers about one instrument's creation.
+ */
+export interface RecordedInstrument {
+  readonly metric: string;
+  readonly description: string;
+  readonly unit: string;
+}
+
 export interface FakeTelemetry {
   readonly spans: readonly RecordedSpan[];
   readonly counts: readonly RecordedCount[];
+  readonly instruments: readonly RecordedInstrument[];
   /**
    * Runs every observable callback registered so far and returns what they observed.
    */
@@ -117,7 +128,15 @@ const recordingSpan = (name: string, attributes: Attributes, spans: RecordedSpan
 export const installFakeTelemetry: InstallFakeTelemetryFunction = () => {
   const spans: RecordedSpan[] = [];
   const counts: RecordedCount[] = [];
+  const instruments: RecordedInstrument[] = [];
   const callbacks = new Map<string, ObservableCallback>();
+  const describe = (metric: string, options?: MetricOptions): void => {
+    instruments.push({
+      metric,
+      description: options?.description ?? "",
+      unit: options?.unit ?? "",
+    });
+  };
 
   const tracer = {
     startSpan: (name: string, options?: SpanOptions) =>
@@ -130,20 +149,25 @@ export const installFakeTelemetry: InstallFakeTelemetryFunction = () => {
   } as unknown as Tracer;
   const tracerProvider: TracerProvider = { getTracer: () => tracer };
 
-  const counter = (metric: string) => ({
-    add: (value: number, attributes: Attributes = {}) => {
-      counts.push({ metric, value, attributes });
-    },
-  });
-  const gauge = (metric: string): ObservableGauge =>
-    ({
+  const counter = (metric: string, options?: MetricOptions) => {
+    describe(metric, options);
+    return {
+      add: (value: number, attributes: Attributes = {}) => {
+        counts.push({ metric, value, attributes });
+      },
+    };
+  };
+  const gauge = (metric: string, options?: MetricOptions): ObservableGauge => {
+    describe(metric, options);
+    return {
       addCallback: (callback: ObservableCallback) => {
         callbacks.set(metric, callback);
       },
       removeCallback: () => {
         callbacks.delete(metric);
       },
-    }) as unknown as ObservableGauge;
+    } as unknown as ObservableGauge;
+  };
   const meter = {
     createCounter: counter,
     createUpDownCounter: counter,
@@ -171,6 +195,7 @@ export const installFakeTelemetry: InstallFakeTelemetryFunction = () => {
   return {
     spans,
     counts,
+    instruments,
     observe: async () => {
       const observed: RecordedCount[] = [];
       for (const [metric, callback] of callbacks) {
