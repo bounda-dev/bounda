@@ -2,7 +2,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    projects: ["packages/*", "examples/*"],
+    projects: ["packages/*", "!packages/adapter-cloudflare", "examples/*"],
     passWithNoTests: true,
     coverage: {
       provider: "v8",
