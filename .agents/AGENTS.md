@@ -58,7 +58,7 @@ User-facing inference must never regress. `packages/core/test-types/` holds `exp
 ## Testing
 
 - Co-located `*.test.ts`. Behavior tests over implementation-coupled mocks.
-- Adapters test against real databases (testcontainers for PostgreSQL, file or memory for SQLite). The PostgreSQL suite starts a `postgres:17` container and skips itself when Docker is not running, so start Docker before `pnpm check` to run it.
+- Adapters test against real databases (testcontainers for PostgreSQL, file or memory for SQLite). The SQLite SQL (stores, schema, read models) lives in `core/src/adapter/sqlite` behind `SqlDatabase` and `createSqliteAdapter`, and is tested there on `node:sqlite`; `adapter-sqlite` only brings the libSQL connection. A change to that SQL is a change to `core`. The PostgreSQL suite starts a `postgres:17` container and skips itself when Docker is not running, so start Docker before `pnpm check` to run it.
 - Coverage must not decrease. Mutation testing with Stryker validates test quality (`patches/` carries a fix for `@stryker-mutator/vitest-runner` with Vitest 5: it joined suite and test names with a space where Vitest 5 uses ` > `, so no test matched and every mutant survived).
 - A new package goes into `pnpm-workspace.yaml`, the root `tsconfig.json` references, and the CI workflow.
 

@@ -1,5 +1,5 @@
-import { quoteIdentifier, tableNameFor } from "@bounda-dev/core/adapter/sql";
-import type { SqliteDatabase } from "./database.ts";
+import type { SqlDatabase } from "../sql/database.ts";
+import { quoteIdentifier, tableNameFor } from "../sql/index.ts";
 
 /**
  * The quoted names of the five storage tables for a table prefix.
@@ -94,7 +94,7 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
 ];
 
 export interface EnsureStorageSchemaArgs {
-  readonly db: SqliteDatabase;
+  readonly db: SqlDatabase;
   readonly tables: StorageTables;
 }
 

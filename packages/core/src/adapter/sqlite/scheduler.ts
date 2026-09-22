@@ -1,10 +1,10 @@
-import type { CausationContext } from "@bounda-dev/core";
-import type { ScheduledCommand, Scheduler } from "@bounda-dev/core/adapter";
-import { earliestDue } from "@bounda-dev/core/adapter/sql";
-import type { SqliteDatabase } from "./database.ts";
+import type { CausationContext } from "../../contracts/metadata.ts";
+import type { ScheduledCommand, Scheduler } from "../index.ts";
+import type { SqlDatabase } from "../sql/database.ts";
+import { earliestDue } from "../sql/index.ts";
 
 export interface CreateSqliteSchedulerArgs {
-  readonly db: SqliteDatabase;
+  readonly db: SqlDatabase;
   readonly table: string;
 }
 

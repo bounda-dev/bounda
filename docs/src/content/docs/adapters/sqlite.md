@@ -42,6 +42,11 @@ Within one process the adapter serialises write transactions itself. Several pro
 same file rely on SQLite's own locking; for that setup, or for more than one machine, use
 [PostgreSQL](/adapters/postgresql/).
 
+The SQL itself is not specific to libSQL. The stores, the schema and the read models live in
+`@bounda-dev/core/adapter/sqlite`, and `createSqliteAdapter` builds a complete adapter from any
+SQLite connection a host brings: this package brings libSQL, and the same code runs inside a
+Cloudflare Durable Object.
+
 ## In tests
 
 ```ts

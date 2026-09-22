@@ -5,11 +5,11 @@ import type {
   DeadLetterStatus,
   DeadLetterStore,
   ListDeadLettersArgs,
-} from "@bounda-dev/core/adapter";
-import type { SqliteDatabase } from "./database.ts";
+} from "../index.ts";
+import type { SqlDatabase } from "../sql/database.ts";
 
 export interface CreateSqliteDeadLetterStoreArgs {
-  readonly db: SqliteDatabase;
+  readonly db: SqlDatabase;
   readonly table: string;
 }
 

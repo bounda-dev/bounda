@@ -35,6 +35,10 @@
       "types": "./dist/adapter/sql/index.d.ts",
       "default": "./dist/adapter/sql/index.js"
     },
+    "./adapter/sqlite": {
+      "types": "./dist/adapter/sqlite/index.d.ts",
+      "default": "./dist/adapter/sqlite/index.js"
+    },
     "./memory": {
       "types": "./dist/memory/index.d.ts",
       "default": "./dist/memory/index.js"

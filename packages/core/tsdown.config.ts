@@ -7,6 +7,7 @@ export default defineConfig({
     "src/adapter/index.ts",
     "src/adapter/testing/index.ts",
     "src/adapter/sql/index.ts",
+    "src/adapter/sqlite/index.ts",
     "src/memory/index.ts",
     "src/node/index.ts",
     "src/register/index.ts",

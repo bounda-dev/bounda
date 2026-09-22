@@ -56,6 +56,7 @@ purpose; the [deployment guide](https://docs.bounda.dev/guides/deployment/) says
 | `@bounda-dev/core/memory` | The in-memory adapter |
 | `@bounda-dev/core/adapter` | Ports for writing an adapter |
 | `@bounda-dev/core/adapter/sql` | Helpers shared by the SQL adapters |
+| `@bounda-dev/core/adapter/sqlite` | The storage and read models over any SQLite, for a host that brings the connection: `createSqliteAdapter` |
 | `@bounda-dev/core/register` | Where the generator registers your registry type |
 
 ## Alpha

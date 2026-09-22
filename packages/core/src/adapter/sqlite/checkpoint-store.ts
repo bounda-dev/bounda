@@ -1,8 +1,8 @@
-import type { CheckpointStore } from "@bounda-dev/core/adapter";
-import type { SqliteDatabase } from "./database.ts";
+import type { CheckpointStore } from "../index.ts";
+import type { SqlDatabase } from "../sql/database.ts";
 
 export interface CreateSqliteCheckpointStoreArgs {
-  readonly db: SqliteDatabase;
+  readonly db: SqlDatabase;
   readonly table: string;
 }
 

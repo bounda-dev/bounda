@@ -1,5 +1,7 @@
-import type { FieldsRecord, Logger } from "@bounda-dev/core";
-import type { ReadModelPorts, ReadModelRebuild } from "@bounda-dev/core/adapter";
+import type { Logger } from "../../contracts/logger.ts";
+import type { FieldsRecord } from "../../modules/view.ts";
+import type { ReadModelPorts, ReadModelRebuild } from "../index.ts";
+import type { SqlDatabase } from "../sql/database.ts";
 import {
   columnsOf,
   createSqlReadClient,
@@ -13,13 +15,14 @@ import {
   sqliteDialect,
   swapTableStatements,
   tableNameFor,
-} from "@bounda-dev/core/adapter/sql";
-import type { Client } from "@libsql/client";
-import type { SqliteDatabase } from "./database.ts";
+} from "../sql/index.ts";
 
-export interface OpenSqliteReadModelArgs {
-  readonly db: SqliteDatabase;
-  readonly client: Client;
+export interface OpenSqliteReadModelArgs<Raw = unknown> {
+  readonly db: SqlDatabase;
+  /**
+   * The driver handle queries get as `client.raw`.
+   */
+  readonly raw: Raw;
   readonly tablePrefix: string;
   readonly name: string;
   readonly fields: FieldsRecord;
@@ -28,23 +31,27 @@ export interface OpenSqliteReadModelArgs {
 }
 
 export interface OpenSqliteReadModelFunction {
-  <Row extends object>(args: OpenSqliteReadModelArgs): Promise<ReadModelPorts<Row, Client>>;
+  <Row extends object, Raw = unknown>(
+    args: OpenSqliteReadModelArgs<Raw>,
+  ): Promise<ReadModelPorts<Row, Raw>>;
 }
 
 /**
  * Creates the read model's table from its `fields`, or brings an existing table up to date with
- * additive changes, then returns the typed table and the SQL read client (`raw` is the libSQL
- * client).
+ * additive changes, then returns the typed table and the SQL read client (`raw` is whatever the host passes).
  */
-export const openSqliteReadModel: OpenSqliteReadModelFunction = async <Row extends object>({
+export const openSqliteReadModel: OpenSqliteReadModelFunction = async <
+  Row extends object,
+  Raw = unknown,
+>({
   db,
-  client,
+  raw,
   tablePrefix,
   name,
   fields,
   logger,
   close,
-}: OpenSqliteReadModelArgs): Promise<ReadModelPorts<Row, Client>> => {
+}: OpenSqliteReadModelArgs<Raw>): Promise<ReadModelPorts<Row, Raw>> => {
   const table = tableNameFor({ prefix: tablePrefix, readModel: name });
   const columns = columnsOf({ readModel: name, fields, dialect: sqliteDialect });
   const existing = (await db.all(`PRAGMA table_info(${quoteIdentifier(table)})`, [])).map(
@@ -66,22 +73,24 @@ export const openSqliteReadModel: OpenSqliteReadModelFunction = async <Row exten
       dialect: sqliteDialect,
       executor: db,
     }),
-    client: createSqlReadClient<Row, Client>({
+    client: createSqlReadClient<Row, Raw>({
       readModel: name,
       fields,
       dialect: sqliteDialect,
       executor: db,
-      raw: client,
+      raw,
     }),
     close,
   };
 };
 
 export interface RebuildSqliteReadModelFunction {
-  <Row extends object>(args: OpenSqliteReadModelArgs): Promise<ReadModelRebuild<Row, Client>>;
+  <Row extends object, Raw = unknown>(
+    args: OpenSqliteReadModelArgs<Raw>,
+  ): Promise<ReadModelRebuild<Row, Raw>>;
 }
 
-const tableExists = async (db: SqliteDatabase, table: string): Promise<boolean> =>
+const tableExists = async (db: SqlDatabase, table: string): Promise<boolean> =>
   (await db.all(`PRAGMA table_info(${quoteIdentifier(table)})`, [])).length > 0;
 
 /**
@@ -89,15 +98,18 @@ const tableExists = async (db: SqliteDatabase, table: string): Promise<boolean> 
  * after dropping what an interrupted rebuild may have left. `commit` swaps it into place inside
  * one write transaction; `abort` drops it. Both release the connection.
  */
-export const rebuildSqliteReadModel: RebuildSqliteReadModelFunction = async <Row extends object>({
+export const rebuildSqliteReadModel: RebuildSqliteReadModelFunction = async <
+  Row extends object,
+  Raw = unknown,
+>({
   db,
-  client,
+  raw,
   tablePrefix,
   name,
   fields,
   logger,
   close,
-}: OpenSqliteReadModelArgs): Promise<ReadModelRebuild<Row, Client>> => {
+}: OpenSqliteReadModelArgs<Raw>): Promise<ReadModelRebuild<Row, Raw>> => {
   const table = tableNameFor({ prefix: tablePrefix, readModel: name });
   const { shadow } = rebuildTablesFor(table);
   const columns = columnsOf({ readModel: name, fields, dialect: sqliteDialect });
@@ -111,12 +123,12 @@ export const rebuildSqliteReadModel: RebuildSqliteReadModelFunction = async <Row
       dialect: sqliteDialect,
       executor: db,
     }),
-    client: createSqlReadClient<Row, Client>({
+    client: createSqlReadClient<Row, Raw>({
       readModel: name,
       fields,
       dialect: sqliteDialect,
       executor: db,
-      raw: client,
+      raw,
     }),
     commit: async () => {
       const live = await tableExists(db, table);
