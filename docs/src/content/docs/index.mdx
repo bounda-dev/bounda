@@ -24,9 +24,17 @@ import { Card, CardGrid } from "@astrojs/starlight/components";
     Payloads, state and query results are typed from your code. Change a field and the compiler points at every place that breaks.
   </Card>
   <Card title="Processes are first-class" icon="random">
-    Multi-step workflows with timeouts, retries and compensation live in dedicated processes and policies, not in ad-hoc state machines.
+    A process follows one aggregate instance over time: it says which events open and close it, keeps state between them, and runs `on-timeout.ts` when its deadline passes. Retries and dead letters are the runtime's job.
   </Card>
   <Card title="One database is all your infra" icon="seti:db">
     Events, read models, scheduling and dead letters on a single Postgres or SQLite. No brokers, no queues to operate.
   </Card>
 </CardGrid>
+
+import { Aside } from "@astrojs/starlight/components";
+
+<Aside type="caution" title="Alpha">
+  Every published version is a prerelease, so a plain install gets one: `npm create bounda`,
+  `npm install @bounda-dev/core`. The API can change between alphas without a deprecation cycle,
+  and [Deployment](/guides/deployment/) lists what a production app does not have yet.
+</Aside>
