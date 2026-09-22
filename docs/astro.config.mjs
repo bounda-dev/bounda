@@ -9,8 +9,8 @@ export default defineConfig({
       title: "Bounda",
       favicon: "/favicon.svg",
       logo: {
-        light: "./src/assets/wordmark-light.svg",
-        dark: "./src/assets/wordmark-dark.svg",
+        light: "./public/wordmark-light.svg",
+        dark: "./public/wordmark-dark.svg",
         replacesTitle: true,
       },
       description: "Event sourcing and CQRS for TypeScript without the ceremony.",

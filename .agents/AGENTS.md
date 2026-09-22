@@ -6,7 +6,7 @@ Bounda is an event sourcing and CQRS framework for TypeScript. Users write small
 
 ## Toolchain
 
-pnpm 12 (workspace catalog, `catalogMode: strict`), TypeScript 7, Biome (lint and format), tsdown (library build, runs publint and attw), Vitest 5, Stryker (mutation testing), Changesets (release), lefthook (pre-commit), Astro Starlight (docs). Node 22.12 or newer.
+pnpm 12 (workspace catalog, `catalogMode: strict`), TypeScript 7, Biome (lint and format), tsdown (library build, runs publint and attw), Vitest 5, Stryker (mutation testing), Changesets (release), lefthook (pre-commit), Astro Starlight (docs). Node 22.18 or newer.
 
 ## Commands (root)
 

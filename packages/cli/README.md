@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://docs.bounda.dev/wordmark-dark.svg" />
+    <img src="https://docs.bounda.dev/wordmark-light.svg" alt="Bounda" width="160" />
+  </picture>
+</p>
+
 # @bounda-dev/cli
 
 [![Mutation score](https://img.shields.io/endpoint?style=flat&url=https%3A%2F%2Fbadge-api.stryker-mutator.io%2Fgithub.com%2Fbounda-dev%2Fbounda%2Fmain%3Fmodule%3Dcli)](https://dashboard.stryker-mutator.io/reports/github.com/bounda-dev/bounda/main?module=cli)

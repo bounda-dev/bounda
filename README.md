@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/wordmark-dark.svg" />
-    <img src="docs/src/assets/wordmark-light.svg" alt="Bounda" width="200" />
+    <source media="(prefers-color-scheme: dark)" srcset="docs/public/wordmark-dark.svg" />
+    <img src="docs/public/wordmark-light.svg" alt="Bounda" width="200" />
   </picture>
 </p>
 
@@ -91,8 +91,8 @@ a policy can be retried without touching the events. The
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/flow-dark.svg" />
-    <img src="docs/src/assets/flow-light.svg" alt="A command handler decides from state and returns events; the events are appended to the event store, which keeps them in one ordered log; read models, policies and processes subscribe to that log, and policies and processes dispatch new commands" width="900" />
+    <source media="(prefers-color-scheme: dark)" srcset="docs/public/flow-dark.svg" />
+    <img src="docs/public/flow-light.svg" alt="A command handler decides from state and returns events; the events are appended to the event store, which keeps them in one ordered log; read models, policies and processes subscribe to that log, and policies and processes dispatch new commands" width="900" />
   </picture>
 </p>
 
