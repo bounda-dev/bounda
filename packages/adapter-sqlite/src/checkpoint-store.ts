@@ -11,7 +11,8 @@ export interface CreateSqliteCheckpointStoreFunction {
 }
 
 /**
- * One row per subscriber.
+ * One row per subscriber. A subscriber without a row is at position 0, so `compareAndSet` from 0
+ * inserts the row when it is missing and updates it only while it still says 0.
  */
 export const createSqliteCheckpointStore: CreateSqliteCheckpointStoreFunction = ({
   db,
@@ -28,6 +29,19 @@ export const createSqliteCheckpointStore: CreateSqliteCheckpointStoreFunction = 
       `INSERT INTO ${table} ("subscriber", "position") VALUES (?, ?) ON CONFLICT ("subscriber") DO UPDATE SET "position" = excluded."position"`,
       [subscriber, position],
     ),
+  compareAndSet: async (subscriber, expected, position) => {
+    const rows =
+      expected === 0
+        ? await db.all(
+            `INSERT INTO ${table} ("subscriber", "position") VALUES (?, ?) ON CONFLICT ("subscriber") DO UPDATE SET "position" = excluded."position" WHERE ${table}."position" = 0 RETURNING "position"`,
+            [subscriber, position],
+          )
+        : await db.all(
+            `UPDATE ${table} SET "position" = ? WHERE "subscriber" = ? AND "position" = ? RETURNING "position"`,
+            [position, subscriber, expected],
+          );
+    return rows.length === 1;
+  },
   list: async () =>
     (await db.all(`SELECT "subscriber", "position" FROM ${table} ORDER BY "subscriber"`, [])).map(
       (row) => ({ subscriber: String(row.subscriber), position: Number(row.position) }),

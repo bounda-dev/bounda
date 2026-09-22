@@ -144,14 +144,15 @@ describe("policy subscriber", () => {
     reset("ok");
     const harness = await createReactiveHarness({ registry });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    const originalSet = harness.storage.checkpointStore.set.bind(harness.storage.checkpointStore);
+    const store = harness.storage.checkpointStore;
+    const originalCompareAndSet = store.compareAndSet.bind(store);
     let crashed = false;
-    harness.storage.checkpointStore.set = async (subscriber, position) => {
+    store.compareAndSet = async (subscriber, expected, position) => {
       if (subscriber === "policies" && !crashed) {
         crashed = true;
         throw new Error("crash before checkpoint");
       }
-      return originalSet(subscriber, position);
+      return originalCompareAndSet(subscriber, expected, position);
     };
     await harness.dispatcher.processOnce().catch(() => undefined);
     expect(calls.filter((call) => call === "pay:o-1")).toHaveLength(1);

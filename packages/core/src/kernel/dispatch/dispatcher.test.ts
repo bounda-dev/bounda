@@ -144,6 +144,47 @@ describe("createDispatcher", () => {
     expect((await dispatcher.getLag()).maxLag).toBe(0);
   });
 
+  it("leaves a checkpoint alone when someone else moved it during the batch", async () => {
+    const { eventStore, checkpointStore } = await storage();
+    await appendMany(eventStore, 5);
+    await checkpointStore.set("orders", 2);
+    const seen: number[][] = [];
+    const orders: Subscriber = {
+      name: "orders",
+      kind: "projection",
+      process: async (events) => {
+        seen.push(events.map((event) => event.position));
+        if (seen.length === 1) await checkpointStore.set("orders", 0);
+        return true;
+      },
+    };
+    const { logger, entries } = createRecordingLogger();
+    const dispatcher = createDispatcher({
+      eventStore,
+      checkpointStore,
+      subscribers: [orders],
+      batchSize: 2,
+      pollIntervalMs: 1_000,
+      logger,
+    });
+
+    expect(await dispatcher.processOnce()).toBe(true);
+    expect(seen).toEqual([[3, 4]]);
+    expect(await checkpointStore.get("orders")).toBe(0);
+    expect(entries).toEqual([
+      {
+        level: "warn",
+        message: "checkpoint moved by someone else; batch will be redelivered from there",
+        fields: { subscriber: "orders", afterPosition: 2, current: 0 },
+      },
+    ]);
+
+    await dispatcher.processUntilIdle();
+    expect(seen).toEqual([[3, 4], [1, 2], [3, 4], [5]]);
+    expect(await checkpointStore.get("orders")).toBe(5);
+    expect(entries).toHaveLength(1);
+  });
+
   it("never runs two passes at once, whoever triggers them", async () => {
     const { eventStore, checkpointStore } = await storage();
     await appendMany(eventStore, 3);
