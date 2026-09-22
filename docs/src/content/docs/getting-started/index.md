@@ -157,6 +157,9 @@ it("removes a cancelled order from the list", async () => {
 npm test
 ```
 
+[Testing](/guides/testing/) goes further: advancing the clock for reminders and time-outs, running
+against a real database, and choosing which implementation of a dependency a test gets.
+
 ## Run it for real
 
 `src/main.ts` shows the production path: `boot()` reads `bounda.config.ts` and the generated
