@@ -58,6 +58,18 @@ picks up their consequences.
 `processUntilIdle()` and `catchUpReadModels()` work in every role, which is what makes a `web`
 process able to wait for its own writes without running the background loop.
 
+A host with no background loop at all, such as a serverless function or a Durable Object, drives
+the same work in slices. `processUntilIdle({ maxPasses })` stops after that many rounds and
+resolves to `{ idle }`, `false` when work is left; `app.nextDueAt()` is the earliest moment a
+scheduled command or a process time-out becomes due, or `null`. Together they say when to come
+back:
+
+```ts
+const { idle } = await app.processUntilIdle({ maxPasses: 20 });
+const next = idle ? await app.nextDueAt() : new Date();
+// arm a timer, an alarm or a cron trigger for `next`, if there is one
+```
+
 ## More than one instance
 
 Use PostgreSQL. SQLite is a single writer and fine for one process; PostgreSQL is what the

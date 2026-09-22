@@ -188,6 +188,31 @@ describe("createApp", () => {
     await app.stop();
   });
 
+  it("stops after maxPasses rounds and says whether it reached idle", async () => {
+    const { app } = await start();
+    expect(await app.processUntilIdle()).toEqual({ idle: true });
+    await app.commands.placeOrder({ orderId: "o-1", total: 42 });
+    await app.commands.payOrder({ orderId: "o-1", method: "card" });
+    expect(await app.processUntilIdle({ maxPasses: 0 })).toEqual({ idle: false });
+    expect(await app.processUntilIdle({ maxPasses: 1 })).toEqual({ idle: false });
+    expect((await app.getLag()).maxLag).toBeGreaterThan(0);
+    expect(await app.processUntilIdle({ maxPasses: 50 })).toEqual({ idle: true });
+    expect((await app.getLag()).maxLag).toBe(0);
+    expect(await app.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "paid" });
+    await app.stop();
+  });
+
+  it("says when the next scheduled command or process time-out is due", async () => {
+    const { app, clock } = await start();
+    expect(await app.nextDueAt()).toBeNull();
+    await app.commands.archiveOrder({ orderId: "o-9" }, { delay: "10m" });
+    expect(await app.nextDueAt()).toEqual(new Date(clock.now().getTime() + 600_000));
+    clock.advance(600_000);
+    await app.processUntilIdle();
+    expect(await app.nextDueAt()).toBeNull();
+    await app.stop();
+  });
+
   it("runs due scheduled commands and process time-outs inside processUntilIdle", async () => {
     const { app, clock } = await start();
     await app.commands.placeOrder({ orderId: "o-1", total: 10 });

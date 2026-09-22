@@ -40,6 +40,14 @@ export interface FailScheduledArgs {
   readonly retryAt?: Date;
 }
 
+export interface NextDueAtArgs {
+  /**
+   * The lease `claimDue` is called with: a claimed command becomes claimable again once it has
+   * passed.
+   */
+  readonly leaseMs: number;
+}
+
 export interface ListScheduledArgs {
   readonly limit?: number;
   readonly offset?: number;
@@ -53,6 +61,12 @@ export interface Scheduler {
   schedule(args: ScheduleArgs): Promise<void>;
   cancel(dedupeKey: string): Promise<void>;
   claimDue(args: ClaimDueArgs): Promise<readonly ScheduledCommand[]>;
+  /**
+   * The earliest moment `claimDue` could hand something out: the soonest execution time of a
+   * command nobody holds, or the end of the oldest lease. `null` when nothing is scheduled. What a
+   * host without a polling loop, such as a Durable Object, arms its alarm for.
+   */
+  nextDueAt(args: NextDueAtArgs): Promise<Date | null>;
   complete(dedupeKey: string): Promise<void>;
   fail(args: FailScheduledArgs): Promise<void>;
   list(args?: ListScheduledArgs): Promise<readonly ScheduledCommand[]>;

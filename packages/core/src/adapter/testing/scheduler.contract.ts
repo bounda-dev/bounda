@@ -96,6 +96,38 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
       expect(reclaimed[0]?.attempts).toBe(1);
     });
 
+    it("says when the next command becomes claimable, counting leases", async () => {
+      expect(await scheduler.nextDueAt({ leaseMs: 1_000 })).toBeNull();
+      await scheduler.schedule({
+        dedupeKey: "late",
+        command: testCommand("2"),
+        executeAt: at(60_000),
+        context: testContext,
+      });
+      await scheduler.schedule({
+        dedupeKey: "soon",
+        command: testCommand("1"),
+        executeAt: at(5_000),
+        context: testContext,
+      });
+      expect(await scheduler.nextDueAt({ leaseMs: 1_000 })).toEqual(at(5_000));
+
+      await scheduler.claimDue({ now: at(5_000), limit: 10, leaseMs: 1_000 });
+      expect(await scheduler.nextDueAt({ leaseMs: 1_000 })).toEqual(at(6_001));
+      expect(await scheduler.nextDueAt({ leaseMs: 100_000 })).toEqual(at(60_000));
+      expect(await scheduler.claimDue({ now: at(6_000), limit: 10, leaseMs: 1_000 })).toEqual([]);
+      expect(
+        (await scheduler.claimDue({ now: at(6_001), limit: 10, leaseMs: 1_000 })).map(
+          (entry) => entry.dedupeKey,
+        ),
+      ).toEqual(["soon"]);
+
+      await scheduler.complete("soon");
+      expect(await scheduler.nextDueAt({ leaseMs: 1_000 })).toEqual(at(60_000));
+      await scheduler.cancel("late");
+      expect(await scheduler.nextDueAt({ leaseMs: 1_000 })).toBeNull();
+    });
+
     it("removes completed and cancelled commands", async () => {
       await scheduler.schedule({
         dedupeKey: "a",

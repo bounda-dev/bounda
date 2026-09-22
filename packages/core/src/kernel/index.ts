@@ -15,7 +15,13 @@ export type {
   WithUpcastingFunction,
 } from "./aggregate/upcasting.ts";
 export { upcastEvent, withUpcasting } from "./aggregate/upcasting.ts";
-export type { BoundaApp, CreateAppArgs, CreateAppFunction } from "./app.ts";
+export type {
+  BoundaApp,
+  CreateAppArgs,
+  CreateAppFunction,
+  ProcessUntilIdleOptions,
+  ProcessUntilIdleResult,
+} from "./app.ts";
 export { createApp } from "./app.ts";
 export type {
   CommandsFacadeRuntime,

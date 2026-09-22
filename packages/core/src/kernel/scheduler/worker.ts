@@ -24,6 +24,10 @@ export interface ScheduledCommandWorker {
    * Claims and runs every command that is due. Resolves to how many ran.
    */
   runOnce(): Promise<number>;
+  /**
+   * How long a claim this worker takes is held before another worker may take it over.
+   */
+  readonly leaseMs: number;
 }
 
 export interface CreateScheduledCommandWorkerArgs {
@@ -225,5 +229,6 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       await mutex.drain();
     },
     runOnce,
+    leaseMs,
   };
 };
