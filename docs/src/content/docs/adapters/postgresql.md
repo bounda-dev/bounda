@@ -31,7 +31,8 @@ postgresql({ host: "localhost", port: 5432, database: "shop", user: "shop", pass
   advisory lock (`pg_advisory_xact_lock`) before writing, so positions are handed out in commit
   order and a reader of the global stream never sees a gap that a later commit would fill. The
   lock bounds write throughput to what one connection can commit; that is thousands of events per
-  second, far above what the apps Bounda targets produce.
+  second, far above what the apps Bounda targets produce. When one store is not enough, run one
+  per tenant with `schema`; see [How Bounda runs](/guides/how-it-runs/#the-way-out-one-store-per-tenant).
 - The stream version is checked in the same transaction as the write; a stale version rolls back
   with a `ConcurrencyError` and the command is retried with fresh state.
 - The transaction ends with `pg_notify` on a channel named after the events table

@@ -63,7 +63,12 @@ process able to wait for its own writes without running the background loop.
 Use PostgreSQL. SQLite is a single writer and fine for one process; PostgreSQL is what the
 adapter's concurrency work is for. Handler claims are single `INSERT … ON CONFLICT` statements and
 due scheduled commands are taken `FOR UPDATE SKIP LOCKED`, so any number of instances can run the
-worker role and each event and each due command is handled by exactly one of them.
+worker role and each policy or process handler and each due command runs on exactly one of them.
+
+Projections are the exception: every instance applies every batch, idempotently, so a second
+worker does not make a read model catch up faster. More instances buy availability for
+projections and throughput for reactions. [How Bounda runs](/guides/how-it-runs/) explains why,
+and what the ceiling of one store is.
 
 Appends take a transaction-scoped advisory lock, so positions in the global stream are handed out
 in commit order and a reader never sees a gap that a later commit would fill. That bounds write
