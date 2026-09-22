@@ -81,3 +81,9 @@ export const repository: Query.RepositoryFunction = ({ customerId, client }) =>
 
 Placeholders are the driver's: `?` on SQLite, `$1`, `$2` on PostgreSQL. A query written in SQL
 is tied to one of them; `table` (`findMany`, `count`, ...) works on both.
+
+## Which one to deploy
+
+SQLite is a single writer: right for one process, and for tests. PostgreSQL is what lets
+several instances run the background work at once. [Deployment](/guides/deployment/) covers the
+roles, what the instances share and what is not there yet.
