@@ -1,17 +1,13 @@
-import type { SqlExecutor } from "@bounda-dev/core/adapter/sql";
+import type { SqlDatabase, SqlExecutor } from "@bounda-dev/core/adapter/sql";
 import type { Client, InValue, ResultSet, Transaction } from "@libsql/client";
 
 /**
  * The libSQL client seen through the two calls the SQL helpers need, plus write transactions.
+ * `write` runs the work inside `BEGIN IMMEDIATE ... COMMIT`, one write transaction at a time
+ * within the process, so it never has to wait on the engine's busy handler for another
+ * transaction of the same process.
  */
-export interface SqliteDatabase extends SqlExecutor {
-  /**
-   * Runs `work` inside `BEGIN IMMEDIATE ... COMMIT`. Writes are serialised within the process, so
-   * a transaction never has to wait on the engine's busy handler for another transaction of the
-   * same process.
-   */
-  write<T>(work: (tx: SqlExecutor) => Promise<T>): Promise<T>;
-}
+export type SqliteDatabase = SqlDatabase;
 
 export interface CreateSqliteDatabaseFunction {
   (client: Client): SqliteDatabase;

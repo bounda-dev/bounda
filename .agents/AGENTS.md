@@ -43,6 +43,10 @@ pnpm 12 (workspace catalog, `catalogMode: strict`), TypeScript 7, Biome (lint an
 - Keep files small. Adapter provider modules may exceed the norm when splitting would fragment one cohesive unit.
 - Keep every package `index.ts` thin: what is exported there is public API.
 
+## Where adapter code lives
+
+The rule, written down because it is not obvious: **code shared by two or more adapters lives in `core/adapter/*`; code only one adapter uses stays in that adapter's package.** `core/adapter/sql` holds the dialects, the query builder and the read-model schema that SQLite and PostgreSQL share. `core/adapter/sqlite` holds the SQLite stores, schema and read models, shared by libSQL (`adapter-sqlite`) and the Durable Object (`adapter-cloudflare`); each of those packages only brings its connection through `createSqliteAdapter`. The PostgreSQL stores stay in `adapter-postgresql` because nothing else speaks that SQL. It costs an app nothing: each is a subpath without side effects, loaded only when imported. Revisit if a third SQL engine appears or if the size of `core` starts to matter; the alternative is a `sqlite-storage` package both adapters depend on.
+
 ## The generator
 
 `packages/cli` holds `bounda generate`: it reads `app/domain` and `app/read` by file and directory names only (no module is imported or parsed), and writes `.bounda/registry.ts`, `.bounda/register.d.ts` (registers the registry type with `@bounda-dev/core/register`, so `boot()` needs no type argument), `.bounda/types.ts` and one `+types/<name>.ts` next to every module. Its output has a canonical layout that Biome does not touch (`**/+types/**` and `.bounda/` are excluded); the fixtures under `packages/core/test-types/fixtures` are literally that output and the golden tests compare them byte for byte. State for aggregates without `state.ts` is inferred with the TypeScript 7 API in `packages/cli/src/generate/state/infer.ts`, the only module that touches that API. When the generator's output changes, regenerate the fixtures and check `pnpm test:types` still passes.
@@ -58,7 +62,7 @@ User-facing inference must never regress. `packages/core/test-types/` holds `exp
 ## Testing
 
 - Co-located `*.test.ts`. Behavior tests over implementation-coupled mocks.
-- Adapters test against real databases (testcontainers for PostgreSQL, file or memory for SQLite). The PostgreSQL suite starts a `postgres:17` container and skips itself when Docker is not running, so start Docker before `pnpm check` to run it.
+- Adapters test against real databases (testcontainers for PostgreSQL, file or memory for SQLite). The SQLite SQL (stores, schema, read models) lives in `core/src/adapter/sqlite` behind `SqlDatabase` and `createSqliteAdapter`, and is tested there on `node:sqlite`; `adapter-sqlite` only brings the libSQL connection. A change to that SQL is a change to `core`. The PostgreSQL suite starts a `postgres:17` container and skips itself when Docker is not running, so start Docker before `pnpm check` to run it.
 - Coverage must not decrease. Mutation testing with Stryker validates test quality (`patches/` carries a fix for `@stryker-mutator/vitest-runner` with Vitest 5: it joined suite and test names with a space where Vitest 5 uses ` > `, so no test matched and every mutant survived).
 - A new package goes into `pnpm-workspace.yaml`, the root `tsconfig.json` references, and the CI workflow.
 

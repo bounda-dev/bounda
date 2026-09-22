@@ -1,9 +1,11 @@
-import { ConcurrencyError, type EventMetadata, type StoredEvent } from "@bounda-dev/core";
-import type { EventStore } from "@bounda-dev/core/adapter";
-import type { SqliteDatabase } from "./database.ts";
+import { ConcurrencyError } from "../../contracts/errors.ts";
+import type { StoredEvent } from "../../contracts/event.ts";
+import type { EventMetadata } from "../../contracts/metadata.ts";
+import type { EventStore } from "../index.ts";
+import type { SqlDatabase } from "../sql/database.ts";
 
 export interface CreateSqliteEventStoreArgs {
-  readonly db: SqliteDatabase;
+  readonly db: SqlDatabase;
   readonly table: string;
 }
 
@@ -32,7 +34,7 @@ const toStoredEvent = (row: Record<string, unknown>): StoredEvent => ({
  */
 export const createSqliteEventStore: CreateSqliteEventStoreFunction = ({ db, table }) => {
   const currentVersion = async (
-    executor: Pick<SqliteDatabase, "all">,
+    executor: Pick<SqlDatabase, "all">,
     aggregateType: string,
     aggregateId: string,
   ): Promise<number> => {

@@ -1,8 +1,8 @@
-import type { ClaimRecord, ClaimStatus, InboxLedger } from "@bounda-dev/core/adapter";
-import type { SqliteDatabase } from "./database.ts";
+import type { ClaimRecord, ClaimStatus, InboxLedger } from "../index.ts";
+import type { SqlDatabase } from "../sql/database.ts";
 
 export interface CreateSqliteInboxLedgerArgs {
-  readonly db: SqliteDatabase;
+  readonly db: SqlDatabase;
   readonly table: string;
 }
 

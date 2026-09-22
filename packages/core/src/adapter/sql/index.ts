@@ -1,3 +1,4 @@
+export type { SqlDatabase } from "./database.ts";
 export type { SqlDialect } from "./dialect.ts";
 export { postgresqlDialect, sqliteDialect } from "./dialect.ts";
 export type {
