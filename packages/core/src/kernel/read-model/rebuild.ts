@@ -7,6 +7,8 @@ import { type Logger, silentLogger } from "../../contracts/logger.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { validateRegistry } from "../../modules/validate.ts";
 import { fieldBuilder } from "../../modules/view.ts";
+import { buildAggregates } from "../aggregate/build-aggregates.ts";
+import { withUpcasting } from "../aggregate/upcasting.ts";
 import { createProjectionSubscriber } from "../projection/runner.ts";
 import { adapterForReadModel, compileReadModel } from "./build-read-models.ts";
 
@@ -92,6 +94,10 @@ export const rebuildReadModel: RebuildReadModelFunction = async ({
     );
   }
   const storage = await config.storage.createStorage({ logger });
+  const eventStore = withUpcasting({
+    eventStore: storage.eventStore,
+    aggregates: buildAggregates({ registry, config }),
+  });
   try {
     const rebuild = await adapterForReadModel({ name, config }).rebuildReadModel<
       Record<string, unknown>
@@ -109,10 +115,7 @@ export const rebuildReadModel: RebuildReadModelFunction = async ({
     let events = 0;
     try {
       for (;;) {
-        const batch = await storage.eventStore.readAll({
-          afterPosition: position,
-          limit: batchSize,
-        });
+        const batch = await eventStore.readAll({ afterPosition: position, limit: batchSize });
         if (batch.length === 0) break;
         await subscriber.process(batch);
         events += batch.length;

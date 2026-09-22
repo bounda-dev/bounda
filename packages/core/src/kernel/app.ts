@@ -9,6 +9,7 @@ import type { CommandsFacade, QueriesFacade, Registry } from "../modules/registr
 import { validateRegistry } from "../modules/validate.ts";
 import type { AppRegistry } from "../register/index.ts";
 import { buildAggregates } from "./aggregate/build-aggregates.ts";
+import { withUpcasting } from "./aggregate/upcasting.ts";
 import { createCommandsFacade } from "./command/facade.ts";
 import { createCommandPipeline } from "./command/pipeline.ts";
 import { createDeadLetters, type DeadLetters } from "./dead-letters/dead-letters.ts";
@@ -94,8 +95,12 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
       `storage "${config.storage.name}" is a definition without factories. Import the adapter package's factory.`,
     );
   }
-  const storage = await config.storage.createStorage({ logger });
+  const opened = await config.storage.createStorage({ logger });
   const aggregates = buildAggregates({ registry, config });
+  const storage = {
+    ...opened,
+    eventStore: withUpcasting({ eventStore: opened.eventStore, aggregates }),
+  };
   const readModels = await buildReadModels({ registry, config, logger });
   const pipeline = createCommandPipeline({
     aggregates,

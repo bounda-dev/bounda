@@ -47,7 +47,12 @@ const relativePaths = (model: ProjectModel): Record<string, unknown> => ({
   aggregates: model.aggregates.map((aggregate) => ({
     name: aggregate.name,
     state: aggregate.state?.relativePath ?? null,
-    events: aggregate.events.map((event) => [event.key, event.typeName, event.relativePath]),
+    events: aggregate.events.map((event) => [
+      event.key,
+      event.typeName,
+      event.relativePath,
+      event.upcasts?.relativePath ?? null,
+    ]),
     commands: aggregate.commands.map((command) => ({
       key: command.key,
       typeName: command.typeName,
@@ -99,6 +104,7 @@ describe("discoverProject on the order-app fixture", () => {
               "customerRegistered",
               "CustomerRegistered",
               "app/domain/customer/customer-registered.ts",
+              null,
             ],
           ],
           commands: [
@@ -118,9 +124,14 @@ describe("discoverProject on the order-app fixture", () => {
           name: "order",
           state: "app/domain/order/state.ts",
           events: [
-            ["orderCancelled", "OrderCancelled", "app/domain/order/order-cancelled.ts"],
-            ["orderPaid", "OrderPaid", "app/domain/order/order-paid.ts"],
-            ["orderPlaced", "OrderPlaced", "app/domain/order/order-placed.ts"],
+            ["orderCancelled", "OrderCancelled", "app/domain/order/order-cancelled.ts", null],
+            ["orderPaid", "OrderPaid", "app/domain/order/order-paid.ts", null],
+            [
+              "orderPlaced",
+              "OrderPlaced",
+              "app/domain/order/order-placed.ts",
+              "app/domain/order/order-placed.upcast.ts",
+            ],
           ],
           commands: [
             {
@@ -282,6 +293,41 @@ describe("discoverProject convention problems", () => {
       "app/read/order-summary/extra.ts: a read model holds view.ts and the directories projections and queries",
       "app/read/order-summary/lists: a read model holds view.ts and the directories projections and queries",
     ]);
+  });
+
+  it("ties an upcast module to the event next to it and rejects orphans", async () => {
+    const root = await project([
+      "app/domain/order/order-placed.ts",
+      "app/domain/order/order-placed.upcast.ts",
+      "app/domain/order/order-shipped.upcast.ts",
+      "app/domain/order/Order_Paid.upcast.ts",
+    ]);
+    expect(await problemsOf(root)).toEqual([
+      "app/domain/order/Order_Paid.upcast.ts: Event names must be kebab-case (lower-case letters, digits and dashes)",
+      "app/domain/order/order-shipped.upcast.ts: an upcast module needs the event order-shipped.ts next to it",
+    ]);
+    const valid = await project([
+      "app/domain/order/order-placed.ts",
+      "app/domain/order/order-placed.upcast.ts",
+      "app/domain/order/order-paid.ts",
+    ]);
+    const model = await discoverProject({ root: valid });
+    expect(relativePaths(model)).toMatchObject({
+      aggregates: [
+        {
+          name: "order",
+          events: [
+            ["orderPaid", "OrderPaid", "app/domain/order/order-paid.ts", null],
+            [
+              "orderPlaced",
+              "OrderPlaced",
+              "app/domain/order/order-placed.ts",
+              "app/domain/order/order-placed.upcast.ts",
+            ],
+          ],
+        },
+      ],
+    });
   });
 
   it("checks names and stray files in every kind of directory", async () => {

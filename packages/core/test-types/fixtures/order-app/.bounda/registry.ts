@@ -10,6 +10,7 @@ import inventoryFake from "../app/domain/order/commands/place-order/inventory.fa
 import * as orderCancelled from "../app/domain/order/order-cancelled.ts";
 import * as orderPaid from "../app/domain/order/order-paid.ts";
 import * as orderPlaced from "../app/domain/order/order-placed.ts";
+import * as orderPlacedUpcasts from "../app/domain/order/order-placed.upcast.ts";
 import * as sendReceiptOnOrderPaid from "../app/domain/order/policies/send-receipt-on-order-paid.ts";
 import * as orderPayment from "../app/domain/order/processes/order-payment/index.ts";
 import * as orderPaymentOnOrderPaid from "../app/domain/order/processes/order-payment/on-order-paid.ts";
@@ -34,6 +35,7 @@ export const registry = {
     order: {
       state: orderState,
       events: { orderCancelled, orderPaid, orderPlaced },
+      upcasts: { orderPlaced: orderPlacedUpcasts },
       commands: {
         cancelOrder: {
           module: cancelOrder,

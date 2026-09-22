@@ -75,6 +75,7 @@ export type {
   ReadModelEntry,
   Registry,
 } from "./registry.ts";
+export type { Upcast, Upcasts, UpcastsModule } from "./upcast.ts";
 export type { ValidateRegistryFunction } from "./validate.ts";
 export { validateRegistry } from "./validate.ts";
 export type {

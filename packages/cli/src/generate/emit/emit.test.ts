@@ -87,6 +87,7 @@ const model: ProjectModel = {
           typeName: "Created",
           path: "/project/app/domain/shipment/created.ts",
           relativePath: "app/domain/shipment/created.ts",
+          upcasts: null,
         },
       ],
       commands: [],
@@ -103,6 +104,7 @@ const model: ProjectModel = {
           typeName: "Created",
           path: "/project/app/domain/ticket/created.ts",
           relativePath: "app/domain/ticket/created.ts",
+          upcasts: null,
         },
       ],
       commands: [],
@@ -131,6 +133,45 @@ const model: ProjectModel = {
 };
 
 describe("emitRegistry", () => {
+  it("imports an upcast module under its own alias and lists it under upcasts", () => {
+    const shipment = model.aggregates[1] as ProjectModel["aggregates"][number];
+    const created = shipment.events[0] as ProjectModel["aggregates"][number]["events"][number];
+    const withUpcasts: ProjectModel = {
+      ...model,
+      aggregates: [
+        model.aggregates[0] as ProjectModel["aggregates"][number],
+        {
+          ...shipment,
+          events: [
+            {
+              ...created,
+              upcasts: {
+                path: "/project/app/domain/shipment/created.upcast.ts",
+                relativePath: "app/domain/shipment/created.upcast.ts",
+              },
+            },
+          ],
+        },
+        model.aggregates[2] as ProjectModel["aggregates"][number],
+      ],
+    };
+    const { content } = emitRegistry({ model: withUpcasts, path: "/project/.bounda/registry.ts" });
+    expect(content).toContain(
+      'import * as createdUpcasts from "../app/domain/shipment/created.upcast.ts";',
+    );
+    expect(content).toContain(
+      [
+        "    shipment: {",
+        "      events: { created: shipmentCreated },",
+        "      upcasts: { created: createdUpcasts },",
+        "      commands: {},",
+      ].join("\n"),
+    );
+    expect(emitRegistry({ model, path: "/project/.bounda/registry.ts" }).content).not.toContain(
+      "upcasts",
+    );
+  });
+
   it("prefixes colliding import aliases with their owner and omits absent parts", () => {
     const { content } = emitRegistry({ model, path: "/project/.bounda/registry.ts" });
     expect(content).toBe(`import type { Registry } from "@bounda-dev/core";

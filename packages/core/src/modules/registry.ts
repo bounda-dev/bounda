@@ -8,6 +8,7 @@ import type { PolicyModule } from "./policy.ts";
 import type { ProcessEntry } from "./process.ts";
 import type { ProjectionModule } from "./projection.ts";
 import type { QueryModule, QueryResultOf } from "./query.ts";
+import type { UpcastsModule } from "./upcast.ts";
 import type { ViewModule } from "./view.ts";
 
 /**
@@ -16,6 +17,11 @@ import type { ViewModule } from "./view.ts";
 export interface AggregateEntry {
   readonly state?: StateModule;
   readonly events: EventModules;
+  /**
+   * The `<event>.upcast.ts` modules found next to the events, keyed like `events`. Only events
+   * whose payload has changed shape have one.
+   */
+  readonly upcasts?: Readonly<Record<string, UpcastsModule>>;
   readonly commands: Readonly<Record<string, CommandEntry>>;
   readonly policies: Readonly<Record<string, PolicyModule>>;
   readonly processes: Readonly<Record<string, ProcessEntry>>;

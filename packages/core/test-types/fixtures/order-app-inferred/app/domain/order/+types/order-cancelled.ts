@@ -10,4 +10,5 @@ export declare namespace Event {
     "OrderCancelled",
     core.PayloadOf<Module>
   >;
+  type Upcasts = core.Upcasts<core.PayloadOf<Module>>;
 }

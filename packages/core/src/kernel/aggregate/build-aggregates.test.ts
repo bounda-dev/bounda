@@ -35,6 +35,27 @@ describe("buildAggregates", () => {
     });
   });
 
+  it("takes the schema version of an event from its upcasts", () => {
+    const upcast = (payload: unknown): unknown => payload;
+    const { byName } = buildAggregates({
+      registry: {
+        aggregates: {
+          order: {
+            ...orderRegistry.aggregates.order,
+            upcasts: { orderPlaced: { upcasts: [upcast, upcast] } },
+          },
+        } as Registry["aggregates"],
+        readModels: {},
+      },
+      config,
+    });
+    expect(byName.order?.events.orderPlaced).toMatchObject({
+      upcasts: [upcast, upcast],
+      schemaVersion: 3,
+    });
+    expect(byName.order?.events.orderPaid).toMatchObject({ upcasts: [], schemaVersion: 1 });
+  });
+
   it("defaults the aggregate id field and the initial state without a state module", () => {
     const registry: Registry = {
       aggregates: {

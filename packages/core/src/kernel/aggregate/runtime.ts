@@ -1,5 +1,6 @@
 import type { z } from "zod";
 import type { NewEvent, StoredEvent } from "../../contracts/event.ts";
+import type { Upcast } from "../../modules/upcast.ts";
 
 /**
  * A compiled event of an aggregate: its type name, its schema if it has one, and its `apply`.
@@ -9,6 +10,14 @@ export interface EventRuntime {
   readonly type: string;
   readonly schema: z.ZodType | null;
   readonly apply: (args: { readonly state: object; readonly event: StoredEvent }) => object;
+  /**
+   * The event's schema history, oldest first; empty for an event whose payload never changed.
+   */
+  readonly upcasts: readonly Upcast<never, unknown>[];
+  /**
+   * `upcasts.length + 1`: what new events of this type are written with.
+   */
+  readonly schemaVersion: number;
 }
 
 /**

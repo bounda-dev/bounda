@@ -1,4 +1,4 @@
-import type { AggregateModel, ProjectModel, ReadModelModel } from "../model.ts";
+import type { AggregateModel, ModuleRef, ProjectModel, ReadModelModel } from "../model.ts";
 import { joinKeys, uniqueAliases } from "../naming.ts";
 import { type GeneratedFile, importPath } from "./paths.ts";
 
@@ -27,7 +27,12 @@ const collectImports = (model: ProjectModel): readonly ImportEntry[] => {
   for (const aggregate of model.aggregates) {
     if (aggregate.state !== null)
       add(joinKeys(aggregate.name, "state"), aggregate.name, aggregate.state.path);
-    for (const event of aggregate.events) add(event.key, aggregate.name, event.path);
+    for (const event of aggregate.events) {
+      add(event.key, aggregate.name, event.path);
+      if (event.upcasts !== null) {
+        add(joinKeys(event.key, "upcasts"), aggregate.name, event.upcasts.path);
+      }
+    }
     for (const command of aggregate.commands) {
       add(command.key, aggregate.name, command.path);
       for (const collaborator of command.collaborators) {
@@ -131,12 +136,23 @@ const emitProcesses = (aggregate: AggregateModel, aliases: Aliases, indent: stri
   return `{\n${lines.join("\n")}\n${indent}}`;
 };
 
+const emitUpcasts = (aggregate: AggregateModel, aliases: Aliases, indent: string): string[] => {
+  const upcast = aggregate.events.filter((event) => event.upcasts !== null);
+  if (upcast.length === 0) return [];
+  return [
+    `${indent}upcasts: ${record(
+      upcast.map((event) => [event.key, aliases.of((event.upcasts as ModuleRef).path)]),
+    )},`,
+  ];
+};
+
 const emitAggregate = (aggregate: AggregateModel, aliases: Aliases): string => {
   const indent = "      ";
   return [
     `    ${aggregate.name}: {`,
     ...(aggregate.state === null ? [] : [`${indent}state: ${aliases.of(aggregate.state.path)},`]),
     `${indent}events: ${record(aggregate.events.map((event) => [event.key, aliases.of(event.path)]))},`,
+    ...emitUpcasts(aggregate, aliases, indent),
     `${indent}commands: ${emitCommands(aggregate, aliases, indent)},`,
     `${indent}policies: ${record(aggregate.policies.map((policy) => [policy.key, aliases.of(policy.path)]))},`,
     `${indent}processes: ${emitProcesses(aggregate, aliases, indent)},`,
