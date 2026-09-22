@@ -15,7 +15,7 @@ import {
 import { ConfigurationError } from "../contracts/errors.ts";
 import { silentLogger } from "../contracts/logger.ts";
 import { fieldBuilder as f } from "../modules/view.ts";
-import { memory } from "./index.ts";
+import { createMemoryEventStore, memory } from "./index.ts";
 
 const storage = async () => memory().createStorage({ logger: silentLogger });
 
@@ -79,6 +79,17 @@ describe("memory adapter", () => {
       events: [pendingEvent({ aggregateId: "2", version: 1 })],
     });
     expect(heard).toEqual([2]);
+  });
+
+  it("works as a bare event store, with nobody to notify", async () => {
+    const store = createMemoryEventStore();
+    await store.append({
+      aggregateType: "order",
+      aggregateId: "1",
+      expectedVersion: 0,
+      events: [pendingEvent({ aggregateId: "1", version: 1 })],
+    });
+    expect(await store.lastPosition()).toBe(1);
   });
 
   it("opens the same read model twice on the same rows", async () => {

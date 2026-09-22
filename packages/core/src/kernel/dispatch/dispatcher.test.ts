@@ -486,13 +486,23 @@ describe("createDispatcher", () => {
     }
   });
 
-  it("runs one more pass after the one in flight when a notification arrives meanwhile", async () => {
+  it("runs one more pass after the one in flight when notifications arrive meanwhile", async () => {
     vi.useFakeTimers();
     try {
       const adapter = memory();
-      const { eventStore, checkpointStore, notifier } = await adapter.createStorage({
-        logger: silentLogger,
-      });
+      const {
+        eventStore: rawStore,
+        checkpointStore,
+        notifier,
+      } = await adapter.createStorage({ logger: silentLogger });
+      let reads = 0;
+      const eventStore = {
+        ...rawStore,
+        readAll: (args: Parameters<typeof rawStore.readAll>[0]) => {
+          reads += 1;
+          return rawStore.readAll(args);
+        },
+      };
       let release: () => void = () => undefined;
       const seen: number[][] = [];
       const gated: Subscriber = {
@@ -524,17 +534,21 @@ describe("createDispatcher", () => {
       expect(seen).toEqual([[1]]);
       expect(vi.getTimerCount()).toBe(0);
 
-      await eventStore.append({
-        aggregateType: "order",
-        aggregateId: "2",
-        expectedVersion: 0,
-        events: [pendingEvent({ aggregateId: "2", version: 1 })],
-      });
+      for (const aggregateId of ["2", "3"]) {
+        await eventStore.append({
+          aggregateType: "order",
+          aggregateId,
+          expectedVersion: 0,
+          events: [pendingEvent({ aggregateId, version: 1 })],
+        });
+      }
       await vi.advanceTimersByTimeAsync(0);
       expect(seen).toEqual([[1]]);
+      expect(reads).toBe(1);
       release();
       await vi.advanceTimersByTimeAsync(0);
-      expect(seen).toEqual([[1], [2]]);
+      expect(seen).toEqual([[1], [2, 3]]);
+      expect(reads).toBe(2);
       expect(vi.getTimerCount()).toBe(1);
       await dispatcher.stop();
     } finally {
@@ -575,6 +589,105 @@ describe("createDispatcher", () => {
       await vi.advanceTimersByTimeAsync(100);
       expect(a.seen).toEqual([[1]]);
       await dispatcher.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("never idles without a notifier, whatever idleIntervalMs says", async () => {
+    vi.useFakeTimers();
+    try {
+      const { eventStore, checkpointStore } = await storage();
+      const a = recorder("a");
+      const dispatcher = createDispatcher({
+        eventStore,
+        checkpointStore,
+        subscribers: [a],
+        batchSize: 10,
+        pollIntervalMs: 100,
+        idleIntervalMs: 30_000,
+        logger: silentLogger,
+      });
+      dispatcher.start();
+      await vi.advanceTimersByTimeAsync(300);
+      expect(a.seen).toEqual([]);
+      await appendMany(eventStore, 1);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(a.seen).toEqual([[1]]);
+      await dispatcher.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries at the poll interval after a failed pass, even with a notifier", async () => {
+    vi.useFakeTimers();
+    try {
+      const adapter = memory();
+      const { eventStore, checkpointStore, notifier } = await adapter.createStorage({
+        logger: silentLogger,
+      });
+      const original = checkpointStore.get.bind(checkpointStore);
+      let failures = 1;
+      checkpointStore.get = async (subscriber) => {
+        if (failures > 0) {
+          failures -= 1;
+          throw new Error("checkpoints unavailable");
+        }
+        return original(subscriber);
+      };
+      const a = recorder("a");
+      const dispatcher = createDispatcher({
+        eventStore,
+        checkpointStore,
+        subscribers: [a],
+        batchSize: 10,
+        pollIntervalMs: 100,
+        idleIntervalMs: 30_000,
+        ...(notifier === undefined ? {} : { notifier }),
+        logger: silentLogger,
+      });
+      await appendMany(eventStore, 1);
+      dispatcher.start();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(a.seen).toEqual([]);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(a.seen).toEqual([[1]]);
+      await dispatcher.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores a notification that arrives after it stopped", async () => {
+    vi.useFakeTimers();
+    try {
+      const { eventStore, checkpointStore } = await storage();
+      let listener: ((position?: number) => void) | undefined;
+      const a = recorder("a");
+      const dispatcher = createDispatcher({
+        eventStore,
+        checkpointStore,
+        subscribers: [a],
+        batchSize: 10,
+        pollIntervalMs: 100,
+        idleIntervalMs: 30_000,
+        notifier: {
+          subscribe: async (next) => {
+            listener = next;
+            return async () => undefined;
+          },
+        },
+        logger: silentLogger,
+      });
+      dispatcher.start();
+      await vi.advanceTimersByTimeAsync(0);
+      await dispatcher.stop();
+      await appendMany(eventStore, 1);
+      listener?.(1);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(a.seen).toEqual([]);
+      expect(vi.getTimerCount()).toBe(0);
     } finally {
       vi.useRealTimers();
     }

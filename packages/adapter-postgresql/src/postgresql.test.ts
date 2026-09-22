@@ -132,6 +132,12 @@ describe.skipIf(container === null)("postgresql adapter", () => {
     });
     await storage.eventStore.append({
       aggregateType: "order",
+      aggregateId: "n-1",
+      expectedVersion: 2,
+      events: [],
+    });
+    await storage.eventStore.append({
+      aggregateType: "order",
       aggregateId: "n-2",
       expectedVersion: 0,
       events: [pendingEvent({ aggregateId: "n-2", version: 1 })],

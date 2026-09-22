@@ -94,9 +94,9 @@ export interface CreateDispatcherFunction {
  *
  * Passes are scheduled the same way with or without a notifier: a timer arms the next one after
  * each pass. A notification only shortens the wait: it runs the pass now, or marks one as due when
- * a pass is in flight. What changes is the timer: `pollIntervalMs` while passes find events,
- * `idleIntervalMs` once they stop, so an idle worker on a notifying backend barely touches the
- * database.
+ * a pass is in flight, however many arrive meanwhile. What changes is the timer: `pollIntervalMs`
+ * while passes find events or fail, `idleIntervalMs` once they stop finding any, so an idle
+ * worker on a notifying backend barely touches the database.
  */
 export const createDispatcher: CreateDispatcherFunction = ({
   eventStore,
@@ -169,12 +169,12 @@ export const createDispatcher: CreateDispatcherFunction = ({
 
   const background = async (): Promise<void> => {
     due = false;
-    const advanced = await mutex
-      .run(() => pass())
-      .catch((error: unknown) => {
-        logger.error("dispatcher pass failed", errorDetails(error));
-        return false;
-      });
+    let advanced = true;
+    try {
+      advanced = await mutex.run(() => pass());
+    } catch (error) {
+      logger.error("dispatcher pass failed", errorDetails(error));
+    }
     idle = notifier !== undefined && !advanced;
     if (due) {
       await background();
