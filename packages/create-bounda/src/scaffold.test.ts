@@ -206,6 +206,7 @@ describe("scaffoldProject", () => {
       "app/read/orders/view.ts",
       "bounda.config.ts",
       "package.json",
+      "public/index.html",
       "src/worker.ts",
       "tests/orders.test.ts",
       "tsconfig.json",
@@ -218,6 +219,7 @@ describe("scaffoldProject", () => {
       devDependencies: Record<string, string>;
     };
     expect(manifest.scripts).toMatchObject({
+      build: "bounda generate",
       dev: "bounda generate && wrangler dev",
       deploy: "bounda generate && wrangler deploy",
     });
@@ -231,6 +233,9 @@ describe("scaffoldProject", () => {
     });
     expect(await readFile(join(target, "bounda.config.ts"), "utf8")).toContain("cloudflare()");
     expect(await readFile(join(target, "wrangler.jsonc"), "utf8")).toContain('"name": "edge"');
+    expect(await readFile(join(target, "wrangler.jsonc"), "utf8")).toContain(
+      '"assets": { "directory": "./public" }',
+    );
     expect(await readFile(join(target, ".gitignore"), "utf8")).toContain(".wrangler/");
     expect(await readFile(join(target, "README.md"), "utf8")).toContain("npm run deploy");
   });

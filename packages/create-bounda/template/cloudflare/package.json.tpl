@@ -8,6 +8,7 @@
   "scripts": {
     "prepare": "bounda generate",
     "generate": "bounda generate",
+    "build": "bounda generate",
     "dev": "bounda generate && wrangler dev",
     "deploy": "bounda generate && wrangler deploy",
     "typecheck": "tsc --noEmit -p tsconfig.json",
