@@ -6,13 +6,13 @@ Scaffolds a [Bounda](https://docs.bounda.dev) project: one aggregate, one read m
 the generator wired up.
 
 ```bash
-npm create bounda my-app
+npm create bounda@latest my-app
 ```
 
 It asks for a database and how the app runs, or takes both as flags:
 
 ```bash
-npm create bounda my-app -- --database postgresql --framework react-router
+npm create bounda@latest my-app -- --database postgresql --framework react-router
 ```
 
 | Flag | Values | Default |
