@@ -106,9 +106,43 @@ In a React Router app this is a setting rather than a call — `createBounda({ c
 The adapter creates what it needs on start: the event store, the ledgers and a table per read
 model. Adding a field to a view adds a nullable column the next time the app starts and existing
 rows keep working. Removing a field or changing its type is refused with an error naming the read
-model — rename the read model instead and it is built from scratch.
+model — that is what `bounda rebuild` is for, below.
 
 There are no migration files to run, and no migration step in your deploy.
+
+## Rebuilding a read model
+
+A read model is derived data: when its projection had a bug, or its view lost a field or changed a
+field's type, the answer is to project the stream again. `bounda rebuild <read-model>` does that
+without taking the read model offline:
+
+1. It creates a fresh table with the view's current fields, next to the live one.
+2. It runs the projections over the whole stream into that table. Queries keep reading the live
+   table meanwhile, and the worker keeps projecting new events into it.
+3. When the fresh table has caught up, it takes the live table's place in a single transaction,
+   and the read model's checkpoint is moved to where the rebuild stopped.
+
+A worker that got further than that meanwhile finds its checkpoint moved back and projects the
+difference again, which is harmless because projections are idempotent. A projection that throws
+aborts the rebuild and leaves the live table as it was.
+
+```bash
+bounda rebuild orderSummary
+```
+
+Run it from a machine with the new code and access to the database, before deploying that code:
+the app refuses to start against a table whose columns no longer match the view. Between the
+swap and the deploy, the old worker's projection for that read model may fail against the new
+columns; its checkpoint holds, and it catches up as soon as the new code runs. Nothing is lost.
+
+Two things the rebuild cannot do for you. A projection that writes through `client` with SQL
+naming the table by hand keeps writing to the live table, not to the fresh one — write projections
+through `table`. And a read model with millions of events takes as long as projecting them takes;
+watch the `read model rebuild progressed` log line.
+
+Programmatically, `app.rebuildReadModel(name)` on an app, or `rebuildReadModel({ registry,
+config, name })` from `@bounda-dev/core` on a project loaded with `loadProject()` from
+`@bounda-dev/core/node`.
 
 ## Tuning
 
@@ -133,8 +167,6 @@ Bounda is alpha, and the honest list of what production would eventually want:
   hundreds of events per instance, not for hundreds of thousands.
 - **Upcasters.** Changing the shape of an event that is already stored has no supported path yet;
   today you add a new event type and keep handling the old one.
-- **Rebuilding a read model in place.** Renaming it rebuilds it, which is enough to move forward
-  but is not what you want against a large stream.
 - **OpenTelemetry.** There is structured logging and `app.getLag()`; there are no traces or
   metrics exported.
 

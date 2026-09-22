@@ -4,6 +4,7 @@ export type {
   CreateStorageArgs,
   IsAdapterFunction,
   ReadModelPorts,
+  ReadModelRebuild,
   StoragePorts,
 } from "./adapter.ts";
 export { isAdapter } from "./adapter.ts";

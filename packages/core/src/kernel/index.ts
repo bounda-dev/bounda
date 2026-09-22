@@ -95,13 +95,27 @@ export type {
 } from "./query/runner.ts";
 export { createQueryRunner } from "./query/runner.ts";
 export type {
+  AdapterForReadModelArgs,
+  AdapterForReadModelFunction,
   BuildReadModelsArgs,
   BuildReadModelsFunction,
+  CompileReadModelArgs,
+  CompileReadModelFunction,
   ProjectionRuntime,
   ReadModelRuntime,
   ReadModelsRuntime,
 } from "./read-model/build-read-models.ts";
-export { buildReadModels } from "./read-model/build-read-models.ts";
+export {
+  adapterForReadModel,
+  buildReadModels,
+  compileReadModel,
+} from "./read-model/build-read-models.ts";
+export type {
+  RebuildReadModelArgs,
+  RebuildReadModelFunction,
+  RebuildReadModelResult,
+} from "./read-model/rebuild.ts";
+export { rebuildReadModel } from "./read-model/rebuild.ts";
 export type {
   CreateScheduledCommandWorkerArgs,
   CreateScheduledCommandWorkerFunction,

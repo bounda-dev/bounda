@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { rebuildReadModel } from "@bounda-dev/core";
+import { loadProject } from "@bounda-dev/core/node";
 import { Command, CommanderError } from "commander";
 import { generate } from "./generate/generate.ts";
 import { ConventionError } from "./generate/problems.ts";
@@ -78,6 +80,38 @@ const runGenerate = async (
   }
 };
 
+interface RebuildOptions {
+  readonly root?: string;
+  readonly config: string;
+  readonly registry: string;
+}
+
+const runRebuild = async (
+  readModel: string,
+  options: RebuildOptions,
+  cwd: string,
+  stdout: Output,
+  stderr: Output,
+): Promise<number> => {
+  const root = resolve(cwd, options.root ?? ".");
+  try {
+    const project = await loadProject({
+      root,
+      configPath: options.config,
+      registryPath: options.registry,
+    });
+    const result = await rebuildReadModel({ ...project, name: readModel });
+    line(
+      stdout,
+      `rebuilt read model "${readModel}": ${result.events} events, checkpoint at position ${result.position}`,
+    );
+    return EXIT_OK;
+  } catch (error) {
+    line(stderr, `error: ${error instanceof Error ? error.message : String(error)}`);
+    return EXIT_FAILURE;
+  }
+};
+
 /**
  * The `bounda` command line, as a function: parses `argv`, runs the command and returns the exit
  * code instead of exiting, so it can be tested and embedded.
@@ -114,6 +148,17 @@ export const runCli: RunCliFunction = async ({ argv, cwd, stdout, stderr, signal
           exitCode = await runGenerate(options, cwd, stdout, stderr);
         },
       });
+    });
+
+  program
+    .command("rebuild")
+    .description("rebuild a read model from the whole stream into a fresh table and swap it in")
+    .argument("<read-model>", "the read model's key in the registry, e.g. orderSummary")
+    .option("--root <dir>", "project root (default: current directory)")
+    .option("--config <file>", "configuration module under the root", "bounda.config.ts")
+    .option("--registry <file>", "generated registry module under the root", ".bounda/registry.ts")
+    .action(async (readModel: string, options: RebuildOptions) => {
+      exitCode = await runRebuild(readModel, options, cwd, stdout, stderr);
     });
 
   try {

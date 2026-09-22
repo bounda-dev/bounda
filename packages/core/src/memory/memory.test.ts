@@ -7,6 +7,7 @@ import {
   deadLetterStoreContract,
   eventStoreContract,
   inboxLedgerContract,
+  readModelRebuildContract,
   schedulerContract,
   tableContract,
 } from "../adapter/testing/index.ts";
@@ -33,16 +34,35 @@ describe("memory adapter", () => {
       return ports.table;
     },
   });
+  readModelRebuildContract({ create: async () => memory() });
 
-  it("is a full adapter with isolated storage per instance", async () => {
+  it("is a full adapter with one storage per instance, isolated from other instances", async () => {
     const adapter = memory();
     expect(isAdapter(adapter)).toBe(true);
     expect(adapter).toMatchObject({ kind: "bounda-adapter", name: "memory", options: {} });
     const first = await adapter.createStorage({ logger: silentLogger });
+    const again = await adapter.createStorage({ logger: silentLogger });
     const second = await memory().createStorage({ logger: silentLogger });
     await first.checkpointStore.set("policies", 4);
+    expect(await again.checkpointStore.get("policies")).toBe(4);
     expect(await second.checkpointStore.get("policies")).toBe(0);
     await first.close();
+  });
+
+  it("opens the same read model twice on the same rows", async () => {
+    const adapter = memory();
+    const first = await adapter.createReadModel<ContractRow>({
+      name: "order-summary",
+      fields: contractFields,
+      logger: silentLogger,
+    });
+    const second = await adapter.createReadModel<ContractRow>({
+      name: "order-summary",
+      fields: contractFields,
+      logger: silentLogger,
+    });
+    await first.table.insert({ orderId: "1", customerId: "c", status: "placed", total: 1 });
+    expect(await second.table.count()).toBe(1);
   });
 
   it("refuses SQL through its read client and points at table instead", async () => {

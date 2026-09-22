@@ -56,14 +56,17 @@ On first use the adapter creates its tables, prefixed with `bounda_` by default:
 | `bounda_dead_letters` | Handler runs that gave up, with the error and the attempt count |
 
 Read models get one table each, named after the read model in snake_case: `orderSummary` becomes
-`bounda_order_summary`. Its columns come from the `fields` of the view, also in snake_case.
+`bounda_order_summary`. Its columns come from the `fields` of the view, also in snake_case. While
+a read model is being rebuilt there is also `bounda_order_summary__rebuild`, and for an instant
+during the swap `bounda_order_summary__retired`.
 
 ## Evolving a read model
 
 Adding a field to a view adds a nullable column the next time the app starts; existing rows keep
 working. Removing a field or changing its type is refused with an error that names the read
-model: rename the read model instead and it is rebuilt from scratch. Rebuilding in place is
-planned.
+model and the command that rebuilds it: `bounda rebuild <read-model>` projects the whole stream
+into a fresh table with the current fields and swaps it in, with the live table serving queries
+until then. See [Deployment](/guides/deployment/#rebuilding-a-read-model).
 
 ## Hand-written SQL
 

@@ -210,3 +210,62 @@ describe("bounda generate", () => {
     expect(await stat(generated)).toBeTruthy();
   });
 });
+
+describe("bounda rebuild", () => {
+  const fixture = resolve(import.meta.dirname, "fixtures/rebuild-project");
+
+  it("loads the project, rebuilds the read model and reports what it did", async () => {
+    const result = await cli(["rebuild", "counterTotals"], fixture);
+    expect(result.stderr).toBe("");
+    expect(result.code).toBe(EXIT_OK);
+    expect(result.stdout).toBe(
+      'rebuilt read model "counterTotals": 0 events, checkpoint at position 0\n',
+    );
+  });
+
+  it("honours --root, --config and --registry", async () => {
+    const result = await cli(
+      [
+        "rebuild",
+        "counterTotals",
+        "--root",
+        fixture,
+        "--config",
+        "bounda.config.ts",
+        "--registry",
+        ".bounda/registry.ts",
+      ],
+      repoRoot,
+    );
+    expect(result.code).toBe(EXIT_OK);
+    expect(result.stdout).toContain('rebuilt read model "counterTotals"');
+  });
+
+  it("documents its argument and options in its help", async () => {
+    const help = await cli(["rebuild", "--help"], fixture);
+    expect(help.code).toBe(EXIT_OK);
+    expect(help.stdout).toContain(
+      "rebuild a read model from the whole stream into a fresh table and swap it in",
+    );
+    expect(help.stdout).toContain("<read-model>");
+    expect(help.stdout).toContain("the read model's key in the registry, e.g. orderSummary");
+    for (const option of ["--root <dir>", "--config <file>", "--registry <file>"]) {
+      expect(help.stdout).toContain(option);
+    }
+    expect(help.stdout).toMatch(/\(default:\s+"bounda\.config\.ts"\)/);
+    expect(help.stdout).toMatch(/\(default:\s+"\.bounda\/registry\.ts"\)/);
+  });
+
+  it("exits 2 with the reason when the read model or the project is not there", async () => {
+    const unknown = await cli(["rebuild", "nope"], fixture);
+    expect(unknown.code).toBe(EXIT_FAILURE);
+    expect(unknown.stderr).toBe(
+      'error: Unknown read model "nope". The registry has: counterTotals\n',
+    );
+    const missing = await cli(["rebuild", "counterTotals", "--registry", "missing.ts"], fixture);
+    expect(missing.code).toBe(EXIT_FAILURE);
+    expect(missing.stderr).toMatch(/^error: Cannot find the registry \(export "registry"\) at /);
+    const noArgument = await cli(["rebuild"], fixture);
+    expect(noArgument.code).toBe(EXIT_CONVENTION);
+  });
+});

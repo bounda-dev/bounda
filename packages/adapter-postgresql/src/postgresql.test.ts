@@ -15,6 +15,7 @@ import {
   eventStoreContract,
   inboxLedgerContract,
   pendingEvent,
+  readModelRebuildContract,
   schedulerContract,
   tableContract,
 } from "@bounda-dev/core/adapter/testing";
@@ -101,6 +102,12 @@ describe.skipIf(container === null)("postgresql adapter", () => {
           readonly paidAt?: Date;
         }>(fresh(), "orderSummary", contractFields)
       ).table;
+    },
+  });
+  readModelRebuildContract({
+    create: async () => {
+      await closeOpened();
+      return fresh();
     },
   });
 
@@ -211,6 +218,38 @@ describe.skipIf(container === null)("postgresql adapter", () => {
     expect(row).toEqual({ id: "a", tags: ["x", "y"], since });
   });
 
+  it("logs the lifecycle of a rebuild with the tables involved", async () => {
+    await closeOpened();
+    const adapter = fresh();
+    const prefix = `t${run}_${prefixes}_`;
+    const logs: unknown[] = [];
+    const logger = {
+      ...silentLogger,
+      info: (message: string, fields?: unknown) => {
+        logs.push([message, fields]);
+      },
+    };
+    const args = { name: "orderSummary", fields: contractFields, logger };
+    const committed = await adapter.rebuildReadModel(args);
+    await committed.commit();
+    const aborted = await adapter.rebuildReadModel(args);
+    await aborted.abort();
+    const table = `${prefix}order_summary`;
+    const shadow = `${table}__rebuild`;
+    expect(logs).toEqual([
+      ["read model rebuild started", { readModel: "orderSummary", table, shadow }],
+      ["read model rebuild committed", { readModel: "orderSummary", table }],
+      ["read model rebuild started", { readModel: "orderSummary", table, shadow }],
+      ["read model rebuild aborted", { readModel: "orderSummary", table }],
+    ]);
+    const ports = await openReadModel(adapter, "orderSummary", contractFields);
+    const tables = await ports.client.all(
+      "SELECT table_name FROM information_schema.tables WHERE table_name LIKE $1 ORDER BY table_name",
+      [`${table}%`],
+    );
+    expect(tables).toEqual([{ tableName: table }]);
+  });
+
   it("evolves a read model table additively and refuses destructive changes", async () => {
     const adapter = fresh();
     const prefix = `t${run}_${prefixes}_`;
@@ -268,7 +307,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
         fields: { ...v2, total: f.string() },
         logger: silentLogger,
       }),
-    ).rejects.toThrow(/Changing a field's type is not supported yet/);
+    ).rejects.toThrow(/Changing a field's type needs a rebuild: run `bounda rebuild orders`/);
   });
 
   it("shares one pool between storage and read models until the last close", async () => {

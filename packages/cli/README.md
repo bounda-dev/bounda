@@ -12,6 +12,7 @@ npx bounda generate
 
 ```
 bounda generate [--root <dir>] [--app-dir <dir>] [--tsconfig <file>] [--no-infer] [--watch]
+bounda rebuild <read-model> [--root <dir>] [--config <file>] [--registry <file>]
 ```
 
 It reads `app/domain` and `app/read` by file and directory names only, and writes
@@ -28,6 +29,10 @@ Keep it as `prepare` so a fresh clone generates on install, and `--watch` while 
 
 In a React Router app the `bounda()` plugin from `@bounda-dev/react-router/vite` runs the
 generator inside Vite instead.
+
+`bounda rebuild <read-model>` projects the whole stream into a fresh table and swaps it in without
+taking the read model offline: for a projection that had a bug, or a view that lost a field or
+changed a field's type.
 
 ## Alpha
 

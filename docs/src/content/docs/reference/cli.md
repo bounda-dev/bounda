@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: "The bounda command: generate the registry and the types, once or on every change."
+description: "The bounda command: generate the registry and the types, and rebuild a read model."
 sidebar:
   order: 0
 ---
@@ -84,6 +84,38 @@ which field and which events set it. Export the type, or add `state.ts`, to fix 
 TypeScript installed, or when it cannot open the project, the state stays `UnknownState` and the
 warning says so.
 
+## `bounda rebuild`
+
+Rebuilds one read model from the whole stream without taking it offline. It loads
+`bounda.config.ts` and the generated registry the way `boot()` does, so it runs from the project
+root with the same environment as the app.
+
+```bash
+bounda rebuild orderSummary
+bounda rebuild orderSummary --root ./apps/shop --config bounda.config.ts --registry .bounda/registry.ts
+```
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--root <dir>` | current directory | The project root, where the configuration and `.bounda/` are |
+| `--config <file>` | `bounda.config.ts` | The configuration module under the root |
+| `--registry <file>` | `.bounda/registry.ts` | The generated registry module under the root |
+
+The projections run into a fresh table with the view's current fields while queries keep reading
+the live one. When the fresh table has caught up with the stream it takes the live table's place
+in one step, and the read model's checkpoint is moved to where the rebuild stopped; a worker that
+got further meanwhile re-projects the difference. A projection that throws aborts the rebuild and
+leaves the live table as it was.
+
+```
+rebuilt read model "orderSummary": 48213 events, checkpoint at position 48213
+```
+
+Use it after fixing a projection, and when a view loses a field or changes a field's type, which
+the app refuses to do on start. See [Deployment](/guides/deployment/#rebuilding-a-read-model) for
+when to run it in a deploy. Exit codes: `0` rebuilt, `1` bad arguments, `2` the project could not
+be loaded, the read model is not in the registry, or a projection failed.
+
 ## Programmatic use
 
 Everything the command does is exported from `@bounda-dev/cli`:
@@ -97,4 +129,6 @@ report.warnings; // inference warnings, per aggregate
 ```
 
 `discoverProject`, `emitProject`, `inferStates`, `watchProject` and `runCli` are the pieces
-`generate` and the binary are made of.
+`generate` and the binary are made of. `bounda rebuild` is `rebuildReadModel` from
+`@bounda-dev/core` over a project loaded with `loadProject` from `@bounda-dev/core/node`; an app
+exposes the same as `app.rebuildReadModel(name)`.

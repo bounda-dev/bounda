@@ -58,6 +58,21 @@ const groupByEvent = (
   return grouped;
 };
 
+export interface AdapterForReadModelArgs {
+  readonly name: string;
+  readonly config: ResolvedConfig;
+}
+
+export interface AdapterForReadModelFunction {
+  (args: AdapterForReadModelArgs): Adapter;
+}
+
+/**
+ * The adapter a read model lives on: its own entry under `readModels`, or `storage`.
+ */
+export const adapterForReadModel: AdapterForReadModelFunction = ({ name, config }) =>
+  adapterFor(name, config);
+
 const adapterFor = (name: string, config: ResolvedConfig): Adapter => {
   const definition = config.readModels[name] ?? config.storage;
   if (!isAdapter(definition)) {
@@ -67,6 +82,28 @@ const adapterFor = (name: string, config: ResolvedConfig): Adapter => {
   }
   return definition;
 };
+
+export interface CompileReadModelArgs {
+  readonly name: string;
+  readonly entry: ReadModelEntry;
+  readonly ports: ReadModelPorts;
+}
+
+export interface CompileReadModelFunction {
+  (args: CompileReadModelArgs): ReadModelRuntime;
+}
+
+/**
+ * The runtime of one read model over the ports given: its fields, its projections indexed by
+ * event type and its queries. `buildReadModels` opens the ports; a rebuild supplies shadow ones.
+ */
+export const compileReadModel: CompileReadModelFunction = ({ name, entry, ports }) => ({
+  name,
+  fields: entry.view.fields({ f: fieldBuilder }),
+  ports,
+  projectionsByEvent: groupByEvent(entry.projections),
+  queries: entry.queries,
+});
 
 const buildReadModel = async (
   name: string,
@@ -80,13 +117,7 @@ const buildReadModel = async (
     fields,
     logger,
   });
-  return {
-    name,
-    fields,
-    ports,
-    projectionsByEvent: groupByEvent(entry.projections),
-    queries: entry.queries,
-  };
+  return compileReadModel({ name, entry, ports });
 };
 
 export interface BuildReadModelsArgs {

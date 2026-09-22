@@ -20,6 +20,7 @@ import { createProjectionSubscriber } from "./projection/runner.ts";
 import { buildQueries } from "./query/build-queries.ts";
 import { createQueryRunner } from "./query/runner.ts";
 import { buildReadModels } from "./read-model/build-read-models.ts";
+import { type RebuildReadModelResult, rebuildReadModel } from "./read-model/rebuild.ts";
 import { createScheduledCommandWorker } from "./scheduler/worker.ts";
 
 /**
@@ -49,6 +50,11 @@ export interface BoundaApp<R extends Registry = AppRegistry> {
    * processes and scheduled commands are left to the background. Works in every role.
    */
   catchUpReadModels(): Promise<void>;
+  /**
+   * Rebuilds one read model from the whole stream into a fresh table and swaps it in, without
+   * taking it offline. See `rebuildReadModel`.
+   */
+  rebuildReadModel(name: string): Promise<RebuildReadModelResult>;
   getLag(): Promise<DispatcherLag>;
 }
 
@@ -174,6 +180,7 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
       }
     },
     catchUpReadModels: () => dispatcher.catchUp("projection"),
+    rebuildReadModel: (name) => rebuildReadModel({ registry, config: rawConfig, name, logger }),
     getLag: () => dispatcher.getLag(),
   };
 };

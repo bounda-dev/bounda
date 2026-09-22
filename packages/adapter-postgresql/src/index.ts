@@ -7,7 +7,7 @@ import { createPostgresqlDeadLetterStore } from "./dead-letter-store.ts";
 import { createPostgresqlEventStore } from "./event-store.ts";
 import { createPostgresqlInboxLedger } from "./inbox-ledger.ts";
 import { type PostgresqlOptions, resolvePostgresqlOptions } from "./options.ts";
-import { openPostgresqlReadModel } from "./read-model.ts";
+import { openPostgresqlReadModel, rebuildPostgresqlReadModel } from "./read-model.ts";
 import { createPostgresqlScheduler } from "./scheduler.ts";
 import { ensureStorageSchema, storageTablesFor } from "./schema.ts";
 
@@ -86,6 +86,20 @@ export const postgresql: PostgresqlFunction = (options) => {
       const { db, sql } = open();
       await db.run(`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(schema)}`, []);
       return openPostgresqlReadModel<Row>({
+        db,
+        sql,
+        schema,
+        tablePrefix,
+        name,
+        fields,
+        logger,
+        close: release,
+      });
+    },
+    rebuildReadModel: async <Row extends object>({ name, fields, logger }: CreateReadModelArgs) => {
+      const { db, sql } = open();
+      await db.run(`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(schema)}`, []);
+      return rebuildPostgresqlReadModel<Row>({
         db,
         sql,
         schema,

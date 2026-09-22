@@ -51,6 +51,20 @@ export interface BootFunction {
   <R extends Registry = AppRegistry>(args?: BootArgs<R>): Promise<BoundaApp<R>>;
 }
 
+export type LoadProjectArgs<R extends Registry = AppRegistry> = Pick<
+  BootArgs<R>,
+  "root" | "configPath" | "registryPath" | "config" | "registry" | "env" | "logger"
+>;
+
+export interface LoadedProject<R extends Registry = AppRegistry> {
+  readonly config: Config;
+  readonly registry: R;
+}
+
+export interface LoadProjectFunction {
+  <R extends Registry = AppRegistry>(args?: LoadProjectArgs<R>): Promise<LoadedProject<R>>;
+}
+
 const exists = async (path: string): Promise<boolean> => {
   try {
     await access(path);
@@ -90,6 +104,39 @@ const loadEnv = (root: string, logger: Logger): void => {
 };
 
 /**
+ * What `boot()` does before creating the app: loads `.env`, then imports `bounda.config.ts` and
+ * the generated registry from the project root. For tooling that needs the project but not a
+ * running app, such as `bounda rebuild`.
+ */
+export const loadProject: LoadProjectFunction = async <R extends Registry = AppRegistry>({
+  root = process.cwd(),
+  configPath = "bounda.config.ts",
+  registryPath = ".bounda/registry.ts",
+  config,
+  registry,
+  env = true,
+  logger = createConsoleLogger(),
+}: LoadProjectArgs<R> = {}): Promise<LoadedProject<R>> => {
+  if (env) loadEnv(root, logger);
+  return {
+    config:
+      config ??
+      (await importModule<Config>(
+        resolve(root, configPath),
+        "the configuration (default export)",
+        (module) => module.default as Config | undefined,
+      )),
+    registry:
+      registry ??
+      (await importModule<R>(
+        resolve(root, registryPath),
+        'the registry (export "registry")',
+        (module) => module.registry as R | undefined,
+      )),
+  };
+};
+
+/**
  * Boots a Bounda app in Node: loads `.env`, imports `bounda.config.ts` and the generated
  * registry from the project root, creates the app and stops it on `SIGINT` or `SIGTERM`; stopping
  * the app removes those listeners again. Every piece can be supplied directly instead of imported.
@@ -106,25 +153,19 @@ export const boot: BootFunction = async <R extends Registry = AppRegistry>({
   ids,
   clock,
 }: BootArgs<R> = {}): Promise<BoundaApp<R>> => {
-  if (env) loadEnv(root, logger);
-  const resolvedConfig =
-    config ??
-    (await importModule<Config>(
-      resolve(root, configPath),
-      "the configuration (default export)",
-      (module) => module.default as Config | undefined,
-    ));
-  const resolvedRegistry =
-    registry ??
-    (await importModule<R>(
-      resolve(root, registryPath),
-      'the registry (export "registry")',
-      (module) => module.registry as R | undefined,
-    ));
+  const project = await loadProject<R>({
+    root,
+    configPath,
+    registryPath,
+    ...(config === undefined ? {} : { config }),
+    ...(registry === undefined ? {} : { registry }),
+    env,
+    logger,
+  });
 
   const app = await createApp<R>({
-    registry: resolvedRegistry,
-    config: resolvedConfig,
+    registry: project.registry,
+    config: project.config,
     logger,
     ...(ids === undefined ? {} : { ids }),
     ...(clock === undefined ? {} : { clock }),

@@ -6,6 +6,12 @@ export { createApp } from "./kernel/app.ts";
 export type { DispatcherLag, SubscriberKind, SubscriberLag } from "./kernel/dispatch/dispatcher.ts";
 export type { ProcessStatus } from "./kernel/process/lifecycle.ts";
 export { PROCESS_EVENTS } from "./kernel/process/lifecycle.ts";
+export type {
+  RebuildReadModelArgs,
+  RebuildReadModelFunction,
+  RebuildReadModelResult,
+} from "./kernel/read-model/rebuild.ts";
+export { rebuildReadModel } from "./kernel/read-model/rebuild.ts";
 export type { ReadYourWritesFunction } from "./kernel/read-your-writes.ts";
 export { readYourWrites } from "./kernel/read-your-writes.ts";
 export type { CommandFailedPayload } from "./kernel/system-events.ts";
