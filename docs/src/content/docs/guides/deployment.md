@@ -1,6 +1,6 @@
 ---
 title: Deployment
-description: Roles, one database, many instances, and an honest list of what is not there yet.
+description: Roles, one database, many instances, rebuilds, observability, and an honest list of what is not there yet.
 sidebar:
   order: 6
 ---
@@ -219,10 +219,26 @@ is failing or stuck, and `app.getLag()` returns the same numbers for a health en
 
 ## What is not there yet
 
-Bounda is alpha, and the honest list of what production would eventually want:
+Bounda is alpha, and this is the honest list of what a production app might want and does not
+get today. Each item says why, so nobody discovers it the hard way:
 
-- **Snapshots.** An aggregate is rebuilt from its whole stream on every command. Fine for
-  hundreds of events per instance, not for hundreds of thousands.
+- **Snapshots.** An aggregate is folded from its whole stream on every command. That is fine for
+  the hundreds of events per instance that Bounda's kind of app produces, and it is not fine for
+  hundreds of thousands. Snapshots are deliberately not built yet: the state is inferred and
+  carries no version, so a snapshot written by yesterday's `apply` would silently be wrong after
+  today's deploy. They come with a versioning story or not at all; until then, model long-lived
+  things as processes, which close, rather than as aggregates that grow forever.
+- **Changing the shape of a process's state.** A process keeps its state in its own lifecycle
+  events, so a change to that shape has the same problem an event payload has, and no
+  `state.upcast.ts` yet. See [Changing an event's shape](/guides/changing-events/#what-is-not-covered-yet).
+- **Renaming or removing an event type.** Upcasts change a payload, not a type. Keep the module,
+  even if `apply` returns the state unchanged.
+- **One trace per request.** Spans carry `bounda.correlation_id` but a policy's span is a separate
+  trace from the command's, because it runs in a later pass. See [Observability](#observability).
+- **Notifications for scheduled commands.** The worker that runs due commands polls at
+  `pollInterval`; only the event dispatcher is woken by `NOTIFY`. See [Tuning](#tuning).
 
-None of these block a small app in production. All of them are the next phase of work, and the
-list is here so that nobody discovers it the hard way.
+What a production app does get, and where it is explained: [rebuilding a read model](#rebuilding-a-read-model)
+without taking it offline, [dead letters with a way out](/guides/reacting-to-events/#dead-letters),
+[upcasts](/guides/changing-events/) for events whose payload changed, [observability](#observability)
+through OpenTelemetry, and a dispatcher that reacts in milliseconds on PostgreSQL.

@@ -17,6 +17,14 @@ Documentation: [docs.bounda.dev](https://docs.bounda.dev).
 Alpha. Every version on npm is a prerelease, so a plain install gets one; the API can change
 between alphas without a deprecation cycle. Each package has its own changelog.
 
+## In production
+
+Roles for web and worker processes, any number of instances on PostgreSQL, a dispatcher woken by
+`NOTIFY`, OpenTelemetry spans and metrics, `bounda rebuild` for a read model that went wrong,
+`bounda dead-letters` for a policy that died, and upcasts for events whose payload changed. What
+is not there yet, and why, is one list in the
+[deployment guide](https://docs.bounda.dev/guides/deployment/#what-is-not-there-yet).
+
 ## Packages
 
 | Package | Purpose | Mutation score |

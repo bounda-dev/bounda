@@ -188,4 +188,12 @@ See [adapters](/adapters/).
   collaborators and hand-written SQL in one small app.
 - [Bounda with React Router](/guides/react-router/): actions that dispatch, loaders that query,
   and the [onboarding example](/guides/onboarding-example/) that puts it together.
-- [CLI](/reference/cli/): `bounda generate` and how state is inferred when there is no `state.ts`.
+- [Testing](/guides/testing/): an app in memory, a clock you move by hand, and assertions that
+  do not flake.
+- [Reacting to events](/guides/reacting-to-events/): policies, processes, retries, and what to do
+  with a dead letter.
+- [Changing an event's shape](/guides/changing-events/): an upcast next to the event, applied as
+  old events are read.
+- [Deployment](/guides/deployment/): roles, several instances, rebuilding a read model,
+  observability, and the honest list of what is not there yet.
+- [CLI](/reference/cli/): `bounda generate`, `bounda rebuild` and `bounda dead-letters`.

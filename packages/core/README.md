@@ -34,6 +34,17 @@ export const handler = ({ command, state, events }: Command.HandlerArgs) => {
 returns the running app, typed for your project. `createTestApp()` from
 `@bounda-dev/core/testing` gives the same app on an in-memory adapter with a clock you control.
 
+## Operating
+
+The runtime carries what a production app needs to recover from its own mistakes, and the
+`bounda` CLI exposes it: `bounda rebuild <read-model>` projects the stream into a fresh table and
+swaps it in without taking the read model offline; `bounda dead-letters` lists, replays or
+discards the handler runs that gave up; an `<event>.upcast.ts` next to an event brings stored
+payloads of an older shape up to date as they are read. Every command, batch and handler run is
+an OpenTelemetry span with `bounda.correlation_id`, the lag of every subscriber is a gauge, and on
+PostgreSQL the dispatcher is woken by `NOTIFY` instead of polling. Snapshots are not there yet, on
+purpose; the [deployment guide](https://docs.bounda.dev/guides/deployment/) says why.
+
 ## Exports
 
 | Subpath | Holds |
