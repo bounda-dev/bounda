@@ -14,6 +14,11 @@ export const createMemoryCheckpointStore: CreateMemoryCheckpointStoreFunction = 
     set: async (subscriber, position) => {
       positions.set(subscriber, position);
     },
+    compareAndSet: async (subscriber, expected, position) => {
+      if ((positions.get(subscriber) ?? 0) !== expected) return false;
+      positions.set(subscriber, position);
+      return true;
+    },
     list: async () =>
       [...positions.entries()].map(([subscriber, position]) => ({ subscriber, position })),
   };

@@ -39,5 +39,29 @@ export const checkpointStoreContract: CheckpointStoreContractFunction = ({ creat
       );
       expect(await store.list()).toHaveLength(2);
     });
+
+    it("moves a checkpoint only from the position it is expected at", async () => {
+      expect(await store.compareAndSet("policies", 0, 4)).toBe(true);
+      expect(await store.get("policies")).toBe(4);
+      expect(await store.compareAndSet("policies", 4, 9)).toBe(true);
+      expect(await store.get("policies")).toBe(9);
+      expect(await store.list()).toEqual([{ subscriber: "policies", position: 9 }]);
+    });
+
+    it("refuses to move a checkpoint someone else moved first", async () => {
+      await store.set("policies", 4);
+      expect(await store.compareAndSet("policies", 3, 9)).toBe(false);
+      expect(await store.compareAndSet("policies", 0, 9)).toBe(false);
+      expect(await store.get("policies")).toBe(4);
+      expect(await store.compareAndSet("processes", 3, 9)).toBe(false);
+      expect(await store.get("processes")).toBe(0);
+      expect(await store.list()).toEqual([{ subscriber: "policies", position: 4 }]);
+    });
+
+    it("moves a checkpoint backwards when that is what is asked", async () => {
+      await store.set("projection:order-summary", 40);
+      expect(await store.compareAndSet("projection:order-summary", 40, 12)).toBe(true);
+      expect(await store.get("projection:order-summary")).toBe(12);
+    });
   });
 };

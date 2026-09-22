@@ -44,7 +44,7 @@ export interface Dispatcher {
    */
   stop(): Promise<void>;
   /**
-   * One pass over every subscriber. Resolves to whether any subscriber advanced.
+   * One pass over every subscriber. Resolves to whether any subscriber processed a batch.
    */
   processOnce(): Promise<boolean>;
   /**
@@ -74,7 +74,10 @@ export interface CreateDispatcherFunction {
 /**
  * Pulls the global stream once per pass for each subscriber, in the order given, and checkpoints
  * after every successful batch. A single mutex guarantees that polling and `processUntilIdle`
- * never run a pass concurrently, so every subscriber sees each event in order.
+ * never run a pass concurrently, so every subscriber sees each event in order. The checkpoint is
+ * advanced with `compareAndSet` from the position the pass read: when another process, a rebuild
+ * or an operator moved it meanwhile, the pass leaves their position alone and the next one reads
+ * from there.
  */
 export const createDispatcher: CreateDispatcherFunction = ({
   eventStore,
@@ -103,7 +106,15 @@ export const createDispatcher: CreateDispatcherFunction = ({
       });
       return false;
     }
-    await checkpointStore.set(subscriber.name, events[events.length - 1]?.position ?? position);
+    const next = events[events.length - 1]?.position ?? position;
+    const advanced = await checkpointStore.compareAndSet(subscriber.name, position, next);
+    if (!advanced) {
+      logger.warn("checkpoint moved by someone else; batch will be redelivered from there", {
+        subscriber: subscriber.name,
+        afterPosition: position,
+        current: await checkpointStore.get(subscriber.name),
+      });
+    }
     return true;
   };
 

@@ -69,6 +69,11 @@ Appends take a transaction-scoped advisory lock, so positions in the global stre
 in commit order and a reader never sees a gap that a later commit would fill. That bounds write
 throughput to what one connection can commit — thousands of events per second.
 
+Checkpoints advance with a compare-and-set from the position a pass read. A pass that finds its
+subscriber's checkpoint moved by someone else, another instance or an operator repositioning it,
+leaves that position alone and continues from there on the next pass, so nothing written from
+outside is ever overwritten by work that was already in flight.
+
 Nothing needs to be told about the others: instances coordinate through the database.
 
 ## Reading your own writes
