@@ -42,6 +42,10 @@
     {
       "groupName": "stryker",
       "matchPackageNames": ["@stryker-mutator/**"]
+    },
+    {
+      "groupName": "opentelemetry",
+      "matchPackageNames": ["@opentelemetry/**"]
     }
   ]
 }

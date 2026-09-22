@@ -12,6 +12,7 @@ import type { CommandPipeline } from "../command/pipeline.ts";
 import type { Subscriber } from "../dispatch/dispatcher.ts";
 import { classifyFailure, errorDetails, retryDelayMs } from "../shared/retry.ts";
 import { withTimeout } from "../shared/timeout.ts";
+import { ATTRIBUTES, deadLettered, traced } from "../telemetry.ts";
 import type { ProcessesRuntime, ProcessRuntime } from "./build-processes.ts";
 import {
   foldProcess,
@@ -166,6 +167,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
       firstFailedAt: now,
       lastFailedAt: now,
     });
+    deadLettered({ kind: "process", subscriber: process.name, errorType });
     logger.warn("process dead-lettered", {
       process: process.name,
       eventId: event.id,
@@ -231,17 +233,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     }
     const context = contextOf(event);
     try {
-      const next = await withTimeout({
-        run: () =>
-          handler({
-            event,
-            state: instance.state,
-            aggregateId: event.aggregateId,
-            commands: facadeFor(context),
-          }),
-        timeoutMs: config.forAggregate(process.aggregate).policies.timeoutMs,
-        subject: `process ${process.name}`,
-      });
+      const next = await runHandler(process, event, instance, (existing?.attempts ?? 0) + 1);
       const state = next === undefined ? instance.state : (next as object);
       await append(
         process,
@@ -294,6 +286,37 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     }
   };
 
+  const runHandler = (
+    process: ProcessRuntime,
+    event: StoredEvent,
+    instance: ProcessInstance,
+    attempt: number,
+  ): Promise<unknown> =>
+    traced({
+      name: `bounda.process ${process.name}`,
+      attributes: {
+        [ATTRIBUTES.process]: process.name,
+        [ATTRIBUTES.eventId]: event.id,
+        [ATTRIBUTES.eventType]: event.type,
+        [ATTRIBUTES.aggregateType]: event.aggregateType,
+        [ATTRIBUTES.aggregateId]: event.aggregateId,
+        [ATTRIBUTES.correlationId]: event.metadata.correlationId,
+        [ATTRIBUTES.attempt]: attempt,
+      },
+      run: () =>
+        withTimeout({
+          run: () =>
+            process.handlers[event.type]?.({
+              event,
+              state: instance.state,
+              aggregateId: event.aggregateId,
+              commands: facadeFor(contextOf(event)),
+            }),
+          timeoutMs: config.forAggregate(process.aggregate).policies.timeoutMs,
+          subject: `process ${process.name}`,
+        }),
+    });
+
   const completeIfDue = async (process: ProcessRuntime, event: StoredEvent): Promise<void> => {
     if (!process.completedBy.has(event.type)) return;
     const current = await load(process, event.aggregateId);
@@ -336,17 +359,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
       throw new NotFoundError(`Process "${name}" has no instance for ${event.aggregateId}`);
     }
     const context = contextOf(event);
-    const next = await withTimeout({
-      run: () =>
-        handler({
-          event,
-          state: instance.state,
-          aggregateId: event.aggregateId,
-          commands: facadeFor(context),
-        }),
-      timeoutMs: config.forAggregate(process.aggregate).policies.timeoutMs,
-      subject: `process ${process.name}`,
-    });
+    const next = await runHandler(process, event, instance, 1);
     await append(
       process,
       event.aggregateId,
@@ -410,15 +423,25 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
       const next =
         process.timeoutHandler === null
           ? instance.state
-          : await withTimeout({
+          : await traced({
+              name: `bounda.process ${process.name} timeout`,
+              attributes: {
+                [ATTRIBUTES.process]: process.name,
+                [ATTRIBUTES.aggregateType]: process.aggregate,
+                [ATTRIBUTES.aggregateId]: payload.aggregateId,
+                [ATTRIBUTES.correlationId]: context.correlationId,
+              },
               run: () =>
-                process.timeoutHandler?.({
-                  state: instance.state,
-                  aggregateId: payload.aggregateId,
-                  commands: facadeFor(context),
+                withTimeout({
+                  run: () =>
+                    process.timeoutHandler?.({
+                      state: instance.state,
+                      aggregateId: payload.aggregateId,
+                      commands: facadeFor(context),
+                    }),
+                  timeoutMs: config.forAggregate(process.aggregate).policies.timeoutMs,
+                  subject: `process ${process.name} timeout`,
                 }),
-              timeoutMs: config.forAggregate(process.aggregate).policies.timeoutMs,
-              subject: `process ${process.name} timeout`,
             });
       await append(
         process,

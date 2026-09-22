@@ -4,6 +4,7 @@ import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { createMutex } from "../shared/mutex.ts";
 import { errorDetails } from "../shared/retry.ts";
+import { ATTRIBUTES, traced } from "../telemetry.ts";
 
 /**
  * Something that consumes the global stream from its own checkpoint. `process` returns whether
@@ -95,27 +96,43 @@ export const createDispatcher: CreateDispatcherFunction = ({
     const position = await checkpointStore.get(subscriber.name);
     const events = await eventStore.readAll({ afterPosition: position, limit: batchSize });
     if (events.length === 0) return false;
-    try {
-      const advance = await subscriber.process(events);
-      if (!advance) return false;
-    } catch (error) {
-      logger.error("subscriber failed; batch will be redelivered", {
-        subscriber: subscriber.name,
-        afterPosition: position,
-        ...errorDetails(error),
-      });
-      return false;
-    }
-    const next = events[events.length - 1]?.position ?? position;
-    const advanced = await checkpointStore.compareAndSet(subscriber.name, position, next);
-    if (!advanced) {
-      logger.warn("checkpoint moved by someone else; batch will be redelivered from there", {
-        subscriber: subscriber.name,
-        afterPosition: position,
-        current: await checkpointStore.get(subscriber.name),
-      });
-    }
-    return true;
+    return traced({
+      name: `bounda.subscriber ${subscriber.name}`,
+      attributes: {
+        [ATTRIBUTES.subscriber]: subscriber.name,
+        [ATTRIBUTES.subscriberKind]: subscriber.kind,
+        [ATTRIBUTES.afterPosition]: position,
+        [ATTRIBUTES.eventCount]: events.length,
+      },
+      run: async (span) => {
+        try {
+          const advance = await subscriber.process(events);
+          if (!advance) {
+            span.setAttribute(ATTRIBUTES.outcome, "held");
+            return false;
+          }
+        } catch (error) {
+          logger.error("subscriber failed; batch will be redelivered", {
+            subscriber: subscriber.name,
+            afterPosition: position,
+            ...errorDetails(error),
+          });
+          span.setAttribute(ATTRIBUTES.outcome, "failed");
+          return false;
+        }
+        const next = events[events.length - 1]?.position ?? position;
+        const advanced = await checkpointStore.compareAndSet(subscriber.name, position, next);
+        if (!advanced) {
+          logger.warn("checkpoint moved by someone else; batch will be redelivered from there", {
+            subscriber: subscriber.name,
+            afterPosition: position,
+            current: await checkpointStore.get(subscriber.name),
+          });
+        }
+        span.setAttribute(ATTRIBUTES.outcome, advanced ? "advanced" : "moved");
+        return true;
+      },
+    });
   };
 
   const pass = async (only?: SubscriberKind): Promise<boolean> => {

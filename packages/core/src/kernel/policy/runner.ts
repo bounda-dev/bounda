@@ -11,6 +11,7 @@ import type { CommandPipeline } from "../command/pipeline.ts";
 import type { Subscriber } from "../dispatch/dispatcher.ts";
 import { classifyFailure, errorDetails, retryDelayMs } from "../shared/retry.ts";
 import { withTimeout } from "../shared/timeout.ts";
+import { ATTRIBUTES, deadLettered, traced } from "../telemetry.ts";
 import type { PoliciesRuntime, PolicyRuntime } from "./build-policies.ts";
 
 export const POLICIES_SUBSCRIBER: "policies" = "policies";
@@ -76,6 +77,7 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
       lastFailedAt: now,
     });
     await ledger.complete({ subscriber: policy.name, eventId: event.id });
+    deadLettered({ kind: "policy", subscriber: policy.name, errorType });
     logger.warn("policy dead-lettered", {
       policy: policy.name,
       eventId: event.id,
@@ -109,16 +111,30 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
         depth: event.metadata.depth,
       },
     });
+    const attempt = (existing?.attempts ?? 0) + 1;
     try {
-      await withTimeout({
-        run: () => policy.handler({ event, commands }),
-        timeoutMs: settings.timeoutMs,
-        subject: `policy ${policy.name}`,
+      await traced({
+        name: `bounda.policy ${policy.name}`,
+        attributes: {
+          [ATTRIBUTES.policy]: policy.name,
+          [ATTRIBUTES.eventId]: event.id,
+          [ATTRIBUTES.eventType]: event.type,
+          [ATTRIBUTES.aggregateType]: event.aggregateType,
+          [ATTRIBUTES.aggregateId]: event.aggregateId,
+          [ATTRIBUTES.correlationId]: event.metadata.correlationId,
+          [ATTRIBUTES.attempt]: attempt,
+        },
+        run: () =>
+          withTimeout({
+            run: () => policy.handler({ event, commands }),
+            timeoutMs: settings.timeoutMs,
+            subject: `policy ${policy.name}`,
+          }),
       });
       await ledger.complete(key);
       return "done";
     } catch (error) {
-      const attempts = (existing?.attempts ?? 0) + 1;
+      const attempts = attempt;
       if (classifyFailure(error) === "terminal") {
         await deadLetter(policy, event, error, attempts, "terminal");
         return "done";

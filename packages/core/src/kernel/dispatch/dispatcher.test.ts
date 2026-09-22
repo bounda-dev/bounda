@@ -1,8 +1,10 @@
+import { SpanStatusCode } from "@opentelemetry/api";
 import { describe, expect, it, vi } from "vitest";
 import { pendingEvent } from "../../adapter/testing/fixtures.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
+import { installFakeTelemetry } from "../telemetry-fake.ts";
 import { createRecordingLogger } from "../test-support.ts";
 import { createDispatcher, type Subscriber } from "./dispatcher.ts";
 
@@ -123,25 +125,36 @@ describe("createDispatcher", () => {
       pollIntervalMs: 1_000,
       logger,
     });
-    expect(await dispatcher.processOnce()).toBe(false);
-    expect(await checkpointStore.get("flaky")).toBe(0);
-    expect(entries).toEqual([
-      {
-        level: "error",
-        message: "subscriber failed; batch will be redelivered",
-        fields: {
-          subscriber: "flaky",
-          afterPosition: 0,
-          message: "boom",
-          stack: expect.stringContaining("boom"),
+    const telemetry = installFakeTelemetry();
+    try {
+      expect(await dispatcher.processOnce()).toBe(false);
+      expect(await checkpointStore.get("flaky")).toBe(0);
+      expect(entries).toEqual([
+        {
+          level: "error",
+          message: "subscriber failed; batch will be redelivered",
+          fields: {
+            subscriber: "flaky",
+            afterPosition: 0,
+            message: "boom",
+            stack: expect.stringContaining("boom"),
+          },
         },
-      },
-    ]);
-    expect(await dispatcher.processOnce()).toBe(false);
-    expect(await checkpointStore.get("flaky")).toBe(0);
-    expect(await dispatcher.processOnce()).toBe(true);
-    expect(await checkpointStore.get("flaky")).toBe(2);
-    expect((await dispatcher.getLag()).maxLag).toBe(0);
+      ]);
+      expect(await dispatcher.processOnce()).toBe(false);
+      expect(await checkpointStore.get("flaky")).toBe(0);
+      expect(await dispatcher.processOnce()).toBe(true);
+      expect(await checkpointStore.get("flaky")).toBe(2);
+      expect((await dispatcher.getLag()).maxLag).toBe(0);
+      expect(telemetry.spans.map((span) => span.attributes["bounda.outcome"])).toEqual([
+        "failed",
+        "held",
+        "advanced",
+      ]);
+      expect(telemetry.spans[0]?.status.code).toBe(SpanStatusCode.UNSET);
+    } finally {
+      telemetry.restore();
+    }
   });
 
   it("leaves a checkpoint alone when someone else moved it during the batch", async () => {
@@ -168,7 +181,25 @@ describe("createDispatcher", () => {
       logger,
     });
 
-    expect(await dispatcher.processOnce()).toBe(true);
+    const telemetry = installFakeTelemetry();
+    try {
+      expect(await dispatcher.processOnce()).toBe(true);
+      expect(telemetry.spans).toEqual([
+        expect.objectContaining({
+          name: "bounda.subscriber orders",
+          attributes: {
+            "bounda.subscriber": "orders",
+            "bounda.subscriber.kind": "projection",
+            "bounda.position.after": 2,
+            "bounda.event.count": 2,
+            "bounda.outcome": "moved",
+          },
+          ended: true,
+        }),
+      ]);
+    } finally {
+      telemetry.restore();
+    }
     expect(seen).toEqual([[3, 4]]);
     expect(await checkpointStore.get("orders")).toBe(0);
     expect(entries).toEqual([
