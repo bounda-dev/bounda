@@ -137,12 +137,12 @@ describe("sqlite adapter on a file", () => {
       ["read model rebuild started", { readModel: "orderSummary", table, shadow }],
       ["read model rebuild aborted", { readModel: "orderSummary", table }],
     ]);
-    const tables = await (
-      await adapter.createReadModel({ ...args, logger: silentLogger })
-    ).client.raw.execute(
+    const ports = await adapter.createReadModel({ ...args, logger: silentLogger });
+    const tables = await (ports.client.raw as Client).execute(
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'bounda_order%' ORDER BY name",
     );
     expect(tables.rows.map((row) => row.name)).toEqual([table]);
+    await ports.close();
   });
 
   it("evolves a read model table additively and refuses destructive changes", async () => {

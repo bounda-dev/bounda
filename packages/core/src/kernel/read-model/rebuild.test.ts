@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { Adapter } from "../../adapter/adapter.ts";
 import type { Table } from "../../adapter/ports/table.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
@@ -93,7 +94,13 @@ describe("rebuildReadModel", () => {
     ]);
     expect(await storage.checkpointStore.get(SUBSCRIBER)).toBe(3);
     expect((await app.getLag()).maxLag).toBe(0);
-    expect(entries.filter((entry) => entry.level === "debug")).toHaveLength(3);
+    expect(entries.filter((entry) => entry.level === "debug")).toEqual(
+      [1, 2, 3].map((position) => ({
+        level: "debug",
+        message: "read model rebuild progressed",
+        fields: { readModel: "orderSummary", position, events: position },
+      })),
+    );
     expect(entries).toContainEqual({
       level: "info",
       message: "read model rebuilt",
@@ -146,18 +153,38 @@ describe("rebuildReadModel", () => {
     await app.stop();
   });
 
-  it("works on its own, before the read model ever had a table", async () => {
+  it("works on its own, before the read model ever had a table, and closes what it opened", async () => {
     mode = "ok";
-    const adapter = memory();
+    const base = memory();
+    const opened: unknown[] = [];
+    let closes = 0;
+    const adapter: Adapter = {
+      ...base,
+      createStorage: async (args) => {
+        opened.push(args);
+        const storage = await base.createStorage(args);
+        return {
+          ...storage,
+          close: async () => {
+            closes += 1;
+            await storage.close();
+          },
+        };
+      },
+    };
     const config = { storage: adapter, commands: { placeOrder: { notifier: { use: "memory" } } } };
     const writer = await createApp({ registry: writeSide, config });
     await writer.commands.placeOrder({ orderId: "o-1", total: 7 });
     await writer.stop();
+    closes = 0;
 
-    expect(await rebuildReadModel({ registry, config, name: "orderSummary" })).toEqual({
+    const logger = { ...silentLogger };
+    expect(await rebuildReadModel({ registry, config, name: "orderSummary", logger })).toEqual({
       events: 1,
       position: 1,
     });
+    expect(opened.at(-1)).toEqual({ logger });
+    expect(closes).toBe(1);
     const app = await createApp({ registry, config });
     expect((await app.getLag()).subscribers).toContainEqual({
       subscriber: SUBSCRIBER,
@@ -182,6 +209,21 @@ describe("rebuildReadModel", () => {
     await expect(
       rebuildReadModel({ registry: writeSide, config: { storage: memory() }, name: "nope" }),
     ).rejects.toThrow('Unknown read model "nope". The registry has: none');
+  });
+
+  it("validates the registry before opening anything", async () => {
+    const broken = {
+      ...registry,
+      readModels: {
+        orderSummary: {
+          ...registry.readModels.orderSummary,
+          projections: { orderPlaced: {} as never },
+        },
+      },
+    };
+    await expect(
+      rebuildReadModel({ registry: broken, config: { storage: memory() }, name: "orderSummary" }),
+    ).rejects.toThrow(/Invalid registry:\n {2}readModels\.orderSummary\.projections\.orderPlaced/);
   });
 
   it("refuses a storage definition without factories", async () => {

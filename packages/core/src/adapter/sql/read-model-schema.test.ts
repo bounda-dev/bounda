@@ -152,6 +152,12 @@ describe("rebuild statements", () => {
     });
   });
 
+  it("refuses a live table name that is not an identifier", () => {
+    expect(() => rebuildTablesFor("Bounda Orders")).toThrow(
+      'Table name "Bounda Orders__rebuild" is not a valid SQL identifier',
+    );
+  });
+
   it("clears leftovers and creates the shadow with its indexes", () => {
     expect(shadowTableStatements({ table: "t", columns })).toEqual([
       'DROP TABLE IF EXISTS "t__rebuild"',
