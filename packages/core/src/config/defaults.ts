@@ -28,4 +28,5 @@ export const DEFAULT_PROCESSES: ResolvedProcessesConfig = {
 export const DEFAULT_ROOT_DIR: string = "app";
 export const DEFAULT_CONCURRENCY_RETRIES: number = 3;
 export const DEFAULT_POLL_INTERVAL_MS: number = 100;
+export const DEFAULT_IDLE_INTERVAL_MS: number = 30_000;
 export const DEFAULT_BATCH_SIZE: number = 100;

@@ -146,16 +146,30 @@ config, name })` from `@bounda-dev/core` on a project loaded with `loadProject()
 
 ## Tuning
 
-The dispatcher polls. `pollInterval` is 100 ms and `batchSize` is 100 events per pass:
+The dispatcher runs passes on a timer: `pollInterval` is 100 ms and `batchSize` is 100 events
+per pass.
 
 ```ts
 runtime: {
-  dispatcher: { pollInterval: "50ms", batchSize: 500 },
+  dispatcher: { pollInterval: "50ms", idleInterval: "1m", batchSize: 500 },
 }
 ```
 
-A shorter interval cuts the delay before a policy reacts and costs queries; a larger batch moves
-more events per pass and holds a claim for longer.
+With PostgreSQL the timer is a safety net, not the mechanism. Every append ends its transaction
+with `NOTIFY` on the events table's channel, delivered at commit, and every worker `LISTEN`s on
+a dedicated connection: a pass runs the moment events land, and once passes stop finding events
+the dispatcher waits `idleInterval`, 30 seconds by default, between polls. An idle worker on
+PostgreSQL therefore costs a handful of queries a minute instead of ten passes a second per
+subscriber, and a policy reacts in milliseconds. A notification lost to a dropped connection is
+caught by the next idle poll, which is why the poll stays. The scheduled-command worker still
+polls at `pollInterval`: due commands are a matter of time, not of new events.
+
+SQLite and the in-memory adapter have no channel to listen on. SQLite polls at `pollInterval` as
+before; the in-memory adapter notifies within the process, so a started app reacts to its own
+appends without waiting for the timer.
+
+A shorter `pollInterval` cuts the delay before a policy reacts where polling is the mechanism and
+costs queries; a larger batch moves more events per pass and holds a claim for longer.
 
 ## Observability
 
@@ -207,8 +221,6 @@ is failing or stuck, and `app.getLag()` returns the same numbers for a health en
 
 Bounda is alpha, and the honest list of what production would eventually want:
 
-- **`LISTEN`/`NOTIFY`.** Instances discover events by polling, so a reaction is up to
-  `pollInterval` behind. Notifications would make it immediate.
 - **Snapshots.** An aggregate is rebuilt from its whole stream on every command. Fine for
   hundreds of events per instance, not for hundreds of thousands.
 

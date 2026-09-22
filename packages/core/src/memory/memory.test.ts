@@ -7,6 +7,7 @@ import {
   deadLetterStoreContract,
   eventStoreContract,
   inboxLedgerContract,
+  pendingEvent,
   readModelRebuildContract,
   schedulerContract,
   tableContract,
@@ -14,7 +15,7 @@ import {
 import { ConfigurationError } from "../contracts/errors.ts";
 import { silentLogger } from "../contracts/logger.ts";
 import { fieldBuilder as f } from "../modules/view.ts";
-import { memory } from "./index.ts";
+import { createMemoryEventStore, memory } from "./index.ts";
 
 const storage = async () => memory().createStorage({ logger: silentLogger });
 
@@ -47,6 +48,48 @@ describe("memory adapter", () => {
     expect(await again.checkpointStore.get("policies")).toBe(4);
     expect(await second.checkpointStore.get("policies")).toBe(0);
     await first.close();
+  });
+
+  it("notifies every subscriber of an append with the last position, until they unsubscribe", async () => {
+    const storage = await memory().createStorage({ logger: silentLogger });
+    const heard: (number | undefined)[] = [];
+    const stop = await (storage.notifier as NonNullable<typeof storage.notifier>).subscribe(
+      (position) => {
+        heard.push(position);
+      },
+    );
+    await storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "1",
+      expectedVersion: 0,
+      events: [1, 2].map((version) => pendingEvent({ aggregateId: "1", version })),
+    });
+    await storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "1",
+      expectedVersion: 2,
+      events: [],
+    });
+    expect(heard).toEqual([2]);
+    await stop();
+    await storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "2",
+      expectedVersion: 0,
+      events: [pendingEvent({ aggregateId: "2", version: 1 })],
+    });
+    expect(heard).toEqual([2]);
+  });
+
+  it("works as a bare event store, with nobody to notify", async () => {
+    const store = createMemoryEventStore();
+    await store.append({
+      aggregateType: "order",
+      aggregateId: "1",
+      expectedVersion: 0,
+      events: [pendingEvent({ aggregateId: "1", version: 1 })],
+    });
+    expect(await store.lastPosition()).toBe(1);
   });
 
   it("opens the same read model twice on the same rows", async () => {

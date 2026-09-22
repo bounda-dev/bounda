@@ -3,6 +3,7 @@ import type { Table } from "../adapter/ports/table.ts";
 import type { FieldsRecord } from "../modules/view.ts";
 import { createMemoryCheckpointStore } from "./checkpoint-store.ts";
 import { createMemoryDeadLetterStore } from "./dead-letter-store.ts";
+import { createMemoryEventNotifier } from "./event-notifier.ts";
 import { createMemoryEventStore } from "./event-store.ts";
 import { createMemoryInboxLedger } from "./inbox-ledger.ts";
 import { createMemoryScheduler } from "./scheduler.ts";
@@ -40,7 +41,8 @@ const through = <Row extends object>(live: LiveTable): Table<Row> => {
 /**
  * The in-memory storage adapter: every port backed by maps, gone when the process ends. For
  * tests and for trying Bounda without a database. Each call returns an adapter with its own
- * isolated storage, shared by everything opened from that adapter, as a database would be.
+ * isolated storage, shared by everything opened from that adapter, as a database would be. It
+ * notifies the dispatcher of appends, so a started app reacts without waiting for a poll.
  */
 export const memory: MemoryFunction = (options = {}) => {
   let storage: StoragePorts | null = null;
@@ -59,8 +61,10 @@ export const memory: MemoryFunction = (options = {}) => {
     name: "memory",
     options,
     createStorage: async () => {
+      const notifier = createMemoryEventNotifier();
       storage ??= {
-        eventStore: createMemoryEventStore(),
+        eventStore: createMemoryEventStore({ onAppend: notifier.notify }),
+        notifier,
         checkpointStore: createMemoryCheckpointStore(),
         inboxLedger: createMemoryInboxLedger(),
         deadLetterStore: createMemoryDeadLetterStore(),
@@ -94,6 +98,9 @@ export const memory: MemoryFunction = (options = {}) => {
 
 export { createMemoryCheckpointStore } from "./checkpoint-store.ts";
 export { createMemoryDeadLetterStore } from "./dead-letter-store.ts";
+export type { CreateMemoryEventNotifierFunction, MemoryEventNotifier } from "./event-notifier.ts";
+export { createMemoryEventNotifier } from "./event-notifier.ts";
+export type { CreateMemoryEventStoreArgs } from "./event-store.ts";
 export { createMemoryEventStore } from "./event-store.ts";
 export { createMemoryInboxLedger } from "./inbox-ledger.ts";
 export { createMemoryScheduler } from "./scheduler.ts";

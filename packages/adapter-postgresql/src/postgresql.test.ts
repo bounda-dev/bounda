@@ -111,6 +111,53 @@ describe.skipIf(container === null)("postgresql adapter", () => {
     },
   });
 
+  it("notifies listeners of every committed append with the last position", async () => {
+    const storage = await openStorage();
+    const heard: (number | undefined)[] = [];
+    let settle: () => void = () => undefined;
+    const settled = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    const stop = await (storage.notifier as NonNullable<typeof storage.notifier>).subscribe(
+      (position) => {
+        heard.push(position);
+        if (heard.length === 2) settle();
+      },
+    );
+    await storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "n-1",
+      expectedVersion: 0,
+      events: [1, 2].map((version) => pendingEvent({ aggregateId: "n-1", version })),
+    });
+    await storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "n-1",
+      expectedVersion: 2,
+      events: [],
+    });
+    await storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "n-2",
+      expectedVersion: 0,
+      events: [pendingEvent({ aggregateId: "n-2", version: 1 })],
+    });
+    await Promise.race([
+      settled,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("no notification")), 5_000)),
+    ]);
+    expect(heard).toEqual([2, 3]);
+    await stop();
+    await storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "n-3",
+      expectedVersion: 0,
+      events: [pendingEvent({ aggregateId: "n-3", version: 1 })],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(heard).toEqual([2, 3]);
+  });
+
   it("reports the stream version even when loading past its end", async () => {
     const { eventStore } = await openStorage();
     await eventStore.append({

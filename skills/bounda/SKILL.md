@@ -215,6 +215,10 @@ export const loader = ({ context }: Route.LoaderArgs) => context.get(bounda).que
   (`--yes` takes the defaults: SQLite, Node).
 - Storage: `sqlite({ path })`, `sqlite({ memory: true })` or `postgresql({ url })` in
   `bounda.config.ts`; read models can point at a different adapter with `readModels`.
+- With PostgreSQL the dispatcher is woken by `NOTIFY` on every append and polls only every
+  `runtime.dispatcher.idleInterval` (30 s) as a safety net; with SQLite it polls at
+  `runtime.dispatcher.pollInterval` (100 ms). Do not add a queue or a broker to make policies
+  react faster.
 - Observability is OpenTelemetry through `@opentelemetry/api`, which `core` depends on. Register
   an SDK before `boot()` and the runtime's spans (`bounda.command`, `bounda.subscriber`,
   `bounda.projection`, `bounda.policy`, `bounda.process`, `bounda.scheduled`) and metrics

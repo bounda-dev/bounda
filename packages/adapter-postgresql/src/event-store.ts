@@ -9,6 +9,11 @@ export interface CreatePostgresqlEventStoreArgs {
    * Text hashed into the advisory lock every append takes for the duration of its transaction.
    */
   readonly lockKey: string;
+  /**
+   * The `NOTIFY` channel every append publishes the last position on, inside its transaction, so
+   * listeners hear about the events only once they are committed.
+   */
+  readonly channel: string;
 }
 
 export interface CreatePostgresqlEventStoreFunction {
@@ -34,12 +39,14 @@ const toStoredEvent = (row: Record<string, unknown>): StoredEvent => ({
  * Event store on one PostgreSQL table. Every append runs in a transaction that first takes
  * `pg_advisory_xact_lock(hashtext(lockKey))`: appends are serialised, so the `BIGSERIAL`
  * position matches commit order and `readAll` sees a gap-free global stream. Throughput is
- * bounded by that lock; it is plenty for the workloads Bounda targets.
+ * bounded by that lock; it is plenty for the workloads Bounda targets. The transaction ends with
+ * `pg_notify` on `channel`, which PostgreSQL delivers at commit.
  */
 export const createPostgresqlEventStore: CreatePostgresqlEventStoreFunction = ({
   db,
   table,
   lockKey,
+  channel,
 }) => {
   const currentVersion = async (
     executor: Pick<PostgresqlDatabase, "all">,
@@ -81,6 +88,10 @@ export const createPostgresqlEventStore: CreatePostgresqlEventStoreFunction = ({
             ],
           );
           stored.push({ ...event, position: Number(row?.position) });
+        }
+        const last = stored.at(-1);
+        if (last !== undefined) {
+          await tx.run("SELECT pg_notify($1, $2)", [channel, String(last.position)]);
         }
         return { version: actualVersion + stored.length, events: stored };
       }),

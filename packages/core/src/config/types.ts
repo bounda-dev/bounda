@@ -39,7 +39,16 @@ export interface CommandsRuntimeConfig {
  * Runtime settings for the event dispatcher.
  */
 export interface DispatcherConfig {
+  /**
+   * How long the dispatcher waits between passes when it has to poll. Also the pace while it is
+   * catching up. Defaults to 100 ms.
+   */
   readonly pollInterval?: DurationInput;
+  /**
+   * With an adapter that pushes notifications, how long the dispatcher waits for one before
+   * running a pass anyway, as a safety net. Defaults to 30 seconds. Ignored without notifications.
+   */
+  readonly idleInterval?: DurationInput;
   readonly batchSize?: number;
 }
 
@@ -133,7 +142,11 @@ export interface ResolvedConfig {
     readonly commands: { readonly concurrencyRetries: number };
     readonly policies: ResolvedPoliciesConfig;
     readonly processes: ResolvedProcessesConfig;
-    readonly dispatcher: { readonly pollIntervalMs: number; readonly batchSize: number };
+    readonly dispatcher: {
+      readonly pollIntervalMs: number;
+      readonly idleIntervalMs: number;
+      readonly batchSize: number;
+    };
     readonly overrides: Readonly<Record<string, ResolvedAggregateRuntime>>;
   };
   readonly commands: Readonly<Record<string, CommandConfig>>;

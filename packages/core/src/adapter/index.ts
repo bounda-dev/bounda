@@ -20,6 +20,7 @@ export type {
   ListDeadLettersArgs,
   NewDeadLetter,
 } from "./ports/dead-letter-store.ts";
+export type { EventListener, EventNotifier, Unsubscribe } from "./ports/event-notifier.ts";
 export type {
   AppendArgs,
   AppendResult,

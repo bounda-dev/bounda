@@ -325,4 +325,24 @@ describe("createApp", () => {
     expect(PROCESS_EVENTS.started).toBe("ProcessStarted");
     await app.stop();
   });
+
+  it("reacts to its own appends at once when the storage notifies, without waiting for a poll", async () => {
+    const app = await createApp({
+      registry,
+      config: {
+        storage: memory(),
+        commands: { placeOrder: { notifier: { use: "memory" } } },
+        runtime: { dispatcher: { pollInterval: "10s", idleInterval: "10s" } },
+      },
+    });
+    app.start();
+    await app.commands.placeOrder({ orderId: "o-1", total: 42 });
+    const started = Date.now();
+    while ((await app.getLag()).maxLag > 0 && Date.now() - started < 2_000) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect((await app.getLag()).maxLag).toBe(0);
+    expect(Date.now() - started).toBeLessThan(2_000);
+    await app.stop();
+  });
 });

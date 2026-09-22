@@ -147,6 +147,8 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
     ],
     batchSize: config.runtime.dispatcher.batchSize,
     pollIntervalMs: config.runtime.dispatcher.pollIntervalMs,
+    idleIntervalMs: config.runtime.dispatcher.idleIntervalMs,
+    ...(storage.notifier === undefined ? {} : { notifier: storage.notifier }),
     logger,
   });
   const worker = createScheduledCommandWorker({
