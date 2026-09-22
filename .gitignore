@@ -8,6 +8,7 @@ reports/
 .bounda/
 !packages/core/test-types/fixtures/**/.bounda/
 !packages/core/src/node/fixtures/**/.bounda/
+!packages/cli/src/fixtures/**/.bounda/
 examples/**/+types/
 examples/*/data/
 examples/*/build/
