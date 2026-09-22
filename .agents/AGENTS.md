@@ -43,6 +43,10 @@ pnpm 12 (workspace catalog, `catalogMode: strict`), TypeScript 7, Biome (lint an
 - Keep files small. Adapter provider modules may exceed the norm when splitting would fragment one cohesive unit.
 - Keep every package `index.ts` thin: what is exported there is public API.
 
+## Where adapter code lives
+
+The rule, written down because it is not obvious: **code shared by two or more adapters lives in `core/adapter/*`; code only one adapter uses stays in that adapter's package.** `core/adapter/sql` holds the dialects, the query builder and the read-model schema that SQLite and PostgreSQL share. `core/adapter/sqlite` holds the SQLite stores, schema and read models, shared by libSQL (`adapter-sqlite`) and the Durable Object (`adapter-cloudflare`); each of those packages only brings its connection through `createSqliteAdapter`. The PostgreSQL stores stay in `adapter-postgresql` because nothing else speaks that SQL. It costs an app nothing: each is a subpath without side effects, loaded only when imported. Revisit if a third SQL engine appears or if the size of `core` starts to matter; the alternative is a `sqlite-storage` package both adapters depend on.
+
 ## The generator
 
 `packages/cli` holds `bounda generate`: it reads `app/domain` and `app/read` by file and directory names only (no module is imported or parsed), and writes `.bounda/registry.ts`, `.bounda/register.d.ts` (registers the registry type with `@bounda-dev/core/register`, so `boot()` needs no type argument), `.bounda/types.ts` and one `+types/<name>.ts` next to every module. Its output has a canonical layout that Biome does not touch (`**/+types/**` and `.bounda/` are excluded); the fixtures under `packages/core/test-types/fixtures` are literally that output and the golden tests compare them byte for byte. State for aggregates without `state.ts` is inferred with the TypeScript 7 API in `packages/cli/src/generate/state/infer.ts`, the only module that touches that API. When the generator's output changes, regenerate the fixtures and check `pnpm test:types` still passes.

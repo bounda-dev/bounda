@@ -41,7 +41,8 @@ export interface CreateSqliteAdapterFunction {
 /**
  * A complete adapter over any SQLite: the storage schema and the six stores, read models and
  * their rebuilds, all speaking the same SQL. A host brings the connection: libSQL for
- * `@bounda-dev/adapter-sqlite`, a Durable Object's storage for Cloudflare.
+ * `@bounda-dev/adapter-sqlite`, a Durable Object's storage for Cloudflare. It lives in `core`
+ * because more than one adapter uses it; SQL only one adapter speaks stays in that adapter.
  */
 export const createSqliteAdapter: CreateSqliteAdapterFunction = ({
   name,
