@@ -6,7 +6,7 @@ sidebar:
 ---
 
 :::caution[Alpha]
-Every published version is a prerelease, so a plain install gets one: `npm create bounda`,
+Every published version is a prerelease, so a plain install gets one: `npm create bounda@latest`,
 `npm install @bounda-dev/core`. The API can change between alphas without a deprecation
 cycle, and each package carries its own changelog.
 :::
@@ -14,9 +14,12 @@ cycle, and each package carries its own changelog.
 ## Create a project
 
 ```bash
-npm create bounda my-shop
+npm create bounda@latest my-shop
 cd my-shop
 ```
+
+`@latest` on purpose: npx reuses a `create-bounda` it cached earlier, and a stale one pins the
+Bounda packages to whatever version it shipped with.
 
 The command asks for a database (SQLite or PostgreSQL) and how the app runs: a Node script, or a
 [React Router](/guides/react-router/) app with a page that dispatches from an action and reads from

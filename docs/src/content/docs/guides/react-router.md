@@ -12,7 +12,7 @@ loaders and actions read it with `context.get(bounda)`.
 The quickest start is a new project:
 
 ```bash
-npm create bounda my-app -- --framework react-router
+npm create bounda@latest my-app -- --framework react-router
 ```
 
 To add Bounda to an existing React Router app:

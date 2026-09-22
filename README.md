@@ -7,7 +7,7 @@ conventions and inferred types. Your business logic lives in small modules that 
 of functions. The runtime does the wiring and runs on a single database.
 
 ```bash
-npm create bounda my-app
+npm create bounda@latest my-app
 ```
 
 Documentation: [docs.bounda.dev](https://docs.bounda.dev).
