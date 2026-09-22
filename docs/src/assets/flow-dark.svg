@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="900" height="340" viewBox="0 0 900 340" role="img" aria-label="A command is handled by an aggregate, the events it returns are appended to the event store as one ordered log, and read models, policies and processes subscribe to that log">
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="340" viewBox="0 0 900 340" role="img" aria-label="A command handler decides from state and returns events, the events are appended to the event store as one ordered log, and read models, policies and processes subscribe to that log">
   <title>How a command becomes events, and what reads them</title>
   <g font-family="Inter, system-ui, -apple-system, 'Segoe UI', sans-serif">
-    <g stroke="#52525b" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <g stroke="#71717a" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
       <path d="M36 166 H121" />
       <path d="M316 166 H361" />
       <path d="M556 166 H585" />
@@ -10,11 +10,11 @@
       <path d="M585 166 V246 H611" />
       <path d="M876 86 H819" />
     </g>
-    <g stroke="#52525b" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="5 5">
+    <g stroke="#71717a" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="5 5">
       <path d="M810 166 H846 V310 H226 V213" />
       <path d="M810 246 H846" />
     </g>
-    <g fill="#52525b">
+    <g fill="#71717a">
       <path d="M128 166 L121 162 L121 170 Z" />
       <path d="M368 166 L361 162 L361 170 Z" />
       <path d="M618 86 L611 82 L611 90 Z" />
@@ -28,7 +28,7 @@
       <text x="843" y="76">query</text>
       <text x="536" y="300">new commands</text>
     </g>
-    <g stroke="#3f3f46" fill="#18181b" stroke-width="1.5">
+    <g stroke="#71717a" fill="#18181b" stroke-width="1.5">
       <rect x="130" y="128" width="180" height="76" rx="8" />
       <rect x="620" y="56" width="190" height="60" rx="8" />
       <rect x="620" y="136" width="190" height="60" rx="8" />
