@@ -43,7 +43,8 @@ dispatcher passes and due scheduled commands until nothing moves, which is the p
 consequence of what you dispatched has happened.
 
 It works in every runtime role, and it is the reason tests need no timers, no polling and no
-`await sleep(50)`.
+`await sleep(50)`. It resolves to `{ idle: true }`; pass `{ maxPasses }` to stop earlier, which is
+how a test checks that a chain of reactions takes more than one round.
 
 Call `app.stop()` when the test ends: it waits for passes in flight and closes storage.
 

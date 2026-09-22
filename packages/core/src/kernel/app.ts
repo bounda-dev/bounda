@@ -45,10 +45,17 @@ export interface BoundaApp<R extends Registry = AppRegistry> {
    */
   stop(): Promise<void>;
   /**
-   * Runs dispatcher passes and due scheduled commands until nothing moves. What tests await after
-   * dispatching commands. Works in every role.
+   * Runs dispatcher passes and due scheduled commands until nothing moves, or until `maxPasses`
+   * rounds when given, and says whether it got there. What tests await after dispatching commands,
+   * and what a host without a background loop, such as a Durable Object alarm, runs in bounded
+   * slices. Works in every role.
    */
-  processUntilIdle(): Promise<void>;
+  processUntilIdle(options?: ProcessUntilIdleOptions): Promise<ProcessUntilIdleResult>;
+  /**
+   * The earliest moment a scheduled command or a process timeout becomes due, or `null` when
+   * nothing is scheduled. A host without a polling worker arms its wake-up for it.
+   */
+  nextDueAt(): Promise<Date | null>;
   /**
    * Runs the projections until every read model reflects the events stored so far. Policies,
    * processes and scheduled commands are left to the background. Works in every role.
@@ -64,6 +71,22 @@ export interface BoundaApp<R extends Registry = AppRegistry> {
    */
   readonly deadLetters: DeadLetters;
   getLag(): Promise<DispatcherLag>;
+}
+
+export interface ProcessUntilIdleOptions {
+  /**
+   * At most this many rounds of one dispatcher pass plus one run of due scheduled commands.
+   * Unbounded when omitted.
+   */
+  readonly maxPasses?: number;
+}
+
+export interface ProcessUntilIdleResult {
+  /**
+   * `true` when a round moved nothing: every subscriber is caught up and nothing is due. `false`
+   * when `maxPasses` ran out with work left.
+   */
+  readonly idle: boolean;
 }
 
 export interface CreateAppArgs<R extends Registry> {
@@ -210,13 +233,15 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
       await readModels.close();
       await storage.close();
     },
-    processUntilIdle: async () => {
-      for (;;) {
+    processUntilIdle: async ({ maxPasses = Number.POSITIVE_INFINITY } = {}) => {
+      for (let round = 0; round < maxPasses; round += 1) {
         const advanced = await dispatcher.processOnce();
         const ran = await worker.runOnce();
-        if (!advanced && ran === 0) return;
+        if (!advanced && ran === 0) return { idle: true };
       }
+      return { idle: false };
     },
+    nextDueAt: () => storage.scheduler.nextDueAt({ leaseMs: worker.leaseMs }),
     catchUpReadModels: () => dispatcher.catchUp("projection"),
     rebuildReadModel: (name) => rebuildReadModel({ registry, config: rawConfig, name, logger }),
     deadLetters,

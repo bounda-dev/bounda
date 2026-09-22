@@ -65,6 +65,14 @@ export const createMemoryScheduler: CreateMemorySchedulerFunction = () => {
         return toScheduled(claimed);
       });
     },
+    nextDueAt: async ({ leaseMs }) => {
+      const times = [...entries.values()].map((entry) =>
+        entry.claimedAt === null
+          ? new Date(entry.executeAt).getTime()
+          : new Date(entry.claimedAt).getTime() + leaseMs + 1,
+      );
+      return times.length === 0 ? null : new Date(Math.min(...times));
+    },
     complete: async (dedupeKey) => {
       entries.delete(dedupeKey);
     },

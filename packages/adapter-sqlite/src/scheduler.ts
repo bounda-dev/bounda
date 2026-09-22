@@ -1,5 +1,6 @@
 import type { CausationContext } from "@bounda-dev/core";
 import type { ScheduledCommand, Scheduler } from "@bounda-dev/core/adapter";
+import { earliestDue } from "@bounda-dev/core/adapter/sql";
 import type { SqliteDatabase } from "./database.ts";
 
 export interface CreateSqliteSchedulerArgs {
@@ -72,6 +73,13 @@ export const createSqliteScheduler: CreateSqliteSchedulerFunction = ({ db, table
       [nowIso, nowIso, expiredBefore, limit],
     );
     return rows.map(toScheduled).sort(byExecuteAt);
+  },
+  nextDueAt: async ({ leaseMs }) => {
+    const [row] = await db.all(
+      `SELECT MIN(CASE WHEN "claimed_at" IS NULL THEN "execute_at" END) AS "unclaimed", MIN("claimed_at") AS "claimed" FROM ${table}`,
+      [],
+    );
+    return earliestDue({ unclaimed: row?.unclaimed, claimed: row?.claimed, leaseMs });
   },
   complete: (dedupeKey) => db.run(`DELETE FROM ${table} WHERE "dedupe_key" = ?`, [dedupeKey]),
   fail: ({ dedupeKey, error, retryAt }) =>
