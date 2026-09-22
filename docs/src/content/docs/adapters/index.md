@@ -37,6 +37,7 @@ export default defineConfig({
 | --- | --- | --- |
 | [SQLite](/adapters/sqlite/) | `@bounda-dev/adapter-sqlite` | A local file, memory, or a libSQL server such as Turso |
 | [PostgreSQL](/adapters/postgresql/) | `@bounda-dev/adapter-postgresql` | PostgreSQL 14 or newer |
+| [Cloudflare](/adapters/cloudflare/) | `@bounda-dev/adapter-cloudflare` | A Durable Object's own SQLite, one object per tenant |
 | In-memory | `@bounda-dev/core/memory` | Nothing; for tests and for trying Bounda without a database |
 
 Every adapter passes the same contract test suites, so an app behaves the same way on each of

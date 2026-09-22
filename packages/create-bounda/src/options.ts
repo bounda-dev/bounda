@@ -14,11 +14,11 @@ export const PACKAGE_MANAGERS: readonly PackageManager[] = ["pnpm", "npm", "yarn
 export const DEFAULT_DIRECTORY: string = "bounda-app";
 
 /**
- * Whether the prompt offers the `cloudflare` framework. `--framework cloudflare` works either way;
- * the prompt waits until `@bounda-dev/adapter-cloudflare` is on npm, so nobody picks an option
- * whose install fails.
+ * Whether the prompt offers the `cloudflare` framework. It waited for
+ * `@bounda-dev/adapter-cloudflare` to be on npm, so nobody would pick an option whose install
+ * failed.
  */
-export const OFFER_CLOUDFLARE: boolean = false;
+export const OFFER_CLOUDFLARE: boolean = true;
 
 /**
  * What the command line gave us; anything missing is asked for or defaulted.

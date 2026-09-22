@@ -109,7 +109,7 @@ describe("resolveOptions", () => {
     ]);
   });
 
-  it("offers each framework and database with what it is for, and not Cloudflare yet", async () => {
+  it("offers each framework and database with what it is for", async () => {
     const prompts = answers("shop", "sqlite");
     await resolveOptions({
       raw: { install: true, git: true, yes: false },
@@ -117,11 +117,16 @@ describe("resolveOptions", () => {
       userAgent: undefined,
       prompts,
     });
-    expect(OFFER_CLOUDFLARE).toBe(false);
+    expect(OFFER_CLOUDFLARE).toBe(true);
     expect(prompts.offered).toEqual({
       "How will the app run?": [
         { value: "node", label: "Node", hint: "a script, a worker or your own server" },
         { value: "react-router", label: "React Router", hint: "framework mode, Vite" },
+        {
+          value: "cloudflare",
+          label: "Cloudflare",
+          hint: "a Worker and a Durable Object, no server",
+        },
       ],
       "Which database?": [
         { value: "sqlite", label: "SQLite", hint: "a file, no server; also Turso" },

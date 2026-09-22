@@ -212,7 +212,13 @@ export const loader = ({ context }: Route.LoaderArgs) => context.get(bounda).que
   `.bounda/register.d.ts` registers the registry type with `@bounda-dev/core/register`. Never write
   `boot<typeof registry>()`.
 - New project: `npm create bounda@latest <dir> -- --database sqlite|postgresql --framework node|react-router`
-  (`--yes` takes the defaults: SQLite, Node).
+  (`--yes` takes the defaults: SQLite, Node), or `-- --framework cloudflare` for a Worker with a
+  Durable Object per tenant (no `--database`: the store is the object's SQLite).
+- On Cloudflare: `storage: cloudflare()`, `createBoundaObject({ registry, config })` exported
+  from the Worker and bound in `wrangler.jsonc` with a `new_sqlite_classes` migration. Commands
+  update read models before answering; policies, processes and scheduled work run in the object's
+  alarm, which it arms itself. Talk to a store with `connect(stub)`, typed like `app.commands`;
+  `createWorker` is an unauthenticated JSON starting point.
 - Storage: `sqlite({ path })`, `sqlite({ memory: true })` or `postgresql({ url })` in
   `bounda.config.ts`; read models can point at a different adapter with `readModels`.
 - A store is one ordered log with one writer at a time; projections, policies and processes read

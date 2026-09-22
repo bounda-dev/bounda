@@ -234,6 +234,13 @@ Metrics:
 The lag gauge is what to alert on: a subscriber whose lag grows is a projection or a policy that
 is failing or stuck, and `app.getLag()` returns the same numbers for a health endpoint.
 
+## On Cloudflare
+
+A Cloudflare app has no process to run and no role to pick: a Worker answers requests and a
+Durable Object per tenant holds the store. Commands update the read models before they answer;
+policies, processes and scheduled commands run in the object's alarm. [The Cloudflare
+adapter](/adapters/cloudflare/) covers it, limits and cost included.
+
 ## What is not there yet
 
 Bounda is alpha, and this is the honest list of what a production app might want and does not
