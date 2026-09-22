@@ -46,6 +46,7 @@ const STATE = "state";
 const VIEW = "view";
 const INDEX = "index";
 const TIMEOUT_HANDLER = "on-timeout";
+const UPCAST_SUFFIX = ".upcast";
 
 interface Listing {
   readonly directories: readonly string[];
@@ -289,6 +290,7 @@ const discoverAggregate = async (
   const listing = await list(directory);
   rejectOthers(context, directory, listing);
   const events: EventModel[] = [];
+  const upcasts = new Map<string, ModuleRef>();
   let state: ModuleRef | null = null;
   for (const module of listing.modules) {
     const path = join(directory, `${module}.ts`);
@@ -296,13 +298,28 @@ const discoverAggregate = async (
       state = moduleRef(context, path);
       continue;
     }
+    if (module.endsWith(UPCAST_SUFFIX)) {
+      const eventName = module.slice(0, -UPCAST_SUFFIX.length);
+      if (!checkName(context, path, eventName, "Event")) continue;
+      if (!listing.modules.includes(eventName)) {
+        context.problems.add(path, `an upcast module needs the event ${eventName}.ts next to it`);
+        continue;
+      }
+      upcasts.set(keyOf(eventName), moduleRef(context, path));
+      continue;
+    }
     if (!checkName(context, path, module, "Event")) continue;
     events.push({
       ...moduleRef(context, path),
       key: keyOf(module),
       typeName: typeNameOf(keyOf(module)),
+      upcasts: null,
     });
   }
+  const eventsWithUpcasts = events.map((event) => ({
+    ...event,
+    upcasts: upcasts.get(event.key) ?? null,
+  }));
   for (const child of listing.directories) {
     if (!AGGREGATE_DIRECTORIES.has(child)) {
       context.problems.add(
@@ -317,7 +334,7 @@ const discoverAggregate = async (
     name,
     directory,
     state,
-    events: events.sort(byKey),
+    events: eventsWithUpcasts.sort(byKey),
     commands: has("commands") ? await discoverCommands(context, join(directory, "commands")) : [],
     policies: has("policies") ? await discoverPolicies(context, join(directory, "policies")) : [],
     processes: has("processes")

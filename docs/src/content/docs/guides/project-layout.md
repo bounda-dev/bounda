@@ -16,6 +16,7 @@ app/
     order/                          an aggregate
       state.ts                      optional: initialState and aggregateId
       order-placed.ts               an event: payload and apply
+      order-placed.upcast.ts        optional: how older payloads become today's
       order-paid.ts
       commands/
         pay-order.ts                a command: payload and handler
@@ -75,6 +76,8 @@ export const apply = ({ state, event }: Event.ApplyArgs) => ({
 ```
 
 `payload` is optional; an event without one has an empty payload. `apply` returns the next state.
+When a payload changes shape after events are stored, `<event>.upcast.ts` next to it brings the
+old ones up to date as they are read: see [Changing an event's shape](/guides/changing-events/).
 
 ### State
 

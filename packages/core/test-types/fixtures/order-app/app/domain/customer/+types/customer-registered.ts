@@ -10,4 +10,5 @@ export declare namespace Event {
     "CustomerRegistered",
     core.PayloadOf<Module>
   >;
+  type Upcasts = core.Upcasts<core.PayloadOf<Module>>;
 }

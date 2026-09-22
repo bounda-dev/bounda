@@ -38,6 +38,39 @@ const withOrder = (patch: Partial<Registry["aggregates"][string]>): Registry => 
 });
 
 describe("validateRegistry", () => {
+  it("checks upcast modules against the events and their shape", () => {
+    const upcast = (payload: unknown): unknown => payload;
+    expect(() =>
+      validateRegistry(withOrder({ upcasts: { orderPlaced: { upcasts: [upcast] } } })),
+    ).not.toThrow();
+    expect(() =>
+      validateRegistry(
+        withOrder({
+          upcasts: {
+            orderShipped: { upcasts: [upcast] },
+            orderPlaced: { upcasts: [] as never },
+          },
+        }),
+      ),
+    ).toThrow(
+      new ConfigurationError(
+        [
+          "Invalid registry:",
+          '  aggregates.order.upcasts.orderShipped: there is no event "orderShipped" to upcast',
+          '  aggregates.order.upcasts.orderPlaced: export "upcasts" must be a non-empty array of functions, oldest version first',
+        ].join("\n"),
+      ),
+    );
+    expect(() =>
+      validateRegistry(
+        withOrder({ upcasts: { orderPlaced: { upcasts: [upcast, "v2"] as never } } }),
+      ),
+    ).toThrow(/must be a non-empty array of functions/);
+    expect(() =>
+      validateRegistry(withOrder({ upcasts: { orderPlaced: { upcasts: "nope" as never } } })),
+    ).toThrow(/must be a non-empty array of functions/);
+  });
+
   it("accepts a well-formed registry", () => {
     expect(() => validateRegistry(validRegistry)).not.toThrow();
   });

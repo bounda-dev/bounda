@@ -165,8 +165,6 @@ Bounda is alpha, and the honest list of what production would eventually want:
   `pollInterval` behind. Notifications would make it immediate.
 - **Snapshots.** An aggregate is rebuilt from its whole stream on every command. Fine for
   hundreds of events per instance, not for hundreds of thousands.
-- **Upcasters.** Changing the shape of an event that is already stored has no supported path yet;
-  today you add a new event type and keep handling the old one.
 - **OpenTelemetry.** There is structured logging and `app.getLag()`; there are no traces or
   metrics exported.
 

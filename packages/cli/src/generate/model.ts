@@ -16,6 +16,10 @@ export interface EventModel extends ModuleRef {
    * The event type name: `OrderPlaced`.
    */
   readonly typeName: string;
+  /**
+   * `order-placed.upcast.ts` next to the event, when its payload has changed shape.
+   */
+  readonly upcasts: ModuleRef | null;
 }
 
 /**

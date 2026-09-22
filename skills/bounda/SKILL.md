@@ -26,6 +26,7 @@ Never edit anything under `.bounda/` or a `+types/` directory; both are generate
 app/domain/<aggregate>/
   state.ts                         optional: export const initialState = {...}; export const aggregateId = "<field>"
   <event>.ts                       export const payload (optional), export const apply
+  <event>.upcast.ts                optional: export const upcasts (oldest version first)
   commands/<command>.ts            export const payload, export const handler
   commands/<command>/index.ts      same, with <collaborator>.<implementation>.ts files beside it
   policies/<action>-on-<event>.ts  export const handler
@@ -214,6 +215,11 @@ export const loader = ({ context }: Route.LoaderArgs) => context.get(bounda).que
   (`--yes` takes the defaults: SQLite, Node).
 - Storage: `sqlite({ path })`, `sqlite({ memory: true })` or `postgresql({ url })` in
   `bounda.config.ts`; read models can point at a different adapter with `readModels`.
+- Never change the shape of an event's `payload` in place once events are stored. Add
+  `<event>.upcast.ts` next to it exporting `upcasts`, an array of functions oldest first, each
+  turning version n's payload into version n+1's, the last returning today's payload
+  (`satisfies Event.Upcasts` from the event's `+types`). The runtime applies them on read. A new
+  optional field needs no upcast; a field that cannot be derived needs a new event type instead.
 - A policy or process handler that failed for good, or a scheduled command that was dropped, is
   a dead letter: `bounda dead-letters list`, then `replay <id>` after fixing the cause or
   `discard <id>`. In code, `app.deadLetters`. Nothing re-runs a dead letter on its own.

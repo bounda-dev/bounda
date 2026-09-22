@@ -24,15 +24,20 @@ const compileSchema = (payload: PayloadFunction | undefined, path: string): z.Zo
 
 const buildEvents = (name: string, entry: AggregateEntry): Record<string, EventRuntime> =>
   Object.fromEntries(
-    Object.entries(entry.events).map(([key, module]) => [
-      key,
-      {
+    Object.entries(entry.events).map(([key, module]) => {
+      const upcasts = entry.upcasts?.[key]?.upcasts ?? [];
+      return [
         key,
-        type: capitalize(key),
-        schema: compileSchema(module.payload, `aggregates.${name}.events.${key}`),
-        apply: module.apply as EventRuntime["apply"],
-      },
-    ]),
+        {
+          key,
+          type: capitalize(key),
+          schema: compileSchema(module.payload, `aggregates.${name}.events.${key}`),
+          apply: module.apply as EventRuntime["apply"],
+          upcasts,
+          schemaVersion: upcasts.length + 1,
+        },
+      ];
+    }),
   );
 
 const buildCommands = (

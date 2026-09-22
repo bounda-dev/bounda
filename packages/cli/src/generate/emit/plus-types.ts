@@ -81,6 +81,7 @@ const eventFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFile
             "core.PayloadOf<Module>",
           ]),
         ],
+        ["Upcasts", "core.Upcasts<core.PayloadOf<Module>>"],
       ],
     }),
   );

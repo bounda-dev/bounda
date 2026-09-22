@@ -86,7 +86,7 @@ const toPendingEvents = (
         correlationId: command.metadata.correlationId,
         causationId: command.metadata.commandId,
         depth: command.metadata.depth,
-        schemaVersion: 1,
+        schemaVersion: runtime.schemaVersion,
         system: false,
       },
     };

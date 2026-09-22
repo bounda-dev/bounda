@@ -29,6 +29,19 @@ const validateAggregate = (
   for (const [key, event] of Object.entries(aggregate.events)) {
     requireFunction(problems, event, `${base}.events.${key}`, "apply");
   }
+  for (const [key, module] of Object.entries(aggregate.upcasts ?? {})) {
+    const path = `${base}.upcasts.${key}`;
+    if (!(key in aggregate.events)) {
+      problems.push({ path, message: `there is no event "${key}" to upcast` });
+    }
+    const upcasts: unknown = Reflect.get(module, "upcasts");
+    if (!Array.isArray(upcasts) || upcasts.length === 0 || !upcasts.every(isFunction)) {
+      problems.push({
+        path,
+        message: 'export "upcasts" must be a non-empty array of functions, oldest version first',
+      });
+    }
+  }
   for (const [key, entry] of Object.entries(aggregate.commands)) {
     requireFunction(problems, entry.module, `${base}.commands.${key}`, "handler");
     for (const [collaborator, implementations] of Object.entries(entry.collaborators ?? {})) {
