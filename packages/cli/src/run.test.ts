@@ -313,6 +313,40 @@ describe("bounda dead-letters", () => {
     expect(none.stdout).toBe("no dead letters\n");
   });
 
+  it("applies every filter and counts what it prints", async () => {
+    await deadLetter();
+    await deadLetter();
+    const one = await cli(["dead-letters", "list", "--limit", "1"], fixture);
+    expect(one.stdout).toMatch(/\n1 dead letter\n$/);
+    expect(one.stdout.split("\n").filter((row) => row.includes("  failed  policy  "))).toHaveLength(
+      1,
+    );
+    const two = await cli(["dead-letters", "list", "--limit", "2"], fixture);
+    expect(two.stdout).toMatch(/\n2 dead letters\n$/);
+    for (const filter of [
+      ["--kind", "command"],
+      ["--subscriber", "counter.nobody"],
+      ["--status", "discarded", "--limit", "0"],
+    ]) {
+      const result = await cli(["dead-letters", "list", ...filter], fixture);
+      expect(result.code).toBe(EXIT_OK);
+      expect(result.stdout).toBe("no dead letters\n");
+    }
+    const bySubscriber = await cli(
+      [
+        "dead-letters",
+        "list",
+        "--subscriber",
+        "counter.alertOnIncremented",
+        "--limit",
+        "1",
+        "--json",
+      ],
+      fixture,
+    );
+    expect(JSON.parse(bySubscriber.stdout)).toHaveLength(1);
+  });
+
   it("replays a letter, reporting the handler's error when it fails again, and discards one", async () => {
     const id = await deadLetter();
     const replay = await cli(["dead-letters", "replay", id], fixture);
@@ -342,14 +376,23 @@ describe("bounda dead-letters", () => {
     const list = await cli(["dead-letters", "list", "--help"], fixture);
     for (const option of [
       "--kind <kind>",
+      "policy, process or command",
       "--status <status>",
+      "failed, replayed or discarded",
       "--subscriber <name>",
+      "the policy, process or scheduled command that failed",
       "--limit <n>",
+      "at most this many letters",
       "--json",
+      "print the letters as JSON",
       "--root <dir>",
+      "project root (default: current directory)",
+      "configuration module under the root",
+      "generated registry module under the root",
     ]) {
       expect(list.stdout).toContain(option);
     }
+    expect(list.stdout).toMatch(/--status <status>.*\(default:\s+"failed"\)/s);
     expect(list.stdout).toContain("list dead letters, failed ones by default");
     const replay = await cli(["dead-letters", "replay", "--help"], fixture);
     expect(replay.stdout).toContain(
@@ -358,5 +401,6 @@ describe("bounda dead-letters", () => {
     expect(replay.stdout).toContain("<id>");
     const discard = await cli(["dead-letters", "discard", "--help"], fixture);
     expect(discard.stdout).toContain("mark the letter discarded without running anything");
+    expect(discard.stdout).toContain("the dead letter's id");
   });
 });

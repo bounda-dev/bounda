@@ -10,7 +10,7 @@ import { createRecordingLogger, orderAggregateEntry } from "../test-support.ts";
 import { createDeadLetters, type DeadLetters } from "./dead-letters.ts";
 
 const calls: string[] = [];
-let policyMode: "ok" | "domain" = "domain";
+let policyMode: "ok" | "domain" | "slow" = "domain";
 let processMode: "ok" | "domain" = "domain";
 
 const registry = {
@@ -19,9 +19,17 @@ const registry = {
       ...orderAggregateEntry(),
       policies: {
         notifyOnOrderPlaced: {
-          handler: async ({ event }: { event: { aggregateId: string } }) => {
+          handler: async ({
+            event,
+            commands,
+          }: {
+            event: { aggregateId: string };
+            commands: { archiveOrder: (payload: { orderId: string }) => Promise<unknown> };
+          }) => {
             calls.push(`notify:${event.aggregateId}`);
             if (policyMode === "domain") throw new DomainError("mail server rejects it");
+            if (policyMode === "slow") await new Promise((resolve) => setTimeout(resolve, 60));
+            await commands.archiveOrder({ orderId: event.aggregateId });
           },
         },
       },
@@ -107,6 +115,45 @@ describe("deadLetters", () => {
     });
     await harness.dispatcher.processUntilIdle();
     expect(calls).toHaveLength(3);
+    const { events } = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    const [placed, ...archived] = events;
+    expect(archived.map((event) => event.type)).toEqual(["OrderArchived"]);
+    expect(archived.at(-1)?.metadata).toMatchObject({
+      correlationId: placed?.metadata.correlationId,
+      depth: 1,
+    });
+  });
+
+  it("gives a replayed policy the same time budget as a live one, naming it", async () => {
+    policyMode = "domain";
+    const { logger } = createRecordingLogger();
+    const harness = await createReactiveHarness({
+      registry,
+      logger,
+      config: { runtime: { policies: { retry: { strategy: "none" }, timeout: "20ms" } } },
+    });
+    const deadLetters = createDeadLetters({
+      storage: harness.storage,
+      aggregates: harness.aggregates,
+      pipeline: harness.pipeline,
+      policies: harness.policies,
+      processes: harness.processes,
+      config: harness.config,
+      ids: harness.ids,
+      clock: harness.clock,
+      logger,
+    });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.dispatcher.processUntilIdle();
+    const [letter] = await deadLetters.list();
+    policyMode = "slow";
+    await expect(deadLetters.replay(letter?.id ?? "")).rejects.toThrow(
+      "policy order.notifyOnOrderPlaced did not finish within 20ms",
+    );
+    expect((await deadLetters.get(letter?.id ?? ""))?.status).toBe("failed");
   });
 
   it("refuses to touch a letter twice, or one that is not there", async () => {
@@ -169,7 +216,7 @@ describe("deadLetters", () => {
   });
 
   it("re-arms the timeout at the original deadline when the process stays open", async () => {
-    policyMode = "ok";
+    policyMode = "domain";
     processMode = "domain";
     const open = {
       ...registry,
@@ -236,7 +283,7 @@ describe("deadLetters", () => {
   });
 
   it("re-arms an overdue timeout for now rather than in the past", async () => {
-    policyMode = "ok";
+    policyMode = "domain";
     processMode = "domain";
     const open = {
       ...registry,
@@ -312,6 +359,34 @@ describe("deadLetters", () => {
     expect((await deadLetters.get(letter?.id ?? ""))?.status).toBe("failed");
   });
 
+  it("dispatches a dropped command that can succeed now", async () => {
+    policyMode = "ok";
+    const { harness, deadLetters } = await setUp();
+    await harness.pipeline.dispatch({
+      type: "PayOrder",
+      payload: { orderId: "o-1", method: "card" },
+      options: { delay: "1m" },
+    });
+    harness.clock.advance(60_000);
+    await harness.worker.runOnce();
+    const [letter] = await deadLetters.list({ kind: "command" });
+    expect(letter).toMatchObject({
+      eventType: "PayOrder",
+      errorMessage: "Only placed orders can be paid",
+    });
+
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    expect((await deadLetters.replay(letter?.id ?? "")).status).toBe("replayed");
+    const { events } = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    const paid = events.find((event) => event.type === "OrderPaid");
+    expect(paid?.payload).toEqual({ method: "card" });
+    expect(paid?.metadata).toMatchObject({ depth: 0 });
+    expect(paid?.metadata.correlationId).toEqual(expect.any(String));
+  });
+
   it("explains a command letter without payload and a projection letter", async () => {
     const { harness, deadLetters } = await setUp();
     const base = {
@@ -345,7 +420,10 @@ describe("deadLetters", () => {
   });
 
   it("replays a dropped process timeout through the process runner", async () => {
+    policyMode = "ok";
     const { harness, deadLetters } = await setUp();
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-9", total: 10 } });
+    await harness.dispatcher.processUntilIdle();
     await harness.storage.deadLetterStore.add({
       id: "t",
       kind: "command",
@@ -361,6 +439,14 @@ describe("deadLetters", () => {
       lastFailedAt: "2026-01-01T00:00:00.000Z",
     });
     expect((await deadLetters.replay("t")).status).toBe("replayed");
+    const { events } = await harness.storage.eventStore.load({
+      aggregateType: "process:OrderPayment",
+      aggregateId: "o-9",
+    });
+    expect(events.map((event) => event.type)).toEqual([
+      PROCESS_EVENTS.started,
+      PROCESS_EVENTS.timedOut,
+    ]);
   });
 
   it("names a policy or process the registry no longer has, and an event that is gone", async () => {

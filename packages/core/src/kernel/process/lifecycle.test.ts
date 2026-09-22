@@ -115,5 +115,14 @@ describe("processAggregateType", () => {
       version: 3,
       handledEventIds: new Set(["e2"]),
     });
+    const completed = foldProcess({
+      initialState: {},
+      events: [
+        lifecycle(PROCESS_EVENTS.started, { state: { step: 0 } }, 1),
+        lifecycle(PROCESS_EVENTS.completed, { eventId: "e2" }, 2),
+        lifecycle(PROCESS_EVENTS.handled, { state: { step: 1 }, eventId: "e3" }, 3),
+      ],
+    });
+    expect(completed.status).toBe("completed");
   });
 });
