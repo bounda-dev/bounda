@@ -2,6 +2,7 @@ import type { Logger } from "../../contracts/logger.ts";
 import type { Subscriber } from "../dispatch/dispatcher.ts";
 import type { ReadModelRuntime } from "../read-model/build-read-models.ts";
 import { errorDetails } from "../shared/retry.ts";
+import { ATTRIBUTES, traced } from "../telemetry.ts";
 
 export interface CreateProjectionSubscriberArgs {
   readonly readModel: ReadModelRuntime;
@@ -38,10 +39,24 @@ export const createProjectionSubscriber: CreateProjectionSubscriberFunction = ({
     for (const event of events) {
       for (const projection of readModel.projectionsByEvent[event.type] ?? []) {
         try {
-          await projection.project({
-            event,
-            table: readModel.ports.table,
-            client: readModel.ports.client,
+          await traced({
+            name: `bounda.projection ${readModel.name}.${projection.key}`,
+            attributes: {
+              [ATTRIBUTES.readModel]: readModel.name,
+              [ATTRIBUTES.projection]: projection.key,
+              [ATTRIBUTES.eventId]: event.id,
+              [ATTRIBUTES.eventType]: event.type,
+              [ATTRIBUTES.aggregateType]: event.aggregateType,
+              [ATTRIBUTES.aggregateId]: event.aggregateId,
+              [ATTRIBUTES.correlationId]: event.metadata.correlationId,
+            },
+            run: async () => {
+              await projection.project({
+                event,
+                table: readModel.ports.table,
+                client: readModel.ports.client,
+              });
+            },
           });
         } catch (error) {
           logger.error("projection failed", {

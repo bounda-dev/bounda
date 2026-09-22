@@ -157,6 +157,52 @@ runtime: {
 A shorter interval cuts the delay before a policy reacts and costs queries; a larger batch moves
 more events per pass and holds a claim for longer.
 
+## Observability
+
+The runtime is instrumented with the [OpenTelemetry API](https://opentelemetry.io/docs/languages/js/).
+Without an SDK registered that costs nothing: the API hands out no-op spans and meters. Register
+one and Bounda's spans and metrics show up next to your HTTP server's and your database
+driver's, with no adapter to write:
+
+```ts
+import { NodeSDK } from "@opentelemetry/sdk-node";
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
+
+const sdk = new NodeSDK({ traceExporter: new OTLPTraceExporter() });
+sdk.start();
+
+const app = await boot(); // after the SDK, so its instruments bind to the provider
+```
+
+Everything is reported under the scope `@bounda-dev/core`. Spans:
+
+| Span | When | Attributes |
+| --- | --- | --- |
+| `bounda.command <Type>` | a command is dispatched | `bounda.command.type`, `bounda.aggregate.type`, `bounda.aggregate.id`, `bounda.correlation_id`, `bounda.causation_id`, `bounda.outcome` (`stored`, `scheduled`), `bounda.event.count` |
+| `bounda.subscriber <name>` | the dispatcher hands a batch to a projection, the policy runner or the process runner; idle passes produce none | `bounda.subscriber`, `bounda.subscriber.kind`, `bounda.position.after`, `bounda.event.count`, `bounda.outcome` (`advanced`, `held`, `failed`, `moved`) |
+| `bounda.projection <readModel>.<projection>` | a projection handles one event | `bounda.read_model`, `bounda.projection`, the event's id, type and aggregate, `bounda.correlation_id` |
+| `bounda.policy <aggregate>.<policy>` | a policy handler runs | `bounda.policy`, the event's id, type and aggregate, `bounda.correlation_id`, `bounda.attempt` |
+| `bounda.process <aggregate>.<process>` | a process handler runs; `… timeout` for `on-timeout.ts` | `bounda.process`, the event's id, type and aggregate, `bounda.correlation_id`, `bounda.attempt` |
+| `bounda.scheduled <Type>` | the worker runs a due command or a process timeout | `bounda.command.type`, `bounda.aggregate.id`, `bounda.correlation_id`, `bounda.attempt` |
+
+A handler that throws marks its span as an error with the message and records the exception.
+
+One request is not one trace. A policy runs in a later dispatcher pass, in whatever process picks
+it up, so the command's span and the policy's span are separate traces. What ties them together is
+`bounda.correlation_id`: the command, the events it stored, the policy that reacted and the
+command it dispatched all carry the same value, so a search on that attribute shows the chain.
+
+Metrics:
+
+| Metric | Kind | Attributes |
+| --- | --- | --- |
+| `bounda.dispatcher.lag` | observable gauge, events each subscriber is behind the head | `bounda.subscriber` |
+| `bounda.commands` | counter | `bounda.command.type`, `bounda.outcome` (`stored`, `scheduled`, `rejected`) |
+| `bounda.dead_letters` | counter | `bounda.subscriber.kind`, `bounda.subscriber`, `bounda.outcome` (`terminal`, `retriable_exhausted`) |
+
+The lag gauge is what to alert on: a subscriber whose lag grows is a projection or a policy that
+is failing or stuck, and `app.getLag()` returns the same numbers for a health endpoint.
+
 ## What is not there yet
 
 Bounda is alpha, and the honest list of what production would eventually want:
@@ -165,8 +211,6 @@ Bounda is alpha, and the honest list of what production would eventually want:
   `pollInterval` behind. Notifications would make it immediate.
 - **Snapshots.** An aggregate is rebuilt from its whole stream on every command. Fine for
   hundreds of events per instance, not for hundreds of thousands.
-- **OpenTelemetry.** There is structured logging and `app.getLag()`; there are no traces or
-  metrics exported.
 
 None of these block a small app in production. All of them are the next phase of work, and the
 list is here so that nobody discovers it the hard way.

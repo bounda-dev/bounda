@@ -15,6 +15,7 @@ import {
   COMMAND_FAILED_EVENT,
   type CommandFailedPayload,
 } from "../system-events.ts";
+import { ATTRIBUTES, deadLettered, traced } from "../telemetry.ts";
 
 export interface ScheduledCommandWorker {
   start(): void;
@@ -121,6 +122,11 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       lastFailedAt: now,
       payload: entry.command.payload,
     });
+    deadLettered({
+      kind: "command",
+      subscriber: `scheduled:${entry.command.type}`,
+      errorType: reason,
+    });
     logger.warn("scheduled command dropped", {
       command: entry.command.type,
       dedupeKey: entry.dedupeKey,
@@ -129,20 +135,34 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     });
   };
 
+  const run = (entry: ScheduledCommand): Promise<void> =>
+    traced({
+      name: `bounda.scheduled ${entry.command.type}`,
+      attributes: {
+        [ATTRIBUTES.commandType]: entry.command.type,
+        [ATTRIBUTES.aggregateId]: entry.command.aggregateId,
+        [ATTRIBUTES.correlationId]: entry.context.correlationId,
+        [ATTRIBUTES.attempt]: entry.attempts + 1,
+      },
+      run: async () => {
+        if (isTimeout(entry)) {
+          await processes.handleTimeout({
+            payload: entry.command.payload as ProcessTimeoutPayload,
+            context: entry.context,
+          });
+        } else {
+          await pipeline.dispatch({
+            type: entry.command.type,
+            payload: entry.command.payload,
+            context: entry.context,
+          });
+        }
+      },
+    });
+
   const execute = async (entry: ScheduledCommand): Promise<void> => {
     try {
-      if (isTimeout(entry)) {
-        await processes.handleTimeout({
-          payload: entry.command.payload as ProcessTimeoutPayload,
-          context: entry.context,
-        });
-      } else {
-        await pipeline.dispatch({
-          type: entry.command.type,
-          payload: entry.command.payload,
-          context: entry.context,
-        });
-      }
+      await run(entry);
       await storage.scheduler.complete(entry.dedupeKey);
     } catch (error) {
       const attempts = entry.attempts + 1;

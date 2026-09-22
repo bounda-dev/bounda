@@ -215,6 +215,11 @@ export const loader = ({ context }: Route.LoaderArgs) => context.get(bounda).que
   (`--yes` takes the defaults: SQLite, Node).
 - Storage: `sqlite({ path })`, `sqlite({ memory: true })` or `postgresql({ url })` in
   `bounda.config.ts`; read models can point at a different adapter with `readModels`.
+- Observability is OpenTelemetry through `@opentelemetry/api`, which `core` depends on. Register
+  an SDK before `boot()` and the runtime's spans (`bounda.command`, `bounda.subscriber`,
+  `bounda.projection`, `bounda.policy`, `bounda.process`, `bounda.scheduled`) and metrics
+  (`bounda.dispatcher.lag`, `bounda.commands`, `bounda.dead_letters`) appear; without one, nothing
+  happens. Do not add a logging or tracing abstraction of your own.
 - Never change the shape of an event's `payload` in place once events are stored. Add
   `<event>.upcast.ts` next to it exporting `upcasts`, an array of functions oldest first, each
   turning version n's payload into version n+1's, the last returning today's payload

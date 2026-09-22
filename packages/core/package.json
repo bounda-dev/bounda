@@ -78,6 +78,7 @@
     "vitest": "catalog:"
   },
   "dependencies": {
+    "@opentelemetry/api": "catalog:",
     "uuid": "catalog:",
     "zod": "catalog:"
   },

@@ -17,6 +17,7 @@ import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
 import { foldState } from "../aggregate/fold-state.ts";
 import type { AggregateRuntime, AggregatesRuntime, CommandRuntime } from "../aggregate/runtime.ts";
+import { ATTRIBUTES, METRICS, meter, traced } from "../telemetry.ts";
 import { validatePayload } from "./validate.ts";
 
 export interface DispatchArgs {
@@ -165,51 +166,89 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     }
   };
 
-  return {
-    dispatch: async ({ type, payload, options = {}, context }) => {
-      const entry = aggregates.commandsByType[type];
-      if (entry === undefined) throw new NotFoundError(`Unknown command "${type}"`);
-      const { aggregate, command: runtime } = entry;
-      const depth = context?.depth ?? 0;
-      const maxDepth = config.forAggregate(aggregate.name).policies.maxChainDepth;
-      if (depth > maxDepth) throw new ChainDepthExceededError(depth, maxDepth);
+  const commands = meter().createCounter(METRICS.commands, {
+    description: "Commands dispatched, by type and outcome",
+    unit: "{command}",
+  });
 
-      const parsed = validatePayload({
-        schema: runtime.schema,
-        payload,
-        subject: `command ${type}`,
-      });
-      const aggregateId = resolveAggregateId(aggregate, parsed);
-      const commandId = ids.next();
-      const command: Command = {
-        type,
-        payload: parsed,
-        aggregateId,
-        metadata: {
-          commandId,
-          correlationId: options.correlationId ?? context?.correlationId ?? commandId,
-          causationId: context?.causationId ?? commandId,
-          depth,
-          timestamp: clock.now().toISOString(),
-        },
-      };
-
-      if (options.delay !== undefined) {
-        const executeAt = new Date(clock.now().getTime() + parseDuration(options.delay));
-        await scheduler.schedule({
-          dedupeKey: `command:${commandId}`,
-          command: { type, payload: parsed, aggregateId },
-          executeAt,
-          context: {
-            correlationId: command.metadata.correlationId,
-            causationId: command.metadata.causationId,
-            depth,
-          },
-        });
-        return { scheduled: true, aggregateId, executeAt: executeAt.toISOString() };
-      }
-
-      return execute(aggregate, runtime, command);
-    },
+  const count = (type: string, outcome: "stored" | "scheduled" | "rejected"): void => {
+    commands.add(1, { [ATTRIBUTES.commandType]: type, [ATTRIBUTES.outcome]: outcome });
   };
+
+  const dispatch = async ({
+    type,
+    payload,
+    options = {},
+    context,
+  }: DispatchArgs): Promise<DispatchResult> => {
+    const entry = aggregates.commandsByType[type];
+    if (entry === undefined) throw new NotFoundError(`Unknown command "${type}"`);
+    const { aggregate, command: runtime } = entry;
+    const depth = context?.depth ?? 0;
+    const maxDepth = config.forAggregate(aggregate.name).policies.maxChainDepth;
+    if (depth > maxDepth) throw new ChainDepthExceededError(depth, maxDepth);
+
+    const parsed = validatePayload({
+      schema: runtime.schema,
+      payload,
+      subject: `command ${type}`,
+    });
+    const aggregateId = resolveAggregateId(aggregate, parsed);
+    const commandId = ids.next();
+    const command: Command = {
+      type,
+      payload: parsed,
+      aggregateId,
+      metadata: {
+        commandId,
+        correlationId: options.correlationId ?? context?.correlationId ?? commandId,
+        causationId: context?.causationId ?? commandId,
+        depth,
+        timestamp: clock.now().toISOString(),
+      },
+    };
+
+    return traced({
+      name: `bounda.command ${type}`,
+      attributes: {
+        [ATTRIBUTES.commandType]: type,
+        [ATTRIBUTES.aggregateType]: aggregate.name,
+        [ATTRIBUTES.aggregateId]: aggregateId,
+        [ATTRIBUTES.correlationId]: command.metadata.correlationId,
+        [ATTRIBUTES.causationId]: command.metadata.causationId,
+      },
+      run: async (span) => {
+        if (options.delay !== undefined) {
+          const executeAt = new Date(clock.now().getTime() + parseDuration(options.delay));
+          await scheduler.schedule({
+            dedupeKey: `command:${commandId}`,
+            command: { type, payload: parsed, aggregateId },
+            executeAt,
+            context: {
+              correlationId: command.metadata.correlationId,
+              causationId: command.metadata.causationId,
+              depth,
+            },
+          });
+          span.setAttribute(ATTRIBUTES.outcome, "scheduled");
+          count(type, "scheduled");
+          return { scheduled: true, aggregateId, executeAt: executeAt.toISOString() };
+        }
+        try {
+          const result = await execute(aggregate, runtime, command);
+          span.setAttributes({
+            [ATTRIBUTES.outcome]: "stored",
+            [ATTRIBUTES.eventCount]: result.scheduled ? 0 : result.eventIds.length,
+          });
+          count(type, "stored");
+          return result;
+        } catch (error) {
+          count(type, "rejected");
+          throw error;
+        }
+      },
+    });
+  };
+
+  return { dispatch };
 };

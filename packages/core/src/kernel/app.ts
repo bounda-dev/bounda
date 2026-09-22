@@ -1,3 +1,4 @@
+import type { ObservableResult } from "@opentelemetry/api";
 import { isAdapter } from "../adapter/adapter.ts";
 import { resolveConfig } from "../config/schema.ts";
 import type { Config, ResolvedConfig, RuntimeRole } from "../config/types.ts";
@@ -24,6 +25,7 @@ import { createQueryRunner } from "./query/runner.ts";
 import { buildReadModels } from "./read-model/build-read-models.ts";
 import { type RebuildReadModelResult, rebuildReadModel } from "./read-model/rebuild.ts";
 import { createScheduledCommandWorker } from "./scheduler/worker.ts";
+import { ATTRIBUTES, METRICS, meter } from "./telemetry.ts";
 
 /**
  * A running Bounda application.
@@ -168,6 +170,17 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
     clock,
     logger,
   });
+  const lag = meter().createObservableGauge(METRICS.lag, {
+    description: "Events each subscriber is behind the head of the stream",
+    unit: "{event}",
+  });
+  const observeLag = async (observer: ObservableResult): Promise<void> => {
+    const current = await dispatcher.getLag();
+    for (const subscriber of current.subscribers) {
+      observer.observe(subscriber.lag, { [ATTRIBUTES.subscriber]: subscriber.subscriber });
+    }
+  };
+  lag.addCallback(observeLag);
   const role = config.runtime.role;
   let stopped = false;
 
@@ -190,6 +203,7 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
     stop: async () => {
       if (stopped) return;
       stopped = true;
+      lag.removeCallback(observeLag);
       await Promise.all([dispatcher.stop(), worker.stop()]);
       await readModels.close();
       await storage.close();
