@@ -27,7 +27,7 @@ import { Card, CardGrid } from "@astrojs/starlight/components";
     A process follows one aggregate instance over time: it says which events open and close it, keeps state between them, and runs `on-timeout.ts` when its deadline passes. Retries and dead letters are the runtime's job.
   </Card>
   <Card title="One database is all your infra" icon="seti:db">
-    Events, read models, scheduling and dead letters on a single Postgres or SQLite. No brokers, no queues to operate.
+    Events, read models, scheduling and dead letters on a single Postgres or SQLite. No brokers, no queues to operate. When a projection goes wrong, `bounda rebuild`; when a policy dies, `bounda dead-letters`; when a payload changes shape, an upcast next to the event.
   </Card>
 </CardGrid>
 
