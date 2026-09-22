@@ -1,8 +1,16 @@
+export type {
+  DeadLetter,
+  DeadLetterErrorType,
+  DeadLetterKind,
+  DeadLetterStatus,
+  ListDeadLettersArgs,
+} from "./adapter/ports/dead-letter-store.ts";
 export type { FindManyArgs, ReadClient, Table, TableOrder } from "./adapter/ports/table.ts";
 export * from "./contracts/index.ts";
 export type { Query } from "./contracts/query.ts";
 export type { BoundaApp, CreateAppArgs, CreateAppFunction } from "./kernel/app.ts";
 export { createApp } from "./kernel/app.ts";
+export type { DeadLetters } from "./kernel/dead-letters/dead-letters.ts";
 export type { DispatcherLag, SubscriberKind, SubscriberLag } from "./kernel/dispatch/dispatcher.ts";
 export type { ProcessStatus } from "./kernel/process/lifecycle.ts";
 export { PROCESS_EVENTS } from "./kernel/process/lifecycle.ts";

@@ -47,6 +47,22 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       expect(await store.get("missing")).toBeNull();
     });
 
+    it("keeps the payload of a dropped command and has none for the others", async () => {
+      const payload = { orderId: "o-1", items: [{ sku: "a", quantity: 2 }], note: null };
+      await store.add(
+        letter("cmd", {
+          kind: "command",
+          subscriber: "scheduled:PlaceOrder",
+          eventType: "PlaceOrder",
+          payload,
+        }),
+      );
+      await store.add(letter("evt"));
+      expect((await store.get("cmd"))?.payload).toEqual(payload);
+      expect(await store.get("evt")).not.toHaveProperty("payload");
+      expect((await store.list({ kind: "command" }))[0]?.payload).toEqual(payload);
+    });
+
     it("is idempotent on id", async () => {
       await store.add(letter("a"));
       await store.add(letter("a", { attempts: 99 }));

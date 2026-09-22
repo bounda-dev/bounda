@@ -6,7 +6,7 @@ export type DeadLetterStatus = "failed" | "replayed" | "discarded";
 
 /**
  * A handler execution that gave up: which subscriber, which event, why, and how many times it was
- * tried.
+ * tried. `status` tracks what an operator did about it: `failed` until it is replayed or discarded.
  */
 export interface DeadLetter {
   readonly id: string;
@@ -23,6 +23,11 @@ export interface DeadLetter {
   readonly firstFailedAt: string;
   readonly lastFailedAt: string;
   readonly status: DeadLetterStatus;
+  /**
+   * For `command` letters, the payload of the scheduled command that was dropped, so it can be
+   * dispatched again. Policy and process letters point at a stored event instead.
+   */
+  readonly payload?: unknown;
 }
 
 export type NewDeadLetter = Omit<DeadLetter, "status">;

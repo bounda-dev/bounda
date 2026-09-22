@@ -75,7 +75,8 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "attempts" INTEGER NOT NULL,
     "first_failed_at" TEXT NOT NULL,
     "last_failed_at" TEXT NOT NULL,
-    "status" TEXT NOT NULL
+    "status" TEXT NOT NULL,
+    "payload" TEXT
   )`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "status")} ON ${tables.deadLetters} ("status")`,
   `CREATE TABLE IF NOT EXISTS ${tables.scheduledCommands} (
@@ -101,9 +102,40 @@ export interface EnsureStorageSchemaFunction {
   (args: EnsureStorageSchemaArgs): Promise<void>;
 }
 
+export interface StorageSchemaAdditionsArgs {
+  readonly tables: StorageTables;
+  /**
+   * The columns the dead-letters table has, from `PRAGMA table_info`.
+   */
+  readonly deadLetterColumns: readonly string[];
+}
+
+export interface StorageSchemaAdditionsFunction {
+  (args: StorageSchemaAdditionsArgs): readonly string[];
+}
+
 /**
- * Creates the storage tables that do not exist yet.
+ * Columns added to the storage tables after their first release, for databases created before.
+ * SQLite has no `ADD COLUMN IF NOT EXISTS`, so the caller says which columns exist.
+ */
+export const storageSchemaAdditions: StorageSchemaAdditionsFunction = ({
+  tables,
+  deadLetterColumns,
+}) =>
+  deadLetterColumns.includes("payload")
+    ? []
+    : [`ALTER TABLE ${tables.deadLetters} ADD COLUMN "payload" TEXT`];
+
+/**
+ * Creates the storage tables that do not exist yet and adds the columns a table created by an
+ * earlier version lacks.
  */
 export const ensureStorageSchema: EnsureStorageSchemaFunction = async ({ db, tables }) => {
   for (const statement of storageSchemaStatements(tables)) await db.run(statement, []);
+  const deadLetterColumns = (await db.all(`PRAGMA table_info(${tables.deadLetters})`, [])).map(
+    (column) => String(column.name),
+  );
+  for (const statement of storageSchemaAdditions({ tables, deadLetterColumns })) {
+    await db.run(statement, []);
+  }
 };

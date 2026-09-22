@@ -218,6 +218,37 @@ describe.skipIf(container === null)("postgresql adapter", () => {
     expect(row).toEqual({ id: "a", tags: ["x", "y"], since });
   });
 
+  it("adds the columns a database created by an earlier version lacks", async () => {
+    await closeOpened();
+    const adapter = fresh();
+    const prefix = `t${run}_${prefixes}_`;
+    const first = await adapter.createStorage({ logger: silentLogger });
+    await first.close();
+    const probe = await openReadModel(adapter, "probe", contractFields);
+    await (probe.client.raw as Sql).unsafe(
+      `ALTER TABLE "${prefix}dead_letters" DROP COLUMN "payload"`,
+    );
+    await closeOpened();
+
+    const storage = await openStorage(adapter);
+    const letter = await storage.deadLetterStore.add({
+      id: "cmd",
+      kind: "command",
+      subscriber: "scheduled:PlaceOrder",
+      eventId: "k",
+      eventType: "PlaceOrder",
+      aggregateType: "order",
+      aggregateId: "o-1",
+      errorType: "terminal",
+      errorMessage: "nope",
+      attempts: 1,
+      firstFailedAt: "2026-01-01T00:00:00.000Z",
+      lastFailedAt: "2026-01-01T00:00:00.000Z",
+      payload: { orderId: "o-1" },
+    });
+    expect(letter.payload).toEqual({ orderId: "o-1" });
+  });
+
   it("logs the lifecycle of a rebuild with the tables involved", async () => {
     await closeOpened();
     const adapter = fresh();

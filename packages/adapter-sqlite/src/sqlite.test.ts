@@ -23,9 +23,9 @@ import {
   tableContract,
 } from "@bounda-dev/core/adapter/testing";
 import { createTestApp } from "@bounda-dev/core/testing";
-import type { Client } from "@libsql/client";
+import { type Client, createClient } from "@libsql/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { resolveSqliteOptions, sqlite } from "./index.ts";
+import { resolveSqliteOptions, sqlite, storageSchemaAdditions, storageTablesFor } from "./index.ts";
 
 const openStorage = (adapter = sqlite({ memory: true })): Promise<StoragePorts> =>
   adapter.createStorage({ logger: silentLogger });
@@ -112,6 +112,43 @@ describe("sqlite adapter on a file", () => {
     ]);
     await readModel.close();
     await second.close();
+  });
+
+  it("adds the columns a database created by an earlier version lacks", async () => {
+    const path = freshPath();
+    const first = await sqlite({ path }).createStorage({ logger: silentLogger });
+    await first.close();
+    const client = createClient({ url: `file:${path}` });
+    await client.execute('ALTER TABLE "bounda_dead_letters" DROP COLUMN "payload"');
+    client.close();
+
+    const storage = await sqlite({ path }).createStorage({ logger: silentLogger });
+    const letter = await storage.deadLetterStore.add({
+      id: "cmd",
+      kind: "command",
+      subscriber: "scheduled:PlaceOrder",
+      eventId: "k",
+      eventType: "PlaceOrder",
+      aggregateType: "order",
+      aggregateId: "o-1",
+      errorType: "terminal",
+      errorMessage: "nope",
+      attempts: 1,
+      firstFailedAt: "2026-01-01T00:00:00.000Z",
+      lastFailedAt: "2026-01-01T00:00:00.000Z",
+      payload: { orderId: "o-1" },
+    });
+    expect(letter.payload).toEqual({ orderId: "o-1" });
+    await storage.close();
+    expect(
+      storageSchemaAdditions({ tables: storageTablesFor("x_"), deadLetterColumns: ["id"] }),
+    ).toEqual(['ALTER TABLE "x_dead_letters" ADD COLUMN "payload" TEXT']);
+    expect(
+      storageSchemaAdditions({
+        tables: storageTablesFor("x_"),
+        deadLetterColumns: ["id", "payload"],
+      }),
+    ).toEqual([]);
   });
 
   it("logs the lifecycle of a rebuild with the tables involved", async () => {

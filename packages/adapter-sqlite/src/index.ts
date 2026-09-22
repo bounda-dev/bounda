@@ -103,5 +103,9 @@ export const sqlite: SqliteFunction = (options) => {
 export type { SqliteDatabase } from "./database.ts";
 export type { ResolvedSqliteOptions, SqliteLocation, SqliteOptions } from "./options.ts";
 export { DEFAULT_TABLE_PREFIX, resolveSqliteOptions } from "./options.ts";
-export type { StorageTables } from "./schema.ts";
-export { storageSchemaStatements, storageTablesFor } from "./schema.ts";
+export type {
+  StorageSchemaAdditionsArgs,
+  StorageSchemaAdditionsFunction,
+  StorageTables,
+} from "./schema.ts";
+export { storageSchemaAdditions, storageSchemaStatements, storageTablesFor } from "./schema.ts";
