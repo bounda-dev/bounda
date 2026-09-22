@@ -67,10 +67,15 @@ User-facing inference must never regress. `packages/core/test-types/` holds `exp
 - Every published package declares `license`, `repository` (with `directory`), `files: ["dist"]`, `sideEffects`, `publishConfig.access: public`, and an `exports` map with `types` first. ESM only.
 - Internal dependencies use `workspace:*`. Third-party versions come from the pnpm catalog; never inline a version.
 - Release is automated: Changesets opens a version PR, merging it publishes via npm trusted publishing (OIDC). No tokens in the repo.
+- **The version PR has no CI.** `changesets/action` opens it with `GITHUB_TOKEN`, and pushes made with that token do not trigger workflows, so waiting for its checks waits forever. Validate it locally — `git fetch origin changeset-release/main && git checkout FETCH_HEAD && pnpm check` — and merge with `gh pr merge <n> --squash --admin`, which the branch protection expects (administrators are deliberately not included for this reason).
+- Leaving that PR open accumulates changesets: the next version rises as they land, and nothing publishes until it is merged.
+- **`npm` refuses to run inside the repo**: `devEngines.packageManager` has `onFail: "error"`, which is what stops anyone creating a `package-lock.json` next to `pnpm-lock.yaml`. It also stops the harmless registry commands, so run those from elsewhere: `cd ~ && npm dist-tag ls @bounda-dev/core`. Do not soften the field to keep them working.
 
 ## Docs
 
 A user-facing change (API, config, CLI, conventions) updates `docs/` in the same PR, and `skills/bounda` if the convention changed.
+
+The documentation is this repository's `docs/` (Starlight, served at `docs.bounda.dev` from GitHub Pages). The landing page is **not** here: it lives in `bounda-dev/bounda-website`, deployed to `bounda.dev` as a Cloudflare Worker serving static assets. The two sites share a palette — `src/styles/tokens.css` there, `docs/src/styles/bounda.css` here — so a change to colours or typography belongs in both. The landing answers "what is this and why"; anything about *how* belongs in `docs/`.
 
 ## Git
 
