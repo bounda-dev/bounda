@@ -67,23 +67,6 @@ const until = async (ready: () => boolean | Promise<boolean>, what: string): Pro
   throw new Error(`timed out waiting for ${what}`);
 };
 
-const untilTriggered = async (
-  trigger: () => Promise<void>,
-  ready: () => boolean | Promise<boolean>,
-  what: string,
-): Promise<void> => {
-  const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline) {
-    await trigger();
-    const settled = Date.now() + 500;
-    while (Date.now() < settled) {
-      if (await ready()) return;
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-  }
-  throw new Error(`timed out waiting for ${what}`);
-};
-
 afterAll(async () => {
   await Promise.all(temporary.map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -205,15 +188,11 @@ describe("bounda generate", () => {
     await until(() => stdout.text().includes("watching app/ for changes"), "the watch to start");
     await rm(join(root, ".bounda"), { recursive: true });
     await writeFile(join(root, ".bounda"), "not a directory\n");
-    await untilTriggered(
-      () =>
-        writeFile(
-          join(root, "app/domain/order/order-shipped.ts"),
-          "export const apply = () => ({});\n",
-        ),
-      () => stderr.text().includes("error: "),
-      "the failed generation to be reported",
+    await writeFile(
+      join(root, "app/domain/order/order-shipped.ts"),
+      "export const apply = () => ({});\n",
     );
+    await until(() => stderr.text().includes("error: "), "the failed generation to be reported");
     controller.abort();
     await done;
     expect(stderr.text()).toMatch(/error: /);
@@ -230,12 +209,11 @@ describe("bounda generate", () => {
     );
     const generated = join(root, "app/domain/order/+types/order-shipped.ts");
     await until(() => stdout.text().includes("watching app/ for changes"), "the watch to start");
-    await untilTriggered(
-      () =>
-        writeFile(
-          join(root, "app/domain/order/order-shipped.ts"),
-          'import type { Event } from "./+types/order-shipped";\n\nexport const apply = ({ state }: Event.ApplyArgs) => state;\n',
-        ),
+    await writeFile(
+      join(root, "app/domain/order/order-shipped.ts"),
+      'import type { Event } from "./+types/order-shipped";\n\nexport const apply = ({ state }: Event.ApplyArgs) => state;\n',
+    );
+    await until(
       async () => (await stat(generated).catch(() => null)) !== null,
       "the new event's generated types",
     );
