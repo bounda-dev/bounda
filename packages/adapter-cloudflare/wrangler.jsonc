@@ -1,0 +1,10 @@
+{
+  "name": "bounda-adapter-cloudflare-test",
+  "main": "test/test-worker.ts",
+  "compatibility_date": "2026-09-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [{ "name": "STORE", "class_name": "Store" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Store"] }]
+}

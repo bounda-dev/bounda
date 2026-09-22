@@ -52,6 +52,7 @@
         "packages/cli/**",
         "packages/create-bounda/**",
         "packages/core/src/node/**",
+        "packages/adapter-cloudflare/src/logger.ts",
         "examples/**"
       ],
       "linter": {
