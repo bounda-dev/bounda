@@ -119,6 +119,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       attempts,
       firstFailedAt: now,
       lastFailedAt: now,
+      payload: entry.command.payload,
     });
     logger.warn("scheduled command dropped", {
       command: entry.command.type,

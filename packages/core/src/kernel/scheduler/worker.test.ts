@@ -56,6 +56,7 @@ describe("scheduled command worker", () => {
         aggregateType: "order",
         aggregateId: "o-1",
         errorType: "terminal",
+        payload: { orderId: "o-1", total: 99 },
       },
     ]);
     await expect(

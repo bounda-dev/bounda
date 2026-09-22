@@ -82,8 +82,10 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "attempts" integer NOT NULL,
     "first_failed_at" text NOT NULL,
     "last_failed_at" text NOT NULL,
-    "status" text NOT NULL
+    "status" text NOT NULL,
+    "payload" jsonb
   )`,
+  `ALTER TABLE ${tables.deadLetters} ADD COLUMN IF NOT EXISTS "payload" jsonb`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "status")} ON ${tables.deadLetters} ("status")`,
   `CREATE TABLE IF NOT EXISTS ${tables.scheduledCommands} (
     "dedupe_key" text PRIMARY KEY,

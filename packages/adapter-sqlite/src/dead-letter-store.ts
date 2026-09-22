@@ -18,7 +18,7 @@ export interface CreateSqliteDeadLetterStoreFunction {
 }
 
 const COLUMNS =
-  '"id", "kind", "subscriber", "event_id", "event_type", "aggregate_type", "aggregate_id", "error_type", "error_message", "error_stack", "attempts", "first_failed_at", "last_failed_at", "status"';
+  '"id", "kind", "subscriber", "event_id", "event_type", "aggregate_type", "aggregate_id", "error_type", "error_message", "error_stack", "attempts", "first_failed_at", "last_failed_at", "status", "payload"';
 
 const toLetter = (row: Record<string, unknown>): DeadLetter => ({
   id: String(row.id),
@@ -37,6 +37,9 @@ const toLetter = (row: Record<string, unknown>): DeadLetter => ({
   firstFailedAt: String(row.first_failed_at),
   lastFailedAt: String(row.last_failed_at),
   status: String(row.status) as DeadLetterStatus,
+  ...(row.payload === null || row.payload === undefined
+    ? {}
+    : { payload: JSON.parse(String(row.payload)) as unknown }),
 });
 
 const filters = (
@@ -69,7 +72,7 @@ export const createSqliteDeadLetterStore: CreateSqliteDeadLetterStoreFunction = 
   return {
     add: async (letter) => {
       await db.run(
-        `INSERT INTO ${table} (${COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'failed') ON CONFLICT ("id") DO NOTHING`,
+        `INSERT INTO ${table} (${COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'failed', ?) ON CONFLICT ("id") DO NOTHING`,
         [
           letter.id,
           letter.kind,
@@ -84,6 +87,7 @@ export const createSqliteDeadLetterStore: CreateSqliteDeadLetterStoreFunction = 
           letter.attempts,
           letter.firstFailedAt,
           letter.lastFailedAt,
+          letter.payload === undefined ? null : JSON.stringify(letter.payload),
         ],
       );
       return (await get(letter.id)) as DeadLetter;

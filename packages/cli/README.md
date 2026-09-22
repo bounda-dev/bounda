@@ -13,6 +13,9 @@ npx bounda generate
 ```
 bounda generate [--root <dir>] [--app-dir <dir>] [--tsconfig <file>] [--no-infer] [--watch]
 bounda rebuild <read-model> [--root <dir>] [--config <file>] [--registry <file>]
+bounda dead-letters list [--kind <kind>] [--status <status>] [--subscriber <name>] [--limit <n>] [--json]
+bounda dead-letters replay <id>
+bounda dead-letters discard <id>
 ```
 
 It reads `app/domain` and `app/read` by file and directory names only, and writes
@@ -32,7 +35,8 @@ generator inside Vite instead.
 
 `bounda rebuild <read-model>` projects the whole stream into a fresh table and swaps it in without
 taking the read model offline: for a projection that had a bug, or a view that lost a field or
-changed a field's type.
+changed a field's type. `bounda dead-letters` lists the handler runs that gave up and replays or
+discards them.
 
 ## Alpha
 

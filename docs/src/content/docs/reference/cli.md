@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: "The bounda command: generate the registry and the types, and rebuild a read model."
+description: "The bounda command: generate the registry and the types, rebuild a read model, deal with dead letters."
 sidebar:
   order: 0
 ---
@@ -116,6 +116,40 @@ the app refuses to do on start. See [Deployment](/guides/deployment/#rebuilding-
 when to run it in a deploy. Exit codes: `0` rebuilt, `1` bad arguments, `2` the project could not
 be loaded, the read model is not in the registry, or a projection failed.
 
+## `bounda dead-letters`
+
+Lists, replays or discards the handler runs that gave up. It boots the project the way `boot()`
+does, without starting the background work, so it runs from the project root with the app's
+environment.
+
+```bash
+bounda dead-letters list
+bounda dead-letters list --kind policy --subscriber order.notifyOnOrderPlaced
+bounda dead-letters list --status replayed --limit 20 --json
+bounda dead-letters replay <id>
+bounda dead-letters discard <id>
+```
+
+| Option | Applies to | Meaning |
+| --- | --- | --- |
+| `--kind <kind>` | `list` | `policy`, `process` or `command` |
+| `--status <status>` | `list` | `failed` (default), `replayed` or `discarded` |
+| `--subscriber <name>` | `list` | The policy or process name as the letter records it, e.g. `order.notifyOnOrderPlaced`, or `scheduled:<CommandType>` |
+| `--limit <n>` | `list` | At most this many letters |
+| `--json` | `list` | Print the letters as JSON |
+| `--root`, `--config`, `--registry` | all | As for `bounda rebuild` |
+
+```
+019a0c4e-3c9e-7a1b-9f1e-2b3c4d5e6f70  failed  policy  order.notifyOnOrderPlaced
+    OrderPlaced on order:o-1, 1 attempt, last 2026-09-22T14:03:11.402Z (terminal)
+    mail server rejects it
+1 dead letter
+```
+
+`replay` runs the failed handler again and marks the letter `replayed` when it succeeds; if the
+handler fails again its error is printed, the exit code is `2` and the letter stays `failed`. See
+[Reacting to events](/guides/reacting-to-events/#dead-letters) for what a replay does per kind.
+
 ## Programmatic use
 
 Everything the command does is exported from `@bounda-dev/cli`:
@@ -131,4 +165,5 @@ report.warnings; // inference warnings, per aggregate
 `discoverProject`, `emitProject`, `inferStates`, `watchProject` and `runCli` are the pieces
 `generate` and the binary are made of. `bounda rebuild` is `rebuildReadModel` from
 `@bounda-dev/core` over a project loaded with `loadProject` from `@bounda-dev/core/node`; an app
-exposes the same as `app.rebuildReadModel(name)`.
+exposes the same as `app.rebuildReadModel(name)`. `bounda dead-letters` is `app.deadLetters` on
+a booted app.

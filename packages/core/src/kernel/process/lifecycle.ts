@@ -44,6 +44,11 @@ export interface ProcessInstance {
   readonly state: object;
   readonly version: number;
   readonly handledEventIds: ReadonlySet<string>;
+  /**
+   * When the process started, from its `ProcessStarted` event; `null` for an instance that does
+   * not exist. What a replay measures the original deadline from.
+   */
+  readonly startedAt: string | null;
 }
 
 export interface FoldProcessArgs {
@@ -61,19 +66,24 @@ const stateOf = (event: StoredEvent, fallback: object): object => {
 };
 
 /**
- * Rebuilds a process instance from its lifecycle events.
+ * Rebuilds a process instance from its lifecycle events. A `ProcessHandled` after a
+ * `ProcessFailed` is what a replayed dead letter writes, and it puts the process back to
+ * `started`.
  */
 export const foldProcess: FoldProcessFunction = ({ initialState, events }) => {
   const handled = new Set<string>();
   let status: ProcessStatus = "started";
   let state = initialState;
+  let startedAt: string | null = null;
   for (const event of events) {
     switch (event.type) {
       case PROCESS_EVENTS.started:
         state = stateOf(event, state);
+        startedAt = event.timestamp;
         break;
       case PROCESS_EVENTS.handled: {
         state = stateOf(event, state);
+        if (status === "failed") status = "started";
         const payload = event.payload as { readonly eventId?: string };
         if (payload.eventId !== undefined) handled.add(payload.eventId);
         break;
@@ -98,5 +108,6 @@ export const foldProcess: FoldProcessFunction = ({ initialState, events }) => {
     state,
     version: events.length,
     handledEventIds: handled,
+    startedAt,
   };
 };

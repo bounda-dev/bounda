@@ -26,6 +26,12 @@ export { createCommandPipeline } from "./command/pipeline.ts";
 export type { ValidatePayloadArgs, ValidatePayloadFunction } from "./command/validate.ts";
 export { validatePayload } from "./command/validate.ts";
 export type {
+  CreateDeadLettersArgs,
+  CreateDeadLettersFunction,
+  DeadLetters,
+} from "./dead-letters/dead-letters.ts";
+export { createDeadLetters } from "./dead-letters/dead-letters.ts";
+export type {
   CreateDispatcherArgs,
   CreateDispatcherFunction,
   Dispatcher,
@@ -67,6 +73,7 @@ export type {
   CreateProcessRunnerFunction,
   ProcessRunner,
   ProcessTimeoutPayload,
+  ReplayProcessArgs,
 } from "./process/runner.ts";
 export {
   createProcessRunner,

@@ -11,6 +11,7 @@ import type { AppRegistry } from "../register/index.ts";
 import { buildAggregates } from "./aggregate/build-aggregates.ts";
 import { createCommandsFacade } from "./command/facade.ts";
 import { createCommandPipeline } from "./command/pipeline.ts";
+import { createDeadLetters, type DeadLetters } from "./dead-letters/dead-letters.ts";
 import { createDispatcher, type DispatcherLag } from "./dispatch/dispatcher.ts";
 import { buildPolicies } from "./policy/build-policies.ts";
 import { createPolicySubscriber } from "./policy/runner.ts";
@@ -55,6 +56,10 @@ export interface BoundaApp<R extends Registry = AppRegistry> {
    * taking it offline. See `rebuildReadModel`.
    */
   rebuildReadModel(name: string): Promise<RebuildReadModelResult>;
+  /**
+   * The handler runs that gave up, and what to do about them: list, replay or discard.
+   */
+  readonly deadLetters: DeadLetters;
   getLag(): Promise<DispatcherLag>;
 }
 
@@ -112,6 +117,7 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
     clock,
     logger,
   });
+  const policies = buildPolicies({ registry });
   const dispatcher = createDispatcher({
     eventStore: storage.eventStore,
     checkpointStore: storage.checkpointStore,
@@ -120,7 +126,7 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
         createProjectionSubscriber({ readModel, logger }),
       ),
       createPolicySubscriber({
-        policies: buildPolicies({ registry }),
+        policies,
         aggregates,
         pipeline,
         ledger: storage.inboxLedger,
@@ -140,6 +146,17 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
     storage,
     aggregates,
     pipeline,
+    processes,
+    config,
+    ids,
+    clock,
+    logger,
+  });
+  const deadLetters = createDeadLetters({
+    storage,
+    aggregates,
+    pipeline,
+    policies,
     processes,
     config,
     ids,
@@ -181,6 +198,7 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
     },
     catchUpReadModels: () => dispatcher.catchUp("projection"),
     rebuildReadModel: (name) => rebuildReadModel({ registry, config: rawConfig, name, logger }),
+    deadLetters,
     getLag: () => dispatcher.getLag(),
   };
 };

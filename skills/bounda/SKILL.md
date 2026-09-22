@@ -214,6 +214,9 @@ export const loader = ({ context }: Route.LoaderArgs) => context.get(bounda).que
   (`--yes` takes the defaults: SQLite, Node).
 - Storage: `sqlite({ path })`, `sqlite({ memory: true })` or `postgresql({ url })` in
   `bounda.config.ts`; read models can point at a different adapter with `readModels`.
+- A policy or process handler that failed for good, or a scheduled command that was dropped, is
+  a dead letter: `bounda dead-letters list`, then `replay <id>` after fixing the cause or
+  `discard <id>`. In code, `app.deadLetters`. Nothing re-runs a dead letter on its own.
 - A view may gain fields freely. Removing a field, changing its type, or fixing a projection that
   wrote wrong rows means `bounda rebuild <read-model>`: it projects the stream into a fresh table
   and swaps it in. Never rename a read model to get a rebuild, and never write projections through

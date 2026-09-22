@@ -2,7 +2,7 @@ import type { StoragePorts } from "../adapter/adapter.ts";
 import { resolveConfig } from "../config/schema.ts";
 import type { Config, ResolvedConfig } from "../config/types.ts";
 import { createFixedClock, type FixedClock } from "../contracts/clock.ts";
-import { createSequentialIdGenerator } from "../contracts/ids.ts";
+import { createSequentialIdGenerator, type IdGenerator } from "../contracts/ids.ts";
 import { type Logger, silentLogger } from "../contracts/logger.ts";
 import { memory } from "../memory/index.ts";
 import type { Registry } from "../modules/registry.ts";
@@ -10,7 +10,7 @@ import { buildAggregates } from "./aggregate/build-aggregates.ts";
 import type { AggregatesRuntime } from "./aggregate/runtime.ts";
 import { createCommandPipeline } from "./command/pipeline.ts";
 import { createDispatcher, type Dispatcher } from "./dispatch/dispatcher.ts";
-import { buildPolicies } from "./policy/build-policies.ts";
+import { buildPolicies, type PoliciesRuntime } from "./policy/build-policies.ts";
 import { createPolicySubscriber } from "./policy/runner.ts";
 import { buildProcesses } from "./process/build-processes.ts";
 import { createProcessRunner, type ProcessRunner } from "./process/runner.ts";
@@ -24,6 +24,9 @@ export interface ReactiveHarness {
   readonly aggregates: AggregatesRuntime;
   readonly readModels: ReadModelsRuntime;
   readonly pipeline: ReturnType<typeof createCommandPipeline>;
+  readonly policies: PoliciesRuntime;
+  readonly ids: IdGenerator;
+  readonly logger: Logger;
   readonly clock: FixedClock;
   /**
    * Creates another dispatcher over the same storage, to simulate a second instance.
@@ -125,6 +128,9 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     aggregates,
     readModels,
     pipeline,
+    policies,
+    ids,
+    logger,
     clock,
     createDispatcher: makeDispatcher,
     dispatcher: makeDispatcher(),

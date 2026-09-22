@@ -57,7 +57,8 @@ policies behind it and shows up as lag rather than as events silently processed 
 
 **Failures are classified.** A terminal failure is dead-lettered at once; a retriable one is
 retried on later passes with the configured back-off and dead-lettered when the attempts run out.
-Dead letters keep the event, the handler, the error and the number of attempts.
+Dead letters keep the event, the handler, the error and the number of attempts, and they have a
+way out: see [Dead letters](#dead-letters).
 
 ## Retries and deadlines
 
@@ -100,6 +101,38 @@ command can never succeed on a second try.
 `maxChainDepth`, 25 by default, bounds how far a chain of policies reacting to the events of other
 policies may go before the runtime refuses to continue. Hitting it means two policies are
 answering each other.
+
+## Dead letters
+
+A dead letter is a handler run the runtime gave up on: a policy or process handler that failed
+for good, or a scheduled command that was dropped. The stream moved on without it, so it is up to
+an operator to decide what happens to it. `bounda dead-letters` is that operator's tool:
+
+```bash
+bounda dead-letters list
+bounda dead-letters replay 019a0c4e-…
+bounda dead-letters discard 019a0c4e-…
+```
+
+`list` prints the failed letters, with `--kind policy|process|command`, `--subscriber`,
+`--status`, `--limit` and `--json` to narrow or script it. `replay` runs the failed handler once
+more and marks the letter `replayed` if it succeeds; when it fails again the error is printed and
+the letter stays `failed`. `discard` marks it `discarded` without running anything. Letters are
+never deleted by these commands; they are the record of what happened.
+
+What a replay does depends on the kind:
+
+- **Policy**: the handler runs again for the stored event, with the event's correlation. The
+  inbox ledger is bypassed on purpose: it already says the handler ran, and you are asking for
+  another run.
+- **Process**: the handler runs again for the stored event with the instance's current state. A
+  process that had failed is back to `started`, its timeout is re-armed at the original deadline
+  (or right now, if that is already past), and an event that completes the process completes it.
+- **Command**: the dropped command is dispatched again with the payload the letter recorded. A
+  dropped process timeout runs the process's `on-timeout.ts` if the process is still open.
+
+The same operations are on the app as `app.deadLetters` — `list`, `count`, `get`, `replay` and
+`discard` — for a script or an admin route.
 
 ## Delaying a command
 

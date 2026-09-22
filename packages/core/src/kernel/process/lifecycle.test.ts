@@ -22,6 +22,7 @@ describe("foldProcess", () => {
       state: { reminders: 0 },
       version: 0,
       handledEventIds: new Set(),
+      startedAt: null,
     });
   });
 
@@ -44,6 +45,7 @@ describe("foldProcess", () => {
       state: { reminders: 1 },
       version: 3,
       handledEventIds: new Set(["e2"]),
+      startedAt: "2026-01-01T00:00:00.000Z",
     });
   });
 
@@ -88,5 +90,30 @@ describe("foldProcess", () => {
 describe("processAggregateType", () => {
   it("prefixes the process type", () => {
     expect(processAggregateType("OrderPayment")).toBe("process:OrderPayment");
+  });
+
+  it("puts a failed process back to started when a handled event follows the failure", () => {
+    const failed = foldProcess({
+      initialState: {},
+      events: [
+        lifecycle(PROCESS_EVENTS.started, { state: { step: 0 } }, 1),
+        lifecycle(PROCESS_EVENTS.failed, { eventId: "e2", error: "boom" }, 2),
+      ],
+    });
+    expect(failed).toMatchObject({ status: "failed", handledEventIds: new Set() });
+    const replayed = foldProcess({
+      initialState: {},
+      events: [
+        lifecycle(PROCESS_EVENTS.started, { state: { step: 0 } }, 1),
+        lifecycle(PROCESS_EVENTS.failed, { eventId: "e2", error: "boom" }, 2),
+        lifecycle(PROCESS_EVENTS.handled, { state: { step: 1 }, eventId: "e2" }, 3),
+      ],
+    });
+    expect(replayed).toMatchObject({
+      status: "started",
+      state: { step: 1 },
+      version: 3,
+      handledEventIds: new Set(["e2"]),
+    });
   });
 });

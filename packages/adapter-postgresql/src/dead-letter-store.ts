@@ -18,7 +18,7 @@ export interface CreatePostgresqlDeadLetterStoreFunction {
 }
 
 const COLUMNS =
-  '"id", "kind", "subscriber", "event_id", "event_type", "aggregate_type", "aggregate_id", "error_type", "error_message", "error_stack", "attempts", "first_failed_at", "last_failed_at", "status"';
+  '"id", "kind", "subscriber", "event_id", "event_type", "aggregate_type", "aggregate_id", "error_type", "error_message", "error_stack", "attempts", "first_failed_at", "last_failed_at", "status", "payload"';
 
 const toLetter = (row: Record<string, unknown>): DeadLetter => ({
   id: String(row.id),
@@ -37,6 +37,7 @@ const toLetter = (row: Record<string, unknown>): DeadLetter => ({
   firstFailedAt: String(row.first_failed_at),
   lastFailedAt: String(row.last_failed_at),
   status: String(row.status) as DeadLetterStatus,
+  ...(row.payload === null || row.payload === undefined ? {} : { payload: row.payload }),
 });
 
 const filters = (
@@ -72,7 +73,7 @@ export const createPostgresqlDeadLetterStore: CreatePostgresqlDeadLetterStoreFun
   return {
     add: async (letter) => {
       await db.run(
-        `INSERT INTO ${table} (${COLUMNS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'failed') ON CONFLICT ("id") DO NOTHING`,
+        `INSERT INTO ${table} (${COLUMNS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'failed', $14) ON CONFLICT ("id") DO NOTHING`,
         [
           letter.id,
           letter.kind,
@@ -87,6 +88,7 @@ export const createPostgresqlDeadLetterStore: CreatePostgresqlDeadLetterStoreFun
           letter.attempts,
           letter.firstFailedAt,
           letter.lastFailedAt,
+          letter.payload === undefined ? null : letter.payload,
         ],
       );
       return (await get(letter.id)) as DeadLetter;
