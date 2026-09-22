@@ -1,13 +1,24 @@
 import { basename, resolve } from "node:path";
 
-export type Database = "sqlite" | "postgresql";
-export type Framework = "node" | "react-router";
+/**
+ * Where the app keeps its events. `cloudflare` is not chosen: it comes with the `cloudflare`
+ * framework, whose store is the Durable Object's own SQLite.
+ */
+export type Database = "sqlite" | "postgresql" | "cloudflare";
+export type Framework = "node" | "react-router" | "cloudflare";
 export type PackageManager = "pnpm" | "npm" | "yarn" | "bun";
 
 export const DATABASES: readonly Database[] = ["sqlite", "postgresql"];
-export const FRAMEWORKS: readonly Framework[] = ["node", "react-router"];
+export const FRAMEWORKS: readonly Framework[] = ["node", "react-router", "cloudflare"];
 export const PACKAGE_MANAGERS: readonly PackageManager[] = ["pnpm", "npm", "yarn", "bun"];
 export const DEFAULT_DIRECTORY: string = "bounda-app";
+
+/**
+ * Whether the prompt offers the `cloudflare` framework. `--framework cloudflare` works either way;
+ * the prompt waits until `@bounda-dev/adapter-cloudflare` is on npm, so nobody picks an option
+ * whose install fails.
+ */
+export const OFFER_CLOUDFLARE: boolean = false;
 
 /**
  * What the command line gave us; anything missing is asked for or defaulted.
@@ -124,7 +135,35 @@ export const resolveOptions: ResolveOptionsFunction = async ({ raw, cwd, userAge
     }
   }
 
-  let database: Database | undefined = raw.database;
+  let framework: Framework | undefined = raw.framework;
+  if (framework === undefined) {
+    if (ask === null) framework = "node";
+    else {
+      const answer = await ask.select("How will the app run?", [
+        { value: "node" as const, label: "Node", hint: "a script, a worker or your own server" },
+        { value: "react-router" as const, label: "React Router", hint: "framework mode, Vite" },
+        ...(OFFER_CLOUDFLARE
+          ? [
+              {
+                value: "cloudflare" as const,
+                label: "Cloudflare",
+                hint: "a Worker and a Durable Object, no server",
+              },
+            ]
+          : []),
+      ]);
+      if (answer === null) return "cancelled";
+      framework = answer;
+    }
+  }
+
+  if (framework === "cloudflare" && raw.database !== undefined) {
+    throw new Error(
+      "--database does not apply to --framework cloudflare: the app keeps everything in its Durable Object's SQLite",
+    );
+  }
+
+  let database: Database | undefined = framework === "cloudflare" ? "cloudflare" : raw.database;
   if (database === undefined) {
     if (ask === null) database = "sqlite";
     else {
@@ -134,19 +173,6 @@ export const resolveOptions: ResolveOptionsFunction = async ({ raw, cwd, userAge
       ]);
       if (answer === null) return "cancelled";
       database = answer;
-    }
-  }
-
-  let framework: Framework | undefined = raw.framework;
-  if (framework === undefined) {
-    if (ask === null) framework = "node";
-    else {
-      const answer = await ask.select("How will the app run?", [
-        { value: "node" as const, label: "Node", hint: "a script, a worker or your own server" },
-        { value: "react-router" as const, label: "React Router", hint: "framework mode, Vite" },
-      ]);
-      if (answer === null) return "cancelled";
-      framework = answer;
     }
   }
 

@@ -83,6 +83,20 @@ describe("create-bounda", () => {
     expect(calls).toEqual([]);
   });
 
+  it("tells a Cloudflare project to run dev, which is where wrangler starts", async () => {
+    const cwd = await workspace();
+    const { calls, exec } = recorder();
+    const result = await cli(
+      ["edge", "--no-git", "--no-install", "--pm", "npm", "--framework", "cloudflare"],
+      cwd,
+      { exec },
+    );
+    expect(result.code).toBe(EXIT_OK);
+    expect(result.stdout).toContain("(15 files, cloudflare, cloudflare)");
+    expect(result.stdout).toContain("next:\n  cd edge\n  npm install\n  npm test\n  npm run dev\n");
+    expect(calls).toEqual([]);
+  });
+
   it("warns and goes on when git or the install fail", async () => {
     const cwd = await workspace();
     const failing: Exec = async (command) => {

@@ -53,7 +53,7 @@ The rule, written down because it is not obvious: **code shared by two or more a
 
 ## create-bounda
 
-`packages/create-bounda/template/` is a real project: `base/` (the domain, the read model, the test), one overlay per database (`sqlite/`, `postgresql/`) and one per framework (`node/`: script and manifest; `react-router/`: Vite config, routes, manifest), applied in that order. `*.tpl` files are rendered (`{{name}}`, versions), `_gitignore` becomes `.gitignore`, everything else is copied. Its end-to-end test scaffolds a project, links the workspace packages into it and runs `bounda generate`, `tsc` and `vitest` there, so a template that does not compile fails CI. Tool versions written into generated projects live in `src/versions.ts` and a test keeps them equal to the catalog.
+`packages/create-bounda/template/` is a real project: `base/` (the domain, the read model, the test), one overlay per database (`sqlite/`, `postgresql/`) and one per framework (`node/`: script and manifest; `react-router/`: Vite config, routes, manifest), applied in that order. `*.tpl` files are rendered (`{{name}}`, versions), `_gitignore` becomes `.gitignore`, everything else is copied. Its end-to-end test scaffolds a project, links the workspace packages into it and runs `bounda generate`, `tsc` and `vitest` there, so a template that does not compile fails CI. Tool versions written into generated projects live in `src/versions.ts` and a test keeps them equal to the catalog. The `cloudflare` framework is one overlay with its own storage (no database layer); the prompt offers it only when `OFFER_CLOUDFLARE` in `src/options.ts` is `true`, which waits for `@bounda-dev/adapter-cloudflare` to be on npm.
 
 ## Types are the product
 
@@ -87,3 +87,4 @@ The documentation is this repository's `docs/` (Starlight, served at `docs.bound
 - Branches: `feat/`, `fix/`, `chore/`, `docs/`, `refactor/`. Never commit to `main` directly.
 - `pnpm check` green before committing. Conventional commit subjects.
 - Commits and PRs are authored solely by the repository owner. No `Co-Authored-By` or agent attribution footers.
+- **Stacked pull requests**: merging the lower one with `--delete-branch` makes GitHub close the upper one, and it cannot be reopened after a rebase. Merge the lower one without deleting its branch, rebase the upper one onto `main` with `git rebase --onto origin/main <old base>`, push it with `--force-with-lease`, retarget it with `gh pr edit <n> --base main`, and delete the lower branch last.

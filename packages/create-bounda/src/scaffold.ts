@@ -27,6 +27,7 @@ export interface ScaffoldProjectFunction {
 const ADAPTER_PACKAGES = {
   sqlite: "@bounda-dev/adapter-sqlite",
   postgresql: "@bounda-dev/adapter-postgresql",
+  cloudflare: "@bounda-dev/adapter-cloudflare",
 } as const;
 
 const TEMPLATE_SUFFIX = ".tpl";
@@ -90,8 +91,8 @@ const isEmptyDirectory = async (directory: string): Promise<boolean> => {
 
 /**
  * Copies `base/`, the database overlay and the framework overlay into the project directory, in
- * that order, rendering `*.tpl` files and renaming `_gitignore`. The directory must not exist or
- * be empty.
+ * that order, rendering `*.tpl` files and renaming `_gitignore`. The `cloudflare` framework brings
+ * its own storage, so it is one overlay, not two. The directory must not exist or be empty.
  */
 export const scaffoldProject: ScaffoldProjectFunction = async ({
   templateRoot,
@@ -114,10 +115,12 @@ export const scaffoldProject: ScaffoldProjectFunction = async ({
     viteVersion: versions.vite,
     isbotVersion: versions.isbot,
     typesReactVersion: versions.typesReact,
+    wranglerVersion: versions.wrangler,
+    workersTypesVersion: versions.workersTypes,
   };
   const layers = [
     join(templateRoot, "base"),
-    join(templateRoot, options.database),
+    ...(options.database === options.framework ? [] : [join(templateRoot, options.database)]),
     join(templateRoot, options.framework),
   ];
   const sources = new Map<string, string>();

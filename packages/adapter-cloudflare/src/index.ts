@@ -22,3 +22,5 @@ export type { CreateDurableSqlDatabaseFunction, DurableSqlStorage } from "./sql-
 export { createDurableSqlDatabase } from "./sql-database.ts";
 export type { NextWakeArgs, NextWakeFunction } from "./wake.ts";
 export { nextWake } from "./wake.ts";
+export type { CreateWorkerArgs, CreateWorkerFunction, TenantOfFunction } from "./worker.ts";
+export { createWorker, TENANT_HEADER } from "./worker.ts";

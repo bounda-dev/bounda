@@ -22,6 +22,8 @@ const TOOLS = [
   "vite",
   "isbot",
   "@types/react",
+  "wrangler",
+  "@cloudflare/workers-types",
 ];
 
 const manifestOf = (
@@ -88,6 +90,8 @@ describe("versions", () => {
     expect(versions.vite).toBe(`^${await catalogVersion("vite")}`);
     expect(versions.isbot).toBe(`^${await catalogVersion("isbot")}`);
     expect(versions.typesReact).toBe(`^${await catalogVersion("@types/react")}`);
+    expect(versions.wrangler).toBe(`^${await catalogVersion("wrangler")}`);
+    expect(versions.workersTypes).toBe(`^${await catalogVersion("@cloudflare/workers-types")}`);
   });
 
   it("keeps the catalog entries a single template version covers in step", async () => {
