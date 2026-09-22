@@ -4,5 +4,6 @@ export default defineConfig({
   test: {
     name: "cli",
     include: ["src/**/*.test.ts"],
+    testTimeout: 20_000,
   },
 });

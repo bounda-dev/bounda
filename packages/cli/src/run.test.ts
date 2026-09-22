@@ -52,6 +52,38 @@ const cli = async (argv: readonly string[], cwd: string, signal?: AbortSignal) =
   return { code, stdout: stdout.text(), stderr: stderr.text() };
 };
 
+const watching = (argv: readonly string[], cwd: string, signal: AbortSignal) => {
+  const stdout = capture();
+  const stderr = capture();
+  return { done: runCli({ argv, cwd, stdout, stderr, signal }), stdout, stderr };
+};
+
+const until = async (ready: () => boolean | Promise<boolean>, what: string): Promise<void> => {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (await ready()) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`timed out waiting for ${what}`);
+};
+
+const untilTriggered = async (
+  trigger: () => Promise<void>,
+  ready: () => boolean | Promise<boolean>,
+  what: string,
+): Promise<void> => {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    await trigger();
+    const settled = Date.now() + 500;
+    while (Date.now() < settled) {
+      if (await ready()) return;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+  throw new Error(`timed out waiting for ${what}`);
+};
+
 afterAll(async () => {
   await Promise.all(temporary.map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -165,28 +197,25 @@ describe("bounda generate", () => {
   it("reports a failure of a later generation while watching and goes on", async () => {
     const root = await project();
     const controller = new AbortController();
-    const stdout = capture();
-    const stderr = capture();
-    const running = runCli({
-      argv: ["generate", "--no-infer", "--watch"],
-      cwd: root,
-      stdout,
-      stderr,
-      signal: controller.signal,
-    });
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    const { done, stdout, stderr } = watching(
+      ["generate", "--no-infer", "--watch"],
+      root,
+      controller.signal,
+    );
+    await until(() => stdout.text().includes("watching app/ for changes"), "the watch to start");
     await rm(join(root, ".bounda"), { recursive: true });
     await writeFile(join(root, ".bounda"), "not a directory\n");
-    await writeFile(
-      join(root, "app/domain/order/order-shipped.ts"),
-      "export const apply = () => ({});\n",
+    await untilTriggered(
+      () =>
+        writeFile(
+          join(root, "app/domain/order/order-shipped.ts"),
+          "export const apply = () => ({});\n",
+        ),
+      () => stderr.text().includes("error: "),
+      "the failed generation to be reported",
     );
-    const deadline = Date.now() + 5_000;
-    while (Date.now() < deadline && !stderr.text().includes("error: ")) {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
     controller.abort();
-    await running;
+    await done;
     expect(stderr.text()).toMatch(/error: /);
     expect(stdout.text()).toContain("watching app/ for changes");
   });
@@ -194,22 +223,25 @@ describe("bounda generate", () => {
   it("regenerates on changes in --watch mode until aborted", async () => {
     const root = await project();
     const controller = new AbortController();
-    const running = cli(["generate", "--no-infer", "--watch"], root, controller.signal);
-    const generated = join(root, "app/domain/order/+types/order-shipped.ts");
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    await writeFile(
-      join(root, "app/domain/order/order-shipped.ts"),
-      'import type { Event } from "./+types/order-shipped";\n\nexport const apply = ({ state }: Event.ApplyArgs) => state;\n',
+    const { done, stdout } = watching(
+      ["generate", "--no-infer", "--watch"],
+      root,
+      controller.signal,
     );
-    const deadline = Date.now() + 5_000;
-    while (Date.now() < deadline) {
-      if (await stat(generated).catch(() => null)) break;
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
+    const generated = join(root, "app/domain/order/+types/order-shipped.ts");
+    await until(() => stdout.text().includes("watching app/ for changes"), "the watch to start");
+    await untilTriggered(
+      () =>
+        writeFile(
+          join(root, "app/domain/order/order-shipped.ts"),
+          'import type { Event } from "./+types/order-shipped";\n\nexport const apply = ({ state }: Event.ApplyArgs) => state;\n',
+        ),
+      async () => (await stat(generated).catch(() => null)) !== null,
+      "the new event's generated types",
+    );
     controller.abort();
-    const result = await running;
-    expect(result.code).toBe(EXIT_OK);
-    expect(result.stdout).toContain("watching app/ for changes");
+    expect(await done).toBe(EXIT_OK);
+    expect(stdout.text()).toContain("watching app/ for changes");
     expect(await stat(generated)).toBeTruthy();
   });
 });
