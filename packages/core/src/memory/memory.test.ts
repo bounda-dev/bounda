@@ -7,6 +7,7 @@ import {
   deadLetterStoreContract,
   eventStoreContract,
   inboxLedgerContract,
+  pendingEvent,
   readModelRebuildContract,
   schedulerContract,
   tableContract,
@@ -47,6 +48,37 @@ describe("memory adapter", () => {
     expect(await again.checkpointStore.get("policies")).toBe(4);
     expect(await second.checkpointStore.get("policies")).toBe(0);
     await first.close();
+  });
+
+  it("notifies every subscriber of an append with the last position, until they unsubscribe", async () => {
+    const storage = await memory().createStorage({ logger: silentLogger });
+    const heard: (number | undefined)[] = [];
+    const stop = await (storage.notifier as NonNullable<typeof storage.notifier>).subscribe(
+      (position) => {
+        heard.push(position);
+      },
+    );
+    await storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "1",
+      expectedVersion: 0,
+      events: [1, 2].map((version) => pendingEvent({ aggregateId: "1", version })),
+    });
+    await storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "1",
+      expectedVersion: 2,
+      events: [],
+    });
+    expect(heard).toEqual([2]);
+    await stop();
+    await storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "2",
+      expectedVersion: 0,
+      events: [pendingEvent({ aggregateId: "2", version: 1 })],
+    });
+    expect(heard).toEqual([2]);
   });
 
   it("opens the same read model twice on the same rows", async () => {

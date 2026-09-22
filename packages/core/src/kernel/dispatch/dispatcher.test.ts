@@ -393,4 +393,190 @@ describe("createDispatcher", () => {
       vi.useRealTimers();
     }
   });
+
+  it("passes as soon as the storage notifies and stretches the timer while idle", async () => {
+    vi.useFakeTimers();
+    try {
+      const adapter = memory();
+      const { eventStore, checkpointStore, notifier } = await adapter.createStorage({
+        logger: silentLogger,
+      });
+      const a = recorder("a");
+      const dispatcher = createDispatcher({
+        eventStore,
+        checkpointStore,
+        subscribers: [a],
+        batchSize: 10,
+        pollIntervalMs: 100,
+        idleIntervalMs: 30_000,
+        ...(notifier === undefined ? {} : { notifier }),
+        logger: silentLogger,
+      });
+      dispatcher.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(vi.getTimerCount()).toBe(1);
+
+      await appendMany(eventStore, 2);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(a.seen).toEqual([[1, 2]]);
+
+      await vi.advanceTimersByTimeAsync(100);
+      expect(a.seen).toEqual([[1, 2]]);
+      await vi.advanceTimersByTimeAsync(29_900);
+      expect(a.seen).toEqual([[1, 2]]);
+      expect(vi.getTimerCount()).toBe(1);
+
+      await eventStore.append({
+        aggregateType: "order",
+        aggregateId: "2",
+        expectedVersion: 0,
+        events: [pendingEvent({ aggregateId: "2", version: 1 })],
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(a.seen).toEqual([[1, 2], [3]]);
+
+      await dispatcher.stop();
+      expect(vi.getTimerCount()).toBe(0);
+      await eventStore.append({
+        aggregateType: "order",
+        aggregateId: "3",
+        expectedVersion: 0,
+        events: [pendingEvent({ aggregateId: "3", version: 1 })],
+      });
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(a.seen).toEqual([[1, 2], [3]]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps polling at the poll interval while passes find events, and idles after", async () => {
+    vi.useFakeTimers();
+    try {
+      const adapter = memory();
+      const { eventStore, checkpointStore, notifier } = await adapter.createStorage({
+        logger: silentLogger,
+      });
+      await appendMany(eventStore, 3);
+      const a = recorder("a");
+      const dispatcher = createDispatcher({
+        eventStore,
+        checkpointStore,
+        subscribers: [a],
+        batchSize: 1,
+        pollIntervalMs: 100,
+        idleIntervalMs: 30_000,
+        ...(notifier === undefined ? {} : { notifier }),
+        logger: silentLogger,
+      });
+      dispatcher.start();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(a.seen).toEqual([[1]]);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(a.seen).toEqual([[1], [2]]);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(a.seen).toEqual([[1], [2], [3]]);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(a.seen).toHaveLength(3);
+      await vi.advanceTimersByTimeAsync(29_800);
+      expect(a.seen).toHaveLength(3);
+      await dispatcher.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("runs one more pass after the one in flight when a notification arrives meanwhile", async () => {
+    vi.useFakeTimers();
+    try {
+      const adapter = memory();
+      const { eventStore, checkpointStore, notifier } = await adapter.createStorage({
+        logger: silentLogger,
+      });
+      let release: () => void = () => undefined;
+      const seen: number[][] = [];
+      const gated: Subscriber = {
+        name: "gated",
+        kind: "projection",
+        process: async (events) => {
+          seen.push(events.map((event) => event.position));
+          if (seen.length === 1) {
+            await new Promise<void>((resolve) => {
+              release = resolve;
+            });
+          }
+          return true;
+        },
+      };
+      const dispatcher = createDispatcher({
+        eventStore,
+        checkpointStore,
+        subscribers: [gated],
+        batchSize: 10,
+        pollIntervalMs: 100,
+        idleIntervalMs: 30_000,
+        ...(notifier === undefined ? {} : { notifier }),
+        logger: silentLogger,
+      });
+      dispatcher.start();
+      await appendMany(eventStore, 1);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(seen).toEqual([[1]]);
+      expect(vi.getTimerCount()).toBe(0);
+
+      await eventStore.append({
+        aggregateType: "order",
+        aggregateId: "2",
+        expectedVersion: 0,
+        events: [pendingEvent({ aggregateId: "2", version: 1 })],
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(seen).toEqual([[1]]);
+      release();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(seen).toEqual([[1], [2]]);
+      expect(vi.getTimerCount()).toBe(1);
+      await dispatcher.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("falls back to polling when subscribing to notifications fails", async () => {
+    vi.useFakeTimers();
+    try {
+      const { eventStore, checkpointStore } = await storage();
+      const { logger, entries } = createRecordingLogger();
+      const a = recorder("a");
+      const dispatcher = createDispatcher({
+        eventStore,
+        checkpointStore,
+        subscribers: [a],
+        batchSize: 10,
+        pollIntervalMs: 100,
+        idleIntervalMs: 30_000,
+        notifier: {
+          subscribe: async () => {
+            throw new Error("no LISTEN for you");
+          },
+        },
+        logger,
+      });
+      dispatcher.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(entries).toEqual([
+        {
+          level: "error",
+          message: "dispatcher could not subscribe to notifications; polling",
+          fields: { message: "no LISTEN for you", stack: expect.any(String) },
+        },
+      ]);
+      await appendMany(eventStore, 1);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(a.seen).toEqual([[1]]);
+      await dispatcher.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

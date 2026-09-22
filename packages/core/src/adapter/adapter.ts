@@ -3,6 +3,7 @@ import type { FieldsRecord } from "../modules/view.ts";
 import type { AdapterDefinition } from "./adapter-definition.ts";
 import type { CheckpointStore } from "./ports/checkpoint-store.ts";
 import type { DeadLetterStore } from "./ports/dead-letter-store.ts";
+import type { EventNotifier } from "./ports/event-notifier.ts";
 import type { EventStore } from "./ports/event-store.ts";
 import type { InboxLedger } from "./ports/inbox-ledger.ts";
 import type { Scheduler } from "./ports/scheduler.ts";
@@ -17,6 +18,11 @@ export interface StoragePorts {
   readonly inboxLedger: InboxLedger;
   readonly deadLetterStore: DeadLetterStore;
   readonly scheduler: Scheduler;
+  /**
+   * Present when the backend can push "new events" to the dispatcher; absent when it can only
+   * be polled.
+   */
+  readonly notifier?: EventNotifier;
   close(): Promise<void>;
 }
 

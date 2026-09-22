@@ -5,6 +5,7 @@ import { ConfigurationError } from "../contracts/errors.ts";
 import {
   DEFAULT_BATCH_SIZE,
   DEFAULT_CONCURRENCY_RETRIES,
+  DEFAULT_IDLE_INTERVAL_MS,
   DEFAULT_POLICIES,
   DEFAULT_POLL_INTERVAL_MS,
   DEFAULT_PROCESSES,
@@ -61,7 +62,11 @@ const runtime = z.strictObject({
   policies: policies.optional(),
   processes: processes.optional(),
   dispatcher: z
-    .strictObject({ pollInterval: duration.optional(), batchSize: z.int().min(1).optional() })
+    .strictObject({
+      pollInterval: duration.optional(),
+      idleInterval: duration.optional(),
+      batchSize: z.int().min(1).optional(),
+    })
     .optional(),
   overrides: z.record(z.string(), overrides).optional(),
 });
@@ -157,6 +162,7 @@ export const resolveConfig: ResolveConfigFunction = (config) => {
       processes: baseProcesses,
       dispatcher: {
         pollIntervalMs: parsed.runtime?.dispatcher?.pollInterval ?? DEFAULT_POLL_INTERVAL_MS,
+        idleIntervalMs: parsed.runtime?.dispatcher?.idleInterval ?? DEFAULT_IDLE_INTERVAL_MS,
         batchSize: parsed.runtime?.dispatcher?.batchSize ?? DEFAULT_BATCH_SIZE,
       },
       overrides: resolvedOverrides,

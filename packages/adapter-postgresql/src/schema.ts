@@ -12,6 +12,10 @@ export interface StorageTables {
   readonly deadLetters: string;
   readonly scheduledCommands: string;
   readonly appendLockKey: string;
+  /**
+   * The `NOTIFY` channel appends publish on: the events table name, which is unique per prefix.
+   */
+  readonly channel: string;
 }
 
 export interface StorageTablesForFunction {
@@ -27,6 +31,7 @@ export const storageTablesFor: StorageTablesForFunction = (prefix) => {
     deadLetters: quoteIdentifier(tableNameFor({ prefix, readModel: "deadLetters" })),
     scheduledCommands: quoteIdentifier(tableNameFor({ prefix, readModel: "scheduledCommands" })),
     appendLockKey: `bounda:${events}`,
+    channel: events,
   };
 };
 

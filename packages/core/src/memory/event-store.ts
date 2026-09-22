@@ -3,15 +3,22 @@ import { ConcurrencyError } from "../contracts/errors.ts";
 import type { StoredEvent } from "../contracts/event.ts";
 import { streamId } from "../contracts/event.ts";
 
+export interface CreateMemoryEventStoreArgs {
+  /**
+   * Called after every append with the position of the last event stored.
+   */
+  readonly onAppend?: (position: number) => void;
+}
+
 export interface CreateMemoryEventStoreFunction {
-  (): EventStore;
+  (args?: CreateMemoryEventStoreArgs): EventStore;
 }
 
 /**
  * An event store held in memory. Appends are atomic because nothing yields between the version
  * check and the write.
  */
-export const createMemoryEventStore: CreateMemoryEventStoreFunction = () => {
+export const createMemoryEventStore: CreateMemoryEventStoreFunction = ({ onAppend } = {}) => {
   const streams = new Map<string, StoredEvent[]>();
   const global: StoredEvent[] = [];
 
@@ -29,6 +36,7 @@ export const createMemoryEventStore: CreateMemoryEventStoreFunction = () => {
       }));
       streams.set(key, [...stream, ...stored]);
       global.push(...stored);
+      if (stored.length > 0) onAppend?.(global.length);
       return { version: actualVersion + stored.length, events: stored };
     },
     load: async ({ aggregateType, aggregateId, fromVersion = 1 }) => {

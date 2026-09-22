@@ -4,6 +4,7 @@ import postgres, { type Sql } from "postgres";
 import { createPostgresqlCheckpointStore } from "./checkpoint-store.ts";
 import { createPostgresqlDatabase, type PostgresqlDatabase } from "./database.ts";
 import { createPostgresqlDeadLetterStore } from "./dead-letter-store.ts";
+import { createPostgresqlEventNotifier } from "./event-notifier.ts";
 import { createPostgresqlEventStore } from "./event-store.ts";
 import { createPostgresqlInboxLedger } from "./inbox-ledger.ts";
 import { type PostgresqlOptions, resolvePostgresqlOptions } from "./options.ts";
@@ -66,7 +67,7 @@ export const postgresql: PostgresqlFunction = (options) => {
     name: "postgresql",
     options,
     createStorage: async () => {
-      const { db } = open();
+      const { db, sql } = open();
       const tables = storageTablesFor(tablePrefix);
       await ensureStorageSchema({ db, schema, tables });
       return {
@@ -74,7 +75,9 @@ export const postgresql: PostgresqlFunction = (options) => {
           db,
           table: tables.events,
           lockKey: tables.appendLockKey,
+          channel: tables.channel,
         }),
+        notifier: createPostgresqlEventNotifier({ sql, channel: tables.channel }),
         checkpointStore: createPostgresqlCheckpointStore({ db, table: tables.checkpoints }),
         inboxLedger: createPostgresqlInboxLedger({ db, table: tables.inbox }),
         deadLetterStore: createPostgresqlDeadLetterStore({ db, table: tables.deadLetters }),

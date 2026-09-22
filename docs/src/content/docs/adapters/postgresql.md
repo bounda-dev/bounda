@@ -34,6 +34,12 @@ postgresql({ host: "localhost", port: 5432, database: "shop", user: "shop", pass
   second, far above what the apps Bounda targets produce.
 - The stream version is checked in the same transaction as the write; a stale version rolls back
   with a `ConcurrencyError` and the command is retried with fresh state.
+- The transaction ends with `pg_notify` on a channel named after the events table
+  (`bounda_events` by default), carrying the last position written. PostgreSQL delivers it at
+  commit. Every worker listens on that channel through a dedicated connection Postgres.js keeps
+  open and re-establishes on its own, and runs a dispatcher pass as soon as it hears; between
+  notifications it polls only every `runtime.dispatcher.idleInterval`. See
+  [Tuning](/guides/deployment/#tuning).
 - Handler claims are single `INSERT … ON CONFLICT DO UPDATE … RETURNING` statements; due
   scheduled commands are taken with `FOR UPDATE SKIP LOCKED`. Any number of instances can run the
   worker role and each due command goes to exactly one of them.

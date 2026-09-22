@@ -44,7 +44,7 @@ describe("resolveConfig", () => {
         retry: { strategy: "exponential", maxAttempts: 3, baseDelayMs: 1_000, maxDelayMs: 30_000 },
         timeoutMs: 604_800_000,
       },
-      dispatcher: { pollIntervalMs: 100, batchSize: 100 },
+      dispatcher: { pollIntervalMs: 100, idleIntervalMs: 30_000, batchSize: 100 },
       overrides: {},
     });
   });
@@ -58,7 +58,7 @@ describe("resolveConfig", () => {
         commands: { concurrencyRetries: 0 },
         policies: { retry: { strategy: "fixed", maxAttempts: 5, baseDelay: "2s" }, timeout: "1m" },
         processes: { timeout: "48h" },
-        dispatcher: { pollInterval: 250, batchSize: 10 },
+        dispatcher: { pollInterval: 250, idleInterval: "1m", batchSize: 10 },
       },
       commands: { placeOrder: { inventory: { use: "http" } } },
     });
@@ -72,7 +72,11 @@ describe("resolveConfig", () => {
     });
     expect(resolved.runtime.policies.timeoutMs).toBe(60_000);
     expect(resolved.runtime.processes.timeoutMs).toBe(172_800_000);
-    expect(resolved.runtime.dispatcher).toEqual({ pollIntervalMs: 250, batchSize: 10 });
+    expect(resolved.runtime.dispatcher).toEqual({
+      pollIntervalMs: 250,
+      idleIntervalMs: 60_000,
+      batchSize: 10,
+    });
     expect(resolved.readModels["users-directory"]).toBe(sqlite);
     expect(resolved.commands.placeOrder?.inventory?.use).toBe("http");
   });
