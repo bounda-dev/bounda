@@ -117,6 +117,7 @@ is not there yet, and why, is one list in the
 | [`@bounda-dev/cli`](packages/cli) | `bounda` CLI: reads the layout, writes the registry and the types |
 | [`@bounda-dev/adapter-sqlite`](packages/adapter-sqlite) | SQLite and libSQL storage |
 | [`@bounda-dev/adapter-postgresql`](packages/adapter-postgresql) | PostgreSQL storage |
+| [`@bounda-dev/adapter-cloudflare`](packages/adapter-cloudflare) | A Durable Object per tenant on Cloudflare | none: its tests run inside workerd, where Stryker cannot mutate |
 | [`@bounda-dev/react-router`](packages/react-router) | React Router integration and its Vite plugin |
 | [`create-bounda`](packages/create-bounda) | Project scaffolder |
 

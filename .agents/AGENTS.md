@@ -2,7 +2,7 @@
 
 ## What this is
 
-Bounda is an event sourcing and CQRS framework for TypeScript. Users write small modules that export functions (`payload`, `handler`, `apply`, `project`) under `app/domain/<aggregate>/` and `app/read/<read-model>/`; the runtime wires them and runs on a single database. Six packages are published to npm under `@bounda-dev/*` (plus `create-bounda`): `core`, `cli`, `adapter-sqlite`, `adapter-postgresql`, `react-router`, `create-bounda`.
+Bounda is an event sourcing and CQRS framework for TypeScript. Users write small modules that export functions (`payload`, `handler`, `apply`, `project`) under `app/domain/<aggregate>/` and `app/read/<read-model>/`; the runtime wires them and runs on a single database. Seven packages are published to npm under `@bounda-dev/*` (plus `create-bounda`): `core`, `cli`, `adapter-sqlite`, `adapter-postgresql`, `adapter-cloudflare`, `react-router`, `create-bounda`.
 
 ## Toolchain
 
@@ -53,7 +53,7 @@ The rule, written down because it is not obvious: **code shared by two or more a
 
 ## create-bounda
 
-`packages/create-bounda/template/` is a real project: `base/` (the domain, the read model, the test), one overlay per database (`sqlite/`, `postgresql/`) and one per framework (`node/`: script and manifest; `react-router/`: Vite config, routes, manifest), applied in that order. `*.tpl` files are rendered (`{{name}}`, versions), `_gitignore` becomes `.gitignore`, everything else is copied. Its end-to-end test scaffolds a project, links the workspace packages into it and runs `bounda generate`, `tsc` and `vitest` there, so a template that does not compile fails CI. Tool versions written into generated projects live in `src/versions.ts` and a test keeps them equal to the catalog. The `cloudflare` framework is one overlay with its own storage (no database layer); the prompt offers it only when `OFFER_CLOUDFLARE` in `src/options.ts` is `true`, which waits for `@bounda-dev/adapter-cloudflare` to be on npm.
+`packages/create-bounda/template/` is a real project: `base/` (the domain, the read model, the test), one overlay per database (`sqlite/`, `postgresql/`) and one per framework (`node/`: script and manifest; `react-router/`: Vite config, routes, manifest), applied in that order. `*.tpl` files are rendered (`{{name}}`, versions), `_gitignore` becomes `.gitignore`, everything else is copied. Its end-to-end test scaffolds a project, links the workspace packages into it and runs `bounda generate`, `tsc` and `vitest` there, so a template that does not compile fails CI. Tool versions written into generated projects live in `src/versions.ts` and a test keeps them equal to the catalog. The `cloudflare` framework is one overlay with its own storage (no database layer). `OFFER_CLOUDFLARE` in `src/options.ts` gates it in the prompt; it is `true` now that `@bounda-dev/adapter-cloudflare` is on npm, and the same kind of switch is how to add a framework whose package is not published yet.
 
 ## Types are the product
 

@@ -21,10 +21,12 @@ cd my-shop
 `@latest` on purpose: npx reuses a `create-bounda` it cached earlier, and a stale one pins the
 Bounda packages to whatever version it shipped with.
 
-The command asks for a database (SQLite or PostgreSQL) and how the app runs: a Node script, or a
-[React Router](/guides/react-router/) app with a page that dispatches from an action and reads from
-a loader. Pass `--database` and `--framework` to skip the questions. With the defaults you get a
-project with one aggregate, one read model and a test, on SQLite:
+The command asks how the app runs: a Node script, a [React Router](/guides/react-router/) app
+with a page that dispatches from an action and reads from a loader, or a
+[Cloudflare](/adapters/cloudflare/) Worker with a Durable Object per tenant. For Node and React
+Router it then asks for a database, SQLite or PostgreSQL; on Cloudflare the store is the
+object's own SQLite. Pass `--framework` and `--database` to skip the questions. With the defaults
+you get a project with one aggregate, one read model and a test, on SQLite:
 
 ```
 app/domain/order/           the order aggregate

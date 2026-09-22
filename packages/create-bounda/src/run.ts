@@ -167,7 +167,7 @@ export const runCreate: RunCreateFunction = async ({
     .description("Create a Bounda project")
     .argument("[directory]", "where to create it (default: bounda-app, or asked)")
     .option("--database <name>", "sqlite or postgresql (default: sqlite, or asked)")
-    .option("--framework <name>", "node or react-router (default: node, or asked)")
+    .option("--framework <name>", "node, react-router or cloudflare (default: node, or asked)")
     .option(
       "--pm <name>",
       "package manager: pnpm, npm, yarn or bun (default: the one running this)",
