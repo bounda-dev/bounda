@@ -73,11 +73,19 @@ const install = async (project: string, names: readonly string[]): Promise<void>
  * The tools the template declares, taken from this package's own dev dependencies: the same
  * versions it writes into the generated manifest.
  */
-const linkTools = async (project: string, framework: "node" | "react-router"): Promise<void> => {
+type Framework = "node" | "react-router" | "cloudflare";
+
+const linkTools = async (project: string, framework: Framework): Promise<void> => {
   const modules = join(project, "node_modules");
   const own = join(repoRoot, "packages/create-bounda/node_modules");
   for (const name of ["vitest", "typescript", "@types/node"]) {
     await link(join(own, name), join(modules, name));
+  }
+  if (framework === "cloudflare") {
+    for (const name of ["wrangler", "@cloudflare/workers-types"]) {
+      await link(join(own, name), join(modules, name));
+    }
+    return;
   }
   if (framework !== "react-router") return;
   for (const name of [
@@ -96,10 +104,7 @@ const linkTools = async (project: string, framework: "node" | "react-router"): P
   }
 };
 
-const scaffold = async (
-  argv: readonly string[],
-  framework: "node" | "react-router",
-): Promise<string> => {
+const scaffold = async (argv: readonly string[], framework: Framework): Promise<string> => {
   const cwd = await mkdtemp(join(tmpdir(), "create-bounda-e2e-"));
   temporary.push(cwd);
   const code = await runCreate({
@@ -115,7 +120,7 @@ const scaffold = async (
   await install(project, [
     "core",
     "cli",
-    "adapter-sqlite",
+    framework === "cloudflare" ? "adapter-cloudflare" : "adapter-sqlite",
     ...(framework === "react-router" ? ["react-router"] : []),
   ]);
   await linkTools(project, framework);
@@ -165,12 +170,17 @@ interface DevServer {
  * change. Both addresses are tried because the dev server binds the `localhost` hostname, which
  * resolves to `::1` on some hosts and to `127.0.0.1` on others.
  */
-const devServer = async (project: string, bin: string): Promise<DevServer> => {
+const devServer = async (
+  project: string,
+  bin: string,
+  extra: readonly string[] = [],
+): Promise<DevServer> => {
   const port = await freePort();
-  const child = spawn(process.execPath, [bin, "dev", "--port", String(port)], {
+  const child = spawn(process.execPath, [bin, "dev", "--port", String(port), ...extra], {
     cwd: project,
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,
+    env: { ...process.env, CI: "1", WRANGLER_SEND_METRICS: "false" },
   });
   let output = "";
   const record = (chunk: Buffer): void => {
@@ -287,6 +297,61 @@ describe("a project created by create-bounda", () => {
 
       const grace = await fetch(`${server.url}/?customer=grace`);
       expect(await rendered(grace)).toContain("grace: 1 order(s), 99 in total");
+    } finally {
+      await server.stop();
+    }
+  }, 300_000);
+
+  it("scaffolds a Cloudflare app that generates, type-checks, tests and serves its store", async () => {
+    const project = await scaffold(
+      ["edge", "--framework", "cloudflare", "--yes", "--no-git", "--no-install"],
+      "cloudflare",
+    );
+    expect(await readFile(join(project, "bounda.config.ts"), "utf8")).toContain("cloudflare()");
+    expect(await readFile(join(project, "wrangler.jsonc"), "utf8")).toContain('"name": "edge"');
+
+    await run(
+      process.execPath,
+      [join(project, "node_modules/@bounda-dev/cli/dist/cli.js"), "generate"],
+      { cwd: project },
+    );
+    await run(join(repoRoot, "node_modules/.bin/tsc"), ["--noEmit", "-p", "tsconfig.json"], {
+      cwd: project,
+    });
+    const tested = await run(
+      process.execPath,
+      [join(repoRoot, "node_modules/vitest/vitest.mjs"), "run", "--root", project],
+      { cwd: project, env: { ...process.env, CI: "1" } },
+    );
+    expect(`${tested.stdout}${tested.stderr}`).toMatch(/1 passed/);
+
+    const server = await devServer(
+      project,
+      join(project, "node_modules/wrangler/bin/wrangler.js"),
+      ["--ip", "127.0.0.1"],
+    );
+    const post = (path: string, body: unknown) =>
+      fetch(`${server.url}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-bounda-tenant": "acme" },
+        body: JSON.stringify(body),
+      });
+    try {
+      const placed = await post("/commands/placeOrder", {
+        orderId: "018f6a5e-4c3c-7c1e-9d4b-0b2c4a1d8e01",
+        customerId: "ada",
+        total: 42,
+      });
+      expect(placed.status).toBe(200);
+      expect(await placed.json()).toMatchObject({ scheduled: false, version: 1 });
+      const listed = await post("/queries/listOrders", { customerId: "ada" });
+      expect(await listed.json()).toMatchObject({ total: 42 });
+      const refused = await post("/commands/placeOrder", {
+        orderId: "018f6a5e-4c3c-7c1e-9d4b-0b2c4a1d8e01",
+        customerId: "ada",
+        total: 1,
+      });
+      expect(refused.status).toBe(409);
     } finally {
       await server.stop();
     }

@@ -14,6 +14,8 @@ export interface Versions {
   readonly vite: string;
   readonly isbot: string;
   readonly typesReact: string;
+  readonly wrangler: string;
+  readonly workersTypes: string;
 }
 
 export interface Manifest {
@@ -58,6 +60,8 @@ export const versionsFrom: VersionsFromFunction = ({ manifest, catalog }) => {
     vite: versionOf("vite"),
     isbot: versionOf("isbot"),
     typesReact: versionOf("@types/react"),
+    wrangler: versionOf("wrangler"),
+    workersTypes: versionOf("@cloudflare/workers-types"),
   };
 };
 

@@ -13,6 +13,7 @@ export {
   DATABASES,
   DEFAULT_DIRECTORY,
   detectPackageManager,
+  OFFER_CLOUDFLARE,
   PACKAGE_MANAGERS,
   projectNameOf,
   resolveOptions,

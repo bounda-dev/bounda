@@ -1,5 +1,5 @@
 import { cloudflare } from "../src/definition.ts";
-import { createBoundaObject } from "../src/index.ts";
+import { createBoundaObject, createWorker } from "../src/index.ts";
 import { registry } from "./app.ts";
 import { clock } from "./clock.ts";
 
@@ -13,6 +13,4 @@ export const Store = createBoundaObject({
   passesPerAlarm: 20,
 });
 
-export default {
-  fetch: () => new Response("bounda adapter-cloudflare test worker"),
-};
+export default createWorker({ binding: "STORE" });

@@ -1,21 +1,36 @@
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { detectPackageManager, type Prompts, projectNameOf, resolveOptions } from "./options.ts";
+import {
+  detectPackageManager,
+  OFFER_CLOUDFLARE,
+  type Prompts,
+  projectNameOf,
+  resolveOptions,
+} from "./options.ts";
+
+interface Offered {
+  readonly value: string;
+  readonly label: string;
+  readonly hint?: string;
+}
 
 const answers = (
   text: string | null,
   select: string | null,
   framework: string | null = "node",
-): Prompts & { asked: string[] } => {
+): Prompts & { asked: string[]; offered: Record<string, readonly Offered[]> } => {
   const asked: string[] = [];
+  const offered: Record<string, readonly Offered[]> = {};
   return {
     asked,
+    offered,
     text: async (message) => {
       asked.push(message);
       return text;
     },
-    select: async (message) => {
+    select: async (message, options) => {
       asked.push(message);
+      offered[message] = options;
       return (message.startsWith("How") ? framework : select) as never;
     },
   };
@@ -89,9 +104,67 @@ describe("resolveOptions", () => {
     });
     expect(prompts.asked).toEqual([
       "Where should the project go?",
-      "Which database?",
       "How will the app run?",
+      "Which database?",
     ]);
+  });
+
+  it("offers each framework and database with what it is for, and not Cloudflare yet", async () => {
+    const prompts = answers("shop", "sqlite");
+    await resolveOptions({
+      raw: { install: true, git: true, yes: false },
+      cwd,
+      userAgent: undefined,
+      prompts,
+    });
+    expect(OFFER_CLOUDFLARE).toBe(false);
+    expect(prompts.offered).toEqual({
+      "How will the app run?": [
+        { value: "node", label: "Node", hint: "a script, a worker or your own server" },
+        { value: "react-router", label: "React Router", hint: "framework mode, Vite" },
+      ],
+      "Which database?": [
+        { value: "sqlite", label: "SQLite", hint: "a file, no server; also Turso" },
+        { value: "postgresql", label: "PostgreSQL", hint: "for several instances" },
+      ],
+    });
+  });
+
+  it("does not ask for a database for Cloudflare, and refuses one given with it", async () => {
+    const prompts = answers("edge", "postgresql", "cloudflare");
+    expect(
+      await resolveOptions({
+        raw: { install: true, git: true, yes: false },
+        cwd,
+        userAgent: undefined,
+        prompts,
+      }),
+    ).toMatchObject({ framework: "cloudflare", database: "cloudflare" });
+    expect(prompts.asked).toEqual(["Where should the project go?", "How will the app run?"]);
+    expect(
+      await resolveOptions({
+        raw: { framework: "cloudflare", install: true, git: true, yes: true },
+        cwd,
+        userAgent: undefined,
+        prompts: null,
+      }),
+    ).toMatchObject({ framework: "cloudflare", database: "cloudflare" });
+    await expect(
+      resolveOptions({
+        raw: {
+          framework: "cloudflare",
+          database: "sqlite",
+          install: true,
+          git: true,
+          yes: true,
+        },
+        cwd,
+        userAgent: undefined,
+        prompts: null,
+      }),
+    ).rejects.toThrow(
+      "--database does not apply to --framework cloudflare: the app keeps everything in its Durable Object's SQLite",
+    );
   });
 
   it("uses the defaults with --yes or without a terminal, including an empty answer", async () => {
@@ -148,6 +221,14 @@ describe("resolveOptions", () => {
         prompts: answers("x", "sqlite", null),
       }),
     ).toBe("cancelled");
+    expect(
+      await resolveOptions({
+        raw: { directory: "x", framework: "node", install: true, git: true, yes: false },
+        cwd,
+        userAgent: undefined,
+        prompts: answers("x", null),
+      }),
+    ).toBe("cancelled");
   });
 
   it("rejects unknown frameworks", async () => {
@@ -158,7 +239,7 @@ describe("resolveOptions", () => {
         userAgent: undefined,
         prompts: null,
       }),
-    ).rejects.toThrow('--framework must be one of node, react-router; got "next"');
+    ).rejects.toThrow('--framework must be one of node, react-router, cloudflare; got "next"');
   });
 
   it("rejects unknown databases and package managers", async () => {

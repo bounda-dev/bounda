@@ -16,6 +16,8 @@ const versions = {
   vite: "^8",
   isbot: "^5",
   typesReact: "^19",
+  wrangler: "^4",
+  workersTypes: "^5",
 };
 
 const directory = async (): Promise<string> => {
@@ -176,6 +178,61 @@ describe("scaffoldProject", () => {
     });
     expect(await readFile(join(target, ".gitignore"), "utf8")).toContain(".react-router/");
     expect(await readFile(join(target, "README.md"), "utf8")).toContain("pnpm run dev");
+  });
+
+  it("lays the cloudflare overlay over the base alone, with its own storage", async () => {
+    const target = await directory();
+    const report = await scaffoldProject({
+      templateRoot,
+      options: {
+        directory: target,
+        name: "edge",
+        database: "cloudflare",
+        framework: "cloudflare",
+        packageManager: "npm",
+        install: true,
+        git: true,
+      },
+      versions,
+    });
+    expect(report.files).toEqual([
+      ".gitignore",
+      "README.md",
+      "app/domain/order/commands/place-order.ts",
+      "app/domain/order/order-placed.ts",
+      "app/domain/order/state.ts",
+      "app/read/orders/projections/order-placed.ts",
+      "app/read/orders/queries/list-orders.ts",
+      "app/read/orders/view.ts",
+      "bounda.config.ts",
+      "package.json",
+      "src/worker.ts",
+      "tests/orders.test.ts",
+      "tsconfig.json",
+      "vitest.config.ts",
+      "wrangler.jsonc",
+    ]);
+    const manifest = JSON.parse(await readFile(join(target, "package.json"), "utf8")) as {
+      scripts: Record<string, string>;
+      dependencies: Record<string, string>;
+      devDependencies: Record<string, string>;
+    };
+    expect(manifest.scripts).toMatchObject({
+      dev: "bounda generate && wrangler dev",
+      deploy: "bounda generate && wrangler deploy",
+    });
+    expect(manifest.dependencies).toEqual({
+      "@bounda-dev/adapter-cloudflare": "^0.1.0-alpha.0",
+      "@bounda-dev/core": "^0.1.0-alpha.0",
+    });
+    expect(manifest.devDependencies).toMatchObject({
+      wrangler: "^4",
+      "@cloudflare/workers-types": "^5",
+    });
+    expect(await readFile(join(target, "bounda.config.ts"), "utf8")).toContain("cloudflare()");
+    expect(await readFile(join(target, "wrangler.jsonc"), "utf8")).toContain('"name": "edge"');
+    expect(await readFile(join(target, ".gitignore"), "utf8")).toContain(".wrangler/");
+    expect(await readFile(join(target, "README.md"), "utf8")).toContain("npm run deploy");
   });
 
   it("accepts an empty directory and refuses a non-empty one", async () => {

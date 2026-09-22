@@ -74,7 +74,7 @@ const nextSteps = (options: CreateOptions, cwd: string): string => {
   if (!options.install) lines.push(runCommand(options.packageManager, "install"));
   lines.push(
     runCommand(options.packageManager, "test"),
-    runCommand(options.packageManager, options.framework === "react-router" ? "dev" : "start"),
+    runCommand(options.packageManager, options.framework === "node" ? "start" : "dev"),
   );
   return lines.map((line) => `  ${line}`).join("\n");
 };
