@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="340" viewBox="0 0 900 340" role="img" aria-label="A command is handled by an aggregate, the events it returns are appended to one ordered log, and read models, policies and processes subscribe to that log">
+  <title>How a command becomes events, and what reads them</title>
+  <g font-family="Inter, system-ui, -apple-system, 'Segoe UI', sans-serif">
+    <g stroke="#52525b" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M36 166 H121" />
+      <path d="M316 166 H361" />
+      <path d="M556 166 H585" />
+      <path d="M585 166 V86 H611" />
+      <path d="M585 166 H611" />
+      <path d="M585 166 V246 H611" />
+      <path d="M816 86 H869" />
+    </g>
+    <g stroke="#52525b" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="5 5">
+      <path d="M810 166 H846 V310 H226 V213" />
+      <path d="M810 246 H846" />
+    </g>
+    <g fill="#52525b">
+      <path d="M128 166 L121 162 L121 170 Z" />
+      <path d="M368 166 L361 162 L361 170 Z" />
+      <path d="M618 86 L611 82 L611 90 Z" />
+      <path d="M618 166 L611 162 L611 170 Z" />
+      <path d="M618 246 L611 242 L611 250 Z" />
+      <path d="M876 86 L869 82 L869 90 Z" />
+      <path d="M226 206 L222 213 L230 213 Z" />
+    </g>
+    <g fill="#a1a1aa" font-size="12.5" text-anchor="middle">
+      <text x="78" y="156">dispatch</text>
+      <text x="843" y="76">query</text>
+      <text x="536" y="300">new commands</text>
+    </g>
+    <g stroke="#3f3f46" fill="#18181b" stroke-width="1.5">
+      <rect x="130" y="128" width="180" height="76" rx="8" />
+      <rect x="620" y="56" width="190" height="60" rx="8" />
+      <rect x="620" y="136" width="190" height="60" rx="8" />
+      <rect x="620" y="216" width="190" height="60" rx="8" />
+    </g>
+    <rect x="370" y="128" width="180" height="76" rx="8" stroke="#3b82f6" fill="#172554" stroke-width="1.5" />
+    <g text-anchor="middle">
+      <g fill="#fafafa" font-size="15" font-weight="500">
+        <text x="220" y="160">Command handler</text>
+        <text x="460" y="160">Event log</text>
+        <text x="715" y="81">Read models</text>
+        <text x="715" y="161">Policies</text>
+        <text x="715" y="241">Processes</text>
+      </g>
+      <g fill="#a1a1aa" font-size="12.5">
+        <text x="220" y="181">decides from state</text>
+        <text x="460" y="181">one order, global position</text>
+        <text x="715" y="100">project</text>
+        <text x="715" y="180">react</text>
+        <text x="715" y="260">orchestrate</text>
+      </g>
+    </g>
+  </g>
+</svg>
