@@ -1,5 +1,38 @@
 # @bounda-dev/adapter-sqlite
 
+## 0.1.0-alpha.5
+
+### Patch Changes
+
+- 43f0f96: Advance checkpoints with `compareAndSet`. A dispatcher pass now moves a subscriber's checkpoint
+  only from the position it read; when another process, a rebuild or an operator moved it meanwhile,
+  the pass leaves their position alone and redelivers from there instead of overwriting it, which
+  could skip events without a trace. `CheckpointStore` gains `compareAndSet(subscriber, expected,
+  position)`; `set` stays for repositioning on purpose.
+- 01642b8: Dead letters get a way out. `app.deadLetters` lists, counts, replays and discards the handler
+  runs that gave up, and `bounda dead-letters list | replay <id> | discard <id>` does the same from
+  the command line. A replay runs the failed policy or process handler again for its stored event,
+  or dispatches the dropped scheduled command again; a process that had failed is back to `started`
+  with its timeout re-armed at the original deadline. Command dead letters now record the command's
+  payload, in a new nullable `payload` column the adapters add to existing databases on start.
+- 78f9b01: Rebuild a read model without taking it offline. `bounda rebuild <read-model>` projects the whole
+  stream into a fresh table with the view's current fields while queries keep reading the live one,
+  then swaps the two in a single transaction and moves the read model's checkpoint to where the
+  rebuild stopped; a worker that got further re-projects the difference. It is the path for a
+  projection that had a bug and for a view that lost a field or changed a field's type, which the
+  app still refuses to do on start, now naming the command. `rebuildReadModel` and
+  `app.rebuildReadModel(name)` in `@bounda-dev/core`, `loadProject` in `@bounda-dev/core/node`,
+  and `rebuildReadModel` in the adapter SPI; the in-memory adapter now shares one storage per
+  instance so that a rebuild sees the same events as the app.
+- Updated dependencies [43f0f96]
+- Updated dependencies [01642b8]
+- Updated dependencies [d8c06fa]
+- Updated dependencies [02e45fd]
+- Updated dependencies [789ac78]
+- Updated dependencies [78f9b01]
+- Updated dependencies [138ac4a]
+  - @bounda-dev/core@0.1.0-alpha.5
+
 ## 0.1.0-alpha.4
 
 ### Patch Changes
