@@ -1,5 +1,25 @@
 # @bounda-dev/adapter-sqlite
 
+## 0.1.0-alpha.6
+
+### Patch Changes
+
+- 176975a: Drive the runtime from a host without a background loop. `app.processUntilIdle({ maxPasses })`
+  stops after that many rounds and resolves to `{ idle }`; `app.nextDueAt()` is the earliest moment
+  a scheduled command or a process time-out becomes due. `Scheduler` gains `nextDueAt({ leaseMs })`,
+  which counts the lease of a claimed command, in every adapter.
+- 19dbca5: Show the Bounda wordmark at the top of each package's README, served from the documentation site so
+  it renders on npm as well as on GitHub.
+- 5000433: The SQLite stores, the storage schema and the read models move from `@bounda-dev/adapter-sqlite`
+  into `@bounda-dev/core/adapter/sqlite`, behind a `SqlDatabase` interface and a
+  `createSqliteAdapter` factory that builds a complete adapter from any SQLite connection.
+  `@bounda-dev/adapter-sqlite` now only brings the libSQL connection, and keeps exporting the schema
+  helpers it did before. Nothing changes for an app.
+- Updated dependencies [176975a]
+- Updated dependencies [19dbca5]
+- Updated dependencies [5000433]
+  - @bounda-dev/core@0.1.0-alpha.6
+
 ## 0.1.0-alpha.5
 
 ### Patch Changes
