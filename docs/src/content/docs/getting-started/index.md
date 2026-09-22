@@ -196,4 +196,6 @@ See [adapters](/adapters/).
   old events are read.
 - [Deployment](/guides/deployment/): roles, several instances, rebuilding a read model,
   observability, and the honest list of what is not there yet.
+- [How Bounda runs](/guides/how-it-runs/): one log per store, the ceiling with numbers, and the
+  way out when you reach it.
 - [CLI](/reference/cli/): `bounda generate`, `bounda rebuild` and `bounda dead-letters`.
