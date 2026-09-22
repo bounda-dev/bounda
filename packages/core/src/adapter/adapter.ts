@@ -29,6 +29,18 @@ export interface ReadModelPorts<Row extends object = Record<string, unknown>, Ra
   close(): Promise<void>;
 }
 
+/**
+ * A read model being rebuilt from scratch, next to the live one. Projections write into `table`
+ * while queries keep reading the live table; `commit` swaps the two and drops the old one, `abort`
+ * drops what was built. Either releases the adapter's resources.
+ */
+export interface ReadModelRebuild<Row extends object = Record<string, unknown>, Raw = unknown> {
+  readonly table: Table<Row>;
+  readonly client: ReadClient<Row, Raw>;
+  commit(): Promise<void>;
+  abort(): Promise<void>;
+}
+
 export interface CreateStorageArgs {
   readonly logger: Logger;
 }
@@ -41,12 +53,17 @@ export interface CreateReadModelArgs {
 
 /**
  * A storage adapter: the definition users put in `bounda.config.ts` plus the factories the kernel
- * calls at boot. `sqlite({ path })` returns one of these.
+ * calls at boot and when rebuilding a read model. `sqlite({ path })` returns one of these.
  */
 export interface Adapter<Name extends string = string, Options = unknown>
   extends AdapterDefinition<Name, Options> {
   createStorage(args: CreateStorageArgs): Promise<StoragePorts>;
   createReadModel<Row extends object>(args: CreateReadModelArgs): Promise<ReadModelPorts<Row>>;
+  /**
+   * Opens a fresh table for `name` with the current `fields`, leaving the live table untouched
+   * until `commit`. A leftover from an interrupted rebuild is discarded first.
+   */
+  rebuildReadModel<Row extends object>(args: CreateReadModelArgs): Promise<ReadModelRebuild<Row>>;
 }
 
 export interface IsAdapterFunction {
@@ -61,4 +78,5 @@ export const isAdapter: IsAdapterFunction = (value): value is Adapter =>
   value !== null &&
   Reflect.get(value, "kind") === "bounda-adapter" &&
   typeof Reflect.get(value, "createStorage") === "function" &&
-  typeof Reflect.get(value, "createReadModel") === "function";
+  typeof Reflect.get(value, "createReadModel") === "function" &&
+  typeof Reflect.get(value, "rebuildReadModel") === "function";

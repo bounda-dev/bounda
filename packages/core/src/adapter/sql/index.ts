@@ -34,11 +34,26 @@ export type {
   ColumnsOfFunction,
   CreateTableStatementsArgs,
   CreateTableStatementsFunction,
+  DropTableStatementsFunction,
   EvolveTableStatementsArgs,
   EvolveTableStatementsFunction,
   ExistingColumn,
+  RebuildTables,
+  RebuildTablesForFunction,
+  ShadowTableStatementsArgs,
+  ShadowTableStatementsFunction,
+  SwapTableStatementsArgs,
+  SwapTableStatementsFunction,
 } from "./read-model-schema.ts";
-export { columnsOf, createTableStatements, evolveTableStatements } from "./read-model-schema.ts";
+export {
+  columnsOf,
+  createTableStatements,
+  dropShadowTableStatements,
+  evolveTableStatements,
+  rebuildTablesFor,
+  shadowTableStatements,
+  swapTableStatements,
+} from "./read-model-schema.ts";
 export type {
   CreateSqlReadClientArgs,
   CreateSqlReadClientFunction,

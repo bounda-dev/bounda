@@ -123,7 +123,7 @@ const sameType = (a: string, b: string): boolean =>
  * The statements that bring an existing table up to the current `fields`. Evolution is additive:
  * new fields become nullable columns (existing rows have no value for them) with their indexes;
  * a field that disappeared or changed type is an error naming the read model, because rebuilding
- * a table silently would drop data. Rename the read model to start it from scratch.
+ * a table silently would drop data. `bounda rebuild` does it on purpose.
  */
 export const evolveTableStatements: EvolveTableStatementsFunction = ({
   readModel,
@@ -137,14 +137,14 @@ export const evolveTableStatements: EvolveTableStatementsFunction = ({
     throw new ConfigurationError(
       `Read model "${readModel}": table "${table}" has columns that are no longer in fields (${removed
         .map((column) => column.name)
-        .join(", ")}). Removing fields is not supported yet; rename the read model to rebuild it`,
+        .join(", ")}). Removing a field needs a rebuild: run \`bounda rebuild ${readModel}\``,
     );
   }
   for (const column of columns) {
     const current = byName.get(column.name);
     if (current !== undefined && !sameType(current.sqlType, column.sqlType)) {
       throw new ConfigurationError(
-        `Read model "${readModel}": column "${column.name}" is ${current.sqlType} in table "${table}" but fields now declare ${column.sqlType}. Changing a field's type is not supported yet; rename the read model to rebuild it`,
+        `Read model "${readModel}": column "${column.name}" is ${current.sqlType} in table "${table}" but fields now declare ${column.sqlType}. Changing a field's type needs a rebuild: run \`bounda rebuild ${readModel}\``,
       );
     }
   }
@@ -158,3 +158,96 @@ export const evolveTableStatements: EvolveTableStatementsFunction = ({
       : []),
   ]);
 };
+
+/**
+ * The tables a rebuild of `table` works with: the shadow the projections fill and the name the
+ * live table takes for the instant between the swap and its drop.
+ */
+export interface RebuildTables {
+  readonly shadow: string;
+  readonly retired: string;
+}
+
+export interface RebuildTablesForFunction {
+  (table: string): RebuildTables;
+}
+
+/**
+ * `<table>__rebuild` and `<table>__retired`. Read-model names are camelCase, so their snake_case
+ * tables never contain a double underscore and neither name can collide with another read model.
+ */
+export const rebuildTablesFor: RebuildTablesForFunction = (table) => ({
+  shadow: assertIdentifier({ name: `${table}__rebuild`, subject: "Table name" }),
+  retired: assertIdentifier({ name: `${table}__retired`, subject: "Table name" }),
+});
+
+export interface ShadowTableStatementsArgs {
+  readonly table: string;
+  readonly columns: readonly ColumnDefinition[];
+}
+
+export interface ShadowTableStatementsFunction {
+  (args: ShadowTableStatementsArgs): readonly string[];
+}
+
+/**
+ * Drops whatever an interrupted rebuild left behind and creates the shadow table with its indexes.
+ */
+export const shadowTableStatements: ShadowTableStatementsFunction = ({ table, columns }) => {
+  const { shadow, retired } = rebuildTablesFor(table);
+  return [
+    `DROP TABLE IF EXISTS ${quoteIdentifier(shadow)}`,
+    `DROP TABLE IF EXISTS ${quoteIdentifier(retired)}`,
+    ...createTableStatements({ table: shadow, columns }),
+  ];
+};
+
+export interface SwapTableStatementsArgs {
+  readonly table: string;
+  readonly columns: readonly ColumnDefinition[];
+  /**
+   * Whether the live table exists. A read model rebuilt before its first boot has none to retire.
+   */
+  readonly live: boolean;
+}
+
+export interface SwapTableStatementsFunction {
+  (args: SwapTableStatementsArgs): readonly string[];
+}
+
+/**
+ * Makes the shadow table the live one: retires the live table, renames the shadow into its place,
+ * drops the retired one, and gives the indexes their canonical names. Index names are global in
+ * PostgreSQL and SQLite cannot rename one, so the shadow's indexes are dropped and recreated
+ * under the live table's names once the retired table, which held those names, is gone. Meant to
+ * run inside one transaction.
+ */
+export const swapTableStatements: SwapTableStatementsFunction = ({ table, columns, live }) => {
+  const { shadow, retired } = rebuildTablesFor(table);
+  const indexed = columns.filter(
+    (column) => column.indexed && !column.primaryKey && !column.unique,
+  );
+  return [
+    ...(live
+      ? [`ALTER TABLE ${quoteIdentifier(table)} RENAME TO ${quoteIdentifier(retired)}`]
+      : []),
+    `ALTER TABLE ${quoteIdentifier(shadow)} RENAME TO ${quoteIdentifier(table)}`,
+    `DROP TABLE IF EXISTS ${quoteIdentifier(retired)}`,
+    ...indexed.map((column) => `DROP INDEX IF EXISTS ${indexName(shadow, column)}`),
+    ...indexed.map(
+      (column) =>
+        `CREATE INDEX IF NOT EXISTS ${indexName(table, column)} ON ${quoteIdentifier(table)} (${quoteIdentifier(column.name)})`,
+    ),
+  ];
+};
+
+export interface DropTableStatementsFunction {
+  (table: string): readonly string[];
+}
+
+/**
+ * What `abort` runs: the shadow table goes, the live one is not touched.
+ */
+export const dropShadowTableStatements: DropTableStatementsFunction = (table) => [
+  `DROP TABLE IF EXISTS ${quoteIdentifier(rebuildTablesFor(table).shadow)}`,
+];

@@ -8,7 +8,7 @@ import { createSequentialIdGenerator } from "../contracts/ids.ts";
 import { silentLogger } from "../contracts/logger.ts";
 import { createRecordingLogger } from "../kernel/test-support.ts";
 import { memory } from "../memory/index.ts";
-import { boot } from "./boot.ts";
+import { boot, loadProject } from "./boot.ts";
 import { registry } from "./fixtures/project/registry.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "project");
@@ -17,6 +17,26 @@ const defaultRoot = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "p
 afterEach(() => {
   delete process.env.BOUNDA_ROLE;
   delete process.env.BOUNDA_TEST_MARKER;
+});
+
+describe("loadProject", () => {
+  it("imports the configuration and the registry without creating an app", async () => {
+    const project = await loadProject<typeof registry>({
+      root,
+      registryPath: "registry.ts",
+      logger: silentLogger,
+    });
+    expect(process.env.BOUNDA_TEST_MARKER).toBe("loaded");
+    expect(project.registry).toBe(registry);
+    expect(project.config.runtime?.role).toBe("worker");
+  });
+
+  it("takes what it is given instead of importing it", async () => {
+    const config = { storage: memory() };
+    const project = await loadProject({ root, env: false, registry, config, logger: silentLogger });
+    expect(process.env.BOUNDA_TEST_MARKER).toBeUndefined();
+    expect(project).toEqual({ config, registry });
+  });
 });
 
 describe("boot", () => {
@@ -187,7 +207,7 @@ describe("boot", () => {
       fields: { signal: "SIGTERM" },
     });
     expect(process.listenerCount("SIGINT")).toBe(sigint);
-    await expect(app.commands.increment({ counterId: "c-1" })).resolves.toMatchObject({
+    await expect(app.commands.increment({ counterId: "c-after-sigterm" })).resolves.toMatchObject({
       version: 1,
     });
     await app.stop();

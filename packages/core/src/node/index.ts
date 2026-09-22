@@ -1,5 +1,11 @@
-export type { BootArgs, BootFunction } from "./boot.ts";
-export { boot } from "./boot.ts";
+export type {
+  BootArgs,
+  BootFunction,
+  LoadedProject,
+  LoadProjectArgs,
+  LoadProjectFunction,
+} from "./boot.ts";
+export { boot, loadProject } from "./boot.ts";
 export type {
   CreateConsoleLoggerArgs,
   CreateConsoleLoggerFunction,

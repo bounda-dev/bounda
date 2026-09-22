@@ -2,7 +2,15 @@ import { describe, expect, it } from "vitest";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import { fieldBuilder as f } from "../../modules/view.ts";
 import { postgresqlDialect, sqliteDialect } from "./dialect.ts";
-import { columnsOf, createTableStatements, evolveTableStatements } from "./read-model-schema.ts";
+import {
+  columnsOf,
+  createTableStatements,
+  dropShadowTableStatements,
+  evolveTableStatements,
+  rebuildTablesFor,
+  shadowTableStatements,
+  swapTableStatements,
+} from "./read-model-schema.ts";
 
 const fields = {
   orderId: f.string().primaryKey(),
@@ -117,7 +125,7 @@ describe("evolveTableStatements", () => {
         existing: [...existing, { name: "legacy", sqlType: "TEXT" }],
       }),
     ).toThrow(
-      'Read model "orderSummary": table "t" has columns that are no longer in fields (legacy). Removing fields is not supported yet; rename the read model to rebuild it',
+      'Read model "orderSummary": table "t" has columns that are no longer in fields (legacy). Removing a field needs a rebuild: run `bounda rebuild orderSummary`',
     );
     expect(() =>
       evolveTableStatements({
@@ -129,7 +137,57 @@ describe("evolveTableStatements", () => {
         ),
       }),
     ).toThrow(
-      'Read model "orderSummary": column "total" is TEXT in table "t" but fields now declare REAL. Changing a field\'s type is not supported yet; rename the read model to rebuild it',
+      'Read model "orderSummary": column "total" is TEXT in table "t" but fields now declare REAL. Changing a field\'s type needs a rebuild: run `bounda rebuild orderSummary`',
     );
+  });
+});
+
+describe("rebuild statements", () => {
+  const columns = columnsOf({ readModel: "orderSummary", fields, dialect: sqliteDialect });
+
+  it("names the shadow and the retired table after the live one", () => {
+    expect(rebuildTablesFor("bounda_order_summary")).toEqual({
+      shadow: "bounda_order_summary__rebuild",
+      retired: "bounda_order_summary__retired",
+    });
+  });
+
+  it("refuses a live table name that is not an identifier", () => {
+    expect(() => rebuildTablesFor("Bounda Orders")).toThrow(
+      'Table name "Bounda Orders__rebuild" is not a valid SQL identifier',
+    );
+  });
+
+  it("clears leftovers and creates the shadow with its indexes", () => {
+    expect(shadowTableStatements({ table: "t", columns })).toEqual([
+      'DROP TABLE IF EXISTS "t__rebuild"',
+      'DROP TABLE IF EXISTS "t__retired"',
+      'CREATE TABLE IF NOT EXISTS "t__rebuild" ("order_id" TEXT PRIMARY KEY, "customer_id" TEXT NOT NULL, "email" TEXT NOT NULL UNIQUE, "total" REAL NOT NULL, "paid" INTEGER NOT NULL, "paid_at" TEXT, "lines" TEXT)',
+      'CREATE INDEX IF NOT EXISTS "t__rebuild_customer_id_idx" ON "t__rebuild" ("customer_id")',
+      'CREATE INDEX IF NOT EXISTS "t__rebuild_lines_idx" ON "t__rebuild" ("lines")',
+    ]);
+  });
+
+  it("swaps the shadow into place and gives the indexes their canonical names", () => {
+    expect(swapTableStatements({ table: "t", columns, live: true })).toEqual([
+      'ALTER TABLE "t" RENAME TO "t__retired"',
+      'ALTER TABLE "t__rebuild" RENAME TO "t"',
+      'DROP TABLE IF EXISTS "t__retired"',
+      'DROP INDEX IF EXISTS "t__rebuild_customer_id_idx"',
+      'DROP INDEX IF EXISTS "t__rebuild_lines_idx"',
+      'CREATE INDEX IF NOT EXISTS "t_customer_id_idx" ON "t" ("customer_id")',
+      'CREATE INDEX IF NOT EXISTS "t_lines_idx" ON "t" ("lines")',
+    ]);
+  });
+
+  it("has nothing to retire when the read model never had a table", () => {
+    expect(swapTableStatements({ table: "t", columns, live: false })[0]).toBe(
+      'ALTER TABLE "t__rebuild" RENAME TO "t"',
+    );
+    expect(swapTableStatements({ table: "t", columns, live: false })).toHaveLength(6);
+  });
+
+  it("drops only the shadow on abort", () => {
+    expect(dropShadowTableStatements("t")).toEqual(['DROP TABLE IF EXISTS "t__rebuild"']);
   });
 });

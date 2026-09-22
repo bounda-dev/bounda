@@ -8,7 +8,7 @@ import { createSqliteDeadLetterStore } from "./dead-letter-store.ts";
 import { createSqliteEventStore } from "./event-store.ts";
 import { createSqliteInboxLedger } from "./inbox-ledger.ts";
 import { resolveSqliteOptions, type SqliteOptions } from "./options.ts";
-import { openSqliteReadModel } from "./read-model.ts";
+import { openSqliteReadModel, rebuildSqliteReadModel } from "./read-model.ts";
 import { createSqliteScheduler } from "./scheduler.ts";
 import { ensureStorageSchema, storageTablesFor } from "./schema.ts";
 
@@ -76,6 +76,18 @@ export const sqlite: SqliteFunction = (options) => {
     createReadModel: <Row extends object>({ name, fields, logger }: CreateReadModelArgs) => {
       const { db, client } = open();
       return openSqliteReadModel<Row>({
+        db,
+        client,
+        tablePrefix,
+        name,
+        fields,
+        logger,
+        close: release,
+      });
+    },
+    rebuildReadModel: <Row extends object>({ name, fields, logger }: CreateReadModelArgs) => {
+      const { db, client } = open();
+      return rebuildSqliteReadModel<Row>({
         db,
         client,
         tablePrefix,

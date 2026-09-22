@@ -18,6 +18,7 @@ import {
   eventStoreContract,
   inboxLedgerContract,
   pendingEvent,
+  readModelRebuildContract,
   schedulerContract,
   tableContract,
 } from "@bounda-dev/core/adapter/testing";
@@ -71,6 +72,7 @@ describe("sqlite adapter on a file", () => {
   schedulerContract({
     create: async () => (await openStorage(sqlite({ path: freshPath() }))).scheduler,
   });
+  readModelRebuildContract({ create: async () => sqlite({ path: freshPath() }) });
 
   it("creates the directory of a file that does not exist yet", async () => {
     const adapter = sqlite({ path: join(directory, "nested", "deeper", "app.db") });
@@ -110,6 +112,37 @@ describe("sqlite adapter on a file", () => {
     ]);
     await readModel.close();
     await second.close();
+  });
+
+  it("logs the lifecycle of a rebuild with the tables involved", async () => {
+    const path = freshPath();
+    const logs: unknown[] = [];
+    const logger = {
+      ...silentLogger,
+      info: (message: string, fields?: unknown) => {
+        logs.push([message, fields]);
+      },
+    };
+    const adapter = sqlite({ path });
+    const args = { name: "orderSummary", fields: contractFields, logger };
+    const committed = await adapter.rebuildReadModel(args);
+    await committed.commit();
+    const aborted = await adapter.rebuildReadModel(args);
+    await aborted.abort();
+    const table = "bounda_order_summary";
+    const shadow = `${table}__rebuild`;
+    expect(logs).toEqual([
+      ["read model rebuild started", { readModel: "orderSummary", table, shadow }],
+      ["read model rebuild committed", { readModel: "orderSummary", table }],
+      ["read model rebuild started", { readModel: "orderSummary", table, shadow }],
+      ["read model rebuild aborted", { readModel: "orderSummary", table }],
+    ]);
+    const ports = await adapter.createReadModel({ ...args, logger: silentLogger });
+    const tables = await (ports.client.raw as Client).execute(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'bounda_order%' ORDER BY name",
+    );
+    expect(tables.rows.map((row) => row.name)).toEqual([table]);
+    await ports.close();
   });
 
   it("evolves a read model table additively and refuses destructive changes", async () => {
@@ -171,7 +204,7 @@ describe("sqlite adapter on a file", () => {
         fields: { ...v2, total: f.string() },
         logger: silentLogger,
       }),
-    ).rejects.toThrow(/Changing a field's type is not supported yet/);
+    ).rejects.toThrow(/Changing a field's type needs a rebuild: run `bounda rebuild orders`/);
   });
 });
 

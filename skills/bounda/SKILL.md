@@ -214,3 +214,7 @@ export const loader = ({ context }: Route.LoaderArgs) => context.get(bounda).que
   (`--yes` takes the defaults: SQLite, Node).
 - Storage: `sqlite({ path })`, `sqlite({ memory: true })` or `postgresql({ url })` in
   `bounda.config.ts`; read models can point at a different adapter with `readModels`.
+- A view may gain fields freely. Removing a field, changing its type, or fixing a projection that
+  wrote wrong rows means `bounda rebuild <read-model>`: it projects the stream into a fresh table
+  and swaps it in. Never rename a read model to get a rebuild, and never write projections through
+  `client` with hand-written SQL, since a rebuild cannot redirect that.
