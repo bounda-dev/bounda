@@ -1,6 +1,19 @@
-# Bounda
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/wordmark-dark.svg" />
+    <img src="docs/src/assets/wordmark-light.svg" alt="Bounda" width="200" />
+  </picture>
+</p>
 
-Event sourcing and CQRS for TypeScript without the ceremony.
+<p align="center">Event sourcing and CQRS for TypeScript without the ceremony.</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/@bounda-dev/core"><img src="https://img.shields.io/npm/v/@bounda-dev/core?style=flat&label=npm&color=2563eb" alt="npm version" /></a>
+  <a href="https://github.com/bounda-dev/bounda/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/bounda-dev/bounda/ci.yml?branch=main&style=flat&label=CI" alt="CI status" /></a>
+  <a href="https://dashboard.stryker-mutator.io/reports/github.com/bounda-dev/bounda/main"><img src="https://img.shields.io/endpoint?style=flat&url=https%3A%2F%2Fbadge-api.stryker-mutator.io%2Fgithub.com%2Fbounda-dev%2Fbounda%2Fmain" alt="Mutation score" /></a>
+  <img src="https://img.shields.io/node/v/@bounda-dev/core?style=flat&label=node" alt="Node version" />
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue?style=flat" alt="License" /></a>
+</p>
 
 Bounda gives you aggregates, commands, events, policies, processes and read models through file
 conventions and inferred types. Your business logic lives in small modules that export a handful
@@ -11,6 +24,77 @@ npm create bounda@latest my-app
 ```
 
 Documentation: [docs.bounda.dev](https://docs.bounda.dev).
+
+## What a slice looks like
+
+A command decides, an event changes the state, a projection writes the row a query will read.
+Three files, no registry to maintain:
+
+```ts
+// app/domain/order/commands/place-order.ts
+import { DomainError } from "@bounda-dev/core";
+import type { Command } from "./+types/place-order";
+
+export const payload = ({ z }: Command.PayloadArgs) =>
+  z.object({ orderId: z.uuid(), customerId: z.string().min(1), total: z.number().positive() });
+
+export const handler = ({ command, state, events }: Command.HandlerArgs) => {
+  if (state.status !== "new") {
+    throw new DomainError(`Order ${command.aggregateId} was already placed`);
+  }
+  return [
+    events.orderPlaced({ customerId: command.payload.customerId, total: command.payload.total }),
+  ];
+};
+```
+
+```ts
+// app/domain/order/order-placed.ts
+import type { Event } from "./+types/order-placed";
+
+export const payload = ({ z }: Event.PayloadArgs) =>
+  z.object({ customerId: z.string(), total: z.number().positive() });
+
+export const apply = ({ state, event }: Event.ApplyArgs) => ({
+  ...state,
+  status: "placed" as const,
+  customerId: event.payload.customerId,
+  total: event.payload.total,
+});
+```
+
+```ts
+// app/read/orders/projections/order-placed.ts
+import type { Projection } from "./+types/order-placed";
+
+export const project = async ({ event, table }: Projection.Args) => {
+  await table.upsert({
+    orderId: event.aggregateId,
+    customerId: event.payload.customerId,
+    total: event.payload.total,
+    placedAt: new Date(event.timestamp),
+  });
+};
+```
+
+Nothing is registered by hand: the file's place and name are the declaration. `bounda generate`
+reads the layout and writes the `+types` modules next to it, so `command.payload` is typed from
+the schema above it, `state` from the aggregate, `events` only offers this aggregate's events, and
+`table` only the fields of this read model's view.
+
+## How it runs
+
+Every event a store holds gets a position in one global order. Read models, policies and
+processes are subscribers of that log, with a checkpoint each, so a read model can be rebuilt and
+a policy can be retried without touching the events. The
+[how it runs](https://docs.bounda.dev/guides/how-it-runs/) guide has the numbers and the ceiling.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/flow-dark.svg" />
+    <img src="docs/src/assets/flow-light.svg" alt="A command handler decides from state and returns events; the events are appended to the event store, which keeps them in one ordered log; read models, policies and processes subscribe to that log, and policies and processes dispatch new commands" width="900" />
+  </picture>
+</p>
 
 ## Status
 
@@ -27,14 +111,16 @@ is not there yet, and why, is one list in the
 
 ## Packages
 
-| Package | Purpose | Mutation score |
-|---|---|---|
-| [`@bounda-dev/core`](packages/core) | Runtime and public API | [![Mutation score](https://img.shields.io/endpoint?style=flat&url=https%3A%2F%2Fbadge-api.stryker-mutator.io%2Fgithub.com%2Fbounda-dev%2Fbounda%2Fmain%3Fmodule%3Dcore)](https://dashboard.stryker-mutator.io/reports/github.com/bounda-dev/bounda/main?module=core) |
-| [`@bounda-dev/cli`](packages/cli) | `bounda` CLI: reads the layout, writes the registry and the types | [![Mutation score](https://img.shields.io/endpoint?style=flat&url=https%3A%2F%2Fbadge-api.stryker-mutator.io%2Fgithub.com%2Fbounda-dev%2Fbounda%2Fmain%3Fmodule%3Dcli)](https://dashboard.stryker-mutator.io/reports/github.com/bounda-dev/bounda/main?module=cli) |
-| [`@bounda-dev/adapter-sqlite`](packages/adapter-sqlite) | SQLite and libSQL storage | [![Mutation score](https://img.shields.io/endpoint?style=flat&url=https%3A%2F%2Fbadge-api.stryker-mutator.io%2Fgithub.com%2Fbounda-dev%2Fbounda%2Fmain%3Fmodule%3Dadapter-sqlite)](https://dashboard.stryker-mutator.io/reports/github.com/bounda-dev/bounda/main?module=adapter-sqlite) |
-| [`@bounda-dev/adapter-postgresql`](packages/adapter-postgresql) | PostgreSQL storage | [![Mutation score](https://img.shields.io/endpoint?style=flat&url=https%3A%2F%2Fbadge-api.stryker-mutator.io%2Fgithub.com%2Fbounda-dev%2Fbounda%2Fmain%3Fmodule%3Dadapter-postgresql)](https://dashboard.stryker-mutator.io/reports/github.com/bounda-dev/bounda/main?module=adapter-postgresql) |
-| [`@bounda-dev/react-router`](packages/react-router) | React Router integration and its Vite plugin | [![Mutation score](https://img.shields.io/endpoint?style=flat&url=https%3A%2F%2Fbadge-api.stryker-mutator.io%2Fgithub.com%2Fbounda-dev%2Fbounda%2Fmain%3Fmodule%3Dreact-router)](https://dashboard.stryker-mutator.io/reports/github.com/bounda-dev/bounda/main?module=react-router) |
-| [`create-bounda`](packages/create-bounda) | Project scaffolder | [![Mutation score](https://img.shields.io/endpoint?style=flat&url=https%3A%2F%2Fbadge-api.stryker-mutator.io%2Fgithub.com%2Fbounda-dev%2Fbounda%2Fmain%3Fmodule%3Dcreate-bounda)](https://dashboard.stryker-mutator.io/reports/github.com/bounda-dev/bounda/main?module=create-bounda) |
+| Package | Purpose |
+|---|---|
+| [`@bounda-dev/core`](packages/core) | Runtime and public API |
+| [`@bounda-dev/cli`](packages/cli) | `bounda` CLI: reads the layout, writes the registry and the types |
+| [`@bounda-dev/adapter-sqlite`](packages/adapter-sqlite) | SQLite and libSQL storage |
+| [`@bounda-dev/adapter-postgresql`](packages/adapter-postgresql) | PostgreSQL storage |
+| [`@bounda-dev/react-router`](packages/react-router) | React Router integration and its Vite plugin |
+| [`create-bounda`](packages/create-bounda) | Project scaffolder |
+
+Each package README carries its own mutation score; the badge above is the whole repository.
 
 Two examples live in this repository: [`examples/storefront`](examples/storefront) on Node and
 SQLite, and [`examples/onboarding`](examples/onboarding) on React Router and PostgreSQL or SQLite.
