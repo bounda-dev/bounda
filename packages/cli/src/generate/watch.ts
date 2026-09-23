@@ -1,5 +1,6 @@
 import { watch as watchDirectory } from "node:fs/promises";
 import { join } from "node:path";
+import { type Clock, systemClock } from "@bounda-dev/core";
 
 /**
  * `fs.watch` from `node:fs/promises`, or a stand-in for tests.
@@ -22,6 +23,10 @@ export interface WatchProjectArgs {
    * Quiet time after the last change before `onChange` runs. Defaults to 100 ms.
    */
   readonly debounceMs?: number;
+  /**
+   * What the quiet time is measured on. Defaults to the wall clock.
+   */
+  readonly clock?: Clock;
   /**
    * Aborting it ends the watch.
    */
@@ -47,16 +52,17 @@ export const watchProject: WatchProjectFunction = async ({
   onChange,
   onError = () => undefined,
   debounceMs = 100,
+  clock = systemClock,
   signal,
   watch = watchDirectory,
 }) => {
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let cancelPending: (() => void) | undefined;
   let running: Promise<void> = Promise.resolve();
   const schedule = (): void => {
-    if (timer !== undefined) clearTimeout(timer);
-    timer = setTimeout(() => {
+    cancelPending?.();
+    cancelPending = clock.after(debounceMs, () => {
       running = running.then(onChange).catch(onError);
-    }, debounceMs);
+    });
   };
   try {
     for await (const event of watch(join(root, appDir), { recursive: true, signal })) {
@@ -65,7 +71,7 @@ export const watchProject: WatchProjectFunction = async ({
   } catch (error) {
     if (!(error instanceof Error && error.name === "AbortError")) throw error;
   } finally {
-    if (timer !== undefined) clearTimeout(timer);
+    cancelPending?.();
     await running;
   }
 };
