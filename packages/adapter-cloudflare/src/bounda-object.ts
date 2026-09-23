@@ -13,6 +13,7 @@ import {
   type Logger,
   NotFoundError,
   type RebuildReadModelResult,
+  RebuildSupersededError,
   type Registry,
   systemClock,
 } from "@bounda-dev/core";
@@ -206,6 +207,10 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
             position,
           });
         } catch (error) {
+          if (error instanceof RebuildSupersededError) {
+            logger.info("bounda rebuild slice taken over by another rebuild", { readModel: name });
+            continue;
+          }
           failed = true;
           logger.error("bounda rebuild slice failed", {
             readModel: name,

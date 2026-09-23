@@ -53,3 +53,5 @@ export type {
   Scheduler,
 } from "./ports/scheduler.ts";
 export type { FindManyArgs, ReadClient, Table, TableOrder } from "./ports/table.ts";
+export type { RebuildFencing, RebuildFencingFunction } from "./rebuild-fencing.ts";
+export { rebuildFencing } from "./rebuild-fencing.ts";

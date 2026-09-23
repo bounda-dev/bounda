@@ -3,6 +3,8 @@ import { silentLogger } from "../../contracts/logger.ts";
 import type { FieldsRecord } from "../../modules/view.ts";
 import { fieldBuilder as f } from "../../modules/view.ts";
 import type { Adapter, ReadModelRebuild } from "../adapter.ts";
+import type { Checkpoint } from "../ports/checkpoint-store.ts";
+import { rebuildFencing } from "../rebuild-fencing.ts";
 import { type ContractRow, contractFields } from "./table.contract.ts";
 
 /**
@@ -63,6 +65,9 @@ const rebuilt = (orderId: string, lines = 1): RebuiltRow => ({
 
 const byId = { orderBy: { field: "orderId", direction: "asc" } } as const;
 
+const withoutGenerations = (checkpoints: readonly Checkpoint[]): readonly Checkpoint[] =>
+  checkpoints.filter(({ subscriber }) => subscriber !== rebuildFencing(NAME).generation);
+
 /**
  * The behaviour every adapter's `rebuildReadModel` must exhibit.
  */
@@ -117,7 +122,9 @@ export const readModelRebuildContract: ReadModelRebuildContractFunction = ({
       expect(await after.table.findMany(byId)).toEqual([rebuilt("1"), rebuilt("3")]);
       expect(await after.table.findMany({ where: { customerId: "c-1" } })).toHaveLength(2);
       expect(await after.checkpointStore.get(SUBSCRIBER)).toBe(2);
-      expect(await after.checkpointStore.list()).toEqual([{ subscriber: SUBSCRIBER, position: 2 }]);
+      expect(withoutGenerations(await after.checkpointStore.list())).toEqual([
+        { subscriber: SUBSCRIBER, position: 2 },
+      ]);
       await after.close();
     });
 
@@ -180,6 +187,92 @@ export const readModelRebuildContract: ReadModelRebuildContractFunction = ({
       expect(await ports.checkpointStore.get(SUBSCRIBER)).toBe(5);
       await ports.close();
     });
+
+    it("lets a newer rebuild take over and stops the older one from writing anything", async () => {
+      const ports = await openLive<ContractRow>();
+      const older = await open<ContractRow>();
+      await project(older, [live("1")], 1);
+      const newer = await open<ContractRow>();
+      expect({ resumed: newer.resumed, position: newer.position }).toEqual({
+        resumed: true,
+        position: 1,
+      });
+      const superseded = { code: "REBUILD_SUPERSEDED", readModel: NAME };
+      await expect(project(older, [live("2")], 2)).rejects.toMatchObject(superseded);
+      await expect(older.commit({ subscriber: SUBSCRIBER, position: 2 })).rejects.toMatchObject(
+        superseded,
+      );
+      await older.abort();
+      expect(await newer.table.findMany()).toEqual([live("1")]);
+      await project(newer, [live("3")], 3);
+      await newer.commit({ subscriber: SUBSCRIBER, position: 3 });
+      expect(await ports.table.findMany(byId)).toEqual([live("1"), live("3")]);
+      expect(withoutGenerations(await ports.checkpointStore.list())).toEqual([
+        { subscriber: SUBSCRIBER, position: 3 },
+      ]);
+      await ports.close();
+    });
+
+    it("never lets a rebuild it took over from write again, however many come after", async () => {
+      const first = await open<ContractRow>();
+      const second = await open<ContractRow>();
+      await second.abort();
+      const third = await open<ContractRow>();
+      const superseded = { code: "REBUILD_SUPERSEDED" };
+      await expect(project(first, [live("1")], 1)).rejects.toMatchObject(superseded);
+      await expect(project(second, [live("2")], 2)).rejects.toMatchObject(superseded);
+      await project(third, [live("3")], 3);
+      await first.abort();
+      expect(await third.table.findMany()).toEqual([live("3")]);
+      await third.abort();
+    });
+
+    it("leaves a rebuild of another read model alone", async () => {
+      const orders = await open<ContractRow>();
+      const other = await adapter.rebuildReadModel<ContractRow>({
+        name: "customerSummary",
+        fields: contractFields,
+        logger: silentLogger,
+        progress: "rebuild:customerSummary:0000000000000001",
+      });
+      await project(orders, [live("1")], 1);
+      await other.abort();
+      await orders.abort();
+    });
+
+    it.skipIf(!concurrent)(
+      "takes over only once the older rebuild's batch in flight has committed",
+      async () => {
+        const older = await open<ContractRow>();
+        let release = (): void => {};
+        const held = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        let entered = (): void => {};
+        const inside = new Promise<void>((resolve) => {
+          entered = resolve;
+        });
+        const batch = older.transact(async ({ table, checkpointStore }) => {
+          await table.upsert(live("1"));
+          await checkpointStore.set(PROGRESS, 1);
+          entered();
+          await held;
+        });
+        await inside;
+        const opening = open<ContractRow>();
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        release();
+        await batch;
+        const newer = await opening;
+        expect({ resumed: newer.resumed, position: newer.position }).toEqual({
+          resumed: true,
+          position: 1,
+        });
+        expect(await newer.table.findMany()).toEqual([live("1")]);
+        await older.abort();
+        await newer.abort();
+      },
+    );
 
     it("rolls a shadow batch and its progress back together when the work throws", async () => {
       const rebuild = await open<ContractRow>();
@@ -250,7 +343,7 @@ export const readModelRebuildContract: ReadModelRebuildContractFunction = ({
       await project(gone, [live("3")], 3);
       await gone.abort();
       const ports = await openLive<ContractRow>();
-      expect(await ports.checkpointStore.list()).toEqual([]);
+      expect(withoutGenerations(await ports.checkpointStore.list())).toEqual([]);
       await ports.close();
 
       const afterAbort = await open<ContractRow>();

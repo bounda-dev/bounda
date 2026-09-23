@@ -225,7 +225,10 @@ describe("createSqliteAdapter", () => {
     const paused = await adapter.rebuildReadModel(args);
     await paused.transact(({ checkpointStore }) => checkpointStore.set(args.progress, 1));
     await paused.pause();
-    await (await adapter.rebuildReadModel(args)).abort();
+    const older = await adapter.rebuildReadModel(args);
+    const newer = await adapter.rebuildReadModel(args);
+    await older.abort();
+    await newer.abort();
     const table = "bounda_order_summary";
     const shadow = `${table}__rebuild`;
     expect(logs).toEqual([
@@ -234,6 +237,8 @@ describe("createSqliteAdapter", () => {
       ["read model rebuild started", { readModel: "orderSummary", table, shadow }],
       ["read model rebuild paused", { readModel: "orderSummary", table }],
       ["read model rebuild resumed", { readModel: "orderSummary", table, shadow }],
+      ["read model rebuild resumed", { readModel: "orderSummary", table, shadow }],
+      ["read model rebuild superseded", { readModel: "orderSummary", table }],
       ["read model rebuild aborted", { readModel: "orderSummary", table }],
     ]);
     expect(tableNames(db, "bounda_order")).toEqual([table]);

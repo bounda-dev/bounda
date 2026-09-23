@@ -109,7 +109,9 @@ and the read model's checkpoint is set to where the rebuild stopped, in one tran
 for any projection batch in flight; the worker carries on from there, so every event reaches the
 new table once. A projection that throws aborts the rebuild and leaves the live table as it was. A
 rebuild that was interrupted resumes exactly where it stopped when you run it again, as long as
-the read model's fields and projections are the same code; otherwise it starts over.
+the read model's fields and projections are the same code; otherwise it starts over. A second
+rebuild of the same read model started meanwhile takes over, and this one stops with
+`REBUILD_SUPERSEDED` without writing.
 
 ```
 rebuilt read model "orderSummary": 48213 events, checkpoint at position 48213

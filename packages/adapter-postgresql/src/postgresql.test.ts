@@ -22,7 +22,7 @@ import {
 } from "@bounda-dev/core/adapter/testing";
 import { createTestApp } from "@bounda-dev/core/testing";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import type { Sql } from "postgres";
+import postgres, { type Sql } from "postgres";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import {
   type PostgresqlAdapter,
@@ -317,7 +317,9 @@ describe.skipIf(container === null)("postgresql adapter", () => {
     const paused = await adapter.rebuildReadModel(args);
     await paused.transact(({ checkpointStore }) => checkpointStore.set(args.progress, 1));
     await paused.pause();
+    const superseded = await adapter.rebuildReadModel(args);
     const aborted = await adapter.rebuildReadModel(args);
+    await superseded.abort();
     await aborted.abort();
     const table = `${prefix}order_summary`;
     const shadow = `${table}__rebuild`;
@@ -327,6 +329,8 @@ describe.skipIf(container === null)("postgresql adapter", () => {
       ["read model rebuild started", { readModel: "orderSummary", table, shadow }],
       ["read model rebuild paused", { readModel: "orderSummary", table }],
       ["read model rebuild resumed", { readModel: "orderSummary", table, shadow }],
+      ["read model rebuild resumed", { readModel: "orderSummary", table, shadow }],
+      ["read model rebuild superseded", { readModel: "orderSummary", table }],
       ["read model rebuild aborted", { readModel: "orderSummary", table }],
     ]);
     const ports = await openReadModel(adapter, "orderSummary", contractFields);
@@ -841,5 +845,66 @@ describe.skipIf(container === null)("projections on postgresql", () => {
     const lag = await app.getLag();
     await app.stop();
     expect(lag.maxLag).toBe(0);
+  });
+
+  it("keeps a newer rebuild and a rebuild's swap waiting on the lock of what is in flight", async () => {
+    await closeOpened();
+    const adapter = fresh();
+    const fields = { orderId: f.string().primaryKey(), status: f.string() };
+    const ports = await openReadModel<StatusRow>(adapter, "orderStatus", fields);
+    const probe = postgres(url, { max: 1, onnotice: () => undefined });
+    closers.push(() => probe.end());
+    const waiting = async () =>
+      (
+        await probe`SELECT count(*)::int AS "n" FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`
+      )[0]?.n;
+    const gate = () => {
+      let open = (): void => {};
+      const opened = new Promise<void>((resolve) => {
+        open = resolve;
+      });
+      return { opened, open };
+    };
+    const args = { name: "orderStatus", fields, logger: silentLogger, progress: "rebuild:o:1" };
+
+    const older = await adapter.rebuildReadModel<StatusRow>(args);
+    const held = gate();
+    const entered = gate();
+    const batch = older.transact(async ({ table, checkpointStore }) => {
+      await table.upsert({ orderId: "r", status: "placed" });
+      await checkpointStore.set(args.progress, 1);
+      entered.open();
+      await held.opened;
+    });
+    await entered.opened;
+    const opening = adapter.rebuildReadModel<StatusRow>(args);
+    await vi.waitFor(async () => expect(await waiting()).toBe(1), { timeout: 5_000 });
+    held.open();
+    await batch;
+    const newer = await opening;
+    expect({ resumed: newer.resumed, position: newer.position }).toEqual({
+      resumed: true,
+      position: 1,
+    });
+
+    const projecting = gate();
+    const inside = gate();
+    const projection = ports.transact({
+      subscriber: "projection:orderStatus",
+      wait: true,
+      work: async ({ table }) => {
+        await table.upsert({ orderId: "r", status: "cancelled" });
+        inside.open();
+        await projecting.opened;
+      },
+    });
+    await inside.opened;
+    const committing = newer.commit({ subscriber: "projection:orderStatus", position: 1 });
+    await vi.waitFor(async () => expect(await waiting()).toBe(1), { timeout: 5_000 });
+    projecting.open();
+    await Promise.all([projection, committing]);
+    await older.abort();
+    expect(await ports.table.findMany()).toEqual([{ orderId: "r", status: "placed" }]);
+    expect(await ports.checkpointStore.get("projection:orderStatus")).toBe(1);
   });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Adapter } from "../../adapter/adapter.ts";
 import type { Table } from "../../adapter/ports/table.ts";
+import { RebuildSupersededError } from "../../contracts/errors.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { createMemoryCheckpointStore } from "../../memory/checkpoint-store.ts";
 import { memory } from "../../memory/index.ts";
@@ -16,6 +17,7 @@ interface Row {
 }
 
 let mode: "ok" | "halved" | "throws" = "ok";
+let holdProjection: (() => Promise<void>) | undefined;
 
 const writeSide = {
   aggregates: { order: orderAggregateEntry() },
@@ -39,6 +41,7 @@ const registry = {
             table: Table<Row>;
           }) => {
             if (mode === "throws") throw new Error("projection broken");
+            await holdProjection?.();
             await table.upsert({
               orderId: event.aggregateId,
               total: mode === "halved" ? event.payload.total / 2 : event.payload.total,
@@ -346,6 +349,40 @@ describe("rebuildReadModel", () => {
       position: 2,
       lag: 0,
     });
+    await app.stop();
+  });
+
+  it("stops a rebuild another one took over, which carries on from where it got", async () => {
+    mode = "ok";
+    const { app, rows } = await setUp();
+    await app.commands.placeOrder({ orderId: "o-1", total: 10 });
+    await app.commands.placeOrder({ orderId: "o-2", total: 20 });
+    await app.processUntilIdle();
+    let release = (): void => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered = (): void => {};
+    const holding = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    holdProjection = async () => {
+      holdProjection = undefined;
+      entered();
+      await gate;
+    };
+
+    const first = app.rebuildReadModel("orderSummary");
+    await holding;
+    const second = app.rebuildReadModel("orderSummary");
+    release();
+    await expect(first).rejects.toBeInstanceOf(RebuildSupersededError);
+    expect(await second).toEqual({ events: 1, position: 2, done: true });
+    expect(await rows()).toEqual([
+      { orderId: "o-1", total: 10 },
+      { orderId: "o-2", total: 20 },
+    ]);
+    expect(await app.pendingRebuilds()).toEqual([]);
     await app.stop();
   });
 
