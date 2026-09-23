@@ -38,7 +38,11 @@ describe("read model transactions in a Durable Object", () => {
           wait: false,
           work: async ({ table, checkpointStore }) => {
             await table.upsert(order("1"));
+            await table.update({ orderId: "1" }, { total: 2 });
+            expect(await table.findOne({ orderId: "1" })).toEqual({ ...order("1"), total: 2 });
+            await table.update({ orderId: "1" }, { total: 1 });
             await checkpointStore.compareAndSet(SUBSCRIBER, 0, 1);
+            expect(await checkpointStore.get(SUBSCRIBER)).toBe(1);
             return "kept";
           },
         }),
@@ -59,6 +63,39 @@ describe("read model transactions in a Durable Object", () => {
       ).rejects.toThrow("projection failed");
       expect(await ports.table.findMany()).toEqual([order("1")]);
       expect(await ports.checkpointStore.get(SUBSCRIBER)).toBe(1);
+    });
+  });
+
+  it("never runs two transactions of one subscriber at once", async () => {
+    await runInDurableObject(fresh(), async (_instance, state) => {
+      const ports = await openPorts(state.storage);
+      const steps: string[] = [];
+      let release = (): void => {};
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const first = ports.transact({
+        subscriber: SUBSCRIBER,
+        wait: true,
+        work: async ({ table }) => {
+          steps.push("first in");
+          await table.upsert(order("1"));
+          await held;
+          steps.push("first out");
+        },
+      });
+      const second = ports.transact({
+        subscriber: SUBSCRIBER,
+        wait: true,
+        work: async ({ table }) => {
+          steps.push("second in");
+          expect(await table.findOne({ orderId: "1" })).toEqual(order("1"));
+        },
+      });
+      for (let turn = 0; turn < 20; turn += 1) await Promise.resolve();
+      release();
+      await Promise.all([first, second]);
+      expect(steps).toEqual(["first in", "first out", "second in"]);
     });
   });
 
