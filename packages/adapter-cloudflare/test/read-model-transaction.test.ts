@@ -99,6 +99,46 @@ describe("read model transactions in a Durable Object", () => {
     });
   });
 
+  it("lets a rebuild swap only once the projection batch in flight has committed", async () => {
+    await runInDurableObject(fresh(), async (_instance, state) => {
+      const adapter = durableObjectAdapter({ storage: state.storage, options: {} });
+      const ports = await openPorts(state.storage);
+      const rebuild = await adapter.rebuildReadModel<Row>({
+        name: "orderSummary",
+        fields: contractFields,
+        logger: silentLogger,
+        progress: "rebuild:orderSummary:1",
+      });
+      await rebuild.transact(async ({ table, checkpointStore }) => {
+        await table.upsert({ ...order("1"), total: 99 });
+        await checkpointStore.set("rebuild:orderSummary:1", 5);
+      });
+      const steps: string[] = [];
+      let release = (): void => {};
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const batch = ports.transact({
+        subscriber: SUBSCRIBER,
+        wait: true,
+        work: async ({ table }) => {
+          await table.upsert({ ...order("1"), total: 7 });
+          await held;
+          steps.push("batch done");
+        },
+      });
+      const committing = rebuild
+        .commit({ subscriber: SUBSCRIBER, position: 5 })
+        .then(() => steps.push("committed"));
+      for (let turn = 0; turn < 20; turn += 1) await Promise.resolve();
+      release();
+      await Promise.all([batch, committing]);
+      expect(steps).toEqual(["batch done", "committed"]);
+      expect(await ports.table.findMany()).toEqual([{ ...order("1"), total: 99 }]);
+      expect(await ports.checkpointStore.get(SUBSCRIBER)).toBe(5);
+    });
+  });
+
   it("completes a batch while a timer is pending outside it", async () => {
     await runInDurableObject(fresh(), async (_instance, state) => {
       const ports = await openPorts(state.storage);

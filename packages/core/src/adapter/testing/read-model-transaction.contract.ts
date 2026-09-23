@@ -20,6 +20,13 @@ export interface ReadModelTransactionContractArgs {
    */
   readonly create: () => Promise<Adapter>;
   readonly locking: TransactionLocking;
+  /**
+   * Whether the contract may run two calls at once and have one wait for the other. Defaults to
+   * `true`. A harness that reaches the adapter through a host that cannot interleave calls from
+   * the test, such as a Durable Object through `runInDurableObject`, passes `false` and covers
+   * that behaviour inside the host instead.
+   */
+  readonly concurrent?: boolean;
 }
 
 /**
@@ -60,6 +67,7 @@ const gate = (): Gate => {
 export const readModelTransactionContract: ReadModelTransactionContractFunction = ({
   create,
   locking,
+  concurrent = true,
 }) => {
   describe("read model transaction contract", () => {
     let ports: ReadModelPorts<ContractRow>;
@@ -115,7 +123,7 @@ export const readModelTransactionContract: ReadModelTransactionContractFunction 
       expect(await ports.checkpointStore.get(SUBSCRIBER)).toBe(3);
     });
 
-    it("never runs two transactions of one subscriber at once", async () => {
+    it.skipIf(!concurrent)("never runs two transactions of one subscriber at once", async () => {
       const held = gate();
       const entered = gate();
       const steps: string[] = [];
@@ -145,7 +153,7 @@ export const readModelTransactionContract: ReadModelTransactionContractFunction 
       expect(steps).toEqual(["first in", "first out", "second in"]);
     });
 
-    if (locking === "per-subscriber") {
+    if (locking === "per-subscriber" && concurrent) {
       it("gives up at once without waiting, and lets other subscribers through", async () => {
         const held = gate();
         const entered = gate();

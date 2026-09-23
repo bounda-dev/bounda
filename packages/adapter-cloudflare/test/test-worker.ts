@@ -1,3 +1,4 @@
+import { DurableObject } from "cloudflare:workers";
 import { cloudflare } from "../src/definition.ts";
 import { createBoundaObject, createWorker } from "../src/index.ts";
 import { quietRegistry, registry } from "./app.ts";
@@ -31,5 +32,10 @@ export const SlicedStore = createBoundaObject({
   clock,
   eventsPerRebuildSlice: 1,
 });
+
+/**
+ * An object with no app in it: an empty SQLite for the storage contracts.
+ */
+export class Bare extends DurableObject {}
 
 export default createWorker({ binding: "STORE" });

@@ -30,6 +30,13 @@ export interface ReadModelRebuildContractArgs {
    * A fresh adapter per test, with nothing in it.
    */
   readonly create: () => Promise<Adapter>;
+  /**
+   * Whether the contract may run two calls at once and have one wait for the other. Defaults to
+   * `true`. A harness that reaches the adapter through a host that cannot interleave calls from
+   * the test, such as a Durable Object through `runInDurableObject`, passes `false` and covers
+   * that behaviour inside the host instead.
+   */
+  readonly concurrent?: boolean;
 }
 
 export interface ReadModelRebuildContractFunction {
@@ -59,7 +66,10 @@ const byId = { orderBy: { field: "orderId", direction: "asc" } } as const;
 /**
  * The behaviour every adapter's `rebuildReadModel` must exhibit.
  */
-export const readModelRebuildContract: ReadModelRebuildContractFunction = ({ create }) => {
+export const readModelRebuildContract: ReadModelRebuildContractFunction = ({
+  create,
+  concurrent = true,
+}) => {
   describe("read model rebuild contract", () => {
     let adapter: Adapter;
 
@@ -135,7 +145,7 @@ export const readModelRebuildContract: ReadModelRebuildContractFunction = ({ cre
       await ports.close();
     });
 
-    it("waits for a projection batch in flight before it swaps", async () => {
+    it.skipIf(!concurrent)("waits for a projection batch in flight before it swaps", async () => {
       const ports = await openLive<ContractRow>();
       const rebuild = await open<ContractRow>();
       await project(rebuild, [live("1", 99)], 5);
