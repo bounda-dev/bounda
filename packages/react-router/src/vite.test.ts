@@ -2,21 +2,18 @@ import { EventEmitter } from "node:events";
 import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { createFixedClock, type FixedClock } from "@bounda-dev/core";
 import type { Logger, Plugin, ResolvedConfig, ViteDevServer } from "vite";
 import { afterAll, describe, expect, it } from "vitest";
 import { bounda } from "./vite.ts";
+import { createBoundaPlugin } from "./vite-plugin.ts";
 
 const repoRoot = resolve(import.meta.dirname, "../../..");
 const fixtures = join(repoRoot, "packages/core/test-types/fixtures");
 const temporary: string[] = [];
 
 afterAll(async () => {
-  await settle(300);
-  await Promise.all(
-    temporary.map((directory) =>
-      rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }),
-    ),
-  );
+  await Promise.all(temporary.map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
 const project = async (fixture = "order-app-inferred"): Promise<string> => {
@@ -78,14 +75,22 @@ interface Harness {
   readonly load: (id: string, consumer: "client" | "server") => unknown;
   readonly resolve: (id: string) => unknown;
   readonly serve: () => EventEmitter;
+  readonly close: () => Promise<void>;
+  readonly clock: FixedClock;
 }
 
 const harness = (root: string, options?: Parameters<typeof bounda>[0]): Harness => {
-  const plugin = bounda(options);
+  const clock = createFixedClock();
+  const plugin = createBoundaPlugin({ ...options, clock });
   const recorded = recordingLogger();
   return {
     plugin,
     recorded,
+    clock,
+    close: async () => {
+      const closeBundle = hookOf(plugin, "closeBundle") as (this: unknown) => Promise<void>;
+      await closeBundle.call({});
+    },
     configure: (command) => {
       const configResolved = hookOf(plugin, "configResolved") as (
         this: unknown,
@@ -262,7 +267,7 @@ describe("bounda() Vite plugin", () => {
 
   it("regenerates after a burst of changes under domain/ and read/, ignoring the rest", async () => {
     const root = await project();
-    const { configure, start, serve, recorded } = harness(root, { debounceMs: 20 });
+    const { configure, start, serve, recorded, clock, close } = harness(root, { debounceMs: 20 });
     configure("serve");
     await start();
     const watcher = serve();
@@ -273,6 +278,8 @@ describe("bounda() Vite plugin", () => {
     );
     watcher.emit("add", join(root, "app/domain/order/order-shipped.ts"));
     watcher.emit("change", join(root, "app/domain/order/order-shipped.ts"));
+    expect(clock.pending()).toBe(1);
+    clock.advance(20);
     await until(() => exists(join(root, "app/domain/order/+types/order-shipped.ts")));
     await until(async () =>
       (await readFile(join(root, ".bounda/registry.ts"), "utf8")).includes("order-shipped"),
@@ -282,14 +289,16 @@ describe("bounda() Vite plugin", () => {
     watcher.emit("change", join(root, "app/routes/home.tsx"));
     watcher.emit("change", join(root, "bounda.config.ts"));
     await rm(join(root, "app/domain/order/order-shipped.ts"));
-    await settle(500);
+    expect(clock.pending()).toBe(0);
     expect(await exists(join(root, "app/domain/order/+types/order-shipped.ts"))).toBe(true);
 
     watcher.emit("unlink", join(root, "app/domain/order/order-shipped.ts"));
+    clock.advance(20);
     await until(
       async () => !(await exists(join(root, "app/domain/order/+types/order-shipped.ts"))),
     );
     expect(recorded.errors).toEqual([]);
+    await close();
   });
 
   it("ignores changes outside domain/ and read/, and events before the config is resolved", async () => {
@@ -299,10 +308,10 @@ describe("bounda() Vite plugin", () => {
     expect(() =>
       earlyWatcher.emit("change", join(root, "app/domain/order/order-paid.ts")),
     ).not.toThrow();
-    await settle(500);
+    expect(early.clock.pending()).toBe(0);
     expect(await exists(join(root, ".bounda/registry.ts"))).toBe(false);
 
-    const { configure, start, serve } = harness(root, { debounceMs: 20 });
+    const { configure, start, serve, clock, close } = harness(root, { debounceMs: 20 });
     configure("serve");
     await start();
     const watcher = serve();
@@ -316,19 +325,22 @@ describe("bounda() Vite plugin", () => {
     ]) {
       watcher.emit("change", join(root, file));
     }
-    await settle(500);
+    expect(clock.pending()).toBe(0);
     expect(await exists(join(root, ".bounda/registry.ts"))).toBe(false);
 
     await mkdir(join(root, "app/read/summary"), { recursive: true });
     await writeFile(join(root, "app/read/summary/view.ts"), "export const fields = () => ({});\n");
     watcher.emit("addDir", join(root, "app/read/summary"));
+    expect(clock.pending()).toBe(1);
+    clock.advance(20);
     await until(() => exists(join(root, "app/read/summary/+types/view.ts")));
     expect(await exists(join(root, ".bounda/registry.ts"))).toBe(true);
+    await close();
   });
 
   it("reports a generator failure that is not about conventions and keeps watching", async () => {
     const root = await project();
-    const { configure, start, serve, recorded } = harness(root, { debounceMs: 20 });
+    const { configure, start, serve, recorded, clock, close } = harness(root, { debounceMs: 20 });
     configure("serve");
     await start();
     const watcher = serve();
@@ -336,29 +348,106 @@ describe("bounda() Vite plugin", () => {
     await rm(join(root, ".bounda"), { recursive: true });
     await writeFile(join(root, ".bounda"), "not a directory\n");
     watcher.emit("change", join(root, "app/domain/order/order-paid.ts"));
+    clock.advance(20);
     await until(async () => recorded.errors.length > 0);
     expect(recorded.errors[0]).toMatch(/^\[bounda\] .*(ENOTDIR|EEXIST|not a directory)/i);
 
     await rm(join(root, ".bounda"));
     watcher.emit("change", join(root, "app/domain/order/order-paid.ts"));
+    clock.advance(20);
     await until(() => exists(join(root, ".bounda/registry.ts")));
+    await close();
   });
 
   it("keeps serving after a change that breaks a convention, and recovers", async () => {
     const root = await project();
-    const { configure, start, serve, recorded } = harness(root, { debounceMs: 20 });
+    const { configure, start, serve, recorded, clock, close } = harness(root, { debounceMs: 20 });
     configure("serve");
     await start();
     const watcher = serve();
 
     await writeFile(join(root, "app/domain/order/Loose.ts"), "export {};\n");
     watcher.emit("add", join(root, "app/domain/order/Loose.ts"));
+    clock.advance(20);
     await until(async () => recorded.errors.join("\n").includes("Loose.ts"));
     expect(recorded.errors[0]).toMatch(/^\[bounda\] error: 1 problem in the project layout\n/);
 
     await rm(join(root, "app/domain/order/Loose.ts"));
     await rm(join(root, ".bounda/registry.ts"));
     watcher.emit("unlink", join(root, "app/domain/order/Loose.ts"));
+    clock.advance(20);
     await until(() => exists(join(root, ".bounda/registry.ts")));
+    await close();
+  });
+
+  it("drops a regeneration still waiting when the server closes", async () => {
+    const root = await project();
+    const { configure, start, serve, clock, close } = harness(root, { debounceMs: 20 });
+    configure("serve");
+    await start();
+    const watcher = serve();
+    await writeFile(
+      join(root, "app/domain/order/order-shipped.ts"),
+      "export const apply = () => ({});\n",
+    );
+    watcher.emit("add", join(root, "app/domain/order/order-shipped.ts"));
+    expect(clock.pending()).toBe(1);
+    await close();
+    expect(clock.pending()).toBe(0);
+    clock.advance(20);
+    await close();
+    expect(await exists(join(root, "app/domain/order/+types/order-shipped.ts"))).toBe(false);
+  });
+
+  it("waits for the regeneration in flight when the server closes", async () => {
+    const root = await project();
+    const { configure, start, serve, clock, close } = harness(root, { debounceMs: 20 });
+    configure("serve");
+    await start();
+    const watcher = serve();
+    await writeFile(
+      join(root, "app/domain/order/order-shipped.ts"),
+      "export const apply = () => ({});\n",
+    );
+    watcher.emit("add", join(root, "app/domain/order/order-shipped.ts"));
+    clock.advance(20);
+    await close();
+    expect(await exists(join(root, "app/domain/order/+types/order-shipped.ts"))).toBe(true);
+    expect(
+      (await readFile(join(root, ".bounda/registry.ts"), "utf8")).includes("order-shipped"),
+    ).toBe(true);
+  });
+
+  it("is the same plugin behind the public bounda(), with its options, on the wall clock", async () => {
+    const root = await project();
+    const plugin = bounda({ consistency: "eventual" });
+    const recorded = recordingLogger();
+    expect(plugin.name).toBe("bounda");
+    expect(plugin.enforce).toBe("pre");
+    const configResolved = hookOf(plugin, "configResolved") as (
+      this: unknown,
+      config: ResolvedConfig,
+    ) => void;
+    configResolved.call({}, { root, command: "serve", logger: recorded.logger } as ResolvedConfig);
+    const load = hookOf(plugin, "load") as (this: unknown, id: string) => unknown;
+    const resolveId = hookOf(plugin, "resolveId") as (this: unknown, id: string) => unknown;
+    const server = load.call(
+      { environment: { config: { consumer: "server" } } },
+      resolveId.call({}, "@bounda-dev/react-router/app") as string,
+    );
+    expect(server).toContain('consistency: "eventual"');
+
+    const watcher = new EventEmitter();
+    const configureServer = hookOf(plugin, "configureServer") as (
+      this: unknown,
+      server: ViteDevServer,
+    ) => void;
+    configureServer.call({}, { watcher } as unknown as ViteDevServer);
+    expect(() =>
+      watcher.emit("change", join(root, "app/domain/order/order-paid.ts")),
+    ).not.toThrow();
+    const closeBundle = hookOf(plugin, "closeBundle") as (this: unknown) => Promise<void>;
+    await closeBundle.call({});
+    expect(recorded.errors).toEqual([]);
   });
 });

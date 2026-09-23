@@ -133,6 +133,8 @@ from `@bounda-dev/core`.
   `app/read` regenerates the types, and the next request boots an app from the new modules.
   Nothing to restart, no second generator process; a layout that breaks a convention is reported
   in the terminal and the last good registry keeps serving. `react-router build` fails on it.
+  Closing the dev server waits for a regeneration already running and drops one still waiting
+  for its quiet time, so nothing writes to the project after the server has gone.
 - `react-router typegen && tsc` still needs the generated files first, so keep
   `bounda generate` as a script for CI and fresh clones.
 - `.env` is read when the app boots and never overrides a variable that is already set, so a
