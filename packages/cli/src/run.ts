@@ -11,7 +11,7 @@ import { boot, loadProject } from "@bounda-dev/core/node";
 import { Command, CommanderError } from "commander";
 import { generate } from "./generate/generate.ts";
 import { ConventionError } from "./generate/problems.ts";
-import { watchProject } from "./generate/watch.ts";
+import { watchFromFirstRun } from "./generate/watch.ts";
 import { formatConventionError, formatReport, formatWarnings } from "./reporter.ts";
 
 export interface Output {
@@ -247,19 +247,23 @@ export const runCli: RunCliFunction = async ({ argv, cwd, stdout, stderr, signal
     .option("--no-infer", "do not infer state for aggregates without state.ts")
     .option("--watch", "regenerate when a module changes", false)
     .action(async (options: GenerateOptions) => {
-      exitCode = await runGenerate(options, cwd, stdout, stderr);
-      if (!options.watch || exitCode === EXIT_FAILURE) return;
-      const root = resolve(cwd, options.root ?? ".");
-      const watching = watchProject({
-        root,
+      if (!options.watch) {
+        exitCode = await runGenerate(options, cwd, stdout, stderr);
+        return;
+      }
+      await watchFromFirstRun({
+        root: resolve(cwd, options.root ?? "."),
         appDir: options.appDir,
         signal: signal ?? new AbortController().signal,
+        firstRun: async () => {
+          exitCode = await runGenerate(options, cwd, stdout, stderr);
+          return exitCode !== EXIT_FAILURE;
+        },
         onChange: async () => {
           exitCode = await runGenerate(options, cwd, stdout, stderr);
         },
+        onWatching: () => line(stdout, `watching ${options.appDir}/ for changes`),
       });
-      line(stdout, `watching ${options.appDir}/ for changes`);
-      await watching;
     });
 
   projectOptions(

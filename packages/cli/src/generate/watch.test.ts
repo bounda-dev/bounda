@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
-import { watchProject } from "./watch.ts";
+import { watchFromFirstRun, watchProject } from "./watch.ts";
 
 const temporary: string[] = [];
 
@@ -22,11 +22,16 @@ afterAll(async () => {
 
 type WatchEvent = { readonly filename: string | Buffer | null };
 
+interface WatchOptions {
+  readonly recursive?: boolean;
+  readonly signal?: AbortSignal;
+}
+
 interface FakeWatcher {
   readonly watch: typeof watchDirectory;
   readonly emit: (filename: string | null) => void;
   readonly end: (error?: Error) => void;
-  readonly calls: { path: string; options: unknown }[];
+  readonly calls: { path: string; options: WatchOptions }[];
   readonly listening: () => boolean;
 }
 
@@ -63,8 +68,11 @@ const fakeWatcher = (): FakeWatcher => {
     }
   }
   return {
-    watch: ((path: string, options: unknown) => {
+    watch: ((path: string, options: WatchOptions) => {
       calls.push({ path, options });
+      options.signal?.addEventListener("abort", () => push({ error: abortError() }), {
+        once: true,
+      });
       return events();
     }) as unknown as typeof watchDirectory,
     emit: (filename) => push({ filename }),
@@ -188,4 +196,90 @@ describe("watchProject", () => {
     controller.abort();
     await expect(watching).resolves.toBeUndefined();
   }, 15_000);
+});
+
+describe("watchFromFirstRun", () => {
+  const start = (watcher: FakeWatcher, firstRun: () => Promise<boolean>) => {
+    const controller = new AbortController();
+    let changes = 0;
+    let announced = 0;
+    let listeningAtFirstRun: boolean | undefined;
+    const done = watchFromFirstRun({
+      root: "/project",
+      signal: controller.signal,
+      debounceMs: 10,
+      watch: watcher.watch,
+      firstRun: () => {
+        listeningAtFirstRun ??= watcher.listening();
+        return firstRun();
+      },
+      onChange: async () => {
+        changes += 1;
+      },
+      onWatching: () => {
+        announced += 1;
+      },
+    });
+    return {
+      done,
+      controller,
+      changes: () => changes,
+      announced: () => announced,
+      listeningAtFirstRun: () => listeningAtFirstRun,
+    };
+  };
+
+  it("is listening before the first run starts, and announces once that run goes on", async () => {
+    const watcher = fakeWatcher();
+    const run = start(watcher, async () => true);
+    await vi.waitFor(() => expect(run.announced()).toBe(1));
+    expect(run.listeningAtFirstRun()).toBe(true);
+    run.controller.abort();
+    await expect(run.done).resolves.toBeUndefined();
+  });
+
+  it("holds a change made during the first run until that run is done", async () => {
+    const watcher = fakeWatcher();
+    const first = Promise.withResolvers<boolean>();
+    const run = start(watcher, () => first.promise);
+    watcher.emit("domain/order/a.ts");
+    await settle(60);
+    expect(run.changes()).toBe(0);
+    first.resolve(true);
+    await vi.waitFor(() => expect(run.changes()).toBe(1));
+    run.controller.abort();
+    await run.done;
+  });
+
+  it("ends at once when the first run does not go on, dropping the change it held", async () => {
+    const watcher = fakeWatcher();
+    const first = Promise.withResolvers<boolean>();
+    const run = start(watcher, () => first.promise);
+    watcher.emit("domain/order/a.ts");
+    await settle(60);
+    first.resolve(false);
+    await expect(run.done).resolves.toBeUndefined();
+    expect(run.announced()).toBe(0);
+    expect(run.changes()).toBe(0);
+  });
+
+  it("ends the watch and rethrows when the first run rejects", async () => {
+    const watcher = fakeWatcher();
+    const run = start(watcher, async () => {
+      throw new Error("boom");
+    });
+    await expect(run.done).rejects.toThrow("boom");
+    expect(run.announced()).toBe(0);
+    expect(watcher.calls[0]?.options.signal?.aborted).toBe(true);
+  });
+
+  it("reports a watcher that fails during the first run once that run is done", async () => {
+    const watcher = fakeWatcher();
+    const first = Promise.withResolvers<boolean>();
+    const run = start(watcher, () => first.promise);
+    watcher.end(new Error("disk gone"));
+    await settle(20);
+    first.resolve(true);
+    await expect(run.done).rejects.toThrow("disk gone");
+  });
 });
