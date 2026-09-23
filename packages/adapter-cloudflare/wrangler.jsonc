@@ -7,8 +7,11 @@
     "bindings": [
       { "name": "STORE", "class_name": "Store" },
       { "name": "QUIET_STORE", "class_name": "QuietStore" },
-      { "name": "SLICED_STORE", "class_name": "SlicedStore" }
+      { "name": "SLICED_STORE", "class_name": "SlicedStore" },
+      { "name": "BARE", "class_name": "Bare" }
     ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Store", "QuietStore", "SlicedStore"] }]
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Store", "QuietStore", "SlicedStore", "Bare"] }
+  ]
 }
