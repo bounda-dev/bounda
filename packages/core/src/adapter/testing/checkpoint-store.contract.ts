@@ -58,6 +58,17 @@ export const checkpointStoreContract: CheckpointStoreContractFunction = ({ creat
       expect(await store.list()).toEqual([{ subscriber: "policies", position: 4 }]);
     });
 
+    it("forgets a subscriber it is asked to remove, and only that one", async () => {
+      await store.set("policies", 4);
+      await store.set("processes", 6);
+      await store.remove("policies");
+      await store.remove("never-checkpointed");
+      expect(await store.get("policies")).toBe(0);
+      expect(await store.list()).toEqual([{ subscriber: "processes", position: 6 }]);
+      expect(await store.compareAndSet("policies", 0, 2)).toBe(true);
+      expect(await store.get("policies")).toBe(2);
+    });
+
     it("moves a checkpoint backwards when that is what is asked", async () => {
       await store.set("projection:order-summary", 40);
       expect(await store.compareAndSet("projection:order-summary", 40, 12)).toBe(true);

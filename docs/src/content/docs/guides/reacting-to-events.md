@@ -55,6 +55,13 @@ harmless.
 event waits for this one instead of overtaking it. A policy stuck on a retry therefore delays the
 policies behind it and shows up as lag rather than as events silently processed out of order.
 
+**Reactions start when they are deployed.** A policy or process reacts to the events stored
+after the code that declares it starts, never to the history before it. Adding the first policy
+to an app that has been running for months does not replay months of events into it; adding one
+more next to others behaves the same way, because they share the policy runner's checkpoint. An
+app with no policies has no policy runner at all, and one with no processes no process runner:
+nothing reads the log for them, nothing checkpoints and nothing wakes up.
+
 **Failures are classified.** A terminal failure is dead-lettered at once; a retriable one is
 retried on later passes with the configured back-off and dead-lettered when the attempts run out.
 Dead letters keep the event, the handler, the error and the number of attempts, and they have a

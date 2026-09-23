@@ -15,6 +15,7 @@ import { createCommandsFacade } from "./command/facade.ts";
 import { createCommandPipeline } from "./command/pipeline.ts";
 import { createDeadLetters, type DeadLetters } from "./dead-letters/dead-letters.ts";
 import { createDispatcher, type DispatcherLag } from "./dispatch/dispatcher.ts";
+import { alignReactiveCheckpoints } from "./dispatch/reactive-checkpoints.ts";
 import { buildPolicies } from "./policy/build-policies.ts";
 import { createPolicySubscriber } from "./policy/runner.ts";
 import { buildProcesses } from "./process/build-processes.ts";
@@ -137,8 +138,9 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
     logger,
   });
   const queryRunner = createQueryRunner({ queries: buildQueries({ readModels }), readModels });
+  const processDefinitions = buildProcesses({ registry, config });
   const processes = createProcessRunner({
-    processes: buildProcesses({ registry, config }),
+    processes: processDefinitions,
     aggregates,
     pipeline,
     storage,
@@ -148,14 +150,9 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
     logger,
   });
   const policies = buildPolicies({ registry });
-  const dispatcher = createDispatcher({
-    eventStore: storage.eventStore,
-    checkpointStore: storage.checkpointStore,
-    subscribers: [
-      ...Object.values(readModels.byName).map((readModel) =>
-        createProjectionSubscriber({ readModel, logger }),
-      ),
-      createPolicySubscriber({
+  const reactive = [
+    {
+      subscriber: createPolicySubscriber({
         policies,
         aggregates,
         pipeline,
@@ -166,7 +163,25 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
         clock,
         logger,
       }),
-      processes,
+      following: policies.all.length > 0,
+    },
+    { subscriber: processes, following: processDefinitions.all.length > 0 },
+  ];
+  const following = reactive.filter((entry) => entry.following).map((entry) => entry.subscriber);
+  await alignReactiveCheckpoints({
+    eventStore: storage.eventStore,
+    checkpointStore: storage.checkpointStore,
+    following: following.map((subscriber) => subscriber.name),
+    idle: reactive.filter((entry) => !entry.following).map((entry) => entry.subscriber.name),
+  });
+  const dispatcher = createDispatcher({
+    eventStore: storage.eventStore,
+    checkpointStore: storage.checkpointStore,
+    subscribers: [
+      ...Object.values(readModels.byName).map((readModel) =>
+        createProjectionSubscriber({ readModel, logger }),
+      ),
+      ...following,
     ],
     batchSize: config.runtime.dispatcher.batchSize,
     pollIntervalMs: config.runtime.dispatcher.pollIntervalMs,

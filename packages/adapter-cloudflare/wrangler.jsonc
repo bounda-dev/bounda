@@ -4,7 +4,10 @@
   "compatibility_date": "2026-09-22",
   "compatibility_flags": ["nodejs_compat"],
   "durable_objects": {
-    "bindings": [{ "name": "STORE", "class_name": "Store" }]
+    "bindings": [
+      { "name": "STORE", "class_name": "Store" },
+      { "name": "QUIET_STORE", "class_name": "QuietStore" }
+    ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Store"] }]
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Store", "QuietStore"] }]
 }

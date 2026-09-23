@@ -1,6 +1,6 @@
 import { cloudflare } from "../src/definition.ts";
 import { createBoundaObject, createWorker } from "../src/index.ts";
-import { registry } from "./app.ts";
+import { quietRegistry, registry } from "./app.ts";
 import { clock } from "./clock.ts";
 
 /**
@@ -11,6 +11,15 @@ export const Store = createBoundaObject({
   config: { storage: cloudflare() },
   clock,
   passesPerAlarm: 20,
+});
+
+/**
+ * The same app without policies or processes.
+ */
+export const QuietStore = createBoundaObject({
+  registry: quietRegistry,
+  config: { storage: cloudflare() },
+  clock,
 });
 
 export default createWorker({ binding: "STORE" });

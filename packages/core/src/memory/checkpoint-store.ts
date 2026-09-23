@@ -19,6 +19,9 @@ export const createMemoryCheckpointStore: CreateMemoryCheckpointStoreFunction = 
       positions.set(subscriber, position);
       return true;
     },
+    remove: async (subscriber) => {
+      positions.delete(subscriber);
+    },
     list: async () =>
       [...positions.entries()].map(([subscriber, position]) => ({ subscriber, position })),
   };

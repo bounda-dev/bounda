@@ -133,7 +133,11 @@ every storage contract inside `workerd`.
 - **A rebuild runs in one request**, bounded by Cloudflare's five minutes of CPU. That covers
   hundreds of thousands of events in local SQLite; resuming a rebuild across alarms is not built
   yet.
-- **Cost.** Every command writes several rows (the event, checkpoints, ledgers, read-model rows).
-  The free plan's 100,000 row writes a day are in the order of ten to twenty thousand commands;
-  on the paid plan the first fifty million writes a month are included.
+- **Cost.** Row writes are what runs out first. A command that inserts one read-model row writes
+  seven rows, indexes included: four for the event, two for the read-model row, one for the
+  checkpoint. On the free plan's 100,000 row writes a day that is about fourteen thousand
+  commands, when the app has no policies or processes and so no alarm to run after each one.
+  Each policy or process reaction adds its own writes, and the alarm that runs it is one more
+  request. On the paid plan the first fifty million row writes a month are included, and a
+  million commands beyond that cost around eight dollars.
 - **Every published version is a prerelease**, like the rest of Bounda.
