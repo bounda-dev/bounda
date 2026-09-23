@@ -1,0 +1,17 @@
+{
+  "name": "bounda-cloudflare-template",
+  "layout": "project",
+  "pin": "range",
+  "license": true,
+  "gitignore": ["test-results/", "playwright-report/"],
+  "package": {
+    "description": "An event-sourced app on Bounda: one Worker and one Durable Object per tenant, with its events and read models in the object's SQLite.",
+    "scripts": { "test:e2e": "playwright test" },
+    "devDependencies": { "@playwright/test": "catalog:" },
+    "cloudflare": {
+      "label": "Bounda event sourcing",
+      "products": ["Workers", "Durable Objects"],
+      "categories": ["storage"]
+    }
+  }
+}

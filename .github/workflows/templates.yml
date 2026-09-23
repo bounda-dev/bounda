@@ -1,0 +1,26 @@
+name: Template copies
+
+# bounda-cloudflare-template must match what the published create-bounda generates plus its own
+# files (packages/create-bounda/distribution). This fails when they drift, for instance after a
+# release that changed the Cloudflare overlay: run `pnpm templates:sync` and open a pull request
+# in that repository.
+
+on:
+  schedule:
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: bounda-cloudflare-template matches the published scaffolder
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - run: node packages/create-bounda/src/distribution/cli.ts check

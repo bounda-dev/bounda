@@ -5,7 +5,14 @@
   "vitest": {
     "configFile": "vitest.config.ts"
   },
-  "mutate": ["src/**/*.ts", "!src/**/*.test.ts", "!src/index.ts", "!src/cli.ts"],
+  "mutate": [
+    "src/**/*.ts",
+    "!src/**/*.test.ts",
+    "!src/index.ts",
+    "!src/cli.ts",
+    "!src/distribution/cli.ts",
+    "!src/distribution/sync.ts"
+  ],
   "ignoreStatic": true,
   "incremental": true,
   "incrementalFile": ".stryker-tmp/incremental.json",
@@ -20,7 +27,7 @@
   "warnings": {
     "unknownOptions": false
   },
-  "_comment": "Stryker's vitest runner, patched in patches/@stryker-mutator__vitest-runner@10.0.0.patch: Vitest 5 joins suite and test names with ' > ' and the runner joined them with a space, so its testNamePattern matched nothing and every mutant survived. inPlace because tsconfig.json extends ../../tsconfig.base.json, which a sandbox copy cannot reach. tsconfigFile points at a file that does not exist on purpose: Stryker would read tsconfig.json through the TypeScript JavaScript API, which TypeScript 7 no longer ships; Vitest resolves TypeScript on its own.",
+  "_comment": "Stryker's vitest runner, patched in patches/@stryker-mutator__vitest-runner@10.0.0.patch: Vitest 5 joins suite and test names with ' > ' and the runner joined them with a space, so its testNamePattern matched nothing and every mutant survived. inPlace because tsconfig.json extends ../../tsconfig.base.json, which a sandbox copy cannot reach. tsconfigFile points at a file that does not exist on purpose: Stryker would read tsconfig.json through the TypeScript JavaScript API, which TypeScript 7 no longer ships; Vitest resolves TypeScript on its own. src/distribution/sync.ts and its cli.ts are left out: they orchestrate npm, git and the registry, which the tests only reach offline through generate(); the logic worth measuring lives in transform.ts and drift.ts.",
   "inPlace": true,
   "concurrency": 4,
   "timeoutMS": 120000,
