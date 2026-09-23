@@ -1,55 +1,135 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="900" height="340" viewBox="0 0 900 340" role="img" aria-label="A command handler decides from state and returns events, the events are appended to the event store as one ordered log, and read models, policies and processes subscribe to that log">
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="516" viewBox="0 0 900 516" role="img" aria-label="The app sends commands to command handlers in the domain, which decide from the state apply folds from the aggregate's own stream and return events for the event store, one ordered log. After commit, and asynchronously, policies and processes in the domain follow the log and send new commands, and projections turn events into rows in tables, in the same database or their own. Query handlers read those rows to answer the app's queries">
   <title>How a command becomes events, and what reads them</title>
   <g font-family="Inter, system-ui, -apple-system, 'Segoe UI', sans-serif">
+    <rect x="4" y="16" width="888" height="36" rx="8" stroke="#71717a" fill="none" stroke-width="1" />
+
+    <g stroke="#27272a" stroke-width="1" fill="#0f0f12">
+      <rect x="4" y="84" width="296" height="368" rx="12" />
+      <rect x="588" y="84" width="304" height="368" rx="12" />
+    </g>
+
     <g stroke="#71717a" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M36 166 H121" />
-      <path d="M316 166 H361" />
-      <path d="M556 166 H585" />
-      <path d="M585 166 V86 H611" />
-      <path d="M585 166 H611" />
-      <path d="M585 166 V246 H611" />
-      <path d="M876 86 H819" />
+      <path d="M148 52 V109" />
+      <path d="M740 52 V109" />
+      <path d="M246 144 H365" />
+      <path d="M372 232 H253" />
+      <path d="M148 204 V179" />
+      <path d="M50 320 H32 V144 H43" />
+      <path d="M50 408 H32 V320" />
+      <path d="M740 380 V323" />
+      <path d="M740 212 V179" />
     </g>
     <g stroke="#71717a" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="5 5">
-      <path d="M810 166 H846 V310 H226 V213" />
-      <path d="M810 246 H846" />
+      <path d="M372 320 H253" />
+      <path d="M268 320 V408 H253" />
+      <path d="M522 408 H633" />
     </g>
     <g fill="#71717a">
-      <path d="M128 166 L121 162 L121 170 Z" />
-      <path d="M368 166 L361 162 L361 170 Z" />
-      <path d="M618 86 L611 82 L611 90 Z" />
-      <path d="M618 166 L611 162 L611 170 Z" />
-      <path d="M618 246 L611 242 L611 250 Z" />
-      <path d="M812 86 L819 82 L819 90 Z" />
-      <path d="M226 206 L222 213 L230 213 Z" />
+      <path d="M148 116 L144 109 L152 109 Z" />
+      <path d="M740 116 L736 109 L744 109 Z" />
+      <path d="M372 144 L365 140 L365 148 Z" />
+      <path d="M246 232 L253 228 L253 236 Z" />
+      <path d="M148 172 L144 179 L152 179 Z" />
+      <path d="M246 320 L253 316 L253 324 Z" />
+      <path d="M246 408 L253 404 L253 412 Z" />
+      <path d="M640 408 L633 404 L633 412 Z" />
+      <path d="M740 316 L736 323 L744 323 Z" />
+      <path d="M740 172 L736 179 L744 179 Z" />
+      <path d="M50 144 L43 140 L43 148 Z" />
     </g>
-    <g fill="#a1a1aa" font-size="12.5" text-anchor="middle">
-      <text x="78" y="156">dispatch</text>
-      <text x="843" y="76">query</text>
-      <text x="536" y="300">new commands</text>
+
+    <g fill="#a1a1aa" font-size="12.5">
+      <text x="158" y="73">command</text>
+      <text x="750" y="73">query</text>
+      <text x="158" y="193">state</text>
+      <text x="750" y="199">rows</text>
+      <text x="750" y="355">rows</text>
+      <text x="27" y="236" text-anchor="middle" transform="rotate(-90 27 236)">commands</text>
+      <g text-anchor="middle">
+        <text x="336" y="134">events</text>
+        <text x="336" y="222">its stream</text>
+        <text x="336" y="310">events</text>
+        <text x="560" y="398">events</text>
+      </g>
     </g>
-    <g stroke="#71717a" fill="#18181b" stroke-width="1.5">
-      <rect x="130" y="128" width="180" height="76" rx="8" />
-      <rect x="620" y="56" width="190" height="60" rx="8" />
-      <rect x="620" y="136" width="190" height="60" rx="8" />
-      <rect x="620" y="216" width="190" height="60" rx="8" />
+    <g fill="#a1a1aa" font-size="12.5">
+      <text x="152" y="476" text-anchor="middle"><tspan font-weight="600">Domain</tspan><tspan dx="8" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">app/domain/&lt;aggregate&gt;</tspan></text>
+      <text x="740" y="476" text-anchor="middle"><tspan font-weight="600">Read models</tspan><tspan dx="8" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">app/read/&lt;read-model&gt;</tspan></text>
     </g>
-    <rect x="370" y="128" width="180" height="76" rx="8" stroke="#3b82f6" fill="#172554" stroke-width="1.5" />
+
+    <g stroke="#3b82f6" fill="#172554" stroke-width="1.5">
+      <rect x="50" y="116" width="196" height="56" rx="8" />
+      <rect x="50" y="204" width="196" height="56" rx="8" />
+      <rect x="50" y="292" width="196" height="56" rx="8" />
+      <rect x="50" y="380" width="196" height="56" rx="8" />
+      <rect x="640" y="116" width="200" height="56" rx="8" />
+      <rect x="640" y="380" width="200" height="56" rx="8" />
+    </g>
+    <g stroke="#71717a" fill="#27272a" stroke-width="1.5">
+      <rect x="372" y="116" width="150" height="320" rx="8" />
+      <path d="M660 220 V308 A80 8 0 0 0 820 308 V220 A80 8 0 0 0 660 220 Z" />
+      <path d="M660 220 A80 8 0 0 0 820 220" fill="none" />
+    </g>
+
+    <g stroke="#71717a" fill="#18181b" stroke-width="1">
+      <rect x="386" y="272" width="18" height="22" />
+      <rect x="404" y="272" width="18" height="22" />
+      <rect x="422" y="272" width="18" height="22" />
+      <rect x="440" y="272" width="18" height="22" />
+      <rect x="458" y="272" width="18" height="22" />
+      <rect x="476" y="272" width="18" height="22" />
+    </g>
+    <g fill="#71717a">
+      <path d="M413 301 L409 308 L417 308 Z" />
+      <path d="M449 301 L445 308 L453 308 Z" />
+      <path d="M485 301 L481 308 L489 308 Z" />
+    </g>
+    <g fill="#a1a1aa" font-size="11" text-anchor="middle">
+      <text x="395" y="287">1</text>
+      <text x="413" y="287">2</text>
+      <text x="431" y="287">3</text>
+      <text x="449" y="287">4</text>
+      <text x="467" y="287">5</text>
+      <text x="485" y="287">6</text>
+      <text x="508" y="287">…</text>
+    </g>
+
     <g text-anchor="middle">
       <g fill="#fafafa" font-size="15" font-weight="500">
-        <text x="220" y="160">Command handler</text>
-        <text x="460" y="160">Event store</text>
-        <text x="715" y="81">Read models</text>
-        <text x="715" y="161">Policies</text>
-        <text x="715" y="241">Processes</text>
+        <text x="448" y="39">App</text>
+        <text x="148" y="140">Command handlers</text>
+        <text x="148" y="228" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">apply</text>
+        <text x="148" y="316">Policies</text>
+        <text x="148" y="404">Processes</text>
+        <text x="447" y="236">Event store</text>
+        <text x="740" y="140">Query handlers</text>
+        <text x="740" y="262">Tables</text>
+        <text x="740" y="404">Projections</text>
       </g>
       <g fill="#a1a1aa" font-size="12.5">
-        <text x="220" y="181">decides from state</text>
-        <text x="460" y="181">one ordered log</text>
-        <text x="715" y="100">project</text>
-        <text x="715" y="180">react</text>
-        <text x="715" y="260">orchestrate</text>
+        <text x="148" y="159">command + state → events</text>
+        <text x="148" y="247">events → state</text>
+        <text x="148" y="335">event → commands</text>
+        <text x="148" y="423">event + state → commands</text>
+        <text x="447" y="256">one ordered log</text>
+        <text x="740" y="159">rows → answer</text>
+        <text x="740" y="280">same database,</text>
+        <text x="740" y="295">or their own</text>
+        <text x="740" y="423">event → rows</text>
       </g>
+      <g fill="#a1a1aa" font-size="11">
+        <text x="447" y="326">each subscriber</text>
+        <text x="447" y="340">at its own position</text>
+      </g>
+    </g>
+
+    <g font-size="12" fill="#a1a1aa">
+      <rect x="306" y="494" width="12" height="12" rx="3" stroke="#3b82f6" fill="#172554" stroke-width="1.5" />
+      <text x="325" y="504">your code</text>
+      <rect x="394" y="494" width="12" height="12" rx="3" stroke="#71717a" fill="#27272a" stroke-width="1.5" />
+      <text x="413" y="504">runtime</text>
+      <path d="M472 500 H496" stroke="#71717a" stroke-width="1.5" stroke-dasharray="5 4" />
+      <text x="503" y="504">async, after commit</text>
     </g>
   </g>
 </svg>
