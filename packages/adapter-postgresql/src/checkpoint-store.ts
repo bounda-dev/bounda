@@ -1,8 +1,8 @@
 import type { CheckpointStore } from "@bounda-dev/core/adapter";
-import type { PostgresqlDatabase } from "./database.ts";
+import type { SqlExecutor } from "@bounda-dev/core/adapter/sql";
 
 export interface CreatePostgresqlCheckpointStoreArgs {
-  readonly db: PostgresqlDatabase;
+  readonly db: SqlExecutor;
   readonly table: string;
 }
 

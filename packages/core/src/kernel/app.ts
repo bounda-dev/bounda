@@ -200,7 +200,11 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
     checkpointStore: storage.checkpointStore,
     subscribers: [
       ...Object.values(readModels.byName).map((readModel) =>
-        createProjectionSubscriber({ readModel, logger }),
+        createProjectionSubscriber({
+          readModel,
+          logger,
+          budget: { clock, maxMs: config.runtime.dispatcher.projectionBatchTimeMs },
+        }),
       ),
       ...following,
     ],
@@ -289,10 +293,14 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
         logger,
         ...(maxEvents === undefined ? {} : { maxEvents }),
       }),
-    pendingRebuilds: async () =>
-      (await pendingRebuilds(storage.checkpointStore)).filter(
-        (name) => name in registry.readModels,
-      ),
+    pendingRebuilds: async () => {
+      const paused = await Promise.all(
+        Object.values(readModels.byName).map(async ({ name, ports }) =>
+          (await pendingRebuilds(ports.checkpointStore)).includes(name) ? [name] : [],
+        ),
+      );
+      return paused.flat();
+    },
     deadLetters,
     getLag: () => dispatcher.getLag(),
   };

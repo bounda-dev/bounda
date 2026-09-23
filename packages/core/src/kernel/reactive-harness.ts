@@ -103,7 +103,11 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
       checkpointStore: storage.checkpointStore,
       subscribers: [
         ...Object.values(readModels.byName).map((readModel) =>
-          createProjectionSubscriber({ readModel, logger }),
+          createProjectionSubscriber({
+            readModel,
+            logger,
+            budget: { clock, maxMs: config.runtime.dispatcher.projectionBatchTimeMs },
+          }),
         ),
         createPolicySubscriber({
           policies,

@@ -50,6 +50,13 @@ export interface DispatcherConfig {
    */
   readonly idleInterval?: DurationInput;
   readonly batchSize?: number;
+  /**
+   * How long a projection batch keeps its transaction open. Past it, the batch commits what it
+   * has projected so far and the rest of it is delivered next, so a slow batch never holds
+   * SQLite's single writer, or a remote libSQL transaction, for longer. Rebuilds honour it too.
+   * Defaults to 250 ms.
+   */
+  readonly projectionBatchTime?: DurationInput;
 }
 
 /**
@@ -146,6 +153,7 @@ export interface ResolvedConfig {
       readonly pollIntervalMs: number;
       readonly idleIntervalMs: number;
       readonly batchSize: number;
+      readonly projectionBatchTimeMs: number;
     };
     readonly overrides: Readonly<Record<string, ResolvedAggregateRuntime>>;
   };

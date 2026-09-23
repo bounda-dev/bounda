@@ -2,6 +2,7 @@ import { isAdapter } from "../../adapter/adapter.ts";
 import type { CheckpointStore } from "../../adapter/ports/checkpoint-store.ts";
 import { resolveConfig } from "../../config/schema.ts";
 import type { Config } from "../../config/types.ts";
+import { systemClock } from "../../contracts/clock.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import { type Logger, silentLogger } from "../../contracts/logger.ts";
 import type { Registry } from "../../modules/registry.ts";
@@ -9,8 +10,8 @@ import { validateRegistry } from "../../modules/validate.ts";
 import { fieldBuilder } from "../../modules/view.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { withUpcasting } from "../aggregate/upcasting.ts";
-import { createProjectionSubscriber } from "../projection/runner.ts";
-import { adapterForReadModel, compileReadModel } from "./build-read-models.ts";
+import { projectBatch, projectionSubscriberName } from "../projection/runner.ts";
+import { adapterForReadModel, compileProjections } from "./build-read-models.ts";
 import { fingerprintReadModel } from "./fingerprint.ts";
 
 export interface RebuildReadModelArgs {
@@ -71,46 +72,19 @@ export const pendingRebuilds: PendingRebuildsFunction = async (checkpointStore) 
   ),
 ];
 
-interface MoveCheckpointBackArgs {
-  readonly checkpointStore: CheckpointStore;
-  readonly subscriber: string;
-  readonly position: number;
-  readonly logger: Logger;
-}
-
-const moveCheckpointBack = async ({
-  checkpointStore,
-  subscriber,
-  position,
-  logger,
-}: MoveCheckpointBackArgs): Promise<void> => {
-  for (;;) {
-    const current = await checkpointStore.get(subscriber);
-    if (current <= position) return;
-    if (await checkpointStore.compareAndSet(subscriber, current, position)) {
-      logger.info("read model checkpoint moved back to the rebuilt position", {
-        subscriber,
-        from: current,
-        to: position,
-      });
-      return;
-    }
-  }
-};
-
 /**
  * Rebuilds one read model from the whole stream without taking it offline. The projections run
  * into a shadow table with the view's current fields while queries keep reading the live one;
- * when the shadow has caught up with the stream it takes the live table's place in one step and
- * the read model's checkpoint is moved to where the shadow stopped. A worker that got further
- * meanwhile finds its checkpoint moved back and re-projects the difference, which idempotent
- * projections make harmless. A projection that throws aborts the rebuild and leaves the live
- * table as it was.
+ * when the shadow has caught up with the stream it takes the live table's place, and the read
+ * model's checkpoint is set to where the shadow stopped, in one transaction holding the lock the
+ * projections take. Whatever a worker applied to the old table meanwhile goes with it, and the
+ * worker carries on from the rebuilt position, so every event reaches the new table exactly once.
+ * A projection that throws aborts the rebuild and leaves the live table as it was.
  *
- * The position the shadow reached is saved after every batch, so a rebuild that stops, because
- * `maxEvents` ran out or because the process died, resumes where it was on the next call, as
- * long as the read model's fields and projections are the same code: otherwise it starts again
- * from a fresh shadow. At worst a resumed rebuild projects its last batch twice.
+ * Each batch and the position it reached commit together in the shadow's database, so a rebuild
+ * that stops, because `maxEvents` ran out or because the process died, resumes exactly where it
+ * was on the next call, as long as the read model's fields and projections are the same code:
+ * otherwise it starts again from a fresh shadow.
  */
 export const rebuildReadModel: RebuildReadModelFunction = async ({
   registry,
@@ -140,35 +114,19 @@ export const rebuildReadModel: RebuildReadModelFunction = async ({
     eventStore: storage.eventStore,
     aggregates: buildAggregates({ registry, config }),
   });
-  const { checkpointStore } = storage;
   try {
     const progress = `${progressPrefix(name)}${fingerprintReadModel(entry)}`;
-    const saved = new Map(
-      (await checkpointStore.list())
-        .filter(({ subscriber }) => subscriber.startsWith(progressPrefix(name)))
-        .map(({ subscriber, position }) => [subscriber, position]),
-    );
-    for (const subscriber of saved.keys()) {
-      if (subscriber !== progress) await checkpointStore.remove(subscriber);
-    }
     const rebuild = await adapterForReadModel({ name, config }).rebuildReadModel<
       Record<string, unknown>
-    >({
-      name,
-      fields: entry.view.fields({ f: fieldBuilder }),
-      logger,
-      resume: saved.has(progress),
-    });
-    const subscriber = createProjectionSubscriber({
-      readModel: compileReadModel({
-        name,
-        entry,
-        ports: { table: rebuild.table, client: rebuild.client, close: async () => {} },
-      }),
-      logger,
-    });
+    >({ name, fields: entry.view.fields({ f: fieldBuilder }), logger, progress });
+    for (const { subscriber } of await rebuild.checkpointStore.list()) {
+      if (subscriber.startsWith(progressPrefix(name)) && subscriber !== progress) {
+        await rebuild.checkpointStore.remove(subscriber);
+      }
+    }
+    const readModel = compileProjections({ name, entry });
     const { batchSize } = config.runtime.dispatcher;
-    let position = rebuild.resumed ? (saved.get(progress) ?? 0) : 0;
+    let { position } = rebuild;
     const budget = maxEvents ?? Number.POSITIVE_INFINITY;
     let events = 0;
     try {
@@ -180,25 +138,27 @@ export const rebuildReadModel: RebuildReadModelFunction = async ({
         }
         const batch = await eventStore.readAll({ afterPosition: position, limit: batchSize });
         if (batch.length === 0) break;
-        await subscriber.process(batch);
-        events += batch.length;
-        position = batch[batch.length - 1]?.position ?? position;
-        await checkpointStore.set(progress, position);
+        const done = await rebuild.transact(async ({ table, client, checkpointStore }) => {
+          const projected = await projectBatch({
+            readModel,
+            events: batch,
+            table,
+            client,
+            logger,
+            budget: { clock: systemClock, maxMs: config.runtime.dispatcher.projectionBatchTimeMs },
+          });
+          await checkpointStore.set(progress, batch[projected - 1]?.position ?? position);
+          return projected;
+        });
+        events += done;
+        position = batch[done - 1]?.position ?? position;
         logger.debug("read model rebuild progressed", { readModel: name, position, events });
       }
-      await rebuild.commit();
+      await rebuild.commit({ subscriber: projectionSubscriberName(name), position });
     } catch (error) {
       await rebuild.abort();
-      await checkpointStore.remove(progress);
       throw error;
     }
-    await checkpointStore.remove(progress);
-    await moveCheckpointBack({
-      checkpointStore: storage.checkpointStore,
-      subscriber: subscriber.name,
-      position,
-      logger,
-    });
     logger.info("read model rebuilt", { readModel: name, events, position });
     return { events, position, done: true };
   } finally {

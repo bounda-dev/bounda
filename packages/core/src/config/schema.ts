@@ -9,6 +9,7 @@ import {
   DEFAULT_POLICIES,
   DEFAULT_POLL_INTERVAL_MS,
   DEFAULT_PROCESSES,
+  DEFAULT_PROJECTION_BATCH_TIME_MS,
   DEFAULT_ROOT_DIR,
 } from "./defaults.ts";
 import type {
@@ -66,6 +67,7 @@ const runtime = z.strictObject({
       pollInterval: duration.optional(),
       idleInterval: duration.optional(),
       batchSize: z.int().min(1).optional(),
+      projectionBatchTime: duration.optional(),
     })
     .optional(),
   overrides: z.record(z.string(), overrides).optional(),
@@ -164,6 +166,8 @@ export const resolveConfig: ResolveConfigFunction = (config) => {
         pollIntervalMs: parsed.runtime?.dispatcher?.pollInterval ?? DEFAULT_POLL_INTERVAL_MS,
         idleIntervalMs: parsed.runtime?.dispatcher?.idleInterval ?? DEFAULT_IDLE_INTERVAL_MS,
         batchSize: parsed.runtime?.dispatcher?.batchSize ?? DEFAULT_BATCH_SIZE,
+        projectionBatchTimeMs:
+          parsed.runtime?.dispatcher?.projectionBatchTime ?? DEFAULT_PROJECTION_BATCH_TIME_MS,
       },
       overrides: resolvedOverrides,
     },

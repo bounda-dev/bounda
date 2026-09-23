@@ -45,6 +45,13 @@ export type {
 } from "./dead-letters/dead-letters.ts";
 export { createDeadLetters } from "./dead-letters/dead-letters.ts";
 export type {
+  CheckpointClaim,
+  CheckpointedSubscriber,
+  Claimed,
+  DeliveryOutcome,
+} from "./dispatch/delivery.ts";
+export { checkpointedByStore, createCheckpointedSubscriber } from "./dispatch/delivery.ts";
+export type {
   CreateDispatcherArgs,
   CreateDispatcherFunction,
   Dispatcher,
@@ -96,9 +103,17 @@ export {
 export type {
   CreateProjectionSubscriberArgs,
   CreateProjectionSubscriberFunction,
+  ProjectBatchArgs,
+  ProjectBatchFunction,
+  ProjectionBudget,
   ProjectionSubscriberNameFunction,
+  ProjectionTarget,
 } from "./projection/runner.ts";
-export { createProjectionSubscriber, projectionSubscriberName } from "./projection/runner.ts";
+export {
+  createProjectionSubscriber,
+  projectBatch,
+  projectionSubscriberName,
+} from "./projection/runner.ts";
 export type {
   BuildQueriesArgs,
   BuildQueriesFunction,
@@ -119,6 +134,8 @@ export type {
   AdapterForReadModelFunction,
   BuildReadModelsArgs,
   BuildReadModelsFunction,
+  CompileProjectionsArgs,
+  CompileProjectionsFunction,
   CompileReadModelArgs,
   CompileReadModelFunction,
   ProjectionRuntime,
@@ -128,6 +145,7 @@ export type {
 export {
   adapterForReadModel,
   buildReadModels,
+  compileProjections,
   compileReadModel,
 } from "./read-model/build-read-models.ts";
 export type {

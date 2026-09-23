@@ -16,6 +16,7 @@ import {
   inboxLedgerContract,
   pendingEvent,
   readModelRebuildContract,
+  readModelTransactionContract,
   schedulerContract,
   tableContract,
 } from "@bounda-dev/core/adapter/testing";
@@ -109,6 +110,13 @@ describe.skipIf(container === null)("postgresql adapter", () => {
       await closeOpened();
       return fresh();
     },
+  });
+  readModelTransactionContract({
+    create: async () => {
+      await closeOpened();
+      return fresh();
+    },
+    locking: "per-subscriber",
   });
 
   it("notifies listeners of every committed append with the last position", async () => {
@@ -303,12 +311,13 @@ describe.skipIf(container === null)("postgresql adapter", () => {
         logs.push([message, fields]);
       },
     };
-    const args = { name: "orderSummary", fields: contractFields, logger };
+    const args = { name: "orderSummary", fields: contractFields, logger, progress: "rebuild:1" };
     const committed = await adapter.rebuildReadModel(args);
-    await committed.commit();
+    await committed.commit({ subscriber: "projection:orderSummary", position: 0 });
     const paused = await adapter.rebuildReadModel(args);
+    await paused.transact(({ checkpointStore }) => checkpointStore.set(args.progress, 1));
     await paused.pause();
-    const aborted = await adapter.rebuildReadModel({ ...args, resume: true });
+    const aborted = await adapter.rebuildReadModel(args);
     await aborted.abort();
     const table = `${prefix}order_summary`;
     const shadow = `${table}__rebuild`;
@@ -599,5 +608,238 @@ describe.skipIf(container === null)("an app on the postgresql adapter", () => {
     expect(await app.queries.getOrder({ orderId: "o-2" })).toMatchObject({ status: "paid" });
     expect((await app.getLag()).maxLag).toBe(0);
     await app.stop();
+  });
+});
+
+interface StatusRow {
+  readonly orderId: string;
+  readonly status: string;
+}
+
+interface CountRow {
+  readonly id: string;
+  readonly placed: number;
+}
+
+interface HoldProjection {
+  (): Promise<void>;
+}
+
+const statusRegistry = (hold: HoldProjection = async () => {}) =>
+  ({
+    aggregates: {
+      order: {
+        state: { initialState: {} },
+        events: {
+          orderPlaced: { apply: ({ state }: { state: object }) => state },
+          orderCancelled: { apply: ({ state }: { state: object }) => state },
+        },
+        commands: {
+          placeOrder: {
+            module: {
+              payload: ({ z }: PayloadArgs) => z.object({ orderId: z.string() }),
+              handler: ({ events }: { events: Record<string, (payload?: unknown) => unknown> }) => [
+                events.orderPlaced?.(),
+              ],
+            },
+          },
+          cancelOrder: {
+            module: {
+              payload: ({ z }: PayloadArgs) => z.object({ orderId: z.string() }),
+              handler: ({ events }: { events: Record<string, (payload?: unknown) => unknown> }) => [
+                events.orderCancelled?.(),
+              ],
+            },
+          },
+        },
+        policies: {},
+        processes: {},
+      },
+    },
+    readModels: {
+      orderStatus: {
+        view: {
+          fields: ({ f: fields }: FieldsArgs) => ({
+            orderId: fields.string().primaryKey(),
+            status: fields.string(),
+          }),
+        },
+        projections: {
+          orderPlaced: {
+            project: async ({
+              event,
+              table,
+            }: {
+              event: { aggregateId: string };
+              table: Table<StatusRow>;
+            }) => {
+              await hold();
+              await table.upsert({ orderId: event.aggregateId, status: "placed" });
+            },
+          },
+          orderCancelled: {
+            project: async ({
+              event,
+              table,
+            }: {
+              event: { aggregateId: string };
+              table: Table<StatusRow>;
+            }) => {
+              await table.update({ orderId: event.aggregateId }, { status: "cancelled" });
+            },
+          },
+        },
+        queries: {},
+      },
+    },
+  }) as const satisfies Registry;
+
+const counterRegistry = (failOnce: { failed: boolean }) =>
+  ({
+    aggregates: statusRegistry().aggregates,
+    readModels: {
+      orderCount: {
+        view: {
+          fields: ({ f: fields }: FieldsArgs) => ({
+            id: fields.string().primaryKey(),
+            placed: fields.number(),
+          }),
+        },
+        projections: {
+          orderPlaced: {
+            project: async ({ table }: { table: Table<CountRow> }) => {
+              const row = await table.findOne({ id: "all" });
+              await table.upsert({ id: "all", placed: (row?.placed ?? 0) + 1 });
+            },
+          },
+          orderCancelled: {
+            project: async () => {
+              if (failOnce.failed) return;
+              failOnce.failed = true;
+              throw new Error("transient");
+            },
+          },
+        },
+        queries: {},
+      },
+    },
+  }) as const satisfies Registry;
+
+describe.skipIf(container === null)("projections on postgresql", () => {
+  it("keeps a read model right when a slower instance applies a batch another already moved past", async () => {
+    await closeOpened();
+    const tablePrefix = `race_${run}_`;
+    const adapter = () => postgresql({ url, tablePrefix, maxConnections: 3 });
+    let release = (): void => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered = (): void => {};
+    const holding = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const fast = await createTestApp({ registry: statusRegistry(), adapter: adapter() });
+    const slow = await createTestApp({
+      registry: statusRegistry(async () => {
+        entered();
+        await gate;
+      }),
+      adapter: adapter(),
+    });
+
+    const { table, client } = await openReadModel<StatusRow>(adapter(), "orderStatus", {
+      orderId: f.string().primaryKey(),
+      status: f.string(),
+    });
+    const sql = client.raw as Sql;
+    const waitingForLock = async () =>
+      (
+        await sql`SELECT count(*)::int AS "n" FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`
+      )[0]?.n;
+
+    await fast.app.commands.placeOrder({ orderId: "r" });
+    const lagging = slow.app.catchUpReadModels();
+    await holding;
+    await fast.app.commands.cancelOrder({ orderId: "r" });
+    const waiting = fast.app.catchUpReadModels();
+    await vi.waitFor(async () => expect(await waitingForLock()).toBe(1), { timeout: 5_000 });
+    release();
+    await Promise.all([lagging, waiting]);
+    const lag = await fast.app.getLag();
+    await Promise.all([fast.app.stop(), slow.app.stop()]);
+    expect({ row: await table.findOne({ orderId: "r" }), maxLag: lag.maxLag }).toEqual({
+      row: { orderId: "r", status: "cancelled" },
+      maxLag: 0,
+    });
+  });
+
+  it("applies every event of a redelivered batch once, even to a read-modify-write projection", async () => {
+    await closeOpened();
+    const tablePrefix = `redeliver_${run}_`;
+    const adapter = () => postgresql({ url, tablePrefix, maxConnections: 3 });
+    const { app } = await createTestApp({
+      registry: counterRegistry({ failed: false }),
+      adapter: adapter(),
+    });
+
+    await app.commands.placeOrder({ orderId: "r" });
+    await app.commands.cancelOrder({ orderId: "r" });
+    await app.catchUpReadModels();
+    await app.catchUpReadModels();
+
+    const { table } = await openReadModel<CountRow>(adapter(), "orderCount", {
+      id: f.string().primaryKey(),
+      placed: f.number(),
+    });
+    const lag = await app.getLag();
+    await app.stop();
+    expect({ row: await table.findOne({ id: "all" }), maxLag: lag.maxLag }).toEqual({
+      row: { id: "all", placed: 1 },
+      maxLag: 0,
+    });
+  });
+
+  it("rolls hand-written SQL on client.raw back with the rest of the batch", async () => {
+    await closeOpened();
+    const adapter = fresh();
+    const prefix = `t${run}_${prefixes}_`;
+    const ports = await openReadModel<StatusRow>(adapter, "orderStatus", {
+      orderId: f.string().primaryKey(),
+      status: f.string(),
+    });
+    await expect(
+      ports.transact({
+        subscriber: "projection:orderStatus",
+        wait: true,
+        work: async ({ client, checkpointStore }) => {
+          const tx = client.raw as Sql;
+          await tx.unsafe(
+            `INSERT INTO "${prefix}order_status" (order_id, status) VALUES ('r', 'x')`,
+          );
+          expect(await client.get(`SELECT * FROM "${prefix}order_status"`)).toEqual({
+            orderId: "r",
+            status: "x",
+          });
+          await checkpointStore.compareAndSet("projection:orderStatus", 0, 1);
+          throw new Error("later projection failed");
+        },
+      }),
+    ).rejects.toThrow("later projection failed");
+    expect(await ports.table.count()).toBe(0);
+    expect(await ports.checkpointStore.get("projection:orderStatus")).toBe(0);
+  });
+
+  it("projects on a pool of one connection without waiting on itself", async () => {
+    await closeOpened();
+    const { app } = await createTestApp({
+      registry: statusRegistry(),
+      adapter: postgresql({ url, tablePrefix: `single_${run}_`, maxConnections: 1 }),
+    });
+    await app.commands.placeOrder({ orderId: "r" });
+    await app.commands.cancelOrder({ orderId: "r" });
+    await app.processUntilIdle();
+    const lag = await app.getLag();
+    await app.stop();
+    expect(lag.maxLag).toBe(0);
   });
 });

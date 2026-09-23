@@ -1,8 +1,8 @@
 import type { CheckpointStore } from "../index.ts";
-import type { SqlDatabase } from "../sql/database.ts";
+import type { SqlExecutor } from "../sql/sql-table.ts";
 
 export interface CreateSqliteCheckpointStoreArgs {
-  readonly db: SqlDatabase;
+  readonly db: SqlExecutor;
   readonly table: string;
 }
 

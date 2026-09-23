@@ -30,3 +30,4 @@ export const DEFAULT_CONCURRENCY_RETRIES: number = 3;
 export const DEFAULT_POLL_INTERVAL_MS: number = 100;
 export const DEFAULT_IDLE_INTERVAL_MS: number = 30_000;
 export const DEFAULT_BATCH_SIZE: number = 100;
+export const DEFAULT_PROJECTION_BATCH_TIME_MS: number = 250;

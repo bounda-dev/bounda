@@ -9,6 +9,7 @@ import {
   inboxLedgerContract,
   pendingEvent,
   readModelRebuildContract,
+  readModelTransactionContract,
   schedulerContract,
   tableContract,
 } from "../adapter/testing/index.ts";
@@ -36,6 +37,7 @@ describe("memory adapter", () => {
     },
   });
   readModelRebuildContract({ create: async () => memory() });
+  readModelTransactionContract({ create: async () => memory(), locking: "per-subscriber" });
 
   it("is a full adapter with one storage per instance, isolated from other instances", async () => {
     const adapter = memory();

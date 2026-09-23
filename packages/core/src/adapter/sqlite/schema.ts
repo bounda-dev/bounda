@@ -27,6 +27,20 @@ export const storageTablesFor: StorageTablesForFunction = (prefix) => ({
 const indexName = (table: string, suffix: string): string =>
   quoteIdentifier(`${table.slice(1, -1)}_${suffix}_idx`);
 
+export interface CheckpointTableStatementFunction {
+  (table: string): string;
+}
+
+/**
+ * DDL for a checkpoints table: part of the storage schema, and created next to a read model's
+ * rows when the read model lives in a database of its own.
+ */
+export const checkpointTableStatement: CheckpointTableStatementFunction = (table) =>
+  `CREATE TABLE IF NOT EXISTS ${table} (
+    "subscriber" TEXT PRIMARY KEY,
+    "position" INTEGER NOT NULL
+  )`;
+
 export interface StorageSchemaStatementsFunction {
   (tables: StorageTables): readonly string[];
 }
@@ -48,10 +62,7 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "metadata" TEXT NOT NULL,
     UNIQUE ("aggregate_type", "aggregate_id", "version")
   )`,
-  `CREATE TABLE IF NOT EXISTS ${tables.checkpoints} (
-    "subscriber" TEXT PRIMARY KEY,
-    "position" INTEGER NOT NULL
-  )`,
+  checkpointTableStatement(tables.checkpoints),
   `CREATE TABLE IF NOT EXISTS ${tables.inbox} (
     "subscriber" TEXT NOT NULL,
     "event_id" TEXT NOT NULL,

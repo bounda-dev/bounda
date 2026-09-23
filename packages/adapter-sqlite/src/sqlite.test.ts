@@ -19,6 +19,7 @@ import {
   inboxLedgerContract,
   pendingEvent,
   readModelRebuildContract,
+  readModelTransactionContract,
   schedulerContract,
   tableContract,
 } from "@bounda-dev/core/adapter/testing";
@@ -73,6 +74,10 @@ describe("sqlite adapter on a file", () => {
     create: async () => (await openStorage(sqlite({ path: freshPath() }))).scheduler,
   });
   readModelRebuildContract({ create: async () => sqlite({ path: freshPath() }) });
+  readModelTransactionContract({
+    create: async () => sqlite({ path: freshPath() }),
+    locking: "single-writer",
+  });
 
   it("creates the directory of a file that does not exist yet", async () => {
     const adapter = sqlite({ path: join(directory, "nested", "deeper", "app.db") });
@@ -161,9 +166,9 @@ describe("sqlite adapter on a file", () => {
       },
     };
     const adapter = sqlite({ path });
-    const args = { name: "orderSummary", fields: contractFields, logger };
+    const args = { name: "orderSummary", fields: contractFields, logger, progress: "rebuild:1" };
     const committed = await adapter.rebuildReadModel(args);
-    await committed.commit();
+    await committed.commit({ subscriber: "projection:orderSummary", position: 0 });
     const aborted = await adapter.rebuildReadModel(args);
     await aborted.abort();
     const table = "bounda_order_summary";

@@ -5,7 +5,7 @@ import type { Client, InValue, ResultSet, Transaction } from "@libsql/client";
  * The libSQL client seen through the two calls the SQL helpers need, plus write transactions.
  * `write` runs the work inside `BEGIN IMMEDIATE ... COMMIT`, one write transaction at a time
  * within the process, so it never has to wait on the engine's busy handler for another
- * transaction of the same process.
+ * transaction of the same process. The transaction's `raw` is the libSQL `Transaction`.
  */
 export type SqliteDatabase = SqlDatabase;
 
@@ -49,7 +49,7 @@ export const createSqliteDatabase: CreateSqliteDatabaseFunction = (client) => {
       serially(async () => {
         const transaction = await client.transaction("write");
         try {
-          const result = await work(executorOf(transaction));
+          const result = await work({ ...executorOf(transaction), raw: transaction });
           await transaction.commit();
           return result;
         } catch (error) {
