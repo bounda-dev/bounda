@@ -1,5 +1,26 @@
 # @bounda-dev/react-router
 
+## 0.1.0-alpha.8
+
+### Patch Changes
+
+- 312cc35: When `createBounda` is called again in development, the next request boots the new app only once
+  the one booted before has stopped. It used to boot at once while the previous app was still
+  closing, so for a moment both held the storage. `dispose()` now resolves once every app booted
+  under its key has stopped, including one a later `createBounda` is still stopping.
+- 312cc35: Closing the dev server now waits for a regeneration the `bounda()` Vite plugin is running, and
+  drops one still waiting for its quiet time. It used to let both go on, so the generator could
+  write to the project after the server had closed.
+- Updated dependencies [312cc35]
+- Updated dependencies [664fdbd]
+- Updated dependencies [2083e68]
+- Updated dependencies [5d81066]
+- Updated dependencies [312cc35]
+- Updated dependencies [05da3fa]
+- Updated dependencies [312cc35]
+  - @bounda-dev/core@0.1.0-alpha.8
+  - @bounda-dev/cli@0.1.0-alpha.8
+
 ## 0.1.0-alpha.7
 
 ### Patch Changes

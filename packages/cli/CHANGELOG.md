@@ -1,5 +1,26 @@
 # @bounda-dev/cli
 
+## 0.1.0-alpha.8
+
+### Minor Changes
+
+- 312cc35: `watchProject` takes an optional `clock`, the `Clock` from `@bounda-dev/core` that its quiet time is
+  measured on. It defaults to the wall clock, so nothing changes unless you pass one; with
+  `createFixedClock()` a test decides when a burst of changes goes to `onChange`.
+
+### Patch Changes
+
+- 05da3fa: `bounda generate --watch` starts watching before its first run instead of after it, so a module
+  saved while that run is going is regenerated right after it rather than at the next change. It
+  prints `watching app/ for changes` once the watcher is listening; it used to print the line first
+  and start watching after.
+- Updated dependencies [312cc35]
+- Updated dependencies [664fdbd]
+- Updated dependencies [2083e68]
+- Updated dependencies [5d81066]
+- Updated dependencies [312cc35]
+  - @bounda-dev/core@0.1.0-alpha.8
+
 ## 0.1.0-alpha.7
 
 ### Patch Changes
