@@ -11,6 +11,8 @@ import { createDispatcher, type Subscriber } from "./dispatcher.ts";
 
 const storage = () => memory().createStorage({ logger: silentLogger });
 
+const drained = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+
 const appendMany = async (
   eventStore: Awaited<ReturnType<typeof storage>>["eventStore"],
   count: number,
@@ -226,13 +228,14 @@ describe("createDispatcher", () => {
     await appendMany(eventStore, 3);
     let inside = 0;
     let overlap = false;
+    const held: Array<() => void> = [];
     const slow: Subscriber = {
       name: "slow",
       kind: "projection",
       process: async () => {
         inside += 1;
         overlap = overlap || inside > 1;
-        await new Promise((resolve) => setTimeout(resolve, 5));
+        await new Promise<void>((release) => held.push(release));
         inside -= 1;
         return true;
       },
@@ -254,10 +257,18 @@ describe("createDispatcher", () => {
       dispatcher.processOnce(),
       dispatcher.processUntilIdle(),
     ]);
+    let settled = false;
+    void manual.then(() => {
+      settled = true;
+    });
     clock.advance(1);
-    await manual;
-    await eventually(() => expect(clock.pending()).toBe(1));
+    while (!settled || clock.pending() === 0) {
+      await drained();
+      held.shift()?.();
+    }
+    expect(clock.pending()).toBe(1);
     await dispatcher.stop();
+    expect(held).toEqual([]);
     expect(overlap).toBe(false);
     expect(await checkpointStore.get("slow")).toBe(3);
   });

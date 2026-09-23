@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { createFixedClock, systemClock } from "../../contracts/clock.ts";
+import { describe, expect, it } from "vitest";
+import { createFixedClock } from "../../contracts/clock.ts";
 import { HandlerTimeoutError, withTimeout } from "./timeout.ts";
 
 const HOUR = 3_600_000;
@@ -55,20 +55,16 @@ describe("withTimeout", () => {
     ).rejects.toThrow("boom");
   });
 
-  it("clears its timer whichever side wins", async () => {
-    vi.useFakeTimers();
-    try {
-      await withTimeout({ run: () => 1, timeoutMs: 1_000, subject: "x", clock: systemClock });
-      expect(vi.getTimerCount()).toBe(0);
-      await withTimeout({
-        run: () => Promise.reject(new Error("boom")),
-        timeoutMs: 1_000,
-        subject: "x",
-        clock: systemClock,
-      }).catch(() => undefined);
-      expect(vi.getTimerCount()).toBe(0);
-    } finally {
-      vi.useRealTimers();
-    }
+  it("cancels its wait whichever side wins", async () => {
+    const clock = createFixedClock();
+    await withTimeout({ run: () => 1, timeoutMs: HOUR, subject: "x", clock });
+    expect(clock.pending()).toBe(0);
+    await withTimeout({
+      run: () => Promise.reject(new Error("boom")),
+      timeoutMs: HOUR,
+      subject: "x",
+      clock,
+    }).catch(() => undefined);
+    expect(clock.pending()).toBe(0);
   });
 });
