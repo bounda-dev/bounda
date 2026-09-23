@@ -24,7 +24,9 @@ export interface WithTimeoutFunction {
 
 /**
  * Races a handler against a timer. The handler keeps running if it loses; the runner treats the
- * timeout as a retriable failure.
+ * timeout as a retriable failure. The handler's promise is awaited as soon as it exists, so a
+ * handler that throws is never seen as an unhandled rejection, not even by runtimes such as
+ * workerd that report one before a later `then` attaches.
  */
 export const withTimeout: WithTimeoutFunction = async <T>({
   run,
@@ -36,7 +38,8 @@ export const withTimeout: WithTimeoutFunction = async <T>({
     timer = setTimeout(() => reject(new HandlerTimeoutError(subject, timeoutMs)), timeoutMs);
   });
   try {
-    return await Promise.race([Promise.resolve().then(run), expiry]);
+    const attempt = (async () => await run())();
+    return await Promise.race([attempt, expiry]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }

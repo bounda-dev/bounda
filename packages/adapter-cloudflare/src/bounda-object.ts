@@ -20,6 +20,7 @@ import type { Config } from "@bounda-dev/core/config";
 import { durableObjectAdapter } from "./adapter.ts";
 import { isCloudflareDefinition } from "./definition.ts";
 import { workersLogger } from "./logger.ts";
+import { type RpcOutcome, settle } from "./outcome.ts";
 import type { DurableSqlStorage } from "./sql-database.ts";
 import { nextWake } from "./wake.ts";
 
@@ -47,8 +48,10 @@ export interface CreateBoundaObjectArgs<R extends Registry> {
 }
 
 /**
- * What a Bounda Durable Object answers over RPC. Every method runs inside the object, in order.
- * Call it through `connect(stub)`, which types commands and queries from the registry.
+ * What a Bounda Durable Object answers over RPC. Every method runs inside the object, in order,
+ * and answers an outcome: its value, or the refusal it threw as plain data, so `code` and
+ * `issues` survive RPC on every compatibility date. Call it through `connect(stub)`, which types
+ * commands and queries from the registry and throws refusals again.
  */
 export interface BoundaObjectMethods {
   /**
@@ -56,18 +59,22 @@ export interface BoundaObjectMethods {
    * them, so a query issued next sees them. Policies and processes run right after, in the
    * object's alarm.
    */
-  command(name: string, payload?: unknown, options?: DispatchOptions): Promise<DispatchResult>;
-  query(name: string, payload?: unknown): Promise<unknown>;
-  lag(): Promise<DispatcherLag>;
-  listDeadLetters(args?: ListDeadLettersArgs): Promise<readonly DeadLetter[]>;
-  replayDeadLetter(id: string): Promise<DeadLetter>;
-  discardDeadLetter(id: string): Promise<DeadLetter>;
+  command(
+    name: string,
+    payload?: unknown,
+    options?: DispatchOptions,
+  ): Promise<RpcOutcome<DispatchResult>>;
+  query(name: string, payload?: unknown): Promise<RpcOutcome<unknown>>;
+  lag(): Promise<RpcOutcome<DispatcherLag>>;
+  listDeadLetters(args?: ListDeadLettersArgs): Promise<RpcOutcome<readonly DeadLetter[]>>;
+  replayDeadLetter(id: string): Promise<RpcOutcome<DeadLetter>>;
+  discardDeadLetter(id: string): Promise<RpcOutcome<DeadLetter>>;
   /**
    * Starts or continues rebuilding a read model with one slice of `eventsPerRebuildSlice` events.
    * When the result is not `done` the object's alarm runs the next slices, one per alarm, until
    * the rebuilt table takes the live one's place; queries keep reading the live table meanwhile.
    */
-  rebuildReadModel(name: string): Promise<RebuildReadModelResult>;
+  rebuildReadModel(name: string): Promise<RpcOutcome<RebuildReadModelResult>>;
   /**
    * Runs the next slice of every paused rebuild, then policies, processes, due scheduled commands
    * and retries, in bounded slices, and arms the next alarm. Called by the platform.
@@ -209,54 +216,62 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
       return failed;
     }
 
-    async command(
+    command(
       name: string,
       payload?: unknown,
       options?: DispatchOptions,
-    ): Promise<DispatchResult> {
-      const app = this.#ready();
-      const dispatch = Reflect.get(app.commands, name) as
-        | ((payload?: unknown, options?: DispatchOptions) => Promise<DispatchResult>)
-        | undefined;
-      if (typeof dispatch !== "function") throw new NotFoundError(`Unknown command "${name}"`);
-      const result = await dispatch(payload, options);
-      if (!result.scheduled) await app.catchUpReadModels();
-      await this.#rearm(false, true);
-      return result;
-    }
-
-    query(name: string, payload?: unknown): Promise<unknown> {
-      const run = Reflect.get(this.#ready().queries, name) as
-        | ((payload?: unknown) => Promise<unknown>)
-        | undefined;
-      if (typeof run !== "function") throw new NotFoundError(`Unknown query "${name}"`);
-      return run(payload);
-    }
-
-    lag(): Promise<DispatcherLag> {
-      return this.#ready().getLag();
-    }
-
-    listDeadLetters(args?: ListDeadLettersArgs): Promise<readonly DeadLetter[]> {
-      return this.#ready().deadLetters.list(args);
-    }
-
-    async replayDeadLetter(id: string): Promise<DeadLetter> {
-      const letter = await this.#ready().deadLetters.replay(id);
-      await this.#rearm(false, true);
-      return letter;
-    }
-
-    discardDeadLetter(id: string): Promise<DeadLetter> {
-      return this.#ready().deadLetters.discard(id);
-    }
-
-    async rebuildReadModel(name: string): Promise<RebuildReadModelResult> {
-      const result = await this.#ready().rebuildReadModel(name, {
-        maxEvents: eventsPerRebuildSlice,
+    ): Promise<RpcOutcome<DispatchResult>> {
+      return settle(async () => {
+        const app = this.#ready();
+        const dispatch = Reflect.get(app.commands, name) as
+          | ((payload?: unknown, options?: DispatchOptions) => Promise<DispatchResult>)
+          | undefined;
+        if (typeof dispatch !== "function") throw new NotFoundError(`Unknown command "${name}"`);
+        const result = await dispatch(payload, options);
+        if (!result.scheduled) await app.catchUpReadModels();
+        await this.#rearm(false, true);
+        return result;
       });
-      await this.#rearm(false, true);
-      return result;
+    }
+
+    query(name: string, payload?: unknown): Promise<RpcOutcome<unknown>> {
+      return settle(async () => {
+        const run = Reflect.get(this.#ready().queries, name) as
+          | ((payload?: unknown) => Promise<unknown>)
+          | undefined;
+        if (typeof run !== "function") throw new NotFoundError(`Unknown query "${name}"`);
+        return run(payload);
+      });
+    }
+
+    lag(): Promise<RpcOutcome<DispatcherLag>> {
+      return settle(() => this.#ready().getLag());
+    }
+
+    listDeadLetters(args?: ListDeadLettersArgs): Promise<RpcOutcome<readonly DeadLetter[]>> {
+      return settle(() => this.#ready().deadLetters.list(args));
+    }
+
+    replayDeadLetter(id: string): Promise<RpcOutcome<DeadLetter>> {
+      return settle(async () => {
+        const letter = await this.#ready().deadLetters.replay(id);
+        await this.#rearm(false, true);
+        return letter;
+      });
+    }
+
+    discardDeadLetter(id: string): Promise<RpcOutcome<DeadLetter>> {
+      return settle(() => this.#ready().deadLetters.discard(id));
+    }
+
+    rebuildReadModel(name: string): Promise<RpcOutcome<RebuildReadModelResult>> {
+      return settle(async () => {
+        const result = await this.#ready().rebuildReadModel(name, {
+          maxEvents: eventsPerRebuildSlice,
+        });
+        await this.#rearm(false, true);
+        return result;
+      });
     }
 
     override async alarm(): Promise<void> {

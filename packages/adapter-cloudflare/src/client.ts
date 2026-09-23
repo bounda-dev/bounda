@@ -10,10 +10,12 @@ import type {
   RebuildReadModelResult,
   Registry,
 } from "@bounda-dev/core";
+import { unwrap } from "./outcome.ts";
 
 /**
  * The methods of a Bounda object's stub that `connect` calls. Structural on purpose: a stub from
- * `env.STORE.get(id)` fits, whatever Cloudflare's RPC types map its results to.
+ * `env.STORE.get(id)` fits, whatever Cloudflare's RPC types map its results to. Each answers an
+ * outcome, which `connect` unwraps.
  */
 export interface BoundaStub {
   command(name: string, payload?: unknown, options?: DispatchOptions): PromiseLike<unknown>;
@@ -69,20 +71,15 @@ const byName = <T extends object>(call: (name: string, ...args: unknown[]) => un
 export const connect: ConnectFunction = <R extends Registry = AppRegistry>(
   stub: BoundaStub,
 ): BoundaClient<R> => ({
-  commands: byName<CommandsFacade<R>>(
-    (name, payload, options) =>
-      stub.command(
-        name,
-        payload,
-        options as DispatchOptions | undefined,
-      ) as Promise<DispatchResult>,
+  commands: byName<CommandsFacade<R>>((name, payload, options) =>
+    unwrap<DispatchResult>(stub.command(name, payload, options as DispatchOptions | undefined)),
   ),
-  queries: byName<QueriesFacade<R>>((name, payload) => stub.query(name, payload)),
-  getLag: async () => (await stub.lag()) as DispatcherLag,
+  queries: byName<QueriesFacade<R>>((name, payload) => unwrap(stub.query(name, payload))),
+  getLag: () => unwrap<DispatcherLag>(stub.lag()),
   deadLetters: {
-    list: async (args) => (await stub.listDeadLetters(args)) as readonly DeadLetter[],
-    replay: async (id) => (await stub.replayDeadLetter(id)) as DeadLetter,
-    discard: async (id) => (await stub.discardDeadLetter(id)) as DeadLetter,
+    list: (args) => unwrap<readonly DeadLetter[]>(stub.listDeadLetters(args)),
+    replay: (id) => unwrap<DeadLetter>(stub.replayDeadLetter(id)),
+    discard: (id) => unwrap<DeadLetter>(stub.discardDeadLetter(id)),
   },
-  rebuildReadModel: async (name) => (await stub.rebuildReadModel(name)) as RebuildReadModelResult,
+  rebuildReadModel: (name) => unwrap<RebuildReadModelResult>(stub.rebuildReadModel(name)),
 });

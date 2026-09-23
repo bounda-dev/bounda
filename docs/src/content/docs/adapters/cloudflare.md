@@ -118,8 +118,11 @@ export default {
 ```
 
 `connect(stub)` gives the same `commands` and `queries` as `app.commands` and `app.queries`,
-typed from your modules, plus `getLag()`, `deadLetters` and `rebuildReadModel`. Errors keep their
-class and their `code` across the call.
+typed from your modules, plus `getLag()`, `deadLetters` and `rebuildReadModel`. A refusal comes
+back as an `Error` with the same `name`, `message`, `code` and, for validation, `issues`, whatever
+the Worker's compatibility date: the object answers refusals as data and `connect` throws them
+again, because RPC drops an error's own properties on older dates. Check `error.code`, not
+`instanceof`.
 
 ## Testing
 
