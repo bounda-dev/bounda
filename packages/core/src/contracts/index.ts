@@ -18,6 +18,7 @@ export {
   ConfigurationError,
   DomainError,
   NotFoundError,
+  RebuildSupersededError,
   ValidationError,
   type ValidationIssue,
 } from "./errors.ts";

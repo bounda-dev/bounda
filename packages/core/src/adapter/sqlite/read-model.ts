@@ -1,6 +1,8 @@
+import { RebuildSupersededError } from "../../contracts/errors.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { FieldsRecord } from "../../modules/view.ts";
 import type { ReadModelPorts, ReadModelRebuild } from "../index.ts";
+import { rebuildFencing } from "../rebuild-fencing.ts";
 import type { SqlDatabase } from "../sql/database.ts";
 import {
   columnsOf,
@@ -132,16 +134,19 @@ export interface RebuildSqliteReadModelFunction {
   ): Promise<ReadModelRebuild<Row, Raw>>;
 }
 
-const tableExists = async (db: SqlDatabase, table: string): Promise<boolean> =>
+const tableExists = async (db: SqlExecutor, table: string): Promise<boolean> =>
   (await db.all(`PRAGMA table_info(${quoteIdentifier(table)})`, [])).length > 0;
 
 /**
  * Opens the shadow table of a rebuild: `<table>__rebuild`, reopened as it is when `progress`
  * says a paused rebuild got somewhere, created fresh with the current fields otherwise, after
- * dropping what an interrupted rebuild may have left. Each `transact` is one write transaction on
- * the shadow and the checkpoints. `commit` swaps the shadow into place, sets the projections'
- * checkpoint and forgets `progress` inside one write transaction, `abort` drops the shadow and
- * forgets `progress`, `pause` leaves both. All three release the connection.
+ * dropping what an interrupted rebuild may have left. Opening is one write transaction that also
+ * claims the next rebuild generation (see `rebuildFencing`); every later step is one more write
+ * transaction that goes ahead only while that generation is still the latest. Each `transact`
+ * writes the shadow and the checkpoints; `commit` swaps the shadow into place, sets the
+ * projections' checkpoint and forgets `progress`; `abort` drops the shadow and forgets `progress`,
+ * or does nothing when another rebuild took over; `pause` leaves everything. SQLite's single
+ * writer is the lock. All three release the connection.
  */
 export const rebuildSqliteReadModel: RebuildSqliteReadModelFunction = async <
   Row extends object,
@@ -160,19 +165,33 @@ export const rebuildSqliteReadModel: RebuildSqliteReadModelFunction = async <
   const table = tableNameFor({ prefix: tablePrefix, readModel: name });
   const { shadow } = rebuildTablesFor(table);
   const columns = columnsOf({ readModel: name, fields, dialect: sqliteDialect });
+  const fencing = rebuildFencing(name);
+  const checkpointsIn = (executor: SqlExecutor) =>
+    createSqliteCheckpointStore({ db: executor, table: checkpoints });
   await db.run(checkpointTableStatement(checkpoints), []);
-  const checkpointStore = createSqliteCheckpointStore({ db, table: checkpoints });
-  const saved = await checkpointStore.get(progress);
-  const resumed = saved > 0 && (await tableExists(db, shadow));
-  if (!resumed) {
-    for (const statement of shadowTableStatements({ table, columns })) await db.run(statement, []);
-    await checkpointStore.remove(progress);
-  }
-  logger.info(resumed ? "read model rebuild resumed" : "read model rebuild started", {
+  const opened = await db.write(async (tx) => {
+    const store = checkpointsIn(tx);
+    const generation = (await store.get(fencing.generation)) + 1;
+    await store.set(fencing.generation, generation);
+    const saved = await store.get(progress);
+    const resumed = saved > 0 && (await tableExists(tx, shadow));
+    if (!resumed) {
+      for (const statement of shadowTableStatements({ table, columns }))
+        await tx.run(statement, []);
+      await store.remove(progress);
+    }
+    return { generation, resumed, position: resumed ? saved : 0 };
+  });
+  logger.info(opened.resumed ? "read model rebuild resumed" : "read model rebuild started", {
     readModel: name,
     table,
     shadow,
   });
+  const current = async (executor: SqlExecutor): Promise<boolean> =>
+    (await checkpointsIn(executor).get(fencing.generation)) === opened.generation;
+  const fenced = async (executor: SqlExecutor): Promise<void> => {
+    if (!(await current(executor))) throw new RebuildSupersededError(name);
+  };
   const shadowTable = (executor: SqlExecutor) =>
     createSqlTable<Row>({
       readModel: name,
@@ -182,8 +201,8 @@ export const rebuildSqliteReadModel: RebuildSqliteReadModelFunction = async <
       executor,
     });
   return {
-    resumed,
-    position: resumed ? saved : 0,
+    resumed: opened.resumed,
+    position: opened.position,
     table: shadowTable(db),
     client: createSqlReadClient<Row, Raw>({
       readModel: name,
@@ -192,10 +211,11 @@ export const rebuildSqliteReadModel: RebuildSqliteReadModelFunction = async <
       executor: db,
       raw,
     }),
-    checkpointStore,
+    checkpointStore: checkpointsIn(db),
     transact: (work) =>
-      db.write((tx) =>
-        work({
+      db.write(async (tx) => {
+        await fenced(tx);
+        return work({
           table: shadowTable(tx),
           client: createSqlReadClient<Row, unknown>({
             readModel: name,
@@ -204,26 +224,35 @@ export const rebuildSqliteReadModel: RebuildSqliteReadModelFunction = async <
             executor: tx,
             raw: tx.raw,
           }),
-          checkpointStore: createSqliteCheckpointStore({ db: tx, table: checkpoints }),
-        }),
-      ),
+          checkpointStore: checkpointsIn(tx),
+        });
+      }),
     commit: async ({ subscriber, position }) => {
-      const live = await tableExists(db, table);
       await db.write(async (tx) => {
+        await fenced(tx);
+        const live = await tableExists(tx, table);
         for (const statement of swapTableStatements({ table, columns, live })) {
           await tx.run(statement, []);
         }
-        const committed = createSqliteCheckpointStore({ db: tx, table: checkpoints });
-        await committed.set(subscriber, position);
-        await committed.remove(progress);
+        const store = checkpointsIn(tx);
+        await store.set(subscriber, position);
+        await store.remove(progress);
       });
       logger.info("read model rebuild committed", { readModel: name, table });
       await close();
     },
     abort: async () => {
-      for (const statement of dropShadowTableStatements(table)) await db.run(statement, []);
-      await checkpointStore.remove(progress);
-      logger.info("read model rebuild aborted", { readModel: name, table });
+      const aborted = await db.write(async (tx) => {
+        if (!(await current(tx))) return false;
+        for (const statement of dropShadowTableStatements(table)) await tx.run(statement, []);
+        const store = checkpointsIn(tx);
+        await store.remove(progress);
+        return true;
+      });
+      logger.info(aborted ? "read model rebuild aborted" : "read model rebuild superseded", {
+        readModel: name,
+        table,
+      });
       await close();
     },
     pause: async () => {

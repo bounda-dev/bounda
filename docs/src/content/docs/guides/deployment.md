@@ -166,6 +166,12 @@ reached, kept in the read model's database as a checkpoint named
 projections' code, so a rebuild left behind by different code starts again from a fresh table
 instead of mixing rows projected by two versions.
 
+Two rebuilds of the same read model never write at the same time. The one started last takes
+over: it waits for a batch the other has in flight, resumes from where that one got when the code
+is the same, and the older rebuild stops at its next step with `RebuildSupersededError`
+(`REBUILD_SUPERSEDED`) without writing anything or dropping the table it no longer owns. A rebuild
+whose process died needs no clean-up either: the next one simply takes over.
+
 Two things the rebuild cannot do for you. A projection that writes through `client` with SQL
 naming the table by hand keeps writing to the live table, not to the fresh one — write projections
 through `table`. And a read model with millions of events takes as long as projecting them takes;

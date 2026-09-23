@@ -6,6 +6,7 @@ import {
   ConfigurationError,
   DomainError,
   NotFoundError,
+  RebuildSupersededError,
   ValidationError,
 } from "./errors.ts";
 
@@ -51,6 +52,13 @@ describe("errors", () => {
     expect(error.code).toBe("CHAIN_DEPTH_EXCEEDED");
     expect(error.depth).toBe(26);
     expect(error.maxDepth).toBe(25);
+  });
+
+  it("name the read model whose rebuild was taken over", () => {
+    const error = new RebuildSupersededError("orderSummary");
+    expect(error.code).toBe("REBUILD_SUPERSEDED");
+    expect(error.readModel).toBe("orderSummary");
+    expect(error.message).toContain('"orderSummary"');
   });
 
   it("mark missing resources", () => {

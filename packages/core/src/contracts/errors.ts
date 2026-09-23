@@ -100,3 +100,20 @@ export class ChainDepthExceededError extends BoundaError {
     this.maxDepth = maxDepth;
   }
 }
+
+/**
+ * Thrown by a rebuild that another rebuild of the same read model has taken over. Only the most
+ * recent rebuild may write: the older one stops at its next step, leaving the shadow table and its
+ * progress to the one that superseded it.
+ */
+export class RebuildSupersededError extends BoundaError {
+  readonly readModel: string;
+
+  constructor(readModel: string) {
+    super(
+      "REBUILD_SUPERSEDED",
+      `Another rebuild of read model "${readModel}" took over; this one stopped without writing`,
+    );
+    this.readModel = readModel;
+  }
+}

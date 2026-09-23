@@ -139,6 +139,43 @@ describe("read model transactions in a Durable Object", () => {
     });
   });
 
+  it("lets a newer rebuild take over only once the older one's batch in flight has committed", async () => {
+    await runInDurableObject(fresh(), async (_instance, state) => {
+      const adapter = durableObjectAdapter({ storage: state.storage, options: {} });
+      const progress = "rebuild:orderSummary:1";
+      const open = () =>
+        adapter.rebuildReadModel<Row>({
+          name: "orderSummary",
+          fields: contractFields,
+          logger: silentLogger,
+          progress,
+        });
+      const older = await open();
+      let release = (): void => {};
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const batch = older.transact(async ({ table, checkpointStore }) => {
+        await table.upsert(order("1"));
+        await checkpointStore.set(progress, 1);
+        await held;
+      });
+      const opening = open();
+      for (let turn = 0; turn < 20; turn += 1) await Promise.resolve();
+      release();
+      await batch;
+      const newer = await opening;
+      expect({ resumed: newer.resumed, position: newer.position }).toEqual({
+        resumed: true,
+        position: 1,
+      });
+      expect(await newer.table.findMany()).toEqual([order("1")]);
+      await expect(older.transact(async () => {})).rejects.toMatchObject({
+        code: "REBUILD_SUPERSEDED",
+      });
+    });
+  });
+
   it("completes a batch while a timer is pending outside it", async () => {
     await runInDurableObject(fresh(), async (_instance, state) => {
       const ports = await openPorts(state.storage);

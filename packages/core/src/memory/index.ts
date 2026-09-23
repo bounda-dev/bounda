@@ -8,6 +8,8 @@ import type {
 } from "../adapter/adapter.ts";
 import type { CheckpointStore } from "../adapter/ports/checkpoint-store.ts";
 import type { Table } from "../adapter/ports/table.ts";
+import { rebuildFencing } from "../adapter/rebuild-fencing.ts";
+import { RebuildSupersededError } from "../contracts/errors.ts";
 import type { FieldsRecord } from "../modules/view.ts";
 import { createMemoryCheckpointStore } from "./checkpoint-store.ts";
 import { createMemoryDeadLetterStore } from "./dead-letter-store.ts";
@@ -135,38 +137,63 @@ export const memory: MemoryFunction = (options = {}) => {
       fields,
       progress,
     }: CreateReadModelRebuildArgs): Promise<ReadModelRebuild<Row>> => {
-      const saved = await checkpointStore.get(progress);
-      const left = saved > 0 ? shadows.get(name) : undefined;
-      if (left === undefined) await checkpointStore.remove(progress);
-      const shadow = left ?? createMemoryTable({ name, fields });
-      shadows.set(name, shadow);
+      const fencing = rebuildFencing(name);
+      const holding = async <T>(lock: string, work: () => Promise<T>): Promise<T> => {
+        const release = await locks.acquire(lock, true);
+        try {
+          return await work();
+        } finally {
+          release?.();
+        }
+      };
+      const opened = await holding(fencing.lock, async () => {
+        const generation = (await checkpointStore.get(fencing.generation)) + 1;
+        await checkpointStore.set(fencing.generation, generation);
+        const saved = await checkpointStore.get(progress);
+        const left = saved > 0 ? shadows.get(name) : undefined;
+        if (left === undefined) await checkpointStore.remove(progress);
+        const shadow = left ?? createMemoryTable({ name, fields });
+        shadows.set(name, shadow);
+        const resumed = left !== undefined;
+        return { generation, shadow, resumed, position: resumed ? saved : 0 };
+      });
+      const { generation, shadow } = opened;
+      const current = async (): Promise<boolean> =>
+        (await checkpointStore.get(fencing.generation)) === generation;
+      const fenced = <T>(work: () => Promise<T>): Promise<T> =>
+        holding(fencing.lock, async () => {
+          if (!(await current())) throw new RebuildSupersededError(name);
+          return work();
+        });
       const table = shadow as unknown as MemoryTable<Row>;
       const client = createMemoryReadClient({ name, table });
       return {
         table,
         client,
-        resumed: left !== undefined,
-        position: left === undefined ? 0 : saved,
+        resumed: opened.resumed,
+        position: opened.position,
         checkpointStore,
         transact: (work) =>
-          inTransaction(shadow, (store) => work({ table, client, checkpointStore: store })),
-        commit: async ({ subscriber, position }) => {
-          const release = await locks.acquire(subscriber, true);
-          try {
+          fenced(() =>
+            inTransaction(shadow, (store) => work({ table, client, checkpointStore: store })),
+          ),
+        commit: ({ subscriber, position }) =>
+          holding(subscriber, () =>
+            fenced(async () => {
+              shadows.delete(name);
+              const target = tables.get(name);
+              if (target === undefined) tables.set(name, { current: shadow });
+              else target.current = shadow;
+              await checkpointStore.set(subscriber, position);
+              await checkpointStore.remove(progress);
+            }),
+          ),
+        abort: () =>
+          holding(fencing.lock, async () => {
+            if (!(await current())) return;
             shadows.delete(name);
-            const target = tables.get(name);
-            if (target === undefined) tables.set(name, { current: shadow });
-            else target.current = shadow;
-            await checkpointStore.set(subscriber, position);
             await checkpointStore.remove(progress);
-          } finally {
-            release?.();
-          }
-        },
-        abort: async () => {
-          shadows.delete(name);
-          await checkpointStore.remove(progress);
-        },
+          }),
         pause: async () => {},
       };
     },
