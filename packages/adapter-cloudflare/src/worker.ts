@@ -1,6 +1,7 @@
 import type { DispatchOptions, Logger } from "@bounda-dev/core";
 import type { BoundaStub } from "./client.ts";
 import { workersLogger } from "./logger.ts";
+import { unwrap } from "./outcome.ts";
 
 export interface TenantOfFunction {
   (request: Request): string | Promise<string>;
@@ -108,10 +109,11 @@ export const createWorker: CreateWorkerFunction = ({
       namespace.idFromName(await tenantOf(request)),
     ) as unknown as BoundaStub;
     try {
-      const result =
+      const result = await unwrap(
         target.kind === "commands"
-          ? await stub.command(target.name, payload, optionsOf(url))
-          : await stub.query(target.name, payload);
+          ? stub.command(target.name, payload, optionsOf(url))
+          : stub.query(target.name, payload),
+      );
       return json(result ?? null);
     } catch (error) {
       const code = error instanceof Error ? Reflect.get(error, "code") : undefined;

@@ -18,6 +18,7 @@ export type {
 } from "./definition.ts";
 export { cloudflare, DEFAULT_TABLE_PREFIX, isCloudflareDefinition } from "./definition.ts";
 export { workersLogger } from "./logger.ts";
+export type { RpcOutcome, RpcRefusal } from "./outcome.ts";
 export type { CreateDurableSqlDatabaseFunction, DurableSqlStorage } from "./sql-database.ts";
 export { createDurableSqlDatabase } from "./sql-database.ts";
 export type { NextWakeArgs, NextWakeFunction } from "./wake.ts";

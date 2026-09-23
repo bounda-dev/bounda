@@ -87,14 +87,21 @@ describe("a Bounda Durable Object", () => {
     );
     expect(refused).toMatchObject({ name: "DomainError", message: "Order already placed" });
     expect(refused.code).toBe("DOMAIN_ERROR");
-    expect(await rejection(stub.command("nope"))).toMatchObject({
-      message: 'Unknown command "nope"',
-      code: "NOT_FOUND",
+    expect(await stub.command("nope")).toEqual({
+      ok: false,
+      refusal: { name: "NotFoundError", message: 'Unknown command "nope"', code: "NOT_FOUND" },
     });
-    expect(await rejection(stub.query("nope"))).toMatchObject({
+    const unknownQuery = Reflect.get(store.queries, "nope") as (
+      payload: unknown,
+    ) => Promise<unknown>;
+    expect(await rejection(unknownQuery({}))).toMatchObject({
+      name: "NotFoundError",
       message: 'Unknown query "nope"',
       code: "NOT_FOUND",
     });
+    const invalid = await rejection(store.commands.placeOrder({ orderId: "o-9" } as never));
+    expect(invalid).toMatchObject({ name: "ValidationError", code: "VALIDATION_FAILED" });
+    expect(Reflect.get(invalid, "issues")).toEqual(expect.arrayContaining([expect.any(Object)]));
   });
 
   it("dead-letters a failing policy and lets it be discarded", async () => {
