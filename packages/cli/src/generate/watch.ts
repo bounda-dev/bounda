@@ -38,7 +38,8 @@ const isGenerated = (fileName: string | Buffer | null): boolean =>
 
 /**
  * Watches the application directory and regenerates after each burst of changes to user modules.
- * Changes under `+types` are the generator's own and are ignored. Resolves when the signal aborts.
+ * Changes under `+types` are the generator's own and are ignored. The watcher is listening by the
+ * time the call returns, so a change made right after it is seen. Resolves when the signal aborts.
  */
 export const watchProject: WatchProjectFunction = async ({
   root,
@@ -67,4 +68,55 @@ export const watchProject: WatchProjectFunction = async ({
     if (timer !== undefined) clearTimeout(timer);
     await running;
   }
+};
+
+export interface WatchFromFirstRunArgs extends WatchProjectArgs {
+  /**
+   * Started once the watcher is listening. Resolves to whether watching goes on; a rejection ends
+   * the watch and is rethrown.
+   */
+  readonly firstRun: () => Promise<boolean>;
+  /**
+   * Called once the first run has resolved to go on.
+   */
+  readonly onWatching: () => void;
+}
+
+export interface WatchFromFirstRunFunction {
+  (args: WatchFromFirstRunArgs): Promise<void>;
+}
+
+/**
+ * Starts watching, then makes the first run, so a change made while that run is going is not lost:
+ * it waits for the run to finish and then goes to `onChange`. Ends at once, dropping a change held
+ * back, when the first run does not go on, and otherwise when the signal aborts.
+ */
+export const watchFromFirstRun: WatchFromFirstRunFunction = async ({
+  firstRun,
+  onWatching,
+  onChange,
+  signal,
+  ...project
+}) => {
+  const stopWatching = new AbortController();
+  const watchSignal = AbortSignal.any([signal, stopWatching.signal]);
+  const firstRunDone = Promise.withResolvers<void>();
+  const watching = watchProject({
+    ...project,
+    signal: watchSignal,
+    onChange: async () => {
+      await firstRunDone.promise;
+      if (!watchSignal.aborted) await onChange();
+    },
+  });
+  watching.catch(() => undefined);
+  let goesOn = false;
+  try {
+    goesOn = await firstRun();
+  } finally {
+    if (!goesOn) stopWatching.abort();
+    firstRunDone.resolve();
+  }
+  if (goesOn) onWatching();
+  await watching;
 };

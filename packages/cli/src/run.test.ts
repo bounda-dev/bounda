@@ -1,9 +1,10 @@
-import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
+import { chmod, cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createApp, silentLogger } from "@bounda-dev/core";
 import { loadProject } from "@bounda-dev/core/node";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import type { registry as fixtureRegistry } from "./fixtures/rebuild-project/.bounda/registry.ts";
 import { EXIT_CONVENTION, EXIT_FAILURE, EXIT_OK, runCli } from "./run.ts";
 
@@ -34,9 +35,15 @@ const project = async (): Promise<string> => {
   return root;
 };
 
-const capture = () => {
+const capture = (onWrite: (text: string) => void = () => undefined) => {
   const chunks: string[] = [];
-  return { text: () => chunks.join(""), write: (text: string) => void chunks.push(text) };
+  return {
+    text: () => chunks.join(""),
+    write: (text: string) => {
+      chunks.push(text);
+      onWrite(text);
+    },
+  };
 };
 
 const cli = async (argv: readonly string[], cwd: string, signal?: AbortSignal) => {
@@ -154,13 +161,34 @@ describe("bounda generate", () => {
     expect(program.stdout).toContain("-v, --version");
   });
 
-  it("does not start watching when the first generation fails outright", async () => {
+  it("exits without watching when the first generation fails outright", async () => {
     const root = await project();
     await writeFile(join(root, ".bounda"), "not a directory\n");
     const result = await cli(["generate", "--no-infer", "--watch"], root);
     expect(result.code).toBe(EXIT_FAILURE);
+    expect(result.stderr).toMatch(/^error: .*\.bounda/);
     expect(result.stdout).not.toContain("watching");
   });
+
+  it("reports a missing application directory in watch mode without crashing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "bounda-cli-"));
+    temporary.push(root);
+    const controller = new AbortController();
+    const stderr = capture();
+    const running = runCli({
+      argv: ["generate", "--no-infer", "--watch"],
+      cwd: root,
+      stdout: capture(),
+      stderr,
+      signal: controller.signal,
+    });
+    await vi.waitFor(
+      () => expect(stderr.text()).toContain("the application directory does not exist"),
+      { timeout: 5_000 },
+    );
+    controller.abort();
+    expect(await running).not.toBe(EXIT_OK);
+  }, 15_000);
 
   it("reports a failure of a later generation while watching and goes on", async () => {
     const root = await project();
@@ -174,44 +202,58 @@ describe("bounda generate", () => {
       stderr,
       signal: controller.signal,
     });
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    await rm(join(root, ".bounda"), { recursive: true });
-    await writeFile(join(root, ".bounda"), "not a directory\n");
+    await vi.waitFor(() => expect(stdout.text()).toContain("watching app/ for changes"), {
+      timeout: 5_000,
+    });
+    const registry = join(root, ".bounda/registry.ts");
+    await chmod(registry, 0o444);
+    try {
+      await writeFile(
+        join(root, "app/domain/order/order-shipped.ts"),
+        "export const apply = () => ({});\n",
+      );
+      await vi.waitFor(() => expect(stderr.text()).toMatch(/^error: .*\.bounda\/registry\.ts/m), {
+        timeout: 5_000,
+      });
+    } finally {
+      await chmod(registry, 0o644);
+    }
     await writeFile(
-      join(root, "app/domain/order/order-shipped.ts"),
+      join(root, "app/domain/order/order-returned.ts"),
       "export const apply = () => ({});\n",
     );
-    const deadline = Date.now() + 5_000;
-    while (Date.now() < deadline && !stderr.text().includes("error: ")) {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
+    await vi.waitFor(() => stat(join(root, "app/domain/order/+types/order-returned.ts")), {
+      timeout: 5_000,
+    });
     controller.abort();
     await running;
-    expect(stderr.text()).toMatch(/error: /);
-    expect(stdout.text()).toContain("watching app/ for changes");
-  });
+  }, 20_000);
 
-  it("regenerates on changes in --watch mode until aborted", async () => {
+  it("regenerates a module saved while the first generation is running, until aborted", async () => {
     const root = await project();
     const controller = new AbortController();
-    const running = cli(["generate", "--no-infer", "--watch"], root, controller.signal);
-    const generated = join(root, "app/domain/order/+types/order-shipped.ts");
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    await writeFile(
-      join(root, "app/domain/order/order-shipped.ts"),
-      'import type { Event } from "./+types/order-shipped";\n\nexport const apply = ({ state }: Event.ApplyArgs) => state;\n',
-    );
-    const deadline = Date.now() + 5_000;
-    while (Date.now() < deadline) {
-      if (await stat(generated).catch(() => null)) break;
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
+    let saved = false;
+    const stdout = capture(() => {
+      if (saved) return;
+      saved = true;
+      writeFileSync(
+        join(root, "app/domain/order/order-shipped.ts"),
+        'import type { Event } from "./+types/order-shipped";\n\nexport const apply = ({ state }: Event.ApplyArgs) => state;\n',
+      );
+    });
+    const running = runCli({
+      argv: ["generate", "--no-infer", "--watch"],
+      cwd: root,
+      stdout,
+      stderr: capture(),
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => stat(join(root, "app/domain/order/+types/order-shipped.ts")), {
+      timeout: 5_000,
+    });
     controller.abort();
-    const result = await running;
-    expect(result.code).toBe(EXIT_OK);
-    expect(result.stdout).toContain("watching app/ for changes");
-    expect(await stat(generated)).toBeTruthy();
-  });
+    expect(await running).toBe(EXIT_OK);
+  }, 15_000);
 });
 
 describe("bounda rebuild", () => {
