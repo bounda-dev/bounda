@@ -77,19 +77,25 @@ adapter's concurrency work is for. Handler claims are single `INSERT … ON CONF
 due scheduled commands are taken `FOR UPDATE SKIP LOCKED`, so any number of instances can run the
 worker role and each policy or process handler and each due command runs on exactly one of them.
 
-Projections are the exception: every instance applies every batch, idempotently, so a second
-worker does not make a read model catch up faster. More instances buy availability for
-projections and throughput for reactions. [How Bounda runs](/guides/how-it-runs/) explains why,
-and what the ceiling of one store is.
+Projections are applied exactly once as well. Each batch runs in one transaction that holds an
+advisory lock named after its read model, writes the rows and advances the checkpoint, so one
+instance at a time applies a read model and a batch is never applied twice or over a newer one.
+An instance that finds a read model locked skips it, which spreads different read models over the
+workers; a single read model is not made faster by more of them, since its events apply in order.
+[How Bounda runs](/guides/how-it-runs/) explains why, and what the ceiling of one store is.
 
 Appends take a transaction-scoped advisory lock, so positions in the global stream are handed out
 in commit order and a reader never sees a gap that a later commit would fill. That bounds write
 throughput to what one connection can commit — thousands of events per second.
 
-Checkpoints advance with a compare-and-set from the position a pass read. A pass that finds its
-subscriber's checkpoint moved by someone else, another instance or an operator repositioning it,
-leaves that position alone and continues from there on the next pass, so nothing written from
-outside is ever overwritten by work that was already in flight.
+Checkpoints advance with a compare-and-set from the position a pass read, inside the batch's
+transaction for projections. A pass that finds its subscriber's checkpoint moved by someone else,
+an operator repositioning it or a rebuild, leaves that position alone and continues from there on
+the next pass; for a projection the batch it had applied is rolled back with it, so nothing
+written from outside is ever overwritten by work that was already in flight.
+
+A read model configured on a database of its own, under `readModels` in the config, keeps its
+checkpoint in that database, next to its rows, because a transaction cannot span two databases.
 
 Nothing needs to be told about the others: instances coordinate through the database.
 
@@ -136,12 +142,13 @@ without taking the read model offline:
 1. It creates a fresh table with the view's current fields, next to the live one.
 2. It runs the projections over the whole stream into that table. Queries keep reading the live
    table meanwhile, and the worker keeps projecting new events into it.
-3. When the fresh table has caught up, it takes the live table's place in a single transaction,
-   and the read model's checkpoint is moved to where the rebuild stopped.
+3. When the fresh table has caught up, it takes the live table's place and the read model's
+   checkpoint is set to where the rebuild stopped, in one transaction that waits for the
+   projection lock, so no batch is halfway through when it happens.
 
-A worker that got further than that meanwhile finds its checkpoint moved back and projects the
-difference again, which is harmless because projections are idempotent. A projection that throws
-aborts the rebuild and leaves the live table as it was.
+Whatever the worker had applied to the old table goes with it, and the worker carries on from the
+rebuilt position, whether it was ahead of it or behind: every event reaches the new table exactly
+once. A projection that throws aborts the rebuild and leaves the live table as it was.
 
 ```bash
 bounda rebuild orderSummary
@@ -152,12 +159,12 @@ the app refuses to start against a table whose columns no longer match the view.
 swap and the deploy, the old worker's projection for that read model may fail against the new
 columns; its checkpoint holds, and it catches up as soon as the new code runs. Nothing is lost.
 
-A rebuild that stops halfway, because the machine died or the connection dropped, resumes where
-it was the next time you run it: the position the fresh table reached is saved after every batch,
-as a checkpoint named `rebuild:<read model>:<fingerprint>`. The fingerprint is a digest of the
-view's fields and the projections' code, so a rebuild left behind by different code starts again
-from a fresh table instead of mixing rows projected by two versions. At worst the last batch
-before the stop is projected twice.
+A rebuild that stops halfway, because the machine died or the connection dropped, resumes exactly
+where it was the next time you run it: every batch commits together with the position it
+reached, kept in the read model's database as a checkpoint named
+`rebuild:<read model>:<fingerprint>`. The fingerprint is a digest of the view's fields and the
+projections' code, so a rebuild left behind by different code starts again from a fresh table
+instead of mixing rows projected by two versions.
 
 Two things the rebuild cannot do for you. A projection that writes through `client` with SQL
 naming the table by hand keeps writing to the live table, not to the fresh one — write projections
@@ -178,7 +185,12 @@ per pass.
 
 ```ts
 runtime: {
-  dispatcher: { pollInterval: "50ms", idleInterval: "1m", batchSize: 500 },
+  dispatcher: {
+    pollInterval: "50ms",
+    idleInterval: "1m",
+    batchSize: 500,
+    projectionBatchTime: "500ms",
+  },
 }
 ```
 
@@ -197,6 +209,11 @@ appends without waiting for the timer.
 
 A shorter `pollInterval` cuts the delay before a policy reacts where polling is the mechanism and
 costs queries; a larger batch moves more events per pass and holds a claim for longer.
+
+A projection batch keeps its transaction open for at most `projectionBatchTime`, 250 ms by
+default: past it, the batch commits the events it got through and the rest are delivered next.
+On SQLite that transaction holds the database's single writer, so commands wait for it; the limit
+keeps that wait short however many events a batch carries. Rebuilds honour it too.
 
 ## Observability
 

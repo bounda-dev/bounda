@@ -154,7 +154,10 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   run with at-least-once delivery: make them idempotent or let the runtime's inbox do it (it does
   by default, per event).
 - Projections write through `table` (`upsert`, `insert`, `update`, `delete`, `findOne`,
-  `findMany`, `count`); every write is idempotent, so redelivery is safe.
+  `findMany`, `count`). Each batch is one transaction with the read model's
+  checkpoint, so every event is applied exactly once and reading a row to update it
+  (`count + 1`) is safe. That holds only for the read model: a projection must not call HTTP,
+  other databases or timers; that work goes in a policy.
 - Queries compose: a handler receives `queries` and may call other queries.
 - Delayed commands: `commands.remindCustomer(payload, { delay: "24h" })`. A duration from the
   environment is a `string`; wrap it: `{ delay: asDuration(process.env.DELAY ?? "24h") }`.

@@ -86,6 +86,11 @@ export const repository: Query.RepositoryFunction = ({ customerId, client }) =>
 Placeholders are the driver's: `?` on SQLite, `$1`, `$2` on PostgreSQL. A query written in SQL
 is tied to one of them; `table` (`findMany`, `count`, ...) works on both.
 
+Projections receive `client` too. There it belongs to the batch's transaction, and so does
+`client.raw`: the Postgres.js `TransactionSql`, the libSQL `Transaction`, or the Durable Object's
+`sql`. SQL written through it commits and rolls back with the rest of the batch. A connection the
+projection opens by other means does not, and can even wait forever on a row the batch has locked.
+
 ## Which one to deploy
 
 SQLite is a single writer: right for one process, and for tests. PostgreSQL is what lets
