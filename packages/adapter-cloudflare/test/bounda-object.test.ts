@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { configForObject } from "../src/bounda-object.ts";
 import { connect } from "../src/client.ts";
 import { cloudflare } from "../src/definition.ts";
-import type { registry } from "./app.ts";
+import type { quietRegistry, registry } from "./app.ts";
 import { clock } from "./clock.ts";
 
 const fresh = () => env.STORE.get(env.STORE.newUniqueId());
@@ -47,6 +47,15 @@ describe("a Bounda Durable Object", () => {
     expect(paid).toMatchObject({ scheduled: false, version: 2 });
     await runDurableObjectAlarm(stub);
     expect(await store.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "archived" });
+    expect((await store.getLag()).maxLag).toBe(0);
+    expect(await alarmOf(stub)).toBeNull();
+  });
+
+  it("arms no alarm after a command when the app has no policies or processes", async () => {
+    const stub = env.QUIET_STORE.get(env.QUIET_STORE.newUniqueId());
+    const store = connect<typeof quietRegistry>(stub);
+    await store.commands.placeOrder({ orderId: "o-1", total: 42, customer: "ada" });
+    expect(await store.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "placed" });
     expect((await store.getLag()).maxLag).toBe(0);
     expect(await alarmOf(stub)).toBeNull();
   });

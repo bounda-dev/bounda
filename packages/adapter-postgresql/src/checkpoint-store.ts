@@ -42,6 +42,7 @@ export const createPostgresqlCheckpointStore: CreatePostgresqlCheckpointStoreFun
           );
     return rows.length === 1;
   },
+  remove: (subscriber) => db.run(`DELETE FROM ${table} WHERE "subscriber" = $1`, [subscriber]),
   list: async () =>
     (await db.all(`SELECT "subscriber", "position" FROM ${table} ORDER BY "subscriber"`, [])).map(
       (row) => ({ subscriber: String(row.subscriber), position: Number(row.position) }),

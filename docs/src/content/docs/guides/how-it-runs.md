@@ -16,8 +16,8 @@ Every event a store holds has a `position` in a **single global order**, whateve
 belongs to. Commands append to an aggregate's stream and the store gives each event the next
 global position at commit. Everything on the read side, projections, the policy runner and the
 process runner, is a **subscriber** of that log: it keeps one checkpoint, asks the store for the
-events after it, and moves the checkpoint once a batch is done. That is the whole delivery
-mechanism, and it is what a Durable Object, a PostgreSQL schema or a SQLite file each hold: a
+events after it, and moves the checkpoint once a batch is done. The policy runner and the process
+runner exist only when the app has a policy or a process. That is the whole delivery mechanism, and it is what a Durable Object, a PostgreSQL schema or a SQLite file each hold: a
 complete store.
 
 Handlers are declared per aggregate: a policy lives under `app/domain/order/policies/`, and its

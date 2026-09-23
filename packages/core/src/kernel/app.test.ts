@@ -4,6 +4,7 @@ import type { Table } from "../adapter/ports/table.ts";
 import { createFixedClock } from "../contracts/clock.ts";
 import { ConfigurationError, DomainError } from "../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../contracts/ids.ts";
+import { silentLogger } from "../contracts/logger.ts";
 import { memory } from "../memory/index.ts";
 import type { PayloadArgs } from "../modules/payload.ts";
 import type { ProcessConfigArgs } from "../modules/process.ts";
@@ -369,5 +370,112 @@ describe("createApp", () => {
     expect((await app.getLag()).maxLag).toBe(0);
     expect(Date.now() - started).toBeLessThan(2_000);
     await app.stop();
+  });
+});
+
+const quiet = {
+  aggregates: { order: orderAggregateEntry() },
+  readModels: registry.readModels,
+} as const satisfies Registry;
+
+const open = <R extends Registry>(app: R, storage: Adapter) =>
+  createApp({
+    registry: app,
+    config: { storage, commands: { placeOrder: { notifier: { use: "memory" } } } },
+    ids: createSequentialIdGenerator(),
+    clock: createFixedClock(),
+  });
+
+const archived = async (storage: Adapter): Promise<readonly string[]> => {
+  const { eventStore } = await storage.createStorage({ logger: silentLogger });
+  const events = await eventStore.readAll({ afterPosition: 0, limit: 100 });
+  return events.filter((event) => event.type === "OrderArchived").map((event) => event.aggregateId);
+};
+
+describe("policies and processes follow the stream from when they are deployed", () => {
+  it("gives an app without policies or processes nothing to wake up for", async () => {
+    const storage = memory();
+    const app = await open(quiet, storage);
+    await app.commands.placeOrder({ orderId: "o-1", total: 42 });
+    await app.catchUpReadModels();
+
+    const lag = await app.getLag();
+    expect(lag.subscribers.map((subscriber) => subscriber.subscriber)).toEqual([
+      "projection:orderSummary",
+    ]);
+    expect(lag.maxLag).toBe(0);
+    const { checkpointStore } = await storage.createStorage({ logger: silentLogger });
+    expect((await checkpointStore.list()).map((checkpoint) => checkpoint.subscriber)).toEqual([
+      "projection:orderSummary",
+    ]);
+    await app.stop();
+  });
+
+  it("forgets the checkpoints of the policies and processes an app no longer has", async () => {
+    const storage = memory();
+    const { checkpointStore } = await storage.createStorage({ logger: silentLogger });
+    await checkpointStore.set("policies", 3);
+    await checkpointStore.set("processes", 3);
+    await checkpointStore.set("projection:orderSummary", 3);
+
+    const app = await open(quiet, storage);
+    expect(await checkpointStore.list()).toEqual([
+      { subscriber: "projection:orderSummary", position: 3 },
+    ]);
+    await app.stop();
+  });
+
+  it("starts a first policy and process at the head, not at the history before them", async () => {
+    const storage = memory();
+    const before = await open(quiet, storage);
+    await before.commands.placeOrder({ orderId: "o-1", total: 42 });
+    await before.commands.payOrder({ orderId: "o-1", method: "card" });
+    await before.stop();
+
+    const after = await open(registry, storage);
+    const { checkpointStore } = await storage.createStorage({ logger: silentLogger });
+    expect(await checkpointStore.get("policies")).toBe(2);
+    expect(await checkpointStore.get("processes")).toBe(2);
+    await after.commands.placeOrder({ orderId: "o-2", total: 7 });
+    await after.commands.payOrder({ orderId: "o-2", method: "card" });
+    await after.processUntilIdle();
+
+    expect(await archived(storage)).toEqual(["o-2"]);
+    expect(await after.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "paid" });
+    await after.stop();
+  });
+
+  it("keeps a checkpoint a policy already has, however far behind", async () => {
+    const storage = memory();
+    const first = await open(registry, storage);
+    await first.commands.placeOrder({ orderId: "o-1", total: 42 });
+    await first.commands.payOrder({ orderId: "o-1", method: "card" });
+    await first.stop();
+
+    const second = await open(registry, storage);
+    await second.processUntilIdle();
+    expect(await archived(storage)).toEqual(["o-1"]);
+    await second.stop();
+  });
+
+  it("leaves a checkpoint halfway through the log where it is", async () => {
+    const storage = memory();
+    const first = await open(registry, storage);
+    await first.commands.placeOrder({ orderId: "o-1", total: 42 });
+    await first.commands.payOrder({ orderId: "o-1", method: "card" });
+    await first.processUntilIdle();
+    await first.commands.placeOrder({ orderId: "o-2", total: 7 });
+    await first.commands.payOrder({ orderId: "o-2", method: "card" });
+    await first.stop();
+    const { checkpointStore, eventStore } = await storage.createStorage({ logger: silentLogger });
+    const halfway = await checkpointStore.get("policies");
+    expect(halfway).toBeGreaterThan(0);
+    expect(halfway).toBeLessThan(await eventStore.lastPosition());
+
+    const second = await open(registry, storage);
+    expect(await checkpointStore.get("policies")).toBe(halfway);
+    await second.processUntilIdle();
+    expect(await archived(storage)).toEqual(["o-1", "o-2"]);
+    await second.stop();
   });
 });

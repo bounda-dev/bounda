@@ -159,3 +159,11 @@ export const registry = {
     },
   },
 } satisfies Registry;
+
+/**
+ * The order app without its policy or processes: commands and a read model only.
+ */
+export const quietRegistry = {
+  ...registry,
+  aggregates: { order: { ...registry.aggregates.order, policies: {}, processes: {} } },
+} satisfies Registry;

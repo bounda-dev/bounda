@@ -222,7 +222,8 @@ export const loader = ({ context }: Route.LoaderArgs) => context.get(bounda).que
 - Storage: `sqlite({ path })`, `sqlite({ memory: true })` or `postgresql({ url })` in
   `bounda.config.ts`; read models can point at a different adapter with `readModels`.
 - A store is one ordered log with one writer at a time; projections, policies and processes read
-  it by checkpoint. Do not try to scale by splitting the log or adding a broker inside the app:
+  it by checkpoint. A policy or process reacts only to events stored after it is deployed, never
+  to earlier history; an app without policies or processes runs no runner for them. Do not try to scale by splitting the log or adding a broker inside the app:
   the way out is one store per tenant (`postgresql({ schema })`). Events that must reach other
   systems go through a publisher subscriber, not built yet.
 - With PostgreSQL the dispatcher is woken by `NOTIFY` on every append and polls only every
