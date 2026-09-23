@@ -57,6 +57,10 @@ export interface ReadModelTransaction<Row extends object = Record<string, unknow
   readonly checkpointStore: CheckpointStore;
 }
 
+/**
+ * What `ReadModelPorts.transact` runs: the work, the subscriber whose lock it holds, and whether
+ * to wait for that lock.
+ */
 export interface ReadModelTransactArgs<Row extends object, T> {
   /**
    * The subscriber the transaction is for; its name is the lock's.
@@ -120,11 +124,19 @@ export interface ReadModelRebuild<Row extends object = Record<string, unknown>, 
   pause(): Promise<void>;
 }
 
+/**
+ * Where `ReadModelRebuild.commit` leaves the read model: the projections' subscriber and the
+ * position the rebuilt table holds the events up to.
+ */
 export interface CommitReadModelRebuildArgs {
   readonly subscriber: string;
   readonly position: number;
 }
 
+/**
+ * What `Adapter.rebuildReadModel` opens a shadow table for: the read model, its current fields,
+ * and the checkpoint its progress is kept under.
+ */
 export interface CreateReadModelRebuildArgs extends CreateReadModelArgs {
   /**
    * The checkpoint the rebuild keeps its position under. A shadow left by a paused rebuild is

@@ -11,6 +11,9 @@ import { type ContractRow, contractFields } from "./table.contract.ts";
  */
 export type TransactionLocking = "per-subscriber" | "single-writer";
 
+/**
+ * What `readModelTransactionContract` needs: a fresh adapter per test and how it locks.
+ */
 export interface ReadModelTransactionContractArgs {
   /**
    * A fresh adapter per test, with nothing in it.
@@ -19,6 +22,9 @@ export interface ReadModelTransactionContractArgs {
   readonly locking: TransactionLocking;
 }
 
+/**
+ * Registers the read model transaction contract's tests for one adapter.
+ */
 export interface ReadModelTransactionContractFunction {
   (args: ReadModelTransactionContractArgs): void;
 }
