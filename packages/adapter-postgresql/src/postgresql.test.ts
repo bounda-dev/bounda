@@ -22,7 +22,7 @@ import {
 import { createTestApp } from "@bounda-dev/core/testing";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import type { Sql } from "postgres";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import {
   type PostgresqlAdapter,
   type PostgresqlOptions,
@@ -113,17 +113,11 @@ describe.skipIf(container === null)("postgresql adapter", () => {
 
   it("notifies listeners of every committed append with the last position", async () => {
     const storage = await openStorage();
+    const notifier = storage.notifier as NonNullable<typeof storage.notifier>;
     const heard: (number | undefined)[] = [];
-    let settle: () => void = () => undefined;
-    const settled = new Promise<void>((resolve) => {
-      settle = resolve;
+    const stop = await notifier.subscribe((position) => {
+      heard.push(position);
     });
-    const stop = await (storage.notifier as NonNullable<typeof storage.notifier>).subscribe(
-      (position) => {
-        heard.push(position);
-        if (heard.length === 2) settle();
-      },
-    );
     await storage.eventStore.append({
       aggregateType: "order",
       aggregateId: "n-1",
@@ -142,11 +136,12 @@ describe.skipIf(container === null)("postgresql adapter", () => {
       expectedVersion: 0,
       events: [pendingEvent({ aggregateId: "n-2", version: 1 })],
     });
-    await Promise.race([
-      settled,
-      new Promise((_, reject) => setTimeout(() => reject(new Error("no notification")), 5_000)),
-    ]);
-    expect(heard).toEqual([2, 3]);
+    await vi.waitFor(() => expect(heard).toEqual([2, 3]), { timeout: 5_000 });
+
+    const witnessed: (number | undefined)[] = [];
+    const stopWitness = await notifier.subscribe((position) => {
+      witnessed.push(position);
+    });
     await stop();
     await storage.eventStore.append({
       aggregateType: "order",
@@ -154,8 +149,9 @@ describe.skipIf(container === null)("postgresql adapter", () => {
       expectedVersion: 0,
       events: [pendingEvent({ aggregateId: "n-3", version: 1 })],
     });
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await vi.waitFor(() => expect(witnessed).toEqual([4]), { timeout: 5_000 });
     expect(heard).toEqual([2, 3]);
+    await stopWitness();
   });
 
   it("reports the stream version even when loading past its end", async () => {
