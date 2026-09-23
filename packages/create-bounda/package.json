@@ -43,7 +43,7 @@
     "commander": "catalog:"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "catalog:",
+    "@cloudflare/vitest-plugin": "catalog:",
     "@react-router/dev": "catalog:",
     "@react-router/node": "catalog:",
     "@react-router/serve": "catalog:",
@@ -52,6 +52,7 @@
     "@types/node": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
+    "@vitest/runner": "catalog:cloudflare",
     "isbot": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",

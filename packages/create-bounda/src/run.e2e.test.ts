@@ -78,14 +78,18 @@ type Framework = "node" | "react-router" | "cloudflare";
 const linkTools = async (project: string, framework: Framework): Promise<void> => {
   const modules = join(project, "node_modules");
   const own = join(repoRoot, "packages/create-bounda/node_modules");
-  for (const name of ["vitest", "typescript", "@types/node"]) {
-    await link(join(own, name), join(modules, name));
-  }
   if (framework === "cloudflare") {
-    for (const name of ["wrangler", "@cloudflare/workers-types"]) {
+    const adapter = join(repoRoot, "packages/adapter-cloudflare/node_modules");
+    for (const name of ["typescript", "@types/node", "wrangler"]) {
       await link(join(own, name), join(modules, name));
     }
+    for (const name of ["vitest", "@cloudflare/vitest-plugin"]) {
+      await link(join(adapter, name), join(modules, name));
+    }
     return;
+  }
+  for (const name of ["vitest", "typescript", "@types/node"]) {
+    await link(join(own, name), join(modules, name));
   }
   if (framework !== "react-router") return;
   for (const name of [
@@ -341,21 +345,19 @@ describe("a project created by create-bounda", () => {
       [join(project, "node_modules/@bounda-dev/cli/dist/cli.js"), "generate"],
       { cwd: project },
     );
+    const wrangler = join(project, "node_modules/wrangler/bin/wrangler.js");
+    await run(process.execPath, [wrangler, "types"], { cwd: project });
     await run(join(repoRoot, "node_modules/.bin/tsc"), ["--noEmit", "-p", "tsconfig.json"], {
       cwd: project,
     });
     const tested = await run(
       process.execPath,
-      [join(repoRoot, "node_modules/vitest/vitest.mjs"), "run", "--root", project],
+      [join(project, "node_modules/vitest/vitest.mjs"), "run", "--root", project],
       { cwd: project, env: { ...process.env, CI: "1" } },
     );
-    expect(`${tested.stdout}${tested.stderr}`).toMatch(/1 passed/);
+    expect(`${tested.stdout}${tested.stderr}`).toMatch(/7 passed/);
 
-    const server = await devServer(
-      project,
-      join(project, "node_modules/wrangler/bin/wrangler.js"),
-      ["--ip", "127.0.0.1"],
-    );
+    const server = await devServer(project, wrangler, ["--ip", "127.0.0.1"]);
     const post = (path: string, body: unknown) =>
       fetch(`${server.url}${path}`, {
         method: "POST",

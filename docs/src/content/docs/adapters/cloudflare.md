@@ -50,7 +50,9 @@ export default createWorker({ binding: "STORE" });
   "assets": { "directory": "./public" },
   "compatibility_date": "2026-09-21",
   "durable_objects": { "bindings": [{ "name": "STORE", "class_name": "Store" }] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Store"] }]
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Store"] }],
+  "observability": { "enabled": true },
+  "upload_source_maps": true
 }
 ```
 
@@ -126,9 +128,18 @@ again, because RPC drops an error's own properties on older dates. Check `error.
 
 ## Testing
 
-`tests/` runs the domain on the in-memory adapter with `createTestApp`, in Node, as in any Bounda
-project. The object itself is the same runtime on another SQLite; the adapter's own suite runs
-every storage contract inside `workerd`.
+The tests run inside `workerd` through
+[`@cloudflare/vitest-plugin`](https://developers.cloudflare.com/workers/testing/vitest-integration/),
+which needs Vitest 4.1, so a Cloudflare project pins that version. `tests/orders.test.ts` runs the
+domain on the in-memory adapter with `createTestApp`, as in any Bounda project;
+`tests/api.test.ts` sends requests to the Worker with `SELF.fetch` and reaches the real Durable
+Object and its SQLite. The adapter's own suite runs every storage contract inside `workerd` too.
+
+Types for the bindings come from `wrangler types`, which writes `worker-configuration.d.ts` from
+`wrangler.jsonc`; `dev`, `typecheck` and `check` run it, and `tsconfig.json` lists that file
+instead of `@cloudflare/workers-types`. There is no `prepare` script: every script runs
+`bounda generate` itself, and `npm install --package-lock-only` stays possible without
+`node_modules`.
 
 ## Limits worth knowing
 

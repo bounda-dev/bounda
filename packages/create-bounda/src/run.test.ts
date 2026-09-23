@@ -92,7 +92,7 @@ describe("create-bounda", () => {
       { exec },
     );
     expect(result.code).toBe(EXIT_OK);
-    expect(result.stdout).toContain("(16 files, cloudflare, cloudflare)");
+    expect(result.stdout).toContain("(17 files, cloudflare, cloudflare)");
     expect(result.stdout).toContain("next:\n  cd edge\n  npm install\n  npm test\n  npm run dev\n");
     expect(calls).toEqual([]);
   });

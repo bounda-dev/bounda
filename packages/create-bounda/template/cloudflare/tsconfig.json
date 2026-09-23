@@ -11,8 +11,16 @@
     "noEmit": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
-    "types": ["@cloudflare/workers-types"],
+    "types": ["./worker-configuration.d.ts", "@cloudflare/vitest-plugin/types"],
     "skipLibCheck": true
   },
-  "include": ["app", "src", "tests", ".bounda/**/*", "bounda.config.ts", "vitest.config.ts"]
+  "include": [
+    "app",
+    "src",
+    "tests",
+    ".bounda/**/*",
+    "bounda.config.ts",
+    "vitest.config.ts",
+    "worker-configuration.d.ts"
+  ]
 }

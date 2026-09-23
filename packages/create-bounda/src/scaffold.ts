@@ -116,7 +116,8 @@ export const scaffoldProject: ScaffoldProjectFunction = async ({
     isbotVersion: versions.isbot,
     typesReactVersion: versions.typesReact,
     wranglerVersion: versions.wrangler,
-    workersTypesVersion: versions.workersTypes,
+    cloudflareVitestVersion: versions.cloudflareVitest,
+    cloudflareVitestPluginVersion: versions.cloudflareVitestPlugin,
   };
   const layers = [
     join(templateRoot, "base"),

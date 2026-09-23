@@ -15,7 +15,14 @@ export interface Versions {
   readonly isbot: string;
   readonly typesReact: string;
   readonly wrangler: string;
-  readonly workersTypes: string;
+  /**
+   * Vitest for a Cloudflare project: `@cloudflare/vitest-plugin` runs the tests inside workerd
+   * and only supports Vitest 4.1. It is the version of `@vitest/runner`, released in lockstep with
+   * Vitest, which this package takes from the `cloudflare` catalog because it cannot depend on two
+   * versions of `vitest`.
+   */
+  readonly cloudflareVitest: string;
+  readonly cloudflareVitestPlugin: string;
 }
 
 export interface Manifest {
@@ -61,7 +68,8 @@ export const versionsFrom: VersionsFromFunction = ({ manifest, catalog }) => {
     isbot: versionOf("isbot"),
     typesReact: versionOf("@types/react"),
     wrangler: versionOf("wrangler"),
-    workersTypes: versionOf("@cloudflare/workers-types"),
+    cloudflareVitest: versionOf("@vitest/runner"),
+    cloudflareVitestPlugin: versionOf("@cloudflare/vitest-plugin"),
   };
 };
 

@@ -49,6 +49,7 @@ minimumReleaseAgeExclude:
 
 catalogs:
   cloudflare:
+    "@vitest/runner": 4.1.11
     vitest: 4.1.11
 
 allowBuilds:
