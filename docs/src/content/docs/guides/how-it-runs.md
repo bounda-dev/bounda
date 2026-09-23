@@ -27,12 +27,12 @@ The distinction matters for everything below.
 <figure>
   <img
     src="/flow-light.svg"
-    alt="A command handler decides from state and returns events, the events are appended to the event store, which keeps them in one ordered log, and read models, policies and processes subscribe to that log while policies and processes dispatch new commands"
+    alt="The app sends commands to command handlers in the domain, which decide from the state apply folds from the aggregate's own stream and return events for the event store, one ordered log. After commit, and asynchronously, policies and processes in the domain follow the log and send new commands, and projections turn events into rows in tables, in the same database or their own. Query handlers read those rows to answer the app's queries"
     class="dark:sl-hidden"
   />
   <img
     src="/flow-dark.svg"
-    alt="A command handler decides from state and returns events, the events are appended to the event store, which keeps them in one ordered log, and read models, policies and processes subscribe to that log while policies and processes dispatch new commands"
+    alt="The app sends commands to command handlers in the domain, which decide from the state apply folds from the aggregate's own stream and return events for the event store, one ordered log. After commit, and asynchronously, policies and processes in the domain follow the log and send new commands, and projections turn events into rows in tables, in the same database or their own. Query handlers read those rows to answer the app's queries"
     class="light:sl-hidden"
   />
 </figure>
