@@ -39,6 +39,9 @@ export interface BoundaClient<R extends Registry> {
     replay(id: string): Promise<DeadLetter>;
     discard(id: string): Promise<DeadLetter>;
   };
+  /**
+   * Runs the first slice of a rebuild; when it is not `done`, the object's alarm finishes it.
+   */
   rebuildReadModel(name: string): Promise<RebuildReadModelResult>;
 }
 

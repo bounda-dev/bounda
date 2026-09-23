@@ -130,9 +130,12 @@ every storage contract inside `workerd`.
 ## Limits worth knowing
 
 - **One object lives in one region.** Users far from it pay the latency on every command.
-- **A rebuild runs in one request**, bounded by Cloudflare's five minutes of CPU. That covers
-  hundreds of thousands of events in local SQLite; resuming a rebuild across alarms is not built
-  yet.
+- **A rebuild runs in slices.** `rebuildReadModel` projects the first
+  `eventsPerRebuildSlice` events (5,000 by default, an option of `createBoundaObject`) and
+  answers `done: false` when the stream is longer; the object's alarm runs one slice after
+  another until the rebuilt table takes the live one's place. Queries read the live table all the
+  while. Each slice is one more request to the object, and a slice that fails is retried after
+  the dispatcher's poll interval.
 - **Cost.** Row writes are what runs out first. A command that inserts one read-model row writes
   seven rows, indexes included: four for the event, two for the read-model row, one for the
   checkpoint. On the free plan's 100,000 row writes a day that is about fourteen thousand

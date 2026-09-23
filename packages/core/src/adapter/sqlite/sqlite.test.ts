@@ -213,13 +213,16 @@ describe("createSqliteAdapter", () => {
     const { logs, logger } = recordingLogger();
     const args = { name: "orderSummary", fields: contractFields, logger };
     await (await adapter.rebuildReadModel(args)).commit();
-    await (await adapter.rebuildReadModel(args)).abort();
+    await (await adapter.rebuildReadModel(args)).pause();
+    await (await adapter.rebuildReadModel({ ...args, resume: true })).abort();
     const table = "bounda_order_summary";
     const shadow = `${table}__rebuild`;
     expect(logs).toEqual([
       ["read model rebuild started", { readModel: "orderSummary", table, shadow }],
       ["read model rebuild committed", { readModel: "orderSummary", table }],
       ["read model rebuild started", { readModel: "orderSummary", table, shadow }],
+      ["read model rebuild paused", { readModel: "orderSummary", table }],
+      ["read model rebuild resumed", { readModel: "orderSummary", table, shadow }],
       ["read model rebuild aborted", { readModel: "orderSummary", table }],
     ]);
     expect(tableNames(db, "bounda_order")).toEqual([table]);

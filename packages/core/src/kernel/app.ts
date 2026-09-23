@@ -24,7 +24,11 @@ import { createProjectionSubscriber } from "./projection/runner.ts";
 import { buildQueries } from "./query/build-queries.ts";
 import { createQueryRunner } from "./query/runner.ts";
 import { buildReadModels } from "./read-model/build-read-models.ts";
-import { type RebuildReadModelResult, rebuildReadModel } from "./read-model/rebuild.ts";
+import {
+  pendingRebuilds,
+  type RebuildReadModelResult,
+  rebuildReadModel,
+} from "./read-model/rebuild.ts";
 import { createScheduledCommandWorker } from "./scheduler/worker.ts";
 import { ATTRIBUTES, METRICS, meter } from "./telemetry.ts";
 
@@ -64,14 +68,30 @@ export interface BoundaApp<R extends Registry = AppRegistry> {
   catchUpReadModels(): Promise<void>;
   /**
    * Rebuilds one read model from the whole stream into a fresh table and swaps it in, without
-   * taking it offline. See `rebuildReadModel`.
+   * taking it offline, or, with `maxEvents`, advances it by one slice and pauses. See
+   * `rebuildReadModel`.
    */
-  rebuildReadModel(name: string): Promise<RebuildReadModelResult>;
+  rebuildReadModel(
+    name: string,
+    options?: RebuildReadModelOptions,
+  ): Promise<RebuildReadModelResult>;
+  /**
+   * The read models of the registry whose rebuild is paused, waiting for another
+   * `rebuildReadModel` call.
+   */
+  pendingRebuilds(): Promise<readonly string[]>;
   /**
    * The handler runs that gave up, and what to do about them: list, replay or discard.
    */
   readonly deadLetters: DeadLetters;
   getLag(): Promise<DispatcherLag>;
+}
+
+export interface RebuildReadModelOptions {
+  /**
+   * Project at most about this many events, then pause until the next call.
+   */
+  readonly maxEvents?: number;
 }
 
 export interface ProcessUntilIdleOptions {
@@ -258,7 +278,18 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
     },
     nextDueAt: () => storage.scheduler.nextDueAt({ leaseMs: worker.leaseMs }),
     catchUpReadModels: () => dispatcher.catchUp("projection"),
-    rebuildReadModel: (name) => rebuildReadModel({ registry, config: rawConfig, name, logger }),
+    rebuildReadModel: (name, { maxEvents } = {}) =>
+      rebuildReadModel({
+        registry,
+        config: rawConfig,
+        name,
+        logger,
+        ...(maxEvents === undefined ? {} : { maxEvents }),
+      }),
+    pendingRebuilds: async () =>
+      (await pendingRebuilds(storage.checkpointStore)).filter(
+        (name) => name in registry.readModels,
+      ),
     deadLetters,
     getLag: () => dispatcher.getLag(),
   };

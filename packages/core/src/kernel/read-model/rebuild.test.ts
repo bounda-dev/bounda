@@ -2,12 +2,13 @@ import { describe, expect, it } from "vitest";
 import type { Adapter } from "../../adapter/adapter.ts";
 import type { Table } from "../../adapter/ports/table.ts";
 import { silentLogger } from "../../contracts/logger.ts";
+import { createMemoryCheckpointStore } from "../../memory/checkpoint-store.ts";
 import { memory } from "../../memory/index.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { type FieldsArgs, fieldBuilder as f } from "../../modules/view.ts";
 import { createApp } from "../app.ts";
 import { createRecordingLogger, orderAggregateEntry } from "../test-support.ts";
-import { rebuildReadModel } from "./rebuild.ts";
+import { pendingRebuilds, rebuildReadModel } from "./rebuild.ts";
 
 interface Row {
   readonly orderId: string;
@@ -73,6 +74,18 @@ const setUp = async () => {
   return { adapter, app, storage, config, logger, entries, rows };
 };
 
+describe("pendingRebuilds", () => {
+  it("names each read model with rebuild progress once, ignoring every other checkpoint", async () => {
+    const checkpoints = createMemoryCheckpointStore();
+    await checkpoints.set("policies", 4);
+    await checkpoints.set("projection:orderSummary", 4);
+    await checkpoints.set("rebuild:orderSummary:0000000000000001", 2);
+    await checkpoints.set("rebuild:orderSummary:0000000000000002", 3);
+    await checkpoints.set("rebuild:customers:0000000000000003", 1);
+    expect([...(await pendingRebuilds(checkpoints))].sort()).toEqual(["customers", "orderSummary"]);
+  });
+});
+
 describe("rebuildReadModel", () => {
   it("rebuilds a read model whose projection was wrong and leaves its checkpoint where it was", async () => {
     mode = "halved";
@@ -87,7 +100,11 @@ describe("rebuildReadModel", () => {
     ]);
 
     mode = "ok";
-    expect(await app.rebuildReadModel("orderSummary")).toEqual({ events: 3, position: 3 });
+    expect(await app.rebuildReadModel("orderSummary")).toEqual({
+      events: 3,
+      position: 3,
+      done: true,
+    });
     expect(await rows()).toEqual([
       { orderId: "o-1", total: 10 },
       { orderId: "o-2", total: 20 },
@@ -129,7 +146,11 @@ describe("rebuildReadModel", () => {
       return compareAndSet(subscriber, expected, position);
     };
 
-    expect(await app.rebuildReadModel("orderSummary")).toEqual({ events: 1, position: 1 });
+    expect(await app.rebuildReadModel("orderSummary")).toEqual({
+      events: 1,
+      position: 1,
+      done: true,
+    });
     expect(await storage.checkpointStore.get(SUBSCRIBER)).toBe(1);
     expect(entries).toContainEqual({
       level: "info",
@@ -182,6 +203,7 @@ describe("rebuildReadModel", () => {
     expect(await rebuildReadModel({ registry, config, name: "orderSummary", logger })).toEqual({
       events: 1,
       position: 1,
+      done: true,
     });
     expect(opened.at(-1)).toEqual({ logger });
     expect(closes).toBe(1);
@@ -200,6 +222,158 @@ describe("rebuildReadModel", () => {
     ).table;
     expect(await table.findMany()).toEqual([{ orderId: "o-1", total: 7 }]);
     await app.stop();
+  });
+
+  it("rebuilds in slices, keeping the live table until the last one and resuming each time", async () => {
+    mode = "halved";
+    const { app, storage, entries, rows } = await setUp();
+    for (const [orderId, total] of [
+      ["o-1", 10],
+      ["o-2", 20],
+      ["o-3", 30],
+    ] as const) {
+      await app.commands.placeOrder({ orderId, total });
+    }
+    await app.processUntilIdle();
+
+    mode = "ok";
+    expect(await app.rebuildReadModel("orderSummary", { maxEvents: 2 })).toEqual({
+      events: 2,
+      position: 2,
+      done: false,
+    });
+    expect(await rows()).toEqual([
+      { orderId: "o-1", total: 5 },
+      { orderId: "o-2", total: 10 },
+      { orderId: "o-3", total: 15 },
+    ]);
+    expect(await app.pendingRebuilds()).toEqual(["orderSummary"]);
+    const progress = (await storage.checkpointStore.list()).filter(({ subscriber }) =>
+      subscriber.startsWith("rebuild:"),
+    );
+    expect(progress).toEqual([
+      { subscriber: expect.stringMatching(/^rebuild:orderSummary:[0-9a-f]{16}$/), position: 2 },
+    ]);
+    expect(entries).toContainEqual({
+      level: "info",
+      message: "read model rebuild paused",
+      fields: { readModel: "orderSummary", events: 2, position: 2 },
+    });
+
+    expect(await app.rebuildReadModel("orderSummary", { maxEvents: 2 })).toEqual({
+      events: 1,
+      position: 3,
+      done: true,
+    });
+    expect(await rows()).toEqual([
+      { orderId: "o-1", total: 10 },
+      { orderId: "o-2", total: 20 },
+      { orderId: "o-3", total: 30 },
+    ]);
+    expect(await app.pendingRebuilds()).toEqual([]);
+    expect(await storage.checkpointStore.get(SUBSCRIBER)).toBe(3);
+    await app.stop();
+  });
+
+  it("starts again from a fresh table when the read model's code changed while it was paused", async () => {
+    mode = "ok";
+    const { app, config, storage, rows } = await setUp();
+    await app.commands.placeOrder({ orderId: "o-1", total: 10 });
+    await app.commands.placeOrder({ orderId: "o-2", total: 20 });
+    await app.processUntilIdle();
+    await app.rebuildReadModel("orderSummary", { maxEvents: 1 });
+
+    const doubled = {
+      ...registry,
+      readModels: {
+        orderSummary: {
+          ...registry.readModels.orderSummary,
+          projections: {
+            orderPlaced: {
+              project: async ({
+                event,
+                table,
+              }: {
+                event: { aggregateId: string; payload: { total: number } };
+                table: Table<Row>;
+              }) => {
+                await table.upsert({ orderId: event.aggregateId, total: event.payload.total * 2 });
+              },
+            },
+          },
+        },
+      },
+    } satisfies Registry;
+    expect(await rebuildReadModel({ registry: doubled, config, name: "orderSummary" })).toEqual({
+      events: 2,
+      position: 2,
+      done: true,
+    });
+    expect(await rows()).toEqual([
+      { orderId: "o-1", total: 20 },
+      { orderId: "o-2", total: 40 },
+    ]);
+    expect(
+      (await storage.checkpointStore.list()).filter(({ subscriber }) =>
+        subscriber.startsWith("rebuild:"),
+      ),
+    ).toEqual([]);
+    await app.stop();
+  });
+
+  it("starts again from the first event when the paused table is gone", async () => {
+    mode = "ok";
+    const base = memory();
+    const adapter: Adapter = {
+      ...base,
+      rebuildReadModel: (args) => base.rebuildReadModel({ ...args, resume: false }),
+    };
+    const config = { storage: adapter, commands: { placeOrder: { notifier: { use: "memory" } } } };
+    const app = await createApp({
+      registry,
+      config: { ...config, runtime: { dispatcher: { batchSize: 1 } } },
+    });
+    await app.commands.placeOrder({ orderId: "o-1", total: 10 });
+    await app.commands.placeOrder({ orderId: "o-2", total: 20 });
+    await app.rebuildReadModel("orderSummary", { maxEvents: 1 });
+    expect(await app.rebuildReadModel("orderSummary")).toEqual({
+      events: 2,
+      position: 2,
+      done: true,
+    });
+    await app.stop();
+  });
+
+  it("forgets its progress when a projection throws, so the next rebuild starts over", async () => {
+    mode = "ok";
+    const { app } = await setUp();
+    await app.commands.placeOrder({ orderId: "o-1", total: 10 });
+    await app.commands.placeOrder({ orderId: "o-2", total: 20 });
+    await app.rebuildReadModel("orderSummary", { maxEvents: 1 });
+
+    mode = "throws";
+    await expect(app.rebuildReadModel("orderSummary")).rejects.toThrow("projection broken");
+    expect(await app.pendingRebuilds()).toEqual([]);
+    mode = "ok";
+    expect(await app.rebuildReadModel("orderSummary")).toEqual({
+      events: 2,
+      position: 2,
+      done: true,
+    });
+    await app.stop();
+  });
+
+  it("refuses a slice of fewer than one event before opening anything", async () => {
+    for (const maxEvents of [0, Number.NaN]) {
+      await expect(
+        rebuildReadModel({
+          registry,
+          config: { storage: memory() },
+          name: "orderSummary",
+          maxEvents,
+        }),
+      ).rejects.toThrow(`maxEvents must be at least 1, got ${maxEvents}`);
+    }
   });
 
   it("names the read models it knows when asked for one it does not", async () => {

@@ -118,8 +118,32 @@ describe("a Bounda Durable Object", () => {
     await store.commands.placeOrder({ orderId: "o-4", total: 5, customer: "ada" });
     await store.commands.payOrder({ orderId: "o-4" });
     await runDurableObjectAlarm(stub);
-    expect(await store.rebuildReadModel("orders")).toEqual({ events: 3, position: 3 });
+    expect(await store.rebuildReadModel("orders")).toEqual({ events: 3, position: 3, done: true });
     expect(await store.queries.getOrder({ orderId: "o-4" })).toMatchObject({ status: "archived" });
+  });
+
+  it("rebuilds in slices through its alarm, serving the live table until the last one", async () => {
+    const stub = env.SLICED_STORE.get(env.SLICED_STORE.newUniqueId());
+    const store = connect<typeof quietRegistry>(stub);
+    for (const orderId of ["o-1", "o-2", "o-3"]) {
+      await store.commands.placeOrder({ orderId, total: 5, customer: "ada" });
+    }
+    const progress = () =>
+      runInDurableObject(stub as unknown as DurableObjectStub, (_instance, state) =>
+        state.storage.sql
+          .exec(`SELECT "subscriber" FROM bounda_checkpoints WHERE "subscriber" LIKE 'rebuild:%'`)
+          .toArray(),
+      );
+
+    expect(await store.rebuildReadModel("orders")).toEqual({ events: 1, position: 1, done: false });
+    expect(await store.queries.getOrder({ orderId: "o-3" })).toMatchObject({ status: "placed" });
+    for (let round = 0; round < 50 && (await progress()).length > 0; round += 1) {
+      await runDurableObjectAlarm(stub);
+    }
+    expect(await progress()).toEqual([]);
+    expect(await alarmOf(stub)).toBeNull();
+    expect(await store.queries.getOrder({ orderId: "o-3" })).toMatchObject({ status: "placed" });
+    expect((await store.getLag()).maxLag).toBe(0);
   });
 
   it("keeps each object's store to itself", async () => {

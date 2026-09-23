@@ -11,6 +11,7 @@ import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { withUpcasting } from "../aggregate/upcasting.ts";
 import { createProjectionSubscriber } from "../projection/runner.ts";
 import { adapterForReadModel, compileReadModel } from "./build-read-models.ts";
+import { fingerprintReadModel } from "./fingerprint.ts";
 
 export interface RebuildReadModelArgs {
   readonly registry: Registry;
@@ -20,23 +21,55 @@ export interface RebuildReadModelArgs {
    */
   readonly name: string;
   readonly logger?: Logger;
+  /**
+   * Project at most about this many events, a batch more at most, then pause: the shadow table
+   * and the position it reached are kept, and the next call for the same read model resumes from
+   * there. Without it the rebuild runs to the end in one call.
+   */
+  readonly maxEvents?: number;
 }
 
 export interface RebuildReadModelResult {
   /**
-   * How many events were read from the stream.
+   * How many events this call read from the stream.
    */
   readonly events: number;
   /**
-   * The position of the last event projected: where the read model's checkpoint stands after the
-   * rebuild.
+   * The position of the last event projected into the shadow table. Once `done`, where the read
+   * model's checkpoint stands.
    */
   readonly position: number;
+  /**
+   * `true` when the shadow caught up with the stream and took the live table's place; `false`
+   * when `maxEvents` ran out first and the rebuild is paused.
+   */
+  readonly done: boolean;
 }
 
 export interface RebuildReadModelFunction {
   (args: RebuildReadModelArgs): Promise<RebuildReadModelResult>;
 }
+
+const REBUILD_PREFIX = "rebuild:";
+
+const progressPrefix = (name: string): string => `${REBUILD_PREFIX}${name}:`;
+
+export interface PendingRebuildsFunction {
+  (checkpointStore: CheckpointStore): Promise<readonly string[]>;
+}
+
+/**
+ * The read models with a paused rebuild: each keeps its progress as a checkpoint named
+ * `rebuild:<read model>:<fingerprint>`.
+ */
+export const pendingRebuilds: PendingRebuildsFunction = async (checkpointStore) => [
+  ...new Set(
+    (await checkpointStore.list())
+      .map(({ subscriber }) => subscriber)
+      .filter((subscriber) => subscriber.startsWith(REBUILD_PREFIX))
+      .map((subscriber) => subscriber.slice(REBUILD_PREFIX.length).split(":")[0] ?? ""),
+  ),
+];
 
 interface MoveCheckpointBackArgs {
   readonly checkpointStore: CheckpointStore;
@@ -73,14 +106,23 @@ const moveCheckpointBack = async ({
  * meanwhile finds its checkpoint moved back and re-projects the difference, which idempotent
  * projections make harmless. A projection that throws aborts the rebuild and leaves the live
  * table as it was.
+ *
+ * The position the shadow reached is saved after every batch, so a rebuild that stops, because
+ * `maxEvents` ran out or because the process died, resumes where it was on the next call, as
+ * long as the read model's fields and projections are the same code: otherwise it starts again
+ * from a fresh shadow. At worst a resumed rebuild projects its last batch twice.
  */
 export const rebuildReadModel: RebuildReadModelFunction = async ({
   registry,
   config: rawConfig,
   name,
   logger = silentLogger,
+  maxEvents,
 }) => {
   validateRegistry(registry);
+  if (maxEvents !== undefined && !(maxEvents >= 1)) {
+    throw new ConfigurationError(`maxEvents must be at least 1, got ${maxEvents}`);
+  }
   const config = resolveConfig(rawConfig);
   const entry = registry.readModels[name];
   if (entry === undefined) {
@@ -98,10 +140,25 @@ export const rebuildReadModel: RebuildReadModelFunction = async ({
     eventStore: storage.eventStore,
     aggregates: buildAggregates({ registry, config }),
   });
+  const { checkpointStore } = storage;
   try {
+    const progress = `${progressPrefix(name)}${fingerprintReadModel(entry)}`;
+    const saved = new Map(
+      (await checkpointStore.list())
+        .filter(({ subscriber }) => subscriber.startsWith(progressPrefix(name)))
+        .map(({ subscriber, position }) => [subscriber, position]),
+    );
+    for (const subscriber of saved.keys()) {
+      if (subscriber !== progress) await checkpointStore.remove(subscriber);
+    }
     const rebuild = await adapterForReadModel({ name, config }).rebuildReadModel<
       Record<string, unknown>
-    >({ name, fields: entry.view.fields({ f: fieldBuilder }), logger });
+    >({
+      name,
+      fields: entry.view.fields({ f: fieldBuilder }),
+      logger,
+      resume: saved.has(progress),
+    });
     const subscriber = createProjectionSubscriber({
       readModel: compileReadModel({
         name,
@@ -111,22 +168,31 @@ export const rebuildReadModel: RebuildReadModelFunction = async ({
       logger,
     });
     const { batchSize } = config.runtime.dispatcher;
-    let position = 0;
+    let position = rebuild.resumed ? (saved.get(progress) ?? 0) : 0;
+    const budget = maxEvents ?? Number.POSITIVE_INFINITY;
     let events = 0;
     try {
       for (;;) {
+        if (events >= budget) {
+          await rebuild.pause();
+          logger.info("read model rebuild paused", { readModel: name, events, position });
+          return { events, position, done: false };
+        }
         const batch = await eventStore.readAll({ afterPosition: position, limit: batchSize });
         if (batch.length === 0) break;
         await subscriber.process(batch);
         events += batch.length;
         position = batch[batch.length - 1]?.position ?? position;
+        await checkpointStore.set(progress, position);
         logger.debug("read model rebuild progressed", { readModel: name, position, events });
       }
       await rebuild.commit();
     } catch (error) {
       await rebuild.abort();
+      await checkpointStore.remove(progress);
       throw error;
     }
+    await checkpointStore.remove(progress);
     await moveCheckpointBack({
       checkpointStore: storage.checkpointStore,
       subscriber: subscriber.name,
@@ -134,7 +200,7 @@ export const rebuildReadModel: RebuildReadModelFunction = async ({
       logger,
     });
     logger.info("read model rebuilt", { readModel: name, events, position });
-    return { events, position };
+    return { events, position, done: true };
   } finally {
     await storage.close();
   }

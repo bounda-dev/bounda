@@ -22,4 +22,14 @@ export const QuietStore = createBoundaObject({
   clock,
 });
 
+/**
+ * The same app without policies, rebuilding one event per slice.
+ */
+export const SlicedStore = createBoundaObject({
+  registry: quietRegistry,
+  config: { storage: cloudflare(), runtime: { dispatcher: { batchSize: 1 } } },
+  clock,
+  eventsPerRebuildSlice: 1,
+});
+
 export default createWorker({ binding: "STORE" });

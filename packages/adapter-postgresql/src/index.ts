@@ -1,4 +1,8 @@
-import type { Adapter, CreateReadModelArgs } from "@bounda-dev/core/adapter";
+import type {
+  Adapter,
+  CreateReadModelArgs,
+  CreateReadModelRebuildArgs,
+} from "@bounda-dev/core/adapter";
 import { quoteIdentifier } from "@bounda-dev/core/adapter/sql";
 import postgres, { type Sql } from "postgres";
 import { createPostgresqlCheckpointStore } from "./checkpoint-store.ts";
@@ -99,7 +103,12 @@ export const postgresql: PostgresqlFunction = (options) => {
         close: release,
       });
     },
-    rebuildReadModel: async <Row extends object>({ name, fields, logger }: CreateReadModelArgs) => {
+    rebuildReadModel: async <Row extends object>({
+      name,
+      fields,
+      logger,
+      resume,
+    }: CreateReadModelRebuildArgs) => {
       const { db, sql } = open();
       await db.run(`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(schema)}`, []);
       return rebuildPostgresqlReadModel<Row>({
@@ -111,6 +120,7 @@ export const postgresql: PostgresqlFunction = (options) => {
         fields,
         logger,
         close: release,
+        ...(resume === undefined ? {} : { resume }),
       });
     },
   };
