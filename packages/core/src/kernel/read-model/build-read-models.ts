@@ -83,6 +83,23 @@ const adapterFor = (name: string, config: ResolvedConfig): Adapter => {
   return definition;
 };
 
+export interface CompileProjectionsArgs {
+  readonly name: string;
+  readonly entry: ReadModelEntry;
+}
+
+export interface CompileProjectionsFunction {
+  (args: CompileProjectionsArgs): Pick<ReadModelRuntime, "name" | "projectionsByEvent">;
+}
+
+/**
+ * A read model's projections indexed by the event types they react to.
+ */
+export const compileProjections: CompileProjectionsFunction = ({ name, entry }) => ({
+  name,
+  projectionsByEvent: groupByEvent(entry.projections),
+});
+
 export interface CompileReadModelArgs {
   readonly name: string;
   readonly entry: ReadModelEntry;
@@ -95,13 +112,12 @@ export interface CompileReadModelFunction {
 
 /**
  * The runtime of one read model over the ports given: its fields, its projections indexed by
- * event type and its queries. `buildReadModels` opens the ports; a rebuild supplies shadow ones.
+ * event type and its queries, over ports `buildReadModels` opens.
  */
 export const compileReadModel: CompileReadModelFunction = ({ name, entry, ports }) => ({
-  name,
+  ...compileProjections({ name, entry }),
   fields: entry.view.fields({ f: fieldBuilder }),
   ports,
-  projectionsByEvent: groupByEvent(entry.projections),
   queries: entry.queries,
 });
 

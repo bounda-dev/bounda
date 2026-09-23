@@ -17,6 +17,17 @@ describe("defineConfig", () => {
       runtime: { policies: { timeout: "30s" }, processes: { timeout: "7d" } },
     });
     defineConfig({ storage: sqlite, runtime: { dispatcher: { pollInterval: 250 } } });
+    defineConfig({ storage: sqlite, runtime: { dispatcher: { projectionBatchTime: "500ms" } } });
+    defineConfig({ storage: sqlite, runtime: { dispatcher: { projectionBatchTime: 0 } } });
+    defineConfig({
+      storage: sqlite,
+      runtime: {
+        dispatcher: {
+          // @ts-expect-error "half a second" is not a duration string
+          projectionBatchTime: "half a second",
+        },
+      },
+    });
     // @ts-expect-error "7 days" is not a duration string
     defineConfig({ storage: sqlite, runtime: { policies: { timeout: "7 days" } } });
     // @ts-expect-error "48x" uses an unknown unit

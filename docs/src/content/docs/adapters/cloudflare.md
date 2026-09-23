@@ -133,6 +133,11 @@ every storage contract inside `workerd`.
 ## Limits worth knowing
 
 - **One object lives in one region.** Users far from it pay the latency on every command.
+- **A projection must not wait on anything but its read model.** Each batch runs inside the
+  object's storage transaction, and while one is open the runtime holds the object's other
+  events back. A projection that awaits a `fetch` or a timer can then wait forever for an event
+  queued behind it, and the object stops. Projections that only use `table` and `client` never
+  hit this; anything else belongs in a policy, on every adapter.
 - **A rebuild runs in slices.** `rebuildReadModel` projects the first
   `eventsPerRebuildSlice` events (5,000 by default, an option of `createBoundaObject`) and
   answers `done: false` when the stream is longer; the object's alarm runs one slice after

@@ -93,13 +93,22 @@ Run several worker instances on PostgreSQL and every policy and process handler 
 once**: the inbox ledger claims `(handler, event)` atomically, so instances share that work and
 add throughput for reactions.
 
-Projections are different. Every instance reads the same batches and applies them, idempotently,
-so a second instance does not make a read model catch up faster. More instances buy
-**availability** for projections, not speed. The lag gauge tells you when a projection is behind;
-if one ever is, the fix is a faster projection or a lighter read model, not another instance. The
-known runtime improvement, leasing each subscriber to one instance so that read models are spread
-across workers, is a bounded change to the dispatcher that will land when someone has that
-problem.
+Projections are applied **exactly once** too, and one instance at a time per read model. Each
+batch runs in one transaction on the read model's database, holding a lock named after it:
+PostgreSQL's `pg_advisory_xact_lock`, SQLite's single writer, the Durable Object's transaction.
+The rows the batch writes and the checkpoint past it commit together or roll back together, so a
+crash, a projection that throws halfway or a second instance can neither apply an event twice nor
+put an older batch over a newer one. An instance that finds a read model locked skips it and moves
+on to the next, so different read models spread over the instances, while one read model always
+advances in order on one of them at a time. More instances buy **availability**, and speed when
+there are several read models to share out; they do not make a single read model faster, because
+its events have to be applied in order. If one read model ever falls behind, the lag gauge tells
+you, and the fix is a faster projection or a lighter read model.
+
+The guarantee holds for what the projection writes through `table` and `client`, `client.raw`
+included, since inside a batch it is the driver's transaction handle. Anything a projection does
+outside its read model, an HTTP call or another database, is not part of the transaction: it would
+run again with a batch that is retried, which is why it belongs in a policy.
 
 ## Why there is no broker
 
@@ -111,7 +120,8 @@ place inside the app:
   stream and access by id, and a queue without replay loses rebuilds altogether.
 - A broker between the store and the projections would spread projection work across instances,
   at the price of a component to operate, at-least-once redelivery and ordering only within a
-  partition. Subscriber leases solve the same problem with nothing new to run.
+  partition. A lock per read model in the database already spreads that work, with nothing new
+  to run.
 
 Where a broker does belong is **outside the app**: when events have to reach another service, a
 warehouse or a company-wide Kafka. The piece for that is a publisher, which is just one more
@@ -124,4 +134,5 @@ when it is, it will be a subscriber, not a change to the model.
 A store is one ordered log with one writer at a time and subscribers that keep checkpoints. That
 buys cross-aggregate order for read models and makes lag, rebuild and replay trivial. It costs a
 ceiling of thousands of events per second per store, which you raise by running one store per
-tenant. Instances share reactions but not projections. Brokers stay outside, as publishers.
+tenant. Instances share reactions and spread read models, each applied exactly once. Brokers stay
+outside, as publishers.

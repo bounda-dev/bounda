@@ -16,6 +16,9 @@ import {
   swapTableStatements,
   tableNameFor,
 } from "../sql/index.ts";
+import type { SqlExecutor } from "../sql/sql-table.ts";
+import { createSqliteCheckpointStore } from "./checkpoint-store.ts";
+import { checkpointTableStatement } from "./schema.ts";
 
 export interface OpenSqliteReadModelArgs<Raw = unknown> {
   readonly db: SqlDatabase;
@@ -24,6 +27,10 @@ export interface OpenSqliteReadModelArgs<Raw = unknown> {
    */
   readonly raw: Raw;
   readonly tablePrefix: string;
+  /**
+   * The quoted name of the checkpoints table the read model's projections advance in.
+   */
+  readonly checkpoints: string;
   readonly name: string;
   readonly fields: FieldsRecord;
   readonly logger: Logger;
@@ -38,7 +45,11 @@ export interface OpenSqliteReadModelFunction {
 
 /**
  * Creates the read model's table from its `fields`, or brings an existing table up to date with
- * additive changes, then returns the typed table and the SQL read client (`raw` is whatever the host passes).
+ * additive changes, then returns the typed table and the SQL read client (`raw` is whatever the
+ * host passes). The checkpoints table is created too when missing, so a read model in a database
+ * of its own keeps its projections' checkpoints there. `transact` runs the work in one write
+ * transaction: SQLite has a single writer, so holding it is the lock and `wait` changes nothing.
+ * Inside, `client.raw` is the host's transaction handle.
  */
 export const openSqliteReadModel: OpenSqliteReadModelFunction = async <
   Row extends object,
@@ -47,6 +58,7 @@ export const openSqliteReadModel: OpenSqliteReadModelFunction = async <
   db,
   raw,
   tablePrefix,
+  checkpoints,
   name,
   fields,
   logger,
@@ -65,6 +77,7 @@ export const openSqliteReadModel: OpenSqliteReadModelFunction = async <
   if (existing.length > 0 && statements.length > 0) {
     logger.info("read model table evolved", { readModel: name, table, added: statements.length });
   }
+  await db.run(checkpointTableStatement(checkpoints), []);
   return {
     table: createSqlTable<Row>({
       readModel: name,
@@ -80,12 +93,37 @@ export const openSqliteReadModel: OpenSqliteReadModelFunction = async <
       executor: db,
       raw,
     }),
+    checkpointStore: createSqliteCheckpointStore({ db, table: checkpoints }),
+    transact: ({ work }) =>
+      db.write(async (tx) => ({
+        acquired: true,
+        value: await work({
+          table: createSqlTable<Row>({
+            readModel: name,
+            table,
+            fields,
+            dialect: sqliteDialect,
+            executor: tx,
+          }),
+          client: createSqlReadClient<Row, unknown>({
+            readModel: name,
+            fields,
+            dialect: sqliteDialect,
+            executor: tx,
+            raw: tx.raw,
+          }),
+          checkpointStore: createSqliteCheckpointStore({ db: tx, table: checkpoints }),
+        }),
+      })),
     close,
   };
 };
 
 export interface RebuildSqliteReadModelArgs<Raw = unknown> extends OpenSqliteReadModelArgs<Raw> {
-  readonly resume?: boolean;
+  /**
+   * The checkpoint the rebuild keeps its position under.
+   */
+  readonly progress: string;
 }
 
 export interface RebuildSqliteReadModelFunction {
@@ -98,10 +136,12 @@ const tableExists = async (db: SqlDatabase, table: string): Promise<boolean> =>
   (await db.all(`PRAGMA table_info(${quoteIdentifier(table)})`, [])).length > 0;
 
 /**
- * Opens the shadow table of a rebuild: `<table>__rebuild`, created fresh with the current fields
- * after dropping what an interrupted rebuild may have left, or reopened as it is with `resume`
- * when it exists. `commit` swaps it into place inside one write transaction, `abort` drops it,
- * `pause` leaves it. All three release the connection.
+ * Opens the shadow table of a rebuild: `<table>__rebuild`, reopened as it is when `progress`
+ * says a paused rebuild got somewhere, created fresh with the current fields otherwise, after
+ * dropping what an interrupted rebuild may have left. Each `transact` is one write transaction on
+ * the shadow and the checkpoints. `commit` swaps the shadow into place, sets the projections'
+ * checkpoint and forgets `progress` inside one write transaction, `abort` drops the shadow and
+ * forgets `progress`, `pause` leaves both. All three release the connection.
  */
 export const rebuildSqliteReadModel: RebuildSqliteReadModelFunction = async <
   Row extends object,
@@ -110,33 +150,41 @@ export const rebuildSqliteReadModel: RebuildSqliteReadModelFunction = async <
   db,
   raw,
   tablePrefix,
+  checkpoints,
+  progress,
   name,
   fields,
   logger,
   close,
-  resume = false,
 }: RebuildSqliteReadModelArgs<Raw>): Promise<ReadModelRebuild<Row, Raw>> => {
   const table = tableNameFor({ prefix: tablePrefix, readModel: name });
   const { shadow } = rebuildTablesFor(table);
   const columns = columnsOf({ readModel: name, fields, dialect: sqliteDialect });
-  const resumed = resume && (await tableExists(db, shadow));
+  await db.run(checkpointTableStatement(checkpoints), []);
+  const checkpointStore = createSqliteCheckpointStore({ db, table: checkpoints });
+  const saved = await checkpointStore.get(progress);
+  const resumed = saved > 0 && (await tableExists(db, shadow));
   if (!resumed) {
     for (const statement of shadowTableStatements({ table, columns })) await db.run(statement, []);
+    await checkpointStore.remove(progress);
   }
   logger.info(resumed ? "read model rebuild resumed" : "read model rebuild started", {
     readModel: name,
     table,
     shadow,
   });
-  return {
-    resumed,
-    table: createSqlTable<Row>({
+  const shadowTable = (executor: SqlExecutor) =>
+    createSqlTable<Row>({
       readModel: name,
       table: shadow,
       fields,
       dialect: sqliteDialect,
-      executor: db,
-    }),
+      executor,
+    });
+  return {
+    resumed,
+    position: resumed ? saved : 0,
+    table: shadowTable(db),
     client: createSqlReadClient<Row, Raw>({
       readModel: name,
       fields,
@@ -144,18 +192,37 @@ export const rebuildSqliteReadModel: RebuildSqliteReadModelFunction = async <
       executor: db,
       raw,
     }),
-    commit: async () => {
+    checkpointStore,
+    transact: (work) =>
+      db.write((tx) =>
+        work({
+          table: shadowTable(tx),
+          client: createSqlReadClient<Row, unknown>({
+            readModel: name,
+            fields,
+            dialect: sqliteDialect,
+            executor: tx,
+            raw: tx.raw,
+          }),
+          checkpointStore: createSqliteCheckpointStore({ db: tx, table: checkpoints }),
+        }),
+      ),
+    commit: async ({ subscriber, position }) => {
       const live = await tableExists(db, table);
       await db.write(async (tx) => {
         for (const statement of swapTableStatements({ table, columns, live })) {
           await tx.run(statement, []);
         }
+        const committed = createSqliteCheckpointStore({ db: tx, table: checkpoints });
+        await committed.set(subscriber, position);
+        await committed.remove(progress);
       });
       logger.info("read model rebuild committed", { readModel: name, table });
       await close();
     },
     abort: async () => {
       for (const statement of dropShadowTableStatements(table)) await db.run(statement, []);
+      await checkpointStore.remove(progress);
       logger.info("read model rebuild aborted", { readModel: name, table });
       await close();
     },

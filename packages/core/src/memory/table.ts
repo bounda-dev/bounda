@@ -7,8 +7,16 @@ export interface CreateMemoryTableArgs {
   readonly fields: FieldsRecord;
 }
 
+/**
+ * A table held in memory that can take a snapshot of its rows: `snapshot` returns what puts them
+ * back the way they were, which is how the in-memory adapter rolls a transaction back.
+ */
+export interface MemoryTable<Row> extends Table<Row> {
+  snapshot(): () => void;
+}
+
 export interface CreateMemoryTableFunction {
-  <Row extends object>(args: CreateMemoryTableArgs): Table<Row>;
+  <Row extends object>(args: CreateMemoryTableArgs): MemoryTable<Row>;
 }
 
 const primaryKeyOf = (name: string, fields: FieldsRecord): string => {
@@ -43,7 +51,7 @@ const withoutUndefined = <Row extends object>(row: Row): Row =>
 export const createMemoryTable: CreateMemoryTableFunction = <Row extends object>({
   name,
   fields,
-}: CreateMemoryTableArgs): Table<Row> => {
+}: CreateMemoryTableArgs): MemoryTable<Row> => {
   const primaryKey = primaryKeyOf(name, fields);
   const rows = new Map<unknown, Row>();
   const keyOf = (row: Partial<Row>): unknown => Reflect.get(row, primaryKey);
@@ -82,6 +90,13 @@ export const createMemoryTable: CreateMemoryTableFunction = <Row extends object>
     findOne: async (where) => select({ where, limit: 1 })[0] ?? null,
     findMany: async (args) => select(args),
     count: async (where) => select({ ...(where === undefined ? {} : { where }) }).length,
+    snapshot: () => {
+      const saved = new Map(rows);
+      return () => {
+        rows.clear();
+        for (const [key, row] of saved) rows.set(key, row);
+      };
+    },
   };
 };
 

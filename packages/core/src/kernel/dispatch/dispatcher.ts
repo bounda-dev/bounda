@@ -2,28 +2,23 @@ import type { CheckpointStore } from "../../adapter/ports/checkpoint-store.ts";
 import type { EventNotifier, Unsubscribe } from "../../adapter/ports/event-notifier.ts";
 import type { EventStore } from "../../adapter/ports/event-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
-import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { createMutex } from "../shared/mutex.ts";
 import { errorDetails } from "../shared/retry.ts";
-import { ATTRIBUTES, traced } from "../telemetry.ts";
+import {
+  type CheckpointedSubscriber,
+  checkpointedByStore,
+  type DeliveryOutcome,
+  type Subscriber,
+  type SubscriberKind,
+} from "./delivery.ts";
 
-/**
- * Something that consumes the global stream from its own checkpoint. `process` returns whether
- * the checkpoint may advance past the batch; returning `false` or throwing makes the dispatcher
- * deliver the same batch again on the next pass.
- */
-/**
- * What a subscriber does with the events it receives: keep a read model up to date, run policies
- * or drive processes.
- */
-export type SubscriberKind = "projection" | "policy" | "process";
-
-export interface Subscriber {
-  readonly name: string;
-  readonly kind: SubscriberKind;
-  process(events: readonly StoredEvent[]): Promise<boolean>;
-}
+export type {
+  CheckpointedSubscriber,
+  DeliveryOutcome,
+  Subscriber,
+  SubscriberKind,
+} from "./delivery.ts";
 
 export interface SubscriberLag {
   readonly subscriber: string;
@@ -65,8 +60,11 @@ export interface Dispatcher {
 
 export interface CreateDispatcherArgs {
   readonly eventStore: EventStore;
+  /**
+   * Where the checkpoints of plain subscribers live. A `CheckpointedSubscriber` keeps its own.
+   */
   readonly checkpointStore: CheckpointStore;
-  readonly subscribers: readonly Subscriber[];
+  readonly subscribers: readonly (Subscriber | CheckpointedSubscriber)[];
   readonly batchSize: number;
   readonly pollIntervalMs: number;
   /**
@@ -97,6 +95,12 @@ export interface CreateDispatcherFunction {
  * or an operator moved it meanwhile, the pass leaves their position alone and the next one reads
  * from there.
  *
+ * Across processes, a `CheckpointedSubscriber` can be held by one of them at a time: projections
+ * commit each batch together with their checkpoint under a lock. Background passes skip a
+ * subscriber another process holds, so different subscribers spread over the instances; the
+ * passes callers await (`processOnce`, `processUntilIdle`, `catchUp`) wait for it instead, since
+ * they promise the subscriber has seen what is in the stream.
+ *
  * Passes are scheduled the same way with or without a notifier: a timer arms the next one after
  * each pass. A notification only shortens the wait: it runs the pass now, or marks one as due when
  * a pass is in flight, however many arrive meanwhile. What changes is the timer: `pollIntervalMs`
@@ -121,54 +125,19 @@ export const createDispatcher: CreateDispatcherFunction = ({
   let due = false;
   let unsubscribe: Promise<Unsubscribe | undefined> = Promise.resolve(undefined);
 
-  const deliver = async (subscriber: Subscriber): Promise<boolean> => {
-    const position = await checkpointStore.get(subscriber.name);
-    const events = await eventStore.readAll({ afterPosition: position, limit: batchSize });
-    if (events.length === 0) return false;
-    return traced({
-      name: `bounda.subscriber ${subscriber.name}`,
-      attributes: {
-        [ATTRIBUTES.subscriber]: subscriber.name,
-        [ATTRIBUTES.subscriberKind]: subscriber.kind,
-        [ATTRIBUTES.afterPosition]: position,
-        [ATTRIBUTES.eventCount]: events.length,
-      },
-      run: async (span) => {
-        try {
-          const advance = await subscriber.process(events);
-          if (!advance) {
-            span.setAttribute(ATTRIBUTES.outcome, "held");
-            return false;
-          }
-        } catch (error) {
-          logger.error("subscriber failed; batch will be redelivered", {
-            subscriber: subscriber.name,
-            afterPosition: position,
-            ...errorDetails(error),
-          });
-          span.setAttribute(ATTRIBUTES.outcome, "failed");
-          return false;
-        }
-        const next = events[events.length - 1]?.position ?? position;
-        const advanced = await checkpointStore.compareAndSet(subscriber.name, position, next);
-        if (!advanced) {
-          logger.warn("checkpoint moved by someone else; batch will be redelivered from there", {
-            subscriber: subscriber.name,
-            afterPosition: position,
-            current: await checkpointStore.get(subscriber.name),
-          });
-        }
-        span.setAttribute(ATTRIBUTES.outcome, advanced ? "advanced" : "moved");
-        return true;
-      },
-    });
-  };
+  const delivering: readonly CheckpointedSubscriber[] = subscribers.map((subscriber) =>
+    "deliver" in subscriber
+      ? subscriber
+      : checkpointedByStore({ subscriber, checkpointStore, logger }),
+  );
+  const read = (afterPosition: number) => eventStore.readAll({ afterPosition, limit: batchSize });
+  const moving = new Set<DeliveryOutcome>(["advanced", "moved"]);
 
-  const pass = async (only?: SubscriberKind): Promise<boolean> => {
+  const pass = async (wait: boolean, only?: SubscriberKind): Promise<boolean> => {
     let advanced = false;
-    for (const subscriber of subscribers) {
+    for (const subscriber of delivering) {
       if (only !== undefined && subscriber.kind !== only) continue;
-      advanced = (await deliver(subscriber)) || advanced;
+      advanced = moving.has(await subscriber.deliver({ read, wait })) || advanced;
     }
     return advanced;
   };
@@ -177,7 +146,7 @@ export const createDispatcher: CreateDispatcherFunction = ({
     due = false;
     let advanced = true;
     try {
-      advanced = await mutex.run(() => pass());
+      advanced = await mutex.run(() => pass(false));
     } catch (error) {
       logger.error("dispatcher pass failed", errorDetails(error));
     }
@@ -233,22 +202,22 @@ export const createDispatcher: CreateDispatcherFunction = ({
       await release?.();
       await mutex.drain();
     },
-    processOnce: () => mutex.run(() => pass()),
+    processOnce: () => mutex.run(() => pass(true)),
     processUntilIdle: async () => {
-      while (await mutex.run(() => pass())) {
+      while (await mutex.run(() => pass(true))) {
         // keep passing until nothing moves
       }
     },
     catchUp: async (kind) => {
-      while (await mutex.run(() => pass(kind))) {
+      while (await mutex.run(() => pass(true, kind))) {
         // keep passing until nothing moves
       }
     },
     getLag: async () => {
       const lastPosition = await eventStore.lastPosition();
       const lags = await Promise.all(
-        subscribers.map(async (subscriber) => {
-          const position = await checkpointStore.get(subscriber.name);
+        delivering.map(async (subscriber) => {
+          const position = await subscriber.position();
           return { subscriber: subscriber.name, position, lag: lastPosition - position };
         }),
       );

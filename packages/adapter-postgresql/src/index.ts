@@ -97,6 +97,7 @@ export const postgresql: PostgresqlFunction = (options) => {
         sql,
         schema,
         tablePrefix,
+        checkpoints: storageTablesFor(tablePrefix).checkpoints,
         name,
         fields,
         logger,
@@ -107,7 +108,7 @@ export const postgresql: PostgresqlFunction = (options) => {
       name,
       fields,
       logger,
-      resume,
+      progress,
     }: CreateReadModelRebuildArgs) => {
       const { db, sql } = open();
       await db.run(`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(schema)}`, []);
@@ -116,11 +117,12 @@ export const postgresql: PostgresqlFunction = (options) => {
         sql,
         schema,
         tablePrefix,
+        checkpoints: storageTablesFor(tablePrefix).checkpoints,
         name,
         fields,
         logger,
         close: release,
-        ...(resume === undefined ? {} : { resume }),
+        progress,
       });
     },
   };

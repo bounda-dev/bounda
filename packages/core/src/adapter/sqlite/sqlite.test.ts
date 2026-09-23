@@ -15,6 +15,7 @@ import {
   inboxLedgerContract,
   pendingEvent,
   readModelRebuildContract,
+  readModelTransactionContract,
   schedulerContract,
   tableContract,
 } from "../testing/index.ts";
@@ -37,7 +38,7 @@ const nodeSqlite = (db = new DatabaseSync(":memory:"), tablePrefix = "bounda_") 
       const next = queue.then(async () => {
         db.exec("BEGIN IMMEDIATE");
         try {
-          const result = await work(executor);
+          const result = await work({ ...executor, raw: db });
           db.exec("COMMIT");
           return result;
         } catch (error) {
@@ -106,6 +107,10 @@ describe("the SQLite stores on node:sqlite", () => {
       ).table,
   });
   readModelRebuildContract({ create: async () => nodeSqlite().adapter });
+  readModelTransactionContract({
+    create: async () => nodeSqlite().adapter,
+    locking: "single-writer",
+  });
 });
 
 describe("createSqliteAdapter", () => {
@@ -130,6 +135,7 @@ describe("createSqliteAdapter", () => {
       name: "orderSummary",
       fields: contractFields,
       logger: silentLogger,
+      progress: "rebuild:orderSummary:1",
     });
     expect(uses()).toBe(3);
     await rebuild.abort();
@@ -211,10 +217,15 @@ describe("createSqliteAdapter", () => {
   it("logs the lifecycle of a rebuild and leaves only the live table behind", async () => {
     const { adapter, db } = nodeSqlite();
     const { logs, logger } = recordingLogger();
-    const args = { name: "orderSummary", fields: contractFields, logger };
-    await (await adapter.rebuildReadModel(args)).commit();
-    await (await adapter.rebuildReadModel(args)).pause();
-    await (await adapter.rebuildReadModel({ ...args, resume: true })).abort();
+    const args = { name: "orderSummary", fields: contractFields, logger, progress: "rebuild:1" };
+    await (await adapter.rebuildReadModel(args)).commit({
+      subscriber: "projection:x",
+      position: 0,
+    });
+    const paused = await adapter.rebuildReadModel(args);
+    await paused.transact(({ checkpointStore }) => checkpointStore.set(args.progress, 1));
+    await paused.pause();
+    await (await adapter.rebuildReadModel(args)).abort();
     const table = "bounda_order_summary";
     const shadow = `${table}__rebuild`;
     expect(logs).toEqual([

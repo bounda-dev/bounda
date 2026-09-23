@@ -1,11 +1,15 @@
 export type {
   Adapter,
+  CommitReadModelRebuildArgs,
   CreateReadModelArgs,
   CreateReadModelRebuildArgs,
   CreateStorageArgs,
   IsAdapterFunction,
   ReadModelPorts,
   ReadModelRebuild,
+  ReadModelTransactArgs,
+  ReadModelTransacted,
+  ReadModelTransaction,
   StoragePorts,
 } from "./adapter.ts";
 export { isAdapter } from "./adapter.ts";

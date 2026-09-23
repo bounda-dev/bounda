@@ -123,40 +123,27 @@ describe("rebuildReadModel", () => {
       message: "read model rebuilt",
       fields: { readModel: "orderSummary", events: 3, position: 3 },
     });
-    expect(entries.map((entry) => entry.message)).not.toContain(
-      "read model checkpoint moved back to the rebuilt position",
-    );
     await app.stop();
   });
 
-  it("moves the checkpoint back when a worker got past the rebuilt position, retrying a lost race", async () => {
+  it("sets the checkpoint to the rebuilt position, so the new table gets every event once", async () => {
     mode = "ok";
-    const { app, storage, entries } = await setUp();
+    const { app, storage, rows } = await setUp();
     await app.commands.placeOrder({ orderId: "o-1", total: 10 });
     await app.processUntilIdle();
     await storage.checkpointStore.set(SUBSCRIBER, 40);
-    const compareAndSet = storage.checkpointStore.compareAndSet.bind(storage.checkpointStore);
-    let lost = 1;
-    storage.checkpointStore.compareAndSet = async (subscriber, expected, position) => {
-      if (lost > 0) {
-        lost -= 1;
-        await storage.checkpointStore.set(subscriber, 41);
-        return false;
-      }
-      return compareAndSet(subscriber, expected, position);
-    };
-
-    expect(await app.rebuildReadModel("orderSummary")).toEqual({
-      events: 1,
-      position: 1,
-      done: true,
-    });
+    await app.rebuildReadModel("orderSummary");
     expect(await storage.checkpointStore.get(SUBSCRIBER)).toBe(1);
-    expect(entries).toContainEqual({
-      level: "info",
-      message: "read model checkpoint moved back to the rebuilt position",
-      fields: { subscriber: SUBSCRIBER, from: 41, to: 1 },
-    });
+
+    await app.commands.placeOrder({ orderId: "o-2", total: 20 });
+    await storage.checkpointStore.set(SUBSCRIBER, 0);
+    expect(await app.rebuildReadModel("orderSummary")).toMatchObject({ position: 2 });
+    expect(await storage.checkpointStore.get(SUBSCRIBER)).toBe(2);
+    await app.processUntilIdle();
+    expect(await rows()).toEqual([
+      { orderId: "o-1", total: 10 },
+      { orderId: "o-2", total: 20 },
+    ]);
     await app.stop();
   });
 
@@ -210,8 +197,8 @@ describe("rebuildReadModel", () => {
     const app = await createApp({ registry, config });
     expect((await app.getLag()).subscribers).toContainEqual({
       subscriber: SUBSCRIBER,
-      position: 0,
-      lag: 1,
+      position: 1,
+      lag: 0,
     });
     const table = (
       await adapter.createReadModel<Row>({
@@ -321,25 +308,43 @@ describe("rebuildReadModel", () => {
     await app.stop();
   });
 
-  it("starts again from the first event when the paused table is gone", async () => {
+  it("keeps the checkpoint and the progress of a read model in a database of its own there", async () => {
     mode = "ok";
-    const base = memory();
-    const adapter: Adapter = {
-      ...base,
-      rebuildReadModel: (args) => base.rebuildReadModel({ ...args, resume: false }),
+    const main = memory();
+    const reporting = memory();
+    const config = {
+      storage: main,
+      readModels: { orderSummary: reporting },
+      commands: { placeOrder: { notifier: { use: "memory" } } },
+      runtime: { dispatcher: { batchSize: 1 } },
     };
-    const config = { storage: adapter, commands: { placeOrder: { notifier: { use: "memory" } } } };
-    const app = await createApp({
-      registry,
-      config: { ...config, runtime: { dispatcher: { batchSize: 1 } } },
-    });
+    const app = await createApp({ registry, config });
     await app.commands.placeOrder({ orderId: "o-1", total: 10 });
     await app.commands.placeOrder({ orderId: "o-2", total: 20 });
+    await app.processUntilIdle();
+    const mainCheckpoints = (await main.createStorage({ logger: silentLogger })).checkpointStore;
+    const reportingCheckpoints = (await reporting.createStorage({ logger: silentLogger }))
+      .checkpointStore;
+    expect(await reportingCheckpoints.get(SUBSCRIBER)).toBe(2);
+    expect(await mainCheckpoints.get(SUBSCRIBER)).toBe(0);
+
     await app.rebuildReadModel("orderSummary", { maxEvents: 1 });
+    expect(await app.pendingRebuilds()).toEqual(["orderSummary"]);
+    expect((await mainCheckpoints.list()).map(({ subscriber }) => subscriber)).not.toContainEqual(
+      expect.stringMatching(/^rebuild:/),
+    );
+    await reportingCheckpoints.set(SUBSCRIBER, 0);
     expect(await app.rebuildReadModel("orderSummary")).toEqual({
-      events: 2,
+      events: 1,
       position: 2,
       done: true,
+    });
+    expect(await app.pendingRebuilds()).toEqual([]);
+    expect(await reportingCheckpoints.get(SUBSCRIBER)).toBe(2);
+    expect((await app.getLag()).subscribers).toContainEqual({
+      subscriber: SUBSCRIBER,
+      position: 2,
+      lag: 0,
     });
     await app.stop();
   });

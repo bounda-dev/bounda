@@ -77,6 +77,7 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = ({
       db,
       raw,
       tablePrefix,
+      checkpoints: storageTablesFor(tablePrefix).checkpoints,
       name: readModel,
       fields,
       logger,
@@ -87,18 +88,19 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = ({
     name: readModel,
     fields,
     logger,
-    resume,
+    progress,
   }: CreateReadModelRebuildArgs) => {
     const { db, raw } = acquire();
     return rebuildSqliteReadModel<Row>({
       db,
       raw,
       tablePrefix,
+      checkpoints: storageTablesFor(tablePrefix).checkpoints,
       name: readModel,
       fields,
       logger,
       close: release,
-      ...(resume === undefined ? {} : { resume }),
+      progress,
     });
   },
 });

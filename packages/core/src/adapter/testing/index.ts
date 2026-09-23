@@ -27,6 +27,12 @@ export type {
   RebuiltRow,
 } from "./read-model-rebuild.contract.ts";
 export { readModelRebuildContract, rebuiltFields } from "./read-model-rebuild.contract.ts";
+export type {
+  ReadModelTransactionContractArgs,
+  ReadModelTransactionContractFunction,
+  TransactionLocking,
+} from "./read-model-transaction.contract.ts";
+export { readModelTransactionContract } from "./read-model-transaction.contract.ts";
 export type { SchedulerContractArgs, SchedulerContractFunction } from "./scheduler.contract.ts";
 export { schedulerContract } from "./scheduler.contract.ts";
 export type { ContractRow, TableContractArgs, TableContractFunction } from "./table.contract.ts";

@@ -32,32 +32,118 @@ export interface StoragePorts {
 export interface ReadModelPorts<Row extends object = Record<string, unknown>, Raw = unknown> {
   readonly table: Table<Row>;
   readonly client: ReadClient<Row, Raw>;
+  /**
+   * The checkpoints of this read model's projections, in the same database as its rows.
+   */
+  readonly checkpointStore: CheckpointStore;
+  /**
+   * Runs `work` in one transaction on the read model's database, holding the lock named
+   * `subscriber` for its whole length. What `work` writes through the transaction's `table`,
+   * `client` and `checkpointStore` commits together when it resolves and rolls back together when
+   * it throws, so a batch and the checkpoint past it are never apart. When another holder has the
+   * lock, `wait` decides between waiting for it and resolving at once with `acquired: false`.
+   */
+  transact<T>(args: ReadModelTransactArgs<Row, T>): Promise<ReadModelTransacted<T>>;
   close(): Promise<void>;
 }
 
 /**
+ * What `ReadModelPorts.transact` runs its work with: the read model's table, client and
+ * checkpoints, all bound to the one transaction. `client.raw` is the driver's transaction handle.
+ */
+export interface ReadModelTransaction<Row extends object = Record<string, unknown>> {
+  readonly table: Table<Row>;
+  readonly client: ReadClient<Row>;
+  readonly checkpointStore: CheckpointStore;
+}
+
+/**
+ * What `ReadModelPorts.transact` runs: the work, the subscriber whose lock it holds, and whether
+ * to wait for that lock.
+ */
+export interface ReadModelTransactArgs<Row extends object, T> {
+  /**
+   * The subscriber the transaction is for; its name is the lock's.
+   */
+  readonly subscriber: string;
+  /**
+   * Wait for the lock when someone else holds it, instead of giving up.
+   */
+  readonly wait: boolean;
+  readonly work: (transaction: ReadModelTransaction<Row>) => Promise<T>;
+}
+
+/**
+ * The outcome of `ReadModelPorts.transact`: the work's result, or `acquired: false` when the lock
+ * was taken and the caller chose not to wait.
+ */
+export type ReadModelTransacted<T> =
+  | { readonly acquired: true; readonly value: T }
+  | { readonly acquired: false };
+
+/**
  * A read model being rebuilt from scratch, next to the live one. Projections write into `table`
  * while queries keep reading the live table; `commit` swaps the two and drops the old one, `abort`
- * drops what was built, `pause` keeps it for a later `rebuildReadModel` with `resume`. Each of the
+ * drops what was built, `pause` keeps it for a later rebuild with the same `progress`. Each of the
  * three releases the adapter's resources.
  */
 export interface ReadModelRebuild<Row extends object = Record<string, unknown>, Raw = unknown> {
   readonly table: Table<Row>;
   readonly client: ReadClient<Row, Raw>;
   /**
-   * Whether `table` is the shadow a paused rebuild left, rows included, rather than a fresh one.
+   * Whether `table` is the shadow a paused rebuild left under the same `progress`, rows included,
+   * rather than a fresh one.
    */
   readonly resumed: boolean;
-  commit(): Promise<void>;
+  /**
+   * The position the shadow holds the events up to: the one saved under `progress` when resumed,
+   * 0 for a fresh shadow.
+   */
+  readonly position: number;
+  /**
+   * The checkpoints in the read model's database, where `progress` is kept.
+   */
+  readonly checkpointStore: CheckpointStore;
+  /**
+   * Runs `work` in one transaction on the shadow: what it writes through the transaction's
+   * `table`, `client` and `checkpointStore` commits together or rolls back together, so a batch
+   * and the progress past it are never apart.
+   */
+  transact<T>(work: (transaction: ReadModelTransaction<Row>) => Promise<T>): Promise<T>;
+  /**
+   * In one transaction, holding the lock named `subscriber` as `ReadModelPorts.transact` does:
+   * the shadow takes the live table's place, the checkpoint `subscriber` is set to `position` and
+   * `progress` is forgotten. The read model then holds the events up to `position` exactly, and
+   * its projections carry on from there.
+   */
+  commit(args: CommitReadModelRebuildArgs): Promise<void>;
+  /**
+   * Drops the shadow and forgets `progress`.
+   */
   abort(): Promise<void>;
   pause(): Promise<void>;
 }
 
+/**
+ * Where `ReadModelRebuild.commit` leaves the read model: the projections' subscriber and the
+ * position the rebuilt table holds the events up to.
+ */
+export interface CommitReadModelRebuildArgs {
+  readonly subscriber: string;
+  readonly position: number;
+}
+
+/**
+ * What `Adapter.rebuildReadModel` opens a shadow table for: the read model, its current fields,
+ * and the checkpoint its progress is kept under.
+ */
 export interface CreateReadModelRebuildArgs extends CreateReadModelArgs {
   /**
-   * Reopen the shadow a paused rebuild left, when there is one, instead of starting a fresh one.
+   * The checkpoint the rebuild keeps its position under. A shadow left by a paused rebuild is
+   * reopened, rows included, when this checkpoint says it got somewhere; otherwise it is
+   * discarded and a fresh one opened.
    */
-  readonly resume?: boolean;
+  readonly progress: string;
 }
 
 export interface CreateStorageArgs {
@@ -79,9 +165,8 @@ export interface Adapter<Name extends string = string, Options = unknown>
   createStorage(args: CreateStorageArgs): Promise<StoragePorts>;
   createReadModel<Row extends object>(args: CreateReadModelArgs): Promise<ReadModelPorts<Row>>;
   /**
-   * Opens a fresh table for `name` with the current `fields`, leaving the live table untouched
-   * until `commit`. A leftover from an interrupted rebuild is discarded first, unless `resume`
-   * asks to reopen it.
+   * Opens a shadow table for `name` with the current `fields`, leaving the live table untouched
+   * until `commit`: the one a paused rebuild left under the same `progress`, or a fresh one.
    */
   rebuildReadModel<Row extends object>(
     args: CreateReadModelRebuildArgs,
