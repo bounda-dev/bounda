@@ -67,7 +67,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   logger,
 }) => {
   const mutex = createMutex();
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let cancelWait: (() => void) | undefined;
   let running = false;
   const retry = config.runtime.policies.retry;
   const leaseMs = config.runtime.policies.timeoutMs * 2;
@@ -209,12 +209,12 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
 
   const schedule = (): void => {
     if (!running) return;
-    timer = setTimeout(async () => {
+    cancelWait = clock.after(config.runtime.dispatcher.pollIntervalMs, async () => {
       await runOnce().catch((error: unknown) =>
         logger.error("scheduled command worker failed", errorDetails(error)),
       );
       schedule();
-    }, config.runtime.dispatcher.pollIntervalMs);
+    });
   };
 
   return {
@@ -225,7 +225,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     },
     stop: async () => {
       running = false;
-      if (timer !== undefined) clearTimeout(timer);
+      cancelWait?.();
       await mutex.drain();
     },
     runOnce,

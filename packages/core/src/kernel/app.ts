@@ -208,6 +208,7 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
     pollIntervalMs: config.runtime.dispatcher.pollIntervalMs,
     idleIntervalMs: config.runtime.dispatcher.idleIntervalMs,
     ...(storage.notifier === undefined ? {} : { notifier: storage.notifier }),
+    clock,
     logger,
   });
   const worker = createScheduledCommandWorker({

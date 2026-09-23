@@ -129,6 +129,7 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
             run: () => policy.handler({ event, commands }),
             timeoutMs: settings.timeoutMs,
             subject: `policy ${policy.name}`,
+            clock,
           }),
       });
       await ledger.complete(key);
