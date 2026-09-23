@@ -11,10 +11,9 @@ object's own SQLite. Nothing else to run.
 {{pm}} run deploy       # wrangler deploy, to your Cloudflare account
 ```
 
-Every script first runs `bounda generate`, which writes the typed registry under `.bounda/` and a
-`+types/` folder next to each module; run it yourself after adding a module, so your editor sees
-its types. `dev`, `typecheck` and `check` also run `wrangler types`, which writes
-`worker-configuration.d.ts` from `wrangler.jsonc`.
+`{{pm}} run generate` writes the typed registry under `.bounda/`, a `+types/` folder next to each
+module and, with `wrangler types`, `worker-configuration.d.ts` from `wrangler.jsonc`. The scripts
+run it for you; run it yourself after adding a module or a binding, so your editor sees the types.
 
 Open http://localhost:8787 once `dev` is running: `public/index.html` places orders and lists
 them through the API. Or from a terminal:

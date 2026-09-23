@@ -97,6 +97,57 @@ describe("create-bounda", () => {
     expect(calls).toEqual([]);
   });
 
+  it("generates a Cloudflare project's types after its install, which has no prepare to do it", async () => {
+    const cwd = await workspace();
+    const { calls, exec } = recorder();
+    const result = await cli(
+      ["edge", "--no-git", "--pm", "npm", "--framework", "cloudflare"],
+      cwd,
+      {
+        exec,
+      },
+    );
+    expect(result.code).toBe(EXIT_OK);
+    expect(calls).toEqual([
+      `npm install @ ${join(cwd, "edge")}`,
+      `npm run generate @ ${join(cwd, "edge")}`,
+    ]);
+  });
+
+  it("warns when a Cloudflare project's types cannot be generated, and skips them after a failed install", async () => {
+    const cwd = await workspace();
+    const generating: Exec = async (_command, args) => {
+      if (args[0] === "run") throw new Error("wrangler exploded");
+    };
+    const generated = await cli(
+      ["edge", "--no-git", "--pm", "bun", "--framework", "cloudflare"],
+      cwd,
+      {
+        exec: generating,
+      },
+    );
+    expect(generated.code).toBe(EXIT_OK);
+    expect(generated.stderr).toContain(
+      "warning: generating types failed (wrangler exploded); run bun run generate yourself",
+    );
+    expect(generated.stderr).not.toContain("install failed");
+
+    const calls: string[] = [];
+    const installing: Exec = async (command, args) => {
+      calls.push(`${command} ${args.join(" ")}`);
+      if (args[0] === "install") throw new Error("npm exploded");
+    };
+    const failed = await cli(
+      ["other", "--no-git", "--pm", "npm", "--framework", "cloudflare"],
+      cwd,
+      {
+        exec: installing,
+      },
+    );
+    expect(failed.stderr).toContain("warning: install failed (npm exploded)");
+    expect(calls).toEqual(["npm install"]);
+  });
+
   it("warns and goes on when git or the install fail", async () => {
     const cwd = await workspace();
     const failing: Exec = async (command) => {

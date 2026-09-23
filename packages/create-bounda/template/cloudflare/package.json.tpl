@@ -6,7 +6,7 @@
     "node": ">=22.18"
   },
   "scripts": {
-    "generate": "bounda generate",
+    "generate": "bounda generate && wrangler types",
     "cf-typegen": "wrangler types",
     "build": "bounda generate",
     "dev": "bounda generate && wrangler types && wrangler dev",

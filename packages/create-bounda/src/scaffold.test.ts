@@ -221,6 +221,7 @@ describe("scaffoldProject", () => {
       devDependencies: Record<string, string>;
     };
     expect(manifest.scripts).toMatchObject({
+      generate: "bounda generate && wrangler types",
       build: "bounda generate",
       dev: "bounda generate && wrangler types && wrangler dev",
       deploy: "bounda generate && wrangler deploy",
