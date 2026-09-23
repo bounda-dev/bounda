@@ -38,7 +38,8 @@ const isGenerated = (fileName: string | Buffer | null): boolean =>
 
 /**
  * Watches the application directory and regenerates after each burst of changes to user modules.
- * Changes under `+types` are the generator's own and are ignored. Resolves when the signal aborts.
+ * Changes under `+types` are the generator's own and are ignored. The watcher is listening by the
+ * time the call returns, so a change made right after it is seen. Resolves when the signal aborts.
  */
 export const watchProject: WatchProjectFunction = async ({
   root,

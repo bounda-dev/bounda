@@ -250,8 +250,7 @@ export const runCli: RunCliFunction = async ({ argv, cwd, stdout, stderr, signal
       exitCode = await runGenerate(options, cwd, stdout, stderr);
       if (!options.watch || exitCode === EXIT_FAILURE) return;
       const root = resolve(cwd, options.root ?? ".");
-      line(stdout, `watching ${options.appDir}/ for changes`);
-      await watchProject({
+      const watching = watchProject({
         root,
         appDir: options.appDir,
         signal: signal ?? new AbortController().signal,
@@ -259,6 +258,8 @@ export const runCli: RunCliFunction = async ({ argv, cwd, stdout, stderr, signal
           exitCode = await runGenerate(options, cwd, stdout, stderr);
         },
       });
+      line(stdout, `watching ${options.appDir}/ for changes`);
+      await watching;
     });
 
   projectOptions(

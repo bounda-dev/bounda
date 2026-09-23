@@ -61,8 +61,9 @@ or add state.ts
 ### Watch mode
 
 `--watch` regenerates after each burst of changes, 100 ms after the last one, and ignores changes
-to `+types` directories. A run that fails prints its problems and watching goes on. `Ctrl-C` ends
-it.
+to `+types` directories. It prints `watching app/ for changes` once the first run has succeeded
+and the watcher is listening, so a change saved from that line on is picked up. A run that fails
+prints its problems and watching goes on. `Ctrl-C` ends it.
 
 ### How state is inferred
 
