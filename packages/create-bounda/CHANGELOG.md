@@ -1,5 +1,16 @@
 # create-bounda
 
+## 0.1.0-alpha.7
+
+### Patch Changes
+
+- 6906dff: A Cloudflare project serves `public/index.html` as a static asset: a page that places orders and
+  lists them through the API, so a fresh deploy shows something that works. It also gets a `build`
+  script, which Workers Builds and the Deploy to Cloudflare button run before deploying.
+- 76285dd: `npm create bounda` offers Cloudflare: a Worker with a Bounda Durable Object per tenant, the
+  events, read models and scheduled work in the object's own SQLite. The adapter is documented at
+  docs.bounda.dev/adapters/cloudflare.
+
 ## 0.1.0-alpha.6
 
 ### Patch Changes
