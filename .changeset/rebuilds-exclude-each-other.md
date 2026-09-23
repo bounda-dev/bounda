@@ -14,3 +14,7 @@ code is the same, and the older one stops at its next step with the new `Rebuild
 (`REBUILD_SUPERSEDED`) without writing or dropping anything. A rebuild whose process died needs no
 timeout to be replaced. `rebuildFencing` in `@bounda-dev/core/adapter` names the lock and the
 generation checkpoint for adapter authors.
+
+On Cloudflare, an alarm slice that another rebuild took over is logged at `info` as
+`bounda rebuild slice taken over by another rebuild` instead of as a failed slice, and is not
+retried as one: the rebuild that took over carries on.
