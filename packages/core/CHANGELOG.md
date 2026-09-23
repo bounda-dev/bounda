@@ -1,5 +1,27 @@
 # @bounda-dev/core
 
+## 0.1.0-alpha.7
+
+### Patch Changes
+
+- f660eb7: An app without policies or processes no longer runs a policy or process runner: nothing reads the
+  log for them, nothing checkpoints and nothing wakes up. On Cloudflare that removes an alarm and
+  two row writes after every command. A policy or process now always starts at the head of the log
+  when it has no checkpoint yet, so adding the first one to a running app does not replay its
+  history. `CheckpointStore` gains `remove(subscriber)`.
+- f7ce38a: A read model rebuild can run in slices and resumes where it stopped. `rebuildReadModel` and
+  `app.rebuildReadModel` take `maxEvents` and answer `done`; the position reached is saved after
+  every batch, keyed by a fingerprint of the read model's fields and projections, so an interrupted
+  `bounda rebuild` picks up where it was unless the code changed, and `app.pendingRebuilds()` lists
+  what is waiting. On Cloudflare the Durable Object runs the first slice in the request and the
+  rest in its alarm (`eventsPerRebuildSlice`, 5,000 by default). Adapters gain `resume` and
+  `pause` in their rebuild.
+- 9d9b670: A Bounda Durable Object works the same on every compatibility date. Workers before the 2026
+  dates drop an error's own properties on the way across RPC, so `createWorker` answered 500 for a
+  domain error or an invalid payload; the object now answers each call with an outcome, and
+  `connect` and `createWorker` throw refusals again with `name`, `message`, `code` and `issues`.
+  A handler that throws is no longer reported as an unhandled rejection by workerd on those dates.
+
 ## 0.1.0-alpha.6
 
 ### Patch Changes

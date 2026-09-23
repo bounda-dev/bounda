@@ -1,5 +1,14 @@
 # @bounda-dev/cli
 
+## 0.1.0-alpha.7
+
+### Patch Changes
+
+- Updated dependencies [f660eb7]
+- Updated dependencies [f7ce38a]
+- Updated dependencies [9d9b670]
+  - @bounda-dev/core@0.1.0-alpha.7
+
 ## 0.1.0-alpha.6
 
 ### Patch Changes
