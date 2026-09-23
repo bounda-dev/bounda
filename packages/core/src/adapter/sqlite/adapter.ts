@@ -1,4 +1,4 @@
-import type { Adapter, CreateReadModelArgs } from "../adapter.ts";
+import type { Adapter, CreateReadModelArgs, CreateReadModelRebuildArgs } from "../adapter.ts";
 import type { SqlDatabase } from "../sql/database.ts";
 import { createSqliteCheckpointStore } from "./checkpoint-store.ts";
 import { createSqliteDeadLetterStore } from "./dead-letter-store.ts";
@@ -87,7 +87,8 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = ({
     name: readModel,
     fields,
     logger,
-  }: CreateReadModelArgs) => {
+    resume,
+  }: CreateReadModelRebuildArgs) => {
     const { db, raw } = acquire();
     return rebuildSqliteReadModel<Row>({
       db,
@@ -97,6 +98,7 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = ({
       fields,
       logger,
       close: release,
+      ...(resume === undefined ? {} : { resume }),
     });
   },
 });

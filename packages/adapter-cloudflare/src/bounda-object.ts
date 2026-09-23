@@ -35,6 +35,12 @@ export interface CreateBoundaObjectArgs<R extends Registry> {
    * yields and wakes itself again. Defaults to 50.
    */
   readonly passesPerAlarm?: number;
+  /**
+   * At most about this many events per slice of a read model rebuild: the request that starts it
+   * runs the first slice, and each alarm runs the next until the rebuilt table is swapped in.
+   * Defaults to 5,000.
+   */
+  readonly eventsPerRebuildSlice?: number;
   readonly logger?: Logger;
   readonly ids?: IdGenerator;
   readonly clock?: Clock;
@@ -56,10 +62,15 @@ export interface BoundaObjectMethods {
   listDeadLetters(args?: ListDeadLettersArgs): Promise<readonly DeadLetter[]>;
   replayDeadLetter(id: string): Promise<DeadLetter>;
   discardDeadLetter(id: string): Promise<DeadLetter>;
+  /**
+   * Starts or continues rebuilding a read model with one slice of `eventsPerRebuildSlice` events.
+   * When the result is not `done` the object's alarm runs the next slices, one per alarm, until
+   * the rebuilt table takes the live one's place; queries keep reading the live table meanwhile.
+   */
   rebuildReadModel(name: string): Promise<RebuildReadModelResult>;
   /**
-   * Runs policies, processes, due scheduled commands and retries, in bounded slices, and arms the
-   * next alarm. Called by the platform.
+   * Runs the next slice of every paused rebuild, then policies, processes, due scheduled commands
+   * and retries, in bounded slices, and arms the next alarm. Called by the platform.
    */
   alarm(): Promise<void>;
 }
@@ -76,6 +87,7 @@ export interface CreateBoundaObjectFunction {
 }
 
 const DEFAULT_PASSES_PER_ALARM = 50;
+const DEFAULT_EVENTS_PER_REBUILD_SLICE = 5_000;
 const MIN_RETRY_MS = 1_000;
 
 export interface ConfigForObjectFunction {
@@ -124,6 +136,7 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
   registry,
   config,
   passesPerAlarm = DEFAULT_PASSES_PER_ALARM,
+  eventsPerRebuildSlice = DEFAULT_EVENTS_PER_REBUILD_SLICE,
   logger = workersLogger,
   ids,
   clock = systemClock,
@@ -149,14 +162,19 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
       return this.#app;
     }
 
-    async #rearm(settled: boolean, idle: boolean): Promise<void> {
+    async #rearm(settled: boolean, idle: boolean, rebuildFailed = false): Promise<void> {
       const app = this.#ready();
-      const [lag, due] = await Promise.all([app.getLag(), app.nextDueAt()]);
+      const [lag, due, rebuilds] = await Promise.all([
+        app.getLag(),
+        app.nextDueAt(),
+        app.pendingRebuilds(),
+      ]);
       const now = clock.now().getTime();
       const at = nextWake({
         idle,
         settled,
         lag: lag.maxLag,
+        rebuild: rebuilds.length === 0 ? "none" : rebuildFailed ? "held" : "next",
         due,
         now,
         retryMs: Math.max(app.config.runtime.dispatcher.pollIntervalMs, MIN_RETRY_MS),
@@ -166,6 +184,29 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
         return;
       }
       await this.ctx.storage.setAlarm(Date.now() + (at - now));
+    }
+
+    async #continueRebuilds(): Promise<boolean> {
+      const app = this.#ready();
+      let failed = false;
+      for (const name of await app.pendingRebuilds()) {
+        try {
+          const { done, position } = await app.rebuildReadModel(name, {
+            maxEvents: eventsPerRebuildSlice,
+          });
+          logger.info(done ? "bounda rebuild finished" : "bounda rebuild continues", {
+            readModel: name,
+            position,
+          });
+        } catch (error) {
+          failed = true;
+          logger.error("bounda rebuild slice failed", {
+            readModel: name,
+            message: errorMessage(error),
+          });
+        }
+      }
+      return failed;
     }
 
     async command(
@@ -211,20 +252,29 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
     }
 
     async rebuildReadModel(name: string): Promise<RebuildReadModelResult> {
-      const result = await this.#ready().rebuildReadModel(name);
+      const result = await this.#ready().rebuildReadModel(name, {
+        maxEvents: eventsPerRebuildSlice,
+      });
       await this.#rearm(false, true);
       return result;
     }
 
     override async alarm(): Promise<void> {
       let idle = true;
+      let rebuildFailed = false;
+      try {
+        rebuildFailed = await this.#continueRebuilds();
+      } catch (error) {
+        rebuildFailed = true;
+        logger.error("bounda rebuilds could not be listed", { message: errorMessage(error) });
+      }
       try {
         ({ idle } = await this.#ready().processUntilIdle({ maxPasses: passesPerAlarm }));
       } catch (error) {
         logger.error("bounda alarm failed; it will be retried", { message: errorMessage(error) });
       }
       try {
-        await this.#rearm(true, idle);
+        await this.#rearm(true, idle, rebuildFailed);
       } catch (error) {
         logger.error("bounda alarm could not re-arm", { message: errorMessage(error) });
       }

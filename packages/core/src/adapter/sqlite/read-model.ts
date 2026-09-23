@@ -84,9 +84,13 @@ export const openSqliteReadModel: OpenSqliteReadModelFunction = async <
   };
 };
 
+export interface RebuildSqliteReadModelArgs<Raw = unknown> extends OpenSqliteReadModelArgs<Raw> {
+  readonly resume?: boolean;
+}
+
 export interface RebuildSqliteReadModelFunction {
   <Row extends object, Raw = unknown>(
-    args: OpenSqliteReadModelArgs<Raw>,
+    args: RebuildSqliteReadModelArgs<Raw>,
   ): Promise<ReadModelRebuild<Row, Raw>>;
 }
 
@@ -95,8 +99,9 @@ const tableExists = async (db: SqlDatabase, table: string): Promise<boolean> =>
 
 /**
  * Opens the shadow table of a rebuild: `<table>__rebuild`, created fresh with the current fields
- * after dropping what an interrupted rebuild may have left. `commit` swaps it into place inside
- * one write transaction; `abort` drops it. Both release the connection.
+ * after dropping what an interrupted rebuild may have left, or reopened as it is with `resume`
+ * when it exists. `commit` swaps it into place inside one write transaction, `abort` drops it,
+ * `pause` leaves it. All three release the connection.
  */
 export const rebuildSqliteReadModel: RebuildSqliteReadModelFunction = async <
   Row extends object,
@@ -109,13 +114,22 @@ export const rebuildSqliteReadModel: RebuildSqliteReadModelFunction = async <
   fields,
   logger,
   close,
-}: OpenSqliteReadModelArgs<Raw>): Promise<ReadModelRebuild<Row, Raw>> => {
+  resume = false,
+}: RebuildSqliteReadModelArgs<Raw>): Promise<ReadModelRebuild<Row, Raw>> => {
   const table = tableNameFor({ prefix: tablePrefix, readModel: name });
   const { shadow } = rebuildTablesFor(table);
   const columns = columnsOf({ readModel: name, fields, dialect: sqliteDialect });
-  for (const statement of shadowTableStatements({ table, columns })) await db.run(statement, []);
-  logger.info("read model rebuild started", { readModel: name, table, shadow });
+  const resumed = resume && (await tableExists(db, shadow));
+  if (!resumed) {
+    for (const statement of shadowTableStatements({ table, columns })) await db.run(statement, []);
+  }
+  logger.info(resumed ? "read model rebuild resumed" : "read model rebuild started", {
+    readModel: name,
+    table,
+    shadow,
+  });
   return {
+    resumed,
     table: createSqlTable<Row>({
       readModel: name,
       table: shadow,
@@ -143,6 +157,10 @@ export const rebuildSqliteReadModel: RebuildSqliteReadModelFunction = async <
     abort: async () => {
       for (const statement of dropShadowTableStatements(table)) await db.run(statement, []);
       logger.info("read model rebuild aborted", { readModel: name, table });
+      await close();
+    },
+    pause: async () => {
+      logger.info("read model rebuild paused", { readModel: name, table });
       await close();
     },
   };

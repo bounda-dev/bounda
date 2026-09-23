@@ -152,6 +152,13 @@ the app refuses to start against a table whose columns no longer match the view.
 swap and the deploy, the old worker's projection for that read model may fail against the new
 columns; its checkpoint holds, and it catches up as soon as the new code runs. Nothing is lost.
 
+A rebuild that stops halfway, because the machine died or the connection dropped, resumes where
+it was the next time you run it: the position the fresh table reached is saved after every batch,
+as a checkpoint named `rebuild:<read model>:<fingerprint>`. The fingerprint is a digest of the
+view's fields and the projections' code, so a rebuild left behind by different code starts again
+from a fresh table instead of mixing rows projected by two versions. At worst the last batch
+before the stop is projected twice.
+
 Two things the rebuild cannot do for you. A projection that writes through `client` with SQL
 naming the table by hand keeps writing to the live table, not to the fresh one — write projections
 through `table`. And a read model with millions of events takes as long as projecting them takes;
@@ -159,7 +166,10 @@ watch the `read model rebuild progressed` log line.
 
 Programmatically, `app.rebuildReadModel(name)` on an app, or `rebuildReadModel({ registry,
 config, name })` from `@bounda-dev/core` on a project loaded with `loadProject()` from
-`@bounda-dev/core/node`.
+`@bounda-dev/core/node`. Both take `maxEvents` to run one slice and pause: the result says
+`done: false`, the next call resumes, and `app.pendingRebuilds()` lists the read models waiting
+for one. That is how a host without a long-running process, such as a Durable Object, rebuilds a
+stream that does not fit in one request.
 
 ## Tuning
 

@@ -81,8 +81,12 @@ export const openPostgresqlReadModel: OpenPostgresqlReadModelFunction = async <R
   };
 };
 
+export interface RebuildPostgresqlReadModelArgs extends OpenPostgresqlReadModelArgs {
+  readonly resume?: boolean;
+}
+
 export interface RebuildPostgresqlReadModelFunction {
-  <Row extends object>(args: OpenPostgresqlReadModelArgs): Promise<ReadModelRebuild<Row, Sql>>;
+  <Row extends object>(args: RebuildPostgresqlReadModelArgs): Promise<ReadModelRebuild<Row, Sql>>;
 }
 
 const tableExists = async (
@@ -99,8 +103,9 @@ const tableExists = async (
 
 /**
  * Opens the shadow table of a rebuild: `<table>__rebuild`, created fresh with the current fields
- * after dropping what an interrupted rebuild may have left. `commit` swaps it into place inside
- * one transaction; `abort` drops it. Both release the pool.
+ * after dropping what an interrupted rebuild may have left, or reopened as it is with `resume`
+ * when it exists. `commit` swaps it into place inside one transaction, `abort` drops it, `pause`
+ * leaves it. All three release the pool.
  */
 export const rebuildPostgresqlReadModel: RebuildPostgresqlReadModelFunction = async <
   Row extends object,
@@ -113,13 +118,22 @@ export const rebuildPostgresqlReadModel: RebuildPostgresqlReadModelFunction = as
   fields,
   logger,
   close,
-}: OpenPostgresqlReadModelArgs): Promise<ReadModelRebuild<Row, Sql>> => {
+  resume = false,
+}: RebuildPostgresqlReadModelArgs): Promise<ReadModelRebuild<Row, Sql>> => {
   const table = tableNameFor({ prefix: tablePrefix, readModel: name });
   const { shadow } = rebuildTablesFor(table);
   const columns = columnsOf({ readModel: name, fields, dialect: postgresqlDialect });
-  for (const statement of shadowTableStatements({ table, columns })) await db.run(statement, []);
-  logger.info("read model rebuild started", { readModel: name, table, shadow });
+  const resumed = resume && (await tableExists(db, schema, shadow));
+  if (!resumed) {
+    for (const statement of shadowTableStatements({ table, columns })) await db.run(statement, []);
+  }
+  logger.info(resumed ? "read model rebuild resumed" : "read model rebuild started", {
+    readModel: name,
+    table,
+    shadow,
+  });
   return {
+    resumed,
     table: createSqlTable<Row>({
       readModel: name,
       table: shadow,
@@ -147,6 +161,10 @@ export const rebuildPostgresqlReadModel: RebuildPostgresqlReadModelFunction = as
     abort: async () => {
       for (const statement of dropShadowTableStatements(table)) await db.run(statement, []);
       logger.info("read model rebuild aborted", { readModel: name, table });
+      await close();
+    },
+    pause: async () => {
+      logger.info("read model rebuild paused", { readModel: name, table });
       await close();
     },
   };

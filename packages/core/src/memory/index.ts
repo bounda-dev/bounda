@@ -1,4 +1,9 @@
-import type { Adapter, CreateReadModelArgs, StoragePorts } from "../adapter/adapter.ts";
+import type {
+  Adapter,
+  CreateReadModelArgs,
+  CreateReadModelRebuildArgs,
+  StoragePorts,
+} from "../adapter/adapter.ts";
 import type { Table } from "../adapter/ports/table.ts";
 import type { FieldsRecord } from "../modules/view.ts";
 import { createMemoryCheckpointStore } from "./checkpoint-store.ts";
@@ -47,6 +52,7 @@ const through = <Row extends object>(live: LiveTable): Table<Row> => {
 export const memory: MemoryFunction = (options = {}) => {
   let storage: StoragePorts | null = null;
   const tables = new Map<string, LiveTable>();
+  const shadows = new Map<string, Table<Record<string, unknown>>>();
 
   const live = (name: string, fields: FieldsRecord): LiveTable => {
     const existing = tables.get(name);
@@ -77,12 +83,20 @@ export const memory: MemoryFunction = (options = {}) => {
       const table = through<Row>(live(name, fields));
       return { table, client: createMemoryReadClient({ name, table }), close: async () => {} };
     },
-    rebuildReadModel: async <Row extends object>({ name, fields }: CreateReadModelArgs) => {
-      const shadow = createMemoryTable<Row>({ name, fields });
+    rebuildReadModel: async <Row extends object>({
+      name,
+      fields,
+      resume = false,
+    }: CreateReadModelRebuildArgs) => {
+      const left = resume ? shadows.get(name) : undefined;
+      const shadow = (left as Table<Row> | undefined) ?? createMemoryTable<Row>({ name, fields });
+      shadows.set(name, shadow as unknown as Table<Record<string, unknown>>);
       return {
         table: shadow,
         client: createMemoryReadClient({ name, table: shadow }),
+        resumed: left !== undefined,
         commit: async () => {
+          shadows.delete(name);
           const target = tables.get(name);
           if (target === undefined) {
             tables.set(name, { current: shadow as unknown as Table<Record<string, unknown>> });
@@ -90,7 +104,10 @@ export const memory: MemoryFunction = (options = {}) => {
             target.current = shadow as unknown as Table<Record<string, unknown>>;
           }
         },
-        abort: async () => {},
+        abort: async () => {
+          shadows.delete(name);
+        },
+        pause: async () => {},
       };
     },
   };

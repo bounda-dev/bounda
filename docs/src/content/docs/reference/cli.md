@@ -105,7 +105,9 @@ The projections run into a fresh table with the view's current fields while quer
 the live one. When the fresh table has caught up with the stream it takes the live table's place
 in one step, and the read model's checkpoint is moved to where the rebuild stopped; a worker that
 got further meanwhile re-projects the difference. A projection that throws aborts the rebuild and
-leaves the live table as it was.
+leaves the live table as it was. A rebuild that was interrupted resumes where it stopped when you
+run it again, as long as the read model's fields and projections are the same code; otherwise it
+starts over.
 
 ```
 rebuilt read model "orderSummary": 48213 events, checkpoint at position 48213

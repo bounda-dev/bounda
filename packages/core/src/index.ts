@@ -14,6 +14,7 @@ export type {
   CreateAppFunction,
   ProcessUntilIdleOptions,
   ProcessUntilIdleResult,
+  RebuildReadModelOptions,
 } from "./kernel/app.ts";
 export { createApp } from "./kernel/app.ts";
 export type { DeadLetters } from "./kernel/dead-letters/dead-letters.ts";

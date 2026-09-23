@@ -38,13 +38,26 @@ export interface ReadModelPorts<Row extends object = Record<string, unknown>, Ra
 /**
  * A read model being rebuilt from scratch, next to the live one. Projections write into `table`
  * while queries keep reading the live table; `commit` swaps the two and drops the old one, `abort`
- * drops what was built. Either releases the adapter's resources.
+ * drops what was built, `pause` keeps it for a later `rebuildReadModel` with `resume`. Each of the
+ * three releases the adapter's resources.
  */
 export interface ReadModelRebuild<Row extends object = Record<string, unknown>, Raw = unknown> {
   readonly table: Table<Row>;
   readonly client: ReadClient<Row, Raw>;
+  /**
+   * Whether `table` is the shadow a paused rebuild left, rows included, rather than a fresh one.
+   */
+  readonly resumed: boolean;
   commit(): Promise<void>;
   abort(): Promise<void>;
+  pause(): Promise<void>;
+}
+
+export interface CreateReadModelRebuildArgs extends CreateReadModelArgs {
+  /**
+   * Reopen the shadow a paused rebuild left, when there is one, instead of starting a fresh one.
+   */
+  readonly resume?: boolean;
 }
 
 export interface CreateStorageArgs {
@@ -67,9 +80,12 @@ export interface Adapter<Name extends string = string, Options = unknown>
   createReadModel<Row extends object>(args: CreateReadModelArgs): Promise<ReadModelPorts<Row>>;
   /**
    * Opens a fresh table for `name` with the current `fields`, leaving the live table untouched
-   * until `commit`. A leftover from an interrupted rebuild is discarded first.
+   * until `commit`. A leftover from an interrupted rebuild is discarded first, unless `resume`
+   * asks to reopen it.
    */
-  rebuildReadModel<Row extends object>(args: CreateReadModelArgs): Promise<ReadModelRebuild<Row>>;
+  rebuildReadModel<Row extends object>(
+    args: CreateReadModelRebuildArgs,
+  ): Promise<ReadModelRebuild<Row>>;
 }
 
 export interface IsAdapterFunction {

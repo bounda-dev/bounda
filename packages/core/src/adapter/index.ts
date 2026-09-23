@@ -1,6 +1,7 @@
 export type {
   Adapter,
   CreateReadModelArgs,
+  CreateReadModelRebuildArgs,
   CreateStorageArgs,
   IsAdapterFunction,
   ReadModelPorts,

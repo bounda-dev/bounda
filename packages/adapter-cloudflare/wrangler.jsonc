@@ -6,8 +6,9 @@
   "durable_objects": {
     "bindings": [
       { "name": "STORE", "class_name": "Store" },
-      { "name": "QUIET_STORE", "class_name": "QuietStore" }
+      { "name": "QUIET_STORE", "class_name": "QuietStore" },
+      { "name": "SLICED_STORE", "class_name": "SlicedStore" }
     ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Store", "QuietStore"] }]
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Store", "QuietStore", "SlicedStore"] }]
 }
