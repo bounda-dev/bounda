@@ -132,8 +132,8 @@ const countingAdapter = (): CountingAdapter => {
         return {
           ...ports,
           close: async () => {
-            storage += 1;
             await ports.close();
+            storage += 1;
           },
         };
       },
@@ -142,8 +142,8 @@ const countingAdapter = (): CountingAdapter => {
         return {
           ...ports,
           close: async () => {
-            readModels += 1;
             await ports.close();
+            readModels += 1;
           },
         };
       },
@@ -321,6 +321,16 @@ describe("createApp", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("makes a stop called while another is under way wait for it to finish", async () => {
+    const { adapter, closes } = countingAdapter();
+    const { app } = await start("all", adapter);
+    app.start();
+    const first = app.stop();
+    const closedWhenTheSecondReturned = await app.stop().then(() => closes());
+    await first;
+    expect(closedWhenTheSecondReturned).toEqual({ storage: 1, readModels: 1 });
   });
 
   it("validates the registry and requires a real adapter", async () => {
