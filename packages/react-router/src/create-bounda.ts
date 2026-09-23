@@ -26,7 +26,7 @@ export interface CreateBoundaArgs<R extends Registry = AppRegistry> {
    * The key under which the running app is kept on `globalThis`, so that it survives a reload of
    * the module that called `createBounda` in development. Calling `createBounda` again with the
    * same key stops the app booted by the previous call; the next request boots a fresh one from
-   * the reloaded modules. Defaults to `"bounda.app"`; one app per key.
+   * the reloaded modules once that app has stopped. Defaults to `"bounda.app"`; one app per key.
    */
   readonly key?: string;
   readonly consistency?: Consistency;
@@ -41,7 +41,9 @@ export interface BoundaMiddleware {
 }
 
 /**
- * Stops the running app, if any, and forgets it, so that the next request boots again.
+ * Stops the running app, if any, and forgets it, so that the next request boots again. Resolves
+ * once every app booted under the same key has stopped, including one that a later call to
+ * `createBounda` is still stopping.
  */
 export interface DisposeBoundaFunction {
   (): Promise<void>;
@@ -62,6 +64,7 @@ export interface CreateBoundaFunction {
 
 interface Slot<R extends Registry> {
   app?: Promise<BoundaApp<R>> | undefined;
+  retired?: Promise<void> | undefined;
 }
 
 const DEFAULT_KEY = "bounda.app";
@@ -81,12 +84,21 @@ const started = <R extends Registry>(app: BoundaApp<R>): BoundaApp<R> => {
   return app;
 };
 
-const stop = async <R extends Registry>(slot: Slot<R>): Promise<void> => {
+const retire = <R extends Registry>(slot: Slot<R>): Promise<void> => {
   const running = slot.app;
   slot.app = undefined;
-  if (running === undefined) return;
-  const app = await running.catch(() => undefined);
-  await app?.stop();
+  if (running === undefined && slot.retired === undefined) return Promise.resolve();
+  const stopping = (slot.retired ?? Promise.resolve()).then(async () => {
+    const app = await running?.catch(() => undefined);
+    await app?.stop();
+  });
+  const retired = stopping
+    .catch(() => undefined)
+    .then(() => {
+      if (slot.retired === retired) slot.retired = undefined;
+    });
+  slot.retired = retired;
+  return stopping;
 };
 
 const load = <R extends Registry>(
@@ -95,7 +107,7 @@ const load = <R extends Registry>(
   consistency: Consistency,
 ): Promise<BoundaApp<R>> => {
   if (slot.app !== undefined) return slot.app;
-  const starting = bootApp()
+  const starting = (slot.retired === undefined ? bootApp() : slot.retired.then(() => bootApp()))
     .then(started)
     .then((app) => (consistency === "immediate" ? readYourWrites(app) : app));
   slot.app = starting;
@@ -112,7 +124,7 @@ const load = <R extends Registry>(
  * lands on is fresh. Declare it once in a server module and mount the middleware in `root.tsx`.
  * In development the server
  * module is re-evaluated when the code changes; the app booted before is stopped and the next
- * request boots one from the new modules.
+ * request boots one from the new modules once it has, so the two never hold the storage at once.
  *
  * @example
  * // app/bounda.server.ts
@@ -132,14 +144,14 @@ export const createBounda: CreateBoundaFunction = <R extends Registry = AppRegis
 }: CreateBoundaArgs<R> = {}): Bounda<R> => {
   const bounda = createContext<BoundaApp<R>>();
   const slot = slotFor<R>(key);
-  void stop(slot);
+  void retire(slot);
 
   const boundaMiddleware: BoundaMiddleware = async ({ context }, next) => {
     context.set(bounda, await load(slot, bootApp, consistency));
     return next();
   };
 
-  const dispose: DisposeBoundaFunction = () => stop(slot);
+  const dispose: DisposeBoundaFunction = () => retire(slot);
 
   return { bounda, boundaMiddleware, dispose };
 };

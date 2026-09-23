@@ -172,9 +172,10 @@ export const { bounda, boundaMiddleware, dispose } = createBounda({
 ```
 
 Import the registry by value, as above, so that a change in your modules re-evaluates this file
-in development; `createBounda` then stops the app booted before and the next request boots a new
-one. Its options are `boot` (how to create the app, `boot()` by default), `consistency` and `key`
-(where the running app is kept on `globalThis`, one app per key). `dispose()` stops the running
-app and forgets it.
+in development; `createBounda` then stops the app booted before, and the next request boots a new
+one once that stop has finished, so the two never hold the storage at the same time. Its options
+are `boot` (how to create the app, `boot()` by default), `consistency` and `key` (where the
+running app is kept on `globalThis`, one app per key). `dispose()` stops the running app and
+forgets it, and resolves once every app booted under that key has stopped.
 
 The [onboarding example](/guides/onboarding-example/) is a complete app built this way.

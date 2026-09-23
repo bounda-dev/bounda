@@ -8,6 +8,8 @@ interface FakeApp {
   readonly calls: string[];
 }
 
+const drained = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+
 const fakeApp = (name: string): FakeApp => {
   const calls: string[] = [];
   const app = {
@@ -168,13 +170,68 @@ describe("createBounda", () => {
     await before.boundaMiddleware(middlewareArgs().args, async () => undefined);
 
     const after = createBounda({ consistency: "eventual", key, boot: async () => second.app });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(first.calls).toEqual(["start", "stop"]);
-
     const { context, args } = middlewareArgs();
     await after.boundaMiddleware(args, async () => undefined);
+    expect(first.calls).toEqual(["start", "stop"]);
     expect(context.get(after.bounda)).toBe(second.app);
     expect(second.calls).toEqual(["start"]);
+  });
+
+  it("boots the next app only once the previous one has stopped", async () => {
+    const key = uniqueKey();
+    const timeline: string[] = [];
+    const first = fakeApp("first");
+    const stopped = Promise.withResolvers<void>();
+    first.app.stop = async () => {
+      await stopped.promise;
+      timeline.push("first stopped");
+    };
+    const before = createBounda({ consistency: "eventual", key, boot: async () => first.app });
+    await before.boundaMiddleware(middlewareArgs().args, async () => undefined);
+
+    const after = createBounda({
+      consistency: "eventual",
+      key,
+      boot: async () => {
+        timeline.push("second booted");
+        return fakeApp("second").app;
+      },
+    });
+    const serving = after.boundaMiddleware(middlewareArgs().args, async () => undefined);
+    await drained();
+    expect(timeline).toEqual([]);
+    stopped.resolve();
+    await serving;
+    expect(timeline).toEqual(["first stopped", "second booted"]);
+  });
+
+  it("waits for every app retired before it, through declarations that booted nothing", async () => {
+    const key = uniqueKey();
+    const timeline: string[] = [];
+    const first = fakeApp("first");
+    const stopped = Promise.withResolvers<void>();
+    first.app.stop = async () => {
+      await stopped.promise;
+      timeline.push("first stopped");
+    };
+    const one = createBounda({ consistency: "eventual", key, boot: async () => first.app });
+    await one.boundaMiddleware(middlewareArgs().args, async () => undefined);
+
+    createBounda({ consistency: "eventual", key, boot: async () => fakeApp("unused").app });
+    const three = createBounda({
+      consistency: "eventual",
+      key,
+      boot: async () => {
+        timeline.push("third booted");
+        return fakeApp("third").app;
+      },
+    });
+    const serving = three.boundaMiddleware(middlewareArgs().args, async () => undefined);
+    await drained();
+    expect(timeline).toEqual([]);
+    stopped.resolve();
+    await serving;
+    expect(timeline).toEqual(["first stopped", "third booted"]);
   });
 
   it("stops a boot still in flight when it is declared again", async () => {
@@ -191,11 +248,101 @@ describe("createBounda", () => {
     });
     const pending = before.boundaMiddleware(middlewareArgs().args, async () => undefined);
 
-    createBounda({ consistency: "eventual", key, boot: async () => fakeApp("second").app });
+    const again = createBounda({
+      consistency: "eventual",
+      key,
+      boot: async () => fakeApp("second").app,
+    });
     release();
     await pending;
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await again.boundaMiddleware(middlewareArgs().args, async () => undefined);
     expect(first.calls).toEqual(["start", "stop"]);
+  });
+
+  it("resolves dispose only once every app retired under its key has stopped", async () => {
+    const key = uniqueKey();
+    const timeline: string[] = [];
+    const first = fakeApp("first");
+    const stopped = Promise.withResolvers<void>();
+    first.app.stop = async () => {
+      await stopped.promise;
+      timeline.push("first stopped");
+    };
+    const one = createBounda({ consistency: "eventual", key, boot: async () => first.app });
+    await one.boundaMiddleware(middlewareArgs().args, async () => undefined);
+
+    const two = createBounda({
+      consistency: "eventual",
+      key,
+      boot: async () => fakeApp("two").app,
+    });
+    const disposing = two.dispose().then(() => timeline.push("disposed"));
+    await drained();
+    expect(timeline).toEqual([]);
+    stopped.resolve();
+    await disposing;
+    expect(timeline).toEqual(["first stopped", "disposed"]);
+  });
+
+  it("boots at once again once a reload has finished stopping the previous app", async () => {
+    const key = uniqueKey();
+    const one = createBounda({
+      consistency: "eventual",
+      key,
+      boot: async () => fakeApp("one").app,
+    });
+    await one.boundaMiddleware(middlewareArgs().args, async () => undefined);
+
+    let booting = false;
+    const two = createBounda({
+      consistency: "eventual",
+      key,
+      boot: async () => {
+        booting = true;
+        return fakeApp("two").app;
+      },
+    });
+    await drained();
+    const serving = two.boundaMiddleware(middlewareArgs().args, async () => undefined);
+    expect(booting).toBe(true);
+    await serving;
+  });
+
+  it("keeps waiting for a later retirement when an earlier one finishes first", async () => {
+    const key = uniqueKey();
+    const timeline: string[] = [];
+    const gated = (name: string) => {
+      const app = fakeApp(name);
+      const release = Promise.withResolvers<void>();
+      app.app.stop = async () => {
+        await release.promise;
+        timeline.push(`${name} stopped`);
+      };
+      return { app: app.app, release: release.resolve };
+    };
+    const first = gated("first");
+    const second = gated("second");
+    const one = createBounda({ consistency: "eventual", key, boot: async () => first.app });
+    await one.boundaMiddleware(middlewareArgs().args, async () => undefined);
+
+    const two = createBounda({ consistency: "eventual", key, boot: async () => second.app });
+    const booted = two.boundaMiddleware(middlewareArgs().args, async () => undefined);
+    const three = createBounda({
+      consistency: "eventual",
+      key,
+      boot: async () => {
+        timeline.push("third booted");
+        return fakeApp("third").app;
+      },
+    });
+    first.release();
+    await booted.catch(() => undefined);
+    const serving = three.boundaMiddleware(middlewareArgs().args, async () => undefined);
+    await drained();
+    expect(timeline).toEqual(["first stopped"]);
+    second.release();
+    await serving;
+    expect(timeline).toEqual(["first stopped", "second stopped", "third booted"]);
   });
 
   it("keeps apps under different keys apart", async () => {
