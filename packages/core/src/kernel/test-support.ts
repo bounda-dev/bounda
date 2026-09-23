@@ -1,3 +1,4 @@
+import { expect, vi } from "vitest";
 import type { StoragePorts } from "../adapter/adapter.ts";
 import { resolveConfig } from "../config/schema.ts";
 import type { Config, ResolvedConfig } from "../config/types.ts";
@@ -208,4 +209,29 @@ export const createKernelHarness: CreateKernelHarnessFunction = async ({
     logger: silentLogger,
   });
   return { storage, config, aggregates, clock, pipeline };
+};
+
+export interface EventuallyFunction {
+  <T>(assertion: () => T | Promise<T>): Promise<T>;
+}
+
+/**
+ * Retries `assertion` until it passes. For conditions that background work makes true without any
+ * time passing on the clock, so they hold within microseconds once the work has run.
+ */
+export const eventually: EventuallyFunction = (assertion) =>
+  vi.waitFor(assertion, { interval: 1, timeout: 5_000 });
+
+export interface AdvanceUntilWaitingFunction {
+  (clock: FixedClock, milliseconds: number): Promise<void>;
+}
+
+/**
+ * Moves the clock forward, then waits until the background loops that were waiting on it are
+ * waiting again: whatever the move woke up has run its pass and re-armed.
+ */
+export const advanceUntilWaiting: AdvanceUntilWaitingFunction = async (clock, milliseconds) => {
+  const waiting = clock.pending();
+  clock.advance(milliseconds);
+  await eventually(() => expect(clock.pending()).toBe(waiting));
 };

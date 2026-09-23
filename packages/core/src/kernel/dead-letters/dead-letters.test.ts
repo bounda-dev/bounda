@@ -10,7 +10,8 @@ import { createRecordingLogger, orderAggregateEntry } from "../test-support.ts";
 import { createDeadLetters, type DeadLetters } from "./dead-letters.ts";
 
 const calls: string[] = [];
-let policyMode: "ok" | "domain" | "slow" = "domain";
+let policyMode: "ok" | "domain" | "hangs" = "domain";
+let handlerStarted = Promise.withResolvers<void>();
 let processMode: "ok" | "domain" = "domain";
 
 const registry = {
@@ -28,7 +29,10 @@ const registry = {
           }) => {
             calls.push(`notify:${event.aggregateId}`);
             if (policyMode === "domain") throw new DomainError("mail server rejects it");
-            if (policyMode === "slow") await new Promise((resolve) => setTimeout(resolve, 60));
+            if (policyMode === "hangs") {
+              handlerStarted.resolve();
+              await new Promise<never>(() => undefined);
+            }
             await commands.archiveOrder({ orderId: event.aggregateId });
           },
         },
@@ -133,7 +137,7 @@ describe("deadLetters", () => {
     const harness = await createReactiveHarness({
       registry,
       logger,
-      config: { runtime: { policies: { retry: { strategy: "none" }, timeout: "20ms" } } },
+      config: { runtime: { policies: { retry: { strategy: "none" }, timeout: "1h" } } },
     });
     const deadLetters = createDeadLetters({
       storage: harness.storage,
@@ -149,9 +153,13 @@ describe("deadLetters", () => {
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
     await harness.dispatcher.processUntilIdle();
     const [letter] = await deadLetters.list();
-    policyMode = "slow";
-    await expect(deadLetters.replay(letter?.id ?? "")).rejects.toThrow(
-      "policy order.notifyOnOrderPlaced did not finish within 20ms",
+    policyMode = "hangs";
+    handlerStarted = Promise.withResolvers<void>();
+    const replaying = deadLetters.replay(letter?.id ?? "");
+    await handlerStarted.promise;
+    harness.clock.advance(3_600_000);
+    await expect(replaying).rejects.toThrow(
+      "policy order.notifyOnOrderPlaced did not finish within 3600000ms",
     );
     expect((await deadLetters.get(letter?.id ?? ""))?.status).toBe("failed");
   });

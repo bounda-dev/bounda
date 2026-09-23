@@ -103,6 +103,7 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
       run: () => policy.handler({ event, commands }),
       timeoutMs: config.forAggregate(policy.aggregate).policies.timeoutMs,
       subject: `policy ${policy.name}`,
+      clock,
     });
   };
 

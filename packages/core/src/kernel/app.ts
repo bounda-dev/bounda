@@ -46,7 +46,8 @@ export interface BoundaApp<R extends Registry = AppRegistry> {
    */
   start(): void;
   /**
-   * Stops background work, waits for passes in flight and closes every storage connection.
+   * Stops background work, waits for passes in flight and closes every storage connection. Every
+   * call, including one made while a stop is under way, waits for that same stop.
    */
   stop(): Promise<void>;
   /**
@@ -207,6 +208,7 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
     pollIntervalMs: config.runtime.dispatcher.pollIntervalMs,
     idleIntervalMs: config.runtime.dispatcher.idleIntervalMs,
     ...(storage.notifier === undefined ? {} : { notifier: storage.notifier }),
+    clock,
     logger,
   });
   const worker = createScheduledCommandWorker({
@@ -242,7 +244,7 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
   };
   lag.addCallback(observeLag);
   const role = config.runtime.role;
-  let stopped = false;
+  let stopping: Promise<void> | undefined;
 
   logger.info("bounda app created", {
     role,
@@ -256,17 +258,18 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
     config,
     role,
     start: () => {
-      if (role === "web" || stopped) return;
+      if (role === "web" || stopping !== undefined) return;
       dispatcher.start();
       worker.start();
     },
-    stop: async () => {
-      if (stopped) return;
-      stopped = true;
-      lag.removeCallback(observeLag);
-      await Promise.all([dispatcher.stop(), worker.stop()]);
-      await readModels.close();
-      await storage.close();
+    stop: () => {
+      stopping ??= (async () => {
+        lag.removeCallback(observeLag);
+        await Promise.all([dispatcher.stop(), worker.stop()]);
+        await readModels.close();
+        await storage.close();
+      })();
+      return stopping;
     },
     processUntilIdle: async ({ maxPasses = Number.POSITIVE_INFINITY } = {}) => {
       for (let round = 0; round < maxPasses; round += 1) {

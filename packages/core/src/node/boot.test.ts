@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { createFixedClock } from "../contracts/clock.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../contracts/ids.ts";
 import { silentLogger } from "../contracts/logger.ts";
@@ -192,24 +193,27 @@ describe("boot", () => {
   it("stops the app on SIGTERM", async () => {
     const recording = createRecordingLogger();
     const sigint = process.listenerCount("SIGINT");
+    const clock = createFixedClock();
     const app = await boot<typeof registry>({
       root,
       registryPath: "registry.ts",
       logger: recording.logger,
+      clock,
     });
     expect(process.listenerCount("SIGINT")).toBe(sigint + 1);
     app.start();
+    expect(clock.pending()).toBe(2);
     process.emit("SIGTERM", "SIGTERM");
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(clock.pending()).toBe(0);
+    expect(process.listenerCount("SIGINT")).toBe(sigint);
     expect(recording.entries).toContainEqual({
       level: "info",
       message: "stopping",
       fields: { signal: "SIGTERM" },
     });
-    expect(process.listenerCount("SIGINT")).toBe(sigint);
+    await app.stop();
     await expect(app.commands.increment({ counterId: "c-after-sigterm" })).resolves.toMatchObject({
       version: 1,
     });
-    await app.stop();
   });
 });

@@ -207,6 +207,8 @@ export const loader = ({ context }: Route.LoaderArgs) => context.get(bounda).que
 - Tests: `createTestApp({ registry, adapter? })` from `@bounda-dev/core/testing` gives an app on the
   in-memory adapter with a fixed clock (`clock.advance(ms)`) and sequential ids; call
   `await app.processUntilIdle()` after dispatching to run policies, processes and projections.
+  The clock drives handler time-outs and background polling too: never wait real time in a test,
+  advance the clock.
   `import { registry } from "../.bounda/registry.ts"`.
 - `boot()` from `@bounda-dev/core/node` is typed for the project without a type argument:
   `.bounda/register.d.ts` registers the registry type with `@bounda-dev/core/register`. Never write

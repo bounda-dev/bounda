@@ -2,6 +2,7 @@ import type { watch as watchDirectory } from "node:fs/promises";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createFixedClock } from "@bounda-dev/core";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { watchFromFirstRun, watchProject } from "./watch.ts";
 
@@ -14,7 +15,7 @@ const project = async (): Promise<string> => {
   return root;
 };
 
-const settle = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+const drained = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
 afterAll(async () => {
   await Promise.all(temporary.map((root) => rm(root, { recursive: true, force: true })));
@@ -89,11 +90,13 @@ const harness = (
   let runs = 0;
   const errors: unknown[] = [];
   const controller = new AbortController();
+  const clock = createFixedClock();
   const watching = watchProject({
     root: "/project",
     ...(overrides.appDir === undefined ? {} : { appDir: overrides.appDir }),
     signal: controller.signal,
     debounceMs: 10,
+    clock,
     watch: watcher.watch,
     onChange: async () => {
       runs += 1;
@@ -101,7 +104,7 @@ const harness = (
     },
     onError: (error) => errors.push(error),
   });
-  return { watching, controller, runs: () => runs, errors };
+  return { watching, controller, clock, runs: () => runs, errors };
 };
 
 describe("watchProject", () => {
@@ -130,20 +133,26 @@ describe("watchProject", () => {
 
   it("coalesces a burst into one onChange and ignores +types", async () => {
     const watcher = fakeWatcher();
-    const { watching, runs } = harness(watcher);
+    const { watching, runs, clock } = harness(watcher);
     watcher.emit("domain/order/a.ts");
     watcher.emit("domain/order/b.ts");
     watcher.emit(null);
+    await drained();
+    expect(clock.pending()).toBe(1);
+    clock.advance(9);
+    expect(clock.pending()).toBe(1);
+    clock.advance(1);
     await vi.waitFor(() => expect(runs()).toBe(1));
-    await settle(60);
-    expect(runs()).toBe(1);
+    expect(clock.pending()).toBe(0);
 
     watcher.emit("domain/order/+types/a.ts");
     watcher.emit("domain/order/commands/+types/b.ts");
-    await settle(60);
-    expect(runs()).toBe(1);
+    await drained();
+    expect(clock.pending()).toBe(0);
 
     watcher.emit("domain\\order\\c.ts");
+    await drained();
+    clock.advance(10);
     await vi.waitFor(() => expect(runs()).toBe(2));
     watcher.end(abortError());
     await expect(watching).resolves.toBeUndefined();
@@ -151,25 +160,63 @@ describe("watchProject", () => {
 
   it("reports what onChange throws and keeps watching", async () => {
     const watcher = fakeWatcher();
-    const { watching, runs, errors } = harness(watcher, { throwOn: 1 });
+    const { watching, runs, errors, clock } = harness(watcher, { throwOn: 1 });
     watcher.emit("domain/order/a.ts");
+    await drained();
+    clock.advance(10);
     await vi.waitFor(() => expect(errors).toHaveLength(1));
     expect(errors[0]).toEqual(new Error("boom"));
     watcher.emit("domain/order/b.ts");
+    await drained();
+    clock.advance(10);
     await vi.waitFor(() => expect(runs()).toBe(2));
     expect(errors).toHaveLength(1);
     watcher.end(abortError());
     await watching;
   });
 
-  it("stops on abort without running a pending change, and waits for one in flight", async () => {
+  it("stops on abort without running a pending change", async () => {
     const watcher = fakeWatcher();
-    const { watching, runs } = harness(watcher);
+    const { watching, runs, clock } = harness(watcher);
     watcher.emit("domain/order/a.ts");
+    await drained();
+    expect(clock.pending()).toBe(1);
     watcher.end(abortError());
     await expect(watching).resolves.toBeUndefined();
-    await settle(60);
+    expect(clock.pending()).toBe(0);
+    clock.advance(10);
     expect(runs()).toBe(0);
+  });
+
+  it("waits for a change in flight before it ends on abort", async () => {
+    const watcher = fakeWatcher();
+    const clock = createFixedClock();
+    const release = Promise.withResolvers<void>();
+    const timeline: string[] = [];
+    const watching = watchProject({
+      root: "/project",
+      signal: new AbortController().signal,
+      debounceMs: 10,
+      clock,
+      watch: watcher.watch,
+      onChange: async () => {
+        timeline.push("started");
+        await release.promise;
+        timeline.push("finished");
+      },
+    });
+    watcher.emit("domain/order/a.ts");
+    await drained();
+    clock.advance(10);
+    await drained();
+    expect(timeline).toEqual(["started"]);
+    const ended = watching.then(() => timeline.push("ended"));
+    watcher.end(abortError());
+    await drained();
+    expect(timeline).toEqual(["started"]);
+    release.resolve();
+    await ended;
+    expect(timeline).toEqual(["started", "finished", "ended"]);
   });
 
   it("rethrows a failure of the watcher itself", async () => {
@@ -201,6 +248,7 @@ describe("watchProject", () => {
 describe("watchFromFirstRun", () => {
   const start = (watcher: FakeWatcher, firstRun: () => Promise<boolean>) => {
     const controller = new AbortController();
+    const clock = createFixedClock();
     let changes = 0;
     let announced = 0;
     let listeningAtFirstRun: boolean | undefined;
@@ -208,6 +256,7 @@ describe("watchFromFirstRun", () => {
       root: "/project",
       signal: controller.signal,
       debounceMs: 10,
+      clock,
       watch: watcher.watch,
       firstRun: () => {
         listeningAtFirstRun ??= watcher.listening();
@@ -223,6 +272,7 @@ describe("watchFromFirstRun", () => {
     return {
       done,
       controller,
+      clock,
       changes: () => changes,
       announced: () => announced,
       listeningAtFirstRun: () => listeningAtFirstRun,
@@ -243,7 +293,10 @@ describe("watchFromFirstRun", () => {
     const first = Promise.withResolvers<boolean>();
     const run = start(watcher, () => first.promise);
     watcher.emit("domain/order/a.ts");
-    await settle(60);
+    await drained();
+    run.clock.advance(10);
+    await drained();
+    expect(run.clock.pending()).toBe(0);
     expect(run.changes()).toBe(0);
     first.resolve(true);
     await vi.waitFor(() => expect(run.changes()).toBe(1));
@@ -256,7 +309,9 @@ describe("watchFromFirstRun", () => {
     const first = Promise.withResolvers<boolean>();
     const run = start(watcher, () => first.promise);
     watcher.emit("domain/order/a.ts");
-    await settle(60);
+    await drained();
+    run.clock.advance(10);
+    await drained();
     first.resolve(false);
     await expect(run.done).resolves.toBeUndefined();
     expect(run.announced()).toBe(0);
@@ -278,7 +333,7 @@ describe("watchFromFirstRun", () => {
     const first = Promise.withResolvers<boolean>();
     const run = start(watcher, () => first.promise);
     watcher.end(new Error("disk gone"));
-    await settle(20);
+    await drained();
     first.resolve(true);
     await expect(run.done).rejects.toThrow("disk gone");
   });

@@ -13,7 +13,7 @@ import type { FieldsArgs } from "../modules/view.ts";
 import { createApp } from "./app.ts";
 import { PROCESS_EVENTS } from "./process/lifecycle.ts";
 import { readYourWrites } from "./read-your-writes.ts";
-import { orderAggregateEntry, sentMessages } from "./test-support.ts";
+import { eventually, orderAggregateEntry, sentMessages } from "./test-support.ts";
 
 interface Row {
   readonly orderId: string;
@@ -132,8 +132,8 @@ const countingAdapter = (): CountingAdapter => {
         return {
           ...ports,
           close: async () => {
-            storage += 1;
             await ports.close();
+            storage += 1;
           },
         };
       },
@@ -142,8 +142,8 @@ const countingAdapter = (): CountingAdapter => {
         return {
           ...ports,
           close: async () => {
-            readModels += 1;
             await ports.close();
+            readModels += 1;
           },
         };
       },
@@ -275,52 +275,55 @@ describe("createApp", () => {
   });
 
   it("does not start background work in the web role but still serves commands and queries", async () => {
-    vi.useFakeTimers();
-    try {
-      const { app } = await start("web");
-      expect(app.role).toBe("web");
-      app.start();
-      expect(vi.getTimerCount()).toBe(0);
-      await app.commands.placeOrder({ orderId: "o-1", total: 10 });
-      await vi.advanceTimersByTimeAsync(1_000);
-      expect(await app.queries.getOrder({ orderId: "o-1" })).toBeNull();
-      await app.processUntilIdle();
-      expect(await app.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "placed" });
-      await app.stop();
-    } finally {
-      vi.useRealTimers();
-    }
+    const { app, clock } = await start("web");
+    expect(app.role).toBe("web");
+    app.start();
+    expect(clock.pending()).toBe(0);
+    await app.commands.placeOrder({ orderId: "o-1", total: 10 });
+    clock.advance(1_000);
+    expect(await app.queries.getOrder({ orderId: "o-1" })).toBeNull();
+    await app.processUntilIdle();
+    expect(await app.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "placed" });
+    await app.stop();
   });
 
   it("polls the stream and the schedule in the background in the worker role", async () => {
-    const { app } = await start("worker");
+    const { app, clock } = await start("worker");
     app.start();
     await app.commands.placeOrder({ orderId: "o-1", total: 10 });
     await app.commands.placeOrder({ orderId: "o-2", total: 20 }, { delay: 0 });
-    await new Promise((resolve) => setTimeout(resolve, 350));
-    expect(await app.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "placed" });
-    expect(await app.queries.getOrder({ orderId: "o-2" })).toMatchObject({ status: "placed" });
+    expect(await app.queries.getOrder({ orderId: "o-2" })).toBeNull();
+    clock.advance(app.config.runtime.dispatcher.pollIntervalMs);
+    await eventually(async () => {
+      expect(await app.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "placed" });
+      expect(await app.queries.getOrder({ orderId: "o-2" })).toMatchObject({ status: "placed" });
+    });
     await app.stop();
   });
 
   it("stops background work, closes storage and read models once, and never restarts", async () => {
-    vi.useFakeTimers();
-    try {
-      const { adapter, closes } = countingAdapter();
-      const { app } = await start("all", adapter);
-      app.start();
-      app.start();
-      expect(vi.getTimerCount()).toBe(2);
-      await app.stop();
-      expect(vi.getTimerCount()).toBe(0);
-      expect(closes()).toEqual({ storage: 1, readModels: 1 });
-      await app.stop();
-      app.start();
-      expect(vi.getTimerCount()).toBe(0);
-      expect(closes()).toEqual({ storage: 1, readModels: 1 });
-    } finally {
-      vi.useRealTimers();
-    }
+    const { adapter, closes } = countingAdapter();
+    const { app, clock } = await start("all", adapter);
+    app.start();
+    app.start();
+    expect(clock.pending()).toBe(2);
+    await app.stop();
+    expect(clock.pending()).toBe(0);
+    expect(closes()).toEqual({ storage: 1, readModels: 1 });
+    await app.stop();
+    app.start();
+    expect(clock.pending()).toBe(0);
+    expect(closes()).toEqual({ storage: 1, readModels: 1 });
+  });
+
+  it("makes a stop called while another is under way wait for it to finish", async () => {
+    const { adapter, closes } = countingAdapter();
+    const { app } = await start("all", adapter);
+    app.start();
+    const first = app.stop();
+    const closedWhenTheSecondReturned = await app.stop().then(() => closes());
+    await first;
+    expect(closedWhenTheSecondReturned).toEqual({ storage: 1, readModels: 1 });
   });
 
   it("validates the registry and requires a real adapter", async () => {
@@ -353,22 +356,10 @@ describe("createApp", () => {
   });
 
   it("reacts to its own appends at once when the storage notifies, without waiting for a poll", async () => {
-    const app = await createApp({
-      registry,
-      config: {
-        storage: memory(),
-        commands: { placeOrder: { notifier: { use: "memory" } } },
-        runtime: { dispatcher: { pollInterval: "10s", idleInterval: "10s" } },
-      },
-    });
+    const { app } = await start();
     app.start();
     await app.commands.placeOrder({ orderId: "o-1", total: 42 });
-    const started = Date.now();
-    while ((await app.getLag()).maxLag > 0 && Date.now() - started < 2_000) {
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
-    expect((await app.getLag()).maxLag).toBe(0);
-    expect(Date.now() - started).toBeLessThan(2_000);
+    await eventually(async () => expect((await app.getLag()).maxLag).toBe(0));
     await app.stop();
   });
 });

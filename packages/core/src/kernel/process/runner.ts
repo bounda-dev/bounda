@@ -314,6 +314,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
             }),
           timeoutMs: config.forAggregate(process.aggregate).policies.timeoutMs,
           subject: `process ${process.name}`,
+          clock,
         }),
     });
 
@@ -441,6 +442,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
                     }),
                   timeoutMs: config.forAggregate(process.aggregate).policies.timeoutMs,
                   subject: `process ${process.name} timeout`,
+                  clock,
                 }),
             });
       await append(

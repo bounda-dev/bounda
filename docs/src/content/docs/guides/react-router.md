@@ -133,6 +133,8 @@ from `@bounda-dev/core`.
   `app/read` regenerates the types, and the next request boots an app from the new modules.
   Nothing to restart, no second generator process; a layout that breaks a convention is reported
   in the terminal and the last good registry keeps serving. `react-router build` fails on it.
+  Closing the dev server waits for a regeneration already running and drops one still waiting
+  for its quiet time, so nothing writes to the project after the server has gone.
 - `react-router typegen && tsc` still needs the generated files first, so keep
   `bounda generate` as a script for CI and fresh clones.
 - `.env` is read when the app boots and never overrides a variable that is already set, so a
@@ -172,9 +174,10 @@ export const { bounda, boundaMiddleware, dispose } = createBounda({
 ```
 
 Import the registry by value, as above, so that a change in your modules re-evaluates this file
-in development; `createBounda` then stops the app booted before and the next request boots a new
-one. Its options are `boot` (how to create the app, `boot()` by default), `consistency` and `key`
-(where the running app is kept on `globalThis`, one app per key). `dispose()` stops the running
-app and forgets it.
+in development; `createBounda` then stops the app booted before, and the next request boots a new
+one once that stop has finished, so the two never hold the storage at the same time. Its options
+are `boot` (how to create the app, `boot()` by default), `consistency` and `key` (where the
+running app is kept on `globalThis`, one app per key). `dispose()` stops the running app and
+forgets it, and resolves once every app booted under that key has stopped.
 
 The [onboarding example](/guides/onboarding-example/) is a complete app built this way.

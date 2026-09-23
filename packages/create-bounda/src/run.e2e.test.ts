@@ -141,77 +141,102 @@ const until = async (
   }
 };
 
-/** The whole group: `react-router dev` relaunches itself, so the listener outlives the child. */
+const signalGroup = (pid: number, name: NodeJS.Signals | 0): boolean => {
+  try {
+    process.kill(-pid, name);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+    throw error;
+  }
+};
+
+/**
+ * The whole group, and until it is gone: `react-router dev` relaunches itself, so the listener
+ * can outlive the child, and a group that has gone must not be signalled again.
+ */
 const stop = async (child: ChildProcess): Promise<void> => {
   const { pid } = child;
-  if (pid === undefined || child.exitCode !== null || child.signalCode !== null) return;
-  const exited = new Promise<void>((done) => child.once("exit", () => done()));
-  const signal = (name: NodeJS.Signals): void => {
-    try {
-      process.kill(-pid, name);
-    } catch {
-      child.kill(name);
-    }
-  };
-  signal("SIGTERM");
-  await Promise.race([exited, settle(3_000).then(() => signal("SIGKILL"))]);
+  if (pid === undefined || !signalGroup(pid, "SIGTERM")) return;
+  const gone = (): boolean => !signalGroup(pid, 0);
+  await until(gone, () => "", 3_000).catch(async () => {
+    signalGroup(pid, "SIGKILL");
+    await until(gone, () => `process group ${pid} outlived SIGKILL`, 5_000);
+  });
 };
+
+const portTaken = (port: number): Promise<boolean> =>
+  new Promise((done) => {
+    const server = createServer();
+    server.once("error", () => done(true));
+    server.listen(port, "127.0.0.1", () => server.close(() => done(false)));
+  });
 
 interface DevServer {
   readonly url: string;
+  readonly port: number;
   readonly stop: () => Promise<void>;
 }
+
+const PORT_ATTEMPTS = 3;
+const READY_WITHIN_MS = 90_000;
 
 /**
  * The bug that made this test install tarballs only showed up in dev: the production build
  * resolved the app module through the plugin and succeeded while every request 500ed.
  *
  * Readiness is a request that answers, not a line in the log: the banner's wording is Vite's to
- * change. Both addresses are tried because the dev server binds the `localhost` hostname, which
- * resolves to `::1` on some hosts and to `127.0.0.1` on others.
+ * change. `bind` makes the server listen on 127.0.0.1 and exit rather than move when the port is
+ * taken, so the port found free is the one it listens on. Between finding it and binding it
+ * another process can take it; the server then exits, and a port found busy afterwards means
+ * exactly that, so it tries another. Any other exit fails with what the server printed. A request
+ * is dropped when the server exits or the deadline passes: whatever held the port may accept the
+ * connection and never answer.
  */
 const devServer = async (
   project: string,
   bin: string,
-  extra: readonly string[] = [],
+  bind: readonly string[],
 ): Promise<DevServer> => {
-  const port = await freePort();
-  const child = spawn(process.execPath, [bin, "dev", "--port", String(port), ...extra], {
-    cwd: project,
-    stdio: ["ignore", "pipe", "pipe"],
-    detached: true,
-    env: { ...process.env, CI: "1", WRANGLER_SEND_METRICS: "false" },
-  });
-  let output = "";
-  const record = (chunk: Buffer): void => {
-    output += chunk.toString();
-  };
-  child.stdout.on("data", record);
-  child.stderr.on("data", record);
-  const candidates = [`http://localhost:${port}`, `http://127.0.0.1:${port}`];
-  let url = "";
-  const answers = async (): Promise<boolean> => {
-    for (const candidate of candidates) {
-      const answered = await fetch(candidate).then(
+  for (let attempt = 1; ; attempt += 1) {
+    const port = await freePort();
+    const url = `http://127.0.0.1:${port}`;
+    const child = spawn(process.execPath, [bin, "dev", "--port", String(port), ...bind], {
+      cwd: project,
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
+      env: { ...process.env, CI: "1", WRANGLER_SEND_METRICS: "false" },
+    });
+    let output = "";
+    const record = (chunk: Buffer): void => {
+      output += chunk.toString();
+    };
+    child.stdout.on("data", record);
+    child.stderr.on("data", record);
+    const exit = new AbortController();
+    child.once("exit", () => exit.abort());
+    const exited = (): boolean => exit.signal.aborted;
+    const request = AbortSignal.any([exit.signal, AbortSignal.timeout(READY_WITHIN_MS)]);
+    const answers = (): Promise<boolean> =>
+      fetch(url, { signal: request }).then(
         () => true,
         () => false,
       );
-      if (answered) {
-        url = candidate;
-        return true;
-      }
-    }
-    return false;
-  };
-  await until(
-    answers,
-    () => `the dev server never answered on ${port} (exit ${child.exitCode}):\n${output}`,
-    90_000,
-  ).catch(async (error: Error) => {
+    await until(
+      async () => exited() || (await answers()),
+      () => `the dev server never answered on ${port}:\n${output}`,
+      READY_WITHIN_MS,
+    ).catch(async (error: Error) => {
+      await stop(child);
+      throw error;
+    });
+    if (!exited()) return { url, port, stop: () => stop(child) };
     await stop(child);
-    throw error;
-  });
-  return { url, stop: () => stop(child) };
+    if (attempt < PORT_ATTEMPTS && (await portTaken(port))) continue;
+    throw new Error(
+      `the dev server exited (${child.exitCode ?? child.signalCode}) before answering on ${port}:\n${output}`,
+    );
+  }
 };
 
 const freePort = (): Promise<number> =>
@@ -281,7 +306,7 @@ describe("a project created by create-bounda", () => {
     const built = await run(process.execPath, [reactRouter, "build"], { cwd: project });
     expect(`${built.stdout}${built.stderr}`).toMatch(/built in/);
 
-    const server = await devServer(project, reactRouter);
+    const server = await devServer(project, reactRouter, ["--host", "127.0.0.1", "--strictPort"]);
     try {
       const home = await fetch(`${server.url}/`);
       expect(home.status).toBe(200);
@@ -300,6 +325,7 @@ describe("a project created by create-bounda", () => {
     } finally {
       await server.stop();
     }
+    expect(await portTaken(server.port)).toBe(false);
   }, 300_000);
 
   it("scaffolds a Cloudflare app that generates, type-checks, tests and serves its store", async () => {
@@ -359,5 +385,6 @@ describe("a project created by create-bounda", () => {
     } finally {
       await server.stop();
     }
+    expect(await portTaken(server.port)).toBe(false);
   }, 300_000);
 });

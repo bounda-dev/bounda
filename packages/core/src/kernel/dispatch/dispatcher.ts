@@ -1,6 +1,7 @@
 import type { CheckpointStore } from "../../adapter/ports/checkpoint-store.ts";
 import type { EventNotifier, Unsubscribe } from "../../adapter/ports/event-notifier.ts";
 import type { EventStore } from "../../adapter/ports/event-store.ts";
+import type { Clock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { createMutex } from "../shared/mutex.ts";
@@ -77,6 +78,10 @@ export interface CreateDispatcherArgs {
    * When present, a notification runs a pass at once and idle waits stretch to `idleIntervalMs`.
    */
   readonly notifier?: EventNotifier;
+  /**
+   * What the background passes wait on between one another.
+   */
+  readonly clock: Clock;
   readonly logger: Logger;
 }
 
@@ -106,10 +111,11 @@ export const createDispatcher: CreateDispatcherFunction = ({
   pollIntervalMs,
   idleIntervalMs = pollIntervalMs,
   notifier,
+  clock,
   logger,
 }) => {
   const mutex = createMutex();
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let cancelWait: (() => void) | undefined;
   let running = false;
   let idle = false;
   let due = false;
@@ -185,24 +191,21 @@ export const createDispatcher: CreateDispatcherFunction = ({
 
   const schedule = (): void => {
     if (!running) return;
-    if (timer !== undefined) clearTimeout(timer);
-    timer = setTimeout(
-      () => {
-        timer = undefined;
-        void background();
-      },
-      idle ? idleIntervalMs : pollIntervalMs,
-    );
+    cancelWait?.();
+    cancelWait = clock.after(idle ? idleIntervalMs : pollIntervalMs, () => {
+      cancelWait = undefined;
+      void background();
+    });
   };
 
   const wake = (): void => {
     if (!running) return;
-    if (timer === undefined) {
+    if (cancelWait === undefined) {
       due = true;
       return;
     }
-    clearTimeout(timer);
-    timer = undefined;
+    cancelWait();
+    cancelWait = undefined;
     void background();
   };
 
@@ -223,8 +226,8 @@ export const createDispatcher: CreateDispatcherFunction = ({
     },
     stop: async () => {
       running = false;
-      if (timer !== undefined) clearTimeout(timer);
-      timer = undefined;
+      cancelWait?.();
+      cancelWait = undefined;
       const release = await unsubscribe;
       unsubscribe = Promise.resolve(undefined);
       await release?.();

@@ -11,8 +11,9 @@ interface PolicyArgs {
 }
 
 const calls: string[] = [];
-let behaviour: "ok" | "domain" | "flaky" | "slow" = "ok";
+let behaviour: "ok" | "domain" | "flaky" | "hangs" = "ok";
 let flakyFailures = 0;
+let handlerStarted = Promise.withResolvers<void>();
 
 const registry: Registry = {
   aggregates: {
@@ -27,7 +28,10 @@ const registry: Registry = {
               flakyFailures -= 1;
               throw new Error("network");
             }
-            if (behaviour === "slow") await new Promise((resolve) => setTimeout(resolve, 30));
+            if (behaviour === "hangs") {
+              handlerStarted.resolve();
+              await new Promise<never>(() => undefined);
+            }
             await commands.payOrder?.({ orderId: event.aggregateId, method: "card" });
           },
         },
@@ -47,6 +51,7 @@ const reset = (mode: typeof behaviour, failures = 0) => {
   calls.length = 0;
   behaviour = mode;
   flakyFailures = failures;
+  handlerStarted = Promise.withResolvers<void>();
 };
 
 describe("policyTriggerFromKey", () => {
@@ -284,16 +289,19 @@ describe("policy subscriber", () => {
   });
 
   it("treats a handler timeout as a retriable failure", async () => {
-    reset("slow");
+    reset("hangs");
     const harness = await createReactiveHarness({
       registry,
-      config: { runtime: { policies: { timeout: 5, retry: { strategy: "none" } } } },
+      config: { runtime: { policies: { timeout: "1h", retry: { strategy: "none" } } } },
     });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    const processing = harness.dispatcher.processUntilIdle();
+    await handlerStarted.promise;
+    harness.clock.advance(3_600_000);
+    await processing;
     const letters = await harness.storage.deadLetterStore.list();
     expect(letters[0]).toMatchObject({
-      errorMessage: "policy order.payOnOrderPlaced did not finish within 5ms",
+      errorMessage: "policy order.payOnOrderPlaced did not finish within 3600000ms",
     });
   });
 });

@@ -93,6 +93,12 @@ expect(await app.queries.getOrderSummary({ orderId: ORDER })).toMatchObject({
 
 Pass `now` to start somewhere else: `createTestApp({ registry, now: new Date("2026-06-01") })`.
 
+The clock also owns every wait the runtime makes. A handler time-out fires when the clock passes
+it, not after real milliseconds, so a handler that never finishes holds `processUntilIdle()` until
+you advance the clock past `runtime.policies.timeout`. The background loops that `app.start()`
+arms wait on it too: in a test they run only when you advance the clock, and `clock.pending()`
+says how many waits are armed, which is none once `app.stop()` has resolved.
+
 ## Against a real database
 
 The in-memory adapter is the default, not a requirement. Point the test at SQLite to exercise the
