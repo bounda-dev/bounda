@@ -28,6 +28,8 @@
     "test:types": "vitest run --typecheck.only",
     "check": "pnpm lint && pnpm build && pnpm generate && pnpm typecheck && pnpm test",
     "changeset": "changeset",
+    "templates:sync": "node packages/create-bounda/src/distribution/cli.ts sync",
+    "templates:check": "node packages/create-bounda/src/distribution/cli.ts check",
     "release": "pnpm build && changeset publish",
     "docs:dev": "pnpm --filter @bounda-dev/docs dev",
     "docs:build": "pnpm --filter @bounda-dev/docs build",

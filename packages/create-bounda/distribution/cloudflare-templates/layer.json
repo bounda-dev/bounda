@@ -1,0 +1,16 @@
+{
+  "name": "bounda-event-sourcing-template",
+  "layout": "monorepo",
+  "pin": "aligned",
+  "license": false,
+  "gitignore": [],
+  "package": {
+    "description": "Event-sourced orders with Bounda: every change is an event in a Durable Object's SQLite, projected into a read model before the request answers.",
+    "cloudflare": {
+      "label": "Event Sourcing with Bounda",
+      "products": ["Workers", "Durable Objects"],
+      "categories": ["storage"],
+      "docs_url": "https://docs.bounda.dev/adapters/cloudflare/"
+    }
+  }
+}

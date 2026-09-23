@@ -15,6 +15,7 @@ catalog:
   "@changesets/cli": 3.0.3
   "@clack/prompts": 1.8.1
   "@libsql/client": 0.18.0
+  "@playwright/test": 1.63.0
   "@react-router/dev": 8.4.0
   "@react-router/node": 8.4.0
   "@react-router/serve": 8.4.0
