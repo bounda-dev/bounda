@@ -164,6 +164,9 @@ settings:
 
 catalogs:
   cloudflare:
+    '@vitest/runner':
+      specifier: 4.1.11
+      version: 4.1.11
     vitest:
       specifier: 4.1.11
       version: 4.1.11
@@ -564,9 +567,9 @@ importers:
         specifier: 'catalog:'
         version: 15.0.0
     devDependencies:
-      '@cloudflare/workers-types':
+      '@cloudflare/vitest-plugin':
         specifier: 'catalog:'
-        version: 5.20260921.1
+        version: 1.2.0(@cloudflare/workers-types@5.20260921.1)(@types/node@26.6.1)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@5.0.1)
       '@react-router/dev':
         specifier: 'catalog:'
         version: 8.4.0(@react-router/serve@8.4.0(react-router@8.4.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(supports-color@7.2.0)(typescript@7.0.2))(react-router@8.4.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(supports-color@7.2.0)(typescript@7.0.2)(vite@8.3.0(@types/node@26.6.1)(esbuild@0.28.2)(yaml@2.9.1))(wrangler@4.136.0(@cloudflare/workers-types@5.20260921.1)(@types/node@26.6.1))
@@ -591,6 +594,9 @@ importers:
       '@types/react-dom':
         specifier: 'catalog:'
         version: 19.3.0(@types/react@19.3.0)
+      '@vitest/runner':
+        specifier: catalog:cloudflare
+        version: 4.1.11
       isbot:
         specifier: 'catalog:'
         version: 5.2.2
@@ -6150,6 +6156,22 @@ snapshots:
       esbuild: 0.28.1
       miniflare: 5.20260921.0-alpha(@types/node@26.6.1)
       vitest: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@26.6.1)(@vitest/coverage-v8@5.0.1)(vite@8.3.0(@types/node@26.6.1)(esbuild@0.28.2)(yaml@2.9.1))
+      wrangler: 4.136.0(@cloudflare/workers-types@5.20260921.1)(@types/node@26.6.1)
+      zod: 4.4.3
+    transitivePeerDependencies:
+      - '@cloudflare/workers-types'
+      - '@types/node'
+      - bufferutil
+      - utf-8-validate
+
+  '@cloudflare/vitest-plugin@1.2.0(@cloudflare/workers-types@5.20260921.1)(@types/node@26.6.1)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@5.0.1)':
+    dependencies:
+      '@vitest/runner': 4.1.11
+      '@vitest/snapshot': 4.1.11
+      cjs-module-lexer: 1.2.3
+      esbuild: 0.28.1
+      miniflare: 5.20260921.0-alpha(@types/node@26.6.1)
+      vitest: 5.0.1(@opentelemetry/api@1.9.1)(@types/node@26.6.1)(@vitest/coverage-v8@5.0.1)(vite@8.3.0(@types/node@26.6.1)(esbuild@0.28.2)(yaml@2.9.1))
       wrangler: 4.136.0(@cloudflare/workers-types@5.20260921.1)(@types/node@26.6.1)
       zod: 4.4.3
     transitivePeerDependencies:

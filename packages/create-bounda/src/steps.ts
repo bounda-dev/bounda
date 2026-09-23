@@ -21,10 +21,24 @@ export interface InstallCommandFunction {
 
 /**
  * The install command of each package manager. Installing also runs the project's `prepare`
- * script, which generates the types.
+ * script, which generates the types, in every template but Cloudflare's.
  */
 export const installCommand: InstallCommandFunction = (packageManager) =>
   packageManager === "yarn" ? ["yarn", []] : [packageManager, ["install"]];
+
+export interface GenerateCommandFunction {
+  (packageManager: PackageManager): readonly [string, readonly string[]];
+}
+
+/**
+ * Runs the project's `generate` script. A Cloudflare project has no `prepare`, because npm runs it
+ * even for `npm install --package-lock-only`, when there is nothing to run it with; this is what
+ * gives its editor the registry and the binding types right after the install.
+ */
+export const generateCommand: GenerateCommandFunction = (packageManager) => [
+  packageManager,
+  ["run", "generate"],
+];
 
 export interface RunCommandFunction {
   (packageManager: PackageManager, script: string): string;

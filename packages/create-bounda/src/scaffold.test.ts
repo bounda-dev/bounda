@@ -17,7 +17,8 @@ const versions = {
   isbot: "^5",
   typesReact: "^19",
   wrangler: "^4",
-  workersTypes: "^5",
+  cloudflareVitest: "^4.1",
+  cloudflareVitestPlugin: "^1.2",
 };
 
 const directory = async (): Promise<string> => {
@@ -208,6 +209,7 @@ describe("scaffoldProject", () => {
       "package.json",
       "public/index.html",
       "src/worker.ts",
+      "tests/api.test.ts",
       "tests/orders.test.ts",
       "tsconfig.json",
       "vitest.config.ts",
@@ -219,22 +221,32 @@ describe("scaffoldProject", () => {
       devDependencies: Record<string, string>;
     };
     expect(manifest.scripts).toMatchObject({
+      generate: "bounda generate && wrangler types",
       build: "bounda generate",
-      dev: "bounda generate && wrangler dev",
+      dev: "bounda generate && wrangler types && wrangler dev",
       deploy: "bounda generate && wrangler deploy",
+      test: "bounda generate && vitest run",
     });
+    expect(manifest.scripts).not.toHaveProperty("prepare");
     expect(manifest.dependencies).toEqual({
       "@bounda-dev/adapter-cloudflare": "^0.1.0-alpha.0",
       "@bounda-dev/core": "^0.1.0-alpha.0",
     });
-    expect(manifest.devDependencies).toMatchObject({
+    expect(manifest.devDependencies).toEqual({
+      "@bounda-dev/cli": "^0.1.0-alpha.0",
+      "@cloudflare/vitest-plugin": "^1.2",
+      typescript: "^7",
+      vitest: "^4.1",
       wrangler: "^4",
-      "@cloudflare/workers-types": "^5",
     });
+    expect(await readFile(join(target, "vitest.config.ts"), "utf8")).toContain("cloudflareTest");
     expect(await readFile(join(target, "bounda.config.ts"), "utf8")).toContain("cloudflare()");
     expect(await readFile(join(target, "wrangler.jsonc"), "utf8")).toContain('"name": "edge"');
     expect(await readFile(join(target, "wrangler.jsonc"), "utf8")).toContain(
       '"assets": { "directory": "./public" }',
+    );
+    expect(await readFile(join(target, "wrangler.jsonc"), "utf8")).toContain(
+      '"upload_source_maps": true',
     );
     expect(await readFile(join(target, ".gitignore"), "utf8")).toContain(".wrangler/");
     expect(await readFile(join(target, "README.md"), "utf8")).toContain("npm run deploy");

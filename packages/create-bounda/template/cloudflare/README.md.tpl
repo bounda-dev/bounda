@@ -5,11 +5,15 @@ Durable Object per tenant, with the events, the read models and the scheduled wo
 object's own SQLite. Nothing else to run.
 
 ```bash
-{{pm}} install          # also runs bounda generate (prepare)
-{{pm}} test             # the domain, on an in-memory store
+{{pm}} install
+{{pm}} test             # the app and its API, inside workerd
 {{pm}} run dev          # wrangler dev on http://localhost:8787
 {{pm}} run deploy       # wrangler deploy, to your Cloudflare account
 ```
+
+`{{pm}} run generate` writes the typed registry under `.bounda/`, a `+types/` folder next to each
+module and, with `wrangler types`, `worker-configuration.d.ts` from `wrangler.jsonc`. The scripts
+run it for you; run it yourself after adding a module or a binding, so your editor sees the types.
 
 Open http://localhost:8787 once `dev` is running: `public/index.html` places orders and lists
 them through the API. Or from a terminal:
@@ -32,7 +36,8 @@ bounda.config.ts            storage: cloudflare()
 src/worker.ts               the Durable Object class and the HTTP API
 public/index.html           a page that uses the API, served as a static asset
 wrangler.jsonc              the binding and the SQLite migration for the object
-tests/orders.test.ts        the app on an in-memory adapter
+tests/orders.test.ts        the domain, on an in-memory store
+tests/api.test.ts           the API, against the Durable Object in workerd
 ```
 
 `src/worker.ts` uses `createWorker`, a JSON API with no authentication: a starting point. An app

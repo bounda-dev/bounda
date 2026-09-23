@@ -4,7 +4,7 @@ import * as clack from "@clack/prompts";
 import { Command, CommanderError } from "commander";
 import { type CreateOptions, type Prompts, resolveOptions } from "./options.ts";
 import { scaffoldProject } from "./scaffold.ts";
-import { type Exec, installCommand, realExec, runCommand } from "./steps.ts";
+import { type Exec, generateCommand, installCommand, realExec, runCommand } from "./steps.ts";
 import { currentVersions } from "./versions.ts";
 
 export interface Output {
@@ -79,6 +79,21 @@ const nextSteps = (options: CreateOptions, cwd: string): string => {
   return lines.map((line) => `  ${line}`).join("\n");
 };
 
+const generate = async (
+  options: CreateOptions,
+  exec: Exec,
+  stderr: RunCreateArgs["stderr"],
+): Promise<void> => {
+  const [command, args] = generateCommand(options.packageManager);
+  try {
+    await exec(command, args, options.directory);
+  } catch (error) {
+    stderr.write(
+      `warning: generating types failed (${error instanceof Error ? error.message : String(error)}); run ${runCommand(options.packageManager, "generate")} yourself\n`,
+    );
+  }
+};
+
 const create = async (
   directory: string | undefined,
   flags: Flags,
@@ -138,6 +153,7 @@ const create = async (
     stdout.write(`installing dependencies with ${resolved.packageManager}\n`);
     try {
       await exec(command, args, resolved.directory);
+      if (resolved.framework === "cloudflare") await generate(resolved, exec, stderr);
     } catch (error) {
       stderr.write(
         `warning: install failed (${error instanceof Error ? error.message : String(error)}); run ${runCommand(resolved.packageManager, "install")} yourself\n`,
