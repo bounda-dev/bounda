@@ -1,6 +1,6 @@
 {
   "name": "@bounda-dev/cli",
-  "version": "0.1.0-alpha.8",
+  "version": "0.1.0-alpha.9",
   "description": "The bounda CLI: reads the project layout and writes the registry and the types",
   "license": "Apache-2.0",
   "repository": {
