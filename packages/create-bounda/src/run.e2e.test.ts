@@ -145,19 +145,23 @@ const until = async (
   }
 };
 
+const GROUP_GONE = new Set(["ESRCH", "EPERM"]);
+
 const signalGroup = (pid: number, name: NodeJS.Signals | 0): boolean => {
   try {
     process.kill(-pid, name);
     return true;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+    if (GROUP_GONE.has((error as NodeJS.ErrnoException).code ?? "")) return false;
     throw error;
   }
 };
 
 /**
  * The whole group, and until it is gone: `react-router dev` relaunches itself, so the listener
- * can outlive the child, and a group that has gone must not be signalled again.
+ * can outlive the child, and a group that has gone must not be signalled again. Gone is ESRCH, or
+ * EPERM on macOS, which answers that way for a group whose only members are zombies not yet
+ * reaped: every process in it is this test's, so no live one can refuse the signal.
  */
 const stop = async (child: ChildProcess): Promise<void> => {
   const { pid } = child;
