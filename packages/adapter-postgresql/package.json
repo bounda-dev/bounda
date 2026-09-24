@@ -1,6 +1,6 @@
 {
   "name": "@bounda-dev/adapter-postgresql",
-  "version": "0.1.0-alpha.9",
+  "version": "0.1.0",
   "description": "PostgreSQL storage adapter for Bounda",
   "license": "Apache-2.0",
   "repository": {
