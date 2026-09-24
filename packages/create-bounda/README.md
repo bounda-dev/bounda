@@ -36,10 +36,10 @@ from a loader.
 Installing runs the generator (it is the `prepare` script), so the project type-checks and its
 test passes straight away.
 
-## Alpha
+## Status
 
-Every published version is a prerelease. The API can change between alphas without a deprecation
-cycle.
+0.x. Until 1.0 the API can still change between minor versions, and every change that breaks
+something is called out in the changelog.
 
 Docs: [docs.bounda.dev/getting-started](https://docs.bounda.dev/getting-started/). Source and
 issues: [github.com/bounda-dev/bounda](https://github.com/bounda-dev/bounda).

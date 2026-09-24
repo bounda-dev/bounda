@@ -44,10 +44,10 @@ export default createWorker({ binding: "STORE" });
   `x-bounda-tenant` header. It has no authentication: a starting point. Your own `fetch` talks to a
   store with `connect(stub)`, which types `commands` and `queries` from your modules.
 
-## Alpha
+## Status
 
-Every published version is a prerelease. The API can change between alphas without a deprecation
-cycle.
+0.x. Until 1.0 the API can still change between minor versions, and every change that breaks
+something is called out in the changelog.
 
 Docs: [docs.bounda.dev](https://docs.bounda.dev). Source and issues:
 [github.com/bounda-dev/bounda](https://github.com/bounda-dev/bounda).

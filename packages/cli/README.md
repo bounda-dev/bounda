@@ -45,10 +45,10 @@ taking the read model offline: for a projection that had a bug, or a view that l
 changed a field's type. `bounda dead-letters` lists the handler runs that gave up and replays or
 discards them.
 
-## Alpha
+## Status
 
-Every published version is a prerelease. The API can change between alphas without a deprecation
-cycle.
+0.x. Until 1.0 the API can still change between minor versions, and every change that breaks
+something is called out in the changelog.
 
 Docs: [docs.bounda.dev/reference/cli](https://docs.bounda.dev/reference/cli/). Source and issues:
 [github.com/bounda-dev/bounda](https://github.com/bounda-dev/bounda).

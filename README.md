@@ -98,8 +98,8 @@ a policy can be retried without touching the events. The
 
 ## Status
 
-Alpha. Every version on npm is a prerelease, so a plain install gets one; the API can change
-between alphas without a deprecation cycle. Each package has its own changelog.
+0.x. Until 1.0 the API can still change between minor versions (0.1 to 0.2), and every change
+that breaks something is called out in the changelog of the package it touches.
 
 ## In production
 
