@@ -142,6 +142,7 @@ describe("createDispatcher", () => {
           fields: {
             subscriber: "flaky",
             afterPosition: 0,
+            failedPosition: 1,
             message: "boom",
             stack: expect.stringContaining("boom"),
           },

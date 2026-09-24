@@ -29,6 +29,39 @@ export interface Subscriber {
  */
 export type DeliveryOutcome = "idle" | "busy" | "advanced" | "held" | "moved" | "failed";
 
+/**
+ * What a delivery that failed was stuck on: the event that failed, or the batch's first event when
+ * the subscriber could not tell which one, and the error.
+ */
+export interface DeliveryFailure {
+  readonly position: number;
+  readonly eventId: string;
+  readonly eventType: string;
+  readonly message: string;
+}
+
+/**
+ * How one delivery went, and what it failed on when it failed.
+ */
+export type Delivery =
+  | { readonly outcome: Exclude<DeliveryOutcome, "failed"> }
+  | { readonly outcome: "failed"; readonly failure: DeliveryFailure };
+
+/**
+ * Thrown by a subscriber's `process` when its batch failed partway: the first `done` events went
+ * through and the next one threw `cause`. The delivery then commits those `done` events on their
+ * own, so the checkpoint stops right before the event that failed.
+ */
+export class PartialBatchError extends Error {
+  readonly done: number;
+
+  constructor(done: number, cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = "PartialBatchError";
+    this.done = done;
+  }
+}
+
 export interface DeliverArgs {
   readonly read: (afterPosition: number) => Promise<readonly StoredEvent[]>;
   /**
@@ -45,7 +78,7 @@ export interface CheckpointedSubscriber {
   readonly name: string;
   readonly kind: SubscriberKind;
   position(): Promise<number>;
-  deliver(args: DeliverArgs): Promise<DeliveryOutcome>;
+  deliver(args: DeliverArgs): Promise<Delivery>;
 }
 
 /**
@@ -110,7 +143,9 @@ class DeliveryStopped extends Error {
  * checkpoint is read again: when someone else moved it meanwhile the batch is stale and is left
  * alone. Otherwise the batch is processed and the checkpoint advanced with `compareAndSet`, still
  * under the claim. Holding the batch or finding the checkpoint moved throws out of the claim, so a
- * transactional one rolls back what the batch wrote.
+ * transactional one rolls back what the batch wrote. When `process` reports that the batch failed
+ * partway, the events before the one that failed are committed again on their own, under a fresh
+ * claim, so the next delivery starts right at the event that failed.
  */
 export const createCheckpointedSubscriber: CreateCheckpointedSubscriberFunction = ({
   name,
@@ -120,33 +155,74 @@ export const createCheckpointedSubscriber: CreateCheckpointedSubscriberFunction 
   process,
   logger,
 }) => {
-  const attempt = async (
+  const commit = (afterPosition: number, events: readonly StoredEvent[], wait: boolean) =>
+    claim({
+      wait,
+      work: async (held) => {
+        if ((await held.get()) !== afterPosition) throw new DeliveryStopped("moved");
+        const done = await process(events, held);
+        const last = events[Math.min(done, events.length) - 1];
+        if (last === undefined) throw new DeliveryStopped("held");
+        if (!(await held.compareAndSet(afterPosition, last.position))) {
+          throw new DeliveryStopped("moved");
+        }
+      },
+    });
+
+  const salvage = async (
     afterPosition: number,
     events: readonly StoredEvent[],
     wait: boolean,
-  ): Promise<DeliveryOutcome> => {
+  ): Promise<void> => {
     try {
-      const claimed = await claim({
-        wait,
-        work: async (held) => {
-          if ((await held.get()) !== afterPosition) throw new DeliveryStopped("moved");
-          const done = await process(events, held);
-          const last = events[Math.min(done, events.length) - 1];
-          if (last === undefined) throw new DeliveryStopped("held");
-          if (!(await held.compareAndSet(afterPosition, last.position))) {
-            throw new DeliveryStopped("moved");
-          }
-        },
+      const claimed = await commit(afterPosition, events, wait);
+      if (!claimed.acquired) return;
+      logger.info("subscriber applied the events before the one that failed", {
+        subscriber: name,
+        afterPosition,
+        through: events[events.length - 1]?.position,
       });
-      return claimed.acquired ? "advanced" : "busy";
     } catch (error) {
-      if (error instanceof DeliveryStopped) return error.outcome;
-      logger.error("subscriber failed; batch will be redelivered", {
+      if (error instanceof DeliveryStopped) return;
+      logger.error("subscriber could not apply the events before the one that failed", {
         subscriber: name,
         afterPosition,
         ...errorDetails(error),
       });
-      return "failed";
+    }
+  };
+
+  const attempt = async (
+    afterPosition: number,
+    events: readonly StoredEvent[],
+    first: StoredEvent,
+    wait: boolean,
+  ): Promise<Delivery> => {
+    try {
+      const claimed = await commit(afterPosition, events, wait);
+      return { outcome: claimed.acquired ? "advanced" : "busy" };
+    } catch (error) {
+      if (error instanceof DeliveryStopped) return { outcome: error.outcome };
+      const done = error instanceof PartialBatchError ? error.done : 0;
+      const cause = error instanceof PartialBatchError ? error.cause : error;
+      const failed = events[done] ?? first;
+      const details = errorDetails(cause);
+      logger.error("subscriber failed; batch will be redelivered", {
+        subscriber: name,
+        afterPosition,
+        failedPosition: failed.position,
+        ...details,
+      });
+      if (done > 0) await salvage(afterPosition, events.slice(0, done), wait);
+      return {
+        outcome: "failed",
+        failure: {
+          position: failed.position,
+          eventId: failed.id,
+          eventType: failed.type,
+          message: details.message,
+        },
+      };
     }
   };
 
@@ -157,7 +233,8 @@ export const createCheckpointedSubscriber: CreateCheckpointedSubscriberFunction 
     deliver: async ({ read, wait }) => {
       const afterPosition = await position();
       const events = await read(afterPosition);
-      if (events.length === 0) return "idle";
+      const [first] = events;
+      if (first === undefined) return { outcome: "idle" };
       return traced({
         name: `bounda.subscriber ${name}`,
         attributes: {
@@ -167,16 +244,16 @@ export const createCheckpointedSubscriber: CreateCheckpointedSubscriberFunction 
           [ATTRIBUTES.eventCount]: events.length,
         },
         run: async (span) => {
-          const outcome = await attempt(afterPosition, events, wait);
-          if (outcome === "moved") {
+          const delivery = await attempt(afterPosition, events, first, wait);
+          if (delivery.outcome === "moved") {
             logger.warn("checkpoint moved by someone else; batch will be redelivered from there", {
               subscriber: name,
               afterPosition,
               current: await position(),
             });
           }
-          span.setAttribute(ATTRIBUTES.outcome, outcome);
-          return outcome;
+          span.setAttribute(ATTRIBUTES.outcome, delivery.outcome);
+          return delivery;
         },
       });
     },

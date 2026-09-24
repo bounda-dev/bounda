@@ -609,6 +609,7 @@ describe("process runner", () => {
         fields: {
           subscriber: "processes",
           afterPosition: 0,
+          failedPosition: 1,
           message: "db down",
           stack: expect.any(String),
         },

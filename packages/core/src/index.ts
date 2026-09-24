@@ -18,7 +18,12 @@ export type {
 } from "./kernel/app.ts";
 export { createApp } from "./kernel/app.ts";
 export type { DeadLetters } from "./kernel/dead-letters/dead-letters.ts";
-export type { DispatcherLag, SubscriberKind, SubscriberLag } from "./kernel/dispatch/dispatcher.ts";
+export type {
+  DispatcherLag,
+  SubscriberFailing,
+  SubscriberKind,
+  SubscriberLag,
+} from "./kernel/dispatch/dispatcher.ts";
 export type { ProcessStatus } from "./kernel/process/lifecycle.ts";
 export { PROCESS_EVENTS } from "./kernel/process/lifecycle.ts";
 export type {

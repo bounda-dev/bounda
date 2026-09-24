@@ -124,6 +124,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
       ],
       batchSize: config.runtime.dispatcher.batchSize,
       pollIntervalMs: config.runtime.dispatcher.pollIntervalMs,
+      backoff: config.runtime.dispatcher.backoff,
       clock,
       logger,
     });

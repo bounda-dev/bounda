@@ -210,6 +210,7 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
     ],
     batchSize: config.runtime.dispatcher.batchSize,
     pollIntervalMs: config.runtime.dispatcher.pollIntervalMs,
+    backoff: config.runtime.dispatcher.backoff,
     idleIntervalMs: config.runtime.dispatcher.idleIntervalMs,
     ...(storage.notifier === undefined ? {} : { notifier: storage.notifier }),
     clock,

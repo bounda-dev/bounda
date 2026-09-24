@@ -31,3 +31,5 @@ export const DEFAULT_POLL_INTERVAL_MS: number = 100;
 export const DEFAULT_IDLE_INTERVAL_MS: number = 30_000;
 export const DEFAULT_BATCH_SIZE: number = 100;
 export const DEFAULT_PROJECTION_BATCH_TIME_MS: number = 250;
+export const DEFAULT_BACKOFF_BASE_DELAY_MS: number = 1_000;
+export const DEFAULT_BACKOFF_MAX_DELAY_MS: number = 30_000;

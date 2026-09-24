@@ -49,6 +49,7 @@ describe("resolveConfig", () => {
         idleIntervalMs: 30_000,
         batchSize: 100,
         projectionBatchTimeMs: 250,
+        backoff: { baseDelayMs: 1_000, maxDelayMs: 30_000 },
       },
       overrides: {},
     });
@@ -68,6 +69,7 @@ describe("resolveConfig", () => {
           idleInterval: "1m",
           batchSize: 10,
           projectionBatchTime: "2s",
+          backoff: { baseDelay: "500ms", maxDelay: "1m" },
         },
       },
       commands: { placeOrder: { inventory: { use: "http" } } },
@@ -87,6 +89,7 @@ describe("resolveConfig", () => {
       idleIntervalMs: 60_000,
       batchSize: 10,
       projectionBatchTimeMs: 2_000,
+      backoff: { baseDelayMs: 500, maxDelayMs: 60_000 },
     });
     expect(resolved.readModels["users-directory"]).toBe(sqlite);
     expect(resolved.commands.placeOrder?.inventory?.use).toBe("http");
