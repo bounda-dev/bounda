@@ -114,9 +114,11 @@ Anything else propagates to the route's `ErrorBoundary`.
 
 Read models are updated by projections that run in the background, so a page reached right after
 a command could be rendered before the read model has the row. By default the app in the context
-reads its own writes: a command resolves once the read models reflect its events, and the redirect
-lands on a page that already shows them. Policies, processes and scheduled commands still run in
-the background.
+reads its own writes: a command resolves once the read models that project its events have
+reached them, and the redirect lands on a page that already shows them. The wait is bounded (2
+seconds by default), so a stuck worker makes a page stale rather than a request that hangs; see
+[Reading your own writes](/guides/deployment/#reading-your-own-writes). Policies, processes and
+scheduled commands still run in the background.
 
 ```ts
 bounda({ consistency: "eventual" });
@@ -124,8 +126,8 @@ bounda({ consistency: "eventual" });
 
 `consistency: "eventual"` serves the app exactly as booted, and reads may lag behind writes. Use
 it when a separate worker owns the projections and the pages tolerate the delay. The same
-behaviour is available to any host through `readYourWrites(app)` and `app.catchUpReadModels()`
-from `@bounda-dev/core`.
+behaviour is available to any host through `readYourWrites(app)` and
+`app.catchUpReadModels({ through })` from `@bounda-dev/core`.
 
 ## Development and production
 

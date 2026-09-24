@@ -168,7 +168,8 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   the schema's input type) and always present in handlers (output type).
 - A command resolves when its events are stored; read models catch up in the background.
   `app.catchUpReadModels()` runs the projections now; `readYourWrites(app)` returns an app whose
-  commands do that before resolving. Hosts such as the React Router package apply it for you.
+  commands wait, for at most 2 s, for the read models that project their events to reach them.
+  Hosts such as the React Router package apply it for you.
 
 ## Bounda with React Router
 

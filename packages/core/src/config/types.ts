@@ -64,6 +64,13 @@ export interface DispatcherConfig {
    * own, which says the database is back. Defaults to 1 second and 30 seconds.
    */
   readonly backoff?: BackoffConfig;
+  /**
+   * How `catchUpReadModels({ through })`, and read-your-writes with it, waits for the read models
+   * a command changed: for at most `timeout`, reading the checkpoint of one another process is
+   * busy with every `pollInterval`. Past `timeout` it gives up, logs a warning and lets the
+   * request read what is there. Defaults to 2 seconds and 15 milliseconds.
+   */
+  readonly catchUp?: CatchUpConfig;
 }
 
 /**
@@ -72,6 +79,14 @@ export interface DispatcherConfig {
 export interface BackoffConfig {
   readonly baseDelay?: DurationInput;
   readonly maxDelay?: DurationInput;
+}
+
+/**
+ * The `catchUp` of the dispatcher's settings.
+ */
+export interface CatchUpConfig {
+  readonly timeout?: DurationInput;
+  readonly pollInterval?: DurationInput;
 }
 
 /**
@@ -170,6 +185,7 @@ export interface ResolvedConfig {
       readonly batchSize: number;
       readonly projectionBatchTimeMs: number;
       readonly backoff: { readonly baseDelayMs: number; readonly maxDelayMs: number };
+      readonly catchUp: { readonly timeoutMs: number; readonly pollIntervalMs: number };
     };
     readonly overrides: Readonly<Record<string, ResolvedAggregateRuntime>>;
   };

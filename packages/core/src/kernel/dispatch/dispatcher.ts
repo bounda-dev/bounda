@@ -4,6 +4,8 @@ import type { EventStore } from "../../adapter/ports/event-store.ts";
 import {
   DEFAULT_BACKOFF_BASE_DELAY_MS,
   DEFAULT_BACKOFF_MAX_DELAY_MS,
+  DEFAULT_CATCH_UP_POLL_MS,
+  DEFAULT_CATCH_UP_TIMEOUT_MS,
 } from "../../config/defaults.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { Logger } from "../../contracts/logger.ts";
@@ -61,6 +63,15 @@ export interface DispatcherLag {
   readonly maxLag: number;
 }
 
+/**
+ * What `catchUpThrough` waits for: a position in the global stream and the types of the events
+ * that led there.
+ */
+export interface CatchUpThroughArgs {
+  readonly position: number;
+  readonly eventTypes: readonly string[];
+}
+
 export interface Dispatcher {
   /**
    * Starts passing in the background: on every notification when the storage pushes them, and on
@@ -84,6 +95,17 @@ export interface Dispatcher {
    * Runs passes for the subscribers of one kind until none of them moves.
    */
   catchUp(kind: SubscriberKind): Promise<void>;
+  /**
+   * Waits until every subscriber that reacts to one of `eventTypes`, which only projections say,
+   * has reached `position`, and resolves to whether they all did within the configured time. A
+   * projection already there costs one checkpoint read. One behind is delivered to when nobody
+   * else holds it; when another process does, its checkpoint is read again every
+   * `pollIntervalMs` instead of waiting on the lock, so no connection is kept waiting. A
+   * projection whose batches keep failing is not waited for while it backs off, nor once a batch
+   * of it fails here. It runs outside the pass mutex: the projections' own locks keep deliveries
+   * apart.
+   */
+  catchUpThrough(args: CatchUpThroughArgs): Promise<boolean>;
   getLag(): Promise<DispatcherLag>;
 }
 
@@ -109,6 +131,11 @@ export interface CreateDispatcherArgs {
    */
   readonly backoff?: DispatcherBackoff;
   /**
+   * How long `catchUpThrough` waits at most, and how often it reads the checkpoint of a
+   * projection another process holds. Defaults to 2 seconds and 15 milliseconds.
+   */
+  readonly catchUp?: DispatcherCatchUp;
+  /**
    * With a `notifier`, how long to wait for a notification before passing anyway. Defaults to
    * `pollIntervalMs`.
    */
@@ -130,6 +157,14 @@ export interface CreateDispatcherArgs {
 export interface DispatcherBackoff {
   readonly baseDelayMs: number;
   readonly maxDelayMs: number;
+}
+
+/**
+ * The timings of `catchUpThrough`, in milliseconds.
+ */
+export interface DispatcherCatchUp {
+  readonly timeoutMs: number;
+  readonly pollIntervalMs: number;
 }
 
 export interface CreateDispatcherFunction {
@@ -166,6 +201,7 @@ export const createDispatcher: CreateDispatcherFunction = ({
     baseDelayMs: DEFAULT_BACKOFF_BASE_DELAY_MS,
     maxDelayMs: DEFAULT_BACKOFF_MAX_DELAY_MS,
   },
+  catchUp = { timeoutMs: DEFAULT_CATCH_UP_TIMEOUT_MS, pollIntervalMs: DEFAULT_CATCH_UP_POLL_MS },
   idleIntervalMs = pollIntervalMs,
   notifier,
   clock,
@@ -213,6 +249,26 @@ export const createDispatcher: CreateDispatcherFunction = ({
   const backingOff = (subscriber: string): boolean => {
     const current = failing.get(subscriber);
     return current !== undefined && now() < current.retryAt;
+  };
+
+  const sleep = (milliseconds: number): Promise<void> =>
+    new Promise((resolve) => {
+      clock.after(milliseconds, resolve);
+    });
+
+  const reach = async (
+    subscriber: CheckpointedSubscriber,
+    position: number,
+    deadline: number,
+  ): Promise<boolean> => {
+    for (;;) {
+      if ((await subscriber.position()) >= position) return true;
+      if (now() >= deadline || backingOff(subscriber.name)) return false;
+      const delivery = await subscriber.deliver({ read, wait: false });
+      record(subscriber.name, delivery);
+      if (delivery.outcome === "failed") return false;
+      if (!moving.has(delivery.outcome)) await sleep(catchUp.pollIntervalMs);
+    }
   };
 
   const pass = async (wait: boolean, patient: boolean, only?: SubscriberKind): Promise<boolean> => {
@@ -299,6 +355,26 @@ export const createDispatcher: CreateDispatcherFunction = ({
       while (await mutex.run(() => pass(true, true, kind))) {
         // keep passing until nothing moves
       }
+    },
+    catchUpThrough: async ({ position, eventTypes }) => {
+      const deadline = now() + catchUp.timeoutMs;
+      const reacting = delivering.filter((subscriber) =>
+        eventTypes.some((type) => subscriber.reactsTo?.(type) === true),
+      );
+      const reached = await Promise.all(
+        reacting.map(async (subscriber) => ({
+          subscriber: subscriber.name,
+          reached: await reach(subscriber, position, deadline),
+        })),
+      );
+      const behind = reached.filter((entry) => !entry.reached).map((entry) => entry.subscriber);
+      if (behind.length === 0) return true;
+      logger.warn("read models did not catch up with the command in time", {
+        position,
+        subscribers: behind,
+        timeoutMs: catchUp.timeoutMs,
+      });
+      return false;
     },
     getLag: async () => {
       const lastPosition = await eventStore.lastPosition();

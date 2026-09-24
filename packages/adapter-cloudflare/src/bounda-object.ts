@@ -233,7 +233,7 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
           | undefined;
         if (typeof dispatch !== "function") throw new NotFoundError(`Unknown command "${name}"`);
         const result = await dispatch(payload, options);
-        if (!result.scheduled) await app.catchUpReadModels();
+        await app.catchUpReadModels({ through: result });
         await this.#rearm(false, true);
         return result;
       });

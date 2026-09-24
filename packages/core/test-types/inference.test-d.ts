@@ -1,6 +1,7 @@
 import type {
   AppRegistry,
   BoundaApp,
+  CatchUpReadModelsArgs,
   CommandsFacade,
   DispatchOptions,
   DispatchResult,
@@ -173,6 +174,14 @@ describe("facades", () => {
     }>();
     expectTypeOf<Commands["payOrder"]>().parameter(1).toEqualTypeOf<DispatchOptions | undefined>();
     expectTypeOf<Commands["payOrder"]>().returns.toEqualTypeOf<Promise<DispatchResult>>();
+    expectTypeOf<Extract<DispatchResult, { scheduled: false }>>().toMatchObjectType<{
+      readonly eventTypes: readonly string[];
+      readonly position: number;
+    }>();
+    expectTypeOf<BoundaApp<Registry>["catchUpReadModels"]>()
+      .parameter(0)
+      .toEqualTypeOf<CatchUpReadModelsArgs | undefined>();
+    expectTypeOf<CatchUpReadModelsArgs["through"]>().toEqualTypeOf<DispatchResult | undefined>();
   });
 
   it("match the facades derived from the runtime registry", () => {

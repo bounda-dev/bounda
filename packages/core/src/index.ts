@@ -10,6 +10,7 @@ export * from "./contracts/index.ts";
 export type { Query } from "./contracts/query.ts";
 export type {
   BoundaApp,
+  CatchUpReadModelsArgs,
   CreateAppArgs,
   CreateAppFunction,
   ProcessUntilIdleOptions,

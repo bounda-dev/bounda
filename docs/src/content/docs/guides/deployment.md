@@ -112,14 +112,33 @@ await consistent.commands.placeOrder({ orderId, customerId, total });
 // a query here already sees the order
 ```
 
-`readYourWrites` returns the same app with a `commands` facade that brings the read models up to
-date before resolving. A scheduled command resolves immediately, since there is nothing to catch
-up to yet, and commands dispatched from inside the runtime — by a policy or a process — are not
-affected.
+`readYourWrites` returns the same app with a `commands` facade that waits, before resolving, for
+the read models the command changed. A command's result says where its events landed:
+`eventTypes` and `position`, the place of the last one in the global stream. Only the read models
+that project one of those types are waited for, and only until their checkpoint reaches that
+position; the others do not change because of the command, so waiting for them would buy nothing.
+A read model already there costs one checkpoint read. One behind is projected by the request when
+no other process holds it; when the worker is busy with it, the request reads its checkpoint again
+every 15 ms instead of queueing on the lock, so it keeps no database connection waiting. A
+scheduled command resolves immediately, since there is nothing to catch up to yet, and commands
+dispatched from inside the runtime — by a policy or a process — are not affected.
 
-`app.catchUpReadModels()` is the primitive underneath: it runs the projections until every read
-model reflects what is stored, and leaves policies, processes and scheduled commands to the
-background.
+The wait is bounded: after `runtime.dispatcher.catchUp.timeout`, 2 seconds by default, the command
+resolves anyway, a `read models did not catch up with the command in time` warning names the read
+models still behind, and the page reads what is there. A stuck worker or a failing projection
+makes a page stale, never a request that hangs; a read model that is backing off after failures
+(see [A projection that keeps failing](#a-projection-that-keeps-failing)) is not waited for at all. This is read-your-writes in the usual sense: you
+see your own writes, not necessarily everyone else's from the same instant.
+
+```ts
+runtime: {
+  dispatcher: { catchUp: { timeout: "2s", pollInterval: "15ms" } },
+}
+```
+
+`app.catchUpReadModels({ through: result })` is the primitive underneath. Without `through`, it
+runs every projection until every read model reflects what is stored. Both leave policies,
+processes and scheduled commands to the background.
 
 In a React Router app this is a setting rather than a call — `createBounda({ consistency })`,
 `"immediate"` by default. See [Bounda with React Router](/guides/react-router/).

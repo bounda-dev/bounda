@@ -3,6 +3,7 @@ import { isAdapter } from "../adapter/adapter.ts";
 import { resolveConfig } from "../config/schema.ts";
 import type { Config, ResolvedConfig, RuntimeRole } from "../config/types.ts";
 import { type Clock, systemClock } from "../contracts/clock.ts";
+import type { DispatchResult } from "../contracts/command.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
 import { type IdGenerator, uuidV7IdGenerator } from "../contracts/ids.ts";
 import { type Logger, silentLogger } from "../contracts/logger.ts";
@@ -35,6 +36,14 @@ import { ATTRIBUTES, METRICS, meter } from "./telemetry.ts";
 /**
  * A running Bounda application.
  */
+/**
+ * What `catchUpReadModels` waits for: every read model when empty, or only what one dispatch
+ * changed when `through` holds its result.
+ */
+export interface CatchUpReadModelsArgs {
+  readonly through?: DispatchResult;
+}
+
 export interface BoundaApp<R extends Registry = AppRegistry> {
   readonly commands: CommandsFacade<R>;
   readonly queries: QueriesFacade<R>;
@@ -63,10 +72,13 @@ export interface BoundaApp<R extends Registry = AppRegistry> {
    */
   nextDueAt(): Promise<Date | null>;
   /**
-   * Runs the projections until every read model reflects the events stored so far. Policies,
-   * processes and scheduled commands are left to the background. Works in every role.
+   * Runs the projections until every read model reflects the events stored so far. With `through`,
+   * only waits for the read models that project the events of that dispatch, until they reach its
+   * position, for at most `runtime.dispatcher.catchUp.timeout`: what a request that reads its own
+   * writes needs. Policies, processes and scheduled commands are left to the background. Works in
+   * every role.
    */
-  catchUpReadModels(): Promise<void>;
+  catchUpReadModels(args?: CatchUpReadModelsArgs): Promise<void>;
   /**
    * Rebuilds one read model from the whole stream into a fresh table and swaps it in, without
    * taking it offline, or, with `maxEvents`, advances it by one slice and pauses. See
@@ -211,6 +223,7 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
     batchSize: config.runtime.dispatcher.batchSize,
     pollIntervalMs: config.runtime.dispatcher.pollIntervalMs,
     backoff: config.runtime.dispatcher.backoff,
+    catchUp: config.runtime.dispatcher.catchUp,
     idleIntervalMs: config.runtime.dispatcher.idleIntervalMs,
     ...(storage.notifier === undefined ? {} : { notifier: storage.notifier }),
     clock,
@@ -285,7 +298,11 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
       return { idle: false };
     },
     nextDueAt: () => storage.scheduler.nextDueAt({ leaseMs: worker.leaseMs }),
-    catchUpReadModels: () => dispatcher.catchUp("projection"),
+    catchUpReadModels: async ({ through } = {}) => {
+      if (through === undefined) return dispatcher.catchUp("projection");
+      if (through.scheduled) return;
+      await dispatcher.catchUpThrough(through);
+    },
     rebuildReadModel: (name, { maxEvents } = {}) =>
       rebuildReadModel({
         registry,
