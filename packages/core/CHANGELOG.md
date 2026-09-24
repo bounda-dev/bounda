@@ -1,5 +1,32 @@
 # @bounda-dev/core
 
+## 0.1.0-alpha.9
+
+### Minor Changes
+
+- ff8a448: A projection that keeps failing on an event no longer drags its whole batch down with it, floods
+  the logs or hides what it is stuck on. When a projection throws, the events of the batch before
+  the one that failed are committed on their own, so the checkpoint and the lag stop right at that
+  event. Background passes then leave that read model alone for a growing delay, from one second up
+  to thirty (`runtime.dispatcher.backoff`), while the others carry on; the first batch that goes
+  through resets it, and another subscriber recovering from failures of its own retries every
+  failing one at once. `catchUpReadModels`, and read-your-writes with it, respects the backoff;
+  `processUntilIdle` does not. `getLag()` reports `failing` for a subscriber this process saw fail:
+  the event it is stuck on, the error, how many attempts, since when and when it is tried next. The
+  `subscriber failed` log line now carries `failedPosition`. A read model still never skips an event.
+- 62b62bc: Read-your-writes waits for your events, not for everything. A command's result now carries
+  `eventTypes` and `position`, the place of its last event in the global stream, and
+  `app.catchUpReadModels({ through: result })` waits only for the read models that project one of
+  those types, only until they reach that position. A read model already there costs one checkpoint
+  read; one behind is projected by the caller when no other process holds it, and when the worker
+  is busy with it the caller reads its checkpoint again every 15 ms instead of queueing on its lock,
+  so a web request no longer keeps a database connection waiting or projects other users' events.
+  The wait runs outside the dispatcher's pass mutex, and it is bounded by
+  `runtime.dispatcher.catchUp.timeout` (2 s): past it the command resolves anyway and a warning names
+  the read models still behind. `readYourWrites`, and with it React Router's
+  `consistency: "immediate"`, and the Durable Object's commands use it. `catchUpReadModels()`
+  without arguments still catches every read model up.
+
 ## 0.1.0-alpha.8
 
 ### Minor Changes
