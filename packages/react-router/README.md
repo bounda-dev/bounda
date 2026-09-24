@@ -54,10 +54,10 @@ own writes, so a page reached right after a command already shows it; pass
 `bounda({ consistency: "eventual" })` to leave projections to the background. `createBounda()` is
 the same thing without the plugin, for a server module of your own.
 
-## Alpha
+## Status
 
-Every published version is a prerelease. The API can change between alphas without a deprecation
-cycle.
+0.x. Until 1.0 the API can still change between minor versions, and every change that breaks
+something is called out in the changelog.
 
 Docs: [docs.bounda.dev/guides/react-router](https://docs.bounda.dev/guides/react-router/). Source
 and issues: [github.com/bounda-dev/bounda](https://github.com/bounda-dev/bounda).

@@ -162,4 +162,5 @@ instead of `@cloudflare/workers-types`. There is no `prepare` script: every scri
   Each policy or process reaction adds its own writes, and the alarm that runs it is one more
   request. On the paid plan the first fifty million row writes a month are included, and a
   million commands beyond that cost around eight dollars.
-- **Every published version is a prerelease**, like the rest of Bounda.
+- **It is 0.x**, like the rest of Bounda: until 1.0 the API can still change between minor
+  versions, with every change that breaks something called out in the changelog.

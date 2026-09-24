@@ -330,7 +330,7 @@ adapter](/adapters/cloudflare/) covers it, limits and cost included.
 
 ## What is not there yet
 
-Bounda is alpha, and this is the honest list of what a production app might want and does not
+Bounda is 0.x, and this is the honest list of what a production app might want and does not
 get today. Each item says why, so nobody discovers it the hard way:
 
 - **Snapshots.** An aggregate is folded from its whole stream on every command. That is fine for

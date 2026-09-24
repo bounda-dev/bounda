@@ -32,10 +32,10 @@ Appends take a transaction-scoped advisory lock, so global positions never have 
 claims use `FOR UPDATE SKIP LOCKED`, so many web and worker processes can share one database
 without stepping on each other.
 
-## Alpha
+## Status
 
-Every published version is a prerelease. The API can change between alphas without a deprecation
-cycle.
+0.x. Until 1.0 the API can still change between minor versions, and every change that breaks
+something is called out in the changelog.
 
 Docs: [docs.bounda.dev/adapters/postgresql](https://docs.bounda.dev/adapters/postgresql/). Source
 and issues: [github.com/bounda-dev/bounda](https://github.com/bounda-dev/bounda).

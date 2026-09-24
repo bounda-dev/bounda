@@ -5,10 +5,9 @@ sidebar:
   order: 0
 ---
 
-:::caution[Alpha]
-Every published version is a prerelease, so a plain install gets one: `npm create bounda@latest`,
-`npm install @bounda-dev/core`. The API can change between alphas without a deprecation
-cycle, and each package carries its own changelog.
+:::caution[0.x]
+Until 1.0 the API can still change between minor versions (0.1 to 0.2), and every change that
+breaks something is called out in the changelog of the package it touches.
 :::
 
 ## Create a project
