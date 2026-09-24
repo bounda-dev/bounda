@@ -6,6 +6,8 @@ import {
   DEFAULT_BACKOFF_BASE_DELAY_MS,
   DEFAULT_BACKOFF_MAX_DELAY_MS,
   DEFAULT_BATCH_SIZE,
+  DEFAULT_CATCH_UP_POLL_MS,
+  DEFAULT_CATCH_UP_TIMEOUT_MS,
   DEFAULT_CONCURRENCY_RETRIES,
   DEFAULT_IDLE_INTERVAL_MS,
   DEFAULT_POLICIES,
@@ -72,6 +74,9 @@ const runtime = z.strictObject({
       projectionBatchTime: duration.optional(),
       backoff: z
         .strictObject({ baseDelay: duration.optional(), maxDelay: duration.optional() })
+        .optional(),
+      catchUp: z
+        .strictObject({ timeout: duration.optional(), pollInterval: duration.optional() })
         .optional(),
     })
     .optional(),
@@ -177,6 +182,11 @@ export const resolveConfig: ResolveConfigFunction = (config) => {
           baseDelayMs:
             parsed.runtime?.dispatcher?.backoff?.baseDelay ?? DEFAULT_BACKOFF_BASE_DELAY_MS,
           maxDelayMs: parsed.runtime?.dispatcher?.backoff?.maxDelay ?? DEFAULT_BACKOFF_MAX_DELAY_MS,
+        },
+        catchUp: {
+          timeoutMs: parsed.runtime?.dispatcher?.catchUp?.timeout ?? DEFAULT_CATCH_UP_TIMEOUT_MS,
+          pollIntervalMs:
+            parsed.runtime?.dispatcher?.catchUp?.pollInterval ?? DEFAULT_CATCH_UP_POLL_MS,
         },
       },
       overrides: resolvedOverrides,

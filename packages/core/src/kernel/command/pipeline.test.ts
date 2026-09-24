@@ -48,6 +48,8 @@ describe("command pipeline", () => {
       aggregateId: "o-1",
       version: 1,
       eventIds: ["id-2"],
+      eventTypes: ["OrderPlaced"],
+      position: 1,
     });
     expect(sentMessages).toEqual(["placed o-1 v0"]);
 
@@ -127,14 +129,26 @@ describe("command pipeline", () => {
   it("appends nothing when the handler returns no events", async () => {
     const { pipeline, storage } = await createKernelHarness();
     const result = await pipeline.dispatch({ type: "TouchOrder", payload: { orderId: "o-1" } });
-    expect(result).toEqual({ scheduled: false, aggregateId: "o-1", version: 0, eventIds: [] });
+    expect(result).toEqual({
+      scheduled: false,
+      aggregateId: "o-1",
+      version: 0,
+      eventIds: [],
+      eventTypes: [],
+      position: 0,
+    });
     expect(await storage.eventStore.lastPosition()).toBe(0);
   });
 
   it("numbers the events of one command consecutively after the loaded version", async () => {
     const { pipeline, storage } = await createKernelHarness({ registry: withTickets });
     const result = await pipeline.dispatch({ type: "OpenTicket", payload: { ticketId: "t-1" } });
-    expect(result).toMatchObject({ version: 2, eventIds: ["id-2", "id-3"] });
+    expect(result).toMatchObject({
+      version: 2,
+      eventIds: ["id-2", "id-3"],
+      eventTypes: ["TicketOpened", "TicketTagged"],
+      position: 2,
+    });
     const loaded = await storage.eventStore.load({ aggregateType: "ticket", aggregateId: "t-1" });
     expect(loaded.events.map((event) => [event.type, event.version])).toEqual([
       ["TicketOpened", 1],
@@ -159,6 +173,8 @@ describe("command pipeline", () => {
       aggregateId: "t-1",
       version: 0,
       eventIds: [],
+      eventTypes: [],
+      position: 0,
     });
     expect(await storage.eventStore.lastPosition()).toBe(0);
   });

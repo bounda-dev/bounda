@@ -21,6 +21,21 @@ describe("defineConfig", () => {
     defineConfig({ storage: sqlite, runtime: { dispatcher: { projectionBatchTime: 0 } } });
     defineConfig({
       storage: sqlite,
+      runtime: { dispatcher: { catchUp: { timeout: "5s", pollInterval: 20 } } },
+    });
+    defineConfig({
+      storage: sqlite,
+      runtime: {
+        dispatcher: {
+          catchUp: {
+            // @ts-expect-error "two seconds" is not a duration string
+            timeout: "two seconds",
+          },
+        },
+      },
+    });
+    defineConfig({
+      storage: sqlite,
       runtime: { dispatcher: { backoff: { baseDelay: "250ms", maxDelay: 60_000 } } },
     });
     defineConfig({

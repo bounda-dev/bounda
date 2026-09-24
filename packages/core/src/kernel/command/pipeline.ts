@@ -144,6 +144,8 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
           aggregateId: command.aggregateId,
           version: loaded.version,
           eventIds: [],
+          eventTypes: [],
+          position: 0,
         };
       }
       try {
@@ -158,6 +160,8 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
           aggregateId: command.aggregateId,
           version: appended.version,
           eventIds: appended.events.map((event) => event.id),
+          eventTypes: appended.events.map((event) => event.type),
+          position: appended.events.at(-1)?.position ?? 0,
         };
       } catch (error) {
         if (!(error instanceof ConcurrencyError) || attempt >= attempts) throw error;

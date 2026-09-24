@@ -77,6 +77,11 @@ export interface DeliverArgs {
 export interface CheckpointedSubscriber {
   readonly name: string;
   readonly kind: SubscriberKind;
+  /**
+   * Whether events of this type change what the subscriber keeps. A subscriber that does not say
+   * is not waited for on behalf of a command.
+   */
+  readonly reactsTo?: (eventType: string) => boolean;
   position(): Promise<number>;
   deliver(args: DeliverArgs): Promise<Delivery>;
 }

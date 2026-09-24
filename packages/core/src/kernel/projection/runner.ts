@@ -139,7 +139,7 @@ export const createProjectionSubscriber: CreateProjectionSubscriberFunction = ({
 }) => {
   const name = projectionSubscriberName(readModel.name);
   const { ports } = readModel;
-  return createCheckpointedSubscriber<ProjectionClaim>({
+  const subscriber = createCheckpointedSubscriber<ProjectionClaim>({
     name,
     kind: "projection",
     position: () => ports.checkpointStore.get(name),
@@ -160,4 +160,8 @@ export const createProjectionSubscriber: CreateProjectionSubscriberFunction = ({
       projectBatch({ readModel, events, table, client, logger, budget }),
     logger,
   });
+  return {
+    ...subscriber,
+    reactsTo: (eventType) => (readModel.projectionsByEvent[eventType]?.length ?? 0) > 0,
+  };
 };

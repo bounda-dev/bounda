@@ -33,3 +33,5 @@ export const DEFAULT_BATCH_SIZE: number = 100;
 export const DEFAULT_PROJECTION_BATCH_TIME_MS: number = 250;
 export const DEFAULT_BACKOFF_BASE_DELAY_MS: number = 1_000;
 export const DEFAULT_BACKOFF_MAX_DELAY_MS: number = 30_000;
+export const DEFAULT_CATCH_UP_TIMEOUT_MS: number = 2_000;
+export const DEFAULT_CATCH_UP_POLL_MS: number = 15;

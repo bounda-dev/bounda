@@ -265,7 +265,12 @@ describe("createApp", () => {
     );
     expect(scheduled).toMatchObject({ scheduled: true });
     expect(await fresh.queries.getOrder({ orderId: "o-2" })).toMatchObject({ status: "placed" });
-    expect(catchUps).toHaveBeenCalledTimes(3);
+    expect(catchUps.mock.calls.map(([args]) => args?.through?.scheduled)).toEqual([
+      false,
+      false,
+      false,
+      true,
+    ]);
 
     expect((await fresh.getLag()).maxLag).toBeGreaterThan(0);
     await fresh.processUntilIdle();

@@ -8,10 +8,13 @@ export interface ReadYourWritesFunction {
 }
 
 /**
- * The same app with `commands` that bring the read models up to date before resolving, so that a
- * query issued right after a command sees its events. Meant for request handlers that redirect to
- * a page reading what they just wrote. Policies, processes and scheduled commands still run in the
- * background; commands dispatched from inside the runtime are not affected.
+ * The same app with `commands` that wait, before resolving, for the read models their events
+ * change, so that a query issued right after a command sees them. Only the read models that
+ * project those events are waited for, only up to the command's own position, and for at most
+ * `runtime.dispatcher.catchUp.timeout`, after which the command resolves anyway and a warning is
+ * logged. Meant for request handlers that redirect to a page reading what they just wrote.
+ * Policies, processes and scheduled commands still run in the background; commands dispatched
+ * from inside the runtime are not affected.
  */
 export const readYourWrites: ReadYourWritesFunction = <R extends Registry>(
   app: BoundaApp<R>,
@@ -22,7 +25,7 @@ export const readYourWrites: ReadYourWritesFunction = <R extends Registry>(
       key,
       async (payload?: unknown, options?: DispatchOptions): Promise<DispatchResult> => {
         const result = await dispatch(payload, options);
-        if (!result.scheduled) await app.catchUpReadModels();
+        await app.catchUpReadModels({ through: result });
         return result;
       },
     ]),

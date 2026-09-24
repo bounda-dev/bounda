@@ -1,9 +1,11 @@
 import {
   ConfigurationError,
+  createApp,
   type FieldsArgs,
   fieldBuilder as f,
   type PayloadArgs,
   type Registry,
+  readYourWrites,
   silentLogger,
   type Table,
 } from "@bounda-dev/core";
@@ -907,5 +909,63 @@ describe.skipIf(container === null)("projections on postgresql", () => {
     await older.abort();
     expect(await ports.table.findMany()).toEqual([{ orderId: "r", status: "placed" }]);
     expect(await ports.checkpointStore.get("projection:orderStatus")).toBe(1);
+  });
+
+  it("reads its own writes behind a worker holding the projection without queueing on its lock", async () => {
+    await closeOpened();
+    const tablePrefix = `ryw_${run}_`;
+    const adapter = () => postgresql({ url, tablePrefix, maxConnections: 2 });
+    let release = (): void => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered = (): void => {};
+    const holding = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const worker = await createApp({
+      registry: statusRegistry(async () => {
+        entered();
+        await gate;
+      }),
+      config: { storage: adapter() },
+    });
+    const web = readYourWrites(
+      await createApp({
+        registry: statusRegistry(),
+        config: { storage: adapter(), runtime: { role: "web" } },
+      }),
+    );
+    const probe = postgres(url, { max: 1, onnotice: () => undefined });
+    closers.push(() => probe.end());
+    const waiting = async () =>
+      (
+        await probe`SELECT count(*)::int AS "n" FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`
+      )[0]?.n;
+
+    await worker.commands.placeOrder({ orderId: "r" });
+    const projecting = worker.catchUpReadModels();
+    await holding;
+    let answered = false;
+    const cancelled = web.commands.cancelOrder({ orderId: "r" }).then((result) => {
+      answered = true;
+      return result;
+    });
+    const samples: unknown[] = [];
+    for (let sample = 0; sample < 10; sample += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      samples.push(await waiting());
+    }
+    expect({ answered, samples }).toEqual({ answered: false, samples: Array(10).fill(0) });
+    release();
+    await projecting;
+    expect(await cancelled).toMatchObject({ position: 2 });
+
+    const { table } = await openReadModel<StatusRow>(adapter(), "orderStatus", {
+      orderId: f.string().primaryKey(),
+      status: f.string(),
+    });
+    await Promise.all([worker.stop(), web.stop()]);
+    expect(await table.findOne({ orderId: "r" })).toEqual({ orderId: "r", status: "cancelled" });
   });
 });
