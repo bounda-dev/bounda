@@ -158,6 +158,9 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   checkpoint, so every event is applied exactly once and reading a row to update it
   (`count + 1`) is safe. That holds only for the read model: a projection must not call HTTP,
   other databases or timers; that work goes in a policy.
+- A projection that keeps throwing stops its read model at that event: the events before it are
+  kept, retries back off from 1 s to 30 s, and `app.getLag()` shows `failing` with the event and
+  the error. Fix the projection and deploy; a read model never skips an event.
 - Queries compose: a handler receives `queries` and may call other queries.
 - Delayed commands: `commands.remindCustomer(payload, { delay: "24h" })`. A duration from the
   environment is a `string`; wrap it: `{ delay: asDuration(process.env.DELAY ?? "24h") }`.

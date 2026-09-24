@@ -57,6 +57,21 @@ export interface DispatcherConfig {
    * Defaults to 250 ms.
    */
   readonly projectionBatchTime?: DurationInput;
+  /**
+   * How long background passes leave a subscriber alone after a batch of it failed: `baseDelay`
+   * after the first failure, doubling with each one after it up to `maxDelay`. The first batch
+   * that goes through resets it, and so does another subscriber recovering from failures of its
+   * own, which says the database is back. Defaults to 1 second and 30 seconds.
+   */
+  readonly backoff?: BackoffConfig;
+}
+
+/**
+ * The `backoff` of the dispatcher's settings.
+ */
+export interface BackoffConfig {
+  readonly baseDelay?: DurationInput;
+  readonly maxDelay?: DurationInput;
 }
 
 /**
@@ -154,6 +169,7 @@ export interface ResolvedConfig {
       readonly idleIntervalMs: number;
       readonly batchSize: number;
       readonly projectionBatchTimeMs: number;
+      readonly backoff: { readonly baseDelayMs: number; readonly maxDelayMs: number };
     };
     readonly overrides: Readonly<Record<string, ResolvedAggregateRuntime>>;
   };

@@ -3,6 +3,8 @@ import { isAdapterDefinition } from "../adapter/adapter-definition.ts";
 import { parseDuration } from "../contracts/duration.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
 import {
+  DEFAULT_BACKOFF_BASE_DELAY_MS,
+  DEFAULT_BACKOFF_MAX_DELAY_MS,
   DEFAULT_BATCH_SIZE,
   DEFAULT_CONCURRENCY_RETRIES,
   DEFAULT_IDLE_INTERVAL_MS,
@@ -68,6 +70,9 @@ const runtime = z.strictObject({
       idleInterval: duration.optional(),
       batchSize: z.int().min(1).optional(),
       projectionBatchTime: duration.optional(),
+      backoff: z
+        .strictObject({ baseDelay: duration.optional(), maxDelay: duration.optional() })
+        .optional(),
     })
     .optional(),
   overrides: z.record(z.string(), overrides).optional(),
@@ -168,6 +173,11 @@ export const resolveConfig: ResolveConfigFunction = (config) => {
         batchSize: parsed.runtime?.dispatcher?.batchSize ?? DEFAULT_BATCH_SIZE,
         projectionBatchTimeMs:
           parsed.runtime?.dispatcher?.projectionBatchTime ?? DEFAULT_PROJECTION_BATCH_TIME_MS,
+        backoff: {
+          baseDelayMs:
+            parsed.runtime?.dispatcher?.backoff?.baseDelay ?? DEFAULT_BACKOFF_BASE_DELAY_MS,
+          maxDelayMs: parsed.runtime?.dispatcher?.backoff?.maxDelay ?? DEFAULT_BACKOFF_MAX_DELAY_MS,
+        },
       },
       overrides: resolvedOverrides,
     },

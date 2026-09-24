@@ -6,6 +6,7 @@ import {
   type CheckpointClaim,
   type CheckpointedSubscriber,
   createCheckpointedSubscriber,
+  PartialBatchError,
 } from "../dispatch/delivery.ts";
 import type { ProjectionRuntime, ReadModelRuntime } from "../read-model/build-read-models.ts";
 import { errorDetails } from "../shared/retry.ts";
@@ -47,7 +48,8 @@ export interface ProjectBatchFunction {
  * Hands the events to the projections that declare their types, in order, with the `table` and
  * `client` given; events nobody projects are skipped. Resolves to how many events it got through:
  * all of them, or fewer when the budget ran out first, never none. The first projection that
- * throws stops the batch and the error propagates.
+ * throws stops the batch: it rejects with a `PartialBatchError` that says how many events went
+ * through before the one that failed and carries the projection's error as its `cause`.
  */
 export const projectBatch: ProjectBatchFunction = async ({
   readModel,
@@ -86,7 +88,7 @@ export const projectBatch: ProjectBatchFunction = async ({
           eventType: event.type,
           ...errorDetails(error),
         });
-        throw error;
+        throw new PartialBatchError(done, error);
       }
     }
     done += 1;
@@ -124,10 +126,11 @@ export const projectionSubscriberName: ProjectionSubscriberNameFunction = (readM
  * inside `ports.transact`: the projections write through the transaction and the checkpoint
  * advances in it, so the batch and the checkpoint past it commit together or not at all, and only
  * one process at a time applies a read model's batches. A batch that outlasts its budget commits
- * the events it got through and leaves the rest for the next delivery. A projection that throws rolls the whole
- * batch back and holds the checkpoint: a read model cannot skip an event, so the batch is
- * redelivered, onto the rows as they were, until the projection succeeds. Every event is applied
- * exactly once, provided the projection writes nowhere but its read model.
+ * the events it got through and leaves the rest for the next delivery. A projection that throws
+ * rolls the whole batch back; the events before the one that failed are then committed on their
+ * own, and the checkpoint stops right before it: a read model cannot skip an event, so that event
+ * is redelivered, onto the rows as they were, until the projection succeeds. Every event is
+ * applied exactly once, provided the projection writes nowhere but its read model.
  */
 export const createProjectionSubscriber: CreateProjectionSubscriberFunction = ({
   readModel,

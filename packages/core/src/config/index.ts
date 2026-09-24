@@ -7,6 +7,7 @@ export type { ResolveConfigFunction } from "./schema.ts";
 export { resolveConfig } from "./schema.ts";
 export type {
   AggregateOverrides,
+  BackoffConfig,
   CollaboratorSelection,
   CommandConfig,
   CommandsRuntimeConfig,

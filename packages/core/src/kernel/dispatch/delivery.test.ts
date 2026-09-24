@@ -11,6 +11,7 @@ import {
   type ClaimFunction,
   createCheckpointedSubscriber,
   type DeliveryOutcome,
+  PartialBatchError,
 } from "./delivery.ts";
 import { createDispatcher } from "./dispatcher.ts";
 
@@ -77,9 +78,9 @@ describe("createCheckpointedSubscriber", () => {
       },
       logger: silentLogger,
     });
-    expect(await subscriber.deliver({ read, wait: true })).toBe("advanced");
+    expect((await subscriber.deliver({ read, wait: true })).outcome).toBe("advanced");
     expect(await subscriber.position()).toBe(2);
-    expect(await subscriber.deliver({ read, wait: true })).toBe("advanced");
+    expect((await subscriber.deliver({ read, wait: true })).outcome).toBe("advanced");
     expect(seen).toEqual([
       [1, 2, 3, 4, 5],
       [3, 4, 5],
@@ -105,7 +106,7 @@ describe("createCheckpointedSubscriber", () => {
     });
     const telemetry = installFakeTelemetry();
     try {
-      expect(await subscriber.deliver({ read, wait: false })).toBe("busy");
+      expect((await subscriber.deliver({ read, wait: false })).outcome).toBe("busy");
       expect(telemetry.spans.map((span) => span.attributes["bounda.outcome"])).toEqual(["busy"]);
     } finally {
       telemetry.restore();
@@ -132,8 +133,8 @@ describe("createCheckpointedSubscriber", () => {
       },
       logger,
     });
-    expect(await subscriber.deliver({ read, wait: true })).toBe("held");
-    expect(await subscriber.deliver({ read, wait: true })).toBe("failed");
+    expect((await subscriber.deliver({ read, wait: true })).outcome).toBe("held");
+    expect((await subscriber.deliver({ read, wait: true })).outcome).toBe("failed");
     expect(transactions.rolledBack).toHaveLength(2);
     expect(await subscriber.position()).toBe(0);
     expect(entries).toEqual([
@@ -143,6 +144,7 @@ describe("createCheckpointedSubscriber", () => {
         fields: {
           subscriber: "undone",
           afterPosition: 0,
+          failedPosition: 1,
           message: "boom",
           stack: expect.stringContaining("boom"),
         },
@@ -169,7 +171,7 @@ describe("createCheckpointedSubscriber", () => {
       },
       logger,
     });
-    expect(await subscriber.deliver({ read, wait: true })).toBe("moved");
+    expect((await subscriber.deliver({ read, wait: true })).outcome).toBe("moved");
     expect(processed).toBe(0);
     expect(transactions.rolledBack).toHaveLength(1);
     expect(await subscriber.position()).toBe(2);
@@ -180,6 +182,160 @@ describe("createCheckpointedSubscriber", () => {
         fields: { subscriber: "stale", afterPosition: 0, current: 2 },
       },
     ]);
+  });
+
+  it("commits the events before the one that failed on their own and says which one failed", async () => {
+    const { checkpointStore, read } = await setup(4);
+    const { claim, transactions } = transactional(checkpointStore, "poisoned");
+    const seen: number[][] = [];
+    const { logger, entries } = createRecordingLogger();
+    const subscriber = createCheckpointedSubscriber({
+      name: "poisoned",
+      kind: "projection",
+      position: () => checkpointStore.get("poisoned"),
+      claim,
+      process: async (events) => {
+        seen.push(events.map((event) => event.position));
+        if (events.some((event) => event.position === 3)) {
+          throw new PartialBatchError(2, new Error("poison"));
+        }
+        return events.length;
+      },
+      logger,
+    });
+    expect(await subscriber.deliver({ read, wait: true })).toEqual({
+      outcome: "failed",
+      failure: { position: 3, eventId: "order-1-3", eventType: "OrderPlaced", message: "poison" },
+    });
+    expect(seen).toEqual([
+      [1, 2, 3, 4],
+      [1, 2],
+    ]);
+    expect(transactions.rolledBack).toHaveLength(1);
+    expect(await subscriber.position()).toBe(2);
+    expect(entries).toEqual([
+      {
+        level: "error",
+        message: "subscriber failed; batch will be redelivered",
+        fields: {
+          subscriber: "poisoned",
+          afterPosition: 0,
+          failedPosition: 3,
+          message: "poison",
+          stack: expect.stringContaining("poison"),
+        },
+      },
+      {
+        level: "info",
+        message: "subscriber applied the events before the one that failed",
+        fields: { subscriber: "poisoned", afterPosition: 0, through: 2 },
+      },
+    ]);
+  });
+
+  it("leaves the checkpoint where it was when the events before the failure fail too", async () => {
+    const { checkpointStore, read } = await setup(3);
+    const { claim } = transactional(checkpointStore, "shaky");
+    const { logger, entries } = createRecordingLogger();
+    const subscriber = createCheckpointedSubscriber({
+      name: "shaky",
+      kind: "projection",
+      position: () => checkpointStore.get("shaky"),
+      claim,
+      process: async (events) => {
+        if (events.length === 3) throw new PartialBatchError(2, new Error("poison"));
+        throw new Error("database gone");
+      },
+      logger,
+    });
+    expect((await subscriber.deliver({ read, wait: true })).outcome).toBe("failed");
+    expect(await subscriber.position()).toBe(0);
+    expect(entries.map(({ level, message }) => [level, message])).toEqual([
+      ["error", "subscriber failed; batch will be redelivered"],
+      ["error", "subscriber could not apply the events before the one that failed"],
+    ]);
+    expect(entries[1]?.fields).toMatchObject({ subscriber: "shaky", message: "database gone" });
+  });
+
+  it("gives up on the events before the failure when another holder took the claim meanwhile", async () => {
+    const { checkpointStore, read } = await setup(3);
+    const { claim, transactions } = transactional(checkpointStore, "contended");
+    const { logger, entries } = createRecordingLogger();
+    const subscriber = createCheckpointedSubscriber({
+      name: "contended",
+      kind: "projection",
+      position: () => checkpointStore.get("contended"),
+      claim,
+      process: async () => {
+        transactions.acquired = false;
+        throw new PartialBatchError(2, new Error("poison"));
+      },
+      logger,
+    });
+    expect((await subscriber.deliver({ read, wait: false })).outcome).toBe("failed");
+    expect(transactions.waits).toEqual([false, false]);
+    expect(await subscriber.position()).toBe(0);
+    expect(entries.map(({ message }) => message)).toEqual([
+      "subscriber failed; batch will be redelivered",
+    ]);
+  });
+
+  it("leaves the checkpoint to whoever moved it before the events before the failure were kept", async () => {
+    const { checkpointStore, read } = await setup(3);
+    const { claim } = transactional(checkpointStore, "overtaken");
+    const { logger, entries } = createRecordingLogger();
+    const subscriber = createCheckpointedSubscriber({
+      name: "overtaken",
+      kind: "projection",
+      position: () => checkpointStore.get("overtaken"),
+      claim,
+      process: async () => {
+        await checkpointStore.set("overtaken", 3);
+        throw new PartialBatchError(2, new Error("poison"));
+      },
+      logger,
+    });
+    expect((await subscriber.deliver({ read, wait: true })).outcome).toBe("failed");
+    expect(await subscriber.position()).toBe(3);
+    expect(entries.map(({ message }) => message)).toEqual([
+      "subscriber failed; batch will be redelivered",
+    ]);
+  });
+
+  it("names the error a batch that failed partway throws and keeps what caused it", () => {
+    const cause = new Error("poison");
+    const error = new PartialBatchError(2, cause);
+    expect({
+      name: error.name,
+      message: error.message,
+      cause: error.cause,
+      done: error.done,
+    }).toEqual({ name: "PartialBatchError", message: "poison", cause, done: 2 });
+  });
+
+  it("claims nothing more when the very first event of the batch failed", async () => {
+    const { checkpointStore, read } = await setup(2);
+    const { claim, transactions } = transactional(checkpointStore, "head");
+    const subscriber = createCheckpointedSubscriber({
+      name: "head",
+      kind: "projection",
+      position: () => checkpointStore.get("head"),
+      claim,
+      process: async () => {
+        throw new PartialBatchError(0, "not an error");
+      },
+      logger: silentLogger,
+    });
+    expect(await subscriber.deliver({ read, wait: true })).toEqual({
+      outcome: "failed",
+      failure: {
+        position: 1,
+        eventId: "order-1-1",
+        eventType: "OrderPlaced",
+        message: "not an error",
+      },
+    });
+    expect(transactions.waits).toEqual([true]);
   });
 
   it("reports idle without claiming when nothing follows the checkpoint", async () => {
@@ -193,7 +349,7 @@ describe("createCheckpointedSubscriber", () => {
       process: async (events) => events.length,
       logger: silentLogger,
     });
-    expect(await subscriber.deliver({ read, wait: true })).toBe("idle");
+    expect((await subscriber.deliver({ read, wait: true })).outcome).toBe("idle");
     expect(transactions.waits).toEqual([]);
   });
 });
@@ -221,9 +377,9 @@ describe("the dispatcher with a checkpointed subscriber", () => {
         {
           ...inner,
           deliver: async (args) => {
-            const outcome = await inner.deliver(args);
-            outcomes.push(outcome);
-            return outcome;
+            const delivery = await inner.deliver(args);
+            outcomes.push(delivery.outcome);
+            return delivery;
           },
         },
       ],

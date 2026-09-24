@@ -124,6 +124,36 @@ background.
 In a React Router app this is a setting rather than a call — `createBounda({ consistency })`,
 `"immediate"` by default. See [Bounda with React Router](/guides/react-router/).
 
+## A projection that keeps failing
+
+A projection that throws on an event rolls its batch back. The events before that one are then
+committed on their own, so the read model's checkpoint stops right before the event that fails,
+and the lag counts exactly what is waiting behind it. A read model never skips an event: that one
+is retried until the projection stops throwing, which usually means fixing it and deploying.
+
+Retries back off. After a failure, background passes leave that read model alone for a second,
+then two, four and so on up to thirty seconds, while every other read model carries on; the first
+batch that goes through resets it. When another subscriber that was failing recovers, which says
+the database is back after an outage, every failing one is retried at once instead of waiting out
+its delay. `app.catchUpReadModels()`, and read-your-writes with it, respects the backoff too, so a
+request does not stumble on the same failure over and over: it answers with the read model as far
+as it got. `app.processUntilIdle()` ignores the backoff, so a test that fixes a projection and
+processes again sees it advance at once.
+
+`app.getLag()` says what a subscriber is stuck on:
+
+```ts
+const { subscribers } = await app.getLag();
+// { subscriber: "projection:orderSummary", position: 41, lag: 12,
+//   failing: { position: 42, eventId: "…", eventType: "OrderPaid", message: "…",
+//              attempts: 5, since: "2026-09-24T09:00:00.000Z", retryAt: "…" } }
+```
+
+`failing` is what this process saw: another instance that never tried that read model reports no
+failure while its lag still grows. Alert on the lag, which every instance reads from the
+database; read `failing`, and the `subscriber failed` log line that names the event, to find out
+why.
+
 ## Schema
 
 The adapter creates what it needs on start: the event store, the ledgers and a table per read
@@ -196,6 +226,7 @@ runtime: {
     idleInterval: "1m",
     batchSize: 500,
     projectionBatchTime: "500ms",
+    backoff: { baseDelay: "1s", maxDelay: "30s" },
   },
 }
 ```
@@ -220,6 +251,9 @@ A projection batch keeps its transaction open for at most `projectionBatchTime`,
 default: past it, the batch commits the events it got through and the rest are delivered next.
 On SQLite that transaction holds the database's single writer, so commands wait for it; the limit
 keeps that wait short however many events a batch carries. Rebuilds honour it too.
+
+`backoff` sets how long a subscriber whose batches fail is left alone before the next try: see
+[A projection that keeps failing](#a-projection-that-keeps-failing).
 
 ## Observability
 
@@ -265,7 +299,8 @@ Metrics:
 | `bounda.dead_letters` | counter | `bounda.subscriber.kind`, `bounda.subscriber`, `bounda.outcome` (`terminal`, `retriable_exhausted`) |
 
 The lag gauge is what to alert on: a subscriber whose lag grows is a projection or a policy that
-is failing or stuck, and `app.getLag()` returns the same numbers for a health endpoint.
+is failing or stuck, and `app.getLag()` returns the same numbers for a health endpoint, with what
+a failing subscriber is stuck on (see [A projection that keeps failing](#a-projection-that-keeps-failing)).
 
 ## On Cloudflare
 

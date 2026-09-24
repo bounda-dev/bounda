@@ -21,6 +21,21 @@ describe("defineConfig", () => {
     defineConfig({ storage: sqlite, runtime: { dispatcher: { projectionBatchTime: 0 } } });
     defineConfig({
       storage: sqlite,
+      runtime: { dispatcher: { backoff: { baseDelay: "250ms", maxDelay: 60_000 } } },
+    });
+    defineConfig({
+      storage: sqlite,
+      runtime: {
+        dispatcher: {
+          backoff: {
+            // @ts-expect-error "a minute" is not a duration string
+            maxDelay: "a minute",
+          },
+        },
+      },
+    });
+    defineConfig({
+      storage: sqlite,
       runtime: {
         dispatcher: {
           // @ts-expect-error "half a second" is not a duration string

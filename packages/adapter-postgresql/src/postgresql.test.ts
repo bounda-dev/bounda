@@ -781,7 +781,7 @@ describe.skipIf(container === null)("projections on postgresql", () => {
     await closeOpened();
     const tablePrefix = `redeliver_${run}_`;
     const adapter = () => postgresql({ url, tablePrefix, maxConnections: 3 });
-    const { app } = await createTestApp({
+    const { app, clock } = await createTestApp({
       registry: counterRegistry({ failed: false }),
       adapter: adapter(),
     });
@@ -789,6 +789,7 @@ describe.skipIf(container === null)("projections on postgresql", () => {
     await app.commands.placeOrder({ orderId: "r" });
     await app.commands.cancelOrder({ orderId: "r" });
     await app.catchUpReadModels();
+    clock.advance(1_000);
     await app.catchUpReadModels();
 
     const { table } = await openReadModel<CountRow>(adapter(), "orderCount", {

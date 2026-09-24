@@ -134,7 +134,7 @@ describe("projection subscriber", () => {
     expect(row).toMatchObject({ status: "placed", total: 5 });
   });
 
-  it("rolls a failed batch back whole and applies every event once when it is redelivered", async () => {
+  it("keeps the events before the one that failed, backs off, then applies that one once", async () => {
     failProjection = false;
     failPaidOnce = true;
     const { logger, entries } = createRecordingLogger();
@@ -144,9 +144,15 @@ describe("projection subscriber", () => {
       type: "PayOrder",
       payload: { orderId: "o-1", method: "card" },
     });
+    const checkpoint = () => harness.storage.checkpointStore.get("projection:orderSummary");
     await harness.dispatcher.catchUp("projection");
-    expect(await (await table(harness)).count()).toBe(0);
-    expect(await harness.storage.checkpointStore.get("projection:orderSummary")).toBe(0);
+    expect(await (await table(harness)).findOne({ orderId: "o-1" })).toEqual({
+      orderId: "o-1",
+      status: "placed",
+      total: 3,
+      touched: 1,
+    });
+    expect(await checkpoint()).toBe(1);
     expect(entries).toContainEqual({
       level: "error",
       message: "projection failed",
@@ -159,8 +165,17 @@ describe("projection subscriber", () => {
         stack: expect.stringContaining("transient"),
       },
     });
+    expect(entries).toContainEqual({
+      level: "info",
+      message: "subscriber applied the events before the one that failed",
+      fields: { subscriber: "projection:orderSummary", afterPosition: 0, through: 1 },
+    });
 
     await harness.dispatcher.catchUp("projection");
+    expect(await checkpoint()).toBe(1);
+    harness.clock.advance(1_000);
+    await harness.dispatcher.catchUp("projection");
+    expect(await checkpoint()).toBe(2);
     expect(await (await table(harness)).findOne({ orderId: "o-1" })).toEqual({
       orderId: "o-1",
       status: "paid",

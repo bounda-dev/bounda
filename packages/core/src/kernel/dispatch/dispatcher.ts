@@ -1,6 +1,10 @@
 import type { CheckpointStore } from "../../adapter/ports/checkpoint-store.ts";
 import type { EventNotifier, Unsubscribe } from "../../adapter/ports/event-notifier.ts";
 import type { EventStore } from "../../adapter/ports/event-store.ts";
+import {
+  DEFAULT_BACKOFF_BASE_DELAY_MS,
+  DEFAULT_BACKOFF_MAX_DELAY_MS,
+} from "../../config/defaults.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { createMutex } from "../shared/mutex.ts";
@@ -8,6 +12,8 @@ import { errorDetails } from "../shared/retry.ts";
 import {
   type CheckpointedSubscriber,
   checkpointedByStore,
+  type Delivery,
+  type DeliveryFailure,
   type DeliveryOutcome,
   type Subscriber,
   type SubscriberKind,
@@ -15,15 +21,38 @@ import {
 
 export type {
   CheckpointedSubscriber,
+  Delivery,
+  DeliveryFailure,
   DeliveryOutcome,
   Subscriber,
   SubscriberKind,
 } from "./delivery.ts";
 
+/**
+ * Where one subscriber stands: its checkpoint, how many events it is behind the head of the
+ * stream, and, while its batches keep failing, what it is stuck on.
+ */
 export interface SubscriberLag {
   readonly subscriber: string;
   readonly position: number;
   readonly lag: number;
+  readonly failing?: SubscriberFailing;
+}
+
+/**
+ * A subscriber whose batches keep failing, as this process saw it: the event it is stuck on, the
+ * last error, how many deliveries in a row failed, since when, and when background passes try it
+ * again. Each process only knows about the failures it met itself; the lag, read from the
+ * database, is what every process agrees on.
+ */
+export interface SubscriberFailing {
+  readonly position: number;
+  readonly eventId: string;
+  readonly eventType: string;
+  readonly message: string;
+  readonly attempts: number;
+  readonly since: string;
+  readonly retryAt: string;
 }
 
 export interface DispatcherLag {
@@ -58,6 +87,13 @@ export interface Dispatcher {
   getLag(): Promise<DispatcherLag>;
 }
 
+interface FailingState {
+  readonly failure: DeliveryFailure;
+  readonly attempts: number;
+  readonly since: number;
+  readonly retryAt: number;
+}
+
 export interface CreateDispatcherArgs {
   readonly eventStore: EventStore;
   /**
@@ -67,6 +103,11 @@ export interface CreateDispatcherArgs {
   readonly subscribers: readonly (Subscriber | CheckpointedSubscriber)[];
   readonly batchSize: number;
   readonly pollIntervalMs: number;
+  /**
+   * How long background passes and `catchUp` leave a failing subscriber alone: `baseDelayMs` after
+   * its first failure, doubling up to `maxDelayMs`. Defaults to 1 second and 30 seconds.
+   */
+  readonly backoff?: DispatcherBackoff;
   /**
    * With a `notifier`, how long to wait for a notification before passing anyway. Defaults to
    * `pollIntervalMs`.
@@ -81,6 +122,14 @@ export interface CreateDispatcherArgs {
    */
   readonly clock: Clock;
   readonly logger: Logger;
+}
+
+/**
+ * The delays of the dispatcher's backoff, in milliseconds.
+ */
+export interface DispatcherBackoff {
+  readonly baseDelayMs: number;
+  readonly maxDelayMs: number;
 }
 
 export interface CreateDispatcherFunction {
@@ -113,6 +162,10 @@ export const createDispatcher: CreateDispatcherFunction = ({
   subscribers,
   batchSize,
   pollIntervalMs,
+  backoff = {
+    baseDelayMs: DEFAULT_BACKOFF_BASE_DELAY_MS,
+    maxDelayMs: DEFAULT_BACKOFF_MAX_DELAY_MS,
+  },
   idleIntervalMs = pollIntervalMs,
   notifier,
   clock,
@@ -132,12 +185,44 @@ export const createDispatcher: CreateDispatcherFunction = ({
   );
   const read = (afterPosition: number) => eventStore.readAll({ afterPosition, limit: batchSize });
   const moving = new Set<DeliveryOutcome>(["advanced", "moved"]);
+  const failing = new Map<string, FailingState>();
+  const now = (): number => clock.now().getTime();
+  const delayFor = (attempts: number): number =>
+    Math.min(backoff.maxDelayMs, backoff.baseDelayMs * 2 ** (attempts - 1));
 
-  const pass = async (wait: boolean, only?: SubscriberKind): Promise<boolean> => {
+  const record = (subscriber: string, delivery: Delivery): void => {
+    const current = failing.get(subscriber);
+    if (delivery.outcome === "failed") {
+      const attempts = (current?.attempts ?? 0) + 1;
+      failing.set(subscriber, {
+        failure: delivery.failure,
+        attempts,
+        since: current?.since ?? now(),
+        retryAt: now() + delayFor(attempts),
+      });
+      return;
+    }
+    if (current === undefined || delivery.outcome === "busy" || delivery.outcome === "held") return;
+    failing.delete(subscriber);
+    if (delivery.outcome !== "advanced") return;
+    for (const [other, state] of failing) {
+      failing.set(other, { ...state, retryAt: Math.min(state.retryAt, now()) });
+    }
+  };
+
+  const backingOff = (subscriber: string): boolean => {
+    const current = failing.get(subscriber);
+    return current !== undefined && now() < current.retryAt;
+  };
+
+  const pass = async (wait: boolean, patient: boolean, only?: SubscriberKind): Promise<boolean> => {
     let advanced = false;
     for (const subscriber of delivering) {
       if (only !== undefined && subscriber.kind !== only) continue;
-      advanced = moving.has(await subscriber.deliver({ read, wait })) || advanced;
+      if (patient && backingOff(subscriber.name)) continue;
+      const delivery = await subscriber.deliver({ read, wait });
+      record(subscriber.name, delivery);
+      advanced = moving.has(delivery.outcome) || advanced;
     }
     return advanced;
   };
@@ -146,7 +231,7 @@ export const createDispatcher: CreateDispatcherFunction = ({
     due = false;
     let advanced = true;
     try {
-      advanced = await mutex.run(() => pass(false));
+      advanced = await mutex.run(() => pass(false, true));
     } catch (error) {
       logger.error("dispatcher pass failed", errorDetails(error));
     }
@@ -161,7 +246,9 @@ export const createDispatcher: CreateDispatcherFunction = ({
   const schedule = (): void => {
     if (!running) return;
     cancelWait?.();
-    cancelWait = clock.after(idle ? idleIntervalMs : pollIntervalMs, () => {
+    const interval = idle ? idleIntervalMs : pollIntervalMs;
+    const retries = [...failing.values()].map(({ retryAt }) => Math.max(0, retryAt - now()));
+    cancelWait = clock.after(Math.min(interval, ...retries), () => {
       cancelWait = undefined;
       void background();
     });
@@ -202,14 +289,14 @@ export const createDispatcher: CreateDispatcherFunction = ({
       await release?.();
       await mutex.drain();
     },
-    processOnce: () => mutex.run(() => pass(true)),
+    processOnce: () => mutex.run(() => pass(true, false)),
     processUntilIdle: async () => {
-      while (await mutex.run(() => pass(true))) {
+      while (await mutex.run(() => pass(true, false))) {
         // keep passing until nothing moves
       }
     },
     catchUp: async (kind) => {
-      while (await mutex.run(() => pass(true, kind))) {
+      while (await mutex.run(() => pass(true, true, kind))) {
         // keep passing until nothing moves
       }
     },
@@ -218,7 +305,22 @@ export const createDispatcher: CreateDispatcherFunction = ({
       const lags = await Promise.all(
         delivering.map(async (subscriber) => {
           const position = await subscriber.position();
-          return { subscriber: subscriber.name, position, lag: lastPosition - position };
+          const current = failing.get(subscriber.name);
+          return {
+            subscriber: subscriber.name,
+            position,
+            lag: lastPosition - position,
+            ...(current === undefined
+              ? {}
+              : {
+                  failing: {
+                    ...current.failure,
+                    attempts: current.attempts,
+                    since: new Date(current.since).toISOString(),
+                    retryAt: new Date(current.retryAt).toISOString(),
+                  },
+                }),
+          };
         }),
       );
       return {

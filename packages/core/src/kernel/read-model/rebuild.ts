@@ -10,6 +10,7 @@ import { validateRegistry } from "../../modules/validate.ts";
 import { fieldBuilder } from "../../modules/view.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { withUpcasting } from "../aggregate/upcasting.ts";
+import { PartialBatchError } from "../dispatch/delivery.ts";
 import { projectBatch, projectionSubscriberName } from "../projection/runner.ts";
 import { adapterForReadModel, compileProjections } from "./build-read-models.ts";
 import { fingerprintReadModel } from "./fingerprint.ts";
@@ -157,7 +158,7 @@ export const rebuildReadModel: RebuildReadModelFunction = async ({
       await rebuild.commit({ subscriber: projectionSubscriberName(name), position });
     } catch (error) {
       await rebuild.abort();
-      throw error;
+      throw error instanceof PartialBatchError ? error.cause : error;
     }
     logger.info("read model rebuilt", { readModel: name, events, position });
     return { events, position, done: true };
