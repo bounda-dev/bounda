@@ -138,6 +138,13 @@ export default defineConfig({
 Export a `Collaborators` type when the implementations are looser than the contract, as the fake
 above that ignores its argument. Without it, the type is inferred from the implementations.
 
+A handler can run more than once for one command. When the append loses a concurrency race, the
+runtime reloads the aggregate and runs the handler again, collaborators included, up to
+`runtime.commands.concurrencyRetries` times. So a collaborator call must be safe to repeat, and
+harmless if the second run decides differently: reading a price or a stock level is; charging a
+card is not. An effect that has to happen once needs an idempotency key the provider honours,
+derived from the command (the order or payment id), so a second run does not repeat it.
+
 ### Policies: `policies/`
 
 A policy reacts to an event with commands. `<action>-on-<event>.ts` names the event; a policy
