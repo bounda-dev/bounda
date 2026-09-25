@@ -193,7 +193,7 @@ See [adapters](/adapters/).
   do not flake.
 - [Reacting to events](/guides/reacting-to-events/): policies, processes, retries, and what to do
   with a dead letter.
-- [Changing an event's shape](/guides/changing-events/): an upcast next to the event, applied as
+- [Changing an event's shape](/guides/changing-events/): an upcaster next to the event, applied as
   old events are read.
 - [Deployment](/guides/deployment/): roles, several instances, rebuilding a read model,
   observability, and the honest list of what is not there yet.

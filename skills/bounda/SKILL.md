@@ -248,7 +248,7 @@ export const loader = ({ context }: Route.LoaderArgs) => context.get(bounda).que
   `<event>.upcast.ts` next to it exporting `upcasts`, an array of functions oldest first, each
   turning version n's payload into version n+1's, the last returning today's payload
   (`satisfies Event.Upcasts` from the event's `+types`). The runtime applies them on read. A new
-  optional field needs no upcast; a field that cannot be derived needs a new event type instead.
+  optional field needs no upcaster; a field that cannot be derived needs a new event type instead.
 - A policy or process handler that failed for good, or a scheduled command that was dropped, is
   a dead letter: `bounda dead-letters list`, then `replay <id>` after fixing the cause or
   `discard <id>`. In code, `app.deadLetters`. Nothing re-runs a dead letter on its own.

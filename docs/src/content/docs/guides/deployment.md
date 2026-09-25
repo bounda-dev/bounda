@@ -342,7 +342,7 @@ get today. Each item says why, so nobody discovers it the hard way:
 - **Changing the shape of a process's state.** A process keeps its state in its own lifecycle
   events, so a change to that shape has the same problem an event payload has, and no
   `state.upcast.ts` yet. See [Changing an event's shape](/guides/changing-events/#what-is-not-covered-yet).
-- **Renaming or removing an event type.** Upcasts change a payload, not a type. Keep the module,
+- **Renaming or removing an event type.** Upcasters change a payload, not a type. Keep the module,
   even if `apply` returns the state unchanged.
 - **One trace per request.** Spans carry `bounda.correlation_id` but a policy's span is a separate
   trace from the command's, because it runs in a later pass. See [Observability](#observability).
@@ -351,5 +351,5 @@ get today. Each item says why, so nobody discovers it the hard way:
 
 What a production app does get, and where it is explained: [rebuilding a read model](#rebuilding-a-read-model)
 without taking it offline, [dead letters with a way out](/guides/reacting-to-events/#dead-letters),
-[upcasts](/guides/changing-events/) for events whose payload changed, [observability](#observability)
+[upcasters](/guides/changing-events/) for events whose payload changed, [observability](#observability)
 through OpenTelemetry, and a dispatcher that reacts in milliseconds on PostgreSQL.
