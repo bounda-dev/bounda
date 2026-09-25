@@ -89,13 +89,14 @@ changing how you write modules.
 
 ## What more instances do, and do not do
 
-Run several worker instances on PostgreSQL and every policy and process handler runs **exactly
-once**: the inbox ledger claims `(handler, event)` atomically, so instances share that work and
-add throughput for reactions.
+Run several worker instances on PostgreSQL and each policy and process handler runs on **one
+instance per event**: the inbox ledger claims `(handler, event)` atomically, so instances share
+that work and add throughput for reactions. Delivery is still at least once: a handler that crashes
+midway runs again ([what the runtime promises](/guides/reacting-to-events/#what-the-runtime-promises)).
 
-Projections are applied **exactly once** too, and one instance at a time per read model. Each
-batch runs in one transaction on the read model's database, holding a lock named after it:
-PostgreSQL's `pg_advisory_xact_lock`, SQLite's single writer, the Durable Object's transaction.
+Projections go further: they are applied **exactly once**, and one instance at a time per read
+model. Each batch runs in one transaction on the read model's database, holding a lock named after
+it: PostgreSQL's `pg_advisory_xact_lock`, SQLite's single writer, the Durable Object's transaction.
 The rows the batch writes and the checkpoint past it commit together or roll back together, so a
 crash, a projection that throws halfway or a second instance can neither apply an event twice nor
 put an older batch over a newer one. An instance that finds a read model locked skips it and moves

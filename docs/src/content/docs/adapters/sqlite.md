@@ -34,7 +34,7 @@ sqlite({ url: "libsql://my-app-me.turso.io", authToken: process.env.TURSO_AUTH_T
   written inside one transaction. A stale version rolls back and the command is retried with
   fresh state.
 - Claims for handlers and scheduled commands are single statements with `RETURNING`, so two
-  instances of your app on the same file can never run the same handler twice.
+  instances of your app on the same file never run the same handler for the same event at once.
 - Booleans are stored as `0`/`1`, dates as ISO-8601 text, JSON fields as text. You never see
   that: rows come back typed from your `fields`.
 
