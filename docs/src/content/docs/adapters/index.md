@@ -52,7 +52,7 @@ On first use the adapter creates its tables, prefixed with `bounda_` by default:
 | --- | --- |
 | `bounda_events` | Every event, with its stream version and a global position |
 | `bounda_checkpoints` | How far each projection, the policy runner and the process runner have read, and where a paused rebuild stands |
-| `bounda_inbox` | Which handler already ran for which event, so retries never run a handler twice |
+| `bounda_inbox` | Which handler already completed for which event, so a retry does not run it again |
 | `bounda_scheduled_commands` | Delayed commands and process time-outs |
 | `bounda_dead_letters` | Handler runs that gave up, with the error and the attempt count |
 

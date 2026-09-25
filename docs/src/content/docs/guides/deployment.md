@@ -77,9 +77,9 @@ adapter's concurrency work is for. Handler claims are single `INSERT … ON CONF
 due scheduled commands are taken `FOR UPDATE SKIP LOCKED`, so any number of instances can run the
 worker role and each policy or process handler and each due command runs on exactly one of them.
 
-Projections are applied exactly once as well. Each batch runs in one transaction that holds an
-advisory lock named after its read model, writes the rows and advances the checkpoint, so one
-instance at a time applies a read model and a batch is never applied twice or over a newer one.
+Projections go further: they are applied exactly once. Each batch runs in one transaction that
+holds an advisory lock named after its read model, writes the rows and advances the checkpoint, so
+one instance at a time applies a read model and a batch is never applied twice or over a newer one.
 An instance that finds a read model locked skips it, which spreads different read models over the
 workers; a single read model is not made faster by more of them, since its events apply in order.
 [How Bounda runs](/guides/how-it-runs/) explains why, and what the ceiling of one store is.

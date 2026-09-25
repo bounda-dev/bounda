@@ -151,8 +151,8 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
 - `state` in a handler carries `id` and `version` besides the aggregate's fields. Without
   `state.ts` every field is optional (`state.status === undefined` means a fresh aggregate).
 - Policies and process handlers get `commands`, the typed facade of every command in the app, and
-  run with at-least-once delivery: make them idempotent or let the runtime's inbox do it (it does
-  by default, per event).
+  run with at-least-once delivery: the runtime's inbox skips a handler that already completed for
+  an event, but a handler that crashes midway runs again, so make its side effects idempotent.
 - Projections write through `table` (`upsert`, `insert`, `update`, `delete`, `findOne`,
   `findMany`, `count`). Each batch is one transaction with the read model's
   checkpoint, so every event is applied exactly once and reading a row to update it
