@@ -105,7 +105,7 @@ that breaks something is called out in the changelog of the package it touches.
 
 Roles for web and worker processes, any number of instances on PostgreSQL, a dispatcher woken by
 `NOTIFY`, OpenTelemetry spans and metrics, `bounda rebuild` for a read model that went wrong,
-`bounda dead-letters` for a policy that died, and upcasts for events whose payload changed. What
+`bounda dead-letters` for a policy that died, and upcasters for events whose payload changed. What
 is not there yet, and why, is one list in the
 [deployment guide](https://docs.bounda.dev/guides/deployment/#what-is-not-there-yet).
 
