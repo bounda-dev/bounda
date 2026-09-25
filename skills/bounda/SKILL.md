@@ -83,6 +83,10 @@ export const handler = async ({ command, events, inventory }: Command.HandlerArg
 };
 ```
 
+A handler reruns, collaborators included, when its append loses a concurrency race. Collaborator
+calls must be safe to repeat and harmless if the rerun decides differently (reads are); an effect
+that must happen once needs an idempotency key derived from the command.
+
 Policy (`policies/send-receipt-on-order-paid.ts`):
 
 ```ts
