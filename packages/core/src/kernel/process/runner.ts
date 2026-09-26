@@ -402,8 +402,31 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     await storage.scheduler.cancel(timeoutKey(process, instanceId));
   };
 
+  const uncorrelated = async (
+    process: ProcessRuntime,
+    event: StoredEvent,
+    error: unknown,
+  ): Promise<Outcome> => {
+    const key = { subscriber: process.name, eventId: event.id };
+    if ((await storage.inboxLedger.get(key))?.status === "succeeded") return "done";
+    const claimed = await storage.inboxLedger.tryClaim({
+      ...key,
+      now: clock.now(),
+      leaseMs: config.forAggregate(process.aggregate).policies.timeoutMs * 2,
+    });
+    if (!claimed) return "hold";
+    await deadLetter(process, event, error, 1, "terminal");
+    await storage.inboxLedger.complete(key);
+    return "done";
+  };
+
   const deliver = async (process: ProcessRuntime, event: StoredEvent): Promise<Outcome> => {
-    const instanceId = process.instanceOf(event);
+    let instanceId: string | null;
+    try {
+      instanceId = process.instanceOf(event);
+    } catch (error) {
+      return uncorrelated(process, event, error);
+    }
     if (instanceId === null) return "done";
     let instance = await load(process, instanceId);
     if (!instance.exists) {

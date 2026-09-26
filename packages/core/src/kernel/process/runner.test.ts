@@ -1059,6 +1059,58 @@ describe("processes that listen to other aggregates", () => {
     }
   });
 
+  it("dead-letter an event whose correlate throws or returns no id, and keep going", async () => {
+    seen.length = 0;
+    const harness = await createReactiveHarness({
+      registry: withCorrelate({
+        payment: {
+          PaymentFailed: (event) => {
+            if (event.payload.orderId === "boom") throw new Error("no order id on old events");
+            if (event.payload.orderId === "empty") return "";
+            return event.payload.orderId === "blank" ? (undefined as never) : event.payload.orderId;
+          },
+          PaymentSettled: (event) => event.payload.orderId,
+        },
+      }),
+    });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    for (const [paymentId, orderId] of [
+      ["p-1", "boom"],
+      ["p-2", "blank"],
+      ["p-4", "empty"],
+      ["p-3", "o-1"],
+    ] as const) {
+      await harness.pipeline.dispatch({
+        type: "FailPayment",
+        payload: { paymentId, orderId, reason: paymentId },
+      });
+    }
+    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.processUntilIdle();
+    expect(seen).toEqual(["o-1 failed: p-3"]);
+    const letters = await harness.storage.deadLetterStore.list();
+    expect(
+      letters.map((letter) => [letter.aggregateId, letter.errorType, letter.errorMessage]),
+    ).toEqual([
+      ["p-1", "terminal", "no order id on old events"],
+      [
+        "p-2",
+        "terminal",
+        expect.stringMatching(
+          /^aggregates\.order\.processes\.checkout\.correlate returned undefined for payment\.PaymentFailed .+; expected the id of the order it belongs to, or null$/,
+        ),
+      ],
+      [
+        "p-4",
+        "terminal",
+        expect.stringMatching(/correlate returned "" for payment\.PaymentFailed /),
+      ],
+    ]);
+    expect(await harness.storage.checkpointStore.get("processes")).toBe(
+      await harness.storage.eventStore.lastPosition(),
+    );
+  });
+
   it("fail a handler for good when it returns a state its schema refuses", async () => {
     seen.length = 0;
     const harness = await createReactiveHarness({

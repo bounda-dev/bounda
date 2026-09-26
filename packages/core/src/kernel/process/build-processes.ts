@@ -28,7 +28,8 @@ export interface ProcessRuntime {
   readonly collaborators: Readonly<Record<string, unknown>>;
   /**
    * The id of the instance an event belongs to: what `correlate` says for it, or the event's
-   * `aggregateId` for the process's own aggregate; `null` when the event belongs to none.
+   * `aggregateId` for the process's own aggregate; `null` when the event belongs to none. Throws
+   * when `correlate` throws or returns anything but a non-empty string or `null`.
    */
   instanceOf(event: StoredEvent): string | null;
 }
@@ -165,9 +166,19 @@ const buildProcess = (
       config: config.processes[aggregate]?.[key],
     }),
     instanceOf: (event) => {
-      const correlator = correlate[qualifiedEventType(event.aggregateType, event.type)];
-      if (correlator !== undefined) return correlator(event);
-      return event.aggregateType === aggregate ? event.aggregateId : null;
+      const qualified = qualifiedEventType(event.aggregateType, event.type);
+      const correlator = correlate[qualified];
+      if (correlator === undefined) {
+        return event.aggregateType === aggregate ? event.aggregateId : null;
+      }
+      const instanceId: unknown = correlator(event);
+      if (instanceId === null || (typeof instanceId === "string" && instanceId !== "")) {
+        return instanceId;
+      }
+      const returned = JSON.stringify(instanceId) ?? String(instanceId);
+      throw new ConfigurationError(
+        `${path}.correlate returned ${returned} for ${qualified} ${event.id}; expected the id of the ${aggregate} it belongs to, or null`,
+      );
     },
   };
 };

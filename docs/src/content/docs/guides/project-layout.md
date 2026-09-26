@@ -238,7 +238,9 @@ A handler for another aggregate's event sits in a folder named after that aggreg
 `processes/order-payment/payment/on-payment-failed.ts`. Such an event carries that aggregate's id,
 not the order's, so `index.ts` says which instance it belongs to in `correlate`: a function per
 event that returns the id of the process's own aggregate, or `null` to ignore the event. Boot
-refuses an event of another aggregate the process listens to without one.
+refuses an event of another aggregate the process listens to without one. A `correlate` that
+throws, or returns anything but an id or `null`, dead-letters that event for the process and the
+rest carry on.
 
 ```ts
 export const correlate: Process.Correlate = {
@@ -251,8 +253,9 @@ export const correlate: Process.Correlate = {
 
 An event that does not start the process and finds no open instance is skipped, and so is any
 event for an instance that has completed, timed out or failed: a starting event never reopens
-one. The state a handler returns is checked against `state`; one the schema refuses fails the
-handler for good, like any other terminal error.
+one. The state a handler returns is parsed with `state`: defaults fill what is missing, keys the schema
+does not declare are dropped, and a state it refuses fails the handler for good, like any other
+terminal error.
 
 Collaborator files in the process directory reach every handler of the process, `on-timeout.ts`
 included. `index.ts` may export their `Collaborators` type, and `bounda.config.ts` picks the
