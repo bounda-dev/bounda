@@ -547,30 +547,32 @@ const registry = {
         }),
       },
       projections: {
-        orderPlaced: {
-          project: async ({
-            event,
-            table,
-          }: {
-            event: { aggregateId: string; payload: { total: number } };
-            table: Table<Row>;
-          }) => {
-            await table.upsert({
-              orderId: event.aggregateId,
-              status: "placed",
-              total: event.payload.total,
-            });
+        order: {
+          orderPlaced: {
+            project: async ({
+              event,
+              table,
+            }: {
+              event: { aggregateId: string; payload: { total: number } };
+              table: Table<Row>;
+            }) => {
+              await table.upsert({
+                orderId: event.aggregateId,
+                status: "placed",
+                total: event.payload.total,
+              });
+            },
           },
-        },
-        orderPaid: {
-          project: async ({
-            event,
-            table,
-          }: {
-            event: { aggregateId: string };
-            table: Table<Row>;
-          }) => {
-            await table.update({ orderId: event.aggregateId }, { status: "paid" });
+          orderPaid: {
+            project: async ({
+              event,
+              table,
+            }: {
+              event: { aggregateId: string };
+              table: Table<Row>;
+            }) => {
+              await table.update({ orderId: event.aggregateId }, { status: "paid" });
+            },
           },
         },
       },
@@ -673,27 +675,29 @@ const statusRegistry = (hold: HoldProjection = async () => {}) =>
           }),
         },
         projections: {
-          orderPlaced: {
-            project: async ({
-              event,
-              table,
-            }: {
-              event: { aggregateId: string };
-              table: Table<StatusRow>;
-            }) => {
-              await hold();
-              await table.upsert({ orderId: event.aggregateId, status: "placed" });
+          order: {
+            orderPlaced: {
+              project: async ({
+                event,
+                table,
+              }: {
+                event: { aggregateId: string };
+                table: Table<StatusRow>;
+              }) => {
+                await hold();
+                await table.upsert({ orderId: event.aggregateId, status: "placed" });
+              },
             },
-          },
-          orderCancelled: {
-            project: async ({
-              event,
-              table,
-            }: {
-              event: { aggregateId: string };
-              table: Table<StatusRow>;
-            }) => {
-              await table.update({ orderId: event.aggregateId }, { status: "cancelled" });
+            orderCancelled: {
+              project: async ({
+                event,
+                table,
+              }: {
+                event: { aggregateId: string };
+                table: Table<StatusRow>;
+              }) => {
+                await table.update({ orderId: event.aggregateId }, { status: "cancelled" });
+              },
             },
           },
         },
@@ -714,17 +718,19 @@ const counterRegistry = (failOnce: { failed: boolean }) =>
           }),
         },
         projections: {
-          orderPlaced: {
-            project: async ({ table }: { table: Table<CountRow> }) => {
-              const row = await table.findOne({ id: "all" });
-              await table.upsert({ id: "all", placed: (row?.placed ?? 0) + 1 });
+          order: {
+            orderPlaced: {
+              project: async ({ table }: { table: Table<CountRow> }) => {
+                const row = await table.findOne({ id: "all" });
+                await table.upsert({ id: "all", placed: (row?.placed ?? 0) + 1 });
+              },
             },
-          },
-          orderCancelled: {
-            project: async () => {
-              if (failOnce.failed) return;
-              failOnce.failed = true;
-              throw new Error("transient");
+            orderCancelled: {
+              project: async () => {
+                if (failOnce.failed) return;
+                failOnce.failed = true;
+                throw new Error("transient");
+              },
             },
           },
         },

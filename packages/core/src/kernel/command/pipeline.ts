@@ -172,6 +172,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
       if (events.length === 0) {
         return {
           scheduled: false,
+          aggregateType: aggregate.name,
           aggregateId: command.aggregateId,
           version: loaded.version,
           eventIds: [],
@@ -188,6 +189,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         });
         return {
           scheduled: false,
+          aggregateType: aggregate.name,
           aggregateId: command.aggregateId,
           version: appended.version,
           eventIds: appended.events.map((event) => event.id),
@@ -268,7 +270,12 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
           });
           span.setAttribute(ATTRIBUTES.outcome, "scheduled");
           count(type, "scheduled");
-          return { scheduled: true, aggregateId, executeAt: executeAt.toISOString() };
+          return {
+            scheduled: true,
+            aggregateType: aggregate.name,
+            aggregateId,
+            executeAt: executeAt.toISOString(),
+          };
         }
         try {
           const result = await execute(aggregate, runtime, command);

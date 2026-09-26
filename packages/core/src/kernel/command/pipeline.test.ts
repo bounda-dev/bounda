@@ -50,6 +50,7 @@ describe("command pipeline", () => {
     });
     expect(result).toEqual({
       scheduled: false,
+      aggregateType: "order",
       aggregateId: "o-1",
       version: 1,
       eventIds: ["id-2"],
@@ -136,6 +137,7 @@ describe("command pipeline", () => {
     const result = await pipeline.dispatch({ type: "TouchOrder", payload: { orderId: "o-1" } });
     expect(result).toEqual({
       scheduled: false,
+      aggregateType: "order",
       aggregateId: "o-1",
       version: 0,
       eventIds: [],
@@ -175,6 +177,7 @@ describe("command pipeline", () => {
     const { pipeline, storage } = await createKernelHarness({ registry: withTickets });
     expect(await pipeline.dispatch({ type: "TouchTicket", payload: { ticketId: "t-1" } })).toEqual({
       scheduled: false,
+      aggregateType: "ticket",
       aggregateId: "t-1",
       version: 0,
       eventIds: [],
@@ -271,6 +274,7 @@ describe("command pipeline", () => {
     });
     expect(result).toEqual({
       scheduled: true,
+      aggregateType: "order",
       aggregateId: "o-1",
       executeAt: "2026-01-01T00:05:00.000Z",
     });

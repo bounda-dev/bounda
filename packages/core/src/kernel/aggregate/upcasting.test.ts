@@ -198,23 +198,25 @@ describe("an app over events stored with an older shape", () => {
         totals: {
           view: { fields: ({ f }) => ({ orderId: f.string().primaryKey(), amount: f.number() }) },
           projections: {
-            orderPlaced: {
-              project: async ({
-                event,
-                table,
-              }: {
-                event: {
-                  aggregateId: string;
-                  payload: PlacedV3;
-                  metadata: { schemaVersion: number };
-                };
-                table: { upsert: (row: object) => Promise<void> };
-              }) => {
-                seen.push(event.metadata.schemaVersion);
-                await table.upsert({
-                  orderId: event.aggregateId,
-                  amount: event.payload.money.amount,
-                });
+            order: {
+              orderPlaced: {
+                project: async ({
+                  event,
+                  table,
+                }: {
+                  event: {
+                    aggregateId: string;
+                    payload: PlacedV3;
+                    metadata: { schemaVersion: number };
+                  };
+                  table: { upsert: (row: object) => Promise<void> };
+                }) => {
+                  seen.push(event.metadata.schemaVersion);
+                  await table.upsert({
+                    orderId: event.aggregateId,
+                    amount: event.payload.money.amount,
+                  });
+                },
               },
             },
           },

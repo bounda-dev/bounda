@@ -49,15 +49,17 @@ const registry = {
     orderSummary: {
       view: { fields: ({ f }: FieldsArgs) => ({ orderId: f.string().primaryKey() }) },
       projections: {
-        orderPlaced: {
-          project: async ({
-            event,
-            table,
-          }: {
-            event: { aggregateId: string };
-            table: { upsert: (row: object) => Promise<void> };
-          }) => {
-            await table.upsert({ orderId: event.aggregateId });
+        order: {
+          orderPlaced: {
+            project: async ({
+              event,
+              table,
+            }: {
+              event: { aggregateId: string };
+              table: { upsert: (row: object) => Promise<void> };
+            }) => {
+              await table.upsert({ orderId: event.aggregateId });
+            },
           },
         },
       },
@@ -186,10 +188,10 @@ describe("telemetry", () => {
     );
     expect(named(telemetry, "bounda.projection")).toEqual([
       expect.objectContaining({
-        name: "bounda.projection orderSummary.orderPlaced",
+        name: "bounda.projection orderSummary.order.orderPlaced",
         attributes: expect.objectContaining({
           [ATTRIBUTES.readModel]: "orderSummary",
-          [ATTRIBUTES.projection]: "orderPlaced",
+          [ATTRIBUTES.projection]: "order.orderPlaced",
           [ATTRIBUTES.eventType]: "OrderPlaced",
           [ATTRIBUTES.aggregateId]: "o-1",
           [ATTRIBUTES.correlationId]: correlationId,

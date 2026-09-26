@@ -65,6 +65,7 @@ const model: ProjectModel = {
           collaborators: [],
           declaresCollaborators: false,
           collaboratorsTypeName: "OrderAuditPolicyCollaborators",
+          source: null,
           path: "/project/app/domain/order/policies/audit.ts",
           relativePath: "app/domain/order/policies/audit.ts",
         },
@@ -129,9 +130,10 @@ const model: ProjectModel = {
       },
       projections: [
         {
+          aggregate: "shipment",
           eventKey: "created",
-          path: "/project/app/read/shipments/projections/created.ts",
-          relativePath: "app/read/shipments/projections/created.ts",
+          path: "/project/app/read/shipments/projections/shipment/created.ts",
+          relativePath: "app/read/shipments/projections/shipment/created.ts",
         },
       ],
       queries: [],
@@ -209,6 +211,7 @@ describe("emitRegistry", () => {
               ],
               declaresCollaborators: false,
               collaboratorsTypeName: "OrderNotifyOnOrderPlacedPolicyCollaborators",
+              source: "shipment",
             },
           ],
           processes: [
@@ -238,6 +241,7 @@ describe("emitRegistry", () => {
         "        notifyOnOrderPlaced: {",
         "          module: notifyOnOrderPlaced,",
         "          collaborators: { mailer: { memory: mailerMemory, smtp: mailerSmtp }, sms: { fake: smsFake } },",
+        '          source: "shipment",',
         "        },",
         "      },",
         "      processes: {",
@@ -258,7 +262,7 @@ import * as audit from "../app/domain/order/policies/audit.ts";
 import * as followUp from "../app/domain/order/processes/follow-up/index.ts";
 import * as shipmentCreated from "../app/domain/shipment/created.ts";
 import * as ticketCreated from "../app/domain/ticket/created.ts";
-import * as shipmentsOnCreated from "../app/read/shipments/projections/created.ts";
+import * as shipmentsOnShipmentCreated from "../app/read/shipments/projections/shipment/created.ts";
 import * as shipmentsView from "../app/read/shipments/view.ts";
 
 export const registry = {
@@ -290,7 +294,7 @@ export const registry = {
   readModels: {
     shipments: {
       view: shipmentsView,
-      projections: { created: shipmentsOnCreated },
+      projections: { shipment: { created: shipmentsOnShipmentCreated } },
       queries: {},
     },
   },
@@ -350,13 +354,64 @@ export type Queries = core.QueriesFacadeOf<Record<never, never>>;
 });
 
 describe("emitProject without a file-name trigger", () => {
+  it("types a projection by the aggregate of its folder, though another has an event of that name", () => {
+    const shipments = model.readModels[0] as ProjectModel["readModels"][number];
+    const files = emitProject({
+      model: {
+        ...model,
+        readModels: [
+          {
+            ...shipments,
+            projections: [
+              ...shipments.projections,
+              {
+                aggregate: "ticket",
+                eventKey: "created",
+                path: "/project/app/read/shipments/projections/ticket/created.ts",
+                relativePath: "app/read/shipments/projections/ticket/created.ts",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const ticket = files.find((file) => file.path.endsWith("projections/ticket/+types/created.ts"));
+    expect(ticket?.content).toContain('core.StoredEventOf<generated.TicketEvents, "created">');
+  });
+
   it("types a policy without -on- over every event of its aggregate", () => {
     const files = emitProject({ model });
     const policy = files.find((file) => file.path.endsWith("policies/+types/audit.ts"));
     expect(policy?.content).toContain(
       "core.StoredEventOf<generated.OrderEvents, keyof generated.OrderEvents>",
     );
-    const projection = files.find((file) => file.path.endsWith("projections/+types/created.ts"));
+    const order = model.aggregates[0] as ProjectModel["aggregates"][number];
+    const misnamed = emitProject({
+      model: {
+        ...model,
+        aggregates: [
+          {
+            ...order,
+            policies: [
+              {
+                ...(order.policies[0] as ProjectModel["aggregates"][number]["policies"][number]),
+                key: "notifyOnOrderShipped",
+                triggerKey: "orderShipped",
+                path: "/project/app/domain/order/policies/notify-on-order-shipped.ts",
+                relativePath: "app/domain/order/policies/notify-on-order-shipped.ts",
+              },
+            ],
+          },
+          ...model.aggregates.slice(1),
+        ],
+      },
+    }).find((file) => file.path.endsWith("policies/+types/notify-on-order-shipped.ts"));
+    expect(misnamed?.content).toContain(
+      "core.StoredEventOf<generated.OrderEvents, keyof generated.OrderEvents>",
+    );
+    const projection = files.find((file) =>
+      file.path.endsWith("projections/shipment/+types/created.ts"),
+    );
     expect(projection?.content).toContain(
       'core.StoredEventOf<generated.ShipmentEvents, "created">',
     );

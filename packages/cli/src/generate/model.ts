@@ -67,7 +67,12 @@ export interface PolicyModel extends CollaboratorOwnerModel {
   /**
    * Set when the policy is a directory (`policies/<name>/index.ts`), where collaborators live.
    */
-  readonly directory: string | null;
+  readonly directory: string | null /**
+   * The aggregate whose events the policy reacts to when it sits in `policies/<aggregate>/`;
+   * `null` for the owner's own events. Its key is then prefixed with that aggregate:
+   * `policies/payment/refund-on-payment-failed.ts` → `paymentRefundOnPaymentFailed`.
+   */;
+  readonly source: string | null;
 }
 
 export interface ProcessHandlerModel extends ModuleRef {
@@ -96,6 +101,10 @@ export interface AggregateModel {
 }
 
 export interface ProjectionModel extends ModuleRef {
+  /**
+   * The aggregate whose event it projects, from its folder: `projections/order/...` → `order`.
+   */
+  readonly aggregate: string;
   /**
    * The event key from the file name: `order-placed.ts` → `orderPlaced`.
    */

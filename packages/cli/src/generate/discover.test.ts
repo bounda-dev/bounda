@@ -169,6 +169,11 @@ describe("discoverProject on the order-app fixture", () => {
           ],
           policies: [
             [
+              "customerGreetOnCustomerRegistered",
+              "customerRegistered",
+              "app/domain/order/policies/customer/greet-on-customer-registered.ts",
+            ],
+            [
               "notifyOnOrderPlaced",
               "orderPlaced",
               "app/domain/order/policies/notify-on-order-placed/index.ts",
@@ -197,8 +202,8 @@ describe("discoverProject on the order-app fixture", () => {
           name: "orderSummary",
           view: "app/read/order-summary/view.ts",
           projections: [
-            ["orderPaid", "app/read/order-summary/projections/order-paid.ts"],
-            ["orderPlaced", "app/read/order-summary/projections/order-placed.ts"],
+            ["orderPaid", "app/read/order-summary/projections/order/order-paid.ts"],
+            ["orderPlaced", "app/read/order-summary/projections/order/order-placed.ts"],
           ],
           queries: [
             [
@@ -349,7 +354,7 @@ describe("discoverProject convention problems", () => {
       "app/domain/order/processes/payment/index.ts",
       "app/domain/order/processes/payment/notes.md",
       "app/read/order-summary/view.ts",
-      "app/read/order-summary/projections/Bad.ts",
+      "app/read/order-summary/projections/order/Bad.ts",
       "app/read/order-summary/projections/notes.md",
       "app/read/order-summary/queries/Bad.ts",
       "app/read/order-summary/queries/notes.md",
@@ -368,7 +373,7 @@ describe("discoverProject convention problems", () => {
         "app/domain/order/processes/notes.md: only .ts modules are allowed here",
         "app/domain/order/processes/payment/notes.md: only .ts modules are allowed here",
         "app/read/Bad: Read model names must be kebab-case (lower-case letters, digits and dashes)",
-        "app/read/order-summary/projections/Bad.ts: Projection names must be kebab-case (lower-case letters, digits and dashes)",
+        "app/read/order-summary/projections/order/Bad.ts: Projection names must be kebab-case (lower-case letters, digits and dashes)",
         "app/read/order-summary/projections/notes.md: only .ts modules are allowed here",
         "app/read/order-summary/queries/Bad.ts: Query names must be kebab-case (lower-case letters, digits and dashes)",
         "app/read/order-summary/queries/notes.md: only .ts modules are allowed here",
@@ -519,17 +524,88 @@ describe("discoverProject convention problems", () => {
     ]);
   });
 
-  it("rejects directories under projections and queries", async () => {
+  it("puts projections in folders named after aggregates and rejects anything else", async () => {
     const root = await project([
+      "app/domain/order/order-placed.ts",
       "app/read/order-summary/view.ts",
+      "app/read/order-summary/projections/order/order-placed.ts",
+      "app/read/order-summary/projections/order/deeper/",
       "app/read/order-summary/projections/order-placed.ts",
       "app/read/order-summary/projections/nested/",
       "app/read/order-summary/queries/get-order.ts",
       "app/read/order-summary/queries/Nested/",
     ]);
     expect(await problemsOf(root)).toEqual([
-      "app/read/order-summary/projections/nested: projections are single modules; directories are not allowed here",
+      "app/read/order-summary/projections/order-placed.ts: a projection lives in a folder named after the aggregate whose event it projects: projections/<aggregate>/<event>.ts",
+      'app/read/order-summary/projections/nested: "nested" is not an aggregate of the app',
+      "app/read/order-summary/projections/order/deeper: projections are single modules; directories are not allowed here",
       "app/read/order-summary/queries/Nested: queries are single modules; directories are not allowed here",
+    ]);
+  });
+
+  it("finds the policies an aggregate keeps for another aggregate's events", async () => {
+    const root = await project([
+      "app/domain/order/order-placed.ts",
+      "app/domain/order/policies/notify-on-order-placed.ts",
+      "app/domain/order/policies/payment/refund-on-payment-failed.ts",
+      "app/domain/order/policies/payment/charge-on-payment-requested/index.ts",
+      "app/domain/order/policies/payment/charge-on-payment-requested/gateway.fake.ts",
+      "app/domain/payment/payment-failed.ts",
+      "app/domain/payment/payment-requested.ts",
+      "app/read/payments/view.ts",
+      "app/read/payments/projections/payment/payment-failed.ts",
+    ]);
+    const model = await discoverProject({ root });
+    const order = model.aggregates.find((aggregate) => aggregate.name === "order");
+    expect(
+      order?.policies.map((policy) => [
+        policy.key,
+        policy.source,
+        policy.triggerKey,
+        policy.collaborators.length,
+        policy.collaboratorsTypeName,
+      ]),
+    ).toEqual([
+      [
+        "notifyOnOrderPlaced",
+        null,
+        "orderPlaced",
+        0,
+        "OrderNotifyOnOrderPlacedPolicyCollaborators",
+      ],
+      [
+        "paymentChargeOnPaymentRequested",
+        "payment",
+        "paymentRequested",
+        1,
+        "OrderPaymentChargeOnPaymentRequestedPolicyCollaborators",
+      ],
+      [
+        "paymentRefundOnPaymentFailed",
+        "payment",
+        "paymentFailed",
+        0,
+        "OrderPaymentRefundOnPaymentFailedPolicyCollaborators",
+      ],
+    ]);
+    expect(model.readModels[0]?.projections.map((projection) => projection.aggregate)).toEqual([
+      "payment",
+    ]);
+  });
+
+  it("rejects an aggregate's own folder and aggregate folders inside another's", async () => {
+    const root = await project([
+      "app/domain/order/order-placed.ts",
+      "app/domain/order/policies/order/notify-on-order-placed.ts",
+      "app/domain/order/policies/payment/customer/x.ts",
+      "app/domain/order/policies/payment/index.ts",
+      "app/domain/customer/customer-registered.ts",
+      "app/domain/payment/payment-failed.ts",
+    ]);
+    expect(await problemsOf(root)).toEqual([
+      "app/domain/order/policies/order: these are order's own policies; put them in policies/ directly",
+      'app/domain/order/policies/payment/index.ts: "payment" is an aggregate, so policies/payment/ holds policies for its events; name the policy differently',
+      "app/domain/order/policies/payment/customer: a folder of another aggregate's policies holds policies, not more aggregates",
     ]);
   });
 

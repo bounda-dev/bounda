@@ -84,8 +84,8 @@ const timeToSettle = async (
 
 describe("catchUpThrough", () => {
   it("waits only for the projections that react to one of the command's events", async () => {
-    const orders = fake("projection:orders", ["OrderPlaced"], advancing(7));
-    const customers = fake("projection:customers", ["CustomerRegistered"], advancing(7));
+    const orders = fake("projection:orders", ["order.OrderPlaced"], advancing(7));
+    const customers = fake("projection:customers", ["customer.CustomerRegistered"], advancing(7));
     let policies = 0;
     const policy: Subscriber = {
       name: "policies",
@@ -97,45 +97,72 @@ describe("catchUpThrough", () => {
     };
     const { dispatcher } = await setUp([orders, customers, policy]);
     expect(
-      await dispatcher.catchUpThrough({ position: 7, eventTypes: ["OrderPlaced", "OrderTagged"] }),
+      await dispatcher.catchUpThrough({
+        position: 7,
+        aggregateType: "order",
+        eventTypes: ["OrderPlaced", "OrderTagged"],
+      }),
     ).toBe(true);
     expect(orders.deliveries).toEqual([false]);
     expect(customers.deliveries).toEqual([]);
     expect(policies).toBe(0);
   });
 
+  it("does not wait for a projection of another aggregate's event of the same name", async () => {
+    const orders = fake("projection:orders", ["order.OrderPlaced"], advancing(7));
+    const { dispatcher } = await setUp([orders]);
+    expect(
+      await dispatcher.catchUpThrough({
+        position: 7,
+        aggregateType: "ledger",
+        eventTypes: ["OrderPlaced"],
+      }),
+    ).toBe(true);
+    expect(orders.deliveries).toEqual([]);
+  });
+
   it("does nothing for a projection already past the command's position", async () => {
-    const orders = fake("projection:orders", ["OrderPlaced"], advancing(9));
+    const orders = fake("projection:orders", ["order.OrderPlaced"], advancing(9));
     orders.at = 9;
     const { dispatcher } = await setUp([orders]);
-    expect(await dispatcher.catchUpThrough({ position: 7, eventTypes: ["OrderPlaced"] })).toBe(
-      true,
-    );
+    expect(
+      await dispatcher.catchUpThrough({
+        position: 7,
+        aggregateType: "order",
+        eventTypes: ["OrderPlaced"],
+      }),
+    ).toBe(true);
     expect(orders.deliveries).toEqual([]);
   });
 
   it("delivers without waiting for the lock until the projection reaches the position", async () => {
     let batches = 0;
-    const orders = fake("projection:orders", ["OrderPlaced"], async (self) => {
+    const orders = fake("projection:orders", ["order.OrderPlaced"], async (self) => {
       batches += 1;
       self.at += 3;
       return { outcome: "advanced" };
     });
     const { dispatcher } = await setUp([orders]);
-    expect(await dispatcher.catchUpThrough({ position: 7, eventTypes: ["OrderPlaced"] })).toBe(
-      true,
-    );
+    expect(
+      await dispatcher.catchUpThrough({
+        position: 7,
+        aggregateType: "order",
+        eventTypes: ["OrderPlaced"],
+      }),
+    ).toBe(true);
     expect(batches).toBe(3);
     expect(orders.deliveries).toEqual([false, false, false]);
   });
 
   it("reads the checkpoint again while another process holds the projection, until it gets there", async () => {
-    const orders = fake("projection:orders", ["OrderPlaced"], busy);
+    const orders = fake("projection:orders", ["order.OrderPlaced"], busy);
     const { clock, dispatcher } = await setUp([orders], { timeoutMs: 2_000, pollIntervalMs: 15 });
     let settled: boolean | undefined;
-    void dispatcher.catchUpThrough({ position: 7, eventTypes: ["OrderPlaced"] }).then((reached) => {
-      settled = reached;
-    });
+    void dispatcher
+      .catchUpThrough({ position: 7, aggregateType: "order", eventTypes: ["OrderPlaced"] })
+      .then((reached) => {
+        settled = reached;
+      });
     await eventually(() => expect(clock.pending()).toBe(1));
     clock.advance(14);
     expect(clock.pending()).toBe(1);
@@ -146,12 +173,16 @@ describe("catchUpThrough", () => {
   });
 
   it("gives up once the timeout is up, says which read models are behind, and lets the caller go on", async () => {
-    const orders = fake("projection:orders", ["OrderPlaced"], busy);
+    const orders = fake("projection:orders", ["order.OrderPlaced"], busy);
     const { clock, dispatcher, entries } = await setUp([orders], {
       timeoutMs: 2_000,
       pollIntervalMs: 20,
     });
-    const waiting = dispatcher.catchUpThrough({ position: 7, eventTypes: ["OrderPlaced"] });
+    const waiting = dispatcher.catchUpThrough({
+      position: 7,
+      aggregateType: "order",
+      eventTypes: ["OrderPlaced"],
+    });
     expect(await timeToSettle(clock, waiting, 20)).toBe(2_000);
     expect(await waiting).toBe(false);
     expect(entries).toEqual([
@@ -164,19 +195,27 @@ describe("catchUpThrough", () => {
   });
 
   it("waits two seconds at most, reading the checkpoint every 15 ms, unless told otherwise", async () => {
-    const orders = fake("projection:orders", ["OrderPlaced"], busy);
+    const orders = fake("projection:orders", ["order.OrderPlaced"], busy);
     const { clock, dispatcher } = await setUp([orders]);
-    const waiting = dispatcher.catchUpThrough({ position: 7, eventTypes: ["OrderPlaced"] });
+    const waiting = dispatcher.catchUpThrough({
+      position: 7,
+      aggregateType: "order",
+      eventTypes: ["OrderPlaced"],
+    });
     expect(await timeToSettle(clock, waiting, 15)).toBe(2_010);
     expect(orders.deliveries).toHaveLength(134);
   });
 
   it("stops waiting for a projection whose batch fails", async () => {
-    const orders = fake("projection:orders", ["OrderPlaced"], failed);
+    const orders = fake("projection:orders", ["order.OrderPlaced"], failed);
     const { dispatcher, entries } = await setUp([orders]);
-    expect(await dispatcher.catchUpThrough({ position: 7, eventTypes: ["OrderPlaced"] })).toBe(
-      false,
-    );
+    expect(
+      await dispatcher.catchUpThrough({
+        position: 7,
+        aggregateType: "order",
+        eventTypes: ["OrderPlaced"],
+      }),
+    ).toBe(false);
     expect(orders.deliveries).toEqual([false]);
     expect(entries.map(({ message }) => message)).toEqual([
       "read models did not catch up with the command in time",
@@ -184,9 +223,9 @@ describe("catchUpThrough", () => {
   });
 
   it("does not wait for a projection that backs off after failing, until its retry is due", async () => {
-    const orders = fake("projection:orders", ["OrderPlaced"], failed);
+    const orders = fake("projection:orders", ["order.OrderPlaced"], failed);
     const { clock, dispatcher } = await setUp([orders]);
-    const through = { position: 7, eventTypes: ["OrderPlaced"] };
+    const through = { position: 7, aggregateType: "order", eventTypes: ["OrderPlaced"] };
     expect(await dispatcher.catchUpThrough(through)).toBe(false);
     expect(await dispatcher.catchUpThrough(through)).toBe(false);
     expect(orders.deliveries).toEqual([false]);
@@ -206,13 +245,17 @@ describe("catchUpThrough", () => {
       self.at = 1;
       return { outcome: "advanced" };
     });
-    const orders = fake("projection:orders", ["OrderPlaced"], advancing(7));
+    const orders = fake("projection:orders", ["order.OrderPlaced"], advancing(7));
     const { dispatcher } = await setUp([slow, orders]);
     const pass = dispatcher.processOnce();
     await eventually(() => expect(slow.deliveries).toEqual([true]));
-    expect(await dispatcher.catchUpThrough({ position: 7, eventTypes: ["OrderPlaced"] })).toBe(
-      true,
-    );
+    expect(
+      await dispatcher.catchUpThrough({
+        position: 7,
+        aggregateType: "order",
+        eventTypes: ["OrderPlaced"],
+      }),
+    ).toBe(true);
     release();
     await pass;
   });

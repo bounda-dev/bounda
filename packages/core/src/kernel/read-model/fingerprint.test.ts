@@ -9,7 +9,9 @@ const paid = () => "paid";
 
 const entry = (overrides: Partial<ReadModelEntry> = {}): ReadModelEntry => ({
   view: { fields },
-  projections: { orderPlaced: { project: placed }, orderPaid: { project: paid, on: "OrderPaid" } },
+  projections: {
+    order: { orderPlaced: { project: placed }, orderPaid: { project: paid, on: "OrderPaid" } },
+  },
   queries: {},
   ...overrides,
 });
@@ -27,8 +29,8 @@ describe("readModelSource", () => {
     expect(readModelSource(entry())).toBe(
       [
         String(fields),
-        `orderPaid|OrderPaid|${String(paid)}`,
-        `orderPlaced||${String(placed)}`,
+        `order.orderPaid|OrderPaid|${String(paid)}`,
+        `order.orderPlaced||${String(placed)}`,
       ].join("\n"),
     );
   });
@@ -41,8 +43,10 @@ describe("fingerprintReadModel", () => {
       fingerprintReadModel(
         entry({
           projections: {
-            orderPaid: { project: paid, on: "OrderPaid" },
-            orderPlaced: { project: placed },
+            order: {
+              orderPaid: { project: paid, on: "OrderPaid" },
+              orderPlaced: { project: placed },
+            },
           },
         }),
       ),

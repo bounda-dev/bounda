@@ -20,7 +20,7 @@ app/domain/order/           the order aggregate
   commands/place-order.ts   a command: payload and handler
 app/read/orders/            a read model
   view.ts                   its fields
-  projections/order-placed.ts
+  projections/order/order-placed.ts   projects the order's OrderPlaced
   queries/list-orders.ts
 app/routes/home.tsx         a loader that queries and an action that dispatches
 app/root.tsx                mounts boundaMiddleware

@@ -11,6 +11,7 @@ import { createCommandsFacade } from "../command/facade.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
 import type { Subscriber } from "../dispatch/dispatcher.ts";
 import { createReactionCommandIds, deriveIdempotencyKey } from "../shared/idempotency-key.ts";
+import { qualifiedEventType } from "../shared/qualified-event.ts";
 import { classifyFailure, errorDetails, retryDelayMs } from "../shared/retry.ts";
 import { withTimeout } from "../shared/timeout.ts";
 import { ATTRIBUTES, deadLettered, traced } from "../telemetry.ts";
@@ -434,7 +435,8 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     process: async (events) => {
       let hold = false;
       for (const event of events) {
-        for (const process of processes.byEvent[event.type] ?? []) {
+        const qualified = qualifiedEventType(event.aggregateType, event.type);
+        for (const process of processes.byEvent[qualified] ?? []) {
           try {
             hold = (await deliver(process, event)) === "hold" || hold;
           } catch (error) {

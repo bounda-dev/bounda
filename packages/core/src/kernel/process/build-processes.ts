@@ -6,6 +6,7 @@ import { ConfigurationError } from "../../contracts/errors.ts";
 import { capitalize } from "../../modules/naming.ts";
 import type { ProcessEntry } from "../../modules/process.ts";
 import type { Registry } from "../../modules/registry.ts";
+import { qualifiedEventType } from "../shared/qualified-event.ts";
 
 /**
  * A compiled process: which events start, feed and complete it, its state schema and handlers,
@@ -137,7 +138,10 @@ export const buildProcesses: BuildProcessesFunction = ({ registry, config }) => 
       ...process.completedBy,
       ...Object.keys(process.handlers),
     ]);
-    for (const type of interested) byEvent[type] = [...(byEvent[type] ?? []), process];
+    for (const type of interested) {
+      const qualified = qualifiedEventType(process.aggregate, type);
+      byEvent[qualified] = [...(byEvent[qualified] ?? []), process];
+    }
   }
   return {
     all,

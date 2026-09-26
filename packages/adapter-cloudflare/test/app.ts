@@ -108,41 +108,43 @@ export const registry = {
         }),
       },
       projections: {
-        orderPlaced: {
-          project: async ({
-            event,
-            table,
-          }: {
-            event: { aggregateId: string; payload: { total: number } };
-            table: Table<OrderRow>;
-          }) => {
-            await table.upsert({
-              orderId: event.aggregateId,
-              status: "placed",
-              total: event.payload.total,
-            });
+        order: {
+          orderPlaced: {
+            project: async ({
+              event,
+              table,
+            }: {
+              event: { aggregateId: string; payload: { total: number } };
+              table: Table<OrderRow>;
+            }) => {
+              await table.upsert({
+                orderId: event.aggregateId,
+                status: "placed",
+                total: event.payload.total,
+              });
+            },
           },
-        },
-        orderPaid: {
-          project: async ({
-            event,
-            table,
-          }: {
-            event: { aggregateId: string };
-            table: Table<OrderRow>;
-          }) => {
-            await table.update({ orderId: event.aggregateId }, { status: "paid" });
+          orderPaid: {
+            project: async ({
+              event,
+              table,
+            }: {
+              event: { aggregateId: string };
+              table: Table<OrderRow>;
+            }) => {
+              await table.update({ orderId: event.aggregateId }, { status: "paid" });
+            },
           },
-        },
-        orderArchived: {
-          project: async ({
-            event,
-            table,
-          }: {
-            event: { aggregateId: string };
-            table: Table<OrderRow>;
-          }) => {
-            await table.update({ orderId: event.aggregateId }, { status: "archived" });
+          orderArchived: {
+            project: async ({
+              event,
+              table,
+            }: {
+              event: { aggregateId: string };
+              table: Table<OrderRow>;
+            }) => {
+              await table.update({ orderId: event.aggregateId }, { status: "archived" });
+            },
           },
         },
       },

@@ -10,6 +10,7 @@ import {
 import type { Clock } from "../../contracts/clock.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { createMutex } from "../shared/mutex.ts";
+import { qualifiedEventType } from "../shared/qualified-event.ts";
 import { errorDetails } from "../shared/retry.ts";
 import {
   type CheckpointedSubscriber,
@@ -64,11 +65,12 @@ export interface DispatcherLag {
 }
 
 /**
- * What `catchUpThrough` waits for: a position in the global stream and the types of the events
- * that led there.
+ * What `catchUpThrough` waits for: a position in the global stream and the aggregate and types of
+ * the events that led there.
  */
 export interface CatchUpThroughArgs {
   readonly position: number;
+  readonly aggregateType: string;
   readonly eventTypes: readonly string[];
 }
 
@@ -356,10 +358,12 @@ export const createDispatcher: CreateDispatcherFunction = ({
         // keep passing until nothing moves
       }
     },
-    catchUpThrough: async ({ position, eventTypes }) => {
+    catchUpThrough: async ({ position, aggregateType, eventTypes }) => {
       const deadline = now() + catchUp.timeoutMs;
       const reacting = delivering.filter((subscriber) =>
-        eventTypes.some((type) => subscriber.reactsTo?.(type) === true),
+        eventTypes.some(
+          (type) => subscriber.reactsTo?.(qualifiedEventType(aggregateType, type)) === true,
+        ),
       );
       const reached = await Promise.all(
         reacting.map(async (subscriber) => ({

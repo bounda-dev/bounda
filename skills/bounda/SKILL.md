@@ -31,12 +31,13 @@ app/domain/<aggregate>/
   commands/<command>/index.ts      same, with <collaborator>.<implementation>.ts files beside it
   policies/<action>-on-<event>.ts  export const handler; on and delay optional
   policies/<action>-on-<event>/index.ts   same, with <collaborator>.<implementation>.ts files beside it
+  policies/<other-aggregate>/...   the same shapes, reacting to that aggregate's events
   processes/<process>/index.ts     export const config, export const state (optional)
   processes/<process>/on-<event>.ts, on-timeout.ts   export const handler
   processes/<process>/<collaborator>.<implementation>.ts   collaborators of every handler of the process
 app/read/<read-model>/
   view.ts                          export const fields
-  projections/<event>.ts           export const project
+  projections/<aggregate>/<event>.ts   export const project
   queries/<query>.ts               export const payload (optional), repository (optional), handler
 bounda.config.ts                   export default defineConfig({ storage, readModels?, runtime?, commands?, policies?, processes? })
 ```
@@ -137,7 +138,7 @@ export const handler = async ({ state, aggregateId, commands }: Process.TimeoutA
 };
 ```
 
-Read model (`view.ts`, `projections/order-placed.ts`, `queries/get-order.ts`):
+Read model (`view.ts`, `projections/order/order-placed.ts`, `queries/get-order.ts`):
 
 ```ts
 import type { View } from "./+types/view";
@@ -168,6 +169,11 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
 
 ## Rules of the runtime
 
+- An event is identified by its aggregate and its type: two aggregates may both have `Cancelled`.
+  A file reacts to events of the aggregate it sits in; a folder named after another aggregate
+  (`policies/payment/`, `projections/payment/`) holds what reacts to that aggregate's events.
+  Projections always sit in such a folder. A policy's trigger must be an event of the aggregate it
+  listens to, or boot fails.
 - A command handler returns the events to append, built with `events.<eventKey>(payload)`. It may
   only build events of its own aggregate. Throw `DomainError` to reject a command.
 - `state` in a handler carries `id` and `version` besides the aggregate's fields. Without

@@ -34,7 +34,7 @@ app/domain/order/           the order aggregate
   commands/place-order.ts   a command: payload and handler
 app/read/orders/            a read model
   view.ts                   its fields
-  projections/order-placed.ts
+  projections/order/order-placed.ts   projects the order's OrderPlaced
   queries/list-orders.ts
 bounda.config.ts            storage and collaborators
 tests/orders.test.ts        the app on an in-memory adapter
@@ -123,10 +123,10 @@ export const handler = ({ command, state, events }: Command.HandlerArgs) => {
 
 The watcher wrote `+types/order-cancelled.ts` and `+types/cancel-order.ts` as you saved, and
 `events.orderCancelled` appeared in every handler of the aggregate. Reflect the cancellation in
-the read model with a projection named after the event:
+the read model with a projection named after the event, in the folder of its aggregate:
 
 ```ts
-// app/read/orders/projections/order-cancelled.ts
+// app/read/orders/projections/order/order-cancelled.ts
 import type { Projection } from "./+types/order-cancelled";
 
 export const project = async ({ event, table }: Projection.Args) => {

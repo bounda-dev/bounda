@@ -30,46 +30,48 @@ const registry: Registry = {
         }),
       },
       projections: {
-        orderPlaced: {
-          project: async ({
-            event,
-            table,
-          }: {
-            event: { aggregateId: string; payload: { total: number } };
-            table: Table<Row>;
-          }) => {
-            if (failProjection) throw new Error("db down");
-            await holdPlaced?.();
-            await table.upsert({
-              orderId: event.aggregateId,
-              status: "placed",
-              total: event.payload.total,
-              touched: 0,
-            });
+        order: {
+          orderPlaced: {
+            project: async ({
+              event,
+              table,
+            }: {
+              event: { aggregateId: string; payload: { total: number } };
+              table: Table<Row>;
+            }) => {
+              if (failProjection) throw new Error("db down");
+              await holdPlaced?.();
+              await table.upsert({
+                orderId: event.aggregateId,
+                status: "placed",
+                total: event.payload.total,
+                touched: 0,
+              });
+            },
           },
-        },
-        anyChange: {
-          on: ["OrderPlaced", "OrderPaid"],
-          project: async ({
-            event,
-            table,
-          }: {
-            event: { aggregateId: string; type: string };
-            table: Table<Row>;
-          }) => {
-            onAnyChange?.();
-            if (event.type === "OrderPaid" && failPaidOnce) {
-              failPaidOnce = false;
-              throw new Error("transient");
-            }
-            const current = await table.findOne({ orderId: event.aggregateId });
-            await table.update(
-              { orderId: event.aggregateId },
-              {
-                touched: (current?.touched ?? 0) + 1,
-                ...(event.type === "OrderPaid" ? { status: "paid" } : {}),
-              },
-            );
+          anyChange: {
+            on: ["OrderPlaced", "OrderPaid"],
+            project: async ({
+              event,
+              table,
+            }: {
+              event: { aggregateId: string; type: string };
+              table: Table<Row>;
+            }) => {
+              onAnyChange?.();
+              if (event.type === "OrderPaid" && failPaidOnce) {
+                failPaidOnce = false;
+                throw new Error("transient");
+              }
+              const current = await table.findOne({ orderId: event.aggregateId });
+              await table.update(
+                { orderId: event.aggregateId },
+                {
+                  touched: (current?.touched ?? 0) + 1,
+                  ...(event.type === "OrderPaid" ? { status: "paid" } : {}),
+                },
+              );
+            },
           },
         },
       },
@@ -158,7 +160,7 @@ describe("projection subscriber", () => {
       message: "projection failed",
       fields: {
         readModel: "orderSummary",
-        projection: "anyChange",
+        projection: "order.anyChange",
         eventId: expect.any(String),
         eventType: "OrderPaid",
         message: "transient",
@@ -271,5 +273,46 @@ describe("projection subscriber", () => {
     expect(await checkpoint()).toBe(1);
     await harness.dispatcher.processOnce();
     expect(await checkpoint()).toBe(2);
+  });
+});
+
+describe("projections and the aggregate whose events they project", () => {
+  it("project an event only from the aggregate its folder names, whatever the other aggregates call theirs", async () => {
+    const seen: string[] = [];
+    const project = async ({ event }: { event: { aggregateType: string; type: string } }) => {
+      seen.push(`${event.aggregateType}.${event.type}`);
+    };
+    const harness = await createReactiveHarness({
+      registry: {
+        aggregates: {
+          ...orderRegistry.aggregates,
+          ledger: {
+            events: { orderPlaced: { apply: () => ({}) } },
+            commands: {
+              record: {
+                module: {
+                  handler: ({ events }: { events: Record<string, () => unknown> }) => [
+                    events.orderPlaced?.(),
+                  ],
+                },
+              },
+            },
+            policies: {},
+            processes: {},
+          },
+        },
+        readModels: {
+          orders: {
+            view: { fields: ({ f }: FieldsArgs) => ({ orderId: f.string().primaryKey() }) },
+            projections: { order: { orderPlaced: { project } } },
+            queries: {},
+          },
+        },
+      },
+    });
+    await harness.pipeline.dispatch({ type: "Record", payload: { ledgerId: "l-1" } });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.dispatcher.processUntilIdle();
+    expect(seen).toEqual(["order.OrderPlaced"]);
   });
 });

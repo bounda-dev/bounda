@@ -23,15 +23,17 @@ const registry = {
         fields: ({ f }: FieldsArgs) => ({ orderId: f.string().primaryKey(), total: f.number() }),
       },
       projections: {
-        orderPlaced: {
-          project: async ({
-            event,
-            table,
-          }: {
-            event: { aggregateId: string; payload: { total: number } };
-            table: Table<Placed>;
-          }) => {
-            await table.upsert({ orderId: event.aggregateId, total: event.payload.total });
+        order: {
+          orderPlaced: {
+            project: async ({
+              event,
+              table,
+            }: {
+              event: { aggregateId: string; payload: { total: number } };
+              table: Table<Placed>;
+            }) => {
+              await table.upsert({ orderId: event.aggregateId, total: event.payload.total });
+            },
           },
         },
       },
@@ -40,15 +42,17 @@ const registry = {
     archivedOrders: {
       view: { fields: ({ f }: FieldsArgs) => ({ orderId: f.string().primaryKey() }) },
       projections: {
-        orderArchived: {
-          project: async ({
-            event,
-            table,
-          }: {
-            event: { aggregateId: string };
-            table: Table<Archived>;
-          }) => {
-            await table.upsert({ orderId: event.aggregateId });
+        order: {
+          orderArchived: {
+            project: async ({
+              event,
+              table,
+            }: {
+              event: { aggregateId: string };
+              table: Table<Archived>;
+            }) => {
+              await table.upsert({ orderId: event.aggregateId });
+            },
           },
         },
       },
