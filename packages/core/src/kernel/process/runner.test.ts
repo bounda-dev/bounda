@@ -681,3 +681,63 @@ describe("process runner", () => {
     expect(calls).toEqual(["paid:o-1"]);
   });
 });
+
+describe("process collaborators", () => {
+  const recorded: string[] = [];
+  const audit = (tag: string) => ({
+    record: (entry: string) => {
+      recorded.push(`${tag}:${entry}`);
+    },
+  });
+  interface AuditArgs {
+    readonly aggregateId: string;
+    readonly audit: { record: (entry: string) => void };
+  }
+  const withAudit: Registry = {
+    aggregates: {
+      order: {
+        ...orderAggregateEntry(),
+        processes: {
+          orderPayment: {
+            module: { config: () => ({ startedBy: ["OrderPlaced"], timeout: "1h" }) },
+            handlers: {
+              orderPlaced: {
+                handler: ({ aggregateId, audit }: AuditArgs) => {
+                  audit.record(`placed ${aggregateId}`);
+                },
+              },
+            },
+            timeout: {
+              handler: ({ aggregateId, audit }: AuditArgs) => {
+                audit.record(`timed out ${aggregateId}`);
+              },
+            },
+            collaborators: { audit: { log: audit("log"), memory: audit("memory") } },
+          },
+        },
+      },
+    },
+    readModels: {},
+  };
+
+  it("hands the configured implementation to event and timeout handlers", async () => {
+    recorded.length = 0;
+    const harness = await createReactiveHarness({
+      registry: withAudit,
+      config: { processes: { order: { orderPayment: { audit: { use: "memory" } } } } },
+    });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.dispatcher.processUntilIdle();
+    harness.clock.advance(3_600_000);
+    await harness.worker.runOnce();
+    expect(recorded).toEqual(["memory:placed o-1", "memory:timed out o-1"]);
+  });
+
+  it("names the process and where to choose when several implementations exist", () => {
+    expect(() =>
+      buildProcesses({ registry: withAudit, config: resolveConfig({ storage: memory() }) }),
+    ).toThrow(
+      'Process "order.orderPayment", collaborator "audit": choose an implementation with processes.order.orderPayment.audit.use. Available: "log", "memory"',
+    );
+  });
+});

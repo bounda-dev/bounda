@@ -1,4 +1,4 @@
-import type { AggregateModel, CommandModel, ProjectModel } from "../model.ts";
+import type { AggregateModel, CollaboratorOwnerModel, ProjectModel } from "../model.ts";
 import { typeNameOf } from "../naming.ts";
 import { type GeneratedFile, importPath } from "./paths.ts";
 
@@ -57,26 +57,16 @@ export interface RowTypeNameFunction {
 export const rowTypeName: RowTypeNameFunction = (readModelName) =>
   `${typeNameOf(readModelName)}Row`;
 
-export interface CollaboratorsTypeNameFunction {
-  (command: CommandModel): string;
-}
-
-/**
- * `cancelOrder` → `CancelOrderCollaborators`.
- */
-export const collaboratorsTypeName: CollaboratorsTypeNameFunction = (command) =>
-  `${command.typeName}Collaborators`;
-
 export interface InfersCollaboratorsFunction {
-  (command: CommandModel): boolean;
+  (owner: CollaboratorOwnerModel): boolean;
 }
 
 /**
- * Whether the command's collaborator type comes from its implementations: it has collaborator
- * files and does not declare `Collaborators` itself.
+ * Whether a command, policy or process gets its collaborator type from its implementations: it
+ * has collaborator files and does not declare `Collaborators` itself.
  */
-export const infersCollaborators: InfersCollaboratorsFunction = (command) =>
-  command.collaborators.length > 0 && !command.declaresCollaborators;
+export const infersCollaborators: InfersCollaboratorsFunction = (owner) =>
+  owner.collaborators.length > 0 && !owner.declaresCollaborators;
 
 const typeofImport = (from: string, to: string): string =>
   `typeof import("${importPath({ from, to })}")`;
@@ -107,9 +97,9 @@ const emitEvents = (aggregate: AggregateModel, path: string): string =>
         "};",
       ].join("\n");
 
-const emitCollaborators = (command: CommandModel, path: string): string => {
+const emitCollaborators = (owner: CollaboratorOwnerModel, path: string): string => {
   const byName = new Map<string, string[]>();
-  for (const collaborator of command.collaborators) {
+  for (const collaborator of owner.collaborators) {
     const lines = byName.get(collaborator.name) ?? [];
     lines.push(
       `    readonly ${collaborator.implementation}: ${typeofImport(path, collaborator.path)}.default;`,
@@ -117,7 +107,7 @@ const emitCollaborators = (command: CommandModel, path: string): string => {
     byName.set(collaborator.name, lines);
   }
   return [
-    `export type ${collaboratorsTypeName(command)} = core.InferCollaborators<{`,
+    `export type ${owner.collaboratorsTypeName} = core.InferCollaborators<{`,
     ...[...byName.entries()].flatMap(([name, lines]) => [
       `  readonly ${name}: {`,
       ...lines,
@@ -142,7 +132,7 @@ const emitMap = (
 
 /**
  * `.bounda/types.ts`: per aggregate its `State` and `Events` maps, the inferred collaborator
- * types, the `Commands` facade type, per read model its `Row`, and the `Queries` facade type.
+ * types of commands, policies and processes, the `Commands` facade type, per read model its `Row`, and the `Queries` facade type.
  * Everything is `typeof import(...)`, so the file never references the registry.
  */
 export const emitTypes: EmitTypesFunction = ({ model, path, inferredStates = {} }) => {
@@ -156,9 +146,11 @@ export const emitTypes: EmitTypesFunction = ({ model, path, inferredStates = {} 
     );
   }
   const inferred = model.aggregates.flatMap((aggregate) =>
-    aggregate.commands.filter(infersCollaborators),
+    [...aggregate.commands, ...aggregate.policies, ...aggregate.processes].filter(
+      infersCollaborators,
+    ),
   );
-  for (const command of inferred) sections.push(emitCollaborators(command, path));
+  for (const owner of inferred) sections.push(emitCollaborators(owner, path));
   sections.push(
     emitMap(
       "Commands",

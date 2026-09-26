@@ -1,4 +1,10 @@
-import type { AggregateModel, ModuleRef, ProjectModel, ReadModelModel } from "../model.ts";
+import type {
+  AggregateModel,
+  CollaboratorOwnerModel,
+  ModuleRef,
+  ProjectModel,
+  ReadModelModel,
+} from "../model.ts";
 import { joinKeys, uniqueAliases } from "../naming.ts";
 import { type GeneratedFile, importPath } from "./paths.ts";
 
@@ -33,20 +39,27 @@ const collectImports = (model: ProjectModel): readonly ImportEntry[] => {
         add(joinKeys(event.key, "upcasts"), aggregate.name, event.upcasts.path);
       }
     }
-    for (const command of aggregate.commands) {
-      add(command.key, aggregate.name, command.path);
-      for (const collaborator of command.collaborators) {
+    const addCollaborators = (owner: CollaboratorOwnerModel, key: string) => {
+      for (const collaborator of owner.collaborators) {
         add(
           joinKeys(collaborator.name, collaborator.implementation),
-          command.key,
+          key,
           collaborator.path,
           "default",
         );
       }
+    };
+    for (const command of aggregate.commands) {
+      add(command.key, aggregate.name, command.path);
+      addCollaborators(command, command.key);
     }
-    for (const policy of aggregate.policies) add(policy.key, aggregate.name, policy.path);
+    for (const policy of aggregate.policies) {
+      add(policy.key, aggregate.name, policy.path);
+      addCollaborators(policy, policy.key);
+    }
     for (const process of aggregate.processes) {
       add(process.key, aggregate.name, process.path);
+      addCollaborators(process, process.key);
       for (const handler of process.handlers) {
         add(joinKeys(process.key, "on", handler.eventKey), aggregate.name, handler.path);
       }
@@ -85,31 +98,36 @@ const record = (pairs: readonly (readonly [string, string])[]): string =>
     ? "{}"
     : `{ ${pairs.map(([key, value]) => (key === value ? key : `${key}: ${value}`)).join(", ")} }`;
 
-const emitCommands = (aggregate: AggregateModel, aliases: Aliases, indent: string): string => {
-  if (aggregate.commands.length === 0) return "{}";
-  if (aggregate.commands.every((command) => command.collaborators.length === 0)) {
-    return record(
-      aggregate.commands.map((command) => [command.key, `{ module: ${aliases.of(command.path)} }`]),
-    );
+const collaboratorsOf = (owner: CollaboratorOwnerModel, aliases: Aliases): string => {
+  const byName = new Map<string, string[]>();
+  for (const collaborator of owner.collaborators) {
+    const implementations = byName.get(collaborator.name) ?? [];
+    implementations.push(`${collaborator.implementation}: ${aliases.of(collaborator.path)}`);
+    byName.set(collaborator.name, implementations);
+  }
+  return [...byName.entries()]
+    .map(([name, implementations]) => `${name}: { ${implementations.join(", ")} }`)
+    .join(", ");
+};
+
+interface OwnerEntry extends CollaboratorOwnerModel {
+  readonly key: string;
+}
+
+const emitEntries = (owners: readonly OwnerEntry[], aliases: Aliases, indent: string): string => {
+  if (owners.length === 0) return "{}";
+  if (owners.every((owner) => owner.collaborators.length === 0)) {
+    return record(owners.map((owner) => [owner.key, `{ module: ${aliases.of(owner.path)} }`]));
   }
   const inner = `${indent}  `;
-  const lines = aggregate.commands.map((command) => {
-    if (command.collaborators.length === 0) {
-      return `${inner}${command.key}: { module: ${aliases.of(command.path)} },`;
+  const lines = owners.map((owner) => {
+    if (owner.collaborators.length === 0) {
+      return `${inner}${owner.key}: { module: ${aliases.of(owner.path)} },`;
     }
-    const byName = new Map<string, string[]>();
-    for (const collaborator of command.collaborators) {
-      const implementations = byName.get(collaborator.name) ?? [];
-      implementations.push(`${collaborator.implementation}: ${aliases.of(collaborator.path)}`);
-      byName.set(collaborator.name, implementations);
-    }
-    const collaborators = [...byName.entries()]
-      .map(([name, implementations]) => `${name}: { ${implementations.join(", ")} }`)
-      .join(", ");
     return [
-      `${inner}${command.key}: {`,
-      `${inner}  module: ${aliases.of(command.path)},`,
-      `${inner}  collaborators: { ${collaborators} },`,
+      `${inner}${owner.key}: {`,
+      `${inner}  module: ${aliases.of(owner.path)},`,
+      `${inner}  collaborators: { ${collaboratorsOf(owner, aliases)} },`,
       `${inner}},`,
     ].join("\n");
   });
@@ -130,6 +148,9 @@ const emitProcesses = (aggregate: AggregateModel, aliases: Aliases, indent: stri
       ...(process.timeout === null
         ? []
         : [`${inner}  timeout: ${aliases.of(process.timeout.path)},`]),
+      ...(process.collaborators.length === 0
+        ? []
+        : [`${inner}  collaborators: { ${collaboratorsOf(process, aliases)} },`]),
       `${inner}},`,
     ].join("\n");
   });
@@ -153,8 +174,8 @@ const emitAggregate = (aggregate: AggregateModel, aliases: Aliases): string => {
     ...(aggregate.state === null ? [] : [`${indent}state: ${aliases.of(aggregate.state.path)},`]),
     `${indent}events: ${record(aggregate.events.map((event) => [event.key, aliases.of(event.path)]))},`,
     ...emitUpcasts(aggregate, aliases, indent),
-    `${indent}commands: ${emitCommands(aggregate, aliases, indent)},`,
-    `${indent}policies: ${record(aggregate.policies.map((policy) => [policy.key, aliases.of(policy.path)]))},`,
+    `${indent}commands: ${emitEntries(aggregate.commands, aliases, indent)},`,
+    `${indent}policies: ${emitEntries(aggregate.policies, aliases, indent)},`,
     `${indent}processes: ${emitProcesses(aggregate, aliases, indent)},`,
     "    },",
   ].join("\n");
@@ -188,7 +209,8 @@ export interface EmitRegistryFunction {
 
 /**
  * `.bounda/registry.ts`: one namespace import per module, one default import per collaborator
- * implementation, and the structured registry `createApp` consumes.
+ * implementation of a command, policy or process, and the structured registry `createApp`
+ * consumes.
  */
 export const emitRegistry: EmitRegistryFunction = ({ model, path }) => {
   const aliases = resolveAliases(model, path);

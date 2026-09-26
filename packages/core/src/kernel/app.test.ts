@@ -27,14 +27,16 @@ const registry = {
       ...orderAggregateEntry(),
       policies: {
         archiveOnOrderPaid: {
-          handler: async ({
-            event,
-            commands,
-          }: {
-            event: { aggregateId: string };
-            commands: { archiveOrder: (payload: { orderId: string }) => Promise<unknown> };
-          }) => {
-            await commands.archiveOrder({ orderId: event.aggregateId });
+          module: {
+            handler: async ({
+              event,
+              commands,
+            }: {
+              event: { aggregateId: string };
+              commands: { archiveOrder: (payload: { orderId: string }) => Promise<unknown> };
+            }) => {
+              await commands.archiveOrder({ orderId: event.aggregateId });
+            },
           },
         },
       },

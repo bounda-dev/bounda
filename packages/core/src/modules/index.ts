@@ -44,7 +44,7 @@ export type {
   PayloadOf,
   ZodApi,
 } from "./payload.ts";
-export type { PolicyHandlerArgs, PolicyModule } from "./policy.ts";
+export type { PolicyEntry, PolicyHandlerArgs, PolicyModule } from "./policy.ts";
 export type {
   ProcessConfig,
   ProcessConfigArgs,

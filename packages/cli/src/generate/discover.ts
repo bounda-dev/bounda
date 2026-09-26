@@ -4,6 +4,7 @@ import { basename, join, relative } from "node:path";
 import type {
   AggregateModel,
   CollaboratorModel,
+  CollaboratorOwnerModel,
   CommandModel,
   EventModel,
   ModuleRef,
@@ -104,36 +105,77 @@ const rejectOthers = (context: Context, directory: string, listing: Listing): vo
   }
 };
 
+type CollaboratorOwner = "command" | "policy" | "process";
+
+const RESERVED_ARGUMENTS: Readonly<Record<CollaboratorOwner, ReadonlySet<string>>> = {
+  command: new Set(["command", "state", "events", "idempotencyKey"]),
+  policy: new Set(["event", "commands", "idempotencyKey"]),
+  process: new Set(["event", "state", "aggregateId", "commands", "idempotencyKey"]),
+};
+
+const collaboratorOf = (
+  context: Context,
+  path: string,
+  module: string,
+  owner: CollaboratorOwner,
+): CollaboratorModel | null => {
+  const parts = collaboratorPartsOf(module);
+  if (parts === null) {
+    context.problems.add(path, "expected a collaborator named <collaborator>.<implementation>.ts");
+    return null;
+  }
+  if (RESERVED_ARGUMENTS[owner].has(parts.name)) {
+    context.problems.add(
+      path,
+      `a ${owner} handler already receives "${parts.name}"; give the collaborator another name`,
+    );
+    return null;
+  }
+  return { ...moduleRef(context, path), ...parts };
+};
+
+const sortCollaborators = (
+  collaborators: readonly CollaboratorModel[],
+): readonly CollaboratorModel[] =>
+  [...collaborators].sort(
+    (a, b) => a.name.localeCompare(b.name) || a.implementation.localeCompare(b.implementation),
+  );
+
 const discoverCollaborators = async (
   context: Context,
   directory: string,
+  owner: "command" | "policy",
 ): Promise<readonly CollaboratorModel[]> => {
   const listing = await list(directory);
   rejectOthers(context, directory, listing);
   for (const name of listing.directories) {
     context.problems.add(
       join(directory, name),
-      "a command directory holds only index.ts and collaborators",
+      `a ${owner} directory holds only index.ts and collaborators`,
     );
   }
   const collaborators: CollaboratorModel[] = [];
   for (const name of listing.modules) {
     if (name === INDEX) continue;
-    const path = join(directory, `${name}.ts`);
-    const parts = collaboratorPartsOf(name);
-    if (parts === null) {
-      context.problems.add(
-        path,
-        "expected a collaborator named <collaborator>.<implementation>.ts",
-      );
-      continue;
-    }
-    collaborators.push({ ...moduleRef(context, path), ...parts });
+    const collaborator = collaboratorOf(context, join(directory, `${name}.ts`), name, owner);
+    if (collaborator !== null) collaborators.push(collaborator);
   }
-  return collaborators.sort(
-    (a, b) => a.name.localeCompare(b.name) || a.implementation.localeCompare(b.implementation),
-  );
+  return sortCollaborators(collaborators);
 };
+
+const ownedCollaborators = async (
+  index: string,
+  collaborators: readonly CollaboratorModel[],
+  collaboratorsTypeName: string,
+): Promise<
+  Pick<CollaboratorOwnerModel, "collaborators" | "declaresCollaborators" | "collaboratorsTypeName">
+> => ({
+  collaborators,
+  declaresCollaborators: collaborators.length > 0 && (await declaresCollaborators(index)),
+  collaboratorsTypeName,
+});
+
+const NO_COLLABORATORS = { collaborators: [], declaresCollaborators: false } as const;
 
 const discoverCommands = async (
   context: Context,
@@ -151,11 +193,11 @@ const discoverCommands = async (
     }
     commands.push({
       ...moduleRef(context, path),
+      ...NO_COLLABORATORS,
       key: keyOf(name),
       typeName: typeNameOf(keyOf(name)),
       directory: null,
-      collaborators: [],
-      declaresCollaborators: false,
+      collaboratorsTypeName: `${typeNameOf(keyOf(name))}Collaborators`,
     });
   }
   for (const name of listing.directories) {
@@ -173,14 +215,16 @@ const discoverCommands = async (
       );
       continue;
     }
-    const collaborators = await discoverCollaborators(context, commandDirectory);
     commands.push({
       ...moduleRef(context, index),
+      ...(await ownedCollaborators(
+        index,
+        await discoverCollaborators(context, commandDirectory, "command"),
+        `${typeNameOf(keyOf(name))}Collaborators`,
+      )),
       key: keyOf(name),
       typeName: typeNameOf(keyOf(name)),
       directory: commandDirectory,
-      collaborators,
-      declaresCollaborators: collaborators.length > 0 && (await declaresCollaborators(index)),
     });
   }
   return commands.sort(byKey);
@@ -189,29 +233,64 @@ const discoverCommands = async (
 const discoverPolicies = async (
   context: Context,
   directory: string,
+  aggregate: string,
 ): Promise<readonly PolicyModel[]> => {
   const listing = await list(directory);
   rejectOthers(context, directory, listing);
-  for (const name of listing.directories) {
-    context.problems.add(
-      join(directory, name),
-      "policies are single modules; directories are not allowed here",
-    );
-  }
-  return listing.modules
-    .filter((name) => checkName(context, join(directory, `${name}.ts`), name, "Policy"))
-    .map((name) => ({
-      ...moduleRef(context, join(directory, `${name}.ts`)),
+  const typeNameFor = (name: string): string =>
+    `${typeNameOf(aggregate)}${typeNameOf(keyOf(name))}PolicyCollaborators`;
+  const policies: PolicyModel[] = [];
+  for (const name of listing.modules) {
+    const path = join(directory, `${name}.ts`);
+    if (name.includes(".")) {
+      context.problems.add(path, "collaborators live inside the policy's directory");
+      continue;
+    }
+    if (!checkName(context, path, name, "Policy")) continue;
+    policies.push({
+      ...moduleRef(context, path),
+      ...NO_COLLABORATORS,
       key: keyOf(name),
       triggerKey: policyTriggerOf(name),
-    }))
-    .sort(byKey);
+      directory: null,
+      collaboratorsTypeName: typeNameFor(name),
+    });
+  }
+  for (const name of listing.directories) {
+    const policyDirectory = join(directory, name);
+    if (!checkName(context, policyDirectory, name, "Policy")) continue;
+    const index = join(policyDirectory, `${INDEX}.ts`);
+    if (!(await exists(index))) {
+      context.problems.add(policyDirectory, "a policy directory needs an index.ts");
+      continue;
+    }
+    if (policies.some((policy) => policy.key === keyOf(name))) {
+      context.problems.add(
+        policyDirectory,
+        `policy "${keyOf(name)}" is also defined as ${name}.ts`,
+      );
+      continue;
+    }
+    policies.push({
+      ...moduleRef(context, index),
+      ...(await ownedCollaborators(
+        index,
+        await discoverCollaborators(context, policyDirectory, "policy"),
+        typeNameFor(name),
+      )),
+      key: keyOf(name),
+      triggerKey: policyTriggerOf(name),
+      directory: policyDirectory,
+    });
+  }
+  return policies.sort(byKey);
 };
 
 const discoverProcess = async (
   context: Context,
   directory: string,
   name: string,
+  aggregate: string,
   eventKeys: ReadonlySet<string>,
 ): Promise<ProcessModel | null> => {
   const index = join(directory, `${INDEX}.ts`);
@@ -224,14 +303,20 @@ const discoverProcess = async (
   for (const child of listing.directories) {
     context.problems.add(
       join(directory, child),
-      "a process directory holds only index.ts and on-*.ts handlers",
+      "a process directory holds only index.ts, on-*.ts handlers and collaborators",
     );
   }
   const handlers: ProcessHandlerModel[] = [];
+  const collaborators: CollaboratorModel[] = [];
   let timeout: ModuleRef | null = null;
   for (const module of listing.modules) {
     if (module === INDEX) continue;
     const path = join(directory, `${module}.ts`);
+    if (module.includes(".")) {
+      const collaborator = collaboratorOf(context, path, module, "process");
+      if (collaborator !== null) collaborators.push(collaborator);
+      continue;
+    }
     if (module === TIMEOUT_HANDLER) {
       timeout = moduleRef(context, path);
       continue;
@@ -249,6 +334,11 @@ const discoverProcess = async (
   }
   return {
     ...moduleRef(context, index),
+    ...(await ownedCollaborators(
+      index,
+      sortCollaborators(collaborators),
+      `${typeNameOf(aggregate)}${typeNameOf(keyOf(name))}ProcessCollaborators`,
+    )),
     key: keyOf(name),
     typeName: typeNameOf(keyOf(name)),
     directory,
@@ -260,6 +350,7 @@ const discoverProcess = async (
 const discoverProcesses = async (
   context: Context,
   directory: string,
+  aggregate: string,
   eventKeys: ReadonlySet<string>,
 ): Promise<readonly ProcessModel[]> => {
   const listing = await list(directory);
@@ -274,7 +365,7 @@ const discoverProcesses = async (
   for (const name of listing.directories) {
     const processDirectory = join(directory, name);
     if (!checkName(context, processDirectory, name, "Process")) continue;
-    const process = await discoverProcess(context, processDirectory, name, eventKeys);
+    const process = await discoverProcess(context, processDirectory, name, aggregate, eventKeys);
     if (process !== null) processes.push(process);
   }
   return processes.sort(byKey);
@@ -336,9 +427,11 @@ const discoverAggregate = async (
     state,
     events: eventsWithUpcasts.sort(byKey),
     commands: has("commands") ? await discoverCommands(context, join(directory, "commands")) : [],
-    policies: has("policies") ? await discoverPolicies(context, join(directory, "policies")) : [],
+    policies: has("policies")
+      ? await discoverPolicies(context, join(directory, "policies"), name)
+      : [],
     processes: has("processes")
-      ? await discoverProcesses(context, join(directory, "processes"), eventKeys)
+      ? await discoverProcesses(context, join(directory, "processes"), name, eventKeys)
       : [],
   };
 };

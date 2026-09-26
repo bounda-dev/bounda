@@ -81,15 +81,17 @@ export const registry = {
       },
       policies: {
         archiveOnOrderPaid: {
-          handler: async ({
-            event,
-            commands,
-          }: {
-            event: { aggregateId: string };
-            commands: { archiveOrder: (payload: { orderId: string }) => Promise<unknown> };
-          }) => {
-            if (event.aggregateId.startsWith("fail")) throw new DomainError("archive is down");
-            await commands.archiveOrder({ orderId: event.aggregateId });
+          module: {
+            handler: async ({
+              event,
+              commands,
+            }: {
+              event: { aggregateId: string };
+              commands: { archiveOrder: (payload: { orderId: string }) => Promise<unknown> };
+            }) => {
+              if (event.aggregateId.startsWith("fail")) throw new DomainError("archive is down");
+              await commands.archiveOrder({ orderId: event.aggregateId });
+            },
           },
         },
       },

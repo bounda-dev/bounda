@@ -182,7 +182,7 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
     clock,
     logger,
   });
-  const policies = buildPolicies({ registry });
+  const policies = buildPolicies({ registry, config });
   const reactive = [
     {
       subscriber: createPolicySubscriber({

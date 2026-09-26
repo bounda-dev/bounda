@@ -100,7 +100,7 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
     const event = await eventOf(letter);
     const commands = createCommandsFacade({ aggregates, pipeline, context: contextOf(event) });
     await withTimeout({
-      run: () => policy.handler({ event, commands }),
+      run: () => policy.handler({ ...policy.collaborators, event, commands }),
       timeoutMs: config.forAggregate(policy.aggregate).policies.timeoutMs,
       subject: `policy ${policy.name}`,
       clock,

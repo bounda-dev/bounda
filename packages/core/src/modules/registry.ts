@@ -4,7 +4,7 @@ import type { CommandEntry, CommandModule } from "./command.ts";
 import type { EventModules } from "./event.ts";
 import type { Simplify, UnionToIntersection } from "./naming.ts";
 import type { HasPayload, PayloadInputOf } from "./payload.ts";
-import type { PolicyModule } from "./policy.ts";
+import type { PolicyEntry } from "./policy.ts";
 import type { ProcessEntry } from "./process.ts";
 import type { ProjectionModule } from "./projection.ts";
 import type { QueryModule, QueryResultOf } from "./query.ts";
@@ -23,7 +23,7 @@ export interface AggregateEntry {
    */
   readonly upcasts?: Readonly<Record<string, UpcastsModule>>;
   readonly commands: Readonly<Record<string, CommandEntry>>;
-  readonly policies: Readonly<Record<string, PolicyModule>>;
+  readonly policies: Readonly<Record<string, PolicyEntry>>;
   readonly processes: Readonly<Record<string, ProcessEntry>>;
 }
 

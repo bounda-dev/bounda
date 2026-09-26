@@ -20,21 +20,26 @@ const registry = {
       ...orderAggregateEntry(),
       policies: {
         notifyOnOrderPlaced: {
-          handler: async ({
-            event,
-            commands,
-          }: {
-            event: { aggregateId: string };
-            commands: { archiveOrder: (payload: { orderId: string }) => Promise<unknown> };
-          }) => {
-            calls.push(`notify:${event.aggregateId}`);
-            if (policyMode === "domain") throw new DomainError("mail server rejects it");
-            if (policyMode === "hangs") {
-              handlerStarted.resolve();
-              await new Promise<never>(() => undefined);
-            }
-            await commands.archiveOrder({ orderId: event.aggregateId });
+          module: {
+            handler: async ({
+              event,
+              commands,
+              recorder,
+            }: {
+              event: { aggregateId: string };
+              commands: { archiveOrder: (payload: { orderId: string }) => Promise<unknown> };
+              recorder: { record: (call: string) => void };
+            }) => {
+              recorder.record(`notify:${event.aggregateId}`);
+              if (policyMode === "domain") throw new DomainError("mail server rejects it");
+              if (policyMode === "hangs") {
+                handlerStarted.resolve();
+                await new Promise<never>(() => undefined);
+              }
+              await commands.archiveOrder({ orderId: event.aggregateId });
+            },
           },
+          collaborators: { recorder: { memory: { record: (call: string) => calls.push(call) } } },
         },
       },
       processes: {

@@ -61,6 +61,10 @@ const model: ProjectModel = {
         {
           key: "audit",
           triggerKey: null,
+          directory: null,
+          collaborators: [],
+          declaresCollaborators: false,
+          collaboratorsTypeName: "OrderAuditPolicyCollaborators",
           path: "/project/app/domain/order/policies/audit.ts",
           relativePath: "app/domain/order/policies/audit.ts",
         },
@@ -74,6 +78,9 @@ const model: ProjectModel = {
           relativePath: "app/domain/order/processes/follow-up/index.ts",
           handlers: [],
           timeout: null,
+          collaborators: [],
+          declaresCollaborators: false,
+          collaboratorsTypeName: "OrderFollowUpProcessCollaborators",
         },
       ],
     },
@@ -172,6 +179,78 @@ describe("emitRegistry", () => {
     );
   });
 
+  it("lists every implementation of every collaborator of policies and processes", () => {
+    const order = model.aggregates[0] as ProjectModel["aggregates"][number];
+    const collaborator = (owner: string, name: string, implementation: string) => ({
+      name,
+      implementation,
+      path: `/project/app/domain/order/${owner}/${name}.${implementation}.ts`,
+      relativePath: `app/domain/order/${owner}/${name}.${implementation}.ts`,
+    });
+    const notify = "policies/notify-on-order-placed";
+    const followUp = order.processes[0] as ProjectModel["aggregates"][number]["processes"][number];
+    const withCollaborators: ProjectModel = {
+      ...model,
+      aggregates: [
+        {
+          ...order,
+          policies: [
+            ...order.policies,
+            {
+              key: "notifyOnOrderPlaced",
+              triggerKey: "orderPlaced",
+              directory: `/project/app/domain/order/${notify}`,
+              path: `/project/app/domain/order/${notify}/index.ts`,
+              relativePath: `app/domain/order/${notify}/index.ts`,
+              collaborators: [
+                collaborator(notify, "mailer", "memory"),
+                collaborator(notify, "mailer", "smtp"),
+                collaborator(notify, "sms", "fake"),
+              ],
+              declaresCollaborators: false,
+              collaboratorsTypeName: "OrderNotifyOnOrderPlacedPolicyCollaborators",
+            },
+          ],
+          processes: [
+            {
+              ...followUp,
+              collaborators: [
+                collaborator("processes/follow-up", "gateway", "stripe"),
+                collaborator("processes/follow-up", "reminders", "fake"),
+              ],
+            },
+          ],
+        },
+        ...model.aggregates.slice(1),
+      ],
+    };
+    const { content } = emitRegistry({
+      model: withCollaborators,
+      path: "/project/.bounda/registry.ts",
+    });
+    expect(content).toContain(
+      'import mailerSmtp from "../app/domain/order/policies/notify-on-order-placed/mailer.smtp.ts";',
+    );
+    expect(content).toContain(
+      [
+        "      policies: {",
+        "        audit: { module: audit },",
+        "        notifyOnOrderPlaced: {",
+        "          module: notifyOnOrderPlaced,",
+        "          collaborators: { mailer: { memory: mailerMemory, smtp: mailerSmtp }, sms: { fake: smsFake } },",
+        "        },",
+        "      },",
+        "      processes: {",
+        "        followUp: {",
+        "          module: followUp,",
+        "          handlers: {},",
+        "          collaborators: { gateway: { stripe: gatewayStripe }, reminders: { fake: remindersFake } },",
+        "        },",
+        "      },",
+      ].join("\n"),
+    );
+  });
+
   it("prefixes colliding import aliases with their owner and omits absent parts", () => {
     const { content } = emitRegistry({ model, path: "/project/.bounda/registry.ts" });
     expect(content).toBe(`import type { Registry } from "@bounda-dev/core";
@@ -187,7 +266,7 @@ export const registry = {
     order: {
       events: {},
       commands: {},
-      policies: { audit },
+      policies: { audit: { module: audit } },
       processes: {
         followUp: {
           module: followUp,

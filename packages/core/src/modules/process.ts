@@ -1,4 +1,5 @@
 import type { LooseDurationInput } from "../contracts/duration.ts";
+import type { CollaboratorImplementations } from "./command.ts";
 import type { EmptyPayload, InferPayload, PayloadArgs } from "./payload.ts";
 
 /**
@@ -40,12 +41,14 @@ export interface ProcessHandlerModule {
 
 /**
  * A process in the registry: its module, one handler module per event it reacts to, keyed by the
- * event's camelCase name, and the optional timeout handler.
+ * event's camelCase name, the optional timeout handler and the collaborator implementations found
+ * in its directory, which every handler of the process receives.
  */
 export interface ProcessEntry {
   readonly module: ProcessModule;
   readonly handlers: Readonly<Record<string, ProcessHandlerModule>>;
   readonly timeout?: ProcessHandlerModule;
+  readonly collaborators?: CollaboratorImplementations;
 }
 
 /**
@@ -56,20 +59,27 @@ export type ProcessStateOf<Module> = Module extends { readonly state: infer F }
   : EmptyPayload;
 
 /**
- * Arguments of an `on-<event>.ts` handler. The handler returns the new process state.
+ * Arguments of an `on-<event>.ts` handler, with the process's collaborators spread at the top
+ * level. The handler returns the new process state.
  */
-export interface ProcessHandlerArgs<Event, State, Commands> {
+export type ProcessHandlerArgs<
+  Event,
+  State,
+  Commands,
+  Collaborators extends object = EmptyPayload,
+> = {
   readonly event: Event;
   readonly state: Readonly<State>;
   readonly aggregateId: string;
   readonly commands: Commands;
-}
+} & Readonly<Collaborators>;
 
 /**
- * Arguments of an `on-timeout.ts` handler. The handler returns the new process state.
+ * Arguments of an `on-timeout.ts` handler, with the process's collaborators spread at the top
+ * level. The handler returns the new process state.
  */
-export interface ProcessTimeoutArgs<State, Commands> {
+export type ProcessTimeoutArgs<State, Commands, Collaborators extends object = EmptyPayload> = {
   readonly state: Readonly<State>;
   readonly aggregateId: string;
   readonly commands: Commands;
-}
+} & Readonly<Collaborators>;

@@ -1,4 +1,5 @@
 import { ConfigurationError } from "../contracts/errors.ts";
+import type { CollaboratorImplementations } from "./command.ts";
 import type { Registry } from "./registry.ts";
 
 interface Problem {
@@ -14,6 +15,21 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 const requireFunction = (problems: Problem[], owner: object, path: string, name: string): void => {
   if (!isFunction(Reflect.get(owner, name))) {
     problems.push({ path, message: `missing export "${name}" (expected a function)` });
+  }
+};
+
+const requireImplementations = (
+  problems: Problem[],
+  collaborators: CollaboratorImplementations | undefined,
+  path: string,
+): void => {
+  for (const [collaborator, implementations] of Object.entries(collaborators ?? {})) {
+    if (Object.keys(implementations).length === 0) {
+      problems.push({
+        path: `${path}.collaborators.${collaborator}`,
+        message: "has no implementations",
+      });
+    }
   }
 };
 
@@ -44,17 +60,11 @@ const validateAggregate = (
   }
   for (const [key, entry] of Object.entries(aggregate.commands)) {
     requireFunction(problems, entry.module, `${base}.commands.${key}`, "handler");
-    for (const [collaborator, implementations] of Object.entries(entry.collaborators ?? {})) {
-      if (Object.keys(implementations).length === 0) {
-        problems.push({
-          path: `${base}.commands.${key}.collaborators.${collaborator}`,
-          message: "has no implementations",
-        });
-      }
-    }
+    requireImplementations(problems, entry.collaborators, `${base}.commands.${key}`);
   }
   for (const [key, policy] of Object.entries(aggregate.policies)) {
-    requireFunction(problems, policy, `${base}.policies.${key}`, "handler");
+    requireFunction(problems, policy.module, `${base}.policies.${key}`, "handler");
+    requireImplementations(problems, policy.collaborators, `${base}.policies.${key}`);
   }
   for (const [key, process] of Object.entries(aggregate.processes)) {
     requireFunction(problems, process.module, `${base}.processes.${key}`, "config");
@@ -64,6 +74,7 @@ const validateAggregate = (
     if (process.timeout !== undefined) {
       requireFunction(problems, process.timeout, `${base}.processes.${key}.timeout`, "handler");
     }
+    requireImplementations(problems, process.collaborators, `${base}.processes.${key}`);
   }
 };
 

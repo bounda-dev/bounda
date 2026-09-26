@@ -18,6 +18,7 @@ import type { Command as PayOrder } from "./fixtures/order-app/app/domain/order/
 import type { Command as CancelOrder } from "./fixtures/order-app/app/domain/order/commands/cancel-order/+types/index.ts";
 import type { Command as PlaceOrder } from "./fixtures/order-app/app/domain/order/commands/place-order/+types/index.ts";
 import type { Policy as SendReceipt } from "./fixtures/order-app/app/domain/order/policies/+types/send-receipt-on-order-paid.ts";
+import type { Policy as NotifyOnOrderPlaced } from "./fixtures/order-app/app/domain/order/policies/notify-on-order-placed/+types/index.ts";
 import type { Process as OrderPayment } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/index.ts";
 import type { Process as OnOrderPaid } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/on-order-paid.ts";
 import type { Process as OnTimeout } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/on-timeout.ts";
@@ -108,6 +109,23 @@ describe("collaborators", () => {
 
   it("are absent when the command has none", () => {
     expectTypeOf<PayOrder.HandlerArgs>().not.toHaveProperty("inventory");
+  });
+
+  it("reach a policy, inferred from the implementations next to its index.ts", () => {
+    expectTypeOf<NotifyOnOrderPlaced.HandlerArgs["mailer"]["send"]>().toEqualTypeOf<
+      (to: string, message: string) => Promise<void>
+    >();
+    expectTypeOf<NotifyOnOrderPlaced.HandlerArgs["event"]["type"]>().toEqualTypeOf<"OrderPlaced">();
+    expectTypeOf<SendReceipt.HandlerArgs>().not.toHaveProperty("mailer");
+  });
+
+  it("reach every handler of a process, from the Collaborators its index.ts declares", () => {
+    expectTypeOf<OnTimeout.TimeoutArgs["reminders"]["remind"]>().toEqualTypeOf<
+      (orderId: string) => Promise<void>
+    >();
+    expectTypeOf<OnOrderPaid.HandlerArgs["reminders"]["remind"]>().toEqualTypeOf<
+      (orderId: string) => Promise<void>
+    >();
   });
 });
 
