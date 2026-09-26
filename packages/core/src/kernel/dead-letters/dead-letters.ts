@@ -1,19 +1,15 @@
 import type { StoragePorts } from "../../adapter/adapter.ts";
 import type { DeadLetter, ListDeadLettersArgs } from "../../adapter/ports/dead-letter-store.ts";
-import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import { ConfigurationError, NotFoundError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
-import type { AggregatesRuntime } from "../aggregate/runtime.ts";
-import { createCommandsFacade } from "../command/facade.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
 import type { PoliciesRuntime } from "../policy/build-policies.ts";
+import type { PolicyExecutor } from "../policy/executor.ts";
 import { PROCESS_TIMEOUT_COMMAND, type ProcessRunner } from "../process/runner.ts";
-import { createReactionCommandIds, deriveIdempotencyKey } from "../shared/idempotency-key.ts";
-import { withTimeout } from "../shared/timeout.ts";
 
 /**
  * What an operator can do with the handler runs that gave up. `list`, `count` and `get` read the
@@ -35,11 +31,10 @@ export interface DeadLetters {
 
 export interface CreateDeadLettersArgs {
   readonly storage: StoragePorts;
-  readonly aggregates: AggregatesRuntime;
   readonly pipeline: CommandPipeline;
   readonly policies: PoliciesRuntime;
+  readonly policyExecutor: PolicyExecutor;
   readonly processes: ProcessRunner;
-  readonly config: ResolvedConfig;
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly logger: Logger;
@@ -49,23 +44,16 @@ export interface CreateDeadLettersFunction {
   (args: CreateDeadLettersArgs): DeadLetters;
 }
 
-const contextOf = (event: StoredEvent): CausationContext => ({
-  correlationId: event.metadata.correlationId,
-  causationId: event.id,
-  depth: event.metadata.depth,
-});
-
 /**
  * Wires `app.deadLetters` over the storage and the runners. A replay bypasses the inbox ledger on
  * purpose: the ledger already says the handler ran, and the operator is asking for another run.
  */
 export const createDeadLetters: CreateDeadLettersFunction = ({
   storage,
-  aggregates,
   pipeline,
   policies,
+  policyExecutor,
   processes,
-  config,
   ids,
   clock,
   logger,
@@ -94,28 +82,15 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
   };
 
   const replayPolicy = async (letter: DeadLetter, replay: string): Promise<void> => {
-    const policy = policies.all.find((candidate) => candidate.name === letter.subscriber);
+    const policy = policies.byName[letter.subscriber];
     if (policy === undefined) {
       throw new ConfigurationError(`Policy "${letter.subscriber}" is no longer in the registry`);
     }
-    const event = await eventOf(letter);
-    const idempotencyKey = deriveIdempotencyKey({
-      kind: "policy",
-      handler: policy.name,
-      subject: event.id,
+    await policyExecutor.run({
+      policy,
+      event: await eventOf(letter),
+      attempt: letter.attempts + 1,
       replay,
-    });
-    const commands = createCommandsFacade({
-      aggregates,
-      pipeline,
-      context: contextOf(event),
-      commandIds: createReactionCommandIds(idempotencyKey),
-    });
-    await withTimeout({
-      run: () => policy.handler({ ...policy.collaborators, event, commands, idempotencyKey }),
-      timeoutMs: config.forAggregate(policy.aggregate).policies.timeoutMs,
-      subject: `policy ${policy.name}`,
-      clock,
     });
   };
 

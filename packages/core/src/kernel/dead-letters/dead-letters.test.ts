@@ -97,11 +97,10 @@ const setUp = async () => {
   });
   const deadLetters: DeadLetters = createDeadLetters({
     storage: harness.storage,
-    aggregates: harness.aggregates,
     pipeline: harness.pipeline,
     policies: harness.policies,
+    policyExecutor: harness.policyExecutor,
     processes: harness.processes,
-    config: harness.config,
     ids: harness.ids,
     clock: harness.clock,
     logger,
@@ -167,11 +166,10 @@ describe("deadLetters", () => {
     });
     const deadLetters = createDeadLetters({
       storage: harness.storage,
-      aggregates: harness.aggregates,
       pipeline: harness.pipeline,
       policies: harness.policies,
+      policyExecutor: harness.policyExecutor,
       processes: harness.processes,
-      config: harness.config,
       ids: harness.ids,
       clock: harness.clock,
       logger,
@@ -286,11 +284,10 @@ describe("deadLetters", () => {
     });
     const deadLetters = createDeadLetters({
       storage: harness.storage,
-      aggregates: harness.aggregates,
       pipeline: harness.pipeline,
       policies: harness.policies,
+      policyExecutor: harness.policyExecutor,
       processes: harness.processes,
-      config: harness.config,
       ids: harness.ids,
       clock: harness.clock,
       logger,
@@ -351,11 +348,10 @@ describe("deadLetters", () => {
     });
     const deadLetters = createDeadLetters({
       storage: harness.storage,
-      aggregates: harness.aggregates,
       pipeline: harness.pipeline,
       policies: harness.policies,
+      policyExecutor: harness.policyExecutor,
       processes: harness.processes,
-      config: harness.config,
       ids: harness.ids,
       clock: harness.clock,
       logger: harness.logger,

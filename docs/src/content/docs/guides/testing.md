@@ -62,7 +62,7 @@ await expect(
 ## Time
 
 The clock starts at `2026-01-01T00:00:00Z` and stays there until you advance it. A scheduled
-command becomes due, and a process time-out fires, because the clock moved — never because the
+command becomes due, a delayed policy runs and a process time-out fires, because the clock moved — never because the
 test waited.
 
 ```ts

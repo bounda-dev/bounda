@@ -29,7 +29,7 @@ app/domain/<aggregate>/
   <event>.upcast.ts                optional: export const upcasts (oldest version first)
   commands/<command>.ts            export const payload, export const handler
   commands/<command>/index.ts      same, with <collaborator>.<implementation>.ts files beside it
-  policies/<action>-on-<event>.ts  export const handler
+  policies/<action>-on-<event>.ts  export const handler; on and delay optional
   policies/<action>-on-<event>/index.ts   same, with <collaborator>.<implementation>.ts files beside it
   processes/<process>/index.ts     export const config, export const state (optional)
   processes/<process>/on-<event>.ts, on-timeout.ts   export const handler
@@ -178,7 +178,10 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
 - Policies and processes get their collaborators spread next to `event` and `commands`, like
   commands do. Config picks implementations by aggregate, then key:
   `policies: { order: { notifyOnOrderPlaced: { mailer: { use: "smtp" } } } }`, and the same
-  under `processes`. Their `idempotencyKey` is the same on every retry for one event (for a
+  under `processes`. A policy that exports `delay` (`"1m"`, or `asDuration(env)`) runs that long
+  after the event, through the scheduler, with the same arguments and retries; use it when the
+  effect itself waits, and a delayed command when the decision must see the state at that time.
+  Their `idempotencyKey` is the same on every retry for one event (for a
   timeout, one instance) and new on a dead-letter replay. A collaborator cannot be named after a
   handler argument (`event`,
   `commands`, `state`, `aggregateId`, `command`, `events`, `idempotencyKey`).

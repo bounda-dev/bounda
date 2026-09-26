@@ -5,12 +5,13 @@ import type { Collaborators, WelcomeEmail } from "./index.ts";
  * would. Tests read it; nothing else should.
  */
 export const sent: WelcomeEmail[] = [];
-const seen = new Set<string>();
+const sentWithKey = new Map<string, WelcomeEmail>();
 
 export default {
   send: async (email, idempotencyKey) => {
-    if (seen.has(idempotencyKey)) return;
-    seen.add(idempotencyKey);
+    const previous = sentWithKey.get(idempotencyKey);
+    if (previous !== undefined && sent.includes(previous)) return;
+    sentWithKey.set(idempotencyKey, email);
     sent.push(email);
   },
 } satisfies Collaborators["emailSender"];

@@ -11,6 +11,8 @@ import type { AggregatesRuntime } from "./aggregate/runtime.ts";
 import { createCommandPipeline } from "./command/pipeline.ts";
 import { createDispatcher, type Dispatcher } from "./dispatch/dispatcher.ts";
 import { buildPolicies, type PoliciesRuntime } from "./policy/build-policies.ts";
+import { createDelayedPolicies } from "./policy/delayed.ts";
+import { createPolicyExecutor, type PolicyExecutor } from "./policy/executor.ts";
 import { createPolicySubscriber } from "./policy/runner.ts";
 import { buildProcesses } from "./process/build-processes.ts";
 import { createProcessRunner, type ProcessRunner } from "./process/runner.ts";
@@ -25,6 +27,7 @@ export interface ReactiveHarness {
   readonly readModels: ReadModelsRuntime;
   readonly pipeline: ReturnType<typeof createCommandPipeline>;
   readonly policies: PoliciesRuntime;
+  readonly policyExecutor: PolicyExecutor;
   readonly ids: IdGenerator;
   readonly logger: Logger;
   readonly clock: FixedClock;
@@ -77,6 +80,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     logger,
   });
   const policies = buildPolicies({ registry, config });
+  const policyExecutor = createPolicyExecutor({ aggregates, pipeline, config, clock });
   const processes = createProcessRunner({
     processes: buildProcesses({ registry, config }),
     aggregates,
@@ -92,6 +96,12 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     aggregates,
     pipeline,
     processes,
+    delayedPolicies: createDelayedPolicies({
+      policies,
+      executor: policyExecutor,
+      eventStore: storage.eventStore,
+      config,
+    }),
     config,
     ids,
     clock,
@@ -111,8 +121,8 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
         ),
         createPolicySubscriber({
           policies,
-          aggregates,
-          pipeline,
+          executor: policyExecutor,
+          scheduler: storage.scheduler,
           ledger: storage.inboxLedger,
           deadLetters: storage.deadLetterStore,
           config,
@@ -135,6 +145,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     readModels,
     pipeline,
     policies,
+    policyExecutor,
     ids,
     logger,
     clock,

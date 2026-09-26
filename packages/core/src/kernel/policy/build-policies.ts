@@ -1,12 +1,14 @@
 import { selectCollaborators } from "../../config/collaborators.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
+import { parseDuration } from "../../contracts/duration.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import type { PolicyModule } from "../../modules/policy.ts";
 import type { Registry } from "../../modules/registry.ts";
 
 /**
- * A compiled policy: which aggregate it belongs to, which event types trigger it, its handler and
- * the collaborators chosen from the configuration.
+ * A compiled policy: which aggregate it belongs to, which event types trigger it, its handler,
+ * the collaborators chosen from the configuration and, for a delayed policy, how long after the
+ * event it runs.
  */
 export interface PolicyRuntime {
   readonly name: string;
@@ -14,10 +16,12 @@ export interface PolicyRuntime {
   readonly on: readonly string[];
   readonly handler: (args: Record<string, unknown>) => unknown;
   readonly collaborators: Readonly<Record<string, unknown>>;
+  readonly delayMs: number | null;
 }
 
 export interface PoliciesRuntime {
   readonly all: readonly PolicyRuntime[];
+  readonly byName: Readonly<Record<string, PolicyRuntime>>;
   readonly byEvent: Readonly<Record<string, readonly PolicyRuntime[]>>;
 }
 
@@ -45,6 +49,17 @@ const triggersOf = (aggregate: string, key: string, module: PolicyModule): reado
   return [derived];
 };
 
+const delayOf = (aggregate: string, key: string, module: PolicyModule): number | null => {
+  if (module.delay === undefined) return null;
+  try {
+    return parseDuration(module.delay);
+  } catch {
+    throw new ConfigurationError(
+      `aggregates.${aggregate}.policies.${key}: delay ${JSON.stringify(module.delay)} is not a duration such as "30s", "5m" or 60000`,
+    );
+  }
+};
+
 export interface BuildPoliciesArgs {
   readonly registry: Registry;
   readonly config: ResolvedConfig;
@@ -65,6 +80,7 @@ export const buildPolicies: BuildPoliciesFunction = ({ registry, config }) => {
         aggregate,
         on: triggersOf(aggregate, key, policy.module),
         handler: policy.module.handler as PolicyRuntime["handler"],
+        delayMs: delayOf(aggregate, key, policy.module),
         collaborators: selectCollaborators({
           owner: `Policy "${aggregate}.${key}"`,
           path: `policies.${aggregate}.${key}`,
@@ -78,5 +94,9 @@ export const buildPolicies: BuildPoliciesFunction = ({ registry, config }) => {
   for (const policy of all) {
     for (const type of policy.on) byEvent[type] = [...(byEvent[type] ?? []), policy];
   }
-  return { all, byEvent };
+  return {
+    all,
+    byName: Object.fromEntries(all.map((policy) => [policy.name, policy])),
+    byEvent,
+  };
 };

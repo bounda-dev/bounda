@@ -192,6 +192,19 @@ describe("scheduled command worker", () => {
     expect(leases).toEqual([20_000]);
   });
 
+  it("holds its claims long enough for the slowest aggregate's handlers", async () => {
+    const harness = await createReactiveHarness({
+      registry: orderRegistry,
+      config: {
+        runtime: {
+          policies: { timeout: "10s" },
+          overrides: { order: { policies: { timeout: "1m" } }, other: { policies: {} } },
+        },
+      },
+    });
+    expect(harness.worker.leaseMs).toBe(120_000);
+  });
+
   it("arms one timer per interval, re-arms after each run and leaves nothing behind on stop", async () => {
     const harness = await createReactiveHarness({ registry: orderRegistry });
     const scheduler = harness.storage.scheduler;

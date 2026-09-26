@@ -218,6 +218,34 @@ await commands.sendReminder(
 
 A scheduled command is taken by exactly one instance, however many are running the worker role.
 
+## Delaying a policy
+
+A delayed command decides later; a delayed policy acts later. When the effect itself has to wait,
+as in *send the welcome email a minute after the user registers*, the policy exports `delay`:
+
+```ts
+// policies/send-welcome-email-on-user-registered/index.ts
+export const delay = asDuration(process.env.WELCOME_EMAIL_DELAY ?? "1m");
+
+export const handler = async ({ event, commands, emailSender, idempotencyKey }: Policy.HandlerArgs) => {
+  await emailSender.send({ to: event.payload.email, name: event.payload.name }, idempotencyKey);
+  await commands.recordWelcomeEmailSent({ userId: event.aggregateId, to: event.payload.email });
+};
+```
+
+When the event is read, the runtime schedules the policy's run instead of running it, due at the
+event's time plus the delay, so a worker that falls behind does not push it later. When it comes
+due, the worker reads the event, upcast to its shape at that moment, and runs the handler with
+everything a live run gets: collaborators, the commands facade, the same `idempotencyKey`, the
+aggregate's retry settings and time budget. A run that fails for good is dead-lettered as the
+policy's, and replaying it runs the handler at once.
+
+A delayed policy runs whatever happened in between. When the effect depends on what happened
+since (*remind the customer unless they paid*), delay a command instead: its handler decides
+against the state at that moment, as `sendReminder` does above. A pending run lives in the
+scheduler, not in the event history; the command the handler dispatches is what records that the
+effect happened.
+
 ## Watching it work
 
 `app.getLag()` reports how far behind the stream each subscriber is. Zero means every consequence

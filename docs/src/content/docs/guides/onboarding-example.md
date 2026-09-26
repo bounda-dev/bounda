@@ -20,9 +20,8 @@ pnpm dev
 
 1. The `/register` action dispatches `registerUser` and redirects to `/users/:userId`. The page
    already shows the user: the app in the context reads its own writes.
-2. `UserRegistered` starts the process `user-onboarding`. Its handler schedules
-   `requestWelcomeEmail` a minute later, which appends `WelcomeEmailRequested`. The policy
-   `send-welcome-email-on-welcome-email-requested` sends the email through its `emailSender`
+2. `UserRegistered` starts the process `user-onboarding`. A minute later the delayed policy
+   `send-welcome-email-on-user-registered` sends the email through its `emailSender`
    collaborator (`email-sender.console` in the demo, `email-sender.memory` in the tests) and
    dispatches `recordWelcomeEmailSent`, which appends `WelcomeEmailSent`.
 3. Activating the user completes the process. A registration nobody activates within a week hits
@@ -45,7 +44,7 @@ export default defineConfig({
   storage: url === undefined ? sqlite({ path: "./data/onboarding.db" }) : postgresql({ url }),
   policies: {
     user: {
-      sendWelcomeEmailOnWelcomeEmailRequested: {
+      sendWelcomeEmailOnUserRegistered: {
         emailSender: { use: process.env.EMAIL_SENDER ?? "console" },
       },
     },
@@ -53,11 +52,10 @@ export default defineConfig({
 });
 ```
 
-**A delayed effect.** The delay belongs to a command, so the scheduled command does not send
-anything: it records the request as an event, and a policy reacting to that event makes the call,
-after the commit, with an `idempotencyKey` that survives its retries. A policy rather than the
-process, because a user activated before the minute is up completes the process and should still
-get the email.
+**A delayed effect.** The policy exports `delay`, read from `WELCOME_EMAIL_DELAY`, so the runtime
+runs it a minute after `UserRegistered` was stored, with an `idempotencyKey` that survives its
+retries. It is a policy rather than the process because the email does not depend on what happens
+in that minute: a user activated before it is up completes the process and still gets the email.
 
 **A paginated query with defaults.** Fields with `.default()` are optional for callers and always
 present in the repository and the handler:

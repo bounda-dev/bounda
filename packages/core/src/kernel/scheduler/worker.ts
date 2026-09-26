@@ -6,6 +6,7 @@ import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { type CommandPipeline, scheduledCommandId } from "../command/pipeline.ts";
+import type { DelayedPolicies } from "../policy/delayed.ts";
 import type { ProcessRunner, ProcessTimeoutPayload } from "../process/runner.ts";
 import { PROCESS_TIMEOUT_COMMAND } from "../process/runner.ts";
 import { createMutex } from "../shared/mutex.ts";
@@ -25,7 +26,8 @@ export interface ScheduledCommandWorker {
    */
   runOnce(): Promise<number>;
   /**
-   * How long a claim this worker takes is held before another worker may take it over.
+   * How long a claim this worker takes is held before another worker may take it over: twice the
+   * longest handler timeout any aggregate is configured with, so no run outlives its claim.
    */
   readonly leaseMs: number;
 }
@@ -35,6 +37,7 @@ export interface CreateScheduledCommandWorkerArgs {
   readonly aggregates: AggregatesRuntime;
   readonly pipeline: CommandPipeline;
   readonly processes: ProcessRunner;
+  readonly delayedPolicies: DelayedPolicies;
   readonly config: ResolvedConfig;
   readonly ids: IdGenerator;
   readonly clock: Clock;
@@ -50,17 +53,19 @@ const CLAIM_LIMIT = 50;
 type GiveUpReason = "terminal" | "retriable_exhausted";
 
 /**
- * Executes scheduled work: user commands dispatched with `delay` and process timeouts. Due entries
- * are claimed with a lease so two workers never run the same one. A command that fails for a
- * transient reason is rescheduled with back-off; one that fails for good, or exhausts its
- * retries, is dropped from the schedule, recorded as a `CommandFailed` system event on its
- * aggregate's stream and dead-lettered.
+ * Executes scheduled work: user commands dispatched with `delay`, process timeouts and delayed
+ * policy runs. Due entries are claimed with a lease so two workers never run the same one. Work
+ * that fails for a transient reason is rescheduled with back-off; work that fails for good, or
+ * exhausts its retries, is dropped from the schedule and dead-lettered. A dropped command is also
+ * recorded as a `CommandFailed` system event on its aggregate's stream; a dropped policy run is
+ * dead-lettered as the policy's, so a replay runs the policy again.
  */
 export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction = ({
   storage,
   aggregates,
   pipeline,
   processes,
+  delayedPolicies,
   config,
   ids,
   clock,
@@ -69,8 +74,12 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   const mutex = createMutex();
   let cancelWait: (() => void) | undefined;
   let running = false;
-  const retry = config.runtime.policies.retry;
-  const leaseMs = config.runtime.policies.timeoutMs * 2;
+  const defaultRetry = config.runtime.policies.retry;
+  const leaseMs =
+    Math.max(
+      config.runtime.policies.timeoutMs,
+      ...Object.values(config.runtime.overrides).map((override) => override.policies.timeoutMs),
+    ) * 2;
 
   const isTimeout = (entry: ScheduledCommand): boolean =>
     entry.command.type === PROCESS_TIMEOUT_COMMAND;
@@ -98,6 +107,39 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     });
   };
 
+  const giveUpPolicy = async (
+    entry: ScheduledCommand,
+    error: unknown,
+    attempts: number,
+    reason: GiveUpReason,
+  ): Promise<void> => {
+    const details = errorDetails(error);
+    const payload = delayedPolicies.payloadOf(entry);
+    const now = clock.now().toISOString();
+    await storage.deadLetterStore.add({
+      id: ids.next(),
+      kind: "policy",
+      subscriber: payload.policy,
+      eventId: payload.eventId,
+      eventType: payload.eventType,
+      aggregateType: payload.aggregateType,
+      aggregateId: entry.command.aggregateId,
+      errorType: reason,
+      errorMessage: details.message,
+      ...(details.stack === undefined ? {} : { errorStack: details.stack }),
+      attempts,
+      firstFailedAt: now,
+      lastFailedAt: now,
+    });
+    deadLettered({ kind: "policy", subscriber: payload.policy, errorType: reason });
+    logger.warn("policy dead-lettered", {
+      policy: payload.policy,
+      eventId: payload.eventId,
+      errorType: reason,
+      attempts,
+    });
+  };
+
   const giveUp = async (
     entry: ScheduledCommand,
     error: unknown,
@@ -106,6 +148,10 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   ): Promise<void> => {
     const details = errorDetails(error);
     await storage.scheduler.fail({ dedupeKey: entry.dedupeKey, error: details.message });
+    if (delayedPolicies.isDelayedPolicy(entry)) {
+      await giveUpPolicy(entry, error, attempts, reason);
+      return;
+    }
     if (!isTimeout(entry)) await recordFailure(entry, error, attempts);
     const now = clock.now().toISOString();
     await storage.deadLetterStore.add({
@@ -149,7 +195,9 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
         [ATTRIBUTES.attempt]: entry.attempts + 1,
       },
       run: async () => {
-        if (isTimeout(entry)) {
+        if (delayedPolicies.isDelayedPolicy(entry)) {
+          await delayedPolicies.run(entry);
+        } else if (isTimeout(entry)) {
           await processes.handleTimeout({
             payload: entry.command.payload as ProcessTimeoutPayload,
             context: entry.context,
@@ -172,6 +220,9 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     } catch (error) {
       const attempts = entry.attempts + 1;
       const kind = classifyFailure(error);
+      const retry = delayedPolicies.isDelayedPolicy(entry)
+        ? delayedPolicies.retryOf(entry)
+        : defaultRetry;
       if (kind === "retriable" && retry.strategy !== "none" && attempts < retry.maxAttempts) {
         const retryAt = new Date(
           clock.now().getTime() + retryDelayMs({ retry, attempt: attempts }),

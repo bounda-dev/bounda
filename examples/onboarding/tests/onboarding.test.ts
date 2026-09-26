@@ -2,7 +2,7 @@ import { DomainError, ValidationError } from "@bounda-dev/core";
 import { createTestApp } from "@bounda-dev/core/testing";
 import { beforeEach, describe, expect, it } from "vitest";
 import { registry } from "../.bounda/registry.ts";
-import { sent } from "../app/domain/user/policies/send-welcome-email-on-welcome-email-requested/email-sender.memory.ts";
+import { sent } from "../app/domain/user/policies/send-welcome-email-on-user-registered/email-sender.memory.ts";
 
 const ADA = "018f6a5e-4c3c-7c1e-9d4b-0b2c4a1d8e01";
 const GRACE = "018f6a5e-4c3c-7c1e-9d4b-0b2c4a1d8e02";
@@ -16,7 +16,7 @@ const start = () =>
     registry,
     config: {
       policies: {
-        user: { sendWelcomeEmailOnWelcomeEmailRequested: { emailSender: { use: "memory" } } },
+        user: { sendWelcomeEmailOnUserRegistered: { emailSender: { use: "memory" } } },
       },
     },
   });

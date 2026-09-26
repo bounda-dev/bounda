@@ -69,6 +69,26 @@ export type {
 } from "./policy/build-policies.ts";
 export { buildPolicies, policyTriggerFromKey } from "./policy/build-policies.ts";
 export type {
+  CreateDelayedPoliciesArgs,
+  CreateDelayedPoliciesFunction,
+  DelayedPolicies,
+  DelayedPolicyPayload,
+  ScheduleDelayedPolicyArgs,
+  ScheduleDelayedPolicyFunction,
+} from "./policy/delayed.ts";
+export {
+  createDelayedPolicies,
+  DELAYED_POLICY_COMMAND,
+  scheduleDelayedPolicy,
+} from "./policy/delayed.ts";
+export type {
+  CreatePolicyExecutorArgs,
+  CreatePolicyExecutorFunction,
+  PolicyExecutor,
+  RunPolicyArgs,
+} from "./policy/executor.ts";
+export { createPolicyExecutor } from "./policy/executor.ts";
+export type {
   CreatePolicySubscriberArgs,
   CreatePolicySubscriberFunction,
 } from "./policy/runner.ts";
