@@ -145,6 +145,32 @@ describe("policy subscriber", () => {
     expect(loaded.events.filter((event) => event.type === "OrderPaid")).toHaveLength(1);
   });
 
+  it("holds an event another instance claimed and runs it once that instance's lease expires", async () => {
+    reset("ok");
+    const harness = await createReactiveHarness({ registry });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    const [placed] = (
+      await harness.storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" })
+    ).events;
+    await harness.storage.inboxLedger.tryClaim({
+      subscriber: "order.payOnOrderPlaced",
+      eventId: placed?.id ?? "",
+      now: harness.clock.now(),
+      leaseMs: 60_000,
+    });
+
+    await harness.dispatcher.processUntilIdle();
+    expect(calls).not.toContain("pay:o-1");
+    expect(await harness.storage.checkpointStore.get("policies")).toBe(0);
+
+    harness.clock.advance(60_001);
+    await harness.dispatcher.processUntilIdle();
+    expect(calls.filter((call) => call === "pay:o-1")).toHaveLength(1);
+    expect(await harness.storage.checkpointStore.get("policies")).toBe(
+      await harness.storage.eventStore.lastPosition(),
+    );
+  });
+
   it("does not run a policy again after a crash between the handler and the checkpoint", async () => {
     reset("ok");
     const harness = await createReactiveHarness({ registry });

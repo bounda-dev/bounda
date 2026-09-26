@@ -100,7 +100,7 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
       if (now.getTime() - new Date(existing.claimedAt).getTime() < waitMs) return "hold";
     }
     const claimed = await ledger.tryClaim({ ...key, now, leaseMs: settings.timeoutMs * 2 });
-    if (!claimed) return "done";
+    if (!claimed) return "hold";
 
     const commands = createCommandsFacade({
       aggregates,

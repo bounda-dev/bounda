@@ -229,7 +229,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
         leaseMs: config.forAggregate(process.aggregate).policies.timeoutMs * 2,
       }))
     ) {
-      return "done";
+      return "hold";
     }
     const context = contextOf(event);
     try {
