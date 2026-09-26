@@ -36,9 +36,10 @@ type Outcome = "done" | "hold";
 /**
  * One subscriber for every policy. For each event and each policy that reacts to it, the runner
  * claims `(policy, eventId)` in the inbox ledger and runs the handler, or, for a delayed policy,
- * schedules its run for the event's time plus the delay. Failures are classified: terminal ones are dead-lettered
- * at once; retriable ones are retried on later passes with the configured back-off, then
- * dead-lettered. While a retry is pending the checkpoint holds, so events stay ordered.
+ * schedules its run for the event's time plus the delay. Failures are classified: terminal ones
+ * are dead-lettered at once; retriable ones are retried on later passes with the configured
+ * back-off, then dead-lettered. While a retry is pending the checkpoint holds, so events stay
+ * ordered.
  */
 export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
   policies,
