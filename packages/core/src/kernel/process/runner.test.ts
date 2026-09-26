@@ -753,10 +753,15 @@ describe("process collaborators", () => {
     await harness.worker.runOnce();
     expect(keys).toEqual([
       deriveIdempotencyKey({
+        kind: "process",
         handler: "order.orderPayment",
         subject: placed.scheduled ? "" : (placed.eventIds[0] ?? ""),
       }),
-      deriveIdempotencyKey({ handler: "order.orderPayment", subject: "o-1:timeout" }),
+      deriveIdempotencyKey({
+        kind: "process",
+        handler: "order.orderPayment",
+        subject: "o-1:timeout",
+      }),
     ]);
   });
 

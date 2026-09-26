@@ -106,7 +106,12 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
           ...policy.collaborators,
           event,
           commands,
-          idempotencyKey: deriveIdempotencyKey({ handler: policy.name, subject: event.id, replay }),
+          idempotencyKey: deriveIdempotencyKey({
+            kind: "policy",
+            handler: policy.name,
+            subject: event.id,
+            replay,
+          }),
         }),
       timeoutMs: config.forAggregate(policy.aggregate).policies.timeoutMs,
       subject: `policy ${policy.name}`,

@@ -129,7 +129,7 @@ describe("deadLetters", () => {
       status: "replayed",
     });
     expect(calls).toEqual(["notify:o-1", "notify:o-1", "notify:o-1"]);
-    const live = `policy ${deriveIdempotencyKey({ handler: "order.notifyOnOrderPlaced", subject: letter?.eventId ?? "" })}`;
+    const live = `policy ${deriveIdempotencyKey({ kind: "policy", handler: "order.notifyOnOrderPlaced", subject: letter?.eventId ?? "" })}`;
     expect(keys[0]).toBe(live);
     expect(new Set(keys).size).toBe(3);
     expect(await deadLetters.list({ status: "replayed" })).toHaveLength(1);
@@ -240,7 +240,7 @@ describe("deadLetters", () => {
     expect(calls.filter((call) => call.startsWith("paid:"))).toEqual(["paid:card", "paid:card"]);
     const processKeys = keys.filter((key) => key.startsWith("process "));
     expect(processKeys[0]).toBe(
-      `process ${deriveIdempotencyKey({ handler: "order.orderPayment", subject: letter?.eventId ?? "" })}`,
+      `process ${deriveIdempotencyKey({ kind: "process", handler: "order.orderPayment", subject: letter?.eventId ?? "" })}`,
     );
     expect(new Set(processKeys).size).toBe(2);
     expect(
@@ -481,7 +481,7 @@ describe("deadLetters", () => {
     const timeoutKeys = keys.filter((key) => key.startsWith("timeout "));
     expect(timeoutKeys).toHaveLength(1);
     expect(timeoutKeys[0]).not.toBe(
-      `timeout ${deriveIdempotencyKey({ handler: "order.orderPayment", subject: "o-9:timeout" })}`,
+      `timeout ${deriveIdempotencyKey({ kind: "process", handler: "order.orderPayment", subject: "o-9:timeout" })}`,
     );
     const { events } = await harness.storage.eventStore.load({
       aggregateType: "process:OrderPayment",

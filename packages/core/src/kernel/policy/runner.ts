@@ -132,7 +132,11 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
                 ...policy.collaborators,
                 event,
                 commands,
-                idempotencyKey: deriveIdempotencyKey({ handler: policy.name, subject: event.id }),
+                idempotencyKey: deriveIdempotencyKey({
+                  kind: "policy",
+                  handler: policy.name,
+                  subject: event.id,
+                }),
               }),
             timeoutMs: settings.timeoutMs,
             subject: `policy ${policy.name}`,

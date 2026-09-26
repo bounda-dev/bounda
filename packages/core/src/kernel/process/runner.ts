@@ -323,6 +323,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
               aggregateId: event.aggregateId,
               commands: facadeFor(contextOf(event)),
               idempotencyKey: deriveIdempotencyKey({
+                kind: "process",
                 handler: process.name,
                 subject: event.id,
                 replay,
@@ -457,6 +458,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
                       aggregateId: payload.aggregateId,
                       commands: facadeFor(context),
                       idempotencyKey: deriveIdempotencyKey({
+                        kind: "process",
                         handler: process.name,
                         subject: `${payload.aggregateId}:timeout`,
                         replay,

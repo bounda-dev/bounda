@@ -221,6 +221,7 @@ describe("policy subscriber", () => {
       await harness.storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" })
     ).events;
     const expected = deriveIdempotencyKey({
+      kind: "policy",
       handler: "order.payOnOrderPlaced",
       subject: placed?.id ?? "",
     });
