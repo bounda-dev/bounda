@@ -1,8 +1,8 @@
 # Onboarding
 
 User registration and activation on Bounda inside a React Router app. One `user` aggregate, a
-process that sends a welcome email a minute after registering and expires registrations nobody
-activates within a week, and two read models behind the pages.
+process that asks for a welcome email a minute after registering and expires registrations nobody
+activates within a week, a policy that sends that email, and two read models behind the pages.
 
 ```bash
 pnpm install

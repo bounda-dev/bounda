@@ -186,7 +186,7 @@ See [adapters](/adapters/).
 
 - [Project layout](/guides/project-layout/): every kind of module, with a template each.
 - [The storefront example](/guides/storefront-example/): policies, a process with a time-out,
-  collaborators and hand-written SQL in one small app.
+  an effect after the commit and hand-written SQL in one small app.
 - [Bounda with React Router](/guides/react-router/): actions that dispatch, loaders that query,
   and the [onboarding example](/guides/onboarding-example/) that puts it together.
 - [Testing](/guides/testing/): an app in memory, a clock you move by hand, and assertions that
