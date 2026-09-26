@@ -1,5 +1,14 @@
 # @bounda-dev/adapter-postgresql
 
+## 0.2.0
+
+### Patch Changes
+
+- Updated dependencies [7622ada]
+- Updated dependencies [1228d71]
+- Updated dependencies [7474c0e]
+  - @bounda-dev/core@0.2.0
+
 ## 0.1.0
 
 ### Minor Changes
