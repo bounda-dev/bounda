@@ -556,6 +556,36 @@ describe("process runner", () => {
     expect(leases).toEqual([20_000]);
   });
 
+  it("holds an event another instance claimed and handles it once that instance's lease expires", async () => {
+    reset("ok");
+    const harness = await createReactiveHarness({ registry });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.dispatcher.processUntilIdle();
+    const paid = await harness.pipeline.dispatch({
+      type: "PayOrder",
+      payload: { orderId: "o-1", method: "card" },
+    });
+    await harness.storage.inboxLedger.tryClaim({
+      subscriber: "order.orderPayment",
+      eventId: paid.scheduled ? "" : (paid.eventIds[0] ?? ""),
+      now: harness.clock.now(),
+      leaseMs: 60_000,
+    });
+
+    await harness.dispatcher.processUntilIdle();
+    expect(calls).toEqual([]);
+    expect(await harness.storage.checkpointStore.get("processes")).toBeLessThan(
+      await harness.storage.eventStore.lastPosition(),
+    );
+
+    harness.clock.advance(60_001);
+    await harness.dispatcher.processUntilIdle();
+    expect(calls).toEqual(["paid:o-1"]);
+    expect(await harness.storage.checkpointStore.get("processes")).toBe(
+      await harness.storage.eventStore.lastPosition(),
+    );
+  });
+
   it("holds and redelivers when another instance moved the process stream first", async () => {
     reset("ok");
     const { logger, entries } = createRecordingLogger();

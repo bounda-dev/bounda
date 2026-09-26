@@ -93,6 +93,8 @@ Run several worker instances on PostgreSQL and each policy and process handler r
 instance per event**: the inbox ledger claims `(handler, event)` atomically, so instances share
 that work and add throughput for reactions. Delivery is still at least once: a handler that crashes
 midway runs again ([what the runtime promises](/guides/reacting-to-events/#what-the-runtime-promises)).
+An instance that finds an event claimed by another one waits instead of moving past it; if the
+other instance dies, its claim lapses after twice the handler timeout and the event runs again.
 
 Projections go further: they are applied **exactly once**, and one instance at a time per read
 model. Each batch runs in one transaction on the read model's database, holding a lock named after
