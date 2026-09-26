@@ -7,6 +7,7 @@ import type { StoredEvent } from "../../contracts/event.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { Subscriber } from "../dispatch/dispatcher.ts";
+import { qualifiedEventType } from "../shared/qualified-event.ts";
 import { classifyFailure, errorDetails, retryDelayMs } from "../shared/retry.ts";
 import { deadLettered } from "../telemetry.ts";
 import type { PoliciesRuntime, PolicyRuntime } from "./build-policies.ts";
@@ -137,7 +138,8 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
     process: async (events) => {
       let hold = false;
       for (const event of events) {
-        for (const policy of policies.byEvent[event.type] ?? []) {
+        const qualified = qualifiedEventType(event.aggregateType, event.type);
+        for (const policy of policies.byEvent[qualified] ?? []) {
           const outcome = await run(policy, event, config.forAggregate(policy.aggregate).policies);
           hold = hold || outcome === "hold";
         }

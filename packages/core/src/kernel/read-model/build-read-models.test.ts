@@ -15,9 +15,11 @@ const registry: Registry = {
     orderSummary: {
       view,
       projections: {
-        orderPlaced: { project: () => undefined },
-        paid: { on: "OrderPaid", project: () => undefined },
-        anyChange: { on: ["OrderPlaced", "OrderArchived"], project: () => undefined },
+        order: {
+          orderPlaced: { project: () => undefined },
+          paid: { on: "OrderPaid", project: () => undefined },
+          anyChange: { on: ["OrderPlaced", "OrderArchived"], project: () => undefined },
+        },
       },
       queries: {},
     },
@@ -47,7 +49,7 @@ const countingAdapter = (): { readonly adapter: Adapter; readonly closes: () => 
 };
 
 describe("buildReadModels", () => {
-  it("indexes projections by the events they declare, defaulting to the capitalized key", async () => {
+  it("indexes projections by the qualified events they declare, defaulting to the capitalized key", async () => {
     const readModels = await buildReadModels({
       registry,
       config: resolveConfig({ storage: memory() }),
@@ -59,9 +61,9 @@ describe("buildReadModels", () => {
         Object.entries(byEvent).map(([type, list]) => [type, list.map((p) => p.key)]),
       ),
     ).toEqual({
-      OrderPlaced: ["orderPlaced", "anyChange"],
-      OrderPaid: ["paid"],
-      OrderArchived: ["anyChange"],
+      "order.OrderPlaced": ["order.orderPlaced", "order.anyChange"],
+      "order.OrderPaid": ["order.paid"],
+      "order.OrderArchived": ["order.anyChange"],
     });
     expect(readModels.byName.customerOrders?.projectionsByEvent).toEqual({});
     await readModels.close();

@@ -19,6 +19,7 @@ import type {
 import {
   collaboratorPartsOf,
   isKebabCase,
+  joinKeys,
   keyOf,
   policyTriggerOf,
   processHandlerEventOf,
@@ -83,6 +84,10 @@ const byKey = <T extends { readonly key: string }>(a: T, b: T): number =>
 interface Context {
   readonly root: string;
   readonly problems: ProblemCollector;
+  /**
+   * The keys of every aggregate of the app: a folder named after one holds that aggregate's events.
+   */
+  readonly aggregates: ReadonlySet<string>;
 }
 
 const moduleRef = (context: Context, path: string): ModuleRef => ({
@@ -230,15 +235,32 @@ const discoverCommands = async (
   return commands.sort(byKey);
 };
 
-const discoverPolicies = async (
+interface PolicyFolder {
+  readonly aggregate: string;
+  /**
+   * The aggregate whose events the folder's policies react to: the owner for `policies/`, the
+   * folder's aggregate for `policies/<aggregate>/`.
+   */
+  readonly source: string;
+}
+
+const discoverPolicyModules = async (
   context: Context,
   directory: string,
-  aggregate: string,
+  listing: Listing,
+  names: readonly string[],
+  folder: PolicyFolder,
 ): Promise<readonly PolicyModel[]> => {
-  const listing = await list(directory);
-  rejectOthers(context, directory, listing);
+  const foreign = folder.source !== folder.aggregate;
+  const keyFor = (name: string): string =>
+    foreign ? joinKeys(folder.source, keyOf(name)) : keyOf(name);
   const typeNameFor = (name: string): string =>
-    `${typeNameOf(aggregate)}${typeNameOf(keyOf(name))}PolicyCollaborators`;
+    `${typeNameOf(folder.aggregate)}${typeNameOf(keyFor(name))}PolicyCollaborators`;
+  const common = (name: string) => ({
+    key: keyFor(name),
+    triggerKey: policyTriggerOf(name),
+    source: foreign ? folder.source : null,
+  });
   const policies: PolicyModel[] = [];
   for (const name of listing.modules) {
     const path = join(directory, `${name}.ts`);
@@ -250,13 +272,12 @@ const discoverPolicies = async (
     policies.push({
       ...moduleRef(context, path),
       ...NO_COLLABORATORS,
-      key: keyOf(name),
-      triggerKey: policyTriggerOf(name),
+      ...common(name),
       directory: null,
       collaboratorsTypeName: typeNameFor(name),
     });
   }
-  for (const name of listing.directories) {
+  for (const name of names) {
     const policyDirectory = join(directory, name);
     if (!checkName(context, policyDirectory, name, "Policy")) continue;
     const index = join(policyDirectory, `${INDEX}.ts`);
@@ -264,10 +285,10 @@ const discoverPolicies = async (
       context.problems.add(policyDirectory, "a policy directory needs an index.ts");
       continue;
     }
-    if (policies.some((policy) => policy.key === keyOf(name))) {
+    if (policies.some((policy) => policy.key === keyFor(name))) {
       context.problems.add(
         policyDirectory,
-        `policy "${keyOf(name)}" is also defined as ${name}.ts`,
+        `policy "${keyFor(name)}" is also defined as ${name}.ts`,
       );
       continue;
     }
@@ -278,10 +299,62 @@ const discoverPolicies = async (
         await discoverCollaborators(context, policyDirectory, "policy"),
         typeNameFor(name),
       )),
-      key: keyOf(name),
-      triggerKey: policyTriggerOf(name),
+      ...common(name),
       directory: policyDirectory,
     });
+  }
+  return policies;
+};
+
+const discoverPolicies = async (
+  context: Context,
+  directory: string,
+  aggregate: string,
+): Promise<readonly PolicyModel[]> => {
+  const listing = await list(directory);
+  rejectOthers(context, directory, listing);
+  const isAggregate = (name: string): boolean => context.aggregates.has(keyOf(name));
+  const policies = [
+    ...(await discoverPolicyModules(
+      context,
+      directory,
+      listing,
+      listing.directories.filter((name) => !isAggregate(name)),
+      { aggregate, source: aggregate },
+    )),
+  ];
+  for (const name of listing.directories.filter(isAggregate)) {
+    const folder = join(directory, name);
+    if (keyOf(name) === aggregate) {
+      context.problems.add(
+        folder,
+        `these are ${aggregate}'s own policies; put them in policies/ directly`,
+      );
+      continue;
+    }
+    const inner = await list(folder);
+    rejectOthers(context, folder, inner);
+    if (inner.modules.includes(INDEX)) {
+      context.problems.add(
+        join(folder, `${INDEX}.ts`),
+        `"${keyOf(name)}" is an aggregate, so policies/${name}/ holds policies for its events; name the policy differently`,
+      );
+    }
+    for (const child of inner.directories.filter(isAggregate)) {
+      context.problems.add(
+        join(folder, child),
+        "a folder of another aggregate's policies holds policies, not more aggregates",
+      );
+    }
+    policies.push(
+      ...(await discoverPolicyModules(
+        context,
+        folder,
+        inner,
+        inner.directories.filter((child) => !isAggregate(child)),
+        { aggregate, source: keyOf(name) },
+      )),
+    );
   }
   return policies.sort(byKey);
 };
@@ -442,19 +515,38 @@ const discoverProjections = async (
 ): Promise<readonly ProjectionModel[]> => {
   const listing = await list(directory);
   rejectOthers(context, directory, listing);
-  for (const name of listing.directories) {
+  for (const name of listing.modules) {
     context.problems.add(
-      join(directory, name),
-      "projections are single modules; directories are not allowed here",
+      join(directory, `${name}.ts`),
+      "a projection lives in a folder named after the aggregate whose event it projects: projections/<aggregate>/<event>.ts",
     );
   }
-  return listing.modules
-    .filter((name) => checkName(context, join(directory, `${name}.ts`), name, "Projection"))
-    .map((name) => ({
-      ...moduleRef(context, join(directory, `${name}.ts`)),
-      eventKey: keyOf(name),
-    }))
-    .sort((a, b) => a.eventKey.localeCompare(b.eventKey));
+  const projections: ProjectionModel[] = [];
+  for (const folder of listing.directories) {
+    const folderPath = join(directory, folder);
+    if (!context.aggregates.has(keyOf(folder))) {
+      context.problems.add(folderPath, `"${keyOf(folder)}" is not an aggregate of the app`);
+      continue;
+    }
+    const inner = await list(folderPath);
+    rejectOthers(context, folderPath, inner);
+    for (const name of inner.directories) {
+      context.problems.add(
+        join(folderPath, name),
+        "projections are single modules; directories are not allowed here",
+      );
+    }
+    for (const name of inner.modules) {
+      const path = join(folderPath, `${name}.ts`);
+      if (!checkName(context, path, name, "Projection")) continue;
+      projections.push({
+        ...moduleRef(context, path),
+        aggregate: keyOf(folder),
+        eventKey: keyOf(name),
+      });
+    }
+  }
+  return projections;
 };
 
 const discoverQueries = async (
@@ -563,7 +655,6 @@ const discoverGroup = async <T>(
  */
 export const discoverProject: DiscoverProjectFunction = async ({ root, appDir = "app" }) => {
   const problems = createProblemCollector();
-  const context: Context = { root, problems };
   const app = join(root, appDir);
   if (!(await exists(app))) {
     problems.add(
@@ -572,11 +663,16 @@ export const discoverProject: DiscoverProjectFunction = async ({ root, appDir = 
     );
     problems.throwIfAny();
   }
-  const aggregates = await discoverGroup(
-    context,
-    join(app, DOMAIN),
-    "Aggregate",
-    (directory, name) => discoverAggregate(context, directory, name),
+  const domain = join(app, DOMAIN);
+  const context: Context = {
+    root,
+    problems,
+    aggregates: new Set(
+      (await exists(domain)) ? (await list(domain)).directories.map((name) => keyOf(name)) : [],
+    ),
+  };
+  const aggregates = await discoverGroup(context, domain, "Aggregate", (directory, name) =>
+    discoverAggregate(context, directory, name),
   );
   const readModels = await discoverGroup(
     context,

@@ -11,6 +11,7 @@ import * as orderCancelled from "../app/domain/order/order-cancelled.ts";
 import * as orderPaid from "../app/domain/order/order-paid.ts";
 import * as orderPlaced from "../app/domain/order/order-placed.ts";
 import * as orderPlacedUpcasts from "../app/domain/order/order-placed.upcast.ts";
+import * as customerGreetOnCustomerRegistered from "../app/domain/order/policies/customer/greet-on-customer-registered.ts";
 import * as notifyOnOrderPlaced from "../app/domain/order/policies/notify-on-order-placed/index.ts";
 import mailerMemory from "../app/domain/order/policies/notify-on-order-placed/mailer.memory.ts";
 import * as sendReceiptOnOrderPaid from "../app/domain/order/policies/send-receipt-on-order-paid.ts";
@@ -19,8 +20,8 @@ import * as orderPaymentOnOrderPaid from "../app/domain/order/processes/order-pa
 import * as orderPaymentOnTimeout from "../app/domain/order/processes/order-payment/on-timeout.ts";
 import remindersFake from "../app/domain/order/processes/order-payment/reminders.fake.ts";
 import * as orderState from "../app/domain/order/state.ts";
-import * as orderSummaryOnOrderPaid from "../app/read/order-summary/projections/order-paid.ts";
-import * as orderSummaryOnOrderPlaced from "../app/read/order-summary/projections/order-placed.ts";
+import * as orderSummaryOnOrderOrderPaid from "../app/read/order-summary/projections/order/order-paid.ts";
+import * as orderSummaryOnOrderOrderPlaced from "../app/read/order-summary/projections/order/order-placed.ts";
 import * as customerOverview from "../app/read/order-summary/queries/customer-overview.ts";
 import * as getOrder from "../app/read/order-summary/queries/get-order.ts";
 import * as listUnpaidOrders from "../app/read/order-summary/queries/list-unpaid-orders.ts";
@@ -51,6 +52,7 @@ export const registry = {
         },
       },
       policies: {
+        customerGreetOnCustomerRegistered: { module: customerGreetOnCustomerRegistered, source: "customer" },
         notifyOnOrderPlaced: {
           module: notifyOnOrderPlaced,
           collaborators: { mailer: { memory: mailerMemory } },
@@ -70,7 +72,7 @@ export const registry = {
   readModels: {
     orderSummary: {
       view: orderSummaryView,
-      projections: { orderPaid: orderSummaryOnOrderPaid, orderPlaced: orderSummaryOnOrderPlaced },
+      projections: { order: { orderPaid: orderSummaryOnOrderOrderPaid, orderPlaced: orderSummaryOnOrderOrderPlaced } },
       queries: { customerOverview, getOrder, listUnpaidOrders },
     },
   },

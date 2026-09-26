@@ -32,14 +32,15 @@ export interface DispatchOptions {
 }
 
 /**
- * What a successful dispatch returns: the aggregate version after the append and the persisted
- * events, with their types in the same order and the position of the last one in the global stream, 0 when
- * the command stored none. A read model that has projected up to `position` reflects the command.
+ * What a successful dispatch returns: the aggregate the command belongs to, its version after the
+ * append and the persisted events, with their types in the same order and the position of the
+ * last one in the global stream, 0 when the command stored none. A read model that has projected up to `position` reflects the command.
  * Scheduled commands return `scheduled: true` and no events.
  */
 export type DispatchResult =
   | {
       readonly scheduled: false;
+      readonly aggregateType: string;
       readonly aggregateId: string;
       readonly version: number;
       readonly eventIds: readonly string[];
@@ -48,6 +49,7 @@ export type DispatchResult =
     }
   | {
       readonly scheduled: true;
+      readonly aggregateType: string;
       readonly aggregateId: string;
       readonly executeAt: string;
     };

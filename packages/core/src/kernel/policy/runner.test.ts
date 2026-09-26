@@ -80,7 +80,7 @@ describe("policyTriggerFromKey", () => {
       registry: {
         aggregates: {
           order: {
-            events: {},
+            events: { orderPaid: { apply: () => ({}) }, orderPlaced: { apply: () => ({}) } },
             commands: {},
             policies: {
               a: { module: { on: "OrderPaid", handler: () => {} } },
@@ -452,5 +452,89 @@ describe("commands a policy dispatches", () => {
     await harness.dispatcher.processUntilIdle();
     expect(failuresLeft).toBe(0);
     expect(await harness.storage.scheduler.list()).toHaveLength(1);
+  });
+});
+
+describe("policies and the aggregate whose events they react to", () => {
+  const reacted: string[] = [];
+  const apply = () => ({});
+  const twoAggregates: Registry = {
+    aggregates: {
+      order: {
+        ...orderAggregateEntry(),
+        policies: {
+          notifyOnOrderPlaced: {
+            module: {
+              handler: ({ event }: { event: { aggregateType: string } }) => {
+                reacted.push(`order saw ${event.aggregateType}.OrderPlaced`);
+              },
+            },
+          },
+          ledgerNotifyOnOrderPlaced: {
+            module: {
+              handler: ({ event }: { event: { aggregateType: string } }) => {
+                reacted.push(`order saw ${event.aggregateType}.OrderPlaced from ledger/`);
+              },
+            },
+            source: "ledger",
+          },
+        },
+      },
+      ledger: {
+        events: { orderPlaced: { apply } },
+        commands: {
+          record: {
+            module: {
+              handler: ({ events }: { events: Record<string, () => unknown> }) => [
+                events.orderPlaced?.(),
+              ],
+            },
+          },
+        },
+        policies: {},
+        processes: {},
+      },
+    },
+    readModels: {},
+  };
+
+  it("routes an event by its aggregate and type, even when two aggregates share the name", async () => {
+    reacted.length = 0;
+    const harness = await createReactiveHarness({ registry: twoAggregates });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.dispatcher.processUntilIdle();
+    expect(reacted).toEqual(["order saw order.OrderPlaced"]);
+
+    reacted.length = 0;
+    await harness.pipeline.dispatch({ type: "Record", payload: { ledgerId: "l-1" } });
+    await harness.dispatcher.processUntilIdle();
+    expect(reacted).toEqual(["order saw ledger.OrderPlaced from ledger/"]);
+  });
+
+  it("refuses a policy whose trigger is not an event of its aggregate, or whose aggregate is gone", () => {
+    const config = resolveConfig({ storage: memory() });
+    const withPolicy = (policy: Registry["aggregates"][string]["policies"][string]): Registry => ({
+      ...twoAggregates,
+      aggregates: {
+        ...twoAggregates.aggregates,
+        order: { ...orderAggregateEntry(), policies: { payOnOrderShipped: policy } },
+      },
+    });
+    expect(() =>
+      buildPolicies({ registry: withPolicy({ module: { handler: () => {} } }), config }),
+    ).toThrow(
+      'aggregates.order.policies.payOnOrderShipped: "OrderShipped" is not an event of the aggregate "order"',
+    );
+    expect(() =>
+      buildPolicies({
+        registry: withPolicy({
+          module: { on: "OrderPlaced", handler: () => {} },
+          source: "billing",
+        }),
+        config,
+      }),
+    ).toThrow(
+      'aggregates.order.policies.payOnOrderShipped: there is no aggregate "billing" whose events to react to',
+    );
   });
 });

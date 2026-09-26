@@ -14,12 +14,14 @@ export interface PolicyModule {
 }
 
 /**
- * A policy in the registry: its module plus the collaborator implementations found next to it,
- * when the policy is a directory (`policies/<name>/index.ts`).
+ * A policy in the registry: its module, the collaborator implementations found next to it when
+ * the policy is a directory (`policies/<name>/index.ts`), and the aggregate whose events it reacts
+ * to when that is not the one it lives in (`policies/<aggregate>/...`).
  */
 export interface PolicyEntry {
   readonly module: PolicyModule;
   readonly collaborators?: CollaboratorImplementations;
+  readonly source?: string;
 }
 
 /**

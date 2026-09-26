@@ -124,7 +124,22 @@ const commandFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFi
 const storedEvent = (aggregate: AggregateModel, eventKey: string): string =>
   `core.StoredEventOf<generated.${eventsTypeName(aggregate.name)}, "${eventKey}">`;
 
-const policyFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFile[] =>
+const anyEvent = (aggregate: AggregateModel): string =>
+  `core.StoredEventOf<generated.${eventsTypeName(aggregate.name)}, keyof generated.${eventsTypeName(aggregate.name)}>`;
+
+const eventOf = (model: ProjectModel, aggregateName: string, eventKey: string | null): string => {
+  const aggregate = model.aggregates.find((candidate) => candidate.name === aggregateName);
+  if (aggregate === undefined) return "core.StoredEvent";
+  return eventKey !== null && aggregate.events.some((event) => event.key === eventKey)
+    ? storedEvent(aggregate, eventKey)
+    : anyEvent(aggregate);
+};
+
+const policyFiles = (
+  model: ProjectModel,
+  aggregate: AggregateModel,
+  typesPath: string,
+): GeneratedFile[] =>
   aggregate.policies.map((policy) =>
     render(plusTypesPath(policy.path), typesPath, {
       imports: { generated: true, module: null },
@@ -136,9 +151,7 @@ const policyFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFil
             "core.PolicyHandlerArgs",
             withCollaborators(
               [
-                policy.triggerKey === null
-                  ? `core.StoredEventOf<generated.${eventsTypeName(aggregate.name)}, keyof generated.${eventsTypeName(aggregate.name)}>`
-                  : storedEvent(aggregate, policy.triggerKey),
+                eventOf(model, policy.source ?? aggregate.name, policy.triggerKey),
                 "generated.Commands",
               ],
               policy,
@@ -212,9 +225,6 @@ const processFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFi
     return files;
   });
 
-const eventOwner = (model: ProjectModel, eventKey: string): AggregateModel | undefined =>
-  model.aggregates.find((aggregate) => aggregate.events.some((event) => event.key === eventKey));
-
 const readModelFiles = (
   model: ProjectModel,
   readModel: ReadModelModel,
@@ -228,9 +238,7 @@ const readModelFiles = (
       members: [["FieldsArgs", "core.FieldsArgs"]],
     }),
     ...readModel.projections.map((projection) => {
-      const owner = eventOwner(model, projection.eventKey);
-      const event =
-        owner === undefined ? "core.StoredEvent" : storedEvent(owner, projection.eventKey);
+      const event = eventOf(model, projection.aggregate, projection.eventKey);
       return render(plusTypesPath(projection.path), typesPath, {
         imports: { generated: true, module: null },
         namespace: "Projection",
@@ -273,7 +281,7 @@ export const emitPlusTypes: EmitPlusTypesFunction = ({ model, typesPath }) => [
   ...model.aggregates.flatMap((aggregate) => [
     ...eventFiles(aggregate, typesPath),
     ...commandFiles(aggregate, typesPath),
-    ...policyFiles(aggregate, typesPath),
+    ...policyFiles(model, aggregate, typesPath),
     ...processFiles(aggregate, typesPath),
   ]),
   ...model.readModels.flatMap((readModel) => readModelFiles(model, readModel, typesPath)),

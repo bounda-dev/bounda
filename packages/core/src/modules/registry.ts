@@ -28,11 +28,12 @@ export interface AggregateEntry {
 }
 
 /**
- * One read model in the registry.
+ * One read model in the registry. Projections are grouped by the aggregate whose events they
+ * project, then keyed by event: `projections.order.orderPlaced`.
  */
 export interface ReadModelEntry {
   readonly view: ViewModule;
-  readonly projections: Readonly<Record<string, ProjectionModule>>;
+  readonly projections: Readonly<Record<string, Readonly<Record<string, ProjectionModule>>>>;
   readonly queries: Readonly<Record<string, QueryModule>>;
 }
 

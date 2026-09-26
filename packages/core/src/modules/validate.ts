@@ -82,11 +82,20 @@ const validateReadModel = (
   problems: Problem[],
   name: string,
   readModel: Registry["readModels"][string],
+  aggregates: Registry["aggregates"],
 ): void => {
   const base = `readModels.${name}`;
   requireFunction(problems, readModel.view, `${base}.view`, "fields");
-  for (const [key, projection] of Object.entries(readModel.projections)) {
-    requireFunction(problems, projection, `${base}.projections.${key}`, "project");
+  for (const [aggregate, projections] of Object.entries(readModel.projections)) {
+    if (!(aggregate in aggregates)) {
+      problems.push({
+        path: `${base}.projections.${aggregate}`,
+        message: `there is no aggregate "${aggregate}" whose events to project`,
+      });
+    }
+    for (const [key, projection] of Object.entries(projections)) {
+      requireFunction(problems, projection, `${base}.projections.${aggregate}.${key}`, "project");
+    }
   }
   for (const [key, query] of Object.entries(readModel.queries)) {
     requireFunction(problems, query, `${base}.queries.${key}`, "handler");
@@ -107,7 +116,7 @@ export const validateRegistry: ValidateRegistryFunction = (registry) => {
     validateAggregate(problems, name, aggregate);
   }
   for (const [name, readModel] of Object.entries(registry.readModels)) {
-    validateReadModel(problems, name, readModel);
+    validateReadModel(problems, name, readModel, registry.aggregates);
   }
   if (problems.length > 0) {
     const details = problems.map((problem) => `  ${problem.path}: ${problem.message}`).join("\n");

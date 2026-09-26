@@ -38,7 +38,8 @@ app/
     order-summary/                  a read model
       view.ts                       fields
       projections/
-        order-placed.ts             reacts to OrderPlaced
+        order/                      events of the order aggregate
+          order-placed.ts           reacts to order's OrderPlaced
       queries/
         get-order.ts                payload, repository, handler
 ```
@@ -55,10 +56,17 @@ them into the names your code sees:
 | `issue-invoice-on-order-paid.ts` | `issueInvoiceOnOrderPaid` | reacts to `OrderPaid` |
 | `on-order-paid.ts` | handler for `orderPaid` | |
 | `inventory.fake.ts` | collaborator `inventory`, implementation `fake` | |
+| `policies/payment/refund-on-payment-failed.ts` | `paymentRefundOnPaymentFailed` | reacts to payment's `PaymentFailed` |
 | `order-summary/` | `orderSummary` | `OrderSummaryRow` |
 
 Files that start with `_` or `.`, tests (`*.test.ts`, `*.test-d.ts`), declarations (`*.d.ts`) and
 `+types` directories are ignored.
+
+An event belongs to its aggregate: `order`'s `Cancelled` and `subscription`'s `Cancelled` are two
+events, and a handler that reacts to one never sees the other. A file refers to the events of the
+aggregate it sits in; a folder named after another aggregate holds what reacts to that
+aggregate's events. A read model has no aggregate of its own, so its projections always sit in one
+of those folders.
 
 ## Aggregates: `app/domain/<aggregate>/`
 
@@ -166,6 +174,12 @@ export const handler = async ({ event, commands }: Policy.HandlerArgs) => {
 };
 ```
 
+A policy that reacts to another aggregate's event sits in a folder named after that aggregate:
+`app/domain/order/policies/payment/cancel-order-on-payment-failed.ts` is an `order` policy that
+reacts to `payment`'s `PaymentFailed`. Its key carries the aggregate, `paymentCancelOrderOnPaymentFailed`,
+so it never collides with an `order` policy of the same name. A policy cannot be named after an
+aggregate, and one whose trigger is not an event of the aggregate it listens to fails at boot.
+
 Policies dispatch through `commands`, the typed facade of every command in the app. A command can
 be delayed: `commands.sendReminder({ orderId }, { delay: "24h" })`. The compiler checks a literal
 duration; for one that comes from the environment, `asDuration` from `@bounda-dev/core` checks it
@@ -242,10 +256,11 @@ export const fields = ({ f }: View.FieldsArgs) => ({
 });
 ```
 
-A projection `projections/<event>.ts` reacts to that event, or exports `on` for several:
+A projection `projections/<aggregate>/<event>.ts` reacts to that aggregate's event, or exports
+`on` for several of that aggregate's events:
 
 ```ts
-// app/read/order-summary/projections/order-placed.ts
+// app/read/order-summary/projections/order/order-placed.ts
 import type { Projection } from "./+types/order-placed";
 
 export const project = async ({ event, table }: Projection.Args) => {

@@ -32,20 +32,22 @@ const registry = {
         fields: ({ f }: FieldsArgs) => ({ orderId: f.string().primaryKey(), total: f.number() }),
       },
       projections: {
-        orderPlaced: {
-          project: async ({
-            event,
-            table,
-          }: {
-            event: { aggregateId: string; payload: { total: number } };
-            table: Table<Row>;
-          }) => {
-            if (mode === "throws") throw new Error("projection broken");
-            await holdProjection?.();
-            await table.upsert({
-              orderId: event.aggregateId,
-              total: mode === "halved" ? event.payload.total / 2 : event.payload.total,
-            });
+        order: {
+          orderPlaced: {
+            project: async ({
+              event,
+              table,
+            }: {
+              event: { aggregateId: string; payload: { total: number } };
+              table: Table<Row>;
+            }) => {
+              if (mode === "throws") throw new Error("projection broken");
+              await holdProjection?.();
+              await table.upsert({
+                orderId: event.aggregateId,
+                total: mode === "halved" ? event.payload.total / 2 : event.payload.total,
+              });
+            },
           },
         },
       },
@@ -279,15 +281,20 @@ describe("rebuildReadModel", () => {
         orderSummary: {
           ...registry.readModels.orderSummary,
           projections: {
-            orderPlaced: {
-              project: async ({
-                event,
-                table,
-              }: {
-                event: { aggregateId: string; payload: { total: number } };
-                table: Table<Row>;
-              }) => {
-                await table.upsert({ orderId: event.aggregateId, total: event.payload.total * 2 });
+            order: {
+              orderPlaced: {
+                project: async ({
+                  event,
+                  table,
+                }: {
+                  event: { aggregateId: string; payload: { total: number } };
+                  table: Table<Row>;
+                }) => {
+                  await table.upsert({
+                    orderId: event.aggregateId,
+                    total: event.payload.total * 2,
+                  });
+                },
               },
             },
           },
@@ -433,13 +440,15 @@ describe("rebuildReadModel", () => {
       readModels: {
         orderSummary: {
           ...registry.readModels.orderSummary,
-          projections: { orderPlaced: {} as never },
+          projections: { order: { orderPlaced: {} as never } },
         },
       },
     };
     await expect(
       rebuildReadModel({ registry: broken, config: { storage: memory() }, name: "orderSummary" }),
-    ).rejects.toThrow(/Invalid registry:\n {2}readModels\.orderSummary\.projections\.orderPlaced/);
+    ).rejects.toThrow(
+      /Invalid registry:\n {2}readModels\.orderSummary\.projections\.order\.orderPlaced/,
+    );
   });
 
   it("refuses a storage definition without factories", async () => {

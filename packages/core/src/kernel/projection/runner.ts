@@ -9,6 +9,7 @@ import {
   PartialBatchError,
 } from "../dispatch/delivery.ts";
 import type { ProjectionRuntime, ReadModelRuntime } from "../read-model/build-read-models.ts";
+import { qualifiedEventType } from "../shared/qualified-event.ts";
 import { errorDetails } from "../shared/retry.ts";
 import { ATTRIBUTES, traced } from "../telemetry.ts";
 
@@ -63,7 +64,8 @@ export const projectBatch: ProjectBatchFunction = async ({
   let done = 0;
   for (const event of events) {
     if (done > 0 && clock.now().getTime() - started >= maxMs) return done;
-    for (const projection of readModel.projectionsByEvent[event.type] ?? []) {
+    const qualified = qualifiedEventType(event.aggregateType, event.type);
+    for (const projection of readModel.projectionsByEvent[qualified] ?? []) {
       try {
         await traced({
           name: `bounda.projection ${readModel.name}.${projection.key}`,
@@ -162,6 +164,6 @@ export const createProjectionSubscriber: CreateProjectionSubscriberFunction = ({
   });
   return {
     ...subscriber,
-    reactsTo: (eventType) => (readModel.projectionsByEvent[eventType]?.length ?? 0) > 0,
+    reactsTo: (qualified) => (readModel.projectionsByEvent[qualified]?.length ?? 0) > 0,
   };
 };

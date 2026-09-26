@@ -8,12 +8,15 @@ import type { ProjectionModule } from "../../modules/projection.ts";
 import type { QueryModule } from "../../modules/query.ts";
 import type { ReadModelEntry, Registry } from "../../modules/registry.ts";
 import { type FieldsRecord, fieldBuilder } from "../../modules/view.ts";
+import { qualifiedEventType } from "../shared/qualified-event.ts";
 
 /**
- * A compiled projection: the event types it reacts to and its `project`.
+ * A compiled projection: the aggregate whose events it projects, the event types it reacts to
+ * and its `project`.
  */
 export interface ProjectionRuntime {
   readonly key: string;
+  readonly aggregate: string;
   readonly on: readonly string[];
   readonly project: (args: Record<string, unknown>) => unknown;
 }
@@ -25,6 +28,9 @@ export interface ReadModelRuntime {
   readonly name: string;
   readonly fields: FieldsRecord;
   readonly ports: ReadModelPorts;
+  /**
+   * Keyed by qualified event type, `order.OrderPlaced`.
+   */
   readonly projectionsByEvent: Readonly<Record<string, readonly ProjectionRuntime[]>>;
   readonly queries: Readonly<Record<string, QueryModule>>;
 }
@@ -42,17 +48,21 @@ const triggersOf = (key: string, module: ProjectionModule): readonly string[] =>
       : module.on;
 
 const groupByEvent = (
-  projections: Readonly<Record<string, ProjectionModule>>,
+  projections: ReadModelEntry["projections"],
 ): Record<string, readonly ProjectionRuntime[]> => {
   const grouped: Record<string, ProjectionRuntime[]> = {};
-  for (const [key, module] of Object.entries(projections)) {
-    const runtime: ProjectionRuntime = {
-      key,
-      on: triggersOf(key, module),
-      project: module.project as ProjectionRuntime["project"],
-    };
-    for (const type of runtime.on) {
-      grouped[type] = [...(grouped[type] ?? []), runtime];
+  for (const [aggregate, modules] of Object.entries(projections)) {
+    for (const [key, module] of Object.entries(modules)) {
+      const runtime: ProjectionRuntime = {
+        key: `${aggregate}.${key}`,
+        aggregate,
+        on: triggersOf(key, module),
+        project: module.project as ProjectionRuntime["project"],
+      };
+      for (const type of runtime.on) {
+        const qualified = qualifiedEventType(aggregate, type);
+        grouped[qualified] = [...(grouped[qualified] ?? []), runtime];
+      }
     }
   }
   return grouped;

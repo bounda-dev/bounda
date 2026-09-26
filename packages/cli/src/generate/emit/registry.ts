@@ -70,7 +70,11 @@ const collectImports = (model: ProjectModel): readonly ImportEntry[] => {
   for (const readModel of model.readModels) {
     add(joinKeys(readModel.name, "view"), readModel.name, readModel.view.path);
     for (const projection of readModel.projections) {
-      add(joinKeys(readModel.name, "on", projection.eventKey), readModel.name, projection.path);
+      add(
+        joinKeys(readModel.name, "on", projection.aggregate, projection.eventKey),
+        readModel.name,
+        projection.path,
+      );
     }
     for (const query of readModel.queries) add(query.key, readModel.name, query.path);
   }
@@ -112,22 +116,31 @@ const collaboratorsOf = (owner: CollaboratorOwnerModel, aliases: Aliases): strin
 
 interface OwnerEntry extends CollaboratorOwnerModel {
   readonly key: string;
+  readonly source?: string | null;
 }
+
+const sourceOf = (owner: OwnerEntry): string =>
+  owner.source === undefined || owner.source === null ? "" : `, source: "${owner.source}"`;
 
 const emitEntries = (owners: readonly OwnerEntry[], aliases: Aliases, indent: string): string => {
   if (owners.length === 0) return "{}";
   if (owners.every((owner) => owner.collaborators.length === 0)) {
-    return record(owners.map((owner) => [owner.key, `{ module: ${aliases.of(owner.path)} }`]));
+    return record(
+      owners.map((owner) => [owner.key, `{ module: ${aliases.of(owner.path)}${sourceOf(owner)} }`]),
+    );
   }
   const inner = `${indent}  `;
   const lines = owners.map((owner) => {
     if (owner.collaborators.length === 0) {
-      return `${inner}${owner.key}: { module: ${aliases.of(owner.path)} },`;
+      return `${inner}${owner.key}: { module: ${aliases.of(owner.path)}${sourceOf(owner)} },`;
     }
     return [
       `${inner}${owner.key}: {`,
       `${inner}  module: ${aliases.of(owner.path)},`,
       `${inner}  collaborators: { ${collaboratorsOf(owner, aliases)} },`,
+      ...(owner.source === undefined || owner.source === null
+        ? []
+        : [`${inner}  source: "${owner.source}",`]),
       `${inner}},`,
     ].join("\n");
   });
@@ -181,12 +194,22 @@ const emitAggregate = (aggregate: AggregateModel, aliases: Aliases): string => {
   ].join("\n");
 };
 
+const emitProjections = (readModel: ReadModelModel, aliases: Aliases): string => {
+  const byAggregate = new Map<string, (readonly [string, string])[]>();
+  for (const projection of readModel.projections) {
+    const pairs = byAggregate.get(projection.aggregate) ?? [];
+    pairs.push([projection.eventKey, aliases.of(projection.path)]);
+    byAggregate.set(projection.aggregate, pairs);
+  }
+  return record([...byAggregate.entries()].map(([aggregate, pairs]) => [aggregate, record(pairs)]));
+};
+
 const emitReadModel = (readModel: ReadModelModel, aliases: Aliases): string => {
   const indent = "      ";
   return [
     `    ${readModel.name}: {`,
     `${indent}view: ${aliases.of(readModel.view.path)},`,
-    `${indent}projections: ${record(readModel.projections.map((projection) => [projection.eventKey, aliases.of(projection.path)]))},`,
+    `${indent}projections: ${emitProjections(readModel, aliases)},`,
     `${indent}queries: ${record(readModel.queries.map((query) => [query.key, aliases.of(query.path)]))},`,
     "    },",
   ].join("\n");

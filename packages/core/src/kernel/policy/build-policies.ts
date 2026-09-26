@@ -2,17 +2,23 @@ import { selectCollaborators } from "../../config/collaborators.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import { parseDuration } from "../../contracts/duration.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
+import { capitalize } from "../../modules/naming.ts";
 import type { PolicyModule } from "../../modules/policy.ts";
 import type { Registry } from "../../modules/registry.ts";
+import { qualifiedEventType } from "../shared/qualified-event.ts";
 
 /**
- * A compiled policy: which aggregate it belongs to, which event types trigger it, its handler,
- * the collaborators chosen from the configuration and, for a delayed policy, how long after the
- * event it runs.
+ * A compiled policy: which aggregate it belongs to, whose events trigger it and which ones, its
+ * handler, the collaborators chosen from the configuration and, for a delayed policy, how long
+ * after the event it runs.
  */
 export interface PolicyRuntime {
   readonly name: string;
   readonly aggregate: string;
+  /**
+   * The aggregate whose events the policy reacts to: its own, or the one of its folder.
+   */
+  readonly source: string;
   readonly on: readonly string[];
   readonly handler: (args: Record<string, unknown>) => unknown;
   readonly collaborators: Readonly<Record<string, unknown>>;
@@ -22,6 +28,9 @@ export interface PolicyRuntime {
 export interface PoliciesRuntime {
   readonly all: readonly PolicyRuntime[];
   readonly byName: Readonly<Record<string, PolicyRuntime>>;
+  /**
+   * Keyed by qualified event type, `order.OrderPlaced`.
+   */
   readonly byEvent: Readonly<Record<string, readonly PolicyRuntime[]>>;
 }
 
@@ -38,7 +47,11 @@ export interface PolicyTriggerFromKeyFunction {
 export const policyTriggerFromKey: PolicyTriggerFromKeyFunction = (key) =>
   TRIGGER_SUFFIX.exec(key)?.[1] ?? null;
 
-const triggersOf = (aggregate: string, key: string, module: PolicyModule): readonly string[] => {
+const declaredTriggers = (
+  aggregate: string,
+  key: string,
+  module: PolicyModule,
+): readonly string[] => {
   if (module.on !== undefined) return typeof module.on === "string" ? [module.on] : module.on;
   const derived = policyTriggerFromKey(key);
   if (derived === null) {
@@ -47,6 +60,32 @@ const triggersOf = (aggregate: string, key: string, module: PolicyModule): reado
     );
   }
   return [derived];
+};
+
+const triggersOf = (
+  registry: Registry,
+  aggregate: string,
+  key: string,
+  module: PolicyModule,
+  source: string,
+): readonly string[] => {
+  const path = `aggregates.${aggregate}.policies.${key}`;
+  const events = registry.aggregates[source]?.events;
+  if (events === undefined) {
+    throw new ConfigurationError(
+      `${path}: there is no aggregate "${source}" whose events to react to`,
+    );
+  }
+  const known = new Set<string>(Object.keys(events).map(capitalize));
+  const triggers = declaredTriggers(aggregate, key, module);
+  for (const trigger of triggers) {
+    if (!known.has(trigger)) {
+      throw new ConfigurationError(
+        `${path}: "${trigger}" is not an event of the aggregate "${source}"`,
+      );
+    }
+  }
+  return triggers;
 };
 
 const delayOf = (aggregate: string, key: string, module: PolicyModule): number | null => {
@@ -70,7 +109,9 @@ export interface BuildPoliciesFunction {
 }
 
 /**
- * Compiles every policy of the registry and indexes them by the event types they react to.
+ * Compiles every policy of the registry and indexes them by the qualified event types they react
+ * to. A policy whose trigger is not an event of the aggregate it listens to is a configuration
+ * error: it would never run.
  */
 export const buildPolicies: BuildPoliciesFunction = ({ registry, config }) => {
   const all = Object.entries(registry.aggregates).flatMap(([aggregate, entry]) =>
@@ -78,7 +119,8 @@ export const buildPolicies: BuildPoliciesFunction = ({ registry, config }) => {
       ([key, policy]): PolicyRuntime => ({
         name: `${aggregate}.${key}`,
         aggregate,
-        on: triggersOf(aggregate, key, policy.module),
+        source: policy.source ?? aggregate,
+        on: triggersOf(registry, aggregate, key, policy.module, policy.source ?? aggregate),
         handler: policy.module.handler as PolicyRuntime["handler"],
         delayMs: delayOf(aggregate, key, policy.module),
         collaborators: selectCollaborators({
@@ -92,7 +134,10 @@ export const buildPolicies: BuildPoliciesFunction = ({ registry, config }) => {
   );
   const byEvent: Record<string, PolicyRuntime[]> = {};
   for (const policy of all) {
-    for (const type of policy.on) byEvent[type] = [...(byEvent[type] ?? []), policy];
+    for (const type of policy.on) {
+      const qualified = qualifiedEventType(policy.source, type);
+      byEvent[qualified] = [...(byEvent[qualified] ?? []), policy];
+    }
   }
   return {
     all,

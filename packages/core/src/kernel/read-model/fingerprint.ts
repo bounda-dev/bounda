@@ -26,17 +26,22 @@ export interface ReadModelSourceFunction {
 }
 
 /**
- * The code that shapes a read model's rows, as text: its fields, then every projection by name
- * with the events it listens to.
+ * The code that shapes a read model's rows, as text: its fields, then every projection by
+ * aggregate and name with the events it listens to.
  */
 export const readModelSource: ReadModelSourceFunction = (entry) =>
   [
     String(entry.view.fields),
     ...Object.entries(entry.projections)
+      .flatMap(([aggregate, projections]) =>
+        Object.entries(projections).map(
+          ([key, projection]) => [`${aggregate}.${key}`, projection] as const,
+        ),
+      )
       .sort(([left], [right]) => left.localeCompare(right))
       .map(
-        ([key, projection]) =>
-          `${key}|${String(projection.on ?? "")}|${String(projection.project)}`,
+        ([name, projection]) =>
+          `${name}|${String(projection.on ?? "")}|${String(projection.project)}`,
       ),
   ].join("\n");
 

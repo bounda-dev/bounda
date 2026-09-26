@@ -23,7 +23,7 @@ const order: Registry["aggregates"][string] = {
 
 const orderSummary: Registry["readModels"][string] = {
   view: { fields: () => ({}) },
-  projections: { orderPlaced: { project: noop } },
+  projections: { order: { orderPlaced: { project: noop } } },
   queries: { getOrder: { handler: noop } },
 };
 
@@ -127,6 +127,26 @@ describe("validateRegistry", () => {
           '  aggregates.order.policies.notifyOnOrderPlaced: missing export "handler" (expected a function)',
           "  aggregates.order.policies.notifyOnOrderPlaced.collaborators.mailer: has no implementations",
           "  aggregates.order.processes.orderPayment.collaborators.gateway: has no implementations",
+        ].join("\n"),
+      ),
+    );
+  });
+
+  it("requires every projection folder to name an aggregate of the app", () => {
+    const registry: Registry = {
+      aggregates: { order },
+      readModels: {
+        orderSummary: {
+          ...orderSummary,
+          projections: { ...orderSummary.projections, billing: { invoiced: { project: noop } } },
+        },
+      },
+    };
+    expect(() => validateRegistry(registry)).toThrow(
+      new ConfigurationError(
+        [
+          "Invalid registry:",
+          '  readModels.orderSummary.projections.billing: there is no aggregate "billing" whose events to project',
         ].join("\n"),
       ),
     );

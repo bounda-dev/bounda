@@ -97,7 +97,11 @@ describe("buildProcesses", () => {
     });
     expect([...(all[0]?.startedBy ?? [])]).toEqual(["OrderPlaced"]);
     expect(Object.keys(all[0]?.handlers ?? {})).toEqual(["OrderPaid"]);
-    expect(Object.keys(byEvent).sort()).toEqual(["OrderArchived", "OrderPaid", "OrderPlaced"]);
+    expect(Object.keys(byEvent).sort()).toEqual([
+      "order.OrderArchived",
+      "order.OrderPaid",
+      "order.OrderPlaced",
+    ]);
   });
 
   it("falls back to the configured default timeout", () => {

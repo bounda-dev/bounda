@@ -19,7 +19,7 @@ app/domain/order/           the order aggregate
   commands/place-order.ts   a command: payload and handler
 app/read/orders/            a read model
   view.ts                   its fields
-  projections/order-placed.ts
+  projections/order/order-placed.ts   projects the order's OrderPlaced
   queries/list-orders.ts
 bounda.config.ts            storage and collaborators
 tests/orders.test.ts        the app on an in-memory adapter
