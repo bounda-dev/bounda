@@ -18,6 +18,11 @@ export interface CreateCommandsFacadeArgs {
    * inherit the correlation of the event being handled.
    */
   readonly context?: CausationContext;
+  /**
+   * Set for a reaction's facade: the id each dispatched command gets, so a retried run dispatches
+   * the same commands with the same ids.
+   */
+  readonly commandIds?: (commandType: string) => string;
 }
 
 export interface CreateCommandsFacadeFunction {
@@ -32,6 +37,7 @@ export const createCommandsFacade: CreateCommandsFacadeFunction = ({
   aggregates,
   pipeline,
   context,
+  commandIds,
 }) =>
   Object.fromEntries(
     Object.values(aggregates.commandsByType).map(({ command }) => [
@@ -42,6 +48,7 @@ export const createCommandsFacade: CreateCommandsFacadeFunction = ({
           payload,
           ...(options === undefined ? {} : { options }),
           ...(context === undefined ? {} : { context: { ...context, depth: context.depth + 1 } }),
+          commandId: commandIds?.(command.type),
         }),
     ]),
   );

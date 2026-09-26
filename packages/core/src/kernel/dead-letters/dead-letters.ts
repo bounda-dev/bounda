@@ -12,7 +12,7 @@ import { createCommandsFacade } from "../command/facade.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
 import type { PoliciesRuntime } from "../policy/build-policies.ts";
 import { PROCESS_TIMEOUT_COMMAND, type ProcessRunner } from "../process/runner.ts";
-import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
+import { createReactionCommandIds, deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { withTimeout } from "../shared/timeout.ts";
 
 /**
@@ -99,20 +99,20 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
       throw new ConfigurationError(`Policy "${letter.subscriber}" is no longer in the registry`);
     }
     const event = await eventOf(letter);
-    const commands = createCommandsFacade({ aggregates, pipeline, context: contextOf(event) });
+    const idempotencyKey = deriveIdempotencyKey({
+      kind: "policy",
+      handler: policy.name,
+      subject: event.id,
+      replay,
+    });
+    const commands = createCommandsFacade({
+      aggregates,
+      pipeline,
+      context: contextOf(event),
+      commandIds: createReactionCommandIds(idempotencyKey),
+    });
     await withTimeout({
-      run: () =>
-        policy.handler({
-          ...policy.collaborators,
-          event,
-          commands,
-          idempotencyKey: deriveIdempotencyKey({
-            kind: "policy",
-            handler: policy.name,
-            subject: event.id,
-            replay,
-          }),
-        }),
+      run: () => policy.handler({ ...policy.collaborators, event, commands, idempotencyKey }),
       timeoutMs: config.forAggregate(policy.aggregate).policies.timeoutMs,
       subject: `policy ${policy.name}`,
       clock,

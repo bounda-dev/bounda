@@ -117,8 +117,10 @@ A few rules keep it correct:
 - **Without a key on the provider's side**, look the operation up by your own reference before
   calling again, and give a process a time-out for a provider that may never answer.
 - **The command a reaction dispatches can arrive twice**, when the reaction is retried after
-  dispatching it. Its handler decides from state and returns no events the second time, as
-  `recordConfirmationSent` does in the [storefront example](/guides/storefront-example/).
+  dispatching it. The retry gives it the same id, so a delayed command stays scheduled once and
+  the command's own `idempotencyKey` does not change, but one that already ran runs again: its
+  handler decides from state and returns no events the second time, as `recordConfirmationSent`
+  does in the [storefront example](/guides/storefront-example/).
 
 ## Retries and deadlines
 

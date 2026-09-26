@@ -26,8 +26,9 @@ export interface DispatchArgs {
   readonly options?: DispatchOptions;
   readonly context?: CausationContext;
   /**
-   * The id a scheduled command was given when it was scheduled, so it keeps it when it runs and
-   * on every retry of the worker. Otherwise a new one.
+   * The id the command gets instead of a new one: the id a scheduled command was given when it
+   * was scheduled, so it keeps it when it runs and on every retry of the worker, or the one a
+   * reaction derives, so a retried reaction dispatches the same command.
    */
   readonly commandId?: string | undefined;
 }

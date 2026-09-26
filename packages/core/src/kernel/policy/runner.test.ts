@@ -10,7 +10,7 @@ import { buildPolicies, policyTriggerFromKey } from "./build-policies.ts";
 
 interface PolicyArgs {
   readonly event: { aggregateId: string; metadata: { correlationId: string; depth: number } };
-  readonly commands: Record<string, (payload: unknown) => Promise<unknown>>;
+  readonly commands: Record<string, (payload: unknown, options?: object) => Promise<unknown>>;
   readonly idempotencyKey: string;
 }
 
@@ -411,5 +411,46 @@ describe("policy collaborators", () => {
     ).toThrow(
       'Policy "order.mailOnOrderPlaced", collaborator "mailer": choose an implementation with policies.order.mailOnOrderPlaced.mailer.use. Available: "smtp", "memory"',
     );
+  });
+});
+
+describe("commands a policy dispatches", () => {
+  let failuresLeft = 0;
+  const scheduling: Registry = {
+    aggregates: {
+      order: {
+        ...orderAggregateEntry(),
+        policies: {
+          archiveLaterOnOrderPlaced: {
+            module: {
+              handler: async ({ event, commands }: PolicyArgs) => {
+                await commands.archiveOrder?.({ orderId: event.aggregateId }, { delay: "1h" });
+                if (failuresLeft > 0) {
+                  failuresLeft -= 1;
+                  throw new Error("network");
+                }
+              },
+            },
+          },
+        },
+      },
+    },
+    readModels: {},
+  };
+
+  it("schedules a delayed command once when the policy is retried after dispatching it", async () => {
+    failuresLeft = 1;
+    const harness = await createReactiveHarness({
+      registry: scheduling,
+      config: {
+        runtime: { policies: { retry: { strategy: "fixed", maxAttempts: 3, baseDelay: "1s" } } },
+      },
+    });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.dispatcher.processUntilIdle();
+    harness.clock.advance(1_000);
+    await harness.dispatcher.processUntilIdle();
+    expect(failuresLeft).toBe(0);
+    expect(await harness.storage.scheduler.list()).toHaveLength(1);
   });
 });
