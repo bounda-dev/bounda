@@ -19,9 +19,10 @@ pnpm start
 ## What happens when an order is placed
 
 1. `placeOrder` validates the items, computes the total and appends `OrderPlaced`.
-2. The policy `send-confirmation-on-order-placed` dispatches `sendConfirmation`, whose handler
-   calls the `notifier` collaborator. `bounda.config.ts` picks `notifier.console` for the demo
-   and the tests pick `notifier.memory`, which records what was sent.
+2. The policy `send-confirmation-on-order-placed` sends the confirmation through its `notifier`
+   collaborator, then dispatches `recordConfirmationSent`, which appends `ConfirmationSent`.
+   `bounda.config.ts` picks `notifier.console` for the demo and the tests pick
+   `notifier.memory`, which records what was sent.
 3. The policy `schedule-reminder-on-order-placed` dispatches `sendReminder` with a delay of a
    day. The reminder is a scheduled command; when it runs, the handler appends `ReminderSent`
    only if the order is still `placed`.
@@ -36,13 +37,34 @@ handler.
 
 ## Things worth copying
 
-**A collaborator with two implementations.** `commands/send-confirmation/index.ts` declares the
-contract; `notifier.console.ts` and `notifier.memory.ts` implement it. The config decides:
+**An effect after the commit.** The confirmation goes out from a policy, once `OrderPlaced` is
+stored, not from the command that places the order: a command handler can run again on a
+concurrency conflict, and it runs before anything is decided. The policy hands the notifier its
+`idempotencyKey`, the same on every retry, and reports back with a command whose handler ignores a
+second report:
+
+```ts
+// policies/send-confirmation-on-order-placed/index.ts
+export const handler = async ({ event, commands, notifier, idempotencyKey }: Policy.HandlerArgs) => {
+  await notifier.send(
+    { orderId: event.aggregateId, customerId: event.payload.customerId, total: event.payload.total },
+    idempotencyKey,
+  );
+  await commands.recordConfirmationSent({ orderId: event.aggregateId });
+};
+```
+
+**A collaborator with two implementations.** The policy's `index.ts` declares the contract;
+`notifier.console.ts` and `notifier.memory.ts` implement it. The config decides:
 
 ```ts
 export default defineConfig({
   storage: sqlite({ path: process.env.STOREFRONT_DB ?? "./data/storefront.db" }),
-  commands: { sendConfirmation: { notifier: { use: process.env.NOTIFIER ?? "console" } } },
+  policies: {
+    order: {
+      sendConfirmationOnOrderPlaced: { notifier: { use: process.env.NOTIFIER ?? "console" } },
+    },
+  },
 });
 ```
 
