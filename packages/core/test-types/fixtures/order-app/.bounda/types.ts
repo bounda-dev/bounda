@@ -18,6 +18,12 @@ export type CancelOrderCollaborators = core.InferCollaborators<{
   };
 }>;
 
+export type OrderNotifyOnOrderPlacedPolicyCollaborators = core.InferCollaborators<{
+  readonly mailer: {
+    readonly memory: typeof import("../app/domain/order/policies/notify-on-order-placed/mailer.memory.ts").default;
+  };
+}>;
+
 export type Commands = core.CommandsFacadeOf<{
   readonly registerCustomer: typeof import("../app/domain/customer/commands/register-customer.ts");
   readonly cancelOrder: typeof import("../app/domain/order/commands/cancel-order/index.ts");

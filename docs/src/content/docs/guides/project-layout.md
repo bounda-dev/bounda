@@ -25,11 +25,15 @@ app/
           inventory.fake.ts         collaborator "inventory", implementation "fake"
       policies/
         send-receipt-on-order-paid.ts   reacts to OrderPaid
+        notify-on-order-placed/     a policy with collaborators
+          index.ts
+          mailer.smtp.ts
       processes/
         order-payment/              a process
           index.ts                  config and state
           on-order-paid.ts          handler for OrderPaid
           on-timeout.ts             handler for the time-out
+          gateway.stripe.ts         a collaborator of every handler of the process
   read/
     order-summary/                  a read model
       view.ts                       fields
@@ -164,6 +168,30 @@ be delayed: `commands.sendReminder({ orderId }, { delay: "24h" })`. The compiler
 duration; for one that comes from the environment, `asDuration` from `@bounda-dev/core` checks it
 at the call site and returns it typed.
 
+A policy with collaborators is a directory, `policies/<action>-on-<event>/index.ts`, with the
+implementations next to it as for a command. The handler receives them next to `event` and
+`commands`, and `bounda.config.ts` picks one under `policies`, by aggregate and then by policy:
+
+```ts
+// app/domain/order/policies/notify-on-order-placed/index.ts
+import type { Policy } from "./+types/index";
+
+export const handler = async ({ event, mailer }: Policy.HandlerArgs) => {
+  await mailer.send(event.payload.customerId, `Order ${event.aggregateId} placed`);
+};
+```
+
+```ts
+export default defineConfig({
+  storage: sqlite({ path: "./data/app.db" }),
+  policies: { order: { notifyOnOrderPlaced: { mailer: { use: "smtp" } } } },
+});
+```
+
+A policy runs after the events it reacts to are stored, and at least once
+([what the runtime promises](/guides/reacting-to-events/#what-the-runtime-promises)): a call it
+makes must be safe to repeat.
+
 ### Processes: `processes/<name>/`
 
 A process follows an aggregate instance over time. `index.ts` says which events start and complete
@@ -182,6 +210,13 @@ export const config = ({ events }: Process.ConfigArgs) => ({
 
 export const state = ({ z }: Process.StateArgs) => z.object({ reminders: z.int().default(0) });
 ```
+
+Collaborator files in the process directory reach every handler of the process, `on-timeout.ts`
+included. `index.ts` may export their `Collaborators` type, and `bounda.config.ts` picks the
+implementations under `processes`: `processes: { order: { orderPayment: { gateway: { use: "stripe" } } } }`.
+
+A collaborator cannot take the name of an argument its handler already receives (`event`,
+`commands`, `state` and the like); the generator says which.
 
 ## Read models: `app/read/<read-model>/`
 

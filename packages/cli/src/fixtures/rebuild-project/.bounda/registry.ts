@@ -16,8 +16,10 @@ export const registry = {
       },
       policies: {
         alertOnIncremented: {
-          handler: () => {
-            throw new DomainError("alerts are down");
+          module: {
+            handler: () => {
+              throw new DomainError("alerts are down");
+            },
           },
         },
       },

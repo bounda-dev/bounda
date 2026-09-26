@@ -1,15 +1,19 @@
+import { selectCollaborators } from "../../config/collaborators.ts";
+import type { ResolvedConfig } from "../../config/types.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import type { PolicyModule } from "../../modules/policy.ts";
 import type { Registry } from "../../modules/registry.ts";
 
 /**
- * A compiled policy: which aggregate it belongs to, which event types trigger it, and its handler.
+ * A compiled policy: which aggregate it belongs to, which event types trigger it, its handler and
+ * the collaborators chosen from the configuration.
  */
 export interface PolicyRuntime {
   readonly name: string;
   readonly aggregate: string;
   readonly on: readonly string[];
   readonly handler: (args: Record<string, unknown>) => unknown;
+  readonly collaborators: Readonly<Record<string, unknown>>;
 }
 
 export interface PoliciesRuntime {
@@ -43,6 +47,7 @@ const triggersOf = (aggregate: string, key: string, module: PolicyModule): reado
 
 export interface BuildPoliciesArgs {
   readonly registry: Registry;
+  readonly config: ResolvedConfig;
 }
 
 export interface BuildPoliciesFunction {
@@ -52,14 +57,20 @@ export interface BuildPoliciesFunction {
 /**
  * Compiles every policy of the registry and indexes them by the event types they react to.
  */
-export const buildPolicies: BuildPoliciesFunction = ({ registry }) => {
+export const buildPolicies: BuildPoliciesFunction = ({ registry, config }) => {
   const all = Object.entries(registry.aggregates).flatMap(([aggregate, entry]) =>
     Object.entries(entry.policies).map(
-      ([key, module]): PolicyRuntime => ({
+      ([key, policy]): PolicyRuntime => ({
         name: `${aggregate}.${key}`,
         aggregate,
-        on: triggersOf(aggregate, key, module),
-        handler: module.handler as PolicyRuntime["handler"],
+        on: triggersOf(aggregate, key, policy.module),
+        handler: policy.module.handler as PolicyRuntime["handler"],
+        collaborators: selectCollaborators({
+          owner: `Policy "${aggregate}.${key}"`,
+          path: `policies.${aggregate}.${key}`,
+          implementations: policy.collaborators ?? {},
+          config: config.policies[aggregate]?.[key],
+        }),
       }),
     ),
   );

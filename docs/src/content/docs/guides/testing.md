@@ -136,6 +136,10 @@ expect(sent).toEqual([{ orderId: ORDER, customerId: "ada", total: 139 }]);
 
 Reset it in `beforeEach`; the module lives as long as the test file does.
 
+Policies and processes choose theirs the same way, by aggregate and then by key:
+`config: { policies: { order: { notifyOnOrderPlaced: { mailer: { use: "memory" } } } } }`. They
+run after the command, so call `app.processUntilIdle()` before asserting on what they recorded.
+
 ## Nothing left behind
 
 `app.getLag()` reports how far each subscriber is behind the stream. Asserting it is zero proves a

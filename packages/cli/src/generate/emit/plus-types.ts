@@ -1,13 +1,12 @@
 import { basename, dirname, join } from "node:path";
-import type { AggregateModel, ProjectModel, ReadModelModel } from "../model.ts";
+import type {
+  AggregateModel,
+  CollaboratorOwnerModel,
+  ProjectModel,
+  ReadModelModel,
+} from "../model.ts";
 import { type GeneratedFile, importPath } from "./paths.ts";
-import {
-  collaboratorsTypeName,
-  eventsTypeName,
-  infersCollaborators,
-  rowTypeName,
-  stateTypeName,
-} from "./types.ts";
+import { eventsTypeName, infersCollaborators, rowTypeName, stateTypeName } from "./types.ts";
 
 export interface EmitPlusTypesArgs {
   readonly model: ProjectModel;
@@ -86,13 +85,23 @@ const eventFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFile
     }),
   );
 
+const collaboratorsType = (owner: CollaboratorOwnerModel, from: string): string =>
+  owner.declaresCollaborators
+    ? `import("${importPath({ from, to: owner.path })}").Collaborators`
+    : infersCollaborators(owner)
+      ? `generated.${owner.collaboratorsTypeName}`
+      : "core.EmptyPayload";
+
+const withCollaborators = (
+  args: readonly string[],
+  owner: CollaboratorOwnerModel,
+  from: string,
+): readonly string[] =>
+  owner.collaborators.length === 0 ? args : [...args, collaboratorsType(owner, from)];
+
 const commandFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFile[] =>
   aggregate.commands.map((command) => {
-    const collaborators = command.declaresCollaborators
-      ? `import("${importPath({ from: plusTypesPath(command.path), to: command.path })}").Collaborators`
-      : infersCollaborators(command)
-        ? `generated.${collaboratorsTypeName(command)}`
-        : "core.EmptyPayload";
+    const collaborators = collaboratorsType(command, plusTypesPath(command.path));
     return render(plusTypesPath(command.path), typesPath, {
       imports: { generated: true, module: command.path },
       namespace: "Command",
@@ -123,15 +132,19 @@ const policyFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFil
       members: [
         [
           "HandlerArgs",
-          policy.triggerKey === null
-            ? generic("core.PolicyHandlerArgs", [
-                `core.StoredEventOf<generated.${eventsTypeName(aggregate.name)}, keyof generated.${eventsTypeName(aggregate.name)}>`,
+          generic(
+            "core.PolicyHandlerArgs",
+            withCollaborators(
+              [
+                policy.triggerKey === null
+                  ? `core.StoredEventOf<generated.${eventsTypeName(aggregate.name)}, keyof generated.${eventsTypeName(aggregate.name)}>`
+                  : storedEvent(aggregate, policy.triggerKey),
                 "generated.Commands",
-              ])
-            : generic("core.PolicyHandlerArgs", [
-                storedEvent(aggregate, policy.triggerKey),
-                "generated.Commands",
-              ]),
+              ],
+              policy,
+              plusTypesPath(policy.path),
+            ),
+          ),
         ],
       ],
     }),
@@ -158,11 +171,18 @@ const processFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFi
           members: [
             [
               "HandlerArgs",
-              generic("core.ProcessHandlerArgs", [
-                storedEvent(aggregate, handler.eventKey),
-                "core.ProcessStateOf<ProcessModule>",
-                "generated.Commands",
-              ]),
+              generic(
+                "core.ProcessHandlerArgs",
+                withCollaborators(
+                  [
+                    storedEvent(aggregate, handler.eventKey),
+                    "core.ProcessStateOf<ProcessModule>",
+                    "generated.Commands",
+                  ],
+                  process,
+                  plusTypesPath(handler.path),
+                ),
+              ),
             ],
           ],
         }),
@@ -176,10 +196,14 @@ const processFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFi
           members: [
             [
               "TimeoutArgs",
-              generic("core.ProcessTimeoutArgs", [
-                "core.ProcessStateOf<ProcessModule>",
-                "generated.Commands",
-              ]),
+              generic(
+                "core.ProcessTimeoutArgs",
+                withCollaborators(
+                  ["core.ProcessStateOf<ProcessModule>", "generated.Commands"],
+                  process,
+                  plusTypesPath(process.timeout.path),
+                ),
+              ),
             ],
           ],
         }),

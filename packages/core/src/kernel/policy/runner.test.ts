@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { resolveConfig } from "../../config/schema.ts";
 import { DomainError } from "../../contracts/errors.ts";
+import { memory } from "../../memory/index.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { createReactiveHarness } from "../reactive-harness.ts";
 import { createRecordingLogger, orderAggregateEntry } from "../test-support.ts";
@@ -21,24 +23,28 @@ const registry: Registry = {
       ...orderAggregateEntry(),
       policies: {
         payOnOrderPlaced: {
-          handler: async ({ event, commands }: PolicyArgs) => {
-            calls.push(`pay:${event.aggregateId}`);
-            if (behaviour === "domain") throw new DomainError("cannot pay");
-            if (behaviour === "flaky" && flakyFailures > 0) {
-              flakyFailures -= 1;
-              throw new Error("network");
-            }
-            if (behaviour === "hangs") {
-              handlerStarted.resolve();
-              await new Promise<never>(() => undefined);
-            }
-            await commands.payOrder?.({ orderId: event.aggregateId, method: "card" });
+          module: {
+            handler: async ({ event, commands }: PolicyArgs) => {
+              calls.push(`pay:${event.aggregateId}`);
+              if (behaviour === "domain") throw new DomainError("cannot pay");
+              if (behaviour === "flaky" && flakyFailures > 0) {
+                flakyFailures -= 1;
+                throw new Error("network");
+              }
+              if (behaviour === "hangs") {
+                handlerStarted.resolve();
+                await new Promise<never>(() => undefined);
+              }
+              await commands.payOrder?.({ orderId: event.aggregateId, method: "card" });
+            },
           },
         },
         auditEverything: {
-          on: ["OrderPlaced", "OrderPaid"],
-          handler: async ({ event }: PolicyArgs) => {
-            calls.push(`audit:${event.aggregateId}:${event.metadata.depth}`);
+          module: {
+            on: ["OrderPlaced", "OrderPaid"],
+            handler: async ({ event }: PolicyArgs) => {
+              calls.push(`audit:${event.aggregateId}:${event.metadata.depth}`);
+            },
           },
         },
       },
@@ -65,14 +71,15 @@ describe("policyTriggerFromKey", () => {
 
   it("accepts an explicit on as a string or a list", () => {
     const { all } = buildPolicies({
+      config: resolveConfig({ storage: memory() }),
       registry: {
         aggregates: {
           order: {
             events: {},
             commands: {},
             policies: {
-              a: { on: "OrderPaid", handler: () => {} },
-              b: { on: ["OrderPaid", "OrderPlaced"], handler: () => {} },
+              a: { module: { on: "OrderPaid", handler: () => {} } },
+              b: { module: { on: ["OrderPaid", "OrderPlaced"], handler: () => {} } },
             },
             processes: {},
           },
@@ -86,12 +93,13 @@ describe("policyTriggerFromKey", () => {
   it("requires a derivable trigger or an explicit on", () => {
     expect(() =>
       buildPolicies({
+        config: resolveConfig({ storage: memory() }),
         registry: {
           aggregates: {
             order: {
               events: {},
               commands: {},
-              policies: { cleanup: { handler: () => {} } },
+              policies: { cleanup: { module: { handler: () => {} } } },
               processes: {},
             },
           },
@@ -329,5 +337,51 @@ describe("policy subscriber", () => {
     expect(letters[0]).toMatchObject({
       errorMessage: "policy order.payOnOrderPlaced did not finish within 3600000ms",
     });
+  });
+});
+
+describe("policy collaborators", () => {
+  const sent: string[] = [];
+  const mailer = (tag: string) => ({
+    send: async (to: string) => {
+      sent.push(`${tag}:${to}`);
+    },
+  });
+  interface MailerArgs {
+    readonly event: { aggregateId: string };
+    readonly mailer: { send: (to: string) => Promise<void> };
+  }
+  const withMailer: Registry = {
+    aggregates: {
+      order: {
+        ...orderAggregateEntry(),
+        policies: {
+          mailOnOrderPlaced: {
+            module: { handler: ({ event, mailer }: MailerArgs) => mailer.send(event.aggregateId) },
+            collaborators: { mailer: { smtp: mailer("smtp"), memory: mailer("memory") } },
+          },
+        },
+      },
+    },
+    readModels: {},
+  };
+
+  it("hands the configured implementation to the handler", async () => {
+    sent.length = 0;
+    const harness = await createReactiveHarness({
+      registry: withMailer,
+      config: { policies: { order: { mailOnOrderPlaced: { mailer: { use: "memory" } } } } },
+    });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.dispatcher.processUntilIdle();
+    expect(sent).toEqual(["memory:o-1"]);
+  });
+
+  it("names the policy and where to choose when several implementations exist", () => {
+    expect(() =>
+      buildPolicies({ registry: withMailer, config: resolveConfig({ storage: memory() }) }),
+    ).toThrow(
+      'Policy "order.mailOnOrderPlaced", collaborator "mailer": choose an implementation with policies.order.mailOnOrderPlaced.mailer.use. Available: "smtp", "memory"',
+    );
   });
 });

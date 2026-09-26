@@ -31,29 +31,43 @@ export interface CollaboratorModel extends ModuleRef {
   readonly implementation: string;
 }
 
-export interface CommandModel extends ModuleRef {
+/**
+ * A command, policy or process: the modules that may have collaborator files next to them.
+ */
+export interface CollaboratorOwnerModel extends ModuleRef {
+  readonly collaborators: readonly CollaboratorModel[];
+  /**
+   * Whether the module (`index.ts` for a policy or process) exports a `Collaborators` type of its
+   * own. Only checked when there are collaborator files; the generated types then use the
+   * declaration instead of inferring the type from the implementations.
+   */
+  readonly declaresCollaborators: boolean;
+  /**
+   * The name of the inferred collaborator type in `.bounda/types.ts`: `CancelOrderCollaborators`.
+   */
+  readonly collaboratorsTypeName: string;
+}
+
+export interface CommandModel extends CollaboratorOwnerModel {
   readonly key: string;
   readonly typeName: string;
   /**
    * Set when the command is a directory (`commands/<name>/index.ts`), where collaborators live.
    */
   readonly directory: string | null;
-  readonly collaborators: readonly CollaboratorModel[];
-  /**
-   * Whether the module exports a `Collaborators` type of its own. Only checked when the command
-   * has collaborator files; the generated types then use the declaration instead of inferring
-   * the type from the implementations.
-   */
-  readonly declaresCollaborators: boolean;
 }
 
-export interface PolicyModel extends ModuleRef {
+export interface PolicyModel extends CollaboratorOwnerModel {
   readonly key: string;
   /**
-   * The event key derived from the `...-on-<event>` suffix of the file name, or `null` when the
-   * module has to declare `on` itself.
+   * The event key derived from the `...-on-<event>` suffix of the file or directory name, or
+   * `null` when the module has to declare `on` itself.
    */
   readonly triggerKey: string | null;
+  /**
+   * Set when the policy is a directory (`policies/<name>/index.ts`), where collaborators live.
+   */
+  readonly directory: string | null;
 }
 
 export interface ProcessHandlerModel extends ModuleRef {
@@ -63,7 +77,7 @@ export interface ProcessHandlerModel extends ModuleRef {
   readonly eventKey: string;
 }
 
-export interface ProcessModel extends ModuleRef {
+export interface ProcessModel extends CollaboratorOwnerModel {
   readonly key: string;
   readonly typeName: string;
   readonly directory: string;

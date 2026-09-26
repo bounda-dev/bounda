@@ -1,3 +1,6 @@
+import type { CollaboratorImplementations } from "./command.ts";
+import type { EmptyPayload } from "./payload.ts";
+
 /**
  * The shape of a policy module. `on` overrides the event type derived from the file name and may
  * list several events.
@@ -8,9 +11,19 @@ export interface PolicyModule {
 }
 
 /**
- * Arguments of a policy `handler`: the event that triggered it and the typed commands facade.
+ * A policy in the registry: its module plus the collaborator implementations found next to it,
+ * when the policy is a directory (`policies/<name>/index.ts`).
  */
-export interface PolicyHandlerArgs<Event, Commands> {
+export interface PolicyEntry {
+  readonly module: PolicyModule;
+  readonly collaborators?: CollaboratorImplementations;
+}
+
+/**
+ * Arguments of a policy `handler`: the event that triggered it, the typed commands facade and the
+ * policy's collaborators, spread at the top level.
+ */
+export type PolicyHandlerArgs<Event, Commands, Collaborators extends object = EmptyPayload> = {
   readonly event: Event;
   readonly commands: Commands;
-}
+} & Readonly<Collaborators>;

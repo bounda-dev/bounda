@@ -117,7 +117,7 @@ export interface RuntimeConfig {
 }
 
 /**
- * Which implementation a command uses for one collaborator: the suffix of the
+ * Which implementation a command, policy or process uses for one collaborator: the suffix of the
  * `<collaborator>.<implementation>.ts` file.
  */
 export interface CollaboratorSelection {
@@ -125,9 +125,17 @@ export interface CollaboratorSelection {
 }
 
 /**
- * Per-command configuration: one entry per collaborator.
+ * The collaborators of one command, policy or process: one entry per collaborator.
  */
-export type CommandConfig = Readonly<Record<string, CollaboratorSelection>>;
+export type CollaboratorsConfig = Readonly<Record<string, CollaboratorSelection>>;
+
+/**
+ * Collaborators of policies or processes, keyed by aggregate and then by the policy or process
+ * key: `{ order: { sendReceiptOnOrderPaid: { mailer: { use: "memory" } } } }`.
+ */
+export type ReactionsConfig = Readonly<
+  Record<string, Readonly<Record<string, CollaboratorsConfig>>>
+>;
 
 /**
  * What `bounda.config.ts` exports.
@@ -137,7 +145,9 @@ export interface Config {
   readonly storage: AdapterDefinition;
   readonly readModels?: Readonly<Record<string, AdapterDefinition>>;
   readonly runtime?: RuntimeConfig;
-  readonly commands?: Readonly<Record<string, CommandConfig>>;
+  readonly commands?: Readonly<Record<string, CollaboratorsConfig>>;
+  readonly policies?: ReactionsConfig;
+  readonly processes?: ReactionsConfig;
 }
 
 /**
@@ -189,6 +199,8 @@ export interface ResolvedConfig {
     };
     readonly overrides: Readonly<Record<string, ResolvedAggregateRuntime>>;
   };
-  readonly commands: Readonly<Record<string, CommandConfig>>;
+  readonly commands: Readonly<Record<string, CollaboratorsConfig>>;
+  readonly policies: ReactionsConfig;
+  readonly processes: ReactionsConfig;
   forAggregate(name: string): ResolvedAggregateRuntime;
 }

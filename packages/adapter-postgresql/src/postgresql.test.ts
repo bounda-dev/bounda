@@ -521,14 +521,16 @@ const registry = {
       },
       policies: {
         payOnOrderPlaced: {
-          handler: async ({
-            event,
-            commands,
-          }: {
-            event: { aggregateId: string };
-            commands: { payOrder: (payload: { orderId: string }) => Promise<unknown> };
-          }) => {
-            await commands.payOrder({ orderId: event.aggregateId });
+          module: {
+            handler: async ({
+              event,
+              commands,
+            }: {
+              event: { aggregateId: string };
+              commands: { payOrder: (payload: { orderId: string }) => Promise<unknown> };
+            }) => {
+              await commands.payOrder({ orderId: event.aggregateId });
+            },
           },
         },
       },

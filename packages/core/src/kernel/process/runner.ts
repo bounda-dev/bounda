@@ -307,6 +307,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
         withTimeout({
           run: () =>
             process.handlers[event.type]?.({
+              ...process.collaborators,
               event,
               state: instance.state,
               aggregateId: event.aggregateId,
@@ -436,6 +437,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
                 withTimeout({
                   run: () =>
                     process.timeoutHandler?.({
+                      ...process.collaborators,
                       state: instance.state,
                       aggregateId: payload.aggregateId,
                       commands: facadeFor(context),

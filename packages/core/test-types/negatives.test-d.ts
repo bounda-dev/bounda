@@ -1,6 +1,7 @@
 import { describe, it } from "vitest";
 import type { Command as PayOrder } from "./fixtures/order-app/app/domain/order/commands/+types/pay-order.ts";
 import type { Command as PlaceOrder } from "./fixtures/order-app/app/domain/order/commands/place-order/+types/index.ts";
+import type { Policy as SendReceipt } from "./fixtures/order-app/app/domain/order/policies/+types/send-receipt-on-order-paid.ts";
 import type { Process as OrderPayment } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/index.ts";
 import type { Projection as ProjectOrderPlaced } from "./fixtures/order-app/app/read/order-summary/projections/+types/order-placed.ts";
 
@@ -24,6 +25,12 @@ describe("what does not compile", () => {
   it("using a collaborator the command does not declare", () => {
     // @ts-expect-error inventory is not a collaborator of payOrder
     const handler = ({ inventory }: PayOrder.HandlerArgs) => inventory;
+    void handler;
+  });
+
+  it("using a collaborator the policy does not have", () => {
+    // @ts-expect-error mailer belongs to notifyOnOrderPlaced, not to sendReceiptOnOrderPaid
+    const handler = ({ mailer }: SendReceipt.HandlerArgs) => mailer;
     void handler;
   });
 

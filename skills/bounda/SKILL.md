@@ -30,13 +30,15 @@ app/domain/<aggregate>/
   commands/<command>.ts            export const payload, export const handler
   commands/<command>/index.ts      same, with <collaborator>.<implementation>.ts files beside it
   policies/<action>-on-<event>.ts  export const handler
+  policies/<action>-on-<event>/index.ts   same, with <collaborator>.<implementation>.ts files beside it
   processes/<process>/index.ts     export const config, export const state (optional)
   processes/<process>/on-<event>.ts, on-timeout.ts   export const handler
+  processes/<process>/<collaborator>.<implementation>.ts   collaborators of every handler of the process
 app/read/<read-model>/
   view.ts                          export const fields
   projections/<event>.ts           export const project
   queries/<query>.ts               export const payload (optional), repository (optional), handler
-bounda.config.ts                   export default defineConfig({ storage, readModels?, runtime?, commands? })
+bounda.config.ts                   export default defineConfig({ storage, readModels?, runtime?, commands?, policies?, processes? })
 ```
 
 ## Templates
@@ -157,6 +159,11 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
 - Policies and process handlers get `commands`, the typed facade of every command in the app, and
   run with at-least-once delivery: the runtime's inbox skips a handler that already completed for
   an event, but a handler that crashes midway runs again, so make its side effects idempotent.
+- Policies and processes get their collaborators spread next to `event` and `commands`, like
+  commands do. Config picks implementations by aggregate, then key:
+  `policies: { order: { notifyOnOrderPlaced: { mailer: { use: "smtp" } } } }`, and the same
+  under `processes`. A collaborator cannot be named after a handler argument (`event`,
+  `commands`, `state`, `aggregateId`, `command`, `events`, `idempotencyKey`).
 - Projections write through `table` (`upsert`, `insert`, `update`, `delete`, `findOne`,
   `findMany`, `count`). Each batch is one transaction with the read model's
   checkpoint, so every event is applied exactly once and reading a row to update it

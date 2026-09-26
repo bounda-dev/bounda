@@ -83,14 +83,17 @@ const runtime = z.strictObject({
   overrides: z.record(z.string(), overrides).optional(),
 });
 
-const commandConfig = z.record(z.string(), z.strictObject({ use: z.string().min(1) }));
+const collaboratorsConfig = z.record(z.string(), z.strictObject({ use: z.string().min(1) }));
+const reactionsConfig = z.record(z.string(), z.record(z.string(), collaboratorsConfig));
 
 const configSchema = z.strictObject({
   rootDir: z.string().min(1).optional(),
   storage: adapter,
   readModels: z.record(z.string(), adapter).optional(),
   runtime: runtime.optional(),
-  commands: z.record(z.string(), commandConfig).optional(),
+  commands: z.record(z.string(), collaboratorsConfig).optional(),
+  policies: reactionsConfig.optional(),
+  processes: reactionsConfig.optional(),
 });
 
 type ParsedRetry = z.output<typeof retry>;
@@ -192,6 +195,8 @@ export const resolveConfig: ResolveConfigFunction = (config) => {
       overrides: resolvedOverrides,
     },
     commands: parsed.commands ?? {},
+    policies: parsed.policies ?? {},
+    processes: parsed.processes ?? {},
     forAggregate: (name) => resolvedOverrides[name] ?? defaultsForAggregate,
   };
 };

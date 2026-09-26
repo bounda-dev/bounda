@@ -54,7 +54,8 @@ const buildCommands = (
         schema: compileSchema(command.module.payload, `aggregates.${name}.commands.${key}`),
         handler: command.module.handler as CommandRuntime["handler"],
         collaborators: selectCollaborators({
-          commandName: key,
+          owner: `Command "${key}"`,
+          path: `commands.${key}`,
           implementations: command.collaborators ?? {},
           config: config.commands[key],
         }),

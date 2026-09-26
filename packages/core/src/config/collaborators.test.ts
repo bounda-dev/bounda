@@ -9,7 +9,8 @@ const mailer = { send: () => Promise.resolve() };
 describe("selectCollaborators", () => {
   it("uses the configured implementation", () => {
     const selected = selectCollaborators({
-      commandName: "placeOrder",
+      owner: 'Command "placeOrder"',
+      path: "commands.placeOrder",
       implementations: { inventory: { http, fake } },
       config: { inventory: { use: "fake" } },
     });
@@ -18,7 +19,8 @@ describe("selectCollaborators", () => {
 
   it("picks the only implementation when nothing is configured", () => {
     const selected = selectCollaborators({
-      commandName: "placeOrder",
+      owner: 'Command "placeOrder"',
+      path: "commands.placeOrder",
       implementations: { inventory: { http }, mailer: { resend: mailer } },
       config: undefined,
     });
@@ -27,14 +29,20 @@ describe("selectCollaborators", () => {
 
   it("returns an empty object for a command without collaborators", () => {
     expect(
-      selectCollaborators({ commandName: "payOrder", implementations: {}, config: undefined }),
+      selectCollaborators({
+        owner: 'Command "payOrder"',
+        path: "commands.payOrder",
+        implementations: {},
+        config: undefined,
+      }),
     ).toEqual({});
   });
 
   it("demands a choice when several implementations exist and none is configured", () => {
     expect(() =>
       selectCollaborators({
-        commandName: "placeOrder",
+        owner: 'Command "placeOrder"',
+        path: "commands.placeOrder",
         implementations: { inventory: { http, fake } },
         config: undefined,
       }),
@@ -46,7 +54,8 @@ describe("selectCollaborators", () => {
   it("rejects an implementation that does not exist", () => {
     expect(() =>
       selectCollaborators({
-        commandName: "placeOrder",
+        owner: 'Command "placeOrder"',
+        path: "commands.placeOrder",
         implementations: { inventory: { http, fake } },
         config: { inventory: { use: "grpc" } },
       }),
@@ -59,7 +68,8 @@ describe("selectCollaborators", () => {
     let error: unknown;
     try {
       selectCollaborators({
-        commandName: "placeOrder",
+        owner: 'Command "placeOrder"',
+        path: "commands.placeOrder",
         implementations: { inventory: { http } },
         config: { inventory: { use: "http" }, notifier: { use: "console" } },
       });

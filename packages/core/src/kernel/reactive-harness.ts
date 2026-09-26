@@ -76,7 +76,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     clock,
     logger,
   });
-  const policies = buildPolicies({ registry });
+  const policies = buildPolicies({ registry, config });
   const processes = createProcessRunner({
     processes: buildProcesses({ registry, config }),
     aggregates,

@@ -6,6 +6,7 @@ type ProcessModule = typeof import("../index.ts");
 export declare namespace Process {
   type TimeoutArgs = core.ProcessTimeoutArgs<
     core.ProcessStateOf<ProcessModule>,
-    generated.Commands
+    generated.Commands,
+    import("../index.ts").Collaborators
   >;
 }

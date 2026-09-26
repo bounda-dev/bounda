@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { selectCollaborators } from "../../config/collaborators.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import { parseDuration } from "../../contracts/duration.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
@@ -8,7 +9,7 @@ import type { Registry } from "../../modules/registry.ts";
 
 /**
  * A compiled process: which events start, feed and complete it, its state schema and handlers,
- * and how long an instance may stay open.
+ * how long an instance may stay open and the collaborators chosen from the configuration.
  */
 export interface ProcessRuntime {
   readonly name: string;
@@ -21,6 +22,7 @@ export interface ProcessRuntime {
   readonly stateSchema: z.ZodType | null;
   readonly handlers: Readonly<Record<string, (args: Record<string, unknown>) => unknown>>;
   readonly timeoutHandler: ((args: Record<string, unknown>) => unknown) | null;
+  readonly collaborators: Readonly<Record<string, unknown>>;
 }
 
 export interface ProcessesRuntime {
@@ -99,6 +101,12 @@ const buildProcess = (
       }),
     ),
     timeoutHandler: (entry.timeout?.handler as ProcessRuntime["timeoutHandler"]) ?? null,
+    collaborators: selectCollaborators({
+      owner: `Process "${aggregate}.${key}"`,
+      path: `processes.${aggregate}.${key}`,
+      implementations: entry.collaborators ?? {},
+      config: config.processes[aggregate]?.[key],
+    }),
   };
 };
 

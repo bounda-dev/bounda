@@ -11,7 +11,7 @@ const order: Registry["aggregates"][string] = {
   commands: {
     placeOrder: { module: { handler: noop }, collaborators: { inventory: { fake: {} } } },
   },
-  policies: { notifyOnOrderPlaced: { handler: noop } },
+  policies: { notifyOnOrderPlaced: { module: { handler: noop } } },
   processes: {
     orderPayment: {
       module: { config: () => ({ startedBy: ["OrderPlaced"] }) },
@@ -105,6 +105,31 @@ describe("validateRegistry", () => {
       "aggregates.order.commands.placeOrder.collaborators.inventory: has no implementations",
     );
     expect(message).toContain('readModels.orderSummary.queries.getOrder: missing export "handler"');
+  });
+
+  it("checks policy handlers and the collaborators of policies and processes", () => {
+    const registry = withOrder({
+      policies: {
+        notifyOnOrderPlaced: { module: {} as never, collaborators: { mailer: {} } },
+      },
+      processes: {
+        orderPayment: {
+          module: { config: () => ({ startedBy: ["OrderPlaced"] }) },
+          handlers: {},
+          collaborators: { gateway: {} },
+        },
+      },
+    });
+    expect(() => validateRegistry(registry)).toThrow(
+      new ConfigurationError(
+        [
+          "Invalid registry:",
+          '  aggregates.order.policies.notifyOnOrderPlaced: missing export "handler" (expected a function)',
+          "  aggregates.order.policies.notifyOnOrderPlaced.collaborators.mailer: has no implementations",
+          "  aggregates.order.processes.orderPayment.collaborators.gateway: has no implementations",
+        ].join("\n"),
+      ),
+    );
   });
 
   it("rejects a state module whose initialState is not an object", () => {

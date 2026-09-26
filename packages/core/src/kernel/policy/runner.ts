@@ -126,7 +126,7 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
         },
         run: () =>
           withTimeout({
-            run: () => policy.handler({ event, commands }),
+            run: () => policy.handler({ ...policy.collaborators, event, commands }),
             timeoutMs: settings.timeoutMs,
             subject: `policy ${policy.name}`,
             clock,

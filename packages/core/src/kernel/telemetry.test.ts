@@ -22,8 +22,10 @@ const registry = {
       ...orderAggregateEntry(),
       policies: {
         notifyOnOrderPlaced: {
-          handler: async () => {
-            if (policyMode === "domain") throw new DomainError("no mail today");
+          module: {
+            handler: async () => {
+              if (policyMode === "domain") throw new DomainError("no mail today");
+            },
           },
         },
       },
