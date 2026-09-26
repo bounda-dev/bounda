@@ -29,8 +29,8 @@ handler returns the next state:
 
 ```ts
 export const config = ({ events }: Process.ConfigArgs) => ({
-  startedBy: [events.OrderPlaced],
-  completedBy: [events.OrderFulfilled, events.OrderCancelled],
+  startedBy: [events.order.OrderPlaced],
+  completedBy: [events.order.OrderFulfilled, events.order.OrderCancelled],
   timeout: "72h",
 });
 

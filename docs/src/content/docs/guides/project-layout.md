@@ -215,22 +215,44 @@ makes must be safe to repeat.
 
 ### Processes: `processes/<name>/`
 
-A process follows an aggregate instance over time. `index.ts` says which events start and complete
-it and how long it may stay open; `on-<event>.ts` handles an event while it is open; `on-timeout.ts`
-runs when the time is up.
+A process follows an instance of its aggregate over time. `index.ts` says which events start and
+complete it and how long it may stay open; `on-<event>.ts` handles an event while it is open;
+`on-timeout.ts` runs when the time is up. `config` receives every event of the app by aggregate,
+`events.order.OrderPlaced`, so a process can start, continue or finish on another aggregate's
+events.
 
 ```ts
 // app/domain/order/processes/order-payment/index.ts
 import type { Process } from "./+types/index";
 
 export const config = ({ events }: Process.ConfigArgs) => ({
-  startedBy: [events.OrderPlaced],
-  completedBy: [events.OrderPaid, events.OrderCancelled],
+  startedBy: [events.order.OrderPlaced],
+  completedBy: [events.order.OrderPaid, events.order.OrderCancelled],
   timeout: "48h",
 });
 
 export const state = ({ z }: Process.StateArgs) => z.object({ reminders: z.int().default(0) });
 ```
+
+A handler for another aggregate's event sits in a folder named after that aggregate,
+`processes/order-payment/payment/on-payment-failed.ts`. Such an event carries that aggregate's id,
+not the order's, so `index.ts` says which instance it belongs to in `correlate`: a function per
+event that returns the id of the process's own aggregate, or `null` to ignore the event. Boot
+refuses an event of another aggregate the process listens to without one.
+
+```ts
+export const correlate: Process.Correlate = {
+  payment: {
+    PaymentFailed: (event) => event.payload.orderId,
+    PaymentSettled: (event) => event.payload.orderId,
+  },
+};
+```
+
+An event that does not start the process and finds no open instance is skipped, and so is any
+event for an instance that has completed, timed out or failed: a starting event never reopens
+one. The state a handler returns is checked against `state`; one the schema refuses fails the
+handler for good, like any other terminal error.
 
 Collaborator files in the process directory reach every handler of the process, `on-timeout.ts`
 included. `index.ts` may export their `Collaborators` type, and `bounda.config.ts` picks the

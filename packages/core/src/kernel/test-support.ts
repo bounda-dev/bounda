@@ -244,3 +244,11 @@ export const advanceUntilWaiting: AdvanceUntilWaitingFunction = async (clock, mi
   clock.advance(milliseconds);
   await eventually(() => expect(clock.pending()).toBe(waiting));
 };
+
+/**
+ * What a process `config` of the order aggregate receives in kernel tests: the order events by
+ * qualified name, `events.order.OrderPlaced`.
+ */
+export interface OrderProcessConfigArgs<Names extends string> {
+  readonly events: { readonly order: { readonly [Name in Names]: `order.${Name}` } };
+}

@@ -5,9 +5,13 @@ export interface Collaborators {
 }
 
 export const config = ({ events }: Process.ConfigArgs) => ({
-  startedBy: [events.OrderPlaced],
-  completedBy: [events.OrderPaid, events.OrderCancelled],
+  startedBy: [events.order.OrderPlaced],
+  completedBy: [events.order.OrderPaid, events.order.OrderCancelled],
   timeout: "48h",
 });
 
 export const state = ({ z }: Process.StateArgs) => z.object({ reminders: z.int().default(0) });
+
+export const correlate: Process.Correlate = {
+  customer: { CustomerRegistered: () => null },
+};

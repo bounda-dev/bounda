@@ -77,6 +77,11 @@ export interface PolicyModel extends CollaboratorOwnerModel {
 
 export interface ProcessHandlerModel extends ModuleRef {
   /**
+   * The aggregate of the event: the process's own for `on-<event>.ts`, the folder's for
+   * `<aggregate>/on-<event>.ts`.
+   */
+  readonly aggregate: string;
+  /**
    * The event key from `on-<event>.ts`.
    */
   readonly eventKey: string;

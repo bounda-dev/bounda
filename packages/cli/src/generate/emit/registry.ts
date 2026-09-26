@@ -61,7 +61,13 @@ const collectImports = (model: ProjectModel): readonly ImportEntry[] => {
       add(process.key, aggregate.name, process.path);
       addCollaborators(process, process.key);
       for (const handler of process.handlers) {
-        add(joinKeys(process.key, "on", handler.eventKey), aggregate.name, handler.path);
+        add(
+          handler.aggregate === aggregate.name
+            ? joinKeys(process.key, "on", handler.eventKey)
+            : joinKeys(process.key, "on", handler.aggregate, handler.eventKey),
+          aggregate.name,
+          handler.path,
+        );
       }
       if (process.timeout !== null)
         add(joinKeys(process.key, "on", "timeout"), aggregate.name, process.timeout.path);
@@ -151,8 +157,14 @@ const emitProcesses = (aggregate: AggregateModel, aliases: Aliases, indent: stri
   if (aggregate.processes.length === 0) return "{}";
   const inner = `${indent}  `;
   const lines = aggregate.processes.map((process) => {
+    const byAggregate = new Map<string, (readonly [string, string])[]>();
+    for (const handler of process.handlers) {
+      const pairs = byAggregate.get(handler.aggregate) ?? [];
+      pairs.push([handler.eventKey, aliases.of(handler.path)]);
+      byAggregate.set(handler.aggregate, pairs);
+    }
     const handlers = record(
-      process.handlers.map((handler) => [handler.eventKey, aliases.of(handler.path)]),
+      [...byAggregate.entries()].map(([source, pairs]) => [source, record(pairs)]),
     );
     return [
       `${inner}${process.key}: {`,

@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { ConfigurationError, DomainError, NotFoundError } from "../../contracts/errors.ts";
 import type { PayloadArgs } from "../../modules/payload.ts";
-import type { ProcessConfigArgs } from "../../modules/process.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { PROCESS_EVENTS } from "../process/lifecycle.ts";
 import { PROCESS_TIMEOUT_COMMAND } from "../process/runner.ts";
 import { createReactiveHarness } from "../reactive-harness.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
-import { createRecordingLogger, orderAggregateEntry } from "../test-support.ts";
+import {
+  createRecordingLogger,
+  type OrderProcessConfigArgs,
+  orderAggregateEntry,
+} from "../test-support.ts";
 import { createDeadLetters, type DeadLetters } from "./dead-letters.ts";
 
 const calls: string[] = [];
@@ -50,27 +53,29 @@ const registry = {
       processes: {
         orderPayment: {
           module: {
-            config: ({ events }: ProcessConfigArgs<"OrderPlaced" | "OrderPaid">) => ({
-              startedBy: [events.OrderPlaced],
-              completedBy: [events.OrderPaid],
+            config: ({ events }: OrderProcessConfigArgs<"OrderPlaced" | "OrderPaid">) => ({
+              startedBy: [events.order.OrderPlaced],
+              completedBy: [events.order.OrderPaid],
               timeout: "48h",
             }),
             state: ({ z }: PayloadArgs) =>
               z.object({ method: z.string().nullable().default(null) }),
           },
           handlers: {
-            orderPaid: {
-              handler: ({
-                event,
-                idempotencyKey,
-              }: {
-                event: { payload: { method: string } };
-                idempotencyKey: string;
-              }) => {
-                calls.push(`paid:${event.payload.method}`);
-                keys.push(`process ${idempotencyKey}`);
-                if (processMode === "domain") throw new DomainError("payment provider says no");
-                return { method: event.payload.method };
+            order: {
+              orderPaid: {
+                handler: ({
+                  event,
+                  idempotencyKey,
+                }: {
+                  event: { payload: { method: string } };
+                  idempotencyKey: string;
+                }) => {
+                  calls.push(`paid:${event.payload.method}`);
+                  keys.push(`process ${idempotencyKey}`);
+                  if (processMode === "domain") throw new DomainError("payment provider says no");
+                  return { method: event.payload.method };
+                },
               },
             },
           },
@@ -265,9 +270,9 @@ describe("deadLetters", () => {
               ...registry.aggregates.order.processes.orderPayment,
               module: {
                 ...registry.aggregates.order.processes.orderPayment.module,
-                config: ({ events }: ProcessConfigArgs<"OrderPlaced" | "OrderArchived">) => ({
-                  startedBy: [events.OrderPlaced],
-                  completedBy: [events.OrderArchived],
+                config: ({ events }: OrderProcessConfigArgs<"OrderPlaced" | "OrderArchived">) => ({
+                  startedBy: [events.order.OrderPlaced],
+                  completedBy: [events.order.OrderArchived],
                   timeout: "48h",
                 }),
               },
@@ -331,9 +336,9 @@ describe("deadLetters", () => {
               ...registry.aggregates.order.processes.orderPayment,
               module: {
                 ...registry.aggregates.order.processes.orderPayment.module,
-                config: ({ events }: ProcessConfigArgs<"OrderPlaced" | "OrderArchived">) => ({
-                  startedBy: [events.OrderPlaced],
-                  completedBy: [events.OrderArchived],
+                config: ({ events }: OrderProcessConfigArgs<"OrderPlaced" | "OrderArchived">) => ({
+                  startedBy: [events.order.OrderPlaced],
+                  completedBy: [events.order.OrderArchived],
                   timeout: "1h",
                 }),
               },

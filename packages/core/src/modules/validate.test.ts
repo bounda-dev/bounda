@@ -14,8 +14,8 @@ const order: Registry["aggregates"][string] = {
   policies: { notifyOnOrderPlaced: { module: { handler: noop } } },
   processes: {
     orderPayment: {
-      module: { config: () => ({ startedBy: ["OrderPlaced"] }) },
-      handlers: { orderPaid: { handler: noop } },
+      module: { config: () => ({ startedBy: ["order.OrderPlaced"] }) },
+      handlers: { order: { orderPaid: { handler: noop } } },
       timeout: { handler: noop },
     },
   },
@@ -114,7 +114,7 @@ describe("validateRegistry", () => {
       },
       processes: {
         orderPayment: {
-          module: { config: () => ({ startedBy: ["OrderPlaced"] }) },
+          module: { config: () => ({ startedBy: ["order.OrderPlaced"] }) },
           handlers: {},
           collaborators: { gateway: {} },
         },
@@ -162,7 +162,7 @@ describe("validateRegistry", () => {
       processes: {
         orderPayment: {
           module: {} as never,
-          handlers: { orderPaid: {} as never },
+          handlers: { order: { orderPaid: {} as never } },
           timeout: {} as never,
         },
       },
@@ -171,7 +171,7 @@ describe("validateRegistry", () => {
       /processes\.orderPayment: missing export "config"/,
     );
     expect(() => validateRegistry(registry)).toThrow(
-      /handlers\.orderPaid: missing export "handler"/,
+      /handlers\.order\.orderPaid: missing export "handler"/,
     );
     expect(() => validateRegistry(registry)).toThrow(
       /orderPayment\.timeout: missing export "handler"/,

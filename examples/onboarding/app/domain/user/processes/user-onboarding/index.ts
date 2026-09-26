@@ -1,8 +1,8 @@
 import type { Process } from "./+types/index";
 
 export const config = ({ events }: Process.ConfigArgs) => ({
-  startedBy: [events.UserRegistered],
-  completedBy: [events.UserActivated, events.RegistrationExpired],
+  startedBy: [events.user.UserRegistered],
+  completedBy: [events.user.UserActivated, events.user.RegistrationExpired],
   timeout: process.env.ONBOARDING_TIMEOUT ?? "7d",
 });
 

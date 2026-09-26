@@ -163,18 +163,20 @@ const policyFiles = (
     }),
   );
 
-const processFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFile[] =>
+const processFiles = (
+  model: ProjectModel,
+  aggregate: AggregateModel,
+  typesPath: string,
+): GeneratedFile[] =>
   aggregate.processes.flatMap((process) => {
     const files = [
       render(plusTypesPath(process.path), typesPath, {
         imports: { generated: true, module: null },
         namespace: "Process",
         members: [
-          [
-            "ConfigArgs",
-            `core.ProcessConfigArgs<core.EventTypeNames<generated.${eventsTypeName(aggregate.name)}>>`,
-          ],
+          ["ConfigArgs", "core.ProcessConfigArgs<generated.Events>"],
           ["StateArgs", "core.ProcessStateArgs"],
+          ["Correlate", "core.ProcessCorrelate<generated.Events>"],
         ],
       }),
       ...process.handlers.map((handler) =>
@@ -188,7 +190,7 @@ const processFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFi
                 "core.ProcessHandlerArgs",
                 withCollaborators(
                   [
-                    storedEvent(aggregate, handler.eventKey),
+                    eventOf(model, handler.aggregate, handler.eventKey),
                     "core.ProcessStateOf<ProcessModule>",
                     "generated.Commands",
                   ],
@@ -282,7 +284,7 @@ export const emitPlusTypes: EmitPlusTypesFunction = ({ model, typesPath }) => [
     ...eventFiles(aggregate, typesPath),
     ...commandFiles(aggregate, typesPath),
     ...policyFiles(model, aggregate, typesPath),
-    ...processFiles(aggregate, typesPath),
+    ...processFiles(model, aggregate, typesPath),
   ]),
   ...model.readModels.flatMap((readModel) => readModelFiles(model, readModel, typesPath)),
 ];
