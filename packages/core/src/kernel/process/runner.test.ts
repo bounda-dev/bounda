@@ -6,6 +6,7 @@ import type { PayloadArgs } from "../../modules/payload.ts";
 import type { ProcessConfigArgs } from "../../modules/process.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { createReactiveHarness } from "../reactive-harness.ts";
+import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { createRecordingLogger, orderAggregateEntry } from "../test-support.ts";
 import { buildProcesses } from "./build-processes.ts";
 import { PROCESS_EVENTS } from "./lifecycle.ts";
@@ -689,9 +690,11 @@ describe("process collaborators", () => {
       recorded.push(`${tag}:${entry}`);
     },
   });
+  const keys: string[] = [];
   interface AuditArgs {
     readonly aggregateId: string;
     readonly audit: { record: (entry: string) => void };
+    readonly idempotencyKey: string;
   }
   const withAudit: Registry = {
     aggregates: {
@@ -702,14 +705,16 @@ describe("process collaborators", () => {
             module: { config: () => ({ startedBy: ["OrderPlaced"], timeout: "1h" }) },
             handlers: {
               orderPlaced: {
-                handler: ({ aggregateId, audit }: AuditArgs) => {
+                handler: ({ aggregateId, audit, idempotencyKey }: AuditArgs) => {
                   audit.record(`placed ${aggregateId}`);
+                  keys.push(idempotencyKey);
                 },
               },
             },
             timeout: {
-              handler: ({ aggregateId, audit }: AuditArgs) => {
+              handler: ({ aggregateId, audit, idempotencyKey }: AuditArgs) => {
                 audit.record(`timed out ${aggregateId}`);
+                keys.push(idempotencyKey);
               },
             },
             collaborators: { audit: { log: audit("log"), memory: audit("memory") } },
@@ -731,6 +736,28 @@ describe("process collaborators", () => {
     harness.clock.advance(3_600_000);
     await harness.worker.runOnce();
     expect(recorded).toEqual(["memory:placed o-1", "memory:timed out o-1"]);
+  });
+
+  it("gives event handlers a key per event and the timeout one per instance", async () => {
+    keys.length = 0;
+    const harness = await createReactiveHarness({
+      registry: withAudit,
+      config: { processes: { order: { orderPayment: { audit: { use: "memory" } } } } },
+    });
+    const placed = await harness.pipeline.dispatch({
+      type: "PlaceOrder",
+      payload: { orderId: "o-1", total: 10 },
+    });
+    await harness.dispatcher.processUntilIdle();
+    harness.clock.advance(3_600_000);
+    await harness.worker.runOnce();
+    expect(keys).toEqual([
+      deriveIdempotencyKey({
+        handler: "order.orderPayment",
+        subject: placed.scheduled ? "" : (placed.eventIds[0] ?? ""),
+      }),
+      deriveIdempotencyKey({ handler: "order.orderPayment", subject: "o-1:timeout" }),
+    ]);
   });
 
   it("names the process and where to choose when several implementations exist", () => {

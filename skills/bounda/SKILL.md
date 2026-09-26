@@ -86,8 +86,9 @@ export const handler = async ({ command, events, inventory }: Command.HandlerArg
 ```
 
 A handler reruns, collaborators included, when its append loses a concurrency race. Collaborator
-calls must be safe to repeat and harmless if the rerun decides differently (reads are); an effect
-that must happen once needs an idempotency key derived from the command.
+calls must be safe to repeat and harmless if the rerun decides differently (reads are). Every
+handler receives `idempotencyKey`, stable across its reruns (the command id); pass it to calls the
+provider deduplicates.
 
 Policy (`policies/send-receipt-on-order-paid.ts`):
 
@@ -162,7 +163,9 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
 - Policies and processes get their collaborators spread next to `event` and `commands`, like
   commands do. Config picks implementations by aggregate, then key:
   `policies: { order: { notifyOnOrderPlaced: { mailer: { use: "smtp" } } } }`, and the same
-  under `processes`. A collaborator cannot be named after a handler argument (`event`,
+  under `processes`. Their `idempotencyKey` is the same on every retry for one event (for a
+  timeout, one instance) and new on a dead-letter replay. A collaborator cannot be named after a
+  handler argument (`event`,
   `commands`, `state`, `aggregateId`, `command`, `events`, `idempotencyKey`).
 - Projections write through `table` (`upsert`, `insert`, `update`, `delete`, `findOne`,
   `findMany`, `count`). Each batch is one transaction with the read model's

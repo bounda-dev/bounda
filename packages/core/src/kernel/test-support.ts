@@ -50,12 +50,15 @@ export const orderAggregate = {
           state,
           events,
           notifier,
+          idempotencyKey,
         }: {
           command: { payload: { orderId: string; total: number }; aggregateId: string };
           state: OrderState & { version: number };
           events: Record<string, (payload?: unknown) => unknown>;
           notifier: { send: (message: string) => void };
+          idempotencyKey: string;
         }) => {
+          placeOrderKeys.push(idempotencyKey);
           if (state.status !== "new") throw new DomainError("Order already placed");
           notifier.send(`placed ${command.aggregateId} v${state.version}`);
           return [events.orderPlaced?.({ total: command.payload.total })];
@@ -129,6 +132,11 @@ export const orderRegistry: Registry = {
  */
 export const sentMessages: string[] = [];
 
+/**
+ * The `idempotencyKey` of every run of the `placeOrder` handler, reset by `createKernelHarness`.
+ */
+export const placeOrderKeys: string[] = [];
+
 export interface LogEntry {
   readonly level: "debug" | "info" | "warn" | "error";
   readonly message: string;
@@ -190,6 +198,7 @@ export const createKernelHarness: CreateKernelHarnessFunction = async ({
   registry = orderRegistry,
 } = {}) => {
   sentMessages.length = 0;
+  placeOrderKeys.length = 0;
   const adapter = memory();
   const storage = await adapter.createStorage({ logger: silentLogger });
   const config = resolveConfig({

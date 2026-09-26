@@ -6,10 +6,12 @@ import type { Registry } from "../../modules/registry.ts";
 import { PROCESS_EVENTS } from "../process/lifecycle.ts";
 import { PROCESS_TIMEOUT_COMMAND } from "../process/runner.ts";
 import { createReactiveHarness } from "../reactive-harness.ts";
+import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { createRecordingLogger, orderAggregateEntry } from "../test-support.ts";
 import { createDeadLetters, type DeadLetters } from "./dead-letters.ts";
 
 const calls: string[] = [];
+const keys: string[] = [];
 let policyMode: "ok" | "domain" | "hangs" = "domain";
 let handlerStarted = Promise.withResolvers<void>();
 let processMode: "ok" | "domain" = "domain";
@@ -25,12 +27,15 @@ const registry = {
               event,
               commands,
               recorder,
+              idempotencyKey,
             }: {
               event: { aggregateId: string };
               commands: { archiveOrder: (payload: { orderId: string }) => Promise<unknown> };
               recorder: { record: (call: string) => void };
+              idempotencyKey: string;
             }) => {
               recorder.record(`notify:${event.aggregateId}`);
+              keys.push(`policy ${idempotencyKey}`);
               if (policyMode === "domain") throw new DomainError("mail server rejects it");
               if (policyMode === "hangs") {
                 handlerStarted.resolve();
@@ -55,11 +60,23 @@ const registry = {
           },
           handlers: {
             orderPaid: {
-              handler: ({ event }: { event: { payload: { method: string } } }) => {
+              handler: ({
+                event,
+                idempotencyKey,
+              }: {
+                event: { payload: { method: string } };
+                idempotencyKey: string;
+              }) => {
                 calls.push(`paid:${event.payload.method}`);
+                keys.push(`process ${idempotencyKey}`);
                 if (processMode === "domain") throw new DomainError("payment provider says no");
                 return { method: event.payload.method };
               },
+            },
+          },
+          timeout: {
+            handler: ({ idempotencyKey }: { idempotencyKey: string }) => {
+              keys.push(`timeout ${idempotencyKey}`);
             },
           },
         },
@@ -71,6 +88,7 @@ const registry = {
 
 const setUp = async () => {
   calls.length = 0;
+  keys.length = 0;
   const { logger, entries } = createRecordingLogger();
   const harness = await createReactiveHarness({
     registry,
@@ -111,6 +129,9 @@ describe("deadLetters", () => {
       status: "replayed",
     });
     expect(calls).toEqual(["notify:o-1", "notify:o-1", "notify:o-1"]);
+    const live = `policy ${deriveIdempotencyKey({ handler: "order.notifyOnOrderPlaced", subject: letter?.eventId ?? "" })}`;
+    expect(keys[0]).toBe(live);
+    expect(new Set(keys).size).toBe(3);
     expect(await deadLetters.list({ status: "replayed" })).toHaveLength(1);
     expect(entries).toContainEqual({
       level: "info",
@@ -217,6 +238,11 @@ describe("deadLetters", () => {
     processMode = "ok";
     expect((await deadLetters.replay(letter?.id ?? "")).status).toBe("replayed");
     expect(calls.filter((call) => call.startsWith("paid:"))).toEqual(["paid:card", "paid:card"]);
+    const processKeys = keys.filter((key) => key.startsWith("process "));
+    expect(processKeys[0]).toBe(
+      `process ${deriveIdempotencyKey({ handler: "order.orderPayment", subject: letter?.eventId ?? "" })}`,
+    );
+    expect(new Set(processKeys).size).toBe(2);
     expect(
       (await harness.storage.eventStore.load(stream)).events.map((event) => event.type),
     ).toEqual([
@@ -452,6 +478,11 @@ describe("deadLetters", () => {
       lastFailedAt: "2026-01-01T00:00:00.000Z",
     });
     expect((await deadLetters.replay("t")).status).toBe("replayed");
+    const timeoutKeys = keys.filter((key) => key.startsWith("timeout "));
+    expect(timeoutKeys).toHaveLength(1);
+    expect(timeoutKeys[0]).not.toBe(
+      `timeout ${deriveIdempotencyKey({ handler: "order.orderPayment", subject: "o-9:timeout" })}`,
+    );
     const { events } = await harness.storage.eventStore.load({
       aggregateType: "process:OrderPayment",
       aggregateId: "o-9",

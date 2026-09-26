@@ -12,6 +12,7 @@ import { createCommandsFacade } from "../command/facade.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
 import type { PoliciesRuntime } from "../policy/build-policies.ts";
 import { PROCESS_TIMEOUT_COMMAND, type ProcessRunner } from "../process/runner.ts";
+import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { withTimeout } from "../shared/timeout.ts";
 
 /**
@@ -92,7 +93,7 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
     return event;
   };
 
-  const replayPolicy = async (letter: DeadLetter): Promise<void> => {
+  const replayPolicy = async (letter: DeadLetter, replay: string): Promise<void> => {
     const policy = policies.all.find((candidate) => candidate.name === letter.subscriber);
     if (policy === undefined) {
       throw new ConfigurationError(`Policy "${letter.subscriber}" is no longer in the registry`);
@@ -100,14 +101,20 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
     const event = await eventOf(letter);
     const commands = createCommandsFacade({ aggregates, pipeline, context: contextOf(event) });
     await withTimeout({
-      run: () => policy.handler({ ...policy.collaborators, event, commands }),
+      run: () =>
+        policy.handler({
+          ...policy.collaborators,
+          event,
+          commands,
+          idempotencyKey: deriveIdempotencyKey({ handler: policy.name, subject: event.id, replay }),
+        }),
       timeoutMs: config.forAggregate(policy.aggregate).policies.timeoutMs,
       subject: `policy ${policy.name}`,
       clock,
     });
   };
 
-  const replayCommand = async (letter: DeadLetter): Promise<void> => {
+  const replayCommand = async (letter: DeadLetter, replay: string): Promise<void> => {
     const context: CausationContext = {
       correlationId: ids.next(),
       causationId: letter.id,
@@ -117,6 +124,7 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
       await processes.handleTimeout({
         payload: { process: letter.aggregateType, aggregateId: letter.aggregateId },
         context,
+        replay,
       });
       return;
     }
@@ -128,14 +136,18 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
     await pipeline.dispatch({ type: letter.eventType, payload: letter.payload, context });
   };
 
-  const run = async (letter: DeadLetter): Promise<void> => {
+  const run = async (letter: DeadLetter, replay: string): Promise<void> => {
     switch (letter.kind) {
       case "policy":
-        return replayPolicy(letter);
+        return replayPolicy(letter, replay);
       case "process":
-        return processes.replay({ process: letter.subscriber, event: await eventOf(letter) });
+        return processes.replay({
+          process: letter.subscriber,
+          event: await eventOf(letter),
+          replay,
+        });
       case "command":
-        return replayCommand(letter);
+        return replayCommand(letter, replay);
       case "projection":
         throw new ConfigurationError(
           `Dead letter "${letter.id}" is a projection failure; rebuild the read model instead`,
@@ -149,7 +161,7 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
     get: (id) => storage.deadLetterStore.get(id),
     replay: async (id) => {
       const letter = await failedLetter(id);
-      await run(letter);
+      await run(letter, ids.next());
       await storage.deadLetterStore.updateStatus(id, "replayed");
       logger.info("dead letter replayed", {
         id,

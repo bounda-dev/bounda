@@ -129,6 +129,17 @@ describe("collaborators", () => {
   });
 });
 
+describe("idempotency keys", () => {
+  it("reach every handler that can call the outside world", () => {
+    expectTypeOf<PlaceOrder.HandlerArgs["idempotencyKey"]>().toEqualTypeOf<string>();
+    expectTypeOf<PayOrder.HandlerArgs["idempotencyKey"]>().toEqualTypeOf<string>();
+    expectTypeOf<SendReceipt.HandlerArgs["idempotencyKey"]>().toEqualTypeOf<string>();
+    expectTypeOf<NotifyOnOrderPlaced.HandlerArgs["idempotencyKey"]>().toEqualTypeOf<string>();
+    expectTypeOf<OnOrderPaid.HandlerArgs["idempotencyKey"]>().toEqualTypeOf<string>();
+    expectTypeOf<OnTimeout.TimeoutArgs["idempotencyKey"]>().toEqualTypeOf<string>();
+  });
+});
+
 describe("policies", () => {
   it("receive the stored event of the file name and the full commands facade", () => {
     expectTypeOf<SendReceipt.HandlerArgs["event"]>().toEqualTypeOf<

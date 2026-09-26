@@ -7,6 +7,7 @@ import {
   createRecordingLogger,
   eventually,
   orderRegistry,
+  placeOrderKeys,
   sentMessages,
 } from "../test-support.ts";
 
@@ -110,6 +111,43 @@ describe("scheduled command worker", () => {
         errorStack: expect.stringContaining("db unavailable"),
       },
     ]);
+  });
+
+  it("runs a delayed command with the id it was scheduled with, on every retry", async () => {
+    const harness = await createReactiveHarness({
+      registry: orderRegistry,
+      config: {
+        runtime: { policies: { retry: { strategy: "fixed", maxAttempts: 3, baseDelay: "30s" } } },
+      },
+    });
+    placeOrderKeys.length = 0;
+    await harness.pipeline.dispatch({
+      type: "PlaceOrder",
+      payload: { orderId: "o-1", total: 10 },
+      options: { delay: 0 },
+    });
+    const [scheduled] = await harness.storage.scheduler.list();
+    const original = harness.storage.eventStore.append.bind(harness.storage.eventStore);
+    let failures = 1;
+    harness.storage.eventStore.append = async (args) => {
+      if (failures > 0) {
+        failures -= 1;
+        throw new Error("db unavailable");
+      }
+      return original(args);
+    };
+
+    await harness.worker.runOnce();
+    harness.clock.advance(30_000);
+    await harness.worker.runOnce();
+
+    expect(scheduled?.dedupeKey).toBe("command:id-1");
+    expect(placeOrderKeys).toEqual(["id-1", "id-1"]);
+    const order = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    expect(order.events[0]?.metadata.causationId).toBe("id-1");
   });
 
   it("drops a retriable failure at once when retries are off", async () => {

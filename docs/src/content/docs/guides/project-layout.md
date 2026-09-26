@@ -146,8 +146,9 @@ A handler can run more than once for one command. When the append loses a concur
 runtime reloads the aggregate and runs the handler again, collaborators included, up to
 `runtime.commands.concurrencyRetries` times. So a collaborator call must be safe to repeat, and
 harmless if the second run decides differently: reading a price or a stock level is; charging a
-card is not. An effect that has to happen once needs an idempotency key the provider honours,
-derived from the command (the order or payment id), so a second run does not repeat it.
+card is not. The handler receives `idempotencyKey`, the command's id, which stays the same across
+those runs: pass it to a call the provider deduplicates, such as creating a payment intent, so a
+second run does not create another. A delayed command keeps the id it was scheduled with.
 
 ### Policies: `policies/`
 
