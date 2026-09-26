@@ -18,6 +18,8 @@ import { createDeadLetters, type DeadLetters } from "./dead-letters/dead-letters
 import { createDispatcher, type DispatcherLag } from "./dispatch/dispatcher.ts";
 import { alignReactiveCheckpoints } from "./dispatch/reactive-checkpoints.ts";
 import { buildPolicies } from "./policy/build-policies.ts";
+import { createDelayedPolicies } from "./policy/delayed.ts";
+import { createPolicyExecutor } from "./policy/executor.ts";
 import { createPolicySubscriber } from "./policy/runner.ts";
 import { buildProcesses } from "./process/build-processes.ts";
 import { createProcessRunner } from "./process/runner.ts";
@@ -183,12 +185,13 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
     logger,
   });
   const policies = buildPolicies({ registry, config });
+  const policyExecutor = createPolicyExecutor({ aggregates, pipeline, config, clock });
   const reactive = [
     {
       subscriber: createPolicySubscriber({
         policies,
-        aggregates,
-        pipeline,
+        executor: policyExecutor,
+        scheduler: storage.scheduler,
         ledger: storage.inboxLedger,
         deadLetters: storage.deadLetterStore,
         config,
@@ -234,6 +237,12 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
     aggregates,
     pipeline,
     processes,
+    delayedPolicies: createDelayedPolicies({
+      policies,
+      executor: policyExecutor,
+      eventStore: storage.eventStore,
+      config,
+    }),
     config,
     ids,
     clock,
@@ -241,11 +250,10 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
   });
   const deadLetters = createDeadLetters({
     storage,
-    aggregates,
     pipeline,
     policies,
+    policyExecutor,
     processes,
-    config,
     ids,
     clock,
     logger,

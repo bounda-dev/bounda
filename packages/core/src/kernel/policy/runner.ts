@@ -1,26 +1,24 @@
 import type { DeadLetterStore } from "../../adapter/ports/dead-letter-store.ts";
 import type { InboxLedger } from "../../adapter/ports/inbox-ledger.ts";
+import type { Scheduler } from "../../adapter/ports/scheduler.ts";
 import type { ResolvedConfig, ResolvedPoliciesConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
-import type { AggregatesRuntime } from "../aggregate/runtime.ts";
-import { createCommandsFacade } from "../command/facade.ts";
-import type { CommandPipeline } from "../command/pipeline.ts";
 import type { Subscriber } from "../dispatch/dispatcher.ts";
-import { createReactionCommandIds, deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { classifyFailure, errorDetails, retryDelayMs } from "../shared/retry.ts";
-import { withTimeout } from "../shared/timeout.ts";
-import { ATTRIBUTES, deadLettered, traced } from "../telemetry.ts";
+import { deadLettered } from "../telemetry.ts";
 import type { PoliciesRuntime, PolicyRuntime } from "./build-policies.ts";
+import { scheduleDelayedPolicy } from "./delayed.ts";
+import type { PolicyExecutor } from "./executor.ts";
 
 export const POLICIES_SUBSCRIBER: "policies" = "policies";
 
 export interface CreatePolicySubscriberArgs {
   readonly policies: PoliciesRuntime;
-  readonly aggregates: AggregatesRuntime;
-  readonly pipeline: CommandPipeline;
+  readonly executor: PolicyExecutor;
+  readonly scheduler: Scheduler;
   readonly ledger: InboxLedger;
   readonly deadLetters: DeadLetterStore;
   readonly config: ResolvedConfig;
@@ -37,15 +35,16 @@ type Outcome = "done" | "hold";
 
 /**
  * One subscriber for every policy. For each event and each policy that reacts to it, the runner
- * claims `(policy, eventId)` in the inbox ledger and runs the handler with a commands facade
- * carrying the event's causal context. Failures are classified: terminal ones are dead-lettered
- * at once; retriable ones are retried on later passes with the configured back-off, then
- * dead-lettered. While a retry is pending the checkpoint holds, so events stay ordered.
+ * claims `(policy, eventId)` in the inbox ledger and runs the handler, or, for a delayed policy,
+ * schedules its run for the event's time plus the delay. Failures are classified: terminal ones
+ * are dead-lettered at once; retriable ones are retried on later passes with the configured
+ * back-off, then dead-lettered. While a retry is pending the checkpoint holds, so events stay
+ * ordered.
  */
 export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
   policies,
-  aggregates,
-  pipeline,
+  executor,
+  scheduler,
   ledger,
   deadLetters,
   config,
@@ -103,42 +102,13 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
     const claimed = await ledger.tryClaim({ ...key, now, leaseMs: settings.timeoutMs * 2 });
     if (!claimed) return "hold";
 
-    const idempotencyKey = deriveIdempotencyKey({
-      kind: "policy",
-      handler: policy.name,
-      subject: event.id,
-    });
-    const commands = createCommandsFacade({
-      aggregates,
-      pipeline,
-      context: {
-        correlationId: event.metadata.correlationId,
-        causationId: event.id,
-        depth: event.metadata.depth,
-      },
-      commandIds: createReactionCommandIds(idempotencyKey),
-    });
     const attempt = (existing?.attempts ?? 0) + 1;
     try {
-      await traced({
-        name: `bounda.policy ${policy.name}`,
-        attributes: {
-          [ATTRIBUTES.policy]: policy.name,
-          [ATTRIBUTES.eventId]: event.id,
-          [ATTRIBUTES.eventType]: event.type,
-          [ATTRIBUTES.aggregateType]: event.aggregateType,
-          [ATTRIBUTES.aggregateId]: event.aggregateId,
-          [ATTRIBUTES.correlationId]: event.metadata.correlationId,
-          [ATTRIBUTES.attempt]: attempt,
-        },
-        run: () =>
-          withTimeout({
-            run: () => policy.handler({ ...policy.collaborators, event, commands, idempotencyKey }),
-            timeoutMs: settings.timeoutMs,
-            subject: `policy ${policy.name}`,
-            clock,
-          }),
-      });
+      if (policy.delayMs === null) {
+        await executor.run({ policy, event, attempt });
+      } else {
+        await scheduleDelayedPolicy({ scheduler, policy, delayMs: policy.delayMs, event });
+      }
       await ledger.complete(key);
       return "done";
     } catch (error) {

@@ -191,6 +191,10 @@ export default defineConfig({
 });
 ```
 
+A policy that exports `delay` (`export const delay = "1m"`, or `asDuration(...)` for a value
+from the environment) runs that long after the event instead of as soon as it is read; see
+[delaying a policy](/guides/reacting-to-events/#delaying-a-policy).
+
 A policy runs after the events it reacts to are stored, and at least once
 ([what the runtime promises](/guides/reacting-to-events/#what-the-runtime-promises)): a call it
 makes must be safe to repeat.

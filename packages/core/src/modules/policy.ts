@@ -1,13 +1,16 @@
+import type { DurationInput } from "../contracts/duration.ts";
 import type { CollaboratorImplementations } from "./command.ts";
 import type { EmptyPayload } from "./payload.ts";
 
 /**
  * The shape of a policy module. `on` overrides the event type derived from the file name and may
- * list several events.
+ * list several events. `delay` runs the handler that long after the event was stored instead of
+ * as soon as it is read.
  */
 export interface PolicyModule {
   readonly handler: (args: never) => unknown;
   readonly on?: string | readonly string[];
+  readonly delay?: DurationInput;
 }
 
 /**

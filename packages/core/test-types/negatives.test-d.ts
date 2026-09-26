@@ -1,3 +1,4 @@
+import type { PolicyModule } from "@bounda-dev/core";
 import { describe, it } from "vitest";
 import type { Command as PayOrder } from "./fixtures/order-app/app/domain/order/commands/+types/pay-order.ts";
 import type { Command as PlaceOrder } from "./fixtures/order-app/app/domain/order/commands/place-order/+types/index.ts";
@@ -32,6 +33,15 @@ describe("what does not compile", () => {
     // @ts-expect-error mailer belongs to notifyOnOrderPlaced, not to sendReceiptOnOrderPaid
     const handler = ({ mailer }: SendReceipt.HandlerArgs) => mailer;
     void handler;
+  });
+
+  it("a delay that is not a duration", () => {
+    const policy: PolicyModule = {
+      handler: () => undefined,
+      // @ts-expect-error "10 minutes" is not a duration string
+      delay: "10 minutes",
+    };
+    void policy;
   });
 
   it("a typo in a process event name", () => {

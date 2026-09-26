@@ -5,12 +5,13 @@ import type { Collaborators, Confirmation } from "./index.ts";
  * would. Tests read it; nothing else should.
  */
 export const sent: Confirmation[] = [];
-const seen = new Set<string>();
+const sentWithKey = new Map<string, Confirmation>();
 
 export default {
   send: async (confirmation, idempotencyKey) => {
-    if (seen.has(idempotencyKey)) return;
-    seen.add(idempotencyKey);
+    const previous = sentWithKey.get(idempotencyKey);
+    if (previous !== undefined && sent.includes(previous)) return;
+    sentWithKey.set(idempotencyKey, confirmation);
     sent.push(confirmation);
   },
 } satisfies Collaborators["notifier"];
