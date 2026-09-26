@@ -10,7 +10,7 @@ import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { createCommandsFacade } from "../command/facade.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
 import type { Subscriber } from "../dispatch/dispatcher.ts";
-import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
+import { createReactionCommandIds, deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { classifyFailure, errorDetails, retryDelayMs } from "../shared/retry.ts";
 import { withTimeout } from "../shared/timeout.ts";
 import { ATTRIBUTES, deadLettered, traced } from "../telemetry.ts";
@@ -149,8 +149,23 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     depth: event.metadata.depth,
   });
 
-  const facadeFor = (context: CausationContext) =>
-    createCommandsFacade({ aggregates, pipeline, context });
+  const facadeFor = (context: CausationContext, idempotencyKey: string) =>
+    createCommandsFacade({
+      aggregates,
+      pipeline,
+      context,
+      commandIds: createReactionCommandIds(idempotencyKey),
+    });
+
+  const handlerArgs = (
+    process: ProcessRuntime,
+    context: CausationContext,
+    idempotencyKey: string,
+  ): Record<string, unknown> => ({
+    ...process.collaborators,
+    commands: facadeFor(context, idempotencyKey),
+    idempotencyKey,
+  });
 
   const deadLetter = async (
     process: ProcessRuntime,
@@ -317,17 +332,19 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
         withTimeout({
           run: () =>
             process.handlers[event.type]?.({
-              ...process.collaborators,
+              ...handlerArgs(
+                process,
+                contextOf(event),
+                deriveIdempotencyKey({
+                  kind: "process",
+                  handler: process.name,
+                  subject: event.id,
+                  replay,
+                }),
+              ),
               event,
               state: instance.state,
               aggregateId: event.aggregateId,
-              commands: facadeFor(contextOf(event)),
-              idempotencyKey: deriveIdempotencyKey({
-                kind: "process",
-                handler: process.name,
-                subject: event.id,
-                replay,
-              }),
             }),
           timeoutMs: config.forAggregate(process.aggregate).policies.timeoutMs,
           subject: `process ${process.name}`,
@@ -453,16 +470,18 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
                 withTimeout({
                   run: () =>
                     process.timeoutHandler?.({
-                      ...process.collaborators,
+                      ...handlerArgs(
+                        process,
+                        context,
+                        deriveIdempotencyKey({
+                          kind: "process",
+                          handler: process.name,
+                          subject: `${payload.aggregateId}:timeout`,
+                          replay,
+                        }),
+                      ),
                       state: instance.state,
                       aggregateId: payload.aggregateId,
-                      commands: facadeFor(context),
-                      idempotencyKey: deriveIdempotencyKey({
-                        kind: "process",
-                        handler: process.name,
-                        subject: `${payload.aggregateId}:timeout`,
-                        replay,
-                      }),
                     }),
                   timeoutMs: config.forAggregate(process.aggregate).policies.timeoutMs,
                   subject: `process ${process.name} timeout`,

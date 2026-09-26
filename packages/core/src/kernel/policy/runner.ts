@@ -9,7 +9,7 @@ import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { createCommandsFacade } from "../command/facade.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
 import type { Subscriber } from "../dispatch/dispatcher.ts";
-import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
+import { createReactionCommandIds, deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { classifyFailure, errorDetails, retryDelayMs } from "../shared/retry.ts";
 import { withTimeout } from "../shared/timeout.ts";
 import { ATTRIBUTES, deadLettered, traced } from "../telemetry.ts";
@@ -103,6 +103,11 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
     const claimed = await ledger.tryClaim({ ...key, now, leaseMs: settings.timeoutMs * 2 });
     if (!claimed) return "hold";
 
+    const idempotencyKey = deriveIdempotencyKey({
+      kind: "policy",
+      handler: policy.name,
+      subject: event.id,
+    });
     const commands = createCommandsFacade({
       aggregates,
       pipeline,
@@ -111,6 +116,7 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
         causationId: event.id,
         depth: event.metadata.depth,
       },
+      commandIds: createReactionCommandIds(idempotencyKey),
     });
     const attempt = (existing?.attempts ?? 0) + 1;
     try {
@@ -127,17 +133,7 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
         },
         run: () =>
           withTimeout({
-            run: () =>
-              policy.handler({
-                ...policy.collaborators,
-                event,
-                commands,
-                idempotencyKey: deriveIdempotencyKey({
-                  kind: "policy",
-                  handler: policy.name,
-                  subject: event.id,
-                }),
-              }),
+            run: () => policy.handler({ ...policy.collaborators, event, commands, idempotencyKey }),
             timeoutMs: settings.timeoutMs,
             subject: `policy ${policy.name}`,
             clock,

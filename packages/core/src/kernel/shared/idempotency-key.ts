@@ -41,3 +41,21 @@ export const deriveIdempotencyKey: DeriveIdempotencyKeyFunction = ({
     [kind, handler, subject, ...(replay === undefined ? [] : ["replay", replay])].join(":"),
     NAMESPACE,
   );
+
+export interface CreateReactionCommandIdsFunction {
+  (idempotencyKey: string): (commandType: string) => string;
+}
+
+/**
+ * Ids for the commands one run of a reaction dispatches: a UUID v5 of its idempotency key, the
+ * command type and how many commands of that type the run dispatched before. A retry that
+ * dispatches the same commands gives them the same ids, so a delayed one is scheduled once.
+ */
+export const createReactionCommandIds: CreateReactionCommandIdsFunction = (idempotencyKey) => {
+  const dispatched = new Map<string, number>();
+  return (commandType) => {
+    const ordinal = dispatched.get(commandType) ?? 0;
+    dispatched.set(commandType, ordinal + 1);
+    return uuidV5([idempotencyKey, "command", commandType, ordinal].join(":"), NAMESPACE);
+  };
+};
