@@ -24,7 +24,7 @@ app/
           index.ts
           inventory.fake.ts         collaborator "inventory", implementation "fake"
       policies/
-        send-receipt-on-order-paid.ts   reacts to OrderPaid
+        issue-invoice-on-order-paid.ts   reacts to OrderPaid
         notify-on-order-placed/     a policy with collaborators
           index.ts
           mailer.smtp.ts
@@ -52,7 +52,7 @@ them into the names your code sees:
 | --- | --- | --- |
 | `order-placed.ts` | `orderPlaced` | `OrderPlaced` |
 | `place-order/index.ts` | `placeOrder` | `PlaceOrder` |
-| `send-receipt-on-order-paid.ts` | `sendReceiptOnOrderPaid` | reacts to `OrderPaid` |
+| `issue-invoice-on-order-paid.ts` | `issueInvoiceOnOrderPaid` | reacts to `OrderPaid` |
 | `on-order-paid.ts` | handler for `orderPaid` | |
 | `inventory.fake.ts` | collaborator `inventory`, implementation `fake` | |
 | `order-summary/` | `orderSummary` | `OrderSummaryRow` |
@@ -115,21 +115,23 @@ import { DomainError } from "@bounda-dev/core";
 import type { Command } from "./+types/index";
 
 export type Collaborators = {
-  inventory: { reserve: (skus: readonly string[]) => Promise<void> };
+  inventory: { available: (skus: readonly string[]) => Promise<boolean> };
 };
 
 export const payload = ({ z }: Command.PayloadArgs) =>
-  z.object({ orderId: z.uuid(), customerId: z.string(), total: z.number().positive() });
+  z.object({ orderId: z.uuid(), customerId: z.string(), skus: z.array(z.string()).min(1) });
 
 export const handler = async ({ command, state, events, inventory }: Command.HandlerArgs) => {
   if (state.status !== "new") throw new DomainError("Order already placed");
-  await inventory.reserve([]);
-  return [events.orderPlaced({ customerId: command.payload.customerId, total: command.payload.total })];
+  if (!(await inventory.available(command.payload.skus))) throw new DomainError("Out of stock");
+  return [events.orderPlaced({ customerId: command.payload.customerId, skus: command.payload.skus })];
 };
 ```
 
-Collaborators are the things a handler needs from outside: a payment gateway, a clock, a mailer.
-Each implementation is a file `<collaborator>.<implementation>.ts` next to `index.ts` with a
+A command's collaborators are what its handler reads from outside to decide: stock, prices, a
+feature flag. Effects on the world (a charge, an email) belong in the policy or process that
+reacts to the event, after it is stored; see
+[calling the outside world](/guides/reacting-to-events/#calling-the-outside-world). Each implementation is a file `<collaborator>.<implementation>.ts` next to `index.ts` with a
 default export; `bounda.config.ts` picks one per environment:
 
 ```ts
@@ -139,8 +141,8 @@ export default defineConfig({
 });
 ```
 
-Export a `Collaborators` type when the implementations are looser than the contract, as the fake
-above that ignores its argument. Without it, the type is inferred from the implementations.
+Export a `Collaborators` type when the implementations are looser than the contract, as a fake
+that ignores its argument. Without it, the type is inferred from the implementations.
 
 A handler can run more than once for one command. When the append loses a concurrency race, the
 runtime reloads the aggregate and runs the handler again, collaborators included, up to
@@ -156,11 +158,11 @@ A policy reacts to an event with commands. `<action>-on-<event>.ts` names the ev
 without `-on-` exports `on` with the event type names it reacts to.
 
 ```ts
-// app/domain/order/policies/send-receipt-on-order-paid.ts
-import type { Policy } from "./+types/send-receipt-on-order-paid";
+// app/domain/order/policies/issue-invoice-on-order-paid.ts
+import type { Policy } from "./+types/issue-invoice-on-order-paid";
 
 export const handler = async ({ event, commands }: Policy.HandlerArgs) => {
-  await commands.sendReceipt({ orderId: event.aggregateId, method: event.payload.method });
+  await commands.issueInvoice({ orderId: event.aggregateId, method: event.payload.method });
 };
 ```
 

@@ -18,7 +18,7 @@ file whose name says what it reacts to, and the handler gets the event and the c
 
 ```ts
 export const handler = async ({ event, commands }: Policy.HandlerArgs) => {
-  await commands.sendConfirmation({ orderId: event.aggregateId });
+  await commands.sendReminder({ orderId: event.aggregateId }, { delay: "24h" });
 };
 ```
 
@@ -78,6 +78,47 @@ nothing reads the log for them, nothing checkpoints and nothing wakes up.
 retried on later passes with the configured back-off and dead-lettered when the attempts run out.
 Dead letters keep the event, the handler, the error and the number of attempts, and they have a
 way out: see [Dead letters](#dead-letters).
+
+## Calling the outside world
+
+A command handler decides; it does not act on the world. It can run more than once for one
+command, when its append loses a concurrency race, and what it decided is not stored until the
+append succeeds. So a command handler only makes calls that are safe to repeat and harmless if the
+decision never lands: reading a price, checking stock, creating a payment intent with its
+`idempotencyKey` so the page can show the payment form. What it learned from outside goes into the
+event, so the history says what the decision was based on.
+
+The effect itself (charging the card, sending the email, telling the warehouse) goes in a policy
+or process that reacts to the stored event, with the collaborator next to it. It runs after the
+commit and at least once, and it reports back with a command:
+
+```ts
+// policies/charge-on-order-placed/index.ts
+export const handler = async ({ event, commands, payments, idempotencyKey }: Policy.HandlerArgs) => {
+  const charge = await payments.charge({ amount: event.payload.total, idempotencyKey });
+  if (charge.ok) {
+    await commands.recordPayment({ orderId: event.aggregateId, chargeId: charge.id });
+  } else {
+    await commands.recordPaymentFailure({ orderId: event.aggregateId, reason: charge.reason });
+  }
+};
+```
+
+A refusal from the provider is an answer, not an error: it becomes an event (`PaymentFailed`) that
+other reactions can respond to. Throw only when there is no answer, and the runtime retries with
+back-off. The event store is the outbox, so nothing else is needed for the effect to follow the
+decision.
+
+A few rules keep it correct:
+
+- **Pass `idempotencyKey` to every provider that takes one.** It is one key per handler run: two
+  different calls in one handler need two keys, so either derive a second one for the provider
+  (`${idempotencyKey}-refund`, if its length limit allows) or give each effect its own reaction.
+- **Without a key on the provider's side**, look the operation up by your own reference before
+  calling again, and give a process a time-out for a provider that may never answer.
+- **The command a reaction dispatches can arrive twice**, when the reaction is retried after
+  dispatching it. Its handler decides from state and returns no events the second time, as
+  `recordConfirmationSent` does in the [storefront example](/guides/storefront-example/).
 
 ## Retries and deadlines
 

@@ -3,7 +3,7 @@ import { DomainError } from "@bounda-dev/core";
 import { createTestApp } from "@bounda-dev/core/testing";
 import { beforeEach, describe, expect, it } from "vitest";
 import { registry } from "../.bounda/registry.ts";
-import { sent } from "../app/domain/order/commands/send-confirmation/notifier.memory.ts";
+import { sent } from "../app/domain/order/policies/send-confirmation-on-order-placed/notifier.memory.ts";
 
 const ORDER = "018f6a5e-4c3c-7c1e-9d4b-0b2c4a1d8e01";
 const OTHER = "018f6a5e-4c3c-7c1e-9d4b-0b2c4a1d8e02";
@@ -16,7 +16,9 @@ const start = () =>
   createTestApp({
     registry,
     adapter: sqlite({ memory: true }),
-    config: { commands: { sendConfirmation: { notifier: { use: "memory" } } } },
+    config: {
+      policies: { order: { sendConfirmationOnOrderPlaced: { notifier: { use: "memory" } } } },
+    },
   });
 
 const HOUR = 3_600_000;

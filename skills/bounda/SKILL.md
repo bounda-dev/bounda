@@ -77,26 +77,41 @@ Command with a collaborator (`commands/place-order/index.ts` plus `inventory.fak
 default export; `bounda.config.ts` selects it with `commands: { placeOrder: { inventory: { use: "fake" } } }`):
 
 ```ts
-export type Collaborators = { inventory: { reserve: (skus: readonly string[]) => Promise<void> } };
+export type Collaborators = { inventory: { available: (skus: readonly string[]) => Promise<boolean> } };
 
 export const handler = async ({ command, events, inventory }: Command.HandlerArgs) => {
-  await inventory.reserve(command.payload.lines.map((line) => line.sku));
+  if (!(await inventory.available(command.payload.skus))) throw new DomainError("Out of stock");
   return [events.orderPlaced(command.payload)];
 };
 ```
+
+Command handlers only read from outside. Effects (charging, emailing, calling another service) go
+in a policy or process with the collaborator, after the event is stored, passing `idempotencyKey`
+to the provider, and report back with a command whose handler ignores a duplicate by state.
+A provider's refusal becomes an event (`PaymentFailed`); throw only when there is no answer.
 
 A handler reruns, collaborators included, when its append loses a concurrency race. Collaborator
 calls must be safe to repeat and harmless if the rerun decides differently (reads are). Every
 handler receives `idempotencyKey`, stable across its reruns (the command id); pass it to calls the
 provider deduplicates.
 
-Policy (`policies/send-receipt-on-order-paid.ts`):
+Policy (`policies/issue-invoice-on-order-paid.ts`):
 
 ```ts
-import type { Policy } from "./+types/send-receipt-on-order-paid";
+import type { Policy } from "./+types/issue-invoice-on-order-paid";
 
 export const handler = async ({ event, commands }: Policy.HandlerArgs) => {
-  await commands.sendReceipt({ orderId: event.aggregateId });
+  await commands.issueInvoice({ orderId: event.aggregateId });
+};
+```
+
+Policy with a collaborator (`policies/send-receipt-on-order-paid/index.ts` plus `mailer.smtp.ts`;
+config `policies: { order: { sendReceiptOnOrderPaid: { mailer: { use: "smtp" } } } }`):
+
+```ts
+export const handler = async ({ event, commands, mailer, idempotencyKey }: Policy.HandlerArgs) => {
+  await mailer.sendReceipt({ orderId: event.aggregateId }, idempotencyKey);
+  await commands.recordReceiptSent({ orderId: event.aggregateId });
 };
 ```
 

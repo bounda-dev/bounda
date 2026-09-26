@@ -3,7 +3,9 @@ import { defineConfig } from "@bounda-dev/core/config";
 
 export default defineConfig({
   storage: sqlite({ path: process.env.STOREFRONT_DB ?? "./data/storefront.db" }),
-  commands: {
-    sendConfirmation: { notifier: { use: process.env.NOTIFIER ?? "console" } },
+  policies: {
+    order: {
+      sendConfirmationOnOrderPlaced: { notifier: { use: process.env.NOTIFIER ?? "console" } },
+    },
   },
 });

@@ -115,30 +115,32 @@ and fast. Use the same for PostgreSQL when a query relies on something only Post
 
 ## Choosing implementations
 
-A command whose module offers more than one implementation of a dependency picks one through
-config, and a test picks the one that records instead of sending:
+A command, policy or process whose module offers more than one implementation of a dependency
+picks one through config, and a test picks the one that records instead of sending. Commands are
+keyed by name; policies and processes by aggregate and then by key:
 
 ```ts
 const { app } = await createTestApp({
   registry,
   adapter: sqlite({ memory: true }),
-  config: { commands: { sendConfirmation: { notifier: { use: "memory" } } } },
+  config: {
+    policies: { order: { sendConfirmationOnOrderPlaced: { notifier: { use: "memory" } } } },
+  },
 });
 ```
 
-Then assert on what it recorded, importing the array the memory implementation exports:
+A policy runs after the command, so let it run, then assert on what the memory implementation
+recorded, importing the array it exports:
 
 ```ts
-import { sent } from "../app/domain/order/commands/send-confirmation/notifier.memory.ts";
+import { sent } from "../app/domain/order/policies/send-confirmation-on-order-placed/notifier.memory.ts";
 
+await app.commands.placeOrder({ orderId: ORDER, customerId: "ada", items });
+await app.processUntilIdle();
 expect(sent).toEqual([{ orderId: ORDER, customerId: "ada", total: 139 }]);
 ```
 
 Reset it in `beforeEach`; the module lives as long as the test file does.
-
-Policies and processes choose theirs the same way, by aggregate and then by key:
-`config: { policies: { order: { notifyOnOrderPlaced: { mailer: { use: "memory" } } } } }`. They
-run after the command, so call `app.processUntilIdle()` before asserting on what they recorded.
 
 ## Nothing left behind
 

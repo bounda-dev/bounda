@@ -20,10 +20,11 @@ pnpm dev
 
 1. The `/register` action dispatches `registerUser` and redirects to `/users/:userId`. The page
    already shows the user: the app in the context reads its own writes.
-2. `UserRegistered` starts the process `user-onboarding`. Its handler schedules `sendWelcomeEmail`
-   a minute later; when it runs, the `emailSender` collaborator sends the email
-   (`email-sender.console` in the demo, `email-sender.memory` in the tests) and `WelcomeEmailSent`
-   is appended.
+2. `UserRegistered` starts the process `user-onboarding`. Its handler schedules
+   `requestWelcomeEmail` a minute later, which appends `WelcomeEmailRequested`. The policy
+   `send-welcome-email-on-welcome-email-requested` sends the email through its `emailSender`
+   collaborator (`email-sender.console` in the demo, `email-sender.memory` in the tests) and
+   dispatches `recordWelcomeEmailSent`, which appends `WelcomeEmailSent`.
 3. Activating the user completes the process. A registration nobody activates within a week hits
    the process time-out, which dispatches `expireRegistration`.
 4. Two read models follow along: `users-directory`, paginated by `listUsers`, and `user-details`,
@@ -42,11 +43,21 @@ const url = process.env.DATABASE_URL;
 
 export default defineConfig({
   storage: url === undefined ? sqlite({ path: "./data/onboarding.db" }) : postgresql({ url }),
-  commands: {
-    sendWelcomeEmail: { emailSender: { use: process.env.EMAIL_SENDER ?? "console" } },
+  policies: {
+    user: {
+      sendWelcomeEmailOnWelcomeEmailRequested: {
+        emailSender: { use: process.env.EMAIL_SENDER ?? "console" },
+      },
+    },
   },
 });
 ```
+
+**A delayed effect.** The delay belongs to a command, so the scheduled command does not send
+anything: it records the request as an event, and a policy reacting to that event makes the call,
+after the commit, with an `idempotencyKey` that survives its retries. A policy rather than the
+process, because a user activated before the minute is up completes the process and should still
+get the email.
 
 **A paginated query with defaults.** Fields with `.default()` are optional for callers and always
 present in the repository and the handler:
