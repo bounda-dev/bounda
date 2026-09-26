@@ -49,4 +49,9 @@ export type CommandHandlerArgs<
   readonly command: Command<Type, Payload>;
   readonly state: HandlerState<State>;
   readonly events: EventBuilders<Events>;
+  /**
+   * The command's id, the same when a concurrency conflict runs the handler again: a key for a
+   * call that must be safe to repeat, such as creating a payment intent.
+   */
+  readonly idempotencyKey: string;
 } & Readonly<Collaborators>;

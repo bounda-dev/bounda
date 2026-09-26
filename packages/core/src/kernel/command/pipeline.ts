@@ -25,6 +25,11 @@ export interface DispatchArgs {
   readonly payload: unknown;
   readonly options?: DispatchOptions;
   readonly context?: CausationContext;
+  /**
+   * The id a scheduled command was given when it was scheduled, so it keeps it when it runs and
+   * on every retry of the worker. Otherwise a new one.
+   */
+  readonly commandId?: string | undefined;
 }
 
 export interface CommandPipeline {
@@ -44,6 +49,30 @@ export interface CreateCommandPipelineArgs {
 export interface CreateCommandPipelineFunction {
   (args: CreateCommandPipelineArgs): CommandPipeline;
 }
+
+const SCHEDULED_COMMAND_PREFIX = "command:";
+
+export interface ScheduledCommandKeyFunction {
+  (commandId: string): string;
+}
+
+/**
+ * The scheduler's dedupe key for a delayed command, built from the command's id.
+ */
+export const scheduledCommandKey: ScheduledCommandKeyFunction = (commandId) =>
+  `${SCHEDULED_COMMAND_PREFIX}${commandId}`;
+
+export interface ScheduledCommandIdFunction {
+  (dedupeKey: string): string | undefined;
+}
+
+/**
+ * The id a delayed command was given when it was scheduled, read back from its dedupe key.
+ */
+export const scheduledCommandId: ScheduledCommandIdFunction = (dedupeKey) =>
+  dedupeKey.startsWith(SCHEDULED_COMMAND_PREFIX)
+    ? dedupeKey.slice(SCHEDULED_COMMAND_PREFIX.length)
+    : undefined;
 
 const resolveAggregateId = (aggregate: AggregateRuntime, payload: unknown): string => {
   const record = payload as Record<string, unknown>;
@@ -129,6 +158,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         command,
         state,
         events: aggregate.eventBuilders,
+        idempotencyKey: command.metadata.commandId,
       })) as readonly NewEvent[] | undefined;
       const events = toPendingEvents(
         aggregate,
@@ -184,6 +214,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     payload,
     options = {},
     context,
+    commandId: scheduledId,
   }: DispatchArgs): Promise<DispatchResult> => {
     const entry = aggregates.commandsByType[type];
     if (entry === undefined) throw new NotFoundError(`Unknown command "${type}"`);
@@ -198,7 +229,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
       subject: `command ${type}`,
     });
     const aggregateId = resolveAggregateId(aggregate, parsed);
-    const commandId = ids.next();
+    const commandId = scheduledId ?? ids.next();
     const command: Command = {
       type,
       payload: parsed,
@@ -225,7 +256,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         if (options.delay !== undefined) {
           const executeAt = new Date(clock.now().getTime() + parseDuration(options.delay));
           await scheduler.schedule({
-            dedupeKey: `command:${commandId}`,
+            dedupeKey: scheduledCommandKey(commandId),
             command: { type, payload: parsed, aggregateId },
             executeAt,
             context: {

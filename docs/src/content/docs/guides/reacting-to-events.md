@@ -51,6 +51,18 @@ What it cannot know is whether the side effect of a partially finished handler h
 why a handler that talks to the outside world should be written so that running it twice is
 harmless.
 
+**Every reaction gets an idempotency key.** Policy and process handlers receive
+`idempotencyKey`, a UUID that is the same on every retry of the handler for one event (for
+`on-timeout.ts`, for one instance) and new each time an operator replays the dead letter, so a
+provider that stored the failed attempt's answer sees a new request. Pass it to the providers that
+accept one:
+
+```ts
+export const handler = async ({ event, payments, idempotencyKey }: Policy.HandlerArgs) => {
+  await payments.charge({ orderId: event.aggregateId, idempotencyKey });
+};
+```
+
 **Events stay in order.** While a retry is pending the subscriber's checkpoint holds, so the next
 event waits for this one instead of overtaking it. A policy stuck on a retry therefore delays the
 policies behind it and shows up as lag rather than as events silently processed out of order.

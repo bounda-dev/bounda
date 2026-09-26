@@ -10,6 +10,7 @@ import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { createCommandsFacade } from "../command/facade.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
 import type { Subscriber } from "../dispatch/dispatcher.ts";
+import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { classifyFailure, errorDetails, retryDelayMs } from "../shared/retry.ts";
 import { withTimeout } from "../shared/timeout.ts";
 import { ATTRIBUTES, deadLettered, traced } from "../telemetry.ts";
@@ -40,6 +41,10 @@ export interface ReplayProcessArgs {
    */
   readonly process: string;
   readonly event: StoredEvent;
+  /**
+   * Identifies this replay, so the handler's `idempotencyKey` differs from the failed run's.
+   */
+  readonly replay: string;
 }
 
 export interface ProcessRunner extends Subscriber {
@@ -49,6 +54,10 @@ export interface ProcessRunner extends Subscriber {
   handleTimeout(args: {
     readonly payload: ProcessTimeoutPayload;
     readonly context: CausationContext;
+    /**
+     * Set when an operator replays a dropped timeout, so its `idempotencyKey` is new.
+     */
+    readonly replay?: string | undefined;
   }): Promise<void>;
   /**
    * Runs a process handler again for an event whose earlier run was dead-lettered, ignoring the
@@ -291,6 +300,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     event: StoredEvent,
     instance: ProcessInstance,
     attempt: number,
+    replay?: string,
   ): Promise<unknown> =>
     traced({
       name: `bounda.process ${process.name}`,
@@ -312,6 +322,12 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
               state: instance.state,
               aggregateId: event.aggregateId,
               commands: facadeFor(contextOf(event)),
+              idempotencyKey: deriveIdempotencyKey({
+                kind: "process",
+                handler: process.name,
+                subject: event.id,
+                replay,
+              }),
             }),
           timeoutMs: config.forAggregate(process.aggregate).policies.timeoutMs,
           subject: `process ${process.name}`,
@@ -347,7 +363,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     return "done";
   };
 
-  const replay = async ({ process: name, event }: ReplayProcessArgs): Promise<void> => {
+  const replay = async ({ process: name, event, replay }: ReplayProcessArgs): Promise<void> => {
     const process = processes.byName[name];
     if (process === undefined) {
       throw new ConfigurationError(`Process "${name}" is no longer in the registry`);
@@ -361,7 +377,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
       throw new NotFoundError(`Process "${name}" has no instance for ${event.aggregateId}`);
     }
     const context = contextOf(event);
-    const next = await runHandler(process, event, instance, 1);
+    const next = await runHandler(process, event, instance, 1, replay);
     await append(
       process,
       event.aggregateId,
@@ -417,7 +433,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
       return !hold;
     },
     replay,
-    handleTimeout: async ({ payload, context }) => {
+    handleTimeout: async ({ payload, context, replay }) => {
       const process = processes.byName[payload.process];
       if (process === undefined) return;
       const instance = await load(process, payload.aggregateId);
@@ -441,6 +457,12 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
                       state: instance.state,
                       aggregateId: payload.aggregateId,
                       commands: facadeFor(context),
+                      idempotencyKey: deriveIdempotencyKey({
+                        kind: "process",
+                        handler: process.name,
+                        subject: `${payload.aggregateId}:timeout`,
+                        replay,
+                      }),
                     }),
                   timeoutMs: config.forAggregate(process.aggregate).policies.timeoutMs,
                   subject: `process ${process.name} timeout`,

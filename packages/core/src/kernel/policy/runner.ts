@@ -9,6 +9,7 @@ import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { createCommandsFacade } from "../command/facade.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
 import type { Subscriber } from "../dispatch/dispatcher.ts";
+import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { classifyFailure, errorDetails, retryDelayMs } from "../shared/retry.ts";
 import { withTimeout } from "../shared/timeout.ts";
 import { ATTRIBUTES, deadLettered, traced } from "../telemetry.ts";
@@ -126,7 +127,17 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
         },
         run: () =>
           withTimeout({
-            run: () => policy.handler({ ...policy.collaborators, event, commands }),
+            run: () =>
+              policy.handler({
+                ...policy.collaborators,
+                event,
+                commands,
+                idempotencyKey: deriveIdempotencyKey({
+                  kind: "policy",
+                  handler: policy.name,
+                  subject: event.id,
+                }),
+              }),
             timeoutMs: settings.timeoutMs,
             subject: `policy ${policy.name}`,
             clock,

@@ -5,7 +5,7 @@ import type { Clock } from "../../contracts/clock.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
-import type { CommandPipeline } from "../command/pipeline.ts";
+import { type CommandPipeline, scheduledCommandId } from "../command/pipeline.ts";
 import type { ProcessRunner, ProcessTimeoutPayload } from "../process/runner.ts";
 import { PROCESS_TIMEOUT_COMMAND } from "../process/runner.ts";
 import { createMutex } from "../shared/mutex.ts";
@@ -159,6 +159,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
             type: entry.command.type,
             payload: entry.command.payload,
             context: entry.context,
+            commandId: scheduledCommandId(entry.dedupeKey),
           });
         }
       },

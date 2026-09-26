@@ -8,7 +8,12 @@ import {
   ValidationError,
 } from "../../contracts/errors.ts";
 import type { Registry } from "../../modules/registry.ts";
-import { createKernelHarness, orderRegistry, sentMessages } from "../test-support.ts";
+import {
+  createKernelHarness,
+  orderRegistry,
+  placeOrderKeys,
+  sentMessages,
+} from "../test-support.ts";
 
 const withTickets: Registry = {
   aggregates: {
@@ -240,6 +245,7 @@ describe("command pipeline", () => {
       pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 42 } }),
     ).rejects.toBeInstanceOf(ConcurrencyError);
     expect(sentMessages).toHaveLength(2);
+    expect(placeOrderKeys).toEqual(["id-1", "id-1"]);
   });
 
   it("lets exactly one of two concurrent commands on a fresh aggregate win without retries", async () => {

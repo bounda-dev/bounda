@@ -72,6 +72,11 @@ export type ProcessHandlerArgs<
   readonly state: Readonly<State>;
   readonly aggregateId: string;
   readonly commands: Commands;
+  /**
+   * A key to hand the providers this handler calls, so a retry does not repeat an effect: the
+   * same on every automatic retry for this event, new when an operator replays a dead letter.
+   */
+  readonly idempotencyKey: string;
 } & Readonly<Collaborators>;
 
 /**
@@ -82,4 +87,9 @@ export type ProcessTimeoutArgs<State, Commands, Collaborators extends object = E
   readonly state: Readonly<State>;
   readonly aggregateId: string;
   readonly commands: Commands;
+  /**
+   * A key to hand the providers this handler calls: the same on every retry of this time-out, new
+   * when an operator replays it from the dead letters.
+   */
+  readonly idempotencyKey: string;
 } & Readonly<Collaborators>;

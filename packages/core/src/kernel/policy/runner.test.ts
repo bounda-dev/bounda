@@ -4,15 +4,18 @@ import { DomainError } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { createReactiveHarness } from "../reactive-harness.ts";
+import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { createRecordingLogger, orderAggregateEntry } from "../test-support.ts";
 import { buildPolicies, policyTriggerFromKey } from "./build-policies.ts";
 
 interface PolicyArgs {
   readonly event: { aggregateId: string; metadata: { correlationId: string; depth: number } };
   readonly commands: Record<string, (payload: unknown) => Promise<unknown>>;
+  readonly idempotencyKey: string;
 }
 
 const calls: string[] = [];
+const keys: string[] = [];
 let behaviour: "ok" | "domain" | "flaky" | "hangs" = "ok";
 let flakyFailures = 0;
 let handlerStarted = Promise.withResolvers<void>();
@@ -24,8 +27,9 @@ const registry: Registry = {
       policies: {
         payOnOrderPlaced: {
           module: {
-            handler: async ({ event, commands }: PolicyArgs) => {
+            handler: async ({ event, commands, idempotencyKey }: PolicyArgs) => {
               calls.push(`pay:${event.aggregateId}`);
+              keys.push(idempotencyKey);
               if (behaviour === "domain") throw new DomainError("cannot pay");
               if (behaviour === "flaky" && flakyFailures > 0) {
                 flakyFailures -= 1;
@@ -55,6 +59,7 @@ const registry: Registry = {
 
 const reset = (mode: typeof behaviour, failures = 0) => {
   calls.length = 0;
+  keys.length = 0;
   behaviour = mode;
   flakyFailures = failures;
   handlerStarted = Promise.withResolvers<void>();
@@ -198,6 +203,29 @@ describe("policy subscriber", () => {
     await harness.dispatcher.processUntilIdle();
     expect(calls.filter((call) => call === "pay:o-1")).toHaveLength(1);
     expect(await harness.storage.checkpointStore.get("policies")).toBeGreaterThan(0);
+  });
+
+  it("gives the handler the same idempotency key on every retry for one event", async () => {
+    reset("flaky", 1);
+    const harness = await createReactiveHarness({
+      registry,
+      config: {
+        runtime: { policies: { retry: { strategy: "fixed", maxAttempts: 3, baseDelay: "1s" } } },
+      },
+    });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.dispatcher.processUntilIdle();
+    harness.clock.advance(1_000);
+    await harness.dispatcher.processUntilIdle();
+    const [placed] = (
+      await harness.storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" })
+    ).events;
+    const expected = deriveIdempotencyKey({
+      kind: "policy",
+      handler: "order.payOnOrderPlaced",
+      subject: placed?.id ?? "",
+    });
+    expect(keys).toEqual([expected, expected]);
   });
 
   it("dead-letters a terminal failure at once and moves on", async () => {
