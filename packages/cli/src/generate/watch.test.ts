@@ -17,6 +17,13 @@ const project = async (): Promise<string> => {
 
 const drained = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
+const unheard = async (clock: ReturnType<typeof createFixedClock>, writes: number) => {
+  for (let write = 0; write < writes; write += 1) {
+    await vi.waitFor(() => expect(clock.pending()).toBe(1));
+    clock.advance(50);
+  }
+};
+
 const cookies = async (directory: string): Promise<string[]> =>
   (await readdir(directory)).filter((name) => name.startsWith(".bounda-watch-"));
 
@@ -103,6 +110,7 @@ const start = async (
   const root = await project();
   let runs = 0;
   let listened = 0;
+  let unconfirmed = 0;
   const errors: unknown[] = [];
   const controller = new AbortController();
   const clock = createFixedClock();
@@ -121,6 +129,9 @@ const start = async (
     onListening: () => {
       listened += 1;
     },
+    onUnconfirmed: () => {
+      unconfirmed += 1;
+    },
   });
   return {
     root,
@@ -129,6 +140,7 @@ const start = async (
     clock,
     runs: () => runs,
     listened: () => listened,
+    unconfirmed: () => unconfirmed,
     errors,
   };
 };
@@ -224,6 +236,32 @@ describe("watchProject", () => {
     expect(await cookies(app)).toEqual([]);
     expect(clock.pending()).toBe(0);
     expect(listened()).toBe(0);
+  });
+
+  it("gives up after 20 writes without hearing the cookie, and goes on watching", async () => {
+    const watcher = fakeWatcher();
+    const { root, watching, controller, clock, runs, listened, unconfirmed } = await start(watcher);
+    const app = join(root, "app");
+    const cookie = await cookieIn(app);
+    await unheard(clock, 19);
+    await vi.waitFor(() => expect(clock.pending()).toBe(1));
+    expect(unconfirmed()).toBe(0);
+    clock.advance(50);
+    await vi.waitFor(() => expect(unconfirmed()).toBe(1));
+    expect(await cookies(app)).toEqual([]);
+    expect(clock.pending()).toBe(0);
+    expect(listened()).toBe(0);
+
+    watcher.emit(cookie);
+    await drained();
+    expect(clock.pending()).toBe(0);
+    watcher.emit("domain/order/a.ts");
+    await drained();
+    clock.advance(10);
+    await vi.waitFor(() => expect(runs()).toBe(1));
+    expect(listened()).toBe(0);
+    controller.abort();
+    await expect(watching).resolves.toBeUndefined();
   });
 
   it("ends and rejects when the cookie cannot be written", async () => {
@@ -412,6 +450,7 @@ describe("watchFromFirstRun", () => {
     let changes = 0;
     let announced = 0;
     let firstRuns = 0;
+    let unconfirmed = 0;
     const done = watchFromFirstRun({
       root: await project(),
       signal: controller.signal,
@@ -425,6 +464,9 @@ describe("watchFromFirstRun", () => {
       onChange: async () => {
         changes += 1;
       },
+      onUnconfirmed: () => {
+        unconfirmed += 1;
+      },
       onWatching: () => {
         announced += 1;
       },
@@ -436,6 +478,7 @@ describe("watchFromFirstRun", () => {
       changes: () => changes,
       announced: () => announced,
       firstRuns: () => firstRuns,
+      unconfirmed: () => unconfirmed,
     };
   };
 
@@ -509,6 +552,20 @@ describe("watchFromFirstRun", () => {
     await drained();
     first.resolve(true);
     await expect(run.done).rejects.toThrow("disk gone");
+  });
+
+  it("makes the first run once the watcher gives up confirming it is listening", async () => {
+    const watcher = fakeWatcher();
+    const run = await begin(watcher, async () => true);
+    await unheard(run.clock, 19);
+    await vi.waitFor(() => expect(run.clock.pending()).toBe(1));
+    expect(run.firstRuns()).toBe(0);
+    run.clock.advance(50);
+    await vi.waitFor(() => expect(run.announced()).toBe(1));
+    expect(run.unconfirmed()).toBe(1);
+    expect(run.firstRuns()).toBe(1);
+    run.controller.abort();
+    await expect(run.done).resolves.toBeUndefined();
   });
 
   it("still makes the first run when the watcher fails before it listens, then rethrows", async () => {

@@ -65,9 +65,10 @@ to `+types` directories. It makes its first run only once it is listening, so a 
 that run is going is regenerated right after it, and prints `watching app/ for changes` once that
 run has succeeded. To know it is listening, it writes a file named `.bounda-watch-<pid>-<n>` into
 the application directory until it sees the change come back, then removes it: the file system can
-start listening a moment after it is asked to, and miss what changes before. A run that fails
-prints its problems and watching goes on; a first run that fails outright, such as a file where
-`.bounda/` should be, ends it. `Ctrl-C` ends it too.
+start listening a moment after it is asked to, and miss what changes before. When it has not seen
+it after 20 tries, a second, it prints a warning that watching may miss changes, removes the file
+and goes on. A run that fails prints its problems and watching goes on; a first run that fails
+outright, such as a file where `.bounda/` should be, ends it. `Ctrl-C` ends it too.
 
 ### How state is inferred
 

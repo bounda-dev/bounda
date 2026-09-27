@@ -24,6 +24,12 @@ export interface WatchProjectArgs {
    */
   readonly onListening?: () => void;
   /**
+   * Called instead of `onListening` when the cookie has not come back after 20 writes, 50 ms
+   * apart on the clock: the file system may not report changes here. The cookie is removed and
+   * watching goes on.
+   */
+  readonly onUnconfirmed?: () => void;
+  /**
    * Quiet time after the last change before `onChange` runs. Defaults to 100 ms.
    */
   readonly debounceMs?: number;
@@ -45,6 +51,8 @@ export interface WatchProjectFunction {
 
 const COOKIE_RETRY_MS = 50;
 
+const COOKIE_ATTEMPTS = 20;
+
 let cookies = 0;
 
 const isGenerated = (fileName: string | Buffer | null): boolean =>
@@ -55,8 +63,8 @@ const isGenerated = (fileName: string | Buffer | null): boolean =>
  * Changes under `+types` are the generator's own and are ignored. The operating system may start
  * listening some time after the watch is set up, and miss what changes before (FSEvents on macOS
  * does), so the watch writes a cookie file, `.bounda-watch-<pid>-<n>`, into the directory until
- * it hears it back, removes it and calls `onListening`: a change made from then on is seen. The
- * cookie's own changes are ignored. Resolves when the signal aborts; rejects when the watcher, or
+ * it hears it back, removes it and calls `onListening`: a change made from then on is seen. It
+ * gives up after 20 writes and calls `onUnconfirmed` instead. The cookie's own changes are ignored. Resolves when the signal aborts; rejects when the watcher, or
  * writing the cookie, fails.
  */
 export const watchProject: WatchProjectFunction = async ({
@@ -65,6 +73,7 @@ export const watchProject: WatchProjectFunction = async ({
   onChange,
   onError = () => undefined,
   onListening = () => undefined,
+  onUnconfirmed = () => undefined,
   debounceMs = 100,
   clock = systemClock,
   signal,
@@ -85,17 +94,18 @@ export const watchProject: WatchProjectFunction = async ({
       running = running.then(onChange).catch(onError);
     });
   };
-  const listen = async (): Promise<void> => {
+  const listen = async (): Promise<boolean> => {
     const path = join(directory, cookie);
     try {
-      let outcome: unknown;
-      do {
+      for (let attempt = 1; attempt <= COOKIE_ATTEMPTS; attempt += 1) {
         await writeFile(path, "");
         const retry = Promise.withResolvers<"retry">();
         const cancelRetry = clock.after(COOKIE_RETRY_MS, () => retry.resolve("retry"));
-        outcome = await Promise.race([heard.promise, ended.promise, retry.promise]);
+        const outcome = await Promise.race([heard.promise, ended.promise, retry.promise]);
         cancelRetry();
-      } while (outcome === "retry");
+        if (outcome !== "retry") return true;
+      }
+      return false;
     } finally {
       await rm(path, { force: true });
     }
@@ -107,8 +117,10 @@ export const watchProject: WatchProjectFunction = async ({
   const first = events.next();
   const listening = listen()
     .then(
-      () => {
-        if (!over) onListening();
+      (confirmed) => {
+        if (over) return;
+        if (confirmed) onListening();
+        else onUnconfirmed();
       },
       (error: unknown) => {
         if (over) return;
@@ -136,8 +148,9 @@ export const watchProject: WatchProjectFunction = async ({
 
 export interface WatchFromFirstRunArgs extends Omit<WatchProjectArgs, "onListening"> {
   /**
-   * Started once the watcher is listening, or once the watch has ended without listening.
-   * Resolves to whether watching goes on; a rejection ends the watch and is rethrown.
+   * Started once the watcher is listening, once it has given up confirming it is (after
+   * `onUnconfirmed`), or once the watch has ended without listening. Resolves to whether watching
+   * goes on; a rejection ends the watch and is rethrown.
    */
   readonly firstRun: () => Promise<boolean>;
   /**
@@ -160,6 +173,7 @@ export const watchFromFirstRun: WatchFromFirstRunFunction = async ({
   firstRun,
   onWatching,
   onChange,
+  onUnconfirmed = () => undefined,
   signal,
   ...project
 }) => {
@@ -171,6 +185,10 @@ export const watchFromFirstRun: WatchFromFirstRunFunction = async ({
     ...project,
     signal: watchSignal,
     onListening: listening.resolve,
+    onUnconfirmed: () => {
+      onUnconfirmed();
+      listening.resolve();
+    },
     onChange: async () => {
       await firstRunDone.promise;
       if (!watchSignal.aborted) await onChange();
