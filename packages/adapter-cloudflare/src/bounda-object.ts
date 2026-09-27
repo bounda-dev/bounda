@@ -1,11 +1,11 @@
 import { DurableObject } from "cloudflare:workers";
 import {
+  type AppLag,
   type BoundaApp,
   type Clock,
   ConfigurationError,
   createApp,
   type DeadLetter,
-  type DispatcherLag,
   type DispatchOptions,
   type DispatchResult,
   type IdGenerator,
@@ -66,7 +66,7 @@ export interface BoundaObjectMethods {
     options?: DispatchOptions,
   ): Promise<RpcOutcome<DispatchResult>>;
   query(name: string, payload?: unknown): Promise<RpcOutcome<unknown>>;
-  lag(): Promise<RpcOutcome<DispatcherLag>>;
+  lag(): Promise<RpcOutcome<AppLag>>;
   listDeadLetters(args?: ListDeadLettersArgs): Promise<RpcOutcome<readonly DeadLetter[]>>;
   replayDeadLetter(id: string): Promise<RpcOutcome<DeadLetter>>;
   discardDeadLetter(id: string): Promise<RpcOutcome<DeadLetter>>;
@@ -249,7 +249,7 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
       });
     }
 
-    lag(): Promise<RpcOutcome<DispatcherLag>> {
+    lag(): Promise<RpcOutcome<AppLag>> {
       return settle(() => this.#ready().getLag());
     }
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { StoredEvent } from "../../contracts/event.ts";
+import { reachedKey } from "./deadlines.ts";
 import { foldProcess, PROCESS_EVENTS, processAggregateType } from "./lifecycle.ts";
 
 const lifecycle = (type: string, payload: unknown, version: number): StoredEvent => ({
@@ -22,7 +23,9 @@ describe("foldProcess", () => {
       state: { reminders: 0 },
       version: 0,
       handledEventIds: new Set(),
-      startedAt: null,
+      timeoutAt: null,
+      reached: new Set(),
+      correlationId: null,
     });
   });
 
@@ -30,7 +33,11 @@ describe("foldProcess", () => {
     const instance = foldProcess({
       initialState: { reminders: 0 },
       events: [
-        lifecycle(PROCESS_EVENTS.started, { state: { reminders: 0 }, eventId: "e1" }, 1),
+        lifecycle(
+          PROCESS_EVENTS.started,
+          { state: { reminders: 0 }, eventId: "e1", timeoutAt: "2026-01-08T00:00:00.000Z" },
+          1,
+        ),
         lifecycle(
           PROCESS_EVENTS.handled,
           { state: { reminders: 1 }, eventId: "e2", eventType: "OrderPaid" },
@@ -45,7 +52,9 @@ describe("foldProcess", () => {
       state: { reminders: 1 },
       version: 3,
       handledEventIds: new Set(["e2"]),
-      startedAt: "2026-01-01T00:00:00.000Z",
+      timeoutAt: "2026-01-08T00:00:00.000Z",
+      reached: new Set(),
+      correlationId: "c",
     });
   });
 
@@ -61,6 +70,7 @@ describe("foldProcess", () => {
     expect(PROCESS_EVENTS).toEqual({
       started: "ProcessStarted",
       handled: "ProcessHandled",
+      deadlineReached: "ProcessDeadlineReached",
       completed: "ProcessCompleted",
       timedOut: "ProcessTimedOut",
       failed: "ProcessFailed",
@@ -84,6 +94,36 @@ describe("foldProcess", () => {
       ],
     });
     expect(failed.status).toBe("failed");
+  });
+
+  it("records each deadline reached at its moment, whatever its precision, and resumes a failed process", () => {
+    const instance = foldProcess({
+      initialState: {},
+      events: [
+        lifecycle(PROCESS_EVENTS.started, { state: {}, eventId: "e1" }, 1),
+        lifecycle(PROCESS_EVENTS.failed, { error: "boom" }, 2),
+        lifecycle(
+          PROCESS_EVENTS.deadlineReached,
+          { field: "nextReminder", at: "2026-01-02T00:00:00Z", state: { reminders: 1 } },
+          3,
+        ),
+      ],
+    });
+    expect(
+      foldProcess({
+        initialState: {},
+        events: [
+          lifecycle(PROCESS_EVENTS.started, { state: {}, eventId: "e1" }, 1),
+          lifecycle(PROCESS_EVENTS.completed, { eventId: "e2" }, 2),
+          lifecycle(PROCESS_EVENTS.deadlineReached, { field: "a", at: "2026-01-02T00:00:00Z" }, 3),
+        ],
+      }).status,
+    ).toBe("completed");
+    expect(instance).toMatchObject({
+      status: "started",
+      state: { reminders: 1 },
+      reached: new Set([reachedKey({ field: "nextReminder", at: "2026-01-02T00:00:00.000Z" })]),
+    });
   });
 });
 

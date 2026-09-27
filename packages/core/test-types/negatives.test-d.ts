@@ -1,12 +1,76 @@
-import type { PolicyModule } from "@bounda-dev/core";
+import type {
+  Instant,
+  PolicyModule,
+  ProcessDeadlineField,
+  ProcessHandlerReturnCheck,
+  ProcessStateOf,
+} from "@bounda-dev/core";
 import { describe, it } from "vitest";
 import type { Command as PayOrder } from "./fixtures/order-app/app/domain/order/commands/+types/pay-order.ts";
 import type { Command as PlaceOrder } from "./fixtures/order-app/app/domain/order/commands/place-order/+types/index.ts";
 import type { Policy as SendReceipt } from "./fixtures/order-app/app/domain/order/policies/+types/send-receipt-on-order-paid.ts";
+import type { Process as AtNextReminder } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/at-next-reminder.ts";
 import type { Process as OrderPayment } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/index.ts";
+import type { Process as OnOrderPaid } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/on-order-paid.ts";
+
 import type { Projection as ProjectOrderPlaced } from "./fixtures/order-app/app/read/order-summary/projections/order/+types/order-placed.ts";
 
+type OrderPaymentModule =
+  typeof import("./fixtures/order-app/app/domain/order/processes/order-payment/index.ts");
+
 describe("what does not compile", () => {
+  it("an at- handler for a field that is not a deadline() of the state", () => {
+    // @ts-expect-error paidAt is an instant(), which only records a moment
+    type RecordedMoment = ProcessDeadlineField<OrderPaymentModule, "paidAt">;
+    // @ts-expect-error reminders is not a moment at all
+    type Counter = ProcessDeadlineField<OrderPaymentModule, "reminders">;
+    // @ts-expect-error the state has no such field
+    type Typo = ProcessDeadlineField<OrderPaymentModule, "nextRemindr">;
+    const fields: [RecordedMoment?, Counter?, Typo?] = [];
+    void fields;
+  });
+
+  it("a delay after() cannot read", () => {
+    const handler = ({ state, after }: OnOrderPaid.HandlerArgs) => ({
+      ...state,
+      // @ts-expect-error "24x" has no unit after() knows
+      nextReminder: after("24x"),
+    });
+    void handler;
+  });
+
+  it("a handler that returns a state its process refuses", () => {
+    type State = ProcessStateOf<OrderPaymentModule>;
+    type Returning<Result> = { handler: () => Result };
+    type Accepted = [
+      ProcessHandlerReturnCheck<State, Returning<{ reminders: number }>>,
+      ProcessHandlerReturnCheck<State, Returning<Promise<State>>>,
+      ProcessHandlerReturnCheck<State, Returning<undefined>>,
+      ProcessHandlerReturnCheck<State, Returning<{ nextReminder: Instant | null }>>,
+    ];
+    type Plain = Returning<{ nextReminder: string }>;
+    type Wrong = Returning<{ reminders: "1" }>;
+    type Other = Returning<Promise<string>>;
+    // @ts-expect-error a deadline takes an Instant from after() or asInstant, not a plain string
+    type PlainString = ProcessHandlerReturnCheck<State, Plain>;
+    // @ts-expect-error reminders is a number
+    type WrongField = ProcessHandlerReturnCheck<State, Wrong>;
+    // @ts-expect-error a handler returns the next state, not anything else
+    type NotAState = ProcessHandlerReturnCheck<State, Other>;
+    const checks: [Accepted?, PlainString?, WrongField?, NotAState?] = [];
+    void checks;
+  });
+
+  it("a plain string where an Instant is expected", () => {
+    // @ts-expect-error a plain string is not an Instant
+    const moment: Instant = "2026-01-01T00:00:00.000Z";
+    const handler = ({ state }: AtNextReminder.DeadlineArgs) => ({
+      ...state,
+      nextReminder: moment,
+    });
+    void handler;
+  });
+
   it("emitting an event of another aggregate", () => {
     const handler = ({ events }: PlaceOrder.HandlerArgs) => [
       // @ts-expect-error customerRegistered belongs to the customer aggregate

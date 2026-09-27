@@ -22,6 +22,17 @@ export interface ToCamelCaseFunction {
 export const toCamelCase: ToCamelCaseFunction = (name) =>
   name.replace(/-+([a-zA-Z0-9])/g, (_, character: string) => character.toUpperCase());
 
+export interface ToKebabCaseFunction {
+  (name: string): string;
+}
+
+/**
+ * Converts a registry key back to the kebab-case file name it came from: `nextReminder` →
+ * `next-reminder`.
+ */
+export const toKebabCase: ToKebabCaseFunction = (name) =>
+  name.replace(/[A-Z]/g, (character) => `-${character.toLowerCase()}`);
+
 /**
  * Flattens an intersection so hovers show one object type instead of `A & B`.
  */

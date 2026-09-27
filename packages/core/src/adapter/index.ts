@@ -46,6 +46,7 @@ export type {
 export type {
   ClaimDueArgs,
   ClaimedCommand,
+  DeferScheduledArgs,
   FailScheduledArgs,
   ListScheduledArgs,
   NextDueAtArgs,

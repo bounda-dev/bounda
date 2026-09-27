@@ -33,8 +33,7 @@ const toScheduled = ({
   attempts,
 });
 
-const sameSchedule = (a: ScheduledCommand, b: ScheduledCommand): boolean =>
-  a.executeAt === b.executeAt &&
+const sameCommand = (a: ScheduledCommand, b: ScheduledCommand): boolean =>
   JSON.stringify(a.command) === JSON.stringify(b.command) &&
   JSON.stringify(a.context) === JSON.stringify(b.context);
 
@@ -54,7 +53,7 @@ export const createMemoryScheduler: CreateMemorySchedulerFunction = () => {
   };
 
   return {
-    schedule: async ({ dedupeKey, command, executeAt, context }) => {
+    schedule: async ({ dedupeKey, command, executeAt, context, keepTimingOfSameCommand }) => {
       const scheduled: ScheduledCommand = {
         dedupeKey,
         command,
@@ -63,7 +62,13 @@ export const createMemoryScheduler: CreateMemorySchedulerFunction = () => {
         attempts: 0,
       };
       const existing = entries.get(dedupeKey);
-      if (existing !== undefined && sameSchedule(existing, scheduled)) return;
+      if (
+        existing !== undefined &&
+        sameCommand(existing, scheduled) &&
+        (keepTimingOfSameCommand === true || existing.executeAt === scheduled.executeAt)
+      ) {
+        return;
+      }
       entries.set(dedupeKey, {
         ...scheduled,
         revision: existing === undefined ? 0 : existing.revision + 1,
@@ -129,6 +134,15 @@ export const createMemoryScheduler: CreateMemorySchedulerFunction = () => {
         claimId: null,
         lastError: error,
       });
+    },
+    defer: async ({ claim, executeAt }) => {
+      const entry = heldBy(claim);
+      if (entry === undefined) return;
+      release(
+        entry.revision === claim.revision
+          ? { ...entry, executeAt: executeAt.toISOString() }
+          : entry,
+      );
     },
     list: async ({ limit, offset = 0 } = {}) =>
       [...entries.values()]

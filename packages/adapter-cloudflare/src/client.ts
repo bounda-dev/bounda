@@ -1,8 +1,8 @@
 import type {
+  AppLag,
   AppRegistry,
   CommandsFacade,
   DeadLetter,
-  DispatcherLag,
   DispatchOptions,
   DispatchResult,
   ListDeadLettersArgs,
@@ -35,7 +35,7 @@ export interface BoundaStub {
 export interface BoundaClient<R extends Registry> {
   readonly commands: CommandsFacade<R>;
   readonly queries: QueriesFacade<R>;
-  getLag(): Promise<DispatcherLag>;
+  getLag(): Promise<AppLag>;
   readonly deadLetters: {
     list(args?: ListDeadLettersArgs): Promise<readonly DeadLetter[]>;
     replay(id: string): Promise<DeadLetter>;
@@ -75,7 +75,7 @@ export const connect: ConnectFunction = <R extends Registry = AppRegistry>(
     unwrap<DispatchResult>(stub.command(name, payload, options as DispatchOptions | undefined)),
   ),
   queries: byName<QueriesFacade<R>>((name, payload) => unwrap(stub.query(name, payload))),
-  getLag: () => unwrap<DispatcherLag>(stub.lag()),
+  getLag: () => unwrap<AppLag>(stub.lag()),
   deadLetters: {
     list: (args) => unwrap<readonly DeadLetter[]>(stub.listDeadLetters(args)),
     replay: (id) => unwrap<DeadLetter>(stub.replayDeadLetter(id)),

@@ -47,16 +47,23 @@ export type {
 export type { PolicyEntry, PolicyHandlerArgs, PolicyModule } from "./policy.ts";
 export type {
   AppEventModules,
+  DeadlineFieldSchema,
+  InstantFieldSchema,
+  ProcessAfterFunction,
   ProcessConfig,
   ProcessConfigArgs,
   ProcessCorrelate,
+  ProcessDeadlineArgs,
+  ProcessDeadlineField,
+  ProcessDeadlineFields,
   ProcessEntry,
   ProcessHandlerArgs,
   ProcessHandlerModule,
+  ProcessHandlerResult,
+  ProcessHandlerReturnCheck,
   ProcessModule,
   ProcessStateArgs,
   ProcessStateOf,
-  ProcessTimeoutArgs,
   QualifiedEventName,
 } from "./process.ts";
 export type { ProjectionArgs, ProjectionModule } from "./projection.ts";

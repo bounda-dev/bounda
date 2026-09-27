@@ -69,8 +69,9 @@ const collectImports = (model: ProjectModel): readonly ImportEntry[] => {
           handler.path,
         );
       }
-      if (process.timeout !== null)
-        add(joinKeys(process.key, "on", "timeout"), aggregate.name, process.timeout.path);
+      for (const deadline of process.deadlines) {
+        add(joinKeys(process.key, "at", deadline.field), aggregate.name, deadline.path);
+      }
     }
   }
   for (const readModel of model.readModels) {
@@ -170,9 +171,13 @@ const emitProcesses = (aggregate: AggregateModel, aliases: Aliases, indent: stri
       `${inner}${process.key}: {`,
       `${inner}  module: ${aliases.of(process.path)},`,
       `${inner}  handlers: ${handlers},`,
-      ...(process.timeout === null
+      ...(process.deadlines.length === 0
         ? []
-        : [`${inner}  timeout: ${aliases.of(process.timeout.path)},`]),
+        : [
+            `${inner}  deadlines: ${record(
+              process.deadlines.map((deadline) => [deadline.field, aliases.of(deadline.path)]),
+            )},`,
+          ]),
       ...(process.collaborators.length === 0
         ? []
         : [`${inner}  collaborators: { ${collaboratorsOf(process, aliases)} },`]),

@@ -5,6 +5,8 @@ import type {
   CommandsFacade,
   DispatchOptions,
   DispatchResult,
+  DurationInput,
+  Instant,
   QueriesFacade,
   StoredEvent,
   Table,
@@ -20,9 +22,10 @@ import type { Command as PlaceOrder } from "./fixtures/order-app/app/domain/orde
 import type { Policy as SendReceipt } from "./fixtures/order-app/app/domain/order/policies/+types/send-receipt-on-order-paid.ts";
 import type { Policy as GreetOnCustomerRegistered } from "./fixtures/order-app/app/domain/order/policies/customer/+types/greet-on-customer-registered.ts";
 import type { Policy as NotifyOnOrderPlaced } from "./fixtures/order-app/app/domain/order/policies/notify-on-order-placed/+types/index.ts";
+import type { Process as AtNextReminder } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/at-next-reminder.ts";
+import type { Process as AtTimeout } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/at-timeout.ts";
 import type { Process as OrderPayment } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/index.ts";
 import type { Process as OnOrderPaid } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/on-order-paid.ts";
-import type { Process as OnTimeout } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/on-timeout.ts";
 import type { Process as OnCustomerRegistered } from "./fixtures/order-app/app/domain/order/processes/order-payment/customer/+types/on-customer-registered.ts";
 import type { Projection as ProjectOrderPaid } from "./fixtures/order-app/app/read/order-summary/projections/order/+types/order-paid.ts";
 import type { Query as CustomerOverview } from "./fixtures/order-app/app/read/order-summary/queries/+types/customer-overview.ts";
@@ -122,7 +125,7 @@ describe("collaborators", () => {
   });
 
   it("reach every handler of a process, from the Collaborators its index.ts declares", () => {
-    expectTypeOf<OnTimeout.TimeoutArgs["reminders"]["remind"]>().toEqualTypeOf<
+    expectTypeOf<AtTimeout.DeadlineArgs["reminders"]["remind"]>().toEqualTypeOf<
       (orderId: string) => Promise<void>
     >();
     expectTypeOf<OnOrderPaid.HandlerArgs["reminders"]["remind"]>().toEqualTypeOf<
@@ -138,7 +141,8 @@ describe("idempotency keys", () => {
     expectTypeOf<SendReceipt.HandlerArgs["idempotencyKey"]>().toEqualTypeOf<string>();
     expectTypeOf<NotifyOnOrderPlaced.HandlerArgs["idempotencyKey"]>().toEqualTypeOf<string>();
     expectTypeOf<OnOrderPaid.HandlerArgs["idempotencyKey"]>().toEqualTypeOf<string>();
-    expectTypeOf<OnTimeout.TimeoutArgs["idempotencyKey"]>().toEqualTypeOf<string>();
+    expectTypeOf<AtTimeout.DeadlineArgs["idempotencyKey"]>().toEqualTypeOf<string>();
+    expectTypeOf<AtNextReminder.DeadlineArgs["idempotencyKey"]>().toEqualTypeOf<string>();
   });
 });
 
@@ -198,9 +202,39 @@ describe("processes", () => {
     expectTypeOf<
       OnOrderPaid.HandlerArgs["event"]["payload"]["reference"]
     >().toEqualTypeOf<string>();
-    expectTypeOf<OnTimeout.TimeoutArgs["state"]["reminders"]>().toEqualTypeOf<number>();
-    expectTypeOf<OnTimeout.TimeoutArgs["aggregateId"]>().toEqualTypeOf<string>();
-    expectTypeOf<OnTimeout.TimeoutArgs>().not.toHaveProperty("event");
+    expectTypeOf<AtTimeout.DeadlineArgs["state"]["reminders"]>().toEqualTypeOf<number>();
+    expectTypeOf<AtTimeout.DeadlineArgs["aggregateId"]>().toEqualTypeOf<string>();
+    expectTypeOf<AtTimeout.DeadlineArgs>().not.toHaveProperty("event");
+  });
+
+  it("type deadlines and recorded moments as nullable instants", () => {
+    expectTypeOf<
+      OnOrderPaid.HandlerArgs["state"]["nextReminder"]
+    >().toEqualTypeOf<Instant | null>();
+    expectTypeOf<OnOrderPaid.HandlerArgs["state"]["paidAt"]>().toEqualTypeOf<Instant | null>();
+    expectTypeOf<AtTimeout.DeadlineArgs["state"]["nextReminder"]>().toEqualTypeOf<Instant | null>();
+    expectTypeOf<Instant>().toExtend<string>();
+    expectTypeOf<string>().not.toExtend<Instant>();
+  });
+
+  it("narrow the deadline that came due in its at- handler, and only that one", () => {
+    expectTypeOf<AtNextReminder.DeadlineArgs["state"]["nextReminder"]>().toEqualTypeOf<Instant>();
+    expectTypeOf<AtNextReminder.DeadlineArgs["state"]["paidAt"]>().toEqualTypeOf<Instant | null>();
+    expectTypeOf<AtNextReminder.DeadlineArgs["state"]["reminders"]>().toEqualTypeOf<number>();
+  });
+
+  it("give every process handler after(), from a duration to an instant", () => {
+    expectTypeOf<OnOrderPaid.HandlerArgs["after"]>().parameter(0).toEqualTypeOf<DurationInput>();
+    expectTypeOf<OnOrderPaid.HandlerArgs["after"]>().returns.toEqualTypeOf<Instant>();
+    expectTypeOf<AtNextReminder.DeadlineArgs["after"]>().returns.toEqualTypeOf<Instant>();
+    expectTypeOf<AtTimeout.DeadlineArgs["after"]>().returns.toEqualTypeOf<Instant>();
+    expectTypeOf<OnCustomerRegistered.HandlerArgs["after"]>().returns.toEqualTypeOf<Instant>();
+  });
+
+  it("hand the state schema deadline() and instant() next to z", () => {
+    expectTypeOf<OrderPayment.StateArgs>().toHaveProperty("z");
+    expectTypeOf<OrderPayment.StateArgs>().toHaveProperty("deadline");
+    expectTypeOf<OrderPayment.StateArgs>().toHaveProperty("instant");
   });
 });
 

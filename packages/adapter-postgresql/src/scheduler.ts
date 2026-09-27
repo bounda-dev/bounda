@@ -69,7 +69,7 @@ export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ d
     );
 
   return {
-    schedule: ({ dedupeKey, command, executeAt, context }) =>
+    schedule: ({ dedupeKey, command, executeAt, context, keepTimingOfSameCommand }) =>
       db.run(
         `INSERT INTO ${table} (${COLUMNS}, "claimed_at", "last_error", "revision") VALUES ($1, $2, $3, $4, $5, $6, 0, NULL, NULL, 0)
        ON CONFLICT ("dedupe_key") DO UPDATE SET
@@ -85,7 +85,7 @@ export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ d
          ${table}."command_type" = excluded."command_type"
          AND ${table}."aggregate_id" = excluded."aggregate_id"
          AND ${table}."payload" = excluded."payload"
-         AND ${table}."execute_at" = excluded."execute_at"
+         ${keepTimingOfSameCommand === true ? "" : `AND ${table}."execute_at" = excluded."execute_at"`}
          AND ${table}."context" = excluded."context"
        )`,
         [
@@ -135,6 +135,16 @@ export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ d
           `UPDATE ${table} SET "execute_at" = $1, "attempts" = "attempts" + 1, "claimed_at" = NULL, "claim_id" = NULL, "last_error" = $2
          WHERE "dedupe_key" = $3 AND "claim_id" = $4 AND "revision" = $5 RETURNING "dedupe_key"`,
           [retryAt.toISOString(), error, claim.dedupeKey, claim.claimId, claim.revision],
+        ),
+        claim,
+      );
+    },
+    defer: async ({ claim, executeAt }) => {
+      await releaseUnless(
+        await db.all(
+          `UPDATE ${table} SET "execute_at" = $1, "claimed_at" = NULL, "claim_id" = NULL
+         WHERE "dedupe_key" = $2 AND "claim_id" = $3 AND "revision" = $4 RETURNING "dedupe_key"`,
+          [executeAt.toISOString(), claim.dedupeKey, claim.claimId, claim.revision],
         ),
         claim,
       );

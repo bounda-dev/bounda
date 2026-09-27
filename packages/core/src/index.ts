@@ -9,6 +9,7 @@ export type { FindManyArgs, ReadClient, Table, TableOrder } from "./adapter/port
 export * from "./contracts/index.ts";
 export type { Query } from "./contracts/query.ts";
 export type {
+  AppLag,
   BoundaApp,
   CatchUpReadModelsArgs,
   CreateAppArgs,

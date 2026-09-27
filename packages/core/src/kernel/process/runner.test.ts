@@ -14,7 +14,7 @@ import {
 } from "../test-support.ts";
 import { buildProcesses } from "./build-processes.ts";
 import { PROCESS_EVENTS } from "./lifecycle.ts";
-import { PROCESS_TIMEOUT_COMMAND } from "./runner.ts";
+import { PROCESS_DEADLINE_COMMAND } from "./runner.ts";
 
 interface HandlerArgs {
   readonly event: { aggregateId: string; payload: { method?: string } };
@@ -63,11 +63,13 @@ const registry: Registry = {
               },
             },
           },
-          timeout: {
-            handler: async ({ state, aggregateId, commands }: HandlerArgs) => {
-              calls.push(`timeout:${aggregateId}`);
-              await commands.archiveOrder?.({ orderId: aggregateId });
-              return { ...state, reminders: state.reminders + 1 };
+          deadlines: {
+            timeout: {
+              handler: async ({ state, aggregateId, commands }: HandlerArgs) => {
+                calls.push(`timeout:${aggregateId}`);
+                await commands.archiveOrder?.({ orderId: aggregateId });
+                return { ...state, reminders: state.reminders + 1 };
+              },
             },
           },
         },
@@ -133,7 +135,8 @@ describe("buildProcesses", () => {
     expect(built.all[0]).toMatchObject({
       initialState: {},
       stateSchema: null,
-      timeoutHandler: null,
+      deadlineFields: [],
+      deadlineHandlers: {},
     });
   });
 
@@ -225,15 +228,26 @@ describe("process runner", () => {
     let stream = await processStream(harness);
     expect(stream.events.map((event) => event.type)).toEqual([PROCESS_EVENTS.started]);
     expect(stream.events[0]?.metadata.system).toBe(true);
+    const timeoutAt = new Date(harness.clock.now().getTime() + 172_800_000).toISOString();
+    expect(stream.events[0]?.payload).toMatchObject({ timeoutAt });
     expect((await harness.storage.scheduler.list()).map((entry) => entry.dedupeKey)).toEqual([
-      "process-timeout:order.orderPayment:o-1",
+      "process-deadline:order.orderPayment:o-1",
     ]);
-    expect((await harness.storage.scheduler.list())[0]?.command).toEqual({
-      type: "bounda.ProcessTimeout",
-      aggregateId: "o-1",
-      payload: { process: "order.orderPayment", aggregateId: "o-1" },
+    expect((await harness.storage.scheduler.list())[0]).toMatchObject({
+      executeAt: timeoutAt,
+      command: {
+        type: "bounda.ProcessDeadline",
+        aggregateId: "o-1",
+        payload: {
+          process: "order.orderPayment",
+          aggregateId: "o-1",
+          field: "timeout",
+          at: timeoutAt,
+        },
+      },
+      context: { correlationId: stream.events[0]?.metadata.correlationId, depth: 0 },
     });
-    expect(PROCESS_TIMEOUT_COMMAND).toBe("bounda.ProcessTimeout");
+    expect(PROCESS_DEADLINE_COMMAND).toBe("bounda.ProcessDeadline");
 
     await harness.pipeline.dispatch({
       type: "PayOrder",
@@ -390,7 +404,7 @@ describe("process runner", () => {
       PROCESS_EVENTS.completed,
     ]);
     expect((await harness.storage.scheduler.list()).map((entry) => entry.dedupeKey)).toEqual([
-      "process-timeout:order.orderPayment:o-1",
+      "process-deadline:order.orderPayment:o-1",
     ]);
   });
 
@@ -663,17 +677,17 @@ describe("process runner", () => {
     ]);
   });
 
-  it("ignores time-outs for unknown processes and for instances that are not running", async () => {
+  it("ignores deadlines for unknown processes and for instances that are not running", async () => {
     reset("ok");
     const harness = await createReactiveHarness({ registry });
     const context = { correlationId: "c", causationId: "c", depth: 0 };
     await expect(
-      harness.processes.handleTimeout({
+      harness.processes.handleDeadline({
         payload: { process: "order.nope", aggregateId: "o-1" },
         context,
       }),
     ).resolves.toBeUndefined();
-    await harness.processes.handleTimeout({
+    await harness.processes.handleDeadline({
       payload: { process: "order.orderPayment", aggregateId: "never" },
       context,
     });
@@ -685,7 +699,8 @@ describe("process runner", () => {
       payload: { orderId: "o-1", method: "card" },
     });
     await harness.dispatcher.processUntilIdle();
-    await harness.processes.handleTimeout({
+    harness.clock.advance(172_800_000);
+    await harness.processes.handleDeadline({
       payload: { process: "order.orderPayment", aggregateId: "o-1" },
       context,
     });
@@ -695,6 +710,7 @@ describe("process runner", () => {
       PROCESS_EVENTS.completed,
     ]);
     expect(calls).toEqual(["paid:o-1"]);
+    expect(await harness.storage.scheduler.list()).toEqual([]);
   });
 });
 
@@ -728,10 +744,12 @@ describe("process collaborators", () => {
                 },
               },
             },
-            timeout: {
-              handler: ({ aggregateId, audit, idempotencyKey }: AuditArgs) => {
-                audit.record(`timed out ${aggregateId}`);
-                keys.push(idempotencyKey);
+            deadlines: {
+              timeout: {
+                handler: ({ aggregateId, audit, idempotencyKey }: AuditArgs) => {
+                  audit.record(`timed out ${aggregateId}`);
+                  keys.push(idempotencyKey);
+                },
               },
             },
             collaborators: { audit: { log: audit("log"), memory: audit("memory") } },
@@ -755,7 +773,7 @@ describe("process collaborators", () => {
     expect(recorded).toEqual(["memory:placed o-1", "memory:timed out o-1"]);
   });
 
-  it("gives event handlers a key per event and the timeout one per instance", async () => {
+  it("gives event handlers a key per event and the timeout one per instance and moment", async () => {
     keys.length = 0;
     const harness = await createReactiveHarness({
       registry: withAudit,
@@ -766,6 +784,7 @@ describe("process collaborators", () => {
       payload: { orderId: "o-1", total: 10 },
     });
     await harness.dispatcher.processUntilIdle();
+    const timeoutAt = new Date(harness.clock.now().getTime() + 3_600_000).toISOString();
     harness.clock.advance(3_600_000);
     await harness.worker.runOnce();
     expect(keys).toEqual([
@@ -777,7 +796,7 @@ describe("process collaborators", () => {
       deriveIdempotencyKey({
         kind: "process",
         handler: "order.orderPayment",
-        subject: "o-1:timeout",
+        subject: `o-1:deadline:timeout:${timeoutAt}`,
       }),
     ]);
   });

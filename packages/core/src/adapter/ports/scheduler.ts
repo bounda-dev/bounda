@@ -36,6 +36,12 @@ export interface ScheduleArgs {
   readonly command: NewCommand;
   readonly executeAt: Date;
   readonly context: CausationContext;
+  /**
+   * When the key already holds this very command with this context, leave the entry as it is,
+   * its time and attempts included, instead of moving it to `executeAt`: a retry that is backing
+   * off stays backed off. What the process runner writes a deadline entry with.
+   */
+  readonly keepTimingOfSameCommand?: boolean;
 }
 
 export interface ClaimDueArgs {
@@ -55,6 +61,14 @@ export interface FailScheduledArgs {
    * dead-lettered it.
    */
   readonly retryAt?: Date;
+}
+
+/**
+ * What `defer` takes: the claim to hand back and when the command becomes due again.
+ */
+export interface DeferScheduledArgs {
+  readonly claim: ScheduledClaim;
+  readonly executeAt: Date;
 }
 
 export interface NextDueAtArgs {
@@ -102,5 +116,10 @@ export interface Scheduler {
    * `complete`.
    */
   fail(args: FailScheduledArgs): Promise<void>;
+  /**
+   * Hands a claimed command back to run again at `executeAt` without counting an attempt: for
+   * work that was not ready yet rather than work that failed. Same rules as `complete`.
+   */
+  defer(args: DeferScheduledArgs): Promise<void>;
   list(args?: ListScheduledArgs): Promise<readonly ScheduledCommand[]>;
 }

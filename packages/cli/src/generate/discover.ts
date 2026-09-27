@@ -9,6 +9,7 @@ import type {
   EventModel,
   ModuleRef,
   PolicyModel,
+  ProcessDeadlineModel,
   ProcessHandlerModel,
   ProcessModel,
   ProjectionModel,
@@ -22,6 +23,7 @@ import {
   joinKeys,
   keyOf,
   policyTriggerOf,
+  processDeadlineOf,
   processHandlerEventOf,
   typeNameOf,
 } from "./naming.ts";
@@ -47,7 +49,7 @@ const READ = "read";
 const STATE = "state";
 const VIEW = "view";
 const INDEX = "index";
-const TIMEOUT_HANDLER = "on-timeout";
+const RENAMED_TIMEOUT_HANDLER = "on-timeout";
 const UPCAST_SUFFIX = ".upcast";
 
 interface Listing {
@@ -115,7 +117,7 @@ type CollaboratorOwner = "command" | "policy" | "process";
 const RESERVED_ARGUMENTS: Readonly<Record<CollaboratorOwner, ReadonlySet<string>>> = {
   command: new Set(["command", "state", "events", "idempotencyKey"]),
   policy: new Set(["event", "commands", "idempotencyKey"]),
-  process: new Set(["event", "state", "aggregateId", "commands", "idempotencyKey"]),
+  process: new Set(["event", "state", "aggregateId", "commands", "idempotencyKey", "after"]),
 };
 
 const collaboratorOf = (
@@ -381,7 +383,7 @@ const discoverProcess = async (
         folder,
         keyOf(child) === aggregate
           ? `these are ${aggregate}'s own events; put their handlers in the process directory`
-          : "a process directory holds only index.ts, on-*.ts handlers, collaborators and folders named after other aggregates",
+          : "a process directory holds only index.ts, on-*.ts and at-*.ts handlers, collaborators and folders named after other aggregates",
       );
       continue;
     }
@@ -404,7 +406,7 @@ const discoverProcess = async (
     }
   }
   const collaborators: CollaboratorModel[] = [];
-  let timeout: ModuleRef | null = null;
+  const deadlines: ProcessDeadlineModel[] = [];
   for (const module of listing.modules) {
     if (module === INDEX) continue;
     const path = join(directory, `${module}.ts`);
@@ -413,13 +415,18 @@ const discoverProcess = async (
       if (collaborator !== null) collaborators.push(collaborator);
       continue;
     }
-    if (module === TIMEOUT_HANDLER) {
-      timeout = moduleRef(context, path);
+    if (module === RENAMED_TIMEOUT_HANDLER && !eventKeys.has("timeout")) {
+      context.problems.add(path, "the timeout handler is at-timeout.ts now; rename the file");
+      continue;
+    }
+    const field = processDeadlineOf(module);
+    if (field !== null) {
+      deadlines.push({ ...moduleRef(context, path), field });
       continue;
     }
     const eventKey = processHandlerEventOf(module);
     if (eventKey === null) {
-      context.problems.add(path, "process handlers are named on-<event>.ts or on-timeout.ts");
+      context.problems.add(path, "process handlers are named on-<event>.ts or at-<deadline>.ts");
       continue;
     }
     if (!eventKeys.has(eventKey)) {
@@ -444,7 +451,7 @@ const discoverProcess = async (
         a.aggregate.localeCompare(b.aggregate) ||
         a.eventKey.localeCompare(b.eventKey),
     ),
-    timeout,
+    deadlines,
   };
 };
 

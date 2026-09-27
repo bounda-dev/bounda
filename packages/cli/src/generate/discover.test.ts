@@ -75,7 +75,7 @@ const relativePaths = (model: ProjectModel): Record<string, unknown> => ({
       typeName: process.typeName,
       path: process.relativePath,
       handlers: process.handlers.map((handler) => [handler.eventKey, handler.relativePath]),
-      timeout: process.timeout?.relativePath ?? null,
+      deadlines: process.deadlines.map((deadline) => [deadline.field, deadline.relativePath]),
     })),
   })),
   readModels: model.readModels.map((readModel) => ({
@@ -196,7 +196,10 @@ describe("discoverProject on the order-app fixture", () => {
                   "app/domain/order/processes/order-payment/customer/on-customer-registered.ts",
                 ],
               ],
-              timeout: "app/domain/order/processes/order-payment/on-timeout.ts",
+              deadlines: [
+                ["nextReminder", "app/domain/order/processes/order-payment/at-next-reminder.ts"],
+                ["timeout", "app/domain/order/processes/order-payment/at-timeout.ts"],
+              ],
             },
           ],
         },
@@ -432,7 +435,7 @@ describe("discoverProject convention problems", () => {
       "app/domain/order/policies/mail-on-order-placed/mailer.memory.ts",
       "app/domain/order/processes/payment/index.ts",
       "app/domain/order/processes/payment/on-order-placed.ts",
-      "app/domain/order/processes/payment/on-timeout.ts",
+      "app/domain/order/processes/payment/at-timeout.ts",
       "app/domain/order/processes/payment/gateway.stripe.ts",
     ]);
     await writeFile(
@@ -473,7 +476,9 @@ describe("discoverProject convention problems", () => {
     ]);
     const [payment] = order?.processes ?? [];
     expect(payment?.handlers.map((handler) => handler.eventKey)).toEqual(["orderPlaced"]);
-    expect(payment?.timeout?.relativePath).toBe("app/domain/order/processes/payment/on-timeout.ts");
+    expect(payment?.deadlines.map((deadline) => deadline.relativePath)).toEqual([
+      "app/domain/order/processes/payment/at-timeout.ts",
+    ]);
     expect(payment?.collaborators.map((c) => `${c.name}.${c.implementation}`)).toEqual([
       "gateway.stripe",
     ]);
@@ -496,6 +501,7 @@ describe("discoverProject convention problems", () => {
       "app/domain/order/commands/place-order/idempotency-key.fixed.ts",
       "app/domain/order/processes/payment/index.ts",
       "app/domain/order/processes/payment/aggregate-id.memory.ts",
+      "app/domain/order/processes/payment/after.memory.ts",
     ]);
     expect(await problemsOf(root)).toEqual([
       'app/domain/order/commands/place-order/idempotency-key.fixed.ts: a command handler already receives "idempotencyKey"; give the collaborator another name',
@@ -504,6 +510,7 @@ describe("discoverProject convention problems", () => {
       'app/domain/order/policies/mail-on-order-placed: policy "mailOnOrderPlaced" is also defined as mail-on-order-placed.ts',
       "app/domain/order/policies/sync-on-order-placed/deep: a policy directory holds only index.ts and collaborators",
       'app/domain/order/policies/sync-on-order-placed/commands.http.ts: a policy handler already receives "commands"; give the collaborator another name',
+      'app/domain/order/processes/payment/after.memory.ts: a process handler already receives "after"; give the collaborator another name',
       'app/domain/order/processes/payment/aggregate-id.memory.ts: a process handler already receives "aggregateId"; give the collaborator another name',
     ]);
   });
@@ -551,6 +558,19 @@ describe("discoverProject convention problems", () => {
     ]);
   });
 
+  it("reads on-timeout.ts as the handler of an aggregate's Timeout event", async () => {
+    const root = await project([
+      "app/domain/order/timeout.ts",
+      "app/domain/order/processes/payment/index.ts",
+      "app/domain/order/processes/payment/on-timeout.ts",
+    ]);
+    expect(await problemsOf(root)).toEqual([]);
+    const model = await discoverProject({ root });
+    expect(model.aggregates[0]?.processes[0]?.handlers.map((handler) => handler.eventKey)).toEqual([
+      "timeout",
+    ]);
+  });
+
   it("rejects process handlers that do not match an event of the aggregate", async () => {
     const root = await project([
       "app/domain/order/order-placed.ts",
@@ -558,6 +578,7 @@ describe("discoverProject convention problems", () => {
       "app/domain/order/processes/payment/on-order-placed.ts",
       "app/domain/order/processes/payment/on-order-shipped.ts",
       "app/domain/order/processes/payment/order-paid.ts",
+      "app/domain/order/processes/payment/on-timeout.ts",
       "app/domain/order/processes/payment/steps/",
       "app/domain/order/processes/loose.ts",
       "app/domain/order/processes/empty/",
@@ -565,9 +586,10 @@ describe("discoverProject convention problems", () => {
     expect(await problemsOf(root)).toEqual([
       "app/domain/order/processes/loose.ts: a process is a directory with an index.ts",
       "app/domain/order/processes/empty: a process directory needs an index.ts with its config",
-      "app/domain/order/processes/payment/steps: a process directory holds only index.ts, on-*.ts handlers, collaborators and folders named after other aggregates",
+      "app/domain/order/processes/payment/steps: a process directory holds only index.ts, on-*.ts and at-*.ts handlers, collaborators and folders named after other aggregates",
       'app/domain/order/processes/payment/on-order-shipped.ts: "orderShipped" is not an event of this aggregate',
-      "app/domain/order/processes/payment/order-paid.ts: process handlers are named on-<event>.ts or on-timeout.ts",
+      "app/domain/order/processes/payment/on-timeout.ts: the timeout handler is at-timeout.ts now; rename the file",
+      "app/domain/order/processes/payment/order-paid.ts: process handlers are named on-<event>.ts or at-<deadline>.ts",
     ]);
   });
 

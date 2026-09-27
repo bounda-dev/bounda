@@ -3,7 +3,7 @@ import { ConfigurationError, DomainError, NotFoundError } from "../../contracts/
 import type { PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { PROCESS_EVENTS } from "../process/lifecycle.ts";
-import { PROCESS_TIMEOUT_COMMAND } from "../process/runner.ts";
+import { PROCESS_DEADLINE_COMMAND } from "../process/runner.ts";
 import { createReactiveHarness } from "../reactive-harness.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import {
@@ -18,6 +18,7 @@ const keys: string[] = [];
 let policyMode: "ok" | "domain" | "hangs" = "domain";
 let handlerStarted = Promise.withResolvers<void>();
 let processMode: "ok" | "domain" = "domain";
+let timeoutMode: "ok" | "domain" = "ok";
 
 const registry = {
   aggregates: {
@@ -79,9 +80,12 @@ const registry = {
               },
             },
           },
-          timeout: {
-            handler: ({ idempotencyKey }: { idempotencyKey: string }) => {
-              keys.push(`timeout ${idempotencyKey}`);
+          deadlines: {
+            timeout: {
+              handler: ({ idempotencyKey }: { idempotencyKey: string }) => {
+                keys.push(`timeout ${idempotencyKey}`);
+                if (timeoutMode === "domain") throw new DomainError("courier is closed");
+              },
             },
           },
         },
@@ -218,7 +222,7 @@ describe("deadLetters", () => {
     expect(calls).toEqual(["notify:o-1"]);
   });
 
-  it("replays a process handler, reopens the failed process and re-arms its timeout", async () => {
+  it("replays a process handler, reopens the failed process and schedules its deadlines again", async () => {
     policyMode = "ok";
     processMode = "domain";
     const { harness, deadLetters } = await setUp();
@@ -257,7 +261,7 @@ describe("deadLetters", () => {
     expect(await harness.storage.scheduler.list()).toEqual([]);
   });
 
-  it("re-arms the timeout at the original deadline when the process stays open", async () => {
+  it("schedules the timeout again at its moment when the process stays open", async () => {
     policyMode = "domain";
     processMode = "domain";
     const open = {
@@ -313,7 +317,7 @@ describe("deadLetters", () => {
     await deadLetters.replay(letter?.id ?? "");
     expect(await harness.storage.scheduler.list()).toMatchObject([
       {
-        dedupeKey: "process-timeout:order.orderPayment:o-1",
+        dedupeKey: "process-deadline:order.orderPayment:o-1",
         executeAt: new Date(startedAt + 48 * 3_600_000).toISOString(),
       },
     ]);
@@ -323,7 +327,7 @@ describe("deadLetters", () => {
     expect(late).toHaveLength(1);
   });
 
-  it("re-arms an overdue timeout for now rather than in the past", async () => {
+  it("schedules an overdue timeout at its moment, so it runs at once", async () => {
     policyMode = "domain";
     processMode = "domain";
     const open = {
@@ -361,6 +365,7 @@ describe("deadLetters", () => {
       clock: harness.clock,
       logger: harness.logger,
     });
+    const startedAt = harness.clock.now().getTime();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
     await harness.dispatcher.processUntilIdle();
     await harness.pipeline.dispatch({
@@ -373,8 +378,15 @@ describe("deadLetters", () => {
     const [letter] = await deadLetters.list({ kind: "process" });
     await deadLetters.replay(letter?.id ?? "");
     expect(await harness.storage.scheduler.list()).toMatchObject([
-      { executeAt: harness.clock.now().toISOString() },
+      { executeAt: new Date(startedAt + 3_600_000).toISOString() },
     ]);
+    await harness.dispatcher.processUntilIdle();
+    expect(await harness.worker.runOnce()).toBe(1);
+    const { events } = await harness.storage.eventStore.load({
+      aggregateType: "process:OrderPayment",
+      aggregateId: "o-1",
+    });
+    expect(events.at(-1)?.type).toBe(PROCESS_EVENTS.timedOut);
   });
 
   it("dispatches a dropped command again with its recorded payload", async () => {
@@ -459,18 +471,59 @@ describe("deadLetters", () => {
     await expect(deadLetters.replay("proj")).rejects.toThrow(/rebuild the read model instead/);
   });
 
-  it("replays a dropped process timeout through the process runner", async () => {
+  it("fails the process on a deadline that gives up, and replays it with a new key", async () => {
+    policyMode = "ok";
+    timeoutMode = "domain";
+    const { harness, deadLetters } = await setUp();
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-9", total: 10 } });
+    await harness.dispatcher.processUntilIdle();
+    harness.clock.advance(48 * 3_600_000);
+    expect(await harness.worker.runOnce()).toBe(1);
+    const stream = { aggregateType: "process:OrderPayment", aggregateId: "o-9" };
+    expect(
+      (await harness.storage.eventStore.load(stream)).events.map((event) => event.type),
+    ).toEqual([PROCESS_EVENTS.started, PROCESS_EVENTS.failed]);
+    expect(await harness.storage.scheduler.list()).toEqual([]);
+    const [letter] = await deadLetters.list({ kind: "process" });
+    expect(letter).toMatchObject({
+      subscriber: "order.orderPayment",
+      eventId: "deadline:timeout",
+      eventType: PROCESS_DEADLINE_COMMAND,
+      aggregateType: "process:OrderPayment",
+      aggregateId: "o-9",
+      errorType: "terminal",
+      errorMessage: "courier is closed",
+    });
+
+    timeoutMode = "ok";
+    expect((await deadLetters.replay(letter?.id ?? "")).status).toBe("replayed");
+    const timeoutKeys = keys.filter((key) => key.startsWith("timeout "));
+    expect(timeoutKeys).toHaveLength(2);
+    expect(new Set(timeoutKeys).size).toBe(2);
+    expect(
+      (await harness.storage.eventStore.load(stream)).events.map((event) => event.type),
+    ).toEqual([PROCESS_EVENTS.started, PROCESS_EVENTS.failed, PROCESS_EVENTS.timedOut]);
+    const replayed = (await harness.storage.eventStore.load(stream)).events;
+    expect(replayed.at(-1)?.metadata).toMatchObject({
+      causationId: letter?.id,
+      depth: 0,
+      correlationId: replayed[0]?.metadata.correlationId,
+    });
+    await expect(deadLetters.replay(letter?.id ?? "")).rejects.toThrow("already replayed");
+  });
+
+  it("refuses to replay a deadline of a process that did not fail on one", async () => {
     policyMode = "ok";
     const { harness, deadLetters } = await setUp();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-9", total: 10 } });
     await harness.dispatcher.processUntilIdle();
     await harness.storage.deadLetterStore.add({
-      id: "t",
-      kind: "command",
-      subscriber: `scheduled:${PROCESS_TIMEOUT_COMMAND}`,
-      eventId: "process-timeout:order.orderPayment:o-9",
-      eventType: PROCESS_TIMEOUT_COMMAND,
-      aggregateType: "order.orderPayment",
+      id: "d",
+      kind: "process",
+      subscriber: "order.orderPayment",
+      eventId: "deadline:timeout",
+      eventType: PROCESS_DEADLINE_COMMAND,
+      aggregateType: "process:OrderPayment",
       aggregateId: "o-9",
       errorType: "terminal",
       errorMessage: "x",
@@ -478,20 +531,26 @@ describe("deadLetters", () => {
       firstFailedAt: "2026-01-01T00:00:00.000Z",
       lastFailedAt: "2026-01-01T00:00:00.000Z",
     });
-    expect((await deadLetters.replay("t")).status).toBe("replayed");
-    const timeoutKeys = keys.filter((key) => key.startsWith("timeout "));
-    expect(timeoutKeys).toHaveLength(1);
-    expect(timeoutKeys[0]).not.toBe(
-      `timeout ${deriveIdempotencyKey({ kind: "process", handler: "order.orderPayment", subject: "o-9:timeout" })}`,
+    await expect(deadLetters.replay("d")).rejects.toThrow(
+      'Process "order.orderPayment" has no failed deadline for o-9',
     );
-    const { events } = await harness.storage.eventStore.load({
-      aggregateType: "process:OrderPayment",
+    await harness.storage.deadLetterStore.add({
+      id: "gone",
+      kind: "process",
+      subscriber: "order.gone",
+      eventId: "deadline:timeout",
+      eventType: PROCESS_DEADLINE_COMMAND,
+      aggregateType: "process:Gone",
       aggregateId: "o-9",
+      errorType: "terminal",
+      errorMessage: "x",
+      attempts: 1,
+      firstFailedAt: "2026-01-01T00:00:00.000Z",
+      lastFailedAt: "2026-01-01T00:00:00.000Z",
     });
-    expect(events.map((event) => event.type)).toEqual([
-      PROCESS_EVENTS.started,
-      PROCESS_EVENTS.timedOut,
-    ]);
+    await expect(deadLetters.replay("gone")).rejects.toThrow(
+      'Process "order.gone" is no longer in the registry',
+    );
   });
 
   it("names a policy or process the registry no longer has, and an event that is gone", async () => {

@@ -56,16 +56,18 @@ const registry = {
             }),
           },
           handlers: {},
-          timeout: {
-            handler: async ({
-              aggregateId,
-              commands,
-            }: {
-              aggregateId: string;
-              commands: { archiveOrder: (payload: { orderId: string }) => Promise<unknown> };
-            }) => {
-              await commands.archiveOrder({ orderId: aggregateId });
-              return {};
+          deadlines: {
+            timeout: {
+              handler: async ({
+                aggregateId,
+                commands,
+              }: {
+                aggregateId: string;
+                commands: { archiveOrder: (payload: { orderId: string }) => Promise<unknown> };
+              }) => {
+                await commands.archiveOrder({ orderId: aggregateId });
+                return {};
+              },
             },
           },
         },

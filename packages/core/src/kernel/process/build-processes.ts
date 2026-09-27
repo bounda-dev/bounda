@@ -4,10 +4,11 @@ import type { ResolvedConfig } from "../../config/types.ts";
 import { parseDuration } from "../../contracts/duration.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
-import { capitalize } from "../../modules/naming.ts";
+import { capitalize, toKebabCase } from "../../modules/naming.ts";
 import type { ProcessEntry } from "../../modules/process.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { qualifiedEventType } from "../shared/qualified-event.ts";
+import { deadlineFieldsOf, processStateArgs, TIMEOUT_DEADLINE } from "./deadlines.ts";
 
 /**
  * A compiled process: which events start, feed and complete it, by qualified type
@@ -24,7 +25,15 @@ export interface ProcessRuntime {
   readonly initialState: object;
   readonly stateSchema: z.ZodType | null;
   readonly handlers: Readonly<Record<string, (args: Record<string, unknown>) => unknown>>;
-  readonly timeoutHandler: ((args: Record<string, unknown>) => unknown) | null;
+  /**
+   * The state fields declared with `deadline()`, by name.
+   */
+  readonly deadlineFields: readonly string[];
+  /**
+   * One handler per deadline field, and the `at-timeout.ts` handler under `timeout` when there is
+   * one.
+   */
+  readonly deadlineHandlers: Readonly<Record<string, (args: Record<string, unknown>) => unknown>>;
   readonly collaborators: Readonly<Record<string, unknown>>;
   /**
    * The id of the instance an event belongs to: what `correlate` says for it, or the event's
@@ -48,7 +57,7 @@ const compileState = (
   entry: ProcessEntry,
 ): { readonly schema: z.ZodType | null; readonly initial: object } => {
   if (entry.module.state === undefined) return { schema: null, initial: {} };
-  const schema = entry.module.state({ z });
+  const schema = entry.module.state(processStateArgs);
   if (!(schema instanceof z.ZodType)) {
     throw new ConfigurationError(`${path}: state must return a Zod schema`);
   }
@@ -62,6 +71,39 @@ const compileState = (
 };
 
 type Correlator = (event: StoredEvent) => string | null;
+
+const compileDeadlines = (
+  path: string,
+  entry: ProcessEntry,
+  fields: readonly string[],
+): ProcessRuntime["deadlineHandlers"] => {
+  if (fields.includes(TIMEOUT_DEADLINE)) {
+    throw new ConfigurationError(
+      `${path}: the deadline "timeout" is reserved for config.timeout; give the field another name`,
+    );
+  }
+  const handlers = entry.deadlines ?? {};
+  for (const field of fields) {
+    if (handlers[field] === undefined) {
+      throw new ConfigurationError(
+        `${path}: the deadline "${field}" has no handler; add at-${toKebabCase(field)}.ts to the process`,
+      );
+    }
+  }
+  for (const field of Object.keys(handlers)) {
+    if (field !== TIMEOUT_DEADLINE && !fields.includes(field)) {
+      throw new ConfigurationError(
+        `${path}: at-${toKebabCase(field)}.ts handles "${field}", which the state does not declare with deadline(); a deadline() wrapped in .describe(), .optional() or the like no longer counts`,
+      );
+    }
+  }
+  return Object.fromEntries(
+    Object.entries(handlers).map(([field, handler]) => [
+      field,
+      handler.handler as ProcessRuntime["handlers"][string],
+    ]),
+  );
+};
 
 const knownEvents = (
   path: string,
@@ -132,6 +174,7 @@ const buildProcess = (
     }) => ReturnType<ProcessEntry["module"]["config"]>
   )({ events });
   const state = compileState(path, entry);
+  const deadlineFields = deadlineFieldsOf(state.schema);
   const startedBy = knownEvents(path, declared.startedBy, known);
   const completedBy = knownEvents(path, declared.completedBy ?? [], known);
   const handlers = compileHandlers(path, entry, known);
@@ -158,7 +201,8 @@ const buildProcess = (
     initialState: state.initial,
     stateSchema: state.schema,
     handlers,
-    timeoutHandler: (entry.timeout?.handler as ProcessRuntime["timeoutHandler"]) ?? null,
+    deadlineFields,
+    deadlineHandlers: compileDeadlines(path, entry, deadlineFields),
     collaborators: selectCollaborators({
       owner: `Process "${aggregate}.${key}"`,
       path: `processes.${aggregate}.${key}`,

@@ -30,6 +30,8 @@ export interface PlusTypesPathFunction {
 export const plusTypesPath: PlusTypesPathFunction = (modulePath) =>
   join(dirname(modulePath), "+types", basename(modulePath));
 
+const TIMEOUT_DEADLINE = "timeout";
+
 const generic = (name: string, args: readonly string[]): string =>
   args.length === 1
     ? `${name}<${args[0]}>`
@@ -163,6 +165,14 @@ const policyFiles = (
     }),
   );
 
+const handlerModuleType = (path: string): string =>
+  `type HandlerModule = typeof import("${importPath({ from: plusTypesPath(path), to: path })}");`;
+
+const returnCheck: readonly [string, string] = [
+  "ReturnCheck",
+  "core.ProcessHandlerReturnCheck<core.ProcessStateOf<ProcessModule>, HandlerModule>",
+];
+
 const processFiles = (
   model: ProjectModel,
   aggregate: AggregateModel,
@@ -182,8 +192,10 @@ const processFiles = (
       ...process.handlers.map((handler) =>
         render(plusTypesPath(handler.path), typesPath, {
           imports: { generated: true, module: process.path, moduleAlias: "ProcessModule" },
+          extraTypes: [handlerModuleType(handler.path)],
           namespace: "Process",
           members: [
+            returnCheck,
             [
               "HandlerArgs",
               generic(
@@ -203,20 +215,28 @@ const processFiles = (
         }),
       ),
     ];
-    if (process.timeout !== null) {
+    for (const deadline of process.deadlines) {
       files.push(
-        render(plusTypesPath(process.timeout.path), typesPath, {
+        render(plusTypesPath(deadline.path), typesPath, {
           imports: { generated: true, module: process.path, moduleAlias: "ProcessModule" },
+          extraTypes: [handlerModuleType(deadline.path)],
           namespace: "Process",
           members: [
+            returnCheck,
             [
-              "TimeoutArgs",
+              "DeadlineArgs",
               generic(
-                "core.ProcessTimeoutArgs",
+                "core.ProcessDeadlineArgs",
                 withCollaborators(
-                  ["core.ProcessStateOf<ProcessModule>", "generated.Commands"],
+                  [
+                    "core.ProcessStateOf<ProcessModule>",
+                    deadline.field === TIMEOUT_DEADLINE
+                      ? "never"
+                      : `core.ProcessDeadlineField<ProcessModule, ${JSON.stringify(deadline.field)}>`,
+                    "generated.Commands",
+                  ],
                   process,
-                  plusTypesPath(process.timeout.path),
+                  plusTypesPath(deadline.path),
                 ),
               ),
             ],
