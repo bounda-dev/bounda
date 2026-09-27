@@ -127,7 +127,10 @@ const toPendingEvents = (
  * The write path. `dispatch` validates the payload, loads the aggregate, runs the handler with its
  * events and collaborators, and appends with the version it loaded. A `ConcurrencyError` from the
  * store reloads and retries up to `runtime.commands.concurrencyRetries` times; a `DomainError`
- * from the handler is returned to the caller untouched. Commands with `delay` go to the scheduler.
+ * from the handler is returned to the caller untouched. Commands with `delay` go to the scheduler
+ * with the payload as the caller passed it: validating it here only rejects bad input early, and
+ * the one validation whose result the handler sees happens when the command runs, so a transform
+ * does not apply twice.
  */
 export const createCommandPipeline: CreateCommandPipelineFunction = ({
   aggregates,
@@ -260,7 +263,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
           const executeAt = new Date(clock.now().getTime() + parseDuration(options.delay));
           await scheduler.schedule({
             dedupeKey: scheduledCommandKey(commandId),
-            command: { type, payload: parsed, aggregateId },
+            command: { type, payload, aggregateId },
             executeAt,
             context: {
               correlationId: command.metadata.correlationId,
