@@ -763,6 +763,149 @@ describe("events of a failed process", () => {
       PROCESS_EVENTS.resumed,
     ]);
   });
+
+  it("fail on a deadline that fails while draining, with what came after it still parked", async () => {
+    const context = await setUp();
+    const { harness, deadLetters, settle, types } = context;
+    await failOnFirstPayment(context);
+    harness.clock.advance(2 * DAY);
+    const order = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    const paid = order.events.find((event) => event.type === "OrderPaid");
+    if (paid === undefined) throw new Error("no payment");
+    await harness.storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "o-1",
+      expectedVersion: order.events.length,
+      events: [
+        {
+          ...paid,
+          id: "after",
+          version: order.events.length + 1,
+          timestamp: harness.clock.now().toISOString(),
+        },
+      ],
+    });
+    await settle();
+    failing.set("nudge", "retriable");
+    const replayed = await deadLetters.replay((await deadLetters.list())[0]?.id ?? "");
+    expect(replayed.parked).toBe(1);
+    expect((await types()).at(-1)).toBe(PROCESS_EVENTS.failed);
+    expect((await harness.storage.eventStore.load(stream)).events.at(-1)?.payload).toMatchObject({
+      deadline: "nudge",
+    });
+    const [letter] = await deadLetters.list({ status: "failed" });
+    expect(letter).toMatchObject({
+      eventId: "deadline:nudge",
+      errorType: "retriable_exhausted",
+      parked: 1,
+    });
+
+    failing.delete("nudge");
+    await deadLetters.replay(letter?.id ?? "");
+    expect(runs.slice(-2)).toEqual(["nudge", "paid:after"]);
+    expect((await types()).at(-1)).toBe(PROCESS_EVENTS.resumed);
+  });
+
+  it("give up a write when something other than a park reached the instance meanwhile", async () => {
+    const context = await setUp();
+    const { harness, deadLetters } = context;
+    await failOnFirstPayment(context);
+    whileHandling = async () => {
+      const { events } = await harness.storage.eventStore.load(stream);
+      await harness.storage.eventStore.append({
+        ...stream,
+        expectedVersion: events.length,
+        events: [
+          {
+            ...(events.at(-1) as (typeof events)[number]),
+            id: "operator",
+            version: events.length + 1,
+            type: PROCESS_EVENTS.completed,
+            payload: {},
+          },
+        ],
+      });
+    };
+    await expect(
+      deadLetters.replay((await deadLetters.list())[0]?.id ?? ""),
+    ).rejects.toBeInstanceOf(ConcurrencyError);
+  });
+
+  it("leave a parked event to the drain that handled it first", async () => {
+    const context = await setUp();
+    const { harness, deadLetters } = context;
+    await failOnFirstPayment(context);
+    const order = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    const paid = order.events.find((event) => event.type === "OrderPaid");
+    if (paid === undefined) throw new Error("no payment");
+    await harness.storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "o-1",
+      expectedVersion: order.events.length,
+      events: [{ ...paid, id: "shared", version: order.events.length + 1 }],
+    });
+    await context.settle();
+    const [letter] = await deadLetters.list();
+    const handleOnce = async () => {
+      whileHandling = async () => {
+        const { events } = await harness.storage.eventStore.load(stream);
+        await harness.storage.eventStore.append({
+          ...stream,
+          expectedVersion: events.length,
+          events: [
+            {
+              ...(events.at(-1) as (typeof events)[number]),
+              id: "other-drain",
+              version: events.length + 1,
+              type: PROCESS_EVENTS.handled,
+              payload: { state: { seen: [], nudge: null }, eventId: "shared" },
+            },
+          ],
+        });
+        failingEvents.set("shared", "terminal");
+      };
+    };
+    const append = harness.storage.eventStore.append;
+    harness.storage.eventStore.append = async (args) => {
+      const [first] = args.events;
+      if (
+        first?.type === PROCESS_EVENTS.handled &&
+        (first.payload as { eventId?: string }).eventId !== "shared"
+      ) {
+        await handleOnce();
+      }
+      return append(args);
+    };
+    await deadLetters.replay(letter?.id ?? "");
+    harness.storage.eventStore.append = append;
+    expect(await deadLetters.list({ status: "failed" })).toEqual([]);
+  });
+
+  it("count nothing parked for a letter whose process is gone", async () => {
+    const context = await setUp();
+    const { harness, deadLetters } = context;
+    await harness.storage.deadLetterStore.add({
+      id: "orphan-letter",
+      kind: "process",
+      subscriber: "order.gone",
+      eventId: "deadline:x",
+      eventType: "bounda.ProcessDeadline",
+      aggregateType: "process:Gone",
+      aggregateId: "o-1",
+      errorType: "terminal",
+      errorMessage: "x",
+      attempts: 1,
+      firstFailedAt: "2026-01-01T00:00:00.000Z",
+      lastFailedAt: "2026-01-01T00:00:00.000Z",
+    });
+    expect(await deadLetters.get("orphan-letter")).toMatchObject({ parked: 0 });
+  });
 });
 
 describe("a parked event that is handled and completes the process", () => {
