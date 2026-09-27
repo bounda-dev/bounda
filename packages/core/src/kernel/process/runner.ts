@@ -534,6 +534,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     const acts = process.handlers[qualified] !== undefined || process.completedBy.has(qualified);
     if (
       !acts ||
+      event.id === instance.failure?.eventId ||
       instance.handledEventIds.has(event.id) ||
       instance.parked.some((parked) => parked.eventId === event.id)
     ) {
@@ -943,10 +944,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
       if (instanceId === null) return 0;
       const instance = await load(process, instanceId);
       return instance.status === "failed"
-        ? instance.parked.filter(
-            (parked) =>
-              parked.eventId !== letter.eventId && parked.eventId !== instance.failure?.eventId,
-          ).length
+        ? instance.parked.filter((parked) => parked.eventId !== instance.failure?.eventId).length
         : 0;
     },
     lostRace: (payload, error) => {

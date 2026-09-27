@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RetryConfig } from "../../config/types.ts";
-import { DomainError } from "../../contracts/errors.ts";
+import { ConcurrencyError, DomainError } from "../../contracts/errors.ts";
 import type { Instant } from "../../contracts/instant.ts";
 import type { ProcessAfterFunction, ProcessStateArgs } from "../../modules/process.ts";
 import type { Registry } from "../../modules/registry.ts";
@@ -22,7 +22,7 @@ interface TallyArgs {
 
 const runs: string[] = [];
 let failing = new Map<string, "terminal" | "retriable">();
-const failingEvents = new Set<string>();
+const failingEvents = new Map<string, "terminal" | "retriable">();
 
 const failIfAsked = (label: string): void => {
   const kind = failing.get(label);
@@ -35,7 +35,8 @@ const tally =
   ({ state, event }: TallyArgs): TallyState => {
     runs.push(`${label}:${event.id}`);
     failIfAsked(label);
-    if (failingEvents.has(event.id)) throw new DomainError(`${event.id} refuses`);
+    if (failingEvents.get(event.id) === "terminal") throw new DomainError(`${event.id} refuses`);
+    if (failingEvents.get(event.id) === "retriable") throw new Error(`${event.id} is down`);
     return { ...state, seen: [...state.seen, label] };
   };
 
@@ -209,11 +210,11 @@ describe("events of a failed process", () => {
     const [first] = await deadLetters.list();
     expect(first).toMatchObject({ parked: 2 });
 
-    failingEvents.add("again-1");
+    failingEvents.set("again-1", "terminal");
     const replayed = await deadLetters.replay(first?.id ?? "");
     expect(replayed).toMatchObject({ status: "replayed", parked: 1 });
     const [second] = await deadLetters.list({ status: "failed" });
-    expect(second).toMatchObject({ eventId: "again-1", parked: 1 });
+    expect(second).toMatchObject({ eventId: "again-1", parked: 1, errorType: "terminal" });
     expect((await types()).at(-1)).toBe(PROCESS_EVENTS.failed);
 
     failingEvents.clear();
@@ -231,14 +232,18 @@ describe("events of a failed process", () => {
     const context = await setUp();
     const { harness, deadLetters, settle, types, pay } = context;
     await failOnFirstPayment(context);
+    await harness.pipeline.dispatch({ type: "ArchiveOrder", payload: { orderId: "o-1" } });
+    await settle();
     const [letter] = await deadLetters.list();
+    expect(letter).toMatchObject({ parked: 1 });
     expect((await deadLetters.discard(letter?.id ?? "")).status).toBe("discarded");
     await pay().catch(() => undefined);
     harness.clock.advance(40 * DAY);
     await settle();
-    expect((await types()).at(-1)).toBe(PROCESS_EVENTS.failed);
+    expect((await types()).at(-1)).toBe(PROCESS_EVENTS.eventParked);
     expect(runs).toHaveLength(1);
     expect(await deadLetters.list({ status: "discarded" })).toMatchObject([{ parked: 0 }]);
+    expect(await deadLetters.get("nope")).toBeNull();
   });
 
   it("wait behind a failed deadline, which runs first when replayed", async () => {
@@ -334,5 +339,159 @@ describe("events of a failed process", () => {
     await harness.dispatcher.processUntilIdle();
     expect((await types()).at(-1)).toBe(PROCESS_EVENTS.eventParked);
     expect((await deadLetters.list())[0]).toMatchObject({ eventId: "deadline:nudge", parked: 1 });
+  });
+
+  it("park only what would do something, and each event once", async () => {
+    const context = await setUp();
+    const { harness, settle, types } = context;
+    await failOnFirstPayment(context);
+    await harness.pipeline.dispatch({ type: "ArchiveOrder", payload: { orderId: "o-1" } });
+    await settle();
+    await harness.storage.checkpointStore.set("processes", 0);
+    await settle();
+    expect((await types()).filter((type) => type === PROCESS_EVENTS.eventParked)).toHaveLength(1);
+  });
+
+  it("refuse to resume on a parked event that is gone", async () => {
+    const context = await setUp();
+    const { harness, deadLetters } = context;
+    await failOnFirstPayment(context);
+    const { events } = await harness.storage.eventStore.load(stream);
+    await harness.storage.eventStore.append({
+      ...stream,
+      expectedVersion: events.length,
+      events: [
+        {
+          ...(events.at(-1) as (typeof events)[number]),
+          id: "ghost-parking",
+          version: events.length + 1,
+          type: PROCESS_EVENTS.eventParked,
+          payload: {
+            eventId: "ghost",
+            eventType: "OrderArchived",
+            aggregateType: "order",
+            aggregateId: "o-1",
+          },
+        },
+      ],
+    });
+    const [letter] = await deadLetters.list();
+    await expect(deadLetters.replay(letter?.id ?? "")).rejects.toThrow(
+      "Parked event ghost of order:o-1 not found",
+    );
+  });
+
+  it("dead-letter a parked event that fails for a transient reason as having run out of attempts", async () => {
+    const context = await setUp();
+    const { harness, deadLetters, settle } = context;
+    await failOnFirstPayment(context);
+    const order = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    const paid = order.events.find((event) => event.type === "OrderPaid");
+    if (paid === undefined) throw new Error("no payment");
+    await harness.storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "o-1",
+      expectedVersion: order.events.length,
+      events: [{ ...paid, id: "flaky", version: order.events.length + 1 }],
+    });
+    await settle();
+    failingEvents.set("flaky", "retriable");
+    await deadLetters.replay((await deadLetters.list())[0]?.id ?? "");
+    expect(await deadLetters.list({ status: "failed" })).toMatchObject([
+      { eventId: "flaky", errorType: "retriable_exhausted", errorMessage: "flaky is down" },
+    ]);
+  });
+
+  it("handle a parked event again when another write to the instance got there first", async () => {
+    const context = await setUp();
+    const { harness, deadLetters, types } = context;
+    await failOnFirstPayment(context);
+    await harness.pipeline.dispatch({ type: "ArchiveOrder", payload: { orderId: "o-1" } });
+    await harness.dispatcher.processUntilIdle();
+    const append = harness.storage.eventStore.append;
+    let raced = false;
+    harness.storage.eventStore.append = async (args) => {
+      if (!raced && args.events[0]?.type === PROCESS_EVENTS.completed) {
+        raced = true;
+        throw new ConcurrencyError({
+          streamId: `${stream.aggregateType}:${stream.aggregateId}`,
+          expectedVersion: args.expectedVersion,
+          actualVersion: args.expectedVersion + 1,
+        });
+      }
+      return append(args);
+    };
+    await expect(
+      deadLetters.replay((await deadLetters.list())[0]?.id ?? ""),
+    ).rejects.toBeInstanceOf(ConcurrencyError);
+    harness.storage.eventStore.append = append;
+    await deadLetters.replay((await deadLetters.list())[0]?.id ?? "");
+    expect((await types()).at(-1)).toBe(PROCESS_EVENTS.completed);
+  });
+
+  it("let a failure to resume reach the caller, and resume on the next replay", async () => {
+    const context = await setUp();
+    const { harness, deadLetters, types } = context;
+    await failOnFirstPayment(context);
+    const append = harness.storage.eventStore.append;
+    let broken = true;
+    harness.storage.eventStore.append = async (args) => {
+      if (broken && args.events[0]?.type === PROCESS_EVENTS.resumed) {
+        broken = false;
+        throw new Error("disk full");
+      }
+      return append(args);
+    };
+    const [letter] = await deadLetters.list();
+    await expect(deadLetters.replay(letter?.id ?? "")).rejects.toThrow("disk full");
+    harness.storage.eventStore.append = append;
+    await deadLetters.replay(letter?.id ?? "");
+    expect((await types()).at(-1)).toBe(PROCESS_EVENTS.resumed);
+    expect(runs.filter((run) => run.startsWith("paid:"))).toHaveLength(2);
+  });
+
+  it("handle an event parked on a handler-less trigger of the process only if it would act", async () => {
+    const quiet: Registry = {
+      aggregates: {
+        order: {
+          ...orderAggregateEntry(),
+          processes: {
+            quiet: {
+              module: {
+                config: ({ events }: OrderProcessConfigArgs<"OrderPlaced" | "OrderArchived">) => ({
+                  startedBy: [events.order.OrderPlaced, events.order.OrderArchived],
+                }),
+              },
+              handlers: {
+                order: {
+                  orderPlaced: {
+                    handler: () => {
+                      throw new DomainError("no");
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      readModels: {},
+    };
+    const harness = await createReactiveHarness({ registry: quiet });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.dispatcher.processUntilIdle();
+    await harness.pipeline.dispatch({ type: "ArchiveOrder", payload: { orderId: "o-1" } });
+    await harness.dispatcher.processUntilIdle();
+    const { events } = await harness.storage.eventStore.load({
+      aggregateType: "process:Quiet",
+      aggregateId: "o-1",
+    });
+    expect(events.map((event) => event.type)).toEqual([
+      PROCESS_EVENTS.started,
+      PROCESS_EVENTS.failed,
+    ]);
   });
 });
