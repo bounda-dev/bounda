@@ -31,6 +31,7 @@ app/
       processes/
         order-payment/              a process
           index.ts                  config and state
+          on-order-placed.ts        handler for OrderPlaced
           on-order-paid.ts          handler for OrderPaid
           at-next-reminder.ts       handler for the deadline nextReminder
           at-timeout.ts             handler for the time-out
@@ -260,8 +261,8 @@ export const handler = ({ state, after }: Process.HandlerArgs) => ({
 // app/domain/order/processes/order-payment/at-next-reminder.ts
 import type { Process } from "./+types/at-next-reminder";
 
-export const handler = async ({ state, aggregateId, reminders, after }: Process.DeadlineArgs) => {
-  await reminders.remind(aggregateId);
+export const handler = async ({ state, aggregateId, commands, after }: Process.DeadlineArgs) => {
+  await commands.sendReminder({ orderId: aggregateId });
   return {
     ...state,
     reminders: state.reminders + 1,

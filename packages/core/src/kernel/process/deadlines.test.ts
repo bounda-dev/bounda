@@ -967,8 +967,14 @@ describe("deadline entries under races and partial failures", () => {
     ]);
     expect(entries).toContainEqual({
       level: "warn",
-      message: "process deadline gave up outside its handler",
-      fields: { process: "order.steps", aggregateId: "o-1", error: "database blip" },
+      message: "process deadline gave up without failing the process",
+      fields: {
+        process: "order.steps",
+        aggregateId: "o-1",
+        status: "started",
+        thrownBy: null,
+        error: "database blip",
+      },
     });
   });
 

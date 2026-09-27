@@ -724,9 +724,11 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
         instance.status !== "started" ||
         instance.reached.has(reachedKey(failed))
       ) {
-        logger.warn("process deadline gave up outside its handler", {
+        logger.warn("process deadline gave up without failing the process", {
           process: process.name,
           aggregateId: payload.aggregateId,
+          status: instance.status,
+          thrownBy: failed?.field ?? null,
           error: errorDetails(error).message,
         });
         await reconcile(process, payload.aggregateId);
