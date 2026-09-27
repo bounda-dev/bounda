@@ -262,6 +262,11 @@ export const runCli: RunCliFunction = async ({ argv, cwd, stdout, stderr, signal
         onChange: async () => {
           exitCode = await runGenerate(options, cwd, stdout, stderr);
         },
+        onUnconfirmed: () =>
+          line(
+            stderr,
+            `warning: the file system has not reported a change under ${options.appDir}/; watching may miss changes`,
+          ),
         onWatching: () => line(stdout, `watching ${options.appDir}/ for changes`),
       });
     });

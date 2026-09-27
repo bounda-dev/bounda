@@ -1,5 +1,5 @@
 import type { watch as watchDirectory } from "node:fs/promises";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFixedClock } from "@bounda-dev/core";
@@ -17,6 +17,23 @@ const project = async (): Promise<string> => {
 
 const drained = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
+const unheard = async (clock: ReturnType<typeof createFixedClock>, writes: number) => {
+  for (let write = 0; write < writes; write += 1) {
+    await vi.waitFor(() => expect(clock.pending()).toBe(1));
+    clock.advance(50);
+  }
+};
+
+const cookies = async (directory: string): Promise<string[]> =>
+  (await readdir(directory)).filter((name) => name.startsWith(".bounda-watch-"));
+
+const cookieIn = (directory: string): Promise<string> =>
+  vi.waitFor(async () => {
+    const [cookie] = await cookies(directory);
+    if (cookie === undefined) throw new Error(`no cookie in ${directory} yet`);
+    return cookie;
+  });
+
 afterAll(async () => {
   await Promise.all(temporary.map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -32,8 +49,8 @@ interface FakeWatcher {
   readonly watch: typeof watchDirectory;
   readonly emit: (filename: string | null) => void;
   readonly end: (error?: Error) => void;
+  readonly hearCookie: () => Promise<string>;
   readonly calls: { path: string; options: WatchOptions }[];
-  readonly listening: () => boolean;
 }
 
 const abortError = (): Error => {
@@ -50,9 +67,7 @@ const fakeWatcher = (): FakeWatcher => {
     wake?.();
   };
   const calls: FakeWatcher["calls"] = [];
-  let listening = false;
   async function* events(): AsyncGenerator<WatchEvent> {
-    listening = true;
     for (;;) {
       const next = queue.shift();
       if (next === undefined) {
@@ -68,6 +83,7 @@ const fakeWatcher = (): FakeWatcher => {
       yield next;
     }
   }
+  const emit = (filename: string | null) => push({ filename });
   return {
     watch: ((path: string, options: WatchOptions) => {
       calls.push({ path, options });
@@ -76,23 +92,30 @@ const fakeWatcher = (): FakeWatcher => {
       });
       return events();
     }) as unknown as typeof watchDirectory,
-    emit: (filename) => push({ filename }),
+    emit,
     end: (error) => push({ error }),
+    hearCookie: async () => {
+      const cookie = await cookieIn(calls[0]?.path ?? "");
+      emit(cookie);
+      return cookie;
+    },
     calls,
-    listening: () => listening,
   };
 };
 
-const harness = (
+const start = async (
   watcher: FakeWatcher,
   overrides: { readonly appDir?: string; readonly throwOn?: number } = {},
 ) => {
+  const root = await project();
   let runs = 0;
+  let listened = 0;
+  let unconfirmed = 0;
   const errors: unknown[] = [];
   const controller = new AbortController();
   const clock = createFixedClock();
   const watching = watchProject({
-    root: "/project",
+    root,
     ...(overrides.appDir === undefined ? {} : { appDir: overrides.appDir }),
     signal: controller.signal,
     debounceMs: 10,
@@ -103,37 +126,204 @@ const harness = (
       if (runs === overrides.throwOn) throw new Error("boom");
     },
     onError: (error) => errors.push(error),
+    onListening: () => {
+      listened += 1;
+    },
+    onUnconfirmed: () => {
+      unconfirmed += 1;
+    },
   });
-  return { watching, controller, clock, runs: () => runs, errors };
+  return {
+    root,
+    watching,
+    controller,
+    clock,
+    runs: () => runs,
+    listened: () => listened,
+    unconfirmed: () => unconfirmed,
+    errors,
+  };
+};
+
+const harness = async (
+  watcher: FakeWatcher,
+  overrides: { readonly appDir?: string; readonly throwOn?: number } = {},
+) => {
+  const started = await start(watcher, overrides);
+  await watcher.hearCookie();
+  await vi.waitFor(() => expect(started.listened()).toBe(1));
+  return started;
 };
 
 describe("watchProject", () => {
-  it("watches <root>/<appDir> recursively with the signal, app/ by default", async () => {
+  it("watches <root>/<appDir> recursively until the signal aborts, app/ by default", async () => {
     const watcher = fakeWatcher();
-    const { watching, controller } = harness(watcher);
-    expect(watcher.calls[0]?.path).toBe(join("/project", "app"));
-    expect(watcher.calls[0]?.options).toEqual({ recursive: true, signal: controller.signal });
-    watcher.end(abortError());
-    await watching;
+    const { root, watching, controller } = await start(watcher);
+    expect(watcher.calls[0]?.path).toBe(join(root, "app"));
+    expect(watcher.calls[0]?.options.recursive).toBe(true);
+    expect(watcher.calls[0]?.options.signal?.aborted).toBe(false);
+    controller.abort();
+    await expect(watching).resolves.toBeUndefined();
+    expect(watcher.calls[0]?.options.signal?.aborted).toBe(true);
 
     const custom = fakeWatcher();
-    const { watching: watchingCustom } = harness(custom, { appDir: "src" });
-    expect(custom.calls[0]?.path).toBe(join("/project", "src"));
+    const other = await project();
+    await mkdir(join(other, "src"));
+    const watchingCustom = watchProject({
+      root: other,
+      appDir: "src",
+      signal: new AbortController().signal,
+      watch: custom.watch,
+      onChange: async () => undefined,
+    });
+    expect(custom.calls[0]?.path).toBe(join(other, "src"));
+    await custom.hearCookie();
     custom.end(abortError());
     await watchingCustom;
   });
 
-  it("is listening by the time it returns", async () => {
+  it("writes a cookie until it hears it back, removes it, and then says it is listening", async () => {
     const watcher = fakeWatcher();
-    const { watching } = harness(watcher);
-    expect(watcher.listening()).toBe(true);
-    watcher.end(abortError());
+    const { root, watching, controller, clock, runs, listened } = await start(watcher);
+    const app = join(root, "app");
+    const cookie = await cookieIn(app);
+    expect(cookie).toMatch(/^\.bounda-watch-[0-9a-f-]{36}$/);
+    await vi.waitFor(() => expect(clock.pending()).toBe(1));
+    await rm(join(app, cookie));
+    clock.advance(49);
+    await drained();
+    expect(await cookies(app)).toEqual([]);
+    clock.advance(1);
+    await vi.waitFor(() => stat(join(app, cookie)));
+    expect(listened()).toBe(0);
+
+    watcher.emit(cookie);
+    await vi.waitFor(() => expect(listened()).toBe(1));
+    expect(await cookies(app)).toEqual([]);
+    expect(clock.pending()).toBe(0);
+    watcher.emit(cookie);
+    await drained();
+    expect(clock.pending()).toBe(0);
+    expect(listened()).toBe(1);
+    expect(runs()).toBe(0);
+    controller.abort();
     await watching;
+  });
+
+  it("gives each watch a cookie of its own", async () => {
+    const root = await project();
+    const controller = new AbortController();
+    const watchings = [fakeWatcher(), fakeWatcher()].map((watcher) =>
+      watchProject({
+        root,
+        signal: controller.signal,
+        watch: watcher.watch,
+        onChange: async () => undefined,
+      }),
+    );
+    await vi.waitFor(async () => expect(await cookies(join(root, "app"))).toHaveLength(2));
+    controller.abort();
+    await Promise.all(watchings);
+  });
+
+  it("removes the cookie and does not say it is listening when it ends first", async () => {
+    const watcher = fakeWatcher();
+    const { root, watching, controller, clock, listened } = await start(watcher);
+    const app = join(root, "app");
+    await cookieIn(app);
+    controller.abort();
+    await expect(watching).resolves.toBeUndefined();
+    expect(await cookies(app)).toEqual([]);
+    expect(clock.pending()).toBe(0);
+    expect(listened()).toBe(0);
+  });
+
+  it("gives up after 20 writes without hearing the cookie, and goes on watching", async () => {
+    const watcher = fakeWatcher();
+    const { root, watching, controller, clock, runs, listened, unconfirmed } = await start(watcher);
+    const app = join(root, "app");
+    const cookie = await cookieIn(app);
+    await unheard(clock, 19);
+    await vi.waitFor(() => expect(clock.pending()).toBe(1));
+    expect(unconfirmed()).toBe(0);
+    clock.advance(50);
+    await vi.waitFor(() => expect(unconfirmed()).toBe(1));
+    expect(await cookies(app)).toEqual([]);
+    expect(clock.pending()).toBe(0);
+    expect(listened()).toBe(0);
+
+    watcher.emit(cookie);
+    await drained();
+    expect(clock.pending()).toBe(0);
+    watcher.emit("domain/order/a.ts");
+    await drained();
+    clock.advance(10);
+    await vi.waitFor(() => expect(runs()).toBe(1));
+    expect(listened()).toBe(0);
+    controller.abort();
+    await expect(watching).resolves.toBeUndefined();
+  });
+
+  it("ends and rejects when the cookie cannot be written", async () => {
+    const watcher = fakeWatcher();
+    const { watching, listened } = await start(watcher, { appDir: "missing" });
+    await expect(watching).rejects.toMatchObject({ code: "ENOENT" });
+    expect(watcher.calls[0]?.options.signal?.aborted).toBe(true);
+    expect(listened()).toBe(0);
+  });
+
+  it("does not report a cookie it could not write once it has ended", async () => {
+    const watcher = fakeWatcher();
+    const { watching, controller } = await start(watcher, { appDir: "missing" });
+    controller.abort();
+    await expect(watching).resolves.toBeUndefined();
+  });
+
+  it("says it is listening even when the cookie is gone by the time it hears it", async () => {
+    const watcher = fakeWatcher();
+    const { root, watching, controller, listened } = await start(watcher);
+    const app = join(root, "app");
+    const cookie = await cookieIn(app);
+    await rm(join(app, cookie));
+    watcher.emit(cookie);
+    await vi.waitFor(() => expect(listened()).toBe(1));
+    controller.abort();
+    await expect(watching).resolves.toBeUndefined();
+  });
+
+  it("passes what onListening throws to onError and keeps watching", async () => {
+    const watcher = fakeWatcher();
+    const errors: unknown[] = [];
+    let runs = 0;
+    const clock = createFixedClock();
+    const controller = new AbortController();
+    const watching = watchProject({
+      root: await project(),
+      signal: controller.signal,
+      debounceMs: 10,
+      clock,
+      watch: watcher.watch,
+      onChange: async () => {
+        runs += 1;
+      },
+      onError: (error) => errors.push(error),
+      onListening: () => {
+        throw new Error("boom");
+      },
+    });
+    await watcher.hearCookie();
+    await vi.waitFor(() => expect(errors).toEqual([new Error("boom")]));
+    watcher.emit("domain/order/a.ts");
+    await drained();
+    clock.advance(10);
+    await vi.waitFor(() => expect(runs).toBe(1));
+    controller.abort();
+    await expect(watching).resolves.toBeUndefined();
   });
 
   it("coalesces a burst into one onChange and ignores +types", async () => {
     const watcher = fakeWatcher();
-    const { watching, runs, clock } = harness(watcher);
+    const { watching, runs, clock } = await harness(watcher);
     watcher.emit("domain/order/a.ts");
     watcher.emit("domain/order/b.ts");
     watcher.emit(null);
@@ -160,7 +350,7 @@ describe("watchProject", () => {
 
   it("reports what onChange throws and keeps watching", async () => {
     const watcher = fakeWatcher();
-    const { watching, runs, errors, clock } = harness(watcher, { throwOn: 1 });
+    const { watching, runs, errors, clock } = await harness(watcher, { throwOn: 1 });
     watcher.emit("domain/order/a.ts");
     await drained();
     clock.advance(10);
@@ -177,7 +367,7 @@ describe("watchProject", () => {
 
   it("stops on abort without running a pending change", async () => {
     const watcher = fakeWatcher();
-    const { watching, runs, clock } = harness(watcher);
+    const { watching, runs, clock } = await harness(watcher);
     watcher.emit("domain/order/a.ts");
     await drained();
     expect(clock.pending()).toBe(1);
@@ -194,7 +384,7 @@ describe("watchProject", () => {
     const release = Promise.withResolvers<void>();
     const timeline: string[] = [];
     const watching = watchProject({
-      root: "/project",
+      root: await project(),
       signal: new AbortController().signal,
       debounceMs: 10,
       clock,
@@ -205,6 +395,8 @@ describe("watchProject", () => {
         timeline.push("finished");
       },
     });
+    await watcher.hearCookie();
+    await vi.waitFor(() => expect(clock.pending()).toBe(0));
     watcher.emit("domain/order/a.ts");
     await drained();
     clock.advance(10);
@@ -221,15 +413,18 @@ describe("watchProject", () => {
 
   it("rethrows a failure of the watcher itself", async () => {
     const watcher = fakeWatcher();
-    const { watching } = harness(watcher);
+    const { root, watching } = await start(watcher);
+    await cookieIn(join(root, "app"));
     watcher.end(new Error("disk gone"));
     await expect(watching).rejects.toThrow("disk gone");
+    expect(await cookies(join(root, "app"))).toEqual([]);
   });
 
-  it("sees a change made right after it returns, on the real file system", async () => {
+  it("sees a change made right after it says it is listening, on the real file system", async () => {
     const root = await project();
     let runs = 0;
     const controller = new AbortController();
+    const listening = Promise.withResolvers<void>();
     const watching = watchProject({
       root,
       signal: controller.signal,
@@ -237,7 +432,10 @@ describe("watchProject", () => {
       onChange: async () => {
         runs += 1;
       },
+      onListening: listening.resolve,
     });
+    await listening.promise;
+    expect(await cookies(join(root, "app"))).toEqual([]);
     await writeFile(join(root, "app/domain/order/a.ts"), "export {};\n");
     await vi.waitFor(() => expect(runs).toBeGreaterThanOrEqual(1), { timeout: 5_000 });
     controller.abort();
@@ -246,24 +444,28 @@ describe("watchProject", () => {
 });
 
 describe("watchFromFirstRun", () => {
-  const start = (watcher: FakeWatcher, firstRun: () => Promise<boolean>) => {
+  const begin = async (watcher: FakeWatcher, firstRun: () => Promise<boolean>) => {
     const controller = new AbortController();
     const clock = createFixedClock();
     let changes = 0;
     let announced = 0;
-    let listeningAtFirstRun: boolean | undefined;
+    let firstRuns = 0;
+    let unconfirmed = 0;
     const done = watchFromFirstRun({
-      root: "/project",
+      root: await project(),
       signal: controller.signal,
       debounceMs: 10,
       clock,
       watch: watcher.watch,
       firstRun: () => {
-        listeningAtFirstRun ??= watcher.listening();
+        firstRuns += 1;
         return firstRun();
       },
       onChange: async () => {
         changes += 1;
+      },
+      onUnconfirmed: () => {
+        unconfirmed += 1;
       },
       onWatching: () => {
         announced += 1;
@@ -275,15 +477,24 @@ describe("watchFromFirstRun", () => {
       clock,
       changes: () => changes,
       announced: () => announced,
-      listeningAtFirstRun: () => listeningAtFirstRun,
+      firstRuns: () => firstRuns,
+      unconfirmed: () => unconfirmed,
     };
   };
 
-  it("is listening before the first run starts, and announces once that run goes on", async () => {
+  const listening = async (watcher: FakeWatcher, run: { readonly firstRuns: () => number }) => {
+    await watcher.hearCookie();
+    await vi.waitFor(() => expect(run.firstRuns()).toBe(1));
+  };
+
+  it("makes the first run once the watcher is listening, and announces once it goes on", async () => {
     const watcher = fakeWatcher();
-    const run = start(watcher, async () => true);
+    const run = await begin(watcher, async () => true);
+    await cookieIn(watcher.calls[0]?.path ?? "");
+    await drained();
+    expect(run.firstRuns()).toBe(0);
+    await listening(watcher, run);
     await vi.waitFor(() => expect(run.announced()).toBe(1));
-    expect(run.listeningAtFirstRun()).toBe(true);
     run.controller.abort();
     await expect(run.done).resolves.toBeUndefined();
   });
@@ -291,7 +502,8 @@ describe("watchFromFirstRun", () => {
   it("holds a change made during the first run until that run is done", async () => {
     const watcher = fakeWatcher();
     const first = Promise.withResolvers<boolean>();
-    const run = start(watcher, () => first.promise);
+    const run = await begin(watcher, () => first.promise);
+    await listening(watcher, run);
     watcher.emit("domain/order/a.ts");
     await drained();
     run.clock.advance(10);
@@ -307,7 +519,8 @@ describe("watchFromFirstRun", () => {
   it("ends at once when the first run does not go on, dropping the change it held", async () => {
     const watcher = fakeWatcher();
     const first = Promise.withResolvers<boolean>();
-    const run = start(watcher, () => first.promise);
+    const run = await begin(watcher, () => first.promise);
+    await listening(watcher, run);
     watcher.emit("domain/order/a.ts");
     await drained();
     run.clock.advance(10);
@@ -320,10 +533,12 @@ describe("watchFromFirstRun", () => {
 
   it("ends the watch and rethrows when the first run rejects", async () => {
     const watcher = fakeWatcher();
-    const run = start(watcher, async () => {
+    const run = await begin(watcher, async () => {
       throw new Error("boom");
     });
-    await expect(run.done).rejects.toThrow("boom");
+    const rejected = expect(run.done).rejects.toThrow("boom");
+    await listening(watcher, run);
+    await rejected;
     expect(run.announced()).toBe(0);
     expect(watcher.calls[0]?.options.signal?.aborted).toBe(true);
   });
@@ -331,10 +546,44 @@ describe("watchFromFirstRun", () => {
   it("reports a watcher that fails during the first run once that run is done", async () => {
     const watcher = fakeWatcher();
     const first = Promise.withResolvers<boolean>();
-    const run = start(watcher, () => first.promise);
+    const run = await begin(watcher, () => first.promise);
+    await listening(watcher, run);
     watcher.end(new Error("disk gone"));
     await drained();
     first.resolve(true);
     await expect(run.done).rejects.toThrow("disk gone");
+  });
+
+  it("makes no first run when the signal aborts before the watcher is listening", async () => {
+    const watcher = fakeWatcher();
+    const run = await begin(watcher, async () => true);
+    await cookieIn(watcher.calls[0]?.path ?? "");
+    run.controller.abort();
+    await expect(run.done).resolves.toBeUndefined();
+    expect(run.firstRuns()).toBe(0);
+    expect(run.announced()).toBe(0);
+  });
+
+  it("makes the first run once the watcher gives up confirming it is listening", async () => {
+    const watcher = fakeWatcher();
+    const run = await begin(watcher, async () => true);
+    await unheard(run.clock, 19);
+    await vi.waitFor(() => expect(run.clock.pending()).toBe(1));
+    expect(run.firstRuns()).toBe(0);
+    run.clock.advance(50);
+    await vi.waitFor(() => expect(run.announced()).toBe(1));
+    expect(run.unconfirmed()).toBe(1);
+    expect(run.firstRuns()).toBe(1);
+    run.controller.abort();
+    await expect(run.done).resolves.toBeUndefined();
+  });
+
+  it("still makes the first run when the watcher fails before it listens, then rethrows", async () => {
+    const watcher = fakeWatcher();
+    const run = await begin(watcher, async () => true);
+    await cookieIn(watcher.calls[0]?.path ?? "");
+    watcher.end(new Error("disk gone"));
+    await expect(run.done).rejects.toThrow("disk gone");
+    expect(run.firstRuns()).toBe(1);
   });
 });
