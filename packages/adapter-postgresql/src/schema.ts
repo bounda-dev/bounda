@@ -112,8 +112,10 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "context" jsonb NOT NULL,
     "attempts" integer NOT NULL,
     "claimed_at" text,
-    "last_error" text
+    "last_error" text,
+    "revision" integer NOT NULL DEFAULT 0
   )`,
+  `ALTER TABLE ${tables.scheduledCommands} ADD COLUMN IF NOT EXISTS "revision" integer NOT NULL DEFAULT 0`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.scheduledCommands, "execute_at")} ON ${tables.scheduledCommands} ("execute_at")`,
 ];
 

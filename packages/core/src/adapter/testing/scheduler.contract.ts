@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import type { Scheduler } from "../ports/scheduler.ts";
+import type { ClaimedCommand, ScheduleArgs, Scheduler } from "../ports/scheduler.ts";
 import { testCommand, testContext } from "./fixtures.ts";
 
 export interface SchedulerContractArgs {
@@ -12,6 +12,12 @@ export interface SchedulerContractFunction {
 
 const t0 = new Date("2026-01-01T00:00:00.000Z");
 const at = (ms: number): Date => new Date(t0.getTime() + ms);
+
+const claimOf = (claimed: readonly ClaimedCommand[], dedupeKey: string): ClaimedCommand => {
+  const entry = claimed.find((candidate) => candidate.dedupeKey === dedupeKey);
+  if (entry === undefined) throw new Error(`${dedupeKey} was not claimed`);
+  return entry;
+};
 
 /**
  * The behaviour every scheduler must exhibit.
@@ -116,13 +122,10 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
       expect(await scheduler.nextDueAt({ leaseMs: 1_000 })).toEqual(at(6_001));
       expect(await scheduler.nextDueAt({ leaseMs: 100_000 })).toEqual(at(60_000));
       expect(await scheduler.claimDue({ now: at(6_000), limit: 10, leaseMs: 1_000 })).toEqual([]);
-      expect(
-        (await scheduler.claimDue({ now: at(6_001), limit: 10, leaseMs: 1_000 })).map(
-          (entry) => entry.dedupeKey,
-        ),
-      ).toEqual(["soon"]);
+      const reclaimed = await scheduler.claimDue({ now: at(6_001), limit: 10, leaseMs: 1_000 });
+      expect(reclaimed.map((entry) => entry.dedupeKey)).toEqual(["soon"]);
 
-      await scheduler.complete("soon");
+      await scheduler.complete(claimOf(reclaimed, "soon"));
       expect(await scheduler.nextDueAt({ leaseMs: 1_000 })).toEqual(at(60_000));
       await scheduler.cancel("late");
       expect(await scheduler.nextDueAt({ leaseMs: 1_000 })).toBeNull();
@@ -141,8 +144,8 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
         executeAt: at(0),
         context: testContext,
       });
-      await scheduler.claimDue({ now: at(1), limit: 10, leaseMs: 60_000 });
-      await scheduler.complete("a");
+      const claimed = await scheduler.claimDue({ now: at(1), limit: 10, leaseMs: 60_000 });
+      await scheduler.complete(claimOf(claimed, "a"));
       await scheduler.cancel("b");
       expect(await scheduler.list()).toEqual([]);
       expect(await scheduler.claimDue({ now: at(120_000), limit: 10, leaseMs: 60_000 })).toEqual(
@@ -164,9 +167,9 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
         executeAt: at(0),
         context: testContext,
       });
-      await scheduler.claimDue({ now: at(1), limit: 10, leaseMs: 60_000 });
-      await scheduler.fail({ dedupeKey: "a", error: "boom", retryAt: at(5_000) });
-      await scheduler.fail({ dedupeKey: "b", error: "boom" });
+      const claimed = await scheduler.claimDue({ now: at(1), limit: 10, leaseMs: 60_000 });
+      await scheduler.fail({ claim: claimOf(claimed, "a"), error: "boom", retryAt: at(5_000) });
+      await scheduler.fail({ claim: claimOf(claimed, "b"), error: "boom" });
 
       expect(await scheduler.claimDue({ now: at(4_000), limit: 10, leaseMs: 60_000 })).toEqual([]);
       const retried = await scheduler.claimDue({ now: at(5_000), limit: 10, leaseMs: 60_000 });
@@ -193,6 +196,94 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
       expect(due).toHaveLength(1);
       expect(due[0]?.command.payload).toEqual({ late: true });
       expect(await scheduler.list()).toHaveLength(1);
+    });
+
+    describe("a command rescheduled while it is claimed", () => {
+      const schedule = (
+        executeAt: Date,
+        payload: Readonly<Record<string, unknown>> = {},
+      ): ScheduleArgs => ({
+        dedupeKey: "a",
+        command: testCommand("1", payload),
+        executeAt,
+        context: testContext,
+      });
+
+      it("is not handed out beside the running claim, and runs once the claim is completed", async () => {
+        await scheduler.schedule(schedule(at(0)));
+        const [first] = await scheduler.claimDue({ now: at(1), limit: 10, leaseMs: 60_000 });
+        await scheduler.schedule(schedule(at(1), { next: true }));
+
+        expect(await scheduler.claimDue({ now: at(2), limit: 10, leaseMs: 60_000 })).toEqual([]);
+        if (first === undefined) throw new Error("nothing claimed");
+        await scheduler.complete(first);
+
+        const next = await scheduler.claimDue({ now: at(2), limit: 10, leaseMs: 60_000 });
+        expect(next).toHaveLength(1);
+        expect(next[0]).toMatchObject({ command: { payload: { next: true } }, attempts: 0 });
+      });
+
+      it("keeps the new version when the old run fails, retried or dropped", async () => {
+        await scheduler.schedule(schedule(at(0)));
+        const [retried] = await scheduler.claimDue({ now: at(1), limit: 10, leaseMs: 60_000 });
+        if (retried === undefined) throw new Error("nothing claimed");
+        await scheduler.schedule(schedule(at(50_000), { next: true }));
+        await scheduler.fail({ claim: retried, error: "boom", retryAt: at(5_000) });
+        expect(await scheduler.claimDue({ now: at(5_000), limit: 10, leaseMs: 60_000 })).toEqual(
+          [],
+        );
+
+        const [dropped] = await scheduler.claimDue({ now: at(50_000), limit: 10, leaseMs: 60_000 });
+        if (dropped === undefined) throw new Error("nothing claimed");
+        await scheduler.schedule(schedule(at(90_000), { last: true }));
+        await scheduler.fail({ claim: dropped, error: "boom" });
+        const due = await scheduler.claimDue({ now: at(90_000), limit: 10, leaseMs: 60_000 });
+        expect(due[0]?.command.payload).toEqual({ last: true });
+      });
+
+      it("is left alone when scheduled again with exactly what it holds", async () => {
+        await scheduler.schedule(schedule(at(0)));
+        const [first] = await scheduler.claimDue({ now: at(1), limit: 10, leaseMs: 60_000 });
+        if (first === undefined) throw new Error("nothing claimed");
+        await scheduler.schedule(schedule(at(0)));
+        await scheduler.complete(first);
+        expect(await scheduler.list()).toEqual([]);
+      });
+    });
+
+    it("ignores a claim whose lease another worker took over", async () => {
+      await scheduler.schedule({
+        dedupeKey: "a",
+        command: testCommand("1"),
+        executeAt: at(0),
+        context: testContext,
+      });
+      const [stale] = await scheduler.claimDue({ now: at(1), limit: 10, leaseMs: 1_000 });
+      const [current] = await scheduler.claimDue({ now: at(1_002), limit: 10, leaseMs: 1_000 });
+      if (stale === undefined || current === undefined) throw new Error("nothing claimed");
+
+      await scheduler.complete(stale);
+      await scheduler.fail({ claim: stale, error: "late", retryAt: at(100_000) });
+      expect(await scheduler.claimDue({ now: at(1_003), limit: 10, leaseMs: 1_000 })).toEqual([]);
+      expect(await scheduler.list()).toHaveLength(1);
+
+      await scheduler.complete(current);
+      expect(await scheduler.list()).toEqual([]);
+    });
+
+    it("does not bring back a claimed command that was cancelled", async () => {
+      await scheduler.schedule({
+        dedupeKey: "a",
+        command: testCommand("1"),
+        executeAt: at(0),
+        context: testContext,
+      });
+      const [claimed] = await scheduler.claimDue({ now: at(1), limit: 10, leaseMs: 60_000 });
+      if (claimed === undefined) throw new Error("nothing claimed");
+      await scheduler.cancel("a");
+      await scheduler.fail({ claim: claimed, error: "boom", retryAt: at(5_000) });
+      await scheduler.complete(claimed);
+      expect(await scheduler.list()).toEqual([]);
     });
 
     it("lists pending commands ordered by execution time with paging", async () => {

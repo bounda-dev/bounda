@@ -186,6 +186,7 @@ describe("createSqliteAdapter", () => {
     const db = new DatabaseSync(":memory:");
     await nodeSqlite(db).adapter.createStorage({ logger: silentLogger });
     db.exec('ALTER TABLE "bounda_dead_letters" DROP COLUMN "payload"');
+    db.exec('ALTER TABLE "bounda_scheduled_commands" DROP COLUMN "revision"');
     const opened = await nodeSqlite(db).adapter.createStorage({ logger: silentLogger });
     const letter = await opened.deadLetterStore.add({
       id: "cmd",
@@ -203,13 +204,34 @@ describe("createSqliteAdapter", () => {
       payload: { orderId: "o-1" },
     });
     expect(letter.payload).toEqual({ orderId: "o-1" });
+    await opened.scheduler.schedule({
+      dedupeKey: "k",
+      command: { type: "PlaceOrder", aggregateId: "o-1", payload: {} },
+      executeAt: new Date("2026-01-01T00:00:00.000Z"),
+      context: { correlationId: "c", causationId: "c", depth: 0 },
+    });
     expect(
-      storageSchemaAdditions({ tables: storageTablesFor("x_"), deadLetterColumns: ["id"] }),
-    ).toEqual(['ALTER TABLE "x_dead_letters" ADD COLUMN "payload" TEXT']);
+      await opened.scheduler.claimDue({
+        now: new Date("2026-01-01T00:00:01.000Z"),
+        limit: 1,
+        leaseMs: 1_000,
+      }),
+    ).toMatchObject([{ dedupeKey: "k", revision: 0 }]);
+    expect(
+      storageSchemaAdditions({
+        tables: storageTablesFor("x_"),
+        deadLetterColumns: ["id"],
+        scheduledCommandColumns: ["dedupe_key"],
+      }),
+    ).toEqual([
+      'ALTER TABLE "x_dead_letters" ADD COLUMN "payload" TEXT',
+      'ALTER TABLE "x_scheduled_commands" ADD COLUMN "revision" INTEGER NOT NULL DEFAULT 0',
+    ]);
     expect(
       storageSchemaAdditions({
         tables: storageTablesFor("x_"),
         deadLetterColumns: ["id", "payload"],
+        scheduledCommandColumns: ["dedupe_key", "revision"],
       }),
     ).toEqual([]);
   });

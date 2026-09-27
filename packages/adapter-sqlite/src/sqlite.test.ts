@@ -146,12 +146,20 @@ describe("sqlite adapter on a file", () => {
     expect(letter.payload).toEqual({ orderId: "o-1" });
     await storage.close();
     expect(
-      storageSchemaAdditions({ tables: storageTablesFor("x_"), deadLetterColumns: ["id"] }),
-    ).toEqual(['ALTER TABLE "x_dead_letters" ADD COLUMN "payload" TEXT']);
+      storageSchemaAdditions({
+        tables: storageTablesFor("x_"),
+        deadLetterColumns: ["id"],
+        scheduledCommandColumns: ["dedupe_key"],
+      }),
+    ).toEqual([
+      'ALTER TABLE "x_dead_letters" ADD COLUMN "payload" TEXT',
+      'ALTER TABLE "x_scheduled_commands" ADD COLUMN "revision" INTEGER NOT NULL DEFAULT 0',
+    ]);
     expect(
       storageSchemaAdditions({
         tables: storageTablesFor("x_"),
         deadLetterColumns: ["id", "payload"],
+        scheduledCommandColumns: ["dedupe_key", "revision"],
       }),
     ).toEqual([]);
   });

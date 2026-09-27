@@ -1,5 +1,10 @@
 import type { CausationContext } from "@bounda-dev/core";
-import type { ScheduledCommand, Scheduler } from "@bounda-dev/core/adapter";
+import type {
+  ClaimedCommand,
+  ScheduledClaim,
+  ScheduledCommand,
+  Scheduler,
+} from "@bounda-dev/core/adapter";
 import { earliestDue } from "@bounda-dev/core/adapter/sql";
 import type { PostgresqlDatabase } from "./database.ts";
 
@@ -27,17 +32,40 @@ const toScheduled = (row: Record<string, unknown>): ScheduledCommand => ({
   attempts: Number(row.attempts),
 });
 
+const toClaimed = (row: Record<string, unknown>): ClaimedCommand => ({
+  ...toScheduled(row),
+  revision: Number(row.revision),
+  claimedAt: String(row.claimed_at),
+});
+
 const byExecuteAt = (a: ScheduledCommand, b: ScheduledCommand): number =>
   a.executeAt.localeCompare(b.executeAt) || a.dedupeKey.localeCompare(b.dedupeKey);
 
 /**
  * Scheduler on one table. `claimDue` selects the due rows `FOR UPDATE SKIP LOCKED` and updates
- * them in the same statement, so concurrent workers each get a disjoint set.
+ * them in the same statement, so concurrent workers each get a disjoint set. `complete` and `fail`
+ * write only while the row still has the claim's `claimed_at` and `revision`, then release a claim
+ * that a reschedule left behind.
  */
-export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ db, table }) => ({
-  schedule: ({ dedupeKey, command, executeAt, context }) =>
+export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ db, table }) => {
+  const release = (claim: ScheduledClaim): Promise<void> =>
     db.run(
-      `INSERT INTO ${table} (${COLUMNS}, "claimed_at", "last_error") VALUES ($1, $2, $3, $4, $5, $6, 0, NULL, NULL)
+      `UPDATE ${table} SET "claimed_at" = NULL WHERE "dedupe_key" = $1 AND "claimed_at" = $2`,
+      [claim.dedupeKey, claim.claimedAt],
+    );
+
+  const drop = async (claim: ScheduledClaim): Promise<void> => {
+    await db.run(
+      `DELETE FROM ${table} WHERE "dedupe_key" = $1 AND "claimed_at" = $2 AND "revision" = $3`,
+      [claim.dedupeKey, claim.claimedAt, claim.revision],
+    );
+    await release(claim);
+  };
+
+  return {
+    schedule: ({ dedupeKey, command, executeAt, context }) =>
+      db.run(
+        `INSERT INTO ${table} (${COLUMNS}, "claimed_at", "last_error", "revision") VALUES ($1, $2, $3, $4, $5, $6, 0, NULL, NULL, 0)
        ON CONFLICT ("dedupe_key") DO UPDATE SET
          "command_type" = excluded."command_type",
          "aggregate_id" = excluded."aggregate_id",
@@ -45,23 +73,30 @@ export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ d
          "execute_at" = excluded."execute_at",
          "context" = excluded."context",
          "attempts" = 0,
-         "claimed_at" = NULL,
-         "last_error" = NULL`,
-      [
-        dedupeKey,
-        command.type,
-        command.aggregateId,
-        command.payload,
-        executeAt.toISOString(),
-        context,
-      ],
-    ),
-  cancel: (dedupeKey) => db.run(`DELETE FROM ${table} WHERE "dedupe_key" = $1`, [dedupeKey]),
-  claimDue: async ({ now, limit, leaseMs }) => {
-    const nowIso = now.toISOString();
-    const expiredBefore = new Date(now.getTime() - leaseMs).toISOString();
-    const rows = await db.all(
-      `UPDATE ${table} SET
+         "last_error" = NULL,
+         "revision" = ${table}."revision" + 1
+       WHERE NOT (
+         ${table}."command_type" = excluded."command_type"
+         AND ${table}."aggregate_id" = excluded."aggregate_id"
+         AND ${table}."payload" = excluded."payload"
+         AND ${table}."execute_at" = excluded."execute_at"
+         AND ${table}."context" = excluded."context"
+       )`,
+        [
+          dedupeKey,
+          command.type,
+          command.aggregateId,
+          command.payload,
+          executeAt.toISOString(),
+          context,
+        ],
+      ),
+    cancel: (dedupeKey) => db.run(`DELETE FROM ${table} WHERE "dedupe_key" = $1`, [dedupeKey]),
+    claimDue: async ({ now, limit, leaseMs }) => {
+      const nowIso = now.toISOString();
+      const expiredBefore = new Date(now.getTime() - leaseMs).toISOString();
+      const rows = await db.all(
+        `UPDATE ${table} SET
          "attempts" = CASE WHEN ${table}."claimed_at" IS NULL THEN ${table}."attempts" ELSE ${table}."attempts" + 1 END,
          "claimed_at" = $1
        WHERE "dedupe_key" IN (
@@ -70,31 +105,37 @@ export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ d
          ORDER BY "execute_at", "dedupe_key" LIMIT $4
          FOR UPDATE SKIP LOCKED
        )
-       RETURNING ${COLUMNS}`,
-      [nowIso, nowIso, expiredBefore, limit],
-    );
-    return rows.map(toScheduled).sort(byExecuteAt);
-  },
-  nextDueAt: async ({ leaseMs }) => {
-    const [row] = await db.all(
-      `SELECT MIN(CASE WHEN "claimed_at" IS NULL THEN "execute_at" END) AS "unclaimed", MIN("claimed_at") AS "claimed" FROM ${table}`,
-      [],
-    );
-    return earliestDue({ unclaimed: row?.unclaimed, claimed: row?.claimed, leaseMs });
-  },
-  complete: (dedupeKey) => db.run(`DELETE FROM ${table} WHERE "dedupe_key" = $1`, [dedupeKey]),
-  fail: ({ dedupeKey, error, retryAt }) =>
-    retryAt === undefined
-      ? db.run(`DELETE FROM ${table} WHERE "dedupe_key" = $1`, [dedupeKey])
-      : db.run(
-          `UPDATE ${table} SET "execute_at" = $1, "attempts" = "attempts" + 1, "claimed_at" = NULL, "last_error" = $2 WHERE "dedupe_key" = $3`,
-          [retryAt.toISOString(), error, dedupeKey],
-        ),
-  list: async ({ limit, offset = 0 } = {}) =>
-    (
-      await db.all(
-        `SELECT ${COLUMNS} FROM ${table} ORDER BY "execute_at", "dedupe_key" LIMIT $1 OFFSET $2`,
-        [limit ?? null, offset],
-      )
-    ).map(toScheduled),
-});
+       RETURNING ${COLUMNS}, "revision", "claimed_at"`,
+        [nowIso, nowIso, expiredBefore, limit],
+      );
+      return rows.map(toClaimed).sort(byExecuteAt);
+    },
+    nextDueAt: async ({ leaseMs }) => {
+      const [row] = await db.all(
+        `SELECT MIN(CASE WHEN "claimed_at" IS NULL THEN "execute_at" END) AS "unclaimed", MIN("claimed_at") AS "claimed" FROM ${table}`,
+        [],
+      );
+      return earliestDue({ unclaimed: row?.unclaimed, claimed: row?.claimed, leaseMs });
+    },
+    complete: drop,
+    fail: async ({ claim, error, retryAt }) => {
+      if (retryAt === undefined) {
+        await drop(claim);
+        return;
+      }
+      await db.run(
+        `UPDATE ${table} SET "execute_at" = $1, "attempts" = "attempts" + 1, "claimed_at" = NULL, "last_error" = $2
+       WHERE "dedupe_key" = $3 AND "claimed_at" = $4 AND "revision" = $5`,
+        [retryAt.toISOString(), error, claim.dedupeKey, claim.claimedAt, claim.revision],
+      );
+      await release(claim);
+    },
+    list: async ({ limit, offset = 0 } = {}) =>
+      (
+        await db.all(
+          `SELECT ${COLUMNS} FROM ${table} ORDER BY "execute_at", "dedupe_key" LIMIT $1 OFFSET $2`,
+          [limit ?? null, offset],
+        )
+      ).map(toScheduled),
+  };
+};

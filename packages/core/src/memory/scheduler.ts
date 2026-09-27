@@ -1,10 +1,16 @@
-import type { ScheduledCommand, Scheduler } from "../adapter/ports/scheduler.ts";
+import type {
+  ClaimedCommand,
+  ScheduledClaim,
+  ScheduledCommand,
+  Scheduler,
+} from "../adapter/ports/scheduler.ts";
 
 export interface CreateMemorySchedulerFunction {
   (): Scheduler;
 }
 
 interface Entry extends ScheduledCommand {
+  readonly revision: number;
   readonly claimedAt: string | null;
   readonly lastError?: string;
 }
@@ -25,21 +31,41 @@ const toScheduled = ({
   attempts,
 });
 
+const sameSchedule = (a: ScheduledCommand, b: ScheduledCommand): boolean =>
+  a.executeAt === b.executeAt &&
+  JSON.stringify(a.command) === JSON.stringify(b.command) &&
+  JSON.stringify(a.context) === JSON.stringify(b.context);
+
 /**
  * A scheduler held in memory.
  */
 export const createMemoryScheduler: CreateMemorySchedulerFunction = () => {
   const entries = new Map<string, Entry>();
 
+  const heldBy = (claim: ScheduledClaim): Entry | undefined => {
+    const entry = entries.get(claim.dedupeKey);
+    return entry?.claimedAt === claim.claimedAt ? entry : undefined;
+  };
+
+  const release = (entry: Entry): void => {
+    entries.set(entry.dedupeKey, { ...entry, claimedAt: null });
+  };
+
   return {
     schedule: async ({ dedupeKey, command, executeAt, context }) => {
-      entries.set(dedupeKey, {
+      const scheduled: ScheduledCommand = {
         dedupeKey,
         command,
         executeAt: executeAt.toISOString(),
         context,
         attempts: 0,
-        claimedAt: null,
+      };
+      const existing = entries.get(dedupeKey);
+      if (existing !== undefined && sameSchedule(existing, scheduled)) return;
+      entries.set(dedupeKey, {
+        ...scheduled,
+        revision: existing === undefined ? 0 : existing.revision + 1,
+        claimedAt: existing?.claimedAt ?? null,
       });
     },
     cancel: async (dedupeKey) => {
@@ -55,14 +81,15 @@ export const createMemoryScheduler: CreateMemorySchedulerFunction = () => {
         )
         .sort(byExecuteAt)
         .slice(0, limit);
-      return due.map((entry) => {
+      return due.map((entry): ClaimedCommand => {
+        const claimedAt = now.toISOString();
         const claimed: Entry = {
           ...entry,
-          claimedAt: now.toISOString(),
+          claimedAt,
           attempts: entry.claimedAt === null ? entry.attempts : entry.attempts + 1,
         };
         entries.set(entry.dedupeKey, claimed);
-        return toScheduled(claimed);
+        return { ...toScheduled(claimed), revision: claimed.revision, claimedAt };
       });
     },
     nextDueAt: async ({ leaseMs }) => {
@@ -73,20 +100,27 @@ export const createMemoryScheduler: CreateMemorySchedulerFunction = () => {
       );
       return times.length === 0 ? null : new Date(Math.min(...times));
     },
-    complete: async (dedupeKey) => {
-      entries.delete(dedupeKey);
+    complete: async (claim) => {
+      const entry = heldBy(claim);
+      if (entry === undefined) return;
+      if (entry.revision === claim.revision) entries.delete(claim.dedupeKey);
+      else release(entry);
     },
-    fail: async ({ dedupeKey, error, retryAt }) => {
-      const existing = entries.get(dedupeKey);
-      if (existing === undefined) return;
-      if (retryAt === undefined) {
-        entries.delete(dedupeKey);
+    fail: async ({ claim, error, retryAt }) => {
+      const entry = heldBy(claim);
+      if (entry === undefined) return;
+      if (entry.revision !== claim.revision) {
+        release(entry);
         return;
       }
-      entries.set(dedupeKey, {
-        ...existing,
+      if (retryAt === undefined) {
+        entries.delete(claim.dedupeKey);
+        return;
+      }
+      entries.set(claim.dedupeKey, {
+        ...entry,
         executeAt: retryAt.toISOString(),
-        attempts: existing.attempts + 1,
+        attempts: entry.attempts + 1,
         claimedAt: null,
         lastError: error,
       });
