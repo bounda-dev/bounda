@@ -344,6 +344,22 @@ const noteRegistry = {
             },
           },
         },
+        pinNote: {
+          module: {
+            payload: ({ z }: PayloadArgs) => z.object({ noteId: z.string(), at: z.date() }),
+            handler: () => [],
+          },
+        },
+        postponeNote: {
+          module: {
+            payload: ({ z }: PayloadArgs) =>
+              z.object({ noteId: z.string(), until: z.coerce.date() }),
+            handler: ({ command }: { command: { payload: unknown } }) => {
+              receivedNotes.push(command.payload);
+              return [];
+            },
+          },
+        },
       },
       policies: {},
       processes: {},
@@ -384,6 +400,47 @@ describe("delayed command payload", () => {
     await app.stop();
   });
 
+  it("reaches the handler as it was dispatched, though the caller changes it afterwards", async () => {
+    receivedNotes.length = 0;
+    rejectNotes = false;
+    const { app, clock } = await createTestApp({ registry: noteRegistry });
+    const payload = { noteId: "n-1", text: "hello" };
+    await app.commands.writeNote(payload, { delay: "1m" });
+    payload.text = "changed";
+
+    clock.advance(60_000);
+    await app.processUntilIdle();
+
+    expect(receivedNotes).toEqual([{ noteId: "n-1", text: "hello!" }]);
+    await app.stop();
+  });
+
+  it("carries a date its schema coerces from the JSON it is stored as", async () => {
+    receivedNotes.length = 0;
+    const { app, clock } = await createTestApp({ registry: noteRegistry });
+    const until = new Date("2026-02-01T00:00:00.000Z");
+    await app.commands.postponeNote({ noteId: "n-1", until }, { delay: "1m" });
+
+    clock.advance(60_000);
+    await app.processUntilIdle();
+
+    expect(receivedNotes).toEqual([{ noteId: "n-1", until }]);
+    await app.stop();
+  });
+
+  it("rejects at dispatch a field JSON cannot carry, which runs when not delayed", async () => {
+    const { app } = await createTestApp({ registry: noteRegistry });
+    const at = new Date("2026-02-01T00:00:00.000Z");
+
+    await expect(app.commands.pinNote({ noteId: "n-1", at }, { delay: "1m" })).rejects.toThrow(
+      "Invalid payload for delayed command PinNote",
+    );
+    await expect(app.commands.pinNote({ noteId: "n-1", at })).resolves.toMatchObject({
+      scheduled: false,
+    });
+    await app.stop();
+  });
+
   it("rejects an invalid payload when the command is scheduled", async () => {
     const harness = await createReactiveHarness({ registry: noteRegistry });
 
@@ -393,7 +450,7 @@ describe("delayed command payload", () => {
         payload: { noteId: "n-1" },
         options: { delay: "1m" },
       }),
-    ).rejects.toThrow("Invalid payload for command WriteNote");
+    ).rejects.toThrow("Invalid payload for delayed command WriteNote");
     expect(await harness.storage.scheduler.list()).toEqual([]);
   });
 });

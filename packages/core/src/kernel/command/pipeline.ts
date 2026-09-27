@@ -86,6 +86,9 @@ const resolveAggregateId = (aggregate: AggregateRuntime, payload: unknown): stri
   return value;
 };
 
+const asStored = (payload: unknown): unknown =>
+  payload === undefined ? payload : JSON.parse(JSON.stringify(payload));
+
 const toPendingEvents = (
   aggregate: AggregateRuntime,
   command: Command,
@@ -128,9 +131,10 @@ const toPendingEvents = (
  * events and collaborators, and appends with the version it loaded. A `ConcurrencyError` from the
  * store reloads and retries up to `runtime.commands.concurrencyRetries` times; a `DomainError`
  * from the handler is returned to the caller untouched. Commands with `delay` go to the scheduler
- * with the payload as the caller passed it: validating it here only rejects bad input early, and
- * the one validation whose result the handler sees happens when the command runs, so a transform
- * does not apply twice.
+ * with the payload as the caller passed it, in the JSON form every scheduler stores: validating
+ * that form here only rejects early what would fail when the command runs, such as a date JSON
+ * turns into a string, and the one validation whose result the handler sees happens then, so a
+ * transform does not apply twice.
  */
 export const createCommandPipeline: CreateCommandPipelineFunction = ({
   aggregates,
@@ -229,10 +233,12 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     const maxDepth = config.forAggregate(aggregate.name).policies.maxChainDepth;
     if (depth > maxDepth) throw new ChainDepthExceededError(depth, maxDepth);
 
+    const delayed = options.delay !== undefined;
+    const input = delayed ? asStored(payload) : payload;
     const parsed = validatePayload({
       schema: runtime.schema,
-      payload,
-      subject: `command ${type}`,
+      payload: input,
+      subject: delayed ? `delayed command ${type}` : `command ${type}`,
     });
     const aggregateId = resolveAggregateId(aggregate, parsed);
     const commandId = scheduledId ?? ids.next();
@@ -263,7 +269,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
           const executeAt = new Date(clock.now().getTime() + parseDuration(options.delay));
           await scheduler.schedule({
             dedupeKey: scheduledCommandKey(commandId),
-            command: { type, payload, aggregateId },
+            command: { type, payload: input, aggregateId },
             executeAt,
             context: {
               correlationId: command.metadata.correlationId,
