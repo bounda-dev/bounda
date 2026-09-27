@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { ConcurrencyError, DomainError } from "../../contracts/errors.ts";
+import type { PayloadArgs } from "../../modules/payload.ts";
+import type { Registry } from "../../modules/registry.ts";
+import { createTestApp } from "../../testing/index.ts";
 import { createReactiveHarness } from "../reactive-harness.ts";
 import { COMMAND_FAILED_EVENT } from "../system-events.ts";
 import {
@@ -308,5 +311,146 @@ describe("scheduled command worker", () => {
     expect(await harness.storage.scheduler.list()).toEqual([]);
     expect(await harness.storage.deadLetterStore.count()).toBe(1);
     expect(await harness.storage.eventStore.lastPosition()).toBe(0);
+  });
+});
+
+const receivedNotes: unknown[] = [];
+let rejectNotes = false;
+
+const noteRegistry = {
+  aggregates: {
+    note: {
+      events: {
+        noteWritten: {
+          payload: ({ z }: PayloadArgs) => z.object({ text: z.string() }),
+          apply: ({ state }: { state: object }) => state,
+        },
+      },
+      commands: {
+        writeNote: {
+          module: {
+            payload: ({ z }: PayloadArgs) =>
+              z.object({ noteId: z.string(), text: z.string().transform((text) => `${text}!`) }),
+            handler: ({
+              command,
+              events,
+            }: {
+              command: { payload: { text: string } };
+              events: Record<string, (payload?: unknown) => unknown>;
+            }) => {
+              receivedNotes.push(command.payload);
+              if (rejectNotes) throw new DomainError("Notes are closed");
+              return [events.noteWritten?.({ text: command.payload.text })];
+            },
+          },
+        },
+        pinNote: {
+          module: {
+            payload: ({ z }: PayloadArgs) => z.object({ noteId: z.string(), at: z.date() }),
+            handler: () => [],
+          },
+        },
+        postponeNote: {
+          module: {
+            payload: ({ z }: PayloadArgs) =>
+              z.object({ noteId: z.string(), until: z.coerce.date() }),
+            handler: ({ command }: { command: { payload: unknown } }) => {
+              receivedNotes.push(command.payload);
+              return [];
+            },
+          },
+        },
+      },
+      policies: {},
+      processes: {},
+    },
+  },
+  readModels: {},
+} as const satisfies Registry;
+
+describe("delayed command payload", () => {
+  it("is validated once, when the command runs", async () => {
+    receivedNotes.length = 0;
+    rejectNotes = false;
+    const { app, clock } = await createTestApp({ registry: noteRegistry });
+    await app.commands.writeNote({ noteId: "n-1", text: "hello" }, { delay: "1m" });
+
+    clock.advance(60_000);
+    await app.processUntilIdle();
+
+    expect(receivedNotes).toEqual([{ noteId: "n-1", text: "hello!" }]);
+    await app.stop();
+  });
+
+  it("is validated once when a dropped command is replayed from its dead letter", async () => {
+    receivedNotes.length = 0;
+    rejectNotes = true;
+    const { app, clock } = await createTestApp({ registry: noteRegistry });
+    await app.commands.writeNote({ noteId: "n-1", text: "hello" }, { delay: "1m" });
+    clock.advance(60_000);
+    await app.processUntilIdle();
+    const [letter] = await app.deadLetters.list();
+
+    rejectNotes = false;
+    receivedNotes.length = 0;
+    await app.deadLetters.replay(letter?.id ?? "");
+
+    expect(letter?.payload).toEqual({ noteId: "n-1", text: "hello" });
+    expect(receivedNotes).toEqual([{ noteId: "n-1", text: "hello!" }]);
+    await app.stop();
+  });
+
+  it("reaches the handler as it was dispatched, though the caller changes it afterwards", async () => {
+    receivedNotes.length = 0;
+    rejectNotes = false;
+    const { app, clock } = await createTestApp({ registry: noteRegistry });
+    const payload = { noteId: "n-1", text: "hello" };
+    await app.commands.writeNote(payload, { delay: "1m" });
+    payload.text = "changed";
+
+    clock.advance(60_000);
+    await app.processUntilIdle();
+
+    expect(receivedNotes).toEqual([{ noteId: "n-1", text: "hello!" }]);
+    await app.stop();
+  });
+
+  it("carries a date its schema coerces from the JSON it is stored as", async () => {
+    receivedNotes.length = 0;
+    const { app, clock } = await createTestApp({ registry: noteRegistry });
+    const until = new Date("2026-02-01T00:00:00.000Z");
+    await app.commands.postponeNote({ noteId: "n-1", until }, { delay: "1m" });
+
+    clock.advance(60_000);
+    await app.processUntilIdle();
+
+    expect(receivedNotes).toEqual([{ noteId: "n-1", until }]);
+    await app.stop();
+  });
+
+  it("rejects at dispatch a field JSON cannot carry, which runs when not delayed", async () => {
+    const { app } = await createTestApp({ registry: noteRegistry });
+    const at = new Date("2026-02-01T00:00:00.000Z");
+
+    await expect(app.commands.pinNote({ noteId: "n-1", at }, { delay: "1m" })).rejects.toThrow(
+      "Invalid payload for delayed command PinNote",
+    );
+    await expect(app.commands.pinNote({ noteId: "n-1", at })).resolves.toMatchObject({
+      scheduled: false,
+    });
+    await app.stop();
+  });
+
+  it("rejects an invalid payload when the command is scheduled", async () => {
+    const harness = await createReactiveHarness({ registry: noteRegistry });
+
+    await expect(
+      harness.pipeline.dispatch({
+        type: "WriteNote",
+        payload: { noteId: "n-1" },
+        options: { delay: "1m" },
+      }),
+    ).rejects.toThrow("Invalid payload for delayed command WriteNote");
+    expect(await harness.storage.scheduler.list()).toEqual([]);
   });
 });

@@ -183,7 +183,10 @@ aggregate, and one whose trigger is not an event of the aggregate it listens to 
 Policies dispatch through `commands`, the typed facade of every command in the app. A command can
 be delayed: `commands.sendReminder({ orderId }, { delay: "24h" })`. The compiler checks a literal
 duration; for one that comes from the environment, `asDuration` from `@bounda-dev/core` checks it
-at the call site and returns it typed.
+at the call site and returns it typed. A delayed command's payload is stored as JSON and validated
+in that form when it is dispatched, so what would fail when it runs fails at once: a `z.date()`
+field rejects the string JSON turns a date into, so declare it as `z.coerce.date()`. The handler
+receives the payload validated when the command runs, so a schema's transforms apply once.
 
 A policy with collaborators is a directory, `policies/<action>-on-<event>/index.ts`, with the
 implementations next to it as for a command. The handler receives them next to `event` and

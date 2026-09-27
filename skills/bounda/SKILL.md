@@ -206,7 +206,9 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   the error. Fix the projection and deploy; a read model never skips an event.
 - Queries compose: a handler receives `queries` and may call other queries.
 - Delayed commands: `commands.remindCustomer(payload, { delay: "24h" })`. A duration from the
-  environment is a `string`; wrap it: `{ delay: asDuration(process.env.DELAY ?? "24h") }`.
+  environment is a `string`; wrap it: `{ delay: asDuration(process.env.DELAY ?? "24h") }`. The
+  payload is stored as JSON and validated in that form at dispatch: a date field must be
+  `z.coerce.date()`, since `z.date()` rejects the string a date becomes.
 - Payload fields with `.default()` are optional for callers (`commands.x()`, `queries.x()` take
   the schema's input type) and always present in handlers (output type).
 - A command resolves when its events are stored; read models catch up in the background.
