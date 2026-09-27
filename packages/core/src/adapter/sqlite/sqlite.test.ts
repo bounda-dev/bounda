@@ -187,6 +187,7 @@ describe("createSqliteAdapter", () => {
     await nodeSqlite(db).adapter.createStorage({ logger: silentLogger });
     db.exec('ALTER TABLE "bounda_dead_letters" DROP COLUMN "payload"');
     db.exec('ALTER TABLE "bounda_scheduled_commands" DROP COLUMN "revision"');
+    db.exec('ALTER TABLE "bounda_scheduled_commands" DROP COLUMN "claim_id"');
     const opened = await nodeSqlite(db).adapter.createStorage({ logger: silentLogger });
     const letter = await opened.deadLetterStore.add({
       id: "cmd",
@@ -226,12 +227,13 @@ describe("createSqliteAdapter", () => {
     ).toEqual([
       'ALTER TABLE "x_dead_letters" ADD COLUMN "payload" TEXT',
       'ALTER TABLE "x_scheduled_commands" ADD COLUMN "revision" INTEGER NOT NULL DEFAULT 0',
+      'ALTER TABLE "x_scheduled_commands" ADD COLUMN "claim_id" TEXT',
     ]);
     expect(
       storageSchemaAdditions({
         tables: storageTablesFor("x_"),
         deadLetterColumns: ["id", "payload"],
-        scheduledCommandColumns: ["dedupe_key", "revision"],
+        scheduledCommandColumns: ["dedupe_key", "revision", "claim_id"],
       }),
     ).toEqual([]);
   });

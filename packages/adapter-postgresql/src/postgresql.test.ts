@@ -282,7 +282,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
       `ALTER TABLE "${prefix}dead_letters" DROP COLUMN "payload"`,
     );
     await (probe.client.raw as Sql).unsafe(
-      `ALTER TABLE "${prefix}scheduled_commands" DROP COLUMN "revision"`,
+      `ALTER TABLE "${prefix}scheduled_commands" DROP COLUMN "revision", DROP COLUMN "claim_id"`,
     );
     await closeOpened();
 

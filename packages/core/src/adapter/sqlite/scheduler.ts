@@ -30,7 +30,7 @@ const toScheduled = (row: Record<string, unknown>): ScheduledCommand => ({
 const toClaimed = (row: Record<string, unknown>): ClaimedCommand => ({
   ...toScheduled(row),
   revision: Number(row.revision),
-  claimedAt: String(row.claimed_at),
+  claimId: String(row.claim_id),
 });
 
 const byExecuteAt = (a: ScheduledCommand, b: ScheduledCommand): number =>
@@ -39,23 +39,29 @@ const byExecuteAt = (a: ScheduledCommand, b: ScheduledCommand): number =>
 /**
  * Scheduler on one table. `claimDue` is a single `UPDATE ... WHERE dedupe_key IN (SELECT ...)
  * RETURNING`, so concurrent workers never claim the same command. `complete` and `fail` write only
- * while the row still has the claim's `claimed_at` and `revision`, then release a claim that a
+ * while the row still has the claim's `claim_id` and `revision`, then release a claim that a
  * reschedule left behind.
  */
 export const createSqliteScheduler: CreateSqliteSchedulerFunction = ({ db, table }) => {
-  const release = (claim: ScheduledClaim): Promise<void> =>
-    db.run(`UPDATE ${table} SET "claimed_at" = NULL WHERE "dedupe_key" = ? AND "claimed_at" = ?`, [
-      claim.dedupeKey,
-      claim.claimedAt,
-    ]);
-
-  const drop = async (claim: ScheduledClaim): Promise<void> => {
+  const releaseUnless = async (
+    fenced: readonly unknown[],
+    claim: ScheduledClaim,
+  ): Promise<void> => {
+    if (fenced.length > 0) return;
     await db.run(
-      `DELETE FROM ${table} WHERE "dedupe_key" = ? AND "claimed_at" = ? AND "revision" = ?`,
-      [claim.dedupeKey, claim.claimedAt, claim.revision],
+      `UPDATE ${table} SET "claimed_at" = NULL, "claim_id" = NULL WHERE "dedupe_key" = ? AND "claim_id" = ?`,
+      [claim.dedupeKey, claim.claimId],
     );
-    await release(claim);
   };
+
+  const drop = async (claim: ScheduledClaim): Promise<void> =>
+    releaseUnless(
+      await db.all(
+        `DELETE FROM ${table} WHERE "dedupe_key" = ? AND "claim_id" = ? AND "revision" = ? RETURNING "dedupe_key"`,
+        [claim.dedupeKey, claim.claimId, claim.revision],
+      ),
+      claim,
+    );
 
   return {
     schedule: ({ dedupeKey, command, executeAt, context }) =>
@@ -93,13 +99,14 @@ export const createSqliteScheduler: CreateSqliteSchedulerFunction = ({ db, table
       const rows = await db.all(
         `UPDATE ${table} SET
          "attempts" = CASE WHEN "claimed_at" IS NULL THEN "attempts" ELSE "attempts" + 1 END,
-         "claimed_at" = ?
+         "claimed_at" = ?,
+         "claim_id" = lower(hex(randomblob(16)))
        WHERE "dedupe_key" IN (
          SELECT "dedupe_key" FROM ${table}
          WHERE "execute_at" <= ? AND ("claimed_at" IS NULL OR "claimed_at" < ?)
          ORDER BY "execute_at", "dedupe_key" LIMIT ?
        )
-       RETURNING ${COLUMNS}, "revision", "claimed_at"`,
+       RETURNING ${COLUMNS}, "revision", "claim_id"`,
         [nowIso, nowIso, expiredBefore, limit],
       );
       return rows.map(toClaimed).sort(byExecuteAt);
@@ -117,12 +124,14 @@ export const createSqliteScheduler: CreateSqliteSchedulerFunction = ({ db, table
         await drop(claim);
         return;
       }
-      await db.run(
-        `UPDATE ${table} SET "execute_at" = ?, "attempts" = "attempts" + 1, "claimed_at" = NULL, "last_error" = ?
-       WHERE "dedupe_key" = ? AND "claimed_at" = ? AND "revision" = ?`,
-        [retryAt.toISOString(), error, claim.dedupeKey, claim.claimedAt, claim.revision],
+      await releaseUnless(
+        await db.all(
+          `UPDATE ${table} SET "execute_at" = ?, "attempts" = "attempts" + 1, "claimed_at" = NULL, "claim_id" = NULL, "last_error" = ?
+         WHERE "dedupe_key" = ? AND "claim_id" = ? AND "revision" = ? RETURNING "dedupe_key"`,
+          [retryAt.toISOString(), error, claim.dedupeKey, claim.claimId, claim.revision],
+        ),
+        claim,
       );
-      await release(claim);
     },
     list: async ({ limit, offset = 0 } = {}) =>
       (

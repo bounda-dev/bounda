@@ -35,7 +35,7 @@ const toScheduled = (row: Record<string, unknown>): ScheduledCommand => ({
 const toClaimed = (row: Record<string, unknown>): ClaimedCommand => ({
   ...toScheduled(row),
   revision: Number(row.revision),
-  claimedAt: String(row.claimed_at),
+  claimId: String(row.claim_id),
 });
 
 const byExecuteAt = (a: ScheduledCommand, b: ScheduledCommand): number =>
@@ -44,23 +44,29 @@ const byExecuteAt = (a: ScheduledCommand, b: ScheduledCommand): number =>
 /**
  * Scheduler on one table. `claimDue` selects the due rows `FOR UPDATE SKIP LOCKED` and updates
  * them in the same statement, so concurrent workers each get a disjoint set. `complete` and `fail`
- * write only while the row still has the claim's `claimed_at` and `revision`, then release a claim
+ * write only while the row still has the claim's `claim_id` and `revision`, then release a claim
  * that a reschedule left behind.
  */
 export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ db, table }) => {
-  const release = (claim: ScheduledClaim): Promise<void> =>
-    db.run(
-      `UPDATE ${table} SET "claimed_at" = NULL WHERE "dedupe_key" = $1 AND "claimed_at" = $2`,
-      [claim.dedupeKey, claim.claimedAt],
-    );
-
-  const drop = async (claim: ScheduledClaim): Promise<void> => {
+  const releaseUnless = async (
+    fenced: readonly unknown[],
+    claim: ScheduledClaim,
+  ): Promise<void> => {
+    if (fenced.length > 0) return;
     await db.run(
-      `DELETE FROM ${table} WHERE "dedupe_key" = $1 AND "claimed_at" = $2 AND "revision" = $3`,
-      [claim.dedupeKey, claim.claimedAt, claim.revision],
+      `UPDATE ${table} SET "claimed_at" = NULL, "claim_id" = NULL WHERE "dedupe_key" = $1 AND "claim_id" = $2`,
+      [claim.dedupeKey, claim.claimId],
     );
-    await release(claim);
   };
+
+  const drop = async (claim: ScheduledClaim): Promise<void> =>
+    releaseUnless(
+      await db.all(
+        `DELETE FROM ${table} WHERE "dedupe_key" = $1 AND "claim_id" = $2 AND "revision" = $3 RETURNING "dedupe_key"`,
+        [claim.dedupeKey, claim.claimId, claim.revision],
+      ),
+      claim,
+    );
 
   return {
     schedule: ({ dedupeKey, command, executeAt, context }) =>
@@ -98,14 +104,15 @@ export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ d
       const rows = await db.all(
         `UPDATE ${table} SET
          "attempts" = CASE WHEN ${table}."claimed_at" IS NULL THEN ${table}."attempts" ELSE ${table}."attempts" + 1 END,
-         "claimed_at" = $1
+         "claimed_at" = $1,
+         "claim_id" = gen_random_uuid()::text
        WHERE "dedupe_key" IN (
          SELECT "dedupe_key" FROM ${table}
          WHERE "execute_at" <= $2 AND ("claimed_at" IS NULL OR "claimed_at" < $3)
          ORDER BY "execute_at", "dedupe_key" LIMIT $4
          FOR UPDATE SKIP LOCKED
        )
-       RETURNING ${COLUMNS}, "revision", "claimed_at"`,
+       RETURNING ${COLUMNS}, "revision", "claim_id"`,
         [nowIso, nowIso, expiredBefore, limit],
       );
       return rows.map(toClaimed).sort(byExecuteAt);
@@ -123,12 +130,14 @@ export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ d
         await drop(claim);
         return;
       }
-      await db.run(
-        `UPDATE ${table} SET "execute_at" = $1, "attempts" = "attempts" + 1, "claimed_at" = NULL, "last_error" = $2
-       WHERE "dedupe_key" = $3 AND "claimed_at" = $4 AND "revision" = $5`,
-        [retryAt.toISOString(), error, claim.dedupeKey, claim.claimedAt, claim.revision],
+      await releaseUnless(
+        await db.all(
+          `UPDATE ${table} SET "execute_at" = $1, "attempts" = "attempts" + 1, "claimed_at" = NULL, "claim_id" = NULL, "last_error" = $2
+         WHERE "dedupe_key" = $3 AND "claim_id" = $4 AND "revision" = $5 RETURNING "dedupe_key"`,
+          [retryAt.toISOString(), error, claim.dedupeKey, claim.claimId, claim.revision],
+        ),
+        claim,
       );
-      await release(claim);
     },
     list: async ({ limit, offset = 0 } = {}) =>
       (

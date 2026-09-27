@@ -100,7 +100,8 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "attempts" INTEGER NOT NULL,
     "claimed_at" TEXT,
     "last_error" TEXT,
-    "revision" INTEGER NOT NULL DEFAULT 0
+    "revision" INTEGER NOT NULL DEFAULT 0,
+    "claim_id" TEXT
   )`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.scheduledCommands, "execute_at")} ON ${tables.scheduledCommands} ("execute_at")`,
 ];
@@ -145,6 +146,9 @@ export const storageSchemaAdditions: StorageSchemaAdditionsFunction = ({
   ...(scheduledCommandColumns.includes("revision")
     ? []
     : [`ALTER TABLE ${tables.scheduledCommands} ADD COLUMN "revision" INTEGER NOT NULL DEFAULT 0`]),
+  ...(scheduledCommandColumns.includes("claim_id")
+    ? []
+    : [`ALTER TABLE ${tables.scheduledCommands} ADD COLUMN "claim_id" TEXT`]),
 ];
 
 /**

@@ -1,3 +1,4 @@
+import { v4 as randomUUID } from "uuid";
 import type {
   ClaimedCommand,
   ScheduledClaim,
@@ -12,6 +13,7 @@ export interface CreateMemorySchedulerFunction {
 interface Entry extends ScheduledCommand {
   readonly revision: number;
   readonly claimedAt: string | null;
+  readonly claimId: string | null;
   readonly lastError?: string;
 }
 
@@ -44,11 +46,11 @@ export const createMemoryScheduler: CreateMemorySchedulerFunction = () => {
 
   const heldBy = (claim: ScheduledClaim): Entry | undefined => {
     const entry = entries.get(claim.dedupeKey);
-    return entry?.claimedAt === claim.claimedAt ? entry : undefined;
+    return entry?.claimId === claim.claimId ? entry : undefined;
   };
 
   const release = (entry: Entry): void => {
-    entries.set(entry.dedupeKey, { ...entry, claimedAt: null });
+    entries.set(entry.dedupeKey, { ...entry, claimedAt: null, claimId: null });
   };
 
   return {
@@ -66,6 +68,7 @@ export const createMemoryScheduler: CreateMemorySchedulerFunction = () => {
         ...scheduled,
         revision: existing === undefined ? 0 : existing.revision + 1,
         claimedAt: existing?.claimedAt ?? null,
+        claimId: existing?.claimId ?? null,
       });
     },
     cancel: async (dedupeKey) => {
@@ -82,14 +85,15 @@ export const createMemoryScheduler: CreateMemorySchedulerFunction = () => {
         .sort(byExecuteAt)
         .slice(0, limit);
       return due.map((entry): ClaimedCommand => {
-        const claimedAt = now.toISOString();
+        const claimId = randomUUID();
         const claimed: Entry = {
           ...entry,
-          claimedAt,
+          claimedAt: now.toISOString(),
+          claimId,
           attempts: entry.claimedAt === null ? entry.attempts : entry.attempts + 1,
         };
         entries.set(entry.dedupeKey, claimed);
-        return { ...toScheduled(claimed), revision: claimed.revision, claimedAt };
+        return { ...toScheduled(claimed), revision: claimed.revision, claimId };
       });
     },
     nextDueAt: async ({ leaseMs }) => {
@@ -122,6 +126,7 @@ export const createMemoryScheduler: CreateMemorySchedulerFunction = () => {
         executeAt: retryAt.toISOString(),
         attempts: entry.attempts + 1,
         claimedAt: null,
+        claimId: null,
         lastError: error,
       });
     },

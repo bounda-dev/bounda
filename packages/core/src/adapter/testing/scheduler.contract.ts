@@ -286,6 +286,27 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
       expect(await scheduler.list()).toEqual([]);
     });
 
+    it("keeps a command scheduled again after a cancel, whatever the old claim does", async () => {
+      const entry: ScheduleArgs = {
+        dedupeKey: "a",
+        command: testCommand("1"),
+        executeAt: at(0),
+        context: testContext,
+      };
+      await scheduler.schedule(entry);
+      const [old] = await scheduler.claimDue({ now: at(1), limit: 10, leaseMs: 60_000 });
+      await scheduler.cancel("a");
+      await scheduler.schedule(entry);
+      const [fresh] = await scheduler.claimDue({ now: at(1), limit: 10, leaseMs: 60_000 });
+      if (old === undefined || fresh === undefined) throw new Error("nothing claimed");
+
+      await scheduler.complete(old);
+      await scheduler.fail({ claim: old, error: "late" });
+      expect(await scheduler.list()).toHaveLength(1);
+      await scheduler.complete(fresh);
+      expect(await scheduler.list()).toEqual([]);
+    });
+
     it("does not bring back a claimed command that was cancelled", async () => {
       await scheduler.schedule({
         dedupeKey: "a",
