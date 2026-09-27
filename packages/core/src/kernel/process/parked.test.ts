@@ -30,10 +30,15 @@ const failIfAsked = (label: string): void => {
   if (kind === "retriable") throw new Error(`${label} is down`);
 };
 
+let whileHandling: (() => Promise<void>) | undefined;
+
 const tally =
   (label: string) =>
-  ({ state, event }: TallyArgs): TallyState => {
+  async ({ state, event }: TallyArgs): Promise<TallyState> => {
     runs.push(`${label}:${event.id}`);
+    const during = whileHandling;
+    whileHandling = undefined;
+    await during?.();
     failIfAsked(label);
     if (failingEvents.get(event.id) === "terminal") throw new DomainError(`${event.id} refuses`);
     if (failingEvents.get(event.id) === "retriable") throw new Error(`${event.id} is down`);
@@ -91,6 +96,7 @@ const setUp = async (retry: RetryConfig = { strategy: "none" }) => {
   runs.length = 0;
   failing = new Map();
   failingEvents.clear();
+  whileHandling = undefined;
   const harness = await createReactiveHarness({
     registry,
     config: { runtime: { processes: { retry } } },
@@ -168,6 +174,7 @@ describe("events of a failed process", () => {
       PROCESS_EVENTS.failed,
       PROCESS_EVENTS.eventParked,
       PROCESS_EVENTS.handled,
+      PROCESS_EVENTS.handled,
       PROCESS_EVENTS.completed,
     ]);
   });
@@ -212,7 +219,7 @@ describe("events of a failed process", () => {
 
     failingEvents.set("again-1", "terminal");
     const replayed = await deadLetters.replay(first?.id ?? "");
-    expect(replayed).toMatchObject({ status: "replayed", parked: 1 });
+    expect(replayed).toMatchObject({ status: "replayed", parked: 2 });
     const [second] = await deadLetters.list({ status: "failed" });
     expect(second).toMatchObject({ eventId: "again-1", parked: 1, errorType: "terminal" });
     expect((await types()).at(-1)).toBe(PROCESS_EVENTS.failed);
@@ -314,9 +321,10 @@ describe("events of a failed process", () => {
     await deadLetters.replay(letter?.id ?? "");
     harness.storage.eventStore.append = append;
     expect(arrived).toBe(true);
-    expect((await types()).slice(-3)).toEqual([
+    expect((await types()).slice(-4)).toEqual([
       PROCESS_EVENTS.handled,
       PROCESS_EVENTS.eventParked,
+      PROCESS_EVENTS.handled,
       PROCESS_EVENTS.completed,
     ]);
   });
@@ -405,7 +413,7 @@ describe("events of a failed process", () => {
     ]);
   });
 
-  it("handle a parked event again when another write to the instance got there first", async () => {
+  it("write a parked event's outcome again, without running it twice, when a park got there first", async () => {
     const context = await setUp();
     const { harness, deadLetters, types } = context;
     await failOnFirstPayment(context);
@@ -446,7 +454,7 @@ describe("events of a failed process", () => {
     await deadLetters.replay((await deadLetters.list())[0]?.id ?? "");
     harness.storage.eventStore.append = append;
     expect(raced).toBe(true);
-    expect(runs.filter((run) => run === "paid:late-payment")).toHaveLength(2);
+    expect(runs.filter((run) => run === "paid:late-payment")).toHaveLength(1);
     expect((await types()).at(-1)).toBe(PROCESS_EVENTS.resumed);
     expect(await deadLetters.list({ status: "failed" })).toEqual([]);
   });
@@ -601,5 +609,217 @@ describe("events of a failed process", () => {
       'Process "order.tally" is failed on another step for o-1; replay the dead letter of that failure first',
     );
     expect(await deadLetters.list()).toMatchObject([{ eventId: "deadline:nudge" }]);
+  });
+
+  it("say a replay failed again even when the only parked event is the one that failed", async () => {
+    const context = await setUp();
+    const { harness, deadLetters, settle } = context;
+    await failOnFirstPayment(context);
+    const order = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    const paid = order.events.find((event) => event.type === "OrderPaid");
+    if (paid === undefined) throw new Error("no payment");
+    await harness.storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "o-1",
+      expectedVersion: order.events.length,
+      events: [{ ...paid, id: "only", version: order.events.length + 1 }],
+    });
+    await settle();
+    failingEvents.set("only", "terminal");
+    const replayed = await deadLetters.replay((await deadLetters.list())[0]?.id ?? "");
+    expect(replayed).toMatchObject({ status: "replayed", parked: 1 });
+    expect(await deadLetters.list({ status: "failed" })).toMatchObject([
+      { eventId: "only", parked: 0 },
+    ]);
+  });
+
+  it("finish a replay during which an event was parked, running the failed handler once", async () => {
+    const context = await setUp();
+    const { harness, deadLetters, types } = context;
+    await failOnFirstPayment(context);
+    whileHandling = async () => {
+      await harness.pipeline.dispatch({ type: "ArchiveOrder", payload: { orderId: "o-1" } });
+      await harness.dispatcher.processUntilIdle();
+    };
+    await deadLetters.replay((await deadLetters.list())[0]?.id ?? "");
+    expect(runs.filter((run) => run.startsWith("paid:"))).toHaveLength(2);
+    expect((await types()).slice(-4)).toEqual([
+      PROCESS_EVENTS.eventParked,
+      PROCESS_EVENTS.handled,
+      PROCESS_EVENTS.handled,
+      PROCESS_EVENTS.completed,
+    ]);
+  });
+
+  it("run a deadline that came due while failed before the parked events that arrived after it", async () => {
+    const context = await setUp();
+    const { harness, deadLetters, settle, types } = context;
+    await failOnFirstPayment(context);
+    harness.clock.advance(2 * DAY);
+    const order = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    const paid = order.events.find((event) => event.type === "OrderPaid");
+    if (paid === undefined) throw new Error("no payment");
+    await harness.storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "o-1",
+      expectedVersion: order.events.length,
+      events: [
+        {
+          ...paid,
+          id: "later",
+          version: order.events.length + 1,
+          timestamp: harness.clock.now().toISOString(),
+        },
+      ],
+    });
+    await settle();
+    await deadLetters.replay((await deadLetters.list())[0]?.id ?? "");
+    expect(runs.slice(1)).toEqual([expect.stringMatching(/^paid:/), "nudge", "paid:later"]);
+    expect((await types()).at(-1)).toBe(PROCESS_EVENTS.resumed);
+  });
+
+  it("recover a replay that broke off between dead-lettering a parked event and failing on it", async () => {
+    const context = await setUp();
+    const { harness, deadLetters, settle, types } = context;
+    await failOnFirstPayment(context);
+    const order = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    const paid = order.events.find((event) => event.type === "OrderPaid");
+    if (paid === undefined) throw new Error("no payment");
+    await harness.storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "o-1",
+      expectedVersion: order.events.length,
+      events: [{ ...paid, id: "stubborn", version: order.events.length + 1 }],
+    });
+    await settle();
+    const [first] = await deadLetters.list();
+    failingEvents.set("stubborn", "terminal");
+    const append = harness.storage.eventStore.append;
+    let crashed = false;
+    harness.storage.eventStore.append = async (args) => {
+      if (!crashed && args.events[0]?.type === PROCESS_EVENTS.failed) {
+        crashed = true;
+        throw new Error("crash");
+      }
+      return append(args);
+    };
+    await expect(deadLetters.replay(first?.id ?? "")).rejects.toThrow("crash");
+    harness.storage.eventStore.append = append;
+    await deadLetters.replay(first?.id ?? "");
+    expect((await types()).at(-1)).toBe(PROCESS_EVENTS.failed);
+    const failed = await deadLetters.list({ status: "failed" });
+    expect(failed.map((letter) => letter.eventId)).toEqual(["stubborn", "stubborn"]);
+    failingEvents.clear();
+    await deadLetters.replay(failed[1]?.id ?? "");
+    expect((await types()).at(-1)).toBe(PROCESS_EVENTS.resumed);
+  });
+
+  it("let a failure through when a deploy removed its handler, and resume", async () => {
+    const context = await setUp();
+    const { harness } = context;
+    await failOnFirstPayment(context);
+    const tallyEntry = registry.aggregates.order?.processes.tally;
+    if (tallyEntry === undefined) throw new Error("no process");
+    const deployed = await createReactiveHarness({
+      registry: {
+        aggregates: {
+          order: {
+            ...orderAggregateEntry(),
+            processes: { tally: { ...tallyEntry, handlers: {} } },
+          },
+        },
+        readModels: {},
+      },
+    });
+    for (const aggregateType of ["order", stream.aggregateType]) {
+      const { events } = await harness.storage.eventStore.load({
+        aggregateType,
+        aggregateId: "o-1",
+      });
+      await deployed.storage.eventStore.append({
+        aggregateType,
+        aggregateId: "o-1",
+        expectedVersion: 0,
+        events,
+      });
+    }
+    const failure = (
+      await deployed.storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" })
+    ).events.find((event) => event.type === "OrderPaid");
+    if (failure === undefined) throw new Error("no payment");
+    await deployed.processes.replay({ process: "order.tally", event: failure, replay: "r" });
+    const { events } = await deployed.storage.eventStore.load(stream);
+    expect(events.slice(-2).map((event) => event.type)).toEqual([
+      PROCESS_EVENTS.handled,
+      PROCESS_EVENTS.resumed,
+    ]);
+  });
+});
+
+describe("a parked event that is handled and completes the process", () => {
+  it("records both at once, so the completion cannot be lost", async () => {
+    let placedFails = true;
+    const closer: Registry = {
+      aggregates: {
+        order: {
+          ...orderAggregateEntry(),
+          processes: {
+            closer: {
+              module: {
+                config: ({ events }: OrderProcessConfigArgs<"OrderPlaced" | "OrderPaid">) => ({
+                  startedBy: [events.order.OrderPlaced],
+                  completedBy: [events.order.OrderPaid],
+                }),
+              },
+              handlers: {
+                order: {
+                  orderPlaced: {
+                    handler: () => {
+                      if (placedFails) throw new DomainError("not yet");
+                    },
+                  },
+                  orderPaid: { handler: () => undefined },
+                },
+              },
+            },
+          },
+        },
+      },
+      readModels: {},
+    };
+    const harness = await createReactiveHarness({ registry: closer });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.pipeline.dispatch({
+      type: "PayOrder",
+      payload: { orderId: "o-1", method: "card" },
+    });
+    await harness.dispatcher.processUntilIdle();
+    const placed = (
+      await harness.storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" })
+    ).events[0];
+    if (placed === undefined) throw new Error("not placed");
+    placedFails = false;
+    await harness.processes.replay({ process: "order.closer", event: placed, replay: "r" });
+    const { events } = await harness.storage.eventStore.load({
+      aggregateType: "process:Closer",
+      aggregateId: "o-1",
+    });
+    expect(events.map((event) => [event.type, event.version])).toEqual([
+      [PROCESS_EVENTS.started, 1],
+      [PROCESS_EVENTS.failed, 2],
+      [PROCESS_EVENTS.eventParked, 3],
+      [PROCESS_EVENTS.handled, 4],
+      [PROCESS_EVENTS.handled, 5],
+      [PROCESS_EVENTS.completed, 6],
+    ]);
   });
 });

@@ -301,16 +301,21 @@ Replaying the dead letter of the failure is what brings the instance back:
 
 1. the failed handler runs again;
 2. the parked events are handled one by one, in order, with the same `idempotencyKey` each would
-   have had;
+   have had; a deadline that came due before a parked event arrived runs before it, as it would
+   have if the process had not failed;
 3. once none is left the instance records `ProcessResumed`, is `started` again, and its deadlines
    are scheduled again.
+
+A failure whose handler a deploy has since removed is let through, and the replay goes on with
+what is parked. When the failure is the process's `timeout`, replaying it ends the process as
+timed out and drops what is parked, as for any timed-out instance.
 
 An event that arrives during the replay is parked too and handled before the instance resumes, so
 nothing overtakes an older event. If a parked event fails again, for whatever reason, it becomes
 the new failure at once: it is dead-lettered without retries, the instance stays failed, and the
 events after it stay parked until that letter is replayed. A parked event the process no longer
-handles, after a deploy removed its handler, is let through. A parked event that completes the process completes it, and what is parked after it
-is dropped, as for any completed instance.
+handles, after a deploy removed its handler, is let through. A parked event that completes the
+process completes it, and what is parked after it is dropped, as for any completed instance.
 
 `bounda dead-letters list` says how many events wait behind a failure (`3 events are parked behind
 it`), and so does `parked` on the letters of `app.deadLetters`. Discarding the letter gives the

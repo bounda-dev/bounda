@@ -17,20 +17,24 @@ export const formatLetter: FormatLetterFunction = (letter) =>
     `    ${letter.eventType} on ${letter.aggregateType}:${letter.aggregateId}, ${letter.attempts} attempt${letter.attempts === 1 ? "" : "s"}, last ${letter.lastFailedAt} (${letter.errorType})`,
     `    ${letter.errorMessage}`,
     ...((letter.parked ?? 0) > 0
-      ? [`    ${parkedEvents(letter.parked ?? 0)} behind it; replaying it handles them in order`]
+      ? [
+          letter.eventId === "deadline:timeout"
+            ? `    ${parkedEvents(letter.parked ?? 0)} behind it; replaying it times the process out and drops them`
+            : `    ${parkedEvents(letter.parked ?? 0)} behind it; replaying it handles them in order`,
+        ]
       : []),
   ].join("\n");
 
 /**
  * What `bounda dead-letters replay` prints for the letter a replay returns, saying when the
- * process failed again on one of the events parked behind it.
+ * process failed again while handling what waited behind it.
  */
 export const formatReplayed: FormatLetterFunction = (letter) =>
   [
     `replayed dead letter ${letter.id}: ${letter.kind} ${letter.subscriber} for ${letter.eventType}`,
     ...((letter.parked ?? 0) > 0
       ? [
-          `the process failed again on a parked event; ${parkedEvents(letter.parked ?? 0)} behind the new dead letter`,
+          `the process failed again; ${letter.parked} of its events still wait${letter.parked === 1 ? "s" : ""}, see the new dead letter`,
         ]
       : []),
   ].join("\n");

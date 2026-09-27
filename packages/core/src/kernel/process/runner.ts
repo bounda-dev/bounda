@@ -126,6 +126,11 @@ export interface ProcessRunner extends Subscriber {
    * failure it records keeps the instance failed. `0` for any other letter.
    */
   parkedBehind(letter: DeadLetter): Promise<number>;
+  /**
+   * After a replay of a process dead letter: how many events of its instance are still waiting
+   * because the process failed again, the one it failed on included. `0` once it resumed.
+   */
+  stillParked(letter: DeadLetter): Promise<number>;
 }
 
 export interface CreateProcessRunnerArgs {
@@ -144,6 +149,13 @@ export interface CreateProcessRunnerFunction {
 }
 
 type Outcome = "done" | "hold";
+
+interface LifecycleEntry {
+  readonly type: string;
+  readonly payload: unknown;
+  readonly context: CausationContext;
+  readonly id?: string;
+}
 
 const deadlineKey = (process: string, aggregateId: string): string =>
   `process-deadline:${process}:${aggregateId}`;
@@ -181,33 +193,65 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     return foldProcess({ initialState: process.initialState, events: loaded.events });
   };
 
-  const append = async (
+  const appendAll = async (
     process: ProcessRuntime,
     aggregateId: string,
     instance: ProcessInstance,
-    type: string,
-    payload: unknown,
-    context: CausationContext,
-    id: string = ids.next(),
+    entries: readonly LifecycleEntry[],
   ): Promise<void> => {
     const aggregateType = processAggregateType(process.type);
     await storage.eventStore.append({
       aggregateType,
       aggregateId,
       expectedVersion: instance.version,
-      events: [
-        {
-          id,
-          aggregateType,
-          aggregateId,
-          version: instance.version + 1,
-          type,
-          payload,
-          timestamp: clock.now().toISOString(),
-          metadata: { ...context, schemaVersion: 1, system: true },
-        },
-      ],
+      events: entries.map((entry, index) => ({
+        id: entry.id ?? ids.next(),
+        aggregateType,
+        aggregateId,
+        version: instance.version + index + 1,
+        type: entry.type,
+        payload: entry.payload,
+        timestamp: clock.now().toISOString(),
+        metadata: { ...entry.context, schemaVersion: 1, system: true },
+      })),
     });
+  };
+
+  const append = (
+    process: ProcessRuntime,
+    aggregateId: string,
+    instance: ProcessInstance,
+    type: string,
+    payload: unknown,
+    context: CausationContext,
+    id?: string,
+  ): Promise<void> =>
+    appendAll(process, aggregateId, instance, [
+      { type, payload, context, ...(id === undefined ? {} : { id }) },
+    ]);
+
+  const appendPastParks = async (
+    process: ProcessRuntime,
+    aggregateId: string,
+    instance: ProcessInstance,
+    entries: readonly LifecycleEntry[],
+  ): Promise<void> => {
+    let current = instance;
+    for (;;) {
+      try {
+        await appendAll(process, aggregateId, current, entries);
+        return;
+      } catch (error) {
+        if (!lostRace(process, aggregateId, error)) throw error;
+        const loaded = await storage.eventStore.load({
+          aggregateType: processAggregateType(process.type),
+          aggregateId,
+        });
+        const since = loaded.events.slice(current.version);
+        if (!since.every((event) => event.type === PROCESS_EVENTS.eventParked)) throw error;
+        current = foldProcess({ initialState: process.initialState, events: loaded.events });
+      }
+    }
   };
 
   const contextOf = (event: StoredEvent): CausationContext => ({
@@ -406,6 +450,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
       const attempts = (existing?.attempts ?? 0) + 1;
       const kind = error instanceof ConcurrencyError ? "retriable" : classifyFailure(error);
       if (kind === "terminal") {
+        await deadLetter(process, event, error, attempts, "terminal");
         await append(
           process,
           instanceId,
@@ -414,12 +459,12 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
           { eventId: event.id, error: errorDetails(error).message },
           context,
         );
-        await deadLetter(process, event, error, attempts, "terminal");
         await storage.inboxLedger.complete(key);
         return "done";
       }
       await storage.inboxLedger.fail({ ...key, error: errorDetails(error).message });
       if (attempts >= settings.retry.maxAttempts || settings.retry.strategy === "none") {
+        await deadLetter(process, event, error, attempts, "retriable_exhausted");
         await append(
           process,
           instanceId,
@@ -428,7 +473,6 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
           { eventId: event.id, error: errorDetails(error).message },
           context,
         );
-        await deadLetter(process, event, error, attempts, "retriable_exhausted");
         await storage.inboxLedger.complete(key);
         return "done";
       }
@@ -574,62 +618,116 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     return event;
   };
 
+  const completionOf = (process: ProcessRuntime, event: StoredEvent): LifecycleEntry[] =>
+    process.completedBy.has(qualifiedEventType(event.aggregateType, event.type))
+      ? [
+          {
+            type: PROCESS_EVENTS.completed,
+            payload: { eventId: event.id },
+            context: contextOf(event),
+          },
+        ]
+      : [];
+
+  const handledEntry = (event: StoredEvent, state: object): LifecycleEntry => ({
+    type: PROCESS_EVENTS.handled,
+    payload: { state, eventId: event.id, eventType: event.type },
+    context: contextOf(event),
+  });
+
+  const letThrough = (process: ProcessRuntime, instanceId: string, event: StoredEvent): void => {
+    logger.warn("process no longer acts on an event it waited for; it is let through", {
+      process: process.name,
+      aggregateId: instanceId,
+      eventId: event.id,
+    });
+  };
+
   const handleParked = async (
     process: ProcessRuntime,
     instanceId: string,
     instance: ProcessInstance,
     event: StoredEvent,
   ): Promise<boolean> => {
-    const qualified = qualifiedEventType(event.aggregateType, event.type);
-    if (process.handlers[qualified] === undefined && !process.completedBy.has(qualified)) {
-      logger.warn("process no longer acts on a parked event; it is let through", {
-        process: process.name,
-        aggregateId: instanceId,
-        eventId: event.id,
-      });
-      await append(
+    const handler = process.handlers[qualifiedEventType(event.aggregateType, event.type)];
+    const completion = completionOf(process, event);
+    if (handler === undefined) {
+      if (completion.length === 0) letThrough(process, instanceId, event);
+      await appendPastParks(process, instanceId, instance, [
+        handledEntry(event, instance.state),
+        ...completion,
+      ]);
+      return true;
+    }
+    let state: object;
+    try {
+      state = await runHandler(process, event, instanceId, instance, 1);
+    } catch (error) {
+      const current = await load(process, instanceId);
+      if (current.status !== "failed" || current.parked[0]?.eventId !== event.id) return true;
+      await deadLetter(
+        process,
+        event,
+        error,
+        1,
+        classifyFailure(error) === "terminal" ? "terminal" : "retriable_exhausted",
+      );
+      await appendPastParks(process, instanceId, current, [
+        {
+          type: PROCESS_EVENTS.failed,
+          payload: { eventId: event.id, error: errorDetails(error).message },
+          context: contextOf(event),
+        },
+      ]);
+      return false;
+    }
+    await appendPastParks(process, instanceId, instance, [
+      handledEntry(event, state),
+      ...completion,
+    ]);
+    return true;
+  };
+
+  const drainDeadline = async (
+    process: ProcessRuntime,
+    instanceId: string,
+    instance: ProcessInstance,
+    due: Deadline,
+  ): Promise<boolean> => {
+    try {
+      await runDeadline(
         process,
         instanceId,
         instance,
-        PROCESS_EVENTS.handled,
-        { state: instance.state, eventId: event.id, eventType: event.type },
-        contextOf(event),
+        due,
+        entryContext(process, instanceId, instance),
+        undefined,
       );
       return true;
+    } catch (error) {
+      const current = await load(process, instanceId);
+      if (current.status !== "failed" || current.reached.has(reachedKey(due))) return true;
+      await deadLetter(
+        process,
+        {
+          id: `deadline:${due.field}`,
+          type: PROCESS_DEADLINE_COMMAND,
+          aggregateType: processAggregateType(process.type),
+          aggregateId: instanceId,
+        },
+        error,
+        1,
+        classifyFailure(error) === "terminal" ? "terminal" : "retriable_exhausted",
+      );
+      await appendPastParks(process, instanceId, current, [
+        {
+          type: PROCESS_EVENTS.failed,
+          payload: { deadline: due.field, at: due.at, error: errorDetails(error).message },
+          context: entryContext(process, instanceId, current),
+        },
+      ]);
+      return false;
     }
-    if (process.handlers[qualified] !== undefined) {
-      try {
-        const state = await runHandler(process, event, instanceId, instance, 1);
-        await append(
-          process,
-          instanceId,
-          instance,
-          PROCESS_EVENTS.handled,
-          { state, eventId: event.id, eventType: event.type },
-          contextOf(event),
-        );
-      } catch (error) {
-        if (lostRace(process, instanceId, error)) return true;
-        await append(
-          process,
-          instanceId,
-          await load(process, instanceId),
-          PROCESS_EVENTS.failed,
-          { eventId: event.id, error: errorDetails(error).message },
-          contextOf(event),
-        );
-        await deadLetter(
-          process,
-          event,
-          error,
-          1,
-          classifyFailure(error) === "terminal" ? "terminal" : "retriable_exhausted",
-        );
-        return false;
-      }
-    }
-    await completeIfDue(process, event, instanceId, true);
-    return true;
   };
 
   const resumeParked = async (process: ProcessRuntime, instanceId: string): Promise<void> => {
@@ -637,7 +735,17 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
       const instance = await load(process, instanceId);
       if (instance.status !== "failed") return;
       const [next] = instance.parked;
-      if (next === undefined) {
+      const event = next === undefined ? undefined : await parkedEvent(next);
+      const due = pendingOf(process, instance);
+      if (
+        event !== undefined &&
+        due !== null &&
+        Date.parse(due.at) <= Date.parse(event.timestamp)
+      ) {
+        if (!(await drainDeadline(process, instanceId, instance, due))) return;
+        continue;
+      }
+      if (event === undefined) {
         try {
           await append(
             process,
@@ -654,7 +762,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
           continue;
         }
       }
-      if (!(await handleParked(process, instanceId, instance, await parkedEvent(next)))) return;
+      if (!(await handleParked(process, instanceId, instance, event))) return;
     }
   };
 
@@ -689,34 +797,34 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     if (process === undefined) {
       throw new ConfigurationError(`Process "${name}" is no longer in the registry`);
     }
-    const handler = process.handlers[qualifiedEventType(event.aggregateType, event.type)];
-    if (handler === undefined) {
-      throw new ConfigurationError(`Process "${name}" no longer handles ${event.type}`);
-    }
     const instanceId = process.instanceOf(event);
     const instance = instanceId === null ? null : await load(process, instanceId);
+    const failedHere = instance?.status === "failed" && instance.failure?.eventId === event.id;
+    const handler = process.handlers[qualifiedEventType(event.aggregateType, event.type)];
+    if (handler === undefined && !failedHere) {
+      throw new ConfigurationError(`Process "${name}" no longer handles ${event.type}`);
+    }
     if (instanceId === null || instance === null || !instance.exists) {
       throw new NotFoundError(
         `Process "${name}" has no instance for ${event.aggregateType}:${event.aggregateId}`,
       );
     }
-    if (instance.status === "failed" && instance.failure?.eventId !== event.id) {
+    if (instance.status === "failed" && !failedHere) {
       throw new ConfigurationError(
         `Process "${name}" is failed on another step for ${instanceId}; replay the dead letter of that failure first`,
       );
     }
-    if (!instance.handledEventIds.has(event.id)) {
-      const state = await runHandler(process, event, instanceId, instance, 1, replay);
-      await append(
-        process,
-        instanceId,
-        instance,
-        PROCESS_EVENTS.handled,
-        { state, eventId: event.id, eventType: event.type },
-        contextOf(event),
-      );
+    if (instance.handledEventIds.has(event.id)) {
+      await completeIfDue(process, event, instanceId, true);
+    } else {
+      let state = instance.state;
+      if (handler === undefined) letThrough(process, instanceId, event);
+      else state = await runHandler(process, event, instanceId, instance, 1, replay);
+      await appendPastParks(process, instanceId, instance, [
+        handledEntry(event, state),
+        ...completionOf(process, event),
+      ]);
     }
-    await completeIfDue(process, event, instanceId, true);
     await resumeParked(process, instanceId);
     await reconcile(process, instanceId);
     logger.info("process handler replayed", { process: process.name, eventId: event.id });
@@ -768,15 +876,9 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
           });
     const state = validState(process, returned ?? instance.state);
     if (due.field === TIMEOUT_DEADLINE) {
-      await append(
-        process,
-        instanceId,
-        instance,
-        PROCESS_EVENTS.timedOut,
-        { state },
-        context,
-        reachedId,
-      );
+      await appendPastParks(process, instanceId, instance, [
+        { type: PROCESS_EVENTS.timedOut, payload: { state }, context, id: reachedId },
+      ]);
       return;
     }
     const kept = (state as Readonly<Record<string, unknown>>)[due.field];
@@ -786,15 +888,14 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
         [{ path: [due.field], message: "Set it to null, or to another moment with after()" }],
       );
     }
-    await append(
-      process,
-      instanceId,
-      instance,
-      PROCESS_EVENTS.deadlineReached,
-      { field: due.field, at: due.at, state },
-      context,
-      reachedId,
-    );
+    await appendPastParks(process, instanceId, instance, [
+      {
+        type: PROCESS_EVENTS.deadlineReached,
+        payload: { field: due.field, at: due.at, state },
+        context,
+        id: reachedId,
+      },
+    ]);
   };
 
   const failedDeadlines = new WeakMap<object, Deadline>();
@@ -876,38 +977,22 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     }
     const failed =
       typeof error === "object" && error !== null ? failedDeadlines.get(error) : undefined;
-    for (;;) {
-      const instance = await load(process, payload.aggregateId);
-      if (
-        failed === undefined ||
-        instance.status !== "started" ||
-        instance.reached.has(reachedKey(failed))
-      ) {
-        logger.warn("process deadline gave up without failing the process", {
-          process: process.name,
-          aggregateId: payload.aggregateId,
-          status: instance.status,
-          thrownBy: failed?.field ?? null,
-          error: errorDetails(error).message,
-        });
-        await reconcile(process, payload.aggregateId);
-        return;
-      }
-      try {
-        await append(
-          process,
-          payload.aggregateId,
-          instance,
-          PROCESS_EVENTS.failed,
-          { deadline: failed.field, at: failed.at, error: errorDetails(error).message },
-          entryContext(process, payload.aggregateId, instance),
-        );
-        break;
-      } catch (appendError) {
-        if (!lostRace(process, payload.aggregateId, appendError)) throw appendError;
-      }
+    const givesUp = (instance: ProcessInstance): boolean =>
+      failed !== undefined &&
+      instance.status === "started" &&
+      !instance.reached.has(reachedKey(failed));
+    let instance = await load(process, payload.aggregateId);
+    if (failed === undefined || !givesUp(instance)) {
+      logger.warn("process deadline gave up without failing the process", {
+        process: process.name,
+        aggregateId: payload.aggregateId,
+        status: instance.status,
+        thrownBy: failed?.field ?? null,
+        error: errorDetails(error).message,
+      });
+      await reconcile(process, payload.aggregateId);
+      return;
     }
-    await reconcile(process, payload.aggregateId);
     await deadLetter(
       process,
       {
@@ -920,6 +1005,41 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
       attempts,
       errorType,
     );
+    for (;;) {
+      try {
+        await append(
+          process,
+          payload.aggregateId,
+          instance,
+          PROCESS_EVENTS.failed,
+          { deadline: failed.field, at: failed.at, error: errorDetails(error).message },
+          entryContext(process, payload.aggregateId, instance),
+        );
+        break;
+      } catch (appendError) {
+        if (!lostRace(process, payload.aggregateId, appendError)) throw appendError;
+        instance = await load(process, payload.aggregateId);
+        if (!givesUp(instance)) break;
+      }
+    }
+    await reconcile(process, payload.aggregateId);
+  };
+
+  const instanceOfLetter = async (letter: DeadLetter): Promise<ProcessInstance | null> => {
+    const process = processes.byName[letter.subscriber];
+    if (letter.kind !== "process" || process === undefined) return null;
+    const instanceId =
+      letter.eventType === PROCESS_DEADLINE_COMMAND
+        ? letter.aggregateId
+        : await parkedEvent({
+            eventId: letter.eventId,
+            eventType: letter.eventType,
+            aggregateType: letter.aggregateType,
+            aggregateId: letter.aggregateId,
+          })
+            .then((event) => process.instanceOf(event))
+            .catch(() => null);
+    return instanceId === null ? null : load(process, instanceId);
   };
 
   return {
@@ -948,26 +1068,14 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     handleDeadline,
     failDeadline,
     parkedBehind: async (letter) => {
-      const process = processes.byName[letter.subscriber];
-      if (letter.kind !== "process" || letter.status !== "failed" || process === undefined) {
-        return 0;
-      }
-      const instanceId =
-        letter.eventType === PROCESS_DEADLINE_COMMAND
-          ? letter.aggregateId
-          : await parkedEvent({
-              eventId: letter.eventId,
-              eventType: letter.eventType,
-              aggregateType: letter.aggregateType,
-              aggregateId: letter.aggregateId,
-            })
-              .then((event) => process.instanceOf(event))
-              .catch(() => null);
-      if (instanceId === null) return 0;
-      const instance = await load(process, instanceId);
-      return instance.status === "failed"
+      const instance = letter.status === "failed" ? await instanceOfLetter(letter) : null;
+      return instance?.status === "failed"
         ? instance.parked.filter((parked) => parked.eventId !== instance.failure?.eventId).length
         : 0;
+    },
+    stillParked: async (letter) => {
+      const instance = await instanceOfLetter(letter);
+      return instance?.status === "failed" ? Math.max(instance.parked.length, 1) : 0;
     },
     lostRace: (payload, error) => {
       const process = processes.byName[payload.process];

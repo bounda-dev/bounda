@@ -10,13 +10,15 @@ deadlines included. Replaying the dead letter of the failure runs the failed han
 the parked events in order with the `idempotencyKey` each would have had, and only then records
 `ProcessResumed`, puts the instance back to `started` and schedules its deadlines again. An event
 that arrives during the replay is parked and handled before the instance resumes, so nothing
-overtakes an older one. A parked event that fails again becomes the new dead letter, with the rest
-still parked behind it. Discarding the letter gives the instance up: it stays failed and its parked
+overtakes an older one, and a deadline that came due before a parked event arrived runs before
+it. A parked event that fails again becomes the new dead letter at once, with the rest still
+parked behind it. Discarding the letter gives the instance up: it stays failed and its parked
 events never run.
 
 `app.deadLetters` fills in `parked` on process letters, how many events wait behind the failure,
-and `bounda dead-letters list` prints it; `replay` says when the process failed again on a parked
-event.
+and `bounda dead-letters list` prints it; on the letter a replay returns, it counts what still
+waits because the process failed again, and `bounda dead-letters replay` says so. A failure whose
+handler a deploy removed is let through on replay.
 
 Breaking, for code that reads process streams: a failed instance is back to `started` only on
 `ProcessResumed`, no longer on the `ProcessHandled` or `ProcessDeadlineReached` a replay writes,

@@ -158,7 +158,7 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
       });
       const replayed: DeadLetter = { ...letter, status: "replayed" };
       if (letter.kind !== "process") return replayed;
-      return { ...replayed, parked: await processes.parkedBehind(letter) };
+      return { ...replayed, parked: await processes.stillParked(letter) };
     },
     discard: async (id) => {
       const letter = await failedLetter(id);

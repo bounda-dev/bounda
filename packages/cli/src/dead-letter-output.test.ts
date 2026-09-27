@@ -36,9 +36,12 @@ describe("dead letter output", () => {
       ].join("\n"),
     );
     expect(formatLetter({ ...letter, parked: 3 })).toContain("3 events are parked behind it");
+    expect(formatLetter({ ...letter, eventId: "deadline:timeout", parked: 2 })).toContain(
+      "2 events are parked behind it; replaying it times the process out and drops them",
+    );
   });
 
-  it("says when a replay stopped at a parked event that failed the process again", () => {
+  it("says when a replay stopped because the process failed again", () => {
     const replayed = { ...letter, status: "replayed" as const };
     expect(formatReplayed(replayed)).toBe(
       "replayed dead letter dl-1: process order.orderPayment for OrderPaid",
@@ -46,8 +49,9 @@ describe("dead letter output", () => {
     expect(formatReplayed({ ...replayed, parked: 2 })).toBe(
       [
         "replayed dead letter dl-1: process order.orderPayment for OrderPaid",
-        "the process failed again on a parked event; 2 events are parked behind the new dead letter",
+        "the process failed again; 2 of its events still wait, see the new dead letter",
       ].join("\n"),
     );
+    expect(formatReplayed({ ...replayed, parked: 1 })).toContain("1 of its events still waits");
   });
 });
