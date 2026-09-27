@@ -1249,7 +1249,7 @@ describe("events of a failed process", () => {
     expect(await deadLetters.list()).toMatchObject([{ eventId: "deadline:nudge", parked: 0 }]);
   });
 
-  it("file the new failure's letter when a replay's writing it failed, so the operator can go on", async () => {
+  it("finish a replay whose new failure's letter could not be written, and file that letter anyway", async () => {
     const context = await setUp();
     const { harness, deadLetters, settle } = context;
     await failOnFirstPayment(context);
@@ -1277,10 +1277,13 @@ describe("events of a failed process", () => {
       }
       return add(letter);
     };
-    await expect(deadLetters.replay(first?.id ?? "")).rejects.toThrow("store down");
-    await expect(deadLetters.replay(first?.id ?? "")).rejects.toThrow("is failed on another step");
+    expect(await deadLetters.replay(first?.id ?? "")).toMatchObject({
+      status: "replayed",
+      parked: 1,
+    });
+    expect(down).toBe(false);
     const failed = await deadLetters.list({ status: "failed" });
-    expect(failed.map((letter) => letter.eventId)).toContain("again");
+    expect(failed.map((letter) => letter.eventId)).toEqual(["again"]);
   });
 
   it("stop a drain once another replay recorded a new failure", async () => {

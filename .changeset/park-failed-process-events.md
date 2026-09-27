@@ -16,6 +16,9 @@ parked behind it. Discarding the letter gives the instance up: it stays failed, 
 events never run and later ones are dropped. `ProcessFailed` now carries its dead letter, which is
 filed again the next time the instance is reached if writing it was cut short.
 
+A process that holds an event for a retry is no longer handed the later events of the same
+batch, so none of them overtakes it, as the guide already promised.
+
 `app.deadLetters` fills in `parked` on process letters, how many events wait behind the failure,
 and `bounda dead-letters list` prints it; on the letter a replay returns, it counts what still
 waits because the process failed again, and `bounda dead-letters replay` says so. A failure whose

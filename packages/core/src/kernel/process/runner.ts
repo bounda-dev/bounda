@@ -178,7 +178,8 @@ const deadlineKey = (process: string, aggregateId: string): string =>
  * starting one included, runs it and writes `ProcessHandled` with the new state; a completing
  * event writes `ProcessCompleted`. Failures follow the same rules as policies: terminal ones are
  * recorded as `ProcessFailed` and dead-lettered, retriable ones hold the checkpoint and are
- * retried with back-off through the inbox ledger.
+ * retried with back-off through the inbox ledger; a process that holds an event is handed none
+ * of the later events of the batch, so none of them overtakes it.
  *
  * Deadlines are state: after every delivery to a running instance, and after every change the
  * runner makes to it, the instance's one scheduler entry is set to its earliest pending deadline,
@@ -320,6 +321,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     for (;;) {
       const next = instance.status === "started" ? pendingOf(process, instance) : null;
       if (next === null) {
+        await healFailure(process, instance);
         await storage.scheduler.cancel(dedupeKey);
       } else {
         await storage.scheduler.schedule({
@@ -396,6 +398,19 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
       attempts: letter.attempts,
     });
   };
+
+  const fileLater = (
+    process: ProcessRuntime,
+    letter: NewDeadLetter,
+    error: unknown,
+  ): Promise<void> =>
+    file(process, letter, error).catch((filing: unknown) => {
+      logger.warn("process dead letter not filed yet; it is filed when the instance is reached", {
+        process: process.name,
+        letter: letter.id,
+        error: errorDetails(filing).message,
+      });
+    });
 
   const deadLetter = (
     process: ProcessRuntime,
@@ -749,7 +764,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
       await appendPastParks(process, instanceId, current, [
         failedEntry({ eventId: event.id }, letter, contextOf(event)),
       ]);
-      await file(process, letter, error);
+      await fileLater(process, letter, error);
       return false;
     }
     await appendPastParks(process, instanceId, instance, [
@@ -794,7 +809,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
           entryContext(process, instanceId, current),
         ),
       ]);
-      await file(process, letter, error);
+      await fileLater(process, letter, error);
       return false;
     }
   };
@@ -1135,23 +1150,24 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     name: PROCESSES_SUBSCRIBER,
     kind: "process",
     process: async (events) => {
-      let hold = false;
+      const held = new Set<string>();
       for (const event of events) {
         const qualified = qualifiedEventType(event.aggregateType, event.type);
         for (const process of processes.byEvent[qualified] ?? []) {
+          if (held.has(process.name)) continue;
           try {
-            hold = (await deliver(process, event)) === "hold" || hold;
+            if ((await deliver(process, event)) === "hold") held.add(process.name);
           } catch (error) {
             if (!(error instanceof ConcurrencyError)) throw error;
             logger.debug("process stream moved; will redeliver", {
               process: process.name,
               eventId: event.id,
             });
-            hold = true;
+            held.add(process.name);
           }
         }
       }
-      return !hold;
+      return held.size === 0;
     },
     replay,
     handleDeadline,
@@ -1165,6 +1181,8 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     },
     stillParked: async (letter) => {
       const instance = await instanceOfLetter(letter);
+      const process = processes.byName[letter.subscriber];
+      if (instance !== null && process !== undefined) await healFailure(process, instance);
       return instance?.status === "failed"
         ? instance.parked.length + (instance.failure?.deadline === undefined ? 0 : 1)
         : 0;
