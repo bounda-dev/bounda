@@ -281,6 +281,9 @@ describe.skipIf(container === null)("postgresql adapter", () => {
     await (probe.client.raw as Sql).unsafe(
       `ALTER TABLE "${prefix}dead_letters" DROP COLUMN "payload"`,
     );
+    await (probe.client.raw as Sql).unsafe(
+      `ALTER TABLE "${prefix}scheduled_commands" DROP COLUMN "revision"`,
+    );
     await closeOpened();
 
     const storage = await openStorage(adapter);
@@ -300,6 +303,19 @@ describe.skipIf(container === null)("postgresql adapter", () => {
       payload: { orderId: "o-1" },
     });
     expect(letter.payload).toEqual({ orderId: "o-1" });
+    await storage.scheduler.schedule({
+      dedupeKey: "k",
+      command: { type: "PlaceOrder", aggregateId: "o-1", payload: {} },
+      executeAt: new Date("2026-01-01T00:00:00.000Z"),
+      context: { correlationId: "c", causationId: "c", depth: 0 },
+    });
+    expect(
+      await storage.scheduler.claimDue({
+        now: new Date("2026-01-01T00:00:01.000Z"),
+        limit: 1,
+        leaseMs: 1_000,
+      }),
+    ).toMatchObject([{ dedupeKey: "k", revision: 0 }]);
   });
 
   it("logs the lifecycle of a rebuild with the tables involved", async () => {

@@ -249,6 +249,21 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
         await scheduler.complete(first);
         expect(await scheduler.list()).toEqual([]);
       });
+
+      it.each([
+        ["its time", { ...schedule(at(0)), executeAt: at(1) }],
+        ["its command", schedule(at(0), { next: true })],
+        ["its context", { ...schedule(at(0)), context: { ...testContext, depth: 1 } }],
+      ])("counts as a new version when only %s changes", async (_, changed) => {
+        await scheduler.schedule(schedule(at(0)));
+        const [first] = await scheduler.claimDue({ now: at(1), limit: 10, leaseMs: 60_000 });
+        if (first === undefined) throw new Error("nothing claimed");
+        await scheduler.schedule(changed);
+        await scheduler.complete(first);
+
+        const [second] = await scheduler.claimDue({ now: at(1), limit: 10, leaseMs: 60_000 });
+        expect(second?.revision).toBeGreaterThan(first.revision);
+      });
     });
 
     it("ignores a claim whose lease another worker took over", async () => {

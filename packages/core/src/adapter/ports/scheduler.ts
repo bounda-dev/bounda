@@ -15,7 +15,7 @@ export interface ScheduledCommand {
 }
 
 /**
- * Who holds a claimed command and which version of it they hold. `revision` changes each time the
+ * Who holds a claimed command and which version of it they hold. `revision` grows each time the
  * key is scheduled again with something different; `claimedAt` is when the claim was taken.
  * `complete` and `fail` act only while both still match, so a worker finishing a command that was
  * rescheduled meanwhile, or whose lease another worker took over, cannot undo the newer state.
