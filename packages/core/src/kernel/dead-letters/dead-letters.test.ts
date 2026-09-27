@@ -503,10 +503,11 @@ describe("deadLetters", () => {
     expect(
       (await harness.storage.eventStore.load(stream)).events.map((event) => event.type),
     ).toEqual([PROCESS_EVENTS.started, PROCESS_EVENTS.failed, PROCESS_EVENTS.timedOut]);
-    expect((await harness.storage.eventStore.load(stream)).events.at(-1)?.metadata).toMatchObject({
+    const replayed = (await harness.storage.eventStore.load(stream)).events;
+    expect(replayed.at(-1)?.metadata).toMatchObject({
       causationId: letter?.id,
       depth: 0,
-      correlationId: expect.any(String),
+      correlationId: replayed[0]?.metadata.correlationId,
     });
     await expect(deadLetters.replay(letter?.id ?? "")).rejects.toThrow("already replayed");
   });
