@@ -573,7 +573,7 @@ describe("discoverProject convention problems", () => {
     expect(await problemsOf(root)).toEqual([
       "app/domain/order/processes/loose.ts: a process is a directory with an index.ts",
       "app/domain/order/processes/empty: a process directory needs an index.ts with its config",
-      "app/domain/order/processes/payment/steps: a process directory holds only index.ts, on-*.ts handlers, collaborators and folders named after other aggregates",
+      "app/domain/order/processes/payment/steps: a process directory holds only index.ts, on-*.ts and at-*.ts handlers, collaborators and folders named after other aggregates",
       'app/domain/order/processes/payment/on-order-shipped.ts: "orderShipped" is not an event of this aggregate',
       "app/domain/order/processes/payment/on-timeout.ts: the timeout handler is at-timeout.ts now; rename the file",
       "app/domain/order/processes/payment/order-paid.ts: process handlers are named on-<event>.ts or at-<deadline>.ts",

@@ -33,7 +33,7 @@ describe("what does not compile", () => {
     void handler;
   });
 
-  it("a moment that did not come from after() or asInstant", () => {
+  it("a plain string where an Instant is expected", () => {
     // @ts-expect-error a plain string is not an Instant
     const moment: Instant = "2026-01-01T00:00:00.000Z";
     const handler = ({ state }: AtNextReminder.DeadlineArgs) => ({

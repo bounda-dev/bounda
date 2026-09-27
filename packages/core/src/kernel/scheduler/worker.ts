@@ -81,7 +81,10 @@ type GiveUpReason = "terminal" | "retriable_exhausted";
  * has handled every event stored when the worker first claimed it, so an event that cancels the
  * deadline is seen first. The check is best effort: the commands a deadline sends are still
  * checked by the aggregates that receive them. A deadline that waits, or whose instance moved
- * while it ran, goes back to the schedule without counting an attempt.
+ * while it ran, goes back to the schedule without counting an attempt. A deadline entry that ran
+ * is never removed here: the process runner has already written what the instance needs next, so
+ * the worker only lets go of its claim. An entry that cannot be settled is logged and left to its
+ * lease, so it does not hold back the rest of the round.
  */
 export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction = ({
   storage,
@@ -251,7 +254,8 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   const execute = async (entry: ClaimedCommand): Promise<void> => {
     try {
       await run(entry);
-      await storage.scheduler.complete(entry);
+      if (isDeadline(entry)) await deferToItsTime(entry);
+      else await storage.scheduler.complete(entry);
     } catch (error) {
       if (isDeadline(entry) && processes.lostRace(deadlineOf(entry), error)) {
         await deferToItsTime(entry);
@@ -318,8 +322,16 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       });
       const ready = await isDeadlineReady(due);
       for (const entry of due) {
-        if (ready(entry)) await execute(entry);
-        else await deferToItsTime(entry);
+        try {
+          if (ready(entry)) await execute(entry);
+          else await deferToItsTime(entry);
+        } catch (error) {
+          logger.error("scheduled command could not be settled; its lease will lapse", {
+            command: entry.command.type,
+            dedupeKey: entry.dedupeKey,
+            ...errorDetails(error),
+          });
+        }
       }
       for (const key of waits.keys()) {
         if (!due.some((entry) => entry.dedupeKey === key)) waits.delete(key);

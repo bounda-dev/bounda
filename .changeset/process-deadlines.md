@@ -2,6 +2,7 @@
 "@bounda-dev/core": minor
 "@bounda-dev/cli": minor
 "@bounda-dev/adapter-postgresql": patch
+"@bounda-dev/adapter-cloudflare": patch
 ---
 
 Processes have deadlines, and a deadline is state. A field of a process `state` declared with
@@ -28,4 +29,5 @@ time-out now counts from the starting event's time. For code that does not come 
 `deadline` and `instant`. The process runner keeps one scheduler entry per instance,
 `bounda.ProcessDeadline`, in place of `bounda.ProcessTimeout`, and records
 `ProcessDeadlineReached` when a deadline comes due. For adapter authors, the `Scheduler` port gains
-`defer`, which hands a claimed command back without counting an attempt.
+`defer`, which hands a claimed command back without counting an attempt. The Cloudflare client's
+`getLag()` is typed with the new `AppLag`, `waitingDeadlines` included.

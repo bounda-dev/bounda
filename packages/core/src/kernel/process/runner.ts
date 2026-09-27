@@ -65,7 +65,7 @@ export interface HandleDeadlineArgs {
 }
 
 export interface FailDeadlineArgs {
-  readonly payload: ProcessDeadlinePayload;
+  readonly payload: Pick<ProcessDeadlinePayload, "process" | "aggregateId">;
   readonly error: unknown;
   readonly attempts: number;
   readonly errorType: "terminal" | "retriable_exhausted";
@@ -100,11 +100,15 @@ export interface ProcessRunner extends Subscriber {
    * worth running again at once, without counting an attempt. A conflict on any other stream,
    * such as one a command of the handler met, is an ordinary failure.
    */
-  lostRace(payload: ProcessDeadlinePayload, error: unknown): boolean;
+  lostRace(
+    payload: Pick<ProcessDeadlinePayload, "process" | "aggregateId">,
+    error: unknown,
+  ): boolean;
   /**
-   * Called by the scheduled-command worker when the deadline its entry was scheduled for gave up:
-   * records `ProcessFailed` and dead-letters the deadline, so a replay runs it again. A deadline the
-   * instance has already reached is not failed again: only a later step went wrong.
+   * Called by the scheduled-command worker when a deadline entry gave up with `error`: records
+   * `ProcessFailed` and dead-letters the deadline whose handler threw it, so a replay runs it again.
+   * An error thrown outside a deadline handler fails no process. Either way the instance's entry
+   * is written again, since the worker has dropped it.
    */
   failDeadline(args: FailDeadlineArgs): Promise<void>;
   /**
@@ -133,8 +137,8 @@ export interface CreateProcessRunnerFunction {
 
 type Outcome = "done" | "hold";
 
-const deadlineKey = (process: ProcessRuntime, aggregateId: string): string =>
-  `process-deadline:${process.name}:${aggregateId}`;
+const deadlineKey = (process: string, aggregateId: string): string =>
+  `process-deadline:${process}:${aggregateId}`;
 
 /**
  * Runs processes as internal aggregates: each instance is a stream of lifecycle events under
@@ -243,7 +247,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     });
 
   const reconcile = async (process: ProcessRuntime, instanceId: string): Promise<void> => {
-    const dedupeKey = deadlineKey(process, instanceId);
+    const dedupeKey = deadlineKey(process.name, instanceId);
     let instance = await load(process, instanceId);
     for (;;) {
       const next = instance.status === "started" ? pendingOf(process, instance) : null;
@@ -638,6 +642,25 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     );
   };
 
+  const failedDeadlines = new WeakMap<object, Deadline>();
+
+  const attemptDeadline = async (
+    process: ProcessRuntime,
+    instanceId: string,
+    instance: ProcessInstance,
+    due: Deadline,
+    context: CausationContext,
+    replay: string | undefined,
+  ): Promise<void> => {
+    try {
+      await runDeadline(process, instanceId, instance, due, context, replay);
+    } catch (error) {
+      const thrown = typeof error === "object" && error !== null ? error : new Error(String(error));
+      failedDeadlines.set(thrown, due);
+      throw thrown;
+    }
+  };
+
   const handleDeadline = async ({
     payload,
     context,
@@ -645,8 +668,11 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
   }: HandleDeadlineArgs): Promise<void> => {
     const process = processes.byName[payload.process];
     if (process === undefined) {
-      if (replay === undefined) return;
-      throw new ConfigurationError(`Process "${payload.process}" is no longer in the registry`);
+      if (replay !== undefined) {
+        throw new ConfigurationError(`Process "${payload.process}" is no longer in the registry`);
+      }
+      await storage.scheduler.cancel(deadlineKey(payload.process, payload.aggregateId));
+      return;
     }
     const instance = await load(process, payload.aggregateId);
     const due = pendingOf(process, instance);
@@ -656,16 +682,27 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
           `Process "${process.name}" has no failed deadline for ${payload.aggregateId}`,
         );
       }
-      await runDeadline(process, payload.aggregateId, instance, due, context, replay);
+      await attemptDeadline(
+        process,
+        payload.aggregateId,
+        instance,
+        due,
+        { ...context, correlationId: instance.correlationId ?? context.correlationId },
+        replay,
+      );
     } else if (
       instance.status === "started" &&
       due !== null &&
       Date.parse(due.at) <= clock.now().getTime()
     ) {
-      await runDeadline(process, payload.aggregateId, instance, due, context, replay);
+      await attemptDeadline(process, payload.aggregateId, instance, due, context, replay);
     }
     await reconcile(process, payload.aggregateId);
   };
+
+  const lostRace = (process: ProcessRuntime, aggregateId: string, error: unknown): boolean =>
+    error instanceof ConcurrencyError &&
+    error.streamId === streamId({ aggregateType: processAggregateType(process.type), aggregateId });
 
   const failDeadline = async ({
     payload,
@@ -674,31 +711,46 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     errorType,
   }: FailDeadlineArgs): Promise<void> => {
     const process = processes.byName[payload.process];
-    if (process === undefined) return;
-    const instance = await load(process, payload.aggregateId);
-    const field = payload.field;
-    if (instance.status !== "started" || instance.reached.has(reachedKey(payload))) {
-      logger.warn("process deadline gave up after it was reached or the process ended", {
-        process: process.name,
-        aggregateId: payload.aggregateId,
-        field,
-        error: errorDetails(error).message,
-      });
+    if (process === undefined) {
+      await storage.scheduler.cancel(deadlineKey(payload.process, payload.aggregateId));
       return;
     }
-    await append(
-      process,
-      payload.aggregateId,
-      instance,
-      PROCESS_EVENTS.failed,
-      { deadline: field, error: errorDetails(error).message },
-      entryContext(process, payload.aggregateId, instance),
-    );
+    const failed =
+      typeof error === "object" && error !== null ? failedDeadlines.get(error) : undefined;
+    for (;;) {
+      const instance = await load(process, payload.aggregateId);
+      if (
+        failed === undefined ||
+        instance.status !== "started" ||
+        instance.reached.has(reachedKey(failed))
+      ) {
+        logger.warn("process deadline gave up outside its handler", {
+          process: process.name,
+          aggregateId: payload.aggregateId,
+          error: errorDetails(error).message,
+        });
+        await reconcile(process, payload.aggregateId);
+        return;
+      }
+      try {
+        await append(
+          process,
+          payload.aggregateId,
+          instance,
+          PROCESS_EVENTS.failed,
+          { deadline: failed.field, error: errorDetails(error).message },
+          entryContext(process, payload.aggregateId, instance),
+        );
+        break;
+      } catch (appendError) {
+        if (!lostRace(process, payload.aggregateId, appendError)) throw appendError;
+      }
+    }
     await reconcile(process, payload.aggregateId);
     await deadLetter(
       process,
       {
-        id: `deadline:${field}`,
+        id: `deadline:${failed.field}`,
         type: PROCESS_DEADLINE_COMMAND,
         aggregateType: processAggregateType(process.type),
         aggregateId: payload.aggregateId,
@@ -736,15 +788,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     failDeadline,
     lostRace: (payload, error) => {
       const process = processes.byName[payload.process];
-      return (
-        error instanceof ConcurrencyError &&
-        process !== undefined &&
-        error.streamId ===
-          streamId({
-            aggregateType: processAggregateType(process.type),
-            aggregateId: payload.aggregateId,
-          })
-      );
+      return process !== undefined && lostRace(process, payload.aggregateId, error);
     },
     retryOf: (name) => {
       const process = processes.byName[name];

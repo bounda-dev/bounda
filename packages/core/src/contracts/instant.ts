@@ -15,6 +15,9 @@ export const instantSchema: z.core.$ZodBranded<z.ZodISODateTime, "Instant", "out
  */
 export type Instant = z.output<typeof instantSchema>;
 
+/**
+ * The signature of `asInstant`.
+ */
 export interface AsInstantFunction {
   (value: Date | string): Instant;
 }

@@ -288,7 +288,7 @@ describe("process deadlines at boot", () => {
         config,
       }),
     ).toThrow(
-      'aggregates.order.processes.reminders: at-paid-at.ts handles "paidAt", which the state does not declare with deadline()',
+      'aggregates.order.processes.reminders: at-paid-at.ts handles "paidAt", which the state does not declare with deadline(); a deadline() wrapped in .describe(), .optional() or the like no longer counts',
     );
   });
 
@@ -747,40 +747,240 @@ describe("process deadlines", () => {
   });
 });
 
-describe("a deadline that gives up after it was reached", () => {
-  it("fails no process, whether it is gone, reached or ended, and records a warning", async () => {
-    reset();
+describe("deadline entries under races and partial failures", () => {
+  interface StepsState {
+    readonly first: Instant | null;
+    readonly second: Instant | null;
+  }
+  interface StepsArgs {
+    readonly state: StepsState;
+    readonly after: ProcessAfterFunction;
+  }
+  const steps: string[] = [];
+  let secondFails = false;
+  const stepsRegistry: Registry = {
+    aggregates: {
+      order: {
+        ...orderAggregateEntry(),
+        processes: {
+          steps: {
+            module: {
+              config: ({ events }: OrderProcessConfigArgs<"OrderPlaced" | "OrderPaid">) => ({
+                startedBy: [events.order.OrderPlaced],
+                timeout: "40d",
+              }),
+              state: ({ z, deadline }: ProcessStateArgs) =>
+                z.object({ first: deadline(), second: deadline() }),
+            },
+            handlers: {
+              order: {
+                orderPlaced: {
+                  handler: ({ state, after: later }: StepsArgs) => ({
+                    ...state,
+                    second: later("24h"),
+                  }),
+                },
+                orderPaid: {
+                  handler: ({ state, after: later }: StepsArgs) => ({
+                    ...state,
+                    first: later("0s"),
+                  }),
+                },
+              },
+            },
+            deadlines: {
+              first: {
+                handler: ({ state, after: later }: StepsArgs) => {
+                  steps.push("first");
+                  return { ...state, first: null, second: later("0s") };
+                },
+              },
+              second: {
+                handler: ({ state }: StepsArgs) => {
+                  steps.push("second");
+                  if (secondFails) throw new ValidationError("second refuses", []);
+                  return { ...state, second: null };
+                },
+              },
+              timeout: {
+                handler: ({ state }: StepsArgs) => {
+                  steps.push("timeout");
+                  return state;
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    readModels: {},
+  };
+  const stepsStream = { aggregateType: "process:Steps", aggregateId: "o-1" };
+  const setUpSteps = async () => {
+    steps.length = 0;
+    secondFails = false;
     const { logger, entries } = createRecordingLogger();
-    const harness = await createReactiveHarness({ registry, logger });
-    const failure = { error: new Error("gone"), attempts: 3, errorType: "terminal" as const };
-    const payload = { aggregateId: "o-1", field: "nextReminder", at: at(DAY) };
-    await harness.processes.failDeadline({
-      payload: { ...payload, process: "order.nope" },
-      ...failure,
-    });
+    const harness = await createReactiveHarness({ registry: stepsRegistry, logger });
+    return { harness, entries };
+  };
+
+  it("keep the entry when the deadline that ran was not the one claimed", async () => {
+    const { harness } = await setUpSteps();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
     await settle(harness);
     harness.clock.advance(DAY);
-    await settle(harness);
-    await harness.processes.failDeadline({
-      payload: { ...payload, process: "order.reminders" },
-      ...failure,
+    const handleDeadline = harness.processes.handleDeadline;
+    const claimed: unknown[] = [];
+    Object.assign(harness.processes, {
+      handleDeadline: async (args: Parameters<typeof handleDeadline>[0]) => {
+        claimed.push((await harness.storage.scheduler.list())[0]?.command.payload);
+        await harness.pipeline.dispatch({
+          type: "PayOrder",
+          payload: { orderId: "o-1", method: "card" },
+        });
+        const appended = Promise.withResolvers<void>();
+        const resume = Promise.withResolvers<void>();
+        const complete = harness.storage.inboxLedger.complete;
+        harness.storage.inboxLedger.complete = async (key) => {
+          harness.storage.inboxLedger.complete = complete;
+          appended.resolve();
+          await resume.promise;
+          return complete(key);
+        };
+        const delivering = harness.dispatcher.processUntilIdle();
+        await appended.promise;
+        await handleDeadline(args);
+        resume.resolve();
+        await delivering;
+      },
     });
-    expect((await lifecycle(harness)).at(-1)?.type).toBe(PROCESS_EVENTS.deadlineReached);
-    await harness.pipeline.dispatch({ type: "ArchiveOrder", payload: { orderId: "o-1" } });
+    expect(await harness.worker.runOnce()).toBe(1);
+    Object.assign(harness.processes, { handleDeadline });
+    expect(claimed).toMatchObject([{ field: "second" }]);
+    expect(steps).toEqual(["first"]);
+    expect(await harness.storage.scheduler.list()).toMatchObject([
+      { command: { payload: { field: "second" } } },
+    ]);
     await settle(harness);
-    await harness.processes.failDeadline({
-      payload: { ...payload, process: "order.reminders", at: at(2 * DAY) },
-      ...failure,
+    expect(steps).toEqual(["first", "second"]);
+    harness.clock.advance(40 * DAY);
+    await settle(harness);
+    expect(steps).toEqual(["first", "second", "timeout"]);
+  });
+
+  it("fail the deadline that threw, even when the entry names one already reached", async () => {
+    const { harness } = await setUpSteps();
+    secondFails = true;
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.pipeline.dispatch({
+      type: "PayOrder",
+      payload: { orderId: "o-1", method: "card" },
     });
-    expect((await lifecycle(harness)).at(-1)?.type).toBe(PROCESS_EVENTS.completed);
+    await harness.dispatcher.processUntilIdle();
+    const schedule = harness.storage.scheduler.schedule;
+    let blip = true;
+    harness.storage.scheduler.schedule = async (args) => {
+      if (blip && (args.command.payload as { field: string }).field === "second") {
+        blip = false;
+        throw new Error("database blip");
+      }
+      return schedule(args);
+    };
+    await harness.worker.runOnce();
+    expect(steps).toEqual(["first"]);
+    expect(await harness.storage.scheduler.list()).toMatchObject([
+      { attempts: 1, command: { payload: { field: "first" } } },
+    ]);
+    harness.clock.advance(HOUR);
+    await settle(harness);
+    expect(steps).toEqual(["first", "second"]);
+    const { events } = await harness.storage.eventStore.load(stepsStream);
+    expect(events.at(-1)).toMatchObject({
+      type: PROCESS_EVENTS.failed,
+      payload: { deadline: "second", error: "second refuses" },
+    });
+    expect(await harness.storage.deadLetterStore.list()).toMatchObject([
+      { eventId: "deadline:second", errorType: "terminal" },
+    ]);
+  });
+
+  it("fail no process for an error outside a deadline handler, and write the entry again", async () => {
+    const { harness, entries } = await setUpSteps();
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await settle(harness);
+    await harness.storage.scheduler.cancel("process-deadline:order.steps:o-1");
+    await harness.processes.failDeadline({
+      payload: { process: "order.steps", aggregateId: "o-1" },
+      error: new Error("database blip"),
+      attempts: 3,
+      errorType: "retriable_exhausted",
+    });
+    const { events } = await harness.storage.eventStore.load(stepsStream);
+    expect(events.at(-1)?.type).toBe(PROCESS_EVENTS.handled);
     expect(await harness.storage.deadLetterStore.list()).toEqual([]);
-    expect(
-      entries.filter(
-        (entry) =>
-          entry.message === "process deadline gave up after it was reached or the process ended",
-      ),
-    ).toHaveLength(2);
+    expect(await harness.storage.scheduler.list()).toMatchObject([
+      { command: { payload: { field: "second" } } },
+    ]);
+    expect(entries).toContainEqual({
+      level: "warn",
+      message: "process deadline gave up outside its handler",
+      fields: { process: "order.steps", aggregateId: "o-1", error: "database blip" },
+    });
+  });
+
+  it("drop the entries of a process the registry no longer has", async () => {
+    const { harness } = await setUpSteps();
+    const entry = {
+      command: {
+        type: "bounda.ProcessDeadline",
+        aggregateId: "o-1",
+        payload: { process: "order.gone", aggregateId: "o-1", field: "x", at: at(0) },
+      },
+      executeAt: new Date(t0),
+      context: { correlationId: "c", causationId: "c", depth: 0 },
+    };
+    await harness.storage.scheduler.schedule({
+      ...entry,
+      dedupeKey: "process-deadline:order.gone:o-1",
+    });
+    await harness.storage.scheduler.schedule({
+      ...entry,
+      dedupeKey: "process-deadline:order.gone:o-2",
+    });
+    expect(await harness.worker.runOnce()).toBe(2);
+    await harness.processes.failDeadline({
+      payload: { process: "order.gone", aggregateId: "o-2" },
+      error: new Error("x"),
+      attempts: 1,
+      errorType: "terminal",
+    });
+    expect(await harness.storage.scheduler.list()).toEqual([]);
+  });
+
+  it("settle each entry of a round on its own when one cannot be settled", async () => {
+    const { harness, entries } = await setUpSteps();
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-2", total: 10 } });
+    await settle(harness);
+    harness.clock.advance(DAY);
+    const load = harness.storage.eventStore.load;
+    harness.storage.eventStore.load = async (args) => {
+      if (args.aggregateId === "o-1" && args.aggregateType === "process:Steps") {
+        throw new Error("disk on fire");
+      }
+      return load(args);
+    };
+    const complete = harness.storage.scheduler.fail;
+    harness.storage.scheduler.fail = async () => {
+      throw new Error("scheduler on fire");
+    };
+    expect(await harness.worker.runOnce()).toBe(2);
+    harness.storage.scheduler.fail = complete;
+    harness.storage.eventStore.load = load;
+    expect(steps).toEqual(["second"]);
+    expect(entries.map((entry) => entry.message)).toContain(
+      "scheduled command could not be settled; its lease will lapse",
+    );
   });
 });
 

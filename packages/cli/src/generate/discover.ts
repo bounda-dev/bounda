@@ -383,7 +383,7 @@ const discoverProcess = async (
         folder,
         keyOf(child) === aggregate
           ? `these are ${aggregate}'s own events; put their handlers in the process directory`
-          : "a process directory holds only index.ts, on-*.ts handlers, collaborators and folders named after other aggregates",
+          : "a process directory holds only index.ts, on-*.ts and at-*.ts handlers, collaborators and folders named after other aggregates",
       );
       continue;
     }

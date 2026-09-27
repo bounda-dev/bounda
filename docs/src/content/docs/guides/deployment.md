@@ -61,7 +61,7 @@ process able to wait for its own writes without running the background loop.
 A host with no background loop at all, such as a serverless function or a Durable Object, drives
 the same work in slices. `processUntilIdle({ maxPasses })` stops after that many rounds and
 resolves to `{ idle }`, `false` when work is left; `app.nextDueAt()` is the earliest moment a
-scheduled command or a process time-out becomes due, or `null`. Together they say when to come
+scheduled command or a process deadline becomes due, or `null`. Together they say when to come
 back:
 
 ```ts

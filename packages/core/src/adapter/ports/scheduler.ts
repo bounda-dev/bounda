@@ -57,6 +57,9 @@ export interface FailScheduledArgs {
   readonly retryAt?: Date;
 }
 
+/**
+ * What `defer` takes: the claim to hand back and when the command becomes due again.
+ */
 export interface DeferScheduledArgs {
   readonly claim: ScheduledClaim;
   readonly executeAt: Date;

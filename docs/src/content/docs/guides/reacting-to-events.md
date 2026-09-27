@@ -96,7 +96,8 @@ export const handler = async ({ state, aggregateId, commands }: Process.Deadline
 
 `instant()` declares a moment the process only records, such as `paidAt`; nothing runs for it.
 Both are ISO 8601 strings in UTC, typed `Instant`; `asInstant` makes one from a date or a string,
-for a handler or a test.
+for a handler or a test. Use `deadline()` as it is: wrapped in `.describe()`, `.optional()` or the
+like it no longer counts as a deadline, and boot says so when its `at-` file is there.
 
 How deadlines behave:
 
@@ -123,7 +124,7 @@ How deadlines behave:
 The time a process may stay open is a deadline too, `timeout`, set from `config.timeout` when the
 process starts. Its handler is `at-timeout.ts`, which receives the same arguments, and reaching it
 ends the process as timed out with the state the handler returns. Boot refuses a `deadline()`
-without its `at-` file, an `at-` file without its `deadline()`, and a field named `timeout`.
+without its `at-` file, an `at-` file without its `deadline()`, and a `deadline()` named `timeout`.
 
 A deadline is not a delay. `delay` on a command or a policy says *do this later*; a deadline says
 *this process expects something by then*, and it lives in the process's history: the state holds

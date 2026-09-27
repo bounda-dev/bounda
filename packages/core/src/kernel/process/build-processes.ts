@@ -93,7 +93,7 @@ const compileDeadlines = (
   for (const field of Object.keys(handlers)) {
     if (field !== TIMEOUT_DEADLINE && !fields.includes(field)) {
       throw new ConfigurationError(
-        `${path}: at-${toKebabCase(field)}.ts handles "${field}", which the state does not declare with deadline()`,
+        `${path}: at-${toKebabCase(field)}.ts handles "${field}", which the state does not declare with deadline(); a deadline() wrapped in .describe(), .optional() or the like no longer counts`,
       );
     }
   }
