@@ -1091,6 +1091,98 @@ describe("events of a failed process", () => {
       PROCESS_EVENTS.resumed,
     ]);
   });
+
+  it("refuse a letter that is not the failure its instance is blocked on, and count nothing behind it", async () => {
+    const context = await setUp();
+    const { harness, deadLetters, settle } = context;
+    await failOnFirstPayment(context);
+    await harness.pipeline.dispatch({ type: "ArchiveOrder", payload: { orderId: "o-1" } });
+    await settle();
+    const [blocking] = await deadLetters.list();
+    if (blocking === undefined) throw new Error("no letter");
+    const { id: _id, status: _status, parked: _parked, ...rest } = blocking;
+    await harness.storage.deadLetterStore.add({ ...rest, id: "stale" });
+    expect(await deadLetters.get("stale")).toMatchObject({ parked: 0 });
+    expect(await deadLetters.get(blocking.id)).toMatchObject({ parked: 1 });
+    await expect(deadLetters.replay("stale")).rejects.toThrow("is failed on another step for o-1");
+    await expect(
+      harness.processes.handleDeadline({
+        payload: { process: "order.tally", aggregateId: "o-1" },
+        context: { correlationId: "c", causationId: "c", depth: 0 },
+        replay: "r",
+        letter: blocking.id,
+      }),
+    ).rejects.toThrow("has no failed deadline for o-1");
+  });
+
+  it("refuse to replay a deadline letter that is not the failure its instance is blocked on", async () => {
+    const context = await setUp();
+    const { harness, deadLetters } = context;
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await context.settle();
+    failing.set("nudge", "terminal");
+    harness.clock.advance(DAY);
+    await context.settle();
+    const [letter] = await deadLetters.list();
+    await expect(
+      harness.processes.handleDeadline({
+        payload: { process: "order.tally", aggregateId: "o-1" },
+        context: { correlationId: "c", causationId: "c", depth: 0 },
+        replay: "r",
+        letter: "stale",
+      }),
+    ).rejects.toThrow("is failed on another step for o-1");
+    failing.delete("nudge");
+    await deadLetters.replay(letter?.id ?? "");
+    expect((await harness.storage.eventStore.load(stream)).events.at(-1)?.type).toBe(
+      PROCESS_EVENTS.resumed,
+    );
+  });
+
+  it("record a parked event's failure once when another drain recorded it first", async () => {
+    const context = await setUp();
+    const { harness, deadLetters, settle } = context;
+    await failOnFirstPayment(context);
+    const order = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    const paid = order.events.find((event) => event.type === "OrderPaid");
+    if (paid === undefined) throw new Error("no payment");
+    await harness.storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "o-1",
+      expectedVersion: order.events.length,
+      events: [{ ...paid, id: "twice", version: order.events.length + 1 }],
+    });
+    await settle();
+    const [letter] = await deadLetters.list();
+    const append = harness.storage.eventStore.append;
+    harness.storage.eventStore.append = async (args) => {
+      const [first] = args.events;
+      if (
+        first?.type === PROCESS_EVENTS.handled &&
+        (first.payload as { eventId?: string }).eventId !== "twice"
+      ) {
+        whileHandling = async () => {
+          await rawAppend(harness, PROCESS_EVENTS.failed, {
+            eventId: "twice",
+            error: "other drain",
+          });
+          failingEvents.set("twice", "terminal");
+        };
+      }
+      return append(args);
+    };
+    await deadLetters.replay(letter?.id ?? "");
+    harness.storage.eventStore.append = append;
+    const failures = (await harness.storage.eventStore.load(stream)).events.filter(
+      (event) =>
+        event.type === PROCESS_EVENTS.failed &&
+        (event.payload as { eventId?: string }).eventId === "twice",
+    );
+    expect(failures).toHaveLength(1);
+  });
 });
 
 describe("a parked event that is handled and completes the process", () => {

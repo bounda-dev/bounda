@@ -840,9 +840,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
   };
 
   const blockedOn = (instance: ProcessInstance, letter: string | undefined): boolean =>
-    letter !== undefined && instance.failure?.letter !== undefined
-      ? instance.failure.letter.id === letter
-      : true;
+    letter === undefined || instance.failure?.letter?.id === letter;
 
   const replay = async ({
     process: name,
@@ -1131,14 +1129,8 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     parkedBehind: async (letter) => {
       const instance = letter.status === "failed" ? await instanceOfLetter(letter) : null;
       const failure = instance?.failure;
-      const current =
-        failure?.letter !== undefined
-          ? failure.letter.id === letter.id
-          : failure?.eventId === letter.eventId ||
-            (failure?.deadline !== undefined &&
-              `deadline:${failure.deadline.field}` === letter.eventId);
-      return instance?.status === "failed" && current
-        ? instance.parked.filter((parked) => parked.eventId !== failure?.eventId).length
+      return instance?.status === "failed" && failure?.letter?.id === letter.id
+        ? instance.parked.filter((parked) => parked.eventId !== failure.eventId).length
         : 0;
     },
     stillParked: async (letter) => {
