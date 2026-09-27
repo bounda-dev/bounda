@@ -294,7 +294,9 @@ An event that does not start the process and finds no open instance is skipped, 
 event for an instance that has completed, timed out or failed: a starting event never reopens
 one. The state a handler returns is parsed with `state`: defaults fill what is missing, keys the schema
 does not declare are dropped, and a state it refuses fails the handler for good, like any other
-terminal error.
+terminal error. The compiler checks it first: the `+types` of every handler asserts that what it
+returns fits the state, so a field of the wrong type, or a plain string where a deadline wants an
+`Instant`, is a type error reported in that `+types` file.
 
 Collaborator files in the process directory reach every handler of the process, the `at-` ones
 included. `index.ts` may export their `Collaborators` type, and `bounda.config.ts` picks the

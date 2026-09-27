@@ -165,6 +165,14 @@ const policyFiles = (
     }),
   );
 
+const handlerModuleType = (path: string): string =>
+  `type HandlerModule = typeof import("${importPath({ from: plusTypesPath(path), to: path })}");`;
+
+const returnCheck: readonly [string, string] = [
+  "ReturnCheck",
+  "core.ProcessHandlerReturnCheck<core.ProcessStateOf<ProcessModule>, HandlerModule>",
+];
+
 const processFiles = (
   model: ProjectModel,
   aggregate: AggregateModel,
@@ -184,8 +192,10 @@ const processFiles = (
       ...process.handlers.map((handler) =>
         render(plusTypesPath(handler.path), typesPath, {
           imports: { generated: true, module: process.path, moduleAlias: "ProcessModule" },
+          extraTypes: [handlerModuleType(handler.path)],
           namespace: "Process",
           members: [
+            returnCheck,
             [
               "HandlerArgs",
               generic(
@@ -209,8 +219,10 @@ const processFiles = (
       files.push(
         render(plusTypesPath(deadline.path), typesPath, {
           imports: { generated: true, module: process.path, moduleAlias: "ProcessModule" },
+          extraTypes: [handlerModuleType(deadline.path)],
           namespace: "Process",
           members: [
+            returnCheck,
             [
               "DeadlineArgs",
               generic(

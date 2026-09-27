@@ -213,7 +213,8 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
 - Process deadlines: `after()` counts from the event's time (in `at-`, from the moment that came
   due), so retries and late runs set the same moment and a daily chain catches up after an
   outage. Each deadline comes due once per moment, earliest first; nothing runs after the process
-  ends. Boot refuses a `deadline()` without its `at-` file and the reverse. Build moments in tests
+  ends. A handler's return is type-checked against the state in its `+types` (`ReturnCheck`):
+  set deadlines with `after()` or `asInstant`, never a plain string. Boot refuses a `deadline()` without its `at-` file and the reverse. Build moments in tests
   with `asInstant`. For "do this later" without process state, keep a delayed command or policy.
 - Projections write through `table` (`upsert`, `insert`, `update`, `delete`, `findOne`,
   `findMany`, `count`). Each batch is one transaction with the read model's

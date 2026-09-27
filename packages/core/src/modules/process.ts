@@ -150,6 +150,26 @@ export type ProcessStateOf<Module> = Module extends {
   : EmptyPayload;
 
 /**
+ * What a process handler may return: the next state, which the `state` schema parses so missing
+ * fields take their defaults, or nothing to keep the state as it is.
+ */
+export type ProcessHandlerResult<State> = Readonly<Partial<State>> | undefined | void;
+
+/**
+ * A process handler module whose `handler` returns a state its process accepts. The `+types` of
+ * every process handler asserts it as `ReturnCheck`, so a handler that returns a plain string for
+ * a deadline, or a field of the wrong type, does not compile; it is not meant to be used in code.
+ */
+export type ProcessHandlerReturnCheck<
+  State,
+  Module extends {
+    readonly handler: (
+      args: never,
+    ) => ProcessHandlerResult<State> | Promise<ProcessHandlerResult<State>>;
+  },
+> = Module;
+
+/**
  * Arguments of an `on-<event>.ts` handler, with the process's collaborators spread at the top
  * level. The handler returns the new process state.
  */

@@ -59,6 +59,8 @@ export type {
   ProcessEntry,
   ProcessHandlerArgs,
   ProcessHandlerModule,
+  ProcessHandlerResult,
+  ProcessHandlerReturnCheck,
   ProcessModule,
   ProcessStateArgs,
   ProcessStateOf,

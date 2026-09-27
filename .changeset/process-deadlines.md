@@ -20,6 +20,9 @@ retried with the process's retry settings, and one that gives up fails the proce
 dead-lettered as `deadline:<field>`; replaying it runs the deadline again. Commands a deadline
 sends start a new chain, so a repeated reminder never reaches `maxChainDepth`. Boot refuses a
 `deadline()` without its `at-` file and an `at-` file without its `deadline()`, naming the file.
+The `+types` of every process handler now checks what the handler returns against the state
+(`Process.ReturnCheck`), so a field of the wrong type, or a plain string for a deadline, no longer
+compiles.
 
 Breaking: the time-out handler is `at-timeout.ts`, typed `Process.DeadlineArgs`, instead of
 `on-timeout.ts` and `Process.TimeoutArgs`; `bounda generate` says so for a file left behind. The

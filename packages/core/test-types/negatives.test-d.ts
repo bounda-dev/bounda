@@ -1,4 +1,10 @@
-import type { Instant, PolicyModule, ProcessDeadlineField } from "@bounda-dev/core";
+import type {
+  Instant,
+  PolicyModule,
+  ProcessDeadlineField,
+  ProcessHandlerReturnCheck,
+  ProcessStateOf,
+} from "@bounda-dev/core";
 import { describe, it } from "vitest";
 import type { Command as PayOrder } from "./fixtures/order-app/app/domain/order/commands/+types/pay-order.ts";
 import type { Command as PlaceOrder } from "./fixtures/order-app/app/domain/order/commands/place-order/+types/index.ts";
@@ -31,6 +37,28 @@ describe("what does not compile", () => {
       nextReminder: after("24x"),
     });
     void handler;
+  });
+
+  it("a handler that returns a state its process refuses", () => {
+    type State = ProcessStateOf<OrderPaymentModule>;
+    type Returning<Result> = { handler: () => Result };
+    type Accepted = [
+      ProcessHandlerReturnCheck<State, Returning<{ reminders: number }>>,
+      ProcessHandlerReturnCheck<State, Returning<Promise<State>>>,
+      ProcessHandlerReturnCheck<State, Returning<undefined>>,
+      ProcessHandlerReturnCheck<State, Returning<{ nextReminder: Instant | null }>>,
+    ];
+    type Plain = Returning<{ nextReminder: string }>;
+    type Wrong = Returning<{ reminders: "1" }>;
+    type Other = Returning<Promise<string>>;
+    // @ts-expect-error a deadline takes an Instant from after() or asInstant, not a plain string
+    type PlainString = ProcessHandlerReturnCheck<State, Plain>;
+    // @ts-expect-error reminders is a number
+    type WrongField = ProcessHandlerReturnCheck<State, Wrong>;
+    // @ts-expect-error a handler returns the next state, not anything else
+    type NotAState = ProcessHandlerReturnCheck<State, Other>;
+    const checks: [Accepted?, PlainString?, WrongField?, NotAState?] = [];
+    void checks;
   });
 
   it("a plain string where an Instant is expected", () => {
