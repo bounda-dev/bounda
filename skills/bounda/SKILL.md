@@ -33,7 +33,7 @@ app/domain/<aggregate>/
   policies/<action>-on-<event>/index.ts   same, with <collaborator>.<implementation>.ts files beside it
   policies/<other-aggregate>/...   the same shapes, reacting to that aggregate's events
   processes/<process>/index.ts     export const config, export const state (optional)
-  processes/<process>/on-<event>.ts, on-timeout.ts   export const handler
+  processes/<process>/on-<event>.ts, at-<deadline>.ts, at-timeout.ts   export const handler
   processes/<process>/<other-aggregate>/on-<event>.ts  handler for that aggregate's event
   processes/<process>/<collaborator>.<implementation>.ts   collaborators of every handler of the process
 app/read/<read-model>/
@@ -117,7 +117,11 @@ export const handler = async ({ event, commands, mailer, idempotencyKey }: Polic
 };
 ```
 
-Process (`processes/order-payment/index.ts` and `on-order-paid.ts`, `on-timeout.ts`):
+Process (`processes/order-payment/index.ts`, `on-order-placed.ts`, `at-payment-deadline.ts`,
+`at-timeout.ts`). A deadline is a state field declared with `deadline()`; a handler schedules it
+with `after("24h")`, moves it by changing it, cancels it with `null`; `at-<field>.ts` runs when it
+comes due and returns the field as `null` or another moment. `instant()` only records a moment.
+`at-timeout.ts` runs at `config.timeout` and ends the process as timed out:
 
 ```ts
 import type { Process } from "./+types/index";
@@ -125,17 +129,27 @@ import type { Process } from "./+types/index";
 export const config = ({ events }: Process.ConfigArgs) => ({
   startedBy: [events.order.OrderPlaced],
   completedBy: [events.order.OrderPaid, events.order.OrderCancelled],
-  timeout: "48h",
+  timeout: "7d",
 });
-export const state = ({ z }: Process.StateArgs) => z.object({ reminders: z.int().default(0) });
+export const state = ({ z, deadline, instant }: Process.StateArgs) =>
+  z.object({ reminders: z.int().default(0), paymentDeadline: deadline(), paidAt: instant() });
 ```
 
 ```ts
-import type { Process } from "./+types/on-timeout";
+import type { Process } from "./+types/on-order-placed";
 
-export const handler = async ({ state, aggregateId, commands }: Process.TimeoutArgs) => {
-  await commands.cancelOrder({ orderId: aggregateId, reason: "payment timeout" });
-  return { ...state, reminders: state.reminders + 1 };
+export const handler = ({ state, after }: Process.HandlerArgs) => ({
+  ...state,
+  paymentDeadline: after("72h"),
+});
+```
+
+```ts
+import type { Process } from "./+types/at-payment-deadline";
+
+export const handler = async ({ state, aggregateId, commands }: Process.DeadlineArgs) => {
+  await commands.cancelOrder({ orderId: aggregateId, reason: "unpaid" });
+  return { ...state, paymentDeadline: null };
 };
 ```
 
@@ -193,9 +207,14 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   after the event, through the scheduler, with the same arguments and retries; use it when the
   effect itself waits, and a delayed command when the decision must see the state at that time.
   Their `idempotencyKey` is the same on every retry for one event (for a
-  timeout, one instance) and new on a dead-letter replay. A collaborator cannot be named after a
-  handler argument (`event`,
-  `commands`, `state`, `aggregateId`, `command`, `events`, `idempotencyKey`).
+  deadline, one field at one moment) and new on a dead-letter replay. A collaborator cannot be
+  named after a handler argument (`event`,
+  `commands`, `state`, `aggregateId`, `command`, `events`, `idempotencyKey`, `after`).
+- Process deadlines: `after()` counts from the event's time (in `at-`, from the moment that came
+  due), so retries and late runs set the same moment and a daily chain catches up after an
+  outage. Each deadline comes due once per moment, earliest first; nothing runs after the process
+  ends. Boot refuses a `deadline()` without its `at-` file and the reverse. Build moments in tests
+  with `asInstant`. For "do this later" without process state, keep a delayed command or policy.
 - Projections write through `table` (`upsert`, `insert`, `update`, `delete`, `findOne`,
   `findMany`, `count`). Each batch is one transaction with the read model's
   checkpoint, so every event is applied exactly once and reading a row to update it

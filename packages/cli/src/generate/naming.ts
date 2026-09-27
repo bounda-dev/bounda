@@ -70,6 +70,21 @@ export const processHandlerEventOf: ProcessHandlerEventOfFunction = (fileName) =
   return match?.[1] === undefined ? null : toCamelCase(match[1]);
 };
 
+const PROCESS_DEADLINE = /^at-([a-z0-9]+(?:-[a-z0-9]+)*)$/;
+
+export interface ProcessDeadlineOfFunction {
+  (fileName: string): string | null;
+}
+
+/**
+ * The deadline field of a process deadline handler file: `at-next-reminder` → `nextReminder`;
+ * `null` when the name does not start with `at-`.
+ */
+export const processDeadlineOf: ProcessDeadlineOfFunction = (fileName) => {
+  const match = PROCESS_DEADLINE.exec(fileName);
+  return match?.[1] === undefined ? null : toCamelCase(match[1]);
+};
+
 const COLLABORATOR = /^([a-z][a-z0-9]*(?:-[a-z0-9]+)*)\.([a-z][a-z0-9]*(?:-[a-z0-9]+)*)$/;
 
 export interface CollaboratorPartsOfFunction {

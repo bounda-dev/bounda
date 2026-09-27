@@ -78,8 +78,8 @@ const validateAggregate = (
         );
       }
     }
-    if (process.timeout !== undefined) {
-      requireFunction(problems, process.timeout, `${base}.processes.${key}.timeout`, "handler");
+    for (const [field, handler] of Object.entries(process.deadlines ?? {})) {
+      requireFunction(problems, handler, `${base}.processes.${key}.deadlines.${field}`, "handler");
     }
     requireImplementations(problems, process.collaborators, `${base}.processes.${key}`);
   }

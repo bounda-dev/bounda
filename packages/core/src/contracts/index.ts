@@ -36,6 +36,8 @@ export type {
   IdGenerator,
 } from "./ids.ts";
 export { createSequentialIdGenerator, uuidV7IdGenerator } from "./ids.ts";
+export type { AsInstantFunction, Instant } from "./instant.ts";
+export { asInstant } from "./instant.ts";
 export type { LogFields, Logger } from "./logger.ts";
 export { silentLogger } from "./logger.ts";
 export type { CausationContext, CommandMetadata, EventMetadata } from "./metadata.ts";

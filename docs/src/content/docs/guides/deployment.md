@@ -173,6 +173,11 @@ failure while its lag still grows. Alert on the lag, which every instance reads 
 database; read `failing`, and the `subscriber failed` log line that names the event, to find out
 why.
 
+`waitingDeadlines`, next to `subscribers`, counts the process deadlines this instance's worker
+holds back until the process runner has handled the events stored before them
+([deadlines](/guides/reacting-to-events/#deadlines)). It stays above zero only while the process
+runner is behind, and each deadline runs anyway after ten rounds.
+
 ## Schema
 
 The adapter creates what it needs on start: the event store, the ledgers and a table per read
@@ -299,8 +304,8 @@ Everything is reported under the scope `@bounda-dev/core`. Spans:
 | `bounda.subscriber <name>` | the dispatcher hands a batch to a projection, the policy runner or the process runner; idle passes produce none | `bounda.subscriber`, `bounda.subscriber.kind`, `bounda.position.after`, `bounda.event.count`, `bounda.outcome` (`advanced`, `held`, `failed`, `moved`) |
 | `bounda.projection <readModel>.<projection>` | a projection handles one event | `bounda.read_model`, `bounda.projection`, the event's id, type and aggregate, `bounda.correlation_id` |
 | `bounda.policy <aggregate>.<policy>` | a policy handler runs | `bounda.policy`, the event's id, type and aggregate, `bounda.correlation_id`, `bounda.attempt` |
-| `bounda.process <aggregate>.<process>` | a process handler runs; `… timeout` for `on-timeout.ts` | `bounda.process`, the event's id, type and aggregate, `bounda.correlation_id`, `bounda.attempt` |
-| `bounda.scheduled <Type>` | the worker runs a due command or a process timeout | `bounda.command.type`, `bounda.aggregate.id`, `bounda.correlation_id`, `bounda.attempt` |
+| `bounda.process <aggregate>.<process>` | a process handler runs; `… at <field>` for an `at-<field>.ts`, `… at timeout` for `at-timeout.ts` | `bounda.process`, the event's id, type and aggregate, `bounda.correlation_id`, `bounda.attempt` |
+| `bounda.scheduled <Type>` | the worker runs a due command or a process deadline (`bounda.ProcessDeadline`) | `bounda.command.type`, `bounda.aggregate.id`, `bounda.correlation_id`, `bounda.attempt` |
 
 A handler that throws marks its span as an error with the message and records the exception.
 

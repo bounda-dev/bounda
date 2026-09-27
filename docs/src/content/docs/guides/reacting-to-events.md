@@ -42,6 +42,93 @@ If you find a policy reading a read model to decide what to do, that is a proces
 written: the state it needs belongs to the process, not to a projection it happens to share with
 the UI.
 
+## Deadlines
+
+A process that has to act at a moment keeps the moment in its state. A field declared with
+`deadline()` is a deadline: `null` while nothing is due, and a moment once a handler sets it with
+`after()`. Changing the value moves it, `null` cancels it, and there is no schedule or cancel call
+besides. Each deadline has a handler named after it, `at-<field>.ts`, which runs when it comes
+due:
+
+```ts
+// processes/order-payment/index.ts
+export const state = ({ z, deadline, instant }: Process.StateArgs) =>
+  z.object({
+    reminders: z.int().default(0),
+    nextReminder: deadline(),
+    paymentDeadline: deadline(),
+    paidAt: instant(),
+  });
+
+// processes/order-payment/on-order-placed.ts
+export const handler = ({ state, after }: Process.HandlerArgs) => ({
+  ...state,
+  nextReminder: after("24h"),
+  paymentDeadline: after("72h"),
+});
+
+// processes/order-payment/on-order-paid.ts
+import { asInstant } from "@bounda-dev/core";
+
+export const handler = ({ state, event }: Process.HandlerArgs) => ({
+  ...state,
+  paidAt: asInstant(event.timestamp),
+  nextReminder: null,
+  paymentDeadline: null,
+});
+
+// processes/order-payment/at-next-reminder.ts
+export const handler = async ({ state, aggregateId, commands, after }: Process.DeadlineArgs) => {
+  await commands.sendReminder({ orderId: aggregateId });
+  return {
+    ...state,
+    reminders: state.reminders + 1,
+    nextReminder: state.reminders < 2 ? after("24h") : null,
+  };
+};
+
+// processes/order-payment/at-payment-deadline.ts
+export const handler = async ({ state, aggregateId, commands }: Process.DeadlineArgs) => {
+  await commands.cancelOrder({ orderId: aggregateId, reason: "unpaid" });
+  return { ...state, paymentDeadline: null, nextReminder: null };
+};
+```
+
+`instant()` declares a moment the process only records, such as `paidAt`; nothing runs for it.
+Both are ISO 8601 strings in UTC, typed `Instant`; `asInstant` makes one from a date or a string,
+for a handler or a test.
+
+How deadlines behave:
+
+- **`after()` counts from what triggered the handler**: the event's time in an `on-<event>.ts`,
+  the moment that came due in an `at-<field>.ts`. A retry, or a handler that runs late, sets the
+  same moment, and a daily reminder does not drift. After an outage a chain catches up: every
+  missed reminder runs in turn, soonest first.
+- **Each deadline comes due once at each moment.** When several are due, the earliest runs first
+  and the field name breaks a tie; a moment already past runs at once. The handler returns the
+  field as `null` or another moment: leaving it at the moment that came due fails the process.
+- **A deadline waits for the events stored before it.** The worker holds a deadline that came due
+  until the process runner has handled every event stored by then, so an `OrderPaid` stored a
+  second before the payment deadline clears it first. When the process runner is stuck, the
+  deadline runs anyway after ten rounds of the worker, and `app.getLag()` counts it in
+  `waitingDeadlines` meanwhile. This is best effort: the aggregate that receives the command still
+  decides, so `cancelOrder` refuses an order that is already paid.
+- **Nothing runs once the process has ended**, whether it completed, timed out or failed.
+- **A failure is handled like an event handler's**: it is retried with the process's back-off, and
+  one that fails for good or runs out of attempts fails the process and is dead-lettered. Losing a
+  race with another write to the instance does not count as an attempt.
+- **The commands a deadline sends start a new chain**, so a reminder repeated every day for months
+  never reaches `maxChainDepth`.
+
+The time a process may stay open is a deadline too, `timeout`, set from `config.timeout` when the
+process starts. Its handler is `at-timeout.ts`, which receives the same arguments, and reaching it
+ends the process as timed out with the state the handler returns. Boot refuses a `deadline()`
+without its `at-` file, an `at-` file without its `deadline()`, and a field named `timeout`.
+
+A deadline is not a delay. `delay` on a command or a policy says *do this later*; a deadline says
+*this process expects something by then*, and it lives in the process's history: the state holds
+it, `ProcessDeadlineReached` records that it came due.
+
 ## What the runtime promises
 
 **Every reaction runs at least once.** Before running a handler the runtime claims
@@ -52,8 +139,8 @@ why a handler that talks to the outside world should be written so that running 
 harmless.
 
 **Every reaction gets an idempotency key.** Policy and process handlers receive
-`idempotencyKey`, a UUID that is the same on every retry of the handler for one event (for
-`on-timeout.ts`, for one instance) and new each time an operator replays the dead letter, so a
+`idempotencyKey`, a UUID that is the same on every retry of the handler for one event (for an
+`at-` handler, for one deadline at one moment) and new each time an operator replays the dead letter, so a
 provider that stored the failed attempt's answer sees a new request. Pass it to the providers that
 accept one:
 
@@ -122,7 +209,7 @@ A few rules keep it correct:
   handler decides from state and returns no events the second time, as `recordConfirmationSent`
   does in the [storefront example](/guides/storefront-example/).
 
-## Retries and deadlines
+## Retries and timeouts
 
 Defaults, when the configuration says nothing:
 
@@ -137,7 +224,7 @@ Two different things are called a timeout, and it is worth keeping them apart:
 
 - **How long one handler run may take** is `runtime.policies.timeout`, 30 seconds by default. It
   governs process handlers too, not only policies — the process runner reads the policy setting.
-- **How long a process may stay open** before `on-timeout.ts` runs is the process's own `timeout`
+- **How long a process may stay open** before `at-timeout.ts` runs is the process's own `timeout`
   in its `config`, falling back to `runtime.processes.timeout`, 7 days by default.
 
 Change them per app, or per aggregate:
@@ -188,17 +275,19 @@ What a replay does depends on the kind:
   inbox ledger is bypassed on purpose: it already says the handler ran, and you are asking for
   another run.
 - **Process**: the handler runs again for the stored event with the instance's current state. A
-  process that had failed is back to `started`, its timeout is re-armed at the original deadline
-  (or right now, if that is already past), and an event that completes the process completes it.
-- **Command**: the dropped command is dispatched again with the payload the letter recorded. A
-  dropped process timeout runs the process's `on-timeout.ts` if the process is still open.
+  process that had failed is back to `started`, its deadlines are scheduled again at their moments
+  (one already past runs at once), and an event that completes the process completes it. A letter
+  for a deadline (`deadline:<field>`) runs the handler of the deadline the process failed on, with
+  a new `idempotencyKey`, and schedules the next one.
+- **Command**: the dropped command is dispatched again with the payload the letter recorded.
 
 The same operations are on the app as `app.deadLetters` — `list`, `count`, `get`, `replay` and
 `discard` — for a script or an admin route.
 
 ## Delaying a command
 
-A policy can put a command in the future, which is how reminders and expiries are written:
+A policy can put a command in the future; in a process, reminders and expiries are
+[deadlines](#deadlines) instead:
 
 ```ts
 await commands.sendReminder({ orderId: event.aggregateId }, { delay: "24h" });

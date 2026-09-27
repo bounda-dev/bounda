@@ -7,7 +7,7 @@ Policies and processes can have collaborators, the way commands do, so a call to
 world can run after the events it reacts to are stored instead of inside a command handler that a
 concurrency conflict reruns. A policy with collaborators is a directory,
 `policies/<action>-on-<event>/index.ts`, with `<collaborator>.<implementation>.ts` files next to
-it; in a process, those files sit in its directory and reach every handler, `on-timeout.ts`
+it; in a process, those files sit in its directory and reach every handler, the `at-` ones
 included. Handlers receive them next to `event` and `commands`, typed from a `Collaborators`
 export in `index.ts` or inferred from the implementations. `bounda.config.ts` picks an
 implementation under `policies` and `processes`, by aggregate and then by key:

@@ -16,7 +16,7 @@ const order: Registry["aggregates"][string] = {
     orderPayment: {
       module: { config: () => ({ startedBy: ["order.OrderPlaced"] }) },
       handlers: { order: { orderPaid: { handler: noop } } },
-      timeout: { handler: noop },
+      deadlines: { timeout: { handler: noop } },
     },
   },
 };
@@ -157,13 +157,13 @@ describe("validateRegistry", () => {
     expect(() => validateRegistry(registry)).toThrow('export "initialState" must be an object');
   });
 
-  it("checks process config, handlers and timeout handler", () => {
+  it("checks process config, handlers and deadline handlers", () => {
     const registry = withOrder({
       processes: {
         orderPayment: {
           module: {} as never,
           handlers: { order: { orderPaid: {} as never } },
-          timeout: {} as never,
+          deadlines: { timeout: {} as never },
         },
       },
     });
@@ -174,7 +174,7 @@ describe("validateRegistry", () => {
       /handlers\.order\.orderPaid: missing export "handler"/,
     );
     expect(() => validateRegistry(registry)).toThrow(
-      /orderPayment\.timeout: missing export "handler"/,
+      /orderPayment\.deadlines\.timeout: missing export "handler"/,
     );
   });
 });

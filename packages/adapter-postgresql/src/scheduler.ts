@@ -139,6 +139,16 @@ export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ d
         claim,
       );
     },
+    defer: async ({ claim, executeAt }) => {
+      await releaseUnless(
+        await db.all(
+          `UPDATE ${table} SET "execute_at" = $1, "claimed_at" = NULL, "claim_id" = NULL
+         WHERE "dedupe_key" = $2 AND "claim_id" = $3 AND "revision" = $4 RETURNING "dedupe_key"`,
+          [executeAt.toISOString(), claim.dedupeKey, claim.claimId, claim.revision],
+        ),
+        claim,
+      );
+    },
     list: async ({ limit, offset = 0 } = {}) =>
       (
         await db.all(

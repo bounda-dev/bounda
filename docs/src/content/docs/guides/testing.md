@@ -62,8 +62,8 @@ await expect(
 ## Time
 
 The clock starts at `2026-01-01T00:00:00Z` and stays there until you advance it. A scheduled
-command becomes due, a delayed policy runs and a process time-out fires, because the clock moved — never because the
-test waited.
+command becomes due, a delayed policy runs and a process deadline comes due because the clock
+moved — never because the test waited.
 
 ```ts
 const HOUR = 3_600_000;
@@ -90,6 +90,13 @@ expect(await app.queries.getOrderSummary({ orderId: ORDER })).toMatchObject({
   cancelledAt: expect.any(Date),
 });
 ```
+
+One advance is enough however many deadlines it passes: `processUntilIdle()` runs a daily reminder
+for every day the clock skipped, in order, before it resolves.
+
+A test that builds a process state by hand, say to call a handler on its own, needs its moments
+typed as `Instant`, which a plain string is not: `asInstant` from `@bounda-dev/core` makes one from
+a date or an ISO 8601 string in UTC, `nextReminder: asInstant("2026-01-02T00:00:00.000Z")`.
 
 Pass `now` to start somewhere else: `createTestApp({ registry, now: new Date("2026-06-01") })`.
 

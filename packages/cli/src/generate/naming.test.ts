@@ -5,6 +5,7 @@ import {
   joinKeys,
   keyOf,
   policyTriggerOf,
+  processDeadlineOf,
   processHandlerEventOf,
   typeNameOf,
   uniqueAliases,
@@ -40,6 +41,15 @@ describe("policyTriggerOf", () => {
     expect(policyTriggerOf("notify-on-customer-registered")).toBe("customerRegistered");
     expect(policyTriggerOf("cleanup")).toBeNull();
     expect(policyTriggerOf("on-order-paid")).toBeNull();
+  });
+});
+
+describe("processDeadlineOf", () => {
+  it("takes the field after at-", () => {
+    expect(processDeadlineOf("at-next-reminder")).toBe("nextReminder");
+    expect(processDeadlineOf("at-timeout")).toBe("timeout");
+    expect(processDeadlineOf("on-timeout")).toBeNull();
+    expect(processDeadlineOf("at-")).toBeNull();
   });
 });
 

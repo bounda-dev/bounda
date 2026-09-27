@@ -78,7 +78,7 @@ const model: ProjectModel = {
           path: "/project/app/domain/order/processes/follow-up/index.ts",
           relativePath: "app/domain/order/processes/follow-up/index.ts",
           handlers: [],
-          timeout: null,
+          deadlines: [],
           collaborators: [],
           declaresCollaborators: false,
           collaboratorsTypeName: "OrderFollowUpProcessCollaborators",

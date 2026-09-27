@@ -1,8 +1,10 @@
-import type { LooseDurationInput } from "../contracts/duration.ts";
+import type { z } from "zod";
+import type { DurationInput, LooseDurationInput } from "../contracts/duration.ts";
+import type { Instant, instantSchema } from "../contracts/instant.ts";
 import type { CollaboratorImplementations } from "./command.ts";
 import type { EventModules, EventTypeNames, StoredEventOf } from "./event.ts";
 import type { TypeNameOf } from "./naming.ts";
-import type { EmptyPayload, InferPayload, PayloadArgs } from "./payload.ts";
+import type { EmptyPayload, PayloadArgs } from "./payload.ts";
 
 /**
  * The event modules of every aggregate of the app, keyed by aggregate.
@@ -54,9 +56,54 @@ export type ProcessCorrelate<Events extends AppEventModules> = {
 };
 
 /**
- * Arguments of a process `state` schema function.
+ * The schema `instant()` returns: a moment the process only records, `null` until it is set.
  */
-export type ProcessStateArgs = PayloadArgs;
+export type InstantFieldSchema = z.ZodDefault<z.ZodNullable<typeof instantSchema>>;
+
+/**
+ * The schema `deadline()` returns: a moment the process acts at, `null` while nothing is due. It
+ * only counts as a deadline as a field of the state object, as `deadline()` returned it.
+ */
+export type DeadlineFieldSchema = InstantFieldSchema & { readonly "~deadline": true };
+
+/**
+ * Arguments of a process `state` schema function. `deadline()` declares a moment the process acts
+ * at: setting it to `after("24h")` in a handler schedules its `at-<field>.ts`, changing it moves
+ * it and `null` cancels it. `instant()` declares a moment it only records.
+ */
+export interface ProcessStateArgs extends PayloadArgs {
+  readonly deadline: () => DeadlineFieldSchema;
+  readonly instant: () => InstantFieldSchema;
+}
+
+/**
+ * The deadline fields of a process module: the fields of its `state` declared with `deadline()`.
+ */
+export type ProcessDeadlineFields<Module> = Module extends {
+  readonly state: (args: never) => { readonly shape: infer Shape };
+}
+  ? {
+      readonly [Key in keyof Shape]: Shape[Key] extends { readonly "~deadline": true }
+        ? Key
+        : never;
+    }[keyof Shape] &
+      string
+  : never;
+
+/**
+ * A deadline field of a process module by name. A name that is not a `deadline()` of its `state`
+ * does not compile: what the `+types` of an `at-<field>.ts` checks its file name with.
+ */
+export type ProcessDeadlineField<Module, Field extends ProcessDeadlineFields<Module>> = Field;
+
+/**
+ * A moment some time after what triggered the handler: the event's time in an `on-<event>.ts`,
+ * the deadline that came due in an `at-<field>.ts`. So a retry, or a handler that runs late,
+ * schedules the same moment.
+ */
+export interface ProcessAfterFunction {
+  (delay: DurationInput): Instant;
+}
 
 /**
  * The shape of a process `index.ts`: a `config`, an optional `state` schema and, when it listens
@@ -64,14 +111,14 @@ export type ProcessStateArgs = PayloadArgs;
  */
 export interface ProcessModule {
   readonly config: (args: never) => ProcessConfig;
-  readonly state?: (args: PayloadArgs) => unknown;
+  readonly state?: (args: ProcessStateArgs) => unknown;
   readonly correlate?: Readonly<
     Record<string, Readonly<Record<string, ((event: never) => string | null) | undefined>>>
   >;
 }
 
 /**
- * The shape of an `on-<event>.ts` or `on-timeout.ts` handler module.
+ * The shape of an `on-<event>.ts` or `at-<deadline>.ts` handler module.
  */
 export interface ProcessHandlerModule {
   readonly handler: (args: never) => unknown;
@@ -79,22 +126,27 @@ export interface ProcessHandlerModule {
 
 /**
  * A process in the registry: its module, one handler module per event it reacts to, grouped by
- * the event's aggregate and keyed by its camelCase name (`handlers.payment.paymentFailed`), the
- * optional timeout handler and the collaborator implementations found in its directory, which
- * every handler of the process receives.
+ * the event's aggregate and keyed by its camelCase name (`handlers.payment.paymentFailed`), one
+ * per deadline keyed by its field (`deadlines.nextReminder`, `deadlines.timeout` for
+ * `at-timeout.ts`) and the collaborator implementations found in its directory, which every
+ * handler of the process receives.
  */
 export interface ProcessEntry {
   readonly module: ProcessModule;
   readonly handlers: Readonly<Record<string, Readonly<Record<string, ProcessHandlerModule>>>>;
-  readonly timeout?: ProcessHandlerModule;
+  readonly deadlines?: Readonly<Record<string, ProcessHandlerModule>>;
   readonly collaborators?: CollaboratorImplementations;
 }
 
 /**
  * The state type of a process: inferred from its `state` schema, empty when absent.
  */
-export type ProcessStateOf<Module> = Module extends { readonly state: infer F }
-  ? InferPayload<F>
+export type ProcessStateOf<Module> = Module extends {
+  readonly state: (args: never) => infer Schema;
+}
+  ? Schema extends z.ZodType
+    ? z.output<Schema>
+    : never
   : EmptyPayload;
 
 /**
@@ -116,19 +168,35 @@ export type ProcessHandlerArgs<
    * same on every automatic retry for this event, new when an operator replays a dead letter.
    */
   readonly idempotencyKey: string;
+  /**
+   * A moment some time after the event: `nextReminder: after("24h")` schedules a deadline.
+   */
+  readonly after: ProcessAfterFunction;
 } & Readonly<Collaborators>;
 
 /**
- * Arguments of an `on-timeout.ts` handler, with the process's collaborators spread at the top
- * level. The handler returns the new process state.
+ * Arguments of an `at-<field>.ts` handler, with the process's collaborators spread at the top
+ * level: `state` holds the deadline that came due as `Field`. The handler returns the new process
+ * state, where the field is `null` or another moment, never the one that came due. For
+ * `at-timeout.ts`, `Field` is `never` and the process ends as `timed_out` whatever it returns.
  */
-export type ProcessTimeoutArgs<State, Commands, Collaborators extends object = EmptyPayload> = {
-  readonly state: Readonly<State>;
+export type ProcessDeadlineArgs<
+  State,
+  Field extends keyof State,
+  Commands,
+  Collaborators extends object = EmptyPayload,
+> = {
+  readonly state: Readonly<State & { readonly [Key in Field]: Instant }>;
   readonly aggregateId: string;
   readonly commands: Commands;
   /**
-   * A key to hand the providers this handler calls: the same on every retry of this time-out, new
-   * when an operator replays it from the dead letters.
+   * A key to hand the providers this handler calls: the same on every retry of this deadline at
+   * this moment, new when an operator replays it from the dead letters.
    */
   readonly idempotencyKey: string;
+  /**
+   * A moment some time after the deadline that came due: `nextReminder: after("24h")` repeats it
+   * every day, without drifting when a run is late.
+   */
+  readonly after: ProcessAfterFunction;
 } & Readonly<Collaborators>;

@@ -130,6 +130,15 @@ export const createMemoryScheduler: CreateMemorySchedulerFunction = () => {
         lastError: error,
       });
     },
+    defer: async ({ claim, executeAt }) => {
+      const entry = heldBy(claim);
+      if (entry === undefined) return;
+      release(
+        entry.revision === claim.revision
+          ? { ...entry, executeAt: executeAt.toISOString() }
+          : entry,
+      );
+    },
     list: async ({ limit, offset = 0 } = {}) =>
       [...entries.values()]
         .sort(byExecuteAt)

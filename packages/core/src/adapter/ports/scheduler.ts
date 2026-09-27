@@ -57,6 +57,11 @@ export interface FailScheduledArgs {
   readonly retryAt?: Date;
 }
 
+export interface DeferScheduledArgs {
+  readonly claim: ScheduledClaim;
+  readonly executeAt: Date;
+}
+
 export interface NextDueAtArgs {
   /**
    * The lease `claimDue` is called with: a claimed command becomes claimable again once it has
@@ -102,5 +107,10 @@ export interface Scheduler {
    * `complete`.
    */
   fail(args: FailScheduledArgs): Promise<void>;
+  /**
+   * Hands a claimed command back to run again at `executeAt` without counting an attempt: for
+   * work that was not ready yet rather than work that failed. Same rules as `complete`.
+   */
+  defer(args: DeferScheduledArgs): Promise<void>;
   list(args?: ListScheduledArgs): Promise<readonly ScheduledCommand[]>;
 }

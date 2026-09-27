@@ -87,12 +87,22 @@ export interface ProcessHandlerModel extends ModuleRef {
   readonly eventKey: string;
 }
 
+export interface ProcessDeadlineModel extends ModuleRef {
+  /**
+   * The state field from `at-<field>.ts`: `nextReminder`, or `timeout` for `at-timeout.ts`.
+   */
+  readonly field: string;
+}
+
 export interface ProcessModel extends CollaboratorOwnerModel {
   readonly key: string;
   readonly typeName: string;
   readonly directory: string;
   readonly handlers: readonly ProcessHandlerModel[];
-  readonly timeout: ModuleRef | null;
+  /**
+   * One per `at-<field>.ts`, in file name order.
+   */
+  readonly deadlines: readonly ProcessDeadlineModel[];
 }
 
 export interface AggregateModel {

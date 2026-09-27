@@ -7,7 +7,7 @@ import type { PayloadArgs } from "../modules/payload.ts";
 import type { Registry } from "../modules/registry.ts";
 import type { FieldsArgs } from "../modules/view.ts";
 import { createApp } from "./app.ts";
-import { PROCESS_TIMEOUT_COMMAND } from "./process/runner.ts";
+import { PROCESS_DEADLINE_COMMAND } from "./process/runner.ts";
 import { createReactiveHarness } from "./reactive-harness.ts";
 import { ATTRIBUTES, METRICS, TELEMETRY_SCOPE, traced } from "./telemetry.ts";
 import { type FakeTelemetry, installFakeTelemetry } from "./telemetry-fake.ts";
@@ -39,7 +39,7 @@ const registry = {
             state: ({ z }: PayloadArgs) => z.object({ paid: z.boolean().default(false) }),
           },
           handlers: { order: { orderPaid: { handler: () => ({ paid: true }) } } },
-          timeout: { handler: () => undefined },
+          deadlines: { timeout: { handler: () => undefined } },
         },
       },
     },
@@ -287,7 +287,7 @@ describe("telemetry", () => {
     expect(await telemetry.observe()).toEqual([]);
   });
 
-  it("traces a process timeout through the scheduled run that fires it", async () => {
+  it("traces a process deadline through the scheduled run that fires it", async () => {
     const telemetry = installFakeTelemetry();
     active = telemetry;
     const harness = await createReactiveHarness({
@@ -300,14 +300,14 @@ describe("telemetry", () => {
     expect(await harness.worker.runOnce()).toBe(1);
     expect(named(telemetry, "bounda.scheduled")).toEqual([
       expect.objectContaining({
-        name: `bounda.scheduled ${PROCESS_TIMEOUT_COMMAND}`,
+        name: `bounda.scheduled ${PROCESS_DEADLINE_COMMAND}`,
         attributes: expect.objectContaining({ [ATTRIBUTES.aggregateId]: "o-1" }),
         ended: true,
       }),
     ]);
     expect(named(telemetry, "bounda.process")).toEqual([
       expect.objectContaining({
-        name: "bounda.process order.orderPayment timeout",
+        name: "bounda.process order.orderPayment at timeout",
         attributes: {
           [ATTRIBUTES.process]: "order.orderPayment",
           [ATTRIBUTES.aggregateType]: "order",

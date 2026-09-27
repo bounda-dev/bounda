@@ -1,4 +1,5 @@
 import type { StoredEvent } from "../../contracts/event.ts";
+import { reachedKey } from "./deadlines.ts";
 
 /**
  * Status of a process instance, derived from its lifecycle events.
@@ -12,12 +13,14 @@ export type ProcessStatus = "started" | "completed" | "failed" | "timed_out";
 export const PROCESS_EVENTS: {
   readonly started: "ProcessStarted";
   readonly handled: "ProcessHandled";
+  readonly deadlineReached: "ProcessDeadlineReached";
   readonly completed: "ProcessCompleted";
   readonly timedOut: "ProcessTimedOut";
   readonly failed: "ProcessFailed";
 } = {
   started: "ProcessStarted",
   handled: "ProcessHandled",
+  deadlineReached: "ProcessDeadlineReached",
   completed: "ProcessCompleted",
   timedOut: "ProcessTimedOut",
   failed: "ProcessFailed",
@@ -45,10 +48,19 @@ export interface ProcessInstance {
   readonly version: number;
   readonly handledEventIds: ReadonlySet<string>;
   /**
-   * When the process started, from its `ProcessStarted` event; `null` for an instance that does
-   * not exist. What a replay measures the original deadline from.
+   * When the process times out, from its `ProcessStarted` event; `null` for an instance that does
+   * not exist.
    */
-  readonly startedAt: string | null;
+  readonly timeoutAt: string | null;
+  /**
+   * The deadlines the instance has reached, as `reachedKey` writes them: each field comes due once
+   * at each moment.
+   */
+  readonly reached: ReadonlySet<string>;
+  /**
+   * The correlation id of the event that started the process, which its deadlines carry on.
+   */
+  readonly correlationId: string | null;
 }
 
 export interface FoldProcessArgs {
@@ -66,26 +78,36 @@ const stateOf = (event: StoredEvent, fallback: object): object => {
 };
 
 /**
- * Rebuilds a process instance from its lifecycle events. A `ProcessHandled` after a
- * `ProcessFailed` is what a replayed dead letter writes, and it puts the process back to
- * `started`.
+ * Rebuilds a process instance from its lifecycle events. A `ProcessHandled` or a
+ * `ProcessDeadlineReached` after a `ProcessFailed` is what a replayed dead letter writes, and it
+ * puts the process back to `started`.
  */
 export const foldProcess: FoldProcessFunction = ({ initialState, events }) => {
   const handled = new Set<string>();
+  const reached = new Set<string>();
   let status: ProcessStatus = "started";
   let state = initialState;
-  let startedAt: string | null = null;
+  let timeoutAt: string | null = null;
+  let correlationId: string | null = null;
   for (const event of events) {
     switch (event.type) {
-      case PROCESS_EVENTS.started:
+      case PROCESS_EVENTS.started: {
         state = stateOf(event, state);
-        startedAt = event.timestamp;
+        timeoutAt = (event.payload as { readonly timeoutAt?: string }).timeoutAt ?? null;
+        correlationId = event.metadata.correlationId;
         break;
+      }
       case PROCESS_EVENTS.handled: {
         state = stateOf(event, state);
         if (status === "failed") status = "started";
         const payload = event.payload as { readonly eventId?: string };
         if (payload.eventId !== undefined) handled.add(payload.eventId);
+        break;
+      }
+      case PROCESS_EVENTS.deadlineReached: {
+        state = stateOf(event, state);
+        if (status === "failed") status = "started";
+        reached.add(reachedKey(event.payload as { readonly field: string; readonly at: string }));
         break;
       }
       case PROCESS_EVENTS.completed:
@@ -108,6 +130,8 @@ export const foldProcess: FoldProcessFunction = ({ initialState, events }) => {
     state,
     version: events.length,
     handledEventIds: handled,
-    startedAt,
+    timeoutAt,
+    reached,
+    correlationId,
   };
 };

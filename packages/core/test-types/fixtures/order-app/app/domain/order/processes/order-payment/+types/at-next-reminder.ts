@@ -4,8 +4,9 @@ import type * as generated from "../../../../../../.bounda/types.ts";
 type ProcessModule = typeof import("../index.ts");
 
 export declare namespace Process {
-  type TimeoutArgs = core.ProcessTimeoutArgs<
+  type DeadlineArgs = core.ProcessDeadlineArgs<
     core.ProcessStateOf<ProcessModule>,
+    core.ProcessDeadlineField<ProcessModule, "nextReminder">,
     generated.Commands,
     import("../index.ts").Collaborators
   >;

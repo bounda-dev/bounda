@@ -10,7 +10,8 @@ export const config = ({ events }: Process.ConfigArgs) => ({
   timeout: "48h",
 });
 
-export const state = ({ z }: Process.StateArgs) => z.object({ reminders: z.int().default(0) });
+export const state = ({ z, deadline, instant }: Process.StateArgs) =>
+  z.object({ reminders: z.int().default(0), nextReminder: deadline(), paidAt: instant() });
 
 export const correlate: Process.Correlate = {
   customer: { CustomerRegistered: () => null },

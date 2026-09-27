@@ -1,5 +1,5 @@
 import type { StoragePorts } from "../../adapter/adapter.ts";
-import type { ResolvedConfig } from "../../config/types.ts";
+import type { ResolvedConfig, ResolvedRetryConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import {
   ConcurrencyError,
@@ -21,6 +21,7 @@ import { classifyFailure, errorDetails, retryDelayMs } from "../shared/retry.ts"
 import { withTimeout } from "../shared/timeout.ts";
 import { ATTRIBUTES, deadLettered, traced } from "../telemetry.ts";
 import type { ProcessesRuntime, ProcessRuntime } from "./build-processes.ts";
+import { afterFrom, type Deadline, nextDeadline, TIMEOUT_DEADLINE } from "./deadlines.ts";
 import {
   foldProcess,
   PROCESS_EVENTS,
@@ -31,14 +32,37 @@ import {
 export const PROCESSES_SUBSCRIBER: "processes" = "processes";
 
 /**
- * The command type the scheduler holds for a process timeout. Routed to the process runner, never
- * to a user command handler.
+ * The command type the scheduler holds for the next deadline of a process instance. Routed to the
+ * process runner, never to a user command handler.
  */
-export const PROCESS_TIMEOUT_COMMAND: "bounda.ProcessTimeout" = "bounda.ProcessTimeout";
+export const PROCESS_DEADLINE_COMMAND: "bounda.ProcessDeadline" = "bounda.ProcessDeadline";
 
-export interface ProcessTimeoutPayload {
+/**
+ * What the scheduler holds for a process instance. `field` and `at` say which deadline the entry
+ * was scheduled for; the runner works out which one is due from the instance when it runs.
+ */
+export interface ProcessDeadlinePayload {
   readonly process: string;
   readonly aggregateId: string;
+  readonly field: string;
+  readonly at: string;
+}
+
+export interface HandleDeadlineArgs {
+  readonly payload: Pick<ProcessDeadlinePayload, "process" | "aggregateId">;
+  readonly context: CausationContext;
+  /**
+   * Set when an operator replays a deadline from the dead letters: the handler runs for a process
+   * that failed on it, and its `idempotencyKey` is new.
+   */
+  readonly replay?: string | undefined;
+}
+
+export interface FailDeadlineArgs {
+  readonly payload: Pick<ProcessDeadlinePayload, "process" | "aggregateId">;
+  readonly error: unknown;
+  readonly attempts: number;
+  readonly errorType: "terminal" | "retriable_exhausted";
 }
 
 export interface ReplayProcessArgs {
@@ -55,21 +79,26 @@ export interface ReplayProcessArgs {
 
 export interface ProcessRunner extends Subscriber {
   /**
-   * Called by the scheduled-command worker when a process timeout comes due.
+   * Called by the scheduled-command worker when the entry of an instance comes due: runs the
+   * handler of the earliest deadline that is due and records `ProcessDeadlineReached`, or
+   * `ProcessTimedOut` for the timeout, then schedules the next one. When nothing is due, it only
+   * schedules the next one.
    */
-  handleTimeout(args: {
-    readonly payload: ProcessTimeoutPayload;
-    readonly context: CausationContext;
-    /**
-     * Set when an operator replays a dropped timeout, so its `idempotencyKey` is new.
-     */
-    readonly replay?: string | undefined;
-  }): Promise<void>;
+  handleDeadline(args: HandleDeadlineArgs): Promise<void>;
+  /**
+   * How a failed deadline of the process is retried: as its event handlers are.
+   */
+  retryOf(process: string): ResolvedRetryConfig;
+  /**
+   * Called by the scheduled-command worker when a deadline handler gave up: records
+   * `ProcessFailed` and dead-letters the deadline, so a replay runs it again.
+   */
+  failDeadline(args: FailDeadlineArgs): Promise<void>;
   /**
    * Runs a process handler again for an event whose earlier run was dead-lettered, ignoring the
    * inbox ledger. On success the instance gets its `ProcessHandled`, a process that had failed
-   * is back to `started` with its timeout re-armed at the original deadline, and an event that
-   * completes the process completes it.
+   * is back to `started` with its deadlines scheduled again, and an event that completes the
+   * process completes it.
    */
   replay(args: ReplayProcessArgs): Promise<void>;
 }
@@ -91,17 +120,23 @@ export interface CreateProcessRunnerFunction {
 
 type Outcome = "done" | "hold";
 
-const timeoutKey = (process: ProcessRuntime, aggregateId: string): string =>
-  `process-timeout:${process.name}:${aggregateId}`;
+const deadlineKey = (process: ProcessRuntime, aggregateId: string): string =>
+  `process-deadline:${process.name}:${aggregateId}`;
 
 /**
  * Runs processes as internal aggregates: each instance is a stream of lifecycle events under
  * `process:<Type>:<aggregateId>`, appended with optimistic concurrency. An event that starts a
- * process writes `ProcessStarted` and schedules the timeout; an event with a handler, the starting
- * one included, runs it and writes `ProcessHandled` with the new state; a completing event writes
- * `ProcessCompleted` and cancels the timeout. Failures follow the same rules as policies: terminal ones are recorded as
- * `ProcessFailed` and dead-lettered, retriable ones hold the checkpoint and are retried with
- * back-off through the inbox ledger.
+ * process writes `ProcessStarted` with the moment it times out; an event with a handler, the
+ * starting one included, runs it and writes `ProcessHandled` with the new state; a completing
+ * event writes `ProcessCompleted`. Failures follow the same rules as policies: terminal ones are
+ * recorded as `ProcessFailed` and dead-lettered, retriable ones hold the checkpoint and are
+ * retried with back-off through the inbox ledger.
+ *
+ * Deadlines are state: after every delivery to a running instance, and after every change the
+ * runner makes to it, the instance's one scheduler entry is set to its earliest pending deadline,
+ * or removed when there is none. The instance is read again after the entry is written, and the
+ * write repeated if the stream moved meanwhile, so the last write always reflects the latest
+ * state.
  */
 export const createProcessRunner: CreateProcessRunnerFunction = ({
   processes,
@@ -128,6 +163,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     type: string,
     payload: unknown,
     context: CausationContext,
+    id: string = ids.next(),
   ): Promise<void> => {
     const aggregateType = processAggregateType(process.type);
     await storage.eventStore.append({
@@ -136,7 +172,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
       expectedVersion: instance.version,
       events: [
         {
-          id: ids.next(),
+          id,
           aggregateType,
           aggregateId,
           version: instance.version + 1,
@@ -167,11 +203,60 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     process: ProcessRuntime,
     context: CausationContext,
     idempotencyKey: string,
+    triggeredAt: string,
   ): Record<string, unknown> => ({
     ...process.collaborators,
     commands: facadeFor(context, idempotencyKey),
     idempotencyKey,
+    after: afterFrom(triggeredAt),
   });
+
+  const entryContext = (
+    process: ProcessRuntime,
+    instanceId: string,
+    instance: ProcessInstance,
+  ): CausationContext => ({
+    correlationId: instance.correlationId ?? instanceId,
+    causationId: `${processAggregateType(process.type)}:${instanceId}`,
+    depth: 0,
+  });
+
+  const pendingOf = (process: ProcessRuntime, instance: ProcessInstance): Deadline | null =>
+    nextDeadline({
+      fields: process.deadlineFields,
+      state: instance.state,
+      timeoutAt: instance.timeoutAt,
+      reached: instance.reached,
+    });
+
+  const reconcile = async (process: ProcessRuntime, instanceId: string): Promise<void> => {
+    const dedupeKey = deadlineKey(process, instanceId);
+    let instance = await load(process, instanceId);
+    for (;;) {
+      const next = instance.status === "started" ? pendingOf(process, instance) : null;
+      if (next === null) {
+        await storage.scheduler.cancel(dedupeKey);
+      } else {
+        await storage.scheduler.schedule({
+          dedupeKey,
+          command: {
+            type: PROCESS_DEADLINE_COMMAND,
+            aggregateId: instanceId,
+            payload: {
+              process: process.name,
+              aggregateId: instanceId,
+              ...next,
+            } satisfies ProcessDeadlinePayload,
+          },
+          executeAt: new Date(next.at),
+          context: entryContext(process, instanceId, instance),
+        });
+      }
+      const current = await load(process, instanceId);
+      if (current.version === instance.version) return;
+      instance = current;
+    }
+  };
 
   const validState = (process: ProcessRuntime, state: unknown): object => {
     if (process.stateSchema === null) return state as object;
@@ -190,7 +275,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
 
   const deadLetter = async (
     process: ProcessRuntime,
-    event: StoredEvent,
+    subject: Pick<StoredEvent, "id" | "type" | "aggregateType" | "aggregateId">,
     error: unknown,
     attempts: number,
     errorType: "terminal" | "retriable_exhausted",
@@ -201,10 +286,10 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
       id: ids.next(),
       kind: "process",
       subscriber: process.name,
-      eventId: event.id,
-      eventType: event.type,
-      aggregateType: event.aggregateType,
-      aggregateId: event.aggregateId,
+      eventId: subject.id,
+      eventType: subject.type,
+      aggregateType: subject.aggregateType,
+      aggregateId: subject.aggregateId,
       errorType,
       errorMessage: details.message,
       ...(details.stack === undefined ? {} : { errorStack: details.stack }),
@@ -215,7 +300,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     deadLettered({ kind: "process", subscriber: process.name, errorType });
     logger.warn("process dead-lettered", {
       process: process.name,
-      eventId: event.id,
+      eventId: subject.id,
       errorType,
       attempts,
     });
@@ -228,28 +313,22 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     instance: ProcessInstance,
   ): Promise<ProcessInstance> => {
     const context = contextOf(event);
+    const timeoutAt = new Date(Date.parse(event.timestamp) + process.timeoutMs).toISOString();
     await append(
       process,
       instanceId,
       instance,
       PROCESS_EVENTS.started,
-      { state: process.initialState, eventId: event.id },
+      { state: process.initialState, eventId: event.id, timeoutAt },
       context,
     );
-    await storage.scheduler.schedule({
-      dedupeKey: timeoutKey(process, instanceId),
-      command: {
-        type: PROCESS_TIMEOUT_COMMAND,
-        aggregateId: instanceId,
-        payload: {
-          process: process.name,
-          aggregateId: instanceId,
-        } satisfies ProcessTimeoutPayload,
-      },
-      executeAt: new Date(clock.now().getTime() + process.timeoutMs),
-      context,
-    });
-    return { ...instance, exists: true, version: instance.version + 1 };
+    return {
+      ...instance,
+      exists: true,
+      version: instance.version + 1,
+      timeoutAt,
+      correlationId: context.correlationId,
+    };
   };
 
   const handle = async (
@@ -309,7 +388,6 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
           { eventId: event.id, error: errorDetails(error).message },
           context,
         );
-        await storage.scheduler.cancel(timeoutKey(process, instanceId));
         await deadLetter(process, event, error, attempts, "terminal");
         await storage.inboxLedger.complete(key);
         return "done";
@@ -324,7 +402,6 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
           { eventId: event.id, error: errorDetails(error).message },
           context,
         );
-        await storage.scheduler.cancel(timeoutKey(process, instanceId));
         await deadLetter(process, event, error, attempts, "retriable_exhausted");
         await storage.inboxLedger.complete(key);
         return "done";
@@ -370,6 +447,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
                   subject: event.id,
                   replay,
                 }),
+                event.timestamp,
               ),
               event,
               state: instance.state,
@@ -399,7 +477,6 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
       { eventId: event.id },
       contextOf(event),
     );
-    await storage.scheduler.cancel(timeoutKey(process, instanceId));
   };
 
   const uncorrelated = async (
@@ -437,9 +514,9 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     }
     if (instance.status !== "started") return "done";
     const outcome = await handle(process, event, instanceId, instance);
-    if (outcome === "hold") return "hold";
-    await completeIfDue(process, event, instanceId);
-    return "done";
+    if (outcome === "done") await completeIfDue(process, event, instanceId);
+    await reconcile(process, instanceId);
+    return outcome;
   };
 
   const replay = async ({ process: name, event, replay }: ReplayProcessArgs): Promise<void> => {
@@ -468,25 +545,154 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
       { state, eventId: event.id, eventType: event.type },
       context,
     );
-    if (instance.status === "failed") {
-      const deadline =
-        new Date(instance.startedAt ?? event.timestamp).getTime() + process.timeoutMs;
-      await storage.scheduler.schedule({
-        dedupeKey: timeoutKey(process, instanceId),
-        command: {
-          type: PROCESS_TIMEOUT_COMMAND,
-          aggregateId: instanceId,
-          payload: {
-            process: process.name,
-            aggregateId: instanceId,
-          } satisfies ProcessTimeoutPayload,
-        },
-        executeAt: new Date(Math.max(deadline, clock.now().getTime())),
-        context,
-      });
-    }
     await completeIfDue(process, event, instanceId);
+    await reconcile(process, instanceId);
     logger.info("process handler replayed", { process: process.name, eventId: event.id });
+  };
+
+  const runDeadline = async (
+    process: ProcessRuntime,
+    instanceId: string,
+    instance: ProcessInstance,
+    due: Deadline,
+    context: CausationContext,
+    replay: string | undefined,
+  ): Promise<void> => {
+    const reachedId = ids.next();
+    const handler = process.deadlineHandlers[due.field];
+    const returned =
+      handler === undefined
+        ? instance.state
+        : await traced({
+            name: `bounda.process ${process.name} at ${due.field}`,
+            attributes: {
+              [ATTRIBUTES.process]: process.name,
+              [ATTRIBUTES.aggregateType]: process.aggregate,
+              [ATTRIBUTES.aggregateId]: instanceId,
+              [ATTRIBUTES.correlationId]: context.correlationId,
+            },
+            run: () =>
+              withTimeout({
+                run: () =>
+                  handler({
+                    ...handlerArgs(
+                      process,
+                      { correlationId: context.correlationId, causationId: reachedId, depth: 0 },
+                      deriveIdempotencyKey({
+                        kind: "process",
+                        handler: process.name,
+                        subject: `${instanceId}:deadline:${due.field}:${due.at}`,
+                        replay,
+                      }),
+                      due.at,
+                    ),
+                    state: instance.state,
+                    aggregateId: instanceId,
+                  }),
+                timeoutMs: config.forAggregate(process.aggregate).policies.timeoutMs,
+                subject: `process ${process.name} at ${due.field}`,
+                clock,
+              }),
+          });
+    const state = validState(process, returned ?? instance.state);
+    if (due.field === TIMEOUT_DEADLINE) {
+      await append(
+        process,
+        instanceId,
+        instance,
+        PROCESS_EVENTS.timedOut,
+        { state },
+        context,
+        reachedId,
+      );
+      return;
+    }
+    const kept = (state as Readonly<Record<string, unknown>>)[due.field];
+    if (Date.parse(String(kept)) === Date.parse(due.at)) {
+      throw new ValidationError(
+        `Process ${process.name} left the deadline "${due.field}" at the moment that came due`,
+        [{ path: [due.field], message: "Set it to null, or to another moment with after()" }],
+      );
+    }
+    await append(
+      process,
+      instanceId,
+      instance,
+      PROCESS_EVENTS.deadlineReached,
+      { field: due.field, at: due.at, state },
+      context,
+      reachedId,
+    );
+  };
+
+  const handleDeadline = async ({
+    payload,
+    context,
+    replay,
+  }: HandleDeadlineArgs): Promise<void> => {
+    const process = processes.byName[payload.process];
+    if (process === undefined) {
+      if (replay === undefined) return;
+      throw new ConfigurationError(`Process "${payload.process}" is no longer in the registry`);
+    }
+    const instance = await load(process, payload.aggregateId);
+    const due = pendingOf(process, instance);
+    if (replay !== undefined) {
+      if (instance.status !== "failed" || due === null) {
+        throw new NotFoundError(
+          `Process "${process.name}" has no failed deadline for ${payload.aggregateId}`,
+        );
+      }
+      await runDeadline(process, payload.aggregateId, instance, due, context, replay);
+    } else if (
+      instance.status === "started" &&
+      due !== null &&
+      Date.parse(due.at) <= clock.now().getTime()
+    ) {
+      await runDeadline(process, payload.aggregateId, instance, due, context, replay);
+    }
+    await reconcile(process, payload.aggregateId);
+  };
+
+  const failDeadline = async ({
+    payload,
+    error,
+    attempts,
+    errorType,
+  }: FailDeadlineArgs): Promise<void> => {
+    const process = processes.byName[payload.process];
+    if (process === undefined) return;
+    const instance = await load(process, payload.aggregateId);
+    const field = instance.status === "started" ? pendingOf(process, instance)?.field : undefined;
+    if (field === undefined) {
+      logger.warn("process deadline gave up with no deadline pending", {
+        process: process.name,
+        aggregateId: payload.aggregateId,
+        error: errorDetails(error).message,
+      });
+      return;
+    }
+    await append(
+      process,
+      payload.aggregateId,
+      instance,
+      PROCESS_EVENTS.failed,
+      { deadline: field, error: errorDetails(error).message },
+      entryContext(process, payload.aggregateId, instance),
+    );
+    await reconcile(process, payload.aggregateId);
+    await deadLetter(
+      process,
+      {
+        id: `deadline:${field}`,
+        type: PROCESS_DEADLINE_COMMAND,
+        aggregateType: processAggregateType(process.type),
+        aggregateId: payload.aggregateId,
+      },
+      error,
+      attempts,
+      errorType,
+    );
   };
 
   return {
@@ -512,52 +718,13 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
       return !hold;
     },
     replay,
-    handleTimeout: async ({ payload, context, replay }) => {
-      const process = processes.byName[payload.process];
-      if (process === undefined) return;
-      const instance = await load(process, payload.aggregateId);
-      if (!instance.exists || instance.status !== "started") return;
-      const next =
-        process.timeoutHandler === null
-          ? instance.state
-          : await traced({
-              name: `bounda.process ${process.name} timeout`,
-              attributes: {
-                [ATTRIBUTES.process]: process.name,
-                [ATTRIBUTES.aggregateType]: process.aggregate,
-                [ATTRIBUTES.aggregateId]: payload.aggregateId,
-                [ATTRIBUTES.correlationId]: context.correlationId,
-              },
-              run: () =>
-                withTimeout({
-                  run: () =>
-                    process.timeoutHandler?.({
-                      ...handlerArgs(
-                        process,
-                        context,
-                        deriveIdempotencyKey({
-                          kind: "process",
-                          handler: process.name,
-                          subject: `${payload.aggregateId}:timeout`,
-                          replay,
-                        }),
-                      ),
-                      state: instance.state,
-                      aggregateId: payload.aggregateId,
-                    }),
-                  timeoutMs: config.forAggregate(process.aggregate).policies.timeoutMs,
-                  subject: `process ${process.name} timeout`,
-                  clock,
-                }),
-            });
-      await append(
-        process,
-        payload.aggregateId,
-        instance,
-        PROCESS_EVENTS.timedOut,
-        { state: validState(process, next ?? instance.state) },
-        context,
-      );
+    handleDeadline,
+    failDeadline,
+    retryOf: (name) => {
+      const process = processes.byName[name];
+      return process === undefined
+        ? config.runtime.processes.retry
+        : config.forAggregate(process.aggregate).processes.retry;
     },
   };
 };

@@ -15,10 +15,11 @@ import * as customerGreetOnCustomerRegistered from "../app/domain/order/policies
 import * as notifyOnOrderPlaced from "../app/domain/order/policies/notify-on-order-placed/index.ts";
 import mailerMemory from "../app/domain/order/policies/notify-on-order-placed/mailer.memory.ts";
 import * as sendReceiptOnOrderPaid from "../app/domain/order/policies/send-receipt-on-order-paid.ts";
+import * as orderPaymentAtNextReminder from "../app/domain/order/processes/order-payment/at-next-reminder.ts";
+import * as orderPaymentAtTimeout from "../app/domain/order/processes/order-payment/at-timeout.ts";
 import * as orderPaymentOnCustomerCustomerRegistered from "../app/domain/order/processes/order-payment/customer/on-customer-registered.ts";
 import * as orderPayment from "../app/domain/order/processes/order-payment/index.ts";
 import * as orderPaymentOnOrderPaid from "../app/domain/order/processes/order-payment/on-order-paid.ts";
-import * as orderPaymentOnTimeout from "../app/domain/order/processes/order-payment/on-timeout.ts";
 import remindersFake from "../app/domain/order/processes/order-payment/reminders.fake.ts";
 import * as orderState from "../app/domain/order/state.ts";
 import * as orderSummaryOnOrderOrderPaid from "../app/read/order-summary/projections/order/order-paid.ts";
@@ -64,7 +65,7 @@ export const registry = {
         orderPayment: {
           module: orderPayment,
           handlers: { order: { orderPaid: orderPaymentOnOrderPaid }, customer: { customerRegistered: orderPaymentOnCustomerCustomerRegistered } },
-          timeout: orderPaymentOnTimeout,
+          deadlines: { nextReminder: orderPaymentAtNextReminder, timeout: orderPaymentAtTimeout },
           collaborators: { reminders: { fake: remindersFake } },
         },
       },

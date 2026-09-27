@@ -69,7 +69,7 @@ export interface BoundaApp<R extends Registry = AppRegistry> {
    */
   processUntilIdle(options?: ProcessUntilIdleOptions): Promise<ProcessUntilIdleResult>;
   /**
-   * The earliest moment a scheduled command or a process timeout becomes due, or `null` when
+   * The earliest moment a scheduled command or a process deadline becomes due, or `null` when
    * nothing is scheduled. A host without a polling worker arms its wake-up for it.
    */
   nextDueAt(): Promise<Date | null>;
@@ -99,7 +99,15 @@ export interface BoundaApp<R extends Registry = AppRegistry> {
    * The handler runs that gave up, and what to do about them: list, replay or discard.
    */
   readonly deadLetters: DeadLetters;
-  getLag(): Promise<DispatcherLag>;
+  getLag(): Promise<AppLag>;
+}
+
+/**
+ * How far behind the background work is: every subscriber's lag, and how many process deadlines
+ * that came due this process holds back until the process runner catches up.
+ */
+export interface AppLag extends DispatcherLag {
+  readonly waitingDeadlines: number;
 }
 
 export interface RebuildReadModelOptions {
@@ -328,6 +336,9 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
       return paused.flat();
     },
     deadLetters,
-    getLag: () => dispatcher.getLag(),
+    getLag: async () => ({
+      ...(await dispatcher.getLag()),
+      waitingDeadlines: worker.waitingDeadlines(),
+    }),
   };
 };

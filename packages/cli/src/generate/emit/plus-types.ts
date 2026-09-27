@@ -30,6 +30,8 @@ export interface PlusTypesPathFunction {
 export const plusTypesPath: PlusTypesPathFunction = (modulePath) =>
   join(dirname(modulePath), "+types", basename(modulePath));
 
+const TIMEOUT_DEADLINE = "timeout";
+
 const generic = (name: string, args: readonly string[]): string =>
   args.length === 1
     ? `${name}<${args[0]}>`
@@ -203,20 +205,26 @@ const processFiles = (
         }),
       ),
     ];
-    if (process.timeout !== null) {
+    for (const deadline of process.deadlines) {
       files.push(
-        render(plusTypesPath(process.timeout.path), typesPath, {
+        render(plusTypesPath(deadline.path), typesPath, {
           imports: { generated: true, module: process.path, moduleAlias: "ProcessModule" },
           namespace: "Process",
           members: [
             [
-              "TimeoutArgs",
+              "DeadlineArgs",
               generic(
-                "core.ProcessTimeoutArgs",
+                "core.ProcessDeadlineArgs",
                 withCollaborators(
-                  ["core.ProcessStateOf<ProcessModule>", "generated.Commands"],
+                  [
+                    "core.ProcessStateOf<ProcessModule>",
+                    deadline.field === TIMEOUT_DEADLINE
+                      ? "never"
+                      : `core.ProcessDeadlineField<ProcessModule, ${JSON.stringify(deadline.field)}>`,
+                    "generated.Commands",
+                  ],
                   process,
-                  plusTypesPath(process.timeout.path),
+                  plusTypesPath(deadline.path),
                 ),
               ),
             ],

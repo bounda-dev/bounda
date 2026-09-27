@@ -1,6 +1,11 @@
-import type { Process } from "./+types/on-timeout";
+import type { Process } from "./+types/at-timeout";
 
-export const handler = async ({ state, aggregateId, commands, reminders }: Process.TimeoutArgs) => {
+export const handler = async ({
+  state,
+  aggregateId,
+  commands,
+  reminders,
+}: Process.DeadlineArgs) => {
   await reminders.remind(aggregateId);
   await commands.cancelOrder({ orderId: aggregateId, reason: "payment timeout" });
   return { ...state, reminders: state.reminders + 1 };

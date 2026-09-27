@@ -9,7 +9,7 @@ import type { CausationContext } from "../../contracts/metadata.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
 import type { PoliciesRuntime } from "../policy/build-policies.ts";
 import type { PolicyExecutor } from "../policy/executor.ts";
-import { PROCESS_TIMEOUT_COMMAND, type ProcessRunner } from "../process/runner.ts";
+import { PROCESS_DEADLINE_COMMAND, type ProcessRunner } from "../process/runner.ts";
 
 /**
  * What an operator can do with the handler runs that gave up. `list`, `count` and `get` read the
@@ -21,8 +21,8 @@ export interface DeadLetters {
   count(args?: ListDeadLettersArgs): Promise<number>;
   get(id: string): Promise<DeadLetter | null>;
   /**
-   * Runs the failed handler once more: the policy or process handler for the stored event, or
-   * the dropped command with its recorded payload. Rejects with the handler's error when it
+   * Runs the failed handler once more: the policy or process handler for the stored event, the
+   * process deadline that failed, or the dropped command with its recorded payload. Rejects with the handler's error when it
    * fails again, and the letter stays `failed`.
    */
   replay(id: string): Promise<DeadLetter>;
@@ -94,20 +94,12 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
     });
   };
 
-  const replayCommand = async (letter: DeadLetter, replay: string): Promise<void> => {
+  const replayCommand = async (letter: DeadLetter): Promise<void> => {
     const context: CausationContext = {
       correlationId: ids.next(),
       causationId: letter.id,
       depth: 0,
     };
-    if (letter.eventType === PROCESS_TIMEOUT_COMMAND) {
-      await processes.handleTimeout({
-        payload: { process: letter.aggregateType, aggregateId: letter.aggregateId },
-        context,
-        replay,
-      });
-      return;
-    }
     if (letter.payload === undefined) {
       throw new ConfigurationError(
         `Dead letter "${letter.id}" was recorded without the command's payload and cannot be replayed`,
@@ -121,13 +113,20 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
       case "policy":
         return replayPolicy(letter, replay);
       case "process":
+        if (letter.eventType === PROCESS_DEADLINE_COMMAND) {
+          return processes.handleDeadline({
+            payload: { process: letter.subscriber, aggregateId: letter.aggregateId },
+            context: { correlationId: ids.next(), causationId: letter.id, depth: 0 },
+            replay,
+          });
+        }
         return processes.replay({
           process: letter.subscriber,
           event: await eventOf(letter),
           replay,
         });
       case "command":
-        return replayCommand(letter, replay);
+        return replayCommand(letter);
       case "projection":
         throw new ConfigurationError(
           `Dead letter "${letter.id}" is a projection failure; rebuild the read model instead`,

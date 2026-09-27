@@ -2,13 +2,14 @@ import type { StoragePorts } from "../../adapter/adapter.ts";
 import type { ClaimedCommand, ScheduledCommand } from "../../adapter/ports/scheduler.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
+import { ConcurrencyError } from "../../contracts/errors.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { type CommandPipeline, scheduledCommandId } from "../command/pipeline.ts";
 import type { DelayedPolicies } from "../policy/delayed.ts";
-import type { ProcessRunner, ProcessTimeoutPayload } from "../process/runner.ts";
-import { PROCESS_TIMEOUT_COMMAND } from "../process/runner.ts";
+import type { ProcessDeadlinePayload, ProcessRunner } from "../process/runner.ts";
+import { PROCESS_DEADLINE_COMMAND, PROCESSES_SUBSCRIBER } from "../process/runner.ts";
 import { createMutex } from "../shared/mutex.ts";
 import { classifyFailure, errorDetails, retryDelayMs } from "../shared/retry.ts";
 import {
@@ -30,6 +31,11 @@ export interface ScheduledCommandWorker {
    * longest handler timeout any aggregate is configured with, so no run outlives its claim.
    */
   readonly leaseMs: number;
+  /**
+   * How many process deadlines that came due this worker holds back until the process runner has
+   * handled the events stored before them.
+   */
+  waitingDeadlines(): number;
 }
 
 export interface CreateScheduledCommandWorkerArgs {
@@ -50,15 +56,33 @@ export interface CreateScheduledCommandWorkerFunction {
 
 const CLAIM_LIMIT = 50;
 
+/**
+ * How many rounds a process deadline that came due waits for the process runner to handle the
+ * events stored before it, before it runs anyway.
+ */
+export const DEADLINE_WAIT_ROUNDS = 10;
+
+interface DeadlineWait {
+  readonly head: number;
+  readonly rounds: number;
+}
+
 type GiveUpReason = "terminal" | "retriable_exhausted";
 
 /**
- * Executes scheduled work: user commands dispatched with `delay`, process timeouts and delayed
+ * Executes scheduled work: user commands dispatched with `delay`, process deadlines and delayed
  * policy runs. Due entries are claimed with a lease so two workers never run the same one. Work
  * that fails for a transient reason is rescheduled with back-off; work that fails for good, or
  * exhausts its retries, is dropped from the schedule and dead-lettered. A dropped command is also
  * recorded as a `CommandFailed` system event on its aggregate's stream; a dropped policy run is
- * dead-lettered as the policy's, so a replay runs the policy again.
+ * dead-lettered as the policy's, so a replay runs the policy again; a dropped deadline fails its
+ * process.
+ *
+ * A process deadline waits, for at most `DEADLINE_WAIT_ROUNDS` rounds, until the process runner
+ * has handled every event stored when the worker first claimed it, so an event that cancels the
+ * deadline is seen first. The check is best effort: the commands a deadline sends are still
+ * checked by the aggregates that receive them. A deadline that waits, or whose instance moved
+ * while it ran, goes back to the schedule without counting an attempt.
  */
 export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction = ({
   storage,
@@ -81,8 +105,13 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       ...Object.values(config.runtime.overrides).map((override) => override.policies.timeoutMs),
     ) * 2;
 
-  const isTimeout = (entry: ScheduledCommand): boolean =>
-    entry.command.type === PROCESS_TIMEOUT_COMMAND;
+  const waits = new Map<string, DeadlineWait>();
+
+  const isDeadline = (entry: ScheduledCommand): boolean =>
+    entry.command.type === PROCESS_DEADLINE_COMMAND;
+
+  const deadlineOf = (entry: ScheduledCommand): ProcessDeadlinePayload =>
+    entry.command.payload as ProcessDeadlinePayload;
 
   const recordFailure = async (
     entry: ScheduledCommand,
@@ -152,7 +181,16 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       await giveUpPolicy(entry, error, attempts, reason);
       return;
     }
-    if (!isTimeout(entry)) await recordFailure(entry, error, attempts);
+    if (isDeadline(entry)) {
+      await processes.failDeadline({
+        payload: deadlineOf(entry),
+        error,
+        attempts,
+        errorType: reason,
+      });
+      return;
+    }
+    await recordFailure(entry, error, attempts);
     const now = clock.now().toISOString();
     await storage.deadLetterStore.add({
       id: ids.next(),
@@ -160,9 +198,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       subscriber: `scheduled:${entry.command.type}`,
       eventId: entry.dedupeKey,
       eventType: entry.command.type,
-      aggregateType: isTimeout(entry)
-        ? (entry.command.payload as ProcessTimeoutPayload).process
-        : (aggregates.commandsByType[entry.command.type]?.aggregate.name ?? ""),
+      aggregateType: aggregates.commandsByType[entry.command.type]?.aggregate.name ?? "",
       aggregateId: entry.command.aggregateId,
       errorType: reason,
       errorMessage: details.message,
@@ -197,11 +233,8 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       run: async () => {
         if (delayedPolicies.isDelayedPolicy(entry)) {
           await delayedPolicies.run(entry);
-        } else if (isTimeout(entry)) {
-          await processes.handleTimeout({
-            payload: entry.command.payload as ProcessTimeoutPayload,
-            context: entry.context,
-          });
+        } else if (isDeadline(entry)) {
+          await processes.handleDeadline({ payload: deadlineOf(entry), context: entry.context });
         } else {
           await pipeline.dispatch({
             type: entry.command.type,
@@ -213,16 +246,25 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       },
     });
 
+  const deferToItsTime = (entry: ClaimedCommand): Promise<void> =>
+    storage.scheduler.defer({ claim: entry, executeAt: new Date(entry.executeAt) });
+
   const execute = async (entry: ClaimedCommand): Promise<void> => {
     try {
       await run(entry);
       await storage.scheduler.complete(entry);
     } catch (error) {
+      if (isDeadline(entry) && error instanceof ConcurrencyError) {
+        await deferToItsTime(entry);
+        return;
+      }
       const attempts = entry.attempts + 1;
       const kind = classifyFailure(error);
       const retry = delayedPolicies.isDelayedPolicy(entry)
         ? delayedPolicies.retryOf(entry)
-        : defaultRetry;
+        : isDeadline(entry)
+          ? processes.retryOf(deadlineOf(entry).process)
+          : defaultRetry;
       if (kind === "retriable" && retry.strategy !== "none" && attempts < retry.maxAttempts) {
         const retryAt = new Date(
           clock.now().getTime() + retryDelayMs({ retry, attempt: attempts }),
@@ -248,6 +290,26 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     }
   };
 
+  const isDeadlineReady = async (
+    due: readonly ClaimedCommand[],
+  ): Promise<(entry: ClaimedCommand) => boolean> => {
+    if (!due.some(isDeadline)) return () => true;
+    const [head, position] = await Promise.all([
+      storage.eventStore.lastPosition(),
+      storage.checkpointStore.get(PROCESSES_SUBSCRIBER),
+    ]);
+    return (entry) => {
+      if (!isDeadline(entry)) return true;
+      const wait = waits.get(entry.dedupeKey) ?? { head, rounds: 0 };
+      if (position >= wait.head || wait.rounds >= DEADLINE_WAIT_ROUNDS) {
+        waits.delete(entry.dedupeKey);
+        return true;
+      }
+      waits.set(entry.dedupeKey, { head: wait.head, rounds: wait.rounds + 1 });
+      return false;
+    };
+  };
+
   const runOnce = (): Promise<number> =>
     mutex.run(async () => {
       const due = await storage.scheduler.claimDue({
@@ -255,7 +317,14 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
         limit: CLAIM_LIMIT,
         leaseMs,
       });
-      for (const entry of due) await execute(entry);
+      const ready = await isDeadlineReady(due);
+      for (const entry of due) {
+        if (ready(entry)) await execute(entry);
+        else await deferToItsTime(entry);
+      }
+      for (const key of waits.keys()) {
+        if (!due.some((entry) => entry.dedupeKey === key)) waits.delete(key);
+      }
       return due.length;
     });
 
@@ -282,5 +351,6 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     },
     runOnce,
     leaseMs,
+    waitingDeadlines: () => waits.size,
   };
 };

@@ -32,7 +32,8 @@ app/
         order-payment/              a process
           index.ts                  config and state
           on-order-paid.ts          handler for OrderPaid
-          on-timeout.ts             handler for the time-out
+          at-next-reminder.ts       handler for the deadline nextReminder
+          at-timeout.ts             handler for the time-out
           gateway.stripe.ts         a collaborator of every handler of the process
   read/
     order-summary/                  a read model
@@ -220,9 +221,9 @@ makes must be safe to repeat.
 
 A process follows an instance of its aggregate over time. `index.ts` says which events start and
 complete it and how long it may stay open; `on-<event>.ts` handles an event while it is open;
-`on-timeout.ts` runs when the time is up. `config` receives every event of the app by aggregate,
-`events.order.OrderPlaced`, so a process can start, continue or finish on another aggregate's
-events.
+`at-<deadline>.ts` runs when a deadline of its state comes due, and `at-timeout.ts` when the time
+is up. `config` receives every event of the app by aggregate, `events.order.OrderPlaced`, so a
+process can start, continue or finish on another aggregate's events.
 
 ```ts
 // app/domain/order/processes/order-payment/index.ts
@@ -234,8 +235,43 @@ export const config = ({ events }: Process.ConfigArgs) => ({
   timeout: "48h",
 });
 
-export const state = ({ z }: Process.StateArgs) => z.object({ reminders: z.int().default(0) });
+export const state = ({ z, deadline, instant }: Process.StateArgs) =>
+  z.object({ reminders: z.int().default(0), nextReminder: deadline(), paidAt: instant() });
 ```
+
+A deadline is a field of the state declared with `deadline()`: a moment, or `null` while nothing is
+due. A handler schedules it by giving it a value with `after()`, moves it by changing the value and
+cancels it with `null`; there is nothing else to call. Each deadline has its handler, named after
+the field: `nextReminder` runs `at-next-reminder.ts`. `instant()` declares a moment the process only
+records, such as `paidAt`, and runs nothing. Boot refuses a `deadline()` without its `at-` file and
+an `at-` file without its `deadline()`, and the name `timeout` is kept for `config.timeout`.
+
+```ts
+// app/domain/order/processes/order-payment/on-order-placed.ts
+import type { Process } from "./+types/on-order-placed";
+
+export const handler = ({ state, after }: Process.HandlerArgs) => ({
+  ...state,
+  nextReminder: after("24h"),
+});
+```
+
+```ts
+// app/domain/order/processes/order-payment/at-next-reminder.ts
+import type { Process } from "./+types/at-next-reminder";
+
+export const handler = async ({ state, aggregateId, reminders, after }: Process.DeadlineArgs) => {
+  await reminders.remind(aggregateId);
+  return {
+    ...state,
+    reminders: state.reminders + 1,
+    nextReminder: state.reminders < 2 ? after("24h") : null,
+  };
+};
+```
+
+`at-timeout.ts` receives the same arguments and ends the process as timed out, keeping the state it
+returns. See [deadlines](/guides/reacting-to-events/#deadlines) for when they run.
 
 A handler for another aggregate's event sits in a folder named after that aggregate,
 `processes/order-payment/payment/on-payment-failed.ts`. Such an event carries that aggregate's id,
@@ -260,7 +296,7 @@ one. The state a handler returns is parsed with `state`: defaults fill what is m
 does not declare are dropped, and a state it refuses fails the handler for good, like any other
 terminal error.
 
-Collaborator files in the process directory reach every handler of the process, `on-timeout.ts`
+Collaborator files in the process directory reach every handler of the process, the `at-` ones
 included. `index.ts` may export their `Collaborators` type, and `bounda.config.ts` picks the
 implementations under `processes`: `processes: { order: { orderPayment: { gateway: { use: "stripe" } } } }`.
 

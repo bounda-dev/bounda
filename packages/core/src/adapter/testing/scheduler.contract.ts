@@ -178,6 +178,51 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
       expect((await scheduler.list()).map((entry) => entry.dedupeKey)).toEqual(["a"]);
     });
 
+    it("hands a deferred command out again at its new time without counting an attempt", async () => {
+      await scheduler.schedule({
+        dedupeKey: "a",
+        command: testCommand("1"),
+        executeAt: at(0),
+        context: testContext,
+      });
+      const [claimed] = await scheduler.claimDue({ now: at(1), limit: 10, leaseMs: 60_000 });
+      if (claimed === undefined) throw new Error("nothing claimed");
+      await scheduler.defer({ claim: claimed, executeAt: at(3_000) });
+
+      expect(await scheduler.claimDue({ now: at(2_999), limit: 10, leaseMs: 60_000 })).toEqual([]);
+      const [again] = await scheduler.claimDue({ now: at(3_000), limit: 10, leaseMs: 60_000 });
+      expect(again).toMatchObject({
+        dedupeKey: "a",
+        attempts: 0,
+        executeAt: at(3_000).toISOString(),
+      });
+    });
+
+    it("keeps what a command was rescheduled to, or who took it over, when a defer comes late", async () => {
+      const entry: ScheduleArgs = {
+        dedupeKey: "a",
+        command: testCommand("1"),
+        executeAt: at(0),
+        context: testContext,
+      };
+      await scheduler.schedule(entry);
+      const [first] = await scheduler.claimDue({ now: at(1), limit: 10, leaseMs: 60_000 });
+      if (first === undefined) throw new Error("nothing claimed");
+      await scheduler.schedule({ ...entry, executeAt: at(50_000) });
+      await scheduler.defer({ claim: first, executeAt: at(2) });
+      expect(await scheduler.claimDue({ now: at(2), limit: 10, leaseMs: 60_000 })).toEqual([]);
+      expect(
+        await scheduler.claimDue({ now: at(50_000), limit: 10, leaseMs: 60_000 }),
+      ).toHaveLength(1);
+
+      const [current] = await scheduler.claimDue({ now: at(200_000), limit: 10, leaseMs: 60_000 });
+      if (current === undefined) throw new Error("lease was not taken over");
+      await scheduler.defer({ claim: first, executeAt: at(200_001) });
+      expect(await scheduler.claimDue({ now: at(200_001), limit: 10, leaseMs: 60_000 })).toEqual(
+        [],
+      );
+    });
+
     it("replaces the schedule when the same key is scheduled again", async () => {
       await scheduler.schedule({
         dedupeKey: "timeout:order:1",

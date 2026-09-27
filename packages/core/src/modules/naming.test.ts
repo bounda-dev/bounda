@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { capitalize, toCamelCase } from "./naming.ts";
+import { capitalize, toCamelCase, toKebabCase } from "./naming.ts";
 
 describe("capitalize", () => {
   it("upper-cases the first character only", () => {
@@ -20,5 +20,13 @@ describe("toCamelCase", () => {
     expect(toCamelCase("send-receipt-on-order-paid")).toBe("sendReceiptOnOrderPaid");
     expect(toCamelCase("v2-report")).toBe("v2Report");
     expect(toCamelCase("order")).toBe("order");
+  });
+});
+
+describe("toKebabCase", () => {
+  it("turns registry keys back into file names", () => {
+    expect(toKebabCase("nextReminder")).toBe("next-reminder");
+    expect(toKebabCase("paymentDeadlineAt")).toBe("payment-deadline-at");
+    expect(toKebabCase("timeout")).toBe("timeout");
   });
 });

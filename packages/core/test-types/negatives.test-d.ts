@@ -1,12 +1,48 @@
-import type { PolicyModule } from "@bounda-dev/core";
+import type { Instant, PolicyModule, ProcessDeadlineField } from "@bounda-dev/core";
 import { describe, it } from "vitest";
 import type { Command as PayOrder } from "./fixtures/order-app/app/domain/order/commands/+types/pay-order.ts";
 import type { Command as PlaceOrder } from "./fixtures/order-app/app/domain/order/commands/place-order/+types/index.ts";
 import type { Policy as SendReceipt } from "./fixtures/order-app/app/domain/order/policies/+types/send-receipt-on-order-paid.ts";
+import type { Process as AtNextReminder } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/at-next-reminder.ts";
 import type { Process as OrderPayment } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/index.ts";
+import type { Process as OnOrderPaid } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/on-order-paid.ts";
+
+type OrderPaymentModule =
+  typeof import("./fixtures/order-app/app/domain/order/processes/order-payment/index.ts");
+
 import type { Projection as ProjectOrderPlaced } from "./fixtures/order-app/app/read/order-summary/projections/order/+types/order-placed.ts";
 
 describe("what does not compile", () => {
+  it("an at- handler for a field that is not a deadline() of the state", () => {
+    // @ts-expect-error paidAt is an instant(), which only records a moment
+    type RecordedMoment = ProcessDeadlineField<OrderPaymentModule, "paidAt">;
+    // @ts-expect-error reminders is not a moment at all
+    type Counter = ProcessDeadlineField<OrderPaymentModule, "reminders">;
+    // @ts-expect-error the state has no such field
+    type Typo = ProcessDeadlineField<OrderPaymentModule, "nextRemindr">;
+    const fields: [RecordedMoment?, Counter?, Typo?] = [];
+    void fields;
+  });
+
+  it("a delay after() cannot read", () => {
+    const handler = ({ state, after }: OnOrderPaid.HandlerArgs) => ({
+      ...state,
+      // @ts-expect-error "24x" has no unit after() knows
+      nextReminder: after("24x"),
+    });
+    void handler;
+  });
+
+  it("a moment that did not come from after() or asInstant", () => {
+    // @ts-expect-error a plain string is not an Instant
+    const moment: Instant = "2026-01-01T00:00:00.000Z";
+    const handler = ({ state }: AtNextReminder.DeadlineArgs) => ({
+      ...state,
+      nextReminder: moment,
+    });
+    void handler;
+  });
+
   it("emitting an event of another aggregate", () => {
     const handler = ({ events }: PlaceOrder.HandlerArgs) => [
       // @ts-expect-error customerRegistered belongs to the customer aggregate

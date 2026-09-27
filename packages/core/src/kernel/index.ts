@@ -111,13 +111,15 @@ export { foldProcess, PROCESS_EVENTS, processAggregateType } from "./process/lif
 export type {
   CreateProcessRunnerArgs,
   CreateProcessRunnerFunction,
+  FailDeadlineArgs,
+  HandleDeadlineArgs,
+  ProcessDeadlinePayload,
   ProcessRunner,
-  ProcessTimeoutPayload,
   ReplayProcessArgs,
 } from "./process/runner.ts";
 export {
   createProcessRunner,
-  PROCESS_TIMEOUT_COMMAND,
+  PROCESS_DEADLINE_COMMAND,
   PROCESSES_SUBSCRIBER,
 } from "./process/runner.ts";
 export type {
