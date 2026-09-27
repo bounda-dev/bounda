@@ -580,7 +580,24 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     instance: ProcessInstance,
     event: StoredEvent,
   ): Promise<boolean> => {
-    if (process.handlers[qualifiedEventType(event.aggregateType, event.type)] !== undefined) {
+    const qualified = qualifiedEventType(event.aggregateType, event.type);
+    if (process.handlers[qualified] === undefined && !process.completedBy.has(qualified)) {
+      logger.warn("process no longer acts on a parked event; it is let through", {
+        process: process.name,
+        aggregateId: instanceId,
+        eventId: event.id,
+      });
+      await append(
+        process,
+        instanceId,
+        instance,
+        PROCESS_EVENTS.handled,
+        { state: instance.state, eventId: event.id, eventType: event.type },
+        contextOf(event),
+      );
+      return true;
+    }
+    if (process.handlers[qualified] !== undefined) {
       try {
         const state = await runHandler(process, event, instanceId, instance, 1);
         await append(
@@ -681,6 +698,11 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     if (instanceId === null || instance === null || !instance.exists) {
       throw new NotFoundError(
         `Process "${name}" has no instance for ${event.aggregateType}:${event.aggregateId}`,
+      );
+    }
+    if (instance.status === "failed" && instance.failure?.eventId !== event.id) {
+      throw new ConfigurationError(
+        `Process "${name}" is failed on another step for ${instanceId}; replay the dead letter of that failure first`,
       );
     }
     if (!instance.handledEventIds.has(event.id)) {

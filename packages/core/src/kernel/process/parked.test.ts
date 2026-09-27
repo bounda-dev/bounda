@@ -513,4 +513,93 @@ describe("events of a failed process", () => {
       PROCESS_EVENTS.failed,
     ]);
   });
+
+  it("let a parked event through when the process no longer acts on it", async () => {
+    const context = await setUp();
+    const { harness, settle } = context;
+    await failOnFirstPayment(context);
+    const order = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    const [placed] = order.events;
+    if (placed === undefined) throw new Error("not placed");
+    await harness.storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "o-1",
+      expectedVersion: order.events.length,
+      events: [{ ...placed, id: "placed-again", version: order.events.length + 1 }],
+    });
+    await settle();
+    expect((await harness.storage.eventStore.load(stream)).events.at(-1)?.type).toBe(
+      PROCESS_EVENTS.eventParked,
+    );
+
+    const tallyEntry = registry.aggregates.order?.processes.tally;
+    if (tallyEntry === undefined) throw new Error("no process");
+    const deployed = await createReactiveHarness({
+      registry: {
+        aggregates: {
+          order: {
+            ...orderAggregateEntry(),
+            processes: {
+              tally: {
+                ...tallyEntry,
+                handlers: { order: { orderPaid: { handler: tally("paid") } } },
+              },
+            },
+          },
+        },
+        readModels: {},
+      },
+    });
+    for (const aggregateType of ["order", stream.aggregateType]) {
+      const { events } = await harness.storage.eventStore.load({
+        aggregateType,
+        aggregateId: "o-1",
+      });
+      await deployed.storage.eventStore.append({
+        aggregateType,
+        aggregateId: "o-1",
+        expectedVersion: 0,
+        events,
+      });
+    }
+    const failure = (
+      await deployed.storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" })
+    ).events.find((event) => event.type === "OrderPaid");
+    if (failure === undefined) throw new Error("no payment");
+    await deployed.processes.replay({ process: "order.tally", event: failure, replay: "r" });
+    const { events } = await deployed.storage.eventStore.load(stream);
+    expect(events.slice(-3).map((event) => event.type)).toEqual([
+      PROCESS_EVENTS.handled,
+      PROCESS_EVENTS.handled,
+      PROCESS_EVENTS.resumed,
+    ]);
+    expect(events.at(-2)?.payload).toMatchObject({ eventId: "placed-again" });
+  });
+
+  it("refuse to replay a letter of an instance that is failed on another step", async () => {
+    const context = await setUp();
+    const { harness, deadLetters } = context;
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await context.settle();
+    failing.set("nudge", "terminal");
+    harness.clock.advance(DAY);
+    await context.settle();
+    const order = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    await expect(
+      harness.processes.replay({
+        process: "order.tally",
+        event: order.events[0] as NonNullable<(typeof order.events)[number]>,
+        replay: "r",
+      }),
+    ).rejects.toThrow(
+      'Process "order.tally" is failed on another step for o-1; replay the dead letter of that failure first',
+    );
+    expect(await deadLetters.list()).toMatchObject([{ eventId: "deadline:nudge" }]);
+  });
 });

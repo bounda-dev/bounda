@@ -306,9 +306,10 @@ Replaying the dead letter of the failure is what brings the instance back:
    are scheduled again.
 
 An event that arrives during the replay is parked too and handled before the instance resumes, so
-nothing overtakes an older event. If a parked event fails again, it becomes the new failure: it
-is dead-lettered, the instance stays failed, and the events after it stay parked until that letter
-is replayed. A parked event that completes the process completes it, and what is parked after it
+nothing overtakes an older event. If a parked event fails again, for whatever reason, it becomes
+the new failure at once: it is dead-lettered without retries, the instance stays failed, and the
+events after it stay parked until that letter is replayed. A parked event the process no longer
+handles, after a deploy removed its handler, is let through. A parked event that completes the process completes it, and what is parked after it
 is dropped, as for any completed instance.
 
 `bounda dead-letters list` says how many events wait behind a failure (`3 events are parked behind
