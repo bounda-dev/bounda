@@ -187,7 +187,7 @@ describe("watchProject", () => {
     const { root, watching, controller, clock, runs, listened } = await start(watcher);
     const app = join(root, "app");
     const cookie = await cookieIn(app);
-    expect(cookie).toMatch(new RegExp(`^\\.bounda-watch-${process.pid}-\\d+$`));
+    expect(cookie).toMatch(/^\.bounda-watch-[0-9a-f-]{36}$/);
     await vi.waitFor(() => expect(clock.pending()).toBe(1));
     await rm(join(app, cookie));
     clock.advance(49);
@@ -552,6 +552,16 @@ describe("watchFromFirstRun", () => {
     await drained();
     first.resolve(true);
     await expect(run.done).rejects.toThrow("disk gone");
+  });
+
+  it("makes no first run when the signal aborts before the watcher is listening", async () => {
+    const watcher = fakeWatcher();
+    const run = await begin(watcher, async () => true);
+    await cookieIn(watcher.calls[0]?.path ?? "");
+    run.controller.abort();
+    await expect(run.done).resolves.toBeUndefined();
+    expect(run.firstRuns()).toBe(0);
+    expect(run.announced()).toBe(0);
   });
 
   it("makes the first run once the watcher gives up confirming it is listening", async () => {

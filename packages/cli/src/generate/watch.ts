@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { rm, watch as watchDirectory, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type Clock, systemClock } from "@bounda-dev/core";
@@ -53,8 +54,6 @@ const COOKIE_RETRY_MS = 50;
 
 const COOKIE_ATTEMPTS = 20;
 
-let cookies = 0;
-
 const isGenerated = (fileName: string | Buffer | null): boolean =>
   typeof fileName === "string" && fileName.split(/[\\/]/).includes("+types");
 
@@ -62,10 +61,10 @@ const isGenerated = (fileName: string | Buffer | null): boolean =>
  * Watches the application directory and regenerates after each burst of changes to user modules.
  * Changes under `+types` are the generator's own and are ignored. The operating system may start
  * listening some time after the watch is set up, and miss what changes before (FSEvents on macOS
- * does), so the watch writes a cookie file, `.bounda-watch-<pid>-<n>`, into the directory until
- * it hears it back, removes it and calls `onListening`: a change made from then on is seen. It
- * gives up after 20 writes and calls `onUnconfirmed` instead. The cookie's own changes are ignored. Resolves when the signal aborts; rejects when the watcher, or
- * writing the cookie, fails.
+ * does), so the watch writes a cookie file, `.bounda-watch-<uuid>`, into the directory until it
+ * hears it back, removes it and calls `onListening`: a change made from then on is seen. It gives
+ * up after 20 writes and calls `onUnconfirmed` instead. The cookie's own changes are ignored.
+ * Resolves when the signal aborts; rejects when the watcher, or writing the cookie, fails.
  */
 export const watchProject: WatchProjectFunction = async ({
   root,
@@ -80,7 +79,7 @@ export const watchProject: WatchProjectFunction = async ({
   watch = watchDirectory,
 }) => {
   const directory = join(root, appDir);
-  const cookie = `.bounda-watch-${process.pid}-${cookies++}`;
+  const cookie = `.bounda-watch-${randomUUID()}`;
   const failed = new AbortController();
   const heard = Promise.withResolvers<void>();
   const ended = Promise.withResolvers<void>();
@@ -149,8 +148,9 @@ export const watchProject: WatchProjectFunction = async ({
 export interface WatchFromFirstRunArgs extends Omit<WatchProjectArgs, "onListening"> {
   /**
    * Started once the watcher is listening, once it has given up confirming it is (after
-   * `onUnconfirmed`), or once the watch has ended without listening. Resolves to whether watching
-   * goes on; a rejection ends the watch and is rethrown.
+   * `onUnconfirmed`), or once the watch has ended without listening; not at all when the signal
+   * aborts first. Resolves to whether watching goes on; a rejection ends the watch and is
+   * rethrown.
    */
   readonly firstRun: () => Promise<boolean>;
   /**
@@ -199,6 +199,10 @@ export const watchFromFirstRun: WatchFromFirstRunFunction = async ({
     () => undefined,
   );
   await Promise.race([listening.promise, watchEnded]);
+  if (signal.aborted) {
+    await watching;
+    return;
+  }
   let goesOn = false;
   try {
     goesOn = await firstRun();
