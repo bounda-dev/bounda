@@ -409,12 +409,31 @@ describe("events of a failed process", () => {
     const context = await setUp();
     const { harness, deadLetters, types } = context;
     await failOnFirstPayment(context);
-    await harness.pipeline.dispatch({ type: "ArchiveOrder", payload: { orderId: "o-1" } });
+    await harness.pipeline
+      .dispatch({ type: "PayOrder", payload: { orderId: "o-1", method: "card" } })
+      .catch(() => undefined);
+    const order = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    const paid = order.events.find((event) => event.type === "OrderPaid");
+    if (paid === undefined) throw new Error("no payment");
+    await harness.storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "o-1",
+      expectedVersion: order.events.length,
+      events: [{ ...paid, id: "late-payment", version: order.events.length + 1 }],
+    });
     await harness.dispatcher.processUntilIdle();
     const append = harness.storage.eventStore.append;
     let raced = false;
     harness.storage.eventStore.append = async (args) => {
-      if (!raced && args.events[0]?.type === PROCESS_EVENTS.completed) {
+      const [first] = args.events;
+      if (
+        !raced &&
+        first?.type === PROCESS_EVENTS.handled &&
+        (first.payload as { eventId?: string }).eventId === "late-payment"
+      ) {
         raced = true;
         throw new ConcurrencyError({
           streamId: `${stream.aggregateType}:${stream.aggregateId}`,
@@ -424,12 +443,12 @@ describe("events of a failed process", () => {
       }
       return append(args);
     };
-    await expect(
-      deadLetters.replay((await deadLetters.list())[0]?.id ?? ""),
-    ).rejects.toBeInstanceOf(ConcurrencyError);
-    harness.storage.eventStore.append = append;
     await deadLetters.replay((await deadLetters.list())[0]?.id ?? "");
-    expect((await types()).at(-1)).toBe(PROCESS_EVENTS.completed);
+    harness.storage.eventStore.append = append;
+    expect(raced).toBe(true);
+    expect(runs.filter((run) => run === "paid:late-payment")).toHaveLength(2);
+    expect((await types()).at(-1)).toBe(PROCESS_EVENTS.resumed);
+    expect(await deadLetters.list({ status: "failed" })).toEqual([]);
   });
 
   it("let a failure to resume reach the caller, and resume on the next replay", async () => {
