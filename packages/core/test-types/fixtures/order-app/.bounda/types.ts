@@ -12,6 +12,11 @@ export type OrderEvents = {
   readonly orderPlaced: typeof import("../app/domain/order/order-placed.ts");
 };
 
+export type Events = {
+  readonly customer: CustomerEvents;
+  readonly order: OrderEvents;
+};
+
 export type CancelOrderCollaborators = core.InferCollaborators<{
   readonly auditLog: {
     readonly memory: typeof import("../app/domain/order/commands/cancel-order/audit-log.memory.ts").default;

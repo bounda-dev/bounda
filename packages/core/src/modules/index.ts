@@ -46,8 +46,10 @@ export type {
 } from "./payload.ts";
 export type { PolicyEntry, PolicyHandlerArgs, PolicyModule } from "./policy.ts";
 export type {
+  AppEventModules,
   ProcessConfig,
   ProcessConfigArgs,
+  ProcessCorrelate,
   ProcessEntry,
   ProcessHandlerArgs,
   ProcessHandlerModule,
@@ -55,6 +57,7 @@ export type {
   ProcessStateArgs,
   ProcessStateOf,
   ProcessTimeoutArgs,
+  QualifiedEventName,
 } from "./process.ts";
 export type { ProjectionArgs, ProjectionModule } from "./projection.ts";
 export type {

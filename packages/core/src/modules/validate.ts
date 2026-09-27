@@ -68,8 +68,15 @@ const validateAggregate = (
   }
   for (const [key, process] of Object.entries(aggregate.processes)) {
     requireFunction(problems, process.module, `${base}.processes.${key}`, "config");
-    for (const [event, handler] of Object.entries(process.handlers)) {
-      requireFunction(problems, handler, `${base}.processes.${key}.handlers.${event}`, "handler");
+    for (const [source, handlers] of Object.entries(process.handlers)) {
+      for (const [event, handler] of Object.entries(handlers)) {
+        requireFunction(
+          problems,
+          handler,
+          `${base}.processes.${key}.handlers.${source}.${event}`,
+          "handler",
+        );
+      }
     }
     if (process.timeout !== undefined) {
       requireFunction(problems, process.timeout, `${base}.processes.${key}.timeout`, "handler");

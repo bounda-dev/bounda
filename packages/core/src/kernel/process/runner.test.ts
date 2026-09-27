@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { resolveConfig } from "../../config/schema.ts";
 import { DomainError } from "../../contracts/errors.ts";
+import type { StoredEvent } from "../../contracts/event.ts";
 import { memory } from "../../memory/index.ts";
 import type { PayloadArgs } from "../../modules/payload.ts";
-import type { ProcessConfigArgs } from "../../modules/process.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { createReactiveHarness } from "../reactive-harness.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
-import { createRecordingLogger, orderAggregateEntry } from "../test-support.ts";
+import {
+  createRecordingLogger,
+  type OrderProcessConfigArgs,
+  orderAggregateEntry,
+} from "../test-support.ts";
 import { buildProcesses } from "./build-processes.ts";
 import { PROCESS_EVENTS } from "./lifecycle.ts";
 import { PROCESS_TIMEOUT_COMMAND } from "./runner.ts";
@@ -32,9 +36,9 @@ const registry: Registry = {
           module: {
             config: ({
               events,
-            }: ProcessConfigArgs<"OrderPlaced" | "OrderPaid" | "OrderArchived">) => ({
-              startedBy: [events.OrderPlaced],
-              completedBy: [events.OrderPaid, events.OrderArchived],
+            }: OrderProcessConfigArgs<"OrderPlaced" | "OrderPaid" | "OrderArchived">) => ({
+              startedBy: [events.order.OrderPlaced],
+              completedBy: [events.order.OrderPaid, events.order.OrderArchived],
               timeout: "48h",
             }),
             state: ({ z }: PayloadArgs) =>
@@ -44,16 +48,18 @@ const registry: Registry = {
               }),
           },
           handlers: {
-            orderPaid: {
-              handler: ({ event, state }: HandlerArgs) => {
-                calls.push(`paid:${event.aggregateId}`);
-                if (mode === "domain") throw new DomainError("bad payment");
-                if (mode === "void") return undefined;
-                if (mode === "flaky" && flakyFailures > 0) {
-                  flakyFailures -= 1;
-                  throw new Error("network");
-                }
-                return { ...state, method: event.payload.method ?? null };
+            order: {
+              orderPaid: {
+                handler: ({ event, state }: HandlerArgs) => {
+                  calls.push(`paid:${event.aggregateId}`);
+                  if (mode === "domain") throw new DomainError("bad payment");
+                  if (mode === "void") return undefined;
+                  if (mode === "flaky" && flakyFailures > 0) {
+                    flakyFailures -= 1;
+                    throw new Error("network");
+                  }
+                  return { ...state, method: event.payload.method ?? null };
+                },
               },
             },
           },
@@ -95,8 +101,8 @@ describe("buildProcesses", () => {
       timeoutMs: 172_800_000,
       initialState: { reminders: 0, method: null },
     });
-    expect([...(all[0]?.startedBy ?? [])]).toEqual(["OrderPlaced"]);
-    expect(Object.keys(all[0]?.handlers ?? {})).toEqual(["OrderPaid"]);
+    expect([...(all[0]?.startedBy ?? [])]).toEqual(["order.OrderPlaced"]);
+    expect(Object.keys(all[0]?.handlers ?? {})).toEqual(["order.OrderPaid"]);
     expect(Object.keys(byEvent).sort()).toEqual([
       "order.OrderArchived",
       "order.OrderPaid",
@@ -110,7 +116,10 @@ describe("buildProcesses", () => {
         order: {
           ...orderAggregateEntry(),
           processes: {
-            quick: { module: { config: () => ({ startedBy: ["OrderPlaced"] }) }, handlers: {} },
+            quick: {
+              module: { config: () => ({ startedBy: ["order.OrderPlaced"] }) },
+              handlers: {},
+            },
           },
         },
       },
@@ -136,7 +145,7 @@ describe("buildProcesses", () => {
           processes: {
             p: {
               module: {
-                config: () => ({ startedBy: ["OrderPlaced"] }),
+                config: () => ({ startedBy: ["order.OrderPlaced"] }),
                 state: (() => "nope") as never,
               },
               handlers: {},
@@ -155,8 +164,8 @@ describe("buildProcesses", () => {
           ...orderAggregateEntry(),
           processes: {
             p: {
-              module: { config: () => ({ startedBy: ["OrderPlaced"] }) },
-              handlers: { orderShipped: { handler: () => undefined } },
+              module: { config: () => ({ startedBy: ["order.OrderPlaced"] }) },
+              handlers: { order: { orderShipped: { handler: () => undefined } } },
             },
           },
         },
@@ -164,7 +173,7 @@ describe("buildProcesses", () => {
       readModels: {},
     };
     expect(() => buildProcesses({ registry: badHandler, config })).toThrow(
-      'aggregates.order.processes.p.handlers.orderShipped: "OrderShipped" is not an event of this aggregate',
+      'aggregates.order.processes.p.handlers.order.orderShipped: "order.OrderShipped" is not an event of the app',
     );
   });
 
@@ -174,14 +183,14 @@ describe("buildProcesses", () => {
         order: {
           ...orderAggregateEntry(),
           processes: {
-            p: { module: { config: () => ({ startedBy: ["OrderShipped"] }) }, handlers: {} },
+            p: { module: { config: () => ({ startedBy: ["order.OrderShipped"] }) }, handlers: {} },
           },
         },
       },
       readModels: {},
     };
     expect(() => buildProcesses({ registry: badEvent, config })).toThrow(
-      'aggregates.order.processes.p: "OrderShipped" is not an event of this aggregate',
+      'aggregates.order.processes.p: "order.OrderShipped" is not an event of the app; name events as events.<aggregate>.<Event>',
     );
     const badState: Registry = {
       aggregates: {
@@ -190,7 +199,7 @@ describe("buildProcesses", () => {
           processes: {
             p: {
               module: {
-                config: () => ({ startedBy: ["OrderPlaced"] }),
+                config: () => ({ startedBy: ["order.OrderPlaced"] }),
                 state: ({ z }: PayloadArgs) => z.object({ required: z.string() }),
               },
               handlers: {},
@@ -394,23 +403,25 @@ describe("process runner", () => {
           processes: {
             orderTotals: {
               module: {
-                config: ({ events }: ProcessConfigArgs<"OrderPlaced" | "OrderPaid">) => ({
-                  startedBy: [events.OrderPlaced],
-                  completedBy: [events.OrderPaid],
+                config: ({ events }: OrderProcessConfigArgs<"OrderPlaced" | "OrderPaid">) => ({
+                  startedBy: [events.order.OrderPlaced],
+                  completedBy: [events.order.OrderPaid],
                 }),
                 state: ({ z }: PayloadArgs) => z.object({ total: z.number().default(0) }),
               },
               handlers: {
-                orderPlaced: {
-                  handler: ({
-                    event,
-                    state,
-                  }: {
-                    event: { payload: { total: number } };
-                    state: { total: number };
-                  }) => {
-                    totals.push(event.payload.total);
-                    return { ...state, total: event.payload.total };
+                order: {
+                  orderPlaced: {
+                    handler: ({
+                      event,
+                      state,
+                    }: {
+                      event: { payload: { total: number } };
+                      state: { total: number };
+                    }) => {
+                      totals.push(event.payload.total);
+                      return { ...state, total: event.payload.total };
+                    },
                   },
                 },
               },
@@ -706,12 +717,14 @@ describe("process collaborators", () => {
         ...orderAggregateEntry(),
         processes: {
           orderPayment: {
-            module: { config: () => ({ startedBy: ["OrderPlaced"], timeout: "1h" }) },
+            module: { config: () => ({ startedBy: ["order.OrderPlaced"], timeout: "1h" }) },
             handlers: {
-              orderPlaced: {
-                handler: ({ aggregateId, audit, idempotencyKey }: AuditArgs) => {
-                  audit.record(`placed ${aggregateId}`);
-                  keys.push(idempotencyKey);
+              order: {
+                orderPlaced: {
+                  handler: ({ aggregateId, audit, idempotencyKey }: AuditArgs) => {
+                    audit.record(`placed ${aggregateId}`);
+                    keys.push(idempotencyKey);
+                  },
                 },
               },
             },
@@ -775,5 +788,385 @@ describe("process collaborators", () => {
     ).toThrow(
       'Process "order.orderPayment", collaborator "audit": choose an implementation with processes.order.orderPayment.audit.use. Available: "log", "memory"',
     );
+  });
+});
+
+describe("processes that listen to other aggregates", () => {
+  const seen: string[] = [];
+  interface PaymentArgs {
+    readonly event: { aggregateId: string; payload: { orderId: string; reason?: string } };
+    readonly state: { failures: number };
+    readonly aggregateId: string;
+  }
+  interface PaymentEvents {
+    readonly order: {
+      readonly OrderPlaced: "order.OrderPlaced";
+      readonly OrderPaid: "order.OrderPaid";
+    };
+    readonly payment: {
+      readonly PaymentFailed: "payment.PaymentFailed";
+      readonly PaymentSettled: "payment.PaymentSettled";
+    };
+  }
+  const paymentPayload = ({ z }: PayloadArgs) =>
+    z.object({ orderId: z.string(), reason: z.string().optional() });
+  const paymentCommand = ({ z }: PayloadArgs) =>
+    z.object({ paymentId: z.string(), orderId: z.string(), reason: z.string().optional() });
+  const payment: Registry["aggregates"][string] = {
+    events: {
+      paymentFailed: { payload: paymentPayload, apply: () => ({}) },
+      paymentSettled: { payload: paymentPayload, apply: () => ({}) },
+    },
+    commands: {
+      failPayment: {
+        module: {
+          payload: paymentCommand,
+          handler: ({
+            command,
+            events,
+          }: {
+            command: { payload: { orderId: string; reason?: string } };
+            events: Record<string, (payload: unknown) => unknown>;
+          }) => [
+            events.paymentFailed?.({
+              orderId: command.payload.orderId,
+              reason: command.payload.reason,
+            }),
+          ],
+        },
+      },
+      settlePayment: {
+        module: {
+          payload: paymentCommand,
+          handler: ({
+            command,
+            events,
+          }: {
+            command: { payload: { orderId: string } };
+            events: Record<string, (payload: unknown) => unknown>;
+          }) => [events.paymentSettled?.({ orderId: command.payload.orderId })],
+        },
+      },
+    },
+    policies: {},
+    processes: {},
+  };
+  const withCorrelate = (
+    correlate: Record<
+      string,
+      Record<string, (event: { payload: { orderId: string } }) => string | null>
+    >,
+    returned: (state: { failures: number }) => unknown = (state) => ({
+      failures: state.failures + 1,
+    }),
+  ): Registry => ({
+    aggregates: {
+      order: {
+        ...orderAggregateEntry(),
+        processes: {
+          checkout: {
+            module: {
+              config: ({ events }: { events: PaymentEvents }) => ({
+                startedBy: [events.order.OrderPlaced],
+                completedBy: [events.payment.PaymentSettled],
+              }),
+              state: ({ z }: PayloadArgs) => z.object({ failures: z.int().default(0) }),
+              correlate,
+            },
+            handlers: {
+              payment: {
+                paymentFailed: {
+                  handler: ({ event, state, aggregateId }: PaymentArgs) => {
+                    seen.push(`${aggregateId} failed: ${event.payload.reason ?? ""}`);
+                    return returned(state);
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      payment,
+    },
+    readModels: {},
+  });
+  const byOrder = {
+    payment: {
+      PaymentFailed: (event: { payload: { orderId: string } }) => event.payload.orderId,
+      PaymentSettled: (event: { payload: { orderId: string } }) => event.payload.orderId,
+    },
+  };
+  const stream = (harness: Awaited<ReturnType<typeof createReactiveHarness>>, id: string) =>
+    harness.storage.eventStore.load({ aggregateType: "process:Checkout", aggregateId: id });
+
+  it("hand another aggregate's event to the instance correlate names, and complete on one", async () => {
+    seen.length = 0;
+    const harness = await createReactiveHarness({ registry: withCorrelate(byOrder) });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.pipeline.dispatch({
+      type: "FailPayment",
+      payload: { paymentId: "p-1", orderId: "o-1", reason: "declined" },
+    });
+    await harness.pipeline.dispatch({
+      type: "SettlePayment",
+      payload: { paymentId: "p-2", orderId: "o-1" },
+    });
+    await harness.dispatcher.processUntilIdle();
+    expect(seen).toEqual(["o-1 failed: declined"]);
+    const events = (await stream(harness, "o-1")).events;
+    expect(events.map((event) => event.type)).toEqual([
+      PROCESS_EVENTS.started,
+      PROCESS_EVENTS.handled,
+      PROCESS_EVENTS.completed,
+    ]);
+    expect(events[1]?.payload).toMatchObject({
+      state: { failures: 1 },
+      eventType: "PaymentFailed",
+    });
+  });
+
+  it("ignore an event correlate says belongs to no instance, or to one that never started", async () => {
+    seen.length = 0;
+    const harness = await createReactiveHarness({
+      registry: withCorrelate({
+        payment: {
+          PaymentFailed: (event) =>
+            event.payload.orderId === "ignored" ? null : event.payload.orderId,
+          PaymentSettled: (event) => event.payload.orderId,
+        },
+      }),
+    });
+    await harness.pipeline.dispatch({
+      type: "FailPayment",
+      payload: { paymentId: "p-1", orderId: "ignored" },
+    });
+    await harness.pipeline.dispatch({
+      type: "FailPayment",
+      payload: { paymentId: "p-2", orderId: "o-never" },
+    });
+    await harness.dispatcher.processUntilIdle();
+    expect(seen).toEqual([]);
+    expect((await stream(harness, "o-never")).events).toEqual([]);
+    expect(await harness.storage.checkpointStore.get("processes")).toBe(
+      await harness.storage.eventStore.lastPosition(),
+    );
+  });
+
+  it("refuse at boot another aggregate's event without correlate, or correlate for no event", () => {
+    const config = resolveConfig({ storage: memory() });
+    expect(() =>
+      buildProcesses({
+        registry: withCorrelate({ payment: { PaymentFailed: byOrder.payment.PaymentFailed } }),
+        config,
+      }),
+    ).toThrow(
+      'aggregates.order.processes.checkout: "payment.PaymentSettled" comes from another aggregate; say which instance it belongs to with correlate.payment.PaymentSettled',
+    );
+    expect(() =>
+      buildProcesses({
+        registry: withCorrelate({
+          ...byOrder,
+          billing: { Invoiced: (event) => event.payload.orderId },
+        }),
+        config,
+      }),
+    ).toThrow(
+      'aggregates.order.processes.checkout.correlate.billing.Invoiced: "billing.Invoiced" is not an event of the app',
+    );
+  });
+
+  it("treat a correlate entry left undefined as missing", () => {
+    expect(() =>
+      buildProcesses({
+        registry: withCorrelate({
+          payment: {
+            PaymentFailed: byOrder.payment.PaymentFailed,
+            PaymentSettled: undefined as never,
+          },
+        }),
+        config: resolveConfig({ storage: memory() }),
+      }),
+    ).toThrow('"payment.PaymentSettled" comes from another aggregate');
+  });
+
+  it("start no instance for a starting event correlate says belongs to none", async () => {
+    const registry = withCorrelate({
+      payment: {
+        PaymentFailed: () => null,
+        PaymentSettled: (event) => event.payload.orderId,
+      },
+    });
+    const checkout = registry.aggregates.order?.processes.checkout;
+    const starting: Registry = {
+      ...registry,
+      aggregates: {
+        ...registry.aggregates,
+        order: {
+          ...(registry.aggregates.order as Registry["aggregates"][string]),
+          processes: {
+            checkout: {
+              ...(checkout as Registry["aggregates"][string]["processes"][string]),
+              module: {
+                ...(checkout?.module as Registry["aggregates"][string]["processes"][string]["module"]),
+                config: ({ events }: { events: PaymentEvents }) => ({
+                  startedBy: [events.payment.PaymentFailed],
+                }),
+              },
+            },
+          },
+        },
+      },
+    };
+    const harness = await createReactiveHarness({ registry: starting });
+    await harness.pipeline.dispatch({
+      type: "FailPayment",
+      payload: { paymentId: "p-1", orderId: "o-1" },
+    });
+    await harness.dispatcher.processUntilIdle();
+    expect((await stream(harness, "null")).events).toEqual([]);
+    expect((await stream(harness, "o-1")).events).toEqual([]);
+  });
+
+  it("refuse to replay an event that belongs to no instance, or to one that is not there", async () => {
+    const harness = await createReactiveHarness({
+      registry: withCorrelate({
+        payment: {
+          PaymentFailed: (event) =>
+            event.payload.orderId === "none" ? null : event.payload.orderId,
+          PaymentSettled: (event) => event.payload.orderId,
+        },
+      }),
+    });
+    await harness.pipeline.dispatch({
+      type: "FailPayment",
+      payload: { paymentId: "p-1", orderId: "none" },
+    });
+    await harness.pipeline.dispatch({
+      type: "FailPayment",
+      payload: { paymentId: "p-2", orderId: "o-gone" },
+    });
+    const eventOf = async (paymentId: string) =>
+      (await harness.storage.eventStore.load({ aggregateType: "payment", aggregateId: paymentId }))
+        .events[0] as StoredEvent;
+    for (const paymentId of ["p-1", "p-2"]) {
+      await expect(
+        harness.processes.replay({
+          process: "order.checkout",
+          event: await eventOf(paymentId),
+          replay: "r",
+        }),
+      ).rejects.toThrow(`Process "order.checkout" has no instance for payment:${paymentId}`);
+    }
+  });
+
+  it("dead-letter an event whose correlate throws or returns no id, and keep going", async () => {
+    seen.length = 0;
+    const harness = await createReactiveHarness({
+      registry: withCorrelate({
+        payment: {
+          PaymentFailed: (event) => {
+            if (event.payload.orderId === "boom") throw new Error("no order id on old events");
+            if (event.payload.orderId === "empty") return "";
+            return event.payload.orderId === "blank" ? (undefined as never) : event.payload.orderId;
+          },
+          PaymentSettled: (event) => event.payload.orderId,
+        },
+      }),
+    });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    for (const [paymentId, orderId] of [
+      ["p-1", "boom"],
+      ["p-2", "blank"],
+      ["p-4", "empty"],
+      ["p-3", "o-1"],
+    ] as const) {
+      await harness.pipeline.dispatch({
+        type: "FailPayment",
+        payload: { paymentId, orderId, reason: paymentId },
+      });
+    }
+    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.processUntilIdle();
+    expect(seen).toEqual(["o-1 failed: p-3"]);
+    const letters = await harness.storage.deadLetterStore.list();
+    expect(
+      letters.map((letter) => [letter.aggregateId, letter.errorType, letter.errorMessage]),
+    ).toEqual([
+      ["p-1", "terminal", "no order id on old events"],
+      [
+        "p-2",
+        "terminal",
+        expect.stringMatching(
+          /^aggregates\.order\.processes\.checkout\.correlate returned undefined for payment\.PaymentFailed .+; expected the id of the order it belongs to, or null$/,
+        ),
+      ],
+      [
+        "p-4",
+        "terminal",
+        expect.stringMatching(/correlate returned "" for payment\.PaymentFailed /),
+      ],
+    ]);
+    expect(await harness.storage.checkpointStore.get("processes")).toBe(
+      await harness.storage.eventStore.lastPosition(),
+    );
+  });
+
+  it("fail a handler for good when it returns a state its schema refuses", async () => {
+    seen.length = 0;
+    const harness = await createReactiveHarness({
+      registry: withCorrelate(byOrder, () => ({ failures: "many" })),
+    });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.pipeline.dispatch({
+      type: "FailPayment",
+      payload: { paymentId: "p-1", orderId: "o-1", reason: "declined" },
+    });
+    await harness.dispatcher.processUntilIdle();
+    expect((await stream(harness, "o-1")).events.map((event) => event.type)).toEqual([
+      PROCESS_EVENTS.started,
+      PROCESS_EVENTS.failed,
+    ]);
+    const [letter] = await harness.storage.deadLetterStore.list();
+    expect(letter).toMatchObject({
+      kind: "process",
+      subscriber: "order.checkout",
+      eventType: "PaymentFailed",
+      aggregateType: "payment",
+      aggregateId: "p-1",
+      errorType: "terminal",
+      errorMessage: "Process order.checkout returned a state its schema refuses",
+    });
+  });
+
+  it("replay a dead-lettered handler of another aggregate's event on the instance correlate names", async () => {
+    seen.length = 0;
+    let broken = true;
+    const harness = await createReactiveHarness({
+      registry: withCorrelate(byOrder, (state) =>
+        broken ? { failures: "many" } : { failures: state.failures + 1 },
+      ),
+    });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.pipeline.dispatch({
+      type: "FailPayment",
+      payload: { paymentId: "p-1", orderId: "o-1", reason: "declined" },
+    });
+    await harness.dispatcher.processUntilIdle();
+    const [letter] = await harness.storage.deadLetterStore.list();
+    const { events } = await harness.storage.eventStore.load({
+      aggregateType: "payment",
+      aggregateId: "p-1",
+    });
+    broken = false;
+    await harness.processes.replay({
+      process: letter?.subscriber ?? "",
+      event: events[0] as (typeof events)[number],
+      replay: "r-1",
+    });
+    expect((await stream(harness, "o-1")).events.map((event) => event.type)).toEqual([
+      PROCESS_EVENTS.started,
+      PROCESS_EVENTS.failed,
+      PROCESS_EVENTS.handled,
+    ]);
   });
 });

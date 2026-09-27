@@ -344,12 +344,28 @@ export type TicketEvents = {
   readonly created: typeof import("../app/domain/ticket/created.ts");
 };
 
+export type Events = {
+  readonly order: OrderEvents;
+  readonly shipment: ShipmentEvents;
+  readonly ticket: TicketEvents;
+};
+
 export type Commands = core.CommandsFacadeOf<Record<never, never>>;
 
 export type ShipmentsRow = core.RowOf<typeof import("../app/read/shipments/view.ts")>;
 
 export type Queries = core.QueriesFacadeOf<Record<never, never>>;
 `);
+  });
+});
+
+describe("emitTypes for an app without aggregates", () => {
+  it("still declares the app's events, as an empty map", () => {
+    const { content } = emitTypes({
+      model: { ...model, aggregates: [], readModels: [] },
+      path: "/project/.bounda/types.ts",
+    });
+    expect(content).toContain("export type Events = Record<never, never>;");
   });
 });
 

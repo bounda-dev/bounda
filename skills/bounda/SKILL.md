@@ -34,6 +34,7 @@ app/domain/<aggregate>/
   policies/<other-aggregate>/...   the same shapes, reacting to that aggregate's events
   processes/<process>/index.ts     export const config, export const state (optional)
   processes/<process>/on-<event>.ts, on-timeout.ts   export const handler
+  processes/<process>/<other-aggregate>/on-<event>.ts  handler for that aggregate's event
   processes/<process>/<collaborator>.<implementation>.ts   collaborators of every handler of the process
 app/read/<read-model>/
   view.ts                          export const fields
@@ -122,8 +123,8 @@ Process (`processes/order-payment/index.ts` and `on-order-paid.ts`, `on-timeout.
 import type { Process } from "./+types/index";
 
 export const config = ({ events }: Process.ConfigArgs) => ({
-  startedBy: [events.OrderPlaced],
-  completedBy: [events.OrderPaid, events.OrderCancelled],
+  startedBy: [events.order.OrderPlaced],
+  completedBy: [events.order.OrderPaid, events.order.OrderCancelled],
   timeout: "48h",
 });
 export const state = ({ z }: Process.StateArgs) => z.object({ reminders: z.int().default(0) });
@@ -174,6 +175,10 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   (`policies/payment/`, `projections/payment/`) holds what reacts to that aggregate's events.
   Projections always sit in such a folder. A policy's trigger must be an event of the aggregate it
   listens to, or boot fails.
+- A process `config` names events as `events.<aggregate>.<Event>`. For every event of another
+  aggregate it uses, `index.ts` exports `correlate: Process.Correlate`, a function per event to the
+  id of the process's own aggregate (or `null` to ignore it). Events for no open instance are
+  skipped; a completed instance is never reopened. Returned state is validated against `state`.
 - A command handler returns the events to append, built with `events.<eventKey>(payload)`. It may
   only build events of its own aggregate. Throw `DomainError` to reject a command.
 - `state` in a handler carries `id` and `version` besides the aggregate's fields. Without

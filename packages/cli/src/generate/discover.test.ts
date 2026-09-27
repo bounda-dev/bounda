@@ -191,6 +191,10 @@ describe("discoverProject on the order-app fixture", () => {
               path: "app/domain/order/processes/order-payment/index.ts",
               handlers: [
                 ["orderPaid", "app/domain/order/processes/order-payment/on-order-paid.ts"],
+                [
+                  "customerRegistered",
+                  "app/domain/order/processes/order-payment/customer/on-customer-registered.ts",
+                ],
               ],
               timeout: "app/domain/order/processes/order-payment/on-timeout.ts",
             },
@@ -504,6 +508,49 @@ describe("discoverProject convention problems", () => {
     ]);
   });
 
+  it("finds a process's handlers for other aggregates' events in folders named after them", async () => {
+    const root = await project([
+      "app/domain/order/order-placed.ts",
+      "app/domain/order/processes/checkout/index.ts",
+      "app/domain/order/processes/checkout/on-order-placed.ts",
+      "app/domain/order/processes/checkout/payment/on-payment-failed.ts",
+      "app/domain/payment/payment-failed.ts",
+    ]);
+    const model = await discoverProject({ root });
+    const order = model.aggregates.find((aggregate) => aggregate.name === "order");
+    expect(
+      order?.processes[0]?.handlers.map((handler) => [handler.aggregate, handler.eventKey]),
+    ).toEqual([
+      ["order", "orderPlaced"],
+      ["payment", "paymentFailed"],
+    ]);
+  });
+
+  it("rejects handlers of events another aggregate lacks and misplaced aggregate folders", async () => {
+    const root = await project([
+      "app/domain/order/order-placed.ts",
+      "app/domain/order/processes/checkout/index.ts",
+      "app/domain/order/processes/checkout/order/on-order-placed.ts",
+      "app/domain/order/processes/checkout/payment/on-payment-lost.ts",
+      "app/domain/order/processes/checkout/payment/payment-failed.ts",
+      "app/domain/order/processes/checkout/payment/deeper/",
+      "app/domain/order/processes/checkout/payment/notes.md",
+      "app/domain/order/policies/payment/notes.md",
+      "app/domain/payment/payment-failed.ts",
+      "app/read/payments/view.ts",
+      "app/read/payments/projections/payment/notes.md",
+    ]);
+    expect(await problemsOf(root)).toEqual([
+      "app/domain/order/policies/payment/notes.md: only .ts modules are allowed here",
+      "app/domain/order/processes/checkout/order: these are order's own events; put their handlers in the process directory",
+      "app/domain/order/processes/checkout/payment/notes.md: only .ts modules are allowed here",
+      "app/domain/order/processes/checkout/payment/deeper: a folder of another aggregate's handlers holds only on-<event>.ts",
+      "app/domain/order/processes/checkout/payment/payment-failed.ts: process handlers are named on-<event>.ts",
+      "app/read/payments/projections/payment/notes.md: only .ts modules are allowed here",
+      'app/domain/order/processes/checkout/payment/on-payment-lost.ts: "paymentLost" is not an event of the aggregate "payment"',
+    ]);
+  });
+
   it("rejects process handlers that do not match an event of the aggregate", async () => {
     const root = await project([
       "app/domain/order/order-placed.ts",
@@ -518,7 +565,7 @@ describe("discoverProject convention problems", () => {
     expect(await problemsOf(root)).toEqual([
       "app/domain/order/processes/loose.ts: a process is a directory with an index.ts",
       "app/domain/order/processes/empty: a process directory needs an index.ts with its config",
-      "app/domain/order/processes/payment/steps: a process directory holds only index.ts, on-*.ts handlers and collaborators",
+      "app/domain/order/processes/payment/steps: a process directory holds only index.ts, on-*.ts handlers, collaborators and folders named after other aggregates",
       'app/domain/order/processes/payment/on-order-shipped.ts: "orderShipped" is not an event of this aggregate',
       "app/domain/order/processes/payment/order-paid.ts: process handlers are named on-<event>.ts or on-timeout.ts",
     ]);

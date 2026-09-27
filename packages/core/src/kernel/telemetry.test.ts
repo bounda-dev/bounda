@@ -4,7 +4,6 @@ import { DomainError } from "../contracts/errors.ts";
 import { silentLogger } from "../contracts/logger.ts";
 import { memory } from "../memory/index.ts";
 import type { PayloadArgs } from "../modules/payload.ts";
-import type { ProcessConfigArgs } from "../modules/process.ts";
 import type { Registry } from "../modules/registry.ts";
 import type { FieldsArgs } from "../modules/view.ts";
 import { createApp } from "./app.ts";
@@ -12,7 +11,7 @@ import { PROCESS_TIMEOUT_COMMAND } from "./process/runner.ts";
 import { createReactiveHarness } from "./reactive-harness.ts";
 import { ATTRIBUTES, METRICS, TELEMETRY_SCOPE, traced } from "./telemetry.ts";
 import { type FakeTelemetry, installFakeTelemetry } from "./telemetry-fake.ts";
-import { orderAggregateEntry } from "./test-support.ts";
+import { type OrderProcessConfigArgs, orderAggregateEntry } from "./test-support.ts";
 
 let policyMode: "ok" | "domain" = "ok";
 
@@ -32,14 +31,14 @@ const registry = {
       processes: {
         orderPayment: {
           module: {
-            config: ({ events }: ProcessConfigArgs<"OrderPlaced" | "OrderPaid">) => ({
-              startedBy: [events.OrderPlaced],
-              completedBy: [events.OrderPaid],
+            config: ({ events }: OrderProcessConfigArgs<"OrderPlaced" | "OrderPaid">) => ({
+              startedBy: [events.order.OrderPlaced],
+              completedBy: [events.order.OrderPaid],
               timeout: "1h",
             }),
             state: ({ z }: PayloadArgs) => z.object({ paid: z.boolean().default(false) }),
           },
-          handlers: { orderPaid: { handler: () => ({ paid: true }) } },
+          handlers: { order: { orderPaid: { handler: () => ({ paid: true }) } } },
           timeout: { handler: () => undefined },
         },
       },

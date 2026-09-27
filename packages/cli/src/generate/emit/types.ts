@@ -131,7 +131,8 @@ const emitMap = (
       ].join("\n");
 
 /**
- * `.bounda/types.ts`: per aggregate its `State` and `Events` maps, the inferred collaborator
+ * `.bounda/types.ts`: per aggregate its `State` and `Events` maps, `Events` of the whole app by
+ * aggregate, the inferred collaborator
  * types of commands, policies and processes, the `Commands` facade type, per read model its `Row`, and the `Queries` facade type.
  * Everything is `typeof import(...)`, so the file never references the registry.
  */
@@ -145,6 +146,17 @@ export const emitTypes: EmitTypesFunction = ({ model, path, inferredStates = {} 
       ].join("\n"),
     );
   }
+  sections.push(
+    model.aggregates.length === 0
+      ? "export type Events = Record<never, never>;"
+      : [
+          "export type Events = {",
+          ...model.aggregates.map(
+            (aggregate) => `  readonly ${aggregate.name}: ${eventsTypeName(aggregate.name)};`,
+          ),
+          "};",
+        ].join("\n"),
+  );
   const inferred = model.aggregates.flatMap((aggregate) =>
     [...aggregate.commands, ...aggregate.policies, ...aggregate.processes].filter(
       infersCollaborators,

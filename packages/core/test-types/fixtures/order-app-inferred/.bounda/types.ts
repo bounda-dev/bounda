@@ -14,6 +14,10 @@ export type OrderEvents = {
   readonly orderPlaced: typeof import("../app/domain/order/order-placed.ts");
 };
 
+export type Events = {
+  readonly order: OrderEvents;
+};
+
 export type Commands = core.CommandsFacadeOf<{
   readonly payOrder: typeof import("../app/domain/order/commands/pay-order.ts");
   readonly placeOrder: typeof import("../app/domain/order/commands/place-order.ts");

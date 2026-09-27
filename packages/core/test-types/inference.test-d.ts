@@ -23,6 +23,7 @@ import type { Policy as NotifyOnOrderPlaced } from "./fixtures/order-app/app/dom
 import type { Process as OrderPayment } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/index.ts";
 import type { Process as OnOrderPaid } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/on-order-paid.ts";
 import type { Process as OnTimeout } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/on-timeout.ts";
+import type { Process as OnCustomerRegistered } from "./fixtures/order-app/app/domain/order/processes/order-payment/customer/+types/on-customer-registered.ts";
 import type { Projection as ProjectOrderPaid } from "./fixtures/order-app/app/read/order-summary/projections/order/+types/order-paid.ts";
 import type { Query as CustomerOverview } from "./fixtures/order-app/app/read/order-summary/queries/+types/customer-overview.ts";
 import type { Query as GetOrder } from "./fixtures/order-app/app/read/order-summary/queries/+types/get-order.ts";
@@ -161,12 +162,35 @@ describe("policies for another aggregate's events", () => {
 });
 
 describe("processes", () => {
-  it("expose the aggregate's event names as literals in config", () => {
-    expectTypeOf<keyof OrderPayment.ConfigArgs["events"]>().toEqualTypeOf<
+  it("expose every event of the app by aggregate, as qualified literals, in config", () => {
+    expectTypeOf<keyof OrderPayment.ConfigArgs["events"]>().toEqualTypeOf<"customer" | "order">();
+    expectTypeOf<keyof OrderPayment.ConfigArgs["events"]["order"]>().toEqualTypeOf<
       "OrderPlaced" | "OrderPaid" | "OrderCancelled"
     >();
-    expectTypeOf<OrderPayment.ConfigArgs["events"]["OrderPaid"]>().toEqualTypeOf<"OrderPaid">();
-    expectTypeOf<OrderPayment.ConfigArgs["events"]>().not.toHaveProperty("OrderPlacd");
+    expectTypeOf<
+      OrderPayment.ConfigArgs["events"]["order"]["OrderPaid"]
+    >().toEqualTypeOf<"order.OrderPaid">();
+    expectTypeOf<
+      OrderPayment.ConfigArgs["events"]["customer"]["CustomerRegistered"]
+    >().toEqualTypeOf<"customer.CustomerRegistered">();
+    expectTypeOf<OrderPayment.ConfigArgs["events"]["order"]>().not.toHaveProperty("OrderPlacd");
+  });
+
+  it("type correlate by aggregate and event, from the event to an instance id or null", () => {
+    type Correlator = NonNullable<
+      NonNullable<OrderPayment.Correlate["customer"]>["CustomerRegistered"]
+    >;
+    expectTypeOf<Parameters<Correlator>[0]>().toEqualTypeOf<
+      StoredEvent<"CustomerRegistered", { email: string }>
+    >();
+    expectTypeOf<ReturnType<Correlator>>().toEqualTypeOf<string | null>();
+  });
+
+  it("type a handler for another aggregate's event against that aggregate", () => {
+    expectTypeOf<OnCustomerRegistered.HandlerArgs["event"]>().toEqualTypeOf<
+      StoredEvent<"CustomerRegistered", { email: string }>
+    >();
+    expectTypeOf<OnCustomerRegistered.HandlerArgs["state"]["reminders"]>().toEqualTypeOf<number>();
   });
 
   it("type state from the state schema and the event from the file name", () => {

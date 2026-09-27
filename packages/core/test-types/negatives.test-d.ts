@@ -35,6 +35,22 @@ describe("what does not compile", () => {
     void handler;
   });
 
+  it("an unqualified event name in a process config", () => {
+    const config = ({ events }: OrderPayment.ConfigArgs) => ({
+      // @ts-expect-error events are grouped by aggregate: events.order.OrderPlaced
+      startedBy: [events.OrderPlaced],
+    });
+    void config;
+  });
+
+  it("correlating an event the aggregate does not have", () => {
+    const correlate: OrderPayment.Correlate = {
+      // @ts-expect-error CustomerDeleted is not an event of customer
+      customer: { CustomerDeleted: () => null },
+    };
+    void correlate;
+  });
+
   it("a delay that is not a duration", () => {
     const policy: PolicyModule = {
       handler: () => undefined,
@@ -47,7 +63,7 @@ describe("what does not compile", () => {
   it("a typo in a process event name", () => {
     const config = ({ events }: OrderPayment.ConfigArgs) => ({
       // @ts-expect-error OrderPlacd is not an event of the aggregate
-      startedBy: [events.OrderPlacd],
+      startedBy: [events.order.OrderPlacd],
     });
     void config;
   });

@@ -7,13 +7,17 @@ import { createSequentialIdGenerator } from "../contracts/ids.ts";
 import { silentLogger } from "../contracts/logger.ts";
 import { memory } from "../memory/index.ts";
 import type { PayloadArgs } from "../modules/payload.ts";
-import type { ProcessConfigArgs } from "../modules/process.ts";
 import type { Registry } from "../modules/registry.ts";
 import type { FieldsArgs } from "../modules/view.ts";
 import { createApp } from "./app.ts";
 import { PROCESS_EVENTS } from "./process/lifecycle.ts";
 import { readYourWrites } from "./read-your-writes.ts";
-import { eventually, orderAggregateEntry, sentMessages } from "./test-support.ts";
+import {
+  eventually,
+  type OrderProcessConfigArgs,
+  orderAggregateEntry,
+  sentMessages,
+} from "./test-support.ts";
 
 interface Row {
   readonly orderId: string;
@@ -45,9 +49,9 @@ const registry = {
           module: {
             config: ({
               events,
-            }: ProcessConfigArgs<"OrderPlaced" | "OrderPaid" | "OrderArchived">) => ({
-              startedBy: [events.OrderPlaced],
-              completedBy: [events.OrderPaid],
+            }: OrderProcessConfigArgs<"OrderPlaced" | "OrderPaid" | "OrderArchived">) => ({
+              startedBy: [events.order.OrderPlaced],
+              completedBy: [events.order.OrderPaid],
               timeout: "1h",
             }),
           },

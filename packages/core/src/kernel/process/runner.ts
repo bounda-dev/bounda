@@ -1,7 +1,12 @@
 import type { StoragePorts } from "../../adapter/adapter.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
-import { ConcurrencyError, ConfigurationError, NotFoundError } from "../../contracts/errors.ts";
+import {
+  ConcurrencyError,
+  ConfigurationError,
+  NotFoundError,
+  ValidationError,
+} from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
@@ -168,6 +173,21 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     idempotencyKey,
   });
 
+  const validState = (process: ProcessRuntime, state: unknown): object => {
+    if (process.stateSchema === null) return state as object;
+    const parsed = process.stateSchema.safeParse(state);
+    if (parsed.success) return parsed.data as object;
+    throw new ValidationError(
+      `Process ${process.name} returned a state its schema refuses`,
+      parsed.error.issues.map((issue) => ({
+        path: issue.path.filter(
+          (segment): segment is string | number => typeof segment !== "symbol",
+        ),
+        message: issue.message,
+      })),
+    );
+  };
+
   const deadLetter = async (
     process: ProcessRuntime,
     event: StoredEvent,
@@ -204,25 +224,26 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
   const start = async (
     process: ProcessRuntime,
     event: StoredEvent,
+    instanceId: string,
     instance: ProcessInstance,
   ): Promise<ProcessInstance> => {
     const context = contextOf(event);
     await append(
       process,
-      event.aggregateId,
+      instanceId,
       instance,
       PROCESS_EVENTS.started,
       { state: process.initialState, eventId: event.id },
       context,
     );
     await storage.scheduler.schedule({
-      dedupeKey: timeoutKey(process, event.aggregateId),
+      dedupeKey: timeoutKey(process, instanceId),
       command: {
         type: PROCESS_TIMEOUT_COMMAND,
-        aggregateId: event.aggregateId,
+        aggregateId: instanceId,
         payload: {
           process: process.name,
-          aggregateId: event.aggregateId,
+          aggregateId: instanceId,
         } satisfies ProcessTimeoutPayload,
       },
       executeAt: new Date(clock.now().getTime() + process.timeoutMs),
@@ -234,9 +255,10 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
   const handle = async (
     process: ProcessRuntime,
     event: StoredEvent,
+    instanceId: string,
     instance: ProcessInstance,
   ): Promise<Outcome> => {
-    const handler = process.handlers[event.type];
+    const handler = process.handlers[qualifiedEventType(event.aggregateType, event.type)];
     if (handler === undefined || instance.handledEventIds.has(event.id)) return "done";
     const settings = config.forAggregate(process.aggregate).processes;
     const key = { subscriber: process.name, eventId: event.id };
@@ -258,11 +280,16 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     }
     const context = contextOf(event);
     try {
-      const next = await runHandler(process, event, instance, (existing?.attempts ?? 0) + 1);
-      const state = next === undefined ? instance.state : (next as object);
+      const state = await runHandler(
+        process,
+        event,
+        instanceId,
+        instance,
+        (existing?.attempts ?? 0) + 1,
+      );
       await append(
         process,
-        event.aggregateId,
+        instanceId,
         instance,
         PROCESS_EVENTS.handled,
         { state, eventId: event.id, eventType: event.type },
@@ -276,13 +303,13 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
       if (kind === "terminal") {
         await append(
           process,
-          event.aggregateId,
+          instanceId,
           instance,
           PROCESS_EVENTS.failed,
           { eventId: event.id, error: errorDetails(error).message },
           context,
         );
-        await storage.scheduler.cancel(timeoutKey(process, event.aggregateId));
+        await storage.scheduler.cancel(timeoutKey(process, instanceId));
         await deadLetter(process, event, error, attempts, "terminal");
         await storage.inboxLedger.complete(key);
         return "done";
@@ -291,13 +318,13 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
       if (attempts >= settings.retry.maxAttempts || settings.retry.strategy === "none") {
         await append(
           process,
-          event.aggregateId,
+          instanceId,
           instance,
           PROCESS_EVENTS.failed,
           { eventId: event.id, error: errorDetails(error).message },
           context,
         );
-        await storage.scheduler.cancel(timeoutKey(process, event.aggregateId));
+        await storage.scheduler.cancel(timeoutKey(process, instanceId));
         await deadLetter(process, event, error, attempts, "retriable_exhausted");
         await storage.inboxLedger.complete(key);
         return "done";
@@ -311,14 +338,15 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     }
   };
 
-  const runHandler = (
+  const runHandler = async (
     process: ProcessRuntime,
     event: StoredEvent,
+    instanceId: string,
     instance: ProcessInstance,
     attempt: number,
     replay?: string,
-  ): Promise<unknown> =>
-    traced({
+  ): Promise<object> => {
+    const next = await traced({
       name: `bounda.process ${process.name}`,
       attributes: {
         [ATTRIBUTES.process]: process.name,
@@ -332,7 +360,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
       run: () =>
         withTimeout({
           run: () =>
-            process.handlers[event.type]?.({
+            process.handlers[qualifiedEventType(event.aggregateType, event.type)]?.({
               ...handlerArgs(
                 process,
                 contextOf(event),
@@ -345,39 +373,72 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
               ),
               event,
               state: instance.state,
-              aggregateId: event.aggregateId,
+              aggregateId: instanceId,
             }),
           timeoutMs: config.forAggregate(process.aggregate).policies.timeoutMs,
           subject: `process ${process.name}`,
           clock,
         }),
     });
+    return validState(process, next === undefined ? instance.state : next);
+  };
 
-  const completeIfDue = async (process: ProcessRuntime, event: StoredEvent): Promise<void> => {
-    if (!process.completedBy.has(event.type)) return;
-    const current = await load(process, event.aggregateId);
+  const completeIfDue = async (
+    process: ProcessRuntime,
+    event: StoredEvent,
+    instanceId: string,
+  ): Promise<void> => {
+    if (!process.completedBy.has(qualifiedEventType(event.aggregateType, event.type))) return;
+    const current = await load(process, instanceId);
     if (current.status !== "started") return;
     await append(
       process,
-      event.aggregateId,
+      instanceId,
       current,
       PROCESS_EVENTS.completed,
       { eventId: event.id },
       contextOf(event),
     );
-    await storage.scheduler.cancel(timeoutKey(process, event.aggregateId));
+    await storage.scheduler.cancel(timeoutKey(process, instanceId));
+  };
+
+  const uncorrelated = async (
+    process: ProcessRuntime,
+    event: StoredEvent,
+    error: unknown,
+  ): Promise<Outcome> => {
+    const key = { subscriber: process.name, eventId: event.id };
+    if ((await storage.inboxLedger.get(key))?.status === "succeeded") return "done";
+    const claimed = await storage.inboxLedger.tryClaim({
+      ...key,
+      now: clock.now(),
+      leaseMs: config.forAggregate(process.aggregate).policies.timeoutMs * 2,
+    });
+    if (!claimed) return "hold";
+    await deadLetter(process, event, error, 1, "terminal");
+    await storage.inboxLedger.complete(key);
+    return "done";
   };
 
   const deliver = async (process: ProcessRuntime, event: StoredEvent): Promise<Outcome> => {
-    let instance = await load(process, event.aggregateId);
+    let instanceId: string | null;
+    try {
+      instanceId = process.instanceOf(event);
+    } catch (error) {
+      return uncorrelated(process, event, error);
+    }
+    if (instanceId === null) return "done";
+    let instance = await load(process, instanceId);
     if (!instance.exists) {
-      if (!process.startedBy.has(event.type)) return "done";
-      instance = await start(process, event, instance);
+      if (!process.startedBy.has(qualifiedEventType(event.aggregateType, event.type))) {
+        return "done";
+      }
+      instance = await start(process, event, instanceId, instance);
     }
     if (instance.status !== "started") return "done";
-    const outcome = await handle(process, event, instance);
+    const outcome = await handle(process, event, instanceId, instance);
     if (outcome === "hold") return "hold";
-    await completeIfDue(process, event);
+    await completeIfDue(process, event, instanceId);
     return "done";
   };
 
@@ -386,46 +447,45 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     if (process === undefined) {
       throw new ConfigurationError(`Process "${name}" is no longer in the registry`);
     }
-    const handler = process.handlers[event.type];
+    const handler = process.handlers[qualifiedEventType(event.aggregateType, event.type)];
     if (handler === undefined) {
       throw new ConfigurationError(`Process "${name}" no longer handles ${event.type}`);
     }
-    const instance = await load(process, event.aggregateId);
-    if (!instance.exists) {
-      throw new NotFoundError(`Process "${name}" has no instance for ${event.aggregateId}`);
+    const instanceId = process.instanceOf(event);
+    const instance = instanceId === null ? null : await load(process, instanceId);
+    if (instanceId === null || instance === null || !instance.exists) {
+      throw new NotFoundError(
+        `Process "${name}" has no instance for ${event.aggregateType}:${event.aggregateId}`,
+      );
     }
     const context = contextOf(event);
-    const next = await runHandler(process, event, instance, 1, replay);
+    const state = await runHandler(process, event, instanceId, instance, 1, replay);
     await append(
       process,
-      event.aggregateId,
+      instanceId,
       instance,
       PROCESS_EVENTS.handled,
-      {
-        state: next === undefined ? instance.state : (next as object),
-        eventId: event.id,
-        eventType: event.type,
-      },
+      { state, eventId: event.id, eventType: event.type },
       context,
     );
     if (instance.status === "failed") {
       const deadline =
         new Date(instance.startedAt ?? event.timestamp).getTime() + process.timeoutMs;
       await storage.scheduler.schedule({
-        dedupeKey: timeoutKey(process, event.aggregateId),
+        dedupeKey: timeoutKey(process, instanceId),
         command: {
           type: PROCESS_TIMEOUT_COMMAND,
-          aggregateId: event.aggregateId,
+          aggregateId: instanceId,
           payload: {
             process: process.name,
-            aggregateId: event.aggregateId,
+            aggregateId: instanceId,
           } satisfies ProcessTimeoutPayload,
         },
         executeAt: new Date(Math.max(deadline, clock.now().getTime())),
         context,
       });
     }
-    await completeIfDue(process, event);
+    await completeIfDue(process, event, instanceId);
     logger.info("process handler replayed", { process: process.name, eventId: event.id });
   };
 
@@ -495,7 +555,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
         payload.aggregateId,
         instance,
         PROCESS_EVENTS.timedOut,
-        { state: next ?? instance.state },
+        { state: validState(process, next ?? instance.state) },
         context,
       );
     },

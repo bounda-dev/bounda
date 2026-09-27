@@ -373,13 +373,36 @@ const discoverProcess = async (
   }
   const listing = await list(directory);
   rejectOthers(context, directory, listing);
-  for (const child of listing.directories) {
-    context.problems.add(
-      join(directory, child),
-      "a process directory holds only index.ts, on-*.ts handlers and collaborators",
-    );
-  }
   const handlers: ProcessHandlerModel[] = [];
+  for (const child of listing.directories) {
+    const folder = join(directory, child);
+    if (!context.aggregates.has(keyOf(child)) || keyOf(child) === aggregate) {
+      context.problems.add(
+        folder,
+        keyOf(child) === aggregate
+          ? `these are ${aggregate}'s own events; put their handlers in the process directory`
+          : "a process directory holds only index.ts, on-*.ts handlers, collaborators and folders named after other aggregates",
+      );
+      continue;
+    }
+    const inner = await list(folder);
+    rejectOthers(context, folder, inner);
+    for (const nested of inner.directories) {
+      context.problems.add(
+        join(folder, nested),
+        "a folder of another aggregate's handlers holds only on-<event>.ts",
+      );
+    }
+    for (const module of inner.modules) {
+      const path = join(folder, `${module}.ts`);
+      const eventKey = processHandlerEventOf(module);
+      if (eventKey === null) {
+        context.problems.add(path, "process handlers are named on-<event>.ts");
+        continue;
+      }
+      handlers.push({ ...moduleRef(context, path), aggregate: keyOf(child), eventKey });
+    }
+  }
   const collaborators: CollaboratorModel[] = [];
   let timeout: ModuleRef | null = null;
   for (const module of listing.modules) {
@@ -403,7 +426,7 @@ const discoverProcess = async (
       context.problems.add(path, `"${eventKey}" is not an event of this aggregate`);
       continue;
     }
-    handlers.push({ ...moduleRef(context, path), eventKey });
+    handlers.push({ ...moduleRef(context, path), aggregate, eventKey });
   }
   return {
     ...moduleRef(context, index),
@@ -415,7 +438,12 @@ const discoverProcess = async (
     key: keyOf(name),
     typeName: typeNameOf(keyOf(name)),
     directory,
-    handlers: handlers.sort((a, b) => a.eventKey.localeCompare(b.eventKey)),
+    handlers: handlers.sort(
+      (a, b) =>
+        Number(a.aggregate !== aggregate) - Number(b.aggregate !== aggregate) ||
+        a.aggregate.localeCompare(b.aggregate) ||
+        a.eventKey.localeCompare(b.eventKey),
+    ),
     timeout,
   };
 };
@@ -648,6 +676,27 @@ const discoverGroup = async <T>(
   return found;
 };
 
+const checkForeignHandlers = (context: Context, aggregates: readonly AggregateModel[]): void => {
+  const eventsOf = new Map(
+    aggregates.map((aggregate) => [
+      aggregate.name,
+      new Set(aggregate.events.map((event) => event.key)),
+    ]),
+  );
+  for (const aggregate of aggregates) {
+    for (const process of aggregate.processes) {
+      for (const handler of process.handlers) {
+        if (eventsOf.get(handler.aggregate)?.has(handler.eventKey) !== true) {
+          context.problems.add(
+            handler.path,
+            `"${handler.eventKey}" is not an event of the aggregate "${handler.aggregate}"`,
+          );
+        }
+      }
+    }
+  }
+};
+
 /**
  * Reads the project layout under `<root>/<appDir>` and returns what the generator needs. Names
  * come from files and directories only; no module is imported or parsed. Convention breaches
@@ -680,6 +729,7 @@ export const discoverProject: DiscoverProjectFunction = async ({ root, appDir = 
     "Read model",
     (directory, name) => discoverReadModel(context, directory, name),
   );
+  checkForeignHandlers(context, aggregates);
   problems.throwIfAny();
   return { root, appDir, aggregates, readModels };
 };
