@@ -45,10 +45,12 @@ export type {
 } from "./ports/inbox-ledger.ts";
 export type {
   ClaimDueArgs,
+  ClaimedCommand,
   FailScheduledArgs,
   ListScheduledArgs,
   NextDueAtArgs,
   ScheduleArgs,
+  ScheduledClaim,
   ScheduledCommand,
   Scheduler,
 } from "./ports/scheduler.ts";

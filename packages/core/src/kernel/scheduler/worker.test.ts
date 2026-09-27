@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ConcurrencyError, DomainError } from "../../contracts/errors.ts";
 import type { PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
@@ -36,6 +36,38 @@ describe("scheduled command worker", () => {
     expect(order.events[0]?.metadata).toMatchObject({ correlationId: "req-7", depth: 0 });
     expect(await harness.storage.scheduler.list()).toEqual([]);
     expect(await harness.worker.runOnce()).toBe(0);
+  });
+
+  it("runs a command scheduled again under its key while it ran, once the run ends", async () => {
+    const harness = await createReactiveHarness({ registry: orderRegistry });
+    await harness.pipeline.dispatch({
+      type: "PlaceOrder",
+      payload: { orderId: "o-1", total: 10 },
+      options: { delay: "1m" },
+    });
+    const [entry] = await harness.storage.scheduler.list();
+    if (entry === undefined) throw new Error("nothing scheduled");
+    const dispatch = harness.pipeline.dispatch;
+    vi.spyOn(harness.pipeline, "dispatch").mockImplementationOnce(async (args) => {
+      await harness.storage.scheduler.schedule({
+        dedupeKey: entry.dedupeKey,
+        command: { ...entry.command, payload: { orderId: "o-2", total: 5 } },
+        executeAt: harness.clock.now(),
+        context: entry.context,
+      });
+      return dispatch(args);
+    });
+
+    harness.clock.advance(60_000);
+    expect(await harness.worker.runOnce()).toBe(1);
+    expect(await harness.worker.runOnce()).toBe(1);
+
+    const second = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-2",
+    });
+    expect(second.events.map((event) => event.type)).toEqual(["OrderPlaced"]);
+    expect(await harness.storage.scheduler.list()).toEqual([]);
   });
 
   it("drops a command that fails for good, records CommandFailed and dead-letters it", async () => {

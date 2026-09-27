@@ -99,7 +99,9 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "context" TEXT NOT NULL,
     "attempts" INTEGER NOT NULL,
     "claimed_at" TEXT,
-    "last_error" TEXT
+    "last_error" TEXT,
+    "revision" INTEGER NOT NULL DEFAULT 0,
+    "claim_id" TEXT
   )`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.scheduledCommands, "execute_at")} ON ${tables.scheduledCommands} ("execute_at")`,
 ];
@@ -119,6 +121,10 @@ export interface StorageSchemaAdditionsArgs {
    * The columns the dead-letters table has, from `PRAGMA table_info`.
    */
   readonly deadLetterColumns: readonly string[];
+  /**
+   * The columns the scheduled-commands table has, from `PRAGMA table_info`.
+   */
+  readonly scheduledCommandColumns: readonly string[];
 }
 
 export interface StorageSchemaAdditionsFunction {
@@ -132,10 +138,18 @@ export interface StorageSchemaAdditionsFunction {
 export const storageSchemaAdditions: StorageSchemaAdditionsFunction = ({
   tables,
   deadLetterColumns,
-}) =>
-  deadLetterColumns.includes("payload")
+  scheduledCommandColumns,
+}) => [
+  ...(deadLetterColumns.includes("payload")
     ? []
-    : [`ALTER TABLE ${tables.deadLetters} ADD COLUMN "payload" TEXT`];
+    : [`ALTER TABLE ${tables.deadLetters} ADD COLUMN "payload" TEXT`]),
+  ...(scheduledCommandColumns.includes("revision")
+    ? []
+    : [`ALTER TABLE ${tables.scheduledCommands} ADD COLUMN "revision" INTEGER NOT NULL DEFAULT 0`]),
+  ...(scheduledCommandColumns.includes("claim_id")
+    ? []
+    : [`ALTER TABLE ${tables.scheduledCommands} ADD COLUMN "claim_id" TEXT`]),
+];
 
 /**
  * Creates the storage tables that do not exist yet and adds the columns a table created by an
@@ -143,10 +157,15 @@ export const storageSchemaAdditions: StorageSchemaAdditionsFunction = ({
  */
 export const ensureStorageSchema: EnsureStorageSchemaFunction = async ({ db, tables }) => {
   for (const statement of storageSchemaStatements(tables)) await db.run(statement, []);
-  const deadLetterColumns = (await db.all(`PRAGMA table_info(${tables.deadLetters})`, [])).map(
-    (column) => String(column.name),
-  );
-  for (const statement of storageSchemaAdditions({ tables, deadLetterColumns })) {
+  const columnsOf = async (table: string): Promise<readonly string[]> =>
+    (await db.all(`PRAGMA table_info(${table})`, [])).map((column) => String(column.name));
+  const deadLetterColumns = await columnsOf(tables.deadLetters);
+  const scheduledCommandColumns = await columnsOf(tables.scheduledCommands);
+  for (const statement of storageSchemaAdditions({
+    tables,
+    deadLetterColumns,
+    scheduledCommandColumns,
+  })) {
     await db.run(statement, []);
   }
 };

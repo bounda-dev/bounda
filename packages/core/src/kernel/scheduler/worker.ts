@@ -1,5 +1,5 @@
 import type { StoragePorts } from "../../adapter/adapter.ts";
-import type { ScheduledCommand } from "../../adapter/ports/scheduler.ts";
+import type { ClaimedCommand, ScheduledCommand } from "../../adapter/ports/scheduler.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
@@ -141,13 +141,13 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   };
 
   const giveUp = async (
-    entry: ScheduledCommand,
+    entry: ClaimedCommand,
     error: unknown,
     attempts: number,
     reason: GiveUpReason,
   ): Promise<void> => {
     const details = errorDetails(error);
-    await storage.scheduler.fail({ dedupeKey: entry.dedupeKey, error: details.message });
+    await storage.scheduler.fail({ claim: entry, error: details.message });
     if (delayedPolicies.isDelayedPolicy(entry)) {
       await giveUpPolicy(entry, error, attempts, reason);
       return;
@@ -213,10 +213,10 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       },
     });
 
-  const execute = async (entry: ScheduledCommand): Promise<void> => {
+  const execute = async (entry: ClaimedCommand): Promise<void> => {
     try {
       await run(entry);
-      await storage.scheduler.complete(entry.dedupeKey);
+      await storage.scheduler.complete(entry);
     } catch (error) {
       const attempts = entry.attempts + 1;
       const kind = classifyFailure(error);
@@ -228,7 +228,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
           clock.now().getTime() + retryDelayMs({ retry, attempt: attempts }),
         );
         await storage.scheduler.fail({
-          dedupeKey: entry.dedupeKey,
+          claim: entry,
           error: errorDetails(error).message,
           retryAt,
         });
