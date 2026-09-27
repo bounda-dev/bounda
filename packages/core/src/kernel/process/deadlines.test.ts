@@ -9,6 +9,7 @@ import { memory } from "../../memory/index.ts";
 import type { ProcessAfterFunction, ProcessStateArgs } from "../../modules/process.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { createApp } from "../app.ts";
+import { createDeadLetters } from "../dead-letters/dead-letters.ts";
 import { createReactiveHarness } from "../reactive-harness.ts";
 import { DEADLINE_WAIT_ROUNDS } from "../scheduler/worker.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
@@ -48,6 +49,7 @@ const keys: string[] = [];
 let placed: "both" | "tie" | "reminders" = "both";
 let reminding: "ok" | "keep" | "flaky" | "conflict" | "hold" = "ok";
 let failuresLeft = 0;
+let conflictOn = "process:Reminders:o-1";
 let paidFails = false;
 let reminderLimit = 3;
 
@@ -57,6 +59,7 @@ const reset = (): void => {
   placed = "both";
   reminding = "ok";
   failuresLeft = 0;
+  conflictOn = "process:Reminders:o-1";
   paidFails = false;
   reminderLimit = 3;
 };
@@ -118,7 +121,7 @@ const registry: Registry = {
                 if (reminding === "conflict" && failuresLeft > 0) {
                   failuresLeft -= 1;
                   throw new ConcurrencyError({
-                    streamId: "x",
+                    streamId: conflictOn,
                     expectedVersion: 1,
                     actualVersion: 2,
                   });
@@ -437,7 +440,7 @@ describe("process deadlines", () => {
     });
 
     reminding = "ok";
-    const deadLetters = (await import("../dead-letters/dead-letters.ts")).createDeadLetters({
+    const deadLetters = createDeadLetters({
       storage: harness.storage,
       pipeline: harness.pipeline,
       policies: harness.policies,
@@ -525,6 +528,25 @@ describe("process deadlines", () => {
     await settle(harness);
     expect(calls).toEqual([`reminder:${at(DAY)}`, `reminder:${at(DAY)}`]);
     expect(await harness.storage.deadLetterStore.list()).toEqual([]);
+  });
+
+  it("count a conflict another stream met as an ordinary failure", async () => {
+    reset();
+    reminding = "conflict";
+    failuresLeft = 99;
+    conflictOn = "order:o-1";
+    const harness = await setUp({
+      runtime: { processes: { retry: { strategy: "none" } } },
+    });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await settle(harness);
+    harness.clock.advance(DAY);
+    await settle(harness);
+    expect(calls).toEqual([`reminder:${at(DAY)}`]);
+    expect(await harness.storage.deadLetterStore.list()).toMatchObject([
+      { eventId: "deadline:nextReminder", errorType: "retriable_exhausted" },
+    ]);
+    expect((await lifecycle(harness)).at(-1)?.type).toBe(PROCESS_EVENTS.failed);
   });
 
   it("put the entry back on the next delivery after a crash between the append and the schedule", async () => {
@@ -725,35 +747,40 @@ describe("process deadlines", () => {
   });
 });
 
-describe("a deadline that gives up with nothing pending", () => {
-  it("fails no process and records nothing but a warning", async () => {
+describe("a deadline that gives up after it was reached", () => {
+  it("fails no process, whether it is gone, reached or ended, and records a warning", async () => {
     reset();
     const { logger, entries } = createRecordingLogger();
     const harness = await createReactiveHarness({ registry, logger });
     const failure = { error: new Error("gone"), attempts: 3, errorType: "terminal" as const };
+    const payload = { aggregateId: "o-1", field: "nextReminder", at: at(DAY) };
     await harness.processes.failDeadline({
-      payload: { process: "order.nope", aggregateId: "o-1" },
+      payload: { ...payload, process: "order.nope" },
       ...failure,
     });
-    await harness.processes.failDeadline({
-      payload: { process: "order.reminders", aggregateId: "o-1" },
-      ...failure,
-    });
-    expect(await lifecycle(harness)).toEqual([]);
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await settle(harness);
+    harness.clock.advance(DAY);
+    await settle(harness);
+    await harness.processes.failDeadline({
+      payload: { ...payload, process: "order.reminders" },
+      ...failure,
+    });
+    expect((await lifecycle(harness)).at(-1)?.type).toBe(PROCESS_EVENTS.deadlineReached);
     await harness.pipeline.dispatch({ type: "ArchiveOrder", payload: { orderId: "o-1" } });
     await settle(harness);
     await harness.processes.failDeadline({
-      payload: { process: "order.reminders", aggregateId: "o-1" },
+      payload: { ...payload, process: "order.reminders", at: at(2 * DAY) },
       ...failure,
     });
     expect((await lifecycle(harness)).at(-1)?.type).toBe(PROCESS_EVENTS.completed);
     expect(await harness.storage.deadLetterStore.list()).toEqual([]);
-    expect(entries).toContainEqual({
-      level: "warn",
-      message: "process deadline gave up with no deadline pending",
-      fields: { process: "order.reminders", aggregateId: "o-1", error: "gone" },
-    });
+    expect(
+      entries.filter(
+        (entry) =>
+          entry.message === "process deadline gave up after it was reached or the process ended",
+      ),
+    ).toHaveLength(2);
   });
 });
 

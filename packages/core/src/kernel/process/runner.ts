@@ -7,7 +7,7 @@ import {
   NotFoundError,
   ValidationError,
 } from "../../contracts/errors.ts";
-import type { StoredEvent } from "../../contracts/event.ts";
+import { type StoredEvent, streamId } from "../../contracts/event.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
@@ -21,7 +21,13 @@ import { classifyFailure, errorDetails, retryDelayMs } from "../shared/retry.ts"
 import { withTimeout } from "../shared/timeout.ts";
 import { ATTRIBUTES, deadLettered, traced } from "../telemetry.ts";
 import type { ProcessesRuntime, ProcessRuntime } from "./build-processes.ts";
-import { afterFrom, type Deadline, nextDeadline, TIMEOUT_DEADLINE } from "./deadlines.ts";
+import {
+  afterFrom,
+  type Deadline,
+  nextDeadline,
+  reachedKey,
+  TIMEOUT_DEADLINE,
+} from "./deadlines.ts";
 import {
   foldProcess,
   PROCESS_EVENTS,
@@ -59,7 +65,7 @@ export interface HandleDeadlineArgs {
 }
 
 export interface FailDeadlineArgs {
-  readonly payload: Pick<ProcessDeadlinePayload, "process" | "aggregateId">;
+  readonly payload: ProcessDeadlinePayload;
   readonly error: unknown;
   readonly attempts: number;
   readonly errorType: "terminal" | "retriable_exhausted";
@@ -90,8 +96,15 @@ export interface ProcessRunner extends Subscriber {
    */
   retryOf(process: string): ResolvedRetryConfig;
   /**
-   * Called by the scheduled-command worker when a deadline handler gave up: records
-   * `ProcessFailed` and dead-letters the deadline, so a replay runs it again.
+   * Whether a deadline failed because another write to its instance's stream got there first:
+   * worth running again at once, without counting an attempt. A conflict on any other stream,
+   * such as one a command of the handler met, is an ordinary failure.
+   */
+  lostRace(payload: ProcessDeadlinePayload, error: unknown): boolean;
+  /**
+   * Called by the scheduled-command worker when the deadline its entry was scheduled for gave up:
+   * records `ProcessFailed` and dead-letters the deadline, so a replay runs it again. A deadline the
+   * instance has already reached is not failed again: only a later step went wrong.
    */
   failDeadline(args: FailDeadlineArgs): Promise<void>;
   /**
@@ -663,11 +676,12 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     const process = processes.byName[payload.process];
     if (process === undefined) return;
     const instance = await load(process, payload.aggregateId);
-    const field = instance.status === "started" ? pendingOf(process, instance)?.field : undefined;
-    if (field === undefined) {
-      logger.warn("process deadline gave up with no deadline pending", {
+    const field = payload.field;
+    if (instance.status !== "started" || instance.reached.has(reachedKey(payload))) {
+      logger.warn("process deadline gave up after it was reached or the process ended", {
         process: process.name,
         aggregateId: payload.aggregateId,
+        field,
         error: errorDetails(error).message,
       });
       return;
@@ -720,6 +734,18 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     replay,
     handleDeadline,
     failDeadline,
+    lostRace: (payload, error) => {
+      const process = processes.byName[payload.process];
+      return (
+        error instanceof ConcurrencyError &&
+        process !== undefined &&
+        error.streamId ===
+          streamId({
+            aggregateType: processAggregateType(process.type),
+            aggregateId: payload.aggregateId,
+          })
+      );
+    },
     retryOf: (name) => {
       const process = processes.byName[name];
       return process === undefined

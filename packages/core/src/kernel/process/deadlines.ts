@@ -96,6 +96,9 @@ export const nextDeadline: NextDeadlineFunction = ({ fields, state, timeoutAt, r
     }),
     ...(timeoutAt === null ? [] : [{ field: TIMEOUT_DEADLINE, at: timeoutAt }]),
   ].filter((candidate) => !reached.has(reachedKey(candidate)));
-  candidates.sort((a, b) => Date.parse(a.at) - Date.parse(b.at) || a.field.localeCompare(b.field));
+  candidates.sort(
+    (a, b) =>
+      Date.parse(a.at) - Date.parse(b.at) || (a.field < b.field ? -1 : a.field > b.field ? 1 : 0),
+  );
   return candidates[0] ?? null;
 };

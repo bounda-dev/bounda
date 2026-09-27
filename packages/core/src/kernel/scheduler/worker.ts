@@ -2,7 +2,6 @@ import type { StoragePorts } from "../../adapter/adapter.ts";
 import type { ClaimedCommand, ScheduledCommand } from "../../adapter/ports/scheduler.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
-import { ConcurrencyError } from "../../contracts/errors.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
@@ -254,7 +253,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       await run(entry);
       await storage.scheduler.complete(entry);
     } catch (error) {
-      if (isDeadline(entry) && error instanceof ConcurrencyError) {
+      if (isDeadline(entry) && processes.lostRace(deadlineOf(entry), error)) {
         await deferToItsTime(entry);
         return;
       }
