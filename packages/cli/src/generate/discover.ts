@@ -415,7 +415,7 @@ const discoverProcess = async (
       if (collaborator !== null) collaborators.push(collaborator);
       continue;
     }
-    if (module === RENAMED_TIMEOUT_HANDLER) {
+    if (module === RENAMED_TIMEOUT_HANDLER && !eventKeys.has("timeout")) {
       context.problems.add(path, "the timeout handler is at-timeout.ts now; rename the file");
       continue;
     }

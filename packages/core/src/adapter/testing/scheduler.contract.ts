@@ -223,6 +223,33 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
       );
     });
 
+    it("keeps the time and attempts of a retry when told to and the command has not changed", async () => {
+      const entry: ScheduleArgs = {
+        dedupeKey: "a",
+        command: testCommand("1"),
+        executeAt: at(0),
+        context: testContext,
+        keepTimingOfSameCommand: true,
+      };
+      await scheduler.schedule(entry);
+      const [claimed] = await scheduler.claimDue({ now: at(1), limit: 10, leaseMs: 60_000 });
+      if (claimed === undefined) throw new Error("nothing claimed");
+      await scheduler.fail({ claim: claimed, error: "boom", retryAt: at(5_000) });
+
+      await scheduler.schedule(entry);
+      expect(await scheduler.claimDue({ now: at(2), limit: 10, leaseMs: 60_000 })).toEqual([]);
+      expect(await scheduler.list()).toMatchObject([
+        { executeAt: at(5_000).toISOString(), attempts: 1 },
+      ]);
+
+      await scheduler.schedule({ ...entry, command: testCommand("1", { moved: true }) });
+      expect(await scheduler.list()).toMatchObject([
+        { executeAt: at(0).toISOString(), attempts: 0 },
+      ]);
+      await scheduler.schedule({ ...entry, keepTimingOfSameCommand: false, executeAt: at(9) });
+      expect(await scheduler.list()).toMatchObject([{ executeAt: at(9).toISOString() }]);
+    });
+
     it("replaces the schedule when the same key is scheduled again", async () => {
       await scheduler.schedule({
         dedupeKey: "timeout:order:1",

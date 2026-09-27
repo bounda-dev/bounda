@@ -13,10 +13,10 @@ import type { Process as AtNextReminder } from "./fixtures/order-app/app/domain/
 import type { Process as OrderPayment } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/index.ts";
 import type { Process as OnOrderPaid } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/on-order-paid.ts";
 
+import type { Projection as ProjectOrderPlaced } from "./fixtures/order-app/app/read/order-summary/projections/order/+types/order-placed.ts";
+
 type OrderPaymentModule =
   typeof import("./fixtures/order-app/app/domain/order/processes/order-payment/index.ts");
-
-import type { Projection as ProjectOrderPlaced } from "./fixtures/order-app/app/read/order-summary/projections/order/+types/order-placed.ts";
 
 describe("what does not compile", () => {
   it("an at- handler for a field that is not a deadline() of the state", () => {

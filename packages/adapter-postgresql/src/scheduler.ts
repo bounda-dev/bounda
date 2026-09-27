@@ -69,7 +69,7 @@ export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ d
     );
 
   return {
-    schedule: ({ dedupeKey, command, executeAt, context }) =>
+    schedule: ({ dedupeKey, command, executeAt, context, keepTimingOfSameCommand }) =>
       db.run(
         `INSERT INTO ${table} (${COLUMNS}, "claimed_at", "last_error", "revision") VALUES ($1, $2, $3, $4, $5, $6, 0, NULL, NULL, 0)
        ON CONFLICT ("dedupe_key") DO UPDATE SET
@@ -85,7 +85,7 @@ export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ d
          ${table}."command_type" = excluded."command_type"
          AND ${table}."aggregate_id" = excluded."aggregate_id"
          AND ${table}."payload" = excluded."payload"
-         AND ${table}."execute_at" = excluded."execute_at"
+         ${keepTimingOfSameCommand === true ? "" : `AND ${table}."execute_at" = excluded."execute_at"`}
          AND ${table}."context" = excluded."context"
        )`,
         [

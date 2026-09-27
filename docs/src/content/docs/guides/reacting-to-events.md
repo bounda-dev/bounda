@@ -278,8 +278,9 @@ What a replay does depends on the kind:
 - **Process**: the handler runs again for the stored event with the instance's current state. A
   process that had failed is back to `started`, its deadlines are scheduled again at their moments
   (one already past runs at once), and an event that completes the process completes it. A letter
-  for a deadline (`deadline:<field>`) runs the handler of the deadline the process failed on, with
-  a new `idempotencyKey`, and schedules the next one.
+  for a deadline (`deadline:<field>`) runs the handler of the earliest deadline still pending,
+  which is the one the process failed on unless an event moved an earlier one since, with a new
+  `idempotencyKey`, and schedules the next one.
 - **Command**: the dropped command is dispatched again with the payload the letter recorded.
 
 The same operations are on the app as `app.deadLetters` — `list`, `count`, `get`, `replay` and

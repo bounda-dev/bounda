@@ -36,6 +36,12 @@ export interface ScheduleArgs {
   readonly command: NewCommand;
   readonly executeAt: Date;
   readonly context: CausationContext;
+  /**
+   * When the key already holds this very command with this context, leave the entry as it is,
+   * its time and attempts included, instead of moving it to `executeAt`: a retry that is backing
+   * off stays backed off. What the process runner writes a deadline entry with.
+   */
+  readonly keepTimingOfSameCommand?: boolean;
 }
 
 export interface ClaimDueArgs {

@@ -32,5 +32,7 @@ time-out now counts from the starting event's time. For code that does not come 
 `deadline` and `instant`. The process runner keeps one scheduler entry per instance,
 `bounda.ProcessDeadline`, in place of `bounda.ProcessTimeout`, and records
 `ProcessDeadlineReached` when a deadline comes due. For adapter authors, the `Scheduler` port gains
-`defer`, which hands a claimed command back without counting an attempt. The Cloudflare client's
+`defer`, which hands a claimed command back without counting an attempt, and `schedule` takes
+`keepTimingOfSameCommand`, which leaves an entry that already holds the same command and context
+as it is, a pending retry included. The Cloudflare client's
 `getLag()` is typed with the new `AppLag`, `waitingDeadlines` included.

@@ -487,6 +487,73 @@ describe("process deadlines", () => {
     ]);
   });
 
+  it("keep backing off when an event reaches the instance during a retry", async () => {
+    reset();
+    reminding = "flaky";
+    failuresLeft = 99;
+    const harness = await setUp({
+      runtime: {
+        processes: {
+          retry: { strategy: "fixed", maxAttempts: 3, baseDelay: HOUR, maxDelay: HOUR },
+        },
+      },
+    });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await settle(harness);
+    harness.clock.advance(DAY);
+    await settle(harness);
+    expect(await harness.storage.scheduler.list()).toMatchObject([
+      { executeAt: at(DAY + HOUR), attempts: 1 },
+    ]);
+    paidFails = true;
+    await harness.pipeline.dispatch({
+      type: "PayOrder",
+      payload: { orderId: "o-1", method: "card" },
+    });
+    for (let pass = 0; pass < 5; pass += 1) {
+      await harness.dispatcher.processOnce();
+      await harness.worker.runOnce();
+    }
+    expect(await harness.storage.scheduler.list()).toMatchObject([
+      { executeAt: at(DAY + HOUR), attempts: 1 },
+    ]);
+    expect(calls).toHaveLength(1);
+    harness.clock.advance(HOUR);
+    for (let pass = 0; pass < DEADLINE_WAIT_ROUNDS + 2; pass += 1) {
+      await harness.dispatcher.processOnce();
+      await harness.worker.runOnce();
+    }
+    expect(calls).toHaveLength(2);
+    expect(await harness.storage.scheduler.list()).toMatchObject([
+      { executeAt: at(DAY + 2 * HOUR), attempts: 2 },
+    ]);
+  });
+
+  it("keep the entry when recording that a deadline gave up fails, and give up again later", async () => {
+    reset();
+    reminding = "flaky";
+    failuresLeft = 99;
+    const harness = await setUp({ runtime: { processes: { retry: { strategy: "none" } } } });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await settle(harness);
+    harness.clock.advance(DAY);
+    const failDeadline = harness.processes.failDeadline;
+    Object.assign(harness.processes, {
+      failDeadline: async () => {
+        throw new Error("event store is down");
+      },
+    });
+    expect(await harness.worker.runOnce()).toBe(1);
+    Object.assign(harness.processes, { failDeadline });
+    expect(await harness.storage.scheduler.list()).toHaveLength(1);
+    harness.clock.advance(harness.worker.leaseMs + 1);
+    await settle(harness);
+    expect((await lifecycle(harness)).at(-1)?.type).toBe(PROCESS_EVENTS.failed);
+    expect(await harness.storage.deadLetterStore.list()).toMatchObject([
+      { eventId: "deadline:nextReminder" },
+    ]);
+  });
+
   it("dead-letter a deadline whose retries run out and fail the process", async () => {
     reset();
     reminding = "flaky";

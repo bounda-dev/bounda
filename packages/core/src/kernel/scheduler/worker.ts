@@ -81,9 +81,10 @@ type GiveUpReason = "terminal" | "retriable_exhausted";
  * has handled every event stored when the worker first claimed it, so an event that cancels the
  * deadline is seen first. The check is best effort: the commands a deadline sends are still
  * checked by the aggregates that receive them. A deadline that waits, or whose instance moved
- * while it ran, goes back to the schedule without counting an attempt. A deadline entry that ran
- * is never removed here: the process runner has already written what the instance needs next, so
- * the worker only lets go of its claim. An entry that cannot be settled is logged and left to its
+ * while it ran, goes back to the schedule without counting an attempt. A deadline entry is never
+ * removed here, whether it ran or gave up: the process runner writes what the instance needs
+ * next, so the worker only lets go of its claim, and a crash in between leaves the entry to its
+ * lease instead of losing it. An entry that cannot be settled is logged and left to its
  * lease, so it does not hold back the rest of the round.
  */
 export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction = ({
@@ -177,12 +178,6 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     attempts: number,
     reason: GiveUpReason,
   ): Promise<void> => {
-    const details = errorDetails(error);
-    await storage.scheduler.fail({ claim: entry, error: details.message });
-    if (delayedPolicies.isDelayedPolicy(entry)) {
-      await giveUpPolicy(entry, error, attempts, reason);
-      return;
-    }
     if (isDeadline(entry)) {
       await processes.failDeadline({
         payload: deadlineOf(entry),
@@ -190,6 +185,13 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
         attempts,
         errorType: reason,
       });
+      await deferToItsTime(entry);
+      return;
+    }
+    const details = errorDetails(error);
+    await storage.scheduler.fail({ claim: entry, error: details.message });
+    if (delayedPolicies.isDelayedPolicy(entry)) {
+      await giveUpPolicy(entry, error, attempts, reason);
       return;
     }
     await recordFailure(entry, error, attempts);

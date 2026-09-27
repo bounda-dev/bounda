@@ -267,6 +267,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
           },
           executeAt: new Date(next.at),
           context: entryContext(process, instanceId, instance),
+          keepTimingOfSameCommand: true,
         });
       }
       const current = await load(process, instanceId);
@@ -598,7 +599,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
                       deriveIdempotencyKey({
                         kind: "process",
                         handler: process.name,
-                        subject: `${instanceId}:deadline:${due.field}:${due.at}`,
+                        subject: `${instanceId}:deadline:${due.field}:${new Date(due.at).toISOString()}`,
                         replay,
                       }),
                       due.at,

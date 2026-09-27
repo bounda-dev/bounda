@@ -558,6 +558,19 @@ describe("discoverProject convention problems", () => {
     ]);
   });
 
+  it("reads on-timeout.ts as the handler of an aggregate's Timeout event", async () => {
+    const root = await project([
+      "app/domain/order/timeout.ts",
+      "app/domain/order/processes/payment/index.ts",
+      "app/domain/order/processes/payment/on-timeout.ts",
+    ]);
+    expect(await problemsOf(root)).toEqual([]);
+    const model = await discoverProject({ root });
+    expect(model.aggregates[0]?.processes[0]?.handlers.map((handler) => handler.eventKey)).toEqual([
+      "timeout",
+    ]);
+  });
+
   it("rejects process handlers that do not match an event of the aggregate", async () => {
     const root = await project([
       "app/domain/order/order-placed.ts",
