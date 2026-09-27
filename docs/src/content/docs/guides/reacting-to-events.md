@@ -323,8 +323,9 @@ instance up: it stays failed, its parked events never run, though they stay in i
 the events that reach it afterwards are dropped, as for an instance that has ended.
 
 The failure is state as well: `ProcessFailed` carries its dead letter, so a letter whose writing
-was cut short, by a crash between the two, is filed again the next time an event reaches the
-instance.
+was cut short is filed again the next time the process runner reaches the instance: an event for
+it, a retry of the deadline that failed, or a replay.
+
 This is Axon's sequenced dead-letter queue, which parks the events of one sequence behind the one
 that failed, with the process instance as the sequence.
 

@@ -49,9 +49,9 @@ describe("dead letter output", () => {
     expect(formatReplayed({ ...replayed, parked: 2 })).toBe(
       [
         "replayed dead letter dl-1: process order.orderPayment for OrderPaid",
-        "the process failed again; 2 of its events still wait, see the new dead letter",
+        "the process failed again; 2 steps still wait, starting with the new dead letter",
       ].join("\n"),
     );
-    expect(formatReplayed({ ...replayed, parked: 1 })).toContain("1 of its events still waits");
+    expect(formatReplayed({ ...replayed, parked: 1 })).toContain("1 step still waits");
   });
 });

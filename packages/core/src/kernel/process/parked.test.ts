@@ -802,7 +802,7 @@ describe("events of a failed process", () => {
     await settle();
     failing.set("nudge", "retriable");
     const replayed = await deadLetters.replay((await deadLetters.list())[0]?.id ?? "");
-    expect(replayed.parked).toBe(1);
+    expect(replayed.parked).toBe(2);
     expect((await types()).at(-1)).toBe(PROCESS_EVENTS.failed);
     expect((await harness.storage.eventStore.load(stream)).events.at(-1)?.payload).toMatchObject({
       deadline: "nudge",
@@ -1182,6 +1182,153 @@ describe("events of a failed process", () => {
         (event.payload as { eventId?: string }).eventId === "twice",
     );
     expect(failures).toHaveLength(1);
+  });
+
+  const letterOfFailure = (id: string, eventId: string) => ({
+    id,
+    kind: "process" as const,
+    subscriber: "order.tally",
+    eventId,
+    eventType: "OrderPaid",
+    aggregateType: "order",
+    aggregateId: "o-1",
+    errorType: "terminal" as const,
+    errorMessage: "elsewhere",
+    attempts: 1,
+    firstFailedAt: "2026-01-01T00:00:00.000Z",
+    lastFailedAt: "2026-01-01T00:00:00.000Z",
+  });
+
+  it("park a completing event when the instance fails between handling and completing it", async () => {
+    const context = await setUp();
+    const { harness, types } = context;
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await context.settle();
+    await harness.pipeline.dispatch({ type: "ArchiveOrder", payload: { orderId: "o-1" } });
+    const load = harness.storage.eventStore.load;
+    let loads = 0;
+    harness.storage.eventStore.load = async (args) => {
+      if (args.aggregateType === stream.aggregateType) {
+        loads += 1;
+        if (loads === 2) {
+          await rawAppend(harness, PROCESS_EVENTS.failed, {
+            eventId: "elsewhere",
+            error: "elsewhere",
+            letter: letterOfFailure("elsewhere-letter", "elsewhere"),
+          });
+        }
+      }
+      return load(args);
+    };
+    await harness.dispatcher.processUntilIdle();
+    harness.storage.eventStore.load = load;
+    expect((await types()).slice(-2)).toEqual([PROCESS_EVENTS.failed, PROCESS_EVENTS.eventParked]);
+  });
+
+  it("file a deadline's letter again when it re-runs after writing the letter failed", async () => {
+    const context = await setUp();
+    const { harness, deadLetters, settle } = context;
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await settle();
+    failing.set("nudge", "terminal");
+    const add = harness.storage.deadLetterStore.add;
+    let down = true;
+    harness.storage.deadLetterStore.add = async (letter) => {
+      if (down) {
+        down = false;
+        throw new Error("store down");
+      }
+      return add(letter);
+    };
+    harness.clock.advance(DAY);
+    await harness.worker.runOnce();
+    expect(down).toBe(false);
+    expect(await deadLetters.list()).toEqual([]);
+    harness.clock.advance(harness.worker.leaseMs + 1);
+    await settle();
+    expect(await deadLetters.list()).toMatchObject([{ eventId: "deadline:nudge", parked: 0 }]);
+  });
+
+  it("file the new failure's letter when a replay's writing it failed, so the operator can go on", async () => {
+    const context = await setUp();
+    const { harness, deadLetters, settle } = context;
+    await failOnFirstPayment(context);
+    const order = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    const paid = order.events.find((event) => event.type === "OrderPaid");
+    if (paid === undefined) throw new Error("no payment");
+    await harness.storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "o-1",
+      expectedVersion: order.events.length,
+      events: [{ ...paid, id: "again", version: order.events.length + 1 }],
+    });
+    await settle();
+    const [first] = await deadLetters.list();
+    failingEvents.set("again", "terminal");
+    const add = harness.storage.deadLetterStore.add;
+    let down = true;
+    harness.storage.deadLetterStore.add = async (letter) => {
+      if (down && letter.eventId === "again") {
+        down = false;
+        throw new Error("store down");
+      }
+      return add(letter);
+    };
+    await expect(deadLetters.replay(first?.id ?? "")).rejects.toThrow("store down");
+    await expect(deadLetters.replay(first?.id ?? "")).rejects.toThrow("is failed on another step");
+    const failed = await deadLetters.list({ status: "failed" });
+    expect(failed.map((letter) => letter.eventId)).toContain("again");
+  });
+
+  it("stop a drain once another replay recorded a new failure", async () => {
+    const context = await setUp();
+    const { harness, deadLetters, settle, types } = context;
+    await failOnFirstPayment(context);
+    const order = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    const paid = order.events.find((event) => event.type === "OrderPaid");
+    if (paid === undefined) throw new Error("no payment");
+    await harness.storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "o-1",
+      expectedVersion: order.events.length,
+      events: [1, 2].map((offset) => ({
+        ...paid,
+        id: `p${offset}`,
+        version: order.events.length + offset,
+      })),
+    });
+    await settle();
+    const [letter] = await deadLetters.list();
+    const append = harness.storage.eventStore.append;
+    let other = false;
+    harness.storage.eventStore.append = async (args) => {
+      const result = await append(args);
+      const [first] = args.events;
+      if (
+        !other &&
+        first?.type === PROCESS_EVENTS.handled &&
+        (first.payload as { eventId?: string }).eventId === "p1"
+      ) {
+        other = true;
+        await rawAppend(harness, PROCESS_EVENTS.failed, {
+          eventId: "p2",
+          error: "other replay",
+          letter: letterOfFailure("L2", "p2"),
+        });
+      }
+      return result;
+    };
+    await deadLetters.replay(letter?.id ?? "");
+    harness.storage.eventStore.append = append;
+    expect(other).toBe(true);
+    expect(runs).not.toContain("paid:p2");
+    expect((await types()).at(-1)).toBe(PROCESS_EVENTS.failed);
   });
 });
 

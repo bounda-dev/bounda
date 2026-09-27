@@ -14,7 +14,7 @@ overtakes an older one, and a deadline that came due before a parked event arriv
 it. A parked event that fails again becomes the new dead letter at once, with the rest still
 parked behind it. Discarding the letter gives the instance up: it stays failed, its parked
 events never run and later ones are dropped. `ProcessFailed` now carries its dead letter, which is
-filed again if writing it was cut short.
+filed again the next time the instance is reached if writing it was cut short.
 
 `app.deadLetters` fills in `parked` on process letters, how many events wait behind the failure,
 and `bounda dead-letters list` prints it; on the letter a replay returns, it counts what still
@@ -23,4 +23,5 @@ handler a deploy removed is let through on replay.
 
 Breaking, for code that reads process streams: a failed instance is back to `started` only on
 `ProcessResumed`, no longer on the `ProcessHandled` or `ProcessDeadlineReached` a replay writes,
-and `ProcessFailed` for a deadline records its moment as `at`.
+and `ProcessFailed` for a deadline records its moment as `at`. A failure recorded by an earlier
+version, whose `ProcessFailed` carries no dead letter, cannot be replayed through `app.deadLetters`.

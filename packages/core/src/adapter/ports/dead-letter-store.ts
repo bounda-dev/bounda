@@ -31,8 +31,9 @@ export interface DeadLetter {
   /**
    * For a process letter, how many events are parked on its instance: while the letter is
    * `failed`, the ones that reached the instance since and wait for its replay, which handles
-   * them in order; on the letter a replay returns, the ones still waiting because the process
-   * failed again, the one it failed on included, so it is `0` only when the instance resumed.
+   * them in order; on the letter a replay returns, the steps still waiting because the process
+   * failed again, the event or deadline it failed on included, so it is `0` only when the instance
+   * resumed.
    * Filled in by `app.deadLetters`, never stored.
    */
   readonly parked?: number;

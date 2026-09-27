@@ -34,7 +34,7 @@ export const formatReplayed: FormatLetterFunction = (letter) =>
     `replayed dead letter ${letter.id}: ${letter.kind} ${letter.subscriber} for ${letter.eventType}`,
     ...((letter.parked ?? 0) > 0
       ? [
-          `the process failed again; ${letter.parked} of its events still wait${letter.parked === 1 ? "s" : ""}, see the new dead letter`,
+          `the process failed again; ${letter.parked} step${letter.parked === 1 ? " still waits" : "s still wait"}, starting with the new dead letter`,
         ]
       : []),
   ].join("\n");

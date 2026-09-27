@@ -137,8 +137,9 @@ export interface ProcessRunner extends Subscriber {
    */
   parkedBehind(letter: DeadLetter): Promise<number>;
   /**
-   * After a replay of a process dead letter: how many events of its instance are still waiting
-   * because the process failed again, the one it failed on included. `0` once it resumed.
+   * After a replay of a process dead letter: how many steps of its instance still wait because
+   * the process failed again, the one it failed on included, whether an event or a deadline. `0`
+   * once it resumed.
    */
   stillParked(letter: DeadLetter): Promise<number>;
 }
@@ -485,14 +486,10 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
         instance,
         (existing?.attempts ?? 0) + 1,
       );
-      await append(
-        process,
-        instanceId,
-        instance,
-        PROCESS_EVENTS.handled,
-        { state, eventId: event.id, eventType: event.type },
-        context,
-      );
+      await appendAll(process, instanceId, instance, [
+        handledEntry(event, state),
+        ...completionOf(process, event),
+      ]);
       await storage.inboxLedger.complete(key);
       return "done";
     } catch (error) {
@@ -580,6 +577,10 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
   ): Promise<void> => {
     if (!process.completedBy.has(qualifiedEventType(event.aggregateType, event.type))) return;
     const current = await load(process, instanceId);
+    if (!resuming && current.status === "failed") {
+      await parkUntilLanded(process, event, instanceId, current);
+      return;
+    }
     if (current.status !== "started" && !(resuming && current.status === "failed")) return;
     const completed: LifecycleEntry = {
       type: PROCESS_EVENTS.completed,
@@ -608,6 +609,37 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     return "done";
   };
 
+  const healFailure = async (
+    process: ProcessRuntime,
+    instance: ProcessInstance,
+  ): Promise<DeadLetter | null> => {
+    const letter = instance.status === "failed" ? instance.failure?.letter : undefined;
+    if (letter === undefined) return null;
+    const filed = await storage.deadLetterStore.get(letter.id);
+    if (filed !== null) return filed;
+    await file(process, letter);
+    return null;
+  };
+
+  const parkUntilLanded = async (
+    process: ProcessRuntime,
+    event: StoredEvent,
+    instanceId: string,
+    instance: ProcessInstance,
+  ): Promise<ProcessInstance> => {
+    let current = instance;
+    while (current.status === "failed") {
+      try {
+        await park(process, event, instanceId, current);
+        return current;
+      } catch (error) {
+        if (!lostRace(process, instanceId, error)) throw error;
+        current = await load(process, instanceId);
+      }
+    }
+    return current;
+  };
+
   const park = async (
     process: ProcessRuntime,
     event: StoredEvent,
@@ -616,12 +648,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
   ): Promise<void> => {
     const qualified = qualifiedEventType(event.aggregateType, event.type);
     const acts = process.handlers[qualified] !== undefined || process.completedBy.has(qualified);
-    const letter = instance.failure?.letter;
-    if (letter !== undefined) {
-      const filed = await storage.deadLetterStore.get(letter.id);
-      if (filed === null) await file(process, letter);
-      if (filed?.status === "discarded") return;
-    }
+    if ((await healFailure(process, instance))?.status === "discarded") return;
     if (
       !acts ||
       event.id === instance.failure?.eventId ||
@@ -772,10 +799,14 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     }
   };
 
-  const resumeParked = async (process: ProcessRuntime, instanceId: string): Promise<void> => {
+  const resumeParked = async (
+    process: ProcessRuntime,
+    instanceId: string,
+    letter: string | undefined,
+  ): Promise<void> => {
     for (;;) {
       const instance = await load(process, instanceId);
-      if (instance.status !== "failed") return;
+      if (instance.status !== "failed" || !blockedOn(instance, letter)) return;
       const [next] = instance.parked;
       const event = next === undefined ? undefined : await parkedEvent(next);
       const due = pendingOf(process, instance);
@@ -823,14 +854,9 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
       }
       instance = await start(process, event, instanceId, instance);
     }
-    while (instance.status === "failed") {
-      try {
-        await park(process, event, instanceId, instance);
-        return "done";
-      } catch (error) {
-        if (!lostRace(process, instanceId, error)) throw error;
-        instance = await load(process, instanceId);
-      }
+    if (instance.status === "failed") {
+      instance = await parkUntilLanded(process, event, instanceId, instance);
+      if (instance.status === "failed") return "done";
     }
     if (instance.status !== "started") return "done";
     const outcome = await handle(process, event, instanceId, instance);
@@ -868,6 +894,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
       );
     }
     if (instance.status === "failed" && !failedHere) {
+      await healFailure(process, instance);
       throw new ConfigurationError(
         `Process "${name}" is failed on another step for ${instanceId}; replay the dead letter of that failure first`,
       );
@@ -883,7 +910,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
         ...completionOf(process, event),
       ]);
     }
-    await resumeParked(process, instanceId);
+    await resumeParked(process, instanceId, letter);
     await reconcile(process, instanceId);
     logger.info("process handler replayed", { process: process.name, eventId: event.id });
   };
@@ -993,14 +1020,15 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     const due = pendingOf(process, instance);
     if (replay !== undefined) {
       const failed = instance.failure?.deadline;
+      if (instance.status === "failed" && !blockedOn(instance, letter)) {
+        await healFailure(process, instance);
+        throw new ConfigurationError(
+          `Process "${process.name}" is failed on another step for ${payload.aggregateId}; replay the dead letter of that failure first`,
+        );
+      }
       if (instance.status !== "failed" || failed === undefined) {
         throw new NotFoundError(
           `Process "${process.name}" has no failed deadline for ${payload.aggregateId}`,
-        );
-      }
-      if (!blockedOn(instance, letter)) {
-        throw new ConfigurationError(
-          `Process "${process.name}" is failed on another step for ${payload.aggregateId}; replay the dead letter of that failure first`,
         );
       }
       if (!instance.reached.has(reachedKey(failed))) {
@@ -1013,7 +1041,9 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
           replay,
         );
       }
-      await resumeParked(process, payload.aggregateId);
+      await resumeParked(process, payload.aggregateId, letter);
+    } else if (instance.status === "failed") {
+      await healFailure(process, instance);
     } else if (
       instance.status === "started" &&
       due !== null &&
@@ -1135,7 +1165,9 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     },
     stillParked: async (letter) => {
       const instance = await instanceOfLetter(letter);
-      return instance?.status === "failed" ? Math.max(instance.parked.length, 1) : 0;
+      return instance?.status === "failed"
+        ? instance.parked.length + (instance.failure?.deadline === undefined ? 0 : 1)
+        : 0;
     },
     lostRace: (payload, error) => {
       const process = processes.byName[payload.process];
