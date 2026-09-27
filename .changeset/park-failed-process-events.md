@@ -12,8 +12,9 @@ the parked events in order with the `idempotencyKey` each would have had, and on
 that arrives during the replay is parked and handled before the instance resumes, so nothing
 overtakes an older one, and a deadline that came due before a parked event arrived runs before
 it. A parked event that fails again becomes the new dead letter at once, with the rest still
-parked behind it. Discarding the letter gives the instance up: it stays failed and its parked
-events never run.
+parked behind it. Discarding the letter gives the instance up: it stays failed, its parked
+events never run and later ones are dropped. `ProcessFailed` now carries its dead letter, which is
+filed again if writing it was cut short.
 
 `app.deadLetters` fills in `parked` on process letters, how many events wait behind the failure,
 and `bounda dead-letters list` prints it; on the letter a replay returns, it counts what still

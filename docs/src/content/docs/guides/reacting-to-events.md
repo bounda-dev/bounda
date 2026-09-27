@@ -306,8 +306,8 @@ Replaying the dead letter of the failure is what brings the instance back:
 3. once none is left the instance records `ProcessResumed`, is `started` again, and its deadlines
    are scheduled again.
 
-A failure whose handler a deploy has since removed is let through, and the replay goes on with
-what is parked. When the failure is the process's `timeout`, replaying it ends the process as
+A failure whose handler a deploy has since removed, an event's or a deadline's, is let through,
+and the replay goes on with what is parked. When the failure is the process's `timeout`, replaying it ends the process as
 timed out and drops what is parked, as for any timed-out instance.
 
 An event that arrives during the replay is parked too and handled before the instance resumes, so
@@ -319,7 +319,12 @@ process completes it, and what is parked after it is dropped, as for any complet
 
 `bounda dead-letters list` says how many events wait behind a failure (`3 events are parked behind
 it`), and so does `parked` on the letters of `app.deadLetters`. Discarding the letter gives the
-instance up: it stays failed and its parked events never run, though they stay in its history.
+instance up: it stays failed, its parked events never run, though they stay in its history, and
+the events that reach it afterwards are dropped, as for an instance that has ended.
+
+The failure is state as well: `ProcessFailed` carries its dead letter, so a letter whose writing
+was cut short, by a crash between the two, is filed again the next time an event reaches the
+instance.
 This is Axon's sequenced dead-letter queue, which parks the events of one sequence behind the one
 that failed, with the process instance as the sequence.
 

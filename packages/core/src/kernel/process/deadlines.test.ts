@@ -415,7 +415,7 @@ describe("process deadlines", () => {
       PROCESS_EVENTS.handled,
       PROCESS_EVENTS.failed,
     ]);
-    expect((await lifecycle(harness)).at(-1)?.payload).toEqual({
+    expect((await lifecycle(harness)).at(-1)?.payload).toMatchObject({
       deadline: "nextReminder",
       at: at(DAY),
       error: 'Process order.reminders left the deadline "nextReminder" at the moment that came due',

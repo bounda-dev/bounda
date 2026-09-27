@@ -335,7 +335,7 @@ describe("process runner", () => {
       PROCESS_EVENTS.started,
       PROCESS_EVENTS.failed,
     ]);
-    expect(stream.events[1]?.payload).toEqual({
+    expect(stream.events[1]?.payload).toMatchObject({
       eventId: expect.any(String),
       error: "bad payment",
     });

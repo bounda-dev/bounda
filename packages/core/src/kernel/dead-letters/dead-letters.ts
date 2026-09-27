@@ -17,8 +17,14 @@ import { PROCESS_DEADLINE_COMMAND, type ProcessRunner } from "../process/runner.
  * succeeds; `discard` marks it `discarded`. Both leave the row in place as a record.
  */
 export interface DeadLetters {
+  /**
+   * The letters of the store, process ones with how many events are `parked` behind them.
+   */
   list(args?: ListDeadLettersArgs): Promise<readonly DeadLetter[]>;
   count(args?: ListDeadLettersArgs): Promise<number>;
+  /**
+   * One letter of the store, a process one with how many events are `parked` behind it.
+   */
   get(id: string): Promise<DeadLetter | null>;
   /**
    * Runs the failed handler once more: the policy or process handler for the stored event, the
@@ -118,12 +124,14 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
             payload: { process: letter.subscriber, aggregateId: letter.aggregateId },
             context: { correlationId: ids.next(), causationId: letter.id, depth: 0 },
             replay,
+            letter: letter.id,
           });
         }
         return processes.replay({
           process: letter.subscriber,
           event: await eventOf(letter),
           replay,
+          letter: letter.id,
         });
       case "command":
         return replayCommand(letter);

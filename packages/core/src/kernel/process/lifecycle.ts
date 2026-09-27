@@ -1,3 +1,4 @@
+import type { NewDeadLetter } from "../../adapter/ports/dead-letter-store.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { reachedKey } from "./deadlines.ts";
 
@@ -93,6 +94,11 @@ export interface ProcessInstance {
 export interface ProcessFailure {
   readonly eventId?: string;
   readonly deadline?: { readonly field: string; readonly at: string };
+  /**
+   * The dead letter that records the failure, as `ProcessFailed` carries it, so the letter can be
+   * filed again when writing it was cut short.
+   */
+  readonly letter?: NewDeadLetter;
 }
 
 export interface FoldProcessArgs {
@@ -158,9 +164,11 @@ export const foldProcess: FoldProcessFunction = ({ initialState, events }) => {
           readonly eventId?: string;
           readonly deadline?: string;
           readonly at?: string;
+          readonly letter?: NewDeadLetter;
         };
         failure = {
           ...(payload.eventId === undefined ? {} : { eventId: payload.eventId }),
+          ...(payload.letter === undefined ? {} : { letter: payload.letter }),
           ...(payload.deadline === undefined || payload.at === undefined
             ? {}
             : { deadline: { field: payload.deadline, at: payload.at } }),

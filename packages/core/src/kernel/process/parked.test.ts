@@ -245,9 +245,21 @@ describe("events of a failed process", () => {
     expect(letter).toMatchObject({ parked: 1 });
     expect((await deadLetters.discard(letter?.id ?? "")).status).toBe("discarded");
     await pay().catch(() => undefined);
+    const order = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    const archived = order.events.at(-1);
+    if (archived === undefined) throw new Error("not archived");
+    await harness.storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "o-1",
+      expectedVersion: order.events.length,
+      events: [{ ...archived, id: "after-discard", version: order.events.length + 1 }],
+    });
     harness.clock.advance(40 * DAY);
     await settle();
-    expect((await types()).at(-1)).toBe(PROCESS_EVENTS.eventParked);
+    expect((await types()).filter((type) => type === PROCESS_EVENTS.eventParked)).toHaveLength(1);
     expect(runs).toHaveLength(1);
     expect(await deadLetters.list({ status: "discarded" })).toMatchObject([{ parked: 0 }]);
     expect(await deadLetters.get("nope")).toBeNull();
@@ -417,9 +429,6 @@ describe("events of a failed process", () => {
     const context = await setUp();
     const { harness, deadLetters, types } = context;
     await failOnFirstPayment(context);
-    await harness.pipeline
-      .dispatch({ type: "PayOrder", payload: { orderId: "o-1", method: "card" } })
-      .catch(() => undefined);
     const order = await harness.storage.eventStore.load({
       aggregateType: "order",
       aggregateId: "o-1",
@@ -443,11 +452,8 @@ describe("events of a failed process", () => {
         (first.payload as { eventId?: string }).eventId === "late-payment"
       ) {
         raced = true;
-        throw new ConcurrencyError({
-          streamId: `${stream.aggregateType}:${stream.aggregateId}`,
-          expectedVersion: args.expectedVersion,
-          actualVersion: args.expectedVersion + 1,
-        });
+        await harness.pipeline.dispatch({ type: "ArchiveOrder", payload: { orderId: "o-1" } });
+        await harness.dispatcher.processUntilIdle();
       }
       return append(args);
     };
@@ -455,7 +461,12 @@ describe("events of a failed process", () => {
     harness.storage.eventStore.append = append;
     expect(raced).toBe(true);
     expect(runs.filter((run) => run === "paid:late-payment")).toHaveLength(1);
-    expect((await types()).at(-1)).toBe(PROCESS_EVENTS.resumed);
+    expect((await types()).slice(-4)).toEqual([
+      PROCESS_EVENTS.eventParked,
+      PROCESS_EVENTS.handled,
+      PROCESS_EVENTS.handled,
+      PROCESS_EVENTS.completed,
+    ]);
     expect(await deadLetters.list({ status: "failed" })).toEqual([]);
   });
 
@@ -684,7 +695,7 @@ describe("events of a failed process", () => {
     expect((await types()).at(-1)).toBe(PROCESS_EVENTS.resumed);
   });
 
-  it("recover a replay that broke off between dead-lettering a parked event and failing on it", async () => {
+  it("recover a replay that broke off while recording that a parked event failed", async () => {
     const context = await setUp();
     const { harness, deadLetters, settle, types } = context;
     await failOnFirstPayment(context);
@@ -717,9 +728,9 @@ describe("events of a failed process", () => {
     await deadLetters.replay(first?.id ?? "");
     expect((await types()).at(-1)).toBe(PROCESS_EVENTS.failed);
     const failed = await deadLetters.list({ status: "failed" });
-    expect(failed.map((letter) => letter.eventId)).toEqual(["stubborn", "stubborn"]);
+    expect(failed.map((letter) => letter.eventId)).toEqual(["stubborn"]);
     failingEvents.clear();
-    await deadLetters.replay(failed[1]?.id ?? "");
+    await deadLetters.replay(failed[0]?.id ?? "");
     expect((await types()).at(-1)).toBe(PROCESS_EVENTS.resumed);
   });
 
@@ -905,6 +916,180 @@ describe("events of a failed process", () => {
       lastFailedAt: "2026-01-01T00:00:00.000Z",
     });
     expect(await deadLetters.get("orphan-letter")).toMatchObject({ parked: 0 });
+  });
+
+  const rawAppend = async (
+    harness: Awaited<ReturnType<typeof setUp>>["harness"],
+    type: string,
+    payload: unknown,
+  ): Promise<void> => {
+    const { events } = await harness.storage.eventStore.load(stream);
+    const last = events.at(-1);
+    if (last === undefined) throw new Error("no instance");
+    await harness.storage.eventStore.append({
+      ...stream,
+      expectedVersion: events.length,
+      events: [{ ...last, id: `raw-${events.length}`, version: events.length + 1, type, payload }],
+    });
+  };
+
+  it("file one letter when recording a failure lost a race and the event failed again", async () => {
+    const context = await setUp();
+    const { harness, deadLetters, settle } = context;
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await settle();
+    failing.set("paid", "terminal");
+    const append = harness.storage.eventStore.append;
+    let raced = false;
+    harness.storage.eventStore.append = async (args) => {
+      if (!raced && args.events[0]?.type === PROCESS_EVENTS.failed) {
+        raced = true;
+        await rawAppend(harness, PROCESS_EVENTS.handled, { state: { seen: [], nudge: null } });
+      }
+      return append(args);
+    };
+    await context.pay();
+    await harness.dispatcher.processUntilIdle();
+    harness.storage.eventStore.append = append;
+    expect(raced).toBe(true);
+    expect(await deadLetters.list()).toEqual([]);
+    harness.clock.advance(harness.config.runtime.policies.timeoutMs * 2 + 1);
+    await harness.dispatcher.processUntilIdle();
+    expect((await deadLetters.list()).map((letter) => letter.eventType)).toEqual(["OrderPaid"]);
+  });
+
+  it("file no letter for a deadline whose process failed on something else meanwhile", async () => {
+    const context = await setUp();
+    const { harness, deadLetters, settle } = context;
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await settle();
+    failing.set("nudge", "terminal");
+    const append = harness.storage.eventStore.append;
+    let raced = false;
+    harness.storage.eventStore.append = async (args) => {
+      if (!raced && (args.events[0]?.payload as { deadline?: string })?.deadline === "nudge") {
+        raced = true;
+        await rawAppend(harness, PROCESS_EVENTS.failed, { eventId: "elsewhere", error: "x" });
+      }
+      return append(args);
+    };
+    harness.clock.advance(DAY);
+    await settle();
+    harness.storage.eventStore.append = append;
+    expect(raced).toBe(true);
+    expect((await deadLetters.list()).map((letter) => letter.eventId)).not.toContain(
+      "deadline:nudge",
+    );
+  });
+
+  it("file a letter again when writing it was cut short", async () => {
+    const context = await setUp();
+    const { harness, deadLetters, settle } = context;
+    const add = harness.storage.deadLetterStore.add;
+    let cut = true;
+    harness.storage.deadLetterStore.add = async (letter) => {
+      if (cut) {
+        cut = false;
+        throw new Error("store down");
+      }
+      return add(letter);
+    };
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await settle();
+    failing.set("paid", "terminal");
+    await context.pay();
+    await harness.dispatcher.processUntilIdle();
+    expect(cut).toBe(false);
+    expect(await deadLetters.list()).toMatchObject([
+      { eventType: "OrderPaid", status: "failed", errorMessage: "paid refuses" },
+    ]);
+  });
+
+  it("keep order when an event's park loses the race to the instance resuming", async () => {
+    const context = await setUp();
+    const { harness, types } = context;
+    await failOnFirstPayment(context);
+    const order = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    const paid = order.events.find((event) => event.type === "OrderPaid");
+    if (paid === undefined) throw new Error("no payment");
+    await harness.storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "o-1",
+      expectedVersion: order.events.length,
+      events: [{ ...paid, id: "first", version: order.events.length + 1 }],
+    });
+    await harness.pipeline.dispatch({ type: "ArchiveOrder", payload: { orderId: "o-1" } });
+    const append = harness.storage.eventStore.append;
+    let raced = false;
+    harness.storage.eventStore.append = async (args) => {
+      if (!raced && args.events[0]?.type === PROCESS_EVENTS.eventParked) {
+        raced = true;
+        await rawAppend(harness, PROCESS_EVENTS.resumed, {});
+      }
+      return append(args);
+    };
+    await harness.dispatcher.processUntilIdle();
+    harness.storage.eventStore.append = append;
+    expect(raced).toBe(true);
+    const lifecycle = (await harness.storage.eventStore.load(stream)).events;
+    expect(
+      lifecycle
+        .slice(-3)
+        .map((event) => [event.type, (event.payload as { eventId?: string }).eventId]),
+    ).toEqual([
+      [PROCESS_EVENTS.resumed, undefined],
+      [PROCESS_EVENTS.handled, "first"],
+      [PROCESS_EVENTS.completed, expect.any(String)],
+    ]);
+    void types;
+  });
+
+  it("let a failed deadline through when a deploy removed its handler and kept the field", async () => {
+    const context = await setUp();
+    const { harness } = context;
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await context.settle();
+    failing.set("nudge", "terminal");
+    harness.clock.advance(DAY);
+    await context.settle();
+    const tallyEntry = registry.aggregates.order?.processes.tally;
+    if (tallyEntry === undefined) throw new Error("no process");
+    const deployed = await createReactiveHarness({
+      registry: {
+        aggregates: {
+          order: {
+            ...orderAggregateEntry(),
+            processes: {
+              tally: {
+                ...tallyEntry,
+                module: {
+                  ...tallyEntry.module,
+                  state: ({ z, instant }: ProcessStateArgs) =>
+                    z.object({ seen: z.array(z.string()).default([]), nudge: instant() }),
+                },
+                deadlines: {},
+              },
+            },
+          },
+        },
+        readModels: {},
+      },
+    });
+    const { events } = await harness.storage.eventStore.load(stream);
+    await deployed.storage.eventStore.append({ ...stream, expectedVersion: 0, events });
+    await deployed.processes.handleDeadline({
+      payload: { process: "order.tally", aggregateId: "o-1" },
+      context: { correlationId: "c", causationId: "c", depth: 0 },
+      replay: "r",
+    });
+    const after = await deployed.storage.eventStore.load(stream);
+    expect(after.events.slice(-2).map((event) => event.type)).toEqual([
+      PROCESS_EVENTS.deadlineReached,
+      PROCESS_EVENTS.resumed,
+    ]);
   });
 });
 
