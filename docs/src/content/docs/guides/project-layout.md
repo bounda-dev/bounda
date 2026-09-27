@@ -292,8 +292,9 @@ export const correlate: Process.Correlate = {
 ```
 
 An event that does not start the process and finds no open instance is skipped, and so is any
-event for an instance that has completed, timed out or failed: a starting event never reopens
-one. The state a handler returns is parsed with `state`: defaults fill what is missing, keys the schema
+event for an instance that has completed or timed out: a starting event never reopens one. An
+event for an instance that has failed is parked instead, and handled in order once the failure is
+replayed; see [a failed process](/guides/reacting-to-events/#a-failed-process). The state a handler returns is parsed with `state`: defaults fill what is missing, keys the schema
 does not declare are dropped, and a state it refuses fails the handler for good, like any other
 terminal error. The compiler checks it first: the `+types` of every handler asserts that what it
 returns fits the state, so a field of the wrong type, or a plain string where a deadline wants an

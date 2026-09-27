@@ -9,6 +9,7 @@ import {
 } from "@bounda-dev/core";
 import { boot, loadProject } from "@bounda-dev/core/node";
 import { Command, CommanderError } from "commander";
+import { formatLetter, formatReplayed } from "./dead-letter-output.ts";
 import { generate } from "./generate/generate.ts";
 import { ConventionError } from "./generate/problems.ts";
 import { watchFromFirstRun } from "./generate/watch.ts";
@@ -128,13 +129,6 @@ interface ListDeadLettersOptions extends ProjectOptions {
   readonly json: boolean;
 }
 
-const formatLetter = (letter: DeadLetter): string =>
-  [
-    `${letter.id}  ${letter.status}  ${letter.kind}  ${letter.subscriber}`,
-    `    ${letter.eventType} on ${letter.aggregateType}:${letter.aggregateId}, ${letter.attempts} attempt${letter.attempts === 1 ? "" : "s"}, last ${letter.lastFailedAt} (${letter.errorType})`,
-    `    ${letter.errorMessage}`,
-  ].join("\n");
-
 const withApp = async <T>(
   options: ProjectOptions,
   cwd: string,
@@ -193,11 +187,7 @@ const runReplayDeadLetter = (
   stderr: Output,
 ): Promise<number> =>
   withApp(options, cwd, stderr, async (app) => {
-    const letter = await app.deadLetters.replay(id);
-    line(
-      stdout,
-      `replayed dead letter ${id}: ${letter.kind} ${letter.subscriber} for ${letter.eventType}`,
-    );
+    line(stdout, formatReplayed(await app.deadLetters.replay(id)));
     return EXIT_OK;
   });
 

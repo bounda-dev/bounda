@@ -316,7 +316,11 @@ export const loader = ({ context }: Route.LoaderArgs) => context.get(bounda).que
   optional field needs no upcaster; a field that cannot be derived needs a new event type instead.
 - A policy or process handler that failed for good, or a scheduled command that was dropped, is
   a dead letter: `bounda dead-letters list`, then `replay <id>` after fixing the cause or
-  `discard <id>`. In code, `app.deadLetters`. Nothing re-runs a dead letter on its own.
+  `discard <id>`. In code, `app.deadLetters`. Nothing re-runs a dead letter on its own. Events
+  that reach a failed process instance are parked in its stream (`ProcessEventParked`), in order;
+  replaying the failure handles them, then the instance resumes (`ProcessResumed`) and its
+  deadlines are scheduled again. A letter's `parked` says how many wait behind it; discarding the
+  letter gives the instance up.
 - A view may gain fields freely. Removing a field, changing its type, or fixing a projection that
   wrote wrong rows means `bounda rebuild <read-model>`: it projects the stream into a fresh table
   and swaps it in; an interrupted rebuild resumes on the next run, and on Cloudflare the object's

@@ -134,10 +134,18 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
     }
   };
 
+  const withParked = async (letter: DeadLetter): Promise<DeadLetter> => {
+    if (letter.kind !== "process") return letter;
+    return { ...letter, parked: await processes.parkedBehind(letter) };
+  };
+
   return {
-    list: (args) => storage.deadLetterStore.list(args),
+    list: async (args) => Promise.all((await storage.deadLetterStore.list(args)).map(withParked)),
     count: (args) => storage.deadLetterStore.count(args),
-    get: (id) => storage.deadLetterStore.get(id),
+    get: async (id) => {
+      const letter = await storage.deadLetterStore.get(id);
+      return letter === null ? null : withParked(letter);
+    },
     replay: async (id) => {
       const letter = await failedLetter(id);
       await run(letter, ids.next());
@@ -148,7 +156,9 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
         subscriber: letter.subscriber,
         at: clock.now().toISOString(),
       });
-      return { ...letter, status: "replayed" };
+      const replayed: DeadLetter = { ...letter, status: "replayed" };
+      if (letter.kind !== "process") return replayed;
+      return { ...replayed, parked: await processes.parkedBehind(letter) };
     },
     discard: async (id) => {
       const letter = await failedLetter(id);

@@ -1186,6 +1186,7 @@ describe("processes that listen to other aggregates", () => {
       PROCESS_EVENTS.started,
       PROCESS_EVENTS.failed,
       PROCESS_EVENTS.handled,
+      PROCESS_EVENTS.resumed,
     ]);
   });
 });

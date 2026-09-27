@@ -417,6 +417,7 @@ describe("process deadlines", () => {
     ]);
     expect((await lifecycle(harness)).at(-1)?.payload).toEqual({
       deadline: "nextReminder",
+      at: at(DAY),
       error: 'Process order.reminders left the deadline "nextReminder" at the moment that came due',
     });
     expect(await harness.storage.scheduler.list()).toEqual([]);
@@ -461,7 +462,10 @@ describe("process deadlines", () => {
       }),
     );
     expect(new Set(keys).size).toBe(3);
-    expect((await lifecycle(harness)).at(-1)?.type).toBe(PROCESS_EVENTS.deadlineReached);
+    expect((await lifecycle(harness)).slice(-2).map((event) => event.type)).toEqual([
+      PROCESS_EVENTS.deadlineReached,
+      PROCESS_EVENTS.resumed,
+    ]);
     expect(await harness.storage.scheduler.list()).toMatchObject([{ executeAt: at(2 * DAY) }]);
   });
 

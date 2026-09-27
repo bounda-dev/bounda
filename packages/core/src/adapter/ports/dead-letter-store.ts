@@ -28,9 +28,16 @@ export interface DeadLetter {
    * dispatched again. Policy and process letters point at a stored event instead.
    */
   readonly payload?: unknown;
+  /**
+   * For a process letter, how many events are parked on its instance: while the letter is
+   * `failed`, the ones that reached the instance since and wait for its replay, which handles
+   * them in order; on the letter a replay returns, the ones still parked because one of them
+   * failed the instance again. Filled in by `app.deadLetters`, never stored.
+   */
+  readonly parked?: number;
 }
 
-export type NewDeadLetter = Omit<DeadLetter, "status">;
+export type NewDeadLetter = Omit<DeadLetter, "status" | "parked">;
 
 export interface ListDeadLettersArgs {
   readonly kind?: DeadLetterKind;

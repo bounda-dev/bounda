@@ -17,6 +17,8 @@ export const PROCESS_EVENTS: {
   readonly completed: "ProcessCompleted";
   readonly timedOut: "ProcessTimedOut";
   readonly failed: "ProcessFailed";
+  readonly eventParked: "ProcessEventParked";
+  readonly resumed: "ProcessResumed";
 } = {
   started: "ProcessStarted",
   handled: "ProcessHandled",
@@ -24,7 +26,20 @@ export const PROCESS_EVENTS: {
   completed: "ProcessCompleted",
   timedOut: "ProcessTimedOut",
   failed: "ProcessFailed",
+  eventParked: "ProcessEventParked",
+  resumed: "ProcessResumed",
 };
+
+/**
+ * An event that reached a failed process instance and waits, in its stream, until the failure is
+ * replayed: where to load it from.
+ */
+export interface ParkedEvent {
+  readonly eventId: string;
+  readonly eventType: string;
+  readonly aggregateType: string;
+  readonly aggregateId: string;
+}
 
 /**
  * The stream prefix of process instances: `process:OrderPayment` for the process `OrderPayment`.
@@ -61,6 +76,23 @@ export interface ProcessInstance {
    * The correlation id of the event that started the process, which its deadlines carry on.
    */
   readonly correlationId: string | null;
+  /**
+   * The events parked while the instance was failed and not handled since, oldest first.
+   */
+  readonly parked: readonly ParkedEvent[];
+  /**
+   * What the last `ProcessFailed` failed on: an event, or a deadline at its moment. `null` for an
+   * instance that never failed.
+   */
+  readonly failure: ProcessFailure | null;
+}
+
+/**
+ * What a process failed on, as its `ProcessFailed` records it.
+ */
+export interface ProcessFailure {
+  readonly eventId?: string;
+  readonly deadline?: { readonly field: string; readonly at: string };
 }
 
 export interface FoldProcessArgs {
@@ -78,13 +110,15 @@ const stateOf = (event: StoredEvent, fallback: object): object => {
 };
 
 /**
- * Rebuilds a process instance from its lifecycle events. A `ProcessHandled` or a
- * `ProcessDeadlineReached` after a `ProcessFailed` is what a replayed dead letter writes, and it
- * puts the process back to `started`.
+ * Rebuilds a process instance from its lifecycle events. A failed instance stays failed until
+ * `ProcessResumed`, which replaying its failure writes once the events parked behind it are
+ * handled; a `ProcessHandled` takes its event off the parked ones.
  */
 export const foldProcess: FoldProcessFunction = ({ initialState, events }) => {
   const handled = new Set<string>();
   const reached = new Set<string>();
+  const parked = new Map<string, ParkedEvent>();
+  let failure: ProcessFailure | null = null;
   let status: ProcessStatus = "started";
   let state = initialState;
   let timeoutAt: string | null = null;
@@ -99,14 +133,15 @@ export const foldProcess: FoldProcessFunction = ({ initialState, events }) => {
       }
       case PROCESS_EVENTS.handled: {
         state = stateOf(event, state);
-        if (status === "failed") status = "started";
         const payload = event.payload as { readonly eventId?: string };
-        if (payload.eventId !== undefined) handled.add(payload.eventId);
+        if (payload.eventId !== undefined) {
+          handled.add(payload.eventId);
+          parked.delete(payload.eventId);
+        }
         break;
       }
       case PROCESS_EVENTS.deadlineReached: {
         state = stateOf(event, state);
-        if (status === "failed") status = "started";
         reached.add(reachedKey(event.payload as { readonly field: string; readonly at: string }));
         break;
       }
@@ -117,8 +152,33 @@ export const foldProcess: FoldProcessFunction = ({ initialState, events }) => {
         state = stateOf(event, state);
         status = "timed_out";
         break;
-      case PROCESS_EVENTS.failed:
+      case PROCESS_EVENTS.failed: {
         status = "failed";
+        const payload = event.payload as {
+          readonly eventId?: string;
+          readonly deadline?: string;
+          readonly at?: string;
+        };
+        failure = {
+          ...(payload.eventId === undefined ? {} : { eventId: payload.eventId }),
+          ...(payload.deadline === undefined || payload.at === undefined
+            ? {}
+            : { deadline: { field: payload.deadline, at: payload.at } }),
+        };
+        break;
+      }
+      case PROCESS_EVENTS.eventParked: {
+        const payload = event.payload as ParkedEvent;
+        parked.set(payload.eventId, {
+          eventId: payload.eventId,
+          eventType: payload.eventType,
+          aggregateType: payload.aggregateType,
+          aggregateId: payload.aggregateId,
+        });
+        break;
+      }
+      case PROCESS_EVENTS.resumed:
+        if (status === "failed") status = "started";
         break;
       default:
         break;
@@ -133,5 +193,7 @@ export const foldProcess: FoldProcessFunction = ({ initialState, events }) => {
     timeoutAt,
     reached,
     correlationId,
+    parked: [...parked.values()],
+    failure,
   };
 };

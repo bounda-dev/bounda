@@ -26,6 +26,8 @@ describe("foldProcess", () => {
       timeoutAt: null,
       reached: new Set(),
       correlationId: null,
+      parked: [],
+      failure: null,
     });
   });
 
@@ -55,6 +57,8 @@ describe("foldProcess", () => {
       timeoutAt: "2026-01-08T00:00:00.000Z",
       reached: new Set(),
       correlationId: "c",
+      parked: [],
+      failure: null,
     });
   });
 
@@ -74,6 +78,8 @@ describe("foldProcess", () => {
       completed: "ProcessCompleted",
       timedOut: "ProcessTimedOut",
       failed: "ProcessFailed",
+      eventParked: "ProcessEventParked",
+      resumed: "ProcessResumed",
     });
   });
 
@@ -96,12 +102,16 @@ describe("foldProcess", () => {
     expect(failed.status).toBe("failed");
   });
 
-  it("records each deadline reached at its moment, whatever its precision, and resumes a failed process", () => {
+  it("records each deadline reached at its moment, whatever its precision, and the deadline a failure was on", () => {
     const instance = foldProcess({
       initialState: {},
       events: [
         lifecycle(PROCESS_EVENTS.started, { state: {}, eventId: "e1" }, 1),
-        lifecycle(PROCESS_EVENTS.failed, { error: "boom" }, 2),
+        lifecycle(
+          PROCESS_EVENTS.failed,
+          { deadline: "nextReminder", at: "2026-01-02T00:00:00Z", error: "boom" },
+          2,
+        ),
         lifecycle(
           PROCESS_EVENTS.deadlineReached,
           { field: "nextReminder", at: "2026-01-02T00:00:00Z", state: { reminders: 1 } },
@@ -120,9 +130,10 @@ describe("foldProcess", () => {
       }).status,
     ).toBe("completed");
     expect(instance).toMatchObject({
-      status: "started",
+      status: "failed",
       state: { reminders: 1 },
       reached: new Set([reachedKey({ field: "nextReminder", at: "2026-01-02T00:00:00.000Z" })]),
+      failure: { deadline: { field: "nextReminder", at: "2026-01-02T00:00:00Z" } },
     });
   });
 });
@@ -132,7 +143,7 @@ describe("processAggregateType", () => {
     expect(processAggregateType("OrderPayment")).toBe("process:OrderPayment");
   });
 
-  it("puts a failed process back to started when a handled event follows the failure", () => {
+  it("keeps a failed process failed, parking events, until it is resumed", () => {
     const failed = foldProcess({
       initialState: {},
       events: [
@@ -141,20 +152,41 @@ describe("processAggregateType", () => {
       ],
     });
     expect(failed).toMatchObject({ status: "failed", handledEventIds: new Set() });
-    const replayed = foldProcess({
+    const parked = (eventId: string, version: number) =>
+      lifecycle(
+        PROCESS_EVENTS.eventParked,
+        { eventId, eventType: "OrderPaid", aggregateType: "order", aggregateId: "o-1", extra: 1 },
+        version,
+      );
+    const replaying = [
+      lifecycle(PROCESS_EVENTS.started, { state: { step: 0 } }, 1),
+      lifecycle(PROCESS_EVENTS.failed, { eventId: "e2", error: "boom" }, 2),
+      parked("e3", 3),
+      parked("e4", 4),
+      lifecycle(PROCESS_EVENTS.handled, { state: { step: 1 }, eventId: "e2" }, 5),
+      lifecycle(PROCESS_EVENTS.handled, { state: { step: 2 }, eventId: "e3" }, 6),
+    ];
+    expect(foldProcess({ initialState: {}, events: replaying })).toMatchObject({
+      status: "failed",
+      state: { step: 2 },
+      handledEventIds: new Set(["e2", "e3"]),
+      parked: [
+        { eventId: "e4", eventType: "OrderPaid", aggregateType: "order", aggregateId: "o-1" },
+      ],
+      failure: { eventId: "e2" },
+    });
+    expect(foldProcess({ initialState: {}, events: replaying }).parked[0]).not.toHaveProperty(
+      "extra",
+    );
+    const resumed = foldProcess({
       initialState: {},
       events: [
-        lifecycle(PROCESS_EVENTS.started, { state: { step: 0 } }, 1),
-        lifecycle(PROCESS_EVENTS.failed, { eventId: "e2", error: "boom" }, 2),
-        lifecycle(PROCESS_EVENTS.handled, { state: { step: 1 }, eventId: "e2" }, 3),
+        ...replaying,
+        lifecycle(PROCESS_EVENTS.handled, { state: { step: 3 }, eventId: "e4" }, 7),
+        lifecycle(PROCESS_EVENTS.resumed, {}, 8),
       ],
     });
-    expect(replayed).toMatchObject({
-      status: "started",
-      state: { step: 1 },
-      version: 3,
-      handledEventIds: new Set(["e2"]),
-    });
+    expect(resumed).toMatchObject({ status: "started", parked: [], version: 8 });
     const completed = foldProcess({
       initialState: {},
       events: [
