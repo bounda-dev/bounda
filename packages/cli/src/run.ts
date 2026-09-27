@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
-  type DeadLetter,
   type DeadLetterKind,
   type DeadLetterStatus,
   type ListDeadLettersArgs,
