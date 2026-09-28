@@ -154,21 +154,22 @@ describe("runClaimed", () => {
     expect(givenUp).toHaveLength(1);
   });
 
-  it("runs a terminal failure again once the lease of a give-up that threw expires", async () => {
-    const { clock, attempts, givenUp, claim, failGiveUpOnce } = setUp();
+  it("gives up on a terminal failure again without running when giving up threw", async () => {
+    const { ledger, attempts, givenUp, reasons, claim, failGiveUpOnce } = setUp();
     failGiveUpOnce();
     await expect(claim(fail(new DomainError("refused")))).rejects.toThrow(
       "dead letters unavailable",
     );
+    expect(await ledger.get(key)).toMatchObject({ status: "failed", gaveUp: "terminal" });
 
-    expect(await claim(fail(new DomainError("refused")))).toBe("hold");
-    clock.advance(60_001);
-    expect(await claim(fail(new DomainError("refused")))).toBe("done");
+    expect(await claim(async () => undefined)).toBe("done");
 
-    expect(attempts).toEqual([1, 2]);
+    expect(attempts).toEqual([1]);
     expect(givenUp).toEqual([
       [1, "terminal"],
-      [2, "terminal"],
+      [1, "terminal"],
     ]);
+    expect(reasons.at(-1)).toBe("refused");
+    expect(await ledger.get(key)).toMatchObject({ status: "succeeded" });
   });
 });

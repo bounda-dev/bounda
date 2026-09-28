@@ -125,6 +125,7 @@ describe("sqlite adapter on a file", () => {
     await first.close();
     const client = createClient({ url: `file:${path}` });
     await client.execute('ALTER TABLE "bounda_dead_letters" DROP COLUMN "payload"');
+    await client.execute('ALTER TABLE "bounda_inbox" DROP COLUMN "gave_up"');
     client.close();
 
     const storage = await sqlite({ path }).createStorage({ logger: silentLogger });
@@ -144,14 +145,33 @@ describe("sqlite adapter on a file", () => {
       payload: { orderId: "o-1" },
     });
     expect(letter.payload).toEqual({ orderId: "o-1" });
+    await storage.inboxLedger.tryClaim({
+      subscriber: "policies",
+      eventId: "e-1",
+      now: new Date("2026-01-01T00:00:00.000Z"),
+      leaseMs: 1_000,
+    });
+    await storage.inboxLedger.fail({
+      subscriber: "policies",
+      eventId: "e-1",
+      error: "nope",
+      gaveUp: "terminal",
+    });
+    expect(await storage.inboxLedger.get({ subscriber: "policies", eventId: "e-1" })).toMatchObject(
+      {
+        gaveUp: "terminal",
+      },
+    );
     await storage.close();
     expect(
       storageSchemaAdditions({
         tables: storageTablesFor("x_"),
+        inboxColumns: ["subscriber"],
         deadLetterColumns: ["id"],
         scheduledCommandColumns: ["dedupe_key"],
       }),
     ).toEqual([
+      'ALTER TABLE "x_inbox" ADD COLUMN "gave_up" TEXT',
       'ALTER TABLE "x_dead_letters" ADD COLUMN "payload" TEXT',
       'ALTER TABLE "x_scheduled_commands" ADD COLUMN "revision" INTEGER NOT NULL DEFAULT 0',
       'ALTER TABLE "x_scheduled_commands" ADD COLUMN "claim_id" TEXT',
@@ -159,6 +179,7 @@ describe("sqlite adapter on a file", () => {
     expect(
       storageSchemaAdditions({
         tables: storageTablesFor("x_"),
+        inboxColumns: ["subscriber", "gave_up"],
         deadLetterColumns: ["id", "payload"],
         scheduledCommandColumns: ["dedupe_key", "revision", "claim_id"],
       }),

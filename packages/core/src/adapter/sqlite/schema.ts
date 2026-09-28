@@ -70,6 +70,7 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "attempts" INTEGER NOT NULL,
     "claimed_at" TEXT NOT NULL,
     "last_error" TEXT,
+    "gave_up" TEXT,
     PRIMARY KEY ("subscriber", "event_id")
   )`,
   `CREATE TABLE IF NOT EXISTS ${tables.deadLetters} (
@@ -118,6 +119,10 @@ export interface EnsureStorageSchemaFunction {
 export interface StorageSchemaAdditionsArgs {
   readonly tables: StorageTables;
   /**
+   * The columns the inbox table has, from `PRAGMA table_info`.
+   */
+  readonly inboxColumns: readonly string[];
+  /**
    * The columns the dead-letters table has, from `PRAGMA table_info`.
    */
   readonly deadLetterColumns: readonly string[];
@@ -137,9 +142,13 @@ export interface StorageSchemaAdditionsFunction {
  */
 export const storageSchemaAdditions: StorageSchemaAdditionsFunction = ({
   tables,
+  inboxColumns,
   deadLetterColumns,
   scheduledCommandColumns,
 }) => [
+  ...(inboxColumns.includes("gave_up")
+    ? []
+    : [`ALTER TABLE ${tables.inbox} ADD COLUMN "gave_up" TEXT`]),
   ...(deadLetterColumns.includes("payload")
     ? []
     : [`ALTER TABLE ${tables.deadLetters} ADD COLUMN "payload" TEXT`]),
@@ -159,10 +168,12 @@ export const ensureStorageSchema: EnsureStorageSchemaFunction = async ({ db, tab
   for (const statement of storageSchemaStatements(tables)) await db.run(statement, []);
   const columnsOf = async (table: string): Promise<readonly string[]> =>
     (await db.all(`PRAGMA table_info(${table})`, [])).map((column) => String(column.name));
+  const inboxColumns = await columnsOf(tables.inbox);
   const deadLetterColumns = await columnsOf(tables.deadLetters);
   const scheduledCommandColumns = await columnsOf(tables.scheduledCommands);
   for (const statement of storageSchemaAdditions({
     tables,
+    inboxColumns,
     deadLetterColumns,
     scheduledCommandColumns,
   })) {

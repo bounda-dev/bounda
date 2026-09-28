@@ -965,7 +965,7 @@ describe("events of a failed process", () => {
     });
   };
 
-  it("file one letter when recording a failure lost a race and the event failed again", async () => {
+  it("file one letter, without running the handler again, when recording a terminal failure lost a race", async () => {
     const context = await setUp();
     const { harness, deadLetters, settle } = context;
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
@@ -983,11 +983,14 @@ describe("events of a failed process", () => {
     await context.pay();
     await harness.dispatcher.processUntilIdle();
     harness.storage.eventStore.append = append;
+    await harness.dispatcher.processUntilIdle();
     expect(raced).toBe(true);
-    expect(await deadLetters.list()).toEqual([]);
+    expect((await deadLetters.list()).map((letter) => letter.eventType)).toEqual(["OrderPaid"]);
     harness.clock.advance(harness.config.runtime.policies.timeoutMs * 2 + 1);
     await harness.dispatcher.processUntilIdle();
-    expect((await deadLetters.list()).map((letter) => letter.eventType)).toEqual(["OrderPaid"]);
+    expect(await deadLetters.list()).toHaveLength(1);
+    expect(runs.filter((run) => run.startsWith("paid:"))).toHaveLength(1);
+    expect((await context.types()).at(-1)).toBe(PROCESS_EVENTS.failed);
   });
 
   it("file no letter for a deadline whose process failed on something else meanwhile", async () => {

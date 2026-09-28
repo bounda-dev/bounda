@@ -1,3 +1,5 @@
+import type { DeadLetterErrorType } from "./dead-letter-store.ts";
+
 export type ClaimStatus = "pending" | "succeeded" | "failed";
 
 export interface ClaimArgs {
@@ -21,6 +23,12 @@ export interface ClaimKey {
 
 export interface FailClaimArgs extends ClaimKey {
   readonly error: string;
+  /**
+   * Set when the runner gives up on the event, before it records the failure elsewhere (a dead
+   * letter). The claim keeps it, so whoever finds the claim again records the failure instead of
+   * running the handler once more. A `fail` without it clears it.
+   */
+  readonly gaveUp?: DeadLetterErrorType | undefined;
 }
 
 export interface ClaimRecord extends ClaimKey {
@@ -28,13 +36,18 @@ export interface ClaimRecord extends ClaimKey {
   readonly attempts: number;
   readonly claimedAt: string;
   readonly lastError?: string;
+  /**
+   * How the runner gave up on the event, as the last `fail` said; kept across `tryClaim`.
+   */
+  readonly gaveUp?: DeadLetterErrorType;
 }
 
 /**
  * Gives at-least-once delivery its idempotency. Before a policy or process handler runs for an
  * event, the runner claims `(subscriber, eventId)`. The claim must be atomic: with two instances
  * racing, exactly one gets `true`. `succeeded` claims are never handed out again; `failed` ones
- * are, so the runner can retry; `pending` ones only once their lease expires.
+ * are, so the runner can retry; `pending` ones only once their lease expires. Claiming again keeps
+ * `lastError` and `gaveUp`.
  */
 export interface InboxLedger {
   tryClaim(args: ClaimArgs): Promise<boolean>;

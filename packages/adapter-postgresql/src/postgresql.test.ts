@@ -284,6 +284,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
     await (probe.client.raw as Sql).unsafe(
       `ALTER TABLE "${prefix}scheduled_commands" DROP COLUMN "revision", DROP COLUMN "claim_id"`,
     );
+    await (probe.client.raw as Sql).unsafe(`ALTER TABLE "${prefix}inbox" DROP COLUMN "gave_up"`);
     await closeOpened();
 
     const storage = await openStorage(adapter);
@@ -316,6 +317,23 @@ describe.skipIf(container === null)("postgresql adapter", () => {
         leaseMs: 1_000,
       }),
     ).toMatchObject([{ dedupeKey: "k", revision: 0 }]);
+    await storage.inboxLedger.tryClaim({
+      subscriber: "policies",
+      eventId: "e-1",
+      now: new Date("2026-01-01T00:00:00.000Z"),
+      leaseMs: 1_000,
+    });
+    await storage.inboxLedger.fail({
+      subscriber: "policies",
+      eventId: "e-1",
+      error: "nope",
+      gaveUp: "terminal",
+    });
+    expect(await storage.inboxLedger.get({ subscriber: "policies", eventId: "e-1" })).toMatchObject(
+      {
+        gaveUp: "terminal",
+      },
+    );
   });
 
   it("logs the lifecycle of a rebuild with the tables involved", async () => {
