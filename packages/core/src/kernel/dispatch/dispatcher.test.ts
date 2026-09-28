@@ -164,6 +164,46 @@ describe("createDispatcher", () => {
     }
   });
 
+  it("advances the checkpoint past the leading events a subscriber reports done", async () => {
+    const { eventStore, checkpointStore } = await storage();
+    await appendMany(eventStore, 3);
+    const seen: number[][] = [];
+    const partial: Subscriber = {
+      name: "partial",
+      kind: "policy",
+      process: async (events) => {
+        seen.push(events.map((event) => event.position));
+        return seen.length === 1 ? 1 : events.length;
+      },
+    };
+    const dispatcher = createDispatcher({
+      clock: createFixedClock(),
+      eventStore,
+      checkpointStore,
+      subscribers: [partial],
+      batchSize: 10,
+      pollIntervalMs: 1_000,
+      logger: silentLogger,
+    });
+    const telemetry = installFakeTelemetry();
+    try {
+      expect(await dispatcher.processOnce()).toBe(true);
+      expect(await checkpointStore.get("partial")).toBe(1);
+      expect(await dispatcher.processOnce()).toBe(true);
+      expect(await checkpointStore.get("partial")).toBe(3);
+      expect(seen).toEqual([
+        [1, 2, 3],
+        [2, 3],
+      ]);
+      expect(telemetry.spans.map((span) => span.attributes["bounda.outcome"])).toEqual([
+        "advanced",
+        "advanced",
+      ]);
+    } finally {
+      telemetry.restore();
+    }
+  });
+
   it("leaves a checkpoint alone when someone else moved it during the batch", async () => {
     const { eventStore, checkpointStore } = await storage();
     await appendMany(eventStore, 5);

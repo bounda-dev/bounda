@@ -853,7 +853,10 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     }
   };
 
-  const deliver = async (process: ProcessRuntime, event: StoredEvent): Promise<ReactionOutcome> => {
+  const handleEvent = async (
+    process: ProcessRuntime,
+    event: StoredEvent,
+  ): Promise<ReactionOutcome> => {
     let instanceId: string | null;
     try {
       instanceId = process.instanceOf(event);
@@ -1154,7 +1157,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
         byEvent: processes.byEvent,
         deliver: async (process, event) => {
           try {
-            return await deliver(process, event);
+            return await handleEvent(process, event);
           } catch (error) {
             if (!(error instanceof ConcurrencyError)) throw error;
             logger.debug("process stream moved; will redeliver", {
