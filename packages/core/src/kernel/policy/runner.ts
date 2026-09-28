@@ -1,4 +1,7 @@
-import type { DeadLetterStore } from "../../adapter/ports/dead-letter-store.ts";
+import type {
+  DeadLetterErrorType,
+  DeadLetterStore,
+} from "../../adapter/ports/dead-letter-store.ts";
 import type { InboxLedger } from "../../adapter/ports/inbox-ledger.ts";
 import type { Scheduler } from "../../adapter/ports/scheduler.ts";
 import type { ResolvedConfig, ResolvedPoliciesConfig } from "../../config/types.ts";
@@ -58,7 +61,7 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
     event: StoredEvent,
     error: unknown,
     attempts: number,
-    errorType: "terminal" | "retriable_exhausted",
+    errorType: DeadLetterErrorType,
   ): Promise<void> => {
     const details = errorDetails(error);
     const now = clock.now().toISOString();

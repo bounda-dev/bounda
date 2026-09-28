@@ -1,4 +1,5 @@
 import type { StoragePorts } from "../../adapter/adapter.ts";
+import type { DeadLetterErrorType } from "../../adapter/ports/dead-letter-store.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import { ConcurrencyError } from "../../contracts/errors.ts";
@@ -7,7 +8,7 @@ import type { Logger } from "../../contracts/logger.ts";
 import type { ReactionOutcome } from "../shared/in-order.ts";
 import { runClaimed } from "../shared/inbox-claim.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
-import type { FailureType, ProcessFailures } from "./failures.ts";
+import type { ProcessFailures } from "./failures.ts";
 import type { ProcessHandlers } from "./handlers.ts";
 import type { ProcessInstances } from "./instances.ts";
 import { eventContext, lifecycleEntries, type ProcessInstance } from "./lifecycle.ts";
@@ -86,7 +87,7 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
     instance: ProcessInstance,
     error: unknown,
     attempts: number,
-    errorType: FailureType,
+    errorType: DeadLetterErrorType,
   ): Promise<void> => {
     const letter = failures.letterOf(process, event, error, attempts, errorType);
     await append(process, instanceId, instance, [

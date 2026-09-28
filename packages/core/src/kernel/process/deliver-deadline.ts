@@ -1,3 +1,4 @@
+import type { DeadLetterErrorType } from "../../adapter/ports/dead-letter-store.ts";
 import type { ResolvedConfig, ResolvedRetryConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { Logger } from "../../contracts/logger.ts";
@@ -6,7 +7,7 @@ import { errorDetails } from "../shared/retry.ts";
 import type { ProcessesRuntime } from "./build-processes.ts";
 import type { DeadlineStep } from "./deadline-step.ts";
 import { type ProcessDeadlinePayload, reachedKey } from "./deadlines.ts";
-import { deadlineSubject, type FailureType, type ProcessFailures } from "./failures.ts";
+import { deadlineSubject, type ProcessFailures } from "./failures.ts";
 import type { ProcessInstances } from "./instances.ts";
 import { instanceContext, lifecycleEntries, type ProcessInstance } from "./lifecycle.ts";
 import { type DeadlineSchedule, pendingDeadline } from "./schedule.ts";
@@ -25,7 +26,7 @@ export interface FailDeadlineArgs {
   readonly payload: DeadlineTarget;
   readonly error: unknown;
   readonly attempts: number;
-  readonly errorType: FailureType;
+  readonly errorType: DeadLetterErrorType;
 }
 
 /**

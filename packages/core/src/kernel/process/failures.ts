@@ -1,5 +1,9 @@
 import type { StoragePorts } from "../../adapter/adapter.ts";
-import type { DeadLetter, NewDeadLetter } from "../../adapter/ports/dead-letter-store.ts";
+import type {
+  DeadLetter,
+  DeadLetterErrorType,
+  NewDeadLetter,
+} from "../../adapter/ports/dead-letter-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
@@ -16,8 +20,6 @@ import { type ProcessInstance, processAggregateType } from "./lifecycle.ts";
  */
 export type FailureSubject = Pick<StoredEvent, "id" | "type" | "aggregateType" | "aggregateId">;
 
-export type FailureType = "terminal" | "retriable_exhausted";
-
 /**
  * The dead letters of process failures.
  */
@@ -27,7 +29,7 @@ export interface ProcessFailures {
     subject: FailureSubject,
     error: unknown,
     attempts: number,
-    errorType: FailureType,
+    errorType: DeadLetterErrorType,
   ): NewDeadLetter;
   file(process: ProcessRuntime, letter: NewDeadLetter, error?: unknown): Promise<void>;
   /**
@@ -64,7 +66,7 @@ export const createProcessFailures: CreateProcessFailuresFunction = ({
     subject: FailureSubject,
     error: unknown,
     attempts: number,
-    errorType: FailureType,
+    errorType: DeadLetterErrorType,
   ): NewDeadLetter => {
     const now = clock.now().toISOString();
     return {
@@ -155,7 +157,7 @@ export const blockedOn: BlockedOnFunction = (instance, letter) =>
   letter === undefined || instance.failure?.letter?.id === letter;
 
 export interface DrainFailureTypeFunction {
-  (error: unknown): FailureType;
+  (error: unknown): DeadLetterErrorType;
 }
 
 /**
