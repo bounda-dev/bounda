@@ -103,12 +103,17 @@ const reset = (): void => {
   whileHandling = undefined;
 };
 
-const setUp = async (retry: RetryConfig = { strategy: "none" }) => {
+const setUp = async (retry: RetryConfig = { strategy: "none" }, concurrencyRetries?: number) => {
   reset();
   const { logger, entries: logs } = createRecordingLogger();
   const harness = await createReactiveHarness({
     registry,
-    config: { runtime: { processes: { retry } } },
+    config: {
+      runtime: {
+        processes: { retry },
+        ...(concurrencyRetries === undefined ? {} : { commands: { concurrencyRetries } }),
+      },
+    },
     logger,
   });
   const deadLetters = createDeadLetters({
@@ -1656,5 +1661,98 @@ describe("replaying a failed process", () => {
       PROCESS_EVENTS.deadlineReached,
       PROCESS_EVENTS.resumed,
     ]);
+  });
+});
+
+describe("an event handled while a deadline writes to its instance", () => {
+  const reachDeadline = (context: Context) => () =>
+    context.harness.processes.handleDeadline({
+      payload: { process: "order.tally", aggregateId: "o-1" },
+      context: { correlationId: "c", causationId: "c", depth: 0 },
+    });
+
+  it("runs again on the instance as it now is, without spending an attempt", async () => {
+    const context = await setUp();
+    const { harness, settle, types } = context;
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await settle();
+    harness.clock.advance(DAY);
+    whileHandling = reachDeadline(context);
+
+    await context.pay();
+    await harness.dispatcher.processUntilIdle();
+
+    const paid = await firstPayment(context);
+    expect(runs).toEqual([`paid:${paid.id}`, "nudge", `paid:${paid.id}`]);
+    expect(await types()).toEqual([
+      PROCESS_EVENTS.started,
+      PROCESS_EVENTS.handled,
+      PROCESS_EVENTS.deadlineReached,
+      PROCESS_EVENTS.handled,
+    ]);
+    expect(
+      await harness.storage.inboxLedger.get({ subscriber: "order.tally", eventId: paid.id }),
+    ).toMatchObject({ status: "succeeded", attempts: 1 });
+    expect(await harness.storage.deadLetterStore.list()).toEqual([]);
+  });
+
+  it("spends an attempt once the races allowed run out", async () => {
+    const context = await setUp({ strategy: "none" }, 1);
+    const { harness, settle, types } = context;
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await settle();
+    let races = 2;
+    const touch = async (): Promise<void> => {
+      races -= 1;
+      if (races > 0) whileHandling = touch;
+      const { events } = await harness.storage.eventStore.load(stream);
+      const [started] = events;
+      if (started === undefined) throw new Error("not started");
+      await harness.storage.eventStore.append({
+        ...stream,
+        expectedVersion: events.length,
+        events: [
+          {
+            ...started,
+            id: `touch-${races}`,
+            version: events.length + 1,
+            type: "ProcessTouched",
+            payload: {},
+          },
+        ],
+      });
+    };
+    whileHandling = touch;
+
+    await context.pay();
+    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.processUntilIdle();
+
+    const paid = await firstPayment(context);
+    expect(runs).toEqual([`paid:${paid.id}`, `paid:${paid.id}`]);
+    expect((await types()).at(-1)).toBe(PROCESS_EVENTS.failed);
+    expect(await harness.storage.deadLetterStore.list()).toMatchObject([
+      { eventId: paid.id, errorType: "retriable_exhausted" },
+    ]);
+  });
+
+  it("runs no more once the deadline ended the process", async () => {
+    const context = await setUp();
+    const { harness, settle, types } = context;
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await settle();
+    harness.clock.advance(31 * DAY);
+    whileHandling = async () => {
+      await reachDeadline(context)();
+      await reachDeadline(context)();
+    };
+
+    await context.pay();
+    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.processUntilIdle();
+
+    const paid = await firstPayment(context);
+    expect(runs.filter((run) => run === `paid:${paid.id}`)).toHaveLength(1);
+    expect((await types()).at(-1)).toBe(PROCESS_EVENTS.timedOut);
   });
 });
