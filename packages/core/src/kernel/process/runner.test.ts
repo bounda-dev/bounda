@@ -1171,20 +1171,29 @@ describe("processes that listen to other aggregates", () => {
       payload: { paymentId: "p-1", orderId: "o-1", reason: "declined" },
     });
     await harness.dispatcher.processUntilIdle();
+    await harness.pipeline.dispatch({
+      type: "FailPayment",
+      payload: { paymentId: "p-2", orderId: "o-1", reason: "declined" },
+    });
+    await harness.dispatcher.processUntilIdle();
     const [letter] = await harness.storage.deadLetterStore.list();
+    if (letter === undefined) throw new Error("no letter");
+    expect(await harness.processes.parkedBehind(letter)).toBe(1);
     const { events } = await harness.storage.eventStore.load({
       aggregateType: "payment",
       aggregateId: "p-1",
     });
     broken = false;
     await harness.processes.replay({
-      process: letter?.subscriber ?? "",
+      process: letter.subscriber,
       event: events[0] as (typeof events)[number],
       replay: "r-1",
     });
     expect((await stream(harness, "o-1")).events.map((event) => event.type)).toEqual([
       PROCESS_EVENTS.started,
       PROCESS_EVENTS.failed,
+      PROCESS_EVENTS.eventParked,
+      PROCESS_EVENTS.handled,
       PROCESS_EVENTS.handled,
       PROCESS_EVENTS.resumed,
     ]);
