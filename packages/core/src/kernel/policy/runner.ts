@@ -39,8 +39,9 @@ type Outcome = "done" | "hold";
  * claims `(policy, eventId)` in the inbox ledger and runs the handler, or, for a delayed policy,
  * schedules its run for the event's time plus the delay. Failures are classified: terminal ones
  * are dead-lettered at once; retriable ones are retried on later passes with the configured
- * back-off, then dead-lettered. While a retry is pending the checkpoint holds, so events stay
- * ordered.
+ * back-off, then dead-lettered. While a retry is pending, or while another instance holds the
+ * claim, the checkpoint holds and the policy skips its later events of the batch, so none of them
+ * overtakes the held one; other policies carry on.
  */
 export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
   policies,
@@ -136,15 +137,16 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
     name: POLICIES_SUBSCRIBER,
     kind: "policy",
     process: async (events) => {
-      let hold = false;
+      const held = new Set<string>();
       for (const event of events) {
         const qualified = qualifiedEventType(event.aggregateType, event.type);
         for (const policy of policies.byEvent[qualified] ?? []) {
+          if (held.has(policy.name)) continue;
           const outcome = await run(policy, event, config.forAggregate(policy.aggregate).policies);
-          hold = hold || outcome === "hold";
+          if (outcome === "hold") held.add(policy.name);
         }
       }
-      return !hold;
+      return held.size === 0;
     },
   };
 };
