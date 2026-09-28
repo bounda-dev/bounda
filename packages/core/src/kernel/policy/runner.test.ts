@@ -331,6 +331,54 @@ describe("policy subscriber", () => {
     harness.clock.advance(60_001);
     await harness.dispatcher.processUntilIdle();
     expect(calls.filter((call) => call.startsWith("pay:"))).toEqual(["pay:o-1", "pay:o-2"]);
+    expect(calls.filter((call) => call.startsWith("audit:") && call.endsWith(":0"))).toEqual([
+      "audit:o-1:0",
+      "audit:o-2:0",
+    ]);
+    expect(await harness.storage.checkpointStore.get("policies")).toBe(
+      await harness.storage.eventStore.lastPosition(),
+    );
+    expect((await harness.dispatcher.getLag()).maxLag).toBe(0);
+  });
+
+  it("keeps a policy's later events of another type behind the one it holds", async () => {
+    reset("ok");
+    const auditEverything = registry.aggregates.order?.policies.auditEverything;
+    if (auditEverything === undefined) throw new Error("auditEverything is missing");
+    const harness = await createReactiveHarness({
+      registry: {
+        ...registry,
+        aggregates: { order: { ...orderAggregateEntry(), policies: { auditEverything } } },
+      },
+    });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.pipeline.dispatch({
+      type: "PayOrder",
+      payload: { orderId: "o-1", method: "card" },
+    });
+    const [placed, paid] = (
+      await harness.storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" })
+    ).events;
+    await harness.storage.inboxLedger.tryClaim({
+      subscriber: "order.auditEverything",
+      eventId: placed?.id ?? "",
+      now: harness.clock.now(),
+      leaseMs: 60_000,
+    });
+
+    await harness.dispatcher.processUntilIdle();
+    expect(calls).toEqual([]);
+    expect(
+      await harness.storage.inboxLedger.get({
+        subscriber: "order.auditEverything",
+        eventId: paid?.id ?? "",
+      }),
+    ).toBeNull();
+
+    harness.clock.advance(60_001);
+    await harness.dispatcher.processUntilIdle();
+    expect(calls).toEqual(["audit:o-1:0", "audit:o-1:0"]);
+    expect((await harness.dispatcher.getLag()).maxLag).toBe(0);
   });
 
   it("recovers when a flaky policy succeeds on retry", async () => {
