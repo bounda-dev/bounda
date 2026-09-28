@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
+import type { DeadLetterErrorType } from "../../adapter/ports/dead-letter-store.ts";
 import type { ResolvedRetryConfig } from "../../config/types.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { DomainError } from "../../contracts/errors.ts";
 import { createMemoryInboxLedger } from "../../memory/inbox-ledger.ts";
-import { type GiveUpType, runClaimed } from "./inbox-claim.ts";
+import { runClaimed } from "./inbox-claim.ts";
 
 const key = { subscriber: "order.notify", eventId: "e-1" };
 
@@ -18,8 +19,10 @@ const setUp = (config: ResolvedRetryConfig = retry) => {
   const ledger = createMemoryInboxLedger();
   const clock = createFixedClock();
   const attempts: number[] = [];
-  const givenUp: [number, GiveUpType][] = [];
+  const givenUp: [number, DeadLetterErrorType][] = [];
+  const reasons: unknown[] = [];
   const retried: number[] = [];
+  let giveUpFails = false;
   const claim = (run: (attempt: number) => Promise<void>) =>
     runClaimed({
       ledger,
@@ -31,14 +34,22 @@ const setUp = (config: ResolvedRetryConfig = retry) => {
         attempts.push(attempt);
         await run(attempt);
       },
-      giveUp: async (_error, attempt, errorType) => {
+      giveUp: async (error, attempt, errorType) => {
         givenUp.push([attempt, errorType]);
+        reasons.push(error);
+        if (giveUpFails) {
+          giveUpFails = false;
+          throw new Error("dead letters unavailable");
+        }
       },
       willRetry: (attempt) => {
         retried.push(attempt);
       },
     });
-  return { ledger, clock, attempts, givenUp, retried, claim };
+  const failGiveUpOnce = (): void => {
+    giveUpFails = true;
+  };
+  return { ledger, clock, attempts, givenUp, reasons, retried, claim, failGiveUpOnce };
 };
 
 const fail = (error: unknown) => async (): Promise<void> => {
@@ -112,5 +123,52 @@ describe("runClaimed", () => {
 
     expect(givenUp).toEqual([[1, "retriable_exhausted"]]);
     expect(retried).toEqual([]);
+  });
+
+  it("gives up again without running when giving up on the last attempt threw", async () => {
+    const { ledger, attempts, givenUp, reasons, claim, failGiveUpOnce } = setUp({
+      ...retry,
+      strategy: "none",
+    });
+    failGiveUpOnce();
+
+    await expect(claim(fail(new Error("down")))).rejects.toThrow("dead letters unavailable");
+    expect(await claim(async () => undefined)).toBe("done");
+
+    expect(attempts).toEqual([1]);
+    expect(givenUp).toEqual([
+      [1, "retriable_exhausted"],
+      [1, "retriable_exhausted"],
+    ]);
+    expect(reasons.at(-1)).toBe("down");
+    expect(await ledger.get(key)).toMatchObject({ status: "succeeded" });
+  });
+
+  it("leaves a claim that failed its last attempt to whoever claims it first", async () => {
+    const { ledger, givenUp, claim, failGiveUpOnce } = setUp({ ...retry, strategy: "none" });
+    failGiveUpOnce();
+    await expect(claim(fail(new Error("down")))).rejects.toThrow("dead letters unavailable");
+    ledger.tryClaim = async () => false;
+
+    expect(await claim(async () => undefined)).toBe("hold");
+    expect(givenUp).toHaveLength(1);
+  });
+
+  it("runs a terminal failure again once the lease of a give-up that threw expires", async () => {
+    const { clock, attempts, givenUp, claim, failGiveUpOnce } = setUp();
+    failGiveUpOnce();
+    await expect(claim(fail(new DomainError("refused")))).rejects.toThrow(
+      "dead letters unavailable",
+    );
+
+    expect(await claim(fail(new DomainError("refused")))).toBe("hold");
+    clock.advance(60_001);
+    expect(await claim(fail(new DomainError("refused")))).toBe("done");
+
+    expect(attempts).toEqual([1, 2]);
+    expect(givenUp).toEqual([
+      [1, "terminal"],
+      [2, "terminal"],
+    ]);
   });
 });
