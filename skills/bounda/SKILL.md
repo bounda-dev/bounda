@@ -204,8 +204,9 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   commands do. Config picks implementations by aggregate, then key:
   `policies: { order: { notifyOnOrderPlaced: { mailer: { use: "smtp" } } } }`, and the same
   under `processes`. A policy that exports `delay` (`"1m"`, or `asDuration(env)`) runs that long
-  after the event, through the scheduler, with the same arguments and retries; use it when the
-  effect itself waits, and a delayed command when the decision must see the state at that time.
+  after the event, through the scheduler, with the same arguments and retries, but its runs are
+  not ordered among themselves (each retries on its own); use it when the effect itself waits,
+  and a delayed command when the decision must see the state at that time.
   Their `idempotencyKey` is the same on every retry for one event (for a
   deadline, one field at one moment) and new on a dead-letter replay. A collaborator cannot be
   named after a handler argument (`event`,
