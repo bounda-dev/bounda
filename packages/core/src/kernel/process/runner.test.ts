@@ -335,7 +335,7 @@ describe("process runner", () => {
       PROCESS_EVENTS.started,
       PROCESS_EVENTS.failed,
     ]);
-    expect(stream.events[1]?.payload).toEqual({
+    expect(stream.events[1]?.payload).toMatchObject({
       eventId: expect.any(String),
       error: "bad payment",
     });
@@ -1186,6 +1186,7 @@ describe("processes that listen to other aggregates", () => {
       PROCESS_EVENTS.started,
       PROCESS_EVENTS.failed,
       PROCESS_EVENTS.handled,
+      PROCESS_EVENTS.resumed,
     ]);
   });
 });

@@ -17,8 +17,14 @@ import { PROCESS_DEADLINE_COMMAND, type ProcessRunner } from "../process/runner.
  * succeeds; `discard` marks it `discarded`. Both leave the row in place as a record.
  */
 export interface DeadLetters {
+  /**
+   * The letters of the store, process ones with how many events are `parked` behind them.
+   */
   list(args?: ListDeadLettersArgs): Promise<readonly DeadLetter[]>;
   count(args?: ListDeadLettersArgs): Promise<number>;
+  /**
+   * One letter of the store, a process one with how many events are `parked` behind it.
+   */
   get(id: string): Promise<DeadLetter | null>;
   /**
    * Runs the failed handler once more: the policy or process handler for the stored event, the
@@ -118,12 +124,14 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
             payload: { process: letter.subscriber, aggregateId: letter.aggregateId },
             context: { correlationId: ids.next(), causationId: letter.id, depth: 0 },
             replay,
+            letter: letter.id,
           });
         }
         return processes.replay({
           process: letter.subscriber,
           event: await eventOf(letter),
           replay,
+          letter: letter.id,
         });
       case "command":
         return replayCommand(letter);
@@ -134,10 +142,18 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
     }
   };
 
+  const withParked = async (letter: DeadLetter): Promise<DeadLetter> => {
+    if (letter.kind !== "process") return letter;
+    return { ...letter, parked: await processes.parkedBehind(letter) };
+  };
+
   return {
-    list: (args) => storage.deadLetterStore.list(args),
+    list: async (args) => Promise.all((await storage.deadLetterStore.list(args)).map(withParked)),
     count: (args) => storage.deadLetterStore.count(args),
-    get: (id) => storage.deadLetterStore.get(id),
+    get: async (id) => {
+      const letter = await storage.deadLetterStore.get(id);
+      return letter === null ? null : withParked(letter);
+    },
     replay: async (id) => {
       const letter = await failedLetter(id);
       await run(letter, ids.next());
@@ -148,7 +164,9 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
         subscriber: letter.subscriber,
         at: clock.now().toISOString(),
       });
-      return { ...letter, status: "replayed" };
+      const replayed: DeadLetter = { ...letter, status: "replayed" };
+      if (letter.kind !== "process") return replayed;
+      return { ...replayed, parked: await processes.stillParked(letter) };
     },
     discard: async (id) => {
       const letter = await failedLetter(id);

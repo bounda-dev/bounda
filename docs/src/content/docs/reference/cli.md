@@ -153,11 +153,17 @@ bounda dead-letters discard <id>
 019a0c4e-3c9e-7a1b-9f1e-2b3c4d5e6f70  failed  policy  order.notifyOnOrderPlaced
     OrderPlaced on order:o-1, 1 attempt, last 2026-09-22T14:03:11.402Z (terminal)
     mail server rejects it
-1 dead letter
+019a0c51-8d2f-7c4e-a1b2-3c4d5e6f7a80  failed  process  order.orderPayment
+    OrderPaid on order:o-2, 3 attempts, last 2026-09-22T14:05:40.118Z (retriable_exhausted)
+    payment provider timed out
+    2 events are parked behind it; replaying it handles them in order
+2 dead letters
 ```
 
 `replay` runs the failed handler again and marks the letter `replayed` when it succeeds; if the
-handler fails again its error is printed, the exit code is `2` and the letter stays `failed`. See
+handler fails again its error is printed, the exit code is `2` and the letter stays `failed`. For a
+process letter it also handles the events parked behind it, and says so when one of them failed
+the process again. See
 [Reacting to events](/guides/reacting-to-events/#dead-letters) for what a replay does per kind.
 
 ## Programmatic use

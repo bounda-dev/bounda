@@ -114,7 +114,8 @@ How deadlines behave:
   deadline runs anyway after ten rounds of the worker, and `app.getLag()` counts it in
   `waitingDeadlines` meanwhile. This is best effort: the aggregate that receives the command still
   decides, so `cancelOrder` refuses an order that is already paid.
-- **Nothing runs once the process has ended**, whether it completed, timed out or failed.
+- **Nothing runs once the process has ended**, whether it completed or timed out, nor while it is
+  failed: its deadlines wait, like its events, for the failure to be replayed.
 - **A failure is handled like an event handler's**: it is retried with the process's back-off, and
   one that fails for good or runs out of attempts fails the process and is dead-lettered. Losing a
   race with another write to the instance does not count as an attempt.
@@ -275,16 +276,58 @@ What a replay does depends on the kind:
 - **Policy**: the handler runs again for the stored event, with the event's correlation. The
   inbox ledger is bypassed on purpose: it already says the handler ran, and you are asking for
   another run.
-- **Process**: the handler runs again for the stored event with the instance's current state. A
-  process that had failed is back to `started`, its deadlines are scheduled again at their moments
-  (one already past runs at once), and an event that completes the process completes it. A letter
-  for a deadline (`deadline:<field>`) runs the handler of the earliest deadline still pending,
-  which is the one the process failed on unless an event moved an earlier one since, with a new
-  `idempotencyKey`, and schedules the next one.
+- **Process**: the handler runs again for the stored event with the instance's current state, or,
+  for a letter of a deadline (`deadline:<field>`), the handler of the deadline the process failed
+  on, with a new `idempotencyKey`. An event that completes the process completes it. Then the
+  events parked behind the failure are handled in order, and once none is left the process is
+  back to `started`, its deadlines scheduled again at their moments (one already past runs at
+  once); see [a failed process](#a-failed-process).
 - **Command**: the dropped command is dispatched again with the payload the letter recorded.
 
 The same operations are on the app as `app.deadLetters` — `list`, `count`, `get`, `replay` and
 `discard` — for a script or an admin route.
+
+## A failed process
+
+A process fails when one of its handlers fails for good: the instance records `ProcessFailed`, the
+run is dead-lettered, and the instance stops. Events keep arriving for it, and dropping them
+would lose them: the `OrderPaid` that comes while the process is failed on a reminder is exactly
+the one it must not miss. So the instance parks them. Each event that would do something in it
+(it has a handler, or completes the process) is recorded in the instance's stream as
+`ProcessEventParked`, in the order it arrived, and nothing of the process runs meanwhile,
+deadlines included.
+
+Replaying the dead letter of the failure is what brings the instance back:
+
+1. the failed handler runs again;
+2. the parked events are handled one by one, in order, with the same `idempotencyKey` each would
+   have had; a deadline that came due before a parked event arrived runs before it, as it would
+   have if the process had not failed;
+3. once none is left the instance records `ProcessResumed`, is `started` again, and its deadlines
+   are scheduled again.
+
+A failure whose handler a deploy has since removed, an event's or a deadline's, is let through,
+and the replay goes on with what is parked. When the failure is the process's `timeout`, replaying it ends the process as
+timed out and drops what is parked, as for any timed-out instance.
+
+An event that arrives during the replay is parked too and handled before the instance resumes, so
+nothing overtakes an older event. If a parked event fails again, for whatever reason, it becomes
+the new failure at once: it is dead-lettered without retries, the instance stays failed, and the
+events after it stay parked until that letter is replayed. A parked event the process no longer
+handles, after a deploy removed its handler, is let through. A parked event that completes the
+process completes it, and what is parked after it is dropped, as for any completed instance.
+
+`bounda dead-letters list` says how many events wait behind a failure (`3 events are parked behind
+it`), and so does `parked` on the letters of `app.deadLetters`. Discarding the letter gives the
+instance up: it stays failed, its parked events never run, though they stay in its history, and
+the events that reach it afterwards are dropped, as for an instance that has ended.
+
+The failure is state as well: `ProcessFailed` carries its dead letter, so a letter whose writing
+was cut short is filed again the next time the process runner reaches the instance: an event for
+it, a retry of the deadline that failed, or a replay.
+
+This is Axon's sequenced dead-letter queue, which parks the events of one sequence behind the one
+that failed, with the process instance as the sequence.
 
 ## Delaying a command
 
