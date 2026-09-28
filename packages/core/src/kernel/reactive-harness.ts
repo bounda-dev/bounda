@@ -126,7 +126,6 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
           ledger: storage.inboxLedger,
           deadLetters: storage.deadLetterStore,
           config,
-          ids,
           clock,
           logger,
         }),

@@ -203,7 +203,6 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
         ledger: storage.inboxLedger,
         deadLetters: storage.deadLetterStore,
         config,
-        ids,
         clock,
         logger,
       }),
