@@ -39,9 +39,18 @@ pnpm 12 (workspace catalog, `catalogMode: strict`), TypeScript 7, Biome (lint an
 - Interface-first: define `XxxArgs` and `XxxFunction` interfaces, then `export const xxx: XxxFunction = (...) => ...`. Exception: code implementing a third-party or platform interface uses that interface directly.
 - Files kebab-case; React components PascalCase; types PascalCase. Prefer interfaces over type aliases unless a union or mapped type is needed.
 - No `any`. No `// biome-ignore`. Modern TS and JS only.
-- No comments that explain implementation; names do that. **JSDoc is required on every public export** of a package's `exports` surface.
+- Comments are read on every change and go stale silently; each one must earn its place (see below).
 - Keep files small. Adapter provider modules may exceed the norm when splitting would fragment one cohesive unit.
 - Keep every package `index.ts` thin: what is exported there is public API.
+
+### Comments and JSDoc
+
+- **Public API** (reachable from a package's `exports` map): JSDoc is required, and it states the contract: what it does, when to use it, what it guarantees, what it throws. Not how it works inside; the reader is a user in their editor. A few lines, rarely more.
+- **Everything else** (exported between files, but not from the package): no JSDoc by default. Write a comment only for what names and types cannot say: an invariant that is easy to break, the reason for a non-obvious choice (ordering, locking, crash safety), or the meaning of a value the type leaves open. At most a few lines, on the code it guards.
+- Never narrate the algorithm step by step: the code says it, and the tests pin it down. Before removing a behaviour from prose, find the test that pins it; when there is none, add one or keep the comment.
+- Never restate a literal or a default in prose ("after 20 writes", "defaults to 1 second"); name the constant or leave it out.
+- Do not document a member whose name and type already say it (`timeoutMs: number` needs nothing).
+- When a change makes a comment longer, check whether it should be shorter instead.
 
 ## Where adapter code lives
 
