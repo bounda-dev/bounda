@@ -16,10 +16,8 @@ export interface RunClaimedArgs {
    */
   readonly run: (attempt: number) => Promise<void>;
   /**
-   * Records a failure the reaction gives up on, typically as a dead letter. The claim is completed
-   * right after, so the event is never handed out again. When it throws after the last attempt,
-   * the next delivery gives up again without running the reaction; `error` is then the message
-   * the ledger kept.
+   * Records a failure the reaction gave up on, typically as a dead letter. It can run more than
+   * once for one failure, after a crash or an error of its own, so it must be idempotent.
    */
   readonly giveUp: (
     error: unknown,
@@ -37,12 +35,9 @@ export interface RunClaimedFunction {
 }
 
 /**
- * Runs a reaction to one event at most once through the inbox ledger. A claim already succeeded
- * is `done`; one that failed waits out its back-off, and one another holder owns is left to it,
- * both as `hold`. A terminal failure, or a retriable one on the last of `retry.maxAttempts`, is
- * given up on and completes the claim; any other retriable failure fails it and holds the event
- * for a later attempt. A claim that failed on its last attempt is given up on without running
- * the reaction again.
+ * Runs a reaction to one event through the inbox ledger, retrying retriable failures with
+ * back-off. A give-up is written on the claim before `giveUp` runs, so a reaction that gave up is
+ * never run again, only given up on again until `giveUp` gets through.
  */
 export const runClaimed: RunClaimedFunction = async ({
   ledger,
@@ -54,22 +49,28 @@ export const runClaimed: RunClaimedFunction = async ({
   giveUp,
   willRetry,
 }) => {
-  const exhausted = (attempts: number): boolean =>
+  const spent = (attempts: number): boolean =>
     attempts >= retry.maxAttempts || retry.strategy === "none";
+  const gaveUpOn = (error: unknown, attempts: number): DeadLetterErrorType | undefined => {
+    if (classifyFailure(error) === "terminal") return "terminal";
+    if (spent(attempts)) return "retriable_exhausted";
+    return undefined;
+  };
   const now = clock.now();
   const existing = await ledger.get(key);
   if (existing?.status === "succeeded") return "done";
-  if (existing?.status === "failed" && exhausted(existing.attempts)) {
-    if (!(await ledger.tryClaim({ ...key, now, leaseMs }))) return "hold";
-    await giveUp(
-      existing.lastError ?? `gave up after ${existing.attempts} attempts`,
-      existing.attempts,
-      "retriable_exhausted",
-    );
-    await ledger.complete(key);
-    return "done";
-  }
   if (existing?.status === "failed") {
+    const gaveUp =
+      existing.gaveUp ?? (spent(existing.attempts) ? "retriable_exhausted" : undefined);
+    if (gaveUp !== undefined) {
+      await giveUp(
+        existing.lastError ?? `gave up after ${existing.attempts} attempts`,
+        existing.attempts,
+        gaveUp,
+      );
+      await ledger.complete(key);
+      return "done";
+    }
     const waitMs = retryDelayMs({ retry, attempt: existing.attempts });
     if (now.getTime() - new Date(existing.claimedAt).getTime() < waitMs) return "hold";
   }
@@ -80,18 +81,14 @@ export const runClaimed: RunClaimedFunction = async ({
     await ledger.complete(key);
     return "done";
   } catch (error) {
-    if (classifyFailure(error) === "terminal") {
-      await giveUp(error, attempts, "terminal");
-      await ledger.complete(key);
-      return "done";
+    const gaveUp = gaveUpOn(error, attempts);
+    await ledger.fail({ ...key, error: errorDetails(error).message, gaveUp });
+    if (gaveUp === undefined) {
+      willRetry(attempts);
+      return "hold";
     }
-    await ledger.fail({ ...key, error: errorDetails(error).message });
-    if (exhausted(attempts)) {
-      await giveUp(error, attempts, "retriable_exhausted");
-      await ledger.complete(key);
-      return "done";
-    }
-    willRetry(attempts);
-    return "hold";
+    await giveUp(error, attempts, gaveUp);
+    await ledger.complete(key);
+    return "done";
   }
 };

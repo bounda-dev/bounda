@@ -82,8 +82,10 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "attempts" integer NOT NULL,
     "claimed_at" text NOT NULL,
     "last_error" text,
+    "gave_up" text,
     PRIMARY KEY ("subscriber", "event_id")
   )`,
+  `ALTER TABLE ${tables.inbox} ADD COLUMN IF NOT EXISTS "gave_up" text`,
   `CREATE TABLE IF NOT EXISTS ${tables.deadLetters} (
     "id" text PRIMARY KEY,
     "kind" text NOT NULL,

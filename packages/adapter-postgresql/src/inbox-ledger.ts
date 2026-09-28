@@ -1,4 +1,9 @@
-import type { ClaimRecord, ClaimStatus, InboxLedger } from "@bounda-dev/core/adapter";
+import type {
+  ClaimRecord,
+  ClaimStatus,
+  DeadLetterErrorType,
+  InboxLedger,
+} from "@bounda-dev/core/adapter";
 import type { PostgresqlDatabase } from "./database.ts";
 
 export interface CreatePostgresqlInboxLedgerArgs {
@@ -19,6 +24,9 @@ const toRecord = (row: Record<string, unknown>): ClaimRecord => ({
   ...(row.last_error === null || row.last_error === undefined
     ? {}
     : { lastError: String(row.last_error) }),
+  ...(row.gave_up === null || row.gave_up === undefined
+    ? {}
+    : { gaveUp: String(row.gave_up) as DeadLetterErrorType }),
 });
 
 /**
@@ -48,14 +56,14 @@ export const createPostgresqlInboxLedger: CreatePostgresqlInboxLedgerFunction = 
       `UPDATE ${table} SET "status" = 'succeeded' WHERE "subscriber" = $1 AND "event_id" = $2`,
       [subscriber, eventId],
     ),
-  fail: ({ subscriber, eventId, error }) =>
+  fail: ({ subscriber, eventId, error, gaveUp }) =>
     db.run(
-      `UPDATE ${table} SET "status" = 'failed', "last_error" = $1 WHERE "subscriber" = $2 AND "event_id" = $3`,
-      [error, subscriber, eventId],
+      `UPDATE ${table} SET "status" = 'failed', "last_error" = $1, "gave_up" = $2 WHERE "subscriber" = $3 AND "event_id" = $4`,
+      [error, gaveUp ?? null, subscriber, eventId],
     ),
   get: async ({ subscriber, eventId }) => {
     const [row] = await db.all(
-      `SELECT "subscriber", "event_id", "status", "attempts", "claimed_at", "last_error" FROM ${table} WHERE "subscriber" = $1 AND "event_id" = $2`,
+      `SELECT "subscriber", "event_id", "status", "attempts", "claimed_at", "last_error", "gave_up" FROM ${table} WHERE "subscriber" = $1 AND "event_id" = $2`,
       [subscriber, eventId],
     );
     return row === undefined ? null : toRecord(row);

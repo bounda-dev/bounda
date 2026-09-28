@@ -136,6 +136,8 @@ it, `ProcessDeadlineReached` records that it came due.
 **Every reaction runs at least once.** Before running a handler the runtime claims
 `(policy, eventId)` — or the process equivalent — in an inbox ledger. A claim that already
 completed is not run again, so a retry after a crash mid-handler does not send the email twice.
+Nor is one the runtime gave up on: the claim records the give-up before the dead letter is written,
+so a crash in between leaves the next delivery to write the dead letter, not to run the handler.
 What it cannot know is whether the side effect of a partially finished handler happened, which is
 why a handler that talks to the outside world should be written so that running it twice is
 harmless.

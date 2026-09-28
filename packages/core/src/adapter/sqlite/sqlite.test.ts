@@ -188,6 +188,7 @@ describe("createSqliteAdapter", () => {
     db.exec('ALTER TABLE "bounda_dead_letters" DROP COLUMN "payload"');
     db.exec('ALTER TABLE "bounda_scheduled_commands" DROP COLUMN "revision"');
     db.exec('ALTER TABLE "bounda_scheduled_commands" DROP COLUMN "claim_id"');
+    db.exec('ALTER TABLE "bounda_inbox" DROP COLUMN "gave_up"');
     const opened = await nodeSqlite(db).adapter.createStorage({ logger: silentLogger });
     const letter = await opened.deadLetterStore.add({
       id: "cmd",
@@ -218,13 +219,30 @@ describe("createSqliteAdapter", () => {
         leaseMs: 1_000,
       }),
     ).toMatchObject([{ dedupeKey: "k", revision: 0 }]);
+    await opened.inboxLedger.tryClaim({
+      subscriber: "policies",
+      eventId: "e-1",
+      now: new Date("2026-01-01T00:00:00.000Z"),
+      leaseMs: 1_000,
+    });
+    await opened.inboxLedger.fail({
+      subscriber: "policies",
+      eventId: "e-1",
+      error: "nope",
+      gaveUp: "terminal",
+    });
+    expect(await opened.inboxLedger.get({ subscriber: "policies", eventId: "e-1" })).toMatchObject({
+      gaveUp: "terminal",
+    });
     expect(
       storageSchemaAdditions({
         tables: storageTablesFor("x_"),
+        inboxColumns: ["subscriber"],
         deadLetterColumns: ["id"],
         scheduledCommandColumns: ["dedupe_key"],
       }),
     ).toEqual([
+      'ALTER TABLE "x_inbox" ADD COLUMN "gave_up" TEXT',
       'ALTER TABLE "x_dead_letters" ADD COLUMN "payload" TEXT',
       'ALTER TABLE "x_scheduled_commands" ADD COLUMN "revision" INTEGER NOT NULL DEFAULT 0',
       'ALTER TABLE "x_scheduled_commands" ADD COLUMN "claim_id" TEXT',
@@ -232,6 +250,7 @@ describe("createSqliteAdapter", () => {
     expect(
       storageSchemaAdditions({
         tables: storageTablesFor("x_"),
+        inboxColumns: ["subscriber", "gave_up"],
         deadLetterColumns: ["id", "payload"],
         scheduledCommandColumns: ["dedupe_key", "revision", "claim_id"],
       }),

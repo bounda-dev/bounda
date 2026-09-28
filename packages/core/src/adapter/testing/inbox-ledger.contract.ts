@@ -60,6 +60,26 @@ export const inboxLedgerContract: InboxLedgerContractFunction = ({ create }) => 
       });
     });
 
+    it("remembers how a failed claim was given up on, across a new claim, until a fail clears it", async () => {
+      await ledger.tryClaim({ ...key, now, leaseMs: 60_000 });
+      expect(await ledger.get(key)).not.toHaveProperty("gaveUp");
+      await ledger.fail({ ...key, error: "refused", gaveUp: "terminal" });
+      expect(await ledger.get(key)).toMatchObject({
+        status: "failed",
+        lastError: "refused",
+        gaveUp: "terminal",
+      });
+      expect(await ledger.tryClaim({ ...key, now: later(1_000), leaseMs: 60_000 })).toBe(true);
+      expect(await ledger.get(key)).toMatchObject({ status: "pending", gaveUp: "terminal" });
+      await ledger.fail({ ...key, error: "down" });
+      const cleared = await ledger.get(key);
+      expect(cleared).toMatchObject({ status: "failed", lastError: "down" });
+      expect(cleared).not.toHaveProperty("gaveUp");
+      await ledger.tryClaim({ ...key, now: later(2_000), leaseMs: 60_000 });
+      await ledger.fail({ ...key, error: "down", gaveUp: "retriable_exhausted" });
+      expect(await ledger.get(key)).toMatchObject({ gaveUp: "retriable_exhausted" });
+    });
+
     it("ignores completions and failures of claims it never handed out", async () => {
       await expect(ledger.complete(key)).resolves.toBeUndefined();
       await expect(ledger.fail({ ...key, error: "late" })).resolves.toBeUndefined();
