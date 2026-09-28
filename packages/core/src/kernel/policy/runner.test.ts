@@ -254,6 +254,17 @@ describe("policy subscriber", () => {
     expect((await harness.dispatcher.getLag()).maxLag).toBe(0);
   });
 
+  it("files a dead letter of its own for each event it gives up on", async () => {
+    reset("domain");
+    const harness = await createReactiveHarness({ registry });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-2", total: 10 } });
+    await harness.dispatcher.processUntilIdle();
+    const letters = await harness.storage.deadLetterStore.list();
+    expect(letters.map((letter) => letter.aggregateId).sort()).toEqual(["o-1", "o-2"]);
+    expect(new Set(letters.map((letter) => letter.id)).size).toBe(2);
+  });
+
   it("retries retriable failures across passes with back-off, then dead-letters", async () => {
     reset("flaky", 5);
     const harness = await createReactiveHarness({
@@ -427,6 +438,37 @@ describe("policy subscriber", () => {
       { errorType: "retriable_exhausted", attempts: 1, errorMessage: "network" },
     ]);
     expect(await harness.storage.checkpointStore.get("policies")).toBe(1);
+  });
+
+  it("files one dead letter when completing the claim failed right after filing it", async () => {
+    reset("flaky", 5);
+    const { logger, entries } = createRecordingLogger();
+    const harness = await createReactiveHarness({
+      registry,
+      config: { runtime: { policies: { retry: { strategy: "none" } } } },
+      logger,
+    });
+    const complete = harness.storage.inboxLedger.complete.bind(harness.storage.inboxLedger);
+    let broken = true;
+    harness.storage.inboxLedger.complete = async (key) => {
+      if (broken && (await harness.storage.deadLetterStore.count()) > 0) {
+        broken = false;
+        throw new Error("connection lost");
+      }
+      return complete(key);
+    };
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+
+    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.processUntilIdle();
+
+    expect(broken).toBe(false);
+    expect(calls.filter((call) => call === "pay:o-1")).toHaveLength(1);
+    expect(await harness.storage.deadLetterStore.list()).toMatchObject([
+      { subscriber: "order.payOnOrderPlaced", errorType: "retriable_exhausted" },
+    ]);
+    expect(await harness.storage.deadLetterStore.count()).toBe(1);
+    expect(entries.filter((entry) => entry.message === "policy dead-lettered")).toHaveLength(1);
   });
 
   it("claims each run with a lease of twice the handler timeout and reports retries", async () => {

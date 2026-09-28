@@ -42,6 +42,29 @@ export const deriveIdempotencyKey: DeriveIdempotencyKeyFunction = ({
     NAMESPACE,
   );
 
+export interface DeriveDeadLetterIdArgs {
+  /**
+   * Whether the reaction is a policy's or a process's: their names can be equal.
+   */
+  readonly kind: "policy" | "process";
+  readonly handler: string;
+  /**
+   * The event the reaction gave up on.
+   */
+  readonly subject: string;
+}
+
+export interface DeriveDeadLetterIdFunction {
+  (args: DeriveDeadLetterIdArgs): string;
+}
+
+/**
+ * The id of the one dead letter a claimed reaction files when it gives up on an event: a UUID v5
+ * of kind, handler and subject, so filing it again after a crash finds the letter already there.
+ */
+export const deriveDeadLetterId: DeriveDeadLetterIdFunction = ({ kind, handler, subject }) =>
+  uuidV5([kind, handler, subject, "dead-letter"].join(":"), NAMESPACE);
+
 export interface CreateReactionCommandIdsFunction {
   (idempotencyKey: string): (commandType: string) => string;
 }

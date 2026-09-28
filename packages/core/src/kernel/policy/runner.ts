@@ -7,9 +7,9 @@ import type { Scheduler } from "../../adapter/ports/scheduler.ts";
 import type { ResolvedConfig, ResolvedPoliciesConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
-import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { Subscriber } from "../dispatch/dispatcher.ts";
+import { deriveDeadLetterId } from "../shared/idempotency-key.ts";
 import { deliverInOrder, type ReactionOutcome } from "../shared/in-order.ts";
 import { runClaimed } from "../shared/inbox-claim.ts";
 import { errorDetails } from "../shared/retry.ts";
@@ -27,7 +27,6 @@ export interface CreatePolicySubscriberArgs {
   readonly ledger: InboxLedger;
   readonly deadLetters: DeadLetterStore;
   readonly config: ResolvedConfig;
-  readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly logger: Logger;
 }
@@ -52,7 +51,6 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
   ledger,
   deadLetters,
   config,
-  ids,
   clock,
   logger,
 }) => {
@@ -63,10 +61,12 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
     attempts: number,
     errorType: DeadLetterErrorType,
   ): Promise<void> => {
+    const id = deriveDeadLetterId({ kind: "policy", handler: policy.name, subject: event.id });
+    if ((await deadLetters.get(id)) !== null) return;
     const details = errorDetails(error);
     const now = clock.now().toISOString();
     await deadLetters.add({
-      id: ids.next(),
+      id,
       kind: "policy",
       subscriber: policy.name,
       eventId: event.id,
