@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { ConfigurationError, DomainError, NotFoundError } from "../../contracts/errors.ts";
 import type { PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
+import { PROCESS_DEADLINE_COMMAND } from "../process/deadlines.ts";
 import { PROCESS_EVENTS } from "../process/lifecycle.ts";
-import { PROCESS_DEADLINE_COMMAND } from "../process/runner.ts";
 import { createReactiveHarness } from "../reactive-harness.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import {

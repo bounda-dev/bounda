@@ -1,6 +1,8 @@
 import type { NewDeadLetter } from "../../adapter/ports/dead-letter-store.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
-import { reachedKey } from "./deadlines.ts";
+import type { CausationContext } from "../../contracts/metadata.ts";
+import type { ProcessRuntime } from "./build-processes.ts";
+import { type Deadline, reachedKey } from "./deadlines.ts";
 
 /**
  * Status of a process instance, derived from its lifecycle events.
@@ -204,4 +206,114 @@ export const foldProcess: FoldProcessFunction = ({ initialState, events }) => {
     parked: [...parked.values()],
     failure,
   };
+};
+
+/**
+ * A lifecycle event about to be appended to an instance's stream. `id` is set when something
+ * the event causes must name it before it is written.
+ */
+export interface LifecycleEntry {
+  readonly type: string;
+  readonly payload: unknown;
+  readonly context: CausationContext;
+  readonly id?: string;
+}
+
+export interface EventContextFunction {
+  (event: StoredEvent): CausationContext;
+}
+
+/**
+ * The context of what an event causes: its correlation, caused by the event itself.
+ */
+export const eventContext: EventContextFunction = (event) => ({
+  correlationId: event.metadata.correlationId,
+  causationId: event.id,
+  depth: event.metadata.depth,
+});
+
+export interface InstanceContextFunction {
+  (process: ProcessRuntime, instanceId: string, instance: ProcessInstance): CausationContext;
+}
+
+/**
+ * The context of what the runner writes on its own for an instance, such as a deadline or a
+ * resume: the correlation of the event that started it, caused by the instance itself.
+ */
+export const instanceContext: InstanceContextFunction = (process, instanceId, instance) => ({
+  correlationId: instance.correlationId ?? instanceId,
+  causationId: `${processAggregateType(process.type)}:${instanceId}`,
+  depth: 0,
+});
+
+/**
+ * What a `ProcessFailed` failed on: an event, or a deadline at its moment.
+ */
+export type FailedOn =
+  | { readonly eventId: string }
+  | { readonly deadline: string; readonly at: string };
+
+/**
+ * Builds the lifecycle events the runner writes, in the shapes `foldProcess` reads.
+ */
+export interface LifecycleEntries {
+  started(event: StoredEvent, state: object, timeoutAt: string): LifecycleEntry;
+  handled(event: StoredEvent, state: object): LifecycleEntry;
+  completed(event: StoredEvent): LifecycleEntry;
+  failed(failedOn: FailedOn, letter: NewDeadLetter, context: CausationContext): LifecycleEntry;
+  parked(event: StoredEvent): LifecycleEntry;
+  resumed(context: CausationContext): LifecycleEntry;
+  deadlineReached(
+    due: Deadline,
+    state: object,
+    context: CausationContext,
+    id: string,
+  ): LifecycleEntry;
+  timedOut(state: object, context: CausationContext, id: string): LifecycleEntry;
+}
+
+export const lifecycleEntries: LifecycleEntries = {
+  started: (event, state, timeoutAt) => ({
+    type: PROCESS_EVENTS.started,
+    payload: { state, eventId: event.id, timeoutAt },
+    context: eventContext(event),
+  }),
+  handled: (event, state) => ({
+    type: PROCESS_EVENTS.handled,
+    payload: { state, eventId: event.id, eventType: event.type },
+    context: eventContext(event),
+  }),
+  completed: (event) => ({
+    type: PROCESS_EVENTS.completed,
+    payload: { eventId: event.id },
+    context: eventContext(event),
+  }),
+  failed: (failedOn, letter, context) => ({
+    type: PROCESS_EVENTS.failed,
+    payload: { ...failedOn, error: letter.errorMessage, letter },
+    context,
+  }),
+  parked: (event) => ({
+    type: PROCESS_EVENTS.eventParked,
+    payload: {
+      eventId: event.id,
+      eventType: event.type,
+      aggregateType: event.aggregateType,
+      aggregateId: event.aggregateId,
+    } satisfies ParkedEvent,
+    context: eventContext(event),
+  }),
+  resumed: (context) => ({ type: PROCESS_EVENTS.resumed, payload: {}, context }),
+  deadlineReached: (due, state, context, id) => ({
+    type: PROCESS_EVENTS.deadlineReached,
+    payload: { field: due.field, at: due.at, state },
+    context,
+    id,
+  }),
+  timedOut: (state, context, id) => ({
+    type: PROCESS_EVENTS.timedOut,
+    payload: { state },
+    context,
+    id,
+  }),
 };

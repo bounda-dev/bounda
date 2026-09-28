@@ -422,7 +422,7 @@ describe("process deadlines", () => {
     });
     expect(await harness.storage.scheduler.list()).toEqual([]);
     await expect(
-      harness.processes.handleDeadline({
+      harness.processes.replayDeadline({
         payload: { process: "order.reminders", aggregateId: "o-1" },
         context: { correlationId: "c", causationId: "c", depth: 0 },
         replay: "r",

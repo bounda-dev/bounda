@@ -14,6 +14,23 @@ import type {
  */
 export const TIMEOUT_DEADLINE: "timeout" = "timeout";
 
+/**
+ * The command type the scheduler holds for the next deadline of a process instance. Routed to the
+ * process runner, never to a user command handler.
+ */
+export const PROCESS_DEADLINE_COMMAND: "bounda.ProcessDeadline" = "bounda.ProcessDeadline";
+
+/**
+ * What the scheduler holds for a process instance. `field` and `at` say which deadline the entry
+ * was scheduled for; the runner works out which one is due from the instance when it runs.
+ */
+export interface ProcessDeadlinePayload {
+  readonly process: string;
+  readonly aggregateId: string;
+  readonly field: string;
+  readonly at: string;
+}
+
 const deadlineSchemas = new WeakSet<object>();
 
 const instant = (): InstantFieldSchema => instantSchema.nullable().default(null);

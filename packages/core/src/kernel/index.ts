@@ -100,6 +100,13 @@ export type {
   ProcessRuntime,
 } from "./process/build-processes.ts";
 export { buildProcesses } from "./process/build-processes.ts";
+export type { ProcessDeadlinePayload } from "./process/deadlines.ts";
+export { PROCESS_DEADLINE_COMMAND } from "./process/deadlines.ts";
+export type {
+  FailDeadlineArgs,
+  HandleDeadlineArgs,
+  ProcessDeadlines,
+} from "./process/deliver-deadline.ts";
 export type {
   FoldProcessArgs,
   FoldProcessFunction,
@@ -109,19 +116,16 @@ export type {
 } from "./process/lifecycle.ts";
 export { foldProcess, PROCESS_EVENTS, processAggregateType } from "./process/lifecycle.ts";
 export type {
+  ProcessDeadLetters,
+  ReplayDeadlineArgs,
+  ReplayProcessArgs,
+} from "./process/replay.ts";
+export type {
   CreateProcessRunnerArgs,
   CreateProcessRunnerFunction,
-  FailDeadlineArgs,
-  HandleDeadlineArgs,
-  ProcessDeadlinePayload,
   ProcessRunner,
-  ReplayProcessArgs,
 } from "./process/runner.ts";
-export {
-  createProcessRunner,
-  PROCESS_DEADLINE_COMMAND,
-  PROCESSES_SUBSCRIBER,
-} from "./process/runner.ts";
+export { createProcessRunner, PROCESSES_SUBSCRIBER } from "./process/runner.ts";
 export type {
   CreateProjectionSubscriberArgs,
   CreateProjectionSubscriberFunction,
