@@ -24,9 +24,11 @@ export interface EventDelivery {
    * process writes `ProcessStarted` with the moment it times out; an event with a handler runs
    * it and writes `ProcessHandled` with the new state; a completing event writes
    * `ProcessCompleted`. Terminal failures are recorded as `ProcessFailed` and dead-lettered;
-   * retriable ones hold the event, retried with back-off through the inbox ledger, and so does
-   * a write another one got to first. An event for a failed instance is parked behind the
-   * failure. The instance's deadlines are reconciled after every delivery to it.
+   * retriable ones hold the event, retried with back-off through the inbox ledger. When another
+   * write to the instance, such as a deadline, gets there before `ProcessHandled`, the handler
+   * runs again on the instance as it now is, up to `runtime.commands.concurrencyRetries` times,
+   * without spending an attempt. An event for a failed instance is parked behind the failure.
+   * The instance's deadlines are reconciled after every delivery to it.
    */
   deliver(process: ProcessRuntime, event: StoredEvent): Promise<ReactionOutcome>;
 }
@@ -112,14 +114,29 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
       leaseMs: leaseMs(process),
       clock,
       run: async (attempt) => {
-        const state = await handlers.runEventHandler({
-          process,
-          event,
-          instanceId,
-          instance,
-          attempt,
-        });
-        await append(process, instanceId, instance, handledEntries(process, event, state));
+        let current = instance;
+        for (let race = 0; ; race += 1) {
+          const state = await handlers.runEventHandler({
+            process,
+            event,
+            instanceId,
+            instance: current,
+            attempt,
+          });
+          try {
+            await append(process, instanceId, current, handledEntries(process, event, state));
+            return;
+          } catch (error) {
+            if (
+              !lostRace(process, instanceId, error) ||
+              race >= config.runtime.commands.concurrencyRetries
+            ) {
+              throw error;
+            }
+            current = await load(process, instanceId);
+            if (current.status !== "started") throw error;
+          }
+        }
       },
       giveUp: (error, attempts, errorType) =>
         failFor(process, event, instanceId, instance, error, attempts, errorType),
