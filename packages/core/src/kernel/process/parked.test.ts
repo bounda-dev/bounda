@@ -1080,7 +1080,7 @@ describe("events of a failed process", () => {
     });
     const { events } = await harness.storage.eventStore.load(stream);
     await deployed.storage.eventStore.append({ ...stream, expectedVersion: 0, events });
-    await deployed.processes.handleDeadline({
+    await deployed.processes.replayDeadline({
       payload: { process: "order.tally", aggregateId: "o-1" },
       context: { correlationId: "c", causationId: "c", depth: 0 },
       replay: "r",
@@ -1106,7 +1106,7 @@ describe("events of a failed process", () => {
     expect(await deadLetters.get(blocking.id)).toMatchObject({ parked: 1 });
     await expect(deadLetters.replay("stale")).rejects.toThrow("is failed on another step for o-1");
     await expect(
-      harness.processes.handleDeadline({
+      harness.processes.replayDeadline({
         payload: { process: "order.tally", aggregateId: "o-1" },
         context: { correlationId: "c", causationId: "c", depth: 0 },
         replay: "r",
@@ -1125,7 +1125,7 @@ describe("events of a failed process", () => {
     await context.settle();
     const [letter] = await deadLetters.list();
     await expect(
-      harness.processes.handleDeadline({
+      harness.processes.replayDeadline({
         payload: { process: "order.tally", aggregateId: "o-1" },
         context: { correlationId: "c", causationId: "c", depth: 0 },
         replay: "r",

@@ -13,8 +13,8 @@ import {
   orderAggregateEntry,
 } from "../test-support.ts";
 import { buildProcesses } from "./build-processes.ts";
+import { PROCESS_DEADLINE_COMMAND } from "./deadlines.ts";
 import { PROCESS_EVENTS } from "./lifecycle.ts";
-import { PROCESS_DEADLINE_COMMAND } from "./runner.ts";
 
 interface HandlerArgs {
   readonly event: { aggregateId: string; payload: { method?: string } };

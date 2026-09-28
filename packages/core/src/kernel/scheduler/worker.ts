@@ -7,8 +7,9 @@ import type { Logger } from "../../contracts/logger.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { type CommandPipeline, scheduledCommandId } from "../command/pipeline.ts";
 import type { DelayedPolicies } from "../policy/delayed.ts";
-import type { ProcessDeadlinePayload, ProcessRunner } from "../process/runner.ts";
-import { PROCESS_DEADLINE_COMMAND, PROCESSES_SUBSCRIBER } from "../process/runner.ts";
+import { PROCESS_DEADLINE_COMMAND, type ProcessDeadlinePayload } from "../process/deadlines.ts";
+import type { ProcessDeadlines } from "../process/deliver-deadline.ts";
+import { PROCESSES_SUBSCRIBER } from "../process/runner.ts";
 import { createMutex } from "../shared/mutex.ts";
 import { classifyFailure, errorDetails, retryDelayMs } from "../shared/retry.ts";
 import {
@@ -41,7 +42,7 @@ export interface CreateScheduledCommandWorkerArgs {
   readonly storage: StoragePorts;
   readonly aggregates: AggregatesRuntime;
   readonly pipeline: CommandPipeline;
-  readonly processes: ProcessRunner;
+  readonly processes: ProcessDeadlines;
   readonly delayedPolicies: DelayedPolicies;
   readonly config: ResolvedConfig;
   readonly ids: IdGenerator;

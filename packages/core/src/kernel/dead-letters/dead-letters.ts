@@ -9,7 +9,8 @@ import type { CausationContext } from "../../contracts/metadata.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
 import type { PoliciesRuntime } from "../policy/build-policies.ts";
 import type { PolicyExecutor } from "../policy/executor.ts";
-import { PROCESS_DEADLINE_COMMAND, type ProcessRunner } from "../process/runner.ts";
+import { PROCESS_DEADLINE_COMMAND } from "../process/deadlines.ts";
+import type { ProcessDeadLetters } from "../process/replay.ts";
 
 /**
  * What an operator can do with the handler runs that gave up. `list`, `count` and `get` read the
@@ -40,7 +41,7 @@ export interface CreateDeadLettersArgs {
   readonly pipeline: CommandPipeline;
   readonly policies: PoliciesRuntime;
   readonly policyExecutor: PolicyExecutor;
-  readonly processes: ProcessRunner;
+  readonly processes: ProcessDeadLetters;
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly logger: Logger;
@@ -120,7 +121,7 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
         return replayPolicy(letter, replay);
       case "process":
         if (letter.eventType === PROCESS_DEADLINE_COMMAND) {
-          return processes.handleDeadline({
+          return processes.replayDeadline({
             payload: { process: letter.subscriber, aggregateId: letter.aggregateId },
             context: { correlationId: ids.next(), causationId: letter.id, depth: 0 },
             replay,

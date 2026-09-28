@@ -7,7 +7,7 @@ import type { PayloadArgs } from "../modules/payload.ts";
 import type { Registry } from "../modules/registry.ts";
 import type { FieldsArgs } from "../modules/view.ts";
 import { createApp } from "./app.ts";
-import { PROCESS_DEADLINE_COMMAND } from "./process/runner.ts";
+import { PROCESS_DEADLINE_COMMAND } from "./process/deadlines.ts";
 import { createReactiveHarness } from "./reactive-harness.ts";
 import { ATTRIBUTES, METRICS, TELEMETRY_SCOPE, traced } from "./telemetry.ts";
 import { type FakeTelemetry, installFakeTelemetry } from "./telemetry-fake.ts";
