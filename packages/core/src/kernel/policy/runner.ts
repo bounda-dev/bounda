@@ -1,4 +1,7 @@
-import type { DeadLetterStore } from "../../adapter/ports/dead-letter-store.ts";
+import type {
+  DeadLetterErrorType,
+  DeadLetterStore,
+} from "../../adapter/ports/dead-letter-store.ts";
 import type { InboxLedger } from "../../adapter/ports/inbox-ledger.ts";
 import type { Scheduler } from "../../adapter/ports/scheduler.ts";
 import type { ResolvedConfig, ResolvedPoliciesConfig } from "../../config/types.ts";
@@ -8,7 +11,8 @@ import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { Subscriber } from "../dispatch/dispatcher.ts";
 import { deliverInOrder, type ReactionOutcome } from "../shared/in-order.ts";
-import { classifyFailure, errorDetails, retryDelayMs } from "../shared/retry.ts";
+import { runClaimed } from "../shared/inbox-claim.ts";
+import { errorDetails } from "../shared/retry.ts";
 import { deadLettered } from "../telemetry.ts";
 import type { PoliciesRuntime, PolicyRuntime } from "./build-policies.ts";
 import { scheduleDelayedPolicy } from "./delayed.ts";
@@ -57,7 +61,7 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
     event: StoredEvent,
     error: unknown,
     attempts: number,
-    errorType: "terminal" | "retriable_exhausted",
+    errorType: DeadLetterErrorType,
   ): Promise<void> => {
     const details = errorDetails(error);
     const now = clock.now().toISOString();
@@ -76,7 +80,6 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
       firstFailedAt: now,
       lastFailedAt: now,
     });
-    await ledger.complete({ subscriber: policy.name, eventId: event.id });
     deadLettered({ kind: "policy", subscriber: policy.name, errorType });
     logger.warn("policy dead-lettered", {
       policy: policy.name,
@@ -86,50 +89,33 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
     });
   };
 
-  const run = async (
+  const run = (
     policy: PolicyRuntime,
     event: StoredEvent,
     settings: ResolvedPoliciesConfig,
-  ): Promise<ReactionOutcome> => {
-    const key = { subscriber: policy.name, eventId: event.id };
-    const now = clock.now();
-    const existing = await ledger.get(key);
-    if (existing?.status === "succeeded") return "done";
-    if (existing?.status === "failed") {
-      const waitMs = retryDelayMs({ retry: settings.retry, attempt: existing.attempts });
-      if (now.getTime() - new Date(existing.claimedAt).getTime() < waitMs) return "hold";
-    }
-    const claimed = await ledger.tryClaim({ ...key, now, leaseMs: settings.timeoutMs * 2 });
-    if (!claimed) return "hold";
-
-    const attempt = (existing?.attempts ?? 0) + 1;
-    try {
-      if (policy.delayMs === null) {
-        await executor.run({ policy, event, attempt });
-      } else {
-        await scheduleDelayedPolicy({ scheduler, policy, delayMs: policy.delayMs, event });
-      }
-      await ledger.complete(key);
-      return "done";
-    } catch (error) {
-      const attempts = attempt;
-      if (classifyFailure(error) === "terminal") {
-        await deadLetter(policy, event, error, attempts, "terminal");
-        return "done";
-      }
-      await ledger.fail({ ...key, error: errorDetails(error).message });
-      if (attempts >= settings.retry.maxAttempts || settings.retry.strategy === "none") {
-        await deadLetter(policy, event, error, attempts, "retriable_exhausted");
-        return "done";
-      }
-      logger.warn("policy failed; will retry", {
-        policy: policy.name,
-        eventId: event.id,
-        attempts,
-      });
-      return "hold";
-    }
-  };
+  ): Promise<ReactionOutcome> =>
+    runClaimed({
+      ledger,
+      key: { subscriber: policy.name, eventId: event.id },
+      retry: settings.retry,
+      leaseMs: settings.timeoutMs * 2,
+      clock,
+      run: async (attempt) => {
+        if (policy.delayMs === null) {
+          await executor.run({ policy, event, attempt });
+        } else {
+          await scheduleDelayedPolicy({ scheduler, policy, delayMs: policy.delayMs, event });
+        }
+      },
+      giveUp: (error, attempts, errorType) => deadLetter(policy, event, error, attempts, errorType),
+      willRetry: (attempts) => {
+        logger.warn("policy failed; will retry", {
+          policy: policy.name,
+          eventId: event.id,
+          attempts,
+        });
+      },
+    });
 
   return {
     name: POLICIES_SUBSCRIBER,

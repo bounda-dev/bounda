@@ -237,10 +237,6 @@ export const createProcessReplay: CreateProcessReplayFunction = ({
     },
     stillParked: async (letter) => {
       const instance = await instanceOfLetter(letter);
-      const process = processes.byName[letter.subscriber];
-      if (instance !== null && process !== undefined) {
-        await failures.healFailure(process, instance);
-      }
       return instance?.status === "failed"
         ? instance.parked.length + (instance.failure?.deadline === undefined ? 0 : 1)
         : 0;

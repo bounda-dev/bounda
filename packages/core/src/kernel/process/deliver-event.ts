@@ -1,13 +1,14 @@
 import type { StoragePorts } from "../../adapter/adapter.ts";
+import type { DeadLetterErrorType } from "../../adapter/ports/dead-letter-store.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import { ConcurrencyError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { ReactionOutcome } from "../shared/in-order.ts";
-import { classifyFailure, errorDetails, retryDelayMs } from "../shared/retry.ts";
+import { runClaimed } from "../shared/inbox-claim.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
-import type { FailureType, ProcessFailures } from "./failures.ts";
+import type { ProcessFailures } from "./failures.ts";
 import type { ProcessHandlers } from "./handlers.ts";
 import type { ProcessInstances } from "./instances.ts";
 import { eventContext, lifecycleEntries, type ProcessInstance } from "./lifecycle.ts";
@@ -86,7 +87,7 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
     instance: ProcessInstance,
     error: unknown,
     attempts: number,
-    errorType: FailureType,
+    errorType: DeadLetterErrorType,
   ): Promise<void> => {
     const letter = failures.letterOf(process, event, error, attempts, errorType);
     await append(process, instanceId, instance, [
@@ -104,50 +105,32 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
     if (handlerOf(process, event) === undefined || instance.handledEventIds.has(event.id)) {
       return "done";
     }
-    const settings = config.forAggregate(process.aggregate).processes;
-    const key = { subscriber: process.name, eventId: event.id };
-    const now = clock.now();
-    const existing = await storage.inboxLedger.get(key);
-    if (existing?.status === "succeeded") return "done";
-    if (existing?.status === "failed") {
-      const waitMs = retryDelayMs({ retry: settings.retry, attempt: existing.attempts });
-      if (now.getTime() - new Date(existing.claimedAt).getTime() < waitMs) return "hold";
-    }
-    if (!(await storage.inboxLedger.tryClaim({ ...key, now, leaseMs: leaseMs(process) }))) {
-      return "hold";
-    }
-    const attempts = (existing?.attempts ?? 0) + 1;
-    try {
-      const state = await handlers.runEventHandler({
-        process,
-        event,
-        instanceId,
-        instance,
-        attempt: attempts,
-      });
-      await append(process, instanceId, instance, handledEntries(process, event, state));
-      await storage.inboxLedger.complete(key);
-      return "done";
-    } catch (error) {
-      const kind = error instanceof ConcurrencyError ? "retriable" : classifyFailure(error);
-      if (kind === "terminal") {
-        await failFor(process, event, instanceId, instance, error, attempts, "terminal");
-        await storage.inboxLedger.complete(key);
-        return "done";
-      }
-      await storage.inboxLedger.fail({ ...key, error: errorDetails(error).message });
-      if (attempts >= settings.retry.maxAttempts || settings.retry.strategy === "none") {
-        await failFor(process, event, instanceId, instance, error, attempts, "retriable_exhausted");
-        await storage.inboxLedger.complete(key);
-        return "done";
-      }
-      logger.warn("process handler failed; will retry", {
-        process: process.name,
-        eventId: event.id,
-        attempts,
-      });
-      return "hold";
-    }
+    return runClaimed({
+      ledger: storage.inboxLedger,
+      key: { subscriber: process.name, eventId: event.id },
+      retry: config.forAggregate(process.aggregate).processes.retry,
+      leaseMs: leaseMs(process),
+      clock,
+      run: async (attempt) => {
+        const state = await handlers.runEventHandler({
+          process,
+          event,
+          instanceId,
+          instance,
+          attempt,
+        });
+        await append(process, instanceId, instance, handledEntries(process, event, state));
+      },
+      giveUp: (error, attempts, errorType) =>
+        failFor(process, event, instanceId, instance, error, attempts, errorType),
+      willRetry: (attempts) => {
+        logger.warn("process handler failed; will retry", {
+          process: process.name,
+          eventId: event.id,
+          attempts,
+        });
+      },
+    });
   };
 
   const park = async (

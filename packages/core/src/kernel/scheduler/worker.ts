@@ -1,4 +1,5 @@
 import type { StoragePorts } from "../../adapter/adapter.ts";
+import type { DeadLetterErrorType } from "../../adapter/ports/dead-letter-store.ts";
 import type { ClaimedCommand, ScheduledCommand } from "../../adapter/ports/scheduler.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
@@ -66,8 +67,6 @@ interface DeadlineWait {
   readonly head: number;
   readonly rounds: number;
 }
-
-type GiveUpReason = "terminal" | "retriable_exhausted";
 
 /**
  * Executes scheduled work: user commands dispatched with `delay`, process deadlines and delayed
@@ -144,7 +143,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     entry: ScheduledCommand,
     error: unknown,
     attempts: number,
-    reason: GiveUpReason,
+    reason: DeadLetterErrorType,
   ): Promise<void> => {
     const details = errorDetails(error);
     const payload = delayedPolicies.payloadOf(entry);
@@ -177,7 +176,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     entry: ClaimedCommand,
     error: unknown,
     attempts: number,
-    reason: GiveUpReason,
+    reason: DeadLetterErrorType,
   ): Promise<void> => {
     if (isDeadline(entry)) {
       await processes.failDeadline({

@@ -6,6 +6,7 @@ import {
   type Tracer,
   trace,
 } from "@opentelemetry/api";
+import type { DeadLetterErrorType } from "../adapter/ports/dead-letter-store.ts";
 import { errorDetails } from "./shared/retry.ts";
 
 /**
@@ -124,7 +125,7 @@ export const METRICS: {
 export interface DeadLetteredArgs {
   readonly kind: "policy" | "process" | "command";
   readonly subscriber: string;
-  readonly errorType: "terminal" | "retriable_exhausted";
+  readonly errorType: DeadLetterErrorType;
 }
 
 export interface DeadLetteredFunction {
