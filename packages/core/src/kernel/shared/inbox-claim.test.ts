@@ -22,7 +22,7 @@ const setUp = (config: ResolvedRetryConfig = retry) => {
   const givenUp: [number, DeadLetterErrorType][] = [];
   const reasons: unknown[] = [];
   const retried: number[] = [];
-  let giveUpFails = false;
+  let giveUpFailures = 0;
   const claim = (run: (attempt: number) => Promise<void>) =>
     runClaimed({
       ledger,
@@ -37,8 +37,8 @@ const setUp = (config: ResolvedRetryConfig = retry) => {
       giveUp: async (error, attempt, errorType) => {
         givenUp.push([attempt, errorType]);
         reasons.push(error);
-        if (giveUpFails) {
-          giveUpFails = false;
+        if (giveUpFailures > 0) {
+          giveUpFailures -= 1;
           throw new Error("dead letters unavailable");
         }
       },
@@ -46,10 +46,10 @@ const setUp = (config: ResolvedRetryConfig = retry) => {
         retried.push(attempt);
       },
     });
-  const failGiveUpOnce = (): void => {
-    giveUpFails = true;
+  const failGiveUp = (times = 1): void => {
+    giveUpFailures = times;
   };
-  return { ledger, clock, attempts, givenUp, reasons, retried, claim, failGiveUpOnce };
+  return { ledger, clock, attempts, givenUp, reasons, retried, claim, failGiveUp };
 };
 
 const fail = (error: unknown) => async (): Promise<void> => {
@@ -126,11 +126,11 @@ describe("runClaimed", () => {
   });
 
   it("gives up again without running when giving up on the last attempt threw", async () => {
-    const { ledger, attempts, givenUp, reasons, claim, failGiveUpOnce } = setUp({
+    const { ledger, attempts, givenUp, reasons, claim, failGiveUp } = setUp({
       ...retry,
       strategy: "none",
     });
-    failGiveUpOnce();
+    failGiveUp();
 
     await expect(claim(fail(new Error("down")))).rejects.toThrow("dead letters unavailable");
     expect(await claim(async () => undefined)).toBe("done");
@@ -144,19 +144,44 @@ describe("runClaimed", () => {
     expect(await ledger.get(key)).toMatchObject({ status: "succeeded" });
   });
 
-  it("leaves a claim that failed its last attempt to whoever claims it first", async () => {
-    const { ledger, givenUp, claim, failGiveUpOnce } = setUp({ ...retry, strategy: "none" });
-    failGiveUpOnce();
-    await expect(claim(fail(new Error("down")))).rejects.toThrow("dead letters unavailable");
-    ledger.tryClaim = async () => false;
+  it("gives up again at once, without claiming or counting an attempt, each time giving up threw", async () => {
+    const { ledger, attempts, givenUp, claim, failGiveUp } = setUp({ ...retry, strategy: "none" });
+    failGiveUp(2);
 
-    expect(await claim(async () => undefined)).toBe("hold");
-    expect(givenUp).toHaveLength(1);
+    await expect(claim(fail(new Error("down")))).rejects.toThrow("dead letters unavailable");
+    await expect(claim(async () => undefined)).rejects.toThrow("dead letters unavailable");
+    expect(await ledger.get(key)).toMatchObject({ status: "failed", attempts: 1 });
+    expect(await claim(async () => undefined)).toBe("done");
+
+    expect(attempts).toEqual([1]);
+    expect(givenUp).toEqual([
+      [1, "retriable_exhausted"],
+      [1, "retriable_exhausted"],
+      [1, "retriable_exhausted"],
+    ]);
+    expect(await ledger.get(key)).toMatchObject({ status: "succeeded", attempts: 1 });
+  });
+
+  it("gives up without running a failed claim whose attempts are spent though it records no give-up", async () => {
+    const { ledger, clock, attempts, givenUp, reasons, claim } = setUp({
+      ...retry,
+      maxAttempts: 2,
+    });
+    await ledger.tryClaim({ ...key, now: clock.now(), leaseMs: 60_000 });
+    await ledger.fail({ ...key, error: "down" });
+    await ledger.tryClaim({ ...key, now: clock.now(), leaseMs: 60_000 });
+    await ledger.fail({ ...key, error: "down" });
+
+    expect(await claim(async () => undefined)).toBe("done");
+
+    expect(attempts).toEqual([]);
+    expect(givenUp).toEqual([[2, "retriable_exhausted"]]);
+    expect(reasons).toEqual(["down"]);
   });
 
   it("gives up on a terminal failure again without running when giving up threw", async () => {
-    const { ledger, attempts, givenUp, reasons, claim, failGiveUpOnce } = setUp();
-    failGiveUpOnce();
+    const { ledger, attempts, givenUp, reasons, claim, failGiveUp } = setUp();
+    failGiveUp();
     await expect(claim(fail(new DomainError("refused")))).rejects.toThrow(
       "dead letters unavailable",
     );
