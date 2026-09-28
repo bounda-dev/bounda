@@ -96,11 +96,15 @@ const registry: Registry = {
 const DAY = 86_400_000;
 const stream = { aggregateType: "process:Tally", aggregateId: "o-1" };
 
-const setUp = async (retry: RetryConfig = { strategy: "none" }) => {
+const reset = (): void => {
   runs.length = 0;
   failing = new Map();
   failingEvents.clear();
   whileHandling = undefined;
+};
+
+const setUp = async (retry: RetryConfig = { strategy: "none" }) => {
+  reset();
   const { logger, entries: logs } = createRecordingLogger();
   const harness = await createReactiveHarness({
     registry,
@@ -1497,7 +1501,7 @@ describe("replaying a failed process", () => {
   });
 
   it("complete an instance whose completing event was handled but its completion not written", async () => {
-    await setUp();
+    reset();
     const tallyEntry = registry.aggregates.order?.processes.tally;
     if (tallyEntry === undefined) throw new Error("no process");
     const archiving: Registry = {
