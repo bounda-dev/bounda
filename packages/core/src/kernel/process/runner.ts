@@ -17,6 +17,7 @@ import { createCommandsFacade } from "../command/facade.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
 import type { Subscriber } from "../dispatch/dispatcher.ts";
 import { createReactionCommandIds, deriveIdempotencyKey } from "../shared/idempotency-key.ts";
+import { deliverInOrder, type ReactionOutcome } from "../shared/in-order.ts";
 import { qualifiedEventType } from "../shared/qualified-event.ts";
 import { classifyFailure, errorDetails, retryDelayMs } from "../shared/retry.ts";
 import { withTimeout } from "../shared/timeout.ts";
@@ -159,8 +160,6 @@ export interface CreateProcessRunnerFunction {
   (args: CreateProcessRunnerArgs): ProcessRunner;
 }
 
-type Outcome = "done" | "hold";
-
 interface LifecycleEntry {
   readonly type: string;
   readonly payload: unknown;
@@ -177,9 +176,9 @@ const deadlineKey = (process: string, aggregateId: string): string =>
  * process writes `ProcessStarted` with the moment it times out; an event with a handler, the
  * starting one included, runs it and writes `ProcessHandled` with the new state; a completing
  * event writes `ProcessCompleted`. Failures follow the same rules as policies: terminal ones are
- * recorded as `ProcessFailed` and dead-lettered, retriable ones hold the checkpoint and are
- * retried with back-off through the inbox ledger; a process that holds an event is handed none
- * of the later events of the batch, so none of them overtakes it.
+ * recorded as `ProcessFailed` and dead-lettered, retriable ones stop the checkpoint right before
+ * the event and are retried with back-off through the inbox ledger; a process that holds an event
+ * is handed none of the later events of the batch, so none of them overtakes it.
  *
  * Deadlines are state: after every delivery to a running instance, and after every change the
  * runner makes to it, the instance's one scheduler entry is set to its earliest pending deadline,
@@ -471,7 +470,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     event: StoredEvent,
     instanceId: string,
     instance: ProcessInstance,
-  ): Promise<Outcome> => {
+  ): Promise<ReactionOutcome> => {
     const handler = process.handlers[qualifiedEventType(event.aggregateType, event.type)];
     if (handler === undefined || instance.handledEventIds.has(event.id)) return "done";
     const settings = config.forAggregate(process.aggregate).processes;
@@ -610,7 +609,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     process: ProcessRuntime,
     event: StoredEvent,
     error: unknown,
-  ): Promise<Outcome> => {
+  ): Promise<ReactionOutcome> => {
     const key = { subscriber: process.name, eventId: event.id };
     if ((await storage.inboxLedger.get(key))?.status === "succeeded") return "done";
     const claimed = await storage.inboxLedger.tryClaim({
@@ -854,7 +853,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     }
   };
 
-  const deliver = async (process: ProcessRuntime, event: StoredEvent): Promise<Outcome> => {
+  const deliver = async (process: ProcessRuntime, event: StoredEvent): Promise<ReactionOutcome> => {
     let instanceId: string | null;
     try {
       instanceId = process.instanceOf(event);
@@ -1149,26 +1148,23 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
   return {
     name: PROCESSES_SUBSCRIBER,
     kind: "process",
-    process: async (events) => {
-      const held = new Set<string>();
-      for (const event of events) {
-        const qualified = qualifiedEventType(event.aggregateType, event.type);
-        for (const process of processes.byEvent[qualified] ?? []) {
-          if (held.has(process.name)) continue;
+    process: (events) =>
+      deliverInOrder({
+        events,
+        byEvent: processes.byEvent,
+        deliver: async (process, event) => {
           try {
-            if ((await deliver(process, event)) === "hold") held.add(process.name);
+            return await deliver(process, event);
           } catch (error) {
             if (!(error instanceof ConcurrencyError)) throw error;
             logger.debug("process stream moved; will redeliver", {
               process: process.name,
               eventId: event.id,
             });
-            held.add(process.name);
+            return "hold";
           }
-        }
-      }
-      return held.size === 0;
-    },
+        },
+      }),
     replay,
     handleDeadline,
     failDeadline,

@@ -38,7 +38,7 @@ const recorder = (
     seen,
     process: async (events) => {
       seen.push(events.map((event) => event.position));
-      return true;
+      return events.length;
     },
   };
 };
@@ -112,13 +112,13 @@ describe("createDispatcher", () => {
     const flaky: Subscriber = {
       name: "flaky",
       kind: "projection",
-      process: async () => {
+      process: async (events) => {
         if (failures > 0) {
           failures -= 1;
           if (failures === 1) throw new Error("boom");
-          return false;
+          return 0;
         }
-        return true;
+        return events.length;
       },
     };
     const { logger, entries } = createRecordingLogger();
@@ -175,7 +175,7 @@ describe("createDispatcher", () => {
       process: async (events) => {
         seen.push(events.map((event) => event.position));
         if (seen.length === 1) await checkpointStore.set("orders", 0);
-        return true;
+        return events.length;
       },
     };
     const { logger, entries } = createRecordingLogger();
@@ -233,12 +233,12 @@ describe("createDispatcher", () => {
     const slow: Subscriber = {
       name: "slow",
       kind: "projection",
-      process: async () => {
+      process: async (events) => {
         inside += 1;
         overlap = overlap || inside > 1;
         await new Promise<void>((release) => held.push(release));
         inside -= 1;
-        return true;
+        return events.length;
       },
     };
     const clock = createFixedClock();
@@ -288,7 +288,7 @@ describe("createDispatcher", () => {
           kind: "projection",
           process: async (events) => {
             seen.push(...events);
-            return true;
+            return events.length;
           },
         },
       ],
@@ -336,13 +336,13 @@ describe("createDispatcher", () => {
     const gated: Subscriber = {
       name: "gated",
       kind: "projection",
-      process: async () => {
+      process: async (events) => {
         passes += 1;
         if (passes === 2)
           await new Promise<void>((resolve) => {
             release = resolve;
           });
-        return true;
+        return events.length;
       },
     };
     const dispatcher = createDispatcher({
@@ -523,7 +523,7 @@ describe("createDispatcher", () => {
             release = resolve;
           });
         }
-        return true;
+        return events.length;
       },
     };
     const clock = createFixedClock();

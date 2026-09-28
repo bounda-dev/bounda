@@ -3,7 +3,7 @@ import { resolveConfig } from "../../config/schema.ts";
 import { DomainError } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
 import type { Registry } from "../../modules/registry.ts";
-import { createReactiveHarness } from "../reactive-harness.ts";
+import { createReactiveHarness, type ReactiveHarness } from "../reactive-harness.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { createRecordingLogger, orderAggregateEntry } from "../test-support.ts";
 import { buildPolicies, policyTriggerFromKey } from "./build-policies.ts";
@@ -55,6 +55,18 @@ const registry: Registry = {
     },
   },
   readModels: {},
+};
+
+const claimFirstEventOf = async (harness: ReactiveHarness, subscriber: string, orderId: string) => {
+  const [first] = (
+    await harness.storage.eventStore.load({ aggregateType: "order", aggregateId: orderId })
+  ).events;
+  await harness.storage.inboxLedger.tryClaim({
+    subscriber,
+    eventId: first?.id ?? "",
+    now: harness.clock.now(),
+    leaseMs: 60_000,
+  });
 };
 
 const reset = (mode: typeof behaviour, failures = 0) => {
@@ -162,15 +174,7 @@ describe("policy subscriber", () => {
     reset("ok");
     const harness = await createReactiveHarness({ registry });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    const [placed] = (
-      await harness.storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" })
-    ).events;
-    await harness.storage.inboxLedger.tryClaim({
-      subscriber: "order.payOnOrderPlaced",
-      eventId: placed?.id ?? "",
-      now: harness.clock.now(),
-      leaseMs: 60_000,
-    });
+    await claimFirstEventOf(harness, "order.payOnOrderPlaced", "o-1");
 
     await harness.dispatcher.processUntilIdle();
     expect(calls).not.toContain("pay:o-1");
@@ -315,15 +319,7 @@ describe("policy subscriber", () => {
     const harness = await createReactiveHarness({ registry });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-2", total: 20 } });
-    const [placed] = (
-      await harness.storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" })
-    ).events;
-    await harness.storage.inboxLedger.tryClaim({
-      subscriber: "order.payOnOrderPlaced",
-      eventId: placed?.id ?? "",
-      now: harness.clock.now(),
-      leaseMs: 60_000,
-    });
+    await claimFirstEventOf(harness, "order.payOnOrderPlaced", "o-1");
 
     await harness.dispatcher.processUntilIdle();
     expect(calls).toEqual(["audit:o-1:0", "audit:o-2:0"]);
@@ -341,6 +337,28 @@ describe("policy subscriber", () => {
     expect((await harness.dispatcher.getLag()).maxLag).toBe(0);
   });
 
+  it("advances the checkpoint up to the first event held and no further", async () => {
+    reset("ok");
+    const harness = await createReactiveHarness({ registry });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-2", total: 20 } });
+    await claimFirstEventOf(harness, "order.payOnOrderPlaced", "o-2");
+    const [placed] = (
+      await harness.storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" })
+    ).events;
+
+    await harness.dispatcher.processUntilIdle();
+    expect(calls.filter((call) => call.startsWith("pay:"))).toEqual(["pay:o-1"]);
+    expect(await harness.storage.checkpointStore.get("policies")).toBe(placed?.position);
+
+    harness.clock.advance(60_001);
+    await harness.dispatcher.processUntilIdle();
+    expect(calls.filter((call) => call.startsWith("pay:"))).toEqual(["pay:o-1", "pay:o-2"]);
+    expect(await harness.storage.checkpointStore.get("policies")).toBe(
+      await harness.storage.eventStore.lastPosition(),
+    );
+  });
+
   it("keeps a policy's later events of another type behind the one it holds", async () => {
     reset("ok");
     const auditEverything = registry.aggregates.order?.policies.auditEverything;
@@ -356,15 +374,10 @@ describe("policy subscriber", () => {
       type: "PayOrder",
       payload: { orderId: "o-1", method: "card" },
     });
-    const [placed, paid] = (
+    await claimFirstEventOf(harness, "order.auditEverything", "o-1");
+    const [, paid] = (
       await harness.storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" })
     ).events;
-    await harness.storage.inboxLedger.tryClaim({
-      subscriber: "order.auditEverything",
-      eventId: placed?.id ?? "",
-      now: harness.clock.now(),
-      leaseMs: 60_000,
-    });
 
     await harness.dispatcher.processUntilIdle();
     expect(calls).toEqual([]);

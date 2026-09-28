@@ -12,13 +12,13 @@ export type SubscriberKind = "projection" | "policy" | "process";
 
 /**
  * Something that consumes the global stream from a checkpoint the dispatcher keeps. `process`
- * returns whether the checkpoint may advance past the batch; returning `false` or throwing makes
- * the dispatcher deliver the same batch again on the next pass.
+ * resolves to how many leading events of the batch are done: the checkpoint advances past them,
+ * and the dispatcher delivers the rest again on the next pass. Throwing holds the whole batch.
  */
 export interface Subscriber {
   readonly name: string;
   readonly kind: SubscriberKind;
-  process(events: readonly StoredEvent[]): Promise<boolean>;
+  process(events: readonly StoredEvent[]): Promise<number>;
 }
 
 /**
@@ -297,6 +297,6 @@ export const checkpointedByStore: CheckpointedByStoreFunction = ({
           checkpointStore.compareAndSet(subscriber.name, expected, position),
       }),
     }),
-    process: async (events) => ((await subscriber.process(events)) ? events.length : 0),
+    process: (events) => subscriber.process(events),
     logger,
   });

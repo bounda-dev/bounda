@@ -152,9 +152,10 @@ export const handler = async ({ event, payments, idempotencyKey }: Policy.Handle
 };
 ```
 
-**Events stay in order.** While a retry is pending the subscriber's checkpoint holds, so the next
-event waits for this one instead of overtaking it. A policy stuck on a retry therefore delays the
-policies behind it and shows up as lag rather than as events silently processed out of order.
+**Events stay in order.** While a retry is pending the subscriber's checkpoint stops right before
+the event, so the policy's next event waits for this one instead of overtaking it; the other
+policies go on with the rest of the batch. A policy stuck on a retry therefore delays the events
+after it and shows up as lag rather than as events silently processed out of order.
 
 **Reactions start when they are deployed.** A policy or process reacts to the events stored
 after the code that declares it starts, never to the history before it. Adding the first policy

@@ -90,9 +90,9 @@ describe("catchUpThrough", () => {
     const policy: Subscriber = {
       name: "policies",
       kind: "policy",
-      process: async () => {
+      process: async (events) => {
         policies += 1;
-        return true;
+        return events.length;
       },
     };
     const { dispatcher } = await setUp([orders, customers, policy]);
