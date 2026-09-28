@@ -195,10 +195,10 @@ describe("the dispatcher's backoff", () => {
     const flaky: Subscriber = {
       name: "flaky",
       kind: "projection",
-      process: async () => {
+      process: async (events) => {
         attempts += 1;
         if (broken) throw new Error("boom");
-        return true;
+        return events.length;
       },
     };
     const dispatcher = createDispatcher({

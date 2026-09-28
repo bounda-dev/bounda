@@ -367,7 +367,7 @@ describe("process runner", () => {
     });
     await harness.dispatcher.processUntilIdle();
     expect(calls).toEqual(["paid:o-1"]);
-    expect(await harness.storage.checkpointStore.get("processes")).toBe(0);
+    expect(await harness.storage.checkpointStore.get("processes")).toBe(1);
 
     await harness.dispatcher.processUntilIdle();
     expect(calls).toEqual(["paid:o-1"]);

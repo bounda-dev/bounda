@@ -152,9 +152,12 @@ export const handler = async ({ event, payments, idempotencyKey }: Policy.Handle
 };
 ```
 
-**Events stay in order.** While a retry is pending the subscriber's checkpoint holds, so the next
-event waits for this one instead of overtaking it. A policy stuck on a retry therefore delays the
-policies behind it and shows up as lag rather than as events silently processed out of order.
+**Events stay in order.** While a retry is pending the subscriber's checkpoint stops right before
+the event, so the policy's next event waits for this one instead of overtaking it; the other
+policies go on with the rest of the batch. A policy stuck on a retry therefore delays the events
+after it and shows up as lag rather than as events silently processed out of order. A delayed
+policy only keeps this order while its runs are scheduled; the runs themselves can overtake one
+another (see [Delaying a policy](#delaying-a-policy)).
 
 **Reactions start when they are deployed.** A policy or process reacts to the events stored
 after the code that declares it starts, never to the history before it. Adding the first policy
@@ -372,7 +375,9 @@ event's time plus the delay, so a worker that falls behind does not push it late
 due, the worker reads the event, upcast to its shape at that moment, and runs the handler with
 everything a live run gets: collaborators, the commands facade, the same `idempotencyKey`, the
 aggregate's retry settings and time budget. A run that fails for good is dead-lettered as the
-policy's, and replaying it runs the handler at once.
+policy's, and replaying it runs the handler at once. Delayed runs are not ordered among
+themselves: the worker retries each one on its own, so the run for a later event can overtake an
+earlier one that is waiting for its retry.
 
 A delayed policy runs whatever happened in between. When the effect depends on what happened
 since (*remind the customer unless they paid*), delay a command instead: its handler decides

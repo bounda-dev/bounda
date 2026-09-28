@@ -7,7 +7,7 @@ import type { StoredEvent } from "../../contracts/event.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { Subscriber } from "../dispatch/dispatcher.ts";
-import { qualifiedEventType } from "../shared/qualified-event.ts";
+import { deliverInOrder, type ReactionOutcome } from "../shared/in-order.ts";
 import { classifyFailure, errorDetails, retryDelayMs } from "../shared/retry.ts";
 import { deadLettered } from "../telemetry.ts";
 import type { PoliciesRuntime, PolicyRuntime } from "./build-policies.ts";
@@ -32,16 +32,14 @@ export interface CreatePolicySubscriberFunction {
   (args: CreatePolicySubscriberArgs): Subscriber;
 }
 
-type Outcome = "done" | "hold";
-
 /**
  * One subscriber for every policy. For each event and each policy that reacts to it, the runner
  * claims `(policy, eventId)` in the inbox ledger and runs the handler, or, for a delayed policy,
  * schedules its run for the event's time plus the delay. Failures are classified: terminal ones
  * are dead-lettered at once; retriable ones are retried on later passes with the configured
  * back-off, then dead-lettered. While a retry is pending, or while another instance holds the
- * claim, the checkpoint holds and the policy skips its later events of the batch, so none of them
- * overtakes the held one; other policies carry on.
+ * claim, the checkpoint stops right before that event and the policy skips its later events of
+ * the batch, so none of them overtakes the held one; other policies carry on.
  */
 export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
   policies,
@@ -92,7 +90,7 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
     policy: PolicyRuntime,
     event: StoredEvent,
     settings: ResolvedPoliciesConfig,
-  ): Promise<Outcome> => {
+  ): Promise<ReactionOutcome> => {
     const key = { subscriber: policy.name, eventId: event.id };
     const now = clock.now();
     const existing = await ledger.get(key);
@@ -136,17 +134,12 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
   return {
     name: POLICIES_SUBSCRIBER,
     kind: "policy",
-    process: async (events) => {
-      const held = new Set<string>();
-      for (const event of events) {
-        const qualified = qualifiedEventType(event.aggregateType, event.type);
-        for (const policy of policies.byEvent[qualified] ?? []) {
-          if (held.has(policy.name)) continue;
-          const outcome = await run(policy, event, config.forAggregate(policy.aggregate).policies);
-          if (outcome === "hold") held.add(policy.name);
-        }
-      }
-      return held.size === 0;
-    },
+    process: (events) =>
+      deliverInOrder({
+        events,
+        byEvent: policies.byEvent,
+        deliver: (policy, event) =>
+          run(policy, event, config.forAggregate(policy.aggregate).policies),
+      }),
   };
 };

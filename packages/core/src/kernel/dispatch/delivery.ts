@@ -12,20 +12,23 @@ export type SubscriberKind = "projection" | "policy" | "process";
 
 /**
  * Something that consumes the global stream from a checkpoint the dispatcher keeps. `process`
- * returns whether the checkpoint may advance past the batch; returning `false` or throwing makes
- * the dispatcher deliver the same batch again on the next pass.
+ * resolves to how many leading events of the batch are done: the checkpoint advances past them,
+ * and the dispatcher delivers the rest again on the next pass. Throwing holds the whole batch,
+ * unless the error is a `PartialBatchError`, whose `done` leading events are committed.
  */
 export interface Subscriber {
   readonly name: string;
   readonly kind: SubscriberKind;
-  process(events: readonly StoredEvent[]): Promise<boolean>;
+  process(events: readonly StoredEvent[]): Promise<number>;
 }
 
 /**
  * How one delivery went. `idle`: nothing after the checkpoint. `busy`: another holder had the
  * subscriber and the delivery chose not to wait. `advanced`: the checkpoint moved past what was
- * processed. `held` and `failed`: the batch will be delivered again. `moved`: someone else moved
- * the checkpoint, and the next delivery reads from where they left it.
+ * processed, which may be only part of the batch when the subscriber held a later event; the
+ * dispatcher counts it as progress, and the next delivery, which starts at the held event,
+ * reports `held`. `held` and `failed`: the batch will be delivered again. `moved`: someone else
+ * moved the checkpoint, and the next delivery reads from where they left it.
  */
 export type DeliveryOutcome = "idle" | "busy" | "advanced" | "held" | "moved" | "failed";
 
@@ -297,6 +300,6 @@ export const checkpointedByStore: CheckpointedByStoreFunction = ({
           checkpointStore.compareAndSet(subscriber.name, expected, position),
       }),
     }),
-    process: async (events) => ((await subscriber.process(events)) ? events.length : 0),
+    process: (events) => subscriber.process(events),
     logger,
   });
