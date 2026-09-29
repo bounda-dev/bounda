@@ -12,9 +12,6 @@ import type { ProcessInstances } from "./instances.ts";
 import { instanceContext, lifecycleEntries, type ProcessInstance } from "./lifecycle.ts";
 import { type DeadlineSchedule, pendingDeadline } from "./schedule.ts";
 
-/**
- * The instance a deadline entry is for.
- */
 export type DeadlineTarget = Pick<ProcessDeadlinePayload, "process" | "aggregateId">;
 
 export interface HandleDeadlineArgs {
@@ -34,9 +31,7 @@ export interface FailDeadlineArgs {
  */
 export interface ProcessDeadlines {
   /**
-   * Called when the entry of an instance comes due: runs the handler of the earliest deadline
-   * that is due and records `ProcessDeadlineReached`, or `ProcessTimedOut` for the timeout, then
-   * schedules the next one. When nothing is due, it only schedules the next one.
+   * Runs the earliest due deadline, if any, then schedules the next one.
    */
   handleDeadline(args: HandleDeadlineArgs): Promise<void>;
   /**
@@ -50,10 +45,8 @@ export interface ProcessDeadlines {
    */
   lostRace(payload: DeadlineTarget, error: unknown): boolean;
   /**
-   * Called when a deadline entry gave up with `error`: records `ProcessFailed` and dead-letters
-   * the deadline whose handler threw it, so a replay runs it again. An error thrown outside a
-   * deadline handler fails no process. Either way the instance's entry is written again, since
-   * the worker has dropped it.
+   * Fails the process only when a deadline handler threw `error`. Either way the entry is written
+   * again, since the worker has dropped it.
    */
   failDeadline(args: FailDeadlineArgs): Promise<void>;
 }

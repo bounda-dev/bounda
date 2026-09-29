@@ -51,11 +51,8 @@ export interface ReplayDeadlineArgs {
  */
 export interface ProcessDeadLetters {
   /**
-   * Runs a process handler again for an event whose earlier run was dead-lettered, ignoring the
-   * inbox ledger. On success the instance gets its `ProcessHandled`, and an event that completes
-   * the process completes it. A process that had failed then handles, in order, the events parked
-   * behind the failure, and is back to `started` with its deadlines scheduled again once none is
-   * left; one that fails again fails the process and is dead-lettered, and the rest stay parked.
+   * Ignores the inbox ledger. A failed process then drains its parked events in order before it
+   * resumes; one that fails again becomes the new failure, and the rest stay parked.
    */
   replay(args: ReplayProcessArgs): Promise<void>;
   /**

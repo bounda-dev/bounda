@@ -20,15 +20,10 @@ import type { DeadlineSchedule } from "./schedule.ts";
  */
 export interface EventDelivery {
   /**
-   * Delivers `event` to the instance of `process` it belongs to. An event that starts the
-   * process writes `ProcessStarted` with the moment it times out; an event with a handler runs
-   * it and writes `ProcessHandled` with the new state; a completing event writes
-   * `ProcessCompleted`. Terminal failures are recorded as `ProcessFailed` and dead-lettered;
-   * retriable ones hold the event, retried with back-off through the inbox ledger. When another
-   * write to the instance, such as a deadline, gets there before `ProcessHandled`, the handler
-   * runs again on the instance as it now is, up to `runtime.commands.concurrencyRetries` times,
-   * without spending an attempt. An event for a failed instance is parked behind the failure.
-   * The instance's deadlines are reconciled after every delivery to it.
+   * A retriable failure holds the event for the inbox ledger to retry. When another write to
+   * the instance, such as a deadline, gets there first, the handler runs again on the instance
+   * as it now is, up to `runtime.commands.concurrencyRetries` times, without spending an
+   * attempt. An event for a failed instance is parked behind the failure.
    */
   deliver(process: ProcessRuntime, event: StoredEvent): Promise<ReactionOutcome>;
 }

@@ -20,9 +20,6 @@ import { type ProcessInstance, processAggregateType } from "./lifecycle.ts";
  */
 export type FailureSubject = Pick<StoredEvent, "id" | "type" | "aggregateType" | "aggregateId">;
 
-/**
- * The dead letters of process failures.
- */
 export interface ProcessFailures {
   letterOf(
     process: ProcessRuntime,

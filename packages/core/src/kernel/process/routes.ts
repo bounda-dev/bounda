@@ -10,9 +10,6 @@ export interface HandlerOfFunction {
   (process: ProcessRuntime, event: StoredEvent): EventHandler | undefined;
 }
 
-/**
- * The handler the process runs for `event`, if it has one.
- */
 export const handlerOf: HandlerOfFunction = (process, event) =>
   process.handlers[qualifiedEventType(event.aggregateType, event.type)];
 
@@ -20,15 +17,9 @@ export interface EventRouteFunction {
   (process: ProcessRuntime, event: StoredEvent): boolean;
 }
 
-/**
- * Whether `event` starts an instance of the process.
- */
 export const startsOn: EventRouteFunction = (process, event) =>
   process.startedBy.has(qualifiedEventType(event.aggregateType, event.type));
 
-/**
- * Whether `event` completes the instance it belongs to.
- */
 export const completesOn: EventRouteFunction = (process, event) =>
   process.completedBy.has(qualifiedEventType(event.aggregateType, event.type));
 
@@ -42,10 +33,6 @@ export interface HandledEntriesFunction {
   (process: ProcessRuntime, event: StoredEvent, state: object): LifecycleEntry[];
 }
 
-/**
- * What handling `event` writes: `ProcessHandled` with the state it left, then `ProcessCompleted`
- * when the event completes the process.
- */
 export const handledEntries: HandledEntriesFunction = (process, event, state) => [
   lifecycleEntries.handled(event, state),
   ...(completesOn(process, event) ? [lifecycleEntries.completed(event)] : []),
