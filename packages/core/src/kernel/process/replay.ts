@@ -15,12 +15,7 @@ import type { ResumeParked } from "./resume.ts";
 import { completesOn, handledEntries, handlerOf, letThrough } from "./routes.ts";
 import type { DeadlineSchedule } from "./schedule.ts";
 
-export interface ReplayProcessArgs {
-  /**
-   * The process name as a dead letter records it, e.g. `order.orderPayment`.
-   */
-  readonly process: string;
-  readonly event: StoredEvent;
+interface ReplayArgs {
   /**
    * Identifies this replay, so the handler's `idempotencyKey` differs from the failed run's.
    */
@@ -32,18 +27,17 @@ export interface ReplayProcessArgs {
   readonly letter?: string | undefined;
 }
 
-export interface ReplayDeadlineArgs {
+export interface ReplayProcessArgs extends ReplayArgs {
+  /**
+   * The process name as a dead letter records it, e.g. `order.orderPayment`.
+   */
+  readonly process: string;
+  readonly event: StoredEvent;
+}
+
+export interface ReplayDeadlineArgs extends ReplayArgs {
   readonly payload: DeadlineTarget;
   readonly context: CausationContext;
-  /**
-   * Identifies this replay, so the handler's `idempotencyKey` differs from the failed run's.
-   */
-  readonly replay: string;
-  /**
-   * The id of the dead letter being replayed: the replay goes on only while it is the failure its
-   * instance is blocked on.
-   */
-  readonly letter?: string | undefined;
 }
 
 /**
