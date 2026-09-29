@@ -131,13 +131,15 @@ place inside the app:
 Where a broker does belong is **outside the app**: when events have to reach another service, a
 warehouse or a company-wide Kafka. The piece for that is a publisher, which is just one more
 subscriber of the log: read from its checkpoint, publish, advance when the broker confirms. It is
-the outbox pattern without an outbox table, because the log already is one. It is not built yet;
-when it is, it will be a subscriber, not a change to the model.
+the outbox pattern without an outbox table, because the log already is one, for reactions inside
+the app as much as for a publisher ([Your event store is your outbox](/concepts/event-store-as-outbox/)).
+It is not built yet; when it is, it will be a subscriber, not a change to the model.
 
 ## In one paragraph
 
 A store is one ordered log with one writer at a time and subscribers that keep checkpoints. That
 buys cross-aggregate order for read models and makes lag, rebuild and replay trivial. It costs a
 ceiling of thousands of events per second per store, which you raise by running one store per
-tenant. Instances share reactions and spread read models, each applied exactly once. Brokers stay
-outside, as publishers.
+tenant. Instances share reactions and spread read models, each applied exactly once, and every
+reaction attempt writes what it decided in one transaction or nothing. Brokers stay outside, as
+publishers.

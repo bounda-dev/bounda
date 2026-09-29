@@ -204,7 +204,8 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   with its claim, its lifecycle events and its deadline entry when it ends, so a failed or crashed
   attempt leaves nothing behind, and a step whose instance moved meanwhile runs again on the new
   state; what `await commands.x()` returns is the aggregate's decision, not something stored yet:
-  call outside first, dispatch after.
+  call outside first, dispatch after. Outside the promise: the outside calls themselves, the inbox
+  claim, and what a read model shows a handler (only what was committed before the attempt).
 - Policies and processes get their collaborators spread next to `event` and `commands`, like
   commands do. Config picks implementations by aggregate, then key:
   `policies: { order: { notifyOnOrderPlaced: { mailer: { use: "smtp" } } } }`, and the same
