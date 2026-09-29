@@ -8,7 +8,7 @@ export type WatchFunction = typeof watchDirectory;
 export interface WatchProjectArgs {
   readonly root: string;
   /**
-   * The application directory under `root`.
+   * The application directory under `root`. Defaults to `app`.
    */
   readonly appDir?: string;
   /**
@@ -27,11 +27,11 @@ export interface WatchProjectArgs {
    */
   readonly onUnconfirmed?: () => void;
   /**
-   * Quiet time after the last change before `onChange` runs.
+   * Quiet time after the last change before `onChange` runs. Defaults to 100 ms.
    */
   readonly debounceMs?: number;
   /**
-   * What the quiet time and the cookie's retries are measured on.
+   * What the quiet time and the cookie's retries are measured on. Defaults to the wall clock.
    */
   readonly clock?: Clock;
   readonly signal: AbortSignal;

@@ -48,7 +48,7 @@ pnpm 12 (workspace catalog, `catalogMode: strict`), TypeScript 7, Biome (lint an
 - **Public API** (reachable from a package's `exports` map): JSDoc is required, and it states the contract: what it does, when to use it, what it guarantees, what it throws. Not how it works inside; the reader is a user in their editor. A few lines, rarely more.
 - **Everything else** (exported between files, but not from the package): no JSDoc by default. Write a comment only for what names and types cannot say: an invariant that is easy to break, the reason for a non-obvious choice (ordering, locking, crash safety), or the meaning of a value the type leaves open. At most a few lines, on the code it guards.
 - Never narrate the algorithm step by step: the code says it, and the tests pin it down. Before removing a behaviour from prose, find the test that pins it; when there is none, add one or keep the comment.
-- Never restate a literal or a default in prose ("after 20 writes", "defaults to 1 second"); name the constant or leave it out.
+- Never restate a literal or a default in prose ("after 20 writes", "defaults to 1 second"); name the constant or leave it out. The exception is the default of a public option: it is part of the contract a user reads on hover, so its JSDoc says it, naming the constant when one is exported.
 - Do not document a member whose name and type already say it (`timeoutMs: number` needs nothing).
 - When a change makes a comment longer, check whether it should be shorter instead.
 
@@ -58,7 +58,7 @@ The rule, written down because it is not obvious: **code shared by two or more a
 
 ## The generator
 
-`packages/cli` holds `bounda generate`: it reads `app/domain` and `app/read` by file and directory names only (no module is imported or parsed), and writes `.bounda/registry.ts`, `.bounda/register.d.ts` (registers the registry type with `@bounda-dev/core/register`, so `boot()` needs no type argument), `.bounda/types.ts` and one `+types/<name>.ts` next to every module. Its output has a canonical layout that Biome does not touch (`**/+types/**` and `.bounda/` are excluded); the fixtures under `packages/core/test-types/fixtures` are literally that output and the golden tests compare them byte for byte. State for aggregates without `state.ts` is inferred with the TypeScript 7 API in `packages/cli/src/generate/state/infer.ts`, the only module that touches that API. When the generator's output changes, regenerate the fixtures and check `pnpm test:types` still passes.
+`packages/cli` holds `bounda generate`: it reads `app/domain` and `app/read` by file and directory names only (no module is imported; the one text read is a regex over `index.ts` for a `Collaborators` declaration), and writes `.bounda/registry.ts`, `.bounda/register.d.ts` (registers the registry type with `@bounda-dev/core/register`, so `boot()` needs no type argument), `.bounda/types.ts` and one `+types/<name>.ts` next to every module. Its output has a canonical layout that Biome does not touch (`**/+types/**` and `.bounda/` are excluded); the fixtures under `packages/core/test-types/fixtures` are literally that output and the golden tests compare them byte for byte. State for aggregates without `state.ts` is inferred with the TypeScript 7 API in `packages/cli/src/generate/state/infer.ts`, the only module that touches that API. When the generator's output changes, regenerate the fixtures and check `pnpm test:types` still passes.
 
 ## create-bounda
 

@@ -10,16 +10,16 @@ import { removeOrphans, writeGeneratedFile, writeGeneratedFiles } from "./write.
 export interface GenerateArgs {
   readonly root: string;
   /**
-   * The application directory under `root`.
+   * The application directory under `root`. Defaults to `app`.
    */
   readonly appDir?: string;
   /**
-   * The `tsconfig.json` TypeScript opens to infer state.
+   * The `tsconfig.json` TypeScript opens to infer state. Defaults to `<root>/tsconfig.json`.
    */
   readonly tsconfigPath?: string;
   /**
-   * `false` leaves aggregates without `state.ts` as `core.UnknownState`, without starting
-   * TypeScript.
+   * Defaults to `true`; `false` leaves aggregates without `state.ts` as `core.UnknownState`,
+   * without starting TypeScript.
    */
   readonly inferState?: boolean;
 }
