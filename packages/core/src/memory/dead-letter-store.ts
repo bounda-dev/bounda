@@ -4,8 +4,16 @@ import type {
   ListDeadLettersArgs,
 } from "../adapter/ports/dead-letter-store.ts";
 
+/**
+ * The in-memory dead-letter store, with a `snapshot` that returns what puts it back the way it
+ * is.
+ */
+export interface MemoryDeadLetterStore extends DeadLetterStore {
+  snapshot(): () => void;
+}
+
 export interface CreateMemoryDeadLetterStoreFunction {
-  (): DeadLetterStore;
+  (): MemoryDeadLetterStore;
 }
 
 const matches = (letter: DeadLetter, args: ListDeadLettersArgs): boolean =>
@@ -43,6 +51,13 @@ export const createMemoryDeadLetterStore: CreateMemoryDeadLetterStoreFunction = 
     },
     remove: async (id) => {
       letters.delete(id);
+    },
+    snapshot: () => {
+      const saved = new Map(letters);
+      return () => {
+        letters.clear();
+        for (const [id, letter] of saved) letters.set(id, letter);
+      };
     },
   };
 };

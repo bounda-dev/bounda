@@ -6,8 +6,15 @@ import type {
   Scheduler,
 } from "../adapter/ports/scheduler.ts";
 
+/**
+ * The in-memory scheduler, with a `snapshot` that returns what puts it back the way it is.
+ */
+export interface MemoryScheduler extends Scheduler {
+  snapshot(): () => void;
+}
+
 export interface CreateMemorySchedulerFunction {
-  (): Scheduler;
+  (): MemoryScheduler;
 }
 
 interface Entry extends ScheduledCommand {
@@ -149,5 +156,12 @@ export const createMemoryScheduler: CreateMemorySchedulerFunction = () => {
         .sort(byExecuteAt)
         .slice(offset, limit === undefined ? undefined : offset + limit)
         .map(toScheduled),
+    snapshot: () => {
+      const saved = new Map(entries);
+      return () => {
+        entries.clear();
+        for (const [key, entry] of saved) entries.set(key, entry);
+      };
+    },
   };
 };

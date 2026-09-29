@@ -21,6 +21,7 @@ import {
   readModelRebuildContract,
   readModelTransactionContract,
   schedulerContract,
+  storageTransactionContract,
   tableContract,
 } from "@bounda-dev/core/adapter/testing";
 import { createTestApp } from "@bounda-dev/core/testing";
@@ -37,6 +38,7 @@ describe("sqlite adapter in memory", () => {
   inboxLedgerContract({ create: async () => (await openStorage()).inboxLedger });
   deadLetterStoreContract({ create: async () => (await openStorage()).deadLetterStore });
   schedulerContract({ create: async () => (await openStorage()).scheduler });
+  storageTransactionContract({ create: () => openStorage() });
   tableContract({
     create: async () =>
       (

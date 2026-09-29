@@ -17,6 +17,7 @@ import {
   readModelRebuildContract,
   readModelTransactionContract,
   schedulerContract,
+  storageTransactionContract,
   tableContract,
 } from "../testing/index.ts";
 import { createSqliteAdapter, storageSchemaAdditions, storageTablesFor } from "./index.ts";
@@ -96,6 +97,7 @@ describe("the SQLite stores on node:sqlite", () => {
   inboxLedgerContract({ create: async () => (await storage()).inboxLedger });
   deadLetterStoreContract({ create: async () => (await storage()).deadLetterStore });
   schedulerContract({ create: async () => (await storage()).scheduler });
+  storageTransactionContract({ create: storage });
   tableContract({
     create: async () =>
       (
@@ -141,22 +143,6 @@ describe("createSqliteAdapter", () => {
     await rebuild.abort();
     await readModel.close();
     await opened.close();
-    expect(uses()).toBe(0);
-  });
-
-  it("releases a rebuild's connection when it commits or pauses too", async () => {
-    const { adapter, uses } = nodeSqlite();
-    const rebuild = (progress: string) =>
-      adapter.rebuildReadModel({
-        name: "orderSummary",
-        fields: contractFields,
-        logger: silentLogger,
-        progress,
-      });
-    const committed = await rebuild("rebuild:orderSummary:1");
-    await committed.commit({ subscriber: "projection:orderSummary", position: 0 });
-    const paused = await rebuild("rebuild:orderSummary:2");
-    await paused.pause();
     expect(uses()).toBe(0);
   });
 

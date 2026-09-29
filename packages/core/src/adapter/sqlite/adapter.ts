@@ -1,5 +1,10 @@
-import type { Adapter, CreateReadModelArgs, CreateReadModelRebuildArgs } from "../adapter.ts";
-import type { SqlDatabase } from "../sql/database.ts";
+import type {
+  Adapter,
+  CreateReadModelArgs,
+  CreateReadModelRebuildArgs,
+  StorageTransaction,
+} from "../adapter.ts";
+import type { SqlDatabase, SqlTransaction } from "../sql/database.ts";
 import { createSqliteCheckpointStore } from "./checkpoint-store.ts";
 import { createSqliteDeadLetterStore } from "./dead-letter-store.ts";
 import { createSqliteEventStore } from "./event-store.ts";
@@ -10,8 +15,7 @@ import { ensureStorageSchema, storageTablesFor } from "./schema.ts";
 
 /**
  * One handle on a SQLite database: what the stores write through, and what queries receive as
- * `client.raw`. `db.write` must run one write transaction at a time: the read models take that
- * as their lock.
+ * `client.raw`.
  */
 export interface SqliteConnection<Raw = unknown> {
   readonly db: SqlDatabase;
@@ -40,9 +44,10 @@ export interface CreateSqliteAdapterFunction {
 }
 
 /**
- * A complete adapter over any SQLite: the storage schema and stores, read models and their
- * rebuilds. A host brings only the connection: libSQL for `@bounda-dev/adapter-sqlite`, a Durable
- * Object's storage for Cloudflare.
+ * A complete adapter over any SQLite: the storage schema and the six stores, read models and
+ * their rebuilds, all speaking the same SQL. A host brings the connection: libSQL for
+ * `@bounda-dev/adapter-sqlite`, a Durable Object's storage for Cloudflare. It lives in `core`
+ * because more than one adapter uses it; SQL only one adapter speaks stays in that adapter.
  */
 export const createSqliteAdapter: CreateSqliteAdapterFunction = ({
   name,
@@ -58,12 +63,23 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = ({
     const { db } = acquire();
     const tables = storageTablesFor(tablePrefix);
     await ensureStorageSchema({ db, tables });
+    const storesOver = (database: SqlDatabase): StorageTransaction => ({
+      eventStore: createSqliteEventStore({ db: database, table: tables.events }),
+      inboxLedger: createSqliteInboxLedger({ db: database, table: tables.inbox }),
+      deadLetterStore: createSqliteDeadLetterStore({ db: database, table: tables.deadLetters }),
+      scheduler: createSqliteScheduler({ db: database, table: tables.scheduledCommands }),
+    });
+    // The stores over an open transaction: their statements join it, and a `write` of their own
+    // runs inside it instead of opening another, which SQLite would refuse.
+    const boundTo = (tx: SqlTransaction): SqlDatabase => ({
+      run: tx.run,
+      all: tx.all,
+      write: (work) => work(tx),
+    });
     return {
-      eventStore: createSqliteEventStore({ db, table: tables.events }),
+      ...storesOver(db),
       checkpointStore: createSqliteCheckpointStore({ db, table: tables.checkpoints }),
-      inboxLedger: createSqliteInboxLedger({ db, table: tables.inbox }),
-      deadLetterStore: createSqliteDeadLetterStore({ db, table: tables.deadLetters }),
-      scheduler: createSqliteScheduler({ db, table: tables.scheduledCommands }),
+      transact: (work) => db.write((tx) => work(storesOver(boundTo(tx)))),
       close: release,
     };
   },

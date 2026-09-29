@@ -11,6 +11,7 @@ import {
   readModelRebuildContract,
   readModelTransactionContract,
   schedulerContract,
+  storageTransactionContract,
   tableContract,
 } from "../adapter/testing/index.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
@@ -26,6 +27,7 @@ describe("memory adapter", () => {
   inboxLedgerContract({ create: async () => (await storage()).inboxLedger });
   deadLetterStoreContract({ create: async () => (await storage()).deadLetterStore });
   schedulerContract({ create: async () => (await storage()).scheduler });
+  storageTransactionContract({ create: storage });
   tableContract({
     create: async () => {
       const ports = await memory().createReadModel<ContractRow>({
@@ -35,6 +37,91 @@ describe("memory adapter", () => {
       });
       return ports.table;
     },
+  });
+  it("puts every store back when a write fails while a transaction is being applied", async () => {
+    const storage = await memory().createStorage({ logger: silentLogger });
+    const key = { subscriber: "order.p", eventId: "e1" };
+    const now = new Date("2026-01-01T00:00:00.000Z");
+    const context = { correlationId: "c", causationId: "c", depth: 0 };
+    const letter = (id: string) => ({
+      id,
+      kind: "policy" as const,
+      subscriber: "order.p",
+      eventId: "e1",
+      eventType: "OrderPlaced",
+      aggregateType: "order",
+      aggregateId: "1",
+      errorType: "terminal" as const,
+      errorMessage: "boom",
+      attempts: 1,
+      firstFailedAt: now.toISOString(),
+      lastFailedAt: now.toISOString(),
+    });
+    // What was there before must survive the restore as it was.
+    await storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "1",
+      expectedVersion: 0,
+      events: [pendingEvent({ aggregateId: "1", version: 1 })],
+    });
+    await storage.scheduler.schedule({
+      dedupeKey: "command:kept",
+      command: { type: "Remind", aggregateId: "1", payload: {} },
+      executeAt: now,
+      context,
+    });
+    await storage.deadLetterStore.add(letter("kept"));
+    await storage.inboxLedger.tryClaim({ ...key, now, leaseMs: 1_000 });
+    storage.inboxLedger.complete = async () => {
+      throw new Error("connection lost");
+    };
+    await expect(
+      storage.transact(async (tx) => {
+        await tx.eventStore.append({
+          aggregateType: "order",
+          aggregateId: "1",
+          expectedVersion: 1,
+          events: [pendingEvent({ aggregateId: "1", version: 2, type: "OrderPaid" })],
+        });
+        await tx.eventStore.append({
+          aggregateType: "payment",
+          aggregateId: "9",
+          expectedVersion: 0,
+          events: [
+            pendingEvent({
+              aggregateType: "payment",
+              aggregateId: "9",
+              version: 1,
+              type: "PaymentRequested",
+            }),
+          ],
+        });
+        await tx.scheduler.schedule({
+          dedupeKey: "command:lost",
+          command: { type: "Remind", aggregateId: "1", payload: {} },
+          executeAt: now,
+          context,
+        });
+        await tx.deadLetterStore.add(letter("lost"));
+        await tx.inboxLedger.fail({ ...key, error: "boom" });
+        await tx.inboxLedger.complete(key);
+      }),
+    ).rejects.toThrow("connection lost");
+    expect(await storage.eventStore.lastPosition()).toBe(1);
+    expect(
+      (await storage.eventStore.load({ aggregateType: "order", aggregateId: "1" })).events.map(
+        (event) => event.type,
+      ),
+    ).toEqual(["OrderPlaced"]);
+    expect(await storage.eventStore.load({ aggregateType: "payment", aggregateId: "9" })).toEqual({
+      events: [],
+      version: 0,
+    });
+    expect((await storage.scheduler.list()).map((entry) => entry.dedupeKey)).toEqual([
+      "command:kept",
+    ]);
+    expect((await storage.deadLetterStore.list()).map((entry) => entry.id)).toEqual(["kept"]);
+    expect(await storage.inboxLedger.get(key)).toMatchObject({ status: "pending", attempts: 1 });
   });
   readModelRebuildContract({ create: async () => memory() });
   readModelTransactionContract({ create: async () => memory(), locking: "per-subscriber" });

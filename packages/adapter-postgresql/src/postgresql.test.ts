@@ -10,6 +10,7 @@ import {
   type Table,
 } from "@bounda-dev/core";
 import type { StoragePorts } from "@bounda-dev/core/adapter";
+import type { SqlExecutor } from "@bounda-dev/core/adapter/sql";
 import {
   checkpointStoreContract,
   contractFields,
@@ -20,6 +21,7 @@ import {
   readModelRebuildContract,
   readModelTransactionContract,
   schedulerContract,
+  storageTransactionContract,
   tableContract,
 } from "@bounda-dev/core/adapter/testing";
 import { createTestApp } from "@bounda-dev/core/testing";
@@ -93,6 +95,43 @@ describe.skipIf(container === null)("postgresql adapter", () => {
   inboxLedgerContract({ create: async () => (await openStorage()).inboxLedger });
   deadLetterStoreContract({ create: async () => (await openStorage()).deadLetterStore });
   schedulerContract({ create: async () => (await openStorage()).scheduler });
+  storageTransactionContract({ create: () => openStorage() });
+
+  it("takes the append lock as a transaction starts, before anything it writes, and lets go of it with the transaction", async () => {
+    const storage = await openStorage();
+    const advisoryLocks = async (executor: { all: SqlExecutor["all"] }) =>
+      Number(
+        (
+          await executor.all(
+            "SELECT count(*)::int AS \"n\" FROM pg_locks WHERE locktype = 'advisory'",
+            [],
+          )
+        )[0]?.n ?? 0,
+      );
+    const sql = postgres(url, { max: 1, onnotice: () => undefined });
+    const outside = {
+      all: (statement: string) =>
+        sql.unsafe(statement) as unknown as Promise<Record<string, unknown>[]>,
+    };
+    try {
+      expect(await advisoryLocks(outside)).toBe(0);
+      await expect(
+        storage.transact(async (tx) => {
+          expect(await advisoryLocks(outside)).toBe(1);
+          await tx.eventStore.append({
+            aggregateType: "order",
+            aggregateId: "1",
+            expectedVersion: 0,
+            events: [pendingEvent({ aggregateId: "1", version: 1 })],
+          });
+          throw new Error("boom");
+        }),
+      ).rejects.toThrow("boom");
+      expect(await advisoryLocks(outside)).toBe(0);
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
   tableContract({
     create: async () => {
       await closeOpened();
