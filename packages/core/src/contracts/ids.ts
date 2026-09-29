@@ -1,8 +1,7 @@
 import { v7 as uuidV7 } from "uuid";
 
 /**
- * Produces the identifiers the runtime assigns to events, commands and executions. The default
- * generates UUID v7, which sorts by creation time.
+ * Produces the identifiers the runtime assigns to events, commands and executions.
  */
 export interface IdGenerator {
   next(): string;

@@ -4,8 +4,9 @@
  * `correlationId` groups everything caused by one external request.
  * `causationId` points at the command that produced the event.
  * `depth` counts how many reactive hops (policy → command → event) separate the event from the
- * original request; the runtime stops the chain when it exceeds the configured maximum.
- * `schemaVersion` is reserved for upcasting; it is `1` until a payload changes shape.
+ * original request; the runtime stops the chain when it exceeds `maxChainDepth`.
+ * `schemaVersion` is the shape the payload was written in: one more than the upcasts its event
+ * had then. An event read through its upcasts carries the current one.
  * `system` marks events emitted by the runtime itself, such as process timeouts.
  */
 export interface EventMetadata {

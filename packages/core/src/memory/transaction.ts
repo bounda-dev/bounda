@@ -2,8 +2,8 @@ import type { CheckpointStore } from "../adapter/ports/checkpoint-store.ts";
 
 export interface MemoryLocks {
   /**
-   * Takes the lock named `name` and resolves to what releases it; with `wait` false, resolves to
-   * `undefined` at once when someone holds it.
+   * Resolves to what releases the lock; with `wait` false, to `undefined` at once when someone
+   * holds it.
    */
   acquire(name: string, wait: boolean): Promise<(() => void) | undefined>;
 }
@@ -12,9 +12,6 @@ export interface CreateMemoryLocksFunction {
   (): MemoryLocks;
 }
 
-/**
- * Named locks held in memory, granted in the order they were asked for.
- */
 export const createMemoryLocks: CreateMemoryLocksFunction = () => {
   const tails = new Map<string, Promise<void>>();
   return {
@@ -56,8 +53,8 @@ export interface CreateCheckpointJournalFunction {
 }
 
 /**
- * A checkpoint store that writes through to `base` at once, as a row a database transaction
- * updates, and remembers each change so that a rolled back transaction can undo it.
+ * Writes through to `base` at once, as a row a database transaction updates, and remembers each
+ * change so that a rolled back transaction can undo it.
  */
 export const createCheckpointJournal: CreateCheckpointJournalFunction = (base) => {
   const changes: CheckpointChange[] = [];

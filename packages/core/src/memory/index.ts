@@ -21,8 +21,7 @@ import { createMemoryReadClient, createMemoryTable, type MemoryTable } from "./t
 import { createCheckpointJournal, createMemoryLocks } from "./transaction.ts";
 
 /**
- * Options of the in-memory adapter. It has none; the object exists so the factory reads like the
- * others.
+ * The in-memory adapter has no options; the object exists so the factory reads like the others.
  */
 export type MemoryOptions = Record<never, never>;
 
@@ -54,8 +53,6 @@ const through = <Row extends object>(live: LiveTable): Table<Row> => {
  * tests and for trying Bounda without a database. Each call returns an adapter with its own
  * isolated storage, shared by everything opened from that adapter, as a database would be. It
  * notifies the dispatcher of appends, so a started app reacts without waiting for a poll.
- * `transact` holds a named lock for the work and, when it throws, puts the read model's rows and
- * the checkpoints it changed back as they were.
  */
 export const memory: MemoryFunction = (options = {}) => {
   let storage: StoragePorts | null = null;

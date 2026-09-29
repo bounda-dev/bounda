@@ -8,8 +8,7 @@ export interface CreateMemoryTableArgs {
 }
 
 /**
- * A table held in memory that can take a snapshot of its rows: `snapshot` returns what puts them
- * back the way they were, which is how the in-memory adapter rolls a transaction back.
+ * A table held in memory whose `snapshot` returns what puts its rows back the way they were.
  */
 export interface MemoryTable<Row> extends Table<Row> {
   snapshot(): () => void;

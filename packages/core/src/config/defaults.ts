@@ -4,9 +4,6 @@ import type {
   ResolvedRetryConfig,
 } from "./types.ts";
 
-/**
- * Retry used by policies and processes when the configuration does not say otherwise.
- */
 export const DEFAULT_RETRY: ResolvedRetryConfig = {
   strategy: "exponential",
   maxAttempts: 3,

@@ -18,7 +18,7 @@ const line = (level: LogLevel, message: string, fields: LogFields | undefined): 
 
 /**
  * A logger that writes one line per entry to the console, with the fields as JSON. Entries below
- * `level` are dropped. The default logger of `boot()`.
+ * `level` are dropped.
  */
 export const createConsoleLogger: CreateConsoleLoggerFunction = ({ level = "info" } = {}) => {
   const enabled = (candidate: LogLevel): boolean => ORDER[candidate] >= ORDER[level];

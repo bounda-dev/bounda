@@ -14,34 +14,38 @@ import { createConsoleLogger } from "./console-logger.ts";
 
 export interface BootArgs<R extends Registry = AppRegistry> {
   /**
-   * The project root. Defaults to the current working directory.
+   * The directory the other paths and `.env` are resolved against. Defaults to the current
+   * working directory.
    */
   readonly root?: string;
   /**
-   * Path of the configuration module, relative to `root`. Defaults to `bounda.config.ts`.
+   * The configuration module, relative to `root`. Defaults to `bounda.config.ts`.
    */
   readonly configPath?: string;
   /**
-   * Path of the generated registry module, relative to `root`. Defaults to `.bounda/registry.ts`.
+   * The generated registry module, relative to `root`. Defaults to `.bounda/registry.ts`.
    */
   readonly registryPath?: string;
   /**
-   * A configuration to use instead of importing one.
+   * Used instead of importing `configPath`.
    */
   readonly config?: Config;
   /**
-   * A registry to use instead of importing one.
+   * Used instead of importing `registryPath`.
    */
   readonly registry?: R;
   /**
-   * Whether to load `.env` from `root` into `process.env` before importing the configuration.
-   * Defaults to `true`; existing variables are never overwritten.
+   * `false` skips loading `.env` from `root` into `process.env` before the configuration is
+   * imported. Variables already set are never overwritten.
    */
   readonly env?: boolean;
   /**
-   * Whether `SIGINT` and `SIGTERM` stop the app. Defaults to `true`.
+   * `false` leaves `SIGINT` and `SIGTERM` alone instead of stopping the app on them.
    */
   readonly signals?: boolean;
+  /**
+   * Defaults to `createConsoleLogger()`.
+   */
   readonly logger?: Logger;
   readonly ids?: IdGenerator;
   readonly clock?: Clock;
@@ -104,9 +108,9 @@ const loadEnv = (root: string, logger: Logger): void => {
 };
 
 /**
- * What `boot()` does before creating the app: loads `.env`, then imports `bounda.config.ts` and
- * the generated registry from the project root. For tooling that needs the project but not a
- * running app, such as `bounda rebuild`.
+ * What `boot()` does before creating the app: loads `.env`, then imports the configuration and
+ * the generated registry. For tooling that needs the project but not a running app, such as
+ * `bounda rebuild`. Throws `ConfigurationError` when a module is missing or lacks its export.
  */
 export const loadProject: LoadProjectFunction = async <R extends Registry = AppRegistry>({
   root = process.cwd(),
@@ -137,9 +141,9 @@ export const loadProject: LoadProjectFunction = async <R extends Registry = AppR
 };
 
 /**
- * Boots a Bounda app in Node: loads `.env`, imports `bounda.config.ts` and the generated
- * registry from the project root, creates the app and stops it on `SIGINT` or `SIGTERM`; stopping
- * the app removes those listeners again. Every piece can be supplied directly instead of imported.
+ * Boots a Bounda app in Node: loads `.env`, imports the configuration and the generated registry,
+ * creates the app and stops it on `SIGINT` or `SIGTERM`; stopping the app removes those listeners
+ * again. Throws `ConfigurationError` when a module is missing or lacks its export.
  */
 export const boot: BootFunction = async <R extends Registry = AppRegistry>({
   root = process.cwd(),

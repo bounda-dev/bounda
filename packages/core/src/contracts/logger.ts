@@ -17,7 +17,7 @@ export interface Logger {
 const noop = (): void => {};
 
 /**
- * Discards everything. The default in tests and in `createApp` when no logger is given.
+ * A logger that discards everything.
  */
 export const silentLogger: Logger = {
   debug: noop,

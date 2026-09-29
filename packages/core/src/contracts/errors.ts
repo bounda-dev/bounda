@@ -30,7 +30,7 @@ export interface ConcurrencyErrorArgs {
 
 /**
  * Thrown when an append finds the stream at a version other than the one the handler decided on.
- * The command pipeline retries the command a configurable number of times before surfacing it.
+ * A command is retried `runtime.commands.concurrencyRetries` times before it surfaces.
  */
 export class ConcurrencyError extends BoundaError {
   readonly streamId: string;
@@ -103,8 +103,7 @@ export class ChainDepthExceededError extends BoundaError {
 
 /**
  * Thrown by a rebuild that another rebuild of the same read model has taken over. Only the most
- * recent rebuild may write: the older one stops at its next step, leaving the shadow table and its
- * progress to the one that superseded it.
+ * recent rebuild writes: the older one stops at its next step and leaves its work to the newer.
  */
 export class RebuildSupersededError extends BoundaError {
   readonly readModel: string;

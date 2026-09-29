@@ -2,7 +2,7 @@ import type { EventListener, EventNotifier } from "../adapter/ports/event-notifi
 
 /**
  * A notifier for the in-memory adapter: `notify` fans out to every subscribed listener in the
- * same process. What the memory event store calls after an append.
+ * same process.
  */
 export interface MemoryEventNotifier extends EventNotifier {
   notify(position: number): void;
