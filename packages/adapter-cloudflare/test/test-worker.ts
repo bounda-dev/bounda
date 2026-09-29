@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { cloudflare } from "../src/definition.ts";
 import { createBoundaObject, createWorker } from "../src/index.ts";
-import { quietRegistry, registry } from "./app.ts";
+import { processRegistry, quietRegistry, registry } from "./app.ts";
 import { clock } from "./clock.ts";
 
 /**
@@ -9,6 +9,16 @@ import { clock } from "./clock.ts";
  */
 export const Store = createBoundaObject({
   registry,
+  config: { storage: cloudflare() },
+  clock,
+  passesPerAlarm: 20,
+});
+
+/**
+ * The same app with a process besides the policy.
+ */
+export const ProcessStore = createBoundaObject({
+  registry: processRegistry,
   config: { storage: cloudflare() },
   clock,
   passesPerAlarm: 20,

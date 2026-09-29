@@ -1,9 +1,10 @@
-import type { Bare, QuietStore, SlicedStore, Store } from "./test-worker.ts";
+import type { Bare, ProcessStore, QuietStore, SlicedStore, Store } from "./test-worker.ts";
 
 declare global {
   namespace Cloudflare {
     interface Env {
       readonly STORE: DurableObjectNamespace<InstanceType<typeof Store>>;
+      readonly PROCESS_STORE: DurableObjectNamespace<InstanceType<typeof ProcessStore>>;
       readonly QUIET_STORE: DurableObjectNamespace<InstanceType<typeof QuietStore>>;
       readonly SLICED_STORE: DurableObjectNamespace<InstanceType<typeof SlicedStore>>;
       readonly BARE: DurableObjectNamespace<Bare>;

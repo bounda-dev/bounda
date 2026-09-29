@@ -1,7 +1,10 @@
 import {
   DomainError,
   type FieldsArgs,
+  type Instant,
   type PayloadArgs,
+  type ProcessAfterFunction,
+  type ProcessStateArgs,
   type Registry,
   type Table,
 } from "@bounda-dev/core";
@@ -158,6 +161,68 @@ export const registry = {
             query: { payload: { orderId: string } };
             table: Table<OrderRow>;
           }) => table.findOne({ orderId: query.payload.orderId }),
+        },
+      },
+    },
+  },
+} satisfies Registry;
+
+interface SettlementState {
+  readonly remind: Instant | null;
+}
+
+/**
+ * The order app with a process besides its policy: started by the order, it pays it at a
+ * reminder an hour later and completes once the policy has archived it.
+ */
+export const processRegistry = {
+  ...registry,
+  aggregates: {
+    order: {
+      ...registry.aggregates.order,
+      processes: {
+        settlement: {
+          module: {
+            config: ({
+              events,
+            }: {
+              events: { order: { OrderPlaced: string; OrderArchived: string } };
+            }) => ({
+              startedBy: [events.order.OrderPlaced],
+              completedBy: [events.order.OrderArchived],
+              timeout: "2h",
+            }),
+            state: ({ z, deadline }: ProcessStateArgs) => z.object({ remind: deadline() }),
+          },
+          handlers: {
+            order: {
+              orderPlaced: {
+                handler: ({
+                  state,
+                  after,
+                }: {
+                  state: SettlementState;
+                  after: ProcessAfterFunction;
+                }) => ({ ...state, remind: after("1h") }),
+              },
+            },
+          },
+          deadlines: {
+            remind: {
+              handler: async ({
+                state,
+                aggregateId,
+                commands,
+              }: {
+                state: SettlementState;
+                aggregateId: string;
+                commands: { payOrder: (payload: { orderId: string }) => Promise<unknown> };
+              }) => {
+                await commands.payOrder({ orderId: aggregateId });
+                return { ...state, remind: null };
+              },
+            },
+          },
         },
       },
     },

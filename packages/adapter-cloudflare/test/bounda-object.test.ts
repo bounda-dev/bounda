@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { configForObject } from "../src/bounda-object.ts";
 import { connect } from "../src/client.ts";
 import { cloudflare } from "../src/definition.ts";
-import type { quietRegistry, registry } from "./app.ts";
+import type { processRegistry, quietRegistry, registry } from "./app.ts";
 import { clock } from "./clock.ts";
 
 const fresh = () => env.STORE.get(env.STORE.newUniqueId());
@@ -76,6 +76,40 @@ describe("a Bounda Durable Object", () => {
     clock.advance(600_000);
     await runDurableObjectAlarm(stub);
     expect(await store.queries.getOrder({ orderId: "o-2" })).toMatchObject({ status: "archived" });
+    expect(await alarmOf(stub)).toBeNull();
+  });
+
+  it("runs a process step, its deadline and the policy after it, each committed whole in the object", async () => {
+    const stub = env.PROCESS_STORE.get(env.PROCESS_STORE.newUniqueId());
+    const store = connect<typeof processRegistry>(stub);
+    const lifecycle = () =>
+      runInDurableObject(stub as unknown as DurableObjectStub, (_instance, state) =>
+        state.storage.sql
+          .exec(
+            `SELECT "type" FROM "bounda_events" WHERE "aggregate_type" = 'process:Settlement' ORDER BY "position"`,
+          )
+          .toArray()
+          .map((row) => row.type),
+      );
+    const before = Date.now();
+    await store.commands.placeOrder({ orderId: "o-1", total: 42, customer: "ada" });
+    await runDurableObjectAlarm(stub);
+    expect(await lifecycle()).toEqual(["ProcessStarted", "ProcessHandled"]);
+    const armed = await alarmOf(stub);
+    expect(armed).toBeGreaterThanOrEqual(before + 3_600_000 - 1_000);
+    expect(armed).toBeLessThanOrEqual(Date.now() + 3_600_000 + 1_000);
+
+    clock.advance(3_600_000);
+    await runDurableObjectAlarm(stub);
+    await runDurableObjectAlarm(stub);
+    expect(await store.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "archived" });
+    expect(await lifecycle()).toEqual([
+      "ProcessStarted",
+      "ProcessHandled",
+      "ProcessDeadlineReached",
+      "ProcessCompleted",
+    ]);
+    expect((await store.getLag()).maxLag).toBe(0);
     expect(await alarmOf(stub)).toBeNull();
   });
 
