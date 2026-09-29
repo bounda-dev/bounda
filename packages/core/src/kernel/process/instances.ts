@@ -17,6 +17,11 @@ import {
  */
 export interface ProcessInstances {
   load(process: ProcessRuntime, instanceId: string): Promise<ProcessInstance>;
+  /**
+   * Appends after `instance`, which must come from this view's `load`: an instance loaded through
+   * another view carries a version this one never fixed, and a stream that moved meanwhile would
+   * fail here, as the handler's own failure, instead of at the commit, where the step runs again.
+   */
   append(
     process: ProcessRuntime,
     instanceId: string,
@@ -48,12 +53,13 @@ export const createProcessInstances: CreateProcessInstancesFunction = ({
   ids,
   clock,
 }) => {
+  const loaded = new Set<string>();
+
   const load = async (process: ProcessRuntime, instanceId: string): Promise<ProcessInstance> => {
-    const loaded = await eventStore.load({
-      aggregateType: processAggregateType(process.type),
-      aggregateId: instanceId,
-    });
-    return foldProcess({ initialState: process.initialState, events: loaded.events });
+    const stream = { aggregateType: processAggregateType(process.type), aggregateId: instanceId };
+    const { events } = await eventStore.load(stream);
+    loaded.add(streamId(stream));
+    return foldProcess({ initialState: process.initialState, events });
   };
 
   const append = async (
@@ -63,6 +69,11 @@ export const createProcessInstances: CreateProcessInstancesFunction = ({
     entries: readonly LifecycleEntry[],
   ): Promise<void> => {
     const aggregateType = processAggregateType(process.type);
+    if (!loaded.has(streamId({ aggregateType, aggregateId: instanceId }))) {
+      throw new Error(
+        `Process ${process.name} appended to ${instanceId} without loading it through the same view`,
+      );
+    }
     await eventStore.append({
       aggregateType,
       aggregateId: instanceId,

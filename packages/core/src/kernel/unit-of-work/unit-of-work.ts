@@ -12,8 +12,9 @@ export type UnitStores = Pick<StorageTransaction, "eventStore" | "scheduler">;
  * What one attempt of a reaction changes in the store, held back until `commit`: the events its
  * commands produce, staged per stream and visible to its own loads, and the writes to the other
  * stores, kept in order. `commit` writes all of it in one storage transaction, events first, or
- * nothing: a stream that moved since the unit loaded it rejects with `ConcurrencyError`. A unit
- * with nothing staged commits without touching the store. Reads through the unit's ports see the
+ * nothing: a stream that moved since the unit loaded it rejects with `ConcurrencyError`; an
+ * append to a stream the unit never loaded checks its version at once instead, as the store
+ * would. A unit with nothing staged commits without touching the store. Reads through the unit's ports see the
  * store as it is, plus the unit's own events; `add` answers the letter as filed, whatever the
  * store holds under that id already.
  */

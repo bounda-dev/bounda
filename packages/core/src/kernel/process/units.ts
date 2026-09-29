@@ -15,7 +15,8 @@ export interface ProcessUnits {
    */
   readonly live: ProcessInstances;
   /**
-   * The instances as `unit` sees them: the store plus what the unit appended.
+   * The instances as `unit` sees them: the store plus what the unit appended. One view per unit,
+   * so an instance loaded anywhere on the unit can be appended after anywhere else on it.
    */
   over(unit: Pick<UnitOfWork, "eventStore">): ProcessInstances;
   /**
@@ -38,8 +39,14 @@ export interface CreateProcessUnitsFunction {
 }
 
 export const createProcessUnits: CreateProcessUnitsFunction = ({ storage, config, ids, clock }) => {
-  const over = ({ eventStore }: Pick<UnitOfWork, "eventStore">): ProcessInstances =>
-    createProcessInstances({ eventStore, ids, clock });
+  const views = new WeakMap<Pick<UnitOfWork, "eventStore">, ProcessInstances>();
+  const over = (unit: Pick<UnitOfWork, "eventStore">): ProcessInstances => {
+    const known = views.get(unit);
+    if (known !== undefined) return known;
+    const view = createProcessInstances({ eventStore: unit.eventStore, ids, clock });
+    views.set(unit, view);
+    return view;
+  };
   return {
     live: over(storage),
     over,
