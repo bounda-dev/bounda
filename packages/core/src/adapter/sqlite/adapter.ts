@@ -15,7 +15,8 @@ import { ensureStorageSchema, storageTablesFor } from "./schema.ts";
 
 /**
  * One handle on a SQLite database: what the stores write through, and what queries receive as
- * `client.raw`.
+ * `client.raw`. `db.write` must run one write transaction at a time: the read models take that
+ * as their lock.
  */
 export interface SqliteConnection<Raw = unknown> {
   readonly db: SqlDatabase;
@@ -44,10 +45,9 @@ export interface CreateSqliteAdapterFunction {
 }
 
 /**
- * A complete adapter over any SQLite: the storage schema and the six stores, read models and
- * their rebuilds, all speaking the same SQL. A host brings the connection: libSQL for
- * `@bounda-dev/adapter-sqlite`, a Durable Object's storage for Cloudflare. It lives in `core`
- * because more than one adapter uses it; SQL only one adapter speaks stays in that adapter.
+ * A complete adapter over any SQLite: the storage schema and stores, read models and their
+ * rebuilds. A host brings only the connection: libSQL for `@bounda-dev/adapter-sqlite`, a Durable
+ * Object's storage for Cloudflare.
  */
 export const createSqliteAdapter: CreateSqliteAdapterFunction = ({
   name,

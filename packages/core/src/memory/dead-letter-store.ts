@@ -3,6 +3,7 @@ import type {
   DeadLetterStore,
   ListDeadLettersArgs,
 } from "../adapter/ports/dead-letter-store.ts";
+import { snapshotMap } from "./transaction.ts";
 
 /**
  * The in-memory dead-letter store, with a `snapshot` that returns what puts it back the way it
@@ -52,12 +53,6 @@ export const createMemoryDeadLetterStore: CreateMemoryDeadLetterStoreFunction = 
     remove: async (id) => {
       letters.delete(id);
     },
-    snapshot: () => {
-      const saved = new Map(letters);
-      return () => {
-        letters.clear();
-        for (const [id, letter] of saved) letters.set(id, letter);
-      };
-    },
+    snapshot: () => snapshotMap(letters),
   };
 };

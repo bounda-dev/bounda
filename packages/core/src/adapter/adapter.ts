@@ -33,15 +33,16 @@ export interface StoragePorts {
   readonly deadLetterStore: DeadLetterStore;
   readonly scheduler: Scheduler;
   /**
-   * Present when the backend can push "new events" to the dispatcher; absent when it can only
-   * be polled.
+   * Only for a backend that can push new events; without it the dispatcher only polls.
    */
   readonly notifier?: EventNotifier;
   /**
    * Runs `work` in one transaction over the write-side stores: everything it writes through the
    * transaction's ports lands together or not at all. A stale `expectedVersion` on any append
-   * rejects with `ConcurrencyError` and rolls the rest back. The work must not wait on anything
-   * outside the store: on a single-writer engine the transaction holds the store's only writer.
+   * rejects with `ConcurrencyError` and rolls the rest back. The work goes through the
+   * transaction's ports only: the storage's own may wait on the transaction (a single-writer
+   * queue) or write outside it. It must not wait on anything outside the store either: on a
+   * single-writer engine the transaction holds the store's only writer.
    */
   transact<T>(work: (transaction: StorageTransaction) => Promise<T>): Promise<T>;
   close(): Promise<void>;
@@ -58,19 +59,18 @@ export interface ReadModelPorts<Row extends object = Record<string, unknown>, Ra
    */
   readonly checkpointStore: CheckpointStore;
   /**
-   * Runs `work` in one transaction on the read model's database, holding the lock named
-   * `subscriber` for its whole length. What `work` writes through the transaction's `table`,
-   * `client` and `checkpointStore` commits together when it resolves and rolls back together when
-   * it throws, so a batch and the checkpoint past it are never apart. When another holder has the
-   * lock, `wait` decides between waiting for it and resolving at once with `acquired: false`.
+   * Runs `work` in one transaction holding the lock named `subscriber`. What it writes through the
+   * transaction's `table`, `client` and `checkpointStore` commits when it resolves and rolls back
+   * when it throws, all together, so a batch and the checkpoint past it are never apart. When
+   * another holder has the lock, `wait: false` resolves at once with `acquired: false`; a database
+   * with a single writer may wait regardless.
    */
   transact<T>(args: ReadModelTransactArgs<Row, T>): Promise<ReadModelTransacted<T>>;
   close(): Promise<void>;
 }
 
 /**
- * What `ReadModelPorts.transact` runs its work with: the read model's table, client and
- * checkpoints, all bound to the one transaction. `client.raw` is the driver's transaction handle.
+ * The read model's ports bound to one transaction; `client.raw` is the driver's transaction handle.
  */
 export interface ReadModelTransaction<Row extends object = Record<string, unknown>> {
   readonly table: Table<Row>;
@@ -78,26 +78,12 @@ export interface ReadModelTransaction<Row extends object = Record<string, unknow
   readonly checkpointStore: CheckpointStore;
 }
 
-/**
- * What `ReadModelPorts.transact` runs: the work, the subscriber whose lock it holds, and whether
- * to wait for that lock.
- */
 export interface ReadModelTransactArgs<Row extends object, T> {
-  /**
-   * The subscriber the transaction is for; its name is the lock's.
-   */
   readonly subscriber: string;
-  /**
-   * Wait for the lock when someone else holds it, instead of giving up.
-   */
   readonly wait: boolean;
   readonly work: (transaction: ReadModelTransaction<Row>) => Promise<T>;
 }
 
-/**
- * The outcome of `ReadModelPorts.transact`: the work's result, or `acquired: false` when the lock
- * was taken and the caller chose not to wait.
- */
 export type ReadModelTransacted<T> =
   | { readonly acquired: true; readonly value: T }
   | { readonly acquired: false };
@@ -106,7 +92,8 @@ export type ReadModelTransacted<T> =
  * A read model being rebuilt from scratch, next to the live one. Projections write into `table`
  * while queries keep reading the live table; `commit` swaps the two and drops the old one, `abort`
  * drops what was built, `pause` keeps it for a later rebuild with the same `progress`. Each of the
- * three releases the adapter's resources.
+ * three releases the adapter's resources. Once a newer rebuild of the read model opens, this one
+ * is fenced off as `rebuildFencing` describes.
  */
 export interface ReadModelRebuild<Row extends object = Record<string, unknown>, Raw = unknown> {
   readonly table: Table<Row>;
@@ -126,16 +113,14 @@ export interface ReadModelRebuild<Row extends object = Record<string, unknown>, 
    */
   readonly checkpointStore: CheckpointStore;
   /**
-   * Runs `work` in one transaction on the shadow: what it writes through the transaction's
-   * `table`, `client` and `checkpointStore` commits together or rolls back together, so a batch
+   * Runs `work` in one transaction on the shadow, which commits or rolls back as one, so a batch
    * and the progress past it are never apart.
    */
   transact<T>(work: (transaction: ReadModelTransaction<Row>) => Promise<T>): Promise<T>;
   /**
    * In one transaction, holding the lock named `subscriber` as `ReadModelPorts.transact` does:
-   * the shadow takes the live table's place, the checkpoint `subscriber` is set to `position` and
-   * `progress` is forgotten. The read model then holds the events up to `position` exactly, and
-   * its projections carry on from there.
+   * the shadow takes the live table's place, the checkpoint `subscriber` is set to `position`,
+   * so the projections carry on from there, and `progress` is forgotten.
    */
   commit(args: CommitReadModelRebuildArgs): Promise<void>;
   /**
@@ -145,24 +130,16 @@ export interface ReadModelRebuild<Row extends object = Record<string, unknown>, 
   pause(): Promise<void>;
 }
 
-/**
- * Where `ReadModelRebuild.commit` leaves the read model: the projections' subscriber and the
- * position the rebuilt table holds the events up to.
- */
 export interface CommitReadModelRebuildArgs {
   readonly subscriber: string;
   readonly position: number;
 }
 
-/**
- * What `Adapter.rebuildReadModel` opens a shadow table for: the read model, its current fields,
- * and the checkpoint its progress is kept under.
- */
 export interface CreateReadModelRebuildArgs extends CreateReadModelArgs {
   /**
-   * The checkpoint the rebuild keeps its position under. A shadow left by a paused rebuild is
-   * reopened, rows included, when this checkpoint says it got somewhere; otherwise it is
-   * discarded and a fresh one opened.
+   * The checkpoint the rebuild keeps its position under. The shadow a paused rebuild left is
+   * reopened, rows included, when this checkpoint says it got somewhere; otherwise a fresh one
+   * replaces it.
    */
   readonly progress: string;
 }
@@ -178,16 +155,16 @@ export interface CreateReadModelArgs {
 }
 
 /**
- * A storage adapter: the definition users put in `bounda.config.ts` plus the factories the kernel
- * calls at boot and when rebuilding a read model. `sqlite({ path })` returns one of these.
+ * A storage adapter, as `sqlite({ path })` returns: the definition `bounda.config.ts` holds plus
+ * the factories the kernel calls at boot and when rebuilding a read model.
  */
 export interface Adapter<Name extends string = string, Options = unknown>
   extends AdapterDefinition<Name, Options> {
   createStorage(args: CreateStorageArgs): Promise<StoragePorts>;
   createReadModel<Row extends object>(args: CreateReadModelArgs): Promise<ReadModelPorts<Row>>;
   /**
-   * Opens a shadow table for `name` with the current `fields`, leaving the live table untouched
-   * until `commit`: the one a paused rebuild left under the same `progress`, or a fresh one.
+   * Opens a shadow of the read model with the current `fields`; the live table stays untouched
+   * until `commit`.
    */
   rebuildReadModel<Row extends object>(
     args: CreateReadModelRebuildArgs,
@@ -199,7 +176,7 @@ export interface IsAdapterFunction {
 }
 
 /**
- * Runtime check used at boot: a definition that also carries the factories.
+ * Whether `value` is an `AdapterDefinition` that also carries the three factories.
  */
 export const isAdapter: IsAdapterFunction = (value): value is Adapter =>
   typeof value === "object" &&

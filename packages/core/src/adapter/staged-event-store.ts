@@ -31,7 +31,13 @@ export const createStagedEventStore: CreateStagedEventStoreFunction = (base) => 
     const key = streamId({ aggregateType, aggregateId });
     const existing = streams.get(key);
     if (existing !== undefined) return existing;
-    const { version } = await base.load({ aggregateType, aggregateId });
+    // Only the version is wanted: from past any head, a load reads no event and the SQL stores
+    // count instead of scanning.
+    const { version } = await base.load({
+      aggregateType,
+      aggregateId,
+      fromVersion: Number.MAX_SAFE_INTEGER,
+    });
     const created = { aggregateType, aggregateId, base: version, events: [] };
     streams.set(key, created);
     return created;

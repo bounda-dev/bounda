@@ -11,16 +11,12 @@ export interface CreateMemoryEventStoreArgs {
 }
 
 /**
- * The in-memory event store, with `appendAll`: several streams appended in one synchronous run,
- * every version checked before anything is written. What the memory adapter's `transact` commits
- * with. Each stream appears at most once per call.
+ * The in-memory event store, with `appendAll`: several batches appended in one synchronous run,
+ * in order, every version checked before anything is written. What the memory adapter's
+ * `transact` commits with.
  */
 export interface MemoryEventStore extends EventStore {
   appendAll(batches: readonly AppendArgs[]): Promise<readonly AppendResult[]>;
-  /**
-   * Returns what puts the store back the way it is now.
-   */
-  snapshot(): () => void;
 }
 
 export interface CreateMemoryEventStoreFunction {
@@ -36,12 +32,14 @@ export const createMemoryEventStore: CreateMemoryEventStoreFunction = ({ onAppen
   const global: StoredEvent[] = [];
 
   const appendAll = async (batches: readonly AppendArgs[]): Promise<readonly AppendResult[]> => {
-    for (const { aggregateType, aggregateId, expectedVersion } of batches) {
+    const versions = new Map<string, number>();
+    for (const { aggregateType, aggregateId, expectedVersion, events } of batches) {
       const key = streamId({ aggregateType, aggregateId });
-      const actualVersion = streams.get(key)?.length ?? 0;
+      const actualVersion = versions.get(key) ?? streams.get(key)?.length ?? 0;
       if (actualVersion !== expectedVersion) {
         throw new ConcurrencyError({ streamId: key, expectedVersion, actualVersion });
       }
+      versions.set(key, actualVersion + events.length);
     }
     const results = batches.map(({ aggregateType, aggregateId, expectedVersion, events }) => {
       const key = streamId({ aggregateType, aggregateId });
@@ -60,16 +58,6 @@ export const createMemoryEventStore: CreateMemoryEventStoreFunction = ({ onAppen
 
   return {
     appendAll,
-    snapshot: () => {
-      const savedStreams = new Map([...streams].map(([key, stream]) => [key, [...stream]]));
-      const savedGlobal = [...global];
-      return () => {
-        streams.clear();
-        for (const [key, stream] of savedStreams) streams.set(key, stream);
-        global.length = 0;
-        global.push(...savedGlobal);
-      };
-    },
     append: async (args) => (await appendAll([args]))[0] as AppendResult,
     load: async ({ aggregateType, aggregateId, fromVersion = 1 }) => {
       const stream = streams.get(streamId({ aggregateType, aggregateId })) ?? [];

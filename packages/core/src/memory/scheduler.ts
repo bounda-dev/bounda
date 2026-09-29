@@ -5,6 +5,7 @@ import type {
   ScheduledCommand,
   Scheduler,
 } from "../adapter/ports/scheduler.ts";
+import { snapshotMap } from "./transaction.ts";
 
 /**
  * The in-memory scheduler, with a `snapshot` that returns what puts it back the way it is.
@@ -156,12 +157,6 @@ export const createMemoryScheduler: CreateMemorySchedulerFunction = () => {
         .sort(byExecuteAt)
         .slice(offset, limit === undefined ? undefined : offset + limit)
         .map(toScheduled),
-    snapshot: () => {
-      const saved = new Map(entries);
-      return () => {
-        entries.clear();
-        for (const [key, entry] of saved) entries.set(key, entry);
-      };
-    },
+    snapshot: () => snapshotMap(entries),
   };
 };

@@ -38,6 +38,37 @@ describe("memory adapter", () => {
       return ports.table;
     },
   });
+  it("appends several batches in order, a stream's later batch on its earlier one, and notifies once", async () => {
+    const positions: number[] = [];
+    const store = createMemoryEventStore({ onAppend: (position) => positions.push(position) });
+    const order = { aggregateType: "order", aggregateId: "1" };
+    const results = await store.appendAll([
+      { ...order, expectedVersion: 0, events: [pendingEvent({ aggregateId: "1", version: 1 })] },
+      { ...order, expectedVersion: 1, events: [] },
+      {
+        ...order,
+        expectedVersion: 1,
+        events: [pendingEvent({ aggregateId: "1", version: 2, type: "OrderPaid" })],
+      },
+    ]);
+    expect(results.map((result) => result.version)).toEqual([1, 1, 2]);
+    expect((await store.load(order)).events.map((event) => event.position)).toEqual([1, 2]);
+    expect(positions).toEqual([2]);
+
+    await expect(
+      store.appendAll([
+        {
+          ...order,
+          expectedVersion: 2,
+          events: [pendingEvent({ aggregateId: "1", version: 3, type: "OrderArchived" })],
+        },
+        { ...order, expectedVersion: 2, events: [pendingEvent({ aggregateId: "1", version: 3 })] },
+      ]),
+    ).rejects.toMatchObject({ streamId: "order:1", expectedVersion: 2, actualVersion: 3 });
+    expect((await store.load(order)).version).toBe(2);
+    expect(positions).toEqual([2]);
+  });
+
   it("puts every store back when a write fails while a transaction is being applied", async () => {
     const storage = await memory().createStorage({ logger: silentLogger });
     const key = { subscriber: "order.p", eventId: "e1" };

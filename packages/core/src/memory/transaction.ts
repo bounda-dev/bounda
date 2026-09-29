@@ -1,4 +1,103 @@
+import type { StoragePorts, StorageTransaction } from "../adapter/adapter.ts";
 import type { CheckpointStore } from "../adapter/ports/checkpoint-store.ts";
+import type { DeadLetterStore } from "../adapter/ports/dead-letter-store.ts";
+import type { InboxLedger } from "../adapter/ports/inbox-ledger.ts";
+import type { Scheduler } from "../adapter/ports/scheduler.ts";
+import { createStagedEventStore } from "../adapter/staged-event-store.ts";
+import type { MemoryDeadLetterStore } from "./dead-letter-store.ts";
+import type { MemoryEventStore } from "./event-store.ts";
+import type { MemoryInboxLedger } from "./inbox-ledger.ts";
+import type { MemoryScheduler } from "./scheduler.ts";
+
+export interface SnapshotMapFunction {
+  <Key, Value>(map: Map<Key, Value>): () => void;
+}
+
+/**
+ * Copies `map` and returns what puts it back the way it was.
+ */
+export const snapshotMap: SnapshotMapFunction = (map) => {
+  const saved = new Map(map);
+  return () => {
+    map.clear();
+    for (const [key, value] of saved) map.set(key, value);
+  };
+};
+
+export interface CreateMemoryStorageTransactionArgs {
+  readonly eventStore: MemoryEventStore;
+  readonly inboxLedger: MemoryInboxLedger;
+  readonly deadLetterStore: MemoryDeadLetterStore;
+  readonly scheduler: MemoryScheduler;
+}
+
+export interface CreateMemoryStorageTransactionFunction {
+  (args: CreateMemoryStorageTransactionArgs): StoragePorts["transact"];
+}
+
+/**
+ * `StoragePorts.transact` for the memory stores. Appends are staged and the other writes deferred
+ * while the work runs; once it resolves, the deferred writes are applied, then every stream is
+ * appended in one synchronous run with every version checked first, so no reader sees one stream
+ * appended without the others. A write that fails puts the ledger, the dead letters and the
+ * scheduler back from their snapshots, and nothing has been appended by then; a stale version
+ * appends nothing and puts them back too. `tryClaim` and `claimDue` answer at once, outside the
+ * transaction.
+ */
+export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunction =
+  ({ eventStore, inboxLedger, deadLetterStore, scheduler }) =>
+  async (work) => {
+    const staged = createStagedEventStore(eventStore);
+    const deferred: (() => Promise<unknown>)[] = [];
+    const later =
+      <Args extends unknown[]>(write: (...args: Args) => Promise<unknown>) =>
+      async (...args: Args): Promise<void> => {
+        deferred.push(() => write(...args));
+      };
+    const ledger: InboxLedger = {
+      tryClaim: inboxLedger.tryClaim,
+      get: inboxLedger.get,
+      complete: later(inboxLedger.complete),
+      fail: later(inboxLedger.fail),
+    };
+    const letters: DeadLetterStore = {
+      get: deadLetterStore.get,
+      list: deadLetterStore.list,
+      count: deadLetterStore.count,
+      add: async (letter) => {
+        deferred.push(() => deadLetterStore.add(letter));
+        return { ...letter, status: "failed" };
+      },
+      updateStatus: later(deadLetterStore.updateStatus),
+      remove: later(deadLetterStore.remove),
+    };
+    const schedule: Scheduler = {
+      claimDue: scheduler.claimDue,
+      nextDueAt: scheduler.nextDueAt,
+      list: scheduler.list,
+      schedule: later(scheduler.schedule),
+      cancel: later(scheduler.cancel),
+      complete: later(scheduler.complete),
+      fail: later(scheduler.fail),
+      defer: later(scheduler.defer),
+    };
+    const transaction: StorageTransaction = {
+      eventStore: staged,
+      inboxLedger: ledger,
+      deadLetterStore: letters,
+      scheduler: schedule,
+    };
+    const result = await work(transaction);
+    const restore = [inboxLedger, deadLetterStore, scheduler].map((store) => store.snapshot());
+    try {
+      await Promise.all(deferred.map((write) => write()));
+      await eventStore.appendAll(staged.batches());
+    } catch (error) {
+      for (const undo of restore) undo();
+      throw error;
+    }
+    return result;
+  };
 
 export interface MemoryLocks {
   /**

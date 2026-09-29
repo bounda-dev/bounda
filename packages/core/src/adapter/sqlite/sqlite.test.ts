@@ -146,6 +146,22 @@ describe("createSqliteAdapter", () => {
     expect(uses()).toBe(0);
   });
 
+  it("releases a rebuild's connection when it commits or pauses too", async () => {
+    const { adapter, uses } = nodeSqlite();
+    const rebuild = (progress: string) =>
+      adapter.rebuildReadModel({
+        name: "orderSummary",
+        fields: contractFields,
+        logger: silentLogger,
+        progress,
+      });
+    const committed = await rebuild("rebuild:orderSummary:1");
+    await committed.commit({ subscriber: "projection:orderSummary", position: 0 });
+    const paused = await rebuild("rebuild:orderSummary:2");
+    await paused.pause();
+    expect(uses()).toBe(0);
+  });
+
   it("hands queries the host's raw handle", async () => {
     const { adapter, db } = nodeSqlite();
     const readModel = await adapter.createReadModel({

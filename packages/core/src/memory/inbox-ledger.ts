@@ -1,4 +1,5 @@
 import type { ClaimRecord, InboxLedger } from "../adapter/ports/inbox-ledger.ts";
+import { snapshotMap } from "./transaction.ts";
 
 /**
  * The in-memory inbox ledger, with a `snapshot` that returns what puts it back the way it is.
@@ -59,12 +60,6 @@ export const createMemoryInboxLedger: CreateMemoryInboxLedgerFunction = () => {
       }
     },
     get: async ({ subscriber, eventId }) => claims.get(keyOf(subscriber, eventId)) ?? null,
-    snapshot: () => {
-      const saved = new Map(claims);
-      return () => {
-        claims.clear();
-        for (const [key, claim] of saved) claims.set(key, claim);
-      };
-    },
+    snapshot: () => snapshotMap(claims),
   };
 };

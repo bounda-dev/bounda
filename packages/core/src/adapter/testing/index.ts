@@ -28,6 +28,7 @@ export type {
 } from "./read-model-rebuild.contract.ts";
 export { readModelRebuildContract, rebuiltFields } from "./read-model-rebuild.contract.ts";
 export type {
+  AdapterContractArgs,
   ReadModelTransactionContractArgs,
   ReadModelTransactionContractFunction,
   TransactionLocking,
