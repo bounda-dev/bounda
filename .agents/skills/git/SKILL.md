@@ -115,12 +115,14 @@ EOF
 
 2. Run `git log` and `git diff main...HEAD` to review all commits since divergence.
 
-3. Push the branch:
+3. Review the branch before it leaves the machine (see [Pre-push review](#pre-push-review)). Do not wait for CI: it is cheaper to fix findings once locally than to run CI twice.
+
+4. Push the branch:
    ```bash
    git push -u origin <branch-name>
    ```
 
-4. Create the PR via `gh pr create`:
+5. Create the PR via `gh pr create`:
 
 ```bash
 gh pr create --title "<type>(<scope>): <subject>" --body "$(cat <<'EOF'
@@ -143,7 +145,27 @@ EOF
 
 - PR title follows the same format as commit messages.
 
-5. Return the PR URL to the user.
+6. Return the PR URL to the user.
+
+### Pre-push review
+
+Runs as part of `pr` and `pr ready`, and before pushing follow-up commits to an open PR, without the user asking for it.
+
+1. Start `pnpm check` in the background and, meanwhile, invoke the `code-review` skill with the branch as target (the diff against `main`) and an explicit level, since without one it reuses whatever level the user typed last. Both only read the sources, so they can run together; never alongside a Stryker run.
+
+   | The diff touches | Level |
+   |---|---|
+   | Only docs, `skills/`, `.github/`, config or tooling | `medium` |
+   | Runtime code: `packages/*/src`, the generator, `create-bounda` templates, public types | `high` |
+   | Concurrency or crash safety: claims, inbox, locks, transactions, retries, dead letters, delayed commands | `max` |
+
+   A diff that spans rows takes the highest.
+
+2. Fix the confirmed findings in new commits. Report the plausible ones to the user instead of fixing them silently, and note out-of-scope findings rather than fixing them inline.
+3. If anything changed, run `pnpm check` again and check its exit code. Push only when it is green.
+4. For follow-up commits on an open PR (CI failures, reviewer comments), review only the new commits, and skip the review when the fix is trivial (a typo, a lint rule, a snapshot).
+
+A review per logical change, not per commit or per phase: do not run it in `commit`.
 
 ### `pr draft`
 
@@ -185,7 +207,7 @@ Update the PR body with the full phase log and move it out of draft. Used by `/l
    git fetch origin
    git rebase origin/main
    ```
-   Push with `--force-with-lease` if needed.
+   Push with `--force-with-lease` if needed, after the [Pre-push review](#pre-push-review) of the whole branch.
 
 2. Build and update the PR body from the phase log:
    ```bash
@@ -283,6 +305,8 @@ git rebase --continue
 ```
 
 ### Update PR after review
+
+Run the [Pre-push review](#pre-push-review) on the new commits first (step 4).
 
 ```bash
 git add <files>
