@@ -193,7 +193,14 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
     logger,
   });
   const policies = buildPolicies({ registry, config });
-  const policyExecutor = createPolicyExecutor({ aggregates, pipeline, config, clock });
+  const policyExecutor = createPolicyExecutor({
+    aggregates,
+    pipeline,
+    scheduler: storage.scheduler,
+    config,
+    clock,
+    logger,
+  });
   const reactive = [
     {
       subscriber: createPolicySubscriber({
@@ -286,7 +293,10 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
   });
 
   return {
-    commands: createCommandsFacade({ aggregates, pipeline }) as CommandsFacade<R>,
+    commands: createCommandsFacade({
+      aggregates,
+      dispatch: (command) => pipeline.dispatch(command),
+    }) as CommandsFacade<R>,
     queries: queryRunner.facade as QueriesFacade<R>,
     config,
     role,

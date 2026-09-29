@@ -189,6 +189,11 @@ export type ProcessHandlerArgs<
    */
   readonly idempotencyKey: string;
   /**
+   * Aborted when the handler runs out of time or its run fails: pass it to what the handler calls
+   * outside (`fetch(url, { signal })`) so it stops. Commands dispatched after that are refused.
+   */
+  readonly signal: AbortSignal;
+  /**
    * A moment some time after the event: `nextReminder: after("24h")` schedules a deadline.
    */
   readonly after: ProcessAfterFunction;
@@ -214,6 +219,11 @@ export type ProcessDeadlineArgs<
    * this moment, new when an operator replays it from the dead letters.
    */
   readonly idempotencyKey: string;
+  /**
+   * Aborted when the handler runs out of time or its run fails: pass it to what the handler calls
+   * outside (`fetch(url, { signal })`) so it stops. Commands dispatched after that are refused.
+   */
+  readonly signal: AbortSignal;
   /**
    * A moment some time after the deadline that came due: `nextReminder: after("24h")` repeats it
    * every day, without drifting when a run is late.

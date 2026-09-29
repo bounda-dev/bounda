@@ -156,10 +156,13 @@ export const createProcessReplay: CreateProcessReplayFunction = ({
     if (instance.handledEventIds.has(event.id)) {
       await completeOnReplay(process, event, instanceId);
     } else {
-      let state = instance.state;
-      if (handler === undefined) letThrough(process, instanceId, event, logger);
-      else {
-        state = await handlers.runEventHandler({
+      const write = (state: object) => () =>
+        appendPastParks(process, instanceId, instance, handledEntries(process, event, state));
+      if (handler === undefined) {
+        letThrough(process, instanceId, event, logger);
+        await write(instance.state)();
+      } else {
+        const handled = await handlers.runEventHandler({
           process,
           event,
           instanceId,
@@ -167,8 +170,8 @@ export const createProcessReplay: CreateProcessReplayFunction = ({
           attempt: 1,
           replay,
         });
+        await handled.record(write(handled.state));
       }
-      await appendPastParks(process, instanceId, instance, handledEntries(process, event, state));
     }
     await resume.resumeParked(process, instanceId, letter);
     await schedule.reconcile(process, instanceId);

@@ -1,12 +1,14 @@
+import type { Scheduler } from "../../adapter/ports/scheduler.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import { ValidationError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
+import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
-import { createCommandsFacade } from "../command/facade.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
-import { createReactionCommandIds, deriveIdempotencyKey } from "../shared/idempotency-key.ts";
+import { createReactionCommands, type ReactionCommands } from "../command/reaction-commands.ts";
+import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { withTimeout } from "../shared/timeout.ts";
 import { ATTRIBUTES, traced } from "../telemetry.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
@@ -42,23 +44,35 @@ export interface RunDeadlineHandlerArgs {
 }
 
 /**
- * Runs the handlers users write for a process, traced and bounded by the policy timeout, and
- * resolves to the state they leave, parsed with the process `state` schema. A handler that
- * returns nothing leaves the state as it was.
+ * One run of a process handler: the state it left, and `record`, which writes it. A run whose
+ * handler fails, or whose `record` throws, is abandoned: its commands are refused from then on
+ * and the delayed ones it scheduled are cancelled.
+ */
+export interface HandlerRun {
+  readonly state: object;
+  record(write: () => Promise<void>): Promise<void>;
+}
+
+/**
+ * Runs the handlers users write for a process, traced and bounded by the policy timeout. The
+ * state they leave is parsed with the process `state` schema; a handler that returns nothing
+ * leaves the state as it was.
  */
 export interface ProcessHandlers {
-  runEventHandler(args: RunEventHandlerArgs): Promise<object>;
+  runEventHandler(args: RunEventHandlerArgs): Promise<HandlerRun>;
   /**
    * Runs the handler of `due`, if it has one.
    */
-  runDeadlineHandler(args: RunDeadlineHandlerArgs): Promise<object>;
+  runDeadlineHandler(args: RunDeadlineHandlerArgs): Promise<HandlerRun>;
 }
 
 export interface CreateProcessHandlersArgs {
   readonly aggregates: AggregatesRuntime;
   readonly pipeline: CommandPipeline;
+  readonly scheduler: Scheduler;
   readonly config: ResolvedConfig;
   readonly clock: Clock;
+  readonly logger: Logger;
 }
 
 export interface CreateProcessHandlersFunction {
@@ -68,79 +82,99 @@ export interface CreateProcessHandlersFunction {
 export const createProcessHandlers: CreateProcessHandlersFunction = ({
   aggregates,
   pipeline,
+  scheduler,
   config,
   clock,
+  logger,
 }) => {
+  const reactionFor = (context: CausationContext, idempotencyKey: string): ReactionCommands =>
+    createReactionCommands({ aggregates, pipeline, scheduler, logger, context, idempotencyKey });
+
   const handlerArgs = (
     process: ProcessRuntime,
-    context: CausationContext,
+    reaction: ReactionCommands,
     idempotencyKey: string,
     triggeredAt: string,
   ): Record<string, unknown> => ({
     ...process.collaborators,
-    commands: createCommandsFacade({
-      aggregates,
-      pipeline,
-      context,
-      commandIds: createReactionCommandIds(idempotencyKey),
-    }),
+    commands: reaction.commands,
+    signal: reaction.signal,
     idempotencyKey,
     after: afterFrom(triggeredAt),
+  });
+
+  const abandonOnError = async <T>(
+    reaction: Pick<ReactionCommands, "abandon">,
+    step: () => Promise<T>,
+  ): Promise<T> => {
+    try {
+      return await step();
+    } catch (error) {
+      await reaction.abandon(error);
+      throw error;
+    }
+  };
+
+  const runOf = async (
+    reaction: Pick<ReactionCommands, "abandon">,
+    handle: () => Promise<object>,
+  ): Promise<HandlerRun> => ({
+    state: await abandonOnError(reaction, handle),
+    record: (write) => abandonOnError(reaction, write),
   });
 
   const timeoutMs = (process: ProcessRuntime): number =>
     config.forAggregate(process.aggregate).policies.timeoutMs;
 
-  const runEventHandler = async ({
+  const runEventHandler = ({
     process,
     event,
     instanceId,
     instance,
     attempt,
     replay,
-  }: RunEventHandlerArgs): Promise<object> => {
-    const next = await traced({
-      name: `bounda.process ${process.name}`,
-      attributes: {
-        [ATTRIBUTES.process]: process.name,
-        [ATTRIBUTES.eventId]: event.id,
-        [ATTRIBUTES.eventType]: event.type,
-        [ATTRIBUTES.aggregateType]: event.aggregateType,
-        [ATTRIBUTES.aggregateId]: event.aggregateId,
-        [ATTRIBUTES.correlationId]: event.metadata.correlationId,
-        [ATTRIBUTES.attempt]: attempt,
-      },
-      run: () =>
-        withTimeout({
-          run: () =>
-            handlerOf(
-              process,
-              event,
-            )?.({
-              ...handlerArgs(
-                process,
-                eventContext(event),
-                deriveIdempotencyKey({
-                  kind: "process",
-                  handler: process.name,
-                  subject: event.id,
-                  replay,
-                }),
-                event.timestamp,
-              ),
-              event,
-              state: instance.state,
-              aggregateId: instanceId,
-            }),
-          timeoutMs: timeoutMs(process),
-          subject: `process ${process.name}`,
-          clock,
-        }),
+  }: RunEventHandlerArgs): Promise<HandlerRun> => {
+    const idempotencyKey = deriveIdempotencyKey({
+      kind: "process",
+      handler: process.name,
+      subject: event.id,
+      replay,
     });
-    return validState(process, next === undefined ? instance.state : next);
+    const reaction = reactionFor(eventContext(event), idempotencyKey);
+    return runOf(reaction, async () => {
+      const next = await traced({
+        name: `bounda.process ${process.name}`,
+        attributes: {
+          [ATTRIBUTES.process]: process.name,
+          [ATTRIBUTES.eventId]: event.id,
+          [ATTRIBUTES.eventType]: event.type,
+          [ATTRIBUTES.aggregateType]: event.aggregateType,
+          [ATTRIBUTES.aggregateId]: event.aggregateId,
+          [ATTRIBUTES.correlationId]: event.metadata.correlationId,
+          [ATTRIBUTES.attempt]: attempt,
+        },
+        run: () =>
+          withTimeout({
+            run: () =>
+              handlerOf(
+                process,
+                event,
+              )?.({
+                ...handlerArgs(process, reaction, idempotencyKey, event.timestamp),
+                event,
+                state: instance.state,
+                aggregateId: instanceId,
+              }),
+            timeoutMs: timeoutMs(process),
+            subject: `process ${process.name}`,
+            clock,
+          }),
+      });
+      return validState(process, next === undefined ? instance.state : next);
+    });
   };
 
-  const runDeadlineHandler = async ({
+  const runDeadlineHandler = ({
     process,
     instanceId,
     instance,
@@ -148,43 +182,47 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     context,
     causationId,
     replay,
-  }: RunDeadlineHandlerArgs): Promise<object> => {
+  }: RunDeadlineHandlerArgs): Promise<HandlerRun> => {
     const handler = process.deadlineHandlers[due.field];
-    const returned =
-      handler === undefined
-        ? instance.state
-        : await traced({
-            name: `bounda.process ${process.name} at ${due.field}`,
-            attributes: {
-              [ATTRIBUTES.process]: process.name,
-              [ATTRIBUTES.aggregateType]: process.aggregate,
-              [ATTRIBUTES.aggregateId]: instanceId,
-              [ATTRIBUTES.correlationId]: context.correlationId,
-            },
+    if (handler === undefined) {
+      return runOf({ abandon: async () => undefined }, async () =>
+        validState(process, instance.state),
+      );
+    }
+    const idempotencyKey = deriveIdempotencyKey({
+      kind: "process",
+      handler: process.name,
+      subject: `${instanceId}:deadline:${due.field}:${new Date(due.at).toISOString()}`,
+      replay,
+    });
+    const reaction = reactionFor(
+      { correlationId: context.correlationId, causationId, depth: 0 },
+      idempotencyKey,
+    );
+    return runOf(reaction, async () => {
+      const returned = await traced({
+        name: `bounda.process ${process.name} at ${due.field}`,
+        attributes: {
+          [ATTRIBUTES.process]: process.name,
+          [ATTRIBUTES.aggregateType]: process.aggregate,
+          [ATTRIBUTES.aggregateId]: instanceId,
+          [ATTRIBUTES.correlationId]: context.correlationId,
+        },
+        run: () =>
+          withTimeout({
             run: () =>
-              withTimeout({
-                run: () =>
-                  handler({
-                    ...handlerArgs(
-                      process,
-                      { correlationId: context.correlationId, causationId, depth: 0 },
-                      deriveIdempotencyKey({
-                        kind: "process",
-                        handler: process.name,
-                        subject: `${instanceId}:deadline:${due.field}:${new Date(due.at).toISOString()}`,
-                        replay,
-                      }),
-                      due.at,
-                    ),
-                    state: instance.state,
-                    aggregateId: instanceId,
-                  }),
-                timeoutMs: timeoutMs(process),
-                subject: `process ${process.name} at ${due.field}`,
-                clock,
+              handler({
+                ...handlerArgs(process, reaction, idempotencyKey, due.at),
+                state: instance.state,
+                aggregateId: instanceId,
               }),
-          });
-    return validState(process, returned ?? instance.state);
+            timeoutMs: timeoutMs(process),
+            subject: `process ${process.name} at ${due.field}`,
+            clock,
+          }),
+      });
+      return validState(process, returned ?? instance.state);
+    });
   };
 
   return { runEventHandler, runDeadlineHandler };

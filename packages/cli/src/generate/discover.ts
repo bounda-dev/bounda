@@ -116,8 +116,16 @@ type CollaboratorOwner = "command" | "policy" | "process";
 
 const RESERVED_ARGUMENTS: Readonly<Record<CollaboratorOwner, ReadonlySet<string>>> = {
   command: new Set(["command", "state", "events", "idempotencyKey"]),
-  policy: new Set(["event", "commands", "idempotencyKey"]),
-  process: new Set(["event", "state", "aggregateId", "commands", "idempotencyKey", "after"]),
+  policy: new Set(["event", "commands", "idempotencyKey", "signal"]),
+  process: new Set([
+    "event",
+    "state",
+    "aggregateId",
+    "commands",
+    "idempotencyKey",
+    "signal",
+    "after",
+  ]),
 };
 
 const collaboratorOf = (

@@ -61,7 +61,14 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
 }) => {
   const instances = createProcessInstances({ storage, ids, clock });
   const failures = createProcessFailures({ storage, ids, clock, logger });
-  const handlers = createProcessHandlers({ aggregates, pipeline, config, clock });
+  const handlers = createProcessHandlers({
+    aggregates,
+    pipeline,
+    scheduler: storage.scheduler,
+    config,
+    clock,
+    logger,
+  });
   const schedule = createDeadlineSchedule({ storage, instances, failures });
   const deadlineStep = createDeadlineStep({ instances, handlers, ids });
   const resume = createResumeParked({ instances, failures, handlers, deadlineStep, logger });

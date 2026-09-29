@@ -143,6 +143,12 @@ describe("idempotency keys", () => {
     expectTypeOf<OnOrderPaid.HandlerArgs["idempotencyKey"]>().toEqualTypeOf<string>();
     expectTypeOf<AtTimeout.DeadlineArgs["idempotencyKey"]>().toEqualTypeOf<string>();
     expectTypeOf<AtNextReminder.DeadlineArgs["idempotencyKey"]>().toEqualTypeOf<string>();
+    expectTypeOf<SendReceipt.HandlerArgs["signal"]>().toEqualTypeOf<AbortSignal>();
+    expectTypeOf<NotifyOnOrderPlaced.HandlerArgs["signal"]>().toEqualTypeOf<AbortSignal>();
+    expectTypeOf<OnOrderPaid.HandlerArgs["signal"]>().toEqualTypeOf<AbortSignal>();
+    expectTypeOf<AtTimeout.DeadlineArgs["signal"]>().toEqualTypeOf<AbortSignal>();
+    expectTypeOf<AtNextReminder.DeadlineArgs["signal"]>().toEqualTypeOf<AbortSignal>();
+    expectTypeOf<PlaceOrder.HandlerArgs>().not.toHaveProperty("signal");
   });
 });
 

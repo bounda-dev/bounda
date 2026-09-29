@@ -4,7 +4,7 @@ import type { ProcessRuntime } from "./build-processes.ts";
 import type { DeadlineStep } from "./deadline-step.ts";
 import { type Deadline, reachedKey } from "./deadlines.ts";
 import { blockedOn, deadlineSubject, drainFailureType, type ProcessFailures } from "./failures.ts";
-import type { ProcessHandlers } from "./handlers.ts";
+import type { HandlerRun, ProcessHandlers } from "./handlers.ts";
 import type { ProcessInstances } from "./instances.ts";
 import {
   eventContext,
@@ -69,9 +69,15 @@ export const createResumeParked: CreateResumeParkedFunction = ({
       );
       return true;
     }
-    let state: object;
+    let handled: HandlerRun;
     try {
-      state = await handlers.runEventHandler({ process, event, instanceId, instance, attempt: 1 });
+      handled = await handlers.runEventHandler({
+        process,
+        event,
+        instanceId,
+        instance,
+        attempt: 1,
+      });
     } catch (error) {
       const current = await load(process, instanceId);
       if (current.failure?.eventId === event.id) return false;
@@ -83,7 +89,9 @@ export const createResumeParked: CreateResumeParkedFunction = ({
       await failures.fileLater(process, letter, error);
       return false;
     }
-    await appendPastParks(process, instanceId, instance, handledEntries(process, event, state));
+    await handled.record(() =>
+      appendPastParks(process, instanceId, instance, handledEntries(process, event, handled.state)),
+    );
     return true;
   };
 

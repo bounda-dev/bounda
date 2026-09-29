@@ -691,3 +691,126 @@ describe("policies and the aggregate whose events they react to", () => {
     );
   });
 });
+
+describe("a policy run that fails", () => {
+  interface RunArgs {
+    readonly event: { readonly aggregateId: string };
+    readonly commands: Record<string, (payload: unknown, options?: object) => Promise<unknown>>;
+    readonly signal: AbortSignal;
+  }
+
+  const withPolicy = (handler: (args: RunArgs) => Promise<void>): Registry => ({
+    aggregates: {
+      order: {
+        ...orderAggregateEntry(),
+        policies: { remindOnOrderPlaced: { module: { handler } } },
+      },
+    },
+    readModels: {},
+  });
+
+  const scheduledTypes = async (harness: ReactiveHarness) =>
+    (await harness.storage.scheduler.list()).map((entry) => entry.command.type);
+
+  it("leaves none of its delayed commands behind when the retry takes another path", async () => {
+    let runs = 0;
+    const harness = await createReactiveHarness({
+      registry: withPolicy(async ({ event, commands }) => {
+        runs += 1;
+        if (runs === 1) {
+          await commands.payOrder?.(
+            { orderId: event.aggregateId, method: "card" },
+            { delay: "1h" },
+          );
+          throw new Error("gateway down");
+        }
+        await commands.archiveOrder?.({ orderId: event.aggregateId }, { delay: "2h" });
+      }),
+      config: { runtime: { policies: { retry: { strategy: "fixed", baseDelay: "1s" } } } },
+    });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.dispatcher.processUntilIdle();
+    expect(await scheduledTypes(harness)).toEqual([]);
+
+    harness.clock.advance(1_000);
+    await harness.dispatcher.processUntilIdle();
+
+    expect(runs).toBe(2);
+    expect(await scheduledTypes(harness)).toEqual(["ArchiveOrder"]);
+  });
+
+  it("cancels its delayed commands when it is dead-lettered", async () => {
+    const harness = await createReactiveHarness({
+      registry: withPolicy(async ({ event, commands }) => {
+        await commands.payOrder?.({ orderId: event.aggregateId, method: "card" }, { delay: "1h" });
+        throw new DomainError("refused");
+      }),
+    });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.dispatcher.processUntilIdle();
+
+    expect(await harness.storage.deadLetterStore.count()).toBe(1);
+    expect(await scheduledTypes(harness)).toEqual([]);
+  });
+
+  it("keeps the handler's own error when cancelling its delayed commands fails", async () => {
+    const harness = await createReactiveHarness({
+      registry: withPolicy(async ({ event, commands }) => {
+        await commands.payOrder?.({ orderId: event.aggregateId, method: "card" }, { delay: "1h" });
+        throw new DomainError("refused");
+      }),
+    });
+    harness.storage.scheduler.cancel = async () => {
+      throw new Error("store down");
+    };
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.dispatcher.processUntilIdle();
+
+    expect(await harness.storage.deadLetterStore.list()).toMatchObject([
+      { errorType: "terminal", errorMessage: "refused" },
+    ]);
+  });
+
+  it("stops the commands of a handler that ran out of time, and aborts its signal", async () => {
+    const started = Promise.withResolvers<void>();
+    const resume = Promise.withResolvers<void>();
+    const late = Promise.withResolvers<unknown>();
+    let signal: AbortSignal | undefined;
+    const harness = await createReactiveHarness({
+      registry: withPolicy(async (args) => {
+        signal = args.signal;
+        await args.commands.payOrder?.(
+          { orderId: args.event.aggregateId, method: "card" },
+          { delay: "1h" },
+        );
+        started.resolve();
+        await resume.promise;
+        late.resolve(
+          await args.commands
+            .archiveOrder?.({ orderId: args.event.aggregateId })
+            .catch((error: unknown) => error),
+        );
+      }),
+      config: { runtime: { policies: { timeout: "1m", retry: { strategy: "none" } } } },
+    });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    const processing = harness.dispatcher.processUntilIdle();
+    await started.promise;
+    harness.clock.advance(60_000);
+    await processing;
+    resume.resolve();
+
+    expect(await late.promise).toMatchObject({
+      code: "REACTION_ABANDONED",
+      cause: { code: "HANDLER_TIMEOUT" },
+    });
+    expect(signal?.aborted).toBe(true);
+    expect(signal?.reason).toMatchObject({ code: "HANDLER_TIMEOUT" });
+    expect(await scheduledTypes(harness)).toEqual([]);
+    const order = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    expect(order.events.map((event) => event.type)).toEqual(["OrderPlaced"]);
+  });
+});
