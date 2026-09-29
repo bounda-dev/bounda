@@ -30,8 +30,8 @@ const toRecord = (row: Record<string, unknown>): ClaimRecord => ({
 });
 
 /**
- * Inbox ledger on one table. `tryClaim` is a single `INSERT ... ON CONFLICT DO UPDATE ... WHERE
- * ... RETURNING`; PostgreSQL locks the conflicting row, so exactly one racing claimer gets it back.
+ * `tryClaim` is a single upsert: PostgreSQL locks the conflicting row, so exactly one racing
+ * claimer gets it back.
  */
 export const createPostgresqlInboxLedger: CreatePostgresqlInboxLedgerFunction = ({
   db,

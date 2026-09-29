@@ -14,10 +14,8 @@ export interface CreatePostgresqlEventNotifierFunction {
 }
 
 /**
- * `LISTEN` on the channel the event store notifies after every committed append. Postgres.js
- * holds a dedicated connection for it and re-listens on its own after a reconnect; a
- * notification lost in between is covered by the dispatcher's idle poll. The payload is the
- * global position of the last event appended.
+ * Postgres.js re-listens on its own after a reconnect; a notification lost in between is covered
+ * by the dispatcher's idle poll. The payload is the global position of the last event appended.
  */
 export const createPostgresqlEventNotifier: CreatePostgresqlEventNotifierFunction = ({
   sql,

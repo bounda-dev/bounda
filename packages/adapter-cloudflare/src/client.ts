@@ -54,6 +54,7 @@ export interface ConnectFunction {
 const byName = <T extends object>(call: (name: string, ...args: unknown[]) => unknown): T =>
   new Proxy({} as T, {
     get: (_target, key) =>
+      // Without a `then`, awaiting or returning the proxy does not take it for a promise.
       typeof key === "string" && key !== "then"
         ? (...args: unknown[]) => call(key, ...args)
         : undefined,

@@ -7,11 +7,18 @@ export type SqliteLocation =
   | { readonly memory: true };
 
 /**
- * Options of `sqlite(...)`. `tablePrefix` is put in front of every table Bounda creates and
- * defaults to `bounda_`.
+ * Options of `sqlite(...)`: where the database is, and the prefix of Bounda's tables.
  */
-export type SqliteOptions = SqliteLocation & { readonly tablePrefix?: string };
+export type SqliteOptions = SqliteLocation & {
+  /**
+   * Put in front of every table Bounda creates. Defaults to `DEFAULT_TABLE_PREFIX`.
+   */
+  readonly tablePrefix?: string;
+};
 
+/**
+ * The libSQL client configuration `resolveSqliteOptions` makes of `SqliteOptions`.
+ */
 export interface ResolvedSqliteOptions {
   readonly url: string;
   readonly authToken?: string;
@@ -22,6 +29,9 @@ export interface ResolveSqliteOptionsFunction {
   (options: SqliteOptions): ResolvedSqliteOptions;
 }
 
+/**
+ * The table prefix `sqlite()` uses when none is given.
+ */
 export const DEFAULT_TABLE_PREFIX: string = "bounda_";
 
 /**

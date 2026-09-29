@@ -19,8 +19,8 @@ interface OrderRow {
 type Events = Record<string, (payload?: unknown) => unknown>;
 
 /**
- * A small order app: place, pay and archive, a policy that archives paid orders and fails for a
- * customer called "fail", and a read model with one query.
+ * A small order app: place, pay and archive, a policy that archives paid orders and fails for an
+ * order whose id starts with "fail", and a read model with one query.
  */
 export const registry = {
   aggregates: {

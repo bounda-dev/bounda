@@ -19,10 +19,9 @@ const bindings = (params: readonly unknown[]): Binding[] =>
   params.map((value) => (typeof value === "boolean" ? Number(value) : (value as Binding)));
 
 /**
- * Wraps a Durable Object's SQLite storage as the connection the SQLite stores write through.
- * `sql.exec` is synchronous; the executor returns resolved promises so the stores keep their
- * asynchronous interface. `write` runs the work inside `storage.transaction`, which rolls back
- * when the work throws; the transaction's `raw` is `storage.sql`, which joins it.
+ * A Durable Object's SQLite storage as the connection the SQLite stores write through. `write`
+ * runs the work in `storage.transaction`, which rolls back when the work throws; inside it, `raw`
+ * is `storage.sql`, which joins the transaction.
  */
 export const createDurableSqlDatabase: CreateDurableSqlDatabaseFunction = (storage) => {
   const executor: SqlExecutor = {
