@@ -12,6 +12,7 @@ import {
   readModelRebuildContract,
   readModelTransactionContract,
   schedulerContract,
+  storageTransactionContract,
   tableContract,
 } from "@bounda-dev/core/adapter/testing";
 import { describe } from "vitest";
@@ -34,6 +35,7 @@ describe("the Durable Object adapter", () => {
   inboxLedgerContract({ create: async () => (await freshStorage()).inboxLedger });
   deadLetterStoreContract({ create: async () => (await freshStorage()).deadLetterStore });
   schedulerContract({ create: async () => (await freshStorage()).scheduler });
+  storageTransactionContract({ create: freshStorage });
   tableContract({
     create: async () =>
       (

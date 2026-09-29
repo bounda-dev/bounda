@@ -2,8 +2,9 @@ import type {
   Adapter,
   CreateReadModelArgs,
   CreateReadModelRebuildArgs,
+  StorageTransaction,
 } from "@bounda-dev/core/adapter";
-import { quoteIdentifier } from "@bounda-dev/core/adapter/sql";
+import { quoteIdentifier, type SqlTransaction } from "@bounda-dev/core/adapter/sql";
 import postgres, { type Sql } from "postgres";
 import { createPostgresqlCheckpointStore } from "./checkpoint-store.ts";
 import { createPostgresqlDatabase, type PostgresqlDatabase } from "./database.ts";
@@ -74,18 +75,36 @@ export const postgresql: PostgresqlFunction = (options) => {
       const { db, sql } = open();
       const tables = storageTablesFor(tablePrefix);
       await ensureStorageSchema({ db, schema, tables });
-      return {
+      const storesOver = (database: PostgresqlDatabase): StorageTransaction => ({
         eventStore: createPostgresqlEventStore({
-          db,
+          db: database,
           table: tables.events,
           lockKey: tables.appendLockKey,
           channel: tables.channel,
         }),
+        inboxLedger: createPostgresqlInboxLedger({ db: database, table: tables.inbox }),
+        deadLetterStore: createPostgresqlDeadLetterStore({
+          db: database,
+          table: tables.deadLetters,
+        }),
+        scheduler: createPostgresqlScheduler({ db: database, table: tables.scheduledCommands }),
+      });
+      const boundTo = (tx: SqlTransaction): PostgresqlDatabase => ({
+        run: tx.run,
+        all: tx.all,
+        write: (work) => work(tx),
+      });
+      return {
+        ...storesOver(db),
         notifier: createPostgresqlEventNotifier({ sql, channel: tables.channel }),
         checkpointStore: createPostgresqlCheckpointStore({ db, table: tables.checkpoints }),
-        inboxLedger: createPostgresqlInboxLedger({ db, table: tables.inbox }),
-        deadLetterStore: createPostgresqlDeadLetterStore({ db, table: tables.deadLetters }),
-        scheduler: createPostgresqlScheduler({ db, table: tables.scheduledCommands }),
+        // The append lock comes first, before any row the work may lock: two transactions that
+        // took the lock and a row in opposite orders would deadlock.
+        transact: (work) =>
+          db.write(async (tx) => {
+            await tx.run("SELECT pg_advisory_xact_lock(hashtext($1))", [tables.appendLockKey]);
+            return work(storesOver(boundTo(tx)));
+          }),
         close: release,
       };
     },

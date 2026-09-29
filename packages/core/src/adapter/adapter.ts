@@ -10,6 +10,20 @@ import type { Scheduler } from "./ports/scheduler.ts";
 import type { ReadClient, Table } from "./ports/table.ts";
 
 /**
+ * The write-side stores bound to one open transaction: what `StoragePorts.transact` runs its
+ * work with. What the work writes through them commits together when it resolves and rolls
+ * back together when it throws. `eventStore.load` sees the events the work appended; what the
+ * other three read back while the transaction is open is the store as committed, or the
+ * transaction's own writes, depending on the adapter, so the work must not depend on it.
+ */
+export interface StorageTransaction {
+  readonly eventStore: EventStore;
+  readonly inboxLedger: InboxLedger;
+  readonly deadLetterStore: DeadLetterStore;
+  readonly scheduler: Scheduler;
+}
+
+/**
  * Everything the write side and the reactive runners need from one storage backend.
  */
 export interface StoragePorts {
@@ -22,6 +36,15 @@ export interface StoragePorts {
    * Only for a backend that can push new events; without it the dispatcher only polls.
    */
   readonly notifier?: EventNotifier;
+  /**
+   * Runs `work` in one transaction over the write-side stores: everything it writes through the
+   * transaction's ports lands together or not at all. A stale `expectedVersion` on any append
+   * rejects with `ConcurrencyError` and rolls the rest back. The work goes through the
+   * transaction's ports only: the storage's own may wait on the transaction (a single-writer
+   * queue) or write outside it. It must not wait on anything outside the store either: on a
+   * single-writer engine the transaction holds the store's only writer.
+   */
+  transact<T>(work: (transaction: StorageTransaction) => Promise<T>): Promise<T>;
   close(): Promise<void>;
 }
 

@@ -1,5 +1,10 @@
-import type { Adapter, CreateReadModelArgs, CreateReadModelRebuildArgs } from "../adapter.ts";
-import type { SqlDatabase } from "../sql/database.ts";
+import type {
+  Adapter,
+  CreateReadModelArgs,
+  CreateReadModelRebuildArgs,
+  StorageTransaction,
+} from "../adapter.ts";
+import type { SqlDatabase, SqlTransaction } from "../sql/database.ts";
 import { createSqliteCheckpointStore } from "./checkpoint-store.ts";
 import { createSqliteDeadLetterStore } from "./dead-letter-store.ts";
 import { createSqliteEventStore } from "./event-store.ts";
@@ -58,12 +63,23 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = ({
     const { db } = acquire();
     const tables = storageTablesFor(tablePrefix);
     await ensureStorageSchema({ db, tables });
+    const storesOver = (database: SqlDatabase): StorageTransaction => ({
+      eventStore: createSqliteEventStore({ db: database, table: tables.events }),
+      inboxLedger: createSqliteInboxLedger({ db: database, table: tables.inbox }),
+      deadLetterStore: createSqliteDeadLetterStore({ db: database, table: tables.deadLetters }),
+      scheduler: createSqliteScheduler({ db: database, table: tables.scheduledCommands }),
+    });
+    // The stores over an open transaction: their statements join it, and a `write` of their own
+    // runs inside it instead of opening another, which SQLite would refuse.
+    const boundTo = (tx: SqlTransaction): SqlDatabase => ({
+      run: tx.run,
+      all: tx.all,
+      write: (work) => work(tx),
+    });
     return {
-      eventStore: createSqliteEventStore({ db, table: tables.events }),
+      ...storesOver(db),
       checkpointStore: createSqliteCheckpointStore({ db, table: tables.checkpoints }),
-      inboxLedger: createSqliteInboxLedger({ db, table: tables.inbox }),
-      deadLetterStore: createSqliteDeadLetterStore({ db, table: tables.deadLetters }),
-      scheduler: createSqliteScheduler({ db, table: tables.scheduledCommands }),
+      transact: (work) => db.write((tx) => work(storesOver(boundTo(tx)))),
       close: release,
     };
   },

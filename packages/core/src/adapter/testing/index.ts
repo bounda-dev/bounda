@@ -36,5 +36,10 @@ export type {
 export { readModelTransactionContract } from "./read-model-transaction.contract.ts";
 export type { SchedulerContractArgs, SchedulerContractFunction } from "./scheduler.contract.ts";
 export { schedulerContract } from "./scheduler.contract.ts";
+export type {
+  StorageTransactionContractArgs,
+  StorageTransactionContractFunction,
+} from "./storage-transaction.contract.ts";
+export { storageTransactionContract } from "./storage-transaction.contract.ts";
 export type { ContractRow, TableContractArgs, TableContractFunction } from "./table.contract.ts";
 export { contractFields, tableContract } from "./table.contract.ts";

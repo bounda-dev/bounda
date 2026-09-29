@@ -11,6 +11,7 @@ export type {
   ReadModelTransacted,
   ReadModelTransaction,
   StoragePorts,
+  StorageTransaction,
 } from "./adapter.ts";
 export { isAdapter } from "./adapter.ts";
 export type { AdapterDefinition, IsAdapterDefinitionFunction } from "./adapter-definition.ts";

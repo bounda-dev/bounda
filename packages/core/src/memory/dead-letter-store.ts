@@ -3,9 +3,18 @@ import type {
   DeadLetterStore,
   ListDeadLettersArgs,
 } from "../adapter/ports/dead-letter-store.ts";
+import { snapshotMap } from "./transaction.ts";
+
+/**
+ * The in-memory dead-letter store, with a `snapshot` that returns what puts it back the way it
+ * is.
+ */
+export interface MemoryDeadLetterStore extends DeadLetterStore {
+  snapshot(): () => void;
+}
 
 export interface CreateMemoryDeadLetterStoreFunction {
-  (): DeadLetterStore;
+  (): MemoryDeadLetterStore;
 }
 
 const matches = (letter: DeadLetter, args: ListDeadLettersArgs): boolean =>
@@ -44,5 +53,6 @@ export const createMemoryDeadLetterStore: CreateMemoryDeadLetterStoreFunction = 
     remove: async (id) => {
       letters.delete(id);
     },
+    snapshot: () => snapshotMap(letters),
   };
 };

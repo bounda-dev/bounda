@@ -17,6 +17,7 @@ import {
   readModelRebuildContract,
   readModelTransactionContract,
   schedulerContract,
+  storageTransactionContract,
   tableContract,
 } from "../testing/index.ts";
 import { createSqliteAdapter, storageSchemaAdditions, storageTablesFor } from "./index.ts";
@@ -96,6 +97,7 @@ describe("the SQLite stores on node:sqlite", () => {
   inboxLedgerContract({ create: async () => (await storage()).inboxLedger });
   deadLetterStoreContract({ create: async () => (await storage()).deadLetterStore });
   schedulerContract({ create: async () => (await storage()).scheduler });
+  storageTransactionContract({ create: storage });
   tableContract({
     create: async () =>
       (
