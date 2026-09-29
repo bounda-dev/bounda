@@ -18,9 +18,7 @@ export interface MergeManifestFunction {
 }
 
 /**
- * Lays a copy's extra `package.json` keys over the scaffolder's manifest. Objects merge key by
- * key, anything else is replaced. Keys keep the base's order, `description` goes right after
- * `name`, new keys come last, and dependency maps are sorted by name, as npm writes them.
+ * Dependency maps come out sorted by name, as npm writes them.
  */
 export const mergeManifest: MergeManifestFunction = (base, patch) => {
   const merge = (left: JsonObject, right: JsonObject): JsonObject => {
@@ -51,9 +49,6 @@ export interface MapDependenciesFunction {
   (manifest: JsonObject, map: (name: string, specifier: string) => string): JsonObject;
 }
 
-/**
- * Rewrites every specifier in `dependencies` and `devDependencies`.
- */
 export const mapDependencies: MapDependenciesFunction = (manifest, map) => {
   const mapped: Record<string, Json> = { ...manifest };
   for (const field of DEPENDENCY_FIELDS) {
@@ -73,8 +68,8 @@ export interface ResolveCatalogFunction {
 }
 
 /**
- * Replaces the `catalog:` specifiers a layer writes with a caret range on the workspace catalog's
- * version, so a copy's extra tools are pinned in one place like the scaffolder's own.
+ * A layer writes `catalog:` so that a copy's extra tools are pinned in the workspace catalog, like
+ * the scaffolder's own.
  */
 export const resolveCatalog: ResolveCatalogFunction = (manifest, catalog) =>
   mapDependencies(manifest, (name, specifier) =>
@@ -85,9 +80,6 @@ export interface PinExactFunction {
   (manifest: JsonObject): JsonObject;
 }
 
-/**
- * Drops the range operator of every dependency: `^1.2.3` becomes `1.2.3`.
- */
 export const pinExact: PinExactFunction = (manifest) =>
   mapDependencies(manifest, (_name, specifier) => specifier.replace(/^[\^~]/, ""));
 
@@ -123,9 +115,7 @@ const mostCommon = (values: readonly string[]): string | undefined => {
 };
 
 /**
- * Gives each dependency the version the rest of a repository uses, as a monorepo that keeps one
- * version per tool across packages expects: an explicit pin for this package first, then the
- * version most packages use, and the copy's own when no other package has it.
+ * For a repository that keeps one version per tool across its packages.
  */
 export const alignVersions: AlignVersionsFunction = ({ manifest, neighbours, pinned }) =>
   mapDependencies(
@@ -142,10 +132,6 @@ export interface SyncpackPinsFunction {
   (args: SyncpackPinsArgs): Readonly<Record<string, string>>;
 }
 
-/**
- * The versions a syncpack configuration pins for one package through a version group that names
- * it.
- */
 export const syncpackPins: SyncpackPinsFunction = ({ config, packageName }) => {
   const groups = config.versionGroups;
   if (!Array.isArray(groups)) return {};
@@ -170,7 +156,7 @@ export interface SetCompatibilityDateFunction {
 }
 
 /**
- * Rewrites the `compatibility_date` of a `wrangler.jsonc`, leaving comments and layout alone.
+ * Replaces the date in place rather than parsing the file, so its comments and layout survive.
  */
 export const setCompatibilityDate: SetCompatibilityDateFunction = (wrangler, date) => {
   if (!COMPATIBILITY_DATE.test(wrangler))
@@ -196,9 +182,6 @@ export interface AppendLinesFunction {
   (content: string, lines: readonly string[]): string;
 }
 
-/**
- * Adds the lines a file does not have yet, after its last one.
- */
 export const appendLines: AppendLinesFunction = (content, lines) => {
   const present = new Set(content.split("\n"));
   const missing = lines.filter((line) => !present.has(line));

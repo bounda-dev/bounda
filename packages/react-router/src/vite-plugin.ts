@@ -6,9 +6,6 @@ import type { Consistency } from "./create-bounda.ts";
 import type { BoundaVitePluginOptions } from "./vite.ts";
 
 export interface CreateBoundaPluginArgs extends BoundaVitePluginOptions {
-  /**
-   * What the regeneration debounce waits on.
-   */
   readonly clock: Clock;
 }
 
@@ -19,17 +16,20 @@ export interface CreateBoundaPluginFunction {
 const RESOLVED_ID = `\0${APP_MODULE_ID}`;
 const PACKAGE_ID = "@bounda-dev/react-router";
 /**
- * Vite externalises anything it finds in `node_modules` when it renders on the server, and an
- * externalised import is loaded by Node without passing through a plugin, so `resolveId` below
- * would never get to serve the app module. `noExternal` is matched against the package, not
- * against the subpath, hence the whole package. A workspace link is internal already, which is
- * why this only shows up once the package is installed from a registry.
+ * Vite externalises `node_modules` on the server, and Node loads an external import without
+ * asking any plugin, so `resolveId` would never serve the app module. `noExternal` matches the
+ * package, not the subpath. A workspace link is never external, so only an install from a
+ * registry shows it.
  */
 const PACKAGE_PATTERN = /^@bounda-dev\/react-router(\/|$)/;
 const APP_DIRECTORY = "app";
 const WATCHED = ["domain", "read"];
 const EVENTS = ["add", "change", "unlink", "addDir", "unlinkDir"] as const;
 
+/**
+ * The registry is imported here rather than loaded by `boot`, so that Vite re-evaluates this
+ * module, and the app reboots, whenever it is regenerated.
+ */
 const serverModule = (root: string, consistency: Consistency): string =>
   [
     'import { boot } from "@bounda-dev/core/node";',
@@ -75,11 +75,6 @@ const regenerate = async ({ root, logger, failOnConvention }: Generation): Promi
   }
 };
 
-/**
- * The plugin behind `bounda()`, waiting on `clock` between a burst of changes and the
- * regeneration it causes. `closeBundle`, which Vite awaits when the server closes, drops a
- * regeneration still waiting and waits for the one running.
- */
 export const createBoundaPlugin: CreateBoundaPluginFunction = ({
   consistency = "immediate",
   debounceMs = 100,
@@ -127,6 +122,9 @@ export const createBoundaPlugin: CreateBoundaPluginFunction = ({
       };
       for (const event of EVENTS) server.watcher.on(event, schedule);
     },
+    /**
+     * Vite awaits it when the server closes, so no regeneration writes after the server is gone.
+     */
     async closeBundle() {
       cancelPending?.();
       cancelPending = undefined;

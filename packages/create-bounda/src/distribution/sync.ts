@@ -177,9 +177,7 @@ export interface GenerateFunction {
 }
 
 /**
- * Builds a copy from the scaffolder's output: its `package.json` extras, its own files over the
- * generated ones, versions pinned as the copy needs, and, with `install`, the lockfile and the
- * binding types. The app's code always comes from the scaffolder.
+ * The app's code always comes from the scaffolder; a copy only adds its layer over it.
  */
 export const generate: GenerateFunction = async ({
   target,
@@ -348,9 +346,7 @@ export interface CheckFunction {
 }
 
 /**
- * Compares the files `bounda-cloudflare-template` tracks with what a sync would write. The
- * lockfile and the binding types are only required to exist: they change with every third-party
- * release.
+ * Only the files the `bounda-cloudflare-template` repository tracks are compared.
  */
 export const check: CheckFunction = async ({ scaffolder, clone }) => {
   const { root, project } = await generate({ target: "bounda-cloudflare-template", scaffolder });

@@ -108,8 +108,9 @@ const isPackageManager = (value: string | undefined): value is PackageManager =>
   PACKAGE_MANAGERS.some((candidate) => candidate === value);
 
 /**
- * Fills the options: flags first, then prompts (unless `--yes` or no terminal), then defaults.
- * Invalid flag values throw with the accepted values.
+ * Fills the options: flags first, then prompts (unless `--yes` or `prompts` is `null`), then
+ * defaults. Throws on an invalid flag value, naming the accepted ones, and on a `--database`
+ * given with the `cloudflare` framework.
  */
 export const resolveOptions: ResolveOptionsFunction = async ({ raw, cwd, userAgent, prompts }) => {
   if (raw.database !== undefined && !isDatabase(raw.database)) {

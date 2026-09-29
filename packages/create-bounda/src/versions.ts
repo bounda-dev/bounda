@@ -16,10 +16,9 @@ export interface Versions {
   readonly typesReact: string;
   readonly wrangler: string;
   /**
-   * Vitest for a Cloudflare project: `@cloudflare/vitest-plugin` runs the tests inside workerd
-   * and only supports Vitest 4.1. It is the version of `@vitest/runner`, released in lockstep with
-   * Vitest, which this package takes from the `cloudflare` catalog because it cannot depend on two
-   * versions of `vitest`.
+   * Vitest for a Cloudflare project, which `@cloudflare/vitest-plugin` keeps on an older major.
+   * It is the version of `@vitest/runner`, released in lockstep with Vitest, taken from the
+   * `cloudflare` catalog because this package cannot depend on two versions of `vitest`.
    */
   readonly cloudflareVitest: string;
   readonly cloudflareVitestPlugin: string;

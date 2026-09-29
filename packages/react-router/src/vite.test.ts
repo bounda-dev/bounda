@@ -301,6 +301,21 @@ describe("bounda() Vite plugin", () => {
     await close();
   });
 
+  it("waits 100 ms of quiet before regenerating when no debounce is given", async () => {
+    const root = await project();
+    const { configure, start, serve, clock, close } = harness(root);
+    configure("serve");
+    await start();
+    const watcher = serve();
+
+    watcher.emit("change", join(root, "app/domain/order/order-paid.ts"));
+    clock.advance(99);
+    expect(clock.pending()).toBe(1);
+    clock.advance(1);
+    expect(clock.pending()).toBe(0);
+    await close();
+  });
+
   it("ignores changes outside domain/ and read/, and events before the config is resolved", async () => {
     const root = await project();
     const early = harness(root, { debounceMs: 20 });

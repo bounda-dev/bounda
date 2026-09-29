@@ -3,10 +3,10 @@ import { registry } from "../.bounda/registry.ts";
 import config from "../bounda.config.ts";
 
 /**
- * The Durable Object class bound as STORE in wrangler.jsonc. Each instance is one store: its
- * events, read models, scheduled commands and dead letters live in the object's own SQLite
- * (`ctx.storage.sql`). A command updates the read models before it answers; anything that reacts
- * to events later runs in the object's alarm, which it arms itself.
+ * The Durable Object class bound as STORE in wrangler.jsonc. Each instance is one store, with
+ * everything it keeps in the object's own SQLite. A command updates the read models before it
+ * answers; policies, processes and scheduled commands run later, in the object's alarm, which it
+ * arms itself.
  */
 export const Store = createBoundaObject({ registry, config });
 
