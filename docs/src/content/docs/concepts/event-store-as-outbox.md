@@ -66,9 +66,12 @@ Three other designs answer the same problem, and each was tried or measured befo
   if the append lock is taken early, serializes the whole store behind one HTTP request. Reactions
   exist to call outside, so this is the one thing they cannot hold a transaction across.
 - **Hold what the handler emits and dispatch it at the end.** NServiceBus's batched dispatch and
-  MassTransit's in-memory outbox do this. It keeps the handler's writes out of the store until it
-  finishes, but the handler cannot wait for a command's result, so it cannot compensate, and once
-  the batch is flushed the same gaps reappear between one write and the next.
+  MassTransit's in-memory outbox do this: what the handler sends is handed to the transport only
+  once the handler has completed, and nothing goes out if it throws. It keeps the handler's
+  effects out of the store until it finishes, but a handler that needs the answer to what it sent
+  cannot have it before then, so it cannot compensate in the same run, and once the batch is
+  flushed the same gaps reappear between one write and the next: MassTransit's own docs say what
+  the in-memory outbox holds is lost if the process crashes.
 - **An outbox table and a relay.** NServiceBus's Outbox, MassTransit's transactional outbox,
   Wolverine with Marten. Everything is durable in one transaction, but the decision is deferred to
   the relay: the handler cannot know whether its command was accepted. It also adds a table and a
@@ -103,6 +106,6 @@ The promise is about what reaches the store. Three things are, on purpose, outsi
 - The precedents: Axon's [unit of work](https://docs.axoniq.io/axon-framework-reference/4.11/messaging-concepts/unit-of-work/),
   NServiceBus's [Outbox](https://docs.particular.net/nservicebus/outbox/) and
   [batched dispatch](https://docs.particular.net/nservicebus/messaging/batched-dispatch),
-  MassTransit's [transactional outbox](https://masstransit.io/documentation/patterns/transactional-outbox)
-  and [in-memory outbox](https://masstransit.io/documentation/patterns/in-memory-outbox),
+  MassTransit's [transactional outbox](https://masstransit.massient.com/documentation/patterns/transactional-outbox)
+  and [in-memory outbox](https://masstransit.massient.com/documentation/patterns/in-memory-outbox),
   Wolverine's [Marten integration](https://wolverinefx.net/guide/durability/marten/event-sourcing.html).
