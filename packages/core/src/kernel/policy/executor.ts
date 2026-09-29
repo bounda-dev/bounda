@@ -1,10 +1,11 @@
+import type { Scheduler } from "../../adapter/ports/scheduler.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
-import { createCommandsFacade } from "../command/facade.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
-import { createReactionCommandIds, deriveIdempotencyKey } from "../shared/idempotency-key.ts";
+import { createReactionCommands } from "../command/reaction-commands.ts";
+import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { withTimeout } from "../shared/timeout.ts";
 import { ATTRIBUTES, traced } from "../telemetry.ts";
 import type { PolicyRuntime } from "./build-policies.ts";
@@ -34,6 +35,7 @@ export interface PolicyExecutor {
 export interface CreatePolicyExecutorArgs {
   readonly aggregates: AggregatesRuntime;
   readonly pipeline: CommandPipeline;
+  readonly scheduler: Scheduler;
   readonly config: ResolvedConfig;
   readonly clock: Clock;
 }
@@ -42,35 +44,32 @@ export interface CreatePolicyExecutorFunction {
   (args: CreatePolicyExecutorArgs): PolicyExecutor;
 }
 
-/**
- * The handler receives its collaborators, the event, a commands facade that dispatches one causal
- * hop deeper with ids derived from the run, and the run's idempotency key. It has the aggregate's
- * policy timeout to finish.
- */
 export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
   aggregates,
   pipeline,
+  scheduler,
   config,
   clock,
 }) => ({
-  run: ({ policy, event, attempt, replay }) => {
+  run: async ({ policy, event, attempt, replay }) => {
     const idempotencyKey = deriveIdempotencyKey({
       kind: "policy",
       handler: policy.name,
       subject: event.id,
       replay,
     });
-    const commands = createCommandsFacade({
+    const reaction = createReactionCommands({
       aggregates,
       pipeline,
+      scheduler,
       context: {
         correlationId: event.metadata.correlationId,
         causationId: event.id,
         depth: event.metadata.depth,
       },
-      commandIds: createReactionCommandIds(idempotencyKey),
+      idempotencyKey,
     });
-    return traced({
+    const handled = traced({
       name: `bounda.policy ${policy.name}`,
       attributes: {
         [ATTRIBUTES.policy]: policy.name,
@@ -83,12 +82,25 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
       },
       run: async () => {
         await withTimeout({
-          run: () => policy.handler({ ...policy.collaborators, event, commands, idempotencyKey }),
+          run: () =>
+            policy.handler({
+              ...policy.collaborators,
+              event,
+              commands: reaction.commands,
+              idempotencyKey,
+              signal: reaction.signal,
+            }),
           timeoutMs: config.forAggregate(policy.aggregate).policies.timeoutMs,
           subject: `policy ${policy.name}`,
           clock,
         });
       },
     });
+    try {
+      await handled;
+    } catch (error) {
+      await reaction.abandon(error);
+      throw error;
+    }
   },
 });

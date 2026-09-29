@@ -208,9 +208,10 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   not ordered among themselves (each retries on its own); use it when the effect itself waits,
   and a delayed command when the decision must see the state at that time.
   Their `idempotencyKey` is the same on every retry for one event (for a
-  deadline, one field at one moment) and new on a dead-letter replay. A collaborator cannot be
-  named after a handler argument (`event`,
-  `commands`, `state`, `aggregateId`, `command`, `events`, `idempotencyKey`, `after`).
+  deadline, one field at one moment) and new on a dead-letter replay. Their `signal` aborts when
+  the run times out or fails: pass it to outside calls. A collaborator cannot be named after a
+  handler argument (`event`, `commands`, `state`, `aggregateId`, `command`, `events`,
+  `idempotencyKey`, `signal`, `after`).
 - Process deadlines: `after()` counts from the event's time (in `at-`, from the moment that came
   due), so retries and late runs set the same moment and a daily chain catches up after an
   outage. Each deadline comes due once per moment, earliest first; nothing runs after the process

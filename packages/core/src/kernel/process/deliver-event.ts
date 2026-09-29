@@ -116,15 +116,18 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
       run: async (attempt) => {
         let current = instance;
         for (let race = 0; ; race += 1) {
-          const state = await handlers.runEventHandler({
+          const handled = await handlers.runEventHandler({
             process,
             event,
             instanceId,
             instance: current,
             attempt,
           });
+          const recording = current;
           try {
-            await append(process, instanceId, current, handledEntries(process, event, state));
+            await handled.record(() =>
+              append(process, instanceId, recording, handledEntries(process, event, handled.state)),
+            );
             return;
           } catch (error) {
             if (

@@ -80,7 +80,13 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     logger,
   });
   const policies = buildPolicies({ registry, config });
-  const policyExecutor = createPolicyExecutor({ aggregates, pipeline, config, clock });
+  const policyExecutor = createPolicyExecutor({
+    aggregates,
+    pipeline,
+    scheduler: storage.scheduler,
+    config,
+    clock,
+  });
   const processes = createProcessRunner({
     processes: buildProcesses({ registry, config }),
     aggregates,

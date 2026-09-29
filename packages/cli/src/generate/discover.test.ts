@@ -496,12 +496,14 @@ describe("discoverProject convention problems", () => {
       "app/domain/order/policies/mail-on-order-placed/index.ts",
       "app/domain/order/policies/sync-on-order-placed/index.ts",
       "app/domain/order/policies/sync-on-order-placed/commands.http.ts",
+      "app/domain/order/policies/sync-on-order-placed/signal.http.ts",
       "app/domain/order/policies/sync-on-order-placed/deep/",
       "app/domain/order/commands/place-order/index.ts",
       "app/domain/order/commands/place-order/idempotency-key.fixed.ts",
       "app/domain/order/processes/payment/index.ts",
       "app/domain/order/processes/payment/aggregate-id.memory.ts",
       "app/domain/order/processes/payment/after.memory.ts",
+      "app/domain/order/processes/payment/signal.memory.ts",
     ]);
     expect(await problemsOf(root)).toEqual([
       'app/domain/order/commands/place-order/idempotency-key.fixed.ts: a command handler already receives "idempotencyKey"; give the collaborator another name',
@@ -510,8 +512,10 @@ describe("discoverProject convention problems", () => {
       'app/domain/order/policies/mail-on-order-placed: policy "mailOnOrderPlaced" is also defined as mail-on-order-placed.ts',
       "app/domain/order/policies/sync-on-order-placed/deep: a policy directory holds only index.ts and collaborators",
       'app/domain/order/policies/sync-on-order-placed/commands.http.ts: a policy handler already receives "commands"; give the collaborator another name',
+      'app/domain/order/policies/sync-on-order-placed/signal.http.ts: a policy handler already receives "signal"; give the collaborator another name',
       'app/domain/order/processes/payment/after.memory.ts: a process handler already receives "after"; give the collaborator another name',
       'app/domain/order/processes/payment/aggregate-id.memory.ts: a process handler already receives "aggregateId"; give the collaborator another name',
+      'app/domain/order/processes/payment/signal.memory.ts: a process handler already receives "signal"; give the collaborator another name',
     ]);
   });
 

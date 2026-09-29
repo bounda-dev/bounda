@@ -36,4 +36,9 @@ export type PolicyHandlerArgs<Event, Commands, Collaborators extends object = Em
    * same on every automatic retry for this event, new when an operator replays a dead letter.
    */
   readonly idempotencyKey: string;
+  /**
+   * Aborted when the handler runs out of time or its run fails: pass it to what the handler calls
+   * outside (`fetch(url, { signal })`) so it stops. Commands dispatched after that are refused.
+   */
+  readonly signal: AbortSignal;
 } & Readonly<Collaborators>;

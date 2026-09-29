@@ -53,7 +53,7 @@ export const createDeadlineStep: CreateDeadlineStepFunction = ({ instances, hand
     replay,
   }: RunDeadlineArgs): Promise<void> => {
     const reachedId = ids.next();
-    const state = await handlers.runDeadlineHandler({
+    const handled = await handlers.runDeadlineHandler({
       process,
       instanceId,
       instance,
@@ -62,25 +62,28 @@ export const createDeadlineStep: CreateDeadlineStepFunction = ({ instances, hand
       causationId: reachedId,
       replay,
     });
-    if (due.field === TIMEOUT_DEADLINE) {
+    const { state } = handled;
+    await handled.record(async () => {
+      if (due.field === TIMEOUT_DEADLINE) {
+        await instances.appendPastParks(process, instanceId, instance, [
+          lifecycleEntries.timedOut(state, context, reachedId),
+        ]);
+        return;
+      }
+      const kept = (state as Readonly<Record<string, unknown>>)[due.field];
+      if (
+        process.deadlineHandlers[due.field] !== undefined &&
+        Date.parse(String(kept)) === Date.parse(due.at)
+      ) {
+        throw new ValidationError(
+          `Process ${process.name} left the deadline "${due.field}" at the moment that came due`,
+          [{ path: [due.field], message: "Set it to null, or to another moment with after()" }],
+        );
+      }
       await instances.appendPastParks(process, instanceId, instance, [
-        lifecycleEntries.timedOut(state, context, reachedId),
+        lifecycleEntries.deadlineReached(due, state, context, reachedId),
       ]);
-      return;
-    }
-    const kept = (state as Readonly<Record<string, unknown>>)[due.field];
-    if (
-      process.deadlineHandlers[due.field] !== undefined &&
-      Date.parse(String(kept)) === Date.parse(due.at)
-    ) {
-      throw new ValidationError(
-        `Process ${process.name} left the deadline "${due.field}" at the moment that came due`,
-        [{ path: [due.field], message: "Set it to null, or to another moment with after()" }],
-      );
-    }
-    await instances.appendPastParks(process, instanceId, instance, [
-      lifecycleEntries.deadlineReached(due, state, context, reachedId),
-    ]);
+    });
   };
 
   const thrown = new WeakMap<object, Deadline>();
