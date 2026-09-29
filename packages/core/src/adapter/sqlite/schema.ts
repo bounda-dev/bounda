@@ -32,8 +32,7 @@ export interface CheckpointTableStatementFunction {
 }
 
 /**
- * DDL for a checkpoints table: part of the storage schema, and created next to a read model's
- * rows when the read model lives in a database of its own.
+ * Apart from the storage schema because a read model in a database of its own needs it too.
  */
 export const checkpointTableStatement: CheckpointTableStatementFunction = (table) =>
   `CREATE TABLE IF NOT EXISTS ${table} (
@@ -116,19 +115,13 @@ export interface EnsureStorageSchemaFunction {
   (args: EnsureStorageSchemaArgs): Promise<void>;
 }
 
+/**
+ * The `*Columns` are the tables' columns as `PRAGMA table_info` reports them.
+ */
 export interface StorageSchemaAdditionsArgs {
   readonly tables: StorageTables;
-  /**
-   * The columns the inbox table has, from `PRAGMA table_info`.
-   */
   readonly inboxColumns: readonly string[];
-  /**
-   * The columns the dead-letters table has, from `PRAGMA table_info`.
-   */
   readonly deadLetterColumns: readonly string[];
-  /**
-   * The columns the scheduled-commands table has, from `PRAGMA table_info`.
-   */
   readonly scheduledCommandColumns: readonly string[];
 }
 

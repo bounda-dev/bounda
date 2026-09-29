@@ -35,7 +35,8 @@ export interface AssertIdentifierFunction {
 }
 
 /**
- * Accepts `^[a-z][a-z0-9_]*$` and nothing else, so a table or column name can never carry SQL.
+ * Returns `name` when it matches `^[a-z][a-z0-9_]*$`, so a table or column name can never carry
+ * SQL; throws `ConfigurationError` naming `subject` otherwise.
  */
 export const assertIdentifier: AssertIdentifierFunction = ({ name, subject }) => {
   if (!IDENTIFIER.test(name)) {

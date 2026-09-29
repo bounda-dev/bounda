@@ -2,9 +2,8 @@ import type { NewCommand } from "../../contracts/command.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
 
 /**
- * A command waiting for its time: the one mechanism behind `delay` and process timeouts.
- * `dedupeKey` identifies the schedule; scheduling the same key again replaces the previous entry,
- * which is how a process moves or cancels its timeout.
+ * A command waiting for its time. `dedupeKey` identifies the entry: scheduling the same key
+ * again replaces it.
  */
 export interface ScheduledCommand {
   readonly dedupeKey: string;
@@ -16,9 +15,9 @@ export interface ScheduledCommand {
 
 /**
  * Who holds a claimed command and which version of it they hold. `claimId` is new on every claim;
- * `revision` grows each time the key is scheduled again with something different. `complete` and
- * `fail` act only while both still match, so a worker finishing a command that was rescheduled
- * meanwhile, or whose lease another worker took over, cannot undo the newer state.
+ * `revision` grows each time the key is scheduled again with something different. `complete`,
+ * `fail` and `defer` act only while both still match, so a worker finishing a command that was
+ * rescheduled meanwhile, or whose lease another worker took over, cannot undo the newer state.
  */
 export interface ScheduledClaim {
   readonly dedupeKey: string;
@@ -39,7 +38,7 @@ export interface ScheduleArgs {
   /**
    * When the key already holds this very command with this context, leave the entry as it is,
    * its time and attempts included, instead of moving it to `executeAt`: a retry that is backing
-   * off stays backed off. What the process runner writes a deadline entry with.
+   * off stays backed off.
    */
   readonly keepTimingOfSameCommand?: boolean;
 }
@@ -57,15 +56,11 @@ export interface FailScheduledArgs {
   readonly claim: ScheduledClaim;
   readonly error: string;
   /**
-   * When to try again. Without it the command is dropped from the schedule; the runner has
-   * dead-lettered it.
+   * Without it the command is dropped: the runner has dead-lettered it.
    */
   readonly retryAt?: Date;
 }
 
-/**
- * What `defer` takes: the claim to hand back and when the command becomes due again.
- */
 export interface DeferScheduledArgs {
   readonly claim: ScheduledClaim;
   readonly executeAt: Date;
@@ -85,14 +80,12 @@ export interface ListScheduledArgs {
 }
 
 /**
- * Time-based work. Claiming must be atomic: with two workers racing, each due command goes to
- * exactly one of them.
+ * Claiming must be atomic: with two workers racing, each due command goes to exactly one of them.
  */
 export interface Scheduler {
   /**
-   * Schedules a command under its key, replacing what the key held. A command being run keeps its
-   * claim, so the new version runs once the current run ends, never beside it; scheduling exactly
-   * what the key already holds changes nothing.
+   * Replaces what the key held. A command being run keeps its claim, so the new version runs once
+   * the current run ends, never beside it. Scheduling exactly what the key holds changes nothing.
    */
   schedule(args: ScheduleArgs): Promise<void>;
   /**
@@ -102,8 +95,8 @@ export interface Scheduler {
   claimDue(args: ClaimDueArgs): Promise<readonly ClaimedCommand[]>;
   /**
    * The earliest moment `claimDue` could hand something out: the soonest execution time of a
-   * command nobody holds, or the end of the oldest lease. `null` when nothing is scheduled. What a
-   * host without a polling loop, such as a Durable Object, arms its alarm for.
+   * command nobody holds, or the end of the oldest lease; `null` when nothing is scheduled. For a
+   * host without a polling loop, such as a Durable Object, to arm its alarm.
    */
   nextDueAt(args: NextDueAtArgs): Promise<Date | null>;
   /**
