@@ -52,7 +52,6 @@ export const createMemoryInboxLedger: CreateMemoryInboxLedgerFunction = () => {
         claimedAt: now.toISOString(),
         claimId,
         ...(existing?.lastError === undefined ? {} : { lastError: existing.lastError }),
-        ...(existing?.gaveUp === undefined ? {} : { gaveUp: existing.gaveUp }),
       });
       return claimId;
     },
@@ -61,18 +60,11 @@ export const createMemoryInboxLedger: CreateMemoryInboxLedgerFunction = () => {
       const existing = held({ subscriber, eventId }, claimId);
       if (existing !== undefined) claims.set(key, { ...existing, status: "succeeded" });
     },
-    fail: async ({ subscriber, eventId, error, gaveUp, claimId }) => {
+    fail: async ({ subscriber, eventId, error, claimId }) => {
       const key = keyOf(subscriber, eventId);
       const existing = held({ subscriber, eventId }, claimId);
-      if (existing !== undefined) {
-        const { gaveUp: _cleared, ...rest } = existing;
-        claims.set(key, {
-          ...rest,
-          status: "failed",
-          lastError: error,
-          ...(gaveUp === undefined ? {} : { gaveUp }),
-        });
-      }
+      if (existing !== undefined)
+        claims.set(key, { ...existing, status: "failed", lastError: error });
     },
     get: async ({ subscriber, eventId }) => claims.get(keyOf(subscriber, eventId)) ?? null,
     snapshot: () => snapshotMap(claims),

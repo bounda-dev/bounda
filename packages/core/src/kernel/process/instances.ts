@@ -1,4 +1,4 @@
-import type { StoragePorts } from "../../adapter/adapter.ts";
+import type { EventStore } from "../../adapter/ports/event-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import { ConcurrencyError, NotFoundError } from "../../contracts/errors.ts";
 import { type StoredEvent, streamId } from "../../contracts/event.ts";
@@ -8,7 +8,6 @@ import {
   foldProcess,
   type LifecycleEntry,
   type ParkedEvent,
-  PROCESS_EVENTS,
   type ProcessInstance,
   processAggregateType,
 } from "./lifecycle.ts";
@@ -25,16 +24,6 @@ export interface ProcessInstances {
     entries: readonly LifecycleEntry[],
   ): Promise<void>;
   /**
-   * Appends `entries` past the events parked on the instance since it was folded; any other write
-   * to the stream meanwhile still fails it.
-   */
-  appendPastParks(
-    process: ProcessRuntime,
-    instanceId: string,
-    instance: ProcessInstance,
-    entries: readonly LifecycleEntry[],
-  ): Promise<void>;
-  /**
    * Whether `error` is another write to the instance's stream getting there first.
    */
   lostRace(process: ProcessRuntime, instanceId: string, error: unknown): boolean;
@@ -42,7 +31,10 @@ export interface ProcessInstances {
 }
 
 export interface CreateProcessInstancesArgs {
-  readonly storage: StoragePorts;
+  /**
+   * Where the instance streams live: the storage's event store, or a unit of work's view of it.
+   */
+  readonly eventStore: EventStore;
   readonly ids: IdGenerator;
   readonly clock: Clock;
 }
@@ -51,9 +43,13 @@ export interface CreateProcessInstancesFunction {
   (args: CreateProcessInstancesArgs): ProcessInstances;
 }
 
-export const createProcessInstances: CreateProcessInstancesFunction = ({ storage, ids, clock }) => {
+export const createProcessInstances: CreateProcessInstancesFunction = ({
+  eventStore,
+  ids,
+  clock,
+}) => {
   const load = async (process: ProcessRuntime, instanceId: string): Promise<ProcessInstance> => {
-    const loaded = await storage.eventStore.load({
+    const loaded = await eventStore.load({
       aggregateType: processAggregateType(process.type),
       aggregateId: instanceId,
     });
@@ -67,7 +63,7 @@ export const createProcessInstances: CreateProcessInstancesFunction = ({ storage
     entries: readonly LifecycleEntry[],
   ): Promise<void> => {
     const aggregateType = processAggregateType(process.type);
-    await storage.eventStore.append({
+    await eventStore.append({
       aggregateType,
       aggregateId: instanceId,
       expectedVersion: instance.version,
@@ -89,37 +85,8 @@ export const createProcessInstances: CreateProcessInstancesFunction = ({ storage
     error.streamId ===
       streamId({ aggregateType: processAggregateType(process.type), aggregateId: instanceId });
 
-  const appendPastParks = async (
-    process: ProcessRuntime,
-    instanceId: string,
-    instance: ProcessInstance,
-    entries: readonly LifecycleEntry[],
-  ): Promise<void> => {
-    let current = instance;
-    for (;;) {
-      try {
-        await append(process, instanceId, current, entries);
-        return;
-      } catch (error) {
-        if (!lostRace(process, instanceId, error)) throw error;
-        const loaded = await storage.eventStore.load({
-          aggregateType: processAggregateType(process.type),
-          aggregateId: instanceId,
-        });
-        const since = loaded.events.slice(current.version);
-        if (
-          since.length === 0 ||
-          !since.every((event) => event.type === PROCESS_EVENTS.eventParked)
-        ) {
-          throw error;
-        }
-        current = foldProcess({ initialState: process.initialState, events: loaded.events });
-      }
-    }
-  };
-
   const parkedEvent = async (parked: ParkedEvent): Promise<StoredEvent> => {
-    const { events } = await storage.eventStore.load({
+    const { events } = await eventStore.load({
       aggregateType: parked.aggregateType,
       aggregateId: parked.aggregateId,
     });
@@ -132,5 +99,5 @@ export const createProcessInstances: CreateProcessInstancesFunction = ({ storage
     return event;
   };
 
-  return { load, append, appendPastParks, lostRace, parkedEvent };
+  return { load, append, lostRace, parkedEvent };
 };

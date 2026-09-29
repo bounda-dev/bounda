@@ -140,15 +140,18 @@ What it cannot know is whether the side effect of a partially finished handler h
 why a handler that talks to the outside world should be written so that running it twice is
 harmless.
 
-**A policy attempt writes everything or nothing.** The commands a policy handler dispatches are
-decided on the spot but stored only when the attempt ends, together, in one transaction of the
-store: the events of its immediate commands, its delayed commands, the claim that marks the
-event done and, when the runtime gives up, the dead letter. A handler that throws, runs out of
-time or dies before that leaves no command behind, immediate or delayed, and the next attempt
-decides afresh. What `await commands.x()` returns is the aggregate's decision, not something
-stored yet: call the outside world before dispatching, not after, and pass `idempotencyKey`,
-because the attempt may run again. A process step still writes as it goes; it moves to the same
-rule next.
+**An attempt writes everything or nothing.** The commands a policy or process handler dispatches
+are decided on the spot but stored only when the attempt ends, together, in one transaction of
+the store: the events of its immediate commands, its delayed commands, the claim that marks the
+event done and, when the runtime gives up, the dead letter. A process step adds its own lifecycle
+events (`ProcessStarted`, `ProcessHandled`, `ProcessCompleted`, `ProcessDeadlineReached`,
+`ProcessFailed`) and its next deadline's entry to the same transaction, so a deadline can never
+disagree with the state it was computed from. A handler that throws, runs out of time or dies
+before that leaves no command behind, immediate or delayed, and the next attempt decides afresh.
+When the instance moved meanwhile, because a deadline or another instance wrote to it, the step
+runs again on the instance as it now is, without spending an attempt. What `await commands.x()`
+returns is the aggregate's decision, not something stored yet: call the outside world before
+dispatching, not after, and pass `idempotencyKey`, because the attempt may run again.
 
 **Every reaction gets an idempotency key.** Policy and process handlers receive
 `idempotencyKey`, a UUID that is the same on every retry of the handler for one event (for an
@@ -346,9 +349,12 @@ it`), and so does `parked` on the letters of `app.deadLetters`. Discarding the l
 instance up: it stays failed, its parked events never run, though they stay in its history, and
 the events that reach it afterwards are dropped, as for an instance that has ended.
 
-The failure is state as well: `ProcessFailed` carries its dead letter, so a letter whose writing
-was cut short is filed again the next time the process runner reaches the instance: an event for
-it, a retry of the deadline that failed, or a replay.
+The failure is state as well: `ProcessFailed` names its dead letter (`letterId`), and the two are
+written in the same transaction, with the claim of the event that failed. A failure that could
+not be written leaves nothing, and the handler runs again once its claim's lease expires. The
+same holds for each step of a replay: the replayed handler, each parked event or deadline drained
+and the final `ProcessResumed` are one transaction each, so a replay cut short goes on from the
+last step written on the next replay.
 
 This is Axon's sequenced dead-letter queue, which parks the events of one sequence behind the one
 that failed, with the process instance as the sequence.

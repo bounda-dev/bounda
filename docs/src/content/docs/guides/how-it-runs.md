@@ -93,8 +93,8 @@ Run several worker instances on PostgreSQL and each policy and process handler r
 instance per event**: the inbox ledger claims `(handler, event)` atomically, so instances share
 that work and add throughput for reactions. Delivery is still at least once: a handler that crashes
 midway runs again ([what the runtime promises](/guides/reacting-to-events/#what-the-runtime-promises)),
-but a policy attempt's writes land in one transaction, so what it decided is stored whole or not
-at all.
+but an attempt's writes, a policy's or a process step's, land in one transaction, so what it
+decided is stored whole or not at all.
 An instance that finds an event claimed by another one waits instead of moving past it; if the
 other instance dies, its claim lapses after twice the handler timeout and the event runs again.
 

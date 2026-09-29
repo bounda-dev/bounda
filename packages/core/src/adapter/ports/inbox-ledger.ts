@@ -1,5 +1,3 @@
-import type { DeadLetterErrorType } from "./dead-letter-store.ts";
-
 export type ClaimStatus = "pending" | "succeeded" | "failed";
 
 export interface ClaimArgs {
@@ -32,13 +30,6 @@ export interface SettleClaimArgs extends ClaimKey {
 
 export interface FailClaimArgs extends SettleClaimArgs {
   readonly error: string;
-  /**
-   * Set by a runner that gives up on the event before it writes the dead letter, as the process
-   * runner does, so whoever claims it next writes the letter instead of running the handler again.
-   * A runner that commits the letter and the claim together leaves it out. A `fail` without it
-   * clears it.
-   */
-  readonly gaveUp?: DeadLetterErrorType | undefined;
 }
 
 export interface ClaimRecord extends ClaimKey {
@@ -50,10 +41,6 @@ export interface ClaimRecord extends ClaimKey {
    */
   readonly claimId?: string;
   readonly lastError?: string;
-  /**
-   * As the last `fail` set it; kept across `tryClaim`.
-   */
-  readonly gaveUp?: DeadLetterErrorType;
 }
 
 /**
@@ -61,7 +48,7 @@ export interface ClaimRecord extends ClaimKey {
  * once the runner claims `(subscriber, eventId)`. `tryClaim` must be atomic: of two racing
  * claimers exactly one gets `true`. A `succeeded` claim is never handed out again, a `failed` one
  * is, a `pending` one only once its lease expires. Claiming again counts an attempt and keeps
- * `lastError` and `gaveUp`.
+ * `lastError`.
  */
 export interface InboxLedger {
   /**

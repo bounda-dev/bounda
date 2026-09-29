@@ -1,7 +1,6 @@
-import type { StoragePorts } from "../../adapter/adapter.ts";
 import type {
-  DeadLetter,
   DeadLetterErrorType,
+  DeadLetterStore,
   NewDeadLetter,
 } from "../../adapter/ports/dead-letter-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
@@ -28,21 +27,22 @@ export interface ProcessFailures {
     attempts: number,
     errorType: DeadLetterErrorType,
   ): NewDeadLetter;
-  file(process: ProcessRuntime, letter: NewDeadLetter, error?: unknown): Promise<void>;
   /**
-   * Files `letter`, or leaves it to be filed when the instance is next reached if filing fails:
-   * the `ProcessFailed` already written carries it.
+   * Stages `letter` in `store`, a unit's dead letters, with the error's stack when it has one.
    */
-  fileLater(process: ProcessRuntime, letter: NewDeadLetter, error: unknown): Promise<void>;
+  file(
+    store: DeadLetterStore,
+    process: ProcessRuntime,
+    letter: NewDeadLetter,
+    error?: unknown,
+  ): Promise<void>;
   /**
-   * Files the letter of a failed instance whose filing was cut short. Resolves to the letter when
-   * it was already filed.
+   * Counts and logs `letter` once the unit that filed it committed.
    */
-  healFailure(process: ProcessRuntime, instance: ProcessInstance): Promise<DeadLetter | null>;
+  filed(process: ProcessRuntime, letter: NewDeadLetter): void;
 }
 
 export interface CreateProcessFailuresArgs {
-  readonly storage: StoragePorts;
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly logger: Logger;
@@ -52,19 +52,8 @@ export interface CreateProcessFailuresFunction {
   (args: CreateProcessFailuresArgs): ProcessFailures;
 }
 
-export const createProcessFailures: CreateProcessFailuresFunction = ({
-  storage,
-  ids,
-  clock,
-  logger,
-}) => {
-  const letterOf = (
-    process: ProcessRuntime,
-    subject: FailureSubject,
-    error: unknown,
-    attempts: number,
-    errorType: DeadLetterErrorType,
-  ): NewDeadLetter => {
+export const createProcessFailures: CreateProcessFailuresFunction = ({ ids, clock, logger }) => ({
+  letterOf: (process, subject, error, attempts, errorType) => {
     const now = clock.now().toISOString();
     return {
       id: ids.next(),
@@ -80,17 +69,12 @@ export const createProcessFailures: CreateProcessFailuresFunction = ({
       firstFailedAt: now,
       lastFailedAt: now,
     };
-  };
-
-  const file = async (
-    process: ProcessRuntime,
-    letter: NewDeadLetter,
-    error?: unknown,
-  ): Promise<void> => {
+  },
+  file: async (store, _process, letter, error) => {
     const stack = error === undefined ? undefined : errorDetails(error).stack;
-    await storage.deadLetterStore.add(
-      stack === undefined ? letter : { ...letter, errorStack: stack },
-    );
+    await store.add(stack === undefined ? letter : { ...letter, errorStack: stack });
+  },
+  filed: (process, letter) => {
     deadLettered({ kind: "process", subscriber: process.name, errorType: letter.errorType });
     logger.warn("process dead-lettered", {
       process: process.name,
@@ -98,35 +82,8 @@ export const createProcessFailures: CreateProcessFailuresFunction = ({
       errorType: letter.errorType,
       attempts: letter.attempts,
     });
-  };
-
-  const fileLater = (
-    process: ProcessRuntime,
-    letter: NewDeadLetter,
-    error: unknown,
-  ): Promise<void> =>
-    file(process, letter, error).catch((filing: unknown) => {
-      logger.warn("process dead letter not filed yet; it is filed when the instance is reached", {
-        process: process.name,
-        letter: letter.id,
-        error: errorDetails(filing).message,
-      });
-    });
-
-  const healFailure = async (
-    process: ProcessRuntime,
-    instance: ProcessInstance,
-  ): Promise<DeadLetter | null> => {
-    const letter = instance.status === "failed" ? instance.failure?.letter : undefined;
-    if (letter === undefined) return null;
-    const filed = await storage.deadLetterStore.get(letter.id);
-    if (filed !== null) return filed;
-    await file(process, letter);
-    return null;
-  };
-
-  return { letterOf, file, fileLater, healFailure };
-};
+  },
+});
 
 export interface DeadlineSubjectFunction {
   (process: ProcessRuntime, instanceId: string, field: string): FailureSubject;
@@ -151,7 +108,7 @@ export interface BlockedOnFunction {
  * letter is named.
  */
 export const blockedOn: BlockedOnFunction = (instance, letter) =>
-  letter === undefined || instance.failure?.letter?.id === letter;
+  letter === undefined || instance.failure?.letterId === letter;
 
 export interface DrainFailureTypeFunction {
   (error: unknown): DeadLetterErrorType;

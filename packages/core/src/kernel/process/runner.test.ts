@@ -619,21 +619,44 @@ describe("process runner", () => {
   it("holds and redelivers when another instance moved the process stream first", async () => {
     reset("ok");
     const { logger, entries } = createRecordingLogger();
-    const harness = await createReactiveHarness({ registry, logger });
-    const original = harness.storage.eventStore.append.bind(harness.storage.eventStore);
+    const harness = await createReactiveHarness({
+      registry,
+      logger,
+      config: { runtime: { commands: { concurrencyRetries: 0 } } },
+    });
+    const schedule = harness.storage.scheduler.schedule;
     let interfered = false;
-    harness.storage.eventStore.append = async (args) => {
-      if (!interfered && args.aggregateType === "process:OrderPayment") {
+    harness.storage.scheduler.schedule = async (args) => {
+      if (!interfered) {
         interfered = true;
-        await original({
-          ...args,
-          events: args.events.map((event) => ({ ...event, id: "sneaky" })),
+        const stream = { aggregateType: "process:OrderPayment", aggregateId: "o-1" };
+        await harness.storage.eventStore.append({
+          ...stream,
+          expectedVersion: 0,
+          events: [
+            {
+              id: "sneaky",
+              ...stream,
+              version: 1,
+              type: "ProcessStarted",
+              payload: { state: { reminders: 0, method: null }, eventId: "elsewhere" },
+              timestamp: "2026-01-01T00:00:00.000Z",
+              metadata: {
+                correlationId: "c",
+                causationId: "c",
+                depth: 0,
+                schemaVersion: 1,
+                system: true,
+              },
+            },
+          ],
         });
       }
-      return original(args);
+      return schedule(args);
     };
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
     await harness.dispatcher.processOnce();
+    expect(interfered).toBe(true);
     expect(await harness.storage.checkpointStore.get("processes")).toBe(0);
     expect(entries).toEqual([
       {
@@ -1080,7 +1103,9 @@ describe("processes that listen to other aggregates", () => {
 
   it("dead-letter an event whose correlate throws or returns no id, and keep going", async () => {
     seen.length = 0;
+    const { logger, entries } = createRecordingLogger();
     const harness = await createReactiveHarness({
+      logger,
       registry: withCorrelate({
         payment: {
           PaymentFailed: (event) => {
@@ -1104,9 +1129,30 @@ describe("processes that listen to other aggregates", () => {
         payload: { paymentId, orderId, reason: paymentId },
       });
     }
+    const [boom] = (
+      await harness.storage.eventStore.load({ aggregateType: "payment", aggregateId: "p-1" })
+    ).events;
+    const key = { subscriber: "order.checkout", eventId: boom?.id ?? "" };
+    await harness.storage.inboxLedger.tryClaim({
+      ...key,
+      now: harness.clock.now(),
+      leaseMs: 60_000,
+    });
+    await harness.dispatcher.processOnce();
+    expect(await harness.storage.deadLetterStore.count()).toBe(0);
+    harness.clock.advance(60_001);
     await harness.dispatcher.processUntilIdle();
     await harness.dispatcher.processUntilIdle();
     expect(seen).toEqual(["o-1 failed: p-3"]);
+    expect(await harness.storage.inboxLedger.get(key)).toMatchObject({ status: "succeeded" });
+    expect(entries.filter((entry) => entry.message === "process dead-lettered")).toHaveLength(3);
+    const filed = await harness.storage.deadLetterStore.count();
+    await harness.storage.checkpointStore.set("processes", 0);
+    await harness.dispatcher.processUntilIdle();
+    expect(await harness.storage.deadLetterStore.count()).toBe(filed);
+    expect(await harness.storage.checkpointStore.get("processes")).toBe(
+      await harness.storage.eventStore.lastPosition(),
+    );
     const letters = await harness.storage.deadLetterStore.list();
     expect(
       letters.map((letter) => [letter.aggregateId, letter.errorType, letter.errorMessage]),

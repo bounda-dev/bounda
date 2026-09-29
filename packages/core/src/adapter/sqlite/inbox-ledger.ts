@@ -1,11 +1,5 @@
 import { ClaimLostError } from "../../contracts/errors.ts";
-import type {
-  ClaimRecord,
-  ClaimStatus,
-  DeadLetterErrorType,
-  InboxLedger,
-  SettleClaimArgs,
-} from "../index.ts";
+import type { ClaimRecord, ClaimStatus, InboxLedger, SettleClaimArgs } from "../index.ts";
 import type { SqlDatabase } from "../sql/database.ts";
 
 export interface CreateSqliteInboxLedgerArgs {
@@ -27,9 +21,6 @@ const toRecord = (row: Record<string, unknown>): ClaimRecord => ({
   ...(row.last_error === null || row.last_error === undefined
     ? {}
     : { lastError: String(row.last_error) }),
-  ...(row.gave_up === null || row.gave_up === undefined
-    ? {}
-    : { gaveUp: String(row.gave_up) as DeadLetterErrorType }),
 });
 
 /**
@@ -75,15 +66,10 @@ export const createSqliteInboxLedger: CreateSqliteInboxLedgerFunction = ({ db, t
       return row === undefined ? null : String(row.claim_id);
     },
     complete: (args) => settle(`"status" = 'succeeded'`, [], args),
-    fail: (args) =>
-      settle(
-        `"status" = 'failed', "last_error" = ?, "gave_up" = ?`,
-        [args.error, args.gaveUp ?? null],
-        args,
-      ),
+    fail: (args) => settle(`"status" = 'failed', "last_error" = ?`, [args.error], args),
     get: async ({ subscriber, eventId }) => {
       const [row] = await db.all(
-        `SELECT "subscriber", "event_id", "status", "attempts", "claimed_at", "claim_id", "last_error", "gave_up" FROM ${table} WHERE "subscriber" = ? AND "event_id" = ?`,
+        `SELECT "subscriber", "event_id", "status", "attempts", "claimed_at", "claim_id", "last_error" FROM ${table} WHERE "subscriber" = ? AND "event_id" = ?`,
         [subscriber, eventId],
       );
       return row === undefined ? null : toRecord(row);

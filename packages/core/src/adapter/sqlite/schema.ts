@@ -70,7 +70,6 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "claimed_at" TEXT NOT NULL,
     "claim_id" TEXT,
     "last_error" TEXT,
-    "gave_up" TEXT,
     PRIMARY KEY ("subscriber", "event_id")
   )`,
   `CREATE TABLE IF NOT EXISTS ${tables.deadLetters} (
@@ -140,9 +139,6 @@ export const storageSchemaAdditions: StorageSchemaAdditionsFunction = ({
   deadLetterColumns,
   scheduledCommandColumns,
 }) => [
-  ...(inboxColumns.includes("gave_up")
-    ? []
-    : [`ALTER TABLE ${tables.inbox} ADD COLUMN "gave_up" TEXT`]),
   ...(inboxColumns.includes("claim_id")
     ? []
     : [`ALTER TABLE ${tables.inbox} ADD COLUMN "claim_id" TEXT`]),

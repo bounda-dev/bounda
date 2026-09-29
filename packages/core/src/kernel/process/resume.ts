@@ -1,25 +1,28 @@
+import type { NewDeadLetter } from "../../adapter/ports/dead-letter-store.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
+import type { UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
 import type { DeadlineStep } from "./deadline-step.ts";
 import { type Deadline, reachedKey } from "./deadlines.ts";
 import { blockedOn, deadlineSubject, drainFailureType, type ProcessFailures } from "./failures.ts";
-import type { HandlerRun, ProcessHandlers } from "./handlers.ts";
-import type { ProcessInstances } from "./instances.ts";
+import type { ProcessHandlers } from "./handlers.ts";
 import {
   eventContext,
   instanceContext,
+  type LifecycleEntry,
   lifecycleEntries,
   type ProcessInstance,
 } from "./lifecycle.ts";
 import { completesOn, handledEntries, handlerOf, letThrough } from "./routes.ts";
-import { pendingDeadline } from "./schedule.ts";
+import { type DeadlineSchedule, pendingDeadline } from "./schedule.ts";
+import type { ProcessUnits } from "./units.ts";
 
 export interface ResumeParked {
   /**
    * Called once the failed step succeeded on replay. Drains the parked events in order, each
-   * deadline that came due before one of them running first, then writes `ProcessResumed`. Stops
-   * as soon as the instance is no longer failed on `letter`.
+   * deadline that came due before one of them running first, then writes `ProcessResumed`. Each
+   * step is one unit of work. Stops as soon as the instance is no longer failed on `letter`.
    */
   resumeParked(
     process: ProcessRuntime,
@@ -29,10 +32,11 @@ export interface ResumeParked {
 }
 
 export interface CreateResumeParkedArgs {
-  readonly instances: ProcessInstances;
+  readonly units: ProcessUnits;
   readonly failures: ProcessFailures;
   readonly handlers: ProcessHandlers;
   readonly deadlineStep: DeadlineStep;
+  readonly schedule: DeadlineSchedule;
   readonly logger: Logger;
 }
 
@@ -40,94 +44,193 @@ export interface CreateResumeParkedFunction {
   (args: CreateResumeParkedArgs): ResumeParked;
 }
 
+// A drained step's handler failed: the step is written as the instance's new failure instead.
+class StepFailed extends Error {
+  constructor(cause: unknown) {
+    super("step failed", { cause });
+  }
+}
+
+// What a drained step's handler threw; any other error, the commit's, is thrown on as it is.
+const failedStep = (error: unknown): unknown => {
+  if (!(error instanceof StepFailed)) throw error;
+  return error.cause;
+};
+
 export const createResumeParked: CreateResumeParkedFunction = ({
-  instances,
+  units,
   failures,
   handlers,
   deadlineStep,
+  schedule,
   logger,
 }) => {
-  const { load, append, appendPastParks, lostRace, parkedEvent } = instances;
+  const { load, parkedEvent } = units.live;
+
+  // Whether the drain can go on: the instance is still failed, on `letter` when named.
+  const draining = (instance: ProcessInstance, letter: string | undefined): boolean =>
+    instance.status === "failed" && blockedOn(instance, letter);
+
+  // Writes the failure of a drained step, unless it was written already or the instance moved
+  // past the step; resolves to whether the drain goes on.
+  const recordFailure = async (
+    process: ProcessRuntime,
+    instanceId: string,
+    stepOf: (instance: ProcessInstance) => "recorded" | "moved" | undefined,
+    entryOf: (instance: ProcessInstance, letter: NewDeadLetter) => LifecycleEntry,
+    letterOf: (instance: ProcessInstance) => NewDeadLetter,
+    error: unknown,
+  ): Promise<boolean> => {
+    let outcome: "recorded" | "moved" | undefined;
+    let filed: NewDeadLetter | undefined;
+    await units.commit(async (unit, within) => {
+      const current = await within.load(process, instanceId);
+      filed = undefined;
+      outcome = stepOf(current);
+      if (outcome !== undefined) return;
+      const letter = letterOf(current);
+      await within.append(process, instanceId, current, [entryOf(current, letter)]);
+      await failures.file(unit.deadLetterStore, process, letter, error);
+      await schedule.stage(unit, process, instanceId);
+      filed = letter;
+    });
+    if (filed !== undefined) failures.filed(process, filed);
+    return outcome === "moved";
+  };
 
   const handleParked = async (
     process: ProcessRuntime,
     instanceId: string,
-    instance: ProcessInstance,
     event: StoredEvent,
+    letter: string | undefined,
   ): Promise<boolean> => {
-    if (handlerOf(process, event) === undefined) {
-      if (!completesOn(process, event)) letThrough(process, instanceId, event, logger);
-      await appendPastParks(
+    try {
+      await units.commit(async (unit, within) => {
+        const instance = await within.load(process, instanceId);
+        if (!draining(instance, letter) || instance.parked[0]?.eventId !== event.id) return;
+        const state = await stateAfter(unit, process, instanceId, instance, event);
+        await within.append(process, instanceId, instance, handledEntries(process, event, state));
+        await schedule.stage(unit, process, instanceId);
+      });
+      return true;
+    } catch (error) {
+      const cause = failedStep(error);
+      return recordFailure(
         process,
         instanceId,
-        instance,
-        handledEntries(process, event, instance.state),
+        (current) => {
+          if (current.failure?.eventId === event.id) return "recorded";
+          if (current.status !== "failed" || current.parked[0]?.eventId !== event.id) {
+            return "moved";
+          }
+          return undefined;
+        },
+        (_current, filed) =>
+          lifecycleEntries.failed({ eventId: event.id }, filed, eventContext(event)),
+        () => failures.letterOf(process, event, cause, 1, drainFailureType(cause)),
+        cause,
       );
-      return true;
     }
-    let handled: HandlerRun;
+  };
+
+  const stateAfter = async (
+    unit: UnitOfWork,
+    process: ProcessRuntime,
+    instanceId: string,
+    instance: ProcessInstance,
+    event: StoredEvent,
+  ): Promise<object> => {
+    if (handlerOf(process, event) === undefined) {
+      if (!completesOn(process, event)) letThrough(process, instanceId, event, logger);
+      return instance.state;
+    }
     try {
-      handled = await handlers.runEventHandler({
+      return await handlers.runEventHandler({
         process,
         event,
         instanceId,
         instance,
         attempt: 1,
+        within: unit,
       });
     } catch (error) {
-      const current = await load(process, instanceId);
-      if (current.failure?.eventId === event.id) return false;
-      if (current.status !== "failed" || current.parked[0]?.eventId !== event.id) return true;
-      const letter = failures.letterOf(process, event, error, 1, drainFailureType(error));
-      await appendPastParks(process, instanceId, current, [
-        lifecycleEntries.failed({ eventId: event.id }, letter, eventContext(event)),
-      ]);
-      await failures.fileLater(process, letter, error);
-      return false;
+      throw new StepFailed(error);
     }
-    await handled.record(() =>
-      appendPastParks(process, instanceId, instance, handledEntries(process, event, handled.state)),
-    );
-    return true;
   };
 
   const drainDeadline = async (
     process: ProcessRuntime,
     instanceId: string,
-    instance: ProcessInstance,
     due: Deadline,
+    letter: string | undefined,
   ): Promise<boolean> => {
     try {
-      await deadlineStep.run({
-        process,
-        instanceId,
-        instance,
-        due,
-        context: instanceContext(process, instanceId, instance),
+      await units.commit(async (unit, within) => {
+        const instance = await within.load(process, instanceId);
+        if (!draining(instance, letter) || instance.reached.has(reachedKey(due))) return;
+        try {
+          await deadlineStep.run({
+            unit,
+            process,
+            instanceId,
+            instance,
+            due,
+            context: instanceContext(process, instanceId, instance),
+          });
+        } catch (error) {
+          throw new StepFailed(error);
+        }
+        await schedule.stage(unit, process, instanceId);
       });
       return true;
     } catch (error) {
-      const current = await load(process, instanceId);
-      const recorded = current.failure?.deadline;
-      if (recorded !== undefined && reachedKey(recorded) === reachedKey(due)) return false;
-      if (current.status !== "failed" || current.reached.has(reachedKey(due))) return true;
-      const letter = failures.letterOf(
+      const cause = failedStep(error);
+      return recordFailure(
         process,
-        deadlineSubject(process, instanceId, due.field),
-        error,
-        1,
-        drainFailureType(error),
+        instanceId,
+        (current) => {
+          const recorded = current.failure?.deadline;
+          if (recorded !== undefined && reachedKey(recorded) === reachedKey(due)) return "recorded";
+          if (current.status !== "failed" || current.reached.has(reachedKey(due))) return "moved";
+          return undefined;
+        },
+        (current, filed) =>
+          lifecycleEntries.failed(
+            { deadline: due.field, at: due.at },
+            filed,
+            instanceContext(process, instanceId, current),
+          ),
+        () =>
+          failures.letterOf(
+            process,
+            deadlineSubject(process, instanceId, due.field),
+            cause,
+            1,
+            drainFailureType(cause),
+          ),
+        cause,
       );
-      await appendPastParks(process, instanceId, current, [
-        lifecycleEntries.failed(
-          { deadline: due.field, at: due.at },
-          letter,
-          instanceContext(process, instanceId, current),
-        ),
-      ]);
-      await failures.fileLater(process, letter, error);
-      return false;
     }
+  };
+
+  const resume = async (
+    process: ProcessRuntime,
+    instanceId: string,
+    letter: string | undefined,
+  ): Promise<boolean> => {
+    let resumed = false;
+    await units.commit(async (unit, within) => {
+      const instance = await within.load(process, instanceId);
+      resumed = false;
+      if (!draining(instance, letter) || instance.parked.length > 0) return;
+      await within.append(process, instanceId, instance, [
+        lifecycleEntries.resumed(instanceContext(process, instanceId, instance)),
+      ]);
+      await schedule.stage(unit, process, instanceId);
+      resumed = true;
+    });
+    if (resumed) logger.info("process resumed", { process: process.name, aggregateId: instanceId });
+    return resumed;
   };
 
   const resumeParked = async (
@@ -137,7 +240,7 @@ export const createResumeParked: CreateResumeParkedFunction = ({
   ): Promise<void> => {
     for (;;) {
       const instance = await load(process, instanceId);
-      if (instance.status !== "failed" || !blockedOn(instance, letter)) return;
+      if (!draining(instance, letter)) return;
       const [next] = instance.parked;
       const event = next === undefined ? undefined : await parkedEvent(next);
       const due = pendingDeadline(process, instance);
@@ -146,22 +249,14 @@ export const createResumeParked: CreateResumeParkedFunction = ({
         due !== null &&
         Date.parse(due.at) <= Date.parse(event.timestamp)
       ) {
-        if (!(await drainDeadline(process, instanceId, instance, due))) return;
+        if (!(await drainDeadline(process, instanceId, due, letter))) return;
         continue;
       }
       if (event === undefined) {
-        try {
-          await append(process, instanceId, instance, [
-            lifecycleEntries.resumed(instanceContext(process, instanceId, instance)),
-          ]);
-          logger.info("process resumed", { process: process.name, aggregateId: instanceId });
-          return;
-        } catch (error) {
-          if (!lostRace(process, instanceId, error)) throw error;
-          continue;
-        }
+        if (await resume(process, instanceId, letter)) return;
+        continue;
       }
-      if (!(await handleParked(process, instanceId, instance, event))) return;
+      if (!(await handleParked(process, instanceId, event, letter))) return;
     }
   };
 

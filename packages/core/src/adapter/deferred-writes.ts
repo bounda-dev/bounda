@@ -18,6 +18,10 @@ export type DeferredStores = Pick<
 export interface DeferredWrites {
   readonly ports: DeferredStores;
   flush(target: DeferredStores): Promise<void>;
+  /**
+   * Whether any write is recorded and not flushed yet.
+   */
+  pending(): boolean;
 }
 
 export interface DeferWritesFunction {
@@ -68,5 +72,6 @@ export const deferWrites: DeferWritesFunction = ({ inboxLedger, deadLetterStore,
     flush: async (target) => {
       for (const write of recorded) await write(target);
     },
+    pending: () => recorded.length > 0,
   };
 };

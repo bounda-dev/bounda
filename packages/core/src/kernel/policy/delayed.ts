@@ -4,7 +4,7 @@ import type { ScheduledCommand, Scheduler } from "../../adapter/ports/scheduler.
 import type { ResolvedConfig, ResolvedRetryConfig } from "../../config/types.ts";
 import { ConfigurationError, NotFoundError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
-import { CommitFailed, commitAttempt } from "../unit-of-work/unit-of-work.ts";
+import { causeOf, commitAttempt } from "../unit-of-work/unit-of-work.ts";
 import type { PoliciesRuntime, PolicyRuntime } from "./build-policies.ts";
 import type { PolicyExecutor } from "./executor.ts";
 
@@ -143,7 +143,7 @@ export const createDelayedPolicies: CreateDelayedPoliciesFunction = ({
             executor.run({ policy, event, attempt: entry.attempts + 1, within: unit }),
         });
       } catch (error) {
-        throw error instanceof CommitFailed ? error.cause : error;
+        throw causeOf(error);
       }
     },
   };

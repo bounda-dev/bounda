@@ -199,10 +199,12 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   `state.ts` every field is optional (`state.status === undefined` means a fresh aggregate).
 - Policies and process handlers get `commands`, the typed facade of every command in the app, and
   run with at-least-once delivery: the runtime's inbox skips a handler that already completed for
-  an event, but a handler that crashes midway runs again, so make its side effects idempotent. A
-  policy attempt stores its commands, immediate and delayed, together with its claim when it ends,
-  so a failed or crashed attempt leaves nothing behind; what `await commands.x()` returns is the
-  aggregate's decision, not something stored yet: call outside first, dispatch after.
+  an event, but a handler that crashes midway runs again, so make its side effects idempotent. An
+  attempt, a policy's or a process step's, stores its commands, immediate and delayed, together
+  with its claim, its lifecycle events and its deadline entry when it ends, so a failed or crashed
+  attempt leaves nothing behind, and a step whose instance moved meanwhile runs again on the new
+  state; what `await commands.x()` returns is the aggregate's decision, not something stored yet:
+  call outside first, dispatch after.
 - Policies and processes get their collaborators spread next to `event` and `commands`, like
   commands do. Config picks implementations by aggregate, then key:
   `policies: { order: { notifyOnOrderPlaced: { mailer: { use: "smtp" } } } }`, and the same

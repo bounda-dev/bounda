@@ -251,7 +251,7 @@ const run = async (seed: number): Promise<void> => {
           aggregateId: order,
         });
         const instance = foldProcess({ initialState: {}, events });
-        const blocking = instance.failure?.letter?.id;
+        const blocking = instance.failure?.letterId;
         const letter =
           blocking === undefined ? null : await harness.storage.deadLetterStore.get(blocking);
         return instance.status === "failed" && letter?.status === "discarded"
@@ -313,15 +313,15 @@ const run = async (seed: number): Promise<void> => {
           const before = foldProcess({ initialState: {}, events: events.slice(0, index) });
           expect(before.parked, `${where}: ${order} resumed with events parked`).toEqual([]);
         }
-        const letter = (event.payload as { letter?: { id: string } }).letter;
-        if (event.type === PROCESS_EVENTS.failed && letter !== undefined) carried.add(letter.id);
+        const { letterId } = event.payload as { letterId?: string };
+        if (event.type === PROCESS_EVENTS.failed && letterId !== undefined) carried.add(letterId);
       });
       const handled = events
         .filter((event) => event.type === PROCESS_EVENTS.handled)
         .map((event) => (event.payload as { eventId?: string }).eventId)
         .filter((id) => id?.startsWith("pay-") === true || id === template.id);
       const instance = foldProcess({ initialState: {}, events });
-      const blocking = instance.failure?.letter?.id;
+      const blocking = instance.failure?.letterId;
       const abandoned =
         instance.status === "failed" &&
         blocking !== undefined &&
@@ -351,8 +351,7 @@ const run = async (seed: number): Promise<void> => {
         const after = events.findIndex(
           (event) =>
             event.type === PROCESS_EVENTS.failed &&
-            (event.payload as { letter?: { id: string } }).letter?.id ===
-              instance.failure?.letter?.id,
+            (event.payload as { letterId?: string }).letterId === instance.failure?.letterId,
         );
         expect(
           events.slice(after + 1).filter((event) => event.type !== PROCESS_EVENTS.eventParked)
