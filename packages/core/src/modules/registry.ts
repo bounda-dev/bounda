@@ -1,4 +1,8 @@
-import type { DispatchOptions, DispatchResult } from "../contracts/command.ts";
+import type {
+  DispatchOptions,
+  DispatchResult,
+  ReactionDispatchResult,
+} from "../contracts/command.ts";
 import type { StateModule } from "./aggregate.ts";
 import type { CommandEntry, CommandModule } from "./command.ts";
 import type { EventModules } from "./event.ts";
@@ -61,6 +65,27 @@ export type CommandInvoker<Module> =
  */
 export type CommandsFacadeOf<Modules extends Readonly<Record<string, CommandModule>>> = {
   readonly [Name in keyof Modules]: CommandInvoker<Modules[Name]>;
+};
+
+/**
+ * The function a policy or process handler's `commands.<name>` exposes for one command: as
+ * `CommandInvoker`, resolving with the decision instead of what was stored.
+ */
+export type ReactionCommandInvoker<Module> =
+  HasPayload<Module> extends true
+    ? (
+        payload: PayloadInputOf<Module>,
+        options?: DispatchOptions,
+      ) => Promise<ReactionDispatchResult>
+    : "payload" extends keyof Module
+      ? (payload?: unknown, options?: DispatchOptions) => Promise<ReactionDispatchResult>
+      : (options?: DispatchOptions) => Promise<ReactionDispatchResult>;
+
+/**
+ * The `commands` of policy and process handlers, typed from a map of command modules.
+ */
+export type ReactionCommandsFacadeOf<Modules extends Readonly<Record<string, CommandModule>>> = {
+  readonly [Name in keyof Modules]: ReactionCommandInvoker<Modules[Name]>;
 };
 
 type CommandModulesOf<Aggregate extends AggregateEntry> = {

@@ -130,20 +130,23 @@ describe("delayed policies", () => {
     expect(runs).toHaveLength(1);
   });
 
-  it("schedule one run when the event is delivered again before the ledger records it", async () => {
+  it("schedule the run and mark the event together, so a delivery cut short schedules nothing and the next schedules it once", async () => {
     const { harness } = await setUp();
-    const ledger = harness.storage.inboxLedger;
-    const complete = ledger.complete.bind(ledger);
+    const transact = harness.storage.transact.bind(harness.storage);
     let crashed = false;
-    ledger.complete = async (key) => {
-      if (!crashed) {
-        crashed = true;
-        throw new Error("crash before the ledger");
-      }
-      return complete(key);
-    };
+    harness.storage.transact = (work) =>
+      transact(async (tx) => {
+        const result = await work(tx);
+        if (!crashed) {
+          crashed = true;
+          throw new Error("crash before the commit");
+        }
+        return result;
+      });
     await harness.dispatcher.processOnce().catch(() => undefined);
-    harness.clock.advance(60_000);
+    expect(crashed).toBe(true);
+    expect(await harness.storage.scheduler.list()).toEqual([]);
+    harness.clock.advance(harness.config.runtime.policies.timeoutMs * 2 + 1);
     await harness.dispatcher.processUntilIdle();
     expect(await harness.storage.scheduler.list()).toHaveLength(1);
     await harness.worker.runOnce();
@@ -241,7 +244,7 @@ describe("delayed policies", () => {
     expect(await orderEvents(harness)).toEqual(["OrderPlaced", "OrderArchived"]);
   });
 
-  it("cancel the delayed commands of a run that fails", async () => {
+  it("leave no delayed command behind when the run fails", async () => {
     const harness = await createReactiveHarness({
       registry: {
         aggregates: {

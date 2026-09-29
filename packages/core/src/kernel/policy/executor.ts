@@ -9,6 +9,7 @@ import { createReactionCommands } from "../command/reaction-commands.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { withTimeout } from "../shared/timeout.ts";
 import { ATTRIBUTES, traced } from "../telemetry.ts";
+import type { UnitStores } from "../unit-of-work/unit-of-work.ts";
 import type { PolicyRuntime } from "./build-policies.ts";
 
 export interface RunPolicyArgs {
@@ -22,6 +23,10 @@ export interface RunPolicyArgs {
    * Set when an operator replays a dead letter, so the handler gets a new idempotency key.
    */
   readonly replay?: string | undefined;
+  /**
+   * The unit of work the run's commands write to. Without one they write to the store at once.
+   */
+  readonly within?: UnitStores | undefined;
 }
 
 /**
@@ -53,7 +58,7 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
   clock,
   logger,
 }) => ({
-  run: async ({ policy, event, attempt, replay }) => {
+  run: async ({ policy, event, attempt, replay, within }) => {
     const idempotencyKey = deriveIdempotencyKey({
       kind: "policy",
       handler: policy.name,
@@ -71,6 +76,7 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
         depth: event.metadata.depth,
       },
       idempotencyKey,
+      within,
     });
     const handled = traced({
       name: `bounda.policy ${policy.name}`,

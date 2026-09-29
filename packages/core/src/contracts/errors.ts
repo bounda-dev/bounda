@@ -68,6 +68,26 @@ export class ValidationError extends BoundaError {
   }
 }
 
+export interface ClaimLostErrorArgs {
+  readonly subscriber: string;
+  readonly eventId: string;
+}
+
+/**
+ * Thrown by an inbox ledger asked to settle a claim by an id it no longer holds: the lease
+ * expired and another runner claimed the event. Whatever the settling was part of rolls back.
+ */
+export class ClaimLostError extends BoundaError {
+  readonly subscriber: string;
+  readonly eventId: string;
+
+  constructor({ subscriber, eventId }: ClaimLostErrorArgs) {
+    super("CLAIM_LOST", `The claim of ${subscriber} on ${eventId} belongs to another runner`);
+    this.subscriber = subscriber;
+    this.eventId = eventId;
+  }
+}
+
 /**
  * Thrown when a requested aggregate, read model row or registry entry does not exist.
  */

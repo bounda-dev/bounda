@@ -1,14 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { createReactionCommandIds } from "../shared/idempotency-key.ts";
 import { createKernelHarness, createRecordingLogger } from "../test-support.ts";
+import { createUnitOfWork, type UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import { scheduledCommandKey } from "./pipeline.ts";
 import { createReactionCommands, ReactionAbandonedError } from "./reaction-commands.ts";
 
 const context = { correlationId: "req-1", causationId: "evt-1", depth: 4 };
 
-const setUp = async () => {
+const setUp = async (withUnit = false) => {
   const harness = await createKernelHarness();
   const { logger, entries } = createRecordingLogger();
+  const unit: UnitOfWork | undefined = withUnit
+    ? createUnitOfWork({ storage: harness.storage })
+    : undefined;
   const reaction = createReactionCommands({
     aggregates: harness.aggregates,
     pipeline: harness.pipeline,
@@ -16,8 +20,9 @@ const setUp = async () => {
     logger,
     context,
     idempotencyKey: "key-1",
+    within: unit,
   });
-  return { ...harness, reaction, entries };
+  return { ...harness, reaction, entries, unit };
 };
 
 const holdScheduling = (scheduler: Awaited<ReturnType<typeof setUp>>["storage"]["scheduler"]) => {
@@ -45,6 +50,40 @@ describe("createReactionCommands", () => {
       { dedupeKey: scheduledCommandKey(ids("PayOrder")) },
     ]);
     expect(reaction.signal.aborted).toBe(false);
+  });
+
+  it("keeps a run's commands, immediate and delayed, in its unit until it commits, as decisions without a position", async () => {
+    const { reaction, storage, unit } = await setUp(true);
+    const placed = await reaction.commands.placeOrder?.({ orderId: "o-1", total: 3 });
+    const paid = await reaction.commands.payOrder?.({ orderId: "o-1", method: "card" });
+    await reaction.commands.archiveOrder?.({ orderId: "o-1" }, { delay: "1h" });
+
+    expect(placed).toEqual({
+      scheduled: false,
+      aggregateType: "order",
+      aggregateId: "o-1",
+      version: 1,
+      eventIds: ["id-1"],
+      eventTypes: ["OrderPlaced"],
+    });
+    expect(paid).toMatchObject({ scheduled: false, version: 2, eventTypes: ["OrderPaid"] });
+    expect(await storage.eventStore.lastPosition()).toBe(0);
+    expect(await storage.scheduler.list()).toEqual([]);
+
+    const cancelled: string[] = [];
+    storage.scheduler.cancel = async (dedupeKey) => {
+      cancelled.push(dedupeKey);
+    };
+    await reaction.abandon(new Error("too late"));
+    expect(cancelled).toEqual([]);
+    expect(await storage.scheduler.list()).toEqual([]);
+    await unit?.commit();
+    const loaded = await storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" });
+    expect(loaded.events.map((event) => [event.type, event.position])).toEqual([
+      ["OrderPlaced", 1],
+      ["OrderPaid", 2],
+    ]);
+    expect(await storage.scheduler.list()).toHaveLength(1);
   });
 
   it("cancels the delayed commands of an abandoned run and keeps what already happened", async () => {

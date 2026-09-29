@@ -1,4 +1,4 @@
-import type { StoragePorts } from "../adapter/adapter.ts";
+import type { Adapter, StoragePorts } from "../adapter/adapter.ts";
 import { resolveConfig } from "../config/schema.ts";
 import type { Config, ResolvedConfig } from "../config/types.ts";
 import { createFixedClock, type FixedClock } from "../contracts/clock.ts";
@@ -44,6 +44,10 @@ export interface CreateReactiveHarnessArgs {
   readonly registry: Registry;
   readonly config?: Partial<Omit<Config, "storage">>;
   readonly logger?: Logger;
+  /**
+   * The storage to run on; the in-memory adapter unless given.
+   */
+  readonly adapter?: Adapter;
 }
 
 export interface CreateReactiveHarnessFunction {
@@ -58,8 +62,8 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
   registry,
   config: overrides = {},
   logger = silentLogger,
+  adapter = memory(),
 }) => {
-  const adapter = memory();
   const storage = await adapter.createStorage({ logger });
   const config = resolveConfig({
     storage: adapter,
@@ -107,6 +111,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
       policies,
       executor: policyExecutor,
       eventStore: storage.eventStore,
+      storage,
       config,
     }),
     config,
@@ -129,9 +134,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
         createPolicySubscriber({
           policies,
           executor: policyExecutor,
-          scheduler: storage.scheduler,
-          ledger: storage.inboxLedger,
-          deadLetters: storage.deadLetterStore,
+          storage,
           config,
           clock,
           logger,

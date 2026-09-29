@@ -36,6 +36,13 @@ export type Commands = core.CommandsFacadeOf<{
   readonly placeOrder: typeof import("../app/domain/order/commands/place-order/index.ts");
 }>;
 
+export type ReactionCommands = core.ReactionCommandsFacadeOf<{
+  readonly registerCustomer: typeof import("../app/domain/customer/commands/register-customer.ts");
+  readonly cancelOrder: typeof import("../app/domain/order/commands/cancel-order/index.ts");
+  readonly payOrder: typeof import("../app/domain/order/commands/pay-order.ts");
+  readonly placeOrder: typeof import("../app/domain/order/commands/place-order/index.ts");
+}>;
+
 export type OrderSummaryRow = core.RowOf<typeof import("../app/read/order-summary/view.ts")>;
 
 export type Queries = core.QueriesFacadeOf<{

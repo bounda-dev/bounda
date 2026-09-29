@@ -82,6 +82,8 @@ export type {
   QueriesFacade,
   QueriesFacadeOf,
   QueryInvoker,
+  ReactionCommandInvoker,
+  ReactionCommandsFacadeOf,
   ReadModelEntry,
   Registry,
 } from "./registry.ts";

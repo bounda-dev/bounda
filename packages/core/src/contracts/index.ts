@@ -1,6 +1,12 @@
 export type { Clock, CreateFixedClockFunction, FixedClock } from "./clock.ts";
 export { createFixedClock, systemClock } from "./clock.ts";
-export type { Command, DispatchOptions, DispatchResult, NewCommand } from "./command.ts";
+export type {
+  Command,
+  DispatchOptions,
+  DispatchResult,
+  NewCommand,
+  ReactionDispatchResult,
+} from "./command.ts";
 export type {
   AsDurationFunction,
   DurationInput,
@@ -13,6 +19,7 @@ export { asDuration, parseDuration } from "./duration.ts";
 export {
   BoundaError,
   ChainDepthExceededError,
+  ClaimLostError,
   ConcurrencyError,
   type ConcurrencyErrorArgs,
   ConfigurationError,

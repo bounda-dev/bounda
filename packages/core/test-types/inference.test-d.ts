@@ -8,6 +8,7 @@ import type {
   DurationInput,
   Instant,
   QueriesFacade,
+  ReactionDispatchResult,
   StoredEvent,
   Table,
 } from "@bounda-dev/core";
@@ -159,6 +160,32 @@ describe("policies", () => {
     >();
     expectTypeOf<SendReceipt.HandlerArgs["commands"]>().toHaveProperty("payOrder");
     expectTypeOf<SendReceipt.HandlerArgs["commands"]>().toHaveProperty("registerCustomer");
+  });
+
+  it("get each command's decision, typed like app.commands but without a position", () => {
+    expectTypeOf<SendReceipt.HandlerArgs["commands"]["payOrder"]>().returns.toEqualTypeOf<
+      Promise<ReactionDispatchResult>
+    >();
+    expectTypeOf<Parameters<SendReceipt.HandlerArgs["commands"]["payOrder"]>>().toEqualTypeOf<
+      Parameters<Commands["payOrder"]>
+    >();
+    expectTypeOf<OnOrderPaid.HandlerArgs["commands"]["payOrder"]>().returns.toEqualTypeOf<
+      Promise<ReactionDispatchResult>
+    >();
+    expectTypeOf<AtNextReminder.DeadlineArgs["commands"]["payOrder"]>().returns.toEqualTypeOf<
+      Promise<ReactionDispatchResult>
+    >();
+    expectTypeOf<Extract<ReactionDispatchResult, { scheduled: false }>>().toMatchObjectType<{
+      readonly aggregateType: string;
+      readonly aggregateId: string;
+      readonly version: number;
+      readonly eventIds: readonly string[];
+      readonly eventTypes: readonly string[];
+    }>();
+    expectTypeOf<Extract<ReactionDispatchResult, { scheduled: false }>>().not.toHaveProperty(
+      "position",
+    );
+    expectTypeOf<Extract<DispatchResult, { scheduled: false }>>().toHaveProperty("position");
   });
 });
 

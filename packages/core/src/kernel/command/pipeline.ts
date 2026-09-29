@@ -18,6 +18,7 @@ import type { CausationContext } from "../../contracts/metadata.ts";
 import { foldState } from "../aggregate/fold-state.ts";
 import type { AggregateRuntime, AggregatesRuntime, CommandRuntime } from "../aggregate/runtime.ts";
 import { ATTRIBUTES, METRICS, meter, traced } from "../telemetry.ts";
+import type { UnitStores } from "../unit-of-work/unit-of-work.ts";
 import { validatePayload } from "./validate.ts";
 
 export interface DispatchArgs {
@@ -31,6 +32,11 @@ export interface DispatchArgs {
    * command.
    */
   readonly commandId?: string | undefined;
+  /**
+   * The stores to load from and write to instead of the storage's own: a reaction's unit of work,
+   * which holds the command's events and schedule until the attempt commits.
+   */
+  readonly within?: UnitStores | undefined;
 }
 
 export interface CommandPipeline {
@@ -145,10 +151,11 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     aggregate: AggregateRuntime,
     runtime: CommandRuntime,
     command: Command,
+    store: EventStore,
   ): Promise<DispatchResult> => {
     const attempts = config.runtime.commands.concurrencyRetries + 1;
     for (let attempt = 1; ; attempt += 1) {
-      const loaded = await eventStore.load({
+      const loaded = await store.load({
         aggregateType: aggregate.name,
         aggregateId: command.aggregateId,
       });
@@ -184,7 +191,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         };
       }
       try {
-        const appended = await eventStore.append({
+        const appended = await store.append({
           aggregateType: aggregate.name,
           aggregateId: command.aggregateId,
           expectedVersion: loaded.version,
@@ -221,7 +228,9 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     options = {},
     context,
     commandId: scheduledId,
+    within,
   }: DispatchArgs): Promise<DispatchResult> => {
+    const stores = within ?? { eventStore, scheduler };
     const entry = aggregates.commandsByType[type];
     if (entry === undefined) throw new NotFoundError(`Unknown command "${type}"`);
     const { aggregate, command: runtime } = entry;
@@ -263,7 +272,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
       run: async (span) => {
         if (options.delay !== undefined) {
           const executeAt = new Date(clock.now().getTime() + parseDuration(options.delay));
-          await scheduler.schedule({
+          await stores.scheduler.schedule({
             dedupeKey: scheduledCommandKey(commandId),
             command: { type, payload: input, aggregateId },
             executeAt,
@@ -283,7 +292,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
           };
         }
         try {
-          const result = await execute(aggregate, runtime, command);
+          const result = await execute(aggregate, runtime, command, stores.eventStore);
           span.setAttributes({
             [ATTRIBUTES.outcome]: "stored",
             [ATTRIBUTES.eventCount]: result.scheduled ? 0 : result.eventIds.length,

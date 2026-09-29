@@ -40,7 +40,9 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
 
     beforeEach(async () => {
       storage = await create();
-      expect(await storage.inboxLedger.tryClaim({ ...key, now, leaseMs: 1_000 })).toBe(true);
+      expect(await storage.inboxLedger.tryClaim({ ...key, now, leaseMs: 1_000 })).toBeTypeOf(
+        "string",
+      );
     });
 
     const everything = (fail: boolean) =>

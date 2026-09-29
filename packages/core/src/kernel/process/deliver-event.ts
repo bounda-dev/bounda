@@ -216,7 +216,7 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
       now: clock.now(),
       leaseMs: leaseMs(process),
     });
-    if (!claimed) return "hold";
+    if (claimed === null) return "hold";
     await failures.file(process, failures.letterOf(process, event, error, 1, "terminal"), error);
     await storage.inboxLedger.complete(key);
     return "done";

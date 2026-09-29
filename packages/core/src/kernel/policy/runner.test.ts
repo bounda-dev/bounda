@@ -4,7 +4,7 @@ import { DomainError } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { createReactiveHarness, type ReactiveHarness } from "../reactive-harness.ts";
-import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
+import { deriveDeadLetterId, deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { createRecordingLogger, orderAggregateEntry } from "../test-support.ts";
 import { buildPolicies, policyTriggerFromKey } from "./build-policies.ts";
 
@@ -232,14 +232,23 @@ describe("policy subscriber", () => {
     expect(keys).toEqual([expected, expected]);
   });
 
-  it("dead-letters a terminal failure at once and moves on", async () => {
+  it("dead-letters a terminal failure at once, under the letter's own id, and moves on", async () => {
     reset("domain");
-    const harness = await createReactiveHarness({ registry });
+    const { logger, entries } = createRecordingLogger();
+    const harness = await createReactiveHarness({ registry, logger });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
     await harness.dispatcher.processUntilIdle();
+    const [placed] = (
+      await harness.storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" })
+    ).events;
     const letters = await harness.storage.deadLetterStore.list();
     expect(letters).toHaveLength(1);
     expect(letters[0]).toMatchObject({
+      id: deriveDeadLetterId({
+        kind: "policy",
+        handler: "order.payOnOrderPlaced",
+        subject: placed?.id ?? "",
+      }),
       kind: "policy",
       subscriber: "order.payOnOrderPlaced",
       eventType: "OrderPlaced",
@@ -250,6 +259,18 @@ describe("policy subscriber", () => {
       attempts: 1,
       status: "failed",
     });
+    expect(entries.filter((entry) => entry.level === "warn")).toEqual([
+      {
+        level: "warn",
+        message: "policy dead-lettered",
+        fields: {
+          policy: "order.payOnOrderPlaced",
+          eventId: placed?.id,
+          errorType: "terminal",
+          attempts: 1,
+        },
+      },
+    ]);
     expect(calls.filter((call) => call === "pay:o-1")).toHaveLength(1);
     expect((await harness.dispatcher.getLag()).maxLag).toBe(0);
   });
@@ -440,35 +461,56 @@ describe("policy subscriber", () => {
     expect(await harness.storage.checkpointStore.get("policies")).toBe(1);
   });
 
-  it("files one dead letter when completing the claim failed right after filing it", async () => {
+  it("files the dead letter and completes the claim together, or neither, and then runs the handler again", async () => {
     reset("flaky", 5);
-    const { logger, entries } = createRecordingLogger();
     const harness = await createReactiveHarness({
       registry,
       config: { runtime: { policies: { retry: { strategy: "none" } } } },
-      logger,
     });
-    const complete = harness.storage.inboxLedger.complete.bind(harness.storage.inboxLedger);
+    const transact = harness.storage.transact.bind(harness.storage);
     let broken = true;
-    harness.storage.inboxLedger.complete = async (key) => {
-      if (broken && (await harness.storage.deadLetterStore.count()) > 0) {
-        broken = false;
-        throw new Error("connection lost");
-      }
-      return complete(key);
-    };
+    harness.storage.transact = (work) =>
+      transact(async (tx) => {
+        let filed = false;
+        const result = await work({
+          ...tx,
+          deadLetterStore: {
+            ...tx.deadLetterStore,
+            add: async (letter) => {
+              filed = true;
+              return tx.deadLetterStore.add(letter);
+            },
+          },
+        });
+        if (broken && filed) {
+          broken = false;
+          throw new Error("connection lost");
+        }
+        return result;
+      });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
 
     await harness.dispatcher.processUntilIdle();
-    await harness.dispatcher.processUntilIdle();
-
     expect(broken).toBe(false);
     expect(calls.filter((call) => call === "pay:o-1")).toHaveLength(1);
+    expect(await harness.storage.deadLetterStore.count()).toBe(0);
+    const [placed] = (
+      await harness.storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" })
+    ).events;
+    expect(
+      await harness.storage.inboxLedger.get({
+        subscriber: "order.payOnOrderPlaced",
+        eventId: placed?.id ?? "",
+      }),
+    ).toMatchObject({ status: "pending", attempts: 1 });
+
+    harness.clock.advance(harness.config.runtime.policies.timeoutMs * 2 + 1);
+    await harness.dispatcher.processUntilIdle();
+    expect(calls.filter((call) => call === "pay:o-1")).toHaveLength(2);
     expect(await harness.storage.deadLetterStore.list()).toMatchObject([
       { subscriber: "order.payOnOrderPlaced", errorType: "retriable_exhausted" },
     ]);
     expect(await harness.storage.deadLetterStore.count()).toBe(1);
-    expect(entries.filter((entry) => entry.message === "policy dead-lettered")).toHaveLength(1);
   });
 
   it("claims each run with a lease of twice the handler timeout and reports retries", async () => {
