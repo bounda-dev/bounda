@@ -289,6 +289,50 @@ describe("process runner", () => {
       PROCESS_EVENTS.completed,
     ]);
     expect(calls).toEqual([]);
+
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-3", total: 10 } });
+    await harness.dispatcher.processUntilIdle();
+    harness.clock.advance(48 * 3_600_000);
+    await harness.worker.runOnce();
+    await harness.dispatcher.processUntilIdle();
+    expect((await processStream(harness, "o-3")).events.map((event) => event.type)).toEqual([
+      PROCESS_EVENTS.started,
+      PROCESS_EVENTS.timedOut,
+    ]);
+    const paidLate = async (orderId: string) => {
+      const order = { aggregateType: "order", aggregateId: orderId };
+      const { events } = await harness.storage.eventStore.load(order);
+      const [placed] = events;
+      if (placed === undefined) throw new Error("not placed");
+      const id = `paid-late-${orderId}`;
+      await harness.storage.eventStore.append({
+        ...order,
+        expectedVersion: events.length,
+        events: [
+          {
+            ...placed,
+            id,
+            version: events.length + 1,
+            type: "OrderPaid",
+            payload: { method: "card" },
+          },
+        ],
+      });
+      return id;
+    };
+    const late = [await paidLate("o-1"), await paidLate("o-3")];
+    await harness.dispatcher.processUntilIdle();
+    expect(calls).toEqual(["timeout:o-3"]);
+    for (const eventId of late) {
+      expect(
+        await harness.storage.inboxLedger.get({ subscriber: "order.orderPayment", eventId }),
+      ).toBeNull();
+    }
+    expect((await processStream(harness)).events).toHaveLength(2);
+    expect((await processStream(harness, "o-3")).events).toHaveLength(2);
+    expect(await harness.storage.checkpointStore.get("processes")).toBe(
+      await harness.storage.eventStore.lastPosition(),
+    );
   });
 
   it("runs the timeout handler when the schedule comes due and records the final state", async () => {

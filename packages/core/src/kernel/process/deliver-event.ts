@@ -27,8 +27,9 @@ import type { ProcessUnits } from "./units.ts";
 export interface EventDelivery {
   /**
    * What one event does to its instance is one unit of work: the start, the handler's commands,
-   * the lifecycle events, the deadline entry and, for an event with a handler, the inbox claim,
-   * committed together or not at all. A retriable failure holds the event for the inbox ledger to
+   * the lifecycle events, the deadline entry and, for an event its handler runs on, the inbox
+   * claim, committed together or not at all. An event for an instance that has ended, or that
+   * was handled already, takes no claim and writes nothing. A retriable failure holds the event for the inbox ledger to
    * retry. A commit that finds the instance moved, by a deadline or another instance, runs the
    * step again on the instance as it now is, up to `runtime.commands.concurrencyRetries` times,
    * without spending an attempt. An event for a failed instance is parked behind the failure.
@@ -64,8 +65,8 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
   const leaseMs = (process: ProcessRuntime): number =>
     config.forAggregate(process.aggregate).policies.timeoutMs * 2;
 
-  // Whether `event` waits behind the instance's failure: an instance whose letter was discarded
-  // is given up, and holds nothing more.
+  // Whether `event` waits behind the instance's failure: not the event that failed, delivered
+  // again, and nothing once the failure's letter was discarded, since the instance is given up.
   const parks = async (
     unit: UnitOfWork,
     process: ProcessRuntime,
@@ -74,6 +75,7 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
   ): Promise<boolean> => {
     if (
       !actsOn(process, event) ||
+      event.id === instance.failure?.eventId ||
       instance.handledEventIds.has(event.id) ||
       instance.parked.some((parked) => parked.eventId === event.id)
     ) {
@@ -239,7 +241,19 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
       return uncorrelated(process, event, error);
     }
     if (instanceId === null) return "done";
-    if (handlerOf(process, event) !== undefined) return handle(process, event, instanceId);
+    // Routed on the instance as the store holds it; the step loads it again through its unit.
+    const instance = await units.live.load(process, instanceId);
+    const ended = instance.exists
+      ? instance.status === "completed" || instance.status === "timed_out"
+      : !startsOn(process, event);
+    if (ended) return "done";
+    if (
+      instance.status === "started" &&
+      handlerOf(process, event) !== undefined &&
+      !instance.handledEventIds.has(event.id)
+    ) {
+      return handle(process, event, instanceId);
+    }
     let parked = false;
     await units.commit(async (unit) => {
       parked = await step(unit, process, event, instanceId, 1);
