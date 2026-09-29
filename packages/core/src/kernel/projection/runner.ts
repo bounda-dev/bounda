@@ -13,9 +13,6 @@ import { qualifiedEventType } from "../shared/qualified-event.ts";
 import { errorDetails } from "../shared/retry.ts";
 import { ATTRIBUTES, traced } from "../telemetry.ts";
 
-/**
- * What projecting needs to know about a read model: its name and its projections by event type.
- */
 export interface ProjectionTarget {
   readonly name: string;
   readonly projectionsByEvent: Readonly<Record<string, readonly ProjectionRuntime[]>>;
@@ -33,9 +30,6 @@ export interface ProjectBatchArgs {
   readonly budget: ProjectionBudget;
 }
 
-/**
- * How long a batch may take, on which clock.
- */
 export interface ProjectionBudget {
   readonly clock: Clock;
   readonly maxMs: number;
@@ -46,11 +40,8 @@ export interface ProjectBatchFunction {
 }
 
 /**
- * Hands the events to the projections that declare their types, in order, with the `table` and
- * `client` given; events nobody projects are skipped. Resolves to how many events it got through:
- * all of them, or fewer when the budget ran out first, never none. The first projection that
- * throws stops the batch: it rejects with a `PartialBatchError` that says how many events went
- * through before the one that failed and carries the projection's error as its `cause`.
+ * Resolves to how many events it got through: fewer when the budget ran out, never none. A
+ * projection that throws rejects the batch with a `PartialBatchError`.
  */
 export const projectBatch: ProjectBatchFunction = async ({
   readModel,
@@ -117,22 +108,13 @@ export interface ProjectionSubscriberNameFunction {
   (readModel: string): string;
 }
 
-/**
- * The checkpoint name of a read model's projections.
- */
 export const projectionSubscriberName: ProjectionSubscriberNameFunction = (readModel) =>
   `projection:${readModel}`;
 
 /**
- * One subscriber per read model, checkpointed in the read model's own database. Each batch runs
- * inside `ports.transact`: the projections write through the transaction and the checkpoint
- * advances in it, so the batch and the checkpoint past it commit together or not at all, and only
- * one process at a time applies a read model's batches. A batch that outlasts its budget commits
- * the events it got through and leaves the rest for the next delivery. A projection that throws
- * rolls the whole batch back; the events before the one that failed are then committed on their
- * own, and the checkpoint stops right before it: a read model cannot skip an event, so that event
- * is redelivered, onto the rows as they were, until the projection succeeds. Every event is
- * applied exactly once, provided the projection writes nowhere but its read model.
+ * The batch and the checkpoint past it commit in one transaction of the read model's database, so
+ * every event is applied exactly once, provided the projection writes nowhere but its read model.
+ * An event whose projection throws is never skipped: it is redelivered until it succeeds.
  */
 export const createProjectionSubscriber: CreateProjectionSubscriberFunction = ({
   readModel,
