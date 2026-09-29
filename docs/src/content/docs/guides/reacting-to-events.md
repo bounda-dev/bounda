@@ -294,7 +294,10 @@ bounda dead-letters discard 019a0c4e-…
 
 `list` prints the failed letters, with `--kind policy|process|command`, `--subscriber`,
 `--status`, `--limit` and `--json` to narrow or script it. `replay` runs the failed handler once
-more and marks the letter `replayed` if it succeeds; when it fails again the error is printed and
+more and marks the letter `replayed` if it succeeds: for a policy or a command, in the same
+transaction as what the run writes, so a replay that ran but could not be marked leaves nothing
+behind; for a process, once its instance has drained what was parked, since a replay cut short
+there is taken up again by replaying the same letter. When it fails again the error is printed and
 the letter stays `failed`. `discard` marks it `discarded` without running anything. Letters are
 never deleted by these commands; they are the record of what happened.
 
@@ -381,6 +384,10 @@ await commands.sendReminder(
 ```
 
 A scheduled command is taken by exactly one instance, however many are running the worker role.
+Its run and the release of its claim are one transaction: what the command wrote lands together
+with the claim's completion, so a worker that dies between the two does not run it twice, and a
+command the worker gives up on is dead-lettered in the same transaction that drops it. The same
+holds for a delayed policy's run and for a process deadline.
 
 ## Delaying a policy
 

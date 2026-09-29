@@ -1,9 +1,7 @@
-import type { Scheduler } from "../../adapter/ports/scheduler.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import { ValidationError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
-import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
@@ -66,10 +64,8 @@ export interface ProcessHandlers {
 export interface CreateProcessHandlersArgs {
   readonly aggregates: AggregatesRuntime;
   readonly pipeline: CommandPipeline;
-  readonly scheduler: Scheduler;
   readonly config: ResolvedConfig;
   readonly clock: Clock;
-  readonly logger: Logger;
 }
 
 export interface CreateProcessHandlersFunction {
@@ -79,25 +75,15 @@ export interface CreateProcessHandlersFunction {
 export const createProcessHandlers: CreateProcessHandlersFunction = ({
   aggregates,
   pipeline,
-  scheduler,
   config,
   clock,
-  logger,
 }) => {
   const reactionFor = (
     context: CausationContext,
     idempotencyKey: string,
     within: UnitStores,
   ): ReactionCommands =>
-    createReactionCommands({
-      aggregates,
-      pipeline,
-      scheduler,
-      logger,
-      context,
-      idempotencyKey,
-      within,
-    });
+    createReactionCommands({ aggregates, pipeline, context, idempotencyKey, within });
 
   const handlerArgs = (
     process: ProcessRuntime,
@@ -119,7 +105,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     try {
       return await handle();
     } catch (error) {
-      await reaction.abandon(error);
+      reaction.abandon(error);
       throw error;
     }
   };
@@ -188,9 +174,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
   }: RunDeadlineHandlerArgs): Promise<object> => {
     const handler = process.deadlineHandlers[due.field];
     if (handler === undefined) {
-      return runOf({ abandon: async () => undefined }, async () =>
-        validState(process, instance.state),
-      );
+      return runOf({ abandon: () => undefined }, async () => validState(process, instance.state));
     }
     const idempotencyKey = deriveIdempotencyKey({
       kind: "process",

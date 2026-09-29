@@ -1,8 +1,6 @@
-import type { Scheduler } from "../../adapter/ports/scheduler.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
-import type { Logger } from "../../contracts/logger.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
 import { createReactionCommands } from "../command/reaction-commands.ts";
@@ -24,9 +22,9 @@ export interface RunPolicyArgs {
    */
   readonly replay?: string | undefined;
   /**
-   * The unit of work the run's commands write to. Without one they write to the store at once.
+   * The unit of work the run's commands write to, to commit with the attempt.
    */
-  readonly within?: UnitStores | undefined;
+  readonly within: UnitStores;
 }
 
 /**
@@ -40,10 +38,8 @@ export interface PolicyExecutor {
 export interface CreatePolicyExecutorArgs {
   readonly aggregates: AggregatesRuntime;
   readonly pipeline: CommandPipeline;
-  readonly scheduler: Scheduler;
   readonly config: ResolvedConfig;
   readonly clock: Clock;
-  readonly logger: Logger;
 }
 
 export interface CreatePolicyExecutorFunction {
@@ -53,10 +49,8 @@ export interface CreatePolicyExecutorFunction {
 export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
   aggregates,
   pipeline,
-  scheduler,
   config,
   clock,
-  logger,
 }) => ({
   run: async ({ policy, event, attempt, replay, within }) => {
     const idempotencyKey = deriveIdempotencyKey({
@@ -68,8 +62,6 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
     const reaction = createReactionCommands({
       aggregates,
       pipeline,
-      scheduler,
-      logger,
       context: {
         correlationId: event.metadata.correlationId,
         causationId: event.id,
@@ -108,7 +100,7 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
     try {
       await handled;
     } catch (error) {
-      await reaction.abandon(error);
+      reaction.abandon(error);
       throw error;
     }
   },

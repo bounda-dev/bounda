@@ -14,6 +14,7 @@ import { createReactiveHarness } from "../reactive-harness.ts";
 import { DEADLINE_WAIT_ROUNDS } from "../scheduler/worker.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import {
+  breakNextCommit,
   createRecordingLogger,
   type OrderProcessConfigArgs,
   orderAggregateEntry,
@@ -451,6 +452,7 @@ describe("process deadlines", () => {
       policies: harness.policies,
       policyExecutor: harness.policyExecutor,
       processes: harness.processes,
+      config: harness.config,
       ids: harness.ids,
       clock: harness.clock,
       logger: harness.logger,
@@ -470,6 +472,34 @@ describe("process deadlines", () => {
       PROCESS_EVENTS.resumed,
     ]);
     expect(await harness.storage.scheduler.list()).toMatchObject([{ executeAt: at(2 * DAY) }]);
+  });
+
+  it("commit a deadline's step with the release of its entry, or neither", async () => {
+    reset();
+    const harness = await setUp({
+      runtime: { processes: { retry: { strategy: "fixed", maxAttempts: 3, baseDelay: "1s" } } },
+    });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await settle(harness);
+    harness.clock.advance(DAY);
+    const crash = breakNextCommit(harness.storage);
+    expect(await harness.worker.runOnce()).toBe(1);
+
+    expect(crash.broke()).toBe(true);
+    expect(calls).toEqual([`reminder:${at(DAY)}`]);
+    expect((await lifecycle(harness)).map((event) => event.type)).toEqual([
+      PROCESS_EVENTS.started,
+      PROCESS_EVENTS.handled,
+    ]);
+    expect(await harness.storage.scheduler.list()).toMatchObject([{ attempts: 1 }]);
+
+    harness.clock.advance(1_000);
+    await settle(harness);
+    expect(calls).toEqual([`reminder:${at(DAY)}`, `reminder:${at(DAY)}`]);
+    expect(await reachedOf(harness)).toMatchObject([{ at: at(DAY) }]);
+    expect(await harness.storage.scheduler.list()).toMatchObject([
+      { attempts: 0, executeAt: at(2 * DAY) },
+    ]);
   });
 
   it("retry with back-off without moving the deadline or its key", async () => {

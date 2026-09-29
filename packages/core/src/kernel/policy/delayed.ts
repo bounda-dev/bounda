@@ -1,10 +1,9 @@
-import type { StoragePorts } from "../../adapter/adapter.ts";
 import type { EventStore } from "../../adapter/ports/event-store.ts";
 import type { ScheduledCommand, Scheduler } from "../../adapter/ports/scheduler.ts";
 import type { ResolvedConfig, ResolvedRetryConfig } from "../../config/types.ts";
 import { ConfigurationError, NotFoundError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
-import { causeOf, commitAttempt } from "../unit-of-work/unit-of-work.ts";
+import type { UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import type { PoliciesRuntime, PolicyRuntime } from "./build-policies.ts";
 import type { PolicyExecutor } from "./executor.ts";
 
@@ -72,9 +71,10 @@ export const scheduleDelayedPolicy: ScheduleDelayedPolicyFunction = ({
 export interface DelayedPolicies {
   isDelayedPolicy(entry: ScheduledCommand): boolean;
   /**
-   * A policy no longer in the registry or an event that is gone fails for good.
+   * Runs the policy on `within`, the worker's unit of work for the entry. A policy no longer in
+   * the registry or an event that is gone fails for good.
    */
-  run(entry: ScheduledCommand): Promise<void>;
+  run(entry: ScheduledCommand, within: UnitOfWork): Promise<void>;
   /**
    * The retry settings of the policy's aggregate, the same a live run of it gets.
    */
@@ -89,7 +89,6 @@ export interface CreateDelayedPoliciesArgs {
    * The kernel's event store, which upcasts, to read the event with.
    */
   readonly eventStore: EventStore;
-  readonly storage: StoragePorts;
   readonly config: ResolvedConfig;
 }
 
@@ -104,7 +103,6 @@ export const createDelayedPolicies: CreateDelayedPoliciesFunction = ({
   policies,
   executor,
   eventStore,
-  storage,
   config,
 }) => {
   const payloadOf = (entry: ScheduledCommand): DelayedPolicyPayload =>
@@ -119,7 +117,7 @@ export const createDelayedPolicies: CreateDelayedPoliciesFunction = ({
         ? config.runtime.policies.retry
         : config.forAggregate(policy.aggregate).policies.retry;
     },
-    run: async (entry) => {
+    run: async (entry, within) => {
       const payload = payloadOf(entry);
       const policy = policies.byName[payload.policy];
       if (policy === undefined) {
@@ -134,17 +132,7 @@ export const createDelayedPolicies: CreateDelayedPoliciesFunction = ({
           `Event ${payload.eventId} of ${payload.aggregateType}:${entry.command.aggregateId} not found`,
         );
       }
-      // The run's commands commit together, or not at all; the worker settles the entry after.
-      try {
-        await commitAttempt({
-          storage,
-          concurrencyRetries: config.runtime.commands.concurrencyRetries,
-          work: (unit) =>
-            executor.run({ policy, event, attempt: entry.attempts + 1, within: unit }),
-        });
-      } catch (error) {
-        throw causeOf(error);
-      }
+      await executor.run({ policy, event, attempt: entry.attempts + 1, within });
     },
   };
 };

@@ -126,6 +126,7 @@ const run = async (seed: number): Promise<void> => {
     policies: harness.policies,
     policyExecutor: harness.policyExecutor,
     processes: harness.processes,
+    config: harness.config,
     ids: harness.ids,
     clock: harness.clock,
     logger: harness.logger,

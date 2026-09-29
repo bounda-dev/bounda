@@ -202,14 +202,7 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
     logger,
   });
   const policies = buildPolicies({ registry, config });
-  const policyExecutor = createPolicyExecutor({
-    aggregates,
-    pipeline,
-    scheduler: storage.scheduler,
-    config,
-    clock,
-    logger,
-  });
+  const policyExecutor = createPolicyExecutor({ aggregates, pipeline, config, clock });
   const reactive = [
     {
       subscriber: createPolicySubscriber({
@@ -262,7 +255,6 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
       policies,
       executor: policyExecutor,
       eventStore: storage.eventStore,
-      storage,
       config,
     }),
     config,
@@ -276,6 +268,7 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
     policies,
     policyExecutor,
     processes,
+    config,
     ids,
     clock,
     logger,
