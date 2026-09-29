@@ -18,10 +18,8 @@ export interface DeliverInOrderFunction {
 }
 
 /**
- * Delivers a batch to the reactions each event routes to, keeping every reaction's events in
- * order: once a reaction holds an event, its later events of the batch are skipped, while the
- * other reactions carry on. Resolves to how many leading events every reaction is done with, so
- * the checkpoint can stop right before the first event held.
+ * Resolves to how many leading events every reaction is done with. Once a reaction holds an event,
+ * its later events of the batch are skipped, so none of them overtakes it.
  */
 export const deliverInOrder: DeliverInOrderFunction = async ({ events, byEvent, deliver }) => {
   const held = new Set<string>();

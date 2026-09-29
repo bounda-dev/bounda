@@ -1,9 +1,6 @@
 import type { Clock } from "../../contracts/clock.ts";
 import { BoundaError } from "../../contracts/errors.ts";
 
-/**
- * Thrown when a handler exceeds its configured timeout.
- */
 export class HandlerTimeoutError extends BoundaError {
   readonly timeoutMs: number;
 
@@ -25,10 +22,9 @@ export interface WithTimeoutFunction {
 }
 
 /**
- * Races a handler against a timer on `clock`. The handler keeps running if it loses; the runner
- * treats the timeout as a retriable failure. The handler's promise is awaited as soon as it exists,
- * so a handler that throws is never seen as an unhandled rejection, not even by runtimes such as
- * workerd that report one before a later `then` attaches.
+ * The handler keeps running if it loses. Its promise is awaited as soon as it exists, so a handler
+ * that throws is never seen as an unhandled rejection, not even by runtimes such as workerd that
+ * report one before a later `then` attaches.
  */
 export const withTimeout: WithTimeoutFunction = async <T>({
   run,

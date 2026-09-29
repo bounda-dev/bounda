@@ -34,8 +34,7 @@ export const PROCESS_EVENTS: {
 };
 
 /**
- * An event that reached a failed process instance and waits, in its stream, until the failure is
- * replayed: where to load it from.
+ * Where to load an event parked on a failed instance until its failure is replayed.
  */
 export interface ParkedEvent {
   readonly eventId: string;
@@ -54,20 +53,17 @@ export interface ProcessAggregateTypeFunction {
 export const processAggregateType: ProcessAggregateTypeFunction = (processType) =>
   `process:${processType}`;
 
-/**
- * A process instance as folded from its stream. `version` is the stream version, used for
- * optimistic concurrency on the next lifecycle append. `handledEventIds` holds the events whose
- * handler already ran; the starting event is among them only if it has a handler of its own.
- */
 export interface ProcessInstance {
   readonly exists: boolean;
   readonly status: ProcessStatus;
   readonly state: object;
   readonly version: number;
+  /**
+   * The events whose handler already ran; the starting event only if it has a handler of its own.
+   */
   readonly handledEventIds: ReadonlySet<string>;
   /**
-   * When the process times out, from its `ProcessStarted` event; `null` for an instance that does
-   * not exist.
+   * From its `ProcessStarted`; `null` for an instance that does not exist.
    */
   readonly timeoutAt: string | null;
   /**
@@ -90,9 +86,6 @@ export interface ProcessInstance {
   readonly failure: ProcessFailure | null;
 }
 
-/**
- * What a process failed on, as its `ProcessFailed` records it.
- */
 export interface ProcessFailure {
   readonly eventId?: string;
   readonly deadline?: { readonly field: string; readonly at: string };
@@ -118,9 +111,8 @@ const stateOf = (event: StoredEvent, fallback: object): object => {
 };
 
 /**
- * Rebuilds a process instance from its lifecycle events. A failed instance stays failed until
- * `ProcessResumed`, which replaying its failure writes once the events parked behind it are
- * handled; a `ProcessHandled` takes its event off the parked ones.
+ * A failed instance stays failed until `ProcessResumed`; a `ProcessHandled` takes its event off
+ * the parked ones.
  */
 export const foldProcess: FoldProcessFunction = ({ initialState, events }) => {
   const handled = new Set<string>();
@@ -208,14 +200,13 @@ export const foldProcess: FoldProcessFunction = ({ initialState, events }) => {
   };
 };
 
-/**
- * A lifecycle event about to be appended to an instance's stream. `id` is set when something
- * the event causes must name it before it is written.
- */
 export interface LifecycleEntry {
   readonly type: string;
   readonly payload: unknown;
   readonly context: CausationContext;
+  /**
+   * Set when something the event causes must name it before it is written.
+   */
   readonly id?: string;
 }
 
@@ -223,9 +214,6 @@ export interface EventContextFunction {
   (event: StoredEvent): CausationContext;
 }
 
-/**
- * The context of what an event causes: its correlation, caused by the event itself.
- */
 export const eventContext: EventContextFunction = (event) => ({
   correlationId: event.metadata.correlationId,
   causationId: event.id,
@@ -237,8 +225,7 @@ export interface InstanceContextFunction {
 }
 
 /**
- * The context of what the runner writes on its own for an instance, such as a deadline or a
- * resume: the correlation of the event that started it, caused by the instance itself.
+ * For what the runner writes on its own for an instance, such as a deadline or a resume.
  */
 export const instanceContext: InstanceContextFunction = (process, instanceId, instance) => ({
   correlationId: instance.correlationId ?? instanceId,
@@ -246,9 +233,6 @@ export const instanceContext: InstanceContextFunction = (process, instanceId, in
   depth: 0,
 });
 
-/**
- * What a `ProcessFailed` failed on: an event, or a deadline at its moment.
- */
 export type FailedOn =
   | { readonly eventId: string }
   | { readonly deadline: string; readonly at: string };

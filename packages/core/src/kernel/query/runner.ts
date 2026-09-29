@@ -29,11 +29,6 @@ export interface CreateQueryRunnerFunction {
   (args: CreateQueryRunnerArgs): QueryRunner;
 }
 
-/**
- * Executes queries: validates the payload, runs `repository` with the payload fields, the typed
- * read client and the table, then `handler` with the query, the repository's result, the table
- * and the queries facade for composition.
- */
 export const createQueryRunner: CreateQueryRunnerFunction = ({ queries, readModels }) => {
   const run = async ({ type, payload }: RunQueryArgs): Promise<unknown> => {
     const query = queries.byType[type];

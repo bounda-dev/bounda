@@ -22,11 +22,8 @@ export interface UpcastEventFunction {
 }
 
 /**
- * Brings one stored event to the current shape of its type: the upcasts from its
- * `schemaVersion` on are applied to the payload and the metadata says the version they produce.
- * Events of unknown aggregates or types, system events and events already current come back as
- * they are. An event written with a version this code does not know is refused: newer code
- * wrote it, and this process must not fold a payload it cannot read.
+ * An event written with a version this code does not know is refused: newer code wrote it, and
+ * this process must not fold a payload it cannot read.
  */
 export const upcastEvent: UpcastEventFunction = ({ event, aggregates }) => {
   const runtime = aggregates.byName[event.aggregateType]?.eventsByType[event.type];
@@ -50,10 +47,8 @@ export const upcastEvent: UpcastEventFunction = ({ event, aggregates }) => {
 };
 
 /**
- * The event store as the kernel reads it: every event that comes out of `load` and `readAll` is
- * upcast to the shape its type has today, so `apply`, policies, processes and projections only
- * ever see current payloads. Writes pass through untouched; the pipeline stamps them with the
- * current version.
+ * So `apply`, policies, processes and projections only ever see current payloads. Writes pass
+ * through untouched, since the pipeline stamps them with the current version.
  */
 export const withUpcasting: WithUpcastingFunction = ({ eventStore, aggregates }) => {
   const current = (event: StoredEvent): StoredEvent => upcastEvent({ event, aggregates });

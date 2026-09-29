@@ -3,9 +3,6 @@ import { ConfigurationError } from "../../contracts/errors.ts";
 import { capitalize } from "../../modules/naming.ts";
 import type { ReadModelsRuntime } from "../read-model/build-read-models.ts";
 
-/**
- * A compiled query: its read model, schema, optional repository and handler.
- */
 export interface QueryRuntime {
   readonly key: string;
   readonly type: string;
@@ -29,8 +26,7 @@ export interface BuildQueriesFunction {
 }
 
 /**
- * Compiles every query of every read model. Query keys are one flat namespace because
- * `app.queries` is.
+ * Query keys must be unique across read models, since `app.queries` is one flat namespace.
  */
 export const buildQueries: BuildQueriesFunction = ({ readModels }) => {
   const byKey: Record<string, QueryRuntime> = {};

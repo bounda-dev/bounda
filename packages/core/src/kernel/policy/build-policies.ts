@@ -7,11 +7,6 @@ import type { PolicyModule } from "../../modules/policy.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { qualifiedEventType } from "../shared/qualified-event.ts";
 
-/**
- * A compiled policy: which aggregate it belongs to, whose events trigger it and which ones, its
- * handler, the collaborators chosen from the configuration and, for a delayed policy, how long
- * after the event it runs.
- */
 export interface PolicyRuntime {
   readonly name: string;
   readonly aggregate: string;
@@ -19,9 +14,15 @@ export interface PolicyRuntime {
    * The aggregate whose events the policy reacts to: its own, or the one of its folder.
    */
   readonly source: string;
+  /**
+   * Event types of `source`, unqualified: `OrderPaid`.
+   */
   readonly on: readonly string[];
   readonly handler: (args: Record<string, unknown>) => unknown;
   readonly collaborators: Readonly<Record<string, unknown>>;
+  /**
+   * `null` for a policy that runs as soon as its event is delivered.
+   */
   readonly delayMs: number | null;
 }
 
@@ -109,9 +110,8 @@ export interface BuildPoliciesFunction {
 }
 
 /**
- * Compiles every policy of the registry and indexes them by the qualified event types they react
- * to. A policy whose trigger is not an event of the aggregate it listens to is a configuration
- * error: it would never run.
+ * A policy whose trigger is not an event of the aggregate it listens to is a configuration error:
+ * it would never run.
  */
 export const buildPolicies: BuildPoliciesFunction = ({ registry, config }) => {
   const all = Object.entries(registry.aggregates).flatMap(([aggregate, entry]) =>

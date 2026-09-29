@@ -11,6 +11,10 @@ import type { CausationContext } from "../contracts/metadata.ts";
  */
 export const COMMAND_FAILED_EVENT: "CommandFailed" = "CommandFailed";
 
+/**
+ * The payload of `CommandFailed`: the scheduled command that failed for good, its last error and
+ * how many attempts it had.
+ */
 export interface CommandFailedPayload {
   readonly commandType: string;
   readonly error: string;
@@ -35,9 +39,8 @@ export interface AppendSystemEventFunction {
 const MAX_ATTEMPTS = 5;
 
 /**
- * Appends one event marked `system: true` at the end of a stream, reloading the version and
- * retrying on a concurrency conflict. System events never change aggregate state, so appending
- * them at whatever version the stream has reached is safe.
+ * System events never change aggregate state, so appending one at whatever version the stream
+ * has reached is safe.
  */
 export const appendSystemEvent: AppendSystemEventFunction = async ({
   eventStore,

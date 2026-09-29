@@ -10,10 +10,6 @@ import type { ReadModelEntry, Registry } from "../../modules/registry.ts";
 import { type FieldsRecord, fieldBuilder } from "../../modules/view.ts";
 import { qualifiedEventType } from "../shared/qualified-event.ts";
 
-/**
- * A compiled projection: the aggregate whose events it projects, the event types it reacts to
- * and its `project`.
- */
 export interface ProjectionRuntime {
   readonly key: string;
   readonly aggregate: string;
@@ -21,9 +17,6 @@ export interface ProjectionRuntime {
   readonly project: (args: Record<string, unknown>) => unknown;
 }
 
-/**
- * Everything the kernel needs about one read model, compiled at boot.
- */
 export interface ReadModelRuntime {
   readonly name: string;
   readonly fields: FieldsRecord;
@@ -102,9 +95,6 @@ export interface CompileProjectionsFunction {
   (args: CompileProjectionsArgs): Pick<ReadModelRuntime, "name" | "projectionsByEvent">;
 }
 
-/**
- * A read model's projections indexed by the event types they react to.
- */
 export const compileProjections: CompileProjectionsFunction = ({ name, entry }) => ({
   name,
   projectionsByEvent: groupByEvent(entry.projections),
@@ -120,10 +110,6 @@ export interface CompileReadModelFunction {
   (args: CompileReadModelArgs): ReadModelRuntime;
 }
 
-/**
- * The runtime of one read model over the ports given: its fields, its projections indexed by
- * event type and its queries, over ports `buildReadModels` opens.
- */
 export const compileReadModel: CompileReadModelFunction = ({ name, entry, ports }) => ({
   ...compileProjections({ name, entry }),
   fields: entry.view.fields({ f: fieldBuilder }),
@@ -156,10 +142,6 @@ export interface BuildReadModelsFunction {
   (args: BuildReadModelsArgs): Promise<ReadModelsRuntime>;
 }
 
-/**
- * Compiles the read side of the registry: field definitions, one table per read model on its
- * configured adapter, and projections indexed by the event types they react to.
- */
 export const buildReadModels: BuildReadModelsFunction = async ({ registry, config, logger }) => {
   const entries = await Promise.all(
     Object.entries(registry.readModels).map(

@@ -25,10 +25,6 @@ export interface ReadModelSourceFunction {
   (entry: ReadModelEntry): string;
 }
 
-/**
- * The code that shapes a read model's rows, as text: its fields, then every projection by
- * aggregate and name with the events it listens to.
- */
 export const readModelSource: ReadModelSourceFunction = (entry) =>
   [
     String(entry.view.fields),
@@ -50,10 +46,9 @@ export interface FingerprintReadModelFunction {
 }
 
 /**
- * A short digest of a read model's fields and projections. A rebuild paused under one fingerprint
- * is only resumed under the same one, so a deploy in the middle of a rebuild starts it again
- * instead of mixing rows projected by two versions of the code. Code that changes only its
- * formatting changes the fingerprint too, which costs a restarted rebuild and nothing else.
+ * A rebuild paused under one fingerprint resumes only under the same one, so a deploy in the
+ * middle of a rebuild starts it again instead of mixing rows projected by two versions of the
+ * code. A change of formatting alone changes it too, which only costs a restarted rebuild.
  */
 export const fingerprintReadModel: FingerprintReadModelFunction = (entry) =>
   digest(readModelSource(entry));

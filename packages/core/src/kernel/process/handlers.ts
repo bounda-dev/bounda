@@ -44,9 +44,8 @@ export interface RunDeadlineHandlerArgs {
 }
 
 /**
- * One run of a process handler: the state it left, and `record`, which writes it. A run whose
- * handler fails, or whose `record` throws, is abandoned: its commands are refused from then on
- * and the delayed ones it scheduled are cancelled.
+ * `record` performs the write of `state`. A run whose handler fails, or whose `record` throws, is
+ * abandoned: its commands are refused from then on and the delayed ones it scheduled are cancelled.
  */
 export interface HandlerRun {
   readonly state: object;
@@ -54,9 +53,7 @@ export interface HandlerRun {
 }
 
 /**
- * Runs the handlers users write for a process, traced and bounded by the policy timeout. The
- * state they leave is parsed with the process `state` schema; a handler that returns nothing
- * leaves the state as it was.
+ * Handlers are bounded by the aggregate's policy timeout, as policy handlers are.
  */
 export interface ProcessHandlers {
   runEventHandler(args: RunEventHandlerArgs): Promise<HandlerRun>;
@@ -232,9 +229,6 @@ export interface ValidStateFunction {
   (process: Pick<ProcessRuntime, "name" | "stateSchema">, state: unknown): object;
 }
 
-/**
- * The state a handler returned, parsed with the process `state` schema when it has one.
- */
 export const validState: ValidStateFunction = (process, state) => {
   if (process.stateSchema === null) return state as object;
   const parsed = process.stateSchema.safeParse(state);

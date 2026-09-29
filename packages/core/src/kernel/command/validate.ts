@@ -11,10 +11,6 @@ export interface ValidatePayloadFunction {
   (args: ValidatePayloadArgs): unknown;
 }
 
-/**
- * Validates a payload against a module's schema and returns the parsed value, so defaults and
- * transforms declared in the schema take effect. Without a schema the payload passes through.
- */
 export const validatePayload: ValidatePayloadFunction = ({ schema, payload, subject }) => {
   if (schema === null) return payload ?? {};
   const result = schema.safeParse(payload);

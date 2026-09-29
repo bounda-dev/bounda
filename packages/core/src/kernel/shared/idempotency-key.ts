@@ -2,17 +2,21 @@ import { v5 as uuidV5 } from "uuid";
 
 const NAMESPACE = "55684f7b-5682-4a97-837e-a64a7c205ba5";
 
-export interface DeriveIdempotencyKeyArgs {
+interface ReactionIdentity {
   /**
    * Whether the handler is a policy's or a process's: their names can be equal.
    */
   readonly kind: "policy" | "process";
   /**
-   * The handler that makes the call: a policy or process name.
+   * A policy or process name, e.g. `order.chargeOnOrderPlaced`.
    */
   readonly handler: string;
+}
+
+export interface DeriveIdempotencyKeyArgs extends ReactionIdentity {
   /**
-   * What the handler is running for: the event id, or the process instance for a timeout.
+   * What the handler is running for: the event id, or `<instance>:deadline:<field>:<moment>` for a
+   * process deadline.
    */
   readonly subject: string;
   /**
@@ -27,9 +31,8 @@ export interface DeriveIdempotencyKeyFunction {
 }
 
 /**
- * The key a reaction hands to the providers it calls: a UUID v5 of kind, handler, subject and replay,
- * the same on every automatic retry of one run and 36 characters long, which every provider
- * accepts.
+ * The key a reaction hands to the providers it calls. A UUID v5, so it is the same on every
+ * automatic retry of one run and 36 characters long, which every provider accepts.
  */
 export const deriveIdempotencyKey: DeriveIdempotencyKeyFunction = ({
   kind,
@@ -42,12 +45,7 @@ export const deriveIdempotencyKey: DeriveIdempotencyKeyFunction = ({
     NAMESPACE,
   );
 
-export interface DeriveDeadLetterIdArgs {
-  /**
-   * Whether the reaction is a policy's or a process's: their names can be equal.
-   */
-  readonly kind: "policy" | "process";
-  readonly handler: string;
+export interface DeriveDeadLetterIdArgs extends ReactionIdentity {
   /**
    * The event the reaction gave up on.
    */

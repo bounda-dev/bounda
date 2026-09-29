@@ -33,8 +33,7 @@ export interface RetryDelayFunction {
 }
 
 /**
- * Milliseconds to wait before retry number `attempt` (1 for the first retry), capped at
- * `maxDelayMs`. Strategy `none` never retries.
+ * Milliseconds before retry number `attempt`, 1 for the first.
  */
 export const retryDelayMs: RetryDelayFunction = ({ retry, attempt }) => {
   const raw = (() => {
@@ -56,9 +55,6 @@ export interface ErrorDetailsFunction {
   (error: unknown): { readonly message: string; readonly stack?: string };
 }
 
-/**
- * Message and stack of anything thrown.
- */
 export const errorDetails: ErrorDetailsFunction = (error) =>
   error instanceof Error
     ? { message: error.message, ...(error.stack === undefined ? {} : { stack: error.stack }) }

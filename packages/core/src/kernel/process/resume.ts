@@ -15,15 +15,11 @@ import {
 import { completesOn, handledEntries, handlerOf, letThrough } from "./routes.ts";
 import { pendingDeadline } from "./schedule.ts";
 
-/**
- * What lifts a failure once its step succeeded on replay: the steps parked behind it.
- */
 export interface ResumeParked {
   /**
-   * Handles, in order of arrival, the events parked on a failed instance, running first each
-   * deadline that came due before the next of them, and writes `ProcessResumed` once none is
-   * left. A step that fails is the new failure and the rest stay parked; an event that completes
-   * the process completes it. Stops as soon as the instance is no longer failed on `letter`.
+   * Called once the failed step succeeded on replay. Drains the parked events in order, each
+   * deadline that came due before one of them running first, then writes `ProcessResumed`. Stops
+   * as soon as the instance is no longer failed on `letter`.
    */
   resumeParked(
     process: ProcessRuntime,
