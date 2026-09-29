@@ -28,7 +28,7 @@ pnpm 12 (workspace catalog, `catalogMode: strict`), TypeScript 7, Biome (lint an
 
 - Delegate wide read-only exploration to sub-agents; do coherent refactors yourself so the whole import graph stays in one head.
 - `/lead` is optional, for genuinely multi-phase work. One review per logical change, not per phase. Typecheck and tests gate every change.
-- Run `/code-review` on the branch before its first push, unprompted, alongside `pnpm check` rather than after CI; fix what it confirms, then push (the steps are in the `git` skill, "Pre-push review").
+- Run `/code-review` on the branch before it goes up for review, unprompted, alongside `pnpm check` rather than after CI; fix what it confirms, then push (when and how: the `git` skill, "Pre-push review").
 - Prefer the smallest change that solves the problem. Scope discipline beats "fix everything you see"; note unrelated findings instead of fixing them inline.
 - Use Context7 for library and API documentation before guessing.
 - Think about what else a change touches: docs pages, the public skill in `skills/bounda`, `create-bounda` templates, examples.

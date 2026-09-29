@@ -149,7 +149,7 @@ EOF
 
 ### Pre-push review
 
-Runs as part of `pr` and `pr ready`, and before pushing follow-up commits to an open PR, without the user asking for it.
+Runs without the user asking for it: in `pr` before the first push, in `pr ready` over the whole branch, and before pushing follow-up commits to a PR that is out of draft. A draft PR's phase pushes skip it, because `pr ready` reviews them together.
 
 1. Start `pnpm check` in the background and, meanwhile, invoke the `code-review` skill with the branch as target (the diff against `main`) and an explicit level, since without one it reuses whatever level the user typed last. Both only read the sources, so they can run together; never alongside a Stryker run.
 
@@ -161,8 +161,8 @@ Runs as part of `pr` and `pr ready`, and before pushing follow-up commits to an 
 
    A diff that spans rows takes the highest.
 
-2. Fix the confirmed findings in new commits. Report the plausible ones to the user instead of fixing them silently, and note out-of-scope findings rather than fixing them inline.
-3. If anything changed, run `pnpm check` again and check its exit code. Push only when it is green.
+2. Fix the confirmed findings. Report the plausible ones to the user instead of fixing them silently, and note out-of-scope findings rather than fixing them inline.
+3. If anything changed, run `pnpm check` again and check its exit code; commit the fixes in new commits only when it is green, then push.
 4. For follow-up commits on an open PR (CI failures, reviewer comments), review only the new commits, and skip the review when the fix is trivial (a typo, a lint rule, a snapshot).
 
 A review per logical change, not per commit or per phase: do not run it in `commit`.
@@ -173,7 +173,7 @@ Create a draft PR early so progress is tracked on GitHub from the start. Used by
 
 **Inputs:** plan title, plan objective, branch name, completed phase count, total phase count.
 
-1. Push the branch (first push — sets up remote tracking):
+1. Push the branch (first push — sets up remote tracking). No review here: `pr ready` reviews the whole branch.
    ```bash
    git push -u origin <branch-name>
    ```
@@ -207,9 +207,9 @@ Update the PR body with the full phase log and move it out of draft. Used by `/l
    git fetch origin
    git rebase origin/main
    ```
-   Push with `--force-with-lease` if needed, after the [Pre-push review](#pre-push-review) of the whole branch.
+2. Run the [Pre-push review](#pre-push-review) of the whole branch, even when there is nothing to push, then push (`--force-with-lease` after a rebase).
 
-2. Build and update the PR body from the phase log:
+3. Build and update the PR body from the phase log:
    ```bash
    gh pr edit <pr-number> --body "$(cat <<'EOF'
    ## Summary
@@ -232,12 +232,12 @@ Update the PR body with the full phase log and move it out of draft. Used by `/l
    )"
    ```
 
-3. Move PR to ready:
+4. Move PR to ready:
    ```bash
    gh pr ready <pr-number>
    ```
 
-4. Return the result:
+5. Return the result:
    ```yaml
    pr_url: "<final PR URL>"
    pr_number: <number>
