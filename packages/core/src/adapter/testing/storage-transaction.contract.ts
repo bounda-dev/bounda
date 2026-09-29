@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { ConcurrencyError } from "../../contracts/errors.ts";
-import type { StoragePorts } from "../adapter.ts";
+import type { StoragePorts, StorageTransaction } from "../adapter.ts";
 import type { NewDeadLetter } from "../ports/dead-letter-store.ts";
 import { pendingEvent, testCommand, testContext } from "./fixtures.ts";
 
@@ -148,6 +148,26 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
         [1, 1],
         [2, 2],
       ]);
+    });
+
+    it("changes and removes dead letters with the rest, or not at all", async () => {
+      await storage.deadLetterStore.add(letter("d1"));
+      await storage.deadLetterStore.add(letter("d2"));
+      const settle = async (tx: StorageTransaction) => {
+        await tx.deadLetterStore.updateStatus("d1", "replayed");
+        await tx.deadLetterStore.remove("d2");
+      };
+      await expect(
+        storage.transact(async (tx) => {
+          await settle(tx);
+          throw new Error("boom");
+        }),
+      ).rejects.toThrow("boom");
+      expect((await storage.deadLetterStore.get("d1"))?.status).toBe("failed");
+      expect(await storage.deadLetterStore.count()).toBe(2);
+      await storage.transact(settle);
+      expect((await storage.deadLetterStore.get("d1"))?.status).toBe("replayed");
+      expect(await storage.deadLetterStore.get("d2")).toBeNull();
     });
   });
 };

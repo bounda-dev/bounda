@@ -33,8 +33,10 @@ export interface SettleClaimArgs extends ClaimKey {
 export interface FailClaimArgs extends SettleClaimArgs {
   readonly error: string;
   /**
-   * Set when the runner gives up on the event, before it writes the dead letter, so whoever claims
-   * it next writes the letter instead of running the handler again. A `fail` without it clears it.
+   * Set by a runner that gives up on the event before it writes the dead letter, as the process
+   * runner does, so whoever claims it next writes the letter instead of running the handler again.
+   * A runner that commits the letter and the claim together leaves it out. A `fail` without it
+   * clears it.
    */
   readonly gaveUp?: DeadLetterErrorType | undefined;
 }

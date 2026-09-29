@@ -3,8 +3,8 @@ import type { DeadLetterErrorType } from "../../adapter/ports/dead-letter-store.
 import type { ClaimKey } from "../../adapter/ports/inbox-ledger.ts";
 import type { ResolvedRetryConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
-import { ClaimLostError, ConcurrencyError } from "../../contracts/errors.ts";
-import { createUnitOfWork, type UnitOfWork } from "../unit-of-work/unit-of-work.ts";
+import { ClaimLostError } from "../../contracts/errors.ts";
+import { CommitFailed, commitAttempt, type UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import type { ReactionOutcome } from "./in-order.ts";
 import { classifyFailure, errorDetails, retryDelayMs } from "./retry.ts";
 
@@ -47,14 +47,6 @@ export interface RunAttemptFunction {
   (args: RunAttemptArgs): Promise<ReactionOutcome>;
 }
 
-// A commit that failed for a reason other than a conflict: the store's failure, not the
-// reaction's, so it reaches the dispatcher instead of the retry policy.
-class CommitFailed extends Error {
-  constructor(cause: unknown) {
-    super("commit failed", { cause });
-  }
-}
-
 /**
  * Runs one attempt of a reaction to one event: claims the event in the inbox, runs the reaction
  * on a unit of work and commits the unit with the claim's completion, or records the failure. A
@@ -83,19 +75,8 @@ export const runAttempt: RunAttemptFunction = async ({
     if (spent(attempts)) return "retriable_exhausted";
     return undefined;
   };
-  const committed = async (work: (unit: UnitOfWork) => Promise<void>): Promise<void> => {
-    for (let race = 0; ; race += 1) {
-      const unit = createUnitOfWork({ storage });
-      await work(unit);
-      try {
-        await unit.commit();
-        return;
-      } catch (error) {
-        if (!(error instanceof ConcurrencyError)) throw new CommitFailed(error);
-        if (race >= concurrencyRetries) throw error;
-      }
-    }
-  };
+  const committed = (work: (unit: UnitOfWork) => Promise<void>): Promise<void> =>
+    commitAttempt({ storage, concurrencyRetries, work });
   const now = clock.now();
   const existing = await storage.inboxLedger.get(key);
   if (existing?.status === "succeeded") return "done";

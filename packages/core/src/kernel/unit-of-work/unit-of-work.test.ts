@@ -9,7 +9,7 @@ import { memory } from "../../memory/index.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { createReactiveHarness, type ReactiveHarness } from "../reactive-harness.ts";
 import { orderAggregateEntry } from "../test-support.ts";
-import { createUnitOfWork } from "./unit-of-work.ts";
+import { CommitFailed, commitAttempt, createUnitOfWork, type UnitOfWork } from "./unit-of-work.ts";
 
 interface Commands {
   readonly [name: string]: (
@@ -260,6 +260,91 @@ describe("createUnitOfWork", () => {
         (event) => event.id,
       ),
     ).toEqual(["theirs"]);
+  });
+
+  it("runs the work again on a fresh unit when the commit finds a stream moved, as many times as allowed, then lets the conflict through", async () => {
+    const storage = await memory().createStorage({ logger: silentLogger });
+    const moveTheStream = () =>
+      storage.eventStore.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events: [pendingEvent({ aggregateId: "1", version: 1, id: "theirs" })],
+      });
+    const units: UnitOfWork[] = [];
+    const work = async (unit: UnitOfWork) => {
+      units.push(unit);
+      const loaded = await unit.eventStore.load({ aggregateType: "order", aggregateId: "1" });
+      if (units.length === 1) await moveTheStream();
+      await unit.eventStore.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: loaded.version,
+        events: [pendingEvent({ aggregateId: "1", version: loaded.version + 1, id: "mine" })],
+      });
+    };
+    await commitAttempt({ storage, concurrencyRetries: 1, work });
+    expect(units).toHaveLength(2);
+    expect(new Set(units).size).toBe(2);
+    expect(
+      (await storage.eventStore.load({ aggregateType: "order", aggregateId: "1" })).events.map(
+        (event) => event.id,
+      ),
+    ).toEqual(["theirs", "mine"]);
+
+    const stale = async (unit: UnitOfWork) => {
+      const stream = { aggregateType: "order", aggregateId: "2" };
+      const loaded = await unit.eventStore.load(stream);
+      await unit.eventStore.append({
+        ...stream,
+        expectedVersion: loaded.version,
+        events: [pendingEvent({ aggregateId: "2", version: loaded.version + 1 })],
+      });
+      const live = await storage.eventStore.load(stream);
+      await storage.eventStore.append({
+        ...stream,
+        expectedVersion: live.version,
+        events: [pendingEvent({ aggregateId: "2", version: live.version + 1 })],
+      });
+    };
+    let attempts = 0;
+    await expect(
+      commitAttempt({
+        storage,
+        concurrencyRetries: 2,
+        work: (unit) => {
+          attempts += 1;
+          return stale(unit);
+        },
+      }),
+    ).rejects.toBeInstanceOf(ConcurrencyError);
+    expect(attempts).toBe(3);
+  });
+
+  it("tells a commit that failed for another reason apart from what the work threw", async () => {
+    const storage = await memory().createStorage({ logger: silentLogger });
+    breakNextCommit(storage);
+    const failed = await commitAttempt({
+      storage,
+      concurrencyRetries: 3,
+      work: (unit) => unit.scheduler.schedule(entry("command:c1")),
+    }).catch((error: unknown) => error);
+    expect(failed).toBeInstanceOf(CommitFailed);
+    expect(failed).toMatchObject({
+      name: "CommitFailed",
+      message: "commit failed",
+      cause: expect.objectContaining({ message: "connection lost" }),
+    });
+    expect(await storage.scheduler.list()).toEqual([]);
+    await expect(
+      commitAttempt({
+        storage,
+        concurrencyRetries: 3,
+        work: async () => {
+          throw new DomainError("refused");
+        },
+      }),
+    ).rejects.toBeInstanceOf(DomainError);
   });
 });
 

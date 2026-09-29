@@ -1,7 +1,7 @@
 import type { StoragePorts, StorageTransaction } from "../../adapter/adapter.ts";
-import type { DeadLetterStore } from "../../adapter/ports/dead-letter-store.ts";
-import type { InboxLedger } from "../../adapter/ports/inbox-ledger.ts";
+import { deferWrites } from "../../adapter/deferred-writes.ts";
 import { createStagedEventStore } from "../../adapter/staged-event-store.ts";
+import { ConcurrencyError } from "../../contracts/errors.ts";
 
 /**
  * The stores a reaction's commands write through while its attempt runs.
@@ -13,11 +13,10 @@ export type UnitStores = Pick<StorageTransaction, "eventStore" | "scheduler">;
  * commands produce, staged per stream and visible to its own loads, and the writes to the other
  * stores, kept in order. `commit` writes all of it in one storage transaction, events first, or
  * nothing: a stream that moved since the unit loaded it rejects with `ConcurrencyError`. Reads
- * through the unit's ports see the store as it is, plus the unit's own events.
+ * through the unit's ports see the store as it is, plus the unit's own events; `add` answers the
+ * letter as filed, whatever the store holds under that id already.
  */
-export interface UnitOfWork extends UnitStores {
-  readonly deadLetterStore: DeadLetterStore;
-  readonly inboxLedger: InboxLedger;
+export interface UnitOfWork extends StorageTransaction {
   commit(): Promise<void>;
 }
 
@@ -29,52 +28,63 @@ export interface CreateUnitOfWorkFunction {
   (args: CreateUnitOfWorkArgs): UnitOfWork;
 }
 
-type DeferredWrite = (transaction: StorageTransaction) => Promise<unknown>;
-
 export const createUnitOfWork: CreateUnitOfWorkFunction = ({ storage }) => {
   const staged = createStagedEventStore(storage.eventStore);
-  const deferred: DeferredWrite[] = [];
-  const later =
-    <Args extends unknown[]>(
-      write: (transaction: StorageTransaction, ...args: Args) => Promise<unknown>,
-    ) =>
-    async (...args: Args): Promise<void> => {
-      deferred.push((transaction) => write(transaction, ...args));
-    };
-  const { inboxLedger, deadLetterStore, scheduler } = storage;
+  const { ports, flush } = deferWrites(storage);
   return {
     eventStore: staged,
-    inboxLedger: {
-      tryClaim: inboxLedger.tryClaim,
-      get: inboxLedger.get,
-      complete: later((tx, key) => tx.inboxLedger.complete(key)),
-      fail: later((tx, args) => tx.inboxLedger.fail(args)),
-    },
-    deadLetterStore: {
-      get: deadLetterStore.get,
-      list: deadLetterStore.list,
-      count: deadLetterStore.count,
-      add: async (letter) => {
-        deferred.push((tx) => tx.deadLetterStore.add(letter));
-        return { ...letter, status: "failed" };
-      },
-      updateStatus: later((tx, id, status) => tx.deadLetterStore.updateStatus(id, status)),
-      remove: later((tx, id) => tx.deadLetterStore.remove(id)),
-    },
-    scheduler: {
-      claimDue: scheduler.claimDue,
-      nextDueAt: scheduler.nextDueAt,
-      list: scheduler.list,
-      schedule: later((tx, args) => tx.scheduler.schedule(args)),
-      cancel: later((tx, key) => tx.scheduler.cancel(key)),
-      complete: later((tx, claim) => tx.scheduler.complete(claim)),
-      fail: later((tx, args) => tx.scheduler.fail(args)),
-      defer: later((tx, args) => tx.scheduler.defer(args)),
-    },
+    ...ports,
     commit: () =>
       storage.transact(async (transaction) => {
         for (const batch of staged.batches()) await transaction.eventStore.append(batch);
-        for (const write of deferred) await write(transaction);
+        await flush(transaction);
       }),
   };
+};
+
+/**
+ * Thrown by `commitAttempt` for a commit that failed for a reason other than a conflict: the
+ * store's failure, not the reaction's, so a caller can tell it from what the work threw.
+ */
+export class CommitFailed extends Error {
+  constructor(cause: unknown) {
+    super("commit failed", { cause });
+    this.name = "CommitFailed";
+  }
+}
+
+export interface CommitAttemptArgs {
+  readonly storage: StoragePorts;
+  /**
+   * How many times the work runs again, on a fresh unit, when its commit finds a stream moved.
+   */
+  readonly concurrencyRetries: number;
+  readonly work: (unit: UnitOfWork) => Promise<void>;
+}
+
+export interface CommitAttemptFunction {
+  (args: CommitAttemptArgs): Promise<void>;
+}
+
+/**
+ * Runs `work` on a fresh unit of work and commits it. A commit that finds a stream moved runs the
+ * work again on another fresh unit, up to `concurrencyRetries` times, then lets the
+ * `ConcurrencyError` through; any other failure of the commit is thrown as `CommitFailed`.
+ */
+export const commitAttempt: CommitAttemptFunction = async ({
+  storage,
+  concurrencyRetries,
+  work,
+}) => {
+  for (let race = 0; ; race += 1) {
+    const unit = createUnitOfWork({ storage });
+    await work(unit);
+    try {
+      await unit.commit();
+      return;
+    } catch (error) {
+      if (!(error instanceof ConcurrencyError)) throw new CommitFailed(error);
+      if (race >= concurrencyRetries) throw error;
+    }
+  }
 };

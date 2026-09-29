@@ -4,7 +4,7 @@ import type { ScheduledCommand, Scheduler } from "../../adapter/ports/scheduler.
 import type { ResolvedConfig, ResolvedRetryConfig } from "../../config/types.ts";
 import { ConfigurationError, NotFoundError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
-import { createUnitOfWork } from "../unit-of-work/unit-of-work.ts";
+import { CommitFailed, commitAttempt } from "../unit-of-work/unit-of-work.ts";
 import type { PoliciesRuntime, PolicyRuntime } from "./build-policies.ts";
 import type { PolicyExecutor } from "./executor.ts";
 
@@ -135,9 +135,16 @@ export const createDelayedPolicies: CreateDelayedPoliciesFunction = ({
         );
       }
       // The run's commands commit together, or not at all; the worker settles the entry after.
-      const unit = createUnitOfWork({ storage });
-      await executor.run({ policy, event, attempt: entry.attempts + 1, within: unit });
-      await unit.commit();
+      try {
+        await commitAttempt({
+          storage,
+          concurrencyRetries: config.runtime.commands.concurrencyRetries,
+          work: (unit) =>
+            executor.run({ policy, event, attempt: entry.attempts + 1, within: unit }),
+        });
+      } catch (error) {
+        throw error instanceof CommitFailed ? error.cause : error;
+      }
     },
   };
 };

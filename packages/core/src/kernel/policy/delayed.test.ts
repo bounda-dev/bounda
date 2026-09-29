@@ -4,7 +4,7 @@ import { DomainError } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { createDeadLetters } from "../dead-letters/dead-letters.ts";
-import { createReactiveHarness } from "../reactive-harness.ts";
+import { createReactiveHarness, type ReactiveHarness } from "../reactive-harness.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { ATTRIBUTES, METRICS } from "../telemetry.ts";
 import { installFakeTelemetry } from "../telemetry-fake.ts";
@@ -288,6 +288,54 @@ describe("delayed policies", () => {
     expect(
       (await harness.storage.scheduler.list()).map((entry) => entry.command.type),
     ).not.toContain("PayOrder");
+  });
+
+  it("run again on the stream as it now is when the commit finds it moved, without spending an attempt", async () => {
+    let harness: ReactiveHarness | undefined;
+    let attempts = 0;
+    const registry: Registry = {
+      aggregates: {
+        order: {
+          ...orderAggregateEntry(),
+          policies: {
+            payOnOrderPlaced: {
+              module: {
+                delay: "1m",
+                handler: async ({
+                  event,
+                  commands,
+                }: Pick<HandlerArgs, "event"> & {
+                  readonly commands: Record<string, (payload: unknown) => Promise<unknown>>;
+                }) => {
+                  attempts += 1;
+                  await commands.payOrder?.({ orderId: event.aggregateId, method: "card" });
+                  if (attempts === 1) {
+                    await harness?.pipeline.dispatch({
+                      type: "ArchiveOrder",
+                      payload: { orderId: event.aggregateId },
+                    });
+                  }
+                },
+              },
+            },
+          },
+        },
+      },
+      readModels: {},
+    };
+    harness = await createReactiveHarness({
+      registry,
+      config: { runtime: { policies: { retry: { strategy: "none" } } } },
+    });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.dispatcher.processUntilIdle();
+    harness.clock.advance(60_000);
+    await harness.worker.runOnce();
+
+    expect(attempts).toBe(2);
+    expect(await harness.storage.deadLetterStore.count()).toBe(0);
+    expect(await harness.storage.scheduler.list()).toEqual([]);
+    expect(await orderEvents(harness)).toEqual(["OrderPlaced", "OrderArchived", "OrderPaid"]);
   });
 
   it("dead-letter a run whose policy or event is gone", async () => {
