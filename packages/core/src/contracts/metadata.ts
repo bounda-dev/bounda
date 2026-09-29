@@ -5,8 +5,8 @@
  * `causationId` points at the command that produced the event.
  * `depth` counts how many reactive hops (policy → command → event) separate the event from the
  * original request; the runtime stops the chain when it exceeds `maxChainDepth`.
- * `schemaVersion` is the shape the payload was written in: one more than the upcasts its event
- * had then. An event read through its upcasts carries the current one.
+ * `schemaVersion` is the shape the payload was written in: one more than the number of upcasts
+ * its event type declared when it was written. An event read through its upcasts carries the current one.
  * `system` marks events emitted by the runtime itself, such as process timeouts.
  */
 export interface EventMetadata {

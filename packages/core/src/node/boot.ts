@@ -35,19 +35,25 @@ export interface BootArgs<R extends Registry = AppRegistry> {
    */
   readonly registry?: R;
   /**
-   * `false` skips loading `.env` from `root` into `process.env` before the configuration is
-   * imported. Variables already set are never overwritten.
+   * Whether to load `.env` from `root` into `process.env` before the configuration is imported.
+   * Defaults to `true`; variables already set are never overwritten.
    */
   readonly env?: boolean;
   /**
-   * `false` leaves `SIGINT` and `SIGTERM` alone instead of stopping the app on them.
+   * Whether `SIGINT` and `SIGTERM` stop the app. Defaults to `true`.
    */
   readonly signals?: boolean;
   /**
    * Defaults to `createConsoleLogger()`.
    */
   readonly logger?: Logger;
+  /**
+   * Defaults to `uuidV7IdGenerator`.
+   */
   readonly ids?: IdGenerator;
+  /**
+   * Defaults to `systemClock`.
+   */
   readonly clock?: Clock;
 }
 

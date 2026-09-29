@@ -144,6 +144,9 @@ export interface CreateAppArgs<R extends Registry> {
    * Defaults to `uuidV7IdGenerator`.
    */
   readonly ids?: IdGenerator;
+  /**
+   * Defaults to `systemClock`.
+   */
   readonly clock?: Clock;
 }
 

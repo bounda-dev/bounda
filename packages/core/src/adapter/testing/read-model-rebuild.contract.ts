@@ -28,6 +28,9 @@ export const rebuiltFields: FieldsRecord = {
   lines: f.number(),
 };
 
+/**
+ * What `readModelRebuildContract` needs from the harness.
+ */
 export interface ReadModelRebuildContractArgs extends AdapterContractArgs {}
 
 export interface ReadModelRebuildContractFunction {

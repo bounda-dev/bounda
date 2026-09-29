@@ -11,6 +11,9 @@ import { type ContractRow, contractFields } from "./table.contract.ts";
  */
 export type TransactionLocking = "per-subscriber" | "single-writer";
 
+/**
+ * What every adapter contract that opens its own adapter needs from the harness.
+ */
 export interface AdapterContractArgs {
   /**
    * A fresh adapter per test, with nothing in it.
@@ -25,6 +28,9 @@ export interface AdapterContractArgs {
   readonly concurrent?: boolean;
 }
 
+/**
+ * What `readModelTransactionContract` needs: a fresh adapter per test and how it locks.
+ */
 export interface ReadModelTransactionContractArgs extends AdapterContractArgs {
   readonly locking: TransactionLocking;
 }

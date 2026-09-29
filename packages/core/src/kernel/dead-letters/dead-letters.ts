@@ -30,8 +30,10 @@ export interface DeadLetters {
    * Runs the failed handler once more: the policy or process handler for the stored event, the
    * process deadline that failed, or the dropped command with its recorded payload, and marks the
    * letter `replayed`. Rejects with the handler's error when it fails again, and the letter stays
-   * `failed`. Rejects a letter that is missing or no longer `failed`, and a projection letter,
-   * which a rebuild of the read model fixes instead.
+   * `failed`. Rejects, without running anything, a letter that is missing or no longer `failed`,
+   * a projection letter (a rebuild of the read model fixes it instead), a letter whose policy is
+   * no longer in the registry or whose event is gone, and a command letter recorded without its
+   * payload.
    */
   replay(id: string): Promise<DeadLetter>;
   /**
