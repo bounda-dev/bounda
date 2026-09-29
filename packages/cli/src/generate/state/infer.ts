@@ -3,8 +3,7 @@ import type { StateTypeSource } from "../emit/types.ts";
 import type { AggregateModel, EventModel, ProjectModel } from "../model.ts";
 
 /**
- * Something the inference could not do for an aggregate; the generator still produces a usable
- * `State` and reports these.
+ * Something inference could not do for an aggregate, which still gets a usable `State`.
  */
 export interface StateWarning {
   readonly aggregate: string;
@@ -13,23 +12,18 @@ export interface StateWarning {
 
 export interface InferStatesArgs {
   readonly model: ProjectModel;
-  /**
-   * The project's `tsconfig.json`; the checker opens the project from it.
-   */
   readonly tsconfigPath: string;
   /**
-   * Absolute path of `.bounda/types.ts`. Its first-pass content, with `core.UnknownState` for
-   * every aggregate without `state.ts`, must already be on disk.
+   * Absolute path of `.bounda/types.ts`. Its first-pass content must already be on disk: typing
+   * every state to infer as `core.UnknownState` is what makes each `apply` return only the fields
+   * it sets.
    */
   readonly typesPath: string;
   /**
-   * Renders `.bounda/types.ts` for a set of inferred states; used for the second pass and for
-   * the validation of what it produced.
+   * Renders `.bounda/types.ts` for a set of inferred states; what it renders is written and
+   * type-checked.
    */
   readonly renderTypes: (states: Readonly<Record<string, StateTypeSource>>) => string;
-  /**
-   * Writes a generated file.
-   */
   readonly write: (path: string, content: string) => Promise<void>;
 }
 
@@ -210,13 +204,11 @@ const openProject = async (
 };
 
 /**
- * Infers `State` for every aggregate without `state.ts` from the return types of its events'
- * `apply` functions, using the TypeScript checker. Two passes: the first-pass `.bounda/types.ts`
- * (already on disk) types `state` as `core.UnknownState`, so each `apply` returns exactly the
- * fields it sets; those are collected, unioned per field and written back as a literal type with
- * every field optional. The result is then type-checked, and a field whose type is not reachable
- * from `.bounda/types.ts` (for example a non-exported interface) becomes `unknown` with a
- * warning. When the checker cannot run at all, every such aggregate keeps `core.UnknownState`.
+ * Infers `State` for every aggregate without `state.ts` from what its events' exported `apply`
+ * functions return: every field optional, typed as the union of what they set. Writes the result
+ * to `typesPath`. A field whose type is not visible from there (a non-exported interface, say)
+ * becomes `unknown` with a warning; when TypeScript cannot run on the project, every such
+ * aggregate keeps `core.UnknownState`, with a warning each.
  */
 export const inferStates: InferStatesFunction = async ({
   model,

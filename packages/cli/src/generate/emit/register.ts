@@ -9,9 +9,8 @@ export interface EmitRegisterFunction {
 }
 
 /**
- * `.bounda/register.d.ts`: registers the project's registry type with `@bounda-dev/core/register`,
- * so that
- * `BoundaApp`, `boot()` and the integrations are typed for the project without a type argument.
+ * Registers the registry type with `@bounda-dev/core/register`, so `BoundaApp`, `boot()` and the
+ * integrations are typed for the project without a type argument.
  */
 export const emitRegister: EmitRegisterFunction = ({ path }) => ({
   path,

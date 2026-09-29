@@ -8,8 +8,7 @@ const parkedEvents = (count: number): string =>
   `${count} event${count === 1 ? " is" : "s are"} parked`;
 
 /**
- * A dead letter as `bounda dead-letters list` prints it: what failed, where, how often and why,
- * and the events parked behind a process failure.
+ * A dead letter as `bounda dead-letters list` prints it.
  */
 export const formatLetter: FormatLetterFunction = (letter) =>
   [

@@ -18,7 +18,7 @@ export interface EmitTypesArgs {
    */
   readonly path: string;
   /**
-   * Inferred state per aggregate name, for aggregates without `state.ts`.
+   * By aggregate name; an aggregate with `state.ts` ignores its entry.
    */
   readonly inferredStates?: Readonly<Record<string, StateTypeSource>>;
 }
@@ -31,9 +31,6 @@ export interface StateTypeNameFunction {
   (aggregateName: string): string;
 }
 
-/**
- * `order` → `OrderState`.
- */
 export const stateTypeName: StateTypeNameFunction = (aggregateName) =>
   `${typeNameOf(aggregateName)}State`;
 
@@ -41,9 +38,6 @@ export interface EventsTypeNameFunction {
   (aggregateName: string): string;
 }
 
-/**
- * `order` → `OrderEvents`.
- */
 export const eventsTypeName: EventsTypeNameFunction = (aggregateName) =>
   `${typeNameOf(aggregateName)}Events`;
 
@@ -51,9 +45,6 @@ export interface RowTypeNameFunction {
   (readModelName: string): string;
 }
 
-/**
- * `orderSummary` → `OrderSummaryRow`.
- */
 export const rowTypeName: RowTypeNameFunction = (readModelName) =>
   `${typeNameOf(readModelName)}Row`;
 
@@ -61,10 +52,6 @@ export interface InfersCollaboratorsFunction {
   (owner: CollaboratorOwnerModel): boolean;
 }
 
-/**
- * Whether a command, policy or process gets its collaborator type from its implementations: it
- * has collaborator files and does not declare `Collaborators` itself.
- */
 export const infersCollaborators: InfersCollaboratorsFunction = (owner) =>
   owner.collaborators.length > 0 && !owner.declaresCollaborators;
 
@@ -131,10 +118,10 @@ const emitMap = (
       ].join("\n");
 
 /**
- * `.bounda/types.ts`: per aggregate its `State` and `Events` maps, `Events` of the whole app by
- * aggregate, the inferred collaborator
- * types of commands, policies and processes, the `Commands` facade type, per read model its `Row`, and the `Queries` facade type.
- * Everything is `typeof import(...)`, so the file never references the registry.
+ * Renders `.bounda/types.ts`: each aggregate's `State` and `Events`, the app's `Events`, the
+ * collaborator types inferred for commands, policies and processes, each read model's `Row`, and
+ * the `Commands` and `Queries` facade types. Modules are referenced only through
+ * `typeof import(...)`, so the file never imports the registry.
  */
 export const emitTypes: EmitTypesFunction = ({ model, path, inferredStates = {} }) => {
   const sections: string[] = ['import type * as core from "@bounda-dev/core";'];

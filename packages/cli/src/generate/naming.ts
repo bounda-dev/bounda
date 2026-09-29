@@ -15,28 +15,18 @@ export interface KeyOfFunction {
   (fileName: string): string;
 }
 
-/**
- * The registry key of a file name: `order-placed` → `orderPlaced`.
- */
 export const keyOf: KeyOfFunction = (fileName) => toCamelCase(fileName);
 
 export interface TypeNameOfFunction {
   (key: string): string;
 }
 
-/**
- * The type name of a key: `orderPlaced` → `OrderPlaced`.
- */
 export const typeNameOf: TypeNameOfFunction = (key) => capitalize(key);
 
 export interface JoinKeysFunction {
   (...parts: readonly string[]): string;
 }
 
-/**
- * Joins camelCase parts into one identifier: `("orderSummary", "on", "orderPlaced")` →
- * `orderSummaryOnOrderPlaced`.
- */
 export const joinKeys: JoinKeysFunction = (...parts) =>
   parts.map((part, index) => (index === 0 ? part : capitalize(part))).join("");
 
@@ -47,8 +37,7 @@ export interface PolicyTriggerOfFunction {
 }
 
 /**
- * The event key a policy file name points at: `send-receipt-on-order-paid` → `orderPaid`; `null`
- * when the name has no `-on-` part.
+ * Takes the event after the last `-on-`: `send-receipt-on-order-paid` → `orderPaid`.
  */
 export const policyTriggerOf: PolicyTriggerOfFunction = (fileName) => {
   const match = POLICY_TRIGGER.exec(fileName);
@@ -61,10 +50,6 @@ export interface ProcessHandlerEventOfFunction {
   (fileName: string): string | null;
 }
 
-/**
- * The event key of a process handler file: `on-order-paid` → `orderPaid`; `null` when the name
- * does not start with `on-`.
- */
 export const processHandlerEventOf: ProcessHandlerEventOfFunction = (fileName) => {
   const match = PROCESS_HANDLER.exec(fileName);
   return match?.[1] === undefined ? null : toCamelCase(match[1]);
@@ -76,10 +61,6 @@ export interface ProcessDeadlineOfFunction {
   (fileName: string): string | null;
 }
 
-/**
- * The deadline field of a process deadline handler file: `at-next-reminder` → `nextReminder`;
- * `null` when the name does not start with `at-`.
- */
 export const processDeadlineOf: ProcessDeadlineOfFunction = (fileName) => {
   const match = PROCESS_DEADLINE.exec(fileName);
   return match?.[1] === undefined ? null : toCamelCase(match[1]);
@@ -91,9 +72,6 @@ export interface CollaboratorPartsOfFunction {
   (fileName: string): { readonly name: string; readonly implementation: string } | null;
 }
 
-/**
- * Name and implementation of a collaborator file: `audit-log.memory` → `auditLog` / `memory`.
- */
 export const collaboratorPartsOf: CollaboratorPartsOfFunction = (fileName) => {
   const match = COLLABORATOR.exec(fileName);
   if (match?.[1] === undefined || match[2] === undefined) return null;
@@ -101,9 +79,6 @@ export const collaboratorPartsOf: CollaboratorPartsOfFunction = (fileName) => {
 };
 
 export interface UniqueAliasesArgs {
-  /**
-   * Preferred alias and, for a collision, the owner to prefix it with.
-   */
   readonly entries: readonly { readonly alias: string; readonly owner: string }[];
 }
 
@@ -112,9 +87,8 @@ export interface UniqueAliasesFunction {
 }
 
 /**
- * Import aliases for one generated file. A preferred alias that two entries share becomes
- * `<owner><Alias>` for every one of them, so `created` in two aggregates gives `orderCreated`
- * and `customerCreated`.
+ * An alias two entries share is prefixed with the owner in every one of them, not only the
+ * second: `created` in two aggregates gives `orderCreated` and `customerCreated`.
  */
 export const uniqueAliases: UniqueAliasesFunction = ({ entries }) => {
   const counts = new Map<string, number>();
