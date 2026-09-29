@@ -1,21 +1,35 @@
 import { describe, expect, it } from "vitest";
 import { createReactionCommandIds } from "../shared/idempotency-key.ts";
-import { createKernelHarness } from "../test-support.ts";
+import { createKernelHarness, createRecordingLogger } from "../test-support.ts";
 import { scheduledCommandKey } from "./pipeline.ts";
-import { createReactionCommands } from "./reaction-commands.ts";
+import { createReactionCommands, ReactionAbandonedError } from "./reaction-commands.ts";
 
 const context = { correlationId: "req-1", causationId: "evt-1", depth: 4 };
 
 const setUp = async () => {
   const harness = await createKernelHarness();
+  const { logger, entries } = createRecordingLogger();
   const reaction = createReactionCommands({
     aggregates: harness.aggregates,
     pipeline: harness.pipeline,
     scheduler: harness.storage.scheduler,
+    logger,
     context,
     idempotencyKey: "key-1",
   });
-  return { ...harness, reaction };
+  return { ...harness, reaction, entries };
+};
+
+const holdScheduling = (scheduler: Awaited<ReturnType<typeof setUp>>["storage"]["scheduler"]) => {
+  const gate = Promise.withResolvers<void>();
+  const reached = Promise.withResolvers<void>();
+  const schedule = scheduler.schedule.bind(scheduler);
+  scheduler.schedule = async (args) => {
+    reached.resolve();
+    await gate.promise;
+    return schedule(args);
+  };
+  return { reached: reached.promise, release: () => gate.resolve() };
 };
 
 describe("createReactionCommands", () => {
@@ -47,31 +61,54 @@ describe("createReactionCommands", () => {
     expect(loaded.events.map((event) => event.type)).toEqual(["OrderPlaced"]);
   });
 
-  it("waits for a delayed command still being scheduled before cancelling it", async () => {
-    const { reaction, storage } = await setUp();
-    const gate = Promise.withResolvers<void>();
-    const reached = Promise.withResolvers<void>();
-    const schedule = storage.scheduler.schedule.bind(storage.scheduler);
-    storage.scheduler.schedule = async (args) => {
-      reached.resolve();
-      await gate.promise;
-      return schedule(args);
-    };
-    const scheduling = reaction.commands.placeOrder?.(
-      { orderId: "o-1", total: 3 },
-      { delay: "1h" },
-    );
-    await reached.promise;
+  it("leaves a retry's delayed command alone when the abandoned run's scheduling lands late", async () => {
+    const { reaction, storage, aggregates, pipeline } = await setUp();
+    const held = holdScheduling(storage.scheduler);
+    const late = reaction.commands.placeOrder?.({ orderId: "o-1", total: 3 }, { delay: "1h" });
+    await held.reached;
+    await reaction.abandon(new Error("timed out"));
+    const retry = createReactionCommands({
+      aggregates,
+      pipeline,
+      scheduler: storage.scheduler,
+      logger: createRecordingLogger().logger,
+      context,
+      idempotencyKey: "key-1",
+    });
 
-    const abandoning = reaction.abandon(new Error("down"));
-    gate.resolve();
-    await abandoning;
+    held.release();
+    await retry.commands.placeOrder?.({ orderId: "o-1", total: 3 }, { delay: "1h" });
+    await late;
 
-    await expect(scheduling).resolves.toMatchObject({ scheduled: true });
-    expect(await storage.scheduler.list()).toEqual([]);
+    expect(await storage.scheduler.list()).toHaveLength(1);
   });
 
-  it("refuses commands after the run is abandoned, and aborts its signal with the reason", async () => {
+  it("does not wait on a delayed command whose scheduling never ends", async () => {
+    const { reaction, storage } = await setUp();
+    const held = holdScheduling(storage.scheduler);
+    void reaction.commands.placeOrder?.({ orderId: "o-1", total: 3 }, { delay: "1h" });
+    await held.reached;
+
+    await expect(reaction.abandon(new Error("timed out"))).resolves.toBeUndefined();
+  });
+
+  it("warns when a delayed command cannot be cancelled, and still resolves", async () => {
+    const { reaction, storage, entries } = await setUp();
+    await reaction.commands.payOrder?.({ orderId: "o-1", method: "card" }, { delay: "1h" });
+    storage.scheduler.cancel = async () => {
+      throw new Error("store down");
+    };
+
+    await expect(reaction.abandon(new Error("refused"))).resolves.toBeUndefined();
+
+    expect(entries).toContainEqual({
+      level: "warn",
+      message: "delayed command of an abandoned run not cancelled",
+      fields: { dedupeKey: expect.any(String), error: "store down" },
+    });
+  });
+
+  it("refuses commands after the run is abandoned, saying why, and aborts its signal", async () => {
     const { reaction, storage } = await setUp();
     const reason = new Error("timed out");
 
@@ -79,7 +116,13 @@ describe("createReactionCommands", () => {
 
     expect(reaction.signal.aborted).toBe(true);
     expect(reaction.signal.reason).toBe(reason);
-    await expect(reaction.commands.placeOrder?.({ orderId: "o-1", total: 3 })).rejects.toBe(reason);
+    const refused = reaction.commands.placeOrder?.({ orderId: "o-1", total: 3 });
+    await expect(refused).rejects.toBeInstanceOf(ReactionAbandonedError);
+    await expect(refused).rejects.toMatchObject({
+      code: "REACTION_ABANDONED",
+      message: "The run that dispatched this command was abandoned: timed out",
+      cause: reason,
+    });
     expect(
       await storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" }),
     ).toMatchObject({ events: [] });

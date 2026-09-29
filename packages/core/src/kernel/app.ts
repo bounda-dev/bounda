@@ -199,6 +199,7 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
     scheduler: storage.scheduler,
     config,
     clock,
+    logger,
   });
   const reactive = [
     {

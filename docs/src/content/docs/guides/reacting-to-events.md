@@ -218,7 +218,9 @@ A few rules keep it correct:
 - **A run that fails takes its delayed commands back.** When the handler throws, times out, or
   its outcome cannot be recorded, the delayed commands that run scheduled are cancelled, so a
   retry that decides differently leaves none behind. Its immediate commands have already run.
-  Only a crash of the runtime mid-run leaves a delayed command in place.
+  A delayed command stays only when its run is never seen to fail (the runtime crashed mid-run,
+  or a policy's run succeeded but could not be marked done, so it runs again and may decide
+  differently), or when it was still being scheduled as its run gave up.
 
 ## Retries and timeouts
 
@@ -235,8 +237,9 @@ Two different things are called a timeout, and it is worth keeping them apart:
 
 - **How long one handler run may take** is `runtime.policies.timeout`, 30 seconds by default. It
   governs process handlers too, not only policies — the process runner reads the policy setting.
-  When a run runs out of time, the commands it dispatches from then on are refused and the
-  handler's `signal` aborts. JavaScript cannot stop the handler itself, so pass `signal` to what
+  When a run runs out of time, the commands it dispatches from then on are refused
+  (the error's `code` is `REACTION_ABANDONED`, its `cause` the timeout) and the handler's `signal`
+  aborts. JavaScript cannot stop the handler itself, so pass `signal` to what
   it calls outside (`fetch(url, { signal })`) and that stops too.
 - **How long a process may stay open** before `at-timeout.ts` runs is the process's own `timeout`
   in its `config`, falling back to `runtime.processes.timeout`, 7 days by default.

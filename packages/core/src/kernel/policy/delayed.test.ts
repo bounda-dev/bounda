@@ -241,6 +241,52 @@ describe("delayed policies", () => {
     expect(await orderEvents(harness)).toEqual(["OrderPlaced", "OrderArchived"]);
   });
 
+  it("cancel the delayed commands of a run that fails", async () => {
+    const harness = await createReactiveHarness({
+      registry: {
+        aggregates: {
+          order: {
+            ...orderAggregateEntry(),
+            policies: {
+              chaseOnOrderPlaced: {
+                module: {
+                  delay: "1m",
+                  handler: async ({
+                    event,
+                    commands,
+                  }: Pick<HandlerArgs, "event"> & {
+                    readonly commands: Record<
+                      string,
+                      (payload: unknown, options?: object) => Promise<unknown>
+                    >;
+                  }) => {
+                    await commands.payOrder?.(
+                      { orderId: event.aggregateId, method: "card" },
+                      { delay: "1h" },
+                    );
+                    throw new DomainError("card declined");
+                  },
+                },
+              },
+            },
+          },
+        },
+        readModels: {},
+      },
+    });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.dispatcher.processUntilIdle();
+    harness.clock.advance(60_000);
+    await harness.worker.runOnce();
+
+    expect(await harness.storage.deadLetterStore.list()).toMatchObject([
+      { subscriber: "order.chaseOnOrderPlaced", errorType: "terminal" },
+    ]);
+    expect(
+      (await harness.storage.scheduler.list()).map((entry) => entry.command.type),
+    ).not.toContain("PayOrder");
+  });
+
   it("dead-letter a run whose policy or event is gone", async () => {
     const { harness, placed } = await setUp();
     const schedule = (policy: string, eventId: string) =>

@@ -753,6 +753,24 @@ describe("a policy run that fails", () => {
     expect(await scheduledTypes(harness)).toEqual([]);
   });
 
+  it("keeps the handler's own error when cancelling its delayed commands fails", async () => {
+    const harness = await createReactiveHarness({
+      registry: withPolicy(async ({ event, commands }) => {
+        await commands.payOrder?.({ orderId: event.aggregateId, method: "card" }, { delay: "1h" });
+        throw new DomainError("refused");
+      }),
+    });
+    harness.storage.scheduler.cancel = async () => {
+      throw new Error("store down");
+    };
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.dispatcher.processUntilIdle();
+
+    expect(await harness.storage.deadLetterStore.list()).toMatchObject([
+      { errorType: "terminal", errorMessage: "refused" },
+    ]);
+  });
+
   it("stops the commands of a handler that ran out of time, and aborts its signal", async () => {
     const started = Promise.withResolvers<void>();
     const resume = Promise.withResolvers<void>();
@@ -782,7 +800,10 @@ describe("a policy run that fails", () => {
     await processing;
     resume.resolve();
 
-    expect(await late.promise).toMatchObject({ code: "HANDLER_TIMEOUT" });
+    expect(await late.promise).toMatchObject({
+      code: "REACTION_ABANDONED",
+      cause: { code: "HANDLER_TIMEOUT" },
+    });
     expect(signal?.aborted).toBe(true);
     expect(signal?.reason).toMatchObject({ code: "HANDLER_TIMEOUT" });
     expect(await scheduledTypes(harness)).toEqual([]);

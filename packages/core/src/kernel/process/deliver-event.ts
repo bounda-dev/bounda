@@ -123,10 +123,9 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
             instance: current,
             attempt,
           });
-          const recording = current;
           try {
             await handled.record(() =>
-              append(process, instanceId, recording, handledEntries(process, event, handled.state)),
+              append(process, instanceId, current, handledEntries(process, event, handled.state)),
             );
             return;
           } catch (error) {

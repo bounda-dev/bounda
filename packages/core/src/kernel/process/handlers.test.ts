@@ -211,7 +211,10 @@ describe("a process handler run that fails", () => {
     await processing;
     resume.resolve();
 
-    expect(await late.promise).toMatchObject({ code: "HANDLER_TIMEOUT" });
+    expect(await late.promise).toMatchObject({
+      code: "REACTION_ABANDONED",
+      cause: { code: "HANDLER_TIMEOUT" },
+    });
     expect(signal?.aborted).toBe(true);
     const order = await harness.storage.eventStore.load({
       aggregateType: "order",

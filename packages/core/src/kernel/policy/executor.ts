@@ -2,6 +2,7 @@ import type { Scheduler } from "../../adapter/ports/scheduler.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
+import type { Logger } from "../../contracts/logger.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
 import { createReactionCommands } from "../command/reaction-commands.ts";
@@ -38,6 +39,7 @@ export interface CreatePolicyExecutorArgs {
   readonly scheduler: Scheduler;
   readonly config: ResolvedConfig;
   readonly clock: Clock;
+  readonly logger: Logger;
 }
 
 export interface CreatePolicyExecutorFunction {
@@ -50,6 +52,7 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
   scheduler,
   config,
   clock,
+  logger,
 }) => ({
   run: async ({ policy, event, attempt, replay }) => {
     const idempotencyKey = deriveIdempotencyKey({
@@ -62,6 +65,7 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
       aggregates,
       pipeline,
       scheduler,
+      logger,
       context: {
         correlationId: event.metadata.correlationId,
         causationId: event.id,

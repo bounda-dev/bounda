@@ -86,6 +86,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     scheduler: storage.scheduler,
     config,
     clock,
+    logger,
   });
   const processes = createProcessRunner({
     processes: buildProcesses({ registry, config }),

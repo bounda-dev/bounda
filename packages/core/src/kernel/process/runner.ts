@@ -67,6 +67,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     scheduler: storage.scheduler,
     config,
     clock,
+    logger,
   });
   const schedule = createDeadlineSchedule({ storage, instances, failures });
   const deadlineStep = createDeadlineStep({ instances, handlers, ids });
