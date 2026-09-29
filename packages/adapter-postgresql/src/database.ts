@@ -2,7 +2,7 @@ import type { SqlExecutor, SqlTransaction } from "@bounda-dev/core/adapter/sql";
 import type { ParameterOrJSON, Sql, TransactionSql } from "postgres";
 
 /**
- * The Postgres.js client seen through the two calls the SQL helpers need, plus transactions.
+ * The Postgres.js client as the SQL helpers use it, plus transactions.
  */
 export interface PostgresqlDatabase extends SqlExecutor {
   /**
@@ -28,8 +28,8 @@ const executorOf = (target: Sql | TransactionSql): SqlExecutor => ({
 });
 
 /**
- * Wraps a Postgres.js client. Parameters travel with `$n` placeholders and the driver's own type
- * inference, so JSON columns take plain values and `timestamptz` columns take `Date`s.
+ * Parameters go through the driver's own type inference, so JSON columns take plain values and
+ * `timestamptz` columns take `Date`s.
  */
 export const createPostgresqlDatabase: CreatePostgresqlDatabaseFunction = (sql) => ({
   ...executorOf(sql),

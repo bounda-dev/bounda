@@ -2,8 +2,8 @@ import { quoteIdentifier, tableNameFor } from "@bounda-dev/core/adapter/sql";
 import type { PostgresqlDatabase } from "./database.ts";
 
 /**
- * The quoted names of the five storage tables for a table prefix, plus the advisory-lock key
- * that serialises appends to the event store.
+ * The quoted names of the storage tables for a table prefix, plus the advisory-lock key that
+ * serialises appends to the event store.
  */
 export interface StorageTables {
   readonly events: string;
@@ -22,6 +22,9 @@ export interface StorageTablesForFunction {
   (prefix: string): StorageTables;
 }
 
+/**
+ * The tables, lock key and channel `postgresql()` uses for a table prefix.
+ */
 export const storageTablesFor: StorageTablesForFunction = (prefix) => {
   const events = tableNameFor({ prefix, readModel: "events" });
   return {
@@ -42,10 +45,6 @@ export interface CheckpointTableStatementFunction {
   (table: string): string;
 }
 
-/**
- * DDL for a checkpoints table: part of the storage schema, and created next to a read model's
- * rows when the read model lives in a database of its own.
- */
 export const checkpointTableStatement: CheckpointTableStatementFunction = (table) =>
   `CREATE TABLE IF NOT EXISTS ${table} (
     "subscriber" text PRIMARY KEY,
@@ -57,9 +56,8 @@ export interface StorageSchemaStatementsFunction {
 }
 
 /**
- * DDL for the write side. `position` is a `BIGSERIAL`; appends take a transaction-scoped advisory
- * lock, so positions are handed out in commit order and `readAll` never sees a gap that a still
- * uncommitted transaction would later fill.
+ * DDL for the storage tables, which `postgresql()` runs on first use. Every statement can run
+ * again on a database that already has them.
  */
 export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables) => [
   `CREATE TABLE IF NOT EXISTS ${tables.events} (
@@ -133,9 +131,6 @@ export interface EnsureStorageSchemaFunction {
   (args: EnsureStorageSchemaArgs): Promise<void>;
 }
 
-/**
- * Creates the schema and the storage tables that do not exist yet.
- */
 export const ensureStorageSchema: EnsureStorageSchemaFunction = async ({ db, schema, tables }) => {
   await db.run(`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(schema)}`, []);
   for (const statement of storageSchemaStatements(tables)) await db.run(statement, []);

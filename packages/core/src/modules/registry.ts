@@ -57,8 +57,7 @@ export type CommandInvoker<Module> =
       : (options?: DispatchOptions) => Promise<DispatchResult>;
 
 /**
- * `app.commands` typed from a map of command modules. The generator emits this map with
- * `typeof import(...)` entries so `+types` files never depend on the registry value.
+ * `app.commands` typed from a map of command modules.
  */
 export type CommandsFacadeOf<Modules extends Readonly<Record<string, CommandModule>>> = {
   readonly [Name in keyof Modules]: CommandInvoker<Modules[Name]>;

@@ -3,7 +3,8 @@ import { boot } from "@bounda-dev/core/node";
 import { createContext, type MiddlewareFunction, type RouterContext } from "react-router";
 
 /**
- * Boots the app the middleware serves. Called once per process, on the first request.
+ * Boots the app the middleware serves. Called on the first request, and again on the next one
+ * after a failed boot or a `dispose`.
  */
 export interface BootBoundaFunction<R extends Registry> {
   (): Promise<BoundaApp<R>>;
@@ -23,10 +24,10 @@ export interface CreateBoundaArgs<R extends Registry = AppRegistry> {
    */
   readonly boot?: BootBoundaFunction<R>;
   /**
-   * The key under which the running app is kept on `globalThis`, so that it survives a reload of
-   * the module that called `createBounda` in development. Calling `createBounda` again with the
-   * same key stops the app booted by the previous call; the next request boots a fresh one from
-   * the reloaded modules once that app has stopped. Defaults to `"bounda.app"`; one app per key.
+   * Where the running app is kept on `globalThis`, so it survives a reload of the module that
+   * calls `createBounda` in development. Calling it again under the same key stops the previous
+   * app, and the next request boots a fresh one once that app has stopped. Defaults to
+   * `"bounda.app"`; one app per key.
    */
   readonly key?: string;
   readonly consistency?: Consistency;
@@ -34,16 +35,17 @@ export interface CreateBoundaArgs<R extends Registry = AppRegistry> {
 
 /**
  * A React Router middleware that boots the app on the first request, starts it and puts it in
- * the context of every request. Return it from `middleware` in `root.tsx`.
+ * the context of every request. Mount it in `root.tsx`:
+ * `export const middleware = [boundaMiddleware]`.
  */
 export interface BoundaMiddleware {
   <Result>(...args: Parameters<MiddlewareFunction<Result>>): Promise<Result>;
 }
 
 /**
- * Stops the running app, if any, and forgets it, so that the next request boots again. Resolves
- * once every app booted under the same key has stopped, including one that a later call to
- * `createBounda` is still stopping.
+ * Stops the running app, if any, and forgets it, so the next request boots again. Resolves once
+ * every app booted under the same key has stopped, including one a later `createBounda` is still
+ * stopping.
  */
 export interface DisposeBoundaFunction {
   (): Promise<void>;
@@ -119,12 +121,11 @@ const load = <R extends Registry>(
 
 /**
  * Wires Bounda into a React Router app: a context for the running app and the middleware that
- * boots it once and provides it to every loader and action. By default the app in the context
- * reads its own writes: a command resolves once the read models reflect it, so the page a redirect
- * lands on is fresh. Declare it once in a server module and mount the middleware in `root.tsx`.
- * In development the server
- * module is re-evaluated when the code changes; the app booted before is stopped and the next
- * request boots one from the new modules once it has, so the two never hold the storage at once.
+ * boots it once and provides it to every loader and action. Declare it once in a server module
+ * and mount the middleware in `root.tsx`. By default a command resolves once the read models
+ * reflect it (see `Consistency`). When the server module is re-evaluated in development, the next
+ * request boots from the new modules only once the previous app has stopped, so the two never
+ * hold the storage at once.
  *
  * @example
  * // app/bounda.server.ts

@@ -24,9 +24,8 @@ interface Connection {
 
 /**
  * SQLite storage through libSQL: a local file (`{ path }`, its directory is created), memory
- * (`{ memory: true }`) or a
- * libSQL server such as Turso (`{ url, authToken }`). Storage and read models opened from the
- * same adapter share one connection, closed when the last of them closes.
+ * (`{ memory: true }`) or a libSQL server such as Turso (`{ url, authToken }`). Storage and read
+ * models opened from the same adapter share one connection, closed when the last of them closes.
  */
 export const sqlite: SqliteFunction = (options) => {
   const { url, authToken, tablePrefix } = resolveSqliteOptions(options);

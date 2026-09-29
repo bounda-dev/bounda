@@ -20,11 +20,6 @@ import { createDeadlineSchedule } from "./schedule.ts";
 
 export const PROCESSES_SUBSCRIBER: "processes" = "processes";
 
-/**
- * Processes as the rest of the kernel sees them: the `processes` subscriber of the dispatcher,
- * what the scheduled-command worker runs deadlines through, and what the dead letters replay
- * process failures through.
- */
 export interface ProcessRunner extends Subscriber, ProcessDeadlines, ProcessDeadLetters {}
 
 export interface CreateProcessRunnerArgs {
@@ -43,11 +38,8 @@ export interface CreateProcessRunnerFunction {
 }
 
 /**
- * Runs processes as internal aggregates: each instance is a stream of lifecycle events under
- * `process:<Type>:<aggregateId>`, appended with optimistic concurrency. Composes the three ways
- * steps reach an instance (events from the dispatcher, deadlines from the scheduler, replays from
- * the dead letters) over the services they share; a process that holds an event is handed none of
- * the later events of the batch, so none of them overtakes it.
+ * A process that holds an event is handed none of the later events of the batch, so none of them
+ * overtakes it.
  */
 export const createProcessRunner: CreateProcessRunnerFunction = ({
   processes,

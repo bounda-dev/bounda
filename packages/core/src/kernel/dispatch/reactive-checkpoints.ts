@@ -4,13 +4,7 @@ import type { EventStore } from "../../adapter/ports/event-store.ts";
 export interface AlignReactiveCheckpointsArgs {
   readonly eventStore: EventStore;
   readonly checkpointStore: CheckpointStore;
-  /**
-   * The policy and process subscribers with something to handle: the dispatcher feeds them.
-   */
   readonly following: readonly string[];
-  /**
-   * The ones with nothing to handle: left out of the dispatcher.
-   */
   readonly idle: readonly string[];
 }
 
@@ -19,13 +13,9 @@ export interface AlignReactiveCheckpointsFunction {
 }
 
 /**
- * Policies and processes react to what happens after they are deployed, never to the history
- * before them. A subscriber with nothing to handle is kept out of the dispatcher, so it costs no
- * reads, no checkpoint writes and no wake-ups, and its checkpoint is forgotten. A subscriber that
- * follows the stream without a checkpoint, the first time an app has a policy or a process, starts
- * at the last position stored instead of 0. The head is read before the checkpoints so that an
- * event stored in between is delivered, and `compareAndSet` from 0 leaves alone a checkpoint that
- * another instance wrote meanwhile.
+ * Policies and processes react only to what happens after they are deployed, so a new one starts
+ * at the head. The head is read before the checkpoints so an event stored in between is still
+ * delivered, and `compareAndSet` from 0 keeps a checkpoint another instance wrote meanwhile.
  */
 export const alignReactiveCheckpoints: AlignReactiveCheckpointsFunction = async ({
   eventStore,

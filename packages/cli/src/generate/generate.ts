@@ -14,12 +14,12 @@ export interface GenerateArgs {
    */
   readonly appDir?: string;
   /**
-   * The `tsconfig.json` the checker opens to infer state. Defaults to `<root>/tsconfig.json`.
+   * The `tsconfig.json` TypeScript opens to infer state. Defaults to `<root>/tsconfig.json`.
    */
   readonly tsconfigPath?: string;
   /**
-   * Whether to infer `State` for aggregates without `state.ts`. Defaults to `true`; `false`
-   * leaves them as `core.UnknownState` without starting TypeScript.
+   * Defaults to `true`; `false` leaves aggregates without `state.ts` as `core.UnknownState`,
+   * without starting TypeScript.
    */
   readonly inferState?: boolean;
 }
@@ -38,10 +38,10 @@ export interface GenerateFunction {
 }
 
 /**
- * The whole generator: discover the project, emit and write `.bounda/registry.ts`,
- * `.bounda/types.ts` and every `+types` file, infer the state of aggregates without `state.ts`
- * and write the types again, then remove `+types` files whose module is gone. Throws
- * `ConventionError` when the layout breaks a convention; inference problems are warnings.
+ * Runs the generator: writes `.bounda/` and every `+types` file, with the state of aggregates
+ * without `state.ts` inferred, and removes `+types` files whose module is gone. A file whose
+ * content is unchanged is not rewritten. Throws `ConventionError` when the layout breaks a
+ * convention; inference problems come back as warnings.
  */
 export const generate: GenerateFunction = async ({
   root,

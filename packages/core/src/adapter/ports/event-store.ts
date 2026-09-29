@@ -10,8 +10,7 @@ export interface AppendArgs {
   readonly aggregateType: string;
   readonly aggregateId: string;
   /**
-   * The stream version the handler decided on. The store rejects the append with
-   * `ConcurrencyError` when the stream has moved.
+   * The version the stream must still be at; otherwise the append throws `ConcurrencyError`.
    */
   readonly expectedVersion: number;
   readonly events: readonly PendingEvent[];
@@ -39,10 +38,9 @@ export interface ReadAllArgs {
 }
 
 /**
- * The write side's storage. Streams are keyed by aggregate type and id; every event also gets a
- * position in one global sequence. `readAll` must return only committed events, in position
- * order, with no event ever appearing before one with a lower position that is still uncommitted.
- * How an adapter guarantees that is its business.
+ * Streams are keyed by aggregate type and id; every event also gets a position in one global
+ * sequence. `readAll` must return only committed events, in position order, and never an event
+ * while one with a lower position is still uncommitted.
  */
 export interface EventStore {
   append(args: AppendArgs): Promise<AppendResult>;

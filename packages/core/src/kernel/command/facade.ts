@@ -23,9 +23,6 @@ export interface CreateCommandsFacadeFunction {
   (args: CreateCommandsFacadeArgs): CommandsFacadeRuntime;
 }
 
-/**
- * One function per command key, each handing its command to `dispatch`.
- */
 export const createCommandsFacade: CreateCommandsFacadeFunction = ({ aggregates, dispatch }) =>
   Object.fromEntries(
     Object.values(aggregates.commandsByType).map(({ command }) => [

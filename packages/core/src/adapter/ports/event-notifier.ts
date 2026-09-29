@@ -11,11 +11,9 @@ export interface Unsubscribe {
 }
 
 /**
- * An adapter's way of saying "there are new events" without being asked. The dispatcher runs a
- * pass when the listener fires instead of waiting for its next poll, and while an app has one it
- * polls only as a safety net, every `runtime.dispatcher.idleInterval`. Optional: an adapter that
- * cannot push, such as SQLite, leaves it out and the dispatcher polls at `pollInterval` as before.
- * Notifications may be lost or coalesced; delivery is what the poll guarantees.
+ * Lets an adapter push "there are new events", so the dispatcher passes at once instead of at its
+ * next poll. Optional. Notifications may be lost or coalesced: the poll, which an idle dispatcher
+ * with a notifier stretches to `runtime.dispatcher.idleInterval`, is what guarantees delivery.
  */
 export interface EventNotifier {
   subscribe(listener: EventListener): Promise<Unsubscribe>;

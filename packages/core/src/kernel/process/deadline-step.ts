@@ -17,14 +17,13 @@ export interface RunDeadlineArgs {
 }
 
 /**
- * Reaching one deadline of an instance: its handler runs and `ProcessDeadlineReached` is written
- * with the state it leaves, or `ProcessTimedOut` for the timeout, past any event parked meanwhile.
+ * Writes `ProcessDeadlineReached`, or `ProcessTimedOut` for the timeout, past any event parked
+ * meanwhile.
  */
 export interface DeadlineStep {
   run(args: RunDeadlineArgs): Promise<void>;
   /**
-   * Runs the step as `run` does, and remembers the deadline an error it throws came from, for
-   * `thrownBy`.
+   * `run`, remembering for `thrownBy` which deadline an error it throws came from.
    */
   attempt(args: RunDeadlineArgs): Promise<void>;
   /**

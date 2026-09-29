@@ -43,17 +43,12 @@ export interface OpenPostgresqlReadModelFunction {
 }
 
 /**
- * Creates the read model's table from its `fields`, or brings an existing table up to date with
- * additive changes, then returns the typed table and the SQL read client (`raw` is the
- * Postgres.js client). The checkpoints table is created too when missing, so a read model in a
- * database of its own keeps its projections' checkpoints there.
+ * The checkpoints table is created too, so a read model in a database of its own keeps its
+ * projections' checkpoints there.
  *
- * `transact` opens a transaction and takes `pg_advisory_xact_lock` on two keys, the checkpoints
- * table and the subscriber, both through `hashtext`: two-key locks never collide with the
- * one-key lock appends take, and the lock is released with the transaction, however it ends,
- * so a crashed process never leaves it behind. With `wait` false it tries
- * `pg_try_advisory_xact_lock` and gives up when another session holds it. Inside, `client.raw`
- * is the Postgres.js `TransactionSql`, so hand-written SQL joins the transaction.
+ * `transact` locks on two keys, the checkpoints table and the subscriber: two-key advisory locks
+ * never collide with the one-key lock appends take, and a transaction-scoped lock goes with its
+ * transaction however it ends, so a crashed process never leaves it behind.
  */
 export const openPostgresqlReadModel: OpenPostgresqlReadModelFunction = async <Row extends object>({
   db,
@@ -156,16 +151,11 @@ const tableExists = async (db: SqlExecutor, schema: string, table: string): Prom
   ).length > 0;
 
 /**
- * Opens the shadow table of a rebuild: `<table>__rebuild`, reopened as it is when `progress`
- * says a paused rebuild got somewhere, created fresh with the current fields otherwise, after
- * dropping what an interrupted rebuild may have left. Opening is one transaction that takes the
- * rebuild's advisory lock and claims the next rebuild generation (see `rebuildFencing`); every
- * later step is one more transaction that takes the same lock and goes ahead only while that
- * generation is still the latest. Each `transact` writes the shadow and the checkpoints. `commit`
- * takes the projections' advisory lock first, as `transact` on the live read model does, then the
- * rebuild's, and swaps the shadow into place, sets the projections' checkpoint and forgets
- * `progress`; `abort` drops the shadow and forgets `progress`, or does nothing when another
- * rebuild took over; `pause` leaves everything. All three release the pool.
+ * Opening claims the next rebuild generation under the rebuild's advisory lock (see
+ * `rebuildFencing`); every later step takes the same lock and goes ahead only while that
+ * generation is still the latest. `commit` takes the projections' lock before the rebuild's, the
+ * one `transact` on the live read model holds, so the swap waits for a projection batch in flight.
+ * `commit`, `abort` and `pause` each give up the rebuild's hold on the pool.
  */
 export const rebuildPostgresqlReadModel: RebuildPostgresqlReadModelFunction = async <
   Row extends object,

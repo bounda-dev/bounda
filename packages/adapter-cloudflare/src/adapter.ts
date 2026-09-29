@@ -13,9 +13,8 @@ export interface DurableObjectAdapterFunction {
 }
 
 /**
- * The adapter over one Durable Object's SQLite: the shared SQLite storage of
- * `@bounda-dev/core/adapter/sqlite` on `ctx.storage.sql`. The storage lives as long as the
- * object, so releasing it closes nothing. Queries get `ctx.storage.sql` as `client.raw`.
+ * The adapter over one Durable Object's SQLite (`ctx.storage`). Queries get `ctx.storage.sql` as
+ * `client.raw`. Closing it closes nothing: the storage lives as long as the object.
  */
 export const durableObjectAdapter: DurableObjectAdapterFunction = ({ storage, options }) => {
   const db = createDurableSqlDatabase(storage);

@@ -5,6 +5,7 @@ import { fieldBuilder as f } from "../../modules/view.ts";
 import type { Adapter, ReadModelRebuild } from "../adapter.ts";
 import type { Checkpoint } from "../ports/checkpoint-store.ts";
 import { rebuildFencing } from "../rebuild-fencing.ts";
+import type { AdapterContractArgs } from "./read-model-transaction.contract.ts";
 import { type ContractRow, contractFields } from "./table.contract.ts";
 
 /**
@@ -27,19 +28,10 @@ export const rebuiltFields: FieldsRecord = {
   lines: f.number(),
 };
 
-export interface ReadModelRebuildContractArgs {
-  /**
-   * A fresh adapter per test, with nothing in it.
-   */
-  readonly create: () => Promise<Adapter>;
-  /**
-   * Whether the contract may run two calls at once and have one wait for the other. Defaults to
-   * `true`. A harness that reaches the adapter through a host that cannot interleave calls from
-   * the test, such as a Durable Object through `runInDurableObject`, passes `false` and covers
-   * that behaviour inside the host instead.
-   */
-  readonly concurrent?: boolean;
-}
+/**
+ * What `readModelRebuildContract` needs from the harness.
+ */
+export interface ReadModelRebuildContractArgs extends AdapterContractArgs {}
 
 export interface ReadModelRebuildContractFunction {
   (args: ReadModelRebuildContractArgs): void;

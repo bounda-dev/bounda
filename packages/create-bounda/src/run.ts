@@ -22,7 +22,8 @@ export interface RunCreateArgs {
    */
   readonly prompts?: Prompts | null;
   /**
-   * Runs `git init` and the install; defaults to spawning the real commands.
+   * Runs `git init`, the install and a Cloudflare project's `generate`; defaults to spawning the
+   * real commands.
    */
   readonly exec?: Exec;
   readonly userAgent?: string | undefined;

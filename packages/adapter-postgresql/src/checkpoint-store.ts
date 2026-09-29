@@ -11,8 +11,7 @@ export interface CreatePostgresqlCheckpointStoreFunction {
 }
 
 /**
- * One row per subscriber. A subscriber without a row is at position 0, so `compareAndSet` from 0
- * inserts the row when it is missing and updates it only while it still says 0.
+ * A subscriber without a row is at position 0, so `compareAndSet` from 0 may have to insert it.
  */
 export const createPostgresqlCheckpointStore: CreatePostgresqlCheckpointStoreFunction = ({
   db,

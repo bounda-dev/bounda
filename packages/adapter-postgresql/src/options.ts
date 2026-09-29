@@ -13,16 +13,26 @@ export type PostgresqlLocation =
     };
 
 /**
- * Options of `postgresql(...)`. `schema` holds every Bounda table (default `public`),
- * `tablePrefix` goes in front of each table name (default `bounda_`), `maxConnections` sizes the
- * pool (default 10).
+ * Options of `postgresql(...)`: where the server is, and where and how Bounda keeps its tables.
  */
 export type PostgresqlOptions = PostgresqlLocation & {
+  /**
+   * Holds every Bounda table, and is created when missing. Defaults to `DEFAULT_SCHEMA`.
+   */
   readonly schema?: string;
+  /**
+   * Put in front of every table name. Defaults to `DEFAULT_TABLE_PREFIX`.
+   */
   readonly tablePrefix?: string;
+  /**
+   * The size of the pool. Defaults to `DEFAULT_MAX_CONNECTIONS`.
+   */
   readonly maxConnections?: number;
 };
 
+/**
+ * `PostgresqlOptions` with every default filled in.
+ */
 export interface ResolvedPostgresqlOptions {
   readonly url?: string;
   readonly host?: string;
@@ -40,8 +50,17 @@ export interface ResolvePostgresqlOptionsFunction {
   (options: PostgresqlOptions): ResolvedPostgresqlOptions;
 }
 
+/**
+ * The table prefix `postgresql()` uses when none is given.
+ */
 export const DEFAULT_TABLE_PREFIX: string = "bounda_";
+/**
+ * The schema `postgresql()` uses when none is given.
+ */
 export const DEFAULT_SCHEMA: string = "public";
+/**
+ * The pool size `postgresql()` uses when none is given.
+ */
 export const DEFAULT_MAX_CONNECTIONS: number = 10;
 
 /**

@@ -1,7 +1,7 @@
 /**
- * What an adapter factory such as `sqlite({ path })` returns and what `bounda.config.ts` holds
- * under `storage` and `readModels`. It carries the adapter name and its options; the port
- * factories the kernel needs are added by the adapter SPI.
+ * What `bounda.config.ts` holds under `storage` and `readModels`: an adapter's name and options.
+ * An adapter factory such as `sqlite({ path })` returns the full `Adapter`, which adds the port
+ * factories.
  */
 export interface AdapterDefinition<Name extends string = string, Options = unknown> {
   readonly kind: "bounda-adapter";
@@ -14,7 +14,7 @@ export interface IsAdapterDefinitionFunction {
 }
 
 /**
- * Runtime check used when validating the configuration.
+ * Whether `value` has the shape of an `AdapterDefinition`.
  */
 export const isAdapterDefinition: IsAdapterDefinitionFunction = (
   value,

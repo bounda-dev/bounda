@@ -51,8 +51,8 @@ export interface CreateReactiveHarnessFunction {
 }
 
 /**
- * Wires the write side, projections and policies of a registry on the in-memory adapter with
- * deterministic ids and clock. For kernel tests.
+ * Wires the write side, projections, policies, processes and the scheduled-command worker of a
+ * registry on the in-memory adapter with deterministic ids and clock. For kernel tests.
  */
 export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
   registry,

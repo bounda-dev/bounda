@@ -38,8 +38,8 @@ export interface CollaboratorOwnerModel extends ModuleRef {
   readonly collaborators: readonly CollaboratorModel[];
   /**
    * Whether the module (`index.ts` for a policy or process) exports a `Collaborators` type of its
-   * own. Only checked when there are collaborator files; the generated types then use the
-   * declaration instead of inferring the type from the implementations.
+   * own, which the generated types then use instead of inferring one from the implementations.
+   * Always `false` without collaborator files.
    */
   readonly declaresCollaborators: boolean;
   /**
@@ -67,11 +67,12 @@ export interface PolicyModel extends CollaboratorOwnerModel {
   /**
    * Set when the policy is a directory (`policies/<name>/index.ts`), where collaborators live.
    */
-  readonly directory: string | null /**
+  readonly directory: string | null;
+  /**
    * The aggregate whose events the policy reacts to when it sits in `policies/<aggregate>/`;
    * `null` for the owner's own events. Its key is then prefixed with that aggregate:
    * `policies/payment/refund-on-payment-failed.ts` → `paymentRefundOnPaymentFailed`.
-   */;
+   */
   readonly source: string | null;
 }
 

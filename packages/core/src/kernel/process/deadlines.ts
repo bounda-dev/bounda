@@ -50,9 +50,6 @@ export interface DeadlineFieldsOfFunction {
   (schema: z.ZodType | null): readonly string[];
 }
 
-/**
- * The fields of a state schema declared with `deadline()`, by name.
- */
 export const deadlineFieldsOf: DeadlineFieldsOfFunction = (schema) =>
   schema instanceof z.ZodObject
     ? Object.entries(schema.shape)
@@ -72,9 +69,6 @@ export interface AfterFromFunction {
 export const afterFrom: AfterFromFunction = (base) => (delay) =>
   new Date(Date.parse(base) + parseDuration(delay)).toISOString() as Instant;
 
-/**
- * A deadline of a process instance: its field and the moment it comes due.
- */
 export interface Deadline {
   readonly field: string;
   readonly at: string;

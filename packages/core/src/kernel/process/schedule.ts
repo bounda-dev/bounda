@@ -30,9 +30,8 @@ export const pendingDeadline: PendingDeadlineFunction = (process, instance) =>
  */
 export interface DeadlineSchedule {
   /**
-   * Sets the instance's entry to its earliest pending deadline while it is running, and removes
-   * it otherwise. The instance is read again after the entry is written, and the write repeated
-   * if the stream moved meanwhile, so the last write always reflects the latest state.
+   * Removes the entry unless the instance is running. The write is repeated while the stream moves
+   * under it, so the last one always reflects the latest state.
    */
   reconcile(process: ProcessRuntime, instanceId: string): Promise<void>;
   /**

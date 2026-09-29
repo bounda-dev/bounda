@@ -5,8 +5,7 @@ export type DeadLetterErrorType = "terminal" | "retriable_exhausted";
 export type DeadLetterStatus = "failed" | "replayed" | "discarded";
 
 /**
- * A handler execution that gave up: which subscriber, which event, why, and how many times it was
- * tried. `status` tracks what an operator did about it: `failed` until it is replayed or discarded.
+ * A handler run that gave up. `status` is `failed` until an operator replays or discards it.
  */
 export interface DeadLetter {
   readonly id: string;
@@ -24,16 +23,15 @@ export interface DeadLetter {
   readonly lastFailedAt: string;
   readonly status: DeadLetterStatus;
   /**
-   * For `command` letters, the payload of the scheduled command that was dropped, so it can be
-   * dispatched again. Policy and process letters point at a stored event instead.
+   * Only on `command` letters: the dropped scheduled command's payload, to dispatch it again.
+   * Policy and process letters point at a stored event instead.
    */
   readonly payload?: unknown;
   /**
-   * For a process letter, how many events are parked on its instance: while the letter is
-   * `failed`, the ones that reached the instance since and wait for its replay, which handles
-   * them in order; on the letter a replay returns, the steps still waiting because the process
-   * failed again, the event or deadline it failed on included, so it is `0` only when the instance
-   * resumed.
+   * Process letters only: how many steps wait on the instance. While the letter is `failed`, the
+   * events parked behind it for its replay to handle; on the letter a replay returns, the steps
+   * still waiting because the process failed again, the one it failed on included, so `0` there
+   * means the instance resumed.
    * Filled in by `app.deadLetters`, never stored.
    */
   readonly parked?: number;
@@ -50,7 +48,8 @@ export interface ListDeadLettersArgs {
 }
 
 /**
- * Storage for dead letters. `add` is idempotent on `id`.
+ * `add` stores a letter as `failed` and resolves to what is stored; adding an `id` again keeps
+ * the first letter.
  */
 export interface DeadLetterStore {
   add(letter: NewDeadLetter): Promise<DeadLetter>;

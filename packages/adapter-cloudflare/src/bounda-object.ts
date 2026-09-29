@@ -102,10 +102,6 @@ export interface ConfigForObjectFunction {
   (config: Config, storage: DurableSqlStorage): Config;
 }
 
-/**
- * The configuration an object's app runs on: `cloudflare()` definitions replaced by the adapter
- * over the object's own storage, anything else kept.
- */
 export const configForObject: ConfigForObjectFunction = (config, storage) => {
   if (!isCloudflareDefinition(config.storage)) {
     throw new ConfigurationError(
@@ -191,6 +187,7 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
         await this.ctx.storage.deleteAlarm();
         return;
       }
+      // `at` is on the app's clock, which need not be the wall clock the alarm is set on.
       await this.ctx.storage.setAlarm(Date.now() + (at - now));
     }
 

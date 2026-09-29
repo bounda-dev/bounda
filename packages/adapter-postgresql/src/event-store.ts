@@ -36,11 +36,9 @@ const toStoredEvent = (row: Record<string, unknown>): StoredEvent => ({
 });
 
 /**
- * Event store on one PostgreSQL table. Every append runs in a transaction that first takes
- * `pg_advisory_xact_lock(hashtext(lockKey))`: appends are serialised, so the `BIGSERIAL`
- * position matches commit order and `readAll` sees a gap-free global stream. Throughput is
- * bounded by that lock; it is plenty for the workloads Bounda targets. The transaction ends with
- * `pg_notify` on `channel`, which PostgreSQL delivers at commit.
+ * Every append takes the advisory lock first, so appends are serialised: the `BIGSERIAL` position
+ * matches commit order, and `readAll` never sees a gap that a transaction still uncommitted would
+ * later fill. The lock bounds throughput, which is plenty for the workloads Bounda targets.
  */
 export const createPostgresqlEventStore: CreatePostgresqlEventStoreFunction = ({
   db,

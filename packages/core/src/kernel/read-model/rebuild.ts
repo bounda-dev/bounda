@@ -76,16 +76,15 @@ export const pendingRebuilds: PendingRebuildsFunction = async (checkpointStore) 
 /**
  * Rebuilds one read model from the whole stream without taking it offline. The projections run
  * into a shadow table with the view's current fields while queries keep reading the live one;
- * when the shadow has caught up with the stream it takes the live table's place, and the read
- * model's checkpoint is set to where the shadow stopped, in one transaction holding the lock the
- * projections take. Whatever a worker applied to the old table meanwhile goes with it, and the
- * worker carries on from the rebuilt position, so every event reaches the new table exactly once.
- * A projection that throws aborts the rebuild and leaves the live table as it was.
+ * once caught up, the shadow takes the live table's place and the read model's checkpoint moves
+ * to where it stopped, so every event reaches the new table exactly once, even with a worker
+ * running. A projection that throws aborts the rebuild, leaves the live table as it was, forgets
+ * the progress and rejects with the projection's error; a rebuild another call took over rejects
+ * with `RebuildSupersededError`.
  *
- * Each batch and the position it reached commit together in the shadow's database, so a rebuild
- * that stops, because `maxEvents` ran out or because the process died, resumes exactly where it
- * was on the next call, as long as the read model's fields and projections are the same code:
- * otherwise it starts again from a fresh shadow.
+ * A rebuild that stops, because `maxEvents` ran out or the process died, resumes where it was on
+ * the next call, unless the read model's fields or projections changed meanwhile: then it starts
+ * again from a fresh shadow.
  */
 export const rebuildReadModel: RebuildReadModelFunction = async ({
   registry,

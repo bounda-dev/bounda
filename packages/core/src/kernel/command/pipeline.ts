@@ -26,9 +26,9 @@ export interface DispatchArgs {
   readonly options?: DispatchOptions;
   readonly context?: CausationContext;
   /**
-   * The id the command gets instead of a new one: the id a scheduled command was given when it
-   * was scheduled, so it keeps it when it runs and on every retry of the worker, or the one a
-   * reaction derives, so a retried reaction dispatches the same command.
+   * Used instead of a new id: the one a scheduled command was given when scheduled, kept across the
+   * worker's retries, or the one a reaction derives, so a retried reaction dispatches the same
+   * command.
    */
   readonly commandId?: string | undefined;
 }
@@ -58,7 +58,7 @@ export interface ScheduledCommandKeyFunction {
 }
 
 /**
- * The scheduler's dedupe key for a delayed command, built from the command's id.
+ * The scheduler's dedupe key for a delayed command.
  */
 export const scheduledCommandKey: ScheduledCommandKeyFunction = (commandId) =>
   `${SCHEDULED_COMMAND_PREFIX}${commandId}`;
@@ -68,7 +68,7 @@ export interface ScheduledCommandIdFunction {
 }
 
 /**
- * The id a delayed command was given when it was scheduled, read back from its dedupe key.
+ * The id a delayed command was scheduled with; `undefined` for a key that is not a command's.
  */
 export const scheduledCommandId: ScheduledCommandIdFunction = (dedupeKey) =>
   dedupeKey.startsWith(SCHEDULED_COMMAND_PREFIX)
@@ -127,14 +127,10 @@ const toPendingEvents = (
   });
 
 /**
- * The write path. `dispatch` validates the payload, loads the aggregate, runs the handler with its
- * events and collaborators, and appends with the version it loaded. A `ConcurrencyError` from the
- * store reloads and retries up to `runtime.commands.concurrencyRetries` times; a `DomainError`
- * from the handler is returned to the caller untouched. Commands with `delay` go to the scheduler
- * with the payload as the caller passed it, in the JSON form every scheduler stores: validating
- * that form here only rejects early what would fail when the command runs, such as a date JSON
- * turns into a string, and the one validation whose result the handler sees happens then, so a
- * transform does not apply twice.
+ * Commands with `delay` are scheduled with the payload as the caller passed it, in the JSON form
+ * every scheduler stores. Validating that form here only rejects early what would fail when the
+ * command runs, such as a date JSON turns into a string; the validation whose result the handler
+ * sees happens then, so a transform does not apply twice.
  */
 export const createCommandPipeline: CreateCommandPipelineFunction = ({
   aggregates,

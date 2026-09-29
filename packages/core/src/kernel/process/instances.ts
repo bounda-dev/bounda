@@ -14,8 +14,7 @@ import {
 } from "./lifecycle.ts";
 
 /**
- * The streams of process instances, `process:<Type>:<aggregateId>`: folded on read, appended with
- * optimistic concurrency on the version they were folded at.
+ * The streams `process:<Type>:<aggregateId>`, appended at the version the instance was folded at.
  */
 export interface ProcessInstances {
   load(process: ProcessRuntime, instanceId: string): Promise<ProcessInstance>;
@@ -39,9 +38,6 @@ export interface ProcessInstances {
    * Whether `error` is another write to the instance's stream getting there first.
    */
   lostRace(process: ProcessRuntime, instanceId: string, error: unknown): boolean;
-  /**
-   * Loads the event a `ProcessEventParked` points at, from its own aggregate's stream.
-   */
   parkedEvent(parked: ParkedEvent): Promise<StoredEvent>;
 }
 

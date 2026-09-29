@@ -16,9 +16,6 @@ import {
   trace,
 } from "@opentelemetry/api";
 
-/**
- * What the fake tracer remembers about one span.
- */
 export interface RecordedSpan {
   readonly name: string;
   readonly attributes: Attributes;
@@ -28,7 +25,7 @@ export interface RecordedSpan {
 }
 
 /**
- * What the fake meter remembers about one counter increment.
+ * One value a counter added, a histogram or gauge recorded, or an observable callback observed.
  */
 export interface RecordedCount {
   readonly metric: string;
@@ -36,9 +33,6 @@ export interface RecordedCount {
   readonly attributes: Attributes;
 }
 
-/**
- * What the fake meter remembers about one instrument's creation.
- */
 export interface RecordedInstrument {
   readonly metric: string;
   readonly description: string;
@@ -122,8 +116,7 @@ const recordingSpan = (name: string, attributes: Attributes, spans: RecordedSpan
 
 /**
  * Registers a tracer provider and a meter provider that record into memory, so tests can assert
- * on the spans and metrics the runtime emits without an OpenTelemetry SDK. Returns the recording
- * and a `restore` that unregisters both.
+ * on the spans and metrics the runtime emits without an OpenTelemetry SDK.
  */
 export const installFakeTelemetry: InstallFakeTelemetryFunction = () => {
   const spans: RecordedSpan[] = [];

@@ -90,9 +90,7 @@ export interface BuildAggregatesFunction {
 }
 
 /**
- * Compiles the write side of the registry: schemas, appliers, event builders and collaborator
- * selection, once, at boot. Duplicate command type names across aggregates are rejected because
- * `app.commands` is one flat namespace.
+ * Command type names must be unique across aggregates, since `app.commands` is one flat namespace.
  */
 export const buildAggregates: BuildAggregatesFunction = ({ registry, config }) => {
   const byName = Object.fromEntries(

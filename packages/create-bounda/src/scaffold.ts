@@ -91,8 +91,9 @@ const isEmptyDirectory = async (directory: string): Promise<boolean> => {
 
 /**
  * Copies `base/`, the database overlay and the framework overlay into the project directory, in
- * that order, rendering `*.tpl` files and renaming `_gitignore`. The `cloudflare` framework brings
- * its own storage, so it is one overlay, not two. The directory must not exist or be empty.
+ * that order, rendering `*.tpl` files and renaming `_gitignore` and `_env.example`. The
+ * `cloudflare` framework brings its own storage, so it is one overlay, not two. Throws when the
+ * directory exists and is not empty.
  */
 export const scaffoldProject: ScaffoldProjectFunction = async ({
   templateRoot,

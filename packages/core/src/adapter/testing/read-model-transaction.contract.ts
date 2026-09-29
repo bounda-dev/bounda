@@ -12,26 +12,29 @@ import { type ContractRow, contractFields } from "./table.contract.ts";
 export type TransactionLocking = "per-subscriber" | "single-writer";
 
 /**
- * What `readModelTransactionContract` needs: a fresh adapter per test and how it locks.
+ * What every adapter contract that opens its own adapter needs from the harness.
  */
-export interface ReadModelTransactionContractArgs {
+export interface AdapterContractArgs {
   /**
    * A fresh adapter per test, with nothing in it.
    */
   readonly create: () => Promise<Adapter>;
-  readonly locking: TransactionLocking;
   /**
-   * Whether the contract may run two calls at once and have one wait for the other. Defaults to
-   * `true`. A harness that reaches the adapter through a host that cannot interleave calls from
-   * the test, such as a Durable Object through `runInDurableObject`, passes `false` and covers
-   * that behaviour inside the host instead.
+   * Whether the contract may run two calls at once and have one wait for the other (the default).
+   * A harness that reaches the adapter through a host that cannot interleave calls from the test,
+   * such as a Durable Object through `runInDurableObject`, passes `false` and covers that
+   * behaviour inside the host instead.
    */
   readonly concurrent?: boolean;
 }
 
 /**
- * Registers the read model transaction contract's tests for one adapter.
+ * What `readModelTransactionContract` needs: a fresh adapter per test and how it locks.
  */
+export interface ReadModelTransactionContractArgs extends AdapterContractArgs {
+  readonly locking: TransactionLocking;
+}
+
 export interface ReadModelTransactionContractFunction {
   (args: ReadModelTransactionContractArgs): void;
 }
@@ -60,9 +63,7 @@ const gate = (): Gate => {
 };
 
 /**
- * The behaviour every adapter's `ReadModelPorts.transact` must exhibit: the table and the
- * checkpoint commit together, roll back together, and two transactions of one subscriber never
- * overlap.
+ * The behaviour every adapter's `ReadModelPorts.transact` must exhibit.
  */
 export const readModelTransactionContract: ReadModelTransactionContractFunction = ({
   create,

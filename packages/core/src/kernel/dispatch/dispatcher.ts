@@ -58,16 +58,15 @@ export interface SubscriberFailing {
   readonly retryAt: string;
 }
 
+/**
+ * How far the subscribers are behind the head of the global stream.
+ */
 export interface DispatcherLag {
   readonly lastPosition: number;
   readonly subscribers: readonly SubscriberLag[];
   readonly maxLag: number;
 }
 
-/**
- * What `catchUpThrough` waits for: a position in the global stream and the aggregate and types of
- * the events that led there.
- */
 export interface CatchUpThroughArgs {
   readonly position: number;
   readonly aggregateType: string;
@@ -75,37 +74,18 @@ export interface CatchUpThroughArgs {
 }
 
 export interface Dispatcher {
-  /**
-   * Starts passing in the background: on every notification when the storage pushes them, and on
-   * a timer either way. Idempotent.
-   */
   start(): void;
-  /**
-   * Stops the background passes, unsubscribes from notifications and waits for the pass in
-   * flight, if any.
-   */
   stop(): Promise<void>;
   /**
-   * One pass over every subscriber. Resolves to whether any subscriber processed a batch.
+   * Resolves to whether any subscriber moved.
    */
   processOnce(): Promise<boolean>;
-  /**
-   * Passes until a full pass advances nothing. What tests await after dispatching commands.
-   */
   processUntilIdle(): Promise<void>;
-  /**
-   * Runs passes for the subscribers of one kind until none of them moves.
-   */
   catchUp(kind: SubscriberKind): Promise<void>;
   /**
-   * Waits until every subscriber that reacts to one of `eventTypes`, which only projections say,
-   * has reached `position`, and resolves to whether they all did within the configured time. A
-   * projection already there costs one checkpoint read. One behind is delivered to when nobody
-   * else holds it; when another process does, its checkpoint is read again every
-   * `pollIntervalMs` instead of waiting on the lock, so no connection is kept waiting. A
-   * projection whose batches keep failing is not waited for while it backs off, nor once a batch
-   * of it fails here. It runs outside the pass mutex: the projections' own locks keep deliveries
-   * apart.
+   * Resolves to whether every projection reacting to `eventTypes` reached `position` in time.
+   * It polls a projection another process holds instead of waiting on its lock, so it keeps no
+   * connection waiting, and runs outside the pass mutex, since those locks keep deliveries apart.
    */
   catchUpThrough(args: CatchUpThroughArgs): Promise<boolean>;
   getLag(): Promise<DispatcherLag>;
@@ -120,50 +100,26 @@ interface FailingState {
 
 export interface CreateDispatcherArgs {
   readonly eventStore: EventStore;
-  /**
-   * Where the checkpoints of plain subscribers live. A `CheckpointedSubscriber` keeps its own.
-   */
   readonly checkpointStore: CheckpointStore;
   readonly subscribers: readonly (Subscriber | CheckpointedSubscriber)[];
   readonly batchSize: number;
   readonly pollIntervalMs: number;
-  /**
-   * How long background passes and `catchUp` leave a failing subscriber alone: `baseDelayMs` after
-   * its first failure, doubling up to `maxDelayMs`. Defaults to 1 second and 30 seconds.
-   */
   readonly backoff?: DispatcherBackoff;
-  /**
-   * How long `catchUpThrough` waits at most, and how often it reads the checkpoint of a
-   * projection another process holds. Defaults to 2 seconds and 15 milliseconds.
-   */
   readonly catchUp?: DispatcherCatchUp;
   /**
-   * With a `notifier`, how long to wait for a notification before passing anyway. Defaults to
-   * `pollIntervalMs`.
+   * Replaces `pollIntervalMs` once passes find nothing, only with a `notifier` to wake them.
    */
   readonly idleIntervalMs?: number;
-  /**
-   * When present, a notification runs a pass at once and idle waits stretch to `idleIntervalMs`.
-   */
   readonly notifier?: EventNotifier;
-  /**
-   * What the background passes wait on between one another.
-   */
   readonly clock: Clock;
   readonly logger: Logger;
 }
 
-/**
- * The delays of the dispatcher's backoff, in milliseconds.
- */
 export interface DispatcherBackoff {
   readonly baseDelayMs: number;
   readonly maxDelayMs: number;
 }
 
-/**
- * The timings of `catchUpThrough`, in milliseconds.
- */
 export interface DispatcherCatchUp {
   readonly timeoutMs: number;
   readonly pollIntervalMs: number;
@@ -174,24 +130,10 @@ export interface CreateDispatcherFunction {
 }
 
 /**
- * Pulls the global stream once per pass for each subscriber, in the order given, and checkpoints
- * after every successful batch. A single mutex guarantees that polling and `processUntilIdle`
- * never run a pass concurrently, so every subscriber sees each event in order. The checkpoint is
- * advanced with `compareAndSet` from the position the pass read: when another process, a rebuild
- * or an operator moved it meanwhile, the pass leaves their position alone and the next one reads
- * from there.
- *
- * Across processes, a `CheckpointedSubscriber` can be held by one of them at a time: projections
- * commit each batch together with their checkpoint under a lock. Background passes skip a
- * subscriber another process holds, so different subscribers spread over the instances; the
- * passes callers await (`processOnce`, `processUntilIdle`, `catchUp`) wait for it instead, since
- * they promise the subscriber has seen what is in the stream.
- *
- * Passes are scheduled the same way with or without a notifier: a timer arms the next one after
- * each pass. A notification only shortens the wait: it runs the pass now, or marks one as due when
- * a pass is in flight, however many arrive meanwhile. What changes is the timer: `pollIntervalMs`
- * while passes find events or fail, `idleIntervalMs` once they stop finding any, so an idle
- * worker on a notifying backend barely touches the database.
+ * One mutex keeps passes from overlapping, so each subscriber sees events in order. Background
+ * passes skip a subscriber another process holds, which spreads subscribers over instances; the
+ * passes callers await wait for it, because they promise it has seen the stream. A notification
+ * runs the next pass early, or marks it due while one runs; it never adds one.
  */
 export const createDispatcher: CreateDispatcherFunction = ({
   eventStore,

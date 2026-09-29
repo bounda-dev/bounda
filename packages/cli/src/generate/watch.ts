@@ -3,9 +3,6 @@ import { rm, watch as watchDirectory, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type Clock, systemClock } from "@bounda-dev/core";
 
-/**
- * `fs.watch` from `node:fs/promises`, or a stand-in for tests.
- */
 export type WatchFunction = typeof watchDirectory;
 
 export interface WatchProjectArgs {
@@ -15,8 +12,8 @@ export interface WatchProjectArgs {
    */
   readonly appDir?: string;
   /**
-   * Called after every burst of changes, once the debounce window has passed. Its rejection is
-   * passed to `onError`; watching goes on.
+   * Runs once per burst of changes, after `debounceMs` of quiet. A rejection goes to `onError`
+   * and watching goes on.
    */
   readonly onChange: () => Promise<void>;
   readonly onError?: (error: unknown) => void;
@@ -25,9 +22,8 @@ export interface WatchProjectArgs {
    */
   readonly onListening?: () => void;
   /**
-   * Called instead of `onListening` when the cookie has not come back after 20 writes, 50 ms
-   * apart on the clock: the file system may not report changes here. The cookie is removed and
-   * watching goes on.
+   * Called instead of `onListening` when the watch gives up confirming it: the file system may
+   * not report changes here. Watching goes on.
    */
   readonly onUnconfirmed?: () => void;
   /**
@@ -35,13 +31,9 @@ export interface WatchProjectArgs {
    */
   readonly debounceMs?: number;
   /**
-   * What the quiet time, and the wait before the cookie is written again, are measured on.
-   * Defaults to the wall clock.
+   * What the quiet time and the cookie's retries are measured on. Defaults to the wall clock.
    */
   readonly clock?: Clock;
-  /**
-   * Aborting it ends the watch.
-   */
   readonly signal: AbortSignal;
   readonly watch?: WatchFunction;
 }
@@ -58,12 +50,10 @@ const isGenerated = (fileName: string | Buffer | null): boolean =>
   typeof fileName === "string" && fileName.split(/[\\/]/).includes("+types");
 
 /**
- * Watches the application directory and regenerates after each burst of changes to user modules.
- * Changes under `+types` are the generator's own and are ignored. The operating system may start
- * listening some time after the watch is set up, and miss what changes before (FSEvents on macOS
- * does), so the watch writes a cookie file, `.bounda-watch-<uuid>`, into the directory until it
- * hears it back, removes it and calls `onListening`: a change made from then on is seen. It gives
- * up after 20 writes and calls `onUnconfirmed` instead. The cookie's own changes are ignored.
+ * Watches the application directory and calls `onChange` after each burst of changes to user
+ * modules, ignoring `+types`. The operating system may start listening late and miss earlier
+ * changes (FSEvents on macOS does), so the watch writes a cookie file into the directory until it
+ * hears it back, then removes it and calls `onListening`, or `onUnconfirmed` once it gives up.
  * Resolves when the signal aborts; rejects when the watcher, or writing the cookie, fails.
  */
 export const watchProject: WatchProjectFunction = async ({
@@ -147,15 +137,9 @@ export const watchProject: WatchProjectFunction = async ({
 
 export interface WatchFromFirstRunArgs extends Omit<WatchProjectArgs, "onListening"> {
   /**
-   * Started once the watcher is listening, once it has given up confirming it is (after
-   * `onUnconfirmed`), or once the watch has ended without listening; not at all when the signal
-   * aborts first. Resolves to whether watching goes on; a rejection ends the watch and is
-   * rethrown.
+   * Resolves to whether watching goes on; a rejection ends the watch and is rethrown.
    */
   readonly firstRun: () => Promise<boolean>;
-  /**
-   * Called once the first run has resolved to go on.
-   */
   readonly onWatching: () => void;
 }
 
@@ -164,10 +148,8 @@ export interface WatchFromFirstRunFunction {
 }
 
 /**
- * Starts watching and makes the first run once the watcher is listening, so a change made while
- * that run is going is not lost: it waits for the run to finish and then goes to `onChange`. Ends
- * at once, dropping a change held back, when the first run does not go on, and otherwise when the
- * signal aborts.
+ * The first run waits for the watcher to listen, so a change made during it is not lost: that
+ * change goes to `onChange` once the run is done.
  */
 export const watchFromFirstRun: WatchFromFirstRunFunction = async ({
   firstRun,

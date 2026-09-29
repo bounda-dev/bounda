@@ -15,10 +15,9 @@ import { errorDetails } from "./shared/retry.ts";
 export const TELEMETRY_SCOPE: "@bounda-dev/core" = "@bounda-dev/core";
 
 /**
- * The attributes Bounda puts on its spans, so dashboards and queries can rely on the names.
- * `bounda.correlation_id` is on every span of a chain: a command, the events it stored, the
- * policy that reacted and the command it dispatched all carry the same value, which is how one
- * request is followed across dispatcher passes that are separate traces.
+ * Users' dashboards and queries rely on these names. `bounda.correlation_id` is on every span of
+ * a chain, from a command to the policies that reacted and the commands they dispatched: it is how
+ * one request is followed across dispatcher passes, which are separate traces.
  */
 export const ATTRIBUTES: {
   readonly correlationId: "bounda.correlation_id";
@@ -69,9 +68,8 @@ export interface TracedFunction {
 }
 
 /**
- * Runs `run` inside an active span. A rejection records the exception, marks the span as an
- * error with the message and rethrows; the span always ends. Without an OpenTelemetry SDK
- * registered this costs a no-op span from the API and nothing else.
+ * The span ends even when `run` rejects. Without an OpenTelemetry SDK registered this costs a
+ * no-op span from the API and nothing else.
  */
 export const traced: TracedFunction = <T>({ name, attributes, run }: TracedArgs<T>) =>
   tracer().startActiveSpan(
@@ -110,7 +108,7 @@ export interface MeterFunction {
 export const meter: MeterFunction = () => metrics.getMeter(TELEMETRY_SCOPE);
 
 /**
- * The names of the metrics the runtime records.
+ * Users' dashboards rely on these names too.
  */
 export const METRICS: {
   readonly lag: "bounda.dispatcher.lag";
@@ -133,8 +131,8 @@ export interface DeadLetteredFunction {
 }
 
 /**
- * Counts a dead letter under `bounda.dead_letters`. The counter is resolved on each call: dead
- * letters are rare, and an SDK registered late is still counted.
+ * The counter is resolved on each call: dead letters are rare, and an SDK registered late is
+ * still counted.
  */
 export const deadLettered: DeadLetteredFunction = ({ kind, subscriber, errorType }) => {
   meter()

@@ -36,9 +36,6 @@ import { createScheduledCommandWorker } from "./scheduler/worker.ts";
 import { ATTRIBUTES, METRICS, meter } from "./telemetry.ts";
 
 /**
- * A running Bounda application.
- */
-/**
  * What `catchUpReadModels` waits for: every read model when empty, or only what one dispatch
  * changed when `through` holds its result.
  */
@@ -46,6 +43,9 @@ export interface CatchUpReadModelsArgs {
   readonly through?: DispatchResult;
 }
 
+/**
+ * A running Bounda application.
+ */
 export interface BoundaApp<R extends Registry = AppRegistry> {
   readonly commands: CommandsFacade<R>;
   readonly queries: QueriesFacade<R>;
@@ -136,8 +136,17 @@ export interface ProcessUntilIdleResult {
 export interface CreateAppArgs<R extends Registry> {
   readonly registry: R;
   readonly config: Config;
+  /**
+   * Defaults to `silentLogger`.
+   */
   readonly logger?: Logger;
+  /**
+   * Defaults to `uuidV7IdGenerator`.
+   */
   readonly ids?: IdGenerator;
+  /**
+   * Defaults to `systemClock`.
+   */
   readonly clock?: Clock;
 }
 

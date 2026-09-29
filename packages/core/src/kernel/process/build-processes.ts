@@ -10,11 +10,6 @@ import type { Registry } from "../../modules/registry.ts";
 import { qualifiedEventType } from "../shared/qualified-event.ts";
 import { deadlineFieldsOf, processStateArgs, TIMEOUT_DEADLINE } from "./deadlines.ts";
 
-/**
- * A compiled process: which events start, feed and complete it, by qualified type
- * (`order.OrderPlaced`), its state schema and handlers, how long an instance may stay open, the
- * collaborators chosen from the configuration and how an event finds its instance.
- */
 export interface ProcessRuntime {
   readonly name: string;
   readonly type: string;
@@ -25,13 +20,9 @@ export interface ProcessRuntime {
   readonly initialState: object;
   readonly stateSchema: z.ZodType | null;
   readonly handlers: Readonly<Record<string, (args: Record<string, unknown>) => unknown>>;
-  /**
-   * The state fields declared with `deadline()`, by name.
-   */
   readonly deadlineFields: readonly string[];
   /**
-   * One handler per deadline field, and the `at-timeout.ts` handler under `timeout` when there is
-   * one.
+   * Includes the `at-timeout.ts` handler under `timeout`, when there is one.
    */
   readonly deadlineHandlers: Readonly<Record<string, (args: Record<string, unknown>) => unknown>>;
   readonly collaborators: Readonly<Record<string, unknown>>;
@@ -237,8 +228,6 @@ export interface BuildProcessesFunction {
 }
 
 /**
- * Compiles every process of the registry, resolving its config against the qualified names of
- * every event of the app, and indexes processes by every qualified event type they care about.
  * An event of another aggregate that a process listens to without saying, in `correlate`, which
  * instance it belongs to is a configuration error.
  */

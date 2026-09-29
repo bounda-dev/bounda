@@ -6,12 +6,12 @@ export interface ClaimArgs {
   readonly subscriber: string;
   readonly eventId: string;
   /**
-   * Current time, supplied by the kernel's clock.
+   * The kernel clock's time, which leases are measured against.
    */
   readonly now: Date;
   /**
-   * How long a `pending` claim stays owned. A pending claim older than this is considered
-   * abandoned by a crashed instance and can be claimed again.
+   * How long a `pending` claim stays owned; an older one was abandoned by a crashed instance and
+   * can be claimed again.
    */
   readonly leaseMs: number;
 }
@@ -24,9 +24,8 @@ export interface ClaimKey {
 export interface FailClaimArgs extends ClaimKey {
   readonly error: string;
   /**
-   * Set when the runner gives up on the event, before it records the failure elsewhere (a dead
-   * letter). The claim keeps it, so whoever finds the claim again records the failure instead of
-   * running the handler once more. A `fail` without it clears it.
+   * Set when the runner gives up on the event, before it writes the dead letter, so whoever claims
+   * it next writes the letter instead of running the handler again. A `fail` without it clears it.
    */
   readonly gaveUp?: DeadLetterErrorType | undefined;
 }
@@ -37,16 +36,16 @@ export interface ClaimRecord extends ClaimKey {
   readonly claimedAt: string;
   readonly lastError?: string;
   /**
-   * How the runner gave up on the event, as the last `fail` said; kept across `tryClaim`.
+   * As the last `fail` set it; kept across `tryClaim`.
    */
   readonly gaveUp?: DeadLetterErrorType;
 }
 
 /**
- * Gives at-least-once delivery its idempotency. Before a policy or process handler runs for an
- * event, the runner claims `(subscriber, eventId)`. The claim must be atomic: with two instances
- * racing, exactly one gets `true`. `succeeded` claims are never handed out again; `failed` ones
- * are, so the runner can retry; `pending` ones only once their lease expires. Claiming again keeps
+ * Gives at-least-once delivery its idempotency: a policy or process handler runs for an event only
+ * once the runner claims `(subscriber, eventId)`. `tryClaim` must be atomic: of two racing
+ * claimers exactly one gets `true`. A `succeeded` claim is never handed out again, a `failed` one
+ * is, a `pending` one only once its lease expires. Claiming again counts an attempt and keeps
  * `lastError` and `gaveUp`.
  */
 export interface InboxLedger {

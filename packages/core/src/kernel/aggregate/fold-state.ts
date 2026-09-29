@@ -12,10 +12,8 @@ export interface FoldStateFunction {
 }
 
 /**
- * Rebuilds an aggregate's state by applying its events in order, starting from `initialState`.
- * System events written by the runtime (a failed scheduled command, for instance) carry no state
- * and are skipped. Any other event type the aggregate does not know is a configuration error:
- * the store holds an event whose module no longer exists.
+ * System events, such as a failed scheduled command, carry no state and are skipped. Any other
+ * event the aggregate does not define is a configuration error: its module no longer exists.
  */
 export const foldState: FoldStateFunction = ({ aggregate, events }) =>
   events.reduce<object>((state, event) => {

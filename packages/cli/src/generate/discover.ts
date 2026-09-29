@@ -32,8 +32,8 @@ import { createProblemCollector, type ProblemCollector } from "./problems.ts";
 export interface DiscoverProjectArgs {
   readonly root: string;
   /**
-   * The application directory under `root`. Defaults to `app`, like `rootDir` in the
-   * configuration.
+   * The application directory under `root`, which the configuration calls `rootDir`. Defaults to
+   * `app`.
    */
   readonly appDir?: string;
 }
@@ -714,8 +714,8 @@ const checkForeignHandlers = (context: Context, aggregates: readonly AggregateMo
 
 /**
  * Reads the project layout under `<root>/<appDir>` and returns what the generator needs. Names
- * come from files and directories only; no module is imported or parsed. Convention breaches
- * are collected and thrown together as a `ConventionError`.
+ * come from files and directories only, and no module is imported. Every convention breach is
+ * collected and thrown together as one `ConventionError`.
  */
 export const discoverProject: DiscoverProjectFunction = async ({ root, appDir = "app" }) => {
   const problems = createProblemCollector();

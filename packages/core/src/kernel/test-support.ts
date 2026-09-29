@@ -114,9 +114,6 @@ export const orderAggregate = {
   processes: {},
 } as const satisfies Registry["aggregates"][string];
 
-/**
- * A fresh reference to the order aggregate entry.
- */
 export const orderAggregateEntry = (): typeof orderAggregate => orderAggregate;
 
 /**

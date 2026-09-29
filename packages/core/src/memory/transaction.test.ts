@@ -17,6 +17,20 @@ describe("createMemoryLocks", () => {
     expect(third).toBeTypeOf("function");
     third?.();
   });
+
+  it("grants the lock to its waiters in the order they asked for it", async () => {
+    const locks = createMemoryLocks();
+    const granted: string[] = [];
+    const first = await locks.acquire("a", true);
+    const waiters = ["second", "third", "fourth"].map(async (name) => {
+      const release = await locks.acquire("a", true);
+      granted.push(name);
+      release?.();
+    });
+    first?.();
+    await Promise.all(waiters);
+    expect(granted).toEqual(["second", "third", "fourth"]);
+  });
 });
 
 describe("createCheckpointJournal", () => {

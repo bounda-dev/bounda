@@ -36,13 +36,8 @@ export interface CreatePolicySubscriberFunction {
 }
 
 /**
- * One subscriber for every policy. For each event and each policy that reacts to it, the runner
- * claims `(policy, eventId)` in the inbox ledger and runs the handler, or, for a delayed policy,
- * schedules its run for the event's time plus the delay. Failures are classified: terminal ones
- * are dead-lettered at once; retriable ones are retried on later passes with the configured
- * back-off, then dead-lettered. While a retry is pending, or while another instance holds the
- * claim, the checkpoint stops right before that event and the policy skips its later events of
- * the batch, so none of them overtakes the held one; other policies carry on.
+ * One subscriber for every policy. A policy that holds an event, for a pending retry or a claim
+ * another instance has, is handed none of its later events of the batch; other policies carry on.
  */
 export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
   policies,

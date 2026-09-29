@@ -25,9 +25,8 @@ export interface RunPolicyArgs {
 }
 
 /**
- * Runs a policy's handler for one event. The live subscriber, the worker running a delayed
- * policy and a dead-letter replay all go through it, so the handler always gets the same
- * arguments, time budget and trace.
+ * The live subscriber, the worker running a delayed policy and a dead-letter replay all run
+ * policies through it, so the handler always gets the same arguments, time budget and trace.
  */
 export interface PolicyExecutor {
   run(args: RunPolicyArgs): Promise<void>;

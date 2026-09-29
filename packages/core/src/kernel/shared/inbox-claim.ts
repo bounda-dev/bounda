@@ -24,9 +24,6 @@ export interface RunClaimedArgs {
     attempts: number,
     errorType: DeadLetterErrorType,
   ) => Promise<void>;
-  /**
-   * Called when a retriable failure will be retried on a later delivery.
-   */
   readonly willRetry: (attempts: number) => void;
 }
 
@@ -35,9 +32,8 @@ export interface RunClaimedFunction {
 }
 
 /**
- * Runs a reaction to one event through the inbox ledger, retrying retriable failures with
- * back-off. A give-up is written on the claim before `giveUp` runs, so a reaction that gave up is
- * never run again, only given up on again until `giveUp` gets through.
+ * A give-up is written on the claim before `giveUp` runs, so a reaction that gave up is never run
+ * again, only given up on again until `giveUp` gets through.
  */
 export const runClaimed: RunClaimedFunction = async ({
   ledger,

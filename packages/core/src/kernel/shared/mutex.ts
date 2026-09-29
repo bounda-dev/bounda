@@ -13,10 +13,6 @@ export interface CreateMutexFunction {
   (): Mutex;
 }
 
-/**
- * A promise-chain mutex. The dispatcher uses one so polling and `processUntilIdle` can never run
- * a pass at the same time.
- */
 export const createMutex: CreateMutexFunction = () => {
   let tail: Promise<unknown> = Promise.resolve();
   return {

@@ -17,10 +17,6 @@ export interface IsGeneratedPathFunction {
   (path: string): boolean;
 }
 
-/**
- * Whether a path lies under a `+types` or `.bounda` directory: the only places the generator may
- * write to.
- */
 export const isGeneratedPath: IsGeneratedPathFunction = (path) =>
   dirname(path)
     .split(/[\\/]/)
@@ -58,9 +54,6 @@ export const writeGeneratedFiles: WriteGeneratedFilesFunction = async (files) =>
 };
 
 export interface RemoveOrphansArgs {
-  /**
-   * The application directory to sweep for `+types` files.
-   */
   readonly appDirectory: string;
   /**
    * Every path the generator produced this run; anything else under a `+types` directory goes.

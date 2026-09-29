@@ -46,12 +46,10 @@ export interface OpenSqliteReadModelFunction {
 }
 
 /**
- * Creates the read model's table from its `fields`, or brings an existing table up to date with
- * additive changes, then returns the typed table and the SQL read client (`raw` is whatever the
- * host passes). The checkpoints table is created too when missing, so a read model in a database
- * of its own keeps its projections' checkpoints there. `transact` runs the work in one write
- * transaction: SQLite has a single writer, so holding it is the lock and `wait` changes nothing.
- * Inside, `client.raw` is the host's transaction handle.
+ * Creates the read model's table from its `fields`, or evolves an existing one additively. The
+ * checkpoints table is created too when missing, so a read model in a database of its own keeps
+ * its projections' checkpoints there. `transact` is one write transaction: SQLite has a single
+ * writer, so holding it is the lock and `wait` changes nothing.
  */
 export const openSqliteReadModel: OpenSqliteReadModelFunction = async <
   Row extends object,
@@ -138,15 +136,8 @@ const tableExists = async (db: SqlExecutor, table: string): Promise<boolean> =>
   (await db.all(`PRAGMA table_info(${quoteIdentifier(table)})`, [])).length > 0;
 
 /**
- * Opens the shadow table of a rebuild: `<table>__rebuild`, reopened as it is when `progress`
- * says a paused rebuild got somewhere, created fresh with the current fields otherwise, after
- * dropping what an interrupted rebuild may have left. Opening is one write transaction that also
- * claims the next rebuild generation (see `rebuildFencing`); every later step is one more write
- * transaction that goes ahead only while that generation is still the latest. Each `transact`
- * writes the shadow and the checkpoints; `commit` swaps the shadow into place, sets the
- * projections' checkpoint and forgets `progress`; `abort` drops the shadow and forgets `progress`,
- * or does nothing when another rebuild took over; `pause` leaves everything. SQLite's single
- * writer is the lock. All three release the connection.
+ * `Adapter.rebuildReadModel` over SQLite, fenced by `rebuildFencing`. Opening and every later
+ * step are each one write transaction; SQLite's single writer is the lock.
  */
 export const rebuildSqliteReadModel: RebuildSqliteReadModelFunction = async <
   Row extends object,

@@ -61,8 +61,8 @@ export interface CreateSqlTableFunction {
 }
 
 /**
- * `Table<Row>` over any SQL engine: idempotent writes through `ON CONFLICT`, reads with
- * allow-listed columns only. SQLite and PostgreSQL adapters supply the dialect and an executor.
+ * `Table<Row>` over any SQL engine the dialect describes: idempotent writes through
+ * `ON CONFLICT`, reads with allow-listed columns only.
  */
 export const createSqlTable: CreateSqlTableFunction = <Row extends object>({
   readModel,

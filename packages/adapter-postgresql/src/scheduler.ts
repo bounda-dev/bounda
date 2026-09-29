@@ -42,12 +42,15 @@ const byExecuteAt = (a: ScheduledCommand, b: ScheduledCommand): number =>
   a.executeAt.localeCompare(b.executeAt) || a.dedupeKey.localeCompare(b.dedupeKey);
 
 /**
- * Scheduler on one table. `claimDue` selects the due rows `FOR UPDATE SKIP LOCKED` and updates
- * them in the same statement, so concurrent workers each get a disjoint set. `complete` and `fail`
- * write only while the row still has the claim's `claim_id` and `revision`, then release a claim
- * that a reschedule left behind.
+ * `claimDue` selects the due rows `FOR UPDATE SKIP LOCKED` and updates them in the same
+ * statement, so concurrent workers each get a disjoint set. What a claim writes afterwards goes
+ * through only while the row still has its `claim_id` and `revision`.
  */
 export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ db, table }) => {
+  /**
+   * A write that missed because a reschedule moved the revision still releases the claim, so the
+   * rescheduled command does not wait out the lease.
+   */
   const releaseUnless = async (
     fenced: readonly unknown[],
     claim: ScheduledClaim,

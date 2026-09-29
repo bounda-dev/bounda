@@ -13,9 +13,8 @@ import { PROCESS_DEADLINE_COMMAND } from "../process/deadlines.ts";
 import type { ProcessDeadLetters } from "../process/replay.ts";
 
 /**
- * What an operator can do with the handler runs that gave up. `list`, `count` and `get` read the
- * store; `replay` runs the failed handler again and marks the letter `replayed` when it
- * succeeds; `discard` marks it `discarded`. Both leave the row in place as a record.
+ * What an operator can do with the handler runs that gave up. Replaying or discarding a letter
+ * leaves its row in place as a record.
  */
 export interface DeadLetters {
   /**
@@ -29,10 +28,17 @@ export interface DeadLetters {
   get(id: string): Promise<DeadLetter | null>;
   /**
    * Runs the failed handler once more: the policy or process handler for the stored event, the
-   * process deadline that failed, or the dropped command with its recorded payload. Rejects with the handler's error when it
-   * fails again, and the letter stays `failed`.
+   * process deadline that failed, or the dropped command with its recorded payload, and marks the
+   * letter `replayed`. Rejects with the handler's error when it fails again, and the letter stays
+   * `failed`. Rejects, without running anything, a letter that is missing or no longer `failed`,
+   * a projection letter (a rebuild of the read model fixes it instead), a letter whose policy is
+   * no longer in the registry or whose event is gone, and a command letter recorded without its
+   * payload.
    */
   replay(id: string): Promise<DeadLetter>;
+  /**
+   * Marks the letter `discarded`. Rejects a letter that is missing or no longer `failed`.
+   */
   discard(id: string): Promise<DeadLetter>;
 }
 
@@ -52,8 +58,8 @@ export interface CreateDeadLettersFunction {
 }
 
 /**
- * Wires `app.deadLetters` over the storage and the runners. A replay bypasses the inbox ledger on
- * purpose: the ledger already says the handler ran, and the operator is asking for another run.
+ * A replay bypasses the inbox ledger on purpose: the ledger already says the handler ran, and the
+ * operator is asking for another run.
  */
 export const createDeadLetters: CreateDeadLettersFunction = ({
   storage,

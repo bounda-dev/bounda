@@ -28,8 +28,9 @@ export interface ColumnsOfFunction {
 }
 
 /**
- * Maps a view's `fields` to columns in declaration order. Exactly one field must be the primary
- * key; every column name must be a valid identifier after snake_casing.
+ * Maps a view's `fields` to columns in declaration order. Throws `ConfigurationError` unless
+ * exactly one field is the primary key and every column name is a valid identifier after
+ * snake_casing.
  */
 export const columnsOf: ColumnsOfFunction = ({ readModel, fields, dialect }) => {
   const columns = Object.entries(fields).map(
@@ -216,11 +217,10 @@ export interface SwapTableStatementsFunction {
 }
 
 /**
- * Makes the shadow table the live one: retires the live table, renames the shadow into its place,
- * drops the retired one, and gives the indexes their canonical names. Index names are global in
- * PostgreSQL and SQLite cannot rename one, so the shadow's indexes are dropped and recreated
- * under the live table's names once the retired table, which held those names, is gone. Meant to
- * run inside one transaction.
+ * Makes the shadow table the live one, its indexes under the live table's names; run the
+ * statements in one transaction. Index names are global in PostgreSQL and SQLite cannot rename
+ * one, so the shadow's indexes are recreated once the retired table, which held those names, is
+ * gone.
  */
 export const swapTableStatements: SwapTableStatementsFunction = ({ table, columns, live }) => {
   const { shadow, retired } = rebuildTablesFor(table);

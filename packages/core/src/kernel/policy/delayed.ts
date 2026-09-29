@@ -35,8 +35,7 @@ export interface ScheduleDelayedPolicyFunction {
 }
 
 /**
- * Schedules a delayed policy's run for an event at the event's time plus the delay. The dedupe key
- * is the policy and the event, so delivering the event again schedules the same run.
+ * Keyed by the policy and the event, so delivering the event again schedules the same run.
  */
 export const scheduleDelayedPolicy: ScheduleDelayedPolicyFunction = ({
   scheduler,
@@ -71,8 +70,7 @@ export const scheduleDelayedPolicy: ScheduleDelayedPolicyFunction = ({
 export interface DelayedPolicies {
   isDelayedPolicy(entry: ScheduledCommand): boolean;
   /**
-   * Reads the event and runs the policy's handler. A policy no longer in the registry or an event
-   * that is gone fails for good.
+   * A policy no longer in the registry or an event that is gone fails for good.
    */
   run(entry: ScheduledCommand): Promise<void>;
   /**
@@ -94,8 +92,7 @@ export interface CreateDelayedPoliciesFunction {
 }
 
 /**
- * Delayed policy runs for the worker. The event is read by its global position, one row, through
- * the kernel's upcasting event store.
+ * The event is read by its global position, one row, through the upcasting event store.
  */
 export const createDelayedPolicies: CreateDelayedPoliciesFunction = ({
   policies,

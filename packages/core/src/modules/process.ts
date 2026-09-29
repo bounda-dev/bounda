@@ -125,11 +125,9 @@ export interface ProcessHandlerModule {
 }
 
 /**
- * A process in the registry: its module, one handler module per event it reacts to, grouped by
- * the event's aggregate and keyed by its camelCase name (`handlers.payment.paymentFailed`), one
- * per deadline keyed by its field (`deadlines.nextReminder`, `deadlines.timeout` for
- * `at-timeout.ts`) and the collaborator implementations found in its directory, which every
- * handler of the process receives.
+ * A process in the registry. `handlers` are grouped by the event's aggregate and keyed by its
+ * camelCase name (`handlers.payment.paymentFailed`); `deadlines` are keyed by field, with
+ * `timeout` for `at-timeout.ts`. Every handler of the process receives its `collaborators`.
  */
 export interface ProcessEntry {
   readonly module: ProcessModule;
@@ -156,9 +154,8 @@ export type ProcessStateOf<Module> = Module extends {
 export type ProcessHandlerResult<State> = Readonly<Partial<State>> | undefined | void;
 
 /**
- * A process handler module whose `handler` returns a state its process accepts. The `+types` of
- * every process handler asserts it as `ReturnCheck`, so a handler that returns a plain string for
- * a deadline, or a field of the wrong type, does not compile; it is not meant to be used in code.
+ * What the `+types` of every process handler asserts as `ReturnCheck`, so a handler that returns a
+ * plain string for a deadline, or a field of the wrong type, does not compile. Not for app code.
  */
 export type ProcessHandlerReturnCheck<
   State,
@@ -202,8 +199,9 @@ export type ProcessHandlerArgs<
 /**
  * Arguments of an `at-<field>.ts` handler, with the process's collaborators spread at the top
  * level: `state` holds the deadline that came due as `Field`. The handler returns the new process
- * state, where the field is `null` or another moment, never the one that came due. For
- * `at-timeout.ts`, `Field` is `never` and the process ends as `timed_out` whatever it returns.
+ * state, with the field set to `null` or another moment: leaving it at the one that came due fails
+ * the process. For `at-timeout.ts`, `Field` is `never` and the process ends as `timed_out`
+ * whatever it returns.
  */
 export type ProcessDeadlineArgs<
   State,

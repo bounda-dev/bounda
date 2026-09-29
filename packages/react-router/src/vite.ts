@@ -5,13 +5,12 @@ import { createBoundaPlugin } from "./vite-plugin.ts";
 
 export interface BoundaVitePluginOptions {
   /**
-   * Passed to `createBounda`. Defaults to `"immediate"`: the app in the context reads its own
-   * writes.
+   * Passed to `createBounda`. Defaults to `"immediate"`.
    */
   readonly consistency?: Consistency;
   /**
-   * Quiet time after the last change under `domain/` or `read/` before regenerating. Defaults to
-   * 100 ms.
+   * Quiet time after the last change under `app/domain` or `app/read` before regenerating.
+   * Defaults to 100 ms.
    */
   readonly debounceMs?: number;
 }
@@ -22,11 +21,10 @@ export interface BoundaVitePluginFunction {
 
 /**
  * Runs `bounda generate` inside Vite and serves `@bounda-dev/react-router/app`: the project's
- * `bounda` context, `boundaMiddleware` and `dispose`, wired to the generated registry. The
- * registry is imported by value, so a change under `app/domain` or `app/read` regenerates the
- * types, re-evaluates the module and reboots the app on the next request. The client build gets
- * a stub that fails loudly if a component touches it. When the dev server closes, it waits for a
- * regeneration in flight rather than letting it write after the server has gone.
+ * `bounda` context, `boundaMiddleware` and `dispose`, wired to the generated registry. A change
+ * under `app/domain` or `app/read` regenerates the project and reboots the app on the next
+ * request. A convention error fails `vite build` and is only logged by the dev server. In the
+ * client the module throws as soon as a component touches it.
  *
  * @example
  * // vite.config.ts

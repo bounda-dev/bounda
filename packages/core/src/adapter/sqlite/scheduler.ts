@@ -38,9 +38,9 @@ const byExecuteAt = (a: ScheduledCommand, b: ScheduledCommand): number =>
 
 /**
  * Scheduler on one table. `claimDue` is a single `UPDATE ... WHERE dedupe_key IN (SELECT ...)
- * RETURNING`, so concurrent workers never claim the same command. `complete` and `fail` write only
- * while the row still has the claim's `claim_id` and `revision`, then release a claim that a
- * reschedule left behind; so does `defer`.
+ * RETURNING`, so concurrent workers never claim the same command. `complete`, `fail` and `defer`
+ * write only while the row still has the claim's `claim_id` and `revision`, and otherwise release
+ * a claim that a reschedule left behind.
  */
 export const createSqliteScheduler: CreateSqliteSchedulerFunction = ({ db, table }) => {
   const releaseUnless = async (

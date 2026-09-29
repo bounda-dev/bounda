@@ -21,10 +21,8 @@ export interface NewCommand<Type extends string = string, Payload = unknown> {
 }
 
 /**
- * Options accepted when dispatching a command.
- *
  * `delay` schedules the command instead of executing it now. `correlationId` overrides the
- * generated correlation id for commands that start a new request from outside the runtime.
+ * generated correlation id, for a command that starts a new request from outside the runtime.
  */
 export interface DispatchOptions {
   readonly delay?: DurationInput;
@@ -32,10 +30,10 @@ export interface DispatchOptions {
 }
 
 /**
- * What a successful dispatch returns: the aggregate the command belongs to, its version after the
- * append and the persisted events, with their types in the same order and the position of the
- * last one in the global stream, 0 when the command stored none. A read model that has projected up to `position` reflects the command.
- * Scheduled commands return `scheduled: true` and no events.
+ * What a successful dispatch returns: the aggregate's version after the append and the ids and
+ * types of the persisted events, in order. `position` is the global position of the last one, 0
+ * when the command stored none; a read model projected up to it reflects the command. A
+ * scheduled command returns `scheduled: true` and no events.
  */
 export type DispatchResult =
   | {

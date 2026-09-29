@@ -24,9 +24,6 @@ export interface DriftBetweenFunction {
   (args: DriftBetweenArgs): readonly Drift[];
 }
 
-/**
- * Every difference between what a sync would write and what a copy holds, sorted by path.
- */
 export const driftBetween: DriftBetweenFunction = ({ expected, actual, regenerated }) => {
   const paths = [...new Set([...expected.keys(), ...actual.keys()])].sort();
   return paths.flatMap((path): readonly Drift[] => {
@@ -43,10 +40,6 @@ export interface ReadTreeFunction {
   (root: string, skip: readonly string[]): Promise<ReadonlyMap<string, string>>;
 }
 
-/**
- * Every file under `root` by its path relative to it, `/`-separated, leaving out the directories
- * named in `skip` wherever they appear.
- */
 export const readTree: ReadTreeFunction = async (root, skip) => {
   const files = new Map<string, string>();
   const walk = async (directory: string): Promise<void> => {

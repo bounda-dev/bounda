@@ -2,10 +2,9 @@ import type { SqlDatabase, SqlExecutor } from "@bounda-dev/core/adapter/sql";
 import type { Client, InValue, ResultSet, Transaction } from "@libsql/client";
 
 /**
- * The libSQL client seen through the two calls the SQL helpers need, plus write transactions.
- * `write` runs the work inside `BEGIN IMMEDIATE ... COMMIT`, one write transaction at a time
- * within the process, so it never has to wait on the engine's busy handler for another
- * transaction of the same process. The transaction's `raw` is the libSQL `Transaction`.
+ * The libSQL client as the SQL helpers use it, plus write transactions. `write` runs one write
+ * transaction at a time within the process, so it never waits on the engine's busy handler for
+ * another transaction of its own; inside it, `raw` is the libSQL `Transaction`.
  */
 export type SqliteDatabase = SqlDatabase;
 
@@ -37,10 +36,6 @@ const createSerialQueue = (): (<T>(task: () => Promise<T>) => Promise<T>) => {
   };
 };
 
-/**
- * Wraps a libSQL client. Plain statements run on the client's pool; `write` takes one write
- * transaction at a time.
- */
 export const createSqliteDatabase: CreateSqliteDatabaseFunction = (client) => {
   const serially = createSerialQueue();
   return {

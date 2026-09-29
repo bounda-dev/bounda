@@ -24,18 +24,13 @@ export interface ScheduledCommandWorker {
   start(): void;
   stop(): Promise<void>;
   /**
-   * Claims and runs every command that is due. Resolves to how many ran.
+   * Resolves to how many entries it claimed, those it deferred included.
    */
   runOnce(): Promise<number>;
   /**
-   * How long a claim this worker takes is held before another worker may take it over: twice the
-   * longest handler timeout any aggregate is configured with, so no run outlives its claim.
+   * Outlasts the slowest handler timeout, so no run outlives its claim.
    */
   readonly leaseMs: number;
-  /**
-   * How many process deadlines that came due this worker holds back until the process runner has
-   * handled the events stored before them.
-   */
   waitingDeadlines(): number;
 }
 
@@ -58,8 +53,7 @@ export interface CreateScheduledCommandWorkerFunction {
 const CLAIM_LIMIT = 50;
 
 /**
- * How many rounds a process deadline that came due waits for the process runner to handle the
- * events stored before it, before it runs anyway.
+ * Rounds a due deadline waits for the process runner to catch up before it runs anyway.
  */
 export const DEADLINE_WAIT_ROUNDS = 10;
 
@@ -69,23 +63,11 @@ interface DeadlineWait {
 }
 
 /**
- * Executes scheduled work: user commands dispatched with `delay`, process deadlines and delayed
- * policy runs. Due entries are claimed with a lease so two workers never run the same one. Work
- * that fails for a transient reason is rescheduled with back-off; work that fails for good, or
- * exhausts its retries, is dropped from the schedule and dead-lettered. A dropped command is also
- * recorded as a `CommandFailed` system event on its aggregate's stream; a dropped policy run is
- * dead-lettered as the policy's, so a replay runs the policy again; a dropped deadline fails its
- * process.
- *
- * A process deadline waits, for at most `DEADLINE_WAIT_ROUNDS` rounds, until the process runner
- * has handled every event stored when the worker first claimed it, so an event that cancels the
- * deadline is seen first. The check is best effort: the commands a deadline sends are still
- * checked by the aggregates that receive them. A deadline that waits, or whose instance moved
- * while it ran, goes back to the schedule without counting an attempt. A deadline entry is never
- * removed here, whether it ran or gave up: the process runner writes what the instance needs
- * next, so the worker only lets go of its claim, and a crash in between leaves the entry to its
- * lease instead of losing it. An entry that cannot be settled is logged and left to its
- * lease, so it does not hold back the rest of the round.
+ * Runs delayed commands, process deadlines and delayed policy runs, each claimed under a lease.
+ * A deadline first waits for the process runner, so an event that cancels it is seen first; this
+ * is best effort, since the aggregates still check what it sends. Deadline entries are never
+ * removed here: the process runner writes what comes next, so a crash in between leaves the entry
+ * to its lease instead of losing it.
  */
 export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction = ({
   storage,

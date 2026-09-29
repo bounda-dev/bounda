@@ -24,8 +24,7 @@ export interface SettleFunction {
 }
 
 /**
- * Runs `work` and wraps its result, or the `BoundaError` it threw, as an outcome. Any other error
- * is thrown as it is.
+ * Only a `BoundaError` becomes a refusal: any other error is thrown as it is.
  */
 export const settle: SettleFunction = async (work) => {
   try {
@@ -49,10 +48,6 @@ export interface UnwrapFunction {
   <T>(pending: PromiseLike<unknown>): Promise<T>;
 }
 
-/**
- * The value of an outcome, or its refusal thrown again as an `Error` with the same `name`,
- * `message`, `code` and `issues`.
- */
 export const unwrap: UnwrapFunction = async <T>(pending: PromiseLike<unknown>): Promise<T> => {
   const outcome = (await pending) as RpcOutcome<T>;
   if (outcome.ok) return outcome.value;

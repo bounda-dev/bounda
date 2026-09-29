@@ -40,20 +40,20 @@ export interface CommandsRuntimeConfig {
  */
 export interface DispatcherConfig {
   /**
-   * How long the dispatcher waits between passes when it has to poll. Also the pace while it is
+   * How long the dispatcher waits between passes when it has to poll, and the pace while it is
    * catching up. Defaults to 100 ms.
    */
   readonly pollInterval?: DurationInput;
   /**
-   * With an adapter that pushes notifications, how long the dispatcher waits for one before
-   * running a pass anyway, as a safety net. Defaults to 30 seconds. Ignored without notifications.
+   * With an adapter that pushes notifications, how long an idle dispatcher waits for one before
+   * running a pass anyway. Defaults to 30 seconds. Ignored without notifications.
    */
   readonly idleInterval?: DurationInput;
   readonly batchSize?: number;
   /**
    * How long a projection batch keeps its transaction open. Past it, the batch commits what it
-   * has projected so far and the rest of it is delivered next, so a slow batch never holds
-   * SQLite's single writer, or a remote libSQL transaction, for longer. Rebuilds honour it too.
+   * has projected and the rest is delivered next, so a slow batch never holds SQLite's single
+   * writer, or a remote libSQL transaction, for longer. Rebuilds honour it too.
    * Defaults to 250 ms.
    */
   readonly projectionBatchTime?: DurationInput;
@@ -67,8 +67,8 @@ export interface DispatcherConfig {
   /**
    * How `catchUpReadModels({ through })`, and read-your-writes with it, waits for the read models
    * a command changed: for at most `timeout`, reading the checkpoint of one another process is
-   * busy with every `pollInterval`. Past `timeout` it gives up, logs a warning and lets the
-   * request read what is there. Defaults to 2 seconds and 15 milliseconds.
+   * busy with every `pollInterval`. Past `timeout` it logs a warning and lets the request read
+   * what is there. Defaults to 2 seconds and 15 milliseconds.
    */
   readonly catchUp?: CatchUpConfig;
 }

@@ -15,12 +15,7 @@ import type { ResumeParked } from "./resume.ts";
 import { completesOn, handledEntries, handlerOf, letThrough } from "./routes.ts";
 import type { DeadlineSchedule } from "./schedule.ts";
 
-export interface ReplayProcessArgs {
-  /**
-   * The process name as a dead letter records it, e.g. `order.orderPayment`.
-   */
-  readonly process: string;
-  readonly event: StoredEvent;
+interface ReplayArgs {
   /**
    * Identifies this replay, so the handler's `idempotencyKey` differs from the failed run's.
    */
@@ -32,18 +27,17 @@ export interface ReplayProcessArgs {
   readonly letter?: string | undefined;
 }
 
-export interface ReplayDeadlineArgs {
+export interface ReplayProcessArgs extends ReplayArgs {
+  /**
+   * The process name as a dead letter records it, e.g. `order.orderPayment`.
+   */
+  readonly process: string;
+  readonly event: StoredEvent;
+}
+
+export interface ReplayDeadlineArgs extends ReplayArgs {
   readonly payload: DeadlineTarget;
   readonly context: CausationContext;
-  /**
-   * Identifies this replay, so the handler's `idempotencyKey` differs from the failed run's.
-   */
-  readonly replay: string;
-  /**
-   * The id of the dead letter being replayed: the replay goes on only while it is the failure its
-   * instance is blocked on.
-   */
-  readonly letter?: string | undefined;
 }
 
 /**
@@ -51,11 +45,8 @@ export interface ReplayDeadlineArgs {
  */
 export interface ProcessDeadLetters {
   /**
-   * Runs a process handler again for an event whose earlier run was dead-lettered, ignoring the
-   * inbox ledger. On success the instance gets its `ProcessHandled`, and an event that completes
-   * the process completes it. A process that had failed then handles, in order, the events parked
-   * behind the failure, and is back to `started` with its deadlines scheduled again once none is
-   * left; one that fails again fails the process and is dead-lettered, and the rest stay parked.
+   * Ignores the inbox ledger. A failed process then drains its parked events in order before it
+   * resumes; one that fails again becomes the new failure, and the rest stay parked.
    */
   replay(args: ReplayProcessArgs): Promise<void>;
   /**
