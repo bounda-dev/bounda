@@ -11,10 +11,8 @@ import { ATTRIBUTES, traced } from "../telemetry.ts";
 export type SubscriberKind = "projection" | "policy" | "process";
 
 /**
- * Something that consumes the global stream from a checkpoint the dispatcher keeps. `process`
- * resolves to how many leading events of the batch are done: the checkpoint advances past them,
- * and the dispatcher delivers the rest again on the next pass. Throwing holds the whole batch,
- * unless the error is a `PartialBatchError`, whose `done` leading events are committed.
+ * `process` resolves to how many leading events of the batch are done; the rest is delivered
+ * again. Throwing holds the whole batch, except a `PartialBatchError`, whose `done` events commit.
  */
 export interface Subscriber {
   readonly name: string;
@@ -23,18 +21,14 @@ export interface Subscriber {
 }
 
 /**
- * How one delivery went. `idle`: nothing after the checkpoint. `busy`: another holder had the
- * subscriber and the delivery chose not to wait. `advanced`: the checkpoint moved past what was
- * processed, which may be only part of the batch when the subscriber held a later event; the
- * dispatcher counts it as progress, and the next delivery, which starts at the held event,
- * reports `held`. `held` and `failed`: the batch will be delivered again. `moved`: someone else
- * moved the checkpoint, and the next delivery reads from where they left it.
+ * `busy`: another holder had the subscriber and the delivery did not wait. `advanced` may cover
+ * only part of the batch. `moved`: someone else moved the checkpoint; the next delivery reads from
+ * there. `held` and `failed` deliver the batch again.
  */
 export type DeliveryOutcome = "idle" | "busy" | "advanced" | "held" | "moved" | "failed";
 
 /**
- * What a delivery that failed was stuck on: the event that failed, or the batch's first event when
- * the subscriber could not tell which one, and the error.
+ * Points at the batch's first event when the subscriber could not tell which one failed.
  */
 export interface DeliveryFailure {
   readonly position: number;
@@ -43,17 +37,12 @@ export interface DeliveryFailure {
   readonly message: string;
 }
 
-/**
- * How one delivery went, and what it failed on when it failed.
- */
 export type Delivery =
   | { readonly outcome: Exclude<DeliveryOutcome, "failed"> }
   | { readonly outcome: "failed"; readonly failure: DeliveryFailure };
 
 /**
- * Thrown by a subscriber's `process` when its batch failed partway: the first `done` events went
- * through and the next one threw `cause`. The delivery then commits those `done` events on their
- * own, so the checkpoint stops right before the event that failed.
+ * Thrown by `process` when the first `done` events went through and the next one threw `cause`.
  */
 export class PartialBatchError extends Error {
   readonly done: number;
@@ -67,39 +56,25 @@ export class PartialBatchError extends Error {
 
 export interface DeliverArgs {
   readonly read: (afterPosition: number) => Promise<readonly StoredEvent[]>;
-  /**
-   * Wait for a subscriber another holder has, instead of reporting `busy`.
-   */
   readonly wait: boolean;
 }
 
-/**
- * A subscriber that owns its checkpoint and how a batch is committed against it. The dispatcher
- * only asks it to deliver and where it stands.
- */
 export interface CheckpointedSubscriber {
   readonly name: string;
   readonly kind: SubscriberKind;
   /**
-   * Whether events of this qualified type (`order.OrderPlaced`) change what the subscriber keeps.
-   * A subscriber that does not say is not waited for on behalf of a command.
+   * A subscriber without it is never waited for on behalf of a command.
    */
   readonly reactsTo?: (qualifiedEventType: string) => boolean;
   position(): Promise<number>;
   deliver(args: DeliverArgs): Promise<Delivery>;
 }
 
-/**
- * One delivery's hold on a subscriber's checkpoint, for as long as its batch is processed.
- */
 export interface CheckpointClaim {
   get(): Promise<number>;
   compareAndSet(expected: number, position: number): Promise<boolean>;
 }
 
-/**
- * The outcome of a claim: the work's result, or `acquired: false` when another holder had it.
- */
 export type Claimed<T> =
   | { readonly acquired: true; readonly value: T }
   | { readonly acquired: false };
@@ -118,14 +93,9 @@ export interface CreateCheckpointedSubscriberArgs<Claim extends CheckpointClaim>
   readonly kind: SubscriberKind;
   readonly position: () => Promise<number>;
   /**
-   * Holds the checkpoint while `work` runs. When the claim is a transaction, throwing out of
-   * `work` must undo everything done inside it.
+   * When the claim is a transaction, throwing out of `work` must undo everything done inside it.
    */
   readonly claim: ClaimFunction<Claim>;
-  /**
-   * Handles the batch under the claim and resolves to how many of its leading events are done:
-   * all of them to advance past the batch, fewer to advance only that far, none to hold it.
-   */
   readonly process: (events: readonly StoredEvent[], claim: Claim) => Promise<number>;
   readonly logger: Logger;
 }
@@ -146,14 +116,9 @@ class DeliveryStopped extends Error {
 }
 
 /**
- * Delivers a batch the same way whatever holds the checkpoint. The batch is read before the
- * claim, so an idle pass costs a checkpoint read and an empty `readAll`. Under the claim the
- * checkpoint is read again: when someone else moved it meanwhile the batch is stale and is left
- * alone. Otherwise the batch is processed and the checkpoint advanced with `compareAndSet`, still
- * under the claim. Holding the batch or finding the checkpoint moved throws out of the claim, so a
- * transactional one rolls back what the batch wrote. When `process` reports that the batch failed
- * partway, the events before the one that failed are committed again on their own, under a fresh
- * claim, so the next delivery starts right at the event that failed.
+ * The batch is read before the claim so an idle pass takes no lock, and the checkpoint is checked
+ * again under it so a batch someone else moved past is never applied. Holding or finding it moved
+ * throws out of the claim, so a transactional claim rolls back what the batch wrote.
  */
 export const createCheckpointedSubscriber: CreateCheckpointedSubscriberFunction = ({
   name,
@@ -279,9 +244,8 @@ export interface CheckpointedByStoreFunction {
 }
 
 /**
- * A subscriber whose checkpoint lives in a checkpoint store with nothing to lock: the claim is
- * always granted and `compareAndSet` alone decides whether the batch advances it. For policies
- * and processes, whose handlers the inbox ledger already makes run once.
+ * Claims without a lock: `compareAndSet` alone guards the checkpoint, which is enough for policies
+ * and processes because the inbox ledger already runs each handler once.
  */
 export const checkpointedByStore: CheckpointedByStoreFunction = ({
   subscriber,
