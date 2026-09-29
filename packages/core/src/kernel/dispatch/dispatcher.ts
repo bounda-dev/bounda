@@ -133,7 +133,7 @@ export interface CreateDispatcherFunction {
  * One mutex keeps passes from overlapping, so each subscriber sees events in order. Background
  * passes skip a subscriber another process holds, which spreads subscribers over instances; the
  * passes callers await wait for it, because they promise it has seen the stream. A notification
- * only shortens the timer's wait; it never schedules a pass of its own.
+ * runs the next pass early, or marks it due while one runs; it never adds one.
  */
 export const createDispatcher: CreateDispatcherFunction = ({
   eventStore,

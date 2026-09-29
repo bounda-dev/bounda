@@ -63,7 +63,8 @@ export interface CheckpointedSubscriber {
   readonly name: string;
   readonly kind: SubscriberKind;
   /**
-   * A subscriber without it is never waited for on behalf of a command.
+   * Takes a qualified type (`order.OrderPlaced`). A subscriber without it is never waited for on
+   * behalf of a command.
    */
   readonly reactsTo?: (qualifiedEventType: string) => boolean;
   position(): Promise<number>;
@@ -142,6 +143,9 @@ export const createCheckpointedSubscriber: CreateCheckpointedSubscriberFunction 
       },
     });
 
+  /**
+   * The failed claim rolled back the events that went through, so they are committed again alone.
+   */
   const salvage = async (
     afterPosition: number,
     events: readonly StoredEvent[],
