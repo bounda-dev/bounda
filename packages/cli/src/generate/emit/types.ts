@@ -1,4 +1,4 @@
-import type { AggregateModel, CollaboratorOwnerModel, ProjectModel } from "../model.ts";
+import type { AggregateModel, ProjectModel } from "../model.ts";
 import { typeNameOf } from "../naming.ts";
 import { type GeneratedFile, importPath } from "./paths.ts";
 
@@ -48,12 +48,14 @@ export interface RowTypeNameFunction {
 export const rowTypeName: RowTypeNameFunction = (readModelName) =>
   `${typeNameOf(readModelName)}Row`;
 
-export interface InfersCollaboratorsFunction {
-  (owner: CollaboratorOwnerModel): boolean;
+export interface CollaboratorsTypeNameFunction {
+  (aggregateName: string): string;
 }
 
-export const infersCollaborators: InfersCollaboratorsFunction = (owner) =>
-  owner.collaborators.length > 0 && !owner.declaresCollaborators;
+export const collaboratorsTypeName: CollaboratorsTypeNameFunction = (aggregateName) =>
+  `${typeNameOf(aggregateName)}Collaborators`;
+
+export const COLLABORATORS_CONFIG_TYPE_NAME = "CollaboratorsConfig";
 
 const typeofImport = (from: string, to: string): string =>
   `typeof import("${importPath({ from, to })}")`;
@@ -84,23 +86,46 @@ const emitEvents = (aggregate: AggregateModel, path: string): string =>
         "};",
       ].join("\n");
 
-const emitCollaborators = (owner: CollaboratorOwnerModel, path: string): string => {
-  const byName = new Map<string, string[]>();
-  for (const collaborator of owner.collaborators) {
-    const lines = byName.get(collaborator.name) ?? [];
-    lines.push(
-      `    readonly ${collaborator.implementation}: ${typeofImport(path, collaborator.path)}.default;`,
-    );
-    byName.set(collaborator.name, lines);
+const emitCollaborators = (aggregate: AggregateModel, path: string): string =>
+  aggregate.collaborators.length === 0
+    ? `export type ${collaboratorsTypeName(aggregate.name)} = core.EmptyPayload;`
+    : [
+        `export type ${collaboratorsTypeName(aggregate.name)} = {`,
+        ...aggregate.collaborators.map(
+          (port) =>
+            `  readonly ${port.key}: import("${importPath({ from: path, to: port.contract.path })}").${port.typeName};`,
+        ),
+        "};",
+      ].join("\n");
+
+const implementationNames = (names: readonly string[]): string =>
+  names.map((name) => JSON.stringify(name)).join(" | ");
+
+/**
+ * A port with one implementation may be left out of the configuration; one with several must be
+ * named, and so must the aggregate that has such a port.
+ */
+const emitCollaboratorsConfig = (model: ProjectModel): string => {
+  const aggregates = model.aggregates.filter((aggregate) => aggregate.collaborators.length > 0);
+  if (aggregates.length === 0) {
+    return `export type ${COLLABORATORS_CONFIG_TYPE_NAME} = Readonly<Record<string, never>>;`;
   }
   return [
-    `export type ${owner.collaboratorsTypeName} = core.InferCollaborators<{`,
-    ...[...byName.entries()].flatMap(([name, lines]) => [
-      `  readonly ${name}: {`,
-      ...lines,
-      "  };",
-    ]),
-    "}>;",
+    `export type ${COLLABORATORS_CONFIG_TYPE_NAME} = {`,
+    ...aggregates.flatMap((aggregate) => {
+      const required = aggregate.collaborators.some((port) => port.implementations.length > 1);
+      return [
+        `  readonly ${aggregate.name}${required ? "" : "?"}: {`,
+        ...aggregate.collaborators.map(
+          (port) =>
+            `    readonly ${port.key}${port.implementations.length > 1 ? "" : "?"}: ${implementationNames(
+              port.implementations.map((implementation) => implementation.name),
+            )};`,
+        ),
+        "  };",
+      ];
+    }),
+    "};",
   ].join("\n");
 };
 
@@ -118,10 +143,10 @@ const emitMap = (
       ].join("\n");
 
 /**
- * Renders `.bounda/types.ts`: each aggregate's `State` and `Events`, the app's `Events`, the
- * collaborator types inferred for commands, policies and processes, each read model's `Row`, and
- * the `Commands` and `Queries` facade types. Modules are referenced only through
- * `typeof import(...)`, so the file never imports the registry.
+ * Renders `.bounda/types.ts`: each aggregate's `State`, `Events` and `Collaborators`, the app's
+ * `Events`, the type of the `collaborators` configuration, each read model's `Row`, and the
+ * `Commands` and `Queries` facade types. Modules are referenced only through `import(...)` types,
+ * so the file never imports the registry.
  */
 export const emitTypes: EmitTypesFunction = ({ model, path, inferredStates = {} }) => {
   const sections: string[] = ['import type * as core from "@bounda-dev/core";'];
@@ -130,6 +155,7 @@ export const emitTypes: EmitTypesFunction = ({ model, path, inferredStates = {} 
       [
         emitState(aggregate, path, inferredStates[aggregate.name]),
         emitEvents(aggregate, path),
+        emitCollaborators(aggregate, path),
       ].join("\n"),
     );
   }
@@ -144,12 +170,7 @@ export const emitTypes: EmitTypesFunction = ({ model, path, inferredStates = {} 
           "};",
         ].join("\n"),
   );
-  const inferred = model.aggregates.flatMap((aggregate) =>
-    [...aggregate.commands, ...aggregate.policies, ...aggregate.processes].filter(
-      infersCollaborators,
-    ),
-  );
-  for (const owner of inferred) sections.push(emitCollaborators(owner, path));
+  sections.push(emitCollaboratorsConfig(model));
   const commandModules = model.aggregates.flatMap((aggregate) =>
     aggregate.commands.map((command) => [command.key, typeofImport(path, command.path)] as const),
   );

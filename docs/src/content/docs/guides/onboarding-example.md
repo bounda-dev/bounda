@@ -21,8 +21,8 @@ pnpm dev
 1. The `/register` action dispatches `registerUser` and redirects to `/users/:userId`. The page
    already shows the user: the app in the context reads its own writes.
 2. `UserRegistered` starts the process `user-onboarding`. A minute later the delayed policy
-   `send-welcome-email-on-user-registered` sends the email through its `emailSender`
-   collaborator (`email-sender.console` in the demo, `email-sender.memory` in the tests) and
+   `send-welcome-email-on-user-registered` sends the email through the user's `emailSender`
+   collaborator (its `console` implementation in the demo, `memory` in the tests) and
    dispatches `recordWelcomeEmailSent`, which appends `WelcomeEmailSent`.
 3. Activating the user completes the process. A registration nobody activates within a week hits
    the process time-out, which dispatches `expireRegistration`.
@@ -35,19 +35,16 @@ pnpm dev
 plugin generates the types and serves `@bounda-dev/react-router/app`, which `root.tsx` and the
 routes import. Nothing in the app knows how Bounda boots.
 
-**Storage from the environment.** `bounda.config.ts` picks the adapter:
+**Storage and collaborators from the environment.** `bounda.config.ts` picks the adapter and
+the email sender:
 
 ```ts
 const url = process.env.DATABASE_URL;
 
 export default defineConfig({
   storage: url === undefined ? sqlite({ path: "./data/onboarding.db" }) : postgresql({ url }),
-  policies: {
-    user: {
-      sendWelcomeEmailOnUserRegistered: {
-        emailSender: { use: process.env.EMAIL_SENDER ?? "console" },
-      },
-    },
+  collaborators: {
+    user: { emailSender: process.env.EMAIL_SENDER === "memory" ? "memory" : "console" },
   },
 });
 ```

@@ -40,11 +40,7 @@ const buildEvents = (name: string, entry: AggregateEntry): Record<string, EventR
     }),
   );
 
-const buildCommands = (
-  name: string,
-  entry: AggregateEntry,
-  config: ResolvedConfig,
-): Record<string, CommandRuntime> =>
+const buildCommands = (name: string, entry: AggregateEntry): Record<string, CommandRuntime> =>
   Object.fromEntries(
     Object.entries(entry.commands).map(([key, command]) => [
       key,
@@ -53,12 +49,6 @@ const buildCommands = (
         type: capitalize(key),
         schema: compileSchema(command.module.payload, `aggregates.${name}.commands.${key}`),
         handler: command.module.handler as CommandRuntime["handler"],
-        collaborators: selectCollaborators({
-          owner: `Command "${key}"`,
-          path: `commands.${key}`,
-          implementations: command.collaborators ?? {},
-          config: config.commands[key],
-        }),
       },
     ]),
   );
@@ -76,7 +66,12 @@ const buildAggregate = (
     events,
     eventsByType: Object.fromEntries(Object.values(events).map((event) => [event.type, event])),
     eventBuilders: createEventBuilders(entry.events) as AggregateRuntime["eventBuilders"],
-    commands: buildCommands(name, entry, config),
+    collaborators: selectCollaborators({
+      aggregate: name,
+      implementations: entry.collaborators ?? {},
+      config: config.collaborators[name],
+    }),
+    commands: buildCommands(name, entry),
   };
 };
 
@@ -91,8 +86,16 @@ export interface BuildAggregatesFunction {
 
 /**
  * Command type names must be unique across aggregates, since `app.commands` is one flat namespace.
+ * The collaborators of each aggregate are chosen here, once, for every handler it has.
  */
 export const buildAggregates: BuildAggregatesFunction = ({ registry, config }) => {
+  for (const name of Object.keys(config.collaborators)) {
+    if (!(name in registry.aggregates)) {
+      throw new ConfigurationError(
+        `collaborators.${name}: there is no aggregate "${name}" whose collaborators to choose`,
+      );
+    }
+  }
   const byName = Object.fromEntries(
     Object.entries(registry.aggregates).map(([name, entry]) => [
       name,

@@ -28,6 +28,10 @@ const registry = {
   aggregates: {
     order: {
       ...orderAggregateEntry(),
+      collaborators: {
+        ...orderAggregateEntry().collaborators,
+        recorder: { memory: { default: { record: (call: string) => calls.push(call) } } },
+      },
       policies: {
         notifyOnOrderPlaced: {
           module: {
@@ -52,7 +56,6 @@ const registry = {
               await commands.archiveOrder({ orderId: event.aggregateId });
             },
           },
-          collaborators: { recorder: { memory: { record: (call: string) => calls.push(call) } } },
         },
       },
       processes: {

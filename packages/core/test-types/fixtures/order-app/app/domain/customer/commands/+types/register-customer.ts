@@ -10,6 +10,6 @@ export declare namespace Command {
     core.PayloadOf<Module>,
     generated.CustomerState,
     generated.CustomerEvents,
-    core.EmptyPayload
+    generated.CustomerCollaborators
   >;
 }

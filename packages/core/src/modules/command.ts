@@ -12,32 +12,15 @@ export interface CommandModule {
 }
 
 /**
- * Implementations of one command's collaborators, keyed by collaborator name and then by
- * implementation name (the `<name>.<implementation>.ts` file suffix).
- */
-export type CollaboratorImplementations = Readonly<
-  Record<string, Readonly<Record<string, unknown>>>
->;
-
-/**
- * The collaborator types a command handler receives when the module does not declare a
- * `Collaborators` type: the type of the implementations found next to it.
- */
-export type InferCollaborators<Implementations extends CollaboratorImplementations> = {
-  readonly [Name in keyof Implementations]: Implementations[Name][keyof Implementations[Name]];
-};
-
-/**
- * A command in the registry: its module plus the collaborator implementations found next to it.
+ * A command in the registry.
  */
 export interface CommandEntry {
   readonly module: CommandModule;
-  readonly collaborators?: CollaboratorImplementations;
 }
 
 /**
- * Arguments of a command `handler`. Collaborators are spread at the top level so a handler
- * destructures them next to `command`, `state` and `events`.
+ * Arguments of a command `handler`. The aggregate's collaborators are spread at the top level so
+ * a handler destructures them next to `command`, `state` and `events`.
  */
 export type CommandHandlerArgs<
   Type extends string,

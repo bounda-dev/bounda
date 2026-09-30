@@ -1,14 +1,4 @@
-import type { Policy } from "./+types/index";
-
-export interface Confirmation {
-  readonly orderId: string;
-  readonly customerId: string;
-  readonly total: number;
-}
-
-export type Collaborators = {
-  notifier: { send: (confirmation: Confirmation, idempotencyKey: string) => Promise<void> };
-};
+import type { Policy } from "./+types/send-confirmation-on-order-placed";
 
 export const handler = async ({
   event,
@@ -16,7 +6,7 @@ export const handler = async ({
   notifier,
   idempotencyKey,
 }: Policy.HandlerArgs) => {
-  await notifier.send(
+  await notifier(
     {
       orderId: event.aggregateId,
       customerId: event.payload.customerId,

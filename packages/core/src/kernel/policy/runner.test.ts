@@ -3,9 +3,14 @@ import { resolveConfig } from "../../config/schema.ts";
 import { DomainError } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
 import type { Registry } from "../../modules/registry.ts";
+import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { createReactiveHarness, type ReactiveHarness } from "../reactive-harness.ts";
 import { deriveDeadLetterId, deriveIdempotencyKey } from "../shared/idempotency-key.ts";
-import { createRecordingLogger, orderAggregateEntry } from "../test-support.ts";
+import {
+  createRecordingLogger,
+  defaultCollaborators,
+  orderAggregateEntry,
+} from "../test-support.ts";
 import { buildPolicies, policyTriggerFromKey } from "./build-policies.ts";
 
 interface PolicyArgs {
@@ -77,6 +82,15 @@ const reset = (mode: typeof behaviour, failures = 0) => {
   handlerStarted = Promise.withResolvers<void>();
 };
 
+const policiesOf = (registry: Registry) =>
+  buildPolicies({
+    registry,
+    aggregates: buildAggregates({
+      registry,
+      config: resolveConfig({ storage: memory(), collaborators: defaultCollaborators(registry) }),
+    }),
+  });
+
 describe("policyTriggerFromKey", () => {
   it("derives the event from the on-<event> suffix", () => {
     expect(policyTriggerFromKey("sendReceiptOnOrderPaid")).toBe("OrderPaid");
@@ -87,41 +101,35 @@ describe("policyTriggerFromKey", () => {
   });
 
   it("accepts an explicit on as a string or a list", () => {
-    const { all } = buildPolicies({
-      config: resolveConfig({ storage: memory() }),
-      registry: {
-        aggregates: {
-          order: {
-            events: { orderPaid: { apply: () => ({}) }, orderPlaced: { apply: () => ({}) } },
-            commands: {},
-            policies: {
-              a: { module: { on: "OrderPaid", handler: () => {} } },
-              b: { module: { on: ["OrderPaid", "OrderPlaced"], handler: () => {} } },
-            },
-            processes: {},
+    const { all } = policiesOf({
+      aggregates: {
+        order: {
+          events: { orderPaid: { apply: () => ({}) }, orderPlaced: { apply: () => ({}) } },
+          commands: {},
+          policies: {
+            a: { module: { on: "OrderPaid", handler: () => {} } },
+            b: { module: { on: ["OrderPaid", "OrderPlaced"], handler: () => {} } },
           },
+          processes: {},
         },
-        readModels: {},
       },
+      readModels: {},
     });
     expect(all.map((policy) => policy.on)).toEqual([["OrderPaid"], ["OrderPaid", "OrderPlaced"]]);
   });
 
   it("requires a derivable trigger or an explicit on", () => {
     expect(() =>
-      buildPolicies({
-        config: resolveConfig({ storage: memory() }),
-        registry: {
-          aggregates: {
-            order: {
-              events: {},
-              commands: {},
-              policies: { cleanup: { module: { handler: () => {} } } },
-              processes: {},
-            },
+      policiesOf({
+        aggregates: {
+          order: {
+            events: {},
+            commands: {},
+            policies: { cleanup: { module: { handler: () => {} } } },
+            processes: {},
           },
-          readModels: {},
         },
+        readModels: {},
       }),
     ).toThrow(
       'aggregates.order.policies.cleanup: name the file "<action>-on-<event>.ts" or export "on"',
@@ -581,8 +589,11 @@ describe("policy collaborators", () => {
         policies: {
           mailOnOrderPlaced: {
             module: { handler: ({ event, mailer }: MailerArgs) => mailer.send(event.aggregateId) },
-            collaborators: { mailer: { smtp: mailer("smtp"), memory: mailer("memory") } },
           },
+        },
+        collaborators: {
+          ...orderAggregateEntry().collaborators,
+          mailer: { smtp: { default: mailer("smtp") }, memory: { default: mailer("memory") } },
         },
       },
     },
@@ -593,18 +604,24 @@ describe("policy collaborators", () => {
     sent.length = 0;
     const harness = await createReactiveHarness({
       registry: withMailer,
-      config: { policies: { order: { mailOnOrderPlaced: { mailer: { use: "memory" } } } } },
+      config: { collaborators: { order: { notifier: "memory", mailer: "memory" } } },
     });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
     await harness.dispatcher.processUntilIdle();
     expect(sent).toEqual(["memory:o-1"]);
   });
 
-  it("names the policy and where to choose when several implementations exist", () => {
+  it("names the aggregate and where to choose when several implementations exist", () => {
     expect(() =>
-      buildPolicies({ registry: withMailer, config: resolveConfig({ storage: memory() }) }),
+      buildAggregates({
+        registry: withMailer,
+        config: resolveConfig({
+          storage: memory(),
+          collaborators: { order: { notifier: "memory" } },
+        }),
+      }),
     ).toThrow(
-      'Policy "order.mailOnOrderPlaced", collaborator "mailer": choose an implementation with policies.order.mailOnOrderPlaced.mailer.use. Available: "smtp", "memory"',
+      'Aggregate "order", collaborator "mailer": choose an implementation with collaborators.order.mailer. Available: "smtp", "memory"',
     );
   });
 });
@@ -707,7 +724,6 @@ describe("policies and the aggregate whose events they react to", () => {
   });
 
   it("refuses a policy whose trigger is not an event of its aggregate, or whose aggregate is gone", () => {
-    const config = resolveConfig({ storage: memory() });
     const withPolicy = (policy: Registry["aggregates"][string]["policies"][string]): Registry => ({
       ...twoAggregates,
       aggregates: {
@@ -715,19 +731,16 @@ describe("policies and the aggregate whose events they react to", () => {
         order: { ...orderAggregateEntry(), policies: { payOnOrderShipped: policy } },
       },
     });
-    expect(() =>
-      buildPolicies({ registry: withPolicy({ module: { handler: () => {} } }), config }),
-    ).toThrow(
+    expect(() => policiesOf(withPolicy({ module: { handler: () => {} } }))).toThrow(
       'aggregates.order.policies.payOnOrderShipped: "OrderShipped" is not an event of the aggregate "order"',
     );
     expect(() =>
-      buildPolicies({
-        registry: withPolicy({
+      policiesOf(
+        withPolicy({
           module: { on: "OrderPlaced", handler: () => {} },
           source: "billing",
         }),
-        config,
-      }),
+      ),
     ).toThrow(
       'aggregates.order.policies.payOnOrderShipped: there is no aggregate "billing" whose events to react to',
     );

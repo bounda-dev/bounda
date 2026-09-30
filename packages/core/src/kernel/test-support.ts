@@ -1,7 +1,7 @@
 import { expect, vi } from "vitest";
 import type { StoragePorts } from "../adapter/adapter.ts";
 import { resolveConfig } from "../config/schema.ts";
-import type { Config, ResolvedConfig } from "../config/types.ts";
+import type { CollaboratorsConfig, Config, ResolvedConfig } from "../config/types.ts";
 import { createFixedClock, type FixedClock } from "../contracts/clock.ts";
 import { DomainError } from "../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../contracts/ids.ts";
@@ -64,12 +64,6 @@ export const orderAggregate = {
           return [events.orderPlaced?.({ total: command.payload.total })];
         },
       },
-      collaborators: {
-        notifier: {
-          memory: { send: (message: string) => sentMessages.push(message) },
-          silent: { send: () => {} },
-        },
-      },
     },
     payOrder: {
       module: {
@@ -112,6 +106,12 @@ export const orderAggregate = {
   },
   policies: {},
   processes: {},
+  collaborators: {
+    notifier: {
+      memory: { default: { send: (message: string) => sentMessages.push(message) } },
+      silent: { default: { send: () => {} } },
+    },
+  },
 } as const satisfies Registry["aggregates"][string];
 
 export const orderAggregateEntry = (): typeof orderAggregate => orderAggregate;
@@ -123,6 +123,15 @@ export const orderRegistry: Registry = {
   aggregates: { order: orderAggregate },
   readModels: {},
 };
+
+/**
+ * The `collaborators` configuration kernel tests boot with: the in-memory notifier for a registry
+ * built on `orderAggregate`, nothing for any other.
+ */
+export const defaultCollaborators = (registry: Registry): CollaboratorsConfig =>
+  registry.aggregates.order?.collaborators?.notifier === undefined
+    ? {}
+    : { order: { notifier: "memory" } };
 
 /**
  * Messages sent through the in-memory notifier collaborator, reset by `createKernelHarness`.
@@ -200,7 +209,7 @@ export const createKernelHarness: CreateKernelHarnessFunction = async ({
   const storage = await adapter.createStorage({ logger: silentLogger });
   const config = resolveConfig({
     storage: adapter,
-    commands: { placeOrder: { notifier: { use: "memory" } } },
+    collaborators: defaultCollaborators(registry),
     ...overrides,
   });
   const aggregates = buildAggregates({ registry, config });

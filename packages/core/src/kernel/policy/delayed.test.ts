@@ -3,6 +3,7 @@ import { resolveConfig } from "../../config/schema.ts";
 import { DomainError } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
 import type { Registry } from "../../modules/registry.ts";
+import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { createDeadLetters } from "../dead-letters/dead-letters.ts";
 import { createReactiveHarness, type ReactiveHarness } from "../reactive-harness.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
@@ -47,8 +48,11 @@ const registryWith = (delay: string | number = "1m"): Registry => ({
               await commands.archiveOrder?.({ orderId: event.aggregateId });
             },
           },
-          collaborators: { mailer: { memory: { send: (run: Run) => runs.push(run) } } },
         },
+      },
+      collaborators: {
+        ...orderAggregateEntry().collaborators,
+        mailer: { memory: { default: { send: (run: Run) => runs.push(run) } } },
       },
     },
   },
@@ -392,7 +396,13 @@ describe("delayed policies", () => {
     expect(() =>
       buildPolicies({
         registry: registryWith("a minute"),
-        config: resolveConfig({ storage: memory() }),
+        aggregates: buildAggregates({
+          registry: registryWith("a minute"),
+          config: resolveConfig({
+            storage: memory(),
+            collaborators: { order: { notifier: "memory" } },
+          }),
+        }),
       }),
     ).toThrow(
       'aggregates.order.policies.remindOnOrderPlaced: delay "a minute" is not a duration such as "30s", "5m" or 60000',

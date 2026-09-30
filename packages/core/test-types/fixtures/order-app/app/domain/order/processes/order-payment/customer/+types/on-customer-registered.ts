@@ -10,6 +10,6 @@ export declare namespace Process {
     core.StoredEventOf<generated.CustomerEvents, "customerRegistered">,
     core.ProcessStateOf<ProcessModule>,
     generated.ReactionCommands,
-    import("../../index.ts").Collaborators
+    generated.OrderCollaborators
   >;
 }

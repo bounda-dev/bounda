@@ -165,7 +165,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         version: loaded.version,
       };
       const produced = (await runtime.handler({
-        ...runtime.collaborators,
+        ...aggregate.collaborators,
         command,
         state,
         events: aggregate.eventBuilders,

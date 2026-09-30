@@ -1,5 +1,4 @@
 import type { DurationInput } from "../contracts/duration.ts";
-import type { CollaboratorImplementations } from "./command.ts";
 import type { EmptyPayload } from "./payload.ts";
 
 /**
@@ -14,19 +13,17 @@ export interface PolicyModule {
 }
 
 /**
- * A policy in the registry: its module, the collaborator implementations found next to it when
- * the policy is a directory (`policies/<name>/index.ts`), and the aggregate whose events it reacts
- * to when that is not the one it lives in (`policies/<aggregate>/...`).
+ * A policy in the registry: its module and the aggregate whose events it reacts to when that is
+ * not the one it lives in (`policies/<aggregate>/...`).
  */
 export interface PolicyEntry {
   readonly module: PolicyModule;
-  readonly collaborators?: CollaboratorImplementations;
   readonly source?: string;
 }
 
 /**
  * Arguments of a policy `handler`: the event that triggered it, the typed commands facade and the
- * policy's collaborators, spread at the top level.
+ * aggregate's collaborators, spread at the top level.
  */
 export type PolicyHandlerArgs<Event, Commands, Collaborators extends object = EmptyPayload> = {
   readonly event: Event;

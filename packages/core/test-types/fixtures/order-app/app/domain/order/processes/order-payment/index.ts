@@ -1,9 +1,5 @@
 import type { Process } from "./+types/index";
 
-export interface Collaborators {
-  readonly reminders: { remind: (orderId: string) => Promise<void> };
-}
-
 export const config = ({ events }: Process.ConfigArgs) => ({
   startedBy: [events.order.OrderPlaced],
   completedBy: [events.order.OrderPaid, events.order.OrderCancelled],

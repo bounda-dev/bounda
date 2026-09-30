@@ -21,7 +21,7 @@ describe("boot", () => {
       root,
       config: {
         storage: sqlite({ path: join(directory, "storefront.db") }),
-        policies: { order: { sendConfirmationOnOrderPlaced: { notifier: { use: "memory" } } } },
+        collaborators: { order: { notifier: "memory" } },
       },
       signals: false,
       logger: silentLogger,
@@ -43,7 +43,7 @@ describe("boot", () => {
       root,
       config: {
         storage: sqlite({ path: join(directory, "storefront.db") }),
-        policies: { order: { sendConfirmationOnOrderPlaced: { notifier: { use: "memory" } } } },
+        collaborators: { order: { notifier: "memory" } },
       },
       signals: false,
       logger: silentLogger,

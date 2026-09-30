@@ -53,18 +53,20 @@ const relativePaths = (model: ProjectModel): Record<string, unknown> => ({
       event.relativePath,
       event.upcasts?.relativePath ?? null,
     ]),
-    commands: aggregate.commands.map((command) => ({
-      key: command.key,
-      typeName: command.typeName,
-      path: command.relativePath,
-      directory: command.directory === null ? null : command.directory.slice(model.root.length + 1),
-      declaresCollaborators: command.declaresCollaborators,
-      collaborators: command.collaborators.map((collaborator) => [
-        collaborator.name,
-        collaborator.implementation,
-        collaborator.relativePath,
+    collaborators: aggregate.collaborators.map((port) => ({
+      key: port.key,
+      typeName: port.typeName,
+      contract: port.contract.relativePath,
+      implementations: port.implementations.map((implementation) => [
+        implementation.name,
+        implementation.relativePath,
       ]),
     })),
+    commands: aggregate.commands.map((command) => [
+      command.key,
+      command.typeName,
+      command.relativePath,
+    ]),
     policies: aggregate.policies.map((policy) => [
       policy.key,
       policy.triggerKey,
@@ -107,15 +109,13 @@ describe("discoverProject on the order-app fixture", () => {
               null,
             ],
           ],
+          collaborators: [],
           commands: [
-            {
-              key: "registerCustomer",
-              declaresCollaborators: false,
-              typeName: "RegisterCustomer",
-              path: "app/domain/customer/commands/register-customer.ts",
-              directory: null,
-              collaborators: [],
-            },
+            [
+              "registerCustomer",
+              "RegisterCustomer",
+              "app/domain/customer/commands/register-customer.ts",
+            ],
           ],
           policies: [],
           processes: [],
@@ -133,39 +133,39 @@ describe("discoverProject on the order-app fixture", () => {
               "app/domain/order/order-placed.upcast.ts",
             ],
           ],
+          collaborators: [
+            {
+              key: "auditLog",
+              typeName: "AuditLog",
+              contract: "app/domain/order/audit-log/index.ts",
+              implementations: [["memory", "app/domain/order/audit-log/memory.ts"]],
+            },
+            {
+              key: "inventory",
+              typeName: "Inventory",
+              contract: "app/domain/order/inventory/index.ts",
+              implementations: [
+                ["fake", "app/domain/order/inventory/fake.ts"],
+                ["memory", "app/domain/order/inventory/memory.ts"],
+              ],
+            },
+            {
+              key: "mailer",
+              typeName: "Mailer",
+              contract: "app/domain/order/mailer/index.ts",
+              implementations: [["memory", "app/domain/order/mailer/memory.ts"]],
+            },
+            {
+              key: "reminders",
+              typeName: "Reminders",
+              contract: "app/domain/order/reminders/index.ts",
+              implementations: [["fake", "app/domain/order/reminders/fake.ts"]],
+            },
+          ],
           commands: [
-            {
-              key: "cancelOrder",
-              declaresCollaborators: false,
-              typeName: "CancelOrder",
-              path: "app/domain/order/commands/cancel-order/index.ts",
-              directory: "app/domain/order/commands/cancel-order",
-              collaborators: [
-                [
-                  "auditLog",
-                  "memory",
-                  "app/domain/order/commands/cancel-order/audit-log.memory.ts",
-                ],
-              ],
-            },
-            {
-              key: "payOrder",
-              declaresCollaborators: false,
-              typeName: "PayOrder",
-              path: "app/domain/order/commands/pay-order.ts",
-              directory: null,
-              collaborators: [],
-            },
-            {
-              key: "placeOrder",
-              declaresCollaborators: true,
-              typeName: "PlaceOrder",
-              path: "app/domain/order/commands/place-order/index.ts",
-              directory: "app/domain/order/commands/place-order",
-              collaborators: [
-                ["inventory", "fake", "app/domain/order/commands/place-order/inventory.fake.ts"],
-              ],
-            },
+            ["cancelOrder", "CancelOrder", "app/domain/order/commands/cancel-order.ts"],
+            ["payOrder", "PayOrder", "app/domain/order/commands/pay-order.ts"],
+            ["placeOrder", "PlaceOrder", "app/domain/order/commands/place-order.ts"],
           ],
           policies: [
             [
@@ -176,7 +176,7 @@ describe("discoverProject on the order-app fixture", () => {
             [
               "notifyOnOrderPlaced",
               "orderPlaced",
-              "app/domain/order/policies/notify-on-order-placed/index.ts",
+              "app/domain/order/policies/notify-on-order-placed.ts",
             ],
             [
               "sendReceiptOnOrderPaid",
@@ -300,10 +300,10 @@ describe("discoverProject convention problems", () => {
       "app/domain/loose.ts: Aggregates are directories, not modules",
       "app/domain/order/notes.md: only .ts modules are allowed here",
       "app/domain/order/orderPlaced.ts: Event names must be kebab-case (lower-case letters, digits and dashes)",
-      "app/domain/order/helpers: an aggregate holds events, state.ts and the directories commands, policies and processes",
-      "app/domain/order/commands/audit.memory.ts: Command names must be kebab-case (lower-case letters, digits and dashes)",
+      "app/domain/order/helpers: a collaborator directory needs an index.ts exporting its interface: export interface Helpers",
+      "app/domain/order/commands/audit.memory.ts: collaborators live at the aggregate root, one directory per port: <port>/index.ts with its interface and <port>/<implementation>.ts",
       "app/domain/order/commands/pay_order.ts: Command names must be kebab-case (lower-case letters, digits and dashes)",
-      "app/domain/order/policies/nested: a policy directory needs an index.ts",
+      "app/domain/order/policies/nested: a policy is a file; collaborators live at the aggregate root, one directory per port: <port>/index.ts with its interface and <port>/<implementation>.ts",
       "app/domain/orders_v2: Aggregate names must be kebab-case (lower-case letters, digits and dashes)",
       "app/read/broken: a read model needs a view.ts with its fields",
       "app/read/order-summary/README.md: only .ts modules are allowed here",
@@ -352,8 +352,6 @@ describe("discoverProject convention problems", () => {
       "app/domain/order/order-placed.ts",
       "app/domain/order/commands/Bad.ts",
       "app/domain/order/commands/notes.md",
-      "app/domain/order/commands/pay-order/index.ts",
-      "app/domain/order/commands/pay-order/README.md",
       "app/domain/order/policies/Bad.ts",
       "app/domain/order/policies/notes.md",
       "app/domain/order/processes/Bad/index.ts",
@@ -368,12 +366,11 @@ describe("discoverProject convention problems", () => {
       "app/read/Bad/view.ts",
     ]);
     const problems = await problemsOf(root);
-    expect(problems).toHaveLength(13);
+    expect(problems).toHaveLength(12);
     expect(problems).toEqual(
       expect.arrayContaining([
         "app/domain/order/commands/Bad.ts: Command names must be kebab-case (lower-case letters, digits and dashes)",
         "app/domain/order/commands/notes.md: only .ts modules are allowed here",
-        "app/domain/order/commands/pay-order/README.md: only .ts modules are allowed here",
         "app/domain/order/policies/Bad.ts: Policy names must be kebab-case (lower-case letters, digits and dashes)",
         "app/domain/order/policies/notes.md: only .ts modules are allowed here",
         "app/domain/order/processes/Bad: Process names must be kebab-case (lower-case letters, digits and dashes)",
@@ -388,134 +385,113 @@ describe("discoverProject convention problems", () => {
     );
   });
 
-  it("marks a command as declaring collaborators only when it has some", async () => {
+  it("finds the ports of an aggregate with their contract and implementations, sorted", async () => {
     const root = await project([
       "app/domain/order/order-placed.ts",
-      "app/domain/order/commands/declared-alone/index.ts",
-      "app/domain/order/commands/declared-with/index.ts",
-      "app/domain/order/commands/declared-with/audit.memory.ts",
-      "app/domain/order/commands/undeclared-with/index.ts",
-      "app/domain/order/commands/undeclared-with/audit.memory.ts",
-    ]);
-    const declaration = "export type Collaborators = { audit: unknown };\n";
-    await writeFile(join(root, "app/domain/order/commands/declared-alone/index.ts"), declaration);
-    await writeFile(join(root, "app/domain/order/commands/declared-with/index.ts"), declaration);
-    const model = await discoverProject({ root });
-    const commands = model.aggregates[0]?.commands ?? [];
-    expect(commands.map((command) => [command.key, command.declaresCollaborators])).toEqual([
-      ["declaredAlone", false],
-      ["declaredWith", true],
-      ["undeclaredWith", false],
-    ]);
-  });
-
-  it("rejects a command defined twice and command directories without index.ts", async () => {
-    const root = await project([
-      "app/domain/order/commands/pay-order.ts",
-      "app/domain/order/commands/pay-order/index.ts",
-      "app/domain/order/commands/place-order/inventory.fake.ts",
-      "app/domain/order/commands/cancel-order/index.ts",
-      "app/domain/order/commands/cancel-order/audit-log.ts",
-      "app/domain/order/commands/cancel-order/deep/",
-    ]);
-    expect(await problemsOf(root)).toEqual([
-      "app/domain/order/commands/cancel-order/deep: a command directory holds only index.ts and collaborators",
-      "app/domain/order/commands/cancel-order/audit-log.ts: expected a collaborator named <collaborator>.<implementation>.ts",
-      'app/domain/order/commands/pay-order: command "payOrder" is also defined as pay-order.ts',
-      "app/domain/order/commands/place-order: a command directory needs an index.ts",
-    ]);
-  });
-
-  it("finds collaborators of policy directories and processes", async () => {
-    const root = await project([
-      "app/domain/order/order-placed.ts",
-      "app/domain/order/policies/audit-on-order-placed.ts",
-      "app/domain/order/policies/mail-on-order-placed/index.ts",
-      "app/domain/order/policies/mail-on-order-placed/mailer.smtp.ts",
-      "app/domain/order/policies/mail-on-order-placed/mailer.memory.ts",
-      "app/domain/order/processes/payment/index.ts",
-      "app/domain/order/processes/payment/on-order-placed.ts",
-      "app/domain/order/processes/payment/at-timeout.ts",
-      "app/domain/order/processes/payment/gateway.stripe.ts",
+      "app/domain/order/notifier/index.ts",
+      "app/domain/order/notifier/smtp.ts",
+      "app/domain/order/notifier/in-memory.ts",
+      "app/domain/order/notifier/_shared.ts",
+      "app/domain/order/notifier/+types/smtp.ts",
+      "app/domain/order/notifier/smtp.test.ts",
+      "app/domain/order/audit-log/index.ts",
+      "app/domain/order/audit-log/memory.ts",
     ]);
     await writeFile(
-      join(root, "app/domain/order/processes/payment/index.ts"),
-      "export interface Collaborators { gateway: unknown }\n",
+      join(root, "app/domain/order/notifier/index.ts"),
+      "export type Notifier = (message: string) => Promise<void>;\n",
+    );
+    await writeFile(
+      join(root, "app/domain/order/audit-log/index.ts"),
+      "import type { X } from './x';\nexport interface AuditLog {\n  record(entry: string): void;\n}\n",
     );
     const model = await discoverProject({ root });
-    const [order] = model.aggregates;
     expect(
-      order?.policies.map((policy) => ({
-        key: policy.key,
-        triggerKey: policy.triggerKey,
-        directory: policy.directory === null ? null : relative(root, policy.directory),
-        path: policy.relativePath,
-        collaborators: policy.collaborators.map((c) => `${c.name}.${c.implementation}`),
-        declares: policy.declaresCollaborators,
-        typeName: policy.collaboratorsTypeName,
+      model.aggregates[0]?.collaborators.map((port) => ({
+        key: port.key,
+        typeName: port.typeName,
+        contract: relative(root, port.contract.path),
+        implementations: port.implementations.map((implementation) => implementation.name),
       })),
     ).toEqual([
       {
-        key: "auditOnOrderPlaced",
-        triggerKey: "orderPlaced",
-        directory: null,
-        path: "app/domain/order/policies/audit-on-order-placed.ts",
-        collaborators: [],
-        declares: false,
-        typeName: "OrderAuditOnOrderPlacedPolicyCollaborators",
+        key: "auditLog",
+        typeName: "AuditLog",
+        contract: "app/domain/order/audit-log/index.ts",
+        implementations: ["memory"],
       },
       {
-        key: "mailOnOrderPlaced",
-        triggerKey: "orderPlaced",
-        directory: "app/domain/order/policies/mail-on-order-placed",
-        path: "app/domain/order/policies/mail-on-order-placed/index.ts",
-        collaborators: ["mailer.memory", "mailer.smtp"],
-        declares: false,
-        typeName: "OrderMailOnOrderPlacedPolicyCollaborators",
+        key: "notifier",
+        typeName: "Notifier",
+        contract: "app/domain/order/notifier/index.ts",
+        implementations: ["in-memory", "smtp"],
       },
     ]);
-    const [payment] = order?.processes ?? [];
-    expect(payment?.handlers.map((handler) => handler.eventKey)).toEqual(["orderPlaced"]);
-    expect(payment?.deadlines.map((deadline) => deadline.relativePath)).toEqual([
-      "app/domain/order/processes/payment/at-timeout.ts",
-    ]);
-    expect(payment?.collaborators.map((c) => `${c.name}.${c.implementation}`)).toEqual([
-      "gateway.stripe",
-    ]);
-    expect(payment?.declaresCollaborators).toBe(true);
-    expect(payment?.collaboratorsTypeName).toBe("OrderPaymentProcessCollaborators");
   });
 
-  it("rejects misplaced policy collaborators, policies defined twice and reserved names", async () => {
+  it("rejects a port without index.ts, interface or implementations, with extra entries, reserved or named like an event", async () => {
     const root = await project([
       "app/domain/order/order-placed.ts",
-      "app/domain/order/policies/mailer.smtp.ts",
-      "app/domain/order/policies/audit-on-order-placed.ts",
-      "app/domain/order/policies/mail-on-order-placed.ts",
-      "app/domain/order/policies/Bad_Policy/index.ts",
-      "app/domain/order/policies/mail-on-order-placed/index.ts",
-      "app/domain/order/policies/sync-on-order-placed/index.ts",
-      "app/domain/order/policies/sync-on-order-placed/commands.http.ts",
-      "app/domain/order/policies/sync-on-order-placed/signal.http.ts",
-      "app/domain/order/policies/sync-on-order-placed/deep/",
-      "app/domain/order/commands/place-order/index.ts",
-      "app/domain/order/commands/place-order/idempotency-key.fixed.ts",
-      "app/domain/order/processes/payment/index.ts",
-      "app/domain/order/processes/payment/aggregate-id.memory.ts",
-      "app/domain/order/processes/payment/after.memory.ts",
-      "app/domain/order/processes/payment/signal.memory.ts",
+      "app/domain/order/order-placed/index.ts",
+      "app/domain/order/order-placed/memory.ts",
+      "app/domain/order/state/index.ts",
+      "app/domain/order/signal/index.ts",
+      "app/domain/order/idempotency-key/index.ts",
+      "app/domain/order/no-index/memory.ts",
+      "app/domain/order/no-interface/index.ts",
+      "app/domain/order/no-interface/memory.ts",
+      "app/domain/order/no-implementation/index.ts",
+      "app/domain/order/Bad_Port/index.ts",
+      "app/domain/order/notes/index.ts",
+      "app/domain/order/notes/memory.ts",
+      "app/domain/order/notes/Bad_Impl.ts",
+      "app/domain/order/notes/README.md",
+      "app/domain/order/notes/deep/",
     ]);
+    for (const port of ["order-placed", "no-implementation", "notes"]) {
+      await writeFile(
+        join(root, `app/domain/order/${port}/index.ts`),
+        `export interface ${port === "order-placed" ? "OrderPlaced" : port === "notes" ? "Notes" : "NoImplementation"} {}\n`,
+      );
+    }
     expect(await problemsOf(root)).toEqual([
-      'app/domain/order/commands/place-order/idempotency-key.fixed.ts: a command handler already receives "idempotencyKey"; give the collaborator another name',
-      "app/domain/order/policies/mailer.smtp.ts: collaborators live inside the policy's directory",
-      "app/domain/order/policies/Bad_Policy: Policy names must be kebab-case (lower-case letters, digits and dashes)",
-      'app/domain/order/policies/mail-on-order-placed: policy "mailOnOrderPlaced" is also defined as mail-on-order-placed.ts',
-      "app/domain/order/policies/sync-on-order-placed/deep: a policy directory holds only index.ts and collaborators",
-      'app/domain/order/policies/sync-on-order-placed/commands.http.ts: a policy handler already receives "commands"; give the collaborator another name',
-      'app/domain/order/policies/sync-on-order-placed/signal.http.ts: a policy handler already receives "signal"; give the collaborator another name',
-      'app/domain/order/processes/payment/after.memory.ts: a process handler already receives "after"; give the collaborator another name',
-      'app/domain/order/processes/payment/aggregate-id.memory.ts: a process handler already receives "aggregateId"; give the collaborator another name',
-      'app/domain/order/processes/payment/signal.memory.ts: a process handler already receives "signal"; give the collaborator another name',
+      "app/domain/order/Bad_Port: Collaborator names must be kebab-case (lower-case letters, digits and dashes)",
+      'app/domain/order/idempotency-key: "idempotencyKey" is reserved; give the collaborator another name',
+      "app/domain/order/no-implementation: a collaborator needs at least one implementation next to its index.ts: no-implementation/<implementation>.ts",
+      "app/domain/order/no-index: a collaborator directory needs an index.ts exporting its interface: export interface NoIndex",
+      "app/domain/order/no-interface/index.ts: must export the collaborator's interface, named after the directory: export interface NoInterface",
+      "app/domain/order/notes/README.md: only .ts modules are allowed here",
+      "app/domain/order/notes/deep: a collaborator directory holds only index.ts and its implementations",
+      "app/domain/order/notes/Bad_Impl.ts: Implementation names must be kebab-case (lower-case letters, digits and dashes)",
+      'app/domain/order/order-placed: "orderPlaced" is also an event of this aggregate; give the collaborator another name',
+      'app/domain/order/signal: "signal" is reserved; give the collaborator another name',
+      'app/domain/order/state: "state" is reserved; give the collaborator another name',
+    ]);
+  });
+
+  it("rejects command and policy directories, and collaborator files next to commands, policies and process handlers", async () => {
+    const root = await project([
+      "app/domain/order/order-placed.ts",
+      "app/domain/order/commands/pay-order.ts",
+      "app/domain/order/commands/place-order/index.ts",
+      "app/domain/order/commands/inventory.fake.ts",
+      "app/domain/order/policies/audit-on-order-placed.ts",
+      "app/domain/order/policies/mailer.smtp.ts",
+      "app/domain/order/policies/mail-on-order-placed/index.ts",
+      "app/domain/order/policies/payment/refund-on-payment-failed/index.ts",
+      "app/domain/order/processes/payment/index.ts",
+      "app/domain/order/processes/payment/gateway.stripe.ts",
+      "app/domain/payment/payment-failed.ts",
+    ]);
+    const hint =
+      "collaborators live at the aggregate root, one directory per port: <port>/index.ts with its interface and <port>/<implementation>.ts";
+    expect(await problemsOf(root)).toEqual([
+      `app/domain/order/commands/place-order: a command is a file; ${hint}`,
+      `app/domain/order/commands/inventory.fake.ts: ${hint}`,
+      `app/domain/order/policies/mail-on-order-placed: a policy is a file; ${hint}`,
+      `app/domain/order/policies/mailer.smtp.ts: ${hint}`,
+      `app/domain/order/policies/payment/refund-on-payment-failed: a policy is a file; ${hint}`,
+      `app/domain/order/processes/payment/gateway.stripe.ts: ${hint}`,
     ]);
   });
 
@@ -590,7 +566,7 @@ describe("discoverProject convention problems", () => {
     expect(await problemsOf(root)).toEqual([
       "app/domain/order/processes/loose.ts: a process is a directory with an index.ts",
       "app/domain/order/processes/empty: a process directory needs an index.ts with its config",
-      "app/domain/order/processes/payment/steps: a process directory holds only index.ts, on-*.ts and at-*.ts handlers, collaborators and folders named after other aggregates",
+      "app/domain/order/processes/payment/steps: a process directory holds only index.ts, on-*.ts and at-*.ts handlers and folders named after other aggregates",
       'app/domain/order/processes/payment/on-order-shipped.ts: "orderShipped" is not an event of this aggregate',
       "app/domain/order/processes/payment/on-timeout.ts: the timeout handler is at-timeout.ts now; rename the file",
       "app/domain/order/processes/payment/order-paid.ts: process handlers are named on-<event>.ts or at-<deadline>.ts",
@@ -621,8 +597,7 @@ describe("discoverProject convention problems", () => {
       "app/domain/order/order-placed.ts",
       "app/domain/order/policies/notify-on-order-placed.ts",
       "app/domain/order/policies/payment/refund-on-payment-failed.ts",
-      "app/domain/order/policies/payment/charge-on-payment-requested/index.ts",
-      "app/domain/order/policies/payment/charge-on-payment-requested/gateway.fake.ts",
+      "app/domain/order/policies/payment/charge-on-payment-requested.ts",
       "app/domain/payment/payment-failed.ts",
       "app/domain/payment/payment-requested.ts",
       "app/read/payments/view.ts",
@@ -630,37 +605,13 @@ describe("discoverProject convention problems", () => {
     ]);
     const model = await discoverProject({ root });
     const order = model.aggregates.find((aggregate) => aggregate.name === "order");
-    expect(
-      order?.policies.map((policy) => [
-        policy.key,
-        policy.source,
-        policy.triggerKey,
-        policy.collaborators.length,
-        policy.collaboratorsTypeName,
-      ]),
-    ).toEqual([
+    expect(order?.policies.map((policy) => [policy.key, policy.source, policy.triggerKey])).toEqual(
       [
-        "notifyOnOrderPlaced",
-        null,
-        "orderPlaced",
-        0,
-        "OrderNotifyOnOrderPlacedPolicyCollaborators",
+        ["notifyOnOrderPlaced", null, "orderPlaced"],
+        ["paymentChargeOnPaymentRequested", "payment", "paymentRequested"],
+        ["paymentRefundOnPaymentFailed", "payment", "paymentFailed"],
       ],
-      [
-        "paymentChargeOnPaymentRequested",
-        "payment",
-        "paymentRequested",
-        1,
-        "OrderPaymentChargeOnPaymentRequestedPolicyCollaborators",
-      ],
-      [
-        "paymentRefundOnPaymentFailed",
-        "payment",
-        "paymentFailed",
-        0,
-        "OrderPaymentRefundOnPaymentFailedPolicyCollaborators",
-      ],
-    ]);
+    );
     expect(model.readModels[0]?.projections.map((projection) => projection.aggregate)).toEqual([
       "payment",
     ]);

@@ -1,9 +1,5 @@
 import { DomainError } from "@bounda-dev/core";
-import type { Command } from "./+types/index";
-
-export type Collaborators = {
-  inventory: { reserve: (skus: readonly string[]) => Promise<void> };
-};
+import type { Command } from "./+types/place-order";
 
 export const payload = ({ z }: Command.PayloadArgs) =>
   z.object({

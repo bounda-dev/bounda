@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { selectCollaborators } from "../../config/collaborators.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import { parseDuration } from "../../contracts/duration.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
@@ -7,6 +6,7 @@ import type { StoredEvent } from "../../contracts/event.ts";
 import { capitalize, toKebabCase } from "../../modules/naming.ts";
 import type { ProcessEntry } from "../../modules/process.ts";
 import type { Registry } from "../../modules/registry.ts";
+import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { qualifiedEventType } from "../shared/qualified-event.ts";
 import { deadlineFieldsOf, processStateArgs, TIMEOUT_DEADLINE } from "./deadlines.ts";
 
@@ -157,6 +157,7 @@ const buildProcess = (
   events: Readonly<Record<string, Readonly<Record<string, string>>>>,
   known: ReadonlySet<string>,
   config: ResolvedConfig,
+  collaborators: ProcessRuntime["collaborators"],
 ): ProcessRuntime => {
   const path = `aggregates.${aggregate}.processes.${key}`;
   const declared = (
@@ -194,12 +195,7 @@ const buildProcess = (
     handlers,
     deadlineFields,
     deadlineHandlers: compileDeadlines(path, entry, deadlineFields),
-    collaborators: selectCollaborators({
-      owner: `Process "${aggregate}.${key}"`,
-      path: `processes.${aggregate}.${key}`,
-      implementations: entry.collaborators ?? {},
-      config: config.processes[aggregate]?.[key],
-    }),
+    collaborators,
     instanceOf: (event) => {
       const qualified = qualifiedEventType(event.aggregateType, event.type);
       const correlator = correlate[qualified];
@@ -220,6 +216,7 @@ const buildProcess = (
 
 export interface BuildProcessesArgs {
   readonly registry: Registry;
+  readonly aggregates: AggregatesRuntime;
   readonly config: ResolvedConfig;
 }
 
@@ -231,7 +228,7 @@ export interface BuildProcessesFunction {
  * An event of another aggregate that a process listens to without saying, in `correlate`, which
  * instance it belongs to is a configuration error.
  */
-export const buildProcesses: BuildProcessesFunction = ({ registry, config }) => {
+export const buildProcesses: BuildProcessesFunction = ({ registry, aggregates, config }) => {
   const events = Object.fromEntries(
     Object.entries(registry.aggregates).map(([aggregate, entry]) => [
       aggregate,
@@ -246,7 +243,15 @@ export const buildProcesses: BuildProcessesFunction = ({ registry, config }) => 
   const known = new Set(Object.values(events).flatMap((byType) => Object.values(byType)));
   const all = Object.entries(registry.aggregates).flatMap(([aggregate, entry]) =>
     Object.entries(entry.processes).map(([key, process]) =>
-      buildProcess(aggregate, key, process, events, known, config),
+      buildProcess(
+        aggregate,
+        key,
+        process,
+        events,
+        known,
+        config,
+        aggregates.byName[aggregate]?.collaborators ?? {},
+      ),
     ),
   );
   const byEvent: Record<string, ProcessRuntime[]> = {};

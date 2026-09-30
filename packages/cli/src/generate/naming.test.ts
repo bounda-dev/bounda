@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  collaboratorPartsOf,
   isKebabCase,
   joinKeys,
   keyOf,
@@ -59,22 +58,6 @@ describe("processHandlerEventOf", () => {
     expect(processHandlerEventOf("on-timeout")).toBe("timeout");
     expect(processHandlerEventOf("order-paid")).toBeNull();
     expect(processHandlerEventOf("on-")).toBeNull();
-  });
-});
-
-describe("collaboratorPartsOf", () => {
-  it("splits <collaborator>.<implementation>", () => {
-    expect(collaboratorPartsOf("audit-log.memory")).toEqual({
-      name: "auditLog",
-      implementation: "memory",
-    });
-    expect(collaboratorPartsOf("inventory.fake")).toEqual({
-      name: "inventory",
-      implementation: "fake",
-    });
-    expect(collaboratorPartsOf("inventory")).toBeNull();
-    expect(collaboratorPartsOf("inventory.fake.v2")).toBeNull();
-    expect(collaboratorPartsOf("Inventory.fake")).toBeNull();
   });
 });
 

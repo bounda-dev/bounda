@@ -19,10 +19,10 @@ pnpm start
 ## What happens when an order is placed
 
 1. `placeOrder` validates the items, computes the total and appends `OrderPlaced`.
-2. The policy `send-confirmation-on-order-placed` sends the confirmation through its `notifier`
-   collaborator, then dispatches `recordConfirmationSent`, which appends `ConfirmationSent`.
-   `bounda.config.ts` picks `notifier.console` for the demo and the tests pick
-   `notifier.memory`, which records what was sent.
+2. The policy `send-confirmation-on-order-placed` sends the confirmation through the order's
+   `notifier` collaborator, then dispatches `recordConfirmationSent`, which appends
+   `ConfirmationSent`. `bounda.config.ts` picks the `console` implementation for the demo and the
+   tests pick `memory`, which records what was sent.
 3. The policy `schedule-reminder-on-order-placed` dispatches `sendReminder` with a delay of a
    day. The reminder is a scheduled command; when it runs, the handler appends `ReminderSent`
    only if the order is still `placed`.
@@ -44,9 +44,9 @@ concurrency conflict, and it runs before anything is decided. The policy hands t
 second report:
 
 ```ts
-// policies/send-confirmation-on-order-placed/index.ts
+// policies/send-confirmation-on-order-placed.ts
 export const handler = async ({ event, commands, notifier, idempotencyKey }: Policy.HandlerArgs) => {
-  await notifier.send(
+  await notifier(
     { orderId: event.aggregateId, customerId: event.payload.customerId, total: event.payload.total },
     idempotencyKey,
   );
@@ -54,16 +54,15 @@ export const handler = async ({ event, commands, notifier, idempotencyKey }: Pol
 };
 ```
 
-**A collaborator with two implementations.** The policy's `index.ts` declares the contract;
-`notifier.console.ts` and `notifier.memory.ts` implement it. The config decides:
+**A collaborator with two implementations.** `order/notifier/index.ts` declares the contract, a
+callable `Notifier`; `console.ts` and `memory.ts` next to it implement it. The config decides,
+and only one of the two names compiles:
 
 ```ts
 export default defineConfig({
   storage: sqlite({ path: process.env.STOREFRONT_DB ?? "./data/storefront.db" }),
-  policies: {
-    order: {
-      sendConfirmationOnOrderPlaced: { notifier: { use: process.env.NOTIFIER ?? "console" } },
-    },
+  collaborators: {
+    order: { notifier: process.env.NOTIFIER === "memory" ? "memory" : "console" },
   },
 });
 ```

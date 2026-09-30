@@ -1,18 +1,12 @@
-import type {
-  AggregateModel,
-  CollaboratorOwnerModel,
-  ModuleRef,
-  ProjectModel,
-  ReadModelModel,
-} from "../model.ts";
-import { joinKeys, uniqueAliases } from "../naming.ts";
+import type { AggregateModel, ModuleRef, ProjectModel, ReadModelModel } from "../model.ts";
+import { joinKeys, keyOf, uniqueAliases } from "../naming.ts";
 import { type GeneratedFile, importPath } from "./paths.ts";
 
 interface ImportEntry {
   readonly alias: string;
   readonly owner: string;
   readonly path: string;
-  readonly kind: "namespace" | "default";
+  readonly kind: "namespace" | "type";
 }
 
 interface Aliases {
@@ -39,27 +33,20 @@ const collectImports = (model: ProjectModel): readonly ImportEntry[] => {
         add(joinKeys(event.key, "upcasts"), aggregate.name, event.upcasts.path);
       }
     }
-    const addCollaborators = (owner: CollaboratorOwnerModel, key: string) => {
-      for (const collaborator of owner.collaborators) {
+    for (const port of aggregate.collaborators) {
+      add(joinKeys(aggregate.name, port.key), aggregate.name, port.contract.path, "type");
+      for (const implementation of port.implementations) {
         add(
-          joinKeys(collaborator.name, collaborator.implementation),
-          key,
-          collaborator.path,
-          "default",
+          joinKeys(aggregate.name, port.key, keyOf(implementation.name)),
+          aggregate.name,
+          implementation.path,
         );
       }
-    };
-    for (const command of aggregate.commands) {
-      add(command.key, aggregate.name, command.path);
-      addCollaborators(command, command.key);
     }
-    for (const policy of aggregate.policies) {
-      add(policy.key, aggregate.name, policy.path);
-      addCollaborators(policy, policy.key);
-    }
+    for (const command of aggregate.commands) add(command.key, aggregate.name, command.path);
+    for (const policy of aggregate.policies) add(policy.key, aggregate.name, policy.path);
     for (const process of aggregate.processes) {
       add(process.key, aggregate.name, process.path);
-      addCollaborators(process, process.key);
       for (const handler of process.handlers) {
         add(
           handler.aggregate === aggregate.name
@@ -97,31 +84,23 @@ const resolveAliases = (model: ProjectModel, registryPath: string): Aliases => {
     .sort((a, b) => (a.entry.path < b.entry.path ? -1 : a.entry.path > b.entry.path ? 1 : 0))
     .map(({ entry, alias }) => {
       const specifier = importPath({ from: registryPath, to: entry.path });
-      return entry.kind === "default"
-        ? `import ${alias} from "${specifier}";`
+      return entry.kind === "type"
+        ? `import type * as ${alias} from "${specifier}";`
         : `import * as ${alias} from "${specifier}";`;
     });
   return { of: (path) => byPath.get(path) as string, lines };
 };
 
+const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+
+const propertyKey = (key: string): string => (IDENTIFIER.test(key) ? key : JSON.stringify(key));
+
 const record = (pairs: readonly (readonly [string, string])[]): string =>
   pairs.length === 0
     ? "{}"
-    : `{ ${pairs.map(([key, value]) => (key === value ? key : `${key}: ${value}`)).join(", ")} }`;
+    : `{ ${pairs.map(([key, value]) => (key === value ? key : `${propertyKey(key)}: ${value}`)).join(", ")} }`;
 
-const collaboratorsOf = (owner: CollaboratorOwnerModel, aliases: Aliases): string => {
-  const byName = new Map<string, string[]>();
-  for (const collaborator of owner.collaborators) {
-    const implementations = byName.get(collaborator.name) ?? [];
-    implementations.push(`${collaborator.implementation}: ${aliases.of(collaborator.path)}`);
-    byName.set(collaborator.name, implementations);
-  }
-  return [...byName.entries()]
-    .map(([name, implementations]) => `${name}: { ${implementations.join(", ")} }`)
-    .join(", ");
-};
-
-interface OwnerEntry extends CollaboratorOwnerModel {
+interface OwnerEntry extends ModuleRef {
   readonly key: string;
   readonly source?: string | null;
 }
@@ -129,29 +108,34 @@ interface OwnerEntry extends CollaboratorOwnerModel {
 const sourceOf = (owner: OwnerEntry): string =>
   owner.source === undefined || owner.source === null ? "" : `, source: "${owner.source}"`;
 
-const emitEntries = (owners: readonly OwnerEntry[], aliases: Aliases, indent: string): string => {
-  if (owners.length === 0) return "{}";
-  if (owners.every((owner) => owner.collaborators.length === 0)) {
-    return record(
-      owners.map((owner) => [owner.key, `{ module: ${aliases.of(owner.path)}${sourceOf(owner)} }`]),
-    );
-  }
+const emitEntries = (owners: readonly OwnerEntry[], aliases: Aliases): string =>
+  record(
+    owners.map((owner) => [owner.key, `{ module: ${aliases.of(owner.path)}${sourceOf(owner)} }`]),
+  );
+
+/**
+ * Every implementation is checked against the port's interface here, so `tsc` fails on one that
+ * does not fulfil it whether or not the module says `satisfies` itself.
+ */
+const emitCollaborators = (
+  aggregate: AggregateModel,
+  aliases: Aliases,
+  indent: string,
+): string[] => {
+  if (aggregate.collaborators.length === 0) return [];
   const inner = `${indent}  `;
-  const lines = owners.map((owner) => {
-    if (owner.collaborators.length === 0) {
-      return `${inner}${owner.key}: { module: ${aliases.of(owner.path)}${sourceOf(owner)} },`;
-    }
-    return [
-      `${inner}${owner.key}: {`,
-      `${inner}  module: ${aliases.of(owner.path)},`,
-      `${inner}  collaborators: { ${collaboratorsOf(owner, aliases)} },`,
-      ...(owner.source === undefined || owner.source === null
-        ? []
-        : [`${inner}  source: "${owner.source}",`]),
+  return [
+    `${indent}collaborators: {`,
+    ...aggregate.collaborators.flatMap((port) => [
+      `${inner}${port.key}: {`,
+      ...port.implementations.map(
+        (implementation) =>
+          `${inner}  ${propertyKey(implementation.name)}: ${aliases.of(implementation.path)} satisfies ImplementationModule<${aliases.of(port.contract.path)}.${port.typeName}>,`,
+      ),
       `${inner}},`,
-    ].join("\n");
-  });
-  return `{\n${lines.join("\n")}\n${indent}}`;
+    ]),
+    `${indent}},`,
+  ];
 };
 
 const emitProcesses = (aggregate: AggregateModel, aliases: Aliases, indent: string): string => {
@@ -178,9 +162,6 @@ const emitProcesses = (aggregate: AggregateModel, aliases: Aliases, indent: stri
               process.deadlines.map((deadline) => [deadline.field, aliases.of(deadline.path)]),
             )},`,
           ]),
-      ...(process.collaborators.length === 0
-        ? []
-        : [`${inner}  collaborators: { ${collaboratorsOf(process, aliases)} },`]),
       `${inner}},`,
     ].join("\n");
   });
@@ -204,8 +185,9 @@ const emitAggregate = (aggregate: AggregateModel, aliases: Aliases): string => {
     ...(aggregate.state === null ? [] : [`${indent}state: ${aliases.of(aggregate.state.path)},`]),
     `${indent}events: ${record(aggregate.events.map((event) => [event.key, aliases.of(event.path)]))},`,
     ...emitUpcasts(aggregate, aliases, indent),
-    `${indent}commands: ${emitEntries(aggregate.commands, aliases, indent)},`,
-    `${indent}policies: ${emitEntries(aggregate.policies, aliases, indent)},`,
+    ...emitCollaborators(aggregate, aliases, indent),
+    `${indent}commands: ${emitEntries(aggregate.commands, aliases)},`,
+    `${indent}policies: ${emitEntries(aggregate.policies, aliases)},`,
     `${indent}processes: ${emitProcesses(aggregate, aliases, indent)},`,
     "    },",
   ].join("\n");
@@ -248,14 +230,16 @@ export interface EmitRegistryFunction {
 }
 
 /**
- * `.bounda/registry.ts`: one namespace import per module, one default import per collaborator
- * implementation of a command, policy or process, and the structured registry `createApp`
- * consumes.
+ * `.bounda/registry.ts`: one namespace import per module, a type import per port, and the
+ * structured registry `createApp` consumes.
  */
 export const emitRegistry: EmitRegistryFunction = ({ model, path }) => {
   const aliases = resolveAliases(model, path);
+  const hasCollaborators = model.aggregates.some((aggregate) => aggregate.collaborators.length > 0);
   const content = [
-    'import type { Registry } from "@bounda-dev/core";',
+    hasCollaborators
+      ? 'import type { ImplementationModule, Registry } from "@bounda-dev/core";'
+      : 'import type { Registry } from "@bounda-dev/core";',
     ...aliases.lines,
     "",
     "export const registry = {",

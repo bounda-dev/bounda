@@ -1,14 +1,18 @@
 import type {
+  ImplementationModule,
   Instant,
   PolicyModule,
   ProcessDeadlineField,
   ProcessHandlerReturnCheck,
   ProcessStateOf,
 } from "@bounda-dev/core";
+import type { AdapterDefinition } from "@bounda-dev/core/adapter";
+import { defineConfig } from "@bounda-dev/core/config";
 import { describe, it } from "vitest";
+import type { Command as RegisterCustomer } from "./fixtures/order-app/app/domain/customer/commands/+types/register-customer.ts";
 import type { Command as PayOrder } from "./fixtures/order-app/app/domain/order/commands/+types/pay-order.ts";
-import type { Command as PlaceOrder } from "./fixtures/order-app/app/domain/order/commands/place-order/+types/index.ts";
-import type { Policy as SendReceipt } from "./fixtures/order-app/app/domain/order/policies/+types/send-receipt-on-order-paid.ts";
+import type { Command as PlaceOrder } from "./fixtures/order-app/app/domain/order/commands/+types/place-order.ts";
+import type { Implementation as InventoryFake } from "./fixtures/order-app/app/domain/order/inventory/+types/fake.ts";
 import type { Process as AtNextReminder } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/at-next-reminder.ts";
 import type { Process as OrderPayment } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/index.ts";
 import type { Process as OnOrderPaid } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/on-order-paid.ts";
@@ -17,6 +21,8 @@ import type { Projection as ProjectOrderPlaced } from "./fixtures/order-app/app/
 
 type OrderPaymentModule =
   typeof import("./fixtures/order-app/app/domain/order/processes/order-payment/index.ts");
+
+declare const sqlite: AdapterDefinition<"sqlite", { path: string }>;
 
 describe("what does not compile", () => {
   it("an at- handler for a field that is not a deadline() of the state", () => {
@@ -87,16 +93,46 @@ describe("what does not compile", () => {
     void handler;
   });
 
-  it("using a collaborator the command does not declare", () => {
-    // @ts-expect-error inventory is not a collaborator of payOrder
-    const handler = ({ inventory }: PayOrder.HandlerArgs) => inventory;
+  it("using a collaborator of another aggregate", () => {
+    // @ts-expect-error inventory belongs to order, not to customer
+    const handler = ({ inventory }: RegisterCustomer.HandlerArgs) => inventory;
     void handler;
   });
 
-  it("using a collaborator the policy does not have", () => {
-    // @ts-expect-error mailer belongs to notifyOnOrderPlaced, not to sendReceiptOnOrderPaid
-    const handler = ({ mailer }: SendReceipt.HandlerArgs) => mailer;
-    void handler;
+  it("an implementation that does not fulfil its port's contract", () => {
+    // @ts-expect-error reserve is missing
+    const wrongShape = { default: {} } satisfies ImplementationModule<InventoryFake.Contract>;
+    const wrongSignature = {
+      // @ts-expect-error reserve takes the skus, not a number
+      default: { reserve: async (count: number) => count },
+    } satisfies ImplementationModule<InventoryFake.Contract>;
+    const namedExport = {
+      // @ts-expect-error an implementation module exports the port as default
+      reserve: async () => {},
+    } satisfies ImplementationModule<InventoryFake.Contract>;
+    void [wrongShape, wrongSignature, namedExport];
+  });
+
+  it("a collaborators configuration that leaves a choice open or names what does not exist", () => {
+    // @ts-expect-error inventory has two implementations, so the config must choose one
+    defineConfig({ storage: sqlite });
+    // @ts-expect-error inventory has two implementations, so the config must choose one
+    defineConfig({ storage: sqlite, collaborators: { order: {} } });
+    // @ts-expect-error "fak" is not an implementation of inventory
+    defineConfig({ storage: sqlite, collaborators: { order: { inventory: "fak" } } });
+    defineConfig({
+      storage: sqlite,
+      // @ts-expect-error notifier is not a collaborator of order
+      collaborators: { order: { inventory: "fake", notifier: "x" } },
+    });
+    defineConfig({
+      storage: sqlite,
+      // @ts-expect-error customer has no collaborators
+      collaborators: { order: { inventory: "fake" }, customer: {} },
+    });
+    const fromEnvironment: string = "fake";
+    // @ts-expect-error a plain string is not one of the implementation names
+    defineConfig({ storage: sqlite, collaborators: { order: { inventory: fromEnvironment } } });
   });
 
   it("an unqualified event name in a process config", () => {

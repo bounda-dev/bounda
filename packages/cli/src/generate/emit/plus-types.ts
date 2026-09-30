@@ -1,12 +1,7 @@
 import { basename, dirname, join } from "node:path";
-import type {
-  AggregateModel,
-  CollaboratorOwnerModel,
-  ProjectModel,
-  ReadModelModel,
-} from "../model.ts";
+import type { AggregateModel, ProjectModel, ReadModelModel } from "../model.ts";
 import { type GeneratedFile, importPath } from "./paths.ts";
-import { eventsTypeName, infersCollaborators, rowTypeName, stateTypeName } from "./types.ts";
+import { collaboratorsTypeName, eventsTypeName, rowTypeName, stateTypeName } from "./types.ts";
 
 export interface EmitPlusTypesArgs {
   readonly model: ProjectModel;
@@ -39,6 +34,7 @@ const generic = (name: string, args: readonly string[]): string =>
 
 interface Template {
   readonly imports: {
+    readonly core?: boolean;
     readonly generated: boolean;
     readonly module: string | null;
     readonly moduleAlias?: string;
@@ -49,11 +45,12 @@ interface Template {
 }
 
 const render = (path: string, typesPath: string, template: Template): GeneratedFile => {
-  const lines = ['import type * as core from "@bounda-dev/core";'];
+  const lines: string[] = [];
+  if (template.imports.core !== false) lines.push('import type * as core from "@bounda-dev/core";');
   if (template.imports.generated) {
     lines.push(`import type * as generated from "${importPath({ from: path, to: typesPath })}";`);
   }
-  lines.push("");
+  if (lines.length > 0) lines.push("");
   if (template.imports.module !== null) {
     lines.push(
       `type ${template.imports.moduleAlias ?? "Module"} = typeof import("${importPath({ from: path, to: template.imports.module })}");`,
@@ -87,24 +84,27 @@ const eventFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFile
     }),
   );
 
-const collaboratorsType = (owner: CollaboratorOwnerModel, from: string): string =>
-  owner.declaresCollaborators
-    ? `import("${importPath({ from, to: owner.path })}").Collaborators`
-    : infersCollaborators(owner)
-      ? `generated.${owner.collaboratorsTypeName}`
-      : "core.EmptyPayload";
+const collaboratorsType = (aggregate: AggregateModel): string =>
+  `generated.${collaboratorsTypeName(aggregate.name)}`;
 
-const withCollaborators = (
-  args: readonly string[],
-  owner: CollaboratorOwnerModel,
-  from: string,
-): readonly string[] =>
-  owner.collaborators.length === 0 ? args : [...args, collaboratorsType(owner, from)];
+const implementationFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFile[] =>
+  aggregate.collaborators.flatMap((port) =>
+    port.implementations.map((implementation) => {
+      const path = plusTypesPath(implementation.path);
+      return render(path, typesPath, {
+        imports: { core: false, generated: false, module: null },
+        extraTypes: [
+          `type Port = import("${importPath({ from: path, to: port.contract.path })}").${port.typeName};`,
+        ],
+        namespace: "Implementation",
+        members: [["Contract", "Port"]],
+      });
+    }),
+  );
 
 const commandFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFile[] =>
-  aggregate.commands.map((command) => {
-    const collaborators = collaboratorsType(command, plusTypesPath(command.path));
-    return render(plusTypesPath(command.path), typesPath, {
+  aggregate.commands.map((command) =>
+    render(plusTypesPath(command.path), typesPath, {
       imports: { generated: true, module: command.path },
       namespace: "Command",
       members: [
@@ -116,12 +116,12 @@ const commandFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFi
             "core.PayloadOf<Module>",
             `generated.${stateTypeName(aggregate.name)}`,
             `generated.${eventsTypeName(aggregate.name)}`,
-            collaborators,
+            collaboratorsType(aggregate),
           ]),
         ],
       ],
-    });
-  });
+    }),
+  );
 
 const storedEvent = (aggregate: AggregateModel, eventKey: string): string =>
   `core.StoredEventOf<generated.${eventsTypeName(aggregate.name)}, "${eventKey}">`;
@@ -149,17 +149,11 @@ const policyFiles = (
       members: [
         [
           "HandlerArgs",
-          generic(
-            "core.PolicyHandlerArgs",
-            withCollaborators(
-              [
-                eventOf(model, policy.source ?? aggregate.name, policy.triggerKey),
-                "generated.ReactionCommands",
-              ],
-              policy,
-              plusTypesPath(policy.path),
-            ),
-          ),
+          generic("core.PolicyHandlerArgs", [
+            eventOf(model, policy.source ?? aggregate.name, policy.triggerKey),
+            "generated.ReactionCommands",
+            collaboratorsType(aggregate),
+          ]),
         ],
       ],
     }),
@@ -198,18 +192,12 @@ const processFiles = (
             returnCheck,
             [
               "HandlerArgs",
-              generic(
-                "core.ProcessHandlerArgs",
-                withCollaborators(
-                  [
-                    eventOf(model, handler.aggregate, handler.eventKey),
-                    "core.ProcessStateOf<ProcessModule>",
-                    "generated.ReactionCommands",
-                  ],
-                  process,
-                  plusTypesPath(handler.path),
-                ),
-              ),
+              generic("core.ProcessHandlerArgs", [
+                eventOf(model, handler.aggregate, handler.eventKey),
+                "core.ProcessStateOf<ProcessModule>",
+                "generated.ReactionCommands",
+                collaboratorsType(aggregate),
+              ]),
             ],
           ],
         }),
@@ -225,20 +213,14 @@ const processFiles = (
             returnCheck,
             [
               "DeadlineArgs",
-              generic(
-                "core.ProcessDeadlineArgs",
-                withCollaborators(
-                  [
-                    "core.ProcessStateOf<ProcessModule>",
-                    deadline.field === TIMEOUT_DEADLINE
-                      ? "never"
-                      : `core.ProcessDeadlineField<ProcessModule, ${JSON.stringify(deadline.field)}>`,
-                    "generated.ReactionCommands",
-                  ],
-                  process,
-                  plusTypesPath(deadline.path),
-                ),
-              ),
+              generic("core.ProcessDeadlineArgs", [
+                "core.ProcessStateOf<ProcessModule>",
+                deadline.field === TIMEOUT_DEADLINE
+                  ? "never"
+                  : `core.ProcessDeadlineField<ProcessModule, ${JSON.stringify(deadline.field)}>`,
+                "generated.ReactionCommands",
+                collaboratorsType(aggregate),
+              ]),
             ],
           ],
         }),
@@ -302,6 +284,7 @@ const readModelFiles = (
 export const emitPlusTypes: EmitPlusTypesFunction = ({ model, typesPath }) => [
   ...model.aggregates.flatMap((aggregate) => [
     ...eventFiles(aggregate, typesPath),
+    ...implementationFiles(aggregate, typesPath),
     ...commandFiles(aggregate, typesPath),
     ...policyFiles(model, aggregate, typesPath),
     ...processFiles(model, aggregate, typesPath),

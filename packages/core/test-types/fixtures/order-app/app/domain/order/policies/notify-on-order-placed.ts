@@ -1,4 +1,4 @@
-import type { Policy } from "./+types/index";
+import type { Policy } from "./+types/notify-on-order-placed";
 
 export const delay = "10m";
 

@@ -73,7 +73,7 @@ const setUp = async () => {
     registry,
     config: {
       storage: memory(),
-      commands: { placeOrder: { notifier: { use: "memory" } } },
+      collaborators: { order: { notifier: "memory" } },
       runtime: { policies: { retry: { strategy: "none" } } },
     },
     logger: silentLogger,
