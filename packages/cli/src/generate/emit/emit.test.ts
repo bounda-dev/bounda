@@ -247,6 +247,53 @@ describe("emitRegistry", () => {
     );
   });
 
+  it("keeps a port's aliases apart from an event named after the aggregate and the port", () => {
+    const order = withCollaborators.aggregates[0] as ProjectModel["aggregates"][number];
+    const { content } = emitRegistry({
+      model: {
+        ...withCollaborators,
+        aggregates: [
+          {
+            ...order,
+            events: [
+              {
+                key: "orderMailer",
+                typeName: "OrderMailer",
+                path: "/project/app/domain/order/order-mailer.ts",
+                relativePath: "app/domain/order/order-mailer.ts",
+                upcasts: null,
+              },
+              {
+                key: "orderMailerSmtp",
+                typeName: "OrderMailerSmtp",
+                path: "/project/app/domain/order/order-mailer-smtp.ts",
+                relativePath: "app/domain/order/order-mailer-smtp.ts",
+                upcasts: null,
+              },
+            ],
+          },
+          ...withCollaborators.aggregates.slice(1),
+        ],
+      },
+      path: "/project/.bounda/registry.ts",
+    });
+    expect(content).toContain(
+      'import type * as mailerOrderMailer from "../app/domain/order/mailer/index.ts";',
+    );
+    expect(content).toContain(
+      'import * as mailerOrderMailerSmtp from "../app/domain/order/mailer/smtp.ts";',
+    );
+    expect(content).toContain(
+      'import * as orderOrderMailer from "../app/domain/order/order-mailer.ts";',
+    );
+    expect(content).toContain(
+      'import * as orderOrderMailerSmtp from "../app/domain/order/order-mailer-smtp.ts";',
+    );
+    expect(content).toContain(
+      "smtp: mailerOrderMailerSmtp satisfies ImplementationModule<mailerOrderMailer.Mailer>,",
+    );
+  });
+
   it("prefixes colliding import aliases with their owner and omits absent parts", () => {
     const { content } = emitRegistry({ model, path: "/project/.bounda/registry.ts" });
     expect(content).toBe(`import type { Registry } from "@bounda-dev/core";

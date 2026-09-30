@@ -31,7 +31,7 @@ export const selectCollaborators: SelectCollaboratorsFunction = ({
     const options = Object.keys(available);
     const chosen = config?.[port];
     if (chosen !== undefined) {
-      const implementation = available[chosen];
+      const implementation = Object.hasOwn(available, chosen) ? available[chosen] : undefined;
       if (implementation === undefined) {
         throw new ConfigurationError(
           `${owner}, collaborator "${port}": implementation "${chosen}" not found. Available: ${describe(options)}`,
@@ -47,7 +47,7 @@ export const selectCollaborators: SelectCollaboratorsFunction = ({
       `${owner}, collaborator "${port}": choose an implementation with collaborators.${aggregate}.${port}. Available: ${describe(options)}`,
     );
   });
-  const unknown = Object.keys(config ?? {}).filter((port) => !(port in implementations));
+  const unknown = Object.keys(config ?? {}).filter((port) => !Object.hasOwn(implementations, port));
   if (unknown.length > 0) {
     throw new ConfigurationError(
       `${owner}: configuration names collaborators that do not exist: ${describe(unknown)}`,

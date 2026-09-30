@@ -28,9 +28,7 @@ export const plusTypesPath: PlusTypesPathFunction = (modulePath) =>
 const TIMEOUT_DEADLINE = "timeout";
 
 const generic = (name: string, args: readonly string[]): string =>
-  args.length === 1
-    ? `${name}<${args[0]}>`
-    : `${name}<\n${args.map((arg) => `    ${arg}`).join(",\n")}\n  >`;
+  `${name}<\n${args.map((arg) => `    ${arg}`).join(",\n")}\n  >`;
 
 interface Template {
   readonly imports: {

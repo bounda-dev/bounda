@@ -127,6 +127,15 @@ describe("buildAggregates", () => {
         'collaborators.shipping: there is no aggregate "shipping" whose collaborators to choose',
       ),
     );
+    expect(() =>
+      buildAggregates({
+        registry: orderRegistry,
+        config: resolveConfig({
+          storage: memory(),
+          collaborators: { order: { notifier: "silent" }, constructor: {} },
+        }),
+      }),
+    ).toThrow('there is no aggregate "constructor"');
   });
 });
 

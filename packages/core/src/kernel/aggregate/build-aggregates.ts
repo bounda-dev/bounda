@@ -90,7 +90,7 @@ export interface BuildAggregatesFunction {
  */
 export const buildAggregates: BuildAggregatesFunction = ({ registry, config }) => {
   for (const name of Object.keys(config.collaborators)) {
-    if (!(name in registry.aggregates)) {
+    if (!Object.hasOwn(registry.aggregates, name)) {
       throw new ConfigurationError(
         `collaborators.${name}: there is no aggregate "${name}" whose collaborators to choose`,
       );

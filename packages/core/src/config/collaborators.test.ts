@@ -46,6 +46,18 @@ describe("selectCollaborators", () => {
     );
   });
 
+  it("refuses a port without implementations rather than handing out nothing", () => {
+    expect(() =>
+      selectCollaborators({
+        aggregate: "order",
+        implementations: { inventory: {} },
+        config: undefined,
+      }),
+    ).toThrow(
+      'Aggregate "order", collaborator "inventory": choose an implementation with collaborators.order.inventory. Available: ',
+    );
+  });
+
   it("rejects an implementation that does not exist", () => {
     expect(() =>
       selectCollaborators({
@@ -56,6 +68,20 @@ describe("selectCollaborators", () => {
     ).toThrow(
       'Aggregate "order", collaborator "inventory": implementation "grpc" not found. Available: "http", "fake"',
     );
+  });
+
+  it("does not take a property of Object.prototype for an implementation or a port", () => {
+    const implementations = { inventory: { http: { default: http } } };
+    expect(() =>
+      selectCollaborators({
+        aggregate: "order",
+        implementations,
+        config: { inventory: "constructor" },
+      }),
+    ).toThrow('implementation "constructor" not found');
+    expect(() =>
+      selectCollaborators({ aggregate: "order", implementations, config: { toString: "x" } }),
+    ).toThrow('configuration names collaborators that do not exist: "toString"');
   });
 
   it("rejects configuration for collaborators the aggregate does not have", () => {

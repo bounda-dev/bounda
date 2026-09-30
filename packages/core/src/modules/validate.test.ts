@@ -113,7 +113,7 @@ describe("validateRegistry", () => {
       },
       collaborators: {
         mailer: {},
-        gateway: { stripe: {} as never, fake: { default: {} } },
+        gateway: { stripe: {} as never, sdk: null as never, fake: { default: {} } },
       },
     });
     expect(() => validateRegistry(registry)).toThrow(
@@ -122,6 +122,7 @@ describe("validateRegistry", () => {
           "Invalid registry:",
           "  aggregates.order.collaborators.mailer: has no implementations",
           '  aggregates.order.collaborators.gateway.stripe: missing export "default"',
+          '  aggregates.order.collaborators.gateway.sdk: missing export "default"',
           '  aggregates.order.policies.notifyOnOrderPlaced: missing export "handler" (expected a function)',
         ].join("\n"),
       ),

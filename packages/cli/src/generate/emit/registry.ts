@@ -33,12 +33,14 @@ const collectImports = (model: ProjectModel): readonly ImportEntry[] => {
         add(joinKeys(event.key, "upcasts"), aggregate.name, event.upcasts.path);
       }
     }
+    // The port is the owner, not the aggregate: an event named `<aggregate>-<port>` would
+    // otherwise share both the alias and the prefix that makes aliases unique.
     for (const port of aggregate.collaborators) {
-      add(joinKeys(aggregate.name, port.key), aggregate.name, port.contract.path, "type");
+      add(joinKeys(aggregate.name, port.key), port.key, port.contract.path, "type");
       for (const implementation of port.implementations) {
         add(
           joinKeys(aggregate.name, port.key, keyOf(implementation.name)),
-          aggregate.name,
+          port.key,
           implementation.path,
         );
       }

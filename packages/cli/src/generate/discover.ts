@@ -342,14 +342,11 @@ const discoverProcesses = async (
 const AGGREGATE_DIRECTORIES: ReadonlySet<string> = new Set(["commands", "policies", "processes"]);
 
 /**
- * Names a port cannot take: the modules of the aggregate and every argument a handler of any
- * kind already receives, since the ports are spread next to them.
+ * Names a port cannot take: the state module and every argument a handler of any kind already
+ * receives, since the ports are spread next to them. The three module directories never get here.
  */
 const RESERVED_PORT_KEYS: ReadonlySet<string> = new Set([
   "state",
-  "commands",
-  "policies",
-  "processes",
   "command",
   "events",
   "idempotencyKey",
@@ -419,12 +416,7 @@ const discoverPort = async (
     );
     return null;
   }
-  return {
-    key,
-    typeName,
-    contract: moduleRef(context, index),
-    implementations: implementations.sort((a, b) => a.name.localeCompare(b.name)),
-  };
+  return { key, typeName, contract: moduleRef(context, index), implementations };
 };
 
 const discoverAggregate = async (
