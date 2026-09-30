@@ -58,16 +58,21 @@ export const middleware: Route.MiddlewareFunction[] = [boundaMiddleware];
 // app/routes/register.tsx
 import { bounda } from "@bounda-dev/react-router/app";
 import { redirect } from "react-router";
+import { failure } from "../errors.server";
 import type { Route } from "./+types/register";
 
 export const action = async ({ request, context }: Route.ActionArgs) => {
   const form = await request.formData();
   const userId = crypto.randomUUID();
-  await context.get(bounda).commands.registerUser({
-    userId,
-    email: String(form.get("email")),
-    name: String(form.get("name")),
-  });
+  try {
+    await context.get(bounda).commands.registerUser({
+      userId,
+      email: String(form.get("email") ?? ""),
+      name: String(form.get("name") ?? ""),
+    });
+  } catch (error) {
+    return failure(error);
+  }
   return redirect(`/users/${userId}`);
 };
 ```

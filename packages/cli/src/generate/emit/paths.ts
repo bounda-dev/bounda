@@ -21,7 +21,7 @@ export interface ImportPathFunction {
  */
 export const importPath: ImportPathFunction = ({ from, to }) => {
   const specifier = relative(dirname(from), to).split("\\").join(posix.sep);
-  return specifier.startsWith(".") ? specifier : `./${specifier}`;
+  return specifier.startsWith("../") ? specifier : `./${specifier}`;
 };
 
 export interface GeneratedFile {

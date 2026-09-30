@@ -44,7 +44,12 @@ export const loader = ({ context }: Route.LoaderArgs) =>
   context.get(bounda).queries.listOrders({ customerId: "ada" });
 
 export const action = async ({ request, context }: Route.ActionArgs) => {
-  await context.get(bounda).commands.placeOrder(await payloadOf(request));
+  const form = await request.formData();
+  await context.get(bounda).commands.placeOrder({
+    orderId: crypto.randomUUID(),
+    customerId: "ada",
+    total: Number(form.get("total")),
+  });
   return redirect("/orders");
 };
 ```

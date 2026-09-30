@@ -13,8 +13,11 @@ export class BoundaError extends Error {
 }
 
 /**
- * Thrown by user code inside a command handler to reject the command. The runtime returns it to
- * the caller as is and does not retry or dead-letter it.
+ * Thrown by user code to say a rule of the domain forbids what was asked. From a command handler
+ * it rejects the command: the runtime returns it to the caller as is and does not retry it. Where
+ * there is no caller to return it to, it is terminal: out of a policy or process handler (thrown
+ * there or by a command it dispatched) or a delayed command, the runtime dead-letters the run at
+ * once instead of retrying it.
  */
 export class DomainError extends BoundaError {
   constructor(message: string, options?: ErrorOptions) {
