@@ -91,17 +91,24 @@ describe("a Bounda Durable Object", () => {
           .toArray()
           .map((row) => row.type),
       );
+    // The object arms its alarm for now after a command, so the runtime may fire it on its own
+    // beside the ones run here: run alarms until the object has caught up, not a fixed count.
+    const caughtUp = async (steps: number) => {
+      for (let round = 0; round < 10; round += 1) {
+        if ((await lifecycle()).length >= steps && (await store.getLag()).maxLag === 0) return;
+        await runDurableObjectAlarm(stub);
+      }
+    };
     const before = Date.now();
     await store.commands.placeOrder({ orderId: "o-1", total: 42, customer: "ada" });
-    await runDurableObjectAlarm(stub);
+    await caughtUp(2);
     expect(await lifecycle()).toEqual(["ProcessStarted", "ProcessHandled"]);
     const armed = await alarmOf(stub);
     expect(armed).toBeGreaterThanOrEqual(before + 3_600_000 - 1_000);
     expect(armed).toBeLessThanOrEqual(Date.now() + 3_600_000 + 1_000);
 
     clock.advance(3_600_000);
-    await runDurableObjectAlarm(stub);
-    await runDurableObjectAlarm(stub);
+    await caughtUp(4);
     expect(await store.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "archived" });
     expect(await lifecycle()).toEqual([
       "ProcessStarted",
