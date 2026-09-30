@@ -16,7 +16,7 @@ const plain = resolveConfig({ storage: memory() });
 
 describe("buildAggregates", () => {
   it("compiles events, commands, schemas and collaborators", () => {
-    const { byName, commandsByType } = buildAggregates({ registry: orderRegistry, config });
+    const { byName } = buildAggregates({ registry: orderRegistry, config });
     const order = byName.order;
     expect(order).toBeDefined();
     expect(order?.aggregateIdField).toBe("orderId");

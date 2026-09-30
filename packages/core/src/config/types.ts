@@ -129,9 +129,10 @@ export type CollaboratorsConfig = Readonly<Record<string, Readonly<Record<string
  * The `collaborators` section of the configuration: optional as long as every port of the
  * project has one implementation, required as soon as one has several.
  */
-export type CollaboratorsSection = {} extends AppCollaboratorsConfig
-  ? { readonly collaborators?: AppCollaboratorsConfig }
-  : { readonly collaborators: AppCollaboratorsConfig };
+export type CollaboratorsSection =
+  Record<never, never> extends AppCollaboratorsConfig
+    ? { readonly collaborators?: AppCollaboratorsConfig }
+    : { readonly collaborators: AppCollaboratorsConfig };
 
 /**
  * What `bounda.config.ts` exports.
