@@ -5,8 +5,11 @@ import type { Registry } from "../../modules/registry.ts";
 import { createTestApp } from "../../testing/index.ts";
 import { createReactiveHarness } from "../reactive-harness.ts";
 import { COMMAND_FAILED_EVENT } from "../system-events.ts";
+import { ATTRIBUTES, METRICS } from "../telemetry.ts";
+import { installFakeTelemetry } from "../telemetry-fake.ts";
 import {
   advanceUntilWaiting,
+  breakNextCommit,
   createRecordingLogger,
   eventually,
   orderRegistry,
@@ -36,6 +39,77 @@ describe("scheduled command worker", () => {
     expect(order.events[0]?.metadata).toMatchObject({ correlationId: "req-7", depth: 0 });
     expect(await harness.storage.scheduler.list()).toEqual([]);
     expect(await harness.worker.runOnce()).toBe(0);
+  });
+
+  it("commits a run with the release of its claim, or neither, so a crash after the run does not run it twice", async () => {
+    const { logger, entries } = createRecordingLogger();
+    const harness = await createReactiveHarness({
+      registry: orderRegistry,
+      logger,
+      config: {
+        runtime: { policies: { retry: { strategy: "fixed", maxAttempts: 3, baseDelay: "1s" } } },
+      },
+    });
+    sentMessages.length = 0;
+    await harness.pipeline.dispatch({
+      type: "PlaceOrder",
+      payload: { orderId: "o-1", total: 10 },
+      options: { delay: "1m" },
+    });
+    harness.clock.advance(60_000);
+    const crash = breakNextCommit(harness.storage);
+    expect(await harness.worker.runOnce()).toBe(1);
+
+    expect(crash.broke()).toBe(true);
+    expect(sentMessages).toEqual(["placed o-1 v0"]);
+    const order = { aggregateType: "order", aggregateId: "o-1" };
+    expect((await harness.storage.eventStore.load(order)).events).toEqual([]);
+    expect(await harness.storage.scheduler.list()).toMatchObject([{ attempts: 1 }]);
+    expect(entries).toContainEqual({
+      level: "warn",
+      message: "scheduled command failed; rescheduled",
+      fields: expect.objectContaining({ command: "PlaceOrder", attempts: 1 }),
+    });
+
+    expect(await harness.worker.runOnce()).toBe(0);
+    harness.clock.advance(1_000);
+    expect(await harness.worker.runOnce()).toBe(1);
+    expect(sentMessages).toEqual(["placed o-1 v0", "placed o-1 v0"]);
+    expect(
+      (await harness.storage.eventStore.load(order)).events.map((event) => event.type),
+    ).toEqual(["OrderPlaced"]);
+    expect(await harness.storage.scheduler.list()).toEqual([]);
+  });
+
+  it("drops a command with its dead letter, CommandFailed and the claim's failure together, or neither", async () => {
+    const harness = await createReactiveHarness({ registry: orderRegistry });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.pipeline.dispatch({
+      type: "PlaceOrder",
+      payload: { orderId: "o-1", total: 99 },
+      options: { delay: "1m" },
+    });
+    harness.clock.advance(60_000);
+    const crash = breakNextCommit(harness.storage);
+    expect(await harness.worker.runOnce()).toBe(1);
+
+    expect(crash.broke()).toBe(true);
+    const order = { aggregateType: "order", aggregateId: "o-1" };
+    expect(
+      (await harness.storage.eventStore.load(order)).events.map((event) => event.type),
+    ).toEqual(["OrderPlaced"]);
+    expect(await harness.storage.deadLetterStore.count()).toBe(0);
+    expect(await harness.storage.scheduler.list()).toHaveLength(1);
+
+    harness.clock.advance(harness.worker.leaseMs + 1);
+    expect(await harness.worker.runOnce()).toBe(1);
+    expect(
+      (await harness.storage.eventStore.load(order)).events.map((event) => event.type),
+    ).toEqual(["OrderPlaced", COMMAND_FAILED_EVENT]);
+    expect(await harness.storage.deadLetterStore.list()).toMatchObject([
+      { kind: "command", eventType: "PlaceOrder", errorMessage: "Order already placed" },
+    ]);
+    expect(await harness.storage.scheduler.list()).toEqual([]);
   });
 
   it("runs a command scheduled again under its key while it ran, once the run ends", async () => {
@@ -71,7 +145,9 @@ describe("scheduled command worker", () => {
   });
 
   it("drops a command that fails for good, records CommandFailed and dead-letters it", async () => {
-    const harness = await createReactiveHarness({ registry: orderRegistry });
+    const telemetry = installFakeTelemetry();
+    const { logger, entries } = createRecordingLogger();
+    const harness = await createReactiveHarness({ registry: orderRegistry, logger });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
     await harness.pipeline.dispatch({
       type: "PlaceOrder",
@@ -104,6 +180,26 @@ describe("scheduled command worker", () => {
     await expect(
       harness.pipeline.dispatch({ type: "PayOrder", payload: { orderId: "o-1", method: "card" } }),
     ).resolves.toMatchObject({ version: 3 });
+    expect(telemetry.counts).toContainEqual({
+      metric: METRICS.deadLetters,
+      value: 1,
+      attributes: {
+        [ATTRIBUTES.subscriberKind]: "command",
+        [ATTRIBUTES.subscriber]: "scheduled:PlaceOrder",
+        [ATTRIBUTES.outcome]: "terminal",
+      },
+    });
+    telemetry.restore();
+    expect(entries).toContainEqual({
+      level: "warn",
+      message: "scheduled command dropped",
+      fields: {
+        command: "PlaceOrder",
+        dedupeKey: expect.stringMatching(/^command:/),
+        reason: "terminal",
+        attempts: 1,
+      },
+    });
   });
 
   it("reschedules transient failures with back-off and gives up after the configured attempts", async () => {
@@ -162,14 +258,14 @@ describe("scheduled command worker", () => {
       options: { delay: 0 },
     });
     const [scheduled] = await harness.storage.scheduler.list();
-    const original = harness.storage.eventStore.append.bind(harness.storage.eventStore);
+    const complete = harness.storage.scheduler.complete;
     let failures = 1;
-    harness.storage.eventStore.append = async (args) => {
+    harness.storage.scheduler.complete = async (claim) => {
       if (failures > 0) {
         failures -= 1;
         throw new Error("db unavailable");
       }
-      return original(args);
+      return complete(claim);
     };
 
     await harness.worker.runOnce();

@@ -232,7 +232,8 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   kept, retries back off from 1 s to 30 s, and `app.getLag()` shows `failing` with the event and
   the error. Fix the projection and deploy; a read model never skips an event.
 - Queries compose: a handler receives `queries` and may call other queries.
-- Delayed commands: `commands.remindCustomer(payload, { delay: "24h" })`. A duration from the
+- Delayed commands: `commands.remindCustomer(payload, { delay: "24h" })`. The worker commits a
+  scheduled run with the release of its claim, so a crash between the two never runs it twice. A duration from the
   environment is a `string`; wrap it: `{ delay: asDuration(process.env.DELAY ?? "24h") }`. The
   payload is stored as JSON and validated in that form at dispatch: a date field must be
   `z.coerce.date()`, since `z.date()` rejects the string a date becomes.

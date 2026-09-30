@@ -4,7 +4,7 @@ import type { Clock } from "../../contracts/clock.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
 import { errorDetails } from "../shared/retry.ts";
-import { causeOf } from "../unit-of-work/unit-of-work.ts";
+import type { UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import type { ProcessesRuntime } from "./build-processes.ts";
 import type { DeadlineStep } from "./deadline-step.ts";
 import { type ProcessDeadlinePayload, reachedKey } from "./deadlines.ts";
@@ -18,6 +18,11 @@ export type DeadlineTarget = Pick<ProcessDeadlinePayload, "process" | "aggregate
 export interface HandleDeadlineArgs {
   readonly payload: DeadlineTarget;
   readonly context: CausationContext;
+  /**
+   * The unit of work to stage the step on, when the caller commits it, with what it settles of
+   * the entry's claim. Without one the step commits on its own.
+   */
+  readonly within?: UnitOfWork | undefined;
 }
 
 export interface FailDeadlineArgs {
@@ -32,7 +37,7 @@ export interface FailDeadlineArgs {
  */
 export interface ProcessDeadlines {
   /**
-   * Runs the earliest due deadline, if any, and writes the next entry with it, as one unit of
+   * Runs the earliest due deadline, if any, and writes the next entry with it, in one unit of
    * work: a commit that finds the instance moved runs the deadline again on the instance as it
    * now is.
    */
@@ -80,35 +85,40 @@ export const createDeadlineDelivery: CreateDeadlineDeliveryFunction = ({
   clock,
   logger,
 }) => {
-  const handleDeadline = async ({ payload, context }: HandleDeadlineArgs): Promise<void> => {
+  const handleDeadline = async ({
+    payload,
+    context,
+    within,
+  }: HandleDeadlineArgs): Promise<void> => {
     const process = processes.byName[payload.process];
     if (process === undefined) {
       await schedule.cancel(payload.process, payload.aggregateId);
       return;
     }
-    try {
-      await units.commit(async (unit, within) => {
-        const instance = await within.load(process, payload.aggregateId);
-        const due = pendingDeadline(process, instance);
-        if (
-          instance.status === "started" &&
-          due !== null &&
-          Date.parse(due.at) <= clock.now().getTime()
-        ) {
-          await deadlineStep.attempt({
-            unit,
-            process,
-            instanceId: payload.aggregateId,
-            instance,
-            due,
-            context,
-          });
-        }
-        await schedule.stage(unit, process, payload.aggregateId);
-      });
-    } catch (error) {
-      throw causeOf(error);
+    const step = async (unit: UnitOfWork): Promise<void> => {
+      const instance = await units.over(unit).load(process, payload.aggregateId);
+      const due = pendingDeadline(process, instance);
+      if (
+        instance.status === "started" &&
+        due !== null &&
+        Date.parse(due.at) <= clock.now().getTime()
+      ) {
+        await deadlineStep.attempt({
+          unit,
+          process,
+          instanceId: payload.aggregateId,
+          instance,
+          due,
+          context,
+        });
+      }
+      await schedule.stage(unit, process, payload.aggregateId);
+    };
+    if (within !== undefined) {
+      await step(within);
+      return;
     }
+    await units.commit(step);
   };
 
   const failDeadline = async ({
@@ -125,37 +135,33 @@ export const createDeadlineDelivery: CreateDeadlineDeliveryFunction = ({
     const failed = deadlineStep.thrownBy(error);
     let letter: NewDeadLetter | undefined;
     let status: ProcessStatus | undefined;
-    try {
-      await units.commit(async (unit, within) => {
-        const instance = await within.load(process, payload.aggregateId);
-        letter = undefined;
-        status = instance.status;
-        if (
-          failed !== undefined &&
-          instance.status === "started" &&
-          !instance.reached.has(reachedKey(failed))
-        ) {
-          letter = failures.letterOf(
-            process,
-            deadlineSubject(process, payload.aggregateId, failed.field),
-            error,
-            attempts,
-            errorType,
-          );
-          await within.append(process, payload.aggregateId, instance, [
-            lifecycleEntries.failed(
-              { deadline: failed.field, at: failed.at },
-              letter,
-              instanceContext(process, payload.aggregateId, instance),
-            ),
-          ]);
-          await failures.file(unit.deadLetterStore, process, letter, error);
-        }
-        await schedule.stage(unit, process, payload.aggregateId);
-      });
-    } catch (failure) {
-      throw causeOf(failure);
-    }
+    await units.commit(async (unit, within) => {
+      const instance = await within.load(process, payload.aggregateId);
+      letter = undefined;
+      status = instance.status;
+      if (
+        failed !== undefined &&
+        instance.status === "started" &&
+        !instance.reached.has(reachedKey(failed))
+      ) {
+        letter = failures.letterOf(
+          process,
+          deadlineSubject(process, payload.aggregateId, failed.field),
+          error,
+          attempts,
+          errorType,
+        );
+        await within.append(process, payload.aggregateId, instance, [
+          lifecycleEntries.failed(
+            { deadline: failed.field, at: failed.at },
+            letter,
+            instanceContext(process, payload.aggregateId, instance),
+          ),
+        ]);
+        await failures.file(unit.deadLetterStore, process, letter, error);
+      }
+      await schedule.stage(unit, process, payload.aggregateId);
+    });
     if (letter === undefined) {
       logger.warn("process deadline gave up without failing the process", {
         process: process.name,

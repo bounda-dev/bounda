@@ -3,7 +3,6 @@ import { ConfigurationError, NotFoundError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
-import { causeOf } from "../unit-of-work/unit-of-work.ts";
 import type { ProcessesRuntime, ProcessRuntime } from "./build-processes.ts";
 import type { DeadlineStep } from "./deadline-step.ts";
 import { PROCESS_DEADLINE_COMMAND, reachedKey } from "./deadlines.ts";
@@ -107,26 +106,6 @@ export const createProcessReplay: CreateProcessReplayFunction = ({
 }) => {
   const { load } = units.live;
 
-  const committed = async (work: Parameters<ProcessUnits["commit"]>[0]): Promise<void> => {
-    try {
-      await units.commit(work);
-    } catch (error) {
-      throw causeOf(error);
-    }
-  };
-
-  const resumed = async (
-    process: ProcessRuntime,
-    instanceId: string,
-    letter: string | undefined,
-  ): Promise<void> => {
-    try {
-      await resume.resumeParked(process, instanceId, letter);
-    } catch (error) {
-      throw causeOf(error);
-    }
-  };
-
   const replay = async ({
     process: name,
     event,
@@ -150,7 +129,7 @@ export const createProcessReplay: CreateProcessReplayFunction = ({
       );
     }
     if (instance.status === "failed" && !failedHere) throw failedOnAnotherStep(process, instanceId);
-    await committed(async (unit, within) => {
+    await units.commit(async (unit, within) => {
       const current = await within.load(process, instanceId);
       if (current.status !== "started" && current.status !== "failed") return;
       if (current.handledEventIds.has(event.id)) {
@@ -175,7 +154,7 @@ export const createProcessReplay: CreateProcessReplayFunction = ({
       }
       await schedule.stage(unit, process, instanceId);
     });
-    await resumed(process, instanceId, letter);
+    await resume.resumeParked(process, instanceId, letter);
     logger.info("process handler replayed", { process: process.name, eventId: event.id });
   };
 
@@ -196,7 +175,7 @@ export const createProcessReplay: CreateProcessReplayFunction = ({
         `Process "${process.name}" has no failed deadline for ${payload.aggregateId}`,
       );
     }
-    await committed(async (unit, within) => {
+    await units.commit(async (unit, within) => {
       const current = await within.load(process, payload.aggregateId);
       if (current.reached.has(reachedKey(failed))) return;
       await deadlineStep.attempt({
@@ -210,7 +189,7 @@ export const createProcessReplay: CreateProcessReplayFunction = ({
       });
       await schedule.stage(unit, process, payload.aggregateId);
     });
-    await resumed(process, payload.aggregateId, letter);
+    await resume.resumeParked(process, payload.aggregateId, letter);
   };
 
   const instanceOfLetter = async (letter: DeadLetter): Promise<ProcessInstance | null> => {

@@ -58,16 +58,6 @@ export class CommitFailed extends Error {
   }
 }
 
-export interface CauseOfFunction {
-  (error: unknown): unknown;
-}
-
-/**
- * The store's failure behind a `CommitFailed`; any other error as it is.
- */
-export const causeOf: CauseOfFunction = (error) =>
-  error instanceof CommitFailed ? error.cause : error;
-
 export interface CommitAttemptArgs {
   readonly storage: StoragePorts;
   /**
@@ -101,5 +91,17 @@ export const commitAttempt: CommitAttemptFunction = async ({
       if (!(error instanceof ConcurrencyError)) throw new CommitFailed(error);
       if (race >= concurrencyRetries) throw error;
     }
+  }
+};
+
+/**
+ * `commitAttempt` for a caller that does not tell the store's failure from the work's: a commit
+ * that fails for a reason other than a conflict throws that failure as it is.
+ */
+export const commitWork: CommitAttemptFunction = async (args) => {
+  try {
+    await commitAttempt(args);
+  } catch (error) {
+    throw error instanceof CommitFailed ? error.cause : error;
   }
 };

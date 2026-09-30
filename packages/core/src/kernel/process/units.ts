@@ -2,7 +2,7 @@ import type { StoragePorts } from "../../adapter/adapter.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
-import { commitAttempt, type UnitOfWork } from "../unit-of-work/unit-of-work.ts";
+import { commitWork, type UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import { createProcessInstances, type ProcessInstances } from "./instances.ts";
 
 /**
@@ -22,7 +22,7 @@ export interface ProcessUnits {
   /**
    * Runs `work` on a fresh unit and commits it. A commit that finds a stream moved runs the work
    * again on a fresh unit, as `commitAttempt` does; a commit that fails for another reason throws
-   * `CommitFailed`, for `causeOf` at the boundary.
+   * the store's failure.
    */
   commit(work: (unit: UnitOfWork, within: ProcessInstances) => Promise<void>): Promise<void>;
 }
@@ -51,7 +51,7 @@ export const createProcessUnits: CreateProcessUnitsFunction = ({ storage, config
     live: over(storage),
     over,
     commit: (work) =>
-      commitAttempt({
+      commitWork({
         storage,
         concurrencyRetries: config.runtime.commands.concurrencyRetries,
         work: (unit) => work(unit, over(unit)),

@@ -125,6 +125,7 @@ const setUp = async (retry: RetryConfig = { strategy: "none" }, concurrencyRetri
     policies: harness.policies,
     policyExecutor: harness.policyExecutor,
     processes: harness.processes,
+    config: harness.config,
     ids: harness.ids,
     clock: harness.clock,
     logger: harness.logger,

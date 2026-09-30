@@ -7,7 +7,7 @@ import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { ReactionOutcome } from "../shared/in-order.ts";
 import { runAttempt } from "../shared/reaction-attempt.ts";
-import { causeOf, type UnitOfWork } from "../unit-of-work/unit-of-work.ts";
+import type { UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
 import type { ProcessFailures } from "./failures.ts";
 import type { ProcessHandlers } from "./handlers.ts";
@@ -223,7 +223,7 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
         await unit.inboxLedger.complete({ ...key, claimId });
       });
     } catch (failure) {
-      if (causeOf(failure) instanceof ClaimLostError) return "hold";
+      if (failure instanceof ClaimLostError) return "hold";
       throw failure;
     }
     failures.filed(process, letter);
@@ -267,8 +267,7 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
       try {
         return await handleEvent(process, event);
       } catch (error) {
-        const cause = causeOf(error);
-        if (!(cause instanceof ConcurrencyError)) throw cause;
+        if (!(error instanceof ConcurrencyError)) throw error;
         logger.debug("process stream moved; will redeliver", {
           process: process.name,
           eventId: event.id,

@@ -1,5 +1,5 @@
 import type { StoragePorts } from "../../adapter/adapter.ts";
-import type { DeadLetterErrorType } from "../../adapter/ports/dead-letter-store.ts";
+import type { DeadLetterErrorType, NewDeadLetter } from "../../adapter/ports/dead-letter-store.ts";
 import type { ClaimedCommand, ScheduledCommand } from "../../adapter/ports/scheduler.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
@@ -19,6 +19,7 @@ import {
   type CommandFailedPayload,
 } from "../system-events.ts";
 import { ATTRIBUTES, deadLettered, traced } from "../telemetry.ts";
+import { commitWork, type UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 
 export interface ScheduledCommandWorker {
   start(): void;
@@ -64,10 +65,12 @@ interface DeadlineWait {
 
 /**
  * Runs delayed commands, process deadlines and delayed policy runs, each claimed under a lease.
- * A deadline first waits for the process runner, so an event that cancels it is seen first; this
- * is best effort, since the aggregates still check what it sends. Deadline entries are never
- * removed here: the process runner writes what comes next, so a crash in between leaves the entry
- * to its lease instead of losing it.
+ * A run and the settling of its claim are one unit of work: what the run wrote and the claim's
+ * completion land together, so a crash between them cannot run the command twice, and a give-up
+ * writes its dead letter with the claim's failure. A deadline first waits for the process runner,
+ * so an event that cancels it is seen first; this is best effort, since the aggregates still
+ * check what it sends. Deadline entries are never removed here: the process runner writes what
+ * comes next, so a crash in between leaves the entry to its lease instead of losing it.
  */
 export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction = ({
   storage,
@@ -98,7 +101,11 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   const deadlineOf = (entry: ScheduledCommand): ProcessDeadlinePayload =>
     entry.command.payload as ProcessDeadlinePayload;
 
+  const settled = (work: (unit: UnitOfWork) => Promise<void>): Promise<void> =>
+    commitWork({ storage, concurrencyRetries: config.runtime.commands.concurrencyRetries, work });
+
   const recordFailure = async (
+    unit: UnitOfWork,
     entry: ScheduledCommand,
     error: unknown,
     attempts: number,
@@ -106,7 +113,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     const aggregateType = aggregates.commandsByType[entry.command.type]?.aggregate.name;
     if (aggregateType === undefined) return;
     await appendSystemEvent({
-      eventStore: storage.eventStore,
+      eventStore: unit.eventStore,
       ids,
       clock,
       aggregateType,
@@ -121,36 +128,68 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     });
   };
 
-  const giveUpPolicy = async (
+  const letterOf = (
     entry: ScheduledCommand,
     error: unknown,
     attempts: number,
     reason: DeadLetterErrorType,
-  ): Promise<void> => {
+  ): NewDeadLetter => {
     const details = errorDetails(error);
-    const payload = delayedPolicies.payloadOf(entry);
     const now = clock.now().toISOString();
-    await storage.deadLetterStore.add({
+    const stack = details.stack === undefined ? {} : { errorStack: details.stack };
+    if (delayedPolicies.isDelayedPolicy(entry)) {
+      const payload = delayedPolicies.payloadOf(entry);
+      return {
+        id: ids.next(),
+        kind: "policy",
+        subscriber: payload.policy,
+        eventId: payload.eventId,
+        eventType: payload.eventType,
+        aggregateType: payload.aggregateType,
+        aggregateId: entry.command.aggregateId,
+        errorType: reason,
+        errorMessage: details.message,
+        ...stack,
+        attempts,
+        firstFailedAt: now,
+        lastFailedAt: now,
+      };
+    }
+    return {
       id: ids.next(),
-      kind: "policy",
-      subscriber: payload.policy,
-      eventId: payload.eventId,
-      eventType: payload.eventType,
-      aggregateType: payload.aggregateType,
+      kind: "command",
+      subscriber: `scheduled:${entry.command.type}`,
+      eventId: entry.dedupeKey,
+      eventType: entry.command.type,
+      aggregateType: aggregates.commandsByType[entry.command.type]?.aggregate.name ?? "",
       aggregateId: entry.command.aggregateId,
       errorType: reason,
       errorMessage: details.message,
-      ...(details.stack === undefined ? {} : { errorStack: details.stack }),
+      ...stack,
       attempts,
       firstFailedAt: now,
       lastFailedAt: now,
-    });
-    deadLettered({ kind: "policy", subscriber: payload.policy, errorType: reason });
-    logger.warn("policy dead-lettered", {
-      policy: payload.policy,
-      eventId: payload.eventId,
-      errorType: reason,
-      attempts,
+      payload: entry.command.payload,
+    };
+  };
+
+  const dropped = (entry: ScheduledCommand, letter: NewDeadLetter): void => {
+    if (letter.kind === "policy") {
+      deadLettered({ kind: "policy", subscriber: letter.subscriber, errorType: letter.errorType });
+      logger.warn("policy dead-lettered", {
+        policy: letter.subscriber,
+        eventId: letter.eventId,
+        errorType: letter.errorType,
+        attempts: letter.attempts,
+      });
+      return;
+    }
+    deadLettered({ kind: "command", subscriber: letter.subscriber, errorType: letter.errorType });
+    logger.warn("scheduled command dropped", {
+      command: entry.command.type,
+      dedupeKey: entry.dedupeKey,
+      reason: letter.errorType,
+      attempts: letter.attempts,
     });
   };
 
@@ -170,44 +209,17 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       await deferToItsTime(entry);
       return;
     }
-    const details = errorDetails(error);
-    await storage.scheduler.fail({ claim: entry, error: details.message });
-    if (delayedPolicies.isDelayedPolicy(entry)) {
-      await giveUpPolicy(entry, error, attempts, reason);
-      return;
-    }
-    await recordFailure(entry, error, attempts);
-    const now = clock.now().toISOString();
-    await storage.deadLetterStore.add({
-      id: ids.next(),
-      kind: "command",
-      subscriber: `scheduled:${entry.command.type}`,
-      eventId: entry.dedupeKey,
-      eventType: entry.command.type,
-      aggregateType: aggregates.commandsByType[entry.command.type]?.aggregate.name ?? "",
-      aggregateId: entry.command.aggregateId,
-      errorType: reason,
-      errorMessage: details.message,
-      ...(details.stack === undefined ? {} : { errorStack: details.stack }),
-      attempts,
-      firstFailedAt: now,
-      lastFailedAt: now,
-      payload: entry.command.payload,
+    const letter = letterOf(entry, error, attempts, reason);
+    await settled(async (unit) => {
+      if (!delayedPolicies.isDelayedPolicy(entry))
+        await recordFailure(unit, entry, error, attempts);
+      await unit.deadLetterStore.add(letter);
+      await unit.scheduler.fail({ claim: entry, error: letter.errorMessage });
     });
-    deadLettered({
-      kind: "command",
-      subscriber: `scheduled:${entry.command.type}`,
-      errorType: reason,
-    });
-    logger.warn("scheduled command dropped", {
-      command: entry.command.type,
-      dedupeKey: entry.dedupeKey,
-      reason,
-      attempts,
-    });
+    dropped(entry, letter);
   };
 
-  const run = (entry: ScheduledCommand): Promise<void> =>
+  const run = (entry: ScheduledCommand, unit: UnitOfWork): Promise<void> =>
     traced({
       name: `bounda.scheduled ${entry.command.type}`,
       attributes: {
@@ -218,15 +230,20 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       },
       run: async () => {
         if (delayedPolicies.isDelayedPolicy(entry)) {
-          await delayedPolicies.run(entry);
+          await delayedPolicies.run(entry, unit);
         } else if (isDeadline(entry)) {
-          await processes.handleDeadline({ payload: deadlineOf(entry), context: entry.context });
+          await processes.handleDeadline({
+            payload: deadlineOf(entry),
+            context: entry.context,
+            within: unit,
+          });
         } else {
           await pipeline.dispatch({
             type: entry.command.type,
             payload: entry.command.payload,
             context: entry.context,
             commandId: scheduledCommandId(entry.dedupeKey),
+            within: unit,
           });
         }
       },
@@ -237,9 +254,14 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
 
   const execute = async (entry: ClaimedCommand): Promise<void> => {
     try {
-      await run(entry);
-      if (isDeadline(entry)) await deferToItsTime(entry);
-      else await storage.scheduler.complete(entry);
+      await settled(async (unit) => {
+        await run(entry, unit);
+        if (isDeadline(entry)) {
+          await unit.scheduler.defer({ claim: entry, executeAt: new Date(entry.executeAt) });
+        } else {
+          await unit.scheduler.complete(entry);
+        }
+      });
     } catch (error) {
       if (isDeadline(entry) && processes.lostRace(deadlineOf(entry), error)) {
         await deferToItsTime(entry);

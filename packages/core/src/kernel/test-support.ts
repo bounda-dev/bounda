@@ -249,3 +249,30 @@ export const advanceUntilWaiting: AdvanceUntilWaitingFunction = async (clock, mi
 export interface OrderProcessConfigArgs<Names extends string> {
   readonly events: { readonly order: { readonly [Name in Names]: `order.${Name}` } };
 }
+
+export interface BrokenCommit {
+  readonly broke: () => boolean;
+}
+
+export interface BreakNextCommitFunction {
+  (storage: StoragePorts): BrokenCommit;
+}
+
+/**
+ * Breaks the next commit that goes through `transact`: the work runs, then the transaction fails
+ * the way a lost connection or a crash would, so nothing it staged is written.
+ */
+export const breakNextCommit: BreakNextCommitFunction = (storage) => {
+  const transact = storage.transact.bind(storage);
+  let broken = false;
+  storage.transact = (work) =>
+    transact(async (tx) => {
+      const result = await work(tx);
+      if (!broken) {
+        broken = true;
+        throw new Error("connection lost");
+      }
+      return result;
+    });
+  return { broke: () => broken };
+};

@@ -6,7 +6,11 @@ import { PROCESS_DEADLINE_COMMAND } from "../process/deadlines.ts";
 import { PROCESS_EVENTS } from "../process/lifecycle.ts";
 import { createReactiveHarness } from "../reactive-harness.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
+import { COMMAND_FAILED_EVENT } from "../system-events.ts";
+import { ATTRIBUTES } from "../telemetry.ts";
+import { installFakeTelemetry } from "../telemetry-fake.ts";
 import {
+  breakNextCommit,
   createRecordingLogger,
   type OrderProcessConfigArgs,
   orderAggregateEntry,
@@ -110,6 +114,7 @@ const setUp = async () => {
     policies: harness.policies,
     policyExecutor: harness.policyExecutor,
     processes: harness.processes,
+    config: harness.config,
     ids: harness.ids,
     clock: harness.clock,
     logger,
@@ -132,10 +137,15 @@ describe("deadLetters", () => {
     expect((await deadLetters.get(letter?.id ?? ""))?.status).toBe("failed");
 
     policyMode = "ok";
+    const telemetry = installFakeTelemetry();
     expect(await deadLetters.replay(letter?.id ?? "")).toMatchObject({
       id: letter?.id,
       status: "replayed",
     });
+    expect(
+      telemetry.spans.find((span) => span.name === "bounda.policy order.notifyOnOrderPlaced"),
+    ).toMatchObject({ attributes: { [ATTRIBUTES.attempt]: 2 } });
+    telemetry.restore();
     expect(calls).toEqual(["notify:o-1", "notify:o-1", "notify:o-1"]);
     const live = `policy ${deriveIdempotencyKey({ kind: "policy", handler: "order.notifyOnOrderPlaced", subject: letter?.eventId ?? "" })}`;
     expect(keys[0]).toBe(live);
@@ -165,6 +175,58 @@ describe("deadLetters", () => {
     });
   });
 
+  it("marks a policy letter replayed together with the replay's writes, or neither", async () => {
+    policyMode = "domain";
+    const { harness, deadLetters } = await setUp();
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.dispatcher.processUntilIdle();
+    const [letter] = await deadLetters.list();
+    policyMode = "ok";
+    const crash = breakNextCommit(harness.storage);
+
+    await expect(deadLetters.replay(letter?.id ?? "")).rejects.toThrow("connection lost");
+    expect(crash.broke()).toBe(true);
+    expect((await deadLetters.get(letter?.id ?? ""))?.status).toBe("failed");
+    const order = { aggregateType: "order", aggregateId: "o-1" };
+    expect(
+      (await harness.storage.eventStore.load(order)).events.map((event) => event.type),
+    ).toEqual(["OrderPlaced"]);
+
+    expect((await deadLetters.replay(letter?.id ?? "")).status).toBe("replayed");
+    expect(
+      (await harness.storage.eventStore.load(order)).events.map((event) => event.type),
+    ).toEqual(["OrderPlaced", "OrderArchived"]);
+    expect(calls).toEqual(["notify:o-1", "notify:o-1", "notify:o-1"]);
+  });
+
+  it("marks a command letter replayed together with the command's events, or neither", async () => {
+    policyMode = "ok";
+    const { harness, deadLetters } = await setUp();
+    await harness.pipeline.dispatch({
+      type: "PayOrder",
+      payload: { orderId: "o-1", method: "card" },
+      options: { delay: "1m" },
+    });
+    harness.clock.advance(60_000);
+    await harness.worker.runOnce();
+    const [letter] = await deadLetters.list({ kind: "command" });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    const crash = breakNextCommit(harness.storage);
+
+    await expect(deadLetters.replay(letter?.id ?? "")).rejects.toThrow("connection lost");
+    expect(crash.broke()).toBe(true);
+    expect((await deadLetters.get(letter?.id ?? ""))?.status).toBe("failed");
+    const order = { aggregateType: "order", aggregateId: "o-1" };
+    expect(
+      (await harness.storage.eventStore.load(order)).events.map((event) => event.type),
+    ).toEqual([COMMAND_FAILED_EVENT, "OrderPlaced"]);
+
+    expect((await deadLetters.replay(letter?.id ?? "")).status).toBe("replayed");
+    expect(
+      (await harness.storage.eventStore.load(order)).events.map((event) => event.type),
+    ).toEqual([COMMAND_FAILED_EVENT, "OrderPlaced", "OrderPaid"]);
+  });
+
   it("gives a replayed policy the same time budget as a live one, naming it", async () => {
     policyMode = "domain";
     const { logger } = createRecordingLogger();
@@ -179,6 +241,7 @@ describe("deadLetters", () => {
       policies: harness.policies,
       policyExecutor: harness.policyExecutor,
       processes: harness.processes,
+      config: harness.config,
       ids: harness.ids,
       clock: harness.clock,
       logger,
@@ -297,6 +360,7 @@ describe("deadLetters", () => {
       policies: harness.policies,
       policyExecutor: harness.policyExecutor,
       processes: harness.processes,
+      config: harness.config,
       ids: harness.ids,
       clock: harness.clock,
       logger,
@@ -361,6 +425,7 @@ describe("deadLetters", () => {
       policies: harness.policies,
       policyExecutor: harness.policyExecutor,
       processes: harness.processes,
+      config: harness.config,
       ids: harness.ids,
       clock: harness.clock,
       logger: harness.logger,

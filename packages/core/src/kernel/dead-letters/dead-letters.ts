@@ -1,5 +1,6 @@
 import type { StoragePorts } from "../../adapter/adapter.ts";
 import type { DeadLetter, ListDeadLettersArgs } from "../../adapter/ports/dead-letter-store.ts";
+import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import { ConfigurationError, NotFoundError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
@@ -11,6 +12,7 @@ import type { PoliciesRuntime } from "../policy/build-policies.ts";
 import type { PolicyExecutor } from "../policy/executor.ts";
 import { PROCESS_DEADLINE_COMMAND } from "../process/deadlines.ts";
 import type { ProcessDeadLetters } from "../process/replay.ts";
+import { commitWork, type UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 
 /**
  * What an operator can do with the handler runs that gave up. Replaying or discarding a letter
@@ -29,8 +31,11 @@ export interface DeadLetters {
   /**
    * Runs the failed handler once more: the policy or process handler for the stored event, the
    * process deadline that failed, or the dropped command with its recorded payload, and marks the
-   * letter `replayed`. Rejects with the handler's error when it fails again, and the letter stays
-   * `failed`. Rejects, without running anything, a letter that is missing or no longer `failed`,
+   * letter `replayed`: a policy's or a command's in the same transaction as what the run writes,
+   * a process's once its instance has drained what was parked, since a replay cut short there is
+   * taken up again by replaying the same letter. Rejects with the handler's error when it fails
+   * again, and the letter stays `failed`. Rejects, without running anything, a letter that is
+   * missing or no longer `failed`,
    * a projection letter (a rebuild of the read model fixes it instead), a letter whose policy is
    * no longer in the registry or whose event is gone, and a command letter recorded without its
    * payload.
@@ -48,6 +53,7 @@ export interface CreateDeadLettersArgs {
   readonly policies: PoliciesRuntime;
   readonly policyExecutor: PolicyExecutor;
   readonly processes: ProcessDeadLetters;
+  readonly config: ResolvedConfig;
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly logger: Logger;
@@ -67,10 +73,22 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
   policies,
   policyExecutor,
   processes,
+  config,
   ids,
   clock,
   logger,
 }) => {
+  // The replay's writes and the letter's new status, together or not at all.
+  const replayed = (letter: DeadLetter, run: (unit: UnitOfWork) => Promise<void>): Promise<void> =>
+    commitWork({
+      storage,
+      concurrencyRetries: config.runtime.commands.concurrencyRetries,
+      work: async (unit) => {
+        await run(unit);
+        await unit.deadLetterStore.updateStatus(letter.id, "replayed");
+      },
+    });
+
   const failedLetter = async (id: string): Promise<DeadLetter> => {
     const letter = await storage.deadLetterStore.get(id);
     if (letter === null) throw new NotFoundError(`Dead letter "${id}" not found`);
@@ -99,12 +117,10 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
     if (policy === undefined) {
       throw new ConfigurationError(`Policy "${letter.subscriber}" is no longer in the registry`);
     }
-    await policyExecutor.run({
-      policy,
-      event: await eventOf(letter),
-      attempt: letter.attempts + 1,
-      replay,
-    });
+    const event = await eventOf(letter);
+    await replayed(letter, (unit) =>
+      policyExecutor.run({ policy, event, attempt: letter.attempts + 1, replay, within: unit }),
+    );
   };
 
   const replayCommand = async (letter: DeadLetter): Promise<void> => {
@@ -118,7 +134,10 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
         `Dead letter "${letter.id}" was recorded without the command's payload and cannot be replayed`,
       );
     }
-    await pipeline.dispatch({ type: letter.eventType, payload: letter.payload, context });
+    const { payload } = letter;
+    await replayed(letter, async (unit) => {
+      await pipeline.dispatch({ type: letter.eventType, payload, context, within: unit });
+    });
   };
 
   const run = async (letter: DeadLetter, replay: string): Promise<void> => {
@@ -164,7 +183,7 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
     replay: async (id) => {
       const letter = await failedLetter(id);
       await run(letter, ids.next());
-      await storage.deadLetterStore.updateStatus(id, "replayed");
+      if (letter.kind === "process") await storage.deadLetterStore.updateStatus(id, "replayed");
       logger.info("dead letter replayed", {
         id,
         kind: letter.kind,

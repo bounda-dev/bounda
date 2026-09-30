@@ -10,8 +10,18 @@ import type { ProcessAfterFunction, ProcessStateArgs } from "../../modules/proce
 import type { Registry } from "../../modules/registry.ts";
 import { PROCESS_EVENTS } from "../process/lifecycle.ts";
 import { createReactiveHarness, type ReactiveHarness } from "../reactive-harness.ts";
-import { type OrderProcessConfigArgs, orderAggregateEntry } from "../test-support.ts";
-import { CommitFailed, commitAttempt, createUnitOfWork, type UnitOfWork } from "./unit-of-work.ts";
+import {
+  breakNextCommit,
+  type OrderProcessConfigArgs,
+  orderAggregateEntry,
+} from "../test-support.ts";
+import {
+  CommitFailed,
+  commitAttempt,
+  commitWork,
+  createUnitOfWork,
+  type UnitOfWork,
+} from "./unit-of-work.ts";
 
 interface Commands {
   readonly [name: string]: (
@@ -147,23 +157,6 @@ const processTypes = async (harness: ReactiveHarness) =>
       aggregateId: "o-1",
     })
   ).events.map((event) => event.type);
-
-// Breaks the next commit that goes through `transact`: `work` runs, then the transaction fails
-// the way a lost connection or a crash would, so nothing it staged is written.
-const breakNextCommit = (storage: StoragePorts): { readonly broke: () => boolean } => {
-  const transact = storage.transact.bind(storage);
-  let broken = false;
-  storage.transact = (work) =>
-    transact(async (tx) => {
-      const result = await work(tx);
-      if (!broken) {
-        broken = true;
-        throw new Error("connection lost");
-      }
-      return result;
-    });
-  return { broke: () => broken };
-};
 
 // Breaks the claim's completion inside the next transaction that completes one.
 const breakNextCompletion = (storage: StoragePorts): { readonly broke: () => boolean } => {
@@ -418,6 +411,26 @@ describe("createUnitOfWork", () => {
         },
       }),
     ).rejects.toBeInstanceOf(DomainError);
+  });
+
+  it("hands a commit failure on as the store threw it, for a caller that does not tell it apart", async () => {
+    const storage = await memory().createStorage({ logger: silentLogger });
+    breakNextCommit(storage);
+    const failed = await commitWork({
+      storage,
+      concurrencyRetries: 3,
+      work: (unit) => unit.scheduler.schedule(entry("command:c1")),
+    }).catch((error: unknown) => error);
+    expect(failed).not.toBeInstanceOf(CommitFailed);
+    expect(failed).toMatchObject({ message: "connection lost" });
+    await commitWork({
+      storage,
+      concurrencyRetries: 3,
+      work: (unit) => unit.scheduler.schedule(entry("command:c1")),
+    });
+    expect((await storage.scheduler.list()).map((scheduled) => scheduled.dedupeKey)).toEqual([
+      "command:c1",
+    ]);
   });
 });
 
