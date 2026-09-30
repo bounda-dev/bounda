@@ -87,15 +87,16 @@ export const handler = async ({ command, events, inventory }: Command.HandlerArg
 };
 ```
 
-Command handlers only read from outside. Effects (charging, emailing, calling another service) go
-in a policy or process with the collaborator, after the event is stored, passing `idempotencyKey`
-to the provider, and report back with a command whose handler ignores a duplicate by state.
-A provider's refusal becomes an event (`PaymentFailed`); throw only when there is no answer.
+Command handlers decide; they do not act on the world. A handler reruns, collaborators included,
+when its append loses a concurrency race, and its decision is not stored until the append
+succeeds. So its collaborator calls must be safe to repeat and harmless if the decision never
+lands: a read, or a call the provider deduplicates, such as creating a payment intent. Every
+handler receives `idempotencyKey`, stable across its reruns (the command id); pass it to those calls.
 
-A handler reruns, collaborators included, when its append loses a concurrency race. Collaborator
-calls must be safe to repeat and harmless if the rerun decides differently (reads are). Every
-handler receives `idempotencyKey`, stable across its reruns (the command id); pass it to calls the
-provider deduplicates.
+Effects (charging, emailing, calling another service) go in a policy or process with the
+collaborator, after the event is stored, passing `idempotencyKey` to the provider, and report back
+with a command whose handler ignores a duplicate by state. A provider's refusal becomes an event
+(`PaymentFailed`); throw only when there is no answer.
 
 Policy (`policies/issue-invoice-on-order-paid.ts`):
 
