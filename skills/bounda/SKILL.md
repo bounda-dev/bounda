@@ -263,7 +263,12 @@ export const middleware: Route.MiddlewareFunction[] = [boundaMiddleware];
 // a route: actions dispatch, loaders query
 import { bounda } from "@bounda-dev/react-router/app";
 export const action = async ({ request, context }: Route.ActionArgs) => {
-  await context.get(bounda).commands.registerUser(await payloadOf(request));
+  const form = await request.formData();
+  await context.get(bounda).commands.registerUser({
+    userId: crypto.randomUUID(),
+    email: String(form.get("email")),
+    name: String(form.get("name")),
+  });
   return redirect("/users");
 };
 export const loader = ({ context }: Route.LoaderArgs) => context.get(bounda).queries.listUsers({});

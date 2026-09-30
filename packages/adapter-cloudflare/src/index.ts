@@ -3,7 +3,6 @@ export { durableObjectAdapter } from "./adapter.ts";
 export type {
   BoundaObjectClass,
   BoundaObjectMethods,
-  ConfigForObjectFunction,
   CreateBoundaObjectArgs,
   CreateBoundaObjectFunction,
 } from "./bounda-object.ts";

@@ -5,6 +5,9 @@ import { basename, resolve } from "node:path";
  * framework, whose store is the Durable Object's own SQLite.
  */
 export type Database = "sqlite" | "postgresql" | "cloudflare";
+/**
+ * How the app runs. `cloudflare` brings its own storage, so it takes no database.
+ */
 export type Framework = "node" | "react-router" | "cloudflare";
 export type PackageManager = "pnpm" | "npm" | "yarn" | "bun";
 

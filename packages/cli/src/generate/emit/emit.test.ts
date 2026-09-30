@@ -444,4 +444,11 @@ describe("importPath", () => {
     expect(importPath({ from: "/p/app/+types/x.ts", to: "/p/app/x.ts" })).toBe("../x.ts");
     expect(importPath({ from: "/p/a.ts", to: "/p/b.ts" })).toBe("./b.ts");
   });
+
+  it("prefixes a target inside a dot directory with ./", () => {
+    expect(importPath({ from: "/p/a.ts", to: "/p/.bounda/registry.ts" })).toBe(
+      "./.bounda/registry.ts",
+    );
+    expect(importPath({ from: "/p/a.ts", to: "/p/..b/c.ts" })).toBe("./..b/c.ts");
+  });
 });

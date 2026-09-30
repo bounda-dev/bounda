@@ -134,9 +134,9 @@ const load = <R extends Registry>(
  * // app/root.tsx
  * export const middleware = [boundaMiddleware];
  *
- * // app/routes/register.tsx
- * export const action = async ({ request, context }: Route.ActionArgs) =>
- *   context.get(bounda).commands.registerUser(await payloadOf(request));
+ * // app/routes/user.tsx
+ * export const action = ({ params, context }: Route.ActionArgs) =>
+ *   context.get(bounda).commands.activateUser({ userId: params.userId });
  */
 export const createBounda: CreateBoundaFunction = <R extends Registry = AppRegistry>({
   boot: bootApp = () => boot<R>(),
