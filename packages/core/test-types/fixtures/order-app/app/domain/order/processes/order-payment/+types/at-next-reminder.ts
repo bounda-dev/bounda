@@ -9,7 +9,7 @@ export declare namespace Process {
   type DeadlineArgs = core.ProcessDeadlineArgs<
     core.ProcessStateOf<ProcessModule>,
     core.ProcessDeadlineField<ProcessModule, "nextReminder">,
-    generated.Commands,
+    generated.ReactionCommands,
     import("../index.ts").Collaborators
   >;
 }

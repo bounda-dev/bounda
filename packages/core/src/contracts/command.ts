@@ -30,12 +30,13 @@ export interface DispatchOptions {
 }
 
 /**
- * What a successful dispatch returns: the aggregate's version after the append and the ids and
- * types of the persisted events, in order. `position` is the global position of the last one, 0
- * when the command stored none; a read model projected up to it reflects the command. A
- * scheduled command returns `scheduled: true` and no events.
+ * What a command dispatched from a policy or process handler resolves with: the aggregate's
+ * version after the command's events and those events' ids and types, in order, or
+ * `scheduled: true` with when a delayed command runs. It is the aggregate's decision, kept in the
+ * handler's unit of work until its attempt commits, so it carries no position in the global
+ * stream: nothing is stored yet.
  */
-export type DispatchResult =
+export type ReactionDispatchResult =
   | {
       readonly scheduled: false;
       readonly aggregateType: string;
@@ -43,7 +44,6 @@ export type DispatchResult =
       readonly version: number;
       readonly eventIds: readonly string[];
       readonly eventTypes: readonly string[];
-      readonly position: number;
     }
   | {
       readonly scheduled: true;
@@ -51,3 +51,15 @@ export type DispatchResult =
       readonly aggregateId: string;
       readonly executeAt: string;
     };
+
+/**
+ * What a successful dispatch returns: the aggregate's version after the append and the ids and
+ * types of the persisted events, in order. `position` is the global position of the last one, 0
+ * when the command stored none; a read model projected up to it reflects the command. A
+ * scheduled command returns `scheduled: true` and no events.
+ */
+export type DispatchResult =
+  | (Extract<ReactionDispatchResult, { readonly scheduled: false }> & {
+      readonly position: number;
+    })
+  | Extract<ReactionDispatchResult, { readonly scheduled: true }>;

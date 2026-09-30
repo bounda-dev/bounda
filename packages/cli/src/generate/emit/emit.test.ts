@@ -352,6 +352,8 @@ export type Events = {
 
 export type Commands = core.CommandsFacadeOf<Record<never, never>>;
 
+export type ReactionCommands = core.ReactionCommandsFacadeOf<Record<never, never>>;
+
 export type ShipmentsRow = core.RowOf<typeof import("../app/read/shipments/view.ts")>;
 
 export type Queries = core.QueriesFacadeOf<Record<never, never>>;

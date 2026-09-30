@@ -1,8 +1,10 @@
+import type { StoragePorts } from "../../adapter/adapter.ts";
 import type { EventStore } from "../../adapter/ports/event-store.ts";
 import type { ScheduledCommand, Scheduler } from "../../adapter/ports/scheduler.ts";
 import type { ResolvedConfig, ResolvedRetryConfig } from "../../config/types.ts";
 import { ConfigurationError, NotFoundError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
+import { CommitFailed, commitAttempt } from "../unit-of-work/unit-of-work.ts";
 import type { PoliciesRuntime, PolicyRuntime } from "./build-policies.ts";
 import type { PolicyExecutor } from "./executor.ts";
 
@@ -83,7 +85,11 @@ export interface DelayedPolicies {
 export interface CreateDelayedPoliciesArgs {
   readonly policies: PoliciesRuntime;
   readonly executor: PolicyExecutor;
+  /**
+   * The kernel's event store, which upcasts, to read the event with.
+   */
   readonly eventStore: EventStore;
+  readonly storage: StoragePorts;
   readonly config: ResolvedConfig;
 }
 
@@ -98,6 +104,7 @@ export const createDelayedPolicies: CreateDelayedPoliciesFunction = ({
   policies,
   executor,
   eventStore,
+  storage,
   config,
 }) => {
   const payloadOf = (entry: ScheduledCommand): DelayedPolicyPayload =>
@@ -127,7 +134,17 @@ export const createDelayedPolicies: CreateDelayedPoliciesFunction = ({
           `Event ${payload.eventId} of ${payload.aggregateType}:${entry.command.aggregateId} not found`,
         );
       }
-      await executor.run({ policy, event, attempt: entry.attempts + 1 });
+      // The run's commands commit together, or not at all; the worker settles the entry after.
+      try {
+        await commitAttempt({
+          storage,
+          concurrencyRetries: config.runtime.commands.concurrencyRetries,
+          work: (unit) =>
+            executor.run({ policy, event, attempt: entry.attempts + 1, within: unit }),
+        });
+      } catch (error) {
+        throw error instanceof CommitFailed ? error.cause : error;
+      }
     },
   };
 };

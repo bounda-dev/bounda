@@ -1,0 +1,452 @@
+import { describe, expect, it } from "vitest";
+import type { Adapter, StoragePorts, StorageTransaction } from "../../adapter/adapter.ts";
+import { createNodeSqliteAdapter } from "../../adapter/sqlite/node-sqlite.ts";
+import { pendingEvent } from "../../adapter/testing/fixtures.ts";
+import type { RetryConfig } from "../../config/types.ts";
+import { ConcurrencyError, DomainError } from "../../contracts/errors.ts";
+import { silentLogger } from "../../contracts/logger.ts";
+import { memory } from "../../memory/index.ts";
+import type { Registry } from "../../modules/registry.ts";
+import { createReactiveHarness, type ReactiveHarness } from "../reactive-harness.ts";
+import { orderAggregateEntry } from "../test-support.ts";
+import { CommitFailed, commitAttempt, createUnitOfWork, type UnitOfWork } from "./unit-of-work.ts";
+
+interface Commands {
+  readonly [name: string]: (
+    payload: unknown,
+    options?: object,
+  ) => Promise<{ readonly version?: number; readonly eventTypes?: readonly string[] }>;
+}
+
+interface PolicyArgs {
+  readonly event: { readonly aggregateId: string };
+  readonly commands: Commands;
+  readonly idempotencyKey: string;
+}
+
+type Mode = "ok" | "refuse" | "compensate";
+let mode: Mode = "ok";
+const providerCalls: string[] = [];
+const seen: unknown[] = [];
+
+const reset = (next: Mode): void => {
+  mode = next;
+  providerCalls.length = 0;
+  seen.length = 0;
+};
+
+// A policy that calls a provider, pays the order at once, archives it later and, when asked,
+// refuses after both, or pays twice and compensates the refusal.
+const policyRegistry: Registry = {
+  aggregates: {
+    order: {
+      ...orderAggregateEntry(),
+      policies: {
+        settleOnOrderPlaced: {
+          module: {
+            handler: async ({ event, commands, idempotencyKey }: PolicyArgs) => {
+              providerCalls.push(idempotencyKey);
+              const orderId = event.aggregateId;
+              seen.push(await commands.payOrder?.({ orderId, method: "card" }));
+              await commands.archiveOrder?.({ orderId }, { delay: "1h" });
+              if (mode === "refuse") throw new DomainError("provider refused");
+              if (mode === "compensate") {
+                try {
+                  await commands.payOrder?.({ orderId, method: "card" });
+                } catch (error) {
+                  seen.push(error);
+                  await commands.touchOrder?.({ orderId });
+                }
+              }
+            },
+          },
+        },
+      },
+    },
+  },
+  readModels: {},
+};
+
+const adapters: readonly [string, () => Adapter][] = [
+  ["memory", () => memory()],
+  ["SQLite (node:sqlite)", () => createNodeSqliteAdapter().adapter],
+];
+
+const orderTypes = async (harness: ReactiveHarness) =>
+  (
+    await harness.storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" })
+  ).events.map((event) => event.type);
+const scheduledTypes = async (harness: ReactiveHarness) =>
+  (await harness.storage.scheduler.list()).map((entry) => entry.command.type);
+const claimOf = async (harness: ReactiveHarness, subscriber: string) => {
+  const [placed] = (
+    await harness.storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" })
+  ).events;
+  return harness.storage.inboxLedger.get({ subscriber, eventId: placed?.id ?? "" });
+};
+const place = (harness: ReactiveHarness) =>
+  harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+const settle = async (harness: ReactiveHarness) => {
+  await harness.dispatcher.processUntilIdle();
+  await harness.worker.runOnce();
+};
+const pastLease = (harness: ReactiveHarness) =>
+  harness.clock.advance(harness.config.runtime.policies.timeoutMs * 2 + 1);
+
+// Breaks the next commit that goes through `transact`: `work` runs, then the transaction fails
+// the way a lost connection or a crash would, so nothing it staged is written.
+const breakNextCommit = (storage: StoragePorts): { readonly broke: () => boolean } => {
+  const transact = storage.transact.bind(storage);
+  let broken = false;
+  storage.transact = (work) =>
+    transact(async (tx) => {
+      const result = await work(tx);
+      if (!broken) {
+        broken = true;
+        throw new Error("connection lost");
+      }
+      return result;
+    });
+  return { broke: () => broken };
+};
+
+// Breaks the claim's completion inside the next transaction that completes one.
+const breakNextCompletion = (storage: StoragePorts): { readonly broke: () => boolean } => {
+  const transact = storage.transact.bind(storage);
+  let broken = false;
+  storage.transact = (work) =>
+    transact((tx) =>
+      work({
+        ...tx,
+        inboxLedger: {
+          ...tx.inboxLedger,
+          complete: async (key) => {
+            if (!broken) {
+              broken = true;
+              throw new Error("connection lost");
+            }
+            return tx.inboxLedger.complete(key);
+          },
+        },
+      } satisfies StorageTransaction),
+    );
+  return { broke: () => broken };
+};
+
+describe("createUnitOfWork", () => {
+  const now = new Date("2026-01-01T00:00:00.000Z");
+  const key = { subscriber: "order.p", eventId: "e1" };
+  const context = { correlationId: "c", causationId: "c", depth: 0 };
+  const letter = (id: string) => ({
+    id,
+    kind: "policy" as const,
+    subscriber: "order.p",
+    eventId: "e1",
+    eventType: "OrderPlaced",
+    aggregateType: "order",
+    aggregateId: "1",
+    errorType: "terminal" as const,
+    errorMessage: "boom",
+    attempts: 1,
+    firstFailedAt: now.toISOString(),
+    lastFailedAt: now.toISOString(),
+  });
+  const entry = (dedupeKey: string) => ({
+    dedupeKey,
+    command: { type: "Remind", aggregateId: "1", payload: {} },
+    executeAt: now,
+    context,
+  });
+
+  it("reads through to the store and holds every write until commit, events first", async () => {
+    const storage = await memory().createStorage({ logger: silentLogger });
+    await storage.deadLetterStore.add(letter("old"));
+    await storage.scheduler.schedule(entry("command:due"));
+    const claimId = await storage.inboxLedger.tryClaim({ ...key, now, leaseMs: 1_000 });
+    const [held] = await storage.scheduler.claimDue({ now, limit: 1, leaseMs: 1_000 });
+    const unit = createUnitOfWork({ storage });
+
+    expect(await unit.deadLetterStore.get("old")).toMatchObject({ id: "old" });
+    expect(await unit.deadLetterStore.count()).toBe(1);
+    expect((await unit.deadLetterStore.list()).map((item) => item.id)).toEqual(["old"]);
+    expect(await unit.inboxLedger.get(key)).toMatchObject({ status: "pending", claimId });
+    expect(await unit.scheduler.nextDueAt({ leaseMs: 1_000 })).toBeInstanceOf(Date);
+    expect((await unit.scheduler.list()).map((item) => item.dedupeKey)).toEqual(["command:due"]);
+
+    await unit.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "1",
+      expectedVersion: 0,
+      events: [pendingEvent({ aggregateId: "1", version: 1 })],
+    });
+    expect(await unit.deadLetterStore.add(letter("new"))).toEqual({
+      ...letter("new"),
+      status: "failed",
+    });
+    await unit.deadLetterStore.updateStatus("old", "discarded");
+    await unit.deadLetterStore.remove("old");
+    await unit.scheduler.schedule(entry("command:later"));
+    await unit.scheduler.cancel("command:later");
+    await unit.scheduler.schedule(entry("command:kept"));
+    await unit.scheduler.complete(held as NonNullable<typeof held>);
+    await unit.inboxLedger.fail({ ...key, error: "boom" });
+    await unit.inboxLedger.complete({ ...key, claimId: claimId ?? undefined });
+
+    expect(await storage.eventStore.lastPosition()).toBe(0);
+    expect(await storage.deadLetterStore.count()).toBe(1);
+    expect((await storage.scheduler.list()).map((item) => item.dedupeKey)).toEqual(["command:due"]);
+    await unit.commit();
+    expect(await storage.eventStore.lastPosition()).toBe(1);
+    expect((await storage.deadLetterStore.list()).map((item) => item.id)).toEqual(["new"]);
+    expect((await storage.scheduler.list()).map((item) => item.dedupeKey)).toEqual([
+      "command:kept",
+    ]);
+    expect(await storage.inboxLedger.get(key)).toMatchObject({
+      status: "succeeded",
+      lastError: "boom",
+    });
+  });
+
+  it("hands a claimed scheduler entry back through fail and defer", async () => {
+    const storage = await memory().createStorage({ logger: silentLogger });
+    await storage.scheduler.schedule(entry("command:a"));
+    await storage.scheduler.schedule(entry("command:b"));
+    const [a, b] = await storage.scheduler.claimDue({ now, limit: 2, leaseMs: 1_000 });
+    const unit = createUnitOfWork({ storage });
+    await unit.scheduler.fail({
+      claim: a as NonNullable<typeof a>,
+      error: "boom",
+      retryAt: new Date(now.getTime() + 5_000),
+    });
+    await unit.scheduler.defer({
+      claim: b as NonNullable<typeof b>,
+      executeAt: new Date(now.getTime() + 9_000),
+    });
+    expect(await storage.scheduler.claimDue({ now, limit: 2, leaseMs: 1_000 })).toEqual([]);
+    await unit.commit();
+    expect(
+      (await storage.scheduler.list()).map((item) => [
+        item.dedupeKey,
+        item.executeAt,
+        item.attempts,
+      ]),
+    ).toEqual([
+      ["command:a", new Date(now.getTime() + 5_000).toISOString(), 1],
+      ["command:b", new Date(now.getTime() + 9_000).toISOString(), 0],
+    ]);
+  });
+
+  it("commits nothing when a stream moved since the unit loaded it", async () => {
+    const storage = await memory().createStorage({ logger: silentLogger });
+    const unit = createUnitOfWork({ storage });
+    const loaded = await unit.eventStore.load({ aggregateType: "order", aggregateId: "1" });
+    await unit.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "1",
+      expectedVersion: loaded.version,
+      events: [pendingEvent({ aggregateId: "1", version: 1, id: "mine" })],
+    });
+    await unit.scheduler.schedule(entry("command:mine"));
+    await storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "1",
+      expectedVersion: 0,
+      events: [pendingEvent({ aggregateId: "1", version: 1, id: "theirs" })],
+    });
+    await expect(unit.commit()).rejects.toBeInstanceOf(ConcurrencyError);
+    expect(await storage.scheduler.list()).toEqual([]);
+    expect(
+      (await storage.eventStore.load({ aggregateType: "order", aggregateId: "1" })).events.map(
+        (event) => event.id,
+      ),
+    ).toEqual(["theirs"]);
+  });
+
+  it("runs the work again on a fresh unit when the commit finds a stream moved, as many times as allowed, then lets the conflict through", async () => {
+    const storage = await memory().createStorage({ logger: silentLogger });
+    const moveTheStream = () =>
+      storage.eventStore.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events: [pendingEvent({ aggregateId: "1", version: 1, id: "theirs" })],
+      });
+    const units: UnitOfWork[] = [];
+    const work = async (unit: UnitOfWork) => {
+      units.push(unit);
+      const loaded = await unit.eventStore.load({ aggregateType: "order", aggregateId: "1" });
+      if (units.length === 1) await moveTheStream();
+      await unit.eventStore.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: loaded.version,
+        events: [pendingEvent({ aggregateId: "1", version: loaded.version + 1, id: "mine" })],
+      });
+    };
+    await commitAttempt({ storage, concurrencyRetries: 1, work });
+    expect(units).toHaveLength(2);
+    expect(new Set(units).size).toBe(2);
+    expect(
+      (await storage.eventStore.load({ aggregateType: "order", aggregateId: "1" })).events.map(
+        (event) => event.id,
+      ),
+    ).toEqual(["theirs", "mine"]);
+
+    const stale = async (unit: UnitOfWork) => {
+      const stream = { aggregateType: "order", aggregateId: "2" };
+      const loaded = await unit.eventStore.load(stream);
+      await unit.eventStore.append({
+        ...stream,
+        expectedVersion: loaded.version,
+        events: [pendingEvent({ aggregateId: "2", version: loaded.version + 1 })],
+      });
+      const live = await storage.eventStore.load(stream);
+      await storage.eventStore.append({
+        ...stream,
+        expectedVersion: live.version,
+        events: [pendingEvent({ aggregateId: "2", version: live.version + 1 })],
+      });
+    };
+    let attempts = 0;
+    await expect(
+      commitAttempt({
+        storage,
+        concurrencyRetries: 2,
+        work: (unit) => {
+          attempts += 1;
+          return stale(unit);
+        },
+      }),
+    ).rejects.toBeInstanceOf(ConcurrencyError);
+    expect(attempts).toBe(3);
+  });
+
+  it("tells a commit that failed for another reason apart from what the work threw", async () => {
+    const storage = await memory().createStorage({ logger: silentLogger });
+    breakNextCommit(storage);
+    const failed = await commitAttempt({
+      storage,
+      concurrencyRetries: 3,
+      work: (unit) => unit.scheduler.schedule(entry("command:c1")),
+    }).catch((error: unknown) => error);
+    expect(failed).toBeInstanceOf(CommitFailed);
+    expect(failed).toMatchObject({
+      name: "CommitFailed",
+      message: "commit failed",
+      cause: expect.objectContaining({ message: "connection lost" }),
+    });
+    expect(await storage.scheduler.list()).toEqual([]);
+    await expect(
+      commitAttempt({
+        storage,
+        concurrencyRetries: 3,
+        work: async () => {
+          throw new DomainError("refused");
+        },
+      }),
+    ).rejects.toBeInstanceOf(DomainError);
+  });
+});
+
+describe.each(adapters)("a reaction attempt as a unit of work on %s", (_name, adapter) => {
+  const policyHarness = (retry: RetryConfig = { strategy: "none" }) =>
+    createReactiveHarness({
+      registry: policyRegistry,
+      config: { runtime: { policies: { retry } } },
+      adapter: adapter(),
+    });
+
+  it("writes a successful attempt's immediate command, delayed command and claim together", async () => {
+    reset("ok");
+    const harness = await policyHarness();
+    await place(harness);
+    await settle(harness);
+
+    expect(await orderTypes(harness)).toEqual(["OrderPlaced", "OrderPaid"]);
+    expect(await scheduledTypes(harness)).toEqual(["ArchiveOrder"]);
+    expect(await claimOf(harness, "order.settleOnOrderPlaced")).toMatchObject({
+      status: "succeeded",
+      attempts: 1,
+    });
+    expect(seen[0]).toMatchObject({ scheduled: false, version: 2, eventTypes: ["OrderPaid"] });
+    expect((await harness.dispatcher.getLag()).maxLag).toBe(0);
+  });
+
+  it("leaves nothing of an attempt that fails after dispatching: not the immediate command, not the delayed one", async () => {
+    reset("refuse");
+    const harness = await policyHarness();
+    await place(harness);
+    await settle(harness);
+
+    expect(await orderTypes(harness)).toEqual(["OrderPlaced"]);
+    expect(await scheduledTypes(harness)).toEqual([]);
+    expect(await harness.storage.deadLetterStore.list()).toMatchObject([
+      { subscriber: "order.settleOnOrderPlaced", errorType: "terminal" },
+    ]);
+    expect(await claimOf(harness, "order.settleOnOrderPlaced")).toMatchObject({
+      status: "succeeded",
+      lastError: "provider refused",
+    });
+    expect(providerCalls).toHaveLength(1);
+  });
+
+  it("leaves only the claim when the runtime dies before the commit, and the next lease decides afresh", async () => {
+    reset("ok");
+    const harness = await policyHarness();
+    const crash = breakNextCommit(harness.storage);
+    await place(harness);
+    await settle(harness);
+
+    expect(crash.broke()).toBe(true);
+    expect(await orderTypes(harness)).toEqual(["OrderPlaced"]);
+    expect(await scheduledTypes(harness)).toEqual([]);
+    expect(await claimOf(harness, "order.settleOnOrderPlaced")).toMatchObject({
+      status: "pending",
+      attempts: 1,
+    });
+
+    pastLease(harness);
+    await settle(harness);
+    expect(await orderTypes(harness)).toEqual(["OrderPlaced", "OrderPaid"]);
+    expect(await scheduledTypes(harness)).toEqual(["ArchiveOrder"]);
+    expect(await claimOf(harness, "order.settleOnOrderPlaced")).toMatchObject({
+      status: "succeeded",
+      attempts: 2,
+    });
+    // The provider was called twice: at least once, under the same idempotency key.
+    expect(providerCalls).toHaveLength(2);
+    expect(new Set(providerCalls).size).toBe(1);
+  });
+
+  it("writes nothing of an attempt that finished but could not be marked done, then runs it again", async () => {
+    reset("ok");
+    const harness = await policyHarness();
+    const lost = breakNextCompletion(harness.storage);
+    await place(harness);
+    await settle(harness);
+
+    expect(lost.broke()).toBe(true);
+    expect(await orderTypes(harness)).toEqual(["OrderPlaced"]);
+    expect(await scheduledTypes(harness)).toEqual([]);
+
+    pastLease(harness);
+    await settle(harness);
+    expect(await orderTypes(harness)).toEqual(["OrderPlaced", "OrderPaid"]);
+    expect(await scheduledTypes(harness)).toEqual(["ArchiveOrder"]);
+    expect(providerCalls).toHaveLength(2);
+  });
+
+  it("gives the handler each command's result at once, its DomainError included, and commits the compensation with the rest", async () => {
+    reset("compensate");
+    const harness = await policyHarness();
+    await place(harness);
+    await settle(harness);
+
+    expect(seen[0]).toMatchObject({ version: 2, eventTypes: ["OrderPaid"] });
+    expect(seen[1]).toBeInstanceOf(DomainError);
+    expect(seen[1]).toMatchObject({ message: "Only placed orders can be paid" });
+    expect(await orderTypes(harness)).toEqual(["OrderPlaced", "OrderPaid"]);
+    expect(await scheduledTypes(harness)).toEqual(["ArchiveOrder"]);
+    expect(await harness.storage.deadLetterStore.count()).toBe(0);
+  });
+});

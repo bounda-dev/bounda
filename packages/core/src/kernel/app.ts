@@ -215,9 +215,7 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
       subscriber: createPolicySubscriber({
         policies,
         executor: policyExecutor,
-        scheduler: storage.scheduler,
-        ledger: storage.inboxLedger,
-        deadLetters: storage.deadLetterStore,
+        storage,
         config,
         clock,
         logger,
@@ -264,6 +262,7 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
       policies,
       executor: policyExecutor,
       eventStore: storage.eventStore,
+      storage,
       config,
     }),
     config,

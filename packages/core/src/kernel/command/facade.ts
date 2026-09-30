@@ -2,10 +2,11 @@ import type { DispatchOptions, DispatchResult } from "../../contracts/command.ts
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 
 /**
- * The untyped shape of `app.commands`. The generated types narrow it per project.
+ * The untyped shape of `app.commands`, and of a reaction's `commands` with its own result. The
+ * generated types narrow it per project.
  */
-export type CommandsFacadeRuntime = Readonly<
-  Record<string, (payload?: unknown, options?: DispatchOptions) => Promise<DispatchResult>>
+export type CommandsFacadeRuntime<Result = DispatchResult> = Readonly<
+  Record<string, (payload?: unknown, options?: DispatchOptions) => Promise<Result>>
 >;
 
 export interface FacadeDispatchArgs {
@@ -14,16 +15,19 @@ export interface FacadeDispatchArgs {
   readonly options?: DispatchOptions;
 }
 
-export interface CreateCommandsFacadeArgs {
+export interface CreateCommandsFacadeArgs<Result> {
   readonly aggregates: AggregatesRuntime;
-  readonly dispatch: (command: FacadeDispatchArgs) => Promise<DispatchResult>;
+  readonly dispatch: (command: FacadeDispatchArgs) => Promise<Result>;
 }
 
 export interface CreateCommandsFacadeFunction {
-  (args: CreateCommandsFacadeArgs): CommandsFacadeRuntime;
+  <Result>(args: CreateCommandsFacadeArgs<Result>): CommandsFacadeRuntime<Result>;
 }
 
-export const createCommandsFacade: CreateCommandsFacadeFunction = ({ aggregates, dispatch }) =>
+export const createCommandsFacade: CreateCommandsFacadeFunction = <Result>({
+  aggregates,
+  dispatch,
+}: CreateCommandsFacadeArgs<Result>): CommandsFacadeRuntime<Result> =>
   Object.fromEntries(
     Object.values(aggregates.commandsByType).map(({ command }) => [
       command.key,

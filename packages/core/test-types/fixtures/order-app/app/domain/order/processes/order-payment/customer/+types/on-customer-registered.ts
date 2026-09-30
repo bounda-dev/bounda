@@ -9,7 +9,7 @@ export declare namespace Process {
   type HandlerArgs = core.ProcessHandlerArgs<
     core.StoredEventOf<generated.CustomerEvents, "customerRegistered">,
     core.ProcessStateOf<ProcessModule>,
-    generated.Commands,
+    generated.ReactionCommands,
     import("../../index.ts").Collaborators
   >;
 }

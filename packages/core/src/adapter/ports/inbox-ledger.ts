@@ -21,11 +21,22 @@ export interface ClaimKey {
   readonly eventId: string;
 }
 
-export interface FailClaimArgs extends ClaimKey {
+/**
+ * What settles a claim: its key and, when the settling must belong to one claim, that claim's id
+ * as `tryClaim` handed it out. With it, a claim that has since been handed out again is not
+ * settled: the call rejects with `ClaimLostError`.
+ */
+export interface SettleClaimArgs extends ClaimKey {
+  readonly claimId?: string | undefined;
+}
+
+export interface FailClaimArgs extends SettleClaimArgs {
   readonly error: string;
   /**
-   * Set when the runner gives up on the event, before it writes the dead letter, so whoever claims
-   * it next writes the letter instead of running the handler again. A `fail` without it clears it.
+   * Set by a runner that gives up on the event before it writes the dead letter, as the process
+   * runner does, so whoever claims it next writes the letter instead of running the handler again.
+   * A runner that commits the letter and the claim together leaves it out. A `fail` without it
+   * clears it.
    */
   readonly gaveUp?: DeadLetterErrorType | undefined;
 }
@@ -34,6 +45,10 @@ export interface ClaimRecord extends ClaimKey {
   readonly status: ClaimStatus;
   readonly attempts: number;
   readonly claimedAt: string;
+  /**
+   * The id of the last claim handed out, as `tryClaim` returned it.
+   */
+  readonly claimId?: string;
   readonly lastError?: string;
   /**
    * As the last `fail` set it; kept across `tryClaim`.
@@ -49,8 +64,11 @@ export interface ClaimRecord extends ClaimKey {
  * `lastError` and `gaveUp`.
  */
 export interface InboxLedger {
-  tryClaim(args: ClaimArgs): Promise<boolean>;
-  complete(key: ClaimKey): Promise<void>;
+  /**
+   * The id of the claim when it was won, new on every claim; `null` when someone else holds it.
+   */
+  tryClaim(args: ClaimArgs): Promise<string | null>;
+  complete(args: SettleClaimArgs): Promise<void>;
   fail(args: FailClaimArgs): Promise<void>;
   get(key: ClaimKey): Promise<ClaimRecord | null>;
 }

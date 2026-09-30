@@ -154,7 +154,7 @@ const policyFiles = (
             withCollaborators(
               [
                 eventOf(model, policy.source ?? aggregate.name, policy.triggerKey),
-                "generated.Commands",
+                "generated.ReactionCommands",
               ],
               policy,
               plusTypesPath(policy.path),
@@ -204,7 +204,7 @@ const processFiles = (
                   [
                     eventOf(model, handler.aggregate, handler.eventKey),
                     "core.ProcessStateOf<ProcessModule>",
-                    "generated.Commands",
+                    "generated.ReactionCommands",
                   ],
                   process,
                   plusTypesPath(handler.path),
@@ -233,7 +233,7 @@ const processFiles = (
                     deadline.field === TIMEOUT_DEADLINE
                       ? "never"
                       : `core.ProcessDeadlineField<ProcessModule, ${JSON.stringify(deadline.field)}>`,
-                    "generated.Commands",
+                    "generated.ReactionCommands",
                   ],
                   process,
                   plusTypesPath(deadline.path),

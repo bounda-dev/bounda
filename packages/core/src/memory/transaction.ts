@@ -1,8 +1,6 @@
-import type { StoragePorts, StorageTransaction } from "../adapter/adapter.ts";
+import type { StoragePorts } from "../adapter/adapter.ts";
+import { deferWrites } from "../adapter/deferred-writes.ts";
 import type { CheckpointStore } from "../adapter/ports/checkpoint-store.ts";
-import type { DeadLetterStore } from "../adapter/ports/dead-letter-store.ts";
-import type { InboxLedger } from "../adapter/ports/inbox-ledger.ts";
-import type { Scheduler } from "../adapter/ports/scheduler.ts";
 import { createStagedEventStore } from "../adapter/staged-event-store.ts";
 import type { MemoryDeadLetterStore } from "./dead-letter-store.ts";
 import type { MemoryEventStore } from "./event-store.ts";
@@ -48,49 +46,12 @@ export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunct
   ({ eventStore, inboxLedger, deadLetterStore, scheduler }) =>
   async (work) => {
     const staged = createStagedEventStore(eventStore);
-    const deferred: (() => Promise<unknown>)[] = [];
-    const later =
-      <Args extends unknown[]>(write: (...args: Args) => Promise<unknown>) =>
-      async (...args: Args): Promise<void> => {
-        deferred.push(() => write(...args));
-      };
-    const ledger: InboxLedger = {
-      tryClaim: inboxLedger.tryClaim,
-      get: inboxLedger.get,
-      complete: later(inboxLedger.complete),
-      fail: later(inboxLedger.fail),
-    };
-    const letters: DeadLetterStore = {
-      get: deadLetterStore.get,
-      list: deadLetterStore.list,
-      count: deadLetterStore.count,
-      add: async (letter) => {
-        deferred.push(() => deadLetterStore.add(letter));
-        return { ...letter, status: "failed" };
-      },
-      updateStatus: later(deadLetterStore.updateStatus),
-      remove: later(deadLetterStore.remove),
-    };
-    const schedule: Scheduler = {
-      claimDue: scheduler.claimDue,
-      nextDueAt: scheduler.nextDueAt,
-      list: scheduler.list,
-      schedule: later(scheduler.schedule),
-      cancel: later(scheduler.cancel),
-      complete: later(scheduler.complete),
-      fail: later(scheduler.fail),
-      defer: later(scheduler.defer),
-    };
-    const transaction: StorageTransaction = {
-      eventStore: staged,
-      inboxLedger: ledger,
-      deadLetterStore: letters,
-      scheduler: schedule,
-    };
-    const result = await work(transaction);
+    const live = { inboxLedger, deadLetterStore, scheduler };
+    const { ports, flush } = deferWrites(live);
+    const result = await work({ eventStore: staged, ...ports });
     const restore = [inboxLedger, deadLetterStore, scheduler].map((store) => store.snapshot());
     try {
-      await Promise.all(deferred.map((write) => write()));
+      await flush(live);
       await eventStore.appendAll(staged.batches());
     } catch (error) {
       for (const undo of restore) undo();

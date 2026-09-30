@@ -324,6 +324,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
       `ALTER TABLE "${prefix}scheduled_commands" DROP COLUMN "revision", DROP COLUMN "claim_id"`,
     );
     await (probe.client.raw as Sql).unsafe(`ALTER TABLE "${prefix}inbox" DROP COLUMN "gave_up"`);
+    await (probe.client.raw as Sql).unsafe(`ALTER TABLE "${prefix}inbox" DROP COLUMN "claim_id"`);
     await closeOpened();
 
     const storage = await openStorage(adapter);

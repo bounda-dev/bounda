@@ -136,11 +136,19 @@ it, `ProcessDeadlineReached` records that it came due.
 **Every reaction runs at least once.** Before running a handler the runtime claims
 `(policy, eventId)` — or the process equivalent — in an inbox ledger. A claim that already
 completed is not run again, so a retry after a crash mid-handler does not send the email twice.
-Nor is one the runtime gave up on: the claim records the give-up before the dead letter is written,
-so a crash in between leaves the next delivery to write the dead letter, not to run the handler.
 What it cannot know is whether the side effect of a partially finished handler happened, which is
 why a handler that talks to the outside world should be written so that running it twice is
 harmless.
+
+**A policy attempt writes everything or nothing.** The commands a policy handler dispatches are
+decided on the spot but stored only when the attempt ends, together, in one transaction of the
+store: the events of its immediate commands, its delayed commands, the claim that marks the
+event done and, when the runtime gives up, the dead letter. A handler that throws, runs out of
+time or dies before that leaves no command behind, immediate or delayed, and the next attempt
+decides afresh. What `await commands.x()` returns is the aggregate's decision, not something
+stored yet: call the outside world before dispatching, not after, and pass `idempotencyKey`,
+because the attempt may run again. A process step still writes as it goes; it moves to the same
+rule next.
 
 **Every reaction gets an idempotency key.** Policy and process handlers receive
 `idempotencyKey`, a UUID that is the same on every retry of the handler for one event (for an
@@ -215,12 +223,13 @@ A few rules keep it correct:
   the command's own `idempotencyKey` does not change, but one that already ran runs again: its
   handler decides from state and returns no events the second time, as `recordConfirmationSent`
   does in the [storefront example](/guides/storefront-example/).
-- **A run that fails takes its delayed commands back.** When the handler throws, times out, or
-  its outcome cannot be recorded, the delayed commands that run scheduled are cancelled, so a
-  retry that decides differently leaves none behind. Its immediate commands have already run.
-  A delayed command stays only when its run is never seen to fail (the runtime crashed mid-run,
-  or a policy's run succeeded but could not be marked done, so it runs again and may decide
-  differently), or when it was still being scheduled as its run gave up.
+- **A policy run that fails leaves no command behind**, immediate or delayed: they are stored
+  only when the attempt commits (see [what the runtime promises](#what-the-runtime-promises)).
+  A process run that fails takes its delayed commands back: when the handler throws, times out,
+  or its outcome cannot be recorded, the delayed commands that run scheduled are cancelled, so a
+  retry that decides differently leaves none behind. Its immediate commands have already run,
+  and a delayed command stays when its run is never seen to fail (the runtime crashed mid-run) or
+  was still being scheduled as its run gave up.
 
 ## Retries and timeouts
 

@@ -70,7 +70,7 @@ export const runClaimed: RunClaimedFunction = async ({
     const waitMs = retryDelayMs({ retry, attempt: existing.attempts });
     if (now.getTime() - new Date(existing.claimedAt).getTime() < waitMs) return "hold";
   }
-  if (!(await ledger.tryClaim({ ...key, now, leaseMs }))) return "hold";
+  if ((await ledger.tryClaim({ ...key, now, leaseMs })) === null) return "hold";
   const attempts = (existing?.attempts ?? 0) + 1;
   try {
     await run(attempts);

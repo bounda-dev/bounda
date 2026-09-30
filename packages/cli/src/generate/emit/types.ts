@@ -150,17 +150,11 @@ export const emitTypes: EmitTypesFunction = ({ model, path, inferredStates = {} 
     ),
   );
   for (const owner of inferred) sections.push(emitCollaborators(owner, path));
-  sections.push(
-    emitMap(
-      "Commands",
-      "CommandsFacadeOf",
-      model.aggregates.flatMap((aggregate) =>
-        aggregate.commands.map(
-          (command) => [command.key, typeofImport(path, command.path)] as const,
-        ),
-      ),
-    ),
+  const commandModules = model.aggregates.flatMap((aggregate) =>
+    aggregate.commands.map((command) => [command.key, typeofImport(path, command.path)] as const),
   );
+  sections.push(emitMap("Commands", "CommandsFacadeOf", commandModules));
+  sections.push(emitMap("ReactionCommands", "ReactionCommandsFacadeOf", commandModules));
   for (const readModel of model.readModels) {
     sections.push(
       `export type ${rowTypeName(readModel.name)} = core.RowOf<${typeofImport(path, readModel.view.path)}>;`,

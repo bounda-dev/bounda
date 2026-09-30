@@ -1,9 +1,5 @@
-import type {
-  DeadLetterErrorType,
-  DeadLetterStore,
-} from "../../adapter/ports/dead-letter-store.ts";
-import type { InboxLedger } from "../../adapter/ports/inbox-ledger.ts";
-import type { Scheduler } from "../../adapter/ports/scheduler.ts";
+import type { StoragePorts } from "../../adapter/adapter.ts";
+import type { DeadLetterErrorType } from "../../adapter/ports/dead-letter-store.ts";
 import type { ResolvedConfig, ResolvedPoliciesConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
@@ -11,9 +7,10 @@ import type { Logger } from "../../contracts/logger.ts";
 import type { Subscriber } from "../dispatch/dispatcher.ts";
 import { deriveDeadLetterId } from "../shared/idempotency-key.ts";
 import { deliverInOrder, type ReactionOutcome } from "../shared/in-order.ts";
-import { runClaimed } from "../shared/inbox-claim.ts";
+import { runAttempt } from "../shared/reaction-attempt.ts";
 import { errorDetails } from "../shared/retry.ts";
 import { deadLettered } from "../telemetry.ts";
+import type { UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import type { PoliciesRuntime, PolicyRuntime } from "./build-policies.ts";
 import { scheduleDelayedPolicy } from "./delayed.ts";
 import type { PolicyExecutor } from "./executor.ts";
@@ -23,9 +20,7 @@ export const POLICIES_SUBSCRIBER: "policies" = "policies";
 export interface CreatePolicySubscriberArgs {
   readonly policies: PoliciesRuntime;
   readonly executor: PolicyExecutor;
-  readonly scheduler: Scheduler;
-  readonly ledger: InboxLedger;
-  readonly deadLetters: DeadLetterStore;
+  readonly storage: StoragePorts;
   readonly config: ResolvedConfig;
   readonly clock: Clock;
   readonly logger: Logger;
@@ -42,14 +37,13 @@ export interface CreatePolicySubscriberFunction {
 export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
   policies,
   executor,
-  scheduler,
-  ledger,
-  deadLetters,
+  storage,
   config,
   clock,
   logger,
 }) => {
   const deadLetter = async (
+    unit: UnitOfWork,
     policy: PolicyRuntime,
     event: StoredEvent,
     error: unknown,
@@ -57,10 +51,9 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
     errorType: DeadLetterErrorType,
   ): Promise<void> => {
     const id = deriveDeadLetterId({ kind: "policy", handler: policy.name, subject: event.id });
-    if ((await deadLetters.get(id)) !== null) return;
     const details = errorDetails(error);
     const now = clock.now().toISOString();
-    await deadLetters.add({
+    await unit.deadLetterStore.add({
       id,
       kind: "policy",
       subscriber: policy.name,
@@ -75,6 +68,14 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
       firstFailedAt: now,
       lastFailedAt: now,
     });
+  };
+
+  const gaveUp = (
+    policy: PolicyRuntime,
+    event: StoredEvent,
+    attempts: number,
+    errorType: DeadLetterErrorType,
+  ): void => {
     deadLettered({ kind: "policy", subscriber: policy.name, errorType });
     logger.warn("policy dead-lettered", {
       policy: policy.name,
@@ -89,20 +90,28 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
     event: StoredEvent,
     settings: ResolvedPoliciesConfig,
   ): Promise<ReactionOutcome> =>
-    runClaimed({
-      ledger,
+    runAttempt({
+      storage,
       key: { subscriber: policy.name, eventId: event.id },
       retry: settings.retry,
       leaseMs: settings.timeoutMs * 2,
+      concurrencyRetries: config.runtime.commands.concurrencyRetries,
       clock,
-      run: async (attempt) => {
+      run: async (unit, attempt) => {
         if (policy.delayMs === null) {
-          await executor.run({ policy, event, attempt });
+          await executor.run({ policy, event, attempt, within: unit });
         } else {
-          await scheduleDelayedPolicy({ scheduler, policy, delayMs: policy.delayMs, event });
+          await scheduleDelayedPolicy({
+            scheduler: unit.scheduler,
+            policy,
+            delayMs: policy.delayMs,
+            event,
+          });
         }
       },
-      giveUp: (error, attempts, errorType) => deadLetter(policy, event, error, attempts, errorType),
+      giveUp: (unit, error, attempts, errorType) =>
+        deadLetter(unit, policy, event, error, attempts, errorType),
+      gaveUp: (attempts, errorType) => gaveUp(policy, event, attempts, errorType),
       willRetry: (attempts) => {
         logger.warn("policy failed; will retry", {
           policy: policy.name,
