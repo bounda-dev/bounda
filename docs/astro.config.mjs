@@ -21,6 +21,7 @@ export default defineConfig({
         { label: "bounda.dev", link: "https://bounda.dev" },
         { label: "Getting started", items: [{ autogenerate: { directory: "getting-started" } }] },
         { label: "Guides", items: [{ autogenerate: { directory: "guides" } }] },
+        { label: "Concepts", items: [{ autogenerate: { directory: "concepts" } }] },
         { label: "Adapters", items: [{ autogenerate: { directory: "adapters" } }] },
         { label: "Reference", items: [{ autogenerate: { directory: "reference" } }] },
       ],

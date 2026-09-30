@@ -151,7 +151,9 @@ before that leaves no command behind, immediate or delayed, and the next attempt
 When the instance moved meanwhile, because a deadline or another instance wrote to it, the step
 runs again on the instance as it now is, without spending an attempt. What `await commands.x()`
 returns is the aggregate's decision, not something stored yet: call the outside world before
-dispatching, not after, and pass `idempotencyKey`, because the attempt may run again.
+dispatching, not after, and pass `idempotencyKey`, because the attempt may run again. What stays
+outside the promise, and why, is in [Your event store is your outbox](/concepts/event-store-as-outbox/):
+the outside calls, the claim, and what a read model shows a handler.
 
 **Every reaction gets an idempotency key.** Policy and process handlers receive
 `idempotencyKey`, a UUID that is the same on every retry of the handler for one event (for an
