@@ -2,7 +2,6 @@ import { ClaimLostError } from "@bounda-dev/core";
 import type {
   ClaimRecord,
   ClaimStatus,
-  DeadLetterErrorType,
   InboxLedger,
   SettleClaimArgs,
 } from "@bounda-dev/core/adapter";
@@ -27,9 +26,6 @@ const toRecord = (row: Record<string, unknown>): ClaimRecord => ({
   ...(row.last_error === null || row.last_error === undefined
     ? {}
     : { lastError: String(row.last_error) }),
-  ...(row.gave_up === null || row.gave_up === undefined
-    ? {}
-    : { gaveUp: String(row.gave_up) as DeadLetterErrorType }),
 });
 
 /**
@@ -74,15 +70,10 @@ export const createPostgresqlInboxLedger: CreatePostgresqlInboxLedgerFunction = 
       return row === undefined ? null : String(row.claim_id);
     },
     complete: (args) => settle(`"status" = 'succeeded'`, [], args),
-    fail: (args) =>
-      settle(
-        `"status" = 'failed', "last_error" = $1, "gave_up" = $2`,
-        [args.error, args.gaveUp ?? null],
-        args,
-      ),
+    fail: (args) => settle(`"status" = 'failed', "last_error" = $1`, [args.error], args),
     get: async ({ subscriber, eventId }) => {
       const [row] = await db.all(
-        `SELECT "subscriber", "event_id", "status", "attempts", "claimed_at", "claim_id", "last_error", "gave_up" FROM ${table} WHERE "subscriber" = $1 AND "event_id" = $2`,
+        `SELECT "subscriber", "event_id", "status", "attempts", "claimed_at", "claim_id", "last_error" FROM ${table} WHERE "subscriber" = $1 AND "event_id" = $2`,
         [subscriber, eventId],
       );
       return row === undefined ? null : toRecord(row);

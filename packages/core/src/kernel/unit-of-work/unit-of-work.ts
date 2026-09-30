@@ -12,9 +12,11 @@ export type UnitStores = Pick<StorageTransaction, "eventStore" | "scheduler">;
  * What one attempt of a reaction changes in the store, held back until `commit`: the events its
  * commands produce, staged per stream and visible to its own loads, and the writes to the other
  * stores, kept in order. `commit` writes all of it in one storage transaction, events first, or
- * nothing: a stream that moved since the unit loaded it rejects with `ConcurrencyError`. Reads
- * through the unit's ports see the store as it is, plus the unit's own events; `add` answers the
- * letter as filed, whatever the store holds under that id already.
+ * nothing: a stream that moved since the unit loaded it rejects with `ConcurrencyError`; an
+ * append to a stream the unit never loaded checks its version at once instead, as the store
+ * would. A unit with nothing staged commits without touching the store. Reads through the unit's ports see the
+ * store as it is, plus the unit's own events; `add` answers the letter as filed, whatever the
+ * store holds under that id already.
  */
 export interface UnitOfWork extends StorageTransaction {
   commit(): Promise<void>;
@@ -30,15 +32,18 @@ export interface CreateUnitOfWorkFunction {
 
 export const createUnitOfWork: CreateUnitOfWorkFunction = ({ storage }) => {
   const staged = createStagedEventStore(storage.eventStore);
-  const { ports, flush } = deferWrites(storage);
+  const { ports, flush, pending } = deferWrites(storage);
   return {
     eventStore: staged,
     ...ports,
-    commit: () =>
-      storage.transact(async (transaction) => {
-        for (const batch of staged.batches()) await transaction.eventStore.append(batch);
+    commit: async () => {
+      const batches = staged.batches();
+      if (batches.length === 0 && !pending()) return;
+      await storage.transact(async (transaction) => {
+        for (const batch of batches) await transaction.eventStore.append(batch);
         await flush(transaction);
-      }),
+      });
+    },
   };
 };
 
@@ -52,6 +57,16 @@ export class CommitFailed extends Error {
     this.name = "CommitFailed";
   }
 }
+
+export interface CauseOfFunction {
+  (error: unknown): unknown;
+}
+
+/**
+ * The store's failure behind a `CommitFailed`; any other error as it is.
+ */
+export const causeOf: CauseOfFunction = (error) =>
+  error instanceof CommitFailed ? error.cause : error;
 
 export interface CommitAttemptArgs {
   readonly storage: StoragePorts;

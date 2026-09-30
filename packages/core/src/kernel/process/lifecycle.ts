@@ -90,10 +90,9 @@ export interface ProcessFailure {
   readonly eventId?: string;
   readonly deadline?: { readonly field: string; readonly at: string };
   /**
-   * The dead letter that records the failure, as `ProcessFailed` carries it, so the letter can be
-   * filed again when writing it was cut short.
+   * The dead letter that records the failure, committed with it.
    */
-  readonly letter?: NewDeadLetter;
+  readonly letterId?: string;
 }
 
 export interface FoldProcessArgs {
@@ -158,11 +157,11 @@ export const foldProcess: FoldProcessFunction = ({ initialState, events }) => {
           readonly eventId?: string;
           readonly deadline?: string;
           readonly at?: string;
-          readonly letter?: NewDeadLetter;
+          readonly letterId?: string;
         };
         failure = {
           ...(payload.eventId === undefined ? {} : { eventId: payload.eventId }),
-          ...(payload.letter === undefined ? {} : { letter: payload.letter }),
+          ...(payload.letterId === undefined ? {} : { letterId: payload.letterId }),
           ...(payload.deadline === undefined || payload.at === undefined
             ? {}
             : { deadline: { field: payload.deadline, at: payload.at } }),
@@ -274,7 +273,7 @@ export const lifecycleEntries: LifecycleEntries = {
   }),
   failed: (failedOn, letter, context) => ({
     type: PROCESS_EVENTS.failed,
-    payload: { ...failedOn, error: letter.errorMessage, letter },
+    payload: { ...failedOn, error: letter.errorMessage, letterId: letter.id },
     context,
   }),
   parked: (event) => ({

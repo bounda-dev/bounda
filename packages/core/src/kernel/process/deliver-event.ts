@@ -1,35 +1,44 @@
 import type { StoragePorts } from "../../adapter/adapter.ts";
-import type { DeadLetterErrorType } from "../../adapter/ports/dead-letter-store.ts";
+import type { NewDeadLetter } from "../../adapter/ports/dead-letter-store.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
-import { ConcurrencyError } from "../../contracts/errors.ts";
+import { ClaimLostError, ConcurrencyError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { ReactionOutcome } from "../shared/in-order.ts";
-import { runClaimed } from "../shared/inbox-claim.ts";
+import { runAttempt } from "../shared/reaction-attempt.ts";
+import { causeOf, type UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
 import type { ProcessFailures } from "./failures.ts";
 import type { ProcessHandlers } from "./handlers.ts";
-import type { ProcessInstances } from "./instances.ts";
-import { eventContext, lifecycleEntries, type ProcessInstance } from "./lifecycle.ts";
+import {
+  eventContext,
+  type LifecycleEntry,
+  lifecycleEntries,
+  type ProcessInstance,
+} from "./lifecycle.ts";
 import { actsOn, completesOn, handledEntries, handlerOf, startsOn } from "./routes.ts";
 import type { DeadlineSchedule } from "./schedule.ts";
+import type { ProcessUnits } from "./units.ts";
 
 /**
  * How the dispatcher's events reach process instances.
  */
 export interface EventDelivery {
   /**
-   * A retriable failure holds the event for the inbox ledger to retry. When another write to
-   * the instance, such as a deadline, gets there first, the handler runs again on the instance
-   * as it now is, up to `runtime.commands.concurrencyRetries` times, without spending an
-   * attempt. An event for a failed instance is parked behind the failure.
+   * What one event does to its instance is one unit of work: the start, the handler's commands,
+   * the lifecycle events, the deadline entry and, for an event its handler runs on, the inbox
+   * claim, committed together or not at all. An event for an instance that has ended, or that
+   * was handled already, takes no claim and writes nothing. A retriable failure holds the event for the inbox ledger to
+   * retry. A commit that finds the instance moved, by a deadline or another instance, runs the
+   * step again on the instance as it now is, up to `runtime.commands.concurrencyRetries` times,
+   * without spending an attempt. An event for a failed instance is parked behind the failure.
    */
   deliver(process: ProcessRuntime, event: StoredEvent): Promise<ReactionOutcome>;
 }
 
 export interface CreateEventDeliveryArgs {
-  readonly instances: ProcessInstances;
+  readonly units: ProcessUnits;
   readonly failures: ProcessFailures;
   readonly handlers: ProcessHandlers;
   readonly schedule: DeadlineSchedule;
@@ -44,7 +53,7 @@ export interface CreateEventDeliveryFunction {
 }
 
 export const createEventDelivery: CreateEventDeliveryFunction = ({
-  instances,
+  units,
   failures,
   handlers,
   schedule,
@@ -53,90 +62,135 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
   clock,
   logger,
 }) => {
-  const { load, append, lostRace } = instances;
-
   const leaseMs = (process: ProcessRuntime): number =>
     config.forAggregate(process.aggregate).policies.timeoutMs * 2;
 
-  const start = async (
+  // Whether `event` waits behind the instance's failure: not the event that failed, delivered
+  // again, and nothing once the failure's letter was discarded, since the instance is given up.
+  const parks = async (
+    unit: UnitOfWork,
     process: ProcessRuntime,
     event: StoredEvent,
-    instanceId: string,
     instance: ProcessInstance,
-  ): Promise<ProcessInstance> => {
-    const timeoutAt = new Date(Date.parse(event.timestamp) + process.timeoutMs).toISOString();
-    await append(process, instanceId, instance, [
-      lifecycleEntries.started(event, process.initialState, timeoutAt),
-    ]);
-    return {
-      ...instance,
-      exists: true,
-      version: instance.version + 1,
-      timeoutAt,
-      correlationId: event.metadata.correlationId,
-    };
+  ): Promise<boolean> => {
+    if (
+      !actsOn(process, event) ||
+      event.id === instance.failure?.eventId ||
+      instance.handledEventIds.has(event.id) ||
+      instance.parked.some((parked) => parked.eventId === event.id)
+    ) {
+      return false;
+    }
+    const letterId = instance.failure?.letterId;
+    if (letterId === undefined) return true;
+    return (await unit.deadLetterStore.get(letterId))?.status !== "discarded";
   };
 
-  const failFor = async (
+  // The instance with its start staged in `entries` when `event` starts it; as it is otherwise.
+  const started = (
+    process: ProcessRuntime,
+    event: StoredEvent,
+    instance: ProcessInstance,
+    entries: LifecycleEntry[],
+  ): ProcessInstance => {
+    if (instance.exists || !startsOn(process, event)) return instance;
+    const timeoutAt = new Date(Date.parse(event.timestamp) + process.timeoutMs).toISOString();
+    entries.push(lifecycleEntries.started(event, process.initialState, timeoutAt));
+    return { ...instance, exists: true, timeoutAt, correlationId: event.metadata.correlationId };
+  };
+
+  // Stages what `event` does to its instance; resolves to whether it was parked.
+  const step = async (
+    unit: UnitOfWork,
     process: ProcessRuntime,
     event: StoredEvent,
     instanceId: string,
-    instance: ProcessInstance,
+    attempt: number,
+  ): Promise<boolean> => {
+    const within = units.over(unit);
+    const entries: LifecycleEntry[] = [];
+    const instance = started(process, event, await within.load(process, instanceId), entries);
+    if (!instance.exists) return false;
+    let parked = false;
+    if (instance.status === "failed") {
+      if (await parks(unit, process, event, instance)) {
+        entries.push(lifecycleEntries.parked(event));
+        parked = true;
+      }
+    } else if (instance.status === "started") {
+      if (handlerOf(process, event) !== undefined && !instance.handledEventIds.has(event.id)) {
+        const state = await handlers.runEventHandler({
+          process,
+          event,
+          instanceId,
+          instance,
+          attempt,
+          within: unit,
+        });
+        entries.push(...handledEntries(process, event, state));
+      } else if (completesOn(process, event)) {
+        entries.push(lifecycleEntries.completed(event));
+      }
+    }
+    if (entries.length === 0) return false;
+    await within.append(process, instanceId, instance, entries);
+    await schedule.stage(unit, process, instanceId);
+    return parked;
+  };
+
+  const parkedLog = (process: ProcessRuntime, event: StoredEvent, instanceId: string): void => {
+    logger.info("process event parked behind a failure", {
+      process: process.name,
+      aggregateId: instanceId,
+      eventId: event.id,
+    });
+  };
+
+  // Stages what giving up on `event` records: the dead letter, and `ProcessFailed` while the
+  // instance still runs, after its start when `event` is what starts it, with its deadline entry.
+  const failFor = async (
+    unit: UnitOfWork,
+    process: ProcessRuntime,
+    event: StoredEvent,
+    instanceId: string,
+    letter: NewDeadLetter,
     error: unknown,
-    attempts: number,
-    errorType: DeadLetterErrorType,
   ): Promise<void> => {
-    const letter = failures.letterOf(process, event, error, attempts, errorType);
-    await append(process, instanceId, instance, [
-      lifecycleEntries.failed({ eventId: event.id }, letter, eventContext(event)),
-    ]);
-    await failures.file(process, letter, error);
+    const within = units.over(unit);
+    const entries: LifecycleEntry[] = [];
+    const current = started(process, event, await within.load(process, instanceId), entries);
+    if (current.status === "started") {
+      entries.push(lifecycleEntries.failed({ eventId: event.id }, letter, eventContext(event)));
+      await within.append(process, instanceId, current, entries);
+      await schedule.stage(unit, process, instanceId);
+    }
+    await failures.file(unit.deadLetterStore, process, letter, error);
   };
 
   const handle = async (
     process: ProcessRuntime,
     event: StoredEvent,
     instanceId: string,
-    instance: ProcessInstance,
   ): Promise<ReactionOutcome> => {
-    if (handlerOf(process, event) === undefined || instance.handledEventIds.has(event.id)) {
-      return "done";
-    }
-    return runClaimed({
-      ledger: storage.inboxLedger,
+    let parked = false;
+    let letter: NewDeadLetter | undefined;
+    const outcome = await runAttempt({
+      storage,
       key: { subscriber: process.name, eventId: event.id },
       retry: config.forAggregate(process.aggregate).processes.retry,
       leaseMs: leaseMs(process),
+      concurrencyRetries: config.runtime.commands.concurrencyRetries,
       clock,
-      run: async (attempt) => {
-        let current = instance;
-        for (let race = 0; ; race += 1) {
-          const handled = await handlers.runEventHandler({
-            process,
-            event,
-            instanceId,
-            instance: current,
-            attempt,
-          });
-          try {
-            await handled.record(() =>
-              append(process, instanceId, current, handledEntries(process, event, handled.state)),
-            );
-            return;
-          } catch (error) {
-            if (
-              !lostRace(process, instanceId, error) ||
-              race >= config.runtime.commands.concurrencyRetries
-            ) {
-              throw error;
-            }
-            current = await load(process, instanceId);
-            if (current.status !== "started") throw error;
-          }
-        }
+      run: async (unit, attempt) => {
+        parked = await step(unit, process, event, instanceId, attempt);
       },
-      giveUp: (error, attempts, errorType) =>
-        failFor(process, event, instanceId, instance, error, attempts, errorType),
+      giveUp: (unit, error, attempts, errorType) => {
+        letter = failures.letterOf(process, event, error, attempts, errorType);
+        return failFor(unit, process, event, instanceId, letter, error);
+      },
+      gaveUp: () => {
+        if (letter !== undefined) failures.filed(process, letter);
+      },
       willRetry: (attempts) => {
         logger.warn("process handler failed; will retry", {
           process: process.name,
@@ -145,63 +199,8 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
         });
       },
     });
-  };
-
-  const park = async (
-    process: ProcessRuntime,
-    event: StoredEvent,
-    instanceId: string,
-    instance: ProcessInstance,
-  ): Promise<void> => {
-    if ((await failures.healFailure(process, instance))?.status === "discarded") return;
-    if (
-      !actsOn(process, event) ||
-      event.id === instance.failure?.eventId ||
-      instance.handledEventIds.has(event.id) ||
-      instance.parked.some((parked) => parked.eventId === event.id)
-    ) {
-      return;
-    }
-    await append(process, instanceId, instance, [lifecycleEntries.parked(event)]);
-    logger.info("process event parked behind a failure", {
-      process: process.name,
-      aggregateId: instanceId,
-      eventId: event.id,
-    });
-  };
-
-  const parkUntilLanded = async (
-    process: ProcessRuntime,
-    event: StoredEvent,
-    instanceId: string,
-    instance: ProcessInstance,
-  ): Promise<ProcessInstance> => {
-    let current = instance;
-    while (current.status === "failed") {
-      try {
-        await park(process, event, instanceId, current);
-        return current;
-      } catch (error) {
-        if (!lostRace(process, instanceId, error)) throw error;
-        current = await load(process, instanceId);
-      }
-    }
-    return current;
-  };
-
-  const completeIfDue = async (
-    process: ProcessRuntime,
-    event: StoredEvent,
-    instanceId: string,
-  ): Promise<void> => {
-    if (!completesOn(process, event)) return;
-    const current = await load(process, instanceId);
-    if (current.status === "failed") {
-      await parkUntilLanded(process, event, instanceId, current);
-      return;
-    }
-    if (current.status !== "started") return;
-    await append(process, instanceId, current, [lifecycleEntries.completed(event)]);
+    if (parked && outcome === "done") parkedLog(process, event, instanceId);
+    return outcome;
   };
 
   const uncorrelated = async (
@@ -211,14 +210,23 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
   ): Promise<ReactionOutcome> => {
     const key = { subscriber: process.name, eventId: event.id };
     if ((await storage.inboxLedger.get(key))?.status === "succeeded") return "done";
-    const claimed = await storage.inboxLedger.tryClaim({
+    const claimId = await storage.inboxLedger.tryClaim({
       ...key,
       now: clock.now(),
       leaseMs: leaseMs(process),
     });
-    if (claimed === null) return "hold";
-    await failures.file(process, failures.letterOf(process, event, error, 1, "terminal"), error);
-    await storage.inboxLedger.complete(key);
+    if (claimId === null) return "hold";
+    const letter = failures.letterOf(process, event, error, 1, "terminal");
+    try {
+      await units.commit(async (unit) => {
+        await failures.file(unit.deadLetterStore, process, letter, error);
+        await unit.inboxLedger.complete({ ...key, claimId });
+      });
+    } catch (failure) {
+      if (causeOf(failure) instanceof ClaimLostError) return "hold";
+      throw failure;
+    }
+    failures.filed(process, letter);
     return "done";
   };
 
@@ -233,20 +241,25 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
       return uncorrelated(process, event, error);
     }
     if (instanceId === null) return "done";
-    let instance = await load(process, instanceId);
-    if (!instance.exists) {
-      if (!startsOn(process, event)) return "done";
-      instance = await start(process, event, instanceId, instance);
+    // Routed on the instance as the store holds it; the step loads it again through its unit.
+    const instance = await units.live.load(process, instanceId);
+    const ended = instance.exists
+      ? instance.status === "completed" || instance.status === "timed_out"
+      : !startsOn(process, event);
+    if (ended) return "done";
+    if (
+      instance.status === "started" &&
+      handlerOf(process, event) !== undefined &&
+      !instance.handledEventIds.has(event.id)
+    ) {
+      return handle(process, event, instanceId);
     }
-    if (instance.status === "failed") {
-      instance = await parkUntilLanded(process, event, instanceId, instance);
-      if (instance.status === "failed") return "done";
-    }
-    if (instance.status !== "started") return "done";
-    const outcome = await handle(process, event, instanceId, instance);
-    if (outcome === "done") await completeIfDue(process, event, instanceId);
-    await schedule.reconcile(process, instanceId);
-    return outcome;
+    let parked = false;
+    await units.commit(async (unit) => {
+      parked = await step(unit, process, event, instanceId, 1);
+    });
+    if (parked) parkedLog(process, event, instanceId);
+    return "done";
   };
 
   return {
@@ -254,7 +267,8 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
       try {
         return await handleEvent(process, event);
       } catch (error) {
-        if (!(error instanceof ConcurrencyError)) throw error;
+        const cause = causeOf(error);
+        if (!(cause instanceof ConcurrencyError)) throw cause;
         logger.debug("process stream moved; will redeliver", {
           process: process.name,
           eventId: event.id,

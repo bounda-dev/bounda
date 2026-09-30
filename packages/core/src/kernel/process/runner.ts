@@ -13,10 +13,10 @@ import { createDeadlineDelivery, type ProcessDeadlines } from "./deliver-deadlin
 import { createEventDelivery } from "./deliver-event.ts";
 import { createProcessFailures } from "./failures.ts";
 import { createProcessHandlers } from "./handlers.ts";
-import { createProcessInstances } from "./instances.ts";
 import { createProcessReplay, type ProcessDeadLetters } from "./replay.ts";
 import { createResumeParked } from "./resume.ts";
 import { createDeadlineSchedule } from "./schedule.ts";
+import { createProcessUnits } from "./units.ts";
 
 export const PROCESSES_SUBSCRIBER: "processes" = "processes";
 
@@ -51,8 +51,8 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
   clock,
   logger,
 }) => {
-  const instances = createProcessInstances({ storage, ids, clock });
-  const failures = createProcessFailures({ storage, ids, clock, logger });
+  const units = createProcessUnits({ storage, config, ids, clock });
+  const failures = createProcessFailures({ ids, clock, logger });
   const handlers = createProcessHandlers({
     aggregates,
     pipeline,
@@ -61,11 +61,11 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     clock,
     logger,
   });
-  const schedule = createDeadlineSchedule({ storage, instances, failures });
-  const deadlineStep = createDeadlineStep({ instances, handlers, ids });
-  const resume = createResumeParked({ instances, failures, handlers, deadlineStep, logger });
+  const schedule = createDeadlineSchedule({ storage, units });
+  const deadlineStep = createDeadlineStep({ units, handlers, ids });
+  const resume = createResumeParked({ units, failures, handlers, deadlineStep, schedule, logger });
   const events = createEventDelivery({
-    instances,
+    units,
     failures,
     handlers,
     schedule,
@@ -76,7 +76,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
   });
   const deadlines = createDeadlineDelivery({
     processes,
-    instances,
+    units,
     failures,
     schedule,
     deadlineStep,
@@ -86,8 +86,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
   });
   const deadLetters = createProcessReplay({
     processes,
-    instances,
-    failures,
+    units,
     handlers,
     schedule,
     deadlineStep,

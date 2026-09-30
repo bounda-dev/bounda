@@ -1,4 +1,4 @@
-import type { StoragePorts } from "../../adapter/adapter.ts";
+import type { EventStore } from "../../adapter/ports/event-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import { ConcurrencyError, NotFoundError } from "../../contracts/errors.ts";
 import { type StoredEvent, streamId } from "../../contracts/event.ts";
@@ -8,7 +8,6 @@ import {
   foldProcess,
   type LifecycleEntry,
   type ParkedEvent,
-  PROCESS_EVENTS,
   type ProcessInstance,
   processAggregateType,
 } from "./lifecycle.ts";
@@ -18,17 +17,12 @@ import {
  */
 export interface ProcessInstances {
   load(process: ProcessRuntime, instanceId: string): Promise<ProcessInstance>;
-  append(
-    process: ProcessRuntime,
-    instanceId: string,
-    instance: ProcessInstance,
-    entries: readonly LifecycleEntry[],
-  ): Promise<void>;
   /**
-   * Appends `entries` past the events parked on the instance since it was folded; any other write
-   * to the stream meanwhile still fails it.
+   * Appends after `instance`, which must come from this view's `load`: an instance loaded through
+   * another view carries a version this one never fixed, and a stream that moved meanwhile would
+   * fail here, as the handler's own failure, instead of at the commit, where the step runs again.
    */
-  appendPastParks(
+  append(
     process: ProcessRuntime,
     instanceId: string,
     instance: ProcessInstance,
@@ -42,7 +36,10 @@ export interface ProcessInstances {
 }
 
 export interface CreateProcessInstancesArgs {
-  readonly storage: StoragePorts;
+  /**
+   * Where the instance streams live: the storage's event store, or a unit of work's view of it.
+   */
+  readonly eventStore: EventStore;
   readonly ids: IdGenerator;
   readonly clock: Clock;
 }
@@ -51,13 +48,18 @@ export interface CreateProcessInstancesFunction {
   (args: CreateProcessInstancesArgs): ProcessInstances;
 }
 
-export const createProcessInstances: CreateProcessInstancesFunction = ({ storage, ids, clock }) => {
+export const createProcessInstances: CreateProcessInstancesFunction = ({
+  eventStore,
+  ids,
+  clock,
+}) => {
+  const loaded = new Set<string>();
+
   const load = async (process: ProcessRuntime, instanceId: string): Promise<ProcessInstance> => {
-    const loaded = await storage.eventStore.load({
-      aggregateType: processAggregateType(process.type),
-      aggregateId: instanceId,
-    });
-    return foldProcess({ initialState: process.initialState, events: loaded.events });
+    const stream = { aggregateType: processAggregateType(process.type), aggregateId: instanceId };
+    const { events } = await eventStore.load(stream);
+    loaded.add(streamId(stream));
+    return foldProcess({ initialState: process.initialState, events });
   };
 
   const append = async (
@@ -67,7 +69,12 @@ export const createProcessInstances: CreateProcessInstancesFunction = ({ storage
     entries: readonly LifecycleEntry[],
   ): Promise<void> => {
     const aggregateType = processAggregateType(process.type);
-    await storage.eventStore.append({
+    if (!loaded.has(streamId({ aggregateType, aggregateId: instanceId }))) {
+      throw new Error(
+        `Process ${process.name} appended to ${instanceId} without loading it through the same view`,
+      );
+    }
+    await eventStore.append({
       aggregateType,
       aggregateId: instanceId,
       expectedVersion: instance.version,
@@ -89,37 +96,8 @@ export const createProcessInstances: CreateProcessInstancesFunction = ({ storage
     error.streamId ===
       streamId({ aggregateType: processAggregateType(process.type), aggregateId: instanceId });
 
-  const appendPastParks = async (
-    process: ProcessRuntime,
-    instanceId: string,
-    instance: ProcessInstance,
-    entries: readonly LifecycleEntry[],
-  ): Promise<void> => {
-    let current = instance;
-    for (;;) {
-      try {
-        await append(process, instanceId, current, entries);
-        return;
-      } catch (error) {
-        if (!lostRace(process, instanceId, error)) throw error;
-        const loaded = await storage.eventStore.load({
-          aggregateType: processAggregateType(process.type),
-          aggregateId: instanceId,
-        });
-        const since = loaded.events.slice(current.version);
-        if (
-          since.length === 0 ||
-          !since.every((event) => event.type === PROCESS_EVENTS.eventParked)
-        ) {
-          throw error;
-        }
-        current = foldProcess({ initialState: process.initialState, events: loaded.events });
-      }
-    }
-  };
-
   const parkedEvent = async (parked: ParkedEvent): Promise<StoredEvent> => {
-    const { events } = await storage.eventStore.load({
+    const { events } = await eventStore.load({
       aggregateType: parked.aggregateType,
       aggregateId: parked.aggregateId,
     });
@@ -132,5 +110,5 @@ export const createProcessInstances: CreateProcessInstancesFunction = ({ storage
     return event;
   };
 
-  return { load, append, appendPastParks, lostRace, parkedEvent };
+  return { load, append, lostRace, parkedEvent };
 };

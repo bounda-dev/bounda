@@ -6,9 +6,11 @@ import type { RetryConfig } from "../../config/types.ts";
 import { ConcurrencyError, DomainError } from "../../contracts/errors.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
+import type { ProcessAfterFunction, ProcessStateArgs } from "../../modules/process.ts";
 import type { Registry } from "../../modules/registry.ts";
+import { PROCESS_EVENTS } from "../process/lifecycle.ts";
 import { createReactiveHarness, type ReactiveHarness } from "../reactive-harness.ts";
-import { orderAggregateEntry } from "../test-support.ts";
+import { type OrderProcessConfigArgs, orderAggregateEntry } from "../test-support.ts";
 import { CommitFailed, commitAttempt, createUnitOfWork, type UnitOfWork } from "./unit-of-work.ts";
 
 interface Commands {
@@ -67,6 +69,52 @@ const policyRegistry: Registry = {
   readModels: {},
 };
 
+// A process that does the same on its starting event, and sets a deadline.
+const processRegistry: Registry = {
+  aggregates: {
+    order: {
+      ...orderAggregateEntry(),
+      processes: {
+        settlement: {
+          module: {
+            config: ({ events }: OrderProcessConfigArgs<"OrderPlaced" | "OrderArchived">) => ({
+              startedBy: [events.order.OrderPlaced],
+              completedBy: [events.order.OrderArchived],
+              timeout: "30d",
+            }),
+            state: ({ z, deadline }: ProcessStateArgs) => z.object({ remind: deadline() }),
+          },
+          handlers: {
+            order: {
+              orderPlaced: {
+                handler: async ({
+                  event,
+                  commands,
+                  idempotencyKey,
+                  after,
+                  state,
+                }: PolicyArgs & {
+                  readonly after: ProcessAfterFunction;
+                  readonly state: object;
+                }) => {
+                  providerCalls.push(idempotencyKey);
+                  const orderId = event.aggregateId;
+                  seen.push(await commands.payOrder?.({ orderId, method: "card" }));
+                  await commands.archiveOrder?.({ orderId }, { delay: "1h" });
+                  if (mode === "refuse") throw new DomainError("provider refused");
+                  return { ...state, remind: after("1d") };
+                },
+              },
+            },
+          },
+          deadlines: { remind: { handler: ({ state }: { readonly state: object }) => state } },
+        },
+      },
+    },
+  },
+  readModels: {},
+};
+
 const adapters: readonly [string, () => Adapter][] = [
   ["memory", () => memory()],
   ["SQLite (node:sqlite)", () => createNodeSqliteAdapter().adapter],
@@ -92,6 +140,13 @@ const settle = async (harness: ReactiveHarness) => {
 };
 const pastLease = (harness: ReactiveHarness) =>
   harness.clock.advance(harness.config.runtime.policies.timeoutMs * 2 + 1);
+const processTypes = async (harness: ReactiveHarness) =>
+  (
+    await harness.storage.eventStore.load({
+      aggregateType: "process:Settlement",
+      aggregateId: "o-1",
+    })
+  ).events.map((event) => event.type);
 
 // Breaks the next commit that goes through `transact`: `work` runs, then the transaction fails
 // the way a lost connection or a crash would, so nothing it staged is written.
@@ -234,6 +289,24 @@ describe("createUnitOfWork", () => {
       ["command:a", new Date(now.getTime() + 5_000).toISOString(), 1],
       ["command:b", new Date(now.getTime() + 9_000).toISOString(), 0],
     ]);
+  });
+
+  it("opens no transaction when nothing was staged", async () => {
+    const storage = await memory().createStorage({ logger: silentLogger });
+    const transact = storage.transact.bind(storage);
+    let transactions = 0;
+    storage.transact = (work) => {
+      transactions += 1;
+      return transact(work);
+    };
+    const unit = createUnitOfWork({ storage });
+    await unit.eventStore.load({ aggregateType: "order", aggregateId: "1" });
+    expect(await unit.inboxLedger.get(key)).toBeNull();
+    await unit.commit();
+    expect(transactions).toBe(0);
+    await unit.scheduler.cancel("command:none");
+    await unit.commit();
+    expect(transactions).toBe(1);
   });
 
   it("commits nothing when a stream moved since the unit loaded it", async () => {
@@ -433,6 +506,65 @@ describe.each(adapters)("a reaction attempt as a unit of work on %s", (_name, ad
     await settle(harness);
     expect(await orderTypes(harness)).toEqual(["OrderPlaced", "OrderPaid"]);
     expect(await scheduledTypes(harness)).toEqual(["ArchiveOrder"]);
+    expect(providerCalls).toHaveLength(2);
+  });
+
+  const processHarness = (retry: RetryConfig = { strategy: "none" }) =>
+    createReactiveHarness({
+      registry: processRegistry,
+      config: { runtime: { processes: { retry } } },
+      adapter: adapter(),
+    });
+
+  it("writes a process step's start, its handler's commands, its deadline entry and its claim together", async () => {
+    reset("ok");
+    const harness = await processHarness();
+    await place(harness);
+    await settle(harness);
+
+    expect(await orderTypes(harness)).toEqual(["OrderPlaced", "OrderPaid"]);
+    expect(await processTypes(harness)).toEqual([PROCESS_EVENTS.started, PROCESS_EVENTS.handled]);
+    expect((await scheduledTypes(harness)).sort()).toEqual([
+      "ArchiveOrder",
+      "bounda.ProcessDeadline",
+    ]);
+    expect(await claimOf(harness, "order.settlement")).toMatchObject({
+      status: "succeeded",
+      attempts: 1,
+    });
+    expect(seen[0]).toMatchObject({ scheduled: false, version: 2, eventTypes: ["OrderPaid"] });
+  });
+
+  it("writes ProcessFailed, the dead letter and the claim together, or neither, and then gives up again", async () => {
+    reset("refuse");
+    const harness = await processHarness();
+    const crash = breakNextCommit(harness.storage);
+    await place(harness);
+    await settle(harness);
+
+    expect(crash.broke()).toBe(true);
+    expect(await orderTypes(harness)).toEqual(["OrderPlaced"]);
+    expect(await processTypes(harness)).toEqual([]);
+    expect(await scheduledTypes(harness)).toEqual([]);
+    expect(await harness.storage.deadLetterStore.list()).toEqual([]);
+    expect(await claimOf(harness, "order.settlement")).toMatchObject({
+      status: "pending",
+      attempts: 1,
+    });
+
+    pastLease(harness);
+    await settle(harness);
+    expect(await orderTypes(harness)).toEqual(["OrderPlaced"]);
+    expect(await processTypes(harness)).toEqual([PROCESS_EVENTS.started, PROCESS_EVENTS.failed]);
+    expect(await scheduledTypes(harness)).toEqual([]);
+    expect(await harness.storage.deadLetterStore.list()).toMatchObject([
+      { subscriber: "order.settlement", errorType: "terminal", errorMessage: "provider refused" },
+    ]);
+    expect(await claimOf(harness, "order.settlement")).toMatchObject({
+      status: "succeeded",
+      attempts: 2,
+      lastError: "provider refused",
+    });
     expect(providerCalls).toHaveLength(2);
   });
 

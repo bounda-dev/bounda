@@ -59,7 +59,7 @@ const instance = (overrides: Partial<ProcessInstance> = {}): ProcessInstance => 
   reached: new Set(),
   correlationId: "c",
   parked: [],
-  failure: { eventId: "e-1", letter },
+  failure: { eventId: "e-1", letterId: "letter-1" },
   ...overrides,
 });
 
@@ -77,7 +77,6 @@ const setup = async () => {
   const { logger, entries } = createRecordingLogger();
   const clock = createFixedClock(new Date("2026-03-04T05:06:07.000Z"));
   const failures = createProcessFailures({
-    storage,
     ids: createSequentialIdGenerator({ prefix: "letter" }),
     clock,
     logger,
@@ -144,15 +143,45 @@ describe("letterOf", () => {
 });
 
 describe("file", () => {
-  it("stores the letter with the error's stack, counts it and warns", async () => {
+  it("stages the letter with the error's stack, counting and logging nothing yet", async () => {
     const { failures, storage, entries, telemetry } = await setup();
     const error = new Error("boom");
-    await failures.file(orderPayment, letter, error);
+    await failures.file(storage.deadLetterStore, orderPayment, letter, error);
     expect(await storage.deadLetterStore.get("letter-1")).toEqual({
       ...letter,
       errorStack: error.stack,
       status: "failed",
     });
+    expect(telemetry.counts).toEqual([]);
+    expect(entries).toEqual([]);
+  });
+
+  it("stores no stack when there is no error or it carries none", async () => {
+    const { failures, storage } = await setup();
+    await failures.file(storage.deadLetterStore, orderPayment, letter);
+    await failures.file(
+      storage.deadLetterStore,
+      orderPayment,
+      { ...letter, id: "letter-2" },
+      "not an error",
+    );
+    expect(await storage.deadLetterStore.get("letter-1")).not.toHaveProperty("errorStack");
+    expect(await storage.deadLetterStore.get("letter-2")).not.toHaveProperty("errorStack");
+  });
+
+  it("fails when the letter cannot be stored", async () => {
+    const { failures, storage, failFiling } = await setup();
+    failFiling();
+    await expect(
+      failures.file(storage.deadLetterStore, orderPayment, letter, new Error("boom")),
+    ).rejects.toThrow("store down");
+  });
+});
+
+describe("filed", () => {
+  it("counts the letter and warns, once its unit committed", async () => {
+    const { failures, entries, telemetry } = await setup();
+    failures.filed(orderPayment, letter);
     expect(telemetry.counts).toEqual([
       {
         metric: "bounda.dead_letters",
@@ -171,85 +200,6 @@ describe("file", () => {
         fields: { process: "orderPayment", eventId: "e-1", errorType: "terminal", attempts: 1 },
       },
     ]);
-  });
-
-  it("stores no stack when there is no error or it carries none", async () => {
-    const { failures, storage } = await setup();
-    await failures.file(orderPayment, letter);
-    await failures.file(orderPayment, { ...letter, id: "letter-2" }, "not an error");
-    expect(await storage.deadLetterStore.get("letter-1")).not.toHaveProperty("errorStack");
-    expect(await storage.deadLetterStore.get("letter-2")).not.toHaveProperty("errorStack");
-  });
-
-  it("fails when the letter cannot be stored, without counting it", async () => {
-    const { failures, entries, telemetry, failFiling } = await setup();
-    failFiling();
-    await expect(failures.file(orderPayment, letter, new Error("boom"))).rejects.toThrow(
-      "store down",
-    );
-    expect(telemetry.counts).toEqual([]);
-    expect(entries).toEqual([]);
-  });
-});
-
-describe("fileLater", () => {
-  it("files the letter when it can", async () => {
-    const { failures, storage } = await setup();
-    await failures.fileLater(orderPayment, letter, new Error("boom"));
-    expect(await storage.deadLetterStore.get("letter-1")).toMatchObject({ status: "failed" });
-  });
-
-  it("leaves the letter for later and warns when filing fails", async () => {
-    const { failures, storage, entries, failFiling } = await setup();
-    failFiling();
-    await expect(
-      failures.fileLater(orderPayment, letter, new Error("boom")),
-    ).resolves.toBeUndefined();
-    expect(await storage.deadLetterStore.get("letter-1")).toBeNull();
-    expect(entries).toEqual([
-      {
-        level: "warn",
-        message: "process dead letter not filed yet; it is filed when the instance is reached",
-        fields: { process: "orderPayment", letter: "letter-1", error: "store down" },
-      },
-    ]);
-  });
-});
-
-describe("healFailure", () => {
-  it("files the letter of a failed instance that was never filed", async () => {
-    const { failures, storage, entries } = await setup();
-    expect(await failures.healFailure(orderPayment, instance())).toBeNull();
-    expect(await storage.deadLetterStore.get("letter-1")).toEqual({ ...letter, status: "failed" });
-    expect(entries).toMatchObject([{ level: "warn", message: "process dead-lettered" }]);
-  });
-
-  it("returns the letter already filed without filing it again", async () => {
-    const { failures, storage, adds } = await setup();
-    await storage.deadLetterStore.add(letter);
-    await storage.deadLetterStore.updateStatus("letter-1", "replayed");
-    expect(await failures.healFailure(orderPayment, instance())).toEqual({
-      ...letter,
-      status: "replayed",
-    });
-    expect(adds()).toBe(1);
-  });
-
-  it("does nothing for an instance that is not failed or whose failure carries no letter", async () => {
-    const { failures, adds } = await setup();
-    expect(await failures.healFailure(orderPayment, instance({ status: "started" }))).toBeNull();
-    expect(await failures.healFailure(orderPayment, instance({ status: "completed" }))).toBeNull();
-    expect(
-      await failures.healFailure(orderPayment, instance({ failure: { eventId: "e-1" } })),
-    ).toBeNull();
-    expect(await failures.healFailure(orderPayment, instance({ failure: null }))).toBeNull();
-    expect(adds()).toBe(0);
-  });
-
-  it("fails when the letter cannot be filed", async () => {
-    const { failures, failFiling } = await setup();
-    failFiling();
-    await expect(failures.healFailure(orderPayment, instance())).rejects.toThrow("store down");
   });
 });
 

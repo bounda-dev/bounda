@@ -137,7 +137,7 @@ describe("a process handler run that fails", () => {
     expect(await scheduledCommands(harness)).toEqual(["ArchiveOrder"]);
   });
 
-  it("cancels them when writing its outcome loses a race and the rerun takes another path", async () => {
+  it("runs again on the new state when its commit conflicts, leaving nothing of the first run", async () => {
     let runs = 0;
     let harness: ReactiveHarness | undefined;
     placed = async ({ aggregateId, commands }) => {
@@ -149,14 +149,27 @@ describe("a process handler run that fails", () => {
       await commands.payOrder?.({ orderId: aggregateId, method: "card" }, { delay: "1h" });
       const stream = { aggregateType: "process:Follow", aggregateId };
       const { events } = (await harness?.storage.eventStore.load(stream)) ?? { events: [] };
-      const [started] = events;
-      if (started !== undefined) {
-        await harness?.storage.eventStore.append({
-          ...stream,
-          expectedVersion: events.length,
-          events: [{ ...started, id: "touch", version: events.length + 1, type: "ProcessTouched" }],
-        });
-      }
+      await harness?.storage.eventStore.append({
+        ...stream,
+        expectedVersion: events.length,
+        events: [
+          {
+            id: "touch",
+            ...stream,
+            version: events.length + 1,
+            type: "ProcessTouched",
+            payload: {},
+            timestamp: "2026-01-01T00:00:00.000Z",
+            metadata: {
+              correlationId: "c",
+              causationId: "c",
+              depth: 0,
+              schemaVersion: 1,
+              system: true,
+            },
+          },
+        ],
+      });
       return undefined;
     };
     harness = await setUp();
@@ -167,7 +180,7 @@ describe("a process handler run that fails", () => {
     expect(await scheduledCommands(harness)).toEqual(["ArchiveOrder"]);
   });
 
-  it("cancels the delayed commands of a deadline whose outcome is refused", async () => {
+  it("writes nothing of a deadline whose outcome is refused", async () => {
     placed = async ({ after }) => ({ nudge: after("1h") });
     nudged = async ({ state, aggregateId, commands }) => {
       await commands.payOrder?.({ orderId: aggregateId, method: "card" }, { delay: "1h" });
@@ -207,13 +220,17 @@ describe("a process handler run that fails", () => {
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
     const processing = harness.dispatcher.processUntilIdle();
     await started.promise;
+    expect(signal?.aborted).toBe(false);
     harness.clock.advance(60_000);
     await processing;
     resume.resolve();
 
     expect(await late.promise).toMatchObject({
       code: "REACTION_ABANDONED",
-      cause: { code: "HANDLER_TIMEOUT" },
+      cause: {
+        code: "HANDLER_TIMEOUT",
+        message: "process order.follow did not finish within 60000ms",
+      },
     });
     expect(signal?.aborted).toBe(true);
     const order = await harness.storage.eventStore.load({

@@ -6,12 +6,14 @@
   "durable_objects": {
     "bindings": [
       { "name": "STORE", "class_name": "Store" },
+      { "name": "PROCESS_STORE", "class_name": "ProcessStore" },
       { "name": "QUIET_STORE", "class_name": "QuietStore" },
       { "name": "SLICED_STORE", "class_name": "SlicedStore" },
       { "name": "BARE", "class_name": "Bare" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["Store", "QuietStore", "SlicedStore", "Bare"] }
+    { "tag": "v1", "new_sqlite_classes": ["Store", "QuietStore", "SlicedStore", "Bare"] },
+    { "tag": "v2", "new_sqlite_classes": ["ProcessStore"] }
   ]
 }

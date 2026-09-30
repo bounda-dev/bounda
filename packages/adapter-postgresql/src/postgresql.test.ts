@@ -1,6 +1,7 @@
 import {
   ConfigurationError,
   createApp,
+  DomainError,
   type FieldsArgs,
   fieldBuilder as f,
   type PayloadArgs,
@@ -323,7 +324,6 @@ describe.skipIf(container === null)("postgresql adapter", () => {
     await (probe.client.raw as Sql).unsafe(
       `ALTER TABLE "${prefix}scheduled_commands" DROP COLUMN "revision", DROP COLUMN "claim_id"`,
     );
-    await (probe.client.raw as Sql).unsafe(`ALTER TABLE "${prefix}inbox" DROP COLUMN "gave_up"`);
     await (probe.client.raw as Sql).unsafe(`ALTER TABLE "${prefix}inbox" DROP COLUMN "claim_id"`);
     await closeOpened();
 
@@ -367,11 +367,11 @@ describe.skipIf(container === null)("postgresql adapter", () => {
       subscriber: "policies",
       eventId: "e-1",
       error: "nope",
-      gaveUp: "terminal",
     });
     expect(await storage.inboxLedger.get({ subscriber: "policies", eventId: "e-1" })).toMatchObject(
       {
-        gaveUp: "terminal",
+        status: "failed",
+        lastError: "nope",
       },
     );
   });
@@ -671,7 +671,57 @@ const registry = {
   },
 } as const satisfies Registry;
 
+const refusingRegistry = (runs: string[]) =>
+  ({
+    aggregates: {
+      order: {
+        ...registry.aggregates.order,
+        policies: {
+          refuseOnOrderPlaced: {
+            module: {
+              handler: async ({ event }: { event: { aggregateId: string } }) => {
+                runs.push(event.aggregateId);
+                await new Promise((resolve) => setTimeout(resolve, 20));
+                throw new DomainError("refused");
+              },
+            },
+          },
+        },
+      },
+    },
+    readModels: {},
+  }) as const satisfies Registry;
+
 describe.skipIf(container === null)("an app on the postgresql adapter", () => {
+  it("hands each policy attempt to one of two instances on the same store, with its give-up written once", async () => {
+    const runs: string[] = [];
+    const prefix = `two_${run}_`;
+    const registry = refusingRegistry(runs);
+    const first = await createTestApp({
+      registry,
+      adapter: postgresql({ url, tablePrefix: prefix, maxConnections: 3 }),
+      config: { runtime: { policies: { retry: { strategy: "none" } } } },
+    });
+    const second = await createTestApp({
+      registry,
+      adapter: postgresql({ url, tablePrefix: prefix, maxConnections: 3 }),
+      config: { runtime: { policies: { retry: { strategy: "none" } } } },
+    });
+    for (const orderId of ["o-1", "o-2", "o-3", "o-4"]) {
+      await first.app.commands.placeOrder({ orderId, total: 1 });
+    }
+
+    await Promise.all([first.app.processUntilIdle(), second.app.processUntilIdle()]);
+    await Promise.all([first.app.processUntilIdle(), second.app.processUntilIdle()]);
+
+    expect([...runs].sort()).toEqual(["o-1", "o-2", "o-3", "o-4"]);
+    expect(await first.app.deadLetters.count()).toBe(4);
+    expect((await first.app.getLag()).maxLag).toBe(0);
+    expect((await second.app.getLag()).maxLag).toBe(0);
+    await first.app.stop();
+    await second.app.stop();
+  });
+
   it("runs commands, policies, projections, scheduled commands and SQL queries end to end", async () => {
     const { app, clock } = await createTestApp({
       registry,

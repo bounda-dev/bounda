@@ -3,17 +3,18 @@ import { ConfigurationError, NotFoundError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
+import { causeOf } from "../unit-of-work/unit-of-work.ts";
 import type { ProcessesRuntime, ProcessRuntime } from "./build-processes.ts";
 import type { DeadlineStep } from "./deadline-step.ts";
 import { PROCESS_DEADLINE_COMMAND, reachedKey } from "./deadlines.ts";
 import type { DeadlineTarget } from "./deliver-deadline.ts";
-import { blockedOn, type ProcessFailures } from "./failures.ts";
+import { blockedOn } from "./failures.ts";
 import type { ProcessHandlers } from "./handlers.ts";
-import type { ProcessInstances } from "./instances.ts";
 import { lifecycleEntries, type ProcessInstance } from "./lifecycle.ts";
 import type { ResumeParked } from "./resume.ts";
 import { completesOn, handledEntries, handlerOf, letThrough } from "./routes.ts";
 import type { DeadlineSchedule } from "./schedule.ts";
+import type { ProcessUnits } from "./units.ts";
 
 interface ReplayArgs {
   /**
@@ -45,8 +46,9 @@ export interface ReplayDeadlineArgs extends ReplayArgs {
  */
 export interface ProcessDeadLetters {
   /**
-   * Ignores the inbox ledger. A failed process then drains its parked events in order before it
-   * resumes; one that fails again becomes the new failure, and the rest stay parked.
+   * Ignores the inbox ledger. The replayed step is one unit of work; a failed process then drains
+   * its parked events in order before it resumes, one unit each; one that fails again becomes the
+   * new failure, and the rest stay parked.
    */
   replay(args: ReplayProcessArgs): Promise<void>;
   /**
@@ -69,8 +71,7 @@ export interface ProcessDeadLetters {
 
 export interface CreateProcessReplayArgs {
   readonly processes: ProcessesRuntime;
-  readonly instances: ProcessInstances;
-  readonly failures: ProcessFailures;
+  readonly units: ProcessUnits;
   readonly handlers: ProcessHandlers;
   readonly schedule: DeadlineSchedule;
   readonly deadlineStep: DeadlineStep;
@@ -97,25 +98,33 @@ const registered = (processes: ProcessesRuntime, name: string): ProcessRuntime =
 
 export const createProcessReplay: CreateProcessReplayFunction = ({
   processes,
-  instances,
-  failures,
+  units,
   handlers,
   schedule,
   deadlineStep,
   resume,
   logger,
 }) => {
-  const { load, appendPastParks } = instances;
+  const { load } = units.live;
 
-  const completeOnReplay = async (
+  const committed = async (work: Parameters<ProcessUnits["commit"]>[0]): Promise<void> => {
+    try {
+      await units.commit(work);
+    } catch (error) {
+      throw causeOf(error);
+    }
+  };
+
+  const resumed = async (
     process: ProcessRuntime,
-    event: StoredEvent,
     instanceId: string,
+    letter: string | undefined,
   ): Promise<void> => {
-    if (!completesOn(process, event)) return;
-    const current = await load(process, instanceId);
-    if (current.status !== "started" && current.status !== "failed") return;
-    await appendPastParks(process, instanceId, current, [lifecycleEntries.completed(event)]);
+    try {
+      await resume.resumeParked(process, instanceId, letter);
+    } catch (error) {
+      throw causeOf(error);
+    }
   };
 
   const replay = async ({
@@ -140,32 +149,33 @@ export const createProcessReplay: CreateProcessReplayFunction = ({
         `Process "${name}" has no instance for ${event.aggregateType}:${event.aggregateId}`,
       );
     }
-    if (instance.status === "failed" && !failedHere) {
-      await failures.healFailure(process, instance);
-      throw failedOnAnotherStep(process, instanceId);
-    }
-    if (instance.handledEventIds.has(event.id)) {
-      await completeOnReplay(process, event, instanceId);
-    } else {
-      const write = (state: object) => () =>
-        appendPastParks(process, instanceId, instance, handledEntries(process, event, state));
-      if (handler === undefined) {
-        letThrough(process, instanceId, event, logger);
-        await write(instance.state)();
+    if (instance.status === "failed" && !failedHere) throw failedOnAnotherStep(process, instanceId);
+    await committed(async (unit, within) => {
+      const current = await within.load(process, instanceId);
+      if (current.status !== "started" && current.status !== "failed") return;
+      if (current.handledEventIds.has(event.id)) {
+        if (!completesOn(process, event)) return;
+        await within.append(process, instanceId, current, [lifecycleEntries.completed(event)]);
       } else {
-        const handled = await handlers.runEventHandler({
-          process,
-          event,
-          instanceId,
-          instance,
-          attempt: 1,
-          replay,
-        });
-        await handled.record(write(handled.state));
+        let state = current.state;
+        if (handler === undefined) {
+          letThrough(process, instanceId, event, logger);
+        } else {
+          state = await handlers.runEventHandler({
+            process,
+            event,
+            instanceId,
+            instance: current,
+            attempt: 1,
+            replay,
+            within: unit,
+          });
+        }
+        await within.append(process, instanceId, current, handledEntries(process, event, state));
       }
-    }
-    await resume.resumeParked(process, instanceId, letter);
-    await schedule.reconcile(process, instanceId);
+      await schedule.stage(unit, process, instanceId);
+    });
+    await resumed(process, instanceId, letter);
     logger.info("process handler replayed", { process: process.name, eventId: event.id });
   };
 
@@ -179,7 +189,6 @@ export const createProcessReplay: CreateProcessReplayFunction = ({
     const instance = await load(process, payload.aggregateId);
     const failed = instance.failure?.deadline;
     if (instance.status === "failed" && !blockedOn(instance, letter)) {
-      await failures.healFailure(process, instance);
       throw failedOnAnotherStep(process, payload.aggregateId);
     }
     if (instance.status !== "failed" || failed === undefined) {
@@ -187,18 +196,21 @@ export const createProcessReplay: CreateProcessReplayFunction = ({
         `Process "${process.name}" has no failed deadline for ${payload.aggregateId}`,
       );
     }
-    if (!instance.reached.has(reachedKey(failed))) {
+    await committed(async (unit, within) => {
+      const current = await within.load(process, payload.aggregateId);
+      if (current.reached.has(reachedKey(failed))) return;
       await deadlineStep.attempt({
+        unit,
         process,
         instanceId: payload.aggregateId,
-        instance,
+        instance: current,
         due: failed,
-        context: { ...context, correlationId: instance.correlationId ?? context.correlationId },
+        context: { ...context, correlationId: current.correlationId ?? context.correlationId },
         replay,
       });
-    }
-    await resume.resumeParked(process, payload.aggregateId, letter);
-    await schedule.reconcile(process, payload.aggregateId);
+      await schedule.stage(unit, process, payload.aggregateId);
+    });
+    await resumed(process, payload.aggregateId, letter);
   };
 
   const instanceOfLetter = async (letter: DeadLetter): Promise<ProcessInstance | null> => {
@@ -207,7 +219,7 @@ export const createProcessReplay: CreateProcessReplayFunction = ({
     const instanceId =
       letter.eventType === PROCESS_DEADLINE_COMMAND
         ? letter.aggregateId
-        : await instances
+        : await units.live
             .parkedEvent({
               eventId: letter.eventId,
               eventType: letter.eventType,
@@ -225,7 +237,7 @@ export const createProcessReplay: CreateProcessReplayFunction = ({
     parkedBehind: async (letter) => {
       const instance = letter.status === "failed" ? await instanceOfLetter(letter) : null;
       const failure = instance?.failure;
-      return instance?.status === "failed" && failure?.letter?.id === letter.id
+      return instance?.status === "failed" && failure?.letterId === letter.id
         ? instance.parked.filter((parked) => parked.eventId !== failure.eventId).length
         : 0;
     },
