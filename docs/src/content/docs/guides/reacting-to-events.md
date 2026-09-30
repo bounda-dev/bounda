@@ -228,13 +228,11 @@ A few rules keep it correct:
   the command's own `idempotencyKey` does not change, but one that already ran runs again: its
   handler decides from state and returns no events the second time, as `recordConfirmationSent`
   does in the [storefront example](/guides/storefront-example/).
-- **A policy run that fails leaves no command behind**, immediate or delayed: they are stored
-  only when the attempt commits (see [what the runtime promises](#what-the-runtime-promises)).
-  A process run that fails takes its delayed commands back: when the handler throws, times out,
-  or its outcome cannot be recorded, the delayed commands that run scheduled are cancelled, so a
-  retry that decides differently leaves none behind. Its immediate commands have already run,
-  and a delayed command stays when its run is never seen to fail (the runtime crashed mid-run) or
-  was still being scheduled as its run gave up.
+- **A run that fails leaves no command behind**, immediate or delayed, whether a policy's or a
+  process step's: they are stored only when the attempt commits (see
+  [what the runtime promises](#what-the-runtime-promises)), so a retry that decides differently
+  starts from nothing. A crash mid-run leaves nothing either, only the claim, which expires with
+  its lease.
 
 ## Retries and timeouts
 
