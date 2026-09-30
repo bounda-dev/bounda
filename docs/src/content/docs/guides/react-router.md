@@ -58,16 +58,21 @@ export const middleware: Route.MiddlewareFunction[] = [boundaMiddleware];
 // app/routes/register.tsx
 import { bounda } from "@bounda-dev/react-router/app";
 import { redirect } from "react-router";
+import { failure, field } from "../errors.server";
 import type { Route } from "./+types/register";
 
 export const action = async ({ request, context }: Route.ActionArgs) => {
   const form = await request.formData();
   const userId = crypto.randomUUID();
-  await context.get(bounda).commands.registerUser({
-    userId,
-    email: String(form.get("email")),
-    name: String(form.get("name")),
-  });
+  try {
+    await context.get(bounda).commands.registerUser({
+      userId,
+      email: field(form, "email"),
+      name: field(form, "name"),
+    });
+  } catch (error) {
+    return failure(error);
+  }
   return redirect(`/users/${userId}`);
 };
 ```
@@ -92,7 +97,8 @@ type.
 ## Errors from the domain
 
 A command throws `ValidationError` when the payload does not match its schema and `DomainError`
-when a rule rejects it. Map them once and return them as data, so the form can show them:
+when a rule rejects it. Map them once and return them as data, so the form can show them. Read
+form fields as strings, a missing one as an empty string, so the schema is what rejects it:
 
 ```ts
 // app/errors.server.ts
@@ -105,6 +111,11 @@ export const failure = (error: unknown) => {
   }
   if (error instanceof DomainError) return data({ error: error.message, issues: [] }, { status: 409 });
   throw error;
+};
+
+export const field = (form: FormData, name: string): string => {
+  const value = form.get(name);
+  return typeof value === "string" ? value.trim() : "";
 };
 ```
 

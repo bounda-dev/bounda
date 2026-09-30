@@ -262,13 +262,18 @@ export const middleware: Route.MiddlewareFunction[] = [boundaMiddleware];
 
 // a route: actions dispatch, loaders query
 import { bounda } from "@bounda-dev/react-router/app";
+import { failure, field } from "../errors.server";
 export const action = async ({ request, context }: Route.ActionArgs) => {
   const form = await request.formData();
-  await context.get(bounda).commands.registerUser({
-    userId: crypto.randomUUID(),
-    email: String(form.get("email")),
-    name: String(form.get("name")),
-  });
+  try {
+    await context.get(bounda).commands.registerUser({
+      userId: crypto.randomUUID(),
+      email: field(form, "email"),
+      name: field(form, "name"),
+    });
+  } catch (error) {
+    return failure(error);
+  }
   return redirect("/users");
 };
 export const loader = ({ context }: Route.LoaderArgs) => context.get(bounda).queries.listUsers({});
@@ -281,8 +286,10 @@ export const loader = ({ context }: Route.LoaderArgs) => context.get(bounda).que
 - The app in the context reads its own writes by default (`bounda({ consistency: "immediate" })`):
   a page reached right after a command sees its read models. Never call `processUntilIdle()` in a
   route.
-- Map `ValidationError` to a 400 with `error.issues` and `DomainError` to a 409 in one helper;
-  let anything else reach the `ErrorBoundary`.
+- Map `ValidationError` to a 400 with `error.issues` and `DomainError` to a 409 in one helper
+  (`failure`); let anything else reach the `ErrorBoundary`. Read form fields with a `field` helper
+  that returns a missing one as `""`, never `String(form.get(...))`, which turns it into `"null"`
+  and slips past the schema.
 - Typecheck with `react-router typegen && tsc`; `.react-router/types` holds the route types and
   Bounda's `+types` sit next to the modules. They do not clash.
 
