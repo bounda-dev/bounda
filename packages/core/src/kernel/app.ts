@@ -9,8 +9,9 @@ import { type IdGenerator, uuidV7IdGenerator } from "../contracts/ids.ts";
 import { type Logger, silentLogger } from "../contracts/logger.ts";
 import type { CommandsFacade, QueriesFacade, Registry } from "../modules/registry.ts";
 import { validateRegistry } from "../modules/validate.ts";
-import type { AppRegistry } from "../register/index.ts";
+import type { AppEnv, AppRegistry } from "../register/index.ts";
 import { buildAggregates } from "./aggregate/build-aggregates.ts";
+import { createCollaborators } from "./aggregate/collaborators.ts";
 import { withUpcasting } from "./aggregate/upcasting.ts";
 import { createCommandsFacade } from "./command/facade.ts";
 import { createCommandPipeline } from "./command/pipeline.ts";
@@ -57,8 +58,10 @@ export interface BoundaApp<R extends Registry = AppRegistry> {
    */
   start(): void;
   /**
-   * Stops background work, waits for passes in flight and closes every storage connection. Every
-   * call, including one made while a stop is under way, waits for that same stop.
+   * Stops background work, waits for passes in flight and closes every storage connection, then
+   * every collaborator a `create` export built that has `[Symbol.asyncDispose]`, last built first;
+   * one that fails to close is logged and the rest still close. Every call, including one made
+   * while a stop is under way, waits for that same stop.
    */
   stop(): Promise<void>;
   /**
@@ -148,6 +151,11 @@ export interface CreateAppArgs<R extends Registry> {
    * Defaults to `systemClock`.
    */
   readonly clock?: Clock;
+  /**
+   * The host's environment, which every collaborator implementation's `create` receives. Defaults
+   * to an empty object.
+   */
+  readonly env?: AppEnv;
 }
 
 export interface CreateAppFunction {
@@ -156,8 +164,8 @@ export interface CreateAppFunction {
 
 /**
  * Wires a Bounda application from its registry and configuration. Nothing here touches the file
- * system or Node APIs; `@bounda-dev/core/node` adds `boot()` for that. Storage is opened here, so
- * call `stop()` when done.
+ * system or Node APIs; `@bounda-dev/core/node` adds `boot()` for that. Storage is opened and the
+ * collaborators' `create` exports run here, so call `stop()` when done.
  */
 export const createApp: CreateAppFunction = async <R extends Registry>({
   registry,
@@ -165,6 +173,7 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
   logger = silentLogger,
   ids = uuidV7IdGenerator,
   clock = systemClock,
+  env = {} as AppEnv,
 }: CreateAppArgs<R>): Promise<BoundaApp<R>> => {
   validateRegistry(registry);
   const config = resolveConfig(rawConfig);
@@ -173,182 +182,200 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
       `storage "${config.storage.name}" is a definition without factories. Import the adapter package's factory.`,
     );
   }
-  const opened = await config.storage.createStorage({ logger });
-  const aggregates = buildAggregates({ registry, config });
-  const storage = {
-    ...opened,
-    eventStore: withUpcasting({ eventStore: opened.eventStore, aggregates }),
-  };
-  const readModels = await buildReadModels({ registry, config, logger });
-  const pipeline = createCommandPipeline({
-    aggregates,
-    eventStore: storage.eventStore,
-    scheduler: storage.scheduler,
-    config,
-    ids,
-    clock,
+  // Built before the storage opens and closed after it, so a `create` that fails leaves nothing
+  // open; a failure further on closes them again.
+  const collaborators = await createCollaborators({
+    registry,
+    config: config.collaborators,
+    env,
     logger,
-  });
-  const queryRunner = createQueryRunner({ queries: buildQueries({ readModels }), readModels });
-  const processDefinitions = buildProcesses({ registry, aggregates, config });
-  const processes = createProcessRunner({
-    processes: processDefinitions,
-    aggregates,
-    pipeline,
-    storage,
-    config,
-    ids,
     clock,
-    logger,
   });
-  const policies = buildPolicies({ registry, aggregates });
-  const policyExecutor = createPolicyExecutor({ aggregates, pipeline, config, clock });
-  const reactive = [
-    {
-      subscriber: createPolicySubscriber({
+  try {
+    const opened = await config.storage.createStorage({ logger });
+    const aggregates = buildAggregates({ registry, collaborators: collaborators.byAggregate });
+    const storage = {
+      ...opened,
+      eventStore: withUpcasting({ eventStore: opened.eventStore, aggregates }),
+    };
+    const readModels = await buildReadModels({ registry, config, logger });
+    const pipeline = createCommandPipeline({
+      aggregates,
+      eventStore: storage.eventStore,
+      scheduler: storage.scheduler,
+      config,
+      ids,
+      clock,
+      logger,
+    });
+    const queryRunner = createQueryRunner({ queries: buildQueries({ readModels }), readModels });
+    const processDefinitions = buildProcesses({ registry, aggregates, config });
+    const processes = createProcessRunner({
+      processes: processDefinitions,
+      aggregates,
+      pipeline,
+      storage,
+      config,
+      ids,
+      clock,
+      logger,
+    });
+    const policies = buildPolicies({ registry, aggregates });
+    const policyExecutor = createPolicyExecutor({ aggregates, pipeline, config, clock });
+    const reactive = [
+      {
+        subscriber: createPolicySubscriber({
+          policies,
+          executor: policyExecutor,
+          storage,
+          config,
+          clock,
+          logger,
+        }),
+        following: policies.all.length > 0,
+      },
+      { subscriber: processes, following: processDefinitions.all.length > 0 },
+    ];
+    const following = reactive.filter((entry) => entry.following).map((entry) => entry.subscriber);
+    await alignReactiveCheckpoints({
+      eventStore: storage.eventStore,
+      checkpointStore: storage.checkpointStore,
+      following: following.map((subscriber) => subscriber.name),
+      idle: reactive.filter((entry) => !entry.following).map((entry) => entry.subscriber.name),
+    });
+    const dispatcher = createDispatcher({
+      eventStore: storage.eventStore,
+      checkpointStore: storage.checkpointStore,
+      subscribers: [
+        ...Object.values(readModels.byName).map((readModel) =>
+          createProjectionSubscriber({
+            readModel,
+            logger,
+            budget: { clock, maxMs: config.runtime.dispatcher.projectionBatchTimeMs },
+          }),
+        ),
+        ...following,
+      ],
+      batchSize: config.runtime.dispatcher.batchSize,
+      pollIntervalMs: config.runtime.dispatcher.pollIntervalMs,
+      backoff: config.runtime.dispatcher.backoff,
+      catchUp: config.runtime.dispatcher.catchUp,
+      idleIntervalMs: config.runtime.dispatcher.idleIntervalMs,
+      ...(storage.notifier === undefined ? {} : { notifier: storage.notifier }),
+      clock,
+      logger,
+    });
+    const worker = createScheduledCommandWorker({
+      storage,
+      aggregates,
+      pipeline,
+      processes,
+      delayedPolicies: createDelayedPolicies({
         policies,
         executor: policyExecutor,
-        storage,
+        eventStore: storage.eventStore,
         config,
-        clock,
-        logger,
       }),
-      following: policies.all.length > 0,
-    },
-    { subscriber: processes, following: processDefinitions.all.length > 0 },
-  ];
-  const following = reactive.filter((entry) => entry.following).map((entry) => entry.subscriber);
-  await alignReactiveCheckpoints({
-    eventStore: storage.eventStore,
-    checkpointStore: storage.checkpointStore,
-    following: following.map((subscriber) => subscriber.name),
-    idle: reactive.filter((entry) => !entry.following).map((entry) => entry.subscriber.name),
-  });
-  const dispatcher = createDispatcher({
-    eventStore: storage.eventStore,
-    checkpointStore: storage.checkpointStore,
-    subscribers: [
-      ...Object.values(readModels.byName).map((readModel) =>
-        createProjectionSubscriber({
-          readModel,
-          logger,
-          budget: { clock, maxMs: config.runtime.dispatcher.projectionBatchTimeMs },
-        }),
-      ),
-      ...following,
-    ],
-    batchSize: config.runtime.dispatcher.batchSize,
-    pollIntervalMs: config.runtime.dispatcher.pollIntervalMs,
-    backoff: config.runtime.dispatcher.backoff,
-    catchUp: config.runtime.dispatcher.catchUp,
-    idleIntervalMs: config.runtime.dispatcher.idleIntervalMs,
-    ...(storage.notifier === undefined ? {} : { notifier: storage.notifier }),
-    clock,
-    logger,
-  });
-  const worker = createScheduledCommandWorker({
-    storage,
-    aggregates,
-    pipeline,
-    processes,
-    delayedPolicies: createDelayedPolicies({
-      policies,
-      executor: policyExecutor,
-      eventStore: storage.eventStore,
       config,
-    }),
-    config,
-    ids,
-    clock,
-    logger,
-  });
-  const deadLetters = createDeadLetters({
-    storage,
-    pipeline,
-    policies,
-    policyExecutor,
-    processes,
-    config,
-    ids,
-    clock,
-    logger,
-  });
-  const lag = meter().createObservableGauge(METRICS.lag, {
-    description: "Events each subscriber is behind the head of the stream",
-    unit: "{event}",
-  });
-  const observeLag = async (observer: ObservableResult): Promise<void> => {
-    const current = await dispatcher.getLag();
-    for (const subscriber of current.subscribers) {
-      observer.observe(subscriber.lag, { [ATTRIBUTES.subscriber]: subscriber.subscriber });
-    }
-  };
-  lag.addCallback(observeLag);
-  const role = config.runtime.role;
-  let stopping: Promise<void> | undefined;
-
-  logger.info("bounda app created", {
-    role,
-    aggregates: Object.keys(aggregates.byName),
-    readModels: Object.keys(readModels.byName),
-  });
-
-  return {
-    commands: createCommandsFacade({
-      aggregates,
-      dispatch: (command) => pipeline.dispatch(command),
-    }) as CommandsFacade<R>,
-    queries: queryRunner.facade as QueriesFacade<R>,
-    config,
-    role,
-    start: () => {
-      if (role === "web" || stopping !== undefined) return;
-      dispatcher.start();
-      worker.start();
-    },
-    stop: () => {
-      stopping ??= (async () => {
-        lag.removeCallback(observeLag);
-        await Promise.all([dispatcher.stop(), worker.stop()]);
-        await readModels.close();
-        await storage.close();
-      })();
-      return stopping;
-    },
-    processUntilIdle: async ({ maxPasses = Number.POSITIVE_INFINITY } = {}) => {
-      for (let round = 0; round < maxPasses; round += 1) {
-        const advanced = await dispatcher.processOnce();
-        const ran = await worker.runOnce();
-        if (!advanced && ran === 0) return { idle: true };
+      ids,
+      clock,
+      logger,
+    });
+    const deadLetters = createDeadLetters({
+      storage,
+      pipeline,
+      policies,
+      policyExecutor,
+      processes,
+      config,
+      ids,
+      clock,
+      logger,
+    });
+    const lag = meter().createObservableGauge(METRICS.lag, {
+      description: "Events each subscriber is behind the head of the stream",
+      unit: "{event}",
+    });
+    const observeLag = async (observer: ObservableResult): Promise<void> => {
+      const current = await dispatcher.getLag();
+      for (const subscriber of current.subscribers) {
+        observer.observe(subscriber.lag, { [ATTRIBUTES.subscriber]: subscriber.subscriber });
       }
-      return { idle: false };
-    },
-    nextDueAt: () => storage.scheduler.nextDueAt({ leaseMs: worker.leaseMs }),
-    catchUpReadModels: async ({ through } = {}) => {
-      if (through === undefined) return dispatcher.catchUp("projection");
-      if (through.scheduled) return;
-      await dispatcher.catchUpThrough(through);
-    },
-    rebuildReadModel: (name, { maxEvents } = {}) =>
-      rebuildReadModel({
-        registry,
-        config: rawConfig,
-        name,
-        logger,
-        ...(maxEvents === undefined ? {} : { maxEvents }),
+    };
+    lag.addCallback(observeLag);
+    const role = config.runtime.role;
+    let stopping: Promise<void> | undefined;
+
+    logger.info("bounda app created", {
+      role,
+      aggregates: Object.keys(aggregates.byName),
+      readModels: Object.keys(readModels.byName),
+    });
+
+    return {
+      commands: createCommandsFacade({
+        aggregates,
+        dispatch: (command) => pipeline.dispatch(command),
+      }) as CommandsFacade<R>,
+      queries: queryRunner.facade as QueriesFacade<R>,
+      config,
+      role,
+      start: () => {
+        if (role === "web" || stopping !== undefined) return;
+        dispatcher.start();
+        worker.start();
+      },
+      stop: () => {
+        stopping ??= (async () => {
+          try {
+            lag.removeCallback(observeLag);
+            await Promise.all([dispatcher.stop(), worker.stop()]);
+            await readModels.close();
+            await storage.close();
+          } finally {
+            await collaborators.dispose();
+          }
+        })();
+        return stopping;
+      },
+      processUntilIdle: async ({ maxPasses = Number.POSITIVE_INFINITY } = {}) => {
+        for (let round = 0; round < maxPasses; round += 1) {
+          const advanced = await dispatcher.processOnce();
+          const ran = await worker.runOnce();
+          if (!advanced && ran === 0) return { idle: true };
+        }
+        return { idle: false };
+      },
+      nextDueAt: () => storage.scheduler.nextDueAt({ leaseMs: worker.leaseMs }),
+      catchUpReadModels: async ({ through } = {}) => {
+        if (through === undefined) return dispatcher.catchUp("projection");
+        if (through.scheduled) return;
+        await dispatcher.catchUpThrough(through);
+      },
+      rebuildReadModel: (name, { maxEvents } = {}) =>
+        rebuildReadModel({
+          registry,
+          config: rawConfig,
+          name,
+          logger,
+          ...(maxEvents === undefined ? {} : { maxEvents }),
+        }),
+      pendingRebuilds: async () => {
+        const paused = await Promise.all(
+          Object.values(readModels.byName).map(async ({ name, ports }) =>
+            (await pendingRebuilds(ports.checkpointStore)).includes(name) ? [name] : [],
+          ),
+        );
+        return paused.flat();
+      },
+      deadLetters,
+      getLag: async () => ({
+        ...(await dispatcher.getLag()),
+        waitingDeadlines: worker.waitingDeadlines(),
       }),
-    pendingRebuilds: async () => {
-      const paused = await Promise.all(
-        Object.values(readModels.byName).map(async ({ name, ports }) =>
-          (await pendingRebuilds(ports.checkpointStore)).includes(name) ? [name] : [],
-        ),
-      );
-      return paused.flat();
-    },
-    deadLetters,
-    getLag: async () => ({
-      ...(await dispatcher.getLag()),
-      waitingDeadlines: worker.waitingDeadlines(),
-    }),
-  };
+    };
+  } catch (error) {
+    await collaborators.dispose();
+    throw error;
+  }
 };

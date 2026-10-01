@@ -134,7 +134,8 @@ const errorMessage = (error: unknown): string =>
  * models in the object's SQLite, with no background loop. A command updates the read models
  * before it resolves; policies, processes, scheduled commands and retries run in the object's
  * alarm, which it arms itself for whatever comes next. One object is one store: give each tenant
- * its own with `idFromName(tenant)`.
+ * its own with `idFromName(tenant)`. The object's `env` is what collaborator implementations
+ * receive in `create`, once per object.
  */
 export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registry>({
   registry,
@@ -154,6 +155,7 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
         this.#app = await createApp<R>({
           registry,
           config: configForObject(config, ctx.storage),
+          env,
           logger,
           clock,
           ...(ids === undefined ? {} : { ids }),

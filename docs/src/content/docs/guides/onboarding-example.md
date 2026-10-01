@@ -49,6 +49,21 @@ export default defineConfig({
 });
 ```
 
+**An implementation built from the environment.** The `console` email sender exports `create`
+instead of a default: it reads its sender address from `EMAIL_FROM` in `env` and writes through
+the app's logger, once, when the app starts:
+
+```ts
+export const create: Implementation.Create = ({ env, logger }) => {
+  const from = env.EMAIL_FROM ?? "welcome@onboarding.localhost";
+  return {
+    send: async ({ to, name }, idempotencyKey) => {
+      logger.info("welcome email", { from, to, name, idempotencyKey });
+    },
+  };
+};
+```
+
 **A delayed effect.** The policy exports `delay`, read from `WELCOME_EMAIL_DELAY`, so the runtime
 runs it a minute after `UserRegistered` was stored, with an `idempotencyKey` that survives its
 retries. It is a policy rather than the process because the email does not depend on what happens

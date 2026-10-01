@@ -122,7 +122,8 @@ A collaborator is what the aggregate's handlers call outside the app: an invento
 mailer, a payment provider. It is a directory at the root of the aggregate, named after the
 port, and every handler of the aggregate receives it under that name: its commands, its policies
 and every handler of its processes. `index.ts` exports the interface, named after the directory
-in PascalCase; every other file in the directory implements it, with a default export.
+in PascalCase; every other file in the directory implements it, with a default export or with a
+`create` function.
 
 ```ts
 // app/domain/order/inventory/index.ts
@@ -145,6 +146,42 @@ in place, and the generated registry checks every implementation against the int
 one that does not fulfil it fails `tsc` either way. An interface may be callable instead of an
 object, `export type Notifier = (message: string) => Promise<void>;`, and the handler then calls
 `notifier(...)`.
+
+An implementation with state, such as a client, a connection pool or a secret, exports `create`
+instead of a default, never both. The app calls it once when it is created, and every handler
+receives what it returns; it may be async.
+
+```ts
+// app/domain/order/inventory/http.ts
+import type { Implementation } from "./+types/http";
+
+export const create: Implementation.Create = ({ env, logger }) => {
+  const url = env.INVENTORY_URL;
+  if (url === undefined) throw new Error("INVENTORY_URL is not set");
+  return {
+    available: async (skus) => {
+      const response = await fetch(`${url}/available`, {
+        method: "POST",
+        body: JSON.stringify(skus),
+      });
+      logger.debug("inventory checked", { status: response.status });
+      return response.ok;
+    },
+  };
+};
+```
+
+`create` receives the host's environment as `env` (`process.env` after `.env` is loaded under
+`boot()`, the Durable Object's `env` on Cloudflare, what a test passes to `createTestApp`), the
+app's `logger` and its `clock`. It runs once per app: once per process under `boot()`, once per
+Durable Object, once per `createTestApp`. When what it returns has `[Symbol.asyncDispose]`,
+`app.stop()` calls it after closing the storage, the last one built first; one that fails to
+close is logged and the rest still close. A default export is never closed, since every app in
+the process shares the module.
+
+Open no connection and read no environment at the top of an implementation module: the registry
+imports every implementation, also those the configuration does not choose. Only the chosen one's
+`create` runs.
 
 `bounda.config.ts` picks one implementation per port, by aggregate and port in camelCase, with
 the implementation's file name as the value. The generator emits the type of that section, so a
@@ -402,7 +439,7 @@ always present in the handler: callers see the schema's input type, handlers its
 | `.bounda/registry.ts` | Every module, grouped as the runtime needs it. `boot()` imports it |
 | `.bounda/register.d.ts` | Registers the registry type and the type of the `collaborators` section with `@bounda-dev/core/register`, so `boot()` and `BoundaApp` are typed for the project without a type argument and `defineConfig` checks the implementation names |
 | `.bounda/types.ts` | The state, events, collaborators, commands, rows and queries maps the `+types` build on |
-| `**/+types/<name>.ts` | The argument types each module imports; for an implementation, its port's interface as `Implementation.Contract` |
+| `**/+types/<name>.ts` | The argument types each module imports; for an implementation, its port's interface as `Implementation.Contract`, and `Implementation.Create` and `Implementation.CreateArgs` for a `create` |
 
 They are derived from your code, so they are not versioned. `tsconfig.json` must include them as
 `.bounda/**/*` (TypeScript skips a bare `.bounda` entry because the directory starts with a dot);

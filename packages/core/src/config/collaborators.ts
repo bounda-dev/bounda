@@ -1,5 +1,5 @@
 import { ConfigurationError } from "../contracts/errors.ts";
-import type { CollaboratorModules } from "../modules/collaborator.ts";
+import type { CollaboratorModules, ImplementationModule } from "../modules/collaborator.ts";
 
 export interface SelectCollaboratorsArgs {
   readonly aggregate: string;
@@ -11,14 +11,14 @@ export interface SelectCollaboratorsArgs {
 }
 
 export interface SelectCollaboratorsFunction {
-  (args: SelectCollaboratorsArgs): Readonly<Record<string, unknown>>;
+  (args: SelectCollaboratorsArgs): Readonly<Record<string, ImplementationModule<unknown>>>;
 }
 
 const describe = (names: readonly string[]): string => names.map((name) => `"${name}"`).join(", ");
 
 /**
- * Picks one implementation per port of an aggregate: what the configuration names, or the only
- * one there is. Anything else is a `ConfigurationError` that names the aggregate, the port and
+ * Picks one implementation module per port of an aggregate: what the configuration names, or the
+ * only one there is. Anything else is a `ConfigurationError` that names the aggregate, the port and
  * the available options.
  */
 export const selectCollaborators: SelectCollaboratorsFunction = ({
@@ -37,12 +37,10 @@ export const selectCollaborators: SelectCollaboratorsFunction = ({
           `${owner}, collaborator "${port}": implementation "${chosen}" not found. Available: ${describe(options)}`,
         );
       }
-      return [port, implementation.default] as const;
+      return [port, implementation] as const;
     }
-    const [only] = options;
-    if (only !== undefined && options.length === 1) {
-      return [port, available[only]?.default] as const;
-    }
+    const [only, ...others] = Object.values(available);
+    if (only !== undefined && others.length === 0) return [port, only] as const;
     throw new ConfigurationError(
       `${owner}, collaborator "${port}": choose an implementation with collaborators.${aggregate}.${port}. Available: ${describe(options)}`,
     );

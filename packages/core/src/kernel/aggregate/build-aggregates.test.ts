@@ -4,19 +4,18 @@ import { ConfigurationError } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
 import type { PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
-import { orderRegistry } from "../test-support.ts";
+import { chooseCollaborators, orderRegistry } from "../test-support.ts";
 import { buildAggregates } from "./build-aggregates.ts";
 import { foldState } from "./fold-state.ts";
 
-const config = resolveConfig({
-  storage: memory(),
-  collaborators: { order: { notifier: "silent" } },
-});
-const plain = resolveConfig({ storage: memory() });
+const collaborators = chooseCollaborators(
+  orderRegistry,
+  resolveConfig({ storage: memory(), collaborators: { order: { notifier: "silent" } } }),
+);
 
 describe("buildAggregates", () => {
   it("compiles events, commands, schemas and collaborators", () => {
-    const { byName } = buildAggregates({ registry: orderRegistry, config });
+    const { byName } = buildAggregates({ registry: orderRegistry, collaborators });
     const order = byName.order;
     expect(order).toBeDefined();
     expect(order?.aggregateIdField).toBe("orderId");
@@ -47,7 +46,7 @@ describe("buildAggregates", () => {
         } as Registry["aggregates"],
         readModels: {},
       },
-      config,
+      collaborators,
     });
     expect(byName.order?.events.orderPlaced).toMatchObject({
       upcasts: [upcast, upcast],
@@ -63,7 +62,7 @@ describe("buildAggregates", () => {
       },
       readModels: {},
     };
-    const { byName } = buildAggregates({ registry, config: plain });
+    const { byName } = buildAggregates({ registry, collaborators: {} });
     expect(byName.customer?.aggregateIdField).toBe("customerId");
     expect(byName.customer?.initialState).toEqual({});
   });
@@ -80,7 +79,7 @@ describe("buildAggregates", () => {
       },
       readModels: {},
     };
-    expect(() => buildAggregates({ registry, config: plain })).toThrow(
+    expect(() => buildAggregates({ registry, collaborators: {} })).toThrow(
       new ConfigurationError("aggregates.order.events.broken: payload must return a Zod schema"),
     );
     const brokenCommand: Registry = {
@@ -94,7 +93,7 @@ describe("buildAggregates", () => {
       },
       readModels: {},
     };
-    expect(() => buildAggregates({ registry: brokenCommand, config: plain })).toThrow(
+    expect(() => buildAggregates({ registry: brokenCommand, collaborators: {} })).toThrow(
       new ConfigurationError("aggregates.order.commands.ship: payload must return a Zod schema"),
     );
   });
@@ -108,39 +107,14 @@ describe("buildAggregates", () => {
       },
       readModels: {},
     };
-    expect(() => buildAggregates({ registry, config: plain })).toThrow(
+    expect(() => buildAggregates({ registry, collaborators: {} })).toThrow(
       'Command "Archive" is defined in both "order" and "customer"',
     );
-  });
-
-  it("rejects configuration for an aggregate that does not exist", () => {
-    expect(() =>
-      buildAggregates({
-        registry: orderRegistry,
-        config: resolveConfig({
-          storage: memory(),
-          collaborators: { order: { notifier: "silent" }, shipping: { carrier: "ups" } },
-        }),
-      }),
-    ).toThrow(
-      new ConfigurationError(
-        'collaborators.shipping: there is no aggregate "shipping" whose collaborators to choose',
-      ),
-    );
-    expect(() =>
-      buildAggregates({
-        registry: orderRegistry,
-        config: resolveConfig({
-          storage: memory(),
-          collaborators: { order: { notifier: "silent" }, constructor: {} },
-        }),
-      }),
-    ).toThrow('there is no aggregate "constructor"');
   });
 });
 
 describe("foldState", () => {
-  const { byName } = buildAggregates({ registry: orderRegistry, config });
+  const { byName } = buildAggregates({ registry: orderRegistry, collaborators });
   const order = byName.order as NonNullable<(typeof byName)["order"]>;
   const stored = (type: string, payload: unknown, version: number) => ({
     id: `e${version}`,

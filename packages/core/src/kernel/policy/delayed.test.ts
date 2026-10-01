@@ -9,7 +9,11 @@ import { createReactiveHarness, type ReactiveHarness } from "../reactive-harness
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { ATTRIBUTES, METRICS } from "../telemetry.ts";
 import { installFakeTelemetry } from "../telemetry-fake.ts";
-import { createRecordingLogger, orderAggregateEntry } from "../test-support.ts";
+import {
+  chooseCollaborators,
+  createRecordingLogger,
+  orderAggregateEntry,
+} from "../test-support.ts";
 import { buildPolicies } from "./build-policies.ts";
 import { DELAYED_POLICY_COMMAND } from "./delayed.ts";
 
@@ -396,13 +400,7 @@ describe("delayed policies", () => {
     expect(() =>
       buildPolicies({
         registry: registryWith("a minute"),
-        aggregates: buildAggregates({
-          registry: registryWith("a minute"),
-          config: resolveConfig({
-            storage: memory(),
-            collaborators: { order: { notifier: "memory" } },
-          }),
-        }),
+        aggregates: buildAggregates({ registry: registryWith("a minute"), collaborators: {} }),
       }),
     ).toThrow(
       'aggregates.order.policies.remindOnOrderPlaced: delay "a minute" is not a duration such as "30s", "5m" or 60000',

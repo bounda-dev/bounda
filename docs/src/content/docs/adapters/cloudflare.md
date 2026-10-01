@@ -81,6 +81,36 @@ Durable Object has no loop running between requests:
 `createBoundaObject` accepts `passesPerAlarm` (50 by default): how many rounds of work one alarm
 does before it yields and wakes itself again.
 
+## Collaborators and `env`
+
+A collaborator implementation that exports `create` receives the object's `env`: the Worker's
+bindings and variables, typed as `Cloudflare.Env` from what `wrangler types` writes. That is how
+a queue, a KV namespace, a service binding or a secret reaches it. `create` runs once per object,
+when it starts.
+
+```ts
+// app/domain/order/notifier/queue.ts
+import type { Implementation } from "./+types/queue";
+
+export const create: Implementation.Create = ({ env }) => (message) =>
+  env.NOTIFICATIONS.send(message);
+```
+
+`bounda.config.ts` can choose an implementation from the same variables, since `env` from
+`cloudflare:workers` is readable when the Worker imports it:
+
+```ts
+import { env } from "cloudflare:workers";
+
+export default defineConfig({
+  storage: cloudflare(),
+  collaborators: { order: { notifier: env.NOTIFIER === "memory" ? "memory" : "queue" } },
+});
+```
+
+A Durable Object never stops its app, so `[Symbol.asyncDispose]` on what `create` returns only
+runs under `createTestApp` or an app you stop yourself.
+
 ## One object per tenant
 
 `createWorker` addresses the object by the `x-bounda-tenant` header, `default` without it. Each

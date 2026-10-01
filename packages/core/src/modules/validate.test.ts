@@ -106,14 +106,21 @@ describe("validateRegistry", () => {
     expect(message).toContain('readModels.orderSummary.queries.getOrder: missing export "handler"');
   });
 
-  it("checks policy handlers and that every implementation of a collaborator has a default export", () => {
+  it("checks policy handlers and that every implementation of a collaborator exports default or create", () => {
     const registry = withOrder({
       policies: {
         notifyOnOrderPlaced: { module: {} as never },
       },
       collaborators: {
         mailer: {},
-        gateway: { stripe: {} as never, sdk: null as never, fake: { default: {} } },
+        gateway: {
+          stripe: {} as never,
+          sdk: null as never,
+          fake: { default: {} },
+          http: { create: () => ({}) },
+          both: { default: {}, create: () => ({}) } as never,
+          broken: { create: "nope" } as never,
+        },
       },
     });
     expect(() => validateRegistry(registry)).toThrow(
@@ -121,8 +128,10 @@ describe("validateRegistry", () => {
         [
           "Invalid registry:",
           "  aggregates.order.collaborators.mailer: has no implementations",
-          '  aggregates.order.collaborators.gateway.stripe: missing export "default"',
-          '  aggregates.order.collaborators.gateway.sdk: missing export "default"',
+          '  aggregates.order.collaborators.gateway.stripe: missing export "default" or "create"',
+          '  aggregates.order.collaborators.gateway.sdk: missing export "default" or "create"',
+          '  aggregates.order.collaborators.gateway.both: exports both "default" and "create" (expected one)',
+          '  aggregates.order.collaborators.gateway.broken: export "create" must be a function',
           '  aggregates.order.policies.notifyOnOrderPlaced: missing export "handler" (expected a function)',
         ].join("\n"),
       ),

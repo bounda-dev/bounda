@@ -6,6 +6,7 @@ import { ConfigurationError, DomainError } from "../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../contracts/ids.ts";
 import { silentLogger } from "../contracts/logger.ts";
 import { memory } from "../memory/index.ts";
+import type { CreateArgs } from "../modules/collaborator.ts";
 import type { PayloadArgs } from "../modules/payload.ts";
 import type { Registry } from "../modules/registry.ts";
 import type { FieldsArgs } from "../modules/view.ts";
@@ -375,6 +376,130 @@ describe("createApp", () => {
     app.start();
     await app.commands.placeOrder({ orderId: "o-1", total: 42 });
     await eventually(async () => expect((await app.getLag()).maxLag).toBe(0));
+    await app.stop();
+  });
+});
+
+describe("collaborators built by create", () => {
+  interface Notifier {
+    send(message: string): void;
+  }
+
+  const lifecycle = (log: string[]) => {
+    const create = vi.fn(({ env }: CreateArgs): Notifier & AsyncDisposable => ({
+      send: (message) => log.push(`${String(Reflect.get(env, "FROM"))}: ${message}`),
+      [Symbol.asyncDispose]: async () => void log.push("notifier closed"),
+    }));
+    const app = {
+      aggregates: {
+        order: {
+          ...orderAggregateEntry(),
+          collaborators: { notifier: { smtp: { create } } },
+        },
+      },
+      readModels: registry.readModels,
+    } as const satisfies Registry;
+    return { create, app };
+  };
+
+  const loggingStorage = (log: string[], fails = false): Adapter => {
+    const base = memory();
+    return {
+      ...base,
+      createStorage: async (args: CreateStorageArgs) => {
+        if (fails) throw new Error("database is down");
+        const ports = await base.createStorage(args);
+        return {
+          ...ports,
+          close: async () => {
+            await ports.close();
+            log.push("storage closed");
+          },
+        };
+      },
+    };
+  };
+
+  it("runs create once per app with its env, logger and clock, and closes it after the storage", async () => {
+    const log: string[] = [];
+    const { create, app: lifecycleRegistry } = lifecycle(log);
+    const clock = createFixedClock();
+    const app = await createApp({
+      registry: lifecycleRegistry,
+      config: { storage: loggingStorage(log) },
+      env: { FROM: "shop" },
+      clock,
+    });
+    await app.commands.placeOrder({ orderId: "o-1", total: 1 });
+    await app.commands.placeOrder({ orderId: "o-2", total: 2 });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(create).toHaveBeenCalledWith({ env: { FROM: "shop" }, logger: silentLogger, clock });
+    await app.stop();
+    await app.stop();
+    expect(log).toEqual([
+      "shop: placed o-1 v0",
+      "shop: placed o-2 v0",
+      "storage closed",
+      "notifier closed",
+    ]);
+  });
+
+  it("closes what create built when the app fails to start", async () => {
+    const log: string[] = [];
+    const { app: lifecycleRegistry } = lifecycle(log);
+    await expect(
+      createApp({ registry: lifecycleRegistry, config: { storage: loggingStorage(log, true) } }),
+    ).rejects.toThrow("database is down");
+    expect(log).toEqual(["notifier closed"]);
+  });
+
+  it("builds a fresh port for every app on the same registry", async () => {
+    const log: string[] = [];
+    const { create, app: lifecycleRegistry } = lifecycle(log);
+    const first = await createApp({ registry: lifecycleRegistry, config: { storage: memory() } });
+    const second = await createApp({ registry: lifecycleRegistry, config: { storage: memory() } });
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ env: {} }));
+    await first.stop();
+    expect(log).toEqual(["notifier closed"]);
+    await second.stop();
+  });
+
+  it("opens no storage when a create fails", async () => {
+    const counting = countingAdapter();
+    const createStorage = vi.spyOn(counting.adapter, "createStorage");
+    const failing = {
+      aggregates: {
+        order: {
+          ...orderAggregateEntry(),
+          collaborators: {
+            notifier: {
+              smtp: {
+                create: () => {
+                  throw new Error("SMTP_URL is not set");
+                },
+              },
+            },
+          },
+        },
+      },
+      readModels: {},
+    } as const satisfies Registry;
+    await expect(
+      createApp({ registry: failing, config: { storage: counting.adapter } }),
+    ).rejects.toThrow("SMTP_URL is not set");
+    expect(createStorage).not.toHaveBeenCalled();
+  });
+
+  it("builds no collaborator to rebuild a read model", async () => {
+    const log: string[] = [];
+    const { create, app: lifecycleRegistry } = lifecycle(log);
+    const storage = memory();
+    const app = await createApp({ registry: lifecycleRegistry, config: { storage } });
+    await app.commands.placeOrder({ orderId: "o-1", total: 1 });
+    expect(create).toHaveBeenCalledTimes(1);
+    await app.rebuildReadModel("orderSummary");
+    expect(create).toHaveBeenCalledTimes(1);
     await app.stop();
   });
 });

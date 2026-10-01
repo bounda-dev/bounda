@@ -9,6 +9,8 @@ import { createSequentialIdGenerator } from "../contracts/ids.ts";
 import { silentLogger } from "../contracts/logger.ts";
 import { createRecordingLogger } from "../kernel/test-support.ts";
 import { memory } from "../memory/index.ts";
+import type { CreateArgs } from "../modules/collaborator.ts";
+import type { Registry } from "../modules/registry.ts";
 import { boot, loadProject } from "./boot.ts";
 import { registry } from "./fixtures/project/registry.ts";
 
@@ -53,6 +55,37 @@ describe("boot", () => {
     await app.commands.increment({ counterId: "c-1" });
     await app.processUntilIdle();
     expect((await app.getLag()).lastPosition).toBe(1);
+    await app.stop();
+  });
+
+  it("hands process.env, with .env loaded, to the collaborators' create", async () => {
+    let marker: string | undefined;
+    const withPort = {
+      ...registry,
+      aggregates: {
+        counter: {
+          ...registry.aggregates.counter,
+          collaborators: {
+            probe: {
+              env: {
+                create: ({ env }: CreateArgs) => {
+                  marker = env.BOUNDA_TEST_MARKER;
+                  return {};
+                },
+              },
+            },
+          },
+        },
+      },
+    } satisfies Registry;
+    const app = await boot({
+      root,
+      signals: false,
+      logger: silentLogger,
+      registry: withPort,
+      config: { storage: memory() },
+    });
+    expect(marker).toBe("loaded");
     await app.stop();
   });
 

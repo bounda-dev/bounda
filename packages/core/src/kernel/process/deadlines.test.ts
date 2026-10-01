@@ -17,6 +17,7 @@ import { DEADLINE_WAIT_ROUNDS } from "../scheduler/worker.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import {
   breakNextCommit,
+  chooseCollaborators,
   createRecordingLogger,
   type OrderProcessConfigArgs,
   orderAggregateEntry,
@@ -263,7 +264,10 @@ describe("process deadlines at boot", () => {
   const processesOf = (registry: Registry, resolved: ResolvedConfig) =>
     buildProcesses({
       registry,
-      aggregates: buildAggregates({ registry, config: resolved }),
+      aggregates: buildAggregates({
+        registry,
+        collaborators: chooseCollaborators(registry, resolved),
+      }),
       config: resolved,
     });
   const withProcess = (process: Registry["aggregates"][string]["processes"][string]): Registry => ({

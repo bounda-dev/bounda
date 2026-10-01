@@ -148,8 +148,9 @@ export const loadProject: LoadProjectFunction = async <R extends Registry = AppR
 
 /**
  * Boots a Bounda app in Node: loads `.env`, imports the configuration and the generated registry,
- * creates the app and stops it on `SIGINT` or `SIGTERM`; stopping the app removes those listeners
- * again. Throws `ConfigurationError` when a module is missing or lacks its export.
+ * creates the app with `process.env` as the environment collaborators' `create` receives, and
+ * stops it on `SIGINT` or `SIGTERM`; stopping the app removes those listeners again. Throws
+ * `ConfigurationError` when a module is missing or lacks its export.
  */
 export const boot: BootFunction = async <R extends Registry = AppRegistry>({
   root = process.cwd(),
@@ -177,6 +178,7 @@ export const boot: BootFunction = async <R extends Registry = AppRegistry>({
     registry: project.registry,
     config: project.config,
     logger,
+    env: process.env,
     ...(ids === undefined ? {} : { ids }),
     ...(clock === undefined ? {} : { clock }),
   });

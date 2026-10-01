@@ -3,17 +3,20 @@
   "main": "test/test-worker.ts",
   "compatibility_date": "2025-10-08",
   "compatibility_flags": ["nodejs_compat"],
+  "vars": { "STORE_REGION": "eu-test" },
   "durable_objects": {
     "bindings": [
       { "name": "STORE", "class_name": "Store" },
       { "name": "PROCESS_STORE", "class_name": "ProcessStore" },
       { "name": "QUIET_STORE", "class_name": "QuietStore" },
       { "name": "SLICED_STORE", "class_name": "SlicedStore" },
+      { "name": "REGION_STORE", "class_name": "RegionStore" },
       { "name": "BARE", "class_name": "Bare" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["Store", "QuietStore", "SlicedStore", "Bare"] },
-    { "tag": "v2", "new_sqlite_classes": ["ProcessStore"] }
+    { "tag": "v2", "new_sqlite_classes": ["ProcessStore"] },
+    { "tag": "v3", "new_sqlite_classes": ["RegionStore"] }
   ]
 }

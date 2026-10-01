@@ -16,6 +16,8 @@ import type { Registry } from "../modules/registry.ts";
  *
  * After that `BoundaApp`, `boot()` and the integrations are typed for the project without a type
  * argument, and `defineConfig` checks the `collaborators` section against the project's ports.
+ * A host adapter may register `env`, the type of the environment implementations receive in
+ * `create`: `@bounda-dev/adapter-cloudflare` registers `Cloudflare.Env`.
  */
 export interface Register {}
 
@@ -36,3 +38,11 @@ export type AppCollaboratorsConfig = Register extends {
 }
   ? C
   : CollaboratorsConfig;
+
+/**
+ * The environment an implementation's `create` receives: the one registered through
+ * {@link Register}, or string variables by name, as `process.env` holds them, when none is.
+ */
+export type AppEnv = Register extends { readonly env: infer E }
+  ? E
+  : Readonly<Record<string, string | undefined>>;

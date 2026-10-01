@@ -1,11 +1,10 @@
 import { z } from "zod";
-import { selectCollaborators } from "../../config/collaborators.ts";
-import type { ResolvedConfig } from "../../config/types.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import { createEventBuilders } from "../../modules/event.ts";
 import { capitalize } from "../../modules/naming.ts";
 import type { PayloadFunction } from "../../modules/payload.ts";
 import type { AggregateEntry, Registry } from "../../modules/registry.ts";
+import type { AggregateCollaborators } from "./collaborators.ts";
 import type {
   AggregateRuntime,
   AggregatesRuntime,
@@ -56,7 +55,7 @@ const buildCommands = (name: string, entry: AggregateEntry): Record<string, Comm
 const buildAggregate = (
   name: string,
   entry: AggregateEntry,
-  config: ResolvedConfig,
+  collaborators: Readonly<Record<string, unknown>>,
 ): AggregateRuntime => {
   const events = buildEvents(name, entry);
   return {
@@ -66,18 +65,17 @@ const buildAggregate = (
     events,
     eventsByType: Object.fromEntries(Object.values(events).map((event) => [event.type, event])),
     eventBuilders: createEventBuilders(entry.events) as AggregateRuntime["eventBuilders"],
-    collaborators: selectCollaborators({
-      aggregate: name,
-      implementations: entry.collaborators ?? {},
-      config: config.collaborators[name],
-    }),
+    collaborators,
     commands: buildCommands(name, entry),
   };
 };
 
 export interface BuildAggregatesArgs {
   readonly registry: Registry;
-  readonly config: ResolvedConfig;
+  /**
+   * What `createCollaborators` built; an aggregate missing here gets no collaborators.
+   */
+  readonly collaborators: AggregateCollaborators;
 }
 
 export interface BuildAggregatesFunction {
@@ -86,20 +84,12 @@ export interface BuildAggregatesFunction {
 
 /**
  * Command type names must be unique across aggregates, since `app.commands` is one flat namespace.
- * The collaborators of each aggregate are chosen here, once, for every handler it has.
  */
-export const buildAggregates: BuildAggregatesFunction = ({ registry, config }) => {
-  for (const name of Object.keys(config.collaborators)) {
-    if (!Object.hasOwn(registry.aggregates, name)) {
-      throw new ConfigurationError(
-        `collaborators.${name}: there is no aggregate "${name}" whose collaborators to choose`,
-      );
-    }
-  }
+export const buildAggregates: BuildAggregatesFunction = ({ registry, collaborators }) => {
   const byName = Object.fromEntries(
     Object.entries(registry.aggregates).map(([name, entry]) => [
       name,
-      buildAggregate(name, entry, config),
+      buildAggregate(name, entry, collaborators[name] ?? {}),
     ]),
   );
   const commandsByType: Record<string, AggregatesRuntime["commandsByType"][string]> = {};

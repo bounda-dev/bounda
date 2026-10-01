@@ -113,6 +113,19 @@ describe("what does not compile", () => {
     void [wrongShape, wrongSignature, namedExport];
   });
 
+  it("an implementation module with both a default export and a create, or a create that builds the wrong port", () => {
+    const both = {
+      default: { reserve: async () => {} },
+      create: () => ({ reserve: async () => {} }),
+      // @ts-expect-error an implementation exports default or create, never both
+    } satisfies ImplementationModule<InventoryFake.Contract>;
+    const wrongPort = {
+      // @ts-expect-error create must build an Inventory
+      create: () => ({ reserve: async (count: number) => count }),
+    } satisfies ImplementationModule<InventoryFake.Contract>;
+    void [both, wrongPort];
+  });
+
   it("a collaborators configuration that leaves a choice open or names what does not exist", () => {
     // @ts-expect-error inventory has two implementations, so the config must choose one
     defineConfig({ storage: sqlite });

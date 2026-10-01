@@ -28,7 +28,7 @@ app/domain/<aggregate>/
   <event>.ts                       export const payload (optional), export const apply
   <event>.upcast.ts                optional: export const upcasts (oldest version first)
   <port>/index.ts                  a collaborator: export interface <Port> (PascalCase of the directory)
-  <port>/<implementation>.ts       export default ... satisfies Implementation.Contract; every handler of the aggregate receives it as <port>
+  <port>/<implementation>.ts       export default ... satisfies Implementation.Contract, or export const create: Implementation.Create; every handler of the aggregate receives it as <port>
   commands/<command>.ts            export const payload, export const handler
   policies/<action>-on-<event>.ts  export const handler; on and delay optional
   policies/<other-aggregate>/...   the same shape, reacting to that aggregate's events
@@ -90,6 +90,15 @@ import type { Implementation } from "./+types/fake";
 
 export default { available: async () => true } satisfies Implementation.Contract;
 
+// order/inventory/http.ts: an implementation with state (client, pool, secret) builds it in create
+import type { Implementation } from "./+types/http";
+
+export const create: Implementation.Create = ({ env }) => {
+  const url = env.INVENTORY_URL;
+  if (url === undefined) throw new Error("INVENTORY_URL is not set");
+  return { available: async (skus) => (await fetch(`${url}/${skus.join(",")}`)).ok };
+};
+
 // order/commands/place-order.ts
 export const handler = async ({ command, events, inventory }: Command.HandlerArgs) => {
   if (!(await inventory.available(command.payload.skus))) throw new DomainError("Out of stock");
@@ -102,6 +111,12 @@ one of the file names, and a choice from the environment spells both branches
 (`process.env.INVENTORY === "fake" ? "fake" : "http"`). Shared domain logic without
 implementations is a `_name.ts` file the generator ignores; a provider two aggregates use is a
 port in each, sharing a client from outside `app/domain`.
+
+An implementation exports `default` or `create`, never both. `create` may be async and runs once
+per app with `{ env, logger, clock }`: `env` is `process.env` under `boot()`, the Durable
+Object's `env` on Cloudflare, and what `createTestApp({ env })` passes in a test. `app.stop()` calls `[Symbol.asyncDispose]` on what
+it returned. Never open a connection or read the environment at the top of an implementation
+module: the registry imports every implementation, chosen or not.
 
 Command handlers decide; they do not act on the world. A handler reruns, collaborators included,
 when its append loses a concurrency race, and its decision is not stored until the append

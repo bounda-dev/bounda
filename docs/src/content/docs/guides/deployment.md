@@ -26,6 +26,10 @@ due scheduled commands. `boot()` installs `SIGINT` and `SIGTERM` handlers by def
 container stop drains passes in flight and closes connections; pass `signals: false` to handle
 that yourself, as a script would.
 
+The environment collaborators' `create` receives is `process.env`, with `.env` already loaded, so
+a secret such as an API key reaches the implementation that needs it without being read at the
+top of a module. See [Collaborators](/guides/project-layout/#collaborators-port).
+
 ## Roles
 
 `runtime.role` decides what a process does. The default is `all`, which is one process doing

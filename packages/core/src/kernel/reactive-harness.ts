@@ -7,6 +7,7 @@ import { type Logger, silentLogger } from "../contracts/logger.ts";
 import { memory } from "../memory/index.ts";
 import type { Registry } from "../modules/registry.ts";
 import { buildAggregates } from "./aggregate/build-aggregates.ts";
+import { createCollaborators } from "./aggregate/collaborators.ts";
 import type { AggregatesRuntime } from "./aggregate/runtime.ts";
 import { createCommandPipeline } from "./command/pipeline.ts";
 import { createDispatcher, type Dispatcher } from "./dispatch/dispatcher.ts";
@@ -73,7 +74,14 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
   });
   const ids = createSequentialIdGenerator();
   const clock = createFixedClock();
-  const aggregates = buildAggregates({ registry, config });
+  const { byAggregate } = await createCollaborators({
+    registry,
+    config: config.collaborators,
+    env: {},
+    logger,
+    clock,
+  });
+  const aggregates = buildAggregates({ registry, collaborators: byAggregate });
   const readModels = await buildReadModels({ registry, config, logger });
   const pipeline = createCommandPipeline({
     aggregates,

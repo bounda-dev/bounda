@@ -8,6 +8,7 @@ import * as cancelOrder from "../app/domain/order/commands/cancel-order.ts";
 import * as payOrder from "../app/domain/order/commands/pay-order.ts";
 import * as placeOrder from "../app/domain/order/commands/place-order.ts";
 import * as orderInventoryFake from "../app/domain/order/inventory/fake.ts";
+import * as orderInventoryHttp from "../app/domain/order/inventory/http.ts";
 import type * as orderInventory from "../app/domain/order/inventory/index.ts";
 import * as orderInventoryMemory from "../app/domain/order/inventory/memory.ts";
 import type * as orderMailer from "../app/domain/order/mailer/index.ts";
@@ -53,6 +54,7 @@ export const registry = {
         },
         inventory: {
           fake: orderInventoryFake satisfies ImplementationModule<orderInventory.Inventory>,
+          http: orderInventoryHttp satisfies ImplementationModule<orderInventory.Inventory>,
           memory: orderInventoryMemory satisfies ImplementationModule<orderInventory.Inventory>,
         },
         mailer: {
