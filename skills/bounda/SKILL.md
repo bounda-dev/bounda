@@ -130,8 +130,9 @@ outside calls. Past the timeout the dispatch rejects with `HANDLER_TIMEOUT` and 
 
 Effects (charging, emailing, calling another service) go in a policy or process with the
 collaborator, after the event is stored, passing `idempotencyKey` to the provider, and report back
-with a command whose handler ignores a duplicate by state. A provider's refusal becomes an event
-(`PaymentFailed`); throw only when there is no answer.
+with a command whose handler ignores a duplicate by state. Two effects in one run need a key each:
+`idempotencyKeyFor(idempotencyKey, "refund")` from `@bounda-dev/core`, one name per effect. A
+provider's refusal becomes an event (`PaymentFailed`); throw only when there is no answer.
 
 Policy (`policies/issue-invoice-on-order-paid.ts`):
 

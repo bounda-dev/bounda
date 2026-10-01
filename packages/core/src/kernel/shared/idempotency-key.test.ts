@@ -4,6 +4,7 @@ import {
   createReactionCommandIds,
   deriveDeadLetterId,
   deriveIdempotencyKey,
+  idempotencyKeyFor,
 } from "./idempotency-key.ts";
 
 describe("deriveIdempotencyKey", () => {
@@ -104,5 +105,31 @@ describe("deriveDeadLetterId", () => {
         deriveIdempotencyKey(args),
       ]).size,
     ).toBe(5);
+  });
+});
+
+describe("idempotencyKeyFor", () => {
+  it("is a UUID v5 that stays the same for one key and one effect, across releases too", () => {
+    const key = idempotencyKeyFor("1edcd2b1-8ce9-5d44-8c3b-6b9bb156e6e1", "refund");
+    expect(validate(key)).toBe(true);
+    expect(version(key)).toBe(5);
+    expect(idempotencyKeyFor("1edcd2b1-8ce9-5d44-8c3b-6b9bb156e6e1", "refund")).toBe(key);
+    expect(key).toBe("e3a043bd-9b2c-5336-a21b-51861eb5000e");
+    expect(idempotencyKeyFor("k".repeat(500), "e".repeat(500))).toHaveLength(key.length);
+  });
+
+  it("changes with the key and the effect, whatever they contain, and is never the key or a command's id", () => {
+    expect(
+      new Set([
+        "key-1",
+        idempotencyKeyFor("key-1", "refund"),
+        idempotencyKeyFor("key-1", "charge"),
+        idempotencyKeyFor("key-2", "refund"),
+        idempotencyKeyFor(idempotencyKeyFor("key-1", "refund"), "refund"),
+        createReactionCommandIds("key-1")("refund"),
+        idempotencyKeyFor("a:effect", "b"),
+        idempotencyKeyFor("a", "effect:b"),
+      ]).size,
+    ).toBe(8);
   });
 });

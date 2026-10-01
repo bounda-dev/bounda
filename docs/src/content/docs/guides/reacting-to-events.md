@@ -224,9 +224,18 @@ A few rules keep it correct:
 - **Await every command the handler dispatches.** The run's outcome is what the handler returns
   or throws: a command it does not await may be left out of the run, and its failure reaches no
   one.
-- **Pass `idempotencyKey` to every provider that takes one.** It is one key per handler run: two
-  different calls in one handler need two keys, so either derive a second one for the provider
-  (`${idempotencyKey}-refund`, if its length limit allows) or give each effect its own reaction.
+- **Pass `idempotencyKey` to every provider that takes one.** It is one key per handler run, so
+  two different effects in one run need a key each. `idempotencyKeyFor` from `@bounda-dev/core`
+  derives one per effect name, the same on every retry and a UUID like the handler's, so it fits
+  every provider's length limit; a collaborator whose implementation makes two calls derives them
+  the same way from the key it received. Giving each effect its own reaction works too.
+
+  ```ts
+  import { idempotencyKeyFor } from "@bounda-dev/core";
+
+  await payments.refund({ chargeId, idempotencyKey: idempotencyKeyFor(idempotencyKey, "refund") });
+  await payments.charge({ amount, idempotencyKey: idempotencyKeyFor(idempotencyKey, "charge") });
+  ```
 - **Without a key on the provider's side**, look the operation up by your own reference before
   calling again, and give a process a time-out for a provider that may never answer.
 - **The command a reaction dispatches can arrive twice**, when the reaction is retried after

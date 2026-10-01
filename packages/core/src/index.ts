@@ -36,6 +36,8 @@ export type {
 export { rebuildReadModel } from "./kernel/read-model/rebuild.ts";
 export type { ReadYourWritesFunction } from "./kernel/read-your-writes.ts";
 export { readYourWrites } from "./kernel/read-your-writes.ts";
+export type { IdempotencyKeyForFunction } from "./kernel/shared/idempotency-key.ts";
+export { idempotencyKeyFor } from "./kernel/shared/idempotency-key.ts";
 export type { CommandFailedPayload } from "./kernel/system-events.ts";
 export { COMMAND_FAILED_EVENT } from "./kernel/system-events.ts";
 export * from "./modules/index.ts";
