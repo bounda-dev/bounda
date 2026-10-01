@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveConfig } from "../../config/schema.ts";
 import { DomainError } from "../../contracts/errors.ts";
-import { memory } from "../../memory/index.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { createDeadLetters } from "../dead-letters/dead-letters.ts";
@@ -9,11 +7,7 @@ import { createReactiveHarness, type ReactiveHarness } from "../reactive-harness
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { ATTRIBUTES, METRICS } from "../telemetry.ts";
 import { installFakeTelemetry } from "../telemetry-fake.ts";
-import {
-  chooseCollaborators,
-  createRecordingLogger,
-  orderAggregateEntry,
-} from "../test-support.ts";
+import { createRecordingLogger, orderAggregateEntry } from "../test-support.ts";
 import { buildPolicies } from "./build-policies.ts";
 import { DELAYED_POLICY_COMMAND } from "./delayed.ts";
 
