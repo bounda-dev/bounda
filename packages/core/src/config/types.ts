@@ -30,13 +30,13 @@ export interface ProcessesConfig {
 }
 
 /**
- * Runtime settings for command handlers, which one aggregate may override.
+ * Runtime settings for command handlers that one aggregate may override.
  */
 export interface AggregateCommandsConfig {
   /**
    * How long one run of a command handler may take. Past it, the dispatch rejects with
    * `HANDLER_TIMEOUT`, the handler's `signal` aborts and nothing it returns is stored. Each retry
-   * after a concurrency conflict gets its own. Defaults to 30 seconds.
+   * after a concurrency conflict gets its own. Defaults to `runtime.commands.timeout`.
    */
   readonly timeout?: DurationInput;
 }
@@ -44,7 +44,13 @@ export interface AggregateCommandsConfig {
 /**
  * Runtime settings for the command pipeline.
  */
-export interface CommandsRuntimeConfig extends AggregateCommandsConfig {
+export interface CommandsRuntimeConfig {
+  /**
+   * How long one run of a command handler may take. Past it, the dispatch rejects with
+   * `HANDLER_TIMEOUT`, the handler's `signal` aborts and nothing it returns is stored. Each retry
+   * after a concurrency conflict gets its own. Defaults to 30 seconds.
+   */
+  readonly timeout?: DurationInput;
   readonly concurrencyRetries?: number;
 }
 

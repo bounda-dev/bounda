@@ -15,7 +15,7 @@ import {
   orderRegistry,
   placeOrderKeys,
   sentMessages,
-  withJob,
+  slowJob,
 } from "../test-support.ts";
 
 describe("scheduled command worker", () => {
@@ -310,12 +310,9 @@ describe("scheduled command worker", () => {
   });
 
   it("reschedules a command whose handler runs out of time", async () => {
-    const started = Promise.withResolvers<void>();
+    const { registry, started } = slowJob();
     const harness = await createReactiveHarness({
-      registry: withJob(async () => {
-        started.resolve();
-        await new Promise(() => undefined);
-      }),
+      registry,
       config: { runtime: { commands: { timeout: "1s" } } },
     });
     await harness.pipeline.dispatch({
@@ -325,7 +322,7 @@ describe("scheduled command worker", () => {
     });
     harness.clock.advance(60_000);
     const running = harness.worker.runOnce();
-    await started.promise;
+    await started;
     harness.clock.advance(1_000);
 
     expect(await running).toBe(1);

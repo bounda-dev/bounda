@@ -1,3 +1,4 @@
+import { getEventListeners } from "node:events";
 import { describe, expect, it } from "vitest";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { HandlerTimeoutError, withTimeout } from "./timeout.ts";
@@ -55,35 +56,45 @@ describe("withTimeout", () => {
     ).rejects.toThrow("boom");
   });
 
-  it("tells onExpire the error before rejecting with it", async () => {
+  it("aborts the handler's signal with the error it loses to", async () => {
     const clock = createFixedClock();
-    const seen: unknown[] = [];
+    let signal: AbortSignal | undefined;
     const outcome = withTimeout({
-      run: () => new Promise<never>(() => undefined),
+      run: (given) => {
+        signal = given;
+        return new Promise<never>(() => undefined);
+      },
       timeoutMs: HOUR,
       subject: "command x",
       clock,
-      onExpire: (error) => seen.push(error),
     });
+    expect(signal?.aborted).toBe(false);
     clock.advance(HOUR);
     const error = await outcome.catch((caught: unknown) => caught);
-    expect(seen).toEqual([error]);
     expect(error).toBeInstanceOf(HandlerTimeoutError);
+    expect(signal?.reason).toBe(error);
   });
 
-  it("rejects with the reason of a signal that aborts before the handler finishes", async () => {
+  it("rejects with the reason of the first signal that aborts, and aborts the handler's", async () => {
     const clock = createFixedClock();
-    const controller = new AbortController();
+    const first = new AbortController();
+    const second = new AbortController();
     const reason = new Error("withdrawn");
+    let signal: AbortSignal | undefined;
     const outcome = withTimeout({
-      run: () => new Promise<never>(() => undefined),
+      run: (given) => {
+        signal = given;
+        return new Promise<never>(() => undefined);
+      },
       timeoutMs: HOUR,
       subject: "x",
       clock,
-      signal: controller.signal,
+      signals: [first.signal, second.signal],
     });
-    controller.abort(reason);
+    second.abort(reason);
+    first.abort(new Error("later"));
     await expect(outcome).rejects.toBe(reason);
+    expect(signal?.reason).toBe(reason);
     expect(clock.pending()).toBe(0);
   });
 
@@ -99,14 +110,14 @@ describe("withTimeout", () => {
         timeoutMs: HOUR,
         subject: "x",
         clock,
-        signal: AbortSignal.abort(reason),
+        signals: [new AbortController().signal, AbortSignal.abort(reason)],
       }),
     ).rejects.toBe(reason);
     expect(ran).toBe(false);
     expect(clock.pending()).toBe(0);
   });
 
-  it("ignores a signal that aborts after the handler finished", async () => {
+  it("stops listening to the signals once the race is over", async () => {
     const clock = createFixedClock();
     const controller = new AbortController();
     await expect(
@@ -115,10 +126,10 @@ describe("withTimeout", () => {
         timeoutMs: HOUR,
         subject: "x",
         clock,
-        signal: controller.signal,
+        signals: [controller.signal],
       }),
     ).resolves.toBe("done");
-    controller.abort(new Error("late"));
+    expect(getEventListeners(controller.signal, "abort")).toEqual([]);
   });
 
   it("cancels its wait whichever side wins", async () => {

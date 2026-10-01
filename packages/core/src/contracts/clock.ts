@@ -12,13 +12,23 @@ export interface Clock {
   after(milliseconds: number, callback: () => void): () => void;
 }
 
+// Node runs a timer whose delay does not fit in 32 bits at once, so a longer wait is armed in steps.
+const LONGEST_TIMER_MS = 2 ** 31 - 1;
+
 /**
  * The wall clock, with the platform's timers.
  */
 export const systemClock: Clock = {
   now: () => new Date(),
   after: (milliseconds, callback) => {
-    const timer = setTimeout(callback, milliseconds);
+    let timer: ReturnType<typeof setTimeout>;
+    const arm = (left: number): void => {
+      timer =
+        left > LONGEST_TIMER_MS
+          ? setTimeout(() => arm(left - LONGEST_TIMER_MS), LONGEST_TIMER_MS)
+          : setTimeout(callback, left);
+    };
+    arm(milliseconds);
     return () => clearTimeout(timer);
   },
 };

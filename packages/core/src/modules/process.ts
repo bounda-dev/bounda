@@ -185,7 +185,8 @@ export type ProcessHandlerArgs<
   readonly idempotencyKey: string;
   /**
    * Aborted when the handler runs out of time or its run fails: pass it to what the handler calls
-   * outside (`fetch(url, { signal })`) so it stops. Commands dispatched after that are refused.
+   * outside (`fetch(url, { signal })`) so it stops. Its commands still running stop too, and
+   * those dispatched after that are refused, both with `REACTION_ABANDONED`.
    */
   readonly signal: AbortSignal;
   /**
@@ -217,7 +218,8 @@ export type ProcessDeadlineArgs<
   readonly idempotencyKey: string;
   /**
    * Aborted when the handler runs out of time or its run fails: pass it to what the handler calls
-   * outside (`fetch(url, { signal })`) so it stops. Commands dispatched after that are refused.
+   * outside (`fetch(url, { signal })`) so it stops. Its commands still running stop too, and
+   * those dispatched after that are refused, both with `REACTION_ABANDONED`.
    */
   readonly signal: AbortSignal;
   /**

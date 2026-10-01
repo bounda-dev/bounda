@@ -36,6 +36,10 @@ const duration = z.union([z.number(), z.string()]).transform((value, context) =>
   }
 });
 
+const timeout = duration.refine((milliseconds) => milliseconds > 0, {
+  message: "Expected a duration longer than 0",
+});
+
 const adapter = z.custom<Config["storage"]>(isAdapterDefinition, {
   message: "Expected an adapter definition such as sqlite({ ... })",
 });
@@ -48,12 +52,12 @@ const retry = z.strictObject({
 });
 
 const commands = z.strictObject({
-  timeout: duration.optional(),
+  timeout: timeout.optional(),
 });
 
 const policies = z.strictObject({
   retry: retry.optional(),
-  timeout: duration.optional(),
+  timeout: timeout.optional(),
   maxChainDepth: z.int().min(1).optional(),
 });
 

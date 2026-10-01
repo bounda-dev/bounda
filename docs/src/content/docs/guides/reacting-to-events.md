@@ -258,12 +258,12 @@ Three different things are called a timeout, and it is worth keeping them apart:
   scheduled command that times out is retried like any other failure. Whoever dispatches can
   withdraw it sooner with a signal of their own, `commands.x(payload, { signal })`, until its
   events start being stored.
-- **How long one policy or process handler run may take** is `runtime.policies.timeout`, 30 seconds by default. It
-  governs process handlers too, not only policies — the process runner reads the policy setting.
-  When a run runs out of time, the commands it dispatches from then on are refused
-  (the error's `code` is `REACTION_ABANDONED`, its `cause` the timeout) and the handler's `signal`
-  aborts. JavaScript cannot stop the handler itself, so pass `signal` to what
-  it calls outside (`fetch(url, { signal })`) and that stops too.
+- **How long one policy or process handler run may take** is `runtime.policies.timeout`, 30
+  seconds by default; the process runner reads the policy setting. When a run runs out of time,
+  its commands still running stop and those it dispatches from then on are refused (the error's
+  `code` is `REACTION_ABANDONED`, its `cause` the timeout), and the handler's `signal` aborts.
+  JavaScript cannot stop the handler itself, so pass `signal` to what it calls outside
+  (`fetch(url, { signal })`) and that stops too.
 - **How long a process may stay open** before `at-timeout.ts` runs is the process's own `timeout`
   in its `config`, falling back to `runtime.processes.timeout`, 7 days by default.
 

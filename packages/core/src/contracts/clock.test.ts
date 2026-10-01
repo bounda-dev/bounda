@@ -25,6 +25,34 @@ describe("systemClock", () => {
       vi.useRealTimers();
     }
   });
+
+  it("waits longer than one platform timer can, in steps, and cancels whichever step is armed", () => {
+    vi.useFakeTimers();
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    try {
+      const longest = 2 ** 31 - 1;
+      const calls: string[] = [];
+      systemClock.after(longest * 2 + 5, () => calls.push("kept"));
+      const cancel = systemClock.after(longest + 5, () => calls.push("cancelled"));
+      vi.advanceTimersByTime(longest);
+      cancel();
+      vi.advanceTimersByTime(longest + 4);
+      expect(calls).toEqual([]);
+      vi.advanceTimersByTime(1);
+      expect(calls).toEqual(["kept"]);
+      expect(vi.getTimerCount()).toBe(0);
+      expect(setTimeoutSpy.mock.calls.map(([, delay]) => delay)).toEqual([
+        longest,
+        longest,
+        longest,
+        5,
+        5,
+      ]);
+    } finally {
+      setTimeoutSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("createFixedClock", () => {

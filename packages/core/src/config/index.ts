@@ -6,6 +6,7 @@ export { defineConfig } from "./define-config.ts";
 export type { ResolveConfigFunction } from "./schema.ts";
 export { resolveConfig } from "./schema.ts";
 export type {
+  AggregateCommandsConfig,
   AggregateOverrides,
   BackoffConfig,
   CatchUpConfig,
@@ -17,6 +18,7 @@ export type {
   PoliciesConfig,
   ProcessesConfig,
   ResolvedAggregateRuntime,
+  ResolvedCommandsConfig,
   ResolvedConfig,
   ResolvedPoliciesConfig,
   ResolvedProcessesConfig,

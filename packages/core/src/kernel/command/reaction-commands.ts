@@ -71,31 +71,29 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
   within,
 }) => {
   const commandIds = createReactionCommandIds(idempotencyKey);
-  const controller = new AbortController();
+  const handler = new AbortController();
+  // A second signal, so the commands are refused with the reason wrapped while the handler's
+  // signal carries it as it is.
+  const abandoned = new AbortController();
   const commands = createCommandsFacade({
     aggregates,
-    dispatch: async (command) => {
-      const { signal } = controller;
-      if (signal.aborted) throw new ReactionAbandonedError(signal.reason);
-      try {
-        return decided(
-          await pipeline.dispatch({
-            ...command,
-            context: { ...context, depth: context.depth + 1 },
-            commandId: commandIds(command.type),
-            within,
-            signal,
-          }),
-        );
-      } catch (error) {
-        if (signal.aborted && error === signal.reason) throw new ReactionAbandonedError(error);
-        throw error;
-      }
-    },
+    dispatch: async (command) =>
+      decided(
+        await pipeline.dispatch({
+          ...command,
+          context: { ...context, depth: context.depth + 1 },
+          commandId: commandIds(command.type),
+          within,
+          signal: abandoned.signal,
+        }),
+      ),
   });
   return {
     commands,
-    signal: controller.signal,
-    abandon: (reason) => controller.abort(reason),
+    signal: handler.signal,
+    abandon: (reason) => {
+      abandoned.abort(new ReactionAbandonedError(reason));
+      handler.abort(reason);
+    },
   };
 };

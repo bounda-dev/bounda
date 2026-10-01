@@ -141,6 +141,18 @@ describe("resolveConfig", () => {
     );
   });
 
+  it("rejects a handler timeout of nothing", () => {
+    expect(message({ storage: sqlite, runtime: { commands: { timeout: 0 } } })).toContain(
+      "runtime.commands.timeout: Expected a duration longer than 0",
+    );
+    expect(
+      message({
+        storage: sqlite,
+        runtime: { overrides: { order: { policies: { timeout: "0s" } } } },
+      }),
+    ).toContain("runtime.overrides.order.policies.timeout: Expected a duration longer than 0");
+  });
+
   it("rejects unknown keys anywhere", () => {
     expect(message({ storage: sqlite, storag: sqlite })).toMatch(/Unrecognized key/);
     expect(message({ storage: sqlite, runtime: { rol: "web" } })).toMatch(/runtime: .*rol/);

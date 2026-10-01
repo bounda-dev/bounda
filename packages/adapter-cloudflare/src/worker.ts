@@ -37,6 +37,7 @@ const STATUS_BY_CODE: Readonly<Record<string, number>> = {
   DOMAIN_ERROR: 409,
   CONCURRENCY_CONFLICT: 409,
   CHAIN_DEPTH_EXCEEDED: 409,
+  HANDLER_TIMEOUT: 504,
 };
 
 const json = (body: unknown, status = 200): Response =>

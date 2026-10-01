@@ -40,7 +40,7 @@ export interface DispatchArgs {
    */
   readonly within?: UnitStores | undefined;
   /**
-   * The signal of the reaction that dispatches the command: a run that fails stops it too.
+   * Aborted when the reaction that dispatches the command is abandoned, so the command stops too.
    */
   readonly signal?: AbortSignal | undefined;
 }
@@ -158,7 +158,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     runtime: CommandRuntime,
     command: Command,
     store: EventStore,
-    signal: AbortSignal | undefined,
+    signals: readonly AbortSignal[],
   ): Promise<DispatchResult> => {
     const attempts = config.runtime.commands.concurrencyRetries + 1;
     const { timeoutMs } = config.forAggregate(aggregate.name).commands;
@@ -172,25 +172,23 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         id: command.aggregateId,
         version: loaded.version,
       };
-      const expired = new AbortController();
       const produced = (await withTimeout({
-        run: () =>
+        run: (signal) =>
           runtime.handler(
             withCollaborators(aggregate.collaborators, {
               command,
               state,
               events: aggregate.eventBuilders,
               idempotencyKey: command.metadata.commandId,
-              signal:
-                signal === undefined ? expired.signal : AbortSignal.any([expired.signal, signal]),
+              signal,
             }),
           ),
         timeoutMs,
         subject: `command ${command.type}`,
         clock,
-        signal,
-        onExpire: (error) => expired.abort(error),
+        signals,
       })) as readonly NewEvent[] | undefined;
+      for (const signal of signals) signal.throwIfAborted();
       const events = toPendingEvents(
         aggregate,
         command,
@@ -251,9 +249,6 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     within,
     signal: reactionSignal,
   }: DispatchArgs): Promise<DispatchResult> => {
-    const signals = [reactionSignal, options.signal].filter((one) => one !== undefined);
-    const signal = signals.length === 0 ? undefined : AbortSignal.any(signals);
-    signal?.throwIfAborted();
     const stores = within ?? { eventStore, scheduler };
     const entry = aggregates.commandsByType[type];
     if (entry === undefined) throw new NotFoundError(`Unknown command "${type}"`);
@@ -283,6 +278,9 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         timestamp: clock.now().toISOString(),
       },
     };
+
+    const signals = [reactionSignal, options.signal].filter((one) => one !== undefined);
+    for (const signal of signals) signal.throwIfAborted();
 
     return traced({
       name: `bounda.command ${type}`,
@@ -316,7 +314,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
           };
         }
         try {
-          const result = await execute(aggregate, runtime, command, stores.eventStore, signal);
+          const result = await execute(aggregate, runtime, command, stores.eventStore, signals);
           span.setAttributes({
             [ATTRIBUTES.outcome]: "stored",
             [ATTRIBUTES.eventCount]: result.scheduled ? 0 : result.eventIds.length,

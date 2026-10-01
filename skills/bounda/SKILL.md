@@ -250,7 +250,8 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   and a delayed command when the decision must see the state at that time.
   Their `idempotencyKey` is the same on every retry for one event (for a
   deadline, one field at one moment) and new on a dead-letter replay. Their `signal` aborts when
-  the run times out or fails: pass it to outside calls. A port cannot be named after a handler
+  the run times out or fails, which also stops their commands still running: pass it to outside
+  calls. A port cannot be named after a handler
   argument (`event`, `commands`, `state`, `aggregateId`, `command`, `events`, `idempotencyKey`,
   `signal`, `after`), after an event of its aggregate, or `commands`, `policies`, `processes`.
 - Process deadlines: `after()` counts from the event's time (in `at-`, from the moment that came

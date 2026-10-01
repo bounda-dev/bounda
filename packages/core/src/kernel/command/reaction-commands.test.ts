@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { Registry } from "../../modules/registry.ts";
 import { createReactionCommandIds } from "../shared/idempotency-key.ts";
-import { createKernelHarness, withJob } from "../test-support.ts";
+import { createKernelHarness, orderRegistry, slowJob } from "../test-support.ts";
 import { createUnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import { scheduledCommandKey } from "./pipeline.ts";
 import { createReactionCommands, ReactionAbandonedError } from "./reaction-commands.ts";
 
 const context = { correlationId: "req-1", causationId: "evt-1", depth: 4 };
 
-const setUp = async (registry?: Registry) => {
-  const harness = await createKernelHarness(registry === undefined ? {} : { registry });
+const setUp = async (registry: Registry = orderRegistry) => {
+  const harness = await createKernelHarness({ registry });
   const unit = createUnitOfWork({ storage: harness.storage });
   const reaction = createReactionCommands({
     aggregates: harness.aggregates,
@@ -92,34 +92,33 @@ describe("createReactionCommands", () => {
   });
 
   it("stops a command still running when the run is abandoned", async () => {
-    const started = Promise.withResolvers<AbortSignal>();
-    const { reaction } = await setUp(
-      withJob(async ({ signal }) => {
-        started.resolve(signal);
-        await new Promise(() => undefined);
-      }),
-    );
+    const { registry, started } = slowJob();
+    const { reaction } = await setUp(registry);
     const reason = new Error("timed out");
     const outcome = reaction.commands.runJob?.({ jobId: "j-1" });
-    const signal = await started.promise;
+    const signal = await started;
     reaction.abandon(reason);
 
     await expect(outcome).rejects.toMatchObject({ code: "REACTION_ABANDONED", cause: reason });
-    expect(signal.reason).toBe(reason);
+    expect(signal.reason).toMatchObject({ code: "REACTION_ABANDONED", cause: reason });
+    expect(reaction.signal.reason).toBe(reason);
+  });
+
+  it("keeps the error of a command that failed on its own when the run is then abandoned", async () => {
+    const { reaction } = await setUp();
+    const refused = reaction.commands.payOrder?.({ orderId: "o-1", method: "card" });
+    await expect(refused).rejects.toThrow("Only placed orders can be paid");
+    reaction.abandon(new Error("timed out"));
+    await expect(refused).rejects.toThrow("Only placed orders can be paid");
   });
 
   it("lets a handler withdraw a command it dispatched without abandoning its run", async () => {
-    const started = Promise.withResolvers<void>();
-    const { reaction } = await setUp(
-      withJob(async () => {
-        started.resolve();
-        await new Promise(() => undefined);
-      }),
-    );
+    const { registry, started } = slowJob();
+    const { reaction } = await setUp(registry);
     const controller = new AbortController();
     const reason = new Error("no longer needed");
     const outcome = reaction.commands.runJob?.({ jobId: "j-1" }, { signal: controller.signal });
-    await started.promise;
+    await started;
     controller.abort(reason);
 
     await expect(outcome).rejects.toBe(reason);

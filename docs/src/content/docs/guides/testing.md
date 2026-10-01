@@ -101,8 +101,9 @@ a date or an ISO 8601 string in UTC, `nextReminder: asInstant("2026-01-02T00:00:
 Pass `now` to start somewhere else: `createTestApp({ registry, now: new Date("2026-06-01") })`.
 
 The clock also owns every wait the runtime makes. A handler time-out fires when the clock passes
-it, not after real milliseconds, so a handler that never finishes holds `processUntilIdle()` until
-you advance the clock past `runtime.policies.timeout`. The background loops that `app.start()`
+it, not after real milliseconds: a command handler that never finishes holds
+`await app.commands.x()` until you advance the clock past `runtime.commands.timeout`, and a policy
+or process handler holds `processUntilIdle()` until it passes `runtime.policies.timeout`. The background loops that `app.start()`
 arms wait on it too: in a test they run only when you advance the clock, and `clock.pending()`
 says how many waits are armed, which is none once `app.stop()` has resolved.
 
