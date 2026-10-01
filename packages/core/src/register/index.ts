@@ -47,6 +47,21 @@ export type AppEnv = Register extends { readonly env: infer E }
   ? E
   : Readonly<Record<string, string | undefined>>;
 
+interface OptionalEnv {
+  /**
+   * The host's environment, which every collaborator implementation's `create` receives. Defaults
+   * to an empty object.
+   */
+  readonly env?: AppEnv;
+}
+
+interface RequiredEnv {
+  /**
+   * The host's environment, which every collaborator implementation's `create` receives.
+   */
+  readonly env: AppEnv;
+}
+
 type ModulesOf<C> =
   C extends Readonly<Record<string, Readonly<Record<string, infer M>>>> ? M : never;
 
@@ -67,7 +82,7 @@ type BuildsWithCreate<R extends Registry> = [
  */
 export type EnvSection<R extends Registry = Registry> =
   Record<never, never> extends AppEnv
-    ? { readonly env?: AppEnv }
+    ? OptionalEnv
     : BuildsWithCreate<R> extends true
-      ? { readonly env: AppEnv }
-      : { readonly env?: AppEnv };
+      ? RequiredEnv
+      : OptionalEnv;
