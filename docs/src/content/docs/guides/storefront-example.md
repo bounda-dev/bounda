@@ -21,8 +21,8 @@ pnpm start
 1. `placeOrder` validates the items, computes the total and appends `OrderPlaced`.
 2. The policy `send-confirmation-on-order-placed` sends the confirmation through the order's
    `notifier` collaborator, then dispatches `recordConfirmationSent`, which appends
-   `ConfirmationSent`. `bounda.config.ts` picks the `console` implementation for the demo and the
-   tests pick `memory`, which records what was sent.
+   `ConfirmationSent`. `bounda.config.ts` picks the `console` implementation for the demo, and
+   each test passes its own double, which records what was sent.
 3. The policy `schedule-reminder-on-order-placed` dispatches `sendReminder` with a delay of a
    day. The reminder is a scheduled command; when it runs, the handler appends `ReminderSent`
    only if the order is still `placed`.

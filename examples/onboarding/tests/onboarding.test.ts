@@ -1,8 +1,8 @@
 import { DomainError, ValidationError } from "@bounda-dev/core";
 import { createTestApp } from "@bounda-dev/core/testing";
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { registry } from "../.bounda/registry.ts";
-import { sent } from "../app/domain/user/email-sender/memory.ts";
+import type { WelcomeEmail } from "../app/domain/user/email-sender/index.ts";
 
 const ADA = "018f6a5e-4c3c-7c1e-9d4b-0b2c4a1d8e01";
 const GRACE = "018f6a5e-4c3c-7c1e-9d4b-0b2c4a1d8e02";
@@ -11,19 +11,21 @@ const LINUS = "018f6a5e-4c3c-7c1e-9d4b-0b2c4a1d8e03";
 const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
 
-const start = () =>
-  createTestApp({
+/**
+ * Each test gets its own email sender, which records what it was asked to send.
+ */
+const start = async () => {
+  const sent: WelcomeEmail[] = [];
+  const test = await createTestApp({
     registry,
-    config: { collaborators: { user: { emailSender: "memory" } } },
+    collaborators: { user: { emailSender: { send: async (email) => void sent.push(email) } } },
   });
+  return { ...test, sent };
+};
 
 describe("onboarding", () => {
-  beforeEach(() => {
-    sent.length = 0;
-  });
-
   it("registers a user, lists it and welcomes it a minute later", async () => {
-    const { app, clock } = await start();
+    const { app, clock, sent } = await start();
     await app.commands.registerUser({ userId: ADA, email: "ada@example.com", name: "Ada" });
     await app.processUntilIdle();
 
@@ -48,7 +50,7 @@ describe("onboarding", () => {
   });
 
   it("completes the process on activation, so the registration never expires", async () => {
-    const { app, clock } = await start();
+    const { app, clock, sent } = await start();
     await app.commands.registerUser({ userId: ADA, email: "ada@example.com", name: "Ada" });
     await app.commands.activateUser({ userId: ADA });
     await app.processUntilIdle();

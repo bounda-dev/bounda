@@ -114,8 +114,8 @@ port in each, sharing a client from outside `app/domain`.
 
 An implementation exports `default` or `create`, never both. `create` may be async and runs once
 per app with `{ env, logger, clock }`: `env` is `process.env` under `boot()`, the Durable
-Object's `env` on Cloudflare, and what `createTestApp({ env })` passes in a test. `app.stop()` calls `[Symbol.asyncDispose]` on what
-it returned. Never open a connection or read the environment at the top of an implementation
+Object's `env` on Cloudflare, and what `createTestApp({ env })` passes in a test, where it only
+runs for a port the test names. `app.stop()` calls `[Symbol.asyncDispose]` on what it returned. Never open a connection or read the environment at the top of an implementation
 module: the registry imports every implementation, chosen or not.
 
 Command handlers decide; they do not act on the world. A handler reruns, collaborators included,
@@ -326,12 +326,25 @@ export const loader = ({ context }: Route.LoaderArgs) => context.get(bounda).que
 
 - After changing the layout: `bounda generate`, then type-check. Convention problems exit with
   code 1 and name the file; fix the name or the location.
-- Tests: `createTestApp({ registry, adapter? })` from `@bounda-dev/core/testing` gives an app on the
-  in-memory adapter with a fixed clock (`clock.advance(ms)`) and sequential ids; call
-  `await app.processUntilIdle()` after dispatching to run policies, processes and projections.
-  The clock drives handler time-outs and background polling too: never wait real time in a test,
-  advance the clock.
+- Tests: `createTestApp({ registry, adapter?, collaborators? })` from `@bounda-dev/core/testing`
+  gives an app on the in-memory adapter with a fixed clock (`clock.advance(ms)`) and sequential
+  ids; call `await app.processUntilIdle()` after dispatching to run policies, processes and
+  projections. The clock drives handler time-outs and background polling too: never wait real
+  time in a test, advance the clock.
   `import { registry } from "../.bounda/registry.ts"`.
+- A test passes each port it exercises, by aggregate and port: a double written in the test (a
+  spy, a stub that throws or hangs) or an implementation's file name. It does not read
+  `bounda.config.ts`, and a port left out has no implementation even with only one file: reading
+  it throws a `ConfigurationError` saying what to pass, which every later `processUntilIdle()`
+  rethrows, even when a policy or process read it. Never export state from an implementation for tests to read.
+
+  ```ts
+  const sent: Confirmation[] = [];
+  const { app } = await createTestApp({
+    registry,
+    collaborators: { order: { notifier: async (confirmation) => void sent.push(confirmation) } },
+  });
+  ```
 - `boot()` from `@bounda-dev/core/node` is typed for the project without a type argument:
   `.bounda/register.d.ts` registers the registry type with `@bounda-dev/core/register`. Never write
   `boot<typeof registry>()`.

@@ -9,9 +9,9 @@ import { type IdGenerator, uuidV7IdGenerator } from "../contracts/ids.ts";
 import { type Logger, silentLogger } from "../contracts/logger.ts";
 import type { CommandsFacade, QueriesFacade, Registry } from "../modules/registry.ts";
 import { validateRegistry } from "../modules/validate.ts";
-import type { AppRegistry, EnvSection } from "../register/index.ts";
+import type { AppEnv, AppRegistry, EnvSection } from "../register/index.ts";
 import { buildAggregates } from "./aggregate/build-aggregates.ts";
-import { createCollaborators } from "./aggregate/collaborators.ts";
+import { createCollaborators, type TestChoice } from "./aggregate/collaborators.ts";
 import { withUpcasting } from "./aggregate/upcasting.ts";
 import { createCommandsFacade } from "./command/facade.ts";
 import { createCommandPipeline } from "./command/pipeline.ts";
@@ -166,14 +166,42 @@ export interface CreateAppFunction {
  * system or Node APIs; `@bounda-dev/core/node` adds `boot()` for that. Storage is opened and the
  * collaborators' `create` exports run here, so call `stop()` when done.
  */
-export const createApp: CreateAppFunction = async <R extends Registry>({
+export const createApp: CreateAppFunction = <R extends Registry>({
   registry,
-  config: rawConfig,
+  config,
   logger = silentLogger,
   ids = uuidV7IdGenerator,
   clock = systemClock,
   env = {},
-}: CreateAppArgs<R>): Promise<BoundaApp<R>> => {
+}: CreateAppArgs<R>): Promise<BoundaApp<R>> =>
+  assembleApp<R>({ registry, config, logger, ids, clock, env });
+
+export interface AssembleAppArgs<R extends Registry> {
+  readonly registry: R;
+  readonly config: Config;
+  readonly logger: Logger;
+  readonly ids: IdGenerator;
+  readonly clock: Clock;
+  readonly env: AppEnv;
+  /**
+   * Given by `createTestApp`: the ports come from the test instead of `config.collaborators`.
+   */
+  readonly test?: TestChoice;
+}
+
+export interface AssembleAppFunction {
+  <R extends Registry>(args: AssembleAppArgs<R>): Promise<BoundaApp<R>>;
+}
+
+export const assembleApp: AssembleAppFunction = async <R extends Registry>({
+  registry,
+  config: rawConfig,
+  logger,
+  ids,
+  clock,
+  env,
+  test,
+}: AssembleAppArgs<R>): Promise<BoundaApp<R>> => {
   validateRegistry(registry);
   const config = resolveConfig(rawConfig);
   if (!isAdapter(config.storage)) {
@@ -185,10 +213,10 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
   // open; a failure further on closes them again.
   const collaborators = await createCollaborators({
     registry,
-    config: config.collaborators,
     env,
     logger,
     clock,
+    ...(test === undefined ? { config: config.collaborators } : { test }),
   });
   try {
     const opened = await config.storage.createStorage({ logger });

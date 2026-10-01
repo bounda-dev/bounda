@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
-import type { CreateArgs } from "../modules/collaborator.ts";
+import { describe, expect, it, vi } from "vitest";
+import { ConfigurationError } from "../contracts/errors.ts";
+import type { OrderProcessConfigArgs } from "../kernel/test-support.ts";
+import type { CollaboratorModules, CreateArgs } from "../modules/collaborator.ts";
+import type { PayloadArgs } from "../modules/payload.ts";
+import type { ProcessAfterFunction, ProcessStateArgs } from "../modules/process.ts";
 import type { Registry } from "../modules/registry.ts";
 import { registry } from "../node/fixtures/project/registry.ts";
 import { createTestApp } from "./index.ts";
@@ -47,10 +51,198 @@ describe("createTestApp", () => {
         },
       },
     } satisfies Registry;
-    const given = await createTestApp({ registry: withPort, env: { REGION: "eu" } });
-    const empty = await createTestApp({ registry: withPort });
+    const collaborators = { counter: { clock: "env" } };
+    const given = await createTestApp({ registry: withPort, collaborators, env: { REGION: "eu" } });
+    const empty = await createTestApp({ registry: withPort, collaborators });
     expect(seen).toEqual([{ REGION: "eu" }, {}]);
     await given.app.stop();
     await empty.app.stop();
+  });
+});
+
+interface Notifier {
+  send(message: string): void;
+}
+
+interface Events {
+  readonly orderPlaced: () => unknown;
+}
+
+const HOUR = 3_600_000;
+
+const orderPayload = ({ z }: PayloadArgs) => z.object({ orderId: z.string() });
+
+/**
+ * `placeOrder` and the `mailOnOrderPlaced` policy each read one port; `noteOrder` and the
+ * `followUp` process, with its deadline an hour after the order, read none.
+ */
+const shop = (collaborators: CollaboratorModules) =>
+  ({
+    aggregates: {
+      order: {
+        events: { orderPlaced: { apply: ({ state }: { state: object }) => state } },
+        commands: {
+          placeOrder: {
+            module: {
+              payload: orderPayload,
+              handler: ({ events, notifier }: { events: Events; notifier: Notifier }) => {
+                notifier.send("placed");
+                return [events.orderPlaced()];
+              },
+            },
+          },
+          noteOrder: {
+            module: {
+              payload: orderPayload,
+              handler: ({ events }: { events: Events }) => [events.orderPlaced()],
+            },
+          },
+        },
+        policies: {
+          mailOnOrderPlaced: {
+            module: {
+              on: "OrderPlaced",
+              handler: ({ event, mailer }: { event: { aggregateId: string }; mailer: Notifier }) =>
+                mailer.send(`mail ${event.aggregateId}`),
+            },
+          },
+        },
+        processes: {
+          followUp: {
+            module: {
+              config: ({ events }: OrderProcessConfigArgs<"OrderPlaced">) => ({
+                startedBy: [events.order.OrderPlaced],
+                timeout: "40d",
+              }),
+              state: ({ z, deadline }: ProcessStateArgs) => z.object({ due: deadline() }),
+            },
+            handlers: {
+              order: {
+                orderPlaced: {
+                  handler: ({ after }: { after: ProcessAfterFunction }) => ({ due: after("1h") }),
+                },
+              },
+            },
+            deadlines: { due: { handler: () => ({ due: null }) } },
+          },
+        },
+        collaborators,
+      },
+    },
+    readModels: {},
+  }) satisfies Registry;
+
+const recording = (sent: string[]): Notifier => ({ send: (message) => sent.push(message) });
+
+const missing = (port: string, options: string) =>
+  new ConfigurationError(
+    `Aggregate "order", collaborator "${port}": this test app was given none. Pass createTestApp collaborators: { order: { ${port}: <double> } }, or one of ${options}.`,
+  );
+
+describe("createTestApp collaborators", () => {
+  it("hands a double to the handlers as it is and never closes it", async () => {
+    const sent: string[] = [];
+    const dispose = vi.fn(async () => {});
+    const notifier = { ...recording(sent), [Symbol.asyncDispose]: dispose };
+    const { app } = await createTestApp({
+      registry: shop({
+        notifier: { smtp: { default: recording([]) } },
+        mailer: { smtp: { default: recording([]) } },
+      }),
+      collaborators: { order: { notifier, mailer: recording(sent) } },
+    });
+    await app.commands.placeOrder({ orderId: "o-1" });
+    await app.processUntilIdle();
+    expect(sent).toEqual(["placed", "mail o-1"]);
+    await app.stop();
+    expect(dispose).not.toHaveBeenCalled();
+  });
+
+  it("builds a named implementation with the test app's env, clock and logger, once per app, and closes it", async () => {
+    const closed: string[] = [];
+    const received: CreateArgs[] = [];
+    const registry = shop({
+      notifier: {
+        memory: {
+          create: (args) => {
+            received.push(args);
+            return {
+              send: () => {},
+              [Symbol.asyncDispose]: async () => void closed.push("memory"),
+            };
+          },
+        },
+      },
+      mailer: { smtp: { default: recording([]) } },
+    });
+    const collaborators = { order: { notifier: "memory", mailer: recording([]) } };
+    const first = await createTestApp({ registry, collaborators, env: { REGION: "eu" } });
+    const second = await createTestApp({ registry, collaborators });
+    expect(received).toHaveLength(2);
+    expect(received[0]).toMatchObject({ env: { REGION: "eu" }, clock: first.clock });
+    expect(received[1]?.clock).toBe(second.clock);
+    await first.app.stop();
+    expect(closed).toEqual(["memory"]);
+    await second.app.stop();
+    expect(closed).toEqual(["memory", "memory"]);
+  });
+
+  it("gives a port left out no implementation, even its only one, and throws only where it is read", async () => {
+    const create = vi.fn(() => recording([]));
+    const { app, clock } = await createTestApp({
+      registry: shop({
+        notifier: { smtp: { create } },
+        mailer: { smtp: { default: recording([]) } },
+      }),
+      collaborators: { order: { mailer: recording([]) } },
+    });
+    expect(create).not.toHaveBeenCalled();
+    await expect(app.commands.noteOrder({ orderId: "o-1" })).resolves.toMatchObject({
+      eventTypes: ["OrderPlaced"],
+    });
+    await expect(app.processUntilIdle()).resolves.toEqual({ idle: true });
+    clock.advance(HOUR);
+    await expect(app.processUntilIdle()).resolves.toEqual({ idle: true });
+    await expect(app.commands.placeOrder({ orderId: "o-2" })).rejects.toThrow(
+      missing("notifier", '"smtp"'),
+    );
+    await app.stop();
+  });
+
+  it("makes processUntilIdle throw, then and on every later call, once a reaction reads a port left out", async () => {
+    const { app } = await createTestApp({
+      registry: shop({
+        notifier: { smtp: { default: recording([]) } },
+        mailer: { smtp: { default: recording([]) }, memory: { default: recording([]) } },
+      }),
+      collaborators: { order: { notifier: recording([]) } },
+    });
+    await app.processUntilIdle();
+    await app.commands.placeOrder({ orderId: "o-1" });
+    const error = missing("mailer", '"smtp", "memory"');
+    await expect(app.processUntilIdle()).rejects.toThrow(error);
+    await expect(app.processUntilIdle()).rejects.toThrow(error);
+    await app.stop();
+  });
+
+  it("rejects an aggregate, a port or an implementation that does not exist", async () => {
+    const registry = shop({ notifier: { smtp: { default: recording([]) } } });
+    await expect(
+      createTestApp({ registry, collaborators: { shipping: { carrier: "ups" } } }),
+    ).rejects.toThrow('collaborators.shipping: there is no aggregate "shipping"');
+    await expect(
+      createTestApp({ registry, collaborators: { order: { sms: recording([]) } } }),
+    ).rejects.toThrow(
+      new ConfigurationError(
+        'Aggregate "order": createTestApp names collaborators that do not exist: "sms"',
+      ),
+    );
+    await expect(
+      createTestApp({ registry, collaborators: { order: { notifier: "smpt" } } }),
+    ).rejects.toThrow(
+      new ConfigurationError(
+        'Aggregate "order", collaborator "notifier": implementation "smpt" not found. Available: "smtp"',
+      ),
+    );
   });
 });

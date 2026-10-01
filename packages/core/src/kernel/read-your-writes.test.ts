@@ -65,10 +65,8 @@ describe("readYourWrites", () => {
   it("brings up to date the read models a command changed, up to its events, and no other", async () => {
     const { app } = await createTestApp({
       registry,
-      config: {
-        runtime: { role: "web" },
-        collaborators: { order: { notifier: "silent" } },
-      },
+      config: { runtime: { role: "web" } },
+      collaborators: { order: { notifier: "silent" } },
     });
     const lagOf = async (name: string) =>
       (await app.getLag()).subscribers.find((lag) => lag.subscriber === name)?.lag;

@@ -394,6 +394,8 @@ export type Events = {
 
 export type CollaboratorsConfig = Readonly<Record<string, never>>;
 
+export type TestCollaborators = Readonly<Record<string, never>>;
+
 export type Commands = core.CommandsFacadeOf<Record<never, never>>;
 
 export type ReactionCommands = core.ReactionCommandsFacadeOf<Record<never, never>>;
@@ -416,7 +418,7 @@ describe("emitTypes for an app without aggregates", () => {
 });
 
 describe("emitTypes with collaborators", () => {
-  it("types the aggregate's ports by their interface and requires a choice only where there are several implementations", () => {
+  it("types the aggregate's ports by their interface, requires a choice only where there are several implementations and lets a test pass a name or a double for any port", () => {
     const { content } = emitTypes({ model: withCollaborators, path: "/project/.bounda/types.ts" });
     expect(content).toContain(
       [
@@ -432,6 +434,16 @@ describe("emitTypes with collaborators", () => {
         "  readonly order: {",
         '    readonly mailer: "in-memory" | "smtp";',
         '    readonly sms?: "fake";',
+        "  };",
+        "};",
+      ].join("\n"),
+    );
+    expect(content).toContain(
+      [
+        "export type TestCollaborators = {",
+        "  readonly order?: {",
+        '    readonly mailer?: "in-memory" | "smtp" | OrderCollaborators["mailer"];',
+        '    readonly sms?: "fake" | OrderCollaborators["sms"];',
         "  };",
         "};",
       ].join("\n"),

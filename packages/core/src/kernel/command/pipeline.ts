@@ -17,6 +17,7 @@ import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
 import { foldState } from "../aggregate/fold-state.ts";
 import type { AggregateRuntime, AggregatesRuntime, CommandRuntime } from "../aggregate/runtime.ts";
+import { withCollaborators } from "../shared/with-collaborators.ts";
 import { ATTRIBUTES, METRICS, meter, traced } from "../telemetry.ts";
 import type { UnitStores } from "../unit-of-work/unit-of-work.ts";
 import { validatePayload } from "./validate.ts";
@@ -164,13 +165,14 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         id: command.aggregateId,
         version: loaded.version,
       };
-      const produced = (await runtime.handler({
-        ...aggregate.collaborators,
-        command,
-        state,
-        events: aggregate.eventBuilders,
-        idempotencyKey: command.metadata.commandId,
-      })) as readonly NewEvent[] | undefined;
+      const produced = (await runtime.handler(
+        withCollaborators(aggregate.collaborators, {
+          command,
+          state,
+          events: aggregate.eventBuilders,
+          idempotencyKey: command.metadata.commandId,
+        }),
+      )) as readonly NewEvent[] | undefined;
       const events = toPendingEvents(
         aggregate,
         command,

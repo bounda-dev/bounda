@@ -211,6 +211,10 @@ in `app/lib/stripe.ts` for instance, and each implementation imports it.
 The runtime chooses once, when the app is created, and a config that names a port, an
 implementation or an aggregate that does not exist fails at boot as well.
 
+Tests do not read this section: `createTestApp` takes its own `collaborators`, a double or a file
+name per port, and gives a port it leaves out no implementation at all
+([Testing](/guides/testing/#doubles)).
+
 ### Commands: `commands/`
 
 A command is `commands/<name>.ts`.

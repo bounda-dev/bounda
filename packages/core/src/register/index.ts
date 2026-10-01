@@ -2,20 +2,23 @@ import type { CollaboratorsConfig } from "../config/types.ts";
 import type { Registry } from "../modules/registry.ts";
 
 /**
- * Where a project registers its registry type and the type of its `collaborators` configuration.
- * The generator writes `.bounda/register.d.ts`, which augments this interface with both:
+ * Where a project registers its registry type, the type of its `collaborators` configuration and
+ * that of `createTestApp`'s `collaborators`. The generator writes `.bounda/register.d.ts`, which
+ * augments this interface with the three:
  *
  * ```ts
  * declare module "@bounda-dev/core/register" {
  *   interface Register {
  *     readonly registry: typeof registry;
  *     readonly collaborators: CollaboratorsConfig;
+ *     readonly testCollaborators: TestCollaborators;
  *   }
  * }
  * ```
  *
  * After that `BoundaApp`, `boot()` and the integrations are typed for the project without a type
- * argument, and `defineConfig` checks the `collaborators` section against the project's ports.
+ * argument, and `defineConfig` and `createTestApp` check their `collaborators` against the
+ * project's ports.
  * A host adapter may register `env`, the type of the environment implementations receive in
  * `create`: `@bounda-dev/adapter-cloudflare` registers `Cloudflare.Env`.
  */
@@ -38,6 +41,23 @@ export type AppCollaboratorsConfig = Register extends {
 }
   ? C
   : CollaboratorsConfig;
+
+/**
+ * What a test app hands each port, by aggregate and port: an implementation's file name, built as
+ * the app would build it, or any other value, which the handlers receive as it is.
+ */
+export type TestCollaboratorsChoice = Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+
+/**
+ * What `createTestApp` takes as `collaborators`, by aggregate and port: an implementation's file
+ * name or a double of the port. The one registered through {@link Register}, or untyped values
+ * when none is.
+ */
+export type AppTestCollaborators = Register extends {
+  readonly testCollaborators: infer C extends TestCollaboratorsChoice;
+}
+  ? C
+  : TestCollaboratorsChoice;
 
 /**
  * The environment an implementation's `create` receives: the one registered through
