@@ -2,11 +2,16 @@ import type {
   AppRegistry,
   BoundaApp,
   CatchUpReadModelsArgs,
+  Clock,
   CommandsFacade,
+  CreateArgs,
   DispatchOptions,
   DispatchResult,
   DurationInput,
+  EnvSection,
+  ImplementationModule,
   Instant,
+  Logger,
   QueriesFacade,
   ReactionDispatchResult,
   StoredEvent,
@@ -22,6 +27,7 @@ import type { Command as CancelOrder } from "./fixtures/order-app/app/domain/ord
 import type { Command as PayOrder } from "./fixtures/order-app/app/domain/order/commands/+types/pay-order.ts";
 import type { Command as PlaceOrder } from "./fixtures/order-app/app/domain/order/commands/+types/place-order.ts";
 import type { Implementation as InventoryFake } from "./fixtures/order-app/app/domain/order/inventory/+types/fake.ts";
+import type { Implementation as InventoryHttp } from "./fixtures/order-app/app/domain/order/inventory/+types/http.ts";
 import type { Policy as NotifyOnOrderPlaced } from "./fixtures/order-app/app/domain/order/policies/+types/notify-on-order-placed.ts";
 import type { Policy as SendReceipt } from "./fixtures/order-app/app/domain/order/policies/+types/send-receipt-on-order-paid.ts";
 import type { Policy as GreetOnCustomerRegistered } from "./fixtures/order-app/app/domain/order/policies/customer/+types/greet-on-customer-registered.ts";
@@ -149,6 +155,44 @@ describe("collaborators", () => {
   it("give each implementation its port's interface as Implementation.Contract", () => {
     expectTypeOf<InventoryFake.Contract>().toEqualTypeOf<Inventory>();
     expectTypeOf<RemindersFake.Contract>().toEqualTypeOf<Reminders>();
+  });
+
+  it("type create by the port, with the host's environment, the logger and the clock", () => {
+    expectTypeOf<InventoryHttp.CreateArgs>().toEqualTypeOf<CreateArgs>();
+    expectTypeOf<InventoryHttp.CreateArgs["env"]>().toEqualTypeOf<
+      Readonly<Record<string, string | undefined>>
+    >();
+    expectTypeOf<InventoryHttp.CreateArgs["logger"]>().toEqualTypeOf<Logger>();
+    expectTypeOf<InventoryHttp.CreateArgs["clock"]>().toEqualTypeOf<Clock>();
+    expectTypeOf<ReturnType<InventoryHttp.Create>>().toEqualTypeOf<
+      Inventory | Promise<Inventory>
+    >();
+  });
+
+  it("leave env optional for createApp and createTestApp when no host registers one", () => {
+    expectTypeOf<EnvSection>().toEqualTypeOf<{
+      readonly env?: Readonly<Record<string, string | undefined>>;
+    }>();
+    // inventory/http.ts exports create, and an empty object is still a valid environment.
+    expectTypeOf<EnvSection<typeof registry>>().toEqualTypeOf<{
+      readonly env?: Readonly<Record<string, string | undefined>>;
+    }>();
+  });
+
+  it("accept an implementation module with a default export or with a create, sync or async", () => {
+    const withDefault = {
+      default: { reserve: async () => {} },
+    } satisfies ImplementationModule<Inventory>;
+    const withCreate = {
+      create: () => ({ reserve: async () => {} }),
+    } satisfies ImplementationModule<Inventory>;
+    const withAsyncCreate = {
+      create: async ({ env }: CreateArgs) => {
+        const url = env.INVENTORY_URL;
+        return { reserve: async () => void url };
+      },
+    } satisfies ImplementationModule<Inventory>;
+    void [withDefault, withCreate, withAsyncCreate];
   });
 });
 

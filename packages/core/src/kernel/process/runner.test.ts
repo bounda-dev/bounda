@@ -10,6 +10,7 @@ import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { createReactiveHarness } from "../reactive-harness.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import {
+  chooseCollaborators,
   createRecordingLogger,
   type OrderProcessConfigArgs,
   orderAggregateEntry,
@@ -91,7 +92,11 @@ const processStream = (harness: Awaited<ReturnType<typeof createReactiveHarness>
   harness.storage.eventStore.load({ aggregateType: "process:OrderPayment", aggregateId: id });
 
 const processesOf = (registry: Registry, config: ResolvedConfig) =>
-  buildProcesses({ registry, aggregates: buildAggregates({ registry, config }), config });
+  buildProcesses({
+    registry,
+    aggregates: buildAggregates({ registry, collaborators: chooseCollaborators(registry, config) }),
+    config,
+  });
 
 describe("buildProcesses", () => {
   const config = resolveConfig({
@@ -880,13 +885,10 @@ describe("process collaborators", () => {
 
   it("names the aggregate and where to choose when several implementations exist", () => {
     expect(() =>
-      buildAggregates({
-        registry: withAudit,
-        config: resolveConfig({
-          storage: memory(),
-          collaborators: { order: { notifier: "memory" } },
-        }),
-      }),
+      chooseCollaborators(
+        withAudit,
+        resolveConfig({ storage: memory(), collaborators: { order: { notifier: "memory" } } }),
+      ),
     ).toThrow(
       'Aggregate "order", collaborator "audit": choose an implementation with collaborators.order.audit. Available: "log", "memory"',
     );

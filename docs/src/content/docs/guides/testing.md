@@ -146,6 +146,23 @@ expect(sent).toEqual([{ orderId: ORDER, customerId: "ada", total: 139 }]);
 
 Reset it in `beforeEach`; the module lives as long as the test file does.
 
+An implementation that exports `create` is built for each test app, with the test's clock and
+logger. Its `env` is what the test passes, never the test's `process.env`, and an empty object
+otherwise:
+
+```ts
+const { app } = await createTestApp({
+  registry,
+  config: { collaborators: { order: { inventory: "http" } } },
+  env: { INVENTORY_URL: "http://localhost:8080" },
+});
+```
+
+`app.stop()` closes what each `create` built, as it does outside tests. On Cloudflare `env` is
+`Cloudflare.Env`, whose bindings an empty object does not have, so `createTestApp` requires it
+there as soon as an implementation exports `create`; inside workerd, pass `env` from
+`cloudflare:workers`.
+
 ## Nothing left behind
 
 `app.getLag()` reports how far each subscriber is behind the stream. Asserting it is zero proves a

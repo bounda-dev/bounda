@@ -1,4 +1,6 @@
+/// <reference lib="esnext.disposable" />
 import {
+  type CreateArgs,
   DomainError,
   type FieldsArgs,
   type Instant,
@@ -235,4 +237,51 @@ export const processRegistry = {
 export const quietRegistry = {
   ...registry,
   aggregates: { order: { ...registry.aggregates.order, policies: {}, processes: {} } },
+} satisfies Registry;
+
+const placeOrder = quietRegistry.aggregates.order.commands.placeOrder.module.handler;
+
+/**
+ * What the `region` collaborator saw: the orders it recorded, prefixed with the binding its
+ * `create` read, and when it was closed.
+ */
+export const regionLog: string[] = [];
+
+/**
+ * The order app with a collaborator built by `create` from a variable of the Worker's `env`.
+ */
+export const regionRegistry = {
+  ...quietRegistry,
+  aggregates: {
+    order: {
+      ...quietRegistry.aggregates.order,
+      collaborators: {
+        region: {
+          binding: {
+            create: ({ env }: CreateArgs) => ({
+              record: (orderId: string) => regionLog.push(`${env.STORE_REGION}:${orderId}`),
+              [Symbol.asyncDispose]: async () => void regionLog.push("closed"),
+            }),
+          },
+        },
+      },
+      commands: {
+        ...quietRegistry.aggregates.order.commands,
+        placeOrder: {
+          module: {
+            ...quietRegistry.aggregates.order.commands.placeOrder.module,
+            handler: (
+              args: Parameters<typeof placeOrder>[0] & {
+                command: { aggregateId: string };
+                region: { record: (orderId: string) => void };
+              },
+            ) => {
+              args.region.record(args.command.aggregateId);
+              return placeOrder(args);
+            },
+          },
+        },
+      },
+    },
+  },
 } satisfies Registry;

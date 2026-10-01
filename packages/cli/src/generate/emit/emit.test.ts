@@ -471,10 +471,14 @@ describe("emitProject with collaborators", () => {
     );
     expect(contentOf("mailer/+types/in-memory.ts")).toBe(
       [
+        'import type * as core from "@bounda-dev/core";',
+        "",
         'type Port = import("../index.ts").Mailer;',
         "",
         "export declare namespace Implementation {",
         "  type Contract = Port;",
+        "  type CreateArgs = core.CreateArgs;",
+        "  type Create = core.CreateImplementation<Port>;",
         "}",
         "",
       ].join("\n"),

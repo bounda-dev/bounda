@@ -32,7 +32,6 @@ const generic = (name: string, args: readonly string[]): string =>
 
 interface Template {
   readonly imports: {
-    readonly core?: boolean;
     readonly generated: boolean;
     readonly module: string | null;
     readonly moduleAlias?: string;
@@ -44,11 +43,11 @@ interface Template {
 
 const render = (path: string, typesPath: string, template: Template): GeneratedFile => {
   const lines: string[] = [];
-  if (template.imports.core !== false) lines.push('import type * as core from "@bounda-dev/core";');
+  lines.push('import type * as core from "@bounda-dev/core";');
   if (template.imports.generated) {
     lines.push(`import type * as generated from "${importPath({ from: path, to: typesPath })}";`);
   }
-  if (lines.length > 0) lines.push("");
+  lines.push("");
   if (template.imports.module !== null) {
     lines.push(
       `type ${template.imports.moduleAlias ?? "Module"} = typeof import("${importPath({ from: path, to: template.imports.module })}");`,
@@ -90,12 +89,16 @@ const implementationFiles = (aggregate: AggregateModel, typesPath: string): Gene
     port.implementations.map((implementation) => {
       const path = plusTypesPath(implementation.path);
       return render(path, typesPath, {
-        imports: { core: false, generated: false, module: null },
+        imports: { generated: false, module: null },
         extraTypes: [
           `type Port = import("${importPath({ from: path, to: port.contract.path })}").${port.typeName};`,
         ],
         namespace: "Implementation",
-        members: [["Contract", "Port"]],
+        members: [
+          ["Contract", "Port"],
+          ["CreateArgs", "core.CreateArgs"],
+          ["Create", "core.CreateImplementation<Port>"],
+        ],
       });
     }),
   );

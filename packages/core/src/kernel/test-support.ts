@@ -1,5 +1,6 @@
 import { expect, vi } from "vitest";
 import type { StoragePorts } from "../adapter/adapter.ts";
+import { selectCollaborators } from "../config/collaborators.ts";
 import { resolveConfig } from "../config/schema.ts";
 import type { CollaboratorsConfig, Config, ResolvedConfig } from "../config/types.ts";
 import { createFixedClock, type FixedClock } from "../contracts/clock.ts";
@@ -10,6 +11,7 @@ import { memory } from "../memory/index.ts";
 import type { PayloadArgs } from "../modules/payload.ts";
 import type { Registry } from "../modules/registry.ts";
 import { buildAggregates } from "./aggregate/build-aggregates.ts";
+import { type AggregateCollaborators, createCollaborators } from "./aggregate/collaborators.ts";
 import type { AggregatesRuntime } from "./aggregate/runtime.ts";
 import { createCommandPipeline } from "./command/pipeline.ts";
 
@@ -134,6 +136,30 @@ export const defaultCollaborators = (registry: Registry): CollaboratorsConfig =>
     : { order: { notifier: "memory" } };
 
 /**
+ * What `createCollaborators` builds, chosen synchronously, for kernel tests that build aggregates
+ * by hand from a registry whose implementations are all default exports.
+ */
+export interface ChooseCollaboratorsFunction {
+  (registry: Registry, config: ResolvedConfig): AggregateCollaborators;
+}
+
+export const chooseCollaborators: ChooseCollaboratorsFunction = (registry, config) =>
+  Object.fromEntries(
+    Object.entries(registry.aggregates).map(([aggregate, entry]) => [
+      aggregate,
+      Object.fromEntries(
+        Object.entries(
+          selectCollaborators({
+            aggregate,
+            implementations: entry.collaborators ?? {},
+            config: config.collaborators[aggregate],
+          }),
+        ).map(([port, module]) => [port, module.default]),
+      ),
+    ]),
+  );
+
+/**
  * Messages sent through the in-memory notifier collaborator, reset by `createKernelHarness`.
  */
 export const sentMessages: string[] = [];
@@ -212,8 +238,15 @@ export const createKernelHarness: CreateKernelHarnessFunction = async ({
     collaborators: defaultCollaborators(registry),
     ...overrides,
   });
-  const aggregates = buildAggregates({ registry, config });
   const clock = createFixedClock();
+  const { byAggregate } = await createCollaborators({
+    registry,
+    config: config.collaborators,
+    env: {},
+    logger: silentLogger,
+    clock,
+  });
+  const aggregates = buildAggregates({ registry, collaborators: byAggregate });
   const pipeline = createCommandPipeline({
     aggregates,
     eventStore: storage.eventStore,

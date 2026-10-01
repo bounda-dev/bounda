@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveConfig } from "../../config/schema.ts";
 import { DomainError } from "../../contracts/errors.ts";
-import { memory } from "../../memory/index.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { createDeadLetters } from "../dead-letters/dead-letters.ts";
@@ -396,13 +394,7 @@ describe("delayed policies", () => {
     expect(() =>
       buildPolicies({
         registry: registryWith("a minute"),
-        aggregates: buildAggregates({
-          registry: registryWith("a minute"),
-          config: resolveConfig({
-            storage: memory(),
-            collaborators: { order: { notifier: "memory" } },
-          }),
-        }),
+        aggregates: buildAggregates({ registry: registryWith("a minute"), collaborators: {} }),
       }),
     ).toThrow(
       'aggregates.order.policies.remindOnOrderPlaced: delay "a minute" is not a duration such as "30s", "5m" or 60000',

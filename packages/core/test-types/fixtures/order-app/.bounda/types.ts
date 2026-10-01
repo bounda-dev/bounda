@@ -27,7 +27,7 @@ export type Events = {
 export type CollaboratorsConfig = {
   readonly order: {
     readonly auditLog?: "memory";
-    readonly inventory: "fake" | "memory";
+    readonly inventory: "fake" | "http" | "memory";
     readonly mailer?: "memory";
     readonly reminders?: "fake";
   };

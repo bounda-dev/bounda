@@ -146,6 +146,7 @@ describe("discoverProject on the order-app fixture", () => {
               contract: "app/domain/order/inventory/index.ts",
               implementations: [
                 ["fake", "app/domain/order/inventory/fake.ts"],
+                ["http", "app/domain/order/inventory/http.ts"],
                 ["memory", "app/domain/order/inventory/memory.ts"],
               ],
             },

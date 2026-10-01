@@ -6,8 +6,13 @@ import { type Logger, silentLogger } from "../contracts/logger.ts";
 import { type BoundaApp, createApp } from "../kernel/app.ts";
 import { memory } from "../memory/index.ts";
 import type { Registry } from "../modules/registry.ts";
+import type { EnvSection } from "../register/index.ts";
 
-export interface CreateTestAppArgs<R extends Registry> {
+/**
+ * `env` is what collaborator implementations receive in `create`, never the test's
+ * `process.env`; `EnvSection` says when it is required.
+ */
+export type CreateTestAppArgs<R extends Registry> = {
   readonly registry: R;
   /**
    * Configuration without `storage`; the in-memory adapter is used unless `adapter` says
@@ -20,7 +25,7 @@ export interface CreateTestAppArgs<R extends Registry> {
    * Where the fixed clock starts. Defaults to 2026-01-01T00:00:00Z.
    */
   readonly now?: Date;
-}
+} & EnvSection<R>;
 
 export interface TestApp<R extends Registry> {
   readonly app: BoundaApp<R>;
@@ -47,6 +52,7 @@ export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
   adapter = memory(),
   logger = silentLogger,
   now,
+  env,
 }: CreateTestAppArgs<R>): Promise<TestApp<R>> => {
   const clock = createFixedClock(now);
   const ids = createSequentialIdGenerator();
@@ -56,6 +62,7 @@ export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
     logger,
     ids,
     clock,
+    ...(env === undefined ? {} : { env }),
   });
   return { app, clock, ids };
 };

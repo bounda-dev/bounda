@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { cloudflare } from "../src/definition.ts";
 import { createBoundaObject, createWorker } from "../src/index.ts";
-import { processRegistry, quietRegistry, registry } from "./app.ts";
+import { processRegistry, quietRegistry, regionRegistry, registry } from "./app.ts";
 import { clock } from "./clock.ts";
 
 /**
@@ -41,6 +41,15 @@ export const SlicedStore = createBoundaObject({
   config: { storage: cloudflare(), runtime: { dispatcher: { batchSize: 1 } } },
   clock,
   eventsPerRebuildSlice: 1,
+});
+
+/**
+ * The app without policies, with a collaborator its `create` builds from the object's `env`.
+ */
+export const RegionStore = createBoundaObject({
+  registry: regionRegistry,
+  config: { storage: cloudflare() },
+  clock,
 });
 
 /**

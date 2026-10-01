@@ -7,6 +7,7 @@ import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { createReactiveHarness, type ReactiveHarness } from "../reactive-harness.ts";
 import { deriveDeadLetterId, deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import {
+  chooseCollaborators,
   createRecordingLogger,
   defaultCollaborators,
   orderAggregateEntry,
@@ -87,7 +88,10 @@ const policiesOf = (registry: Registry) =>
     registry,
     aggregates: buildAggregates({
       registry,
-      config: resolveConfig({ storage: memory(), collaborators: defaultCollaborators(registry) }),
+      collaborators: chooseCollaborators(
+        registry,
+        resolveConfig({ storage: memory(), collaborators: defaultCollaborators(registry) }),
+      ),
     }),
   });
 
@@ -613,13 +617,10 @@ describe("policy collaborators", () => {
 
   it("names the aggregate and where to choose when several implementations exist", () => {
     expect(() =>
-      buildAggregates({
-        registry: withMailer,
-        config: resolveConfig({
-          storage: memory(),
-          collaborators: { order: { notifier: "memory" } },
-        }),
-      }),
+      chooseCollaborators(
+        withMailer,
+        resolveConfig({ storage: memory(), collaborators: { order: { notifier: "memory" } } }),
+      ),
     ).toThrow(
       'Aggregate "order", collaborator "mailer": choose an implementation with collaborators.order.mailer. Available: "smtp", "memory"',
     );

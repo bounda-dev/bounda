@@ -24,3 +24,13 @@ export type { NextWakeArgs, NextWakeFunction } from "./wake.ts";
 export { nextWake } from "./wake.ts";
 export type { CreateWorkerArgs, CreateWorkerFunction, TenantOfFunction } from "./worker.ts";
 export { createWorker, TENANT_HEADER } from "./worker.ts";
+
+declare module "@bounda-dev/core/register" {
+  interface Register {
+    /**
+     * On Cloudflare, collaborator implementations receive the Durable Object's `env` in `create`:
+     * the Worker's bindings and variables, as `wrangler types` declares them.
+     */
+    readonly env: Cloudflare.Env;
+  }
+}

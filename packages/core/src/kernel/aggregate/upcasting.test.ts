@@ -9,7 +9,7 @@ import type { Registry } from "../../modules/registry.ts";
 import type { Upcasts } from "../../modules/upcast.ts";
 import { createApp } from "../app.ts";
 import { rebuildReadModel } from "../read-model/rebuild.ts";
-import { defaultCollaborators, orderAggregateEntry } from "../test-support.ts";
+import { chooseCollaborators, defaultCollaborators, orderAggregateEntry } from "../test-support.ts";
 import { buildAggregates } from "./build-aggregates.ts";
 import { upcastEvent, withUpcasting } from "./upcasting.ts";
 
@@ -78,7 +78,10 @@ const registry = {
 } satisfies Registry;
 
 const config = resolveConfig({ storage: memory(), collaborators: defaultCollaborators(registry) });
-const aggregates = buildAggregates({ registry, config });
+const aggregates = buildAggregates({
+  registry,
+  collaborators: chooseCollaborators(registry, config),
+});
 
 const stored = (
   overrides: Partial<PendingEvent> & { readonly schemaVersion?: number; readonly system?: boolean },

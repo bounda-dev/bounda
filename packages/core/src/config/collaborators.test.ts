@@ -13,7 +13,7 @@ describe("selectCollaborators", () => {
       implementations: { inventory: { http: { default: http }, fake: { default: fake } } },
       config: { inventory: "fake" },
     });
-    expect(selected).toEqual({ inventory: fake });
+    expect(selected).toEqual({ inventory: { default: fake } });
   });
 
   it("picks the only implementation when nothing is configured", () => {
@@ -25,7 +25,7 @@ describe("selectCollaborators", () => {
       },
       config: undefined,
     });
-    expect(selected).toEqual({ inventory: http, mailer });
+    expect(selected).toEqual({ inventory: { default: http }, mailer: { default: mailer } });
   });
 
   it("returns an empty object for an aggregate without collaborators", () => {

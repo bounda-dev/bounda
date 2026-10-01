@@ -28,8 +28,16 @@ const requireImplementations = (
       problems.push({ path: `${path}.${port}`, message: "has no implementations" });
     }
     for (const [name, module] of Object.entries(implementations)) {
-      if (!isRecord(module) || !("default" in module)) {
-        problems.push({ path: `${path}.${port}.${name}`, message: 'missing export "default"' });
+      const at = `${path}.${port}.${name}`;
+      const exported = isRecord(module) ? module : {};
+      const hasDefault = Reflect.get(exported, "default") !== undefined;
+      const create: unknown = Reflect.get(exported, "create");
+      if (hasDefault && create !== undefined) {
+        problems.push({ path: at, message: 'exports both "default" and "create" (expected one)' });
+      } else if (create !== undefined && !isFunction(create)) {
+        problems.push({ path: at, message: 'export "create" must be a function' });
+      } else if (!hasDefault && create === undefined) {
+        problems.push({ path: at, message: 'missing export "default" or "create"' });
       }
     }
   }
