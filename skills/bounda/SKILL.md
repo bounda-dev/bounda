@@ -240,8 +240,9 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   with its claim, its lifecycle events and its deadline entry when it ends, so a failed or crashed
   attempt leaves nothing behind, and a step whose instance moved meanwhile runs again on the new
   state; what `await commands.x()` returns is the aggregate's decision, not something stored yet:
-  call outside first, dispatch after. Outside the promise: the outside calls themselves, the inbox
-  claim, and what a read model shows a handler (only what was committed before the attempt).
+  call outside first, dispatch after, and await every dispatch. Outside the promise: the outside
+  calls themselves, the inbox claim, and what a read model shows a handler (only what was
+  committed before the attempt).
 - Policies and processes get the aggregate's collaborators spread next to `event` and `commands`,
   like commands do; a policy in `policies/<other-aggregate>/` still gets its own aggregate's.
   A policy that exports `delay` (`"1m"`, or `asDuration(env)`) runs that long

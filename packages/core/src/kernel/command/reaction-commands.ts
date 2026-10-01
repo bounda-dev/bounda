@@ -34,7 +34,7 @@ export interface ReactionCommands {
   /**
    * Ends a run that failed or timed out: `signal` aborts, which stops the commands still running,
    * and later dispatches are refused. Nothing is undone, since the run's unit of work is never
-   * committed.
+   * committed. A dispatch the handler does not await is never reported as unhandled for it.
    */
   abandon(reason: unknown): void;
 }
@@ -63,6 +63,8 @@ const decided = (result: DispatchResult): ReactionDispatchResult => {
   return decision;
 };
 
+const ignore = (): void => undefined;
+
 export const createReactionCommands: CreateReactionCommandsFunction = ({
   aggregates,
   pipeline,
@@ -75,23 +77,33 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
   // A second signal, so the commands are refused with the reason wrapped while the handler's
   // signal carries it as it is.
   const abandoned = new AbortController();
+  // Abandoning the run rejects the dispatches it stops or refuses, which a handler that did not
+  // await one would leave unhandled, and Node ends the process on that. They are marked handled
+  // before they can reject; the handler still sees the rejection through its own await.
+  const dispatched = new Set<Promise<ReactionDispatchResult>>();
   const commands = createCommandsFacade({
     aggregates,
-    dispatch: async (command) =>
-      decided(
-        await pipeline.dispatch({
-          ...command,
-          context: { ...context, depth: context.depth + 1 },
-          commandId: commandIds(command.type),
-          within,
-          signal: abandoned.signal,
-        }),
-      ),
+    dispatch: (command) => {
+      const dispatch = (async () =>
+        decided(
+          await pipeline.dispatch({
+            ...command,
+            context: { ...context, depth: context.depth + 1 },
+            commandId: commandIds(command.type),
+            within,
+            signal: abandoned.signal,
+          }),
+        ))();
+      if (abandoned.signal.aborted) dispatch.catch(ignore);
+      else dispatched.add(dispatch);
+      return dispatch;
+    },
   });
   return {
     commands,
     signal: handler.signal,
     abandon: (reason) => {
+      for (const dispatch of dispatched) dispatch.catch(ignore);
       abandoned.abort(new ReactionAbandonedError(reason));
       handler.abort(reason);
     },

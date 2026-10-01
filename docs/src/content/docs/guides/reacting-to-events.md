@@ -221,6 +221,9 @@ decision.
 
 A few rules keep it correct:
 
+- **Await every command the handler dispatches.** The run's outcome is what the handler returns
+  or throws: a command it does not await may be left out of the run, and its failure reaches no
+  one.
 - **Pass `idempotencyKey` to every provider that takes one.** It is one key per handler run: two
   different calls in one handler need two keys, so either derive a second one for the provider
   (`${idempotencyKey}-refund`, if its length limit allows) or give each effect its own reaction.

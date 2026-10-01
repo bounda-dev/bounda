@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Registry } from "../../modules/registry.ts";
 import { createReactionCommandIds } from "../shared/idempotency-key.ts";
-import { createKernelHarness, orderRegistry, slowJob } from "../test-support.ts";
+import { createKernelHarness, drained, orderRegistry, slowJob } from "../test-support.ts";
 import { createUnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import { scheduledCommandKey } from "./pipeline.ts";
 import { createReactionCommands, ReactionAbandonedError } from "./reaction-commands.ts";
@@ -102,6 +102,27 @@ describe("createReactionCommands", () => {
     await expect(outcome).rejects.toMatchObject({ code: "REACTION_ABANDONED", cause: reason });
     expect(signal.reason).toMatchObject({ code: "REACTION_ABANDONED", cause: reason });
     expect(reaction.signal.reason).toBe(reason);
+  });
+
+  it("leaves no dispatch the handler did not await unhandled when the run is abandoned", async () => {
+    const { registry, started } = slowJob();
+    const { reaction } = await setUp(registry);
+    const unhandled: unknown[] = [];
+    const record = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", record);
+    try {
+      void reaction.commands.runJob?.({ jobId: "j-1" });
+      await started;
+      reaction.abandon(new Error("timed out"));
+      void reaction.commands.runJob?.({ jobId: "j-2" });
+      await drained();
+      await drained();
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", record);
+    }
   });
 
   it("keeps the error of a command that failed on its own when the run is then abandoned", async () => {
