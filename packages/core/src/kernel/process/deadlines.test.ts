@@ -1158,12 +1158,20 @@ describe("deadline entries under races and partial failures", () => {
       ...entry,
       dedupeKey: "process-deadline:order.gone:o-1",
     });
-    await harness.storage.scheduler.schedule({
+    const second = {
       ...entry,
       dedupeKey: "process-deadline:order.gone:o-2",
-    });
+      command: {
+        ...entry.command,
+        aggregateId: "o-2",
+        payload: { ...entry.command.payload, aggregateId: "o-2" },
+      },
+    };
+    await harness.storage.scheduler.schedule(second);
     expect(await harness.worker.runOnce()).toBe(2);
     expect(entries).toEqual([]);
+    expect(await harness.storage.scheduler.list()).toEqual([]);
+    await harness.storage.scheduler.schedule(second);
     let settles = 0;
     await harness.processes.failDeadline({
       payload: { process: "order.gone", aggregateId: "o-2" },

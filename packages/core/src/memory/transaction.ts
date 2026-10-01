@@ -39,8 +39,8 @@ export interface CreateMemoryStorageTransactionFunction {
  * appended in one synchronous run with every version checked first, so no reader sees one stream
  * appended without the others. A write that fails puts the ledger, the dead letters and the
  * scheduler back from their snapshots, and nothing has been appended by then; a stale version
- * appends nothing and puts them back too. `tryClaim` and `claimDue` answer at once, outside the
- * transaction.
+ * appends nothing and puts them back too. `tryClaim`, `claimDue` and `renew` act at once, outside
+ * the transaction.
  */
 export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunction =
   ({ eventStore, inboxLedger, deadLetterStore, scheduler }) =>

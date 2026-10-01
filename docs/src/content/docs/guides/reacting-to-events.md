@@ -430,10 +430,11 @@ A scheduled command is claimed by one instance at a time, however many are runni
 role. Its run and the release of its claim are one transaction: what the command wrote lands
 together with the claim's completion, so a worker that dies between the two does not run it twice,
 and a command the worker gives up on is dead-lettered in the same transaction that drops it. The
-claim's lease starts again as the run starts and before every retry after a conflict. A run that
-stalls past it can lose the command to another instance, which then decides it; the stalled run
-writes nothing, and stops before running the handler again. The same holds for a delayed policy's
-run and for a process deadline.
+claim's lease starts again before every retry after a conflict, and a command the worker reaches
+too late in a batch goes back unrun, without counting an attempt. A run that stalls past its lease
+anyway can lose the command to another instance, which then decides it; the stalled run writes
+nothing, and stops before running the handler again. The same holds for a delayed policy's run and
+for a process deadline.
 
 ## Delaying a policy
 

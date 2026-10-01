@@ -126,9 +126,9 @@ export interface Scheduler {
    */
   defer(args: DeferScheduledArgs): Promise<void>;
   /**
-   * Restarts the claim's lease at `now`, for a worker about to run the command, or to run it again
-   * after a conflict, long after it claimed it. Rejects with `ScheduledClaimLostError` when the key
-   * no longer holds this claim, so the run does not start.
+   * Restarts the claim's lease at `now`, for a worker about to run the command again after a
+   * conflict; nothing else of the entry changes. Rejects with `ScheduledClaimLostError` when the key
+   * no longer holds this claim, so the run does not start again.
    */
   renew(args: RenewScheduledArgs): Promise<void>;
   list(args?: ListScheduledArgs): Promise<readonly ScheduledCommand[]>;

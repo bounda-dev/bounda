@@ -94,8 +94,8 @@ export class ClaimLostError extends BoundaError {
 /**
  * Thrown by a scheduler asked to complete, fail, defer or renew a claimed command by a claim it no
  * longer holds: the lease expired and another runner claimed the command, or the command was
- * cancelled. Whatever the settling was part of rolls back, so a run that outlived its claim writes
- * nothing.
+ * cancelled. Whatever the settling was part of rolls back, and a rejected renewal stops the run
+ * before it starts again, so a run that outlived its claim writes nothing.
  */
 export class ScheduledClaimLostError extends BoundaError {
   readonly dedupeKey: string;

@@ -462,10 +462,10 @@ describe("scheduled command worker", () => {
     );
   });
 
-  it("renews each entry's claim as it starts, so a long batch keeps the entries it reaches late", async () => {
+  it("hands back unrun, without an attempt, the entries of a batch it reaches too late in their lease", async () => {
     const harness = await createReactiveHarness({ registry: orderRegistry });
     sentMessages.length = 0;
-    for (const orderId of ["o-1", "o-2"]) {
+    for (const orderId of ["o-1", "o-2", "o-3"]) {
       await harness.pipeline.dispatch({
         type: "PlaceOrder",
         payload: { orderId, total: 10 },
@@ -473,62 +473,131 @@ describe("scheduled command worker", () => {
       });
     }
     harness.clock.advance(60_000);
-    let peer: readonly ClaimedCommand[] | undefined;
     const dispatch = harness.pipeline.dispatch;
+    const slow =
+      (ms: number): typeof dispatch =>
+      async (args) => {
+        harness.clock.advance(ms);
+        return dispatch(args);
+      };
     vi.spyOn(harness.pipeline, "dispatch")
-      .mockImplementationOnce(async (args) => {
-        harness.clock.advance(harness.worker.leaseMs - 1);
-        return dispatch(args);
-      })
-      .mockImplementationOnce(async (args) => {
-        peer = await harness.storage.scheduler.claimDue({
-          now: new Date(harness.clock.now().getTime() + 2),
-          limit: 10,
-          leaseMs: harness.worker.leaseMs,
-        });
-        return dispatch(args);
-      });
+      .mockImplementationOnce(slow(harness.worker.leaseMs / 4))
+      .mockImplementationOnce(slow(1));
 
-    expect(await harness.worker.runOnce()).toBe(2);
+    expect(await harness.worker.runOnce()).toBe(3);
 
-    expect(peer).toEqual([]);
     expect(sentMessages).toHaveLength(2);
-    expect(await harness.storage.eventStore.lastPosition()).toBe(2);
+    expect(await harness.storage.scheduler.list()).toMatchObject([{ attempts: 0 }]);
+    expect(await harness.worker.runOnce()).toBe(1);
+    expect(sentMessages).toHaveLength(3);
     expect(await harness.storage.scheduler.list()).toEqual([]);
   });
 
-  it("stops a run whose claim moved before running it again after a conflict", async () => {
-    const { logger, entries } = createRecordingLogger();
-    const harness = await createReactiveHarness({ registry: orderRegistry, logger });
-    await harness.pipeline.dispatch({
-      type: "PlaceOrder",
-      payload: { orderId: "o-1", total: 10 },
-      options: { delay: "1m" },
-    });
-    harness.clock.advance(60_000);
-    const dispatch = harness.pipeline.dispatch;
-    const runs = vi.spyOn(harness.pipeline, "dispatch").mockImplementationOnce(async (args) => {
-      const result = await dispatch(args);
-      harness.clock.advance(harness.worker.leaseMs + 1);
-      await harness.storage.scheduler.claimDue({
-        now: harness.clock.now(),
-        limit: 10,
-        leaseMs: harness.worker.leaseMs,
+  describe("a run that meets a conflict", () => {
+    const conflicting = async (harness: Awaited<ReturnType<typeof createReactiveHarness>>) => {
+      await harness.pipeline.dispatch({
+        type: "PlaceOrder",
+        payload: { orderId: "o-1", total: 10 },
+        options: { delay: "1m" },
       });
-      await dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-      return result;
+      harness.clock.advance(60_000);
+      const dispatch = harness.pipeline.dispatch;
+      const runs = vi.spyOn(harness.pipeline, "dispatch").mockImplementationOnce(async (args) => {
+        const result = await dispatch(args);
+        await dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+        return result;
+      });
+      return runs;
+    };
+
+    const afterTheConflict = (
+      harness: Awaited<ReturnType<typeof createReactiveHarness>>,
+      then: () => Promise<unknown>,
+    ): void => {
+      const transact = harness.storage.transact.bind(harness.storage);
+      harness.storage.transact = async (work) => {
+        harness.storage.transact = transact;
+        try {
+          return await transact(work);
+        } catch (error) {
+          await then();
+          throw error;
+        }
+      };
+    };
+
+    it("renews its claim before running again, and stops once the claim moved", async () => {
+      const { logger, entries } = createRecordingLogger();
+      const harness = await createReactiveHarness({ registry: orderRegistry, logger });
+      const runs = await conflicting(harness);
+      afterTheConflict(harness, async () => {
+        harness.clock.advance(harness.worker.leaseMs + 1);
+        await harness.storage.scheduler.claimDue({
+          now: harness.clock.now(),
+          limit: 10,
+          leaseMs: harness.worker.leaseMs,
+        });
+      });
+
+      expect(await harness.worker.runOnce()).toBe(1);
+
+      expect(runs).toHaveBeenCalledTimes(1);
+      const order = await harness.storage.eventStore.load({
+        aggregateType: "order",
+        aggregateId: "o-1",
+      });
+      expect(order.events.map((event) => event.type)).toEqual(["OrderPlaced"]);
+      expect(await harness.storage.deadLetterStore.count()).toBe(0);
+      expect(entries.map((entry) => entry.message)).toEqual([LOST_CLAIM]);
     });
 
-    expect(await harness.worker.runOnce()).toBe(1);
+    it("keeps its claim for the rerun, past the lease it was claimed with", async () => {
+      const harness = await createReactiveHarness({ registry: orderRegistry });
+      const runs = await conflicting(harness);
+      const transact = harness.storage.transact.bind(harness.storage);
+      let peer: readonly ClaimedCommand[] = [];
+      afterTheConflict(harness, async () => {
+        harness.clock.advance(harness.worker.leaseMs - 1);
+        harness.storage.transact = async (work) => {
+          peer = await harness.storage.scheduler.claimDue({
+            now: new Date(harness.clock.now().getTime() + 2),
+            limit: 10,
+            leaseMs: harness.worker.leaseMs,
+          });
+          return transact(work);
+        };
+      });
 
-    expect(runs).toHaveBeenCalledTimes(1);
-    const order = await harness.storage.eventStore.load({
-      aggregateType: "order",
-      aggregateId: "o-1",
+      expect(await harness.worker.runOnce()).toBe(1);
+
+      expect(peer).toEqual([]);
+      expect(runs).toHaveBeenCalledTimes(2);
+      expect(await harness.storage.scheduler.list()).toEqual([]);
     });
-    expect(order.events.map((event) => event.type)).toEqual(["OrderPlaced"]);
-    expect(await harness.storage.deadLetterStore.count()).toBe(0);
-    expect(entries.map((entry) => entry.message)).toEqual([LOST_CLAIM]);
+
+    it("leaves its claim to lapse when renewing it fails in the store, spending no attempt", async () => {
+      const { logger, entries } = createRecordingLogger();
+      const harness = await createReactiveHarness({ registry: orderRegistry, logger });
+      const runs = await conflicting(harness);
+      afterTheConflict(harness, async () => {
+        harness.storage.scheduler.renew = async () => {
+          throw new Error("connection reset");
+        };
+      });
+
+      expect(await harness.worker.runOnce()).toBe(1);
+
+      expect(runs).toHaveBeenCalledTimes(1);
+      expect(await harness.storage.scheduler.list()).toMatchObject([{ attempts: 0 }]);
+      expect(await harness.storage.deadLetterStore.count()).toBe(0);
+      expect(entries).toEqual([
+        {
+          level: "error",
+          message: "scheduled command could not be settled; its lease will lapse",
+          fields: expect.objectContaining({ command: "PlaceOrder", message: "connection reset" }),
+        },
+      ]);
+    });
   });
 
   it("holds its claims long enough for the slowest command handler", async () => {

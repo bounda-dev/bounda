@@ -12,10 +12,12 @@ possibly dead-lettered with `CommandFailed`). Settling a claim another instance 
 whose entry was cancelled, now rolls back the whole run, its give-up included, and the worker logs
 it as a warning.
 
-The worker now renews an entry's claim as it starts running it and before every rerun after a
-conflict, so the lease covers one run instead of a whole batch and keeps its length. An entry
-another instance took over before the worker reached it, or while it was running, is not run
-again by this worker.
+The worker now renews an entry's claim before every rerun after a conflict, so the lease covers one
+run instead of a whole batch and keeps its length, and a run whose claim moved stops before its
+handler runs again. An entry of a batch starts only early in the batch's lease; the rest go back
+unrun, without counting an attempt, before another instance could take them over and count one.
+A store failure while renewing leaves the claim to lapse instead of counting as the command's
+failure.
 
 For adapter authors, the `Scheduler` port changes: `complete`, `fail` and `defer` reject with the
 new `ScheduledClaimLostError` (code `SCHEDULED_CLAIM_LOST`) when the key no longer holds the
