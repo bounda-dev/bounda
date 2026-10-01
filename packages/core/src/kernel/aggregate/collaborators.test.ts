@@ -125,6 +125,27 @@ describe("createCollaborators", () => {
     expect(closed).toEqual(["notify"]);
   });
 
+  it("leaves alone what create built without a Symbol.asyncDispose function", async () => {
+    const { logger, entries } = createRecordingLogger();
+    const { byAggregate, dispose } = await createCollaborators({
+      registry: registryOf({
+        order: aggregate({
+          plain: { only: { create: () => ({ send: () => {} }) } },
+          flagged: { only: { create: () => ({ [Symbol.asyncDispose]: "not a function" }) } },
+          empty: { only: { create: () => null } },
+          count: { only: { create: () => 0 } },
+        }),
+      }),
+      config: {},
+      env: {},
+      logger,
+      clock,
+    });
+    expect(byAggregate.order).toMatchObject({ empty: null, count: 0 });
+    await dispose();
+    expect(entries.filter((entry) => entry.level === "error")).toEqual([]);
+  });
+
   it("logs a close that fails and closes the rest", async () => {
     const closed: string[] = [];
     const { logger, entries } = createRecordingLogger();
