@@ -429,8 +429,9 @@ await commands.sendReminder(
 A scheduled command is taken by exactly one instance, however many are running the worker role.
 Its run and the release of its claim are one transaction: what the command wrote lands together
 with the claim's completion, so a worker that dies between the two does not run it twice, and a
-command the worker gives up on is dead-lettered in the same transaction that drops it. The same
-holds for a delayed policy's run and for a process deadline.
+command the worker gives up on is dead-lettered in the same transaction that drops it. A run that
+outlives its claim's lease writes nothing: another instance has taken the command over and decides
+it instead. The same holds for a delayed policy's run and for a process deadline.
 
 ## Delaying a policy
 

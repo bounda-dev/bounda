@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { ClaimedCommand } from "../../adapter/ports/scheduler.ts";
 import { ConcurrencyError, DomainError } from "../../contracts/errors.ts";
 import type { PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
@@ -332,10 +333,15 @@ describe("scheduled command worker", () => {
     expect(await harness.storage.deadLetterStore.count()).toBe(0);
   });
 
-  it("claims due commands with a lease of twice the handler timeout", async () => {
+  it("claims due commands with a lease of twice the handler timeout of every run after a conflict", async () => {
     const harness = await createReactiveHarness({
       registry: orderRegistry,
-      config: { runtime: { commands: { timeout: "5s" }, policies: { timeout: "10s" } } },
+      config: {
+        runtime: {
+          commands: { timeout: "5s", concurrencyRetries: 1 },
+          policies: { timeout: "10s" },
+        },
+      },
     });
     const leases: number[] = [];
     const original = harness.storage.scheduler.claimDue.bind(harness.storage.scheduler);
@@ -344,10 +350,10 @@ describe("scheduled command worker", () => {
       return original(args);
     };
     await harness.worker.runOnce();
-    expect(leases).toEqual([20_000]);
+    expect(leases).toEqual([40_000]);
   });
 
-  it("holds its claims long enough for the slowest aggregate's handlers", async () => {
+  it("holds its claims long enough for the slowest aggregate's handlers, each rerun included", async () => {
     const harness = await createReactiveHarness({
       registry: orderRegistry,
       config: {
@@ -358,15 +364,109 @@ describe("scheduled command worker", () => {
         },
       },
     });
-    expect(harness.worker.leaseMs).toBe(120_000);
+    expect(harness.worker.leaseMs).toBe(480_000);
   });
 
-  it("holds its claims long enough for the slowest command handler", async () => {
+  it.each([
+    ["succeeds", () => undefined, 0],
+    [
+      "fails for good",
+      () => {
+        throw new DomainError("Orders are closed");
+      },
+      1,
+    ],
+    [
+      "fails and would retry",
+      () => {
+        throw new Error("db unavailable");
+      },
+      1,
+    ],
+  ])(
+    "writes nothing of a run that %s after another instance took its claim over",
+    async (_, outcome, failures) => {
+      const { logger, entries } = createRecordingLogger();
+      const harness = await createReactiveHarness({ registry: orderRegistry, logger });
+      await harness.pipeline.dispatch({
+        type: "PlaceOrder",
+        payload: { orderId: "o-1", total: 10 },
+        options: { delay: "1m" },
+      });
+      harness.clock.advance(60_000);
+      let takenOver: readonly ClaimedCommand[] = [];
+      const dispatch = harness.pipeline.dispatch;
+      vi.spyOn(harness.pipeline, "dispatch").mockImplementationOnce(async (args) => {
+        const result = await dispatch(args);
+        harness.clock.advance(harness.worker.leaseMs + 1);
+        takenOver = await harness.storage.scheduler.claimDue({
+          now: harness.clock.now(),
+          limit: 10,
+          leaseMs: harness.worker.leaseMs,
+        });
+        outcome();
+        return result;
+      });
+
+      const fail = vi.spyOn(harness.storage.scheduler, "fail");
+      expect(await harness.worker.runOnce()).toBe(1);
+
+      expect(fail).toHaveBeenCalledTimes(failures);
+      expect(takenOver).toHaveLength(1);
+      expect(await harness.storage.eventStore.lastPosition()).toBe(0);
+      expect(await harness.storage.deadLetterStore.count()).toBe(0);
+      expect(await harness.storage.scheduler.list()).toMatchObject([{ attempts: 1 }]);
+      expect(entries).toEqual([
+        {
+          level: "warn",
+          message: "scheduled command lost its claim; this run wrote nothing",
+          fields: { command: "PlaceOrder", dedupeKey: expect.stringMatching(/^command:/) },
+        },
+      ]);
+      const [current] = takenOver;
+      if (current === undefined) throw new Error("nothing taken over");
+      await harness.storage.scheduler.complete(current);
+      expect(await harness.storage.scheduler.list()).toEqual([]);
+    },
+  );
+
+  it("hands back unrun the entries of a batch it could not finish before their lease ends", async () => {
+    const harness = await createReactiveHarness({ registry: orderRegistry });
+    sentMessages.length = 0;
+    for (const orderId of ["o-1", "o-2", "o-3"]) {
+      await harness.pipeline.dispatch({
+        type: "PlaceOrder",
+        payload: { orderId, total: 10 },
+        options: { delay: "1m" },
+      });
+    }
+    harness.clock.advance(60_000);
+    const dispatch = harness.pipeline.dispatch;
+    const slow =
+      (ms: number): typeof dispatch =>
+      async (args) => {
+        harness.clock.advance(ms);
+        return dispatch(args);
+      };
+    vi.spyOn(harness.pipeline, "dispatch")
+      .mockImplementationOnce(slow(harness.worker.leaseMs / 2))
+      .mockImplementationOnce(slow(1));
+
+    expect(await harness.worker.runOnce()).toBe(3);
+
+    expect(sentMessages).toHaveLength(2);
+    expect(await harness.storage.scheduler.list()).toMatchObject([{ attempts: 0 }]);
+    expect(await harness.worker.runOnce()).toBe(1);
+    expect(sentMessages).toHaveLength(3);
+    expect(await harness.storage.scheduler.list()).toEqual([]);
+  });
+
+  it("holds its claims long enough for the slowest command handler, each rerun included", async () => {
     const commandsLonger = await createReactiveHarness({
       registry: orderRegistry,
       config: { runtime: { commands: { timeout: "40s" }, policies: { timeout: "10s" } } },
     });
-    expect(commandsLonger.worker.leaseMs).toBe(80_000);
+    expect(commandsLonger.worker.leaseMs).toBe(320_000);
     const overridden = await createReactiveHarness({
       registry: orderRegistry,
       config: {
@@ -377,7 +477,7 @@ describe("scheduled command worker", () => {
         },
       },
     });
-    expect(overridden.worker.leaseMs).toBe(120_000);
+    expect(overridden.worker.leaseMs).toBe(480_000);
   });
 
   it("arms one timer per interval, re-arms after each run and leaves nothing behind on stop", async () => {

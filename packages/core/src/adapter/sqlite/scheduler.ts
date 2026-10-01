@@ -1,3 +1,4 @@
+import { ScheduledClaimLostError } from "../../contracts/errors.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
 import type { ClaimedCommand, ScheduledClaim, ScheduledCommand, Scheduler } from "../index.ts";
 import type { SqlDatabase } from "../sql/database.ts";
@@ -39,8 +40,8 @@ const byExecuteAt = (a: ScheduledCommand, b: ScheduledCommand): number =>
 /**
  * Scheduler on one table. `claimDue` is a single `UPDATE ... WHERE dedupe_key IN (SELECT ...)
  * RETURNING`, so concurrent workers never claim the same command. `complete`, `fail` and `defer`
- * write only while the row still has the claim's `claim_id` and `revision`, and otherwise release
- * a claim that a reschedule left behind.
+ * write only while the row still has the claim's `claim_id` and `revision`, otherwise release a
+ * claim that a reschedule left behind, and reject once the row no longer has the `claim_id`.
  */
 export const createSqliteScheduler: CreateSqliteSchedulerFunction = ({ db, table }) => {
   const releaseUnless = async (
@@ -48,10 +49,11 @@ export const createSqliteScheduler: CreateSqliteSchedulerFunction = ({ db, table
     claim: ScheduledClaim,
   ): Promise<void> => {
     if (fenced.length > 0) return;
-    await db.run(
-      `UPDATE ${table} SET "claimed_at" = NULL, "claim_id" = NULL WHERE "dedupe_key" = ? AND "claim_id" = ?`,
+    const released = await db.all(
+      `UPDATE ${table} SET "claimed_at" = NULL, "claim_id" = NULL WHERE "dedupe_key" = ? AND "claim_id" = ? RETURNING "dedupe_key"`,
       [claim.dedupeKey, claim.claimId],
     );
+    if (released.length === 0) throw new ScheduledClaimLostError(claim.dedupeKey);
   };
 
   const drop = async (claim: ScheduledClaim): Promise<void> =>

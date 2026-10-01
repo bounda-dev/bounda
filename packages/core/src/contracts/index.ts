@@ -26,6 +26,7 @@ export {
   DomainError,
   NotFoundError,
   RebuildSupersededError,
+  ScheduledClaimLostError,
   ValidationError,
   type ValidationIssue,
 } from "./errors.ts";

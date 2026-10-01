@@ -1,4 +1,4 @@
-import type { CausationContext } from "@bounda-dev/core";
+import { type CausationContext, ScheduledClaimLostError } from "@bounda-dev/core";
 import type {
   ClaimedCommand,
   ScheduledClaim,
@@ -44,22 +44,25 @@ const byExecuteAt = (a: ScheduledCommand, b: ScheduledCommand): number =>
 /**
  * `claimDue` selects the due rows `FOR UPDATE SKIP LOCKED` and updates them in the same
  * statement, so concurrent workers each get a disjoint set. What a claim writes afterwards goes
- * through only while the row still has its `claim_id` and `revision`.
+ * through only while the row still has its `claim_id` and `revision`, and is rejected once the row
+ * no longer has its `claim_id`.
  */
 export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ db, table }) => {
   /**
    * A write that missed because a reschedule moved the revision still releases the claim, so the
-   * rescheduled command does not wait out the lease.
+   * rescheduled command does not wait out the lease; one that missed because the claim moved
+   * rejects.
    */
   const releaseUnless = async (
     fenced: readonly unknown[],
     claim: ScheduledClaim,
   ): Promise<void> => {
     if (fenced.length > 0) return;
-    await db.run(
-      `UPDATE ${table} SET "claimed_at" = NULL, "claim_id" = NULL WHERE "dedupe_key" = $1 AND "claim_id" = $2`,
+    const released = await db.all(
+      `UPDATE ${table} SET "claimed_at" = NULL, "claim_id" = NULL WHERE "dedupe_key" = $1 AND "claim_id" = $2 RETURNING "dedupe_key"`,
       [claim.dedupeKey, claim.claimId],
     );
+    if (released.length === 0) throw new ScheduledClaimLostError(claim.dedupeKey);
   };
 
   const drop = async (claim: ScheduledClaim): Promise<void> =>

@@ -57,6 +57,7 @@ let conflictOn = "process:Reminders:o-1";
 let paidFails = false;
 let paidKeeps = false;
 let reminderLimit = 3;
+let duringReminder: (() => Promise<unknown>) | undefined;
 
 const reset = (): void => {
   calls.length = 0;
@@ -68,6 +69,7 @@ const reset = (): void => {
   paidFails = false;
   paidKeeps = false;
   reminderLimit = 3;
+  duringReminder = undefined;
 };
 
 const registry: Registry = {
@@ -121,6 +123,7 @@ const registry: Registry = {
               handler: async ({ state, aggregateId, after, commands, idempotencyKey }: Args) => {
                 calls.push(`reminder:${state.nextReminder}`);
                 keys.push(idempotencyKey);
+                await duringReminder?.();
                 if (reminding === "string") throw "mailer said no";
                 if (reminding === "flaky" && failuresLeft > 0) {
                   failuresLeft -= 1;
@@ -649,6 +652,52 @@ describe("process deadlines", () => {
     });
   });
 
+  it.each([
+    ["its step", "ok"],
+    ["its give-up", "flaky"],
+  ] as const)("write nothing of %s once another instance took the entry over", async (_, mode) => {
+    reset();
+    reminding = mode;
+    failuresLeft = 99;
+    const { logger, entries } = createRecordingLogger();
+    const harness = await createReactiveHarness({
+      registry,
+      logger,
+      config: { runtime: { processes: { retry: { strategy: "none" } } } },
+    });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await settle(harness);
+    harness.clock.advance(DAY);
+    duringReminder = () => {
+      harness.clock.advance(harness.worker.leaseMs + 1);
+      return harness.storage.scheduler.claimDue({
+        now: harness.clock.now(),
+        limit: 10,
+        leaseMs: harness.worker.leaseMs,
+      });
+    };
+
+    expect(await harness.worker.runOnce()).toBe(1);
+
+    expect(calls).toEqual([`reminder:${at(DAY)}`]);
+    expect((await lifecycle(harness)).map((event) => event.type)).toEqual([
+      PROCESS_EVENTS.started,
+      PROCESS_EVENTS.handled,
+    ]);
+    expect(await harness.storage.deadLetterStore.count()).toBe(0);
+    expect(await harness.storage.scheduler.list()).toMatchObject([
+      { attempts: 1, executeAt: at(DAY) },
+    ]);
+    expect(entries).toContainEqual({
+      level: "warn",
+      message: "scheduled command lost its claim; this run wrote nothing",
+      fields: {
+        command: "bounda.ProcessDeadline",
+        dedupeKey: "process-deadline:order.reminders:o-1",
+      },
+    });
+  });
+
   it("go back to the schedule without counting an attempt when the instance moved", async () => {
     reset();
     reminding = "conflict";
@@ -1075,6 +1124,7 @@ describe("deadline entries under races and partial failures", () => {
       error: new Error("database blip"),
       attempts: 3,
       errorType: "retriable_exhausted",
+      settle: async () => undefined,
     });
     const { events } = await harness.storage.eventStore.load(stepsStream);
     expect(events.at(-1)?.type).toBe(PROCESS_EVENTS.handled);
@@ -1096,7 +1146,7 @@ describe("deadline entries under races and partial failures", () => {
   });
 
   it("drop the entries of a process the registry no longer has", async () => {
-    const { harness } = await setUpSteps();
+    const { harness, entries } = await setUpSteps();
     const entry = {
       command: {
         type: "bounda.ProcessDeadline",
@@ -1115,11 +1165,13 @@ describe("deadline entries under races and partial failures", () => {
       dedupeKey: "process-deadline:order.gone:o-2",
     });
     expect(await harness.worker.runOnce()).toBe(2);
+    expect(entries).toEqual([]);
     await harness.processes.failDeadline({
       payload: { process: "order.gone", aggregateId: "o-2" },
       error: new Error("x"),
       attempts: 1,
       errorType: "terminal",
+      settle: async () => undefined,
     });
     expect(await harness.storage.scheduler.list()).toEqual([]);
     expect(

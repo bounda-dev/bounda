@@ -3,6 +3,7 @@ import type { DeadLetterErrorType, NewDeadLetter } from "../../adapter/ports/dea
 import type { ClaimedCommand, ScheduledCommand } from "../../adapter/ports/scheduler.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
+import { ScheduledClaimLostError } from "../../contracts/errors.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
@@ -29,7 +30,10 @@ export interface ScheduledCommandWorker {
    */
   runOnce(): Promise<number>;
   /**
-   * Outlasts the slowest handler timeout, so no run outlives its claim.
+   * Twice what one entry's run can take on handler timeouts: the slowest one, fresh for each rerun
+   * after a conflict. Entries of a batch start only while the lease left covers that, the rest go
+   * back unrun. A store has no time limit, so a run can still outlive its claim: it then writes
+   * nothing, and whoever claimed the entry since runs it.
    */
   readonly leaseMs: number;
   waitingDeadlines(): number;
@@ -66,11 +70,12 @@ interface DeadlineWait {
 /**
  * Runs delayed commands, process deadlines and delayed policy runs, each claimed under a lease.
  * A run and the settling of its claim are one unit of work: what the run wrote and the claim's
- * completion land together, so a crash between them cannot run the command twice, and a give-up
- * writes its dead letter with the claim's failure. A deadline first waits for the process runner,
- * so an event that cancels it is seen first; this is best effort, since the aggregates still
- * check what it sends. Deadline entries are never removed here: the process runner writes what
- * comes next, so a crash in between leaves the entry to its lease instead of losing it.
+ * completion land together, so a crash between them cannot run the command twice, a run whose
+ * claim another instance took over writes nothing, and a give-up writes its dead letter with the
+ * claim's failure. A deadline first waits for the process runner, so an event that cancels it is
+ * seen first; this is best effort, since the aggregates still check what it sends. Deadline
+ * entries are never removed here: the process runner writes what comes next, so a crash in between
+ * leaves the entry to its lease instead of losing it.
  */
 export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction = ({
   storage,
@@ -87,7 +92,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   let cancelWait: (() => void) | undefined;
   let running = false;
   const defaultRetry = config.runtime.policies.retry;
-  const leaseMs =
+  const runMs =
     Math.max(
       config.runtime.commands.timeoutMs,
       config.runtime.policies.timeoutMs,
@@ -95,7 +100,9 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
         override.commands.timeoutMs,
         override.policies.timeoutMs,
       ]),
-    ) * 2;
+    ) *
+    (config.runtime.commands.concurrencyRetries + 1);
+  const leaseMs = runMs * 2;
 
   const waits = new Map<string, DeadlineWait>();
 
@@ -209,8 +216,8 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
         error,
         attempts,
         errorType: reason,
+        settle: (unit) => deferToItsTime(entry, unit),
       });
-      await deferToItsTime(entry);
       return;
     }
     const letter = letterOf(entry, error, attempts, reason);
@@ -253,20 +260,22 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       },
     });
 
-  const deferToItsTime = (entry: ClaimedCommand): Promise<void> =>
-    storage.scheduler.defer({ claim: entry, executeAt: new Date(entry.executeAt) });
+  const deferToItsTime = (
+    entry: ClaimedCommand,
+    { scheduler }: Pick<UnitOfWork, "scheduler"> = storage,
+  ): Promise<void> => scheduler.defer({ claim: entry, executeAt: new Date(entry.executeAt) });
 
   const execute = async (entry: ClaimedCommand): Promise<void> => {
     try {
+      // Settled before the run stages anything, so a run that schedules or cancels its own key
+      // does not make the claim look lost.
       await settled(async (unit) => {
+        if (isDeadline(entry)) await deferToItsTime(entry, unit);
+        else await unit.scheduler.complete(entry);
         await run(entry, unit);
-        if (isDeadline(entry)) {
-          await unit.scheduler.defer({ claim: entry, executeAt: new Date(entry.executeAt) });
-        } else {
-          await unit.scheduler.complete(entry);
-        }
       });
     } catch (error) {
+      if (error instanceof ScheduledClaimLostError) throw error;
       if (isDeadline(entry) && processes.lostRace(deadlineOf(entry), error)) {
         await deferToItsTime(entry);
         return;
@@ -325,17 +334,26 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
 
   const runOnce = (): Promise<number> =>
     mutex.run(async () => {
+      const claimedAt = clock.now().getTime();
       const due = await storage.scheduler.claimDue({
-        now: clock.now(),
+        now: new Date(claimedAt),
         limit: CLAIM_LIMIT,
         leaseMs,
       });
       const ready = await isDeadlineReady(due);
       for (const entry of due) {
         try {
-          if (ready(entry)) await execute(entry);
+          if (clock.now().getTime() - claimedAt > leaseMs - runMs) await deferToItsTime(entry);
+          else if (ready(entry)) await execute(entry);
           else await deferToItsTime(entry);
         } catch (error) {
+          if (error instanceof ScheduledClaimLostError) {
+            logger.warn("scheduled command lost its claim; this run wrote nothing", {
+              command: entry.command.type,
+              dedupeKey: entry.dedupeKey,
+            });
+            continue;
+          }
           logger.error("scheduled command could not be settled; its lease will lapse", {
             command: entry.command.type,
             dedupeKey: entry.dedupeKey,
