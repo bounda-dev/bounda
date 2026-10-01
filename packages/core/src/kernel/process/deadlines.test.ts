@@ -668,14 +668,12 @@ describe("process deadlines", () => {
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
     await settle(harness);
     harness.clock.advance(DAY);
-    duringReminder = () => {
-      harness.clock.advance(harness.worker.leaseMs + 1);
-      return harness.storage.scheduler.claimDue({
-        now: harness.clock.now(),
+    duringReminder = () =>
+      harness.storage.scheduler.claimDue({
+        now: new Date(harness.clock.now().getTime() + harness.worker.leaseMs + 1),
         limit: 10,
         leaseMs: harness.worker.leaseMs,
       });
-    };
 
     expect(await harness.worker.runOnce()).toBe(1);
 
@@ -690,7 +688,7 @@ describe("process deadlines", () => {
     ]);
     expect(entries).toContainEqual({
       level: "warn",
-      message: "scheduled command lost its claim; this run wrote nothing",
+      message: "scheduled command no longer holds its claim; this run wrote nothing",
       fields: {
         command: "bounda.ProcessDeadline",
         dedupeKey: "process-deadline:order.reminders:o-1",
@@ -1166,13 +1164,17 @@ describe("deadline entries under races and partial failures", () => {
     });
     expect(await harness.worker.runOnce()).toBe(2);
     expect(entries).toEqual([]);
+    let settles = 0;
     await harness.processes.failDeadline({
       payload: { process: "order.gone", aggregateId: "o-2" },
       error: new Error("x"),
       attempts: 1,
       errorType: "terminal",
-      settle: async () => undefined,
+      settle: async () => {
+        settles += 1;
+      },
     });
+    expect(settles).toBe(1);
     expect(await harness.storage.scheduler.list()).toEqual([]);
     expect(
       harness.processes.lostRace(

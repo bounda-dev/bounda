@@ -92,7 +92,7 @@ export class ClaimLostError extends BoundaError {
 }
 
 /**
- * Thrown by a scheduler asked to complete, fail or defer a claimed command by a claim it no
+ * Thrown by a scheduler asked to complete, fail, defer or renew a claimed command by a claim it no
  * longer holds: the lease expired and another runner claimed the command, or the command was
  * cancelled. Whatever the settling was part of rolls back, so a run that outlived its claim writes
  * nothing.
@@ -103,7 +103,7 @@ export class ScheduledClaimLostError extends BoundaError {
   constructor(dedupeKey: string) {
     super(
       "SCHEDULED_CLAIM_LOST",
-      `The claim on scheduled command ${dedupeKey} belongs to another runner`,
+      `The claim on scheduled command ${dedupeKey} is no longer held: another runner claimed it, or it was cancelled`,
     );
     this.dedupeKey = dedupeKey;
   }

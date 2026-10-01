@@ -135,7 +135,10 @@ export const createDeadlineDelivery: CreateDeadlineDeliveryFunction = ({
   }: FailDeadlineArgs): Promise<void> => {
     const process = processes.byName[payload.process];
     if (process === undefined) {
-      await schedule.cancel(payload.process, payload.aggregateId);
+      await units.commit(async (unit) => {
+        await settle(unit);
+        await schedule.cancel(payload.process, payload.aggregateId, unit);
+      });
       return;
     }
     const failed = deadlineStep.thrownBy(error);

@@ -68,6 +68,14 @@ export interface DeferScheduledArgs {
   readonly executeAt: Date;
 }
 
+export interface RenewScheduledArgs {
+  readonly claim: ScheduledClaim;
+  /**
+   * The kernel clock's time, which the lease then counts from.
+   */
+  readonly now: Date;
+}
+
 export interface NextDueAtArgs {
   /**
    * The lease `claimDue` is called with: a claimed command becomes claimable again once it has
@@ -117,5 +125,11 @@ export interface Scheduler {
    * work that was not ready yet rather than work that failed. Same rules as `complete`.
    */
   defer(args: DeferScheduledArgs): Promise<void>;
+  /**
+   * Restarts the claim's lease at `now`, for a worker about to run the command, or to run it again
+   * after a conflict, long after it claimed it. Rejects with `ScheduledClaimLostError` when the key
+   * no longer holds this claim, so the run does not start.
+   */
+  renew(args: RenewScheduledArgs): Promise<void>;
   list(args?: ListScheduledArgs): Promise<readonly ScheduledCommand[]>;
 }

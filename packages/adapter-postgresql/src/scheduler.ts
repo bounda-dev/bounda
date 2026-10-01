@@ -155,6 +155,13 @@ export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ d
         claim,
       );
     },
+    renew: async ({ claim, now }) => {
+      const renewed = await db.all(
+        `UPDATE ${table} SET "claimed_at" = $1 WHERE "dedupe_key" = $2 AND "claim_id" = $3 RETURNING "dedupe_key"`,
+        [now.toISOString(), claim.dedupeKey, claim.claimId],
+      );
+      if (renewed.length === 0) throw new ScheduledClaimLostError(claim.dedupeKey);
+    },
     list: async ({ limit, offset = 0 } = {}) =>
       (
         await db.all(

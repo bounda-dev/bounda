@@ -30,10 +30,8 @@ export interface ScheduledCommandWorker {
    */
   runOnce(): Promise<number>;
   /**
-   * Twice what one entry's run can take on handler timeouts: the slowest one, fresh for each rerun
-   * after a conflict. Entries of a batch start only while the lease left covers that, the rest go
-   * back unrun. A store has no time limit, so a run can still outlive its claim: it then writes
-   * nothing, and whoever claimed the entry since runs it.
+   * Outlasts the slowest handler timeout. A run renews its claim as it starts and before each rerun
+   * after a conflict, so the lease covers one run, not a batch.
    */
   readonly leaseMs: number;
   waitingDeadlines(): number;
@@ -92,7 +90,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   let cancelWait: (() => void) | undefined;
   let running = false;
   const defaultRetry = config.runtime.policies.retry;
-  const runMs =
+  const leaseMs =
     Math.max(
       config.runtime.commands.timeoutMs,
       config.runtime.policies.timeoutMs,
@@ -100,9 +98,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
         override.commands.timeoutMs,
         override.policies.timeoutMs,
       ]),
-    ) *
-    (config.runtime.commands.concurrencyRetries + 1);
-  const leaseMs = runMs * 2;
+    ) * 2;
 
   const waits = new Map<string, DeadlineWait>();
 
@@ -112,8 +108,19 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   const deadlineOf = (entry: ScheduledCommand): ProcessDeadlinePayload =>
     entry.command.payload as ProcessDeadlinePayload;
 
-  const settled = (work: (unit: UnitOfWork) => Promise<void>): Promise<void> =>
-    commitWork({ storage, concurrencyRetries: config.runtime.commands.concurrencyRetries, work });
+  const settled = (
+    work: (unit: UnitOfWork) => Promise<void>,
+    beforeRerun?: () => Promise<void>,
+  ): Promise<void> =>
+    commitWork({
+      storage,
+      concurrencyRetries: config.runtime.commands.concurrencyRetries,
+      work,
+      beforeRerun,
+    });
+
+  const renew = (entry: ClaimedCommand): Promise<void> =>
+    storage.scheduler.renew({ claim: entry, now: clock.now() });
 
   const recordFailure = async (
     unit: UnitOfWork,
@@ -262,22 +269,26 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
 
   const deferToItsTime = (
     entry: ClaimedCommand,
-    { scheduler }: Pick<UnitOfWork, "scheduler"> = storage,
+    { scheduler }: Pick<UnitOfWork, "scheduler">,
   ): Promise<void> => scheduler.defer({ claim: entry, executeAt: new Date(entry.executeAt) });
 
   const execute = async (entry: ClaimedCommand): Promise<void> => {
+    await renew(entry);
     try {
       // Settled before the run stages anything, so a run that schedules or cancels its own key
       // does not make the claim look lost.
-      await settled(async (unit) => {
-        if (isDeadline(entry)) await deferToItsTime(entry, unit);
-        else await unit.scheduler.complete(entry);
-        await run(entry, unit);
-      });
+      await settled(
+        async (unit) => {
+          if (isDeadline(entry)) await deferToItsTime(entry, unit);
+          else await unit.scheduler.complete(entry);
+          await run(entry, unit);
+        },
+        () => renew(entry),
+      );
     } catch (error) {
       if (error instanceof ScheduledClaimLostError) throw error;
       if (isDeadline(entry) && processes.lostRace(deadlineOf(entry), error)) {
-        await deferToItsTime(entry);
+        await deferToItsTime(entry, storage);
         return;
       }
       const attempts = entry.attempts + 1;
@@ -334,21 +345,19 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
 
   const runOnce = (): Promise<number> =>
     mutex.run(async () => {
-      const claimedAt = clock.now().getTime();
       const due = await storage.scheduler.claimDue({
-        now: new Date(claimedAt),
+        now: clock.now(),
         limit: CLAIM_LIMIT,
         leaseMs,
       });
       const ready = await isDeadlineReady(due);
       for (const entry of due) {
         try {
-          if (clock.now().getTime() - claimedAt > leaseMs - runMs) await deferToItsTime(entry);
-          else if (ready(entry)) await execute(entry);
-          else await deferToItsTime(entry);
+          if (ready(entry)) await execute(entry);
+          else await deferToItsTime(entry, storage);
         } catch (error) {
           if (error instanceof ScheduledClaimLostError) {
-            logger.warn("scheduled command lost its claim; this run wrote nothing", {
+            logger.warn("scheduled command no longer holds its claim; this run wrote nothing", {
               command: entry.command.type,
               dedupeKey: entry.dedupeKey,
             });

@@ -54,9 +54,7 @@ export const createMemoryScheduler: CreateMemorySchedulerFunction = () => {
 
   const heldBy = (claim: ScheduledClaim): Entry => {
     const entry = entries.get(claim.dedupeKey);
-    if (entry === undefined || entry.claimId !== claim.claimId) {
-      throw new ScheduledClaimLostError(claim.dedupeKey);
-    }
+    if (entry?.claimId !== claim.claimId) throw new ScheduledClaimLostError(claim.dedupeKey);
     return entry;
   };
 
@@ -152,6 +150,9 @@ export const createMemoryScheduler: CreateMemorySchedulerFunction = () => {
           ? { ...entry, executeAt: executeAt.toISOString() }
           : entry,
       );
+    },
+    renew: async ({ claim, now }) => {
+      entries.set(claim.dedupeKey, { ...heldBy(claim), claimedAt: now.toISOString() });
     },
     list: async ({ limit, offset = 0 } = {}) =>
       [...entries.values()]

@@ -43,7 +43,7 @@ postgresql({ host: "localhost", port: 5432, database: "shop", user: "shop", pass
   [Tuning](/guides/deployment/#tuning).
 - Handler claims are single `INSERT … ON CONFLICT DO UPDATE … RETURNING` statements; due
   scheduled commands are taken with `FOR UPDATE SKIP LOCKED`. Any number of instances can run the
-  worker role and each due command goes to exactly one of them.
+  worker role and each due command is claimed by one of them at a time.
 - Payloads and metadata are `jsonb`; read-model booleans, dates and JSON fields use `boolean`,
   `timestamp with time zone` and `jsonb`. Numbers are `double precision`.
 
