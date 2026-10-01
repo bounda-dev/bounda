@@ -15,6 +15,7 @@ import {
   orderRegistry,
   placeOrderKeys,
   sentMessages,
+  slowJob,
 } from "../test-support.ts";
 
 describe("scheduled command worker", () => {
@@ -308,10 +309,33 @@ describe("scheduled command worker", () => {
     expect(letter).not.toHaveProperty("errorStack");
   });
 
+  it("reschedules a command whose handler runs out of time", async () => {
+    const { registry, started } = slowJob();
+    const harness = await createReactiveHarness({
+      registry,
+      config: { runtime: { commands: { timeout: "1s" } } },
+    });
+    await harness.pipeline.dispatch({
+      type: "RunJob",
+      payload: { jobId: "j-1" },
+      options: { delay: "1m" },
+    });
+    harness.clock.advance(60_000);
+    const running = harness.worker.runOnce();
+    await started;
+    harness.clock.advance(1_000);
+
+    expect(await running).toBe(1);
+    expect(await harness.storage.scheduler.list()).toMatchObject([
+      { command: { type: "RunJob" }, attempts: 1 },
+    ]);
+    expect(await harness.storage.deadLetterStore.count()).toBe(0);
+  });
+
   it("claims due commands with a lease of twice the handler timeout", async () => {
     const harness = await createReactiveHarness({
       registry: orderRegistry,
-      config: { runtime: { policies: { timeout: "10s" } } },
+      config: { runtime: { commands: { timeout: "5s" }, policies: { timeout: "10s" } } },
     });
     const leases: number[] = [];
     const original = harness.storage.scheduler.claimDue.bind(harness.storage.scheduler);
@@ -328,12 +352,32 @@ describe("scheduled command worker", () => {
       registry: orderRegistry,
       config: {
         runtime: {
+          commands: { timeout: "10s" },
           policies: { timeout: "10s" },
           overrides: { order: { policies: { timeout: "1m" } }, other: { policies: {} } },
         },
       },
     });
     expect(harness.worker.leaseMs).toBe(120_000);
+  });
+
+  it("holds its claims long enough for the slowest command handler", async () => {
+    const commandsLonger = await createReactiveHarness({
+      registry: orderRegistry,
+      config: { runtime: { commands: { timeout: "40s" }, policies: { timeout: "10s" } } },
+    });
+    expect(commandsLonger.worker.leaseMs).toBe(80_000);
+    const overridden = await createReactiveHarness({
+      registry: orderRegistry,
+      config: {
+        runtime: {
+          commands: { timeout: "10s" },
+          policies: { timeout: "10s" },
+          overrides: { order: { commands: { timeout: "1m" } } },
+        },
+      },
+    });
+    expect(overridden.worker.leaseMs).toBe(120_000);
   });
 
   it("arms one timer per interval, re-arms after each run and leaves nothing behind on stop", async () => {

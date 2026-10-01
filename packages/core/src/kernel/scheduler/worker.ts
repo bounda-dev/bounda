@@ -89,8 +89,12 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   const defaultRetry = config.runtime.policies.retry;
   const leaseMs =
     Math.max(
+      config.runtime.commands.timeoutMs,
       config.runtime.policies.timeoutMs,
-      ...Object.values(config.runtime.overrides).map((override) => override.policies.timeoutMs),
+      ...Object.values(config.runtime.overrides).flatMap((override) => [
+        override.commands.timeoutMs,
+        override.policies.timeoutMs,
+      ]),
     ) * 2;
 
   const waits = new Map<string, DeadlineWait>();

@@ -40,6 +40,22 @@ describe("a Bounda Durable Object", () => {
     });
   });
 
+  it("checks a command's signal before calling the object, which cannot receive it", async () => {
+    const { store } = open();
+    const reason = new Error("client gave up");
+    await expect(
+      store.commands.placeOrder(
+        { orderId: "o-1", total: 42, customer: "ada" },
+        { signal: AbortSignal.abort(reason) },
+      ),
+    ).rejects.toBe(reason);
+    const placed = await store.commands.placeOrder(
+      { orderId: "o-1", total: 42, customer: "ada" },
+      { signal: new AbortController().signal },
+    );
+    expect(placed).toMatchObject({ scheduled: false, aggregateId: "o-1", version: 1 });
+  });
+
   it("leaves policies to its alarm and clears the alarm once nothing is pending", async () => {
     const { stub, store } = open();
     await store.commands.placeOrder({ orderId: "o-1", total: 42, customer: "ada" });

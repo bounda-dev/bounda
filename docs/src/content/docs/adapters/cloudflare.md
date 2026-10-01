@@ -134,8 +134,8 @@ stores, not a split log.
 
 Refusals come back as `{ "error": { "code", "message" } }`: 400 for `VALIDATION_FAILED`
 (with the `issues`) and `INVALID_JSON`, 404 for `NOT_FOUND`, 409 for `DOMAIN_ERROR`,
-`CONCURRENCY_CONFLICT` and `CHAIN_DEPTH_EXCEEDED`. Anything else is a 500 whose message goes to
-the logs, not to the caller.
+`CONCURRENCY_CONFLICT` and `CHAIN_DEPTH_EXCEEDED`, 504 for `HANDLER_TIMEOUT`. Anything else is
+a 500 whose message goes to the logs, not to the caller.
 
 It has **no authentication** and no operator endpoint, on purpose: it is a starting point. An
 app with users writes its own `fetch` and talks to a store with `connect`:
@@ -158,7 +158,9 @@ typed from your modules, plus `getLag()`, `deadLetters` and `rebuildReadModel`. 
 back as an `Error` with the same `name`, `message`, `code` and, for validation, `issues`, whatever
 the Worker's compatibility date: the object answers refusals as data and `connect` throws them
 again, because RPC drops an error's own properties on older dates. Check `error.code`, not
-`instanceof`.
+`instanceof`. A command's `signal` only counts before the call leaves the Worker: RPC cannot
+carry it into the object, where the command runs to the end, bounded by
+`runtime.commands.timeout`.
 
 ## Testing
 

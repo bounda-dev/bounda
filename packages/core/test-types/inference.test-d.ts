@@ -210,7 +210,8 @@ describe("idempotency keys", () => {
     expectTypeOf<OnOrderPaid.HandlerArgs["signal"]>().toEqualTypeOf<AbortSignal>();
     expectTypeOf<AtTimeout.DeadlineArgs["signal"]>().toEqualTypeOf<AbortSignal>();
     expectTypeOf<AtNextReminder.DeadlineArgs["signal"]>().toEqualTypeOf<AbortSignal>();
-    expectTypeOf<PlaceOrder.HandlerArgs>().not.toHaveProperty("signal");
+    expectTypeOf<PlaceOrder.HandlerArgs["signal"]>().toEqualTypeOf<AbortSignal>();
+    expectTypeOf<PayOrder.HandlerArgs["signal"]>().toEqualTypeOf<AbortSignal>();
   });
 });
 
@@ -364,6 +365,7 @@ describe("facades", () => {
       reference: string;
     }>();
     expectTypeOf<Commands["payOrder"]>().parameter(1).toEqualTypeOf<DispatchOptions | undefined>();
+    expectTypeOf<DispatchOptions["signal"]>().toEqualTypeOf<AbortSignal | undefined>();
     expectTypeOf<Commands["payOrder"]>().returns.toEqualTypeOf<Promise<DispatchResult>>();
     expectTypeOf<Extract<DispatchResult, { scheduled: false }>>().toMatchObjectType<{
       readonly eventTypes: readonly string[];

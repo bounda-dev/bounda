@@ -248,6 +248,11 @@ card is not. The handler receives `idempotencyKey`, the command's id, which stay
 those runs: pass it to a call the provider deduplicates, such as creating a payment intent, so a
 second run does not create another. A delayed command keeps the id it was scheduled with.
 
+Each run has a time limit, `runtime.commands.timeout` (30 seconds by default): past it the
+dispatch rejects with `HANDLER_TIMEOUT` and nothing the handler returns is stored. The handler
+receives `signal`, which aborts then; pass it to what it calls outside (`fetch(url, { signal })`)
+so a provider that hangs does not hold the request.
+
 ### Policies: `policies/`
 
 A policy reacts to an event with commands. `<action>-on-<event>.ts` names the event; a policy

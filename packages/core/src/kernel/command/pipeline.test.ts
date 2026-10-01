@@ -8,11 +8,16 @@ import {
   ValidationError,
 } from "../../contracts/errors.ts";
 import type { Registry } from "../../modules/registry.ts";
+import { HandlerTimeoutError } from "../shared/timeout.ts";
 import {
   createKernelHarness,
+  drained,
+  type KernelHarness,
   orderRegistry,
   placeOrderKeys,
   sentMessages,
+  slowJob,
+  withJob,
 } from "../test-support.ts";
 
 const withTickets: Registry = {
@@ -321,5 +326,162 @@ describe("command pipeline", () => {
     });
     const loaded = await storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" });
     expect(loaded.events[0]?.metadata.correlationId).toBe("http-1");
+  });
+});
+
+describe("a command's time limit and signal", () => {
+  const job = { jobId: "j-1" };
+
+  const storedTypes = async ({ storage }: KernelHarness): Promise<string[]> =>
+    (await storage.eventStore.load({ aggregateType: "job", aggregateId: "j-1" })).events.map(
+      (event) => event.type,
+    );
+
+  it("rejects a handler that runs out of time, aborts its signal and stores nothing it returns late", async () => {
+    const { registry, started, finish } = slowJob();
+    const harness = await createKernelHarness({ registry });
+    const outcome = harness.pipeline.dispatch({ type: "RunJob", payload: job });
+    const signal = await started;
+    harness.clock.advance(29_999);
+    expect(signal.aborted).toBe(false);
+    harness.clock.advance(1);
+
+    const error = await outcome.catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(HandlerTimeoutError);
+    expect((error as Error).message).toBe("command RunJob did not finish within 30000ms");
+    expect(signal.reason).toBe(error);
+    finish();
+    await drained();
+    expect(await storedTypes(harness)).toEqual([]);
+  });
+
+  it("takes the time limit of the command's aggregate", async () => {
+    const { registry, started } = slowJob();
+    const { pipeline, clock } = await createKernelHarness({
+      registry,
+      config: {
+        runtime: {
+          commands: { timeout: "1m" },
+          overrides: { job: { commands: { timeout: "1s" } } },
+        },
+      },
+    });
+    const outcome = pipeline.dispatch({ type: "RunJob", payload: job });
+    await started;
+    clock.advance(1_000);
+    await expect(outcome).rejects.toThrow("command RunJob did not finish within 1000ms");
+  });
+
+  it("gives every retry after a concurrency conflict a time limit and a signal of its own", async () => {
+    const signals: AbortSignal[] = [];
+    let clock: KernelHarness["clock"] | undefined;
+    const harness = await createKernelHarness({
+      registry: withJob(({ signal, events }) => {
+        signals.push(signal);
+        clock?.advance(600);
+        return [events.jobDone?.()];
+      }),
+      config: { runtime: { commands: { timeout: "1s" } } },
+    });
+    clock = harness.clock;
+    const original = harness.storage.eventStore.append.bind(harness.storage.eventStore);
+    let conflicted = false;
+    harness.storage.eventStore.append = async (args) => {
+      if (conflicted) return original(args);
+      conflicted = true;
+      throw new ConcurrencyError({
+        streamId: "job:j-1",
+        expectedVersion: args.expectedVersion,
+        actualVersion: 1,
+      });
+    };
+
+    await expect(
+      harness.pipeline.dispatch({ type: "RunJob", payload: job }),
+    ).resolves.toMatchObject({ version: 1, eventTypes: ["JobDone"] });
+    expect(signals).toHaveLength(2);
+    expect(signals[0]).not.toBe(signals[1]);
+    expect(signals.map((signal) => signal.aborted)).toEqual([false, false]);
+    expect(harness.clock.pending()).toBe(0);
+  });
+
+  it("lets whoever dispatches withdraw the command while its handler runs", async () => {
+    const { registry, started, finish } = slowJob();
+    const harness = await createKernelHarness({ registry });
+    const controller = new AbortController();
+    const reason = new Error("client gave up");
+    const outcome = harness.pipeline.dispatch({
+      type: "RunJob",
+      payload: job,
+      options: { signal: controller.signal },
+    });
+    const signal = await started;
+    controller.abort(reason);
+
+    await expect(outcome).rejects.toBe(reason);
+    expect(signal.reason).toBe(reason);
+    expect(harness.clock.pending()).toBe(0);
+    finish();
+    await drained();
+    expect(await storedTypes(harness)).toEqual([]);
+  });
+
+  it("never runs nor schedules a command whose signal is already aborted", async () => {
+    let ran = false;
+    const harness = await createKernelHarness({
+      registry: withJob(() => {
+        ran = true;
+      }),
+    });
+    const reason = new Error("too late");
+    await expect(
+      harness.pipeline.dispatch({
+        type: "RunJob",
+        payload: job,
+        options: { signal: AbortSignal.abort(reason) },
+      }),
+    ).rejects.toBe(reason);
+    await expect(
+      harness.pipeline.dispatch({
+        type: "RunJob",
+        payload: job,
+        options: { delay: "1m", signal: AbortSignal.abort(reason) },
+      }),
+    ).rejects.toBe(reason);
+    expect(ran).toBe(false);
+    expect(await harness.storage.scheduler.list()).toEqual([]);
+  });
+
+  it("stores a withdrawn command only when its append had started", async () => {
+    for (let ticks = 0; ticks < 12; ticks += 1) {
+      const controller = new AbortController();
+      let appending = false;
+      let withdrawnFirst = false;
+      const harness = await createKernelHarness({
+        registry: withJob(({ events }) => {
+          void (async () => {
+            for (let tick = 0; tick < ticks; tick += 1) await undefined;
+            withdrawnFirst = !appending;
+            controller.abort(new Error("late"));
+          })();
+          return [events.jobDone?.()];
+        }),
+      });
+      const original = harness.storage.eventStore.append.bind(harness.storage.eventStore);
+      harness.storage.eventStore.append = (args) => {
+        appending = true;
+        return original(args);
+      };
+      const outcome = await harness.pipeline
+        .dispatch({ type: "RunJob", payload: job, options: { signal: controller.signal } })
+        .then(
+          () => "stored",
+          () => "withdrawn",
+        );
+      await drained();
+
+      expect(outcome).toBe(withdrawnFirst ? "withdrawn" : "stored");
+      expect(await storedTypes(harness)).toEqual(withdrawnFirst ? [] : ["JobDone"]);
+    }
   });
 });

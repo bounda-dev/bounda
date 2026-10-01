@@ -17,6 +17,7 @@ import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
 import { foldState } from "../aggregate/fold-state.ts";
 import type { AggregateRuntime, AggregatesRuntime, CommandRuntime } from "../aggregate/runtime.ts";
+import { withTimeout } from "../shared/timeout.ts";
 import { withCollaborators } from "../shared/with-collaborators.ts";
 import { ATTRIBUTES, METRICS, meter, traced } from "../telemetry.ts";
 import type { UnitStores } from "../unit-of-work/unit-of-work.ts";
@@ -38,6 +39,10 @@ export interface DispatchArgs {
    * which holds the command's events and schedule until the attempt commits.
    */
   readonly within?: UnitStores | undefined;
+  /**
+   * Aborted when the reaction that dispatches the command is abandoned, so the command stops too.
+   */
+  readonly signal?: AbortSignal | undefined;
 }
 
 export interface CommandPipeline {
@@ -153,8 +158,10 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     runtime: CommandRuntime,
     command: Command,
     store: EventStore,
+    signals: readonly AbortSignal[],
   ): Promise<DispatchResult> => {
     const attempts = config.runtime.commands.concurrencyRetries + 1;
+    const { timeoutMs } = config.forAggregate(aggregate.name).commands;
     for (let attempt = 1; ; attempt += 1) {
       const loaded = await store.load({
         aggregateType: aggregate.name,
@@ -165,14 +172,23 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         id: command.aggregateId,
         version: loaded.version,
       };
-      const produced = (await runtime.handler(
-        withCollaborators(aggregate.collaborators, {
-          command,
-          state,
-          events: aggregate.eventBuilders,
-          idempotencyKey: command.metadata.commandId,
-        }),
-      )) as readonly NewEvent[] | undefined;
+      const produced = (await withTimeout({
+        run: (signal) =>
+          runtime.handler(
+            withCollaborators(aggregate.collaborators, {
+              command,
+              state,
+              events: aggregate.eventBuilders,
+              idempotencyKey: command.metadata.commandId,
+              signal,
+            }),
+          ),
+        timeoutMs,
+        subject: `command ${command.type}`,
+        clock,
+        signals,
+      })) as readonly NewEvent[] | undefined;
+      for (const signal of signals) signal.throwIfAborted();
       const events = toPendingEvents(
         aggregate,
         command,
@@ -231,6 +247,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     context,
     commandId: scheduledId,
     within,
+    signal: reactionSignal,
   }: DispatchArgs): Promise<DispatchResult> => {
     const stores = within ?? { eventStore, scheduler };
     const entry = aggregates.commandsByType[type];
@@ -261,6 +278,9 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         timestamp: clock.now().toISOString(),
       },
     };
+
+    const signals = [reactionSignal, options.signal].filter((one) => one !== undefined);
+    for (const signal of signals) signal.throwIfAborted();
 
     return traced({
       name: `bounda.command ${type}`,
@@ -294,7 +314,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
           };
         }
         try {
-          const result = await execute(aggregate, runtime, command, stores.eventStore);
+          const result = await execute(aggregate, runtime, command, stores.eventStore, signals);
           span.setAttributes({
             [ATTRIBUTES.outcome]: "stored",
             [ATTRIBUTES.eventCount]: result.scheduled ? 0 : result.eventIds.length,

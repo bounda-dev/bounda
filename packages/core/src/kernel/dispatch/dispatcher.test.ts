@@ -6,12 +6,15 @@ import type { StoredEvent } from "../../contracts/event.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import { installFakeTelemetry } from "../telemetry-fake.ts";
-import { advanceUntilWaiting, createRecordingLogger, eventually } from "../test-support.ts";
+import {
+  advanceUntilWaiting,
+  createRecordingLogger,
+  drained,
+  eventually,
+} from "../test-support.ts";
 import { createDispatcher, type Subscriber } from "./dispatcher.ts";
 
 const storage = () => memory().createStorage({ logger: silentLogger });
-
-const drained = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
 const appendMany = async (
   eventStore: Awaited<ReturnType<typeof storage>>["eventStore"],

@@ -8,6 +8,7 @@ import {
   DEFAULT_BATCH_SIZE,
   DEFAULT_CATCH_UP_POLL_MS,
   DEFAULT_CATCH_UP_TIMEOUT_MS,
+  DEFAULT_COMMANDS,
   DEFAULT_CONCURRENCY_RETRIES,
   DEFAULT_IDLE_INTERVAL_MS,
   DEFAULT_POLICIES,
@@ -19,6 +20,7 @@ import {
 import type {
   Config,
   ResolvedAggregateRuntime,
+  ResolvedCommandsConfig,
   ResolvedConfig,
   ResolvedPoliciesConfig,
   ResolvedProcessesConfig,
@@ -34,6 +36,10 @@ const duration = z.union([z.number(), z.string()]).transform((value, context) =>
   }
 });
 
+const timeout = duration.refine((milliseconds) => milliseconds > 0, {
+  message: "Expected a duration longer than 0",
+});
+
 const adapter = z.custom<Config["storage"]>(isAdapterDefinition, {
   message: "Expected an adapter definition such as sqlite({ ... })",
 });
@@ -45,9 +51,13 @@ const retry = z.strictObject({
   maxDelay: duration.optional(),
 });
 
+const commands = z.strictObject({
+  timeout: timeout.optional(),
+});
+
 const policies = z.strictObject({
   retry: retry.optional(),
-  timeout: duration.optional(),
+  timeout: timeout.optional(),
   maxChainDepth: z.int().min(1).optional(),
 });
 
@@ -57,13 +67,14 @@ const processes = z.strictObject({
 });
 
 const overrides = z.strictObject({
+  commands: commands.optional(),
   policies: policies.optional(),
   processes: processes.optional(),
 });
 
 const runtime = z.strictObject({
   role: z.enum(["web", "worker", "all"]).optional(),
-  commands: z.strictObject({ concurrencyRetries: z.int().min(0).optional() }).optional(),
+  commands: commands.extend({ concurrencyRetries: z.int().min(0).optional() }).optional(),
   policies: policies.optional(),
   processes: processes.optional(),
   dispatcher: z
@@ -94,6 +105,7 @@ const configSchema = z.strictObject({
 });
 
 type ParsedRetry = z.output<typeof retry>;
+type ParsedCommands = z.output<typeof commands>;
 type ParsedPolicies = z.output<typeof policies>;
 type ParsedProcesses = z.output<typeof processes>;
 
@@ -109,6 +121,13 @@ const resolveRetry = (
         baseDelayMs: parsed.baseDelay ?? base.baseDelayMs,
         maxDelayMs: parsed.maxDelay ?? base.maxDelayMs,
       };
+
+const resolveCommands = (
+  parsed: ParsedCommands | undefined,
+  base: ResolvedCommandsConfig,
+): ResolvedCommandsConfig => ({
+  timeoutMs: parsed?.timeout ?? base.timeoutMs,
+});
 
 const resolvePolicies = (
   parsed: ParsedPolicies | undefined,
@@ -144,9 +163,11 @@ export const resolveConfig: ResolveConfigFunction = (config) => {
     throw new ConfigurationError(`Invalid bounda.config.ts:\n${formatIssues(result.error.issues)}`);
   }
   const parsed = result.data;
+  const baseCommands = resolveCommands(parsed.runtime?.commands, DEFAULT_COMMANDS);
   const basePolicies = resolvePolicies(parsed.runtime?.policies, DEFAULT_POLICIES);
   const baseProcesses = resolveProcesses(parsed.runtime?.processes, DEFAULT_PROCESSES);
   const defaultsForAggregate: ResolvedAggregateRuntime = {
+    commands: baseCommands,
     policies: basePolicies,
     processes: baseProcesses,
   };
@@ -154,6 +175,7 @@ export const resolveConfig: ResolveConfigFunction = (config) => {
     Object.entries(parsed.runtime?.overrides ?? {}).map(([aggregate, override]) => [
       aggregate,
       {
+        commands: resolveCommands(override.commands, baseCommands),
         policies: resolvePolicies(override.policies, basePolicies),
         processes: resolveProcesses(override.processes, baseProcesses),
       } satisfies ResolvedAggregateRuntime,
@@ -167,6 +189,7 @@ export const resolveConfig: ResolveConfigFunction = (config) => {
     runtime: {
       role: parsed.runtime?.role ?? "all",
       commands: {
+        ...baseCommands,
         concurrencyRetries:
           parsed.runtime?.commands?.concurrencyRetries ?? DEFAULT_CONCURRENCY_RETRIES,
       },

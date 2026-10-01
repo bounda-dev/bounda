@@ -30,9 +30,27 @@ export interface ProcessesConfig {
 }
 
 /**
+ * Runtime settings for command handlers that one aggregate may override.
+ */
+export interface AggregateCommandsConfig {
+  /**
+   * How long one run of a command handler may take. Past it, the dispatch rejects with
+   * `HANDLER_TIMEOUT`, the handler's `signal` aborts and nothing it returns is stored. Each retry
+   * after a concurrency conflict gets its own. Defaults to `runtime.commands.timeout`.
+   */
+  readonly timeout?: DurationInput;
+}
+
+/**
  * Runtime settings for the command pipeline.
  */
 export interface CommandsRuntimeConfig {
+  /**
+   * How long one run of a command handler may take. Past it, the dispatch rejects with
+   * `HANDLER_TIMEOUT`, the handler's `signal` aborts and nothing it returns is stored. Each retry
+   * after a concurrency conflict gets its own. Defaults to 30 seconds.
+   */
+  readonly timeout?: DurationInput;
   readonly concurrencyRetries?: number;
 }
 
@@ -94,6 +112,7 @@ export interface CatchUpConfig {
  * Settings one aggregate may override.
  */
 export interface AggregateOverrides {
+  readonly commands?: AggregateCommandsConfig;
   readonly policies?: PoliciesConfig;
   readonly processes?: ProcessesConfig;
 }
@@ -165,7 +184,12 @@ export interface ResolvedProcessesConfig {
   readonly timeoutMs: number;
 }
 
+export interface ResolvedCommandsConfig {
+  readonly timeoutMs: number;
+}
+
 export interface ResolvedAggregateRuntime {
+  readonly commands: ResolvedCommandsConfig;
   readonly policies: ResolvedPoliciesConfig;
   readonly processes: ResolvedProcessesConfig;
 }
@@ -180,7 +204,7 @@ export interface ResolvedConfig {
   readonly readModels: Readonly<Record<string, AdapterDefinition>>;
   readonly runtime: {
     readonly role: RuntimeRole;
-    readonly commands: { readonly concurrencyRetries: number };
+    readonly commands: ResolvedCommandsConfig & { readonly concurrencyRetries: number };
     readonly policies: ResolvedPoliciesConfig;
     readonly processes: ResolvedProcessesConfig;
     readonly dispatcher: {

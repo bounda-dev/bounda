@@ -11,6 +11,7 @@ import {
   createRecordingLogger,
   defaultCollaborators,
   orderAggregateEntry,
+  slowJob,
 } from "../test-support.ts";
 import { buildPolicies, policyTriggerFromKey } from "./build-policies.ts";
 
@@ -850,5 +851,35 @@ describe("a policy run that fails", () => {
       aggregateId: "o-1",
     });
     expect(order.events.map((event) => event.type)).toEqual(["OrderPlaced"]);
+  });
+
+  it("stops a command still running when the handler runs out of time", async () => {
+    const dispatched = Promise.withResolvers<unknown>();
+    const { registry, started } = slowJob(
+      withPolicy(async ({ event, commands }) => {
+        dispatched.resolve(
+          await commands.runJob?.({ jobId: event.aggregateId }).catch((error: unknown) => error),
+        );
+      }),
+    );
+    const harness = await createReactiveHarness({
+      registry,
+      config: {
+        runtime: {
+          commands: { timeout: "1h" },
+          policies: { timeout: "1m", retry: { strategy: "none" } },
+        },
+      },
+    });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    const processing = harness.dispatcher.processUntilIdle();
+    const signal = await started;
+    harness.clock.advance(60_000);
+    await processing;
+
+    const abandoned = { code: "REACTION_ABANDONED", cause: { code: "HANDLER_TIMEOUT" } };
+    expect(signal.reason).toMatchObject(abandoned);
+    expect(await dispatched.promise).toMatchObject(abandoned);
+    expect(harness.clock.pending()).toBe(0);
   });
 });

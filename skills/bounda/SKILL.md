@@ -123,6 +123,10 @@ when its append loses a concurrency race, and its decision is not stored until t
 succeeds. So its collaborator calls must be safe to repeat and harmless if the decision never
 lands: a read, or a call the provider deduplicates, such as creating a payment intent. Every
 handler receives `idempotencyKey`, stable across its reruns (the command id); pass it to those calls.
+It also receives `signal`, which aborts after `runtime.commands.timeout` (30s, per aggregate in
+`overrides.<aggregate>.commands`), when the caller withdraws the command
+(`commands.x(payload, { signal })`) or when the reaction that dispatched it fails; pass it to
+outside calls. Past the timeout the dispatch rejects with `HANDLER_TIMEOUT` and nothing is stored.
 
 Effects (charging, emailing, calling another service) go in a policy or process with the
 collaborator, after the event is stored, passing `idempotencyKey` to the provider, and report back
@@ -236,8 +240,9 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   with its claim, its lifecycle events and its deadline entry when it ends, so a failed or crashed
   attempt leaves nothing behind, and a step whose instance moved meanwhile runs again on the new
   state; what `await commands.x()` returns is the aggregate's decision, not something stored yet:
-  call outside first, dispatch after. Outside the promise: the outside calls themselves, the inbox
-  claim, and what a read model shows a handler (only what was committed before the attempt).
+  call outside first, dispatch after, and await every dispatch. Outside the promise: the outside
+  calls themselves, the inbox claim, and what a read model shows a handler (only what was
+  committed before the attempt).
 - Policies and processes get the aggregate's collaborators spread next to `event` and `commands`,
   like commands do; a policy in `policies/<other-aggregate>/` still gets its own aggregate's.
   A policy that exports `delay` (`"1m"`, or `asDuration(env)`) runs that long
@@ -246,7 +251,8 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   and a delayed command when the decision must see the state at that time.
   Their `idempotencyKey` is the same on every retry for one event (for a
   deadline, one field at one moment) and new on a dead-letter replay. Their `signal` aborts when
-  the run times out or fails: pass it to outside calls. A port cannot be named after a handler
+  the run times out or fails, which also stops their commands still running: pass it to outside
+  calls. A port cannot be named after a handler
   argument (`event`, `commands`, `state`, `aggregateId`, `command`, `events`, `idempotencyKey`,
   `signal`, `after`), after an event of its aggregate, or `commands`, `policies`, `processes`.
 - Process deadlines: `after()` counts from the event's time (in `at-`, from the moment that came

@@ -115,6 +115,22 @@ export const failure = (error: unknown) => {
 
 Anything else propagates to the route's `ErrorBoundary`.
 
+## When the client goes away
+
+A command keeps going when the browser closes the tab: the request has already arrived, and
+stopping it halfway would leave the user not knowing whether it happened. Its handler is still
+bounded by `runtime.commands.timeout` (see
+[Retries and timeouts](/guides/reacting-to-events/#retries-and-timeouts)). When an action should
+give up with its request, pass the request's signal; the command is withdrawn until its events
+start being stored, and the dispatch rejects with the signal's reason:
+
+```ts
+await context.get(bounda).commands.registerUser(payload, { signal: request.signal });
+```
+
+The option takes any signal, such as `AbortSignal.timeout(2_000)` for one action that must answer
+sooner than the app's limit.
+
 ## Reading what you just wrote
 
 Read models are updated by projections that run in the background, so a page reached right after

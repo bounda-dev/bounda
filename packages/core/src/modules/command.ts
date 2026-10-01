@@ -37,4 +37,10 @@ export type CommandHandlerArgs<
    * call that must be safe to repeat, such as creating a payment intent.
    */
   readonly idempotencyKey: string;
+  /**
+   * Aborted when the handler runs out of time, when whoever dispatched the command withdraws it or
+   * when the policy or process that dispatched it fails: pass it to what the handler calls outside
+   * (`fetch(url, { signal })`) so it stops. Nothing the handler returns after that is stored.
+   */
+  readonly signal: AbortSignal;
 } & Readonly<Collaborators>;

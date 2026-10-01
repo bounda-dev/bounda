@@ -126,6 +126,59 @@ export const orderRegistry: Registry = {
   readModels: {},
 };
 
+export interface JobHandlerArgs {
+  readonly signal: AbortSignal;
+  readonly events: Record<string, (payload?: unknown) => unknown>;
+}
+
+export interface WithJobFunction {
+  (handler: (args: JobHandlerArgs) => unknown, base?: Registry): Registry;
+}
+
+/**
+ * `base` plus a `job` aggregate whose one command, `RunJob` (`{ jobId }`), runs `handler`, and
+ * whose one event is `JobDone`: for tests that decide when a command finishes.
+ */
+export const withJob: WithJobFunction = (handler, base = { aggregates: {}, readModels: {} }) => ({
+  ...base,
+  aggregates: {
+    ...base.aggregates,
+    job: {
+      events: { jobDone: { apply: ({ state }: { state: object }) => state } },
+      commands: { runJob: { module: { handler } } },
+      policies: {},
+      processes: {},
+    },
+  },
+});
+
+export interface SlowJob {
+  readonly registry: Registry;
+  /**
+   * Resolves with the handler's signal once `RunJob`'s handler runs.
+   */
+  readonly started: Promise<AbortSignal>;
+  /**
+   * Lets the handler return `JobDone`; until then it waits.
+   */
+  finish(): void;
+}
+
+export interface SlowJobFunction {
+  (base?: Registry): SlowJob;
+}
+
+export const slowJob: SlowJobFunction = (base) => {
+  const started = Promise.withResolvers<AbortSignal>();
+  const finished = Promise.withResolvers<void>();
+  const registry = withJob(async ({ signal, events }) => {
+    started.resolve(signal);
+    await finished.promise;
+    return [events.jobDone?.()];
+  }, base);
+  return { registry, started: started.promise, finish: () => finished.resolve() };
+};
+
 /**
  * The `collaborators` configuration kernel tests boot with: the in-memory notifier for a registry
  * built on `orderAggregate`, nothing for any other.
@@ -269,6 +322,15 @@ export interface EventuallyFunction {
  */
 export const eventually: EventuallyFunction = (assertion) =>
   vi.waitFor(assertion, { interval: 1, timeout: 5_000 });
+
+export interface DrainedFunction {
+  (): Promise<void>;
+}
+
+/**
+ * Resolves after every microtask queued so far has run, and the I/O callbacks due with them.
+ */
+export const drained: DrainedFunction = () => new Promise((resolve) => setImmediate(resolve));
 
 export interface AdvanceUntilWaitingFunction {
   (clock: FixedClock, milliseconds: number): Promise<void>;

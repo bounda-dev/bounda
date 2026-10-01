@@ -30,7 +30,8 @@ export interface BoundaStub {
 /**
  * One store, seen from a Worker: the same `commands` and `queries` as `app.commands` and
  * `app.queries`, typed from the registry, plus the operations an operator needs. Every call is a
- * round trip to the object.
+ * round trip to the object. A command's `signal` only counts before the call leaves the Worker:
+ * RPC cannot carry it into the object, where the command then runs to the end.
  */
 export interface BoundaClient<R extends Registry> {
   readonly commands: CommandsFacade<R>;
@@ -50,6 +51,13 @@ export interface BoundaClient<R extends Registry> {
 export interface ConnectFunction {
   <R extends Registry = AppRegistry>(stub: BoundaStub): BoundaClient<R>;
 }
+
+const sendable = (options: DispatchOptions | undefined): DispatchOptions | undefined => {
+  if (options === undefined) return undefined;
+  const { signal, ...rest } = options;
+  signal?.throwIfAborted();
+  return rest;
+};
 
 const byName = <T extends object>(call: (name: string, ...args: unknown[]) => unknown): T =>
   new Proxy({} as T, {
@@ -72,8 +80,10 @@ const byName = <T extends object>(call: (name: string, ...args: unknown[]) => un
 export const connect: ConnectFunction = <R extends Registry = AppRegistry>(
   stub: BoundaStub,
 ): BoundaClient<R> => ({
-  commands: byName<CommandsFacade<R>>((name, payload, options) =>
-    unwrap<DispatchResult>(stub.command(name, payload, options as DispatchOptions | undefined)),
+  commands: byName<CommandsFacade<R>>(async (name, payload, options) =>
+    unwrap<DispatchResult>(
+      stub.command(name, payload, sendable(options as DispatchOptions | undefined)),
+    ),
   ),
   queries: byName<QueriesFacade<R>>((name, payload) => unwrap(stub.query(name, payload))),
   getLag: () => unwrap<AppLag>(stub.lag()),

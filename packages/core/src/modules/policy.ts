@@ -35,7 +35,8 @@ export type PolicyHandlerArgs<Event, Commands, Collaborators extends object = Em
   readonly idempotencyKey: string;
   /**
    * Aborted when the handler runs out of time or its run fails: pass it to what the handler calls
-   * outside (`fetch(url, { signal })`) so it stops. Commands dispatched after that are refused.
+   * outside (`fetch(url, { signal })`) so it stops. Its commands still running stop too, and
+   * those dispatched after that are refused, both with `REACTION_ABANDONED`.
    */
   readonly signal: AbortSignal;
 } & Readonly<Collaborators>;

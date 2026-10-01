@@ -33,7 +33,12 @@ describe("defineConfig", () => {
     defineConfig({
       storage: sqlite,
       collaborators,
-      runtime: { policies: { timeout: "30s" }, processes: { timeout: "7d" } },
+      runtime: {
+        commands: { timeout: "10s" },
+        policies: { timeout: "30s" },
+        processes: { timeout: "7d" },
+        overrides: { order: { commands: { timeout: 5_000 } } },
+      },
     });
     defineConfig({
       storage: sqlite,
@@ -96,6 +101,16 @@ describe("defineConfig", () => {
     });
     // @ts-expect-error "7 days" is not a duration string
     defineConfig({ storage: sqlite, collaborators, runtime: { policies: { timeout: "7 days" } } });
+    defineConfig({
+      storage: sqlite,
+      collaborators,
+      runtime: {
+        commands: {
+          // @ts-expect-error "ten seconds" is not a duration string
+          timeout: "ten seconds",
+        },
+      },
+    });
     // @ts-expect-error "48x" uses an unknown unit
     defineConfig({ storage: sqlite, collaborators, runtime: { processes: { timeout: "48x" } } });
   });
@@ -103,6 +118,12 @@ describe("defineConfig", () => {
   it("rejects unknown keys and wrong roles", () => {
     // @ts-expect-error storag is not a config key
     defineConfig({ storag: sqlite, collaborators });
+    defineConfig({
+      storage: sqlite,
+      collaborators,
+      // @ts-expect-error concurrencyRetries is not overridden per aggregate
+      runtime: { overrides: { order: { commands: { concurrencyRetries: 1 } } } },
+    });
     // @ts-expect-error batch is not a role
     defineConfig({ storage: sqlite, collaborators, runtime: { role: "batch" } });
   });

@@ -9,8 +9,8 @@ import { type CommandsFacadeRuntime, createCommandsFacade } from "./facade.ts";
 import type { CommandPipeline } from "./pipeline.ts";
 
 /**
- * Thrown by a command a handler dispatches after its run was abandoned; `cause` is why the run
- * was abandoned.
+ * Thrown by a command a handler dispatches after its run was abandoned, or that was still running
+ * when it was; `cause` is why the run was abandoned.
  */
 export class ReactionAbandonedError extends BoundaError {
   constructor(reason: unknown) {
@@ -32,8 +32,9 @@ export interface ReactionCommands {
    */
   readonly signal: AbortSignal;
   /**
-   * Ends a run that failed or timed out: later dispatches are refused and `signal` aborts.
-   * Nothing is undone, since the run's unit of work is never committed.
+   * Ends a run that failed or timed out: `signal` aborts, which stops the commands still running,
+   * and later dispatches are refused. Nothing is undone, since the run's unit of work is never
+   * committed. A dispatch the handler does not await is never reported as unhandled for it.
    */
   abandon(reason: unknown): void;
 }
@@ -62,6 +63,8 @@ const decided = (result: DispatchResult): ReactionDispatchResult => {
   return decision;
 };
 
+const ignore = (): void => undefined;
+
 export const createReactionCommands: CreateReactionCommandsFunction = ({
   aggregates,
   pipeline,
@@ -70,26 +73,39 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
   within,
 }) => {
   const commandIds = createReactionCommandIds(idempotencyKey);
-  const controller = new AbortController();
+  const handler = new AbortController();
+  // A second signal, so the commands are refused with the reason wrapped while the handler's
+  // signal carries it as it is.
+  const abandoned = new AbortController();
+  // Abandoning the run rejects the dispatches it stops or refuses, which a handler that did not
+  // await one would leave unhandled, and Node ends the process on that. They are marked handled
+  // before they can reject; the handler still sees the rejection through its own await.
+  const dispatched = new Set<Promise<ReactionDispatchResult>>();
   const commands = createCommandsFacade({
     aggregates,
-    dispatch: async (command) => {
-      if (controller.signal.aborted) {
-        throw new ReactionAbandonedError(controller.signal.reason);
-      }
-      return decided(
-        await pipeline.dispatch({
-          ...command,
-          context: { ...context, depth: context.depth + 1 },
-          commandId: commandIds(command.type),
-          within,
-        }),
-      );
+    dispatch: (command) => {
+      const dispatch = (async () =>
+        decided(
+          await pipeline.dispatch({
+            ...command,
+            context: { ...context, depth: context.depth + 1 },
+            commandId: commandIds(command.type),
+            within,
+            signal: abandoned.signal,
+          }),
+        ))();
+      if (abandoned.signal.aborted) dispatch.catch(ignore);
+      else dispatched.add(dispatch);
+      return dispatch;
     },
   });
   return {
     commands,
-    signal: controller.signal,
-    abandon: (reason) => controller.abort(reason),
+    signal: handler.signal,
+    abandon: (reason) => {
+      for (const dispatch of dispatched) dispatch.catch(ignore);
+      abandoned.abort(new ReactionAbandonedError(reason));
+      handler.abort(reason);
+    },
   };
 };

@@ -193,7 +193,10 @@ command, when its append loses a concurrency race, and what it decided is not st
 append succeeds. So a command handler only makes calls that are safe to repeat and harmless if the
 decision never lands: reading a price, checking stock, creating a payment intent with its
 `idempotencyKey` so the page can show the payment form. What it learned from outside goes into the
-event, so the history says what the decision was based on.
+event, so the history says what the decision was based on. Those calls take the handler's
+`signal` (`fetch(url, { signal })`), which aborts when the handler runs out of time, so a provider
+that hangs fails the command instead of holding the request (see
+[Retries and timeouts](#retries-and-timeouts)).
 
 The effect itself (charging the card, sending the email, telling the warehouse) goes in a policy
 or process that reacts to the stored event, through one of the aggregate's collaborators. It runs
@@ -218,6 +221,9 @@ decision.
 
 A few rules keep it correct:
 
+- **Await every command the handler dispatches.** The run's outcome is what the handler returns
+  or throws: a command it does not await may be left out of the run, and its failure reaches no
+  one.
 - **Pass `idempotencyKey` to every provider that takes one.** It is one key per handler run: two
   different calls in one handler need two keys, so either derive a second one for the provider
   (`${idempotencyKey}-refund`, if its length limit allows) or give each effect its own reaction.
@@ -245,14 +251,22 @@ Defaults, when the configuration says nothing:
 | Base delay | 1s | 1s |
 | Maximum delay | 30s | 30s |
 
-Two different things are called a timeout, and it is worth keeping them apart:
+Three different things are called a timeout, and it is worth keeping them apart:
 
-- **How long one handler run may take** is `runtime.policies.timeout`, 30 seconds by default. It
-  governs process handlers too, not only policies — the process runner reads the policy setting.
-  When a run runs out of time, the commands it dispatches from then on are refused
-  (the error's `code` is `REACTION_ABANDONED`, its `cause` the timeout) and the handler's `signal`
-  aborts. JavaScript cannot stop the handler itself, so pass `signal` to what
-  it calls outside (`fetch(url, { signal })`) and that stops too.
+- **How long one command handler run may take** is `runtime.commands.timeout`, 30 seconds by
+  default. Past it the dispatch rejects (the error's `code` is `HANDLER_TIMEOUT`), the handler's
+  `signal` aborts and nothing it returns is stored. Each retry after a concurrency conflict gets a
+  time limit of its own; loading the aggregate and storing its events do not count. A command
+  dispatched from a policy or process also stops when that run times out or fails, and a
+  scheduled command that times out is retried like any other failure. Whoever dispatches can
+  withdraw it sooner with a signal of their own, `commands.x(payload, { signal })`, until its
+  events start being stored.
+- **How long one policy or process handler run may take** is `runtime.policies.timeout`, 30
+  seconds by default; the process runner reads the policy setting. When a run runs out of time,
+  its commands still running stop and those it dispatches from then on are refused (the error's
+  `code` is `REACTION_ABANDONED`, its `cause` the timeout), and the handler's `signal` aborts.
+  JavaScript cannot stop the handler itself, so pass `signal` to what it calls outside
+  (`fetch(url, { signal })`) and that stops too.
 - **How long a process may stay open** before `at-timeout.ts` runs is the process's own `timeout`
   in its `config`, falling back to `runtime.processes.timeout`, 7 days by default.
 
@@ -264,10 +278,11 @@ import { defineConfig } from "@bounda-dev/core/config";
 export default defineConfig({
   storage: postgresql({ url: process.env.DATABASE_URL! }),
   runtime: {
+    commands: { timeout: "10s" },
     policies: { retry: { strategy: "exponential", maxAttempts: 5, maxDelay: "2m" } },
     processes: { timeout: "30d" },
     overrides: {
-      order: { policies: { retry: { strategy: "none" } } },
+      order: { commands: { timeout: "1m" }, policies: { retry: { strategy: "none" } } },
     },
   },
 });
