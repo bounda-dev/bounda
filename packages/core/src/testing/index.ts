@@ -6,9 +6,13 @@ import { type Logger, silentLogger } from "../contracts/logger.ts";
 import { type BoundaApp, createApp } from "../kernel/app.ts";
 import { memory } from "../memory/index.ts";
 import type { Registry } from "../modules/registry.ts";
-import type { AppEnv } from "../register/index.ts";
+import type { EnvSection } from "../register/index.ts";
 
-export interface CreateTestAppArgs<R extends Registry> {
+/**
+ * `env` is what collaborator implementations receive in `create`, never the test's
+ * `process.env`; `EnvSection` says when it is required.
+ */
+export type CreateTestAppArgs<R extends Registry> = {
   readonly registry: R;
   /**
    * Configuration without `storage`; the in-memory adapter is used unless `adapter` says
@@ -21,12 +25,7 @@ export interface CreateTestAppArgs<R extends Registry> {
    * Where the fixed clock starts. Defaults to 2026-01-01T00:00:00Z.
    */
   readonly now?: Date;
-  /**
-   * The environment collaborator implementations receive in `create`. Defaults to an empty
-   * object; the test's `process.env` is never read.
-   */
-  readonly env?: AppEnv;
-}
+} & EnvSection<R>;
 
 export interface TestApp<R extends Registry> {
   readonly app: BoundaApp<R>;

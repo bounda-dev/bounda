@@ -9,7 +9,7 @@ import { type IdGenerator, uuidV7IdGenerator } from "../contracts/ids.ts";
 import { type Logger, silentLogger } from "../contracts/logger.ts";
 import type { CommandsFacade, QueriesFacade, Registry } from "../modules/registry.ts";
 import { validateRegistry } from "../modules/validate.ts";
-import type { AppEnv, AppRegistry } from "../register/index.ts";
+import type { AppRegistry, EnvSection } from "../register/index.ts";
 import { buildAggregates } from "./aggregate/build-aggregates.ts";
 import { createCollaborators } from "./aggregate/collaborators.ts";
 import { withUpcasting } from "./aggregate/upcasting.ts";
@@ -136,7 +136,11 @@ export interface ProcessUntilIdleResult {
   readonly idle: boolean;
 }
 
-export interface CreateAppArgs<R extends Registry> {
+/**
+ * `env` is the host's environment, which every collaborator implementation's `create` receives;
+ * `EnvSection` says when it is required.
+ */
+export type CreateAppArgs<R extends Registry> = {
   readonly registry: R;
   readonly config: Config;
   /**
@@ -151,12 +155,7 @@ export interface CreateAppArgs<R extends Registry> {
    * Defaults to `systemClock`.
    */
   readonly clock?: Clock;
-  /**
-   * The host's environment, which every collaborator implementation's `create` receives. Defaults
-   * to an empty object.
-   */
-  readonly env?: AppEnv;
-}
+} & EnvSection<R>;
 
 export interface CreateAppFunction {
   <R extends Registry>(args: CreateAppArgs<R>): Promise<BoundaApp<R>>;
@@ -173,7 +172,7 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
   logger = silentLogger,
   ids = uuidV7IdGenerator,
   clock = systemClock,
-  env = {} as AppEnv,
+  env = {},
 }: CreateAppArgs<R>): Promise<BoundaApp<R>> => {
   validateRegistry(registry);
   const config = resolveConfig(rawConfig);

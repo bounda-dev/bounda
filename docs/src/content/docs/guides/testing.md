@@ -158,7 +158,10 @@ const { app } = await createTestApp({
 });
 ```
 
-`app.stop()` closes what each `create` built, as it does outside tests.
+`app.stop()` closes what each `create` built, as it does outside tests. On Cloudflare `env` is
+`Cloudflare.Env`, whose bindings an empty object does not have, so `createTestApp` requires it
+there as soon as an implementation exports `create`; inside workerd, pass `env` from
+`cloudflare:workers`.
 
 ## Nothing left behind
 

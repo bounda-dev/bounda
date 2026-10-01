@@ -8,6 +8,7 @@ import type {
   DispatchOptions,
   DispatchResult,
   DurationInput,
+  EnvSection,
   ImplementationModule,
   Instant,
   Logger,
@@ -166,6 +167,16 @@ describe("collaborators", () => {
     expectTypeOf<ReturnType<InventoryHttp.Create>>().toEqualTypeOf<
       Inventory | Promise<Inventory>
     >();
+  });
+
+  it("leave env optional for createApp and createTestApp when no host registers one", () => {
+    expectTypeOf<EnvSection>().toEqualTypeOf<{
+      readonly env?: Readonly<Record<string, string | undefined>>;
+    }>();
+    // inventory/http.ts exports create, and an empty object is still a valid environment.
+    expectTypeOf<EnvSection<typeof registry>>().toEqualTypeOf<{
+      readonly env?: Readonly<Record<string, string | undefined>>;
+    }>();
   });
 
   it("accept an implementation module with a default export or with a create, sync or async", () => {

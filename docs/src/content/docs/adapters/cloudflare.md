@@ -108,6 +108,10 @@ export default defineConfig({
 });
 ```
 
+Since an empty object has none of those bindings, `createApp` and `createTestApp` require `env`
+in a Cloudflare project whose registry has an implementation with `create`, instead of
+defaulting to `{}`.
+
 A Durable Object never stops its app, so `[Symbol.asyncDispose]` on what `create` returns only
 runs under `createTestApp` or an app you stop yourself.
 

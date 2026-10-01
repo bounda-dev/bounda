@@ -10,13 +10,16 @@ async and runs once per app: once per process under `boot()`, once per Durable O
 `createTestApp`. `env` is the host's environment: `process.env` after `.env` is loaded under
 `boot()`, the Durable Object's `env` on Cloudflare (typed as `Cloudflare.Env`, which
 `@bounda-dev/adapter-cloudflare` registers with `@bounda-dev/core/register`), and what a test
-passes as `createTestApp({ env })`, an empty object otherwise. `createApp` takes `env` as well.
+passes as `createTestApp({ env })`, an empty object otherwise. `createApp` takes `env` as well;
+both require it when the registered environment is one an empty object does not satisfy, as
+`Cloudflare.Env` is, and some implementation of the registry exports `create` (`EnvSection`).
+`CreateAppArgs` and `CreateTestAppArgs` become type aliases.
 `app.stop()` calls `[Symbol.asyncDispose]` on what each `create` returned, after closing the
 storage and in reverse order; one that fails to close is logged and the rest still close. A
 default export is never closed.
 
 The `+types` of an implementation adds `Implementation.Create` and `Implementation.CreateArgs`;
-`CreateArgs`, `CreateImplementation` and `AppEnv` are new public types, and
+`CreateArgs`, `CreateImplementation`, `AppEnv` and `EnvSection` are new public types, and
 `ImplementationModule` accepts either export. `selectCollaborators` now returns the chosen module
 rather than its default export, and the registry check rejects a module that exports both or
 neither. Run `bounda generate` to update generated files.

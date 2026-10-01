@@ -46,3 +46,28 @@ export type AppCollaboratorsConfig = Register extends {
 export type AppEnv = Register extends { readonly env: infer E }
   ? E
   : Readonly<Record<string, string | undefined>>;
+
+type ModulesOf<C> =
+  C extends Readonly<Record<string, Readonly<Record<string, infer M>>>> ? M : never;
+
+type BuildsWithCreate<R extends Registry> = [
+  Extract<
+    ModulesOf<NonNullable<R["aggregates"][keyof R["aggregates"]]["collaborators"]>>,
+    { readonly create: unknown }
+  >,
+] extends [never]
+  ? false
+  : true;
+
+/**
+ * The `env` option of `createApp` and `createTestApp`: required when a host registers an
+ * environment an empty object does not satisfy, such as `Cloudflare.Env`, and some implementation
+ * of the registry exports `create`, which would receive it; optional otherwise, an empty object by
+ * default.
+ */
+export type EnvSection<R extends Registry = Registry> =
+  Record<never, never> extends AppEnv
+    ? { readonly env?: AppEnv }
+    : BuildsWithCreate<R> extends true
+      ? { readonly env: AppEnv }
+      : { readonly env?: AppEnv };

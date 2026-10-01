@@ -1,8 +1,9 @@
 import { env } from "cloudflare:workers";
-import type { DeadLetter, DispatchResult } from "@bounda-dev/core";
+import type { CreateAppArgs, DeadLetter, DispatchResult } from "@bounda-dev/core";
+import type { CreateTestAppArgs } from "@bounda-dev/core/testing";
 import { describe, expectTypeOf, it } from "vitest";
 import { connect } from "../src/client.ts";
-import type { registry } from "./app.ts";
+import type { regionRegistry, registry } from "./app.ts";
 
 describe("connect", () => {
   it("types commands and queries from the registry, as app.commands and app.queries are", () => {
@@ -19,5 +20,23 @@ describe("connect", () => {
     void store.commands.placeOrder({ orderId: "o-1", total: "42", customer: "ada" });
     // @ts-expect-error there is no such command
     void store.commands.shipOrder;
+  });
+});
+
+describe("the env collaborators receive on Cloudflare", () => {
+  it("is the Worker's Cloudflare.Env, required once an implementation exports create", () => {
+    expectTypeOf<
+      NonNullable<CreateAppArgs<typeof regionRegistry>["env"]>
+    >().toEqualTypeOf<Cloudflare.Env>();
+    const app = {} as typeof regionRegistry;
+    // @ts-expect-error region is built by create, which needs the bindings Cloudflare.Env promises
+    const withoutEnv: CreateTestAppArgs<typeof regionRegistry> = { registry: app };
+    const withEnv: CreateTestAppArgs<typeof regionRegistry> = { registry: app, env };
+    void [withoutEnv, withEnv];
+  });
+
+  it("stays optional for a registry whose implementations need none", () => {
+    const withoutEnv: CreateTestAppArgs<typeof registry> = { registry: {} as typeof registry };
+    void withoutEnv;
   });
 });
