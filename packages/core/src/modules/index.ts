@@ -5,13 +5,8 @@ export type {
   StateOf,
   UnknownState,
 } from "./aggregate.ts";
-export type {
-  CollaboratorImplementations,
-  CommandEntry,
-  CommandHandlerArgs,
-  CommandModule,
-  InferCollaborators,
-} from "./command.ts";
+export type { CollaboratorModules, ImplementationModule } from "./collaborator.ts";
+export type { CommandEntry, CommandHandlerArgs, CommandModule } from "./command.ts";
 export type {
   CreateEventBuildersFunction,
   EventApplyArgs,

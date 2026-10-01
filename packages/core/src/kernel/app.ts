@@ -190,7 +190,7 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
     logger,
   });
   const queryRunner = createQueryRunner({ queries: buildQueries({ readModels }), readModels });
-  const processDefinitions = buildProcesses({ registry, config });
+  const processDefinitions = buildProcesses({ registry, aggregates, config });
   const processes = createProcessRunner({
     processes: processDefinitions,
     aggregates,
@@ -201,7 +201,7 @@ export const createApp: CreateAppFunction = async <R extends Registry>({
     clock,
     logger,
   });
-  const policies = buildPolicies({ registry, config });
+  const policies = buildPolicies({ registry, aggregates });
   const policyExecutor = createPolicyExecutor({ aggregates, pipeline, config, clock });
   const reactive = [
     {

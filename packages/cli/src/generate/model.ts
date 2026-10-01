@@ -23,51 +23,45 @@ export interface EventModel extends ModuleRef {
 }
 
 /**
- * A collaborator implementation: `audit-log.memory.ts` → name `auditLog`, implementation
- * `memory`.
+ * An implementation of a port: `notifier/in-memory.ts`. `name` is the file name as the
+ * configuration names it, `in-memory`.
  */
-export interface CollaboratorModel extends ModuleRef {
+export interface ImplementationModel extends ModuleRef {
   readonly name: string;
-  readonly implementation: string;
 }
 
 /**
- * A command, policy or process: the modules that may have collaborator files next to them.
+ * A port of an aggregate, `order/notifier/`: its `index.ts` exports the interface `typeName`,
+ * and every other module in the directory implements it.
  */
-export interface CollaboratorOwnerModel extends ModuleRef {
-  readonly collaborators: readonly CollaboratorModel[];
+export interface PortModel {
   /**
-   * Whether the module (`index.ts` for a policy or process) exports a `Collaborators` type of its
-   * own, which the generated types then use instead of inferring one from the implementations.
-   * Always `false` without collaborator files.
+   * The registry key and the name every handler receives it as: `audit-log/` → `auditLog`.
    */
-  readonly declaresCollaborators: boolean;
+  readonly key: string;
   /**
-   * The name of the inferred collaborator type in `.bounda/types.ts`: `CancelOrderCollaborators`.
+   * The interface `index.ts` exports: `AuditLog`.
    */
-  readonly collaboratorsTypeName: string;
+  readonly typeName: string;
+  readonly contract: ModuleRef;
+  /**
+   * Sorted by name; never empty.
+   */
+  readonly implementations: readonly ImplementationModel[];
 }
 
-export interface CommandModel extends CollaboratorOwnerModel {
+export interface CommandModel extends ModuleRef {
   readonly key: string;
   readonly typeName: string;
-  /**
-   * Set when the command is a directory (`commands/<name>/index.ts`), where collaborators live.
-   */
-  readonly directory: string | null;
 }
 
-export interface PolicyModel extends CollaboratorOwnerModel {
+export interface PolicyModel extends ModuleRef {
   readonly key: string;
   /**
-   * The event key derived from the `...-on-<event>` suffix of the file or directory name, or
-   * `null` when the module has to declare `on` itself.
+   * The event key derived from the `...-on-<event>` suffix of the file name, or `null` when the
+   * module has to declare `on` itself.
    */
   readonly triggerKey: string | null;
-  /**
-   * Set when the policy is a directory (`policies/<name>/index.ts`), where collaborators live.
-   */
-  readonly directory: string | null;
   /**
    * The aggregate whose events the policy reacts to when it sits in `policies/<aggregate>/`;
    * `null` for the owner's own events. Its key is then prefixed with that aggregate:
@@ -95,7 +89,7 @@ export interface ProcessDeadlineModel extends ModuleRef {
   readonly field: string;
 }
 
-export interface ProcessModel extends CollaboratorOwnerModel {
+export interface ProcessModel extends ModuleRef {
   readonly key: string;
   readonly typeName: string;
   readonly directory: string;
@@ -111,6 +105,10 @@ export interface AggregateModel {
   readonly directory: string;
   readonly state: ModuleRef | null;
   readonly events: readonly EventModel[];
+  /**
+   * The ports of the aggregate, sorted by key.
+   */
+  readonly collaborators: readonly PortModel[];
   readonly commands: readonly CommandModel[];
   readonly policies: readonly PolicyModel[];
   readonly processes: readonly ProcessModel[];

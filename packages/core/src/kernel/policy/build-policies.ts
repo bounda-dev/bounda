@@ -1,10 +1,9 @@
-import { selectCollaborators } from "../../config/collaborators.ts";
-import type { ResolvedConfig } from "../../config/types.ts";
 import { parseDuration } from "../../contracts/duration.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import { capitalize } from "../../modules/naming.ts";
 import type { PolicyModule } from "../../modules/policy.ts";
 import type { Registry } from "../../modules/registry.ts";
+import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { qualifiedEventType } from "../shared/qualified-event.ts";
 
 export interface PolicyRuntime {
@@ -102,7 +101,7 @@ const delayOf = (aggregate: string, key: string, module: PolicyModule): number |
 
 export interface BuildPoliciesArgs {
   readonly registry: Registry;
-  readonly config: ResolvedConfig;
+  readonly aggregates: AggregatesRuntime;
 }
 
 export interface BuildPoliciesFunction {
@@ -113,7 +112,7 @@ export interface BuildPoliciesFunction {
  * A policy whose trigger is not an event of the aggregate it listens to is a configuration error:
  * it would never run.
  */
-export const buildPolicies: BuildPoliciesFunction = ({ registry, config }) => {
+export const buildPolicies: BuildPoliciesFunction = ({ registry, aggregates }) => {
   const all = Object.entries(registry.aggregates).flatMap(([aggregate, entry]) =>
     Object.entries(entry.policies).map(
       ([key, policy]): PolicyRuntime => ({
@@ -123,12 +122,7 @@ export const buildPolicies: BuildPoliciesFunction = ({ registry, config }) => {
         on: triggersOf(registry, aggregate, key, policy.module, policy.source ?? aggregate),
         handler: policy.module.handler as PolicyRuntime["handler"],
         delayMs: delayOf(aggregate, key, policy.module),
-        collaborators: selectCollaborators({
-          owner: `Policy "${aggregate}.${key}"`,
-          path: `policies.${aggregate}.${key}`,
-          implementations: policy.collaborators ?? {},
-          config: config.policies[aggregate]?.[key],
-        }),
+        collaborators: aggregates.byName[aggregate]?.collaborators ?? {},
       }),
     ),
   );

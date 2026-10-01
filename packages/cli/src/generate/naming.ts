@@ -66,18 +66,6 @@ export const processDeadlineOf: ProcessDeadlineOfFunction = (fileName) => {
   return match?.[1] === undefined ? null : toCamelCase(match[1]);
 };
 
-const COLLABORATOR = /^([a-z][a-z0-9]*(?:-[a-z0-9]+)*)\.([a-z][a-z0-9]*(?:-[a-z0-9]+)*)$/;
-
-export interface CollaboratorPartsOfFunction {
-  (fileName: string): { readonly name: string; readonly implementation: string } | null;
-}
-
-export const collaboratorPartsOf: CollaboratorPartsOfFunction = (fileName) => {
-  const match = COLLABORATOR.exec(fileName);
-  if (match?.[1] === undefined || match[2] === undefined) return null;
-  return { name: toCamelCase(match[1]), implementation: toCamelCase(match[2]) };
-};
-
 export interface UniqueAliasesArgs {
   readonly entries: readonly { readonly alias: string; readonly owner: string }[];
 }

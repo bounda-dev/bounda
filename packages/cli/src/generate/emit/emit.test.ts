@@ -56,15 +56,12 @@ const model: ProjectModel = {
       directory: "/project/app/domain/order",
       state: null,
       events: [],
+      collaborators: [],
       commands: [],
       policies: [
         {
           key: "audit",
           triggerKey: null,
-          directory: null,
-          collaborators: [],
-          declaresCollaborators: false,
-          collaboratorsTypeName: "OrderAuditPolicyCollaborators",
           source: null,
           path: "/project/app/domain/order/policies/audit.ts",
           relativePath: "app/domain/order/policies/audit.ts",
@@ -79,9 +76,6 @@ const model: ProjectModel = {
           relativePath: "app/domain/order/processes/follow-up/index.ts",
           handlers: [],
           deadlines: [],
-          collaborators: [],
-          declaresCollaborators: false,
-          collaboratorsTypeName: "OrderFollowUpProcessCollaborators",
         },
       ],
     },
@@ -98,6 +92,7 @@ const model: ProjectModel = {
           upcasts: null,
         },
       ],
+      collaborators: [],
       commands: [],
       policies: [],
       processes: [],
@@ -115,6 +110,7 @@ const model: ProjectModel = {
           upcasts: null,
         },
       ],
+      collaborators: [],
       commands: [],
       policies: [],
       processes: [],
@@ -138,6 +134,44 @@ const model: ProjectModel = {
       ],
       queries: [],
     },
+  ],
+};
+
+const port = (name: string, typeName: string, implementations: readonly string[]) => ({
+  key: name,
+  typeName,
+  contract: {
+    path: `/project/app/domain/order/${name}/index.ts`,
+    relativePath: `app/domain/order/${name}/index.ts`,
+  },
+  implementations: implementations.map((implementation) => ({
+    name: implementation,
+    path: `/project/app/domain/order/${name}/${implementation}.ts`,
+    relativePath: `app/domain/order/${name}/${implementation}.ts`,
+  })),
+});
+
+const withCollaborators: ProjectModel = {
+  ...model,
+  aggregates: [
+    {
+      ...(model.aggregates[0] as ProjectModel["aggregates"][number]),
+      collaborators: [
+        port("mailer", "Mailer", ["in-memory", "smtp"]),
+        port("sms", "Sms", ["fake"]),
+      ],
+      policies: [
+        ...(model.aggregates[0] as ProjectModel["aggregates"][number]).policies,
+        {
+          key: "notifyOnOrderPlaced",
+          triggerKey: "orderPlaced",
+          path: "/project/app/domain/order/policies/notify-on-order-placed.ts",
+          relativePath: "app/domain/order/policies/notify-on-order-placed.ts",
+          source: "shipment",
+        },
+      ],
+    },
+    ...model.aggregates.slice(1),
   ],
 };
 
@@ -181,77 +215,82 @@ describe("emitRegistry", () => {
     );
   });
 
-  it("lists every implementation of every collaborator of policies and processes", () => {
-    const order = model.aggregates[0] as ProjectModel["aggregates"][number];
-    const collaborator = (owner: string, name: string, implementation: string) => ({
-      name,
-      implementation,
-      path: `/project/app/domain/order/${owner}/${name}.${implementation}.ts`,
-      relativePath: `app/domain/order/${owner}/${name}.${implementation}.ts`,
-    });
-    const notify = "policies/notify-on-order-placed";
-    const followUp = order.processes[0] as ProjectModel["aggregates"][number]["processes"][number];
-    const withCollaborators: ProjectModel = {
-      ...model,
-      aggregates: [
-        {
-          ...order,
-          policies: [
-            ...order.policies,
-            {
-              key: "notifyOnOrderPlaced",
-              triggerKey: "orderPlaced",
-              directory: `/project/app/domain/order/${notify}`,
-              path: `/project/app/domain/order/${notify}/index.ts`,
-              relativePath: `app/domain/order/${notify}/index.ts`,
-              collaborators: [
-                collaborator(notify, "mailer", "memory"),
-                collaborator(notify, "mailer", "smtp"),
-                collaborator(notify, "sms", "fake"),
-              ],
-              declaresCollaborators: false,
-              collaboratorsTypeName: "OrderNotifyOnOrderPlacedPolicyCollaborators",
-              source: "shipment",
-            },
-          ],
-          processes: [
-            {
-              ...followUp,
-              collaborators: [
-                collaborator("processes/follow-up", "gateway", "stripe"),
-                collaborator("processes/follow-up", "reminders", "fake"),
-              ],
-            },
-          ],
-        },
-        ...model.aggregates.slice(1),
-      ],
-    };
+  it("checks every implementation of every port against its interface, quoting file names that are not identifiers", () => {
     const { content } = emitRegistry({
       model: withCollaborators,
       path: "/project/.bounda/registry.ts",
     });
     expect(content).toContain(
-      'import mailerSmtp from "../app/domain/order/policies/notify-on-order-placed/mailer.smtp.ts";',
+      'import type { ImplementationModule, Registry } from "@bounda-dev/core";',
+    );
+    expect(content).toContain(
+      'import type * as orderMailer from "../app/domain/order/mailer/index.ts";',
+    );
+    expect(content).toContain(
+      'import * as orderMailerInMemory from "../app/domain/order/mailer/in-memory.ts";',
     );
     expect(content).toContain(
       [
-        "      policies: {",
-        "        audit: { module: audit },",
-        "        notifyOnOrderPlaced: {",
-        "          module: notifyOnOrderPlaced,",
-        "          collaborators: { mailer: { memory: mailerMemory, smtp: mailerSmtp }, sms: { fake: smsFake } },",
-        '          source: "shipment",',
+        "      events: {},",
+        "      collaborators: {",
+        "        mailer: {",
+        '          "in-memory": orderMailerInMemory satisfies ImplementationModule<orderMailer.Mailer>,',
+        "          smtp: orderMailerSmtp satisfies ImplementationModule<orderMailer.Mailer>,",
+        "        },",
+        "        sms: {",
+        "          fake: orderSmsFake satisfies ImplementationModule<orderSms.Sms>,",
         "        },",
         "      },",
-        "      processes: {",
-        "        followUp: {",
-        "          module: followUp,",
-        "          handlers: {},",
-        "          collaborators: { gateway: { stripe: gatewayStripe }, reminders: { fake: remindersFake } },",
-        "        },",
-        "      },",
+        "      commands: {},",
+        '      policies: { audit: { module: audit }, notifyOnOrderPlaced: { module: notifyOnOrderPlaced, source: "shipment" } },',
       ].join("\n"),
+    );
+  });
+
+  it("keeps a port's aliases apart from an event named after the aggregate and the port", () => {
+    const order = withCollaborators.aggregates[0] as ProjectModel["aggregates"][number];
+    const { content } = emitRegistry({
+      model: {
+        ...withCollaborators,
+        aggregates: [
+          {
+            ...order,
+            events: [
+              {
+                key: "orderMailer",
+                typeName: "OrderMailer",
+                path: "/project/app/domain/order/order-mailer.ts",
+                relativePath: "app/domain/order/order-mailer.ts",
+                upcasts: null,
+              },
+              {
+                key: "orderMailerSmtp",
+                typeName: "OrderMailerSmtp",
+                path: "/project/app/domain/order/order-mailer-smtp.ts",
+                relativePath: "app/domain/order/order-mailer-smtp.ts",
+                upcasts: null,
+              },
+            ],
+          },
+          ...withCollaborators.aggregates.slice(1),
+        ],
+      },
+      path: "/project/.bounda/registry.ts",
+    });
+    expect(content).toContain(
+      'import type * as mailerOrderMailer from "../app/domain/order/mailer/index.ts";',
+    );
+    expect(content).toContain(
+      'import * as mailerOrderMailerSmtp from "../app/domain/order/mailer/smtp.ts";',
+    );
+    expect(content).toContain(
+      'import * as orderOrderMailer from "../app/domain/order/order-mailer.ts";',
+    );
+    expect(content).toContain(
+      'import * as orderOrderMailerSmtp from "../app/domain/order/order-mailer-smtp.ts";',
+    );
+    expect(content).toContain(
+      "smtp: mailerOrderMailerSmtp satisfies ImplementationModule<mailerOrderMailer.Mailer>,",
     );
   });
 
@@ -333,22 +372,27 @@ describe("emitTypes", () => {
 
 export type OrderState = core.UnknownState;
 export type OrderEvents = Record<never, never>;
+export type OrderCollaborators = core.EmptyPayload;
 
 export type ShipmentState = core.UnknownState;
 export type ShipmentEvents = {
   readonly created: typeof import("../app/domain/shipment/created.ts");
 };
+export type ShipmentCollaborators = core.EmptyPayload;
 
 export type TicketState = { readonly open?: boolean; readonly title?: string };
 export type TicketEvents = {
   readonly created: typeof import("../app/domain/ticket/created.ts");
 };
+export type TicketCollaborators = core.EmptyPayload;
 
 export type Events = {
   readonly order: OrderEvents;
   readonly shipment: ShipmentEvents;
   readonly ticket: TicketEvents;
 };
+
+export type CollaboratorsConfig = Readonly<Record<string, never>>;
 
 export type Commands = core.CommandsFacadeOf<Record<never, never>>;
 
@@ -368,6 +412,73 @@ describe("emitTypes for an app without aggregates", () => {
       path: "/project/.bounda/types.ts",
     });
     expect(content).toContain("export type Events = Record<never, never>;");
+  });
+});
+
+describe("emitTypes with collaborators", () => {
+  it("types the aggregate's ports by their interface and requires a choice only where there are several implementations", () => {
+    const { content } = emitTypes({ model: withCollaborators, path: "/project/.bounda/types.ts" });
+    expect(content).toContain(
+      [
+        "export type OrderCollaborators = {",
+        '  readonly mailer: import("../app/domain/order/mailer/index.ts").Mailer;',
+        '  readonly sms: import("../app/domain/order/sms/index.ts").Sms;',
+        "};",
+      ].join("\n"),
+    );
+    expect(content).toContain(
+      [
+        "export type CollaboratorsConfig = {",
+        "  readonly order: {",
+        '    readonly mailer: "in-memory" | "smtp";',
+        '    readonly sms?: "fake";',
+        "  };",
+        "};",
+      ].join("\n"),
+    );
+    const single = emitTypes({
+      model: {
+        ...withCollaborators,
+        aggregates: [
+          {
+            ...(withCollaborators.aggregates[0] as ProjectModel["aggregates"][number]),
+            collaborators: [port("sms", "Sms", ["fake"])],
+          },
+        ],
+      },
+      path: "/project/.bounda/types.ts",
+    });
+    expect(single.content).toContain(
+      [
+        "export type CollaboratorsConfig = {",
+        "  readonly order?: {",
+        '    readonly sms?: "fake";',
+        "  };",
+        "};",
+      ].join("\n"),
+    );
+  });
+});
+
+describe("emitProject with collaborators", () => {
+  it("gives every handler of the aggregate its collaborators and each implementation its contract", () => {
+    const files = emitProject({ model: withCollaborators });
+    const contentOf = (suffix: string) =>
+      files.find((file) => file.path.endsWith(suffix))?.content ?? "";
+    expect(contentOf("policies/+types/audit.ts")).toContain("generated.OrderCollaborators");
+    expect(contentOf("policies/+types/notify-on-order-placed.ts")).toContain(
+      "generated.OrderCollaborators",
+    );
+    expect(contentOf("mailer/+types/in-memory.ts")).toBe(
+      [
+        'type Port = import("../index.ts").Mailer;',
+        "",
+        "export declare namespace Implementation {",
+        "  type Contract = Port;",
+        "}",
+        "",
+      ].join("\n"),
+    );
   });
 });
 

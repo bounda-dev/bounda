@@ -22,13 +22,17 @@ export interface CommandRuntime {
   readonly type: string;
   readonly schema: z.ZodType | null;
   readonly handler: (args: Record<string, unknown>) => unknown;
-  readonly collaborators: Readonly<Record<string, unknown>>;
 }
 
 export interface AggregateRuntime {
   readonly name: string;
   readonly aggregateIdField: string;
   readonly initialState: object;
+  /**
+   * The chosen implementation of every port, spread into the arguments of every handler of the
+   * aggregate: its commands, policies and processes.
+   */
+  readonly collaborators: Readonly<Record<string, unknown>>;
   /**
    * Keyed by module key, `orderPlaced`; `eventsByType` by event type, `OrderPlaced`.
    */

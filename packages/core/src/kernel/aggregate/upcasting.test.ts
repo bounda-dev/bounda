@@ -9,7 +9,7 @@ import type { Registry } from "../../modules/registry.ts";
 import type { Upcasts } from "../../modules/upcast.ts";
 import { createApp } from "../app.ts";
 import { rebuildReadModel } from "../read-model/rebuild.ts";
-import { orderAggregateEntry } from "../test-support.ts";
+import { defaultCollaborators, orderAggregateEntry } from "../test-support.ts";
 import { buildAggregates } from "./build-aggregates.ts";
 import { upcastEvent, withUpcasting } from "./upcasting.ts";
 
@@ -77,7 +77,7 @@ const registry = {
   readModels: {},
 } satisfies Registry;
 
-const config = resolveConfig({ storage: memory() });
+const config = resolveConfig({ storage: memory(), collaborators: defaultCollaborators(registry) });
 const aggregates = buildAggregates({ registry, config });
 
 const stored = (
@@ -224,7 +224,10 @@ describe("an app over events stored with an older shape", () => {
         },
       },
     } satisfies Registry;
-    const app = await createApp({ registry: appRegistry, config: { storage: adapter } });
+    const app = await createApp({
+      registry: appRegistry,
+      config: { storage: adapter, collaborators: defaultCollaborators(appRegistry) },
+    });
     await expect(app.commands.payOrder({ orderId: "o-1", method: "card" })).resolves.toMatchObject({
       version: 2,
     });
@@ -254,7 +257,7 @@ describe("an app over events stored with an older shape", () => {
     expect(
       await rebuildReadModel({
         registry: appRegistry,
-        config: { storage: adapter },
+        config: { storage: adapter, collaborators: defaultCollaborators(appRegistry) },
         name: "totals",
       }),
     ).toMatchObject({ events: 3 });

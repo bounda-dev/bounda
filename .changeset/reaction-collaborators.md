@@ -3,20 +3,30 @@
 "@bounda-dev/cli": minor
 ---
 
-Policies and processes can have collaborators, the way commands do, so a call to the outside
-world can run after the events it reacts to are stored instead of inside a command handler that a
-concurrency conflict reruns. A policy with collaborators is a directory,
-`policies/<action>-on-<event>/index.ts`, with `<collaborator>.<implementation>.ts` files next to
-it; in a process, those files sit in its directory and reach every handler, the `at-` ones
-included. Handlers receive them next to `event` and `commands`, typed from a `Collaborators`
-export in `index.ts` or inferred from the implementations. `bounda.config.ts` picks an
-implementation under `policies` and `processes`, by aggregate and then by key:
-`policies: { order: { notifyOnOrderPlaced: { mailer: { use: "smtp" } } } }`.
+Collaborators belong to the aggregate. A port is a directory at the aggregate's root,
+`order/notifier/`, whose `index.ts` exports its interface named after the directory
+(`Notifier`) and whose other files implement it with a default export
+(`order/notifier/smtp.ts`); every handler of the aggregate receives it, its commands, policies
+and processes alike, so a call to the outside world can run in the policy or process that reacts
+to a stored event instead of inside a command handler that a concurrency conflict reruns. The
+`+types` of an implementation gives it the interface as `Implementation.Contract`, and the
+generated registry checks each implementation against it, so one that does not fulfil the
+contract fails `tsc`.
 
-`bounda generate` now rejects a collaborator named after an argument its handler already
-receives (`event`, `commands`, `state`, `aggregateId`, `command`, `events`, `idempotencyKey`).
+`bounda.config.ts` picks one implementation per port under `collaborators`, by aggregate and
+port, with the file name as the value: `collaborators: { order: { notifier: "smtp" } }`. The
+generator emits the type of that section and registers it with `@bounda-dev/core/register`, so
+`defineConfig` rejects a name that does not exist and requires a choice wherever a port has
+several implementations; a port with one may be left out, and no implementation is a default.
 
-Breaking, for code that does not come from `bounda generate`: a registry's policies are entries
-`{ module, collaborators? }` like commands, `ProcessEntry` gains `collaborators`, the
-`CommandConfig` type is now `CollaboratorsConfig`, and `selectCollaborators` takes `owner` and
-`path` instead of `commandName`. Run `bounda generate` to update generated files.
+Breaking: a command or policy is always a file, the `<collaborator>.<implementation>.ts` files
+next to a command, policy or process are gone, and so are the `commands`, `policies` and
+`processes` sections of the configuration and the `Collaborators` type a module used to export;
+`bounda generate` points at the aggregate root for each. In the registry, `collaborators` moves
+from the command, policy and process entries to the aggregate entry, typed as
+`CollaboratorModules`; `CollaboratorImplementations`, `InferCollaborators`,
+`CollaboratorSelection` and `ReactionsConfig` are gone, `ImplementationModule` and
+`CollaboratorsSection` are new, and `selectCollaborators` takes the aggregate. `bounda generate`
+rejects a port named after a handler argument (`command`, `state`, `events`, `event`, `commands`,
+`idempotencyKey`, `signal`, `aggregateId`, `after`), after an event of its aggregate, or
+`commands`, `policies` or `processes`. Run `bounda generate` to update generated files.

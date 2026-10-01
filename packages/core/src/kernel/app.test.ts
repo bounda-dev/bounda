@@ -170,7 +170,7 @@ const start = async (role: "web" | "worker" | "all" = "all", storage: Adapter = 
     config: {
       storage,
       runtime: { role },
-      commands: { placeOrder: { notifier: { use: "memory" } } },
+      collaborators: { order: { notifier: "memory" } },
     },
     ids: createSequentialIdGenerator(),
     clock,
@@ -387,7 +387,7 @@ const quiet = {
 const open = <R extends Registry>(app: R, storage: Adapter) =>
   createApp({
     registry: app,
-    config: { storage, commands: { placeOrder: { notifier: { use: "memory" } } } },
+    config: { storage, collaborators: { order: { notifier: "memory" } } },
     ids: createSequentialIdGenerator(),
     clock: createFixedClock(),
   });

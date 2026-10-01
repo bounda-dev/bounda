@@ -10,12 +10,13 @@ import { foldState } from "./fold-state.ts";
 
 const config = resolveConfig({
   storage: memory(),
-  commands: { placeOrder: { notifier: { use: "silent" } } },
+  collaborators: { order: { notifier: "silent" } },
 });
+const plain = resolveConfig({ storage: memory() });
 
 describe("buildAggregates", () => {
   it("compiles events, commands, schemas and collaborators", () => {
-    const { byName, commandsByType } = buildAggregates({ registry: orderRegistry, config });
+    const { byName } = buildAggregates({ registry: orderRegistry, config });
     const order = byName.order;
     expect(order).toBeDefined();
     expect(order?.aggregateIdField).toBe("orderId");
@@ -27,8 +28,7 @@ describe("buildAggregates", () => {
     ]);
     expect(order?.events.orderArchived?.schema).toBeNull();
     expect(order?.events.orderPlaced?.schema).not.toBeNull();
-    expect(commandsByType.PlaceOrder?.command.collaborators).toHaveProperty("notifier");
-    expect(commandsByType.PayOrder?.command.collaborators).toEqual({});
+    expect(byName.order?.collaborators).toHaveProperty("notifier");
     expect(order?.eventBuilders.orderPaid?.({ method: "card" })).toEqual({
       type: "OrderPaid",
       payload: { method: "card" },
@@ -63,7 +63,7 @@ describe("buildAggregates", () => {
       },
       readModels: {},
     };
-    const { byName } = buildAggregates({ registry, config });
+    const { byName } = buildAggregates({ registry, config: plain });
     expect(byName.customer?.aggregateIdField).toBe("customerId");
     expect(byName.customer?.initialState).toEqual({});
   });
@@ -80,7 +80,7 @@ describe("buildAggregates", () => {
       },
       readModels: {},
     };
-    expect(() => buildAggregates({ registry, config })).toThrow(
+    expect(() => buildAggregates({ registry, config: plain })).toThrow(
       new ConfigurationError("aggregates.order.events.broken: payload must return a Zod schema"),
     );
     const brokenCommand: Registry = {
@@ -94,7 +94,7 @@ describe("buildAggregates", () => {
       },
       readModels: {},
     };
-    expect(() => buildAggregates({ registry: brokenCommand, config })).toThrow(
+    expect(() => buildAggregates({ registry: brokenCommand, config: plain })).toThrow(
       new ConfigurationError("aggregates.order.commands.ship: payload must return a Zod schema"),
     );
   });
@@ -108,9 +108,34 @@ describe("buildAggregates", () => {
       },
       readModels: {},
     };
-    expect(() => buildAggregates({ registry, config })).toThrow(
+    expect(() => buildAggregates({ registry, config: plain })).toThrow(
       'Command "Archive" is defined in both "order" and "customer"',
     );
+  });
+
+  it("rejects configuration for an aggregate that does not exist", () => {
+    expect(() =>
+      buildAggregates({
+        registry: orderRegistry,
+        config: resolveConfig({
+          storage: memory(),
+          collaborators: { order: { notifier: "silent" }, shipping: { carrier: "ups" } },
+        }),
+      }),
+    ).toThrow(
+      new ConfigurationError(
+        'collaborators.shipping: there is no aggregate "shipping" whose collaborators to choose',
+      ),
+    );
+    expect(() =>
+      buildAggregates({
+        registry: orderRegistry,
+        config: resolveConfig({
+          storage: memory(),
+          collaborators: { order: { notifier: "silent" }, constructor: {} },
+        }),
+      }),
+    ).toThrow('there is no aggregate "constructor"');
   });
 });
 

@@ -1,5 +1,5 @@
 import { ConfigurationError } from "../contracts/errors.ts";
-import type { CollaboratorImplementations } from "./command.ts";
+import type { CollaboratorModules } from "./collaborator.ts";
 import type { Registry } from "./registry.ts";
 
 interface Problem {
@@ -20,15 +20,17 @@ const requireFunction = (problems: Problem[], owner: object, path: string, name:
 
 const requireImplementations = (
   problems: Problem[],
-  collaborators: CollaboratorImplementations | undefined,
+  collaborators: CollaboratorModules | undefined,
   path: string,
 ): void => {
-  for (const [collaborator, implementations] of Object.entries(collaborators ?? {})) {
+  for (const [port, implementations] of Object.entries(collaborators ?? {})) {
     if (Object.keys(implementations).length === 0) {
-      problems.push({
-        path: `${path}.collaborators.${collaborator}`,
-        message: "has no implementations",
-      });
+      problems.push({ path: `${path}.${port}`, message: "has no implementations" });
+    }
+    for (const [name, module] of Object.entries(implementations)) {
+      if (!isRecord(module) || !("default" in module)) {
+        problems.push({ path: `${path}.${port}.${name}`, message: 'missing export "default"' });
+      }
     }
   }
 };
@@ -58,13 +60,12 @@ const validateAggregate = (
       });
     }
   }
+  requireImplementations(problems, aggregate.collaborators, `${base}.collaborators`);
   for (const [key, entry] of Object.entries(aggregate.commands)) {
     requireFunction(problems, entry.module, `${base}.commands.${key}`, "handler");
-    requireImplementations(problems, entry.collaborators, `${base}.commands.${key}`);
   }
   for (const [key, policy] of Object.entries(aggregate.policies)) {
     requireFunction(problems, policy.module, `${base}.policies.${key}`, "handler");
-    requireImplementations(problems, policy.collaborators, `${base}.policies.${key}`);
   }
   for (const [key, process] of Object.entries(aggregate.processes)) {
     requireFunction(problems, process.module, `${base}.processes.${key}`, "config");
@@ -81,7 +82,6 @@ const validateAggregate = (
     for (const [field, handler] of Object.entries(process.deadlines ?? {})) {
       requireFunction(problems, handler, `${base}.processes.${key}.deadlines.${field}`, "handler");
     }
-    requireImplementations(problems, process.collaborators, `${base}.processes.${key}`);
   }
 };
 

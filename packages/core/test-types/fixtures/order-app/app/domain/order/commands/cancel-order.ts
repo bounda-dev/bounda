@@ -1,4 +1,4 @@
-import type { Command } from "./+types/index";
+import type { Command } from "./+types/cancel-order";
 
 export const payload = ({ z }: Command.PayloadArgs) =>
   z.object({ orderId: z.uuid(), reason: z.string() });

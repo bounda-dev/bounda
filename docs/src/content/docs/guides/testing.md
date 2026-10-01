@@ -122,17 +122,14 @@ and fast. Use the same for PostgreSQL when a query relies on something only Post
 
 ## Choosing implementations
 
-A command, policy or process whose module offers more than one implementation of a dependency
-picks one through config, and a test picks the one that records instead of sending. Commands are
-keyed by name; policies and processes by aggregate and then by key:
+An aggregate whose collaborator has more than one implementation picks one through config, and a
+test picks the one that records instead of sending, by aggregate and port:
 
 ```ts
 const { app } = await createTestApp({
   registry,
   adapter: sqlite({ memory: true }),
-  config: {
-    policies: { order: { sendConfirmationOnOrderPlaced: { notifier: { use: "memory" } } } },
-  },
+  config: { collaborators: { order: { notifier: "memory" } } },
 });
 ```
 
@@ -140,7 +137,7 @@ A policy runs after the command, so let it run, then assert on what the memory i
 recorded, importing the array it exports:
 
 ```ts
-import { sent } from "../app/domain/order/policies/send-confirmation-on-order-placed/notifier.memory.ts";
+import { sent } from "../app/domain/order/notifier/memory.ts";
 
 await app.commands.placeOrder({ orderId: ORDER, customerId: "ada", items });
 await app.processUntilIdle();

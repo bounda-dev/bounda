@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { resolveConfig } from "../../config/schema.ts";
+import type { ResolvedConfig } from "../../config/types.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { ConcurrencyError, ValidationError } from "../../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
@@ -8,6 +9,7 @@ import { asInstant, type Instant } from "../../contracts/instant.ts";
 import { memory } from "../../memory/index.ts";
 import type { ProcessAfterFunction, ProcessStateArgs } from "../../modules/process.ts";
 import type { Registry } from "../../modules/registry.ts";
+import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { createApp } from "../app.ts";
 import { createDeadLetters } from "../dead-letters/dead-letters.ts";
 import { createReactiveHarness } from "../reactive-harness.ts";
@@ -254,7 +256,16 @@ describe("deadline helpers", () => {
 });
 
 describe("process deadlines at boot", () => {
-  const config = resolveConfig({ storage: memory() });
+  const config = resolveConfig({
+    storage: memory(),
+    collaborators: { order: { notifier: "memory" } },
+  });
+  const processesOf = (registry: Registry, resolved: ResolvedConfig) =>
+    buildProcesses({
+      registry,
+      aggregates: buildAggregates({ registry, config: resolved }),
+      config: resolved,
+    });
   const withProcess = (process: Registry["aggregates"][string]["processes"][string]): Registry => ({
     aggregates: { order: { ...orderAggregateEntry(), processes: { reminders: process } } },
     readModels: {},
@@ -265,7 +276,7 @@ describe("process deadlines at boot", () => {
   };
 
   it("compiles the deadline fields and their handlers, timeout included", () => {
-    const [process] = buildProcesses({ registry, config }).all;
+    const [process] = processesOf(registry, config).all;
     expect(process?.deadlineFields).toEqual(["nextReminder", "paymentDeadline"]);
     expect(Object.keys(process?.deadlineHandlers ?? {}).sort()).toEqual([
       "nextReminder",
@@ -275,14 +286,12 @@ describe("process deadlines at boot", () => {
   });
 
   it("names the file a deadline lacks, and the field a handler has no deadline for", () => {
-    expect(() =>
-      buildProcesses({ registry: withProcess({ module, handlers: {} }), config }),
-    ).toThrow(
+    expect(() => processesOf(withProcess({ module, handlers: {} }), config)).toThrow(
       'aggregates.order.processes.reminders: the deadline "nextReminder" has no handler; add at-next-reminder.ts to the process',
     );
     expect(() =>
-      buildProcesses({
-        registry: withProcess({
+      processesOf(
+        withProcess({
           module,
           handlers: {},
           deadlines: {
@@ -291,7 +300,7 @@ describe("process deadlines at boot", () => {
           },
         }),
         config,
-      }),
+      ),
     ).toThrow(
       'aggregates.order.processes.reminders: at-paid-at.ts handles "paidAt", which the state does not declare with deadline(); a deadline() wrapped in .describe(), .optional() or the like no longer counts',
     );
@@ -299,8 +308,8 @@ describe("process deadlines at boot", () => {
 
   it("keeps the name timeout for config.timeout", () => {
     expect(() =>
-      buildProcesses({
-        registry: withProcess({
+      processesOf(
+        withProcess({
           module: {
             config: module.config,
             state: ({ z, deadline }: ProcessStateArgs) => z.object({ timeout: deadline() }),
@@ -309,7 +318,7 @@ describe("process deadlines at boot", () => {
           deadlines: { timeout: { handler: () => undefined } },
         }),
         config,
-      }),
+      ),
     ).toThrow('the deadline "timeout" is reserved for config.timeout');
   });
 });
@@ -1160,7 +1169,7 @@ describe("process deadlines in an app", () => {
     const clock = createFixedClock();
     const app = await createApp({
       registry,
-      config: { storage: memory(), commands: { placeOrder: { notifier: { use: "memory" } } } },
+      config: { storage: memory(), collaborators: { order: { notifier: "memory" } } },
       ids: createSequentialIdGenerator(),
       clock,
     });

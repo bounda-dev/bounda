@@ -10,6 +10,6 @@ export declare namespace Process {
     core.ProcessStateOf<ProcessModule>,
     never,
     generated.ReactionCommands,
-    import("../index.ts").Collaborators
+    generated.OrderCollaborators
   >;
 }

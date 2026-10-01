@@ -1,15 +1,15 @@
 import type * as core from "@bounda-dev/core";
-import type * as generated from "../../../../../../.bounda/types.ts";
+import type * as generated from "../../../../../.bounda/types.ts";
 
-type Module = typeof import("../index.ts");
+type Module = typeof import("../cancel-order.ts");
 
 export declare namespace Command {
   type PayloadArgs = core.PayloadArgs;
   type HandlerArgs = core.CommandHandlerArgs<
-    "PlaceOrder",
+    "CancelOrder",
     core.PayloadOf<Module>,
     generated.OrderState,
     generated.OrderEvents,
-    import("../index.ts").Collaborators
+    generated.OrderCollaborators
   >;
 }

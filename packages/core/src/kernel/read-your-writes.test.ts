@@ -67,7 +67,7 @@ describe("readYourWrites", () => {
       registry,
       config: {
         runtime: { role: "web" },
-        commands: { placeOrder: { notifier: { use: "silent" } } },
+        collaborators: { order: { notifier: "silent" } },
       },
     });
     const lagOf = async (name: string) =>

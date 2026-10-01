@@ -9,7 +9,7 @@ const order: Registry["aggregates"][string] = {
   state: { initialState: { status: "new" } },
   events: { orderPlaced: { apply: noop } },
   commands: {
-    placeOrder: { module: { handler: noop }, collaborators: { inventory: { fake: {} } } },
+    placeOrder: { module: { handler: noop } },
   },
   policies: { notifyOnOrderPlaced: { module: { handler: noop } } },
   processes: {
@@ -82,8 +82,9 @@ describe("validateRegistry", () => {
           ...order,
           events: { orderPlaced: {} as never },
           commands: {
-            placeOrder: { module: {} as never, collaborators: { inventory: {} } },
+            placeOrder: { module: {} as never },
           },
+          collaborators: { inventory: {} },
         },
       },
       readModels: {
@@ -101,32 +102,28 @@ describe("validateRegistry", () => {
     const message = (error as ConfigurationError).message;
     expect(message).toContain('aggregates.order.events.orderPlaced: missing export "apply"');
     expect(message).toContain('aggregates.order.commands.placeOrder: missing export "handler"');
-    expect(message).toContain(
-      "aggregates.order.commands.placeOrder.collaborators.inventory: has no implementations",
-    );
+    expect(message).toContain("aggregates.order.collaborators.inventory: has no implementations");
     expect(message).toContain('readModels.orderSummary.queries.getOrder: missing export "handler"');
   });
 
-  it("checks policy handlers and the collaborators of policies and processes", () => {
+  it("checks policy handlers and that every implementation of a collaborator has a default export", () => {
     const registry = withOrder({
       policies: {
-        notifyOnOrderPlaced: { module: {} as never, collaborators: { mailer: {} } },
+        notifyOnOrderPlaced: { module: {} as never },
       },
-      processes: {
-        orderPayment: {
-          module: { config: () => ({ startedBy: ["order.OrderPlaced"] }) },
-          handlers: {},
-          collaborators: { gateway: {} },
-        },
+      collaborators: {
+        mailer: {},
+        gateway: { stripe: {} as never, sdk: null as never, fake: { default: {} } },
       },
     });
     expect(() => validateRegistry(registry)).toThrow(
       new ConfigurationError(
         [
           "Invalid registry:",
+          "  aggregates.order.collaborators.mailer: has no implementations",
+          '  aggregates.order.collaborators.gateway.stripe: missing export "default"',
+          '  aggregates.order.collaborators.gateway.sdk: missing export "default"',
           '  aggregates.order.policies.notifyOnOrderPlaced: missing export "handler" (expected a function)',
-          "  aggregates.order.policies.notifyOnOrderPlaced.collaborators.mailer: has no implementations",
-          "  aggregates.order.processes.orderPayment.collaborators.gateway: has no implementations",
         ].join("\n"),
       ),
     );

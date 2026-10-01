@@ -6,11 +6,7 @@ const url = process.env.DATABASE_URL;
 
 export default defineConfig({
   storage: url === undefined ? sqlite({ path: "./data/onboarding.db" }) : postgresql({ url }),
-  policies: {
-    user: {
-      sendWelcomeEmailOnUserRegistered: {
-        emailSender: { use: process.env.EMAIL_SENDER ?? "console" },
-      },
-    },
+  collaborators: {
+    user: { emailSender: process.env.EMAIL_SENDER === "memory" ? "memory" : "console" },
   },
 });

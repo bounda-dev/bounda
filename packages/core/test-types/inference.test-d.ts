@@ -16,18 +16,21 @@ import { describe, expectTypeOf, it } from "vitest";
 import type { registry } from "./fixtures/order-app/.bounda/registry.ts";
 import type { Commands, Queries } from "./fixtures/order-app/.bounda/types.ts";
 import type { Event as CustomerRegistered } from "./fixtures/order-app/app/domain/customer/+types/customer-registered.ts";
+import type { Command as RegisterCustomer } from "./fixtures/order-app/app/domain/customer/commands/+types/register-customer.ts";
 import type { Event as OrderPlaced } from "./fixtures/order-app/app/domain/order/+types/order-placed.ts";
+import type { Command as CancelOrder } from "./fixtures/order-app/app/domain/order/commands/+types/cancel-order.ts";
 import type { Command as PayOrder } from "./fixtures/order-app/app/domain/order/commands/+types/pay-order.ts";
-import type { Command as CancelOrder } from "./fixtures/order-app/app/domain/order/commands/cancel-order/+types/index.ts";
-import type { Command as PlaceOrder } from "./fixtures/order-app/app/domain/order/commands/place-order/+types/index.ts";
+import type { Command as PlaceOrder } from "./fixtures/order-app/app/domain/order/commands/+types/place-order.ts";
+import type { Implementation as InventoryFake } from "./fixtures/order-app/app/domain/order/inventory/+types/fake.ts";
+import type { Policy as NotifyOnOrderPlaced } from "./fixtures/order-app/app/domain/order/policies/+types/notify-on-order-placed.ts";
 import type { Policy as SendReceipt } from "./fixtures/order-app/app/domain/order/policies/+types/send-receipt-on-order-paid.ts";
 import type { Policy as GreetOnCustomerRegistered } from "./fixtures/order-app/app/domain/order/policies/customer/+types/greet-on-customer-registered.ts";
-import type { Policy as NotifyOnOrderPlaced } from "./fixtures/order-app/app/domain/order/policies/notify-on-order-placed/+types/index.ts";
 import type { Process as AtNextReminder } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/at-next-reminder.ts";
 import type { Process as AtTimeout } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/at-timeout.ts";
 import type { Process as OrderPayment } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/index.ts";
 import type { Process as OnOrderPaid } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/on-order-paid.ts";
 import type { Process as OnCustomerRegistered } from "./fixtures/order-app/app/domain/order/processes/order-payment/customer/+types/on-customer-registered.ts";
+import type { Implementation as RemindersFake } from "./fixtures/order-app/app/domain/order/reminders/+types/fake.ts";
 import type { Projection as ProjectOrderPaid } from "./fixtures/order-app/app/read/order-summary/projections/order/+types/order-paid.ts";
 import type { Query as CustomerOverview } from "./fixtures/order-app/app/read/order-summary/queries/+types/customer-overview.ts";
 import type { Query as GetOrder } from "./fixtures/order-app/app/read/order-summary/queries/+types/get-order.ts";
@@ -101,37 +104,51 @@ describe("event builders", () => {
 });
 
 describe("collaborators", () => {
-  it("come from the declared Collaborators type when present", () => {
+  type Inventory = import("./fixtures/order-app/app/domain/order/inventory/index.ts").Inventory;
+  type Reminders = import("./fixtures/order-app/app/domain/order/reminders/index.ts").Reminders;
+
+  it("are typed by the interface each port's index.ts exports", () => {
+    expectTypeOf<PlaceOrder.HandlerArgs["inventory"]>().toEqualTypeOf<Inventory>();
     expectTypeOf<PlaceOrder.HandlerArgs["inventory"]["reserve"]>().toEqualTypeOf<
       (skus: readonly string[]) => Promise<void>
     >();
-  });
-
-  it("are inferred from the implementations otherwise", () => {
     expectTypeOf<CancelOrder.HandlerArgs["auditLog"]["record"]>().toEqualTypeOf<
       (entry: string) => void
     >();
   });
 
-  it("are absent when the command has none", () => {
-    expectTypeOf<PayOrder.HandlerArgs>().not.toHaveProperty("inventory");
-  });
-
-  it("reach a policy, inferred from the implementations next to its index.ts", () => {
+  it("reach every handler of the aggregate: its commands, policies and processes", () => {
+    expectTypeOf<PayOrder.HandlerArgs["inventory"]>().toEqualTypeOf<Inventory>();
+    expectTypeOf<PayOrder.HandlerArgs["mailer"]["send"]>().toEqualTypeOf<
+      (to: string, message: string) => Promise<void>
+    >();
     expectTypeOf<NotifyOnOrderPlaced.HandlerArgs["mailer"]["send"]>().toEqualTypeOf<
       (to: string, message: string) => Promise<void>
     >();
     expectTypeOf<NotifyOnOrderPlaced.HandlerArgs["event"]["type"]>().toEqualTypeOf<"OrderPlaced">();
-    expectTypeOf<SendReceipt.HandlerArgs>().not.toHaveProperty("mailer");
+    expectTypeOf<SendReceipt.HandlerArgs["mailer"]>().toHaveProperty("send");
+    expectTypeOf<GreetOnCustomerRegistered.HandlerArgs["auditLog"]>().toHaveProperty("record");
+    expectTypeOf<OnOrderPaid.HandlerArgs["inventory"]>().toEqualTypeOf<Inventory>();
+    expectTypeOf<OnCustomerRegistered.HandlerArgs["inventory"]>().toEqualTypeOf<Inventory>();
+    expectTypeOf<AtTimeout.DeadlineArgs["inventory"]>().toEqualTypeOf<Inventory>();
+    expectTypeOf<AtNextReminder.DeadlineArgs["inventory"]>().toEqualTypeOf<Inventory>();
   });
 
-  it("reach every handler of a process, from the Collaborators its index.ts declares", () => {
-    expectTypeOf<AtTimeout.DeadlineArgs["reminders"]["remind"]>().toEqualTypeOf<
+  it("stay within their aggregate", () => {
+    expectTypeOf<RegisterCustomer.HandlerArgs>().not.toHaveProperty("inventory");
+    expectTypeOf<RegisterCustomer.HandlerArgs>().not.toHaveProperty("mailer");
+  });
+
+  it("may be a callable interface", () => {
+    expectTypeOf<AtTimeout.DeadlineArgs["reminders"]>().toEqualTypeOf<Reminders>();
+    expectTypeOf<OnOrderPaid.HandlerArgs["reminders"]>().toEqualTypeOf<
       (orderId: string) => Promise<void>
     >();
-    expectTypeOf<OnOrderPaid.HandlerArgs["reminders"]["remind"]>().toEqualTypeOf<
-      (orderId: string) => Promise<void>
-    >();
+  });
+
+  it("give each implementation its port's interface as Implementation.Contract", () => {
+    expectTypeOf<InventoryFake.Contract>().toEqualTypeOf<Inventory>();
+    expectTypeOf<RemindersFake.Contract>().toEqualTypeOf<Reminders>();
   });
 });
 

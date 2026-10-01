@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { resolveConfig } from "../../config/schema.ts";
+import type { ResolvedConfig } from "../../config/types.ts";
 import { DomainError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { memory } from "../../memory/index.ts";
 import type { PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
+import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { createReactiveHarness } from "../reactive-harness.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import {
@@ -88,14 +90,17 @@ const reset = (next: typeof mode, failures = 0) => {
 const processStream = (harness: Awaited<ReturnType<typeof createReactiveHarness>>, id = "o-1") =>
   harness.storage.eventStore.load({ aggregateType: "process:OrderPayment", aggregateId: id });
 
+const processesOf = (registry: Registry, config: ResolvedConfig) =>
+  buildProcesses({ registry, aggregates: buildAggregates({ registry, config }), config });
+
 describe("buildProcesses", () => {
   const config = resolveConfig({
     storage: memory(),
-    commands: { placeOrder: { notifier: { use: "memory" } } },
+    collaborators: { order: { notifier: "memory" } },
   });
 
   it("compiles config, state defaults, handlers and timeout", () => {
-    const { all, byEvent } = buildProcesses({ registry, config });
+    const { all, byEvent } = processesOf(registry, config);
     expect(all).toHaveLength(1);
     expect(all[0]).toMatchObject({
       name: "order.orderPayment",
@@ -127,10 +132,14 @@ describe("buildProcesses", () => {
       },
       readModels: {},
     };
-    const built = buildProcesses({
-      registry: withoutTimeout,
-      config: resolveConfig({ storage: memory(), runtime: { processes: { timeout: "1h" } } }),
-    });
+    const built = processesOf(
+      withoutTimeout,
+      resolveConfig({
+        storage: memory(),
+        collaborators: { order: { notifier: "memory" } },
+        runtime: { processes: { timeout: "1h" } },
+      }),
+    );
     expect(built.all[0]?.timeoutMs).toBe(3_600_000);
     expect(built.all[0]).toMatchObject({
       initialState: {},
@@ -158,7 +167,7 @@ describe("buildProcesses", () => {
       },
       readModels: {},
     };
-    expect(() => buildProcesses({ registry: badStateShape, config })).toThrow(
+    expect(() => processesOf(badStateShape, config)).toThrow(
       "aggregates.order.processes.p: state must return a Zod schema",
     );
     const badHandler: Registry = {
@@ -175,7 +184,7 @@ describe("buildProcesses", () => {
       },
       readModels: {},
     };
-    expect(() => buildProcesses({ registry: badHandler, config })).toThrow(
+    expect(() => processesOf(badHandler, config)).toThrow(
       'aggregates.order.processes.p.handlers.order.orderShipped: "order.OrderShipped" is not an event of the app',
     );
   });
@@ -192,7 +201,7 @@ describe("buildProcesses", () => {
       },
       readModels: {},
     };
-    expect(() => buildProcesses({ registry: badEvent, config })).toThrow(
+    expect(() => processesOf(badEvent, config)).toThrow(
       'aggregates.order.processes.p: "order.OrderShipped" is not an event of the app; name events as events.<aggregate>.<Event>',
     );
     const badState: Registry = {
@@ -212,9 +221,7 @@ describe("buildProcesses", () => {
       },
       readModels: {},
     };
-    expect(() => buildProcesses({ registry: badState, config })).toThrow(
-      /must accept an empty object/,
-    );
+    expect(() => processesOf(badState, config)).toThrow(/must accept an empty object/);
   });
 });
 
@@ -819,8 +826,11 @@ describe("process collaborators", () => {
                 },
               },
             },
-            collaborators: { audit: { log: audit("log"), memory: audit("memory") } },
           },
+        },
+        collaborators: {
+          ...orderAggregateEntry().collaborators,
+          audit: { log: { default: audit("log") }, memory: { default: audit("memory") } },
         },
       },
     },
@@ -831,7 +841,7 @@ describe("process collaborators", () => {
     recorded.length = 0;
     const harness = await createReactiveHarness({
       registry: withAudit,
-      config: { processes: { order: { orderPayment: { audit: { use: "memory" } } } } },
+      config: { collaborators: { order: { notifier: "memory", audit: "memory" } } },
     });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
     await harness.dispatcher.processUntilIdle();
@@ -844,7 +854,7 @@ describe("process collaborators", () => {
     keys.length = 0;
     const harness = await createReactiveHarness({
       registry: withAudit,
-      config: { processes: { order: { orderPayment: { audit: { use: "memory" } } } } },
+      config: { collaborators: { order: { notifier: "memory", audit: "memory" } } },
     });
     const placed = await harness.pipeline.dispatch({
       type: "PlaceOrder",
@@ -868,11 +878,17 @@ describe("process collaborators", () => {
     ]);
   });
 
-  it("names the process and where to choose when several implementations exist", () => {
+  it("names the aggregate and where to choose when several implementations exist", () => {
     expect(() =>
-      buildProcesses({ registry: withAudit, config: resolveConfig({ storage: memory() }) }),
+      buildAggregates({
+        registry: withAudit,
+        config: resolveConfig({
+          storage: memory(),
+          collaborators: { order: { notifier: "memory" } },
+        }),
+      }),
     ).toThrow(
-      'Process "order.orderPayment", collaborator "audit": choose an implementation with processes.order.orderPayment.audit.use. Available: "log", "memory"',
+      'Aggregate "order", collaborator "audit": choose an implementation with collaborators.order.audit. Available: "log", "memory"',
     );
   });
 });
@@ -1039,23 +1055,26 @@ describe("processes that listen to other aggregates", () => {
   });
 
   it("refuse at boot another aggregate's event without correlate, or correlate for no event", () => {
-    const config = resolveConfig({ storage: memory() });
+    const config = resolveConfig({
+      storage: memory(),
+      collaborators: { order: { notifier: "memory" } },
+    });
     expect(() =>
-      buildProcesses({
-        registry: withCorrelate({ payment: { PaymentFailed: byOrder.payment.PaymentFailed } }),
+      processesOf(
+        withCorrelate({ payment: { PaymentFailed: byOrder.payment.PaymentFailed } }),
         config,
-      }),
+      ),
     ).toThrow(
       'aggregates.order.processes.checkout: "payment.PaymentSettled" comes from another aggregate; say which instance it belongs to with correlate.payment.PaymentSettled',
     );
     expect(() =>
-      buildProcesses({
-        registry: withCorrelate({
+      processesOf(
+        withCorrelate({
           ...byOrder,
           billing: { Invoiced: (event) => event.payload.orderId },
         }),
         config,
-      }),
+      ),
     ).toThrow(
       'aggregates.order.processes.checkout.correlate.billing.Invoiced: "billing.Invoiced" is not an event of the app',
     );
@@ -1063,15 +1082,15 @@ describe("processes that listen to other aggregates", () => {
 
   it("treat a correlate entry left undefined as missing", () => {
     expect(() =>
-      buildProcesses({
-        registry: withCorrelate({
+      processesOf(
+        withCorrelate({
           payment: {
             PaymentFailed: byOrder.payment.PaymentFailed,
             PaymentSettled: undefined as never,
           },
         }),
-        config: resolveConfig({ storage: memory() }),
-      }),
+        resolveConfig({ storage: memory(), collaborators: { order: { notifier: "memory" } } }),
+      ),
     ).toThrow('"payment.PaymentSettled" comes from another aggregate');
   });
 

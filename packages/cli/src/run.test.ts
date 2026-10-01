@@ -109,7 +109,7 @@ describe("bounda generate", () => {
       [
         "error: 2 problems in the project layout",
         "  app/domain/order/Order_Shipped.ts: Event names must be kebab-case (lower-case letters, digits and dashes)",
-        "  app/domain/order/helpers: an aggregate holds events, state.ts and the directories commands, policies and processes",
+        "  app/domain/order/helpers: a collaborator directory needs an index.ts exporting its interface: export interface Helpers",
         "",
       ].join("\n"),
     );

@@ -4,6 +4,7 @@ export type CustomerState = core.StateOf<typeof import("../app/domain/customer/s
 export type CustomerEvents = {
   readonly customerRegistered: typeof import("../app/domain/customer/customer-registered.ts");
 };
+export type CustomerCollaborators = core.EmptyPayload;
 
 export type OrderState = core.StateOf<typeof import("../app/domain/order/state.ts")>;
 export type OrderEvents = {
@@ -11,36 +12,39 @@ export type OrderEvents = {
   readonly orderPaid: typeof import("../app/domain/order/order-paid.ts");
   readonly orderPlaced: typeof import("../app/domain/order/order-placed.ts");
 };
+export type OrderCollaborators = {
+  readonly auditLog: import("../app/domain/order/audit-log/index.ts").AuditLog;
+  readonly inventory: import("../app/domain/order/inventory/index.ts").Inventory;
+  readonly mailer: import("../app/domain/order/mailer/index.ts").Mailer;
+  readonly reminders: import("../app/domain/order/reminders/index.ts").Reminders;
+};
 
 export type Events = {
   readonly customer: CustomerEvents;
   readonly order: OrderEvents;
 };
 
-export type CancelOrderCollaborators = core.InferCollaborators<{
-  readonly auditLog: {
-    readonly memory: typeof import("../app/domain/order/commands/cancel-order/audit-log.memory.ts").default;
+export type CollaboratorsConfig = {
+  readonly order: {
+    readonly auditLog?: "memory";
+    readonly inventory: "fake" | "memory";
+    readonly mailer?: "memory";
+    readonly reminders?: "fake";
   };
-}>;
-
-export type OrderNotifyOnOrderPlacedPolicyCollaborators = core.InferCollaborators<{
-  readonly mailer: {
-    readonly memory: typeof import("../app/domain/order/policies/notify-on-order-placed/mailer.memory.ts").default;
-  };
-}>;
+};
 
 export type Commands = core.CommandsFacadeOf<{
   readonly registerCustomer: typeof import("../app/domain/customer/commands/register-customer.ts");
-  readonly cancelOrder: typeof import("../app/domain/order/commands/cancel-order/index.ts");
+  readonly cancelOrder: typeof import("../app/domain/order/commands/cancel-order.ts");
   readonly payOrder: typeof import("../app/domain/order/commands/pay-order.ts");
-  readonly placeOrder: typeof import("../app/domain/order/commands/place-order/index.ts");
+  readonly placeOrder: typeof import("../app/domain/order/commands/place-order.ts");
 }>;
 
 export type ReactionCommands = core.ReactionCommandsFacadeOf<{
   readonly registerCustomer: typeof import("../app/domain/customer/commands/register-customer.ts");
-  readonly cancelOrder: typeof import("../app/domain/order/commands/cancel-order/index.ts");
+  readonly cancelOrder: typeof import("../app/domain/order/commands/cancel-order.ts");
   readonly payOrder: typeof import("../app/domain/order/commands/pay-order.ts");
-  readonly placeOrder: typeof import("../app/domain/order/commands/place-order/index.ts");
+  readonly placeOrder: typeof import("../app/domain/order/commands/place-order.ts");
 }>;
 
 export type OrderSummaryRow = core.RowOf<typeof import("../app/read/order-summary/view.ts")>;

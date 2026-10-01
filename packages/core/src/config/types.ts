@@ -1,5 +1,6 @@
 import type { AdapterDefinition } from "../adapter/adapter-definition.ts";
 import type { DurationInput } from "../contracts/duration.ts";
+import type { AppCollaboratorsConfig } from "../register/index.ts";
 
 /**
  * How failed policy and process handlers are retried.
@@ -117,38 +118,31 @@ export interface RuntimeConfig {
 }
 
 /**
- * Which implementation a command, policy or process uses for one collaborator: the suffix of the
- * `<collaborator>.<implementation>.ts` file.
+ * Which implementation each port of each aggregate uses, by aggregate and port in camelCase, with
+ * the implementation's file name as the value: `{ order: { notifier: "smtp" } }`. A port with
+ * one implementation may be left out; one with several must be named. The generator emits this
+ * type for the project, so `defineConfig` checks the names.
  */
-export interface CollaboratorSelection {
-  readonly use: string;
-}
+export type CollaboratorsConfig = Readonly<Record<string, Readonly<Record<string, string>>>>;
 
 /**
- * The collaborators of one command, policy or process: one entry per collaborator.
+ * The `collaborators` section of the configuration: optional as long as every port of the
+ * project has one implementation, required as soon as one has several.
  */
-export type CollaboratorsConfig = Readonly<Record<string, CollaboratorSelection>>;
-
-/**
- * Collaborators of policies or processes, keyed by aggregate and then by the policy or process
- * key: `{ order: { sendReceiptOnOrderPaid: { mailer: { use: "memory" } } } }`.
- */
-export type ReactionsConfig = Readonly<
-  Record<string, Readonly<Record<string, CollaboratorsConfig>>>
->;
+export type CollaboratorsSection =
+  Record<never, never> extends AppCollaboratorsConfig
+    ? { readonly collaborators?: AppCollaboratorsConfig }
+    : { readonly collaborators: AppCollaboratorsConfig };
 
 /**
  * What `bounda.config.ts` exports.
  */
-export interface Config {
+export type Config = {
   readonly rootDir?: string;
   readonly storage: AdapterDefinition;
   readonly readModels?: Readonly<Record<string, AdapterDefinition>>;
   readonly runtime?: RuntimeConfig;
-  readonly commands?: Readonly<Record<string, CollaboratorsConfig>>;
-  readonly policies?: ReactionsConfig;
-  readonly processes?: ReactionsConfig;
-}
+} & CollaboratorsSection;
 
 /**
  * Retry settings with every value present and durations in milliseconds.
@@ -199,8 +193,6 @@ export interface ResolvedConfig {
     };
     readonly overrides: Readonly<Record<string, ResolvedAggregateRuntime>>;
   };
-  readonly commands: Readonly<Record<string, CollaboratorsConfig>>;
-  readonly policies: ReactionsConfig;
-  readonly processes: ReactionsConfig;
+  readonly collaborators: CollaboratorsConfig;
   forAggregate(name: string): ResolvedAggregateRuntime;
 }

@@ -27,20 +27,19 @@ app/domain/<aggregate>/
   state.ts                         optional: export const initialState = {...}; export const aggregateId = "<field>"
   <event>.ts                       export const payload (optional), export const apply
   <event>.upcast.ts                optional: export const upcasts (oldest version first)
+  <port>/index.ts                  a collaborator: export interface <Port> (PascalCase of the directory)
+  <port>/<implementation>.ts       export default ... satisfies Implementation.Contract; every handler of the aggregate receives it as <port>
   commands/<command>.ts            export const payload, export const handler
-  commands/<command>/index.ts      same, with <collaborator>.<implementation>.ts files beside it
   policies/<action>-on-<event>.ts  export const handler; on and delay optional
-  policies/<action>-on-<event>/index.ts   same, with <collaborator>.<implementation>.ts files beside it
-  policies/<other-aggregate>/...   the same shapes, reacting to that aggregate's events
+  policies/<other-aggregate>/...   the same shape, reacting to that aggregate's events
   processes/<process>/index.ts     export const config, export const state (optional)
   processes/<process>/on-<event>.ts, at-<deadline>.ts, at-timeout.ts   export const handler
   processes/<process>/<other-aggregate>/on-<event>.ts  handler for that aggregate's event
-  processes/<process>/<collaborator>.<implementation>.ts   collaborators of every handler of the process
 app/read/<read-model>/
   view.ts                          export const fields
   projections/<aggregate>/<event>.ts   export const project
   queries/<query>.ts               export const payload (optional), repository (optional), handler
-bounda.config.ts                   export default defineConfig({ storage, readModels?, runtime?, commands?, policies?, processes? })
+bounda.config.ts                   export default defineConfig({ storage, readModels?, runtime?, collaborators? })
 ```
 
 ## Templates
@@ -75,17 +74,34 @@ export const handler = ({ command, state, events }: Command.HandlerArgs) => {
 };
 ```
 
-Command with a collaborator (`commands/place-order/index.ts` plus `inventory.fake.ts` with a
-default export; `bounda.config.ts` selects it with `commands: { placeOrder: { inventory: { use: "fake" } } }`):
+Collaborator (`order/inventory/index.ts` with the interface, `order/inventory/fake.ts` and
+`order/inventory/http.ts` implementing it; `bounda.config.ts` selects one with
+`collaborators: { order: { inventory: "fake" } }`, and every handler of `order` receives it as
+`inventory`):
 
 ```ts
-export type Collaborators = { inventory: { available: (skus: readonly string[]) => Promise<boolean> } };
+// order/inventory/index.ts
+export interface Inventory {
+  available(skus: readonly string[]): Promise<boolean>;
+}
 
+// order/inventory/fake.ts
+import type { Implementation } from "./+types/fake";
+
+export default { available: async () => true } satisfies Implementation.Contract;
+
+// order/commands/place-order.ts
 export const handler = async ({ command, events, inventory }: Command.HandlerArgs) => {
   if (!(await inventory.available(command.payload.skus))) throw new DomainError("Out of stock");
   return [events.orderPlaced(command.payload)];
 };
 ```
+
+The config type is generated: a port with several implementations must be named, the value is
+one of the file names, and a choice from the environment spells both branches
+(`process.env.INVENTORY === "fake" ? "fake" : "http"`). Shared domain logic without
+implementations is a `_name.ts` file the generator ignores; a provider two aggregates use is a
+port in each, sharing a client from outside `app/domain`.
 
 Command handlers decide; they do not act on the world. A handler reruns, collaborators included,
 when its append loses a concurrency race, and its decision is not stored until the append
@@ -108,8 +124,8 @@ export const handler = async ({ event, commands }: Policy.HandlerArgs) => {
 };
 ```
 
-Policy with a collaborator (`policies/send-receipt-on-order-paid/index.ts` plus `mailer.smtp.ts`;
-config `policies: { order: { sendReceiptOnOrderPaid: { mailer: { use: "smtp" } } } }`):
+Policy using a collaborator of its aggregate (`policies/send-receipt-on-order-paid.ts`, with
+`order/mailer/`):
 
 ```ts
 export const handler = async ({ event, commands, mailer, idempotencyKey }: Policy.HandlerArgs) => {
@@ -207,18 +223,17 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   state; what `await commands.x()` returns is the aggregate's decision, not something stored yet:
   call outside first, dispatch after. Outside the promise: the outside calls themselves, the inbox
   claim, and what a read model shows a handler (only what was committed before the attempt).
-- Policies and processes get their collaborators spread next to `event` and `commands`, like
-  commands do. Config picks implementations by aggregate, then key:
-  `policies: { order: { notifyOnOrderPlaced: { mailer: { use: "smtp" } } } }`, and the same
-  under `processes`. A policy that exports `delay` (`"1m"`, or `asDuration(env)`) runs that long
+- Policies and processes get the aggregate's collaborators spread next to `event` and `commands`,
+  like commands do; a policy in `policies/<other-aggregate>/` still gets its own aggregate's.
+  A policy that exports `delay` (`"1m"`, or `asDuration(env)`) runs that long
   after the event, through the scheduler, with the same arguments and retries, but its runs are
   not ordered among themselves (each retries on its own); use it when the effect itself waits,
   and a delayed command when the decision must see the state at that time.
   Their `idempotencyKey` is the same on every retry for one event (for a
   deadline, one field at one moment) and new on a dead-letter replay. Their `signal` aborts when
-  the run times out or fails: pass it to outside calls. A collaborator cannot be named after a
-  handler argument (`event`, `commands`, `state`, `aggregateId`, `command`, `events`,
-  `idempotencyKey`, `signal`, `after`).
+  the run times out or fails: pass it to outside calls. A port cannot be named after a handler
+  argument (`event`, `commands`, `state`, `aggregateId`, `command`, `events`, `idempotencyKey`,
+  `signal`, `after`), after an event of its aggregate, or `commands`, `policies`, `processes`.
 - Process deadlines: `after()` counts from the event's time (in `at-`, from the moment that came
   due), so retries and late runs set the same moment and a daily chain catches up after an
   outage. Each deadline comes due once per moment, earliest first; nothing runs after the process

@@ -196,11 +196,11 @@ decision never lands: reading a price, checking stock, creating a payment intent
 event, so the history says what the decision was based on.
 
 The effect itself (charging the card, sending the email, telling the warehouse) goes in a policy
-or process that reacts to the stored event, with the collaborator next to it. It runs after the
-commit and at least once, and it reports back with a command:
+or process that reacts to the stored event, through one of the aggregate's collaborators. It runs
+after the commit and at least once, and it reports back with a command:
 
 ```ts
-// policies/charge-on-order-placed/index.ts
+// policies/charge-on-order-placed.ts
 export const handler = async ({ event, commands, payments, idempotencyKey }: Policy.HandlerArgs) => {
   const charge = await payments.charge({ amount: event.payload.total, idempotencyKey });
   if (charge.ok) {
@@ -395,7 +395,7 @@ A delayed command decides later; a delayed policy acts later. When the effect it
 as in *send the welcome email a minute after the user registers*, the policy exports `delay`:
 
 ```ts
-// policies/send-welcome-email-on-user-registered/index.ts
+// policies/send-welcome-email-on-user-registered.ts
 export const delay = asDuration(process.env.WELCOME_EMAIL_DELAY ?? "1m");
 
 export const handler = async ({ event, commands, emailSender, idempotencyKey }: Policy.HandlerArgs) => {

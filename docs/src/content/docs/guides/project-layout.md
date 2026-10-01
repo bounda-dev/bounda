@@ -18,16 +18,16 @@ app/
       order-placed.ts               an event: payload and apply
       order-placed.upcast.ts        optional: how older payloads become today's
       order-paid.ts
+      inventory/                    a collaborator: what the aggregate's handlers call outside
+        index.ts                    its interface, Inventory
+        http.ts                     an implementation
+        fake.ts                     another; bounda.config.ts picks one
       commands/
         pay-order.ts                a command: payload and handler
-        place-order/                a command with collaborators
-          index.ts
-          inventory.fake.ts         collaborator "inventory", implementation "fake"
+        place-order.ts
       policies/
         issue-invoice-on-order-paid.ts   reacts to OrderPaid
-        notify-on-order-placed/     a policy with collaborators
-          index.ts
-          mailer.smtp.ts
+        notify-on-order-placed.ts
       processes/
         order-payment/              a process
           index.ts                  config and state
@@ -35,7 +35,6 @@ app/
           on-order-paid.ts          handler for OrderPaid
           at-next-reminder.ts       handler for the deadline nextReminder
           at-timeout.ts             handler for the time-out
-          gateway.stripe.ts         a collaborator of every handler of the process
   read/
     order-summary/                  a read model
       view.ts                       fields
@@ -54,10 +53,11 @@ them into the names your code sees:
 | File | Registry key | Type name |
 | --- | --- | --- |
 | `order-placed.ts` | `orderPlaced` | `OrderPlaced` |
-| `place-order/index.ts` | `placeOrder` | `PlaceOrder` |
+| `place-order.ts` | `placeOrder` | `PlaceOrder` |
 | `issue-invoice-on-order-paid.ts` | `issueInvoiceOnOrderPaid` | reacts to `OrderPaid` |
 | `on-order-paid.ts` | handler for `orderPaid` | |
-| `inventory.fake.ts` | collaborator `inventory`, implementation `fake` | |
+| `audit-log/` | collaborator `auditLog` | `AuditLog`, exported by its `index.ts` |
+| `audit-log/in-memory.ts` | implementation `"in-memory"`, as the config names it | |
 | `policies/payment/refund-on-payment-failed.ts` | `paymentRefundOnPaymentFailed` | reacts to payment's `PaymentFailed` |
 | `order-summary/` | `orderSummary` | `OrderSummaryRow` |
 
@@ -72,7 +72,8 @@ of those folders.
 
 ## Aggregates: `app/domain/<aggregate>/`
 
-Every `.ts` file at the root of the aggregate is an event, except `state.ts`.
+Every `.ts` file at the root of the aggregate is an event, except `state.ts`; every directory
+there is a collaborator, except `commands`, `policies` and `processes`.
 
 ```ts
 // app/domain/order/order-placed.ts
@@ -115,18 +116,72 @@ export const aggregateId = "orderId";
 `aggregateId` names the payload field that identifies the aggregate. It defaults to
 `<aggregate>Id`, so `orderId` for `order`.
 
-### Commands: `commands/`
+### Collaborators: `<port>/`
 
-A command is `commands/<name>.ts` or, when it has collaborators, `commands/<name>/index.ts`.
+A collaborator is what the aggregate's handlers call outside the app: an inventory service, a
+mailer, a payment provider. It is a directory at the root of the aggregate, named after the
+port, and every handler of the aggregate receives it under that name: its commands, its policies
+and every handler of its processes. `index.ts` exports the interface, named after the directory
+in PascalCase; every other file in the directory implements it, with a default export.
 
 ```ts
-// app/domain/order/commands/place-order/index.ts
-import { DomainError } from "@bounda-dev/core";
-import type { Command } from "./+types/index";
+// app/domain/order/inventory/index.ts
+export interface Inventory {
+  available(skus: readonly string[]): Promise<boolean>;
+}
+```
 
-export type Collaborators = {
-  inventory: { available: (skus: readonly string[]) => Promise<boolean> };
-};
+```ts
+// app/domain/order/inventory/fake.ts
+import type { Implementation } from "./+types/fake";
+
+export default {
+  available: async () => true,
+} satisfies Implementation.Contract;
+```
+
+`Implementation.Contract` is the port's interface; the `satisfies` gives completion and an error
+in place, and the generated registry checks every implementation against the interface anyway, so
+one that does not fulfil it fails `tsc` either way. An interface may be callable instead of an
+object, `export type Notifier = (message: string) => Promise<void>;`, and the handler then calls
+`notifier(...)`.
+
+`bounda.config.ts` picks one implementation per port, by aggregate and port in camelCase, with
+the implementation's file name as the value. The generator emits the type of that section, so a
+name that does not exist does not compile, and a port with several implementations must be
+named: no implementation is a default. A port with one may be left out.
+
+```ts
+export default defineConfig({
+  storage: sqlite({ path: "./data/app.db" }),
+  collaborators: {
+    order: { inventory: process.env.INVENTORY === "fake" ? "fake" : "http" },
+  },
+});
+```
+
+The value has to be one of the names, so a choice made from the environment says both branches,
+as above; a plain `process.env.INVENTORY ?? "http"` is a `string` and does not compile.
+
+A port cannot be named after an event of the aggregate, nor after an argument a handler already
+receives (`command`, `state`, `events`, `event`, `commands`, `idempotencyKey`, `signal`,
+`aggregateId`, `after`); the generator says which. Domain logic the handlers share but that has no
+implementations to choose from is not a collaborator: put it in a file whose name starts with
+`_`, which the generator ignores, and import it. A provider two aggregates use is two ports, one
+in each, with the contract each aggregate needs; the client they share lives outside `app/domain`,
+in `app/lib/stripe.ts` for instance, and each implementation imports it.
+
+The runtime chooses once, when the app is created, and a config that names a port, an
+implementation or an aggregate that does not exist fails at boot as well.
+
+### Commands: `commands/`
+
+A command is `commands/<name>.ts`.
+
+```ts
+// app/domain/order/commands/place-order.ts
+import { DomainError } from "@bounda-dev/core";
+import type { Command } from "./+types/place-order";
 
 export const payload = ({ z }: Command.PayloadArgs) =>
   z.object({ orderId: z.uuid(), customerId: z.string(), skus: z.array(z.string()).min(1) });
@@ -138,21 +193,11 @@ export const handler = async ({ command, state, events, inventory }: Command.Han
 };
 ```
 
-A command's collaborators are what its handler reads from outside to decide: stock, prices, a
-feature flag. Effects on the world (a charge, an email) belong in the policy or process that
-reacts to the event, after it is stored; see
-[calling the outside world](/guides/reacting-to-events/#calling-the-outside-world). Each implementation is a file `<collaborator>.<implementation>.ts` next to `index.ts` with a
-default export; `bounda.config.ts` picks one per environment:
-
-```ts
-export default defineConfig({
-  storage: sqlite({ path: "./data/app.db" }),
-  commands: { placeOrder: { inventory: { use: "fake" } } },
-});
-```
-
-Export a `Collaborators` type when the implementations are looser than the contract, as a fake
-that ignores its argument. Without it, the type is inferred from the implementations.
+The handler receives the aggregate's collaborators next to `command`, `state` and `events`. In a
+command they are what the handler reads from outside to decide: stock, prices, a feature flag.
+Effects on the world (a charge, an email) belong in the policy or process that reacts to the
+event, after it is stored; see
+[calling the outside world](/guides/reacting-to-events/#calling-the-outside-world).
 
 A handler can run more than once for one command. When the append loses a concurrency race, the
 runtime reloads the aggregate and runs the handler again, collaborators included, up to
@@ -190,24 +235,16 @@ in that form when it is dispatched, so what would fail when it runs fails at onc
 field rejects the string JSON turns a date into, so declare it as `z.coerce.date()`. The handler
 receives the payload validated when the command runs, so a schema's transforms apply once.
 
-A policy with collaborators is a directory, `policies/<action>-on-<event>/index.ts`, with the
-implementations next to it as for a command. The handler receives them next to `event` and
-`commands`, and `bounda.config.ts` picks one under `policies`, by aggregate and then by policy:
+A policy receives the aggregate's collaborators next to `event` and `commands`: an `order` policy
+gets `order`'s, also when it reacts to another aggregate's event.
 
 ```ts
-// app/domain/order/policies/notify-on-order-placed/index.ts
-import type { Policy } from "./+types/index";
+// app/domain/order/policies/notify-on-order-placed.ts
+import type { Policy } from "./+types/notify-on-order-placed";
 
-export const handler = async ({ event, mailer }: Policy.HandlerArgs) => {
-  await mailer.send(event.payload.customerId, `Order ${event.aggregateId} placed`);
+export const handler = async ({ event, mailer, idempotencyKey }: Policy.HandlerArgs) => {
+  await mailer.send(event.payload.customerId, `Order ${event.aggregateId} placed`, idempotencyKey);
 };
-```
-
-```ts
-export default defineConfig({
-  storage: sqlite({ path: "./data/app.db" }),
-  policies: { order: { notifyOnOrderPlaced: { mailer: { use: "smtp" } } } },
-});
 ```
 
 A policy that exports `delay` (`export const delay = "1m"`, or `asDuration(...)` for a value
@@ -302,12 +339,8 @@ other terminal error. The compiler checks it first: the `+types` of every handle
 returns fits the state, so a field of the wrong type, or a plain string where a deadline wants an
 `Instant`, is a type error reported in that `+types` file.
 
-Collaborator files in the process directory reach every handler of the process, the `at-` ones
-included. `index.ts` may export their `Collaborators` type, and `bounda.config.ts` picks the
-implementations under `processes`: `processes: { order: { orderPayment: { gateway: { use: "stripe" } } } }`.
-
-A collaborator cannot take the name of an argument its handler already receives (`event`,
-`commands`, `state` and the like); the generator says which.
+Every handler of the process, the `at-` ones included, receives the aggregate's collaborators,
+as its commands and policies do.
 
 ## Read models: `app/read/<read-model>/`
 
@@ -367,9 +400,9 @@ always present in the handler: callers see the schema's input type, handlers its
 | Path | Holds |
 | --- | --- |
 | `.bounda/registry.ts` | Every module, grouped as the runtime needs it. `boot()` imports it |
-| `.bounda/register.d.ts` | Registers the registry type with `@bounda-dev/core/register`, so `boot()` and `BoundaApp` are typed for the project without a type argument |
-| `.bounda/types.ts` | The state, events, commands, rows and queries maps the `+types` build on |
-| `**/+types/<name>.ts` | The argument types each module imports |
+| `.bounda/register.d.ts` | Registers the registry type and the type of the `collaborators` section with `@bounda-dev/core/register`, so `boot()` and `BoundaApp` are typed for the project without a type argument and `defineConfig` checks the implementation names |
+| `.bounda/types.ts` | The state, events, collaborators, commands, rows and queries maps the `+types` build on |
+| `**/+types/<name>.ts` | The argument types each module imports; for an implementation, its port's interface as `Implementation.Contract` |
 
 They are derived from your code, so they are not versioned. `tsconfig.json` must include them as
 `.bounda/**/*` (TypeScript skips a bare `.bounda` entry because the directory starts with a dot);

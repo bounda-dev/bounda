@@ -63,7 +63,7 @@ const setUp = async () => {
   const { logger, entries } = createRecordingLogger();
   const config = {
     storage: adapter,
-    commands: { placeOrder: { notifier: { use: "memory" } } },
+    collaborators: { order: { notifier: "memory" } },
     runtime: { dispatcher: { batchSize: 1 } },
   };
   const app = await createApp({ registry, config, logger });
@@ -185,7 +185,7 @@ describe("rebuildReadModel", () => {
         };
       },
     };
-    const config = { storage: adapter, commands: { placeOrder: { notifier: { use: "memory" } } } };
+    const config = { storage: adapter, collaborators: { order: { notifier: "memory" } } };
     const writer = await createApp({ registry: writeSide, config });
     await writer.commands.placeOrder({ orderId: "o-1", total: 7 });
     await writer.stop();
@@ -325,7 +325,7 @@ describe("rebuildReadModel", () => {
     const config = {
       storage: main,
       readModels: { orderSummary: reporting },
-      commands: { placeOrder: { notifier: { use: "memory" } } },
+      collaborators: { order: { notifier: "memory" } },
       runtime: { dispatcher: { batchSize: 1 } },
     };
     const app = await createApp({ registry, config });

@@ -25,11 +25,13 @@ export type { GenerateArgs, GenerateFunction, GenerateReport } from "./generate/
 export { generate } from "./generate/generate.ts";
 export type {
   AggregateModel,
-  CollaboratorModel,
   CommandModel,
   EventModel,
+  ImplementationModel,
   ModuleRef,
   PolicyModel,
+  PortModel,
+  ProcessDeadlineModel,
   ProcessHandlerModel,
   ProcessModel,
   ProjectionModel,

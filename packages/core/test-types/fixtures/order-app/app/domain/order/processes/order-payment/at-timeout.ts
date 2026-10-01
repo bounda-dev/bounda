@@ -6,7 +6,7 @@ export const handler = async ({
   commands,
   reminders,
 }: Process.DeadlineArgs) => {
-  await reminders.remind(aggregateId);
+  await reminders(aggregateId);
   await commands.cancelOrder({ orderId: aggregateId, reason: "payment timeout" });
   return { ...state, reminders: state.reminders + 1 };
 };

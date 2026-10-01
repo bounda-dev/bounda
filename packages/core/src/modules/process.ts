@@ -1,7 +1,6 @@
 import type { z } from "zod";
 import type { DurationInput, LooseDurationInput } from "../contracts/duration.ts";
 import type { Instant, instantSchema } from "../contracts/instant.ts";
-import type { CollaboratorImplementations } from "./command.ts";
 import type { EventModules, EventTypeNames, StoredEventOf } from "./event.ts";
 import type { TypeNameOf } from "./naming.ts";
 import type { EmptyPayload, PayloadArgs } from "./payload.ts";
@@ -127,13 +126,12 @@ export interface ProcessHandlerModule {
 /**
  * A process in the registry. `handlers` are grouped by the event's aggregate and keyed by its
  * camelCase name (`handlers.payment.paymentFailed`); `deadlines` are keyed by field, with
- * `timeout` for `at-timeout.ts`. Every handler of the process receives its `collaborators`.
+ * `timeout` for `at-timeout.ts`.
  */
 export interface ProcessEntry {
   readonly module: ProcessModule;
   readonly handlers: Readonly<Record<string, Readonly<Record<string, ProcessHandlerModule>>>>;
   readonly deadlines?: Readonly<Record<string, ProcessHandlerModule>>;
-  readonly collaborators?: CollaboratorImplementations;
 }
 
 /**
@@ -167,7 +165,7 @@ export type ProcessHandlerReturnCheck<
 > = Module;
 
 /**
- * Arguments of an `on-<event>.ts` handler, with the process's collaborators spread at the top
+ * Arguments of an `on-<event>.ts` handler, with the aggregate's collaborators spread at the top
  * level. The handler returns the new process state.
  */
 export type ProcessHandlerArgs<
@@ -197,7 +195,7 @@ export type ProcessHandlerArgs<
 } & Readonly<Collaborators>;
 
 /**
- * Arguments of an `at-<field>.ts` handler, with the process's collaborators spread at the top
+ * Arguments of an `at-<field>.ts` handler, with the aggregate's collaborators spread at the top
  * level: `state` holds the deadline that came due as `Field`. The handler returns the new process
  * state, with the field set to `null` or another moment: leaving it at the one that came due fails
  * the process. For `at-timeout.ts`, `Field` is `never` and the process ends as `timed_out`

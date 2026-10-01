@@ -1,4 +1,5 @@
-import type { Collaborators, WelcomeEmail } from "./index.ts";
+import type { Implementation } from "./+types/memory";
+import type { WelcomeEmail } from "./index.ts";
 
 /**
  * Every welcome email "sent" so far, once per idempotency key, as a provider that honours the key
@@ -14,4 +15,4 @@ export default {
     sentWithKey.set(idempotencyKey, email);
     sent.push(email);
   },
-} satisfies Collaborators["emailSender"];
+} satisfies Implementation.Contract;
