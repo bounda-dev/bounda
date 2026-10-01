@@ -80,3 +80,17 @@ export const createReactionCommandIds: CreateReactionCommandIdsFunction = (idemp
     return uuidV5([idempotencyKey, "command", commandType, ordinal].join(":"), NAMESPACE);
   };
 };
+
+export interface IdempotencyKeyForFunction {
+  (idempotencyKey: string, effect: string): string;
+}
+
+/**
+ * A key of its own for one of the effects a handler run causes, when it causes more than one
+ * (a refund and a charge): give each a different name. Derived from any key, the handler's or one
+ * a collaborator received, it is the same for one name on every retry and in every release, and a
+ * UUID as long as the handler's own key, whatever the length of the name.
+ */
+export const idempotencyKeyFor: IdempotencyKeyForFunction = (idempotencyKey, effect) =>
+  // JSON keeps a separator inside the key or the name from making two pairs hash alike.
+  uuidV5(JSON.stringify([idempotencyKey, "effect", effect]), NAMESPACE);

@@ -17,6 +17,7 @@ import type {
   StoredEvent,
   Table,
 } from "@bounda-dev/core";
+import { idempotencyKeyFor } from "@bounda-dev/core";
 import { describe, expectTypeOf, it } from "vitest";
 import type { registry } from "./fixtures/order-app/.bounda/registry.ts";
 import type { Commands, Queries } from "./fixtures/order-app/.bounda/types.ts";
@@ -212,6 +213,15 @@ describe("idempotency keys", () => {
     expectTypeOf<AtNextReminder.DeadlineArgs["signal"]>().toEqualTypeOf<AbortSignal>();
     expectTypeOf<PlaceOrder.HandlerArgs["signal"]>().toEqualTypeOf<AbortSignal>();
     expectTypeOf<PayOrder.HandlerArgs["signal"]>().toEqualTypeOf<AbortSignal>();
+  });
+
+  it("derive one per effect from the key a handler receives", () => {
+    expectTypeOf(idempotencyKeyFor).toEqualTypeOf<
+      (idempotencyKey: string, effect: string) => string
+    >();
+    expectTypeOf(idempotencyKeyFor)
+      .parameter(0)
+      .toEqualTypeOf<SendReceipt.HandlerArgs["idempotencyKey"]>();
   });
 });
 
