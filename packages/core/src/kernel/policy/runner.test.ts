@@ -11,6 +11,7 @@ import {
   createRecordingLogger,
   defaultCollaborators,
   orderAggregateEntry,
+  withJob,
 } from "../test-support.ts";
 import { buildPolicies, policyTriggerFromKey } from "./build-policies.ts";
 
@@ -850,5 +851,48 @@ describe("a policy run that fails", () => {
       aggregateId: "o-1",
     });
     expect(order.events.map((event) => event.type)).toEqual(["OrderPlaced"]);
+  });
+
+  it("stops a command still running when the handler runs out of time", async () => {
+    const started = Promise.withResolvers<AbortSignal>();
+    const finish = Promise.withResolvers<void>();
+    const dispatched = Promise.withResolvers<unknown>();
+    const jobs = withJob(async ({ signal, events }) => {
+      started.resolve(signal);
+      await finish.promise;
+      return [events.jobDone?.()];
+    });
+    const policies = withPolicy(async ({ event, commands }) => {
+      dispatched.resolve(
+        await commands.runJob?.({ jobId: event.aggregateId }).catch((error: unknown) => error),
+      );
+    });
+    const harness = await createReactiveHarness({
+      registry: { ...jobs, aggregates: { ...jobs.aggregates, ...policies.aggregates } },
+      config: {
+        runtime: {
+          commands: { timeout: "1h" },
+          policies: { timeout: "1m", retry: { strategy: "none" } },
+        },
+      },
+    });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    const processing = harness.dispatcher.processUntilIdle();
+    const signal = await started.promise;
+    harness.clock.advance(60_000);
+    await processing;
+
+    expect(signal.reason).toMatchObject({ code: "HANDLER_TIMEOUT" });
+    expect(await dispatched.promise).toMatchObject({
+      code: "REACTION_ABANDONED",
+      cause: { code: "HANDLER_TIMEOUT" },
+    });
+    finish.resolve();
+    await new Promise((resolve) => setImmediate(resolve));
+    const stream = await harness.storage.eventStore.load({
+      aggregateType: "job",
+      aggregateId: "o-1",
+    });
+    expect(stream.events).toEqual([]);
   });
 });

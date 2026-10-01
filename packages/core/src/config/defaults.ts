@@ -1,4 +1,5 @@
 import type {
+  ResolvedCommandsConfig,
   ResolvedPoliciesConfig,
   ResolvedProcessesConfig,
   ResolvedRetryConfig,
@@ -9,6 +10,10 @@ export const DEFAULT_RETRY: ResolvedRetryConfig = {
   maxAttempts: 3,
   baseDelayMs: 1_000,
   maxDelayMs: 30_000,
+};
+
+export const DEFAULT_COMMANDS: ResolvedCommandsConfig = {
+  timeoutMs: 30_000,
 };
 
 export const DEFAULT_POLICIES: ResolvedPoliciesConfig = {

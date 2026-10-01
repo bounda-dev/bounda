@@ -123,6 +123,10 @@ when its append loses a concurrency race, and its decision is not stored until t
 succeeds. So its collaborator calls must be safe to repeat and harmless if the decision never
 lands: a read, or a call the provider deduplicates, such as creating a payment intent. Every
 handler receives `idempotencyKey`, stable across its reruns (the command id); pass it to those calls.
+It also receives `signal`, which aborts after `runtime.commands.timeout` (30s, per aggregate in
+`overrides.<aggregate>.commands`), when the caller withdraws the command
+(`commands.x(payload, { signal })`) or when the reaction that dispatched it fails; pass it to
+outside calls. Past the timeout the dispatch rejects with `HANDLER_TIMEOUT` and nothing is stored.
 
 Effects (charging, emailing, calling another service) go in a policy or process with the
 collaborator, after the event is stored, passing `idempotencyKey` to the provider, and report back

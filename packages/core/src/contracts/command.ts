@@ -27,6 +27,12 @@ export interface NewCommand<Type extends string = string, Payload = unknown> {
 export interface DispatchOptions {
   readonly delay?: DurationInput;
   readonly correlationId?: string;
+  /**
+   * Withdraws the command until its events start being stored: the handler's `signal` aborts and
+   * the dispatch rejects with the signal's `reason`, storing nothing. Already aborted, the handler
+   * never runs. With `delay`, it only counts before the command is scheduled.
+   */
+  readonly signal?: AbortSignal;
 }
 
 /**

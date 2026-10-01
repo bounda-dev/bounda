@@ -126,6 +126,32 @@ export const orderRegistry: Registry = {
   readModels: {},
 };
 
+export interface JobHandlerArgs {
+  readonly signal: AbortSignal;
+  readonly events: Record<string, (payload?: unknown) => unknown>;
+}
+
+export interface WithJobFunction {
+  (handler: (args: JobHandlerArgs) => unknown): Registry;
+}
+
+/**
+ * The order registry plus a `job` aggregate whose one command, `RunJob` (`{ jobId }`), runs
+ * `handler`, and whose one event is `JobDone`: for tests that decide when a command finishes.
+ */
+export const withJob: WithJobFunction = (handler) => ({
+  aggregates: {
+    ...orderRegistry.aggregates,
+    job: {
+      events: { jobDone: { apply: ({ state }: { state: object }) => state } },
+      commands: { runJob: { module: { handler } } },
+      policies: {},
+      processes: {},
+    },
+  },
+  readModels: {},
+});
+
 /**
  * The `collaborators` configuration kernel tests boot with: the in-memory notifier for a registry
  * built on `orderAggregate`, nothing for any other.

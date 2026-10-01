@@ -34,7 +34,7 @@ describe("resolveConfig", () => {
     expect(resolved.collaborators).toEqual({});
     expect(resolved.runtime).toEqual({
       role: "all",
-      commands: { concurrencyRetries: 3 },
+      commands: { concurrencyRetries: 3, timeoutMs: 30_000 },
       policies: {
         retry: { strategy: "exponential", maxAttempts: 3, baseDelayMs: 1_000, maxDelayMs: 30_000 },
         timeoutMs: 30_000,
@@ -62,7 +62,7 @@ describe("resolveConfig", () => {
       readModels: { "users-directory": sqlite },
       runtime: {
         role: "worker",
-        commands: { concurrencyRetries: 0 },
+        commands: { concurrencyRetries: 0, timeout: "5s" },
         policies: { retry: { strategy: "fixed", maxAttempts: 5, baseDelay: "2s" }, timeout: "1m" },
         processes: { timeout: "48h" },
         dispatcher: {
@@ -77,7 +77,7 @@ describe("resolveConfig", () => {
       collaborators: { order: { inventory: "http" } },
     });
     expect(resolved.runtime.role).toBe("worker");
-    expect(resolved.runtime.commands.concurrencyRetries).toBe(0);
+    expect(resolved.runtime.commands).toEqual({ concurrencyRetries: 0, timeoutMs: 5_000 });
     expect(resolved.runtime.policies.retry).toEqual({
       strategy: "fixed",
       maxAttempts: 5,
@@ -102,11 +102,16 @@ describe("resolveConfig", () => {
     const resolved = resolveConfig({
       storage: sqlite,
       runtime: {
+        commands: { timeout: "10s" },
         policies: { maxChainDepth: 10, timeout: "20s" },
-        overrides: { order: { policies: { maxChainDepth: 3 } } },
+        overrides: {
+          order: { policies: { maxChainDepth: 3 } },
+          payment: { commands: { timeout: "1m" } },
+        },
       },
     });
     expect(resolved.forAggregate("order")).toEqual({
+      commands: { timeoutMs: 10_000 },
       policies: {
         retry: { strategy: "exponential", maxAttempts: 3, baseDelayMs: 1_000, maxDelayMs: 30_000 },
         timeoutMs: 20_000,
@@ -114,7 +119,9 @@ describe("resolveConfig", () => {
       },
       processes: resolved.runtime.processes,
     });
+    expect(resolved.forAggregate("payment").commands).toEqual({ timeoutMs: 60_000 });
     expect(resolved.forAggregate("customer")).toEqual({
+      commands: { timeoutMs: 10_000 },
       policies: resolved.runtime.policies,
       processes: resolved.runtime.processes,
     });
@@ -137,6 +144,12 @@ describe("resolveConfig", () => {
   it("rejects unknown keys anywhere", () => {
     expect(message({ storage: sqlite, storag: sqlite })).toMatch(/Unrecognized key/);
     expect(message({ storage: sqlite, runtime: { rol: "web" } })).toMatch(/runtime: .*rol/);
+    expect(
+      message({
+        storage: sqlite,
+        runtime: { overrides: { order: { commands: { concurrencyRetries: 1 } } } },
+      }),
+    ).toMatch(/runtime\.overrides\.order\.commands: .*concurrencyRetries/);
   });
 
   it("rejects out-of-range numbers and empty implementation names", () => {

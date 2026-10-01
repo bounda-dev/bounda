@@ -55,6 +55,72 @@ describe("withTimeout", () => {
     ).rejects.toThrow("boom");
   });
 
+  it("tells onExpire the error before rejecting with it", async () => {
+    const clock = createFixedClock();
+    const seen: unknown[] = [];
+    const outcome = withTimeout({
+      run: () => new Promise<never>(() => undefined),
+      timeoutMs: HOUR,
+      subject: "command x",
+      clock,
+      onExpire: (error) => seen.push(error),
+    });
+    clock.advance(HOUR);
+    const error = await outcome.catch((caught: unknown) => caught);
+    expect(seen).toEqual([error]);
+    expect(error).toBeInstanceOf(HandlerTimeoutError);
+  });
+
+  it("rejects with the reason of a signal that aborts before the handler finishes", async () => {
+    const clock = createFixedClock();
+    const controller = new AbortController();
+    const reason = new Error("withdrawn");
+    const outcome = withTimeout({
+      run: () => new Promise<never>(() => undefined),
+      timeoutMs: HOUR,
+      subject: "x",
+      clock,
+      signal: controller.signal,
+    });
+    controller.abort(reason);
+    await expect(outcome).rejects.toBe(reason);
+    expect(clock.pending()).toBe(0);
+  });
+
+  it("never runs the handler under a signal that is already aborted", async () => {
+    const clock = createFixedClock();
+    const reason = new Error("withdrawn");
+    let ran = false;
+    await expect(
+      withTimeout({
+        run: () => {
+          ran = true;
+        },
+        timeoutMs: HOUR,
+        subject: "x",
+        clock,
+        signal: AbortSignal.abort(reason),
+      }),
+    ).rejects.toBe(reason);
+    expect(ran).toBe(false);
+    expect(clock.pending()).toBe(0);
+  });
+
+  it("ignores a signal that aborts after the handler finished", async () => {
+    const clock = createFixedClock();
+    const controller = new AbortController();
+    await expect(
+      withTimeout({
+        run: () => "done",
+        timeoutMs: HOUR,
+        subject: "x",
+        clock,
+        signal: controller.signal,
+      }),
+    ).resolves.toBe("done");
+    controller.abort(new Error("late"));
+  });
+
   it("cancels its wait whichever side wins", async () => {
     const clock = createFixedClock();
     await withTimeout({ run: () => 1, timeoutMs: HOUR, subject: "x", clock });

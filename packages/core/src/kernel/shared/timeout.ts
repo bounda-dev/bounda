@@ -15,6 +15,16 @@ export interface WithTimeoutArgs<T> {
   readonly timeoutMs: number;
   readonly subject: string;
   readonly clock: Clock;
+  /**
+   * Also loses the race when it aborts, rejecting with its reason; already aborted, `run` is never
+   * called.
+   */
+  readonly signal?: AbortSignal | undefined;
+  /**
+   * Called with the error before the race rejects with it, so the caller can abort what the
+   * handler was given.
+   */
+  readonly onExpire?: (error: HandlerTimeoutError) => void;
 }
 
 export interface WithTimeoutFunction {
@@ -31,15 +41,23 @@ export const withTimeout: WithTimeoutFunction = async <T>({
   timeoutMs,
   subject,
   clock,
+  signal,
+  onExpire,
 }: WithTimeoutArgs<T>): Promise<T> => {
-  const expiry = Promise.withResolvers<never>();
-  const cancel = clock.after(timeoutMs, () =>
-    expiry.reject(new HandlerTimeoutError(subject, timeoutMs)),
-  );
+  signal?.throwIfAborted();
+  const lost = Promise.withResolvers<never>();
+  const cancel = clock.after(timeoutMs, () => {
+    const error = new HandlerTimeoutError(subject, timeoutMs);
+    onExpire?.(error);
+    lost.reject(error);
+  });
+  const abort = (): void => lost.reject(signal?.reason);
+  signal?.addEventListener("abort", abort, { once: true });
   try {
     const attempt = (async () => await run())();
-    return await Promise.race([attempt, expiry.promise]);
+    return await Promise.race([attempt, lost.promise]);
   } finally {
     cancel();
+    signal?.removeEventListener("abort", abort);
   }
 };

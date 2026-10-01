@@ -9,8 +9,8 @@ import { type CommandsFacadeRuntime, createCommandsFacade } from "./facade.ts";
 import type { CommandPipeline } from "./pipeline.ts";
 
 /**
- * Thrown by a command a handler dispatches after its run was abandoned; `cause` is why the run
- * was abandoned.
+ * Thrown by a command a handler dispatches after its run was abandoned, or that was still running
+ * when it was; `cause` is why the run was abandoned.
  */
 export class ReactionAbandonedError extends BoundaError {
   constructor(reason: unknown) {
@@ -32,8 +32,9 @@ export interface ReactionCommands {
    */
   readonly signal: AbortSignal;
   /**
-   * Ends a run that failed or timed out: later dispatches are refused and `signal` aborts.
-   * Nothing is undone, since the run's unit of work is never committed.
+   * Ends a run that failed or timed out: `signal` aborts, which stops the commands still running,
+   * and later dispatches are refused. Nothing is undone, since the run's unit of work is never
+   * committed.
    */
   abandon(reason: unknown): void;
 }
@@ -74,17 +75,22 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
   const commands = createCommandsFacade({
     aggregates,
     dispatch: async (command) => {
-      if (controller.signal.aborted) {
-        throw new ReactionAbandonedError(controller.signal.reason);
+      const { signal } = controller;
+      if (signal.aborted) throw new ReactionAbandonedError(signal.reason);
+      try {
+        return decided(
+          await pipeline.dispatch({
+            ...command,
+            context: { ...context, depth: context.depth + 1 },
+            commandId: commandIds(command.type),
+            within,
+            signal,
+          }),
+        );
+      } catch (error) {
+        if (signal.aborted && error === signal.reason) throw new ReactionAbandonedError(error);
+        throw error;
       }
-      return decided(
-        await pipeline.dispatch({
-          ...command,
-          context: { ...context, depth: context.depth + 1 },
-          commandId: commandIds(command.type),
-          within,
-        }),
-      );
     },
   });
   return {

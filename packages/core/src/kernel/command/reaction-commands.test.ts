@@ -1,14 +1,15 @@
 import { describe, expect, it } from "vitest";
+import type { Registry } from "../../modules/registry.ts";
 import { createReactionCommandIds } from "../shared/idempotency-key.ts";
-import { createKernelHarness } from "../test-support.ts";
+import { createKernelHarness, withJob } from "../test-support.ts";
 import { createUnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import { scheduledCommandKey } from "./pipeline.ts";
 import { createReactionCommands, ReactionAbandonedError } from "./reaction-commands.ts";
 
 const context = { correlationId: "req-1", causationId: "evt-1", depth: 4 };
 
-const setUp = async () => {
-  const harness = await createKernelHarness();
+const setUp = async (registry?: Registry) => {
+  const harness = await createKernelHarness(registry === undefined ? {} : { registry });
   const unit = createUnitOfWork({ storage: harness.storage });
   const reaction = createReactionCommands({
     aggregates: harness.aggregates,
@@ -88,5 +89,40 @@ describe("createReactionCommands", () => {
     expect(
       await storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" }),
     ).toMatchObject({ events: [] });
+  });
+
+  it("stops a command still running when the run is abandoned", async () => {
+    const started = Promise.withResolvers<AbortSignal>();
+    const { reaction } = await setUp(
+      withJob(async ({ signal }) => {
+        started.resolve(signal);
+        await new Promise(() => undefined);
+      }),
+    );
+    const reason = new Error("timed out");
+    const outcome = reaction.commands.runJob?.({ jobId: "j-1" });
+    const signal = await started.promise;
+    reaction.abandon(reason);
+
+    await expect(outcome).rejects.toMatchObject({ code: "REACTION_ABANDONED", cause: reason });
+    expect(signal.reason).toBe(reason);
+  });
+
+  it("lets a handler withdraw a command it dispatched without abandoning its run", async () => {
+    const started = Promise.withResolvers<void>();
+    const { reaction } = await setUp(
+      withJob(async () => {
+        started.resolve();
+        await new Promise(() => undefined);
+      }),
+    );
+    const controller = new AbortController();
+    const reason = new Error("no longer needed");
+    const outcome = reaction.commands.runJob?.({ jobId: "j-1" }, { signal: controller.signal });
+    await started.promise;
+    controller.abort(reason);
+
+    await expect(outcome).rejects.toBe(reason);
+    expect(reaction.signal.aborted).toBe(false);
   });
 });
