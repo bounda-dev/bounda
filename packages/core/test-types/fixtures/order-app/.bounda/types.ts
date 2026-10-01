@@ -33,6 +33,15 @@ export type CollaboratorsConfig = {
   };
 };
 
+export type TestCollaborators = {
+  readonly order?: {
+    readonly auditLog?: "memory" | OrderCollaborators["auditLog"];
+    readonly inventory?: "fake" | "http" | "memory" | OrderCollaborators["inventory"];
+    readonly mailer?: "memory" | OrderCollaborators["mailer"];
+    readonly reminders?: "fake" | OrderCollaborators["reminders"];
+  };
+};
+
 export type Commands = core.CommandsFacadeOf<{
   readonly registerCustomer: typeof import("../app/domain/customer/commands/register-customer.ts");
   readonly cancelOrder: typeof import("../app/domain/order/commands/cancel-order.ts");

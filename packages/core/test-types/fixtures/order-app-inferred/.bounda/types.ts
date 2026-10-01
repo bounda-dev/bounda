@@ -21,6 +21,8 @@ export type Events = {
 
 export type CollaboratorsConfig = Readonly<Record<string, never>>;
 
+export type TestCollaborators = Readonly<Record<string, never>>;
+
 export type Commands = core.CommandsFacadeOf<{
   readonly payOrder: typeof import("../app/domain/order/commands/pay-order.ts");
   readonly placeOrder: typeof import("../app/domain/order/commands/place-order.ts");

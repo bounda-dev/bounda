@@ -5,21 +5,30 @@ import type { Clock } from "../../contracts/clock.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { Registry } from "../../modules/registry.ts";
-import type { AppEnv } from "../../register/index.ts";
+import type { AppEnv, TestCollaboratorsChoice } from "../../register/index.ts";
 import { errorDetails } from "../shared/retry.ts";
+import { type PortChoice, selectTestCollaborators } from "./test-collaborators.ts";
 
 /**
  * The ports every handler of an aggregate receives, by aggregate and then by port.
  */
 export type AggregateCollaborators = Readonly<Record<string, Readonly<Record<string, unknown>>>>;
 
-export interface CreateCollaboratorsArgs {
+/**
+ * How a test app chooses: only what the test names is built, and a port it leaves out has no
+ * implementation, so reading it throws a `ConfigurationError`, which `onMissing` hears first.
+ */
+export interface TestChoice {
+  readonly collaborators: TestCollaboratorsChoice;
+  onMissing(error: ConfigurationError): void;
+}
+
+export type CreateCollaboratorsArgs = {
   readonly registry: Registry;
-  readonly config: CollaboratorsConfig;
   readonly env: AppEnv;
   readonly logger: Logger;
   readonly clock: Clock;
-}
+} & ({ readonly config: CollaboratorsConfig } | { readonly test: TestChoice });
 
 export interface CreatedCollaborators {
   readonly byAggregate: AggregateCollaborators;
@@ -52,33 +61,36 @@ const disposerOf = (port: unknown): (() => Promise<void>) | undefined => {
 /**
  * Chooses every aggregate's implementations before building any, so a configuration error never
  * leaves a client open. `create` runs one at a time, so closing in reverse undoes the order of
- * creation; a `default` export is shared by every app the process holds and is never closed.
+ * creation; a `default` export is shared by every app the process holds, and a test's double
+ * belongs to the test, so neither is ever closed.
  */
-export const createCollaborators: CreateCollaboratorsFunction = async ({
-  registry,
-  config,
-  env,
-  logger,
-  clock,
-}) => {
-  for (const name of Object.keys(config)) {
+export const createCollaborators: CreateCollaboratorsFunction = async (args) => {
+  const { registry, env, logger, clock } = args;
+  const test = "test" in args ? args.test : undefined;
+  const config = "config" in args ? args.config : {};
+  for (const name of Object.keys(test?.collaborators ?? config)) {
     if (!Object.hasOwn(registry.aggregates, name)) {
       throw new ConfigurationError(
         `collaborators.${name}: there is no aggregate "${name}" whose collaborators to choose`,
       );
     }
   }
-  const selected = Object.entries(registry.aggregates).map(
-    ([aggregate, entry]) =>
-      [
-        aggregate,
-        selectCollaborators({
-          aggregate,
-          implementations: entry.collaborators ?? {},
-          config: config[aggregate],
-        }),
-      ] as const,
-  );
+  const selected = Object.entries(registry.aggregates).map(([aggregate, entry]) => {
+    const implementations = entry.collaborators ?? {};
+    const choices: Readonly<Record<string, PortChoice>> =
+      test === undefined
+        ? Object.fromEntries(
+            Object.entries(
+              selectCollaborators({ aggregate, implementations, config: config[aggregate] }),
+            ).map(([port, module]) => [port, { module }]),
+          )
+        : selectTestCollaborators({
+            aggregate,
+            implementations,
+            chosen: test.collaborators[aggregate],
+          });
+    return [aggregate, choices] as const;
+  });
   const disposers: Disposer[] = [];
   const dispose = async (): Promise<void> => {
     for (const { aggregate, port, close } of disposers.toReversed()) {
@@ -95,9 +107,26 @@ export const createCollaborators: CreateCollaboratorsFunction = async ({
   };
   const byAggregate: Record<string, Readonly<Record<string, unknown>>> = {};
   try {
-    for (const [aggregate, modules] of selected) {
+    for (const [aggregate, choices] of selected) {
       const ports: Record<string, unknown> = {};
-      for (const [port, module] of Object.entries(modules)) {
+      for (const [port, choice] of Object.entries(choices)) {
+        if ("missing" in choice) {
+          const { missing } = choice;
+          Object.defineProperty(ports, port, {
+            enumerable: true,
+            get: () => {
+              const error = missing();
+              test?.onMissing(error);
+              throw error;
+            },
+          });
+          continue;
+        }
+        if ("double" in choice) {
+          ports[port] = choice.double;
+          continue;
+        }
+        const { module } = choice;
         if (module.create === undefined) {
           ports[port] = module.default;
           continue;

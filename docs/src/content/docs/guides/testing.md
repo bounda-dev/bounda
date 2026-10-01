@@ -120,48 +120,59 @@ const { app } = await createTestApp({ registry, adapter: sqlite({ memory: true }
 An in-memory SQLite database is created per app and thrown away with it, so tests stay isolated
 and fast. Use the same for PostgreSQL when a query relies on something only PostgreSQL does.
 
-## Choosing implementations
+## Doubles
 
-An aggregate whose collaborator has more than one implementation picks one through config, and a
-test picks the one that records instead of sending, by aggregate and port:
+A test passes what each port of each aggregate receives, by aggregate and port. Pass a double
+written in the test, so each test owns what it records and tests running in parallel share
+nothing:
 
 ```ts
+import type { Confirmation } from "../app/domain/order/notifier/index.ts";
+
+const sent: Confirmation[] = [];
 const { app } = await createTestApp({
   registry,
   adapter: sqlite({ memory: true }),
-  config: { collaborators: { order: { notifier: "memory" } } },
+  collaborators: { order: { notifier: async (confirmation) => void sent.push(confirmation) } },
 });
 ```
 
-A policy runs after the command, so let it run, then assert on what the memory implementation
-recorded, importing the array it exports:
+A policy runs after the command, so let it run, then assert on what the double recorded:
 
 ```ts
-import { sent } from "../app/domain/order/notifier/memory.ts";
-
 await app.commands.placeOrder({ orderId: ORDER, customerId: "ada", items });
 await app.processUntilIdle();
 expect(sent).toEqual([{ orderId: ORDER, customerId: "ada", total: 139 }]);
 ```
 
-Reset it in `beforeEach`; the module lives as long as the test file does.
+The same way, a provider that rejects or hangs is a double that throws or never resolves, with no
+file for each scenario. The handlers receive a double as it is, and `app.stop()` never closes it:
+it belongs to the test.
 
-An implementation that exports `create` is built for each test app, with the test's clock and
-logger. Its `env` is what the test passes, never the test's `process.env`, and an empty object
-otherwise:
+A port can also take the file name of one of its implementations. An implementation that exports
+`create` is then built for that test app, with the test's clock and logger, and closed by
+`app.stop()`. Its `env` is what the test passes, never the test's `process.env`, and an empty
+object otherwise:
 
 ```ts
 const { app } = await createTestApp({
   registry,
-  config: { collaborators: { order: { inventory: "http" } } },
+  collaborators: { order: { inventory: "http" } },
   env: { INVENTORY_URL: "http://localhost:8080" },
 });
 ```
 
-`app.stop()` closes what each `create` built, as it does outside tests. On Cloudflare `env` is
-`Cloudflare.Env`, whose bindings an empty object does not have, so `createTestApp` requires it
-there as soon as an implementation exports `create`; inside workerd, pass `env` from
-`cloudflare:workers`.
+On Cloudflare `env` is `Cloudflare.Env`, whose bindings an empty object does not have, so
+`createTestApp` requires it there as soon as an implementation exports `create`; inside workerd,
+pass `env` from `cloudflare:workers`.
+
+`createTestApp` does not read `bounda.config.ts`, and a port the test leaves out has no
+implementation, even when it has only one, so a test never calls a real provider it did not ask
+for. A handler that reads that port throws a `ConfigurationError` that names the aggregate and the
+port and says what to pass. A command rejects with it, a policy or a process does not retry it,
+and from then on every `app.processUntilIdle()` throws it, so the test fails with that message
+instead of an assertion further down. Handlers that never read the port run as usual, but reading every port
+at once, as `({ notifier, ...rest })` does, reads that one too.
 
 ## Nothing left behind
 

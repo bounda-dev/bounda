@@ -8,6 +8,7 @@ import type { CommandPipeline } from "../command/pipeline.ts";
 import { createReactionCommands, type ReactionCommands } from "../command/reaction-commands.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { withTimeout } from "../shared/timeout.ts";
+import { withCollaborators } from "../shared/with-collaborators.ts";
 import { ATTRIBUTES, traced } from "../telemetry.ts";
 import type { UnitStores } from "../unit-of-work/unit-of-work.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
@@ -90,13 +91,15 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     reaction: ReactionCommands,
     idempotencyKey: string,
     triggeredAt: string,
-  ): Record<string, unknown> => ({
-    ...process.collaborators,
-    commands: reaction.commands,
-    signal: reaction.signal,
-    idempotencyKey,
-    after: afterFrom(triggeredAt),
-  });
+    own: Readonly<Record<string, unknown>>,
+  ): Record<string, unknown> =>
+    withCollaborators(process.collaborators, {
+      commands: reaction.commands,
+      signal: reaction.signal,
+      idempotencyKey,
+      after: afterFrom(triggeredAt),
+      ...own,
+    });
 
   const runOf = async (
     reaction: Pick<ReactionCommands, "abandon">,
@@ -147,12 +150,13 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
               handlerOf(
                 process,
                 event,
-              )?.({
-                ...handlerArgs(process, reaction, idempotencyKey, event.timestamp),
-                event,
-                state: instance.state,
-                aggregateId: instanceId,
-              }),
+              )?.(
+                handlerArgs(process, reaction, idempotencyKey, event.timestamp, {
+                  event,
+                  state: instance.state,
+                  aggregateId: instanceId,
+                }),
+              ),
             timeoutMs: timeoutMs(process),
             subject: `process ${process.name}`,
             clock,
@@ -199,11 +203,12 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
         run: () =>
           withTimeout({
             run: () =>
-              handler({
-                ...handlerArgs(process, reaction, idempotencyKey, due.at),
-                state: instance.state,
-                aggregateId: instanceId,
-              }),
+              handler(
+                handlerArgs(process, reaction, idempotencyKey, due.at, {
+                  state: instance.state,
+                  aggregateId: instanceId,
+                }),
+              ),
             timeoutMs: timeoutMs(process),
             subject: `process ${process.name} at ${due.field}`,
             clock,

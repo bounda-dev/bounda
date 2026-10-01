@@ -1,9 +1,9 @@
 import { sqlite } from "@bounda-dev/adapter-sqlite";
 import { DomainError } from "@bounda-dev/core";
 import { createTestApp } from "@bounda-dev/core/testing";
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { registry } from "../.bounda/registry.ts";
-import { sent } from "../app/domain/order/notifier/memory.ts";
+import type { Confirmation } from "../app/domain/order/notifier/index.ts";
 
 const ORDER = "018f6a5e-4c3c-7c1e-9d4b-0b2c4a1d8e01";
 const OTHER = "018f6a5e-4c3c-7c1e-9d4b-0b2c4a1d8e02";
@@ -12,22 +12,24 @@ const items = [
   { productId: "cable", quantity: 2, price: 9.5 },
 ];
 
-const start = () =>
-  createTestApp({
+/**
+ * Each test gets its own notifier, which records what it was asked to send.
+ */
+const start = async () => {
+  const sent: Confirmation[] = [];
+  const test = await createTestApp({
     registry,
     adapter: sqlite({ memory: true }),
-    config: { collaborators: { order: { notifier: "memory" } } },
+    collaborators: { order: { notifier: async (confirmation) => void sent.push(confirmation) } },
   });
+  return { ...test, sent };
+};
 
 const HOUR = 3_600_000;
 
 describe("storefront", () => {
-  beforeEach(() => {
-    sent.length = 0;
-  });
-
   it("places an order, confirms it to the customer and auto-fulfils it once confirmed", async () => {
-    const { app } = await start();
+    const { app, sent } = await start();
     await app.commands.placeOrder({ orderId: ORDER, customerId: "ada", items });
     await app.processUntilIdle();
 

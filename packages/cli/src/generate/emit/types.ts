@@ -57,6 +57,8 @@ export const collaboratorsTypeName: CollaboratorsTypeNameFunction = (aggregateNa
 
 export const COLLABORATORS_CONFIG_TYPE_NAME = "CollaboratorsConfig";
 
+export const TEST_COLLABORATORS_TYPE_NAME = "TestCollaborators";
+
 const typeofImport = (from: string, to: string): string =>
   `typeof import("${importPath({ from, to })}")`;
 
@@ -129,6 +131,31 @@ const emitCollaboratorsConfig = (model: ProjectModel): string => {
   ].join("\n");
 };
 
+/**
+ * Everything is optional, since a test only passes the ports it exercises, and each port takes a
+ * double of its interface as well as an implementation name.
+ */
+const emitTestCollaborators = (model: ProjectModel): string => {
+  const aggregates = model.aggregates.filter((aggregate) => aggregate.collaborators.length > 0);
+  if (aggregates.length === 0) {
+    return `export type ${TEST_COLLABORATORS_TYPE_NAME} = Readonly<Record<string, never>>;`;
+  }
+  return [
+    `export type ${TEST_COLLABORATORS_TYPE_NAME} = {`,
+    ...aggregates.flatMap((aggregate) => [
+      `  readonly ${aggregate.name}?: {`,
+      ...aggregate.collaborators.map(
+        (port) =>
+          `    readonly ${port.key}?: ${implementationNames(
+            port.implementations.map((implementation) => implementation.name),
+          )} | ${collaboratorsTypeName(aggregate.name)}["${port.key}"];`,
+      ),
+      "  };",
+    ]),
+    "};",
+  ].join("\n");
+};
+
 const emitMap = (
   name: string,
   wrapper: string,
@@ -144,9 +171,9 @@ const emitMap = (
 
 /**
  * Renders `.bounda/types.ts`: each aggregate's `State`, `Events` and `Collaborators`, the app's
- * `Events`, the type of the `collaborators` configuration, each read model's `Row`, and the
- * `Commands` and `Queries` facade types. Modules are referenced only through `import(...)` types,
- * so the file never imports the registry.
+ * `Events`, the types of the `collaborators` of the configuration and of `createTestApp`, each
+ * read model's `Row`, and the `Commands` and `Queries` facade types. Modules are referenced only
+ * through `import(...)` types, so the file never imports the registry.
  */
 export const emitTypes: EmitTypesFunction = ({ model, path, inferredStates = {} }) => {
   const sections: string[] = ['import type * as core from "@bounda-dev/core";'];
@@ -171,6 +198,7 @@ export const emitTypes: EmitTypesFunction = ({ model, path, inferredStates = {} 
         ].join("\n"),
   );
   sections.push(emitCollaboratorsConfig(model));
+  sections.push(emitTestCollaborators(model));
   const commandModules = model.aggregates.flatMap((aggregate) =>
     aggregate.commands.map((command) => [command.key, typeofImport(path, command.path)] as const),
   );
