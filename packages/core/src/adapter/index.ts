@@ -52,6 +52,7 @@ export type {
   FailScheduledArgs,
   ListScheduledArgs,
   NextDueAtArgs,
+  RenewScheduledArgs,
   ScheduleArgs,
   ScheduledClaim,
   ScheduledCommand,

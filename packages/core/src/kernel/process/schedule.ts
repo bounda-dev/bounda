@@ -36,9 +36,14 @@ export interface DeadlineSchedule {
    */
   stage(unit: UnitOfWork, process: ProcessRuntime, instanceId: string): Promise<void>;
   /**
-   * Removes the entry of an instance, even of a process no longer in the registry.
+   * Removes the entry of an instance, even of a process no longer in the registry; staged in
+   * `unit` when one is given.
    */
-  cancel(process: string, instanceId: string): Promise<void>;
+  cancel(
+    process: string,
+    instanceId: string,
+    unit?: Pick<UnitOfWork, "scheduler"> | undefined,
+  ): Promise<void>;
 }
 
 export interface CreateDeadlineScheduleArgs {
@@ -78,5 +83,6 @@ export const createDeadlineSchedule: CreateDeadlineScheduleFunction = ({ storage
       keepTimingOfSameCommand: true,
     });
   },
-  cancel: (process, instanceId) => storage.scheduler.cancel(deadlineKey(process, instanceId)),
+  cancel: (process, instanceId, unit = storage) =>
+    unit.scheduler.cancel(deadlineKey(process, instanceId)),
 });

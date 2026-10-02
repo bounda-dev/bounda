@@ -5,6 +5,7 @@ import type {
   ScheduledCommand,
   Scheduler,
 } from "../adapter/ports/scheduler.ts";
+import { ScheduledClaimLostError } from "../contracts/errors.ts";
 import { snapshotMap } from "./transaction.ts";
 
 /**
@@ -51,9 +52,10 @@ const sameCommand = (a: ScheduledCommand, b: ScheduledCommand): boolean =>
 export const createMemoryScheduler: CreateMemorySchedulerFunction = () => {
   const entries = new Map<string, Entry>();
 
-  const heldBy = (claim: ScheduledClaim): Entry | undefined => {
+  const heldBy = (claim: ScheduledClaim): Entry => {
     const entry = entries.get(claim.dedupeKey);
-    return entry?.claimId === claim.claimId ? entry : undefined;
+    if (entry?.claimId !== claim.claimId) throw new ScheduledClaimLostError(claim.dedupeKey);
+    return entry;
   };
 
   const release = (entry: Entry): void => {
@@ -119,13 +121,11 @@ export const createMemoryScheduler: CreateMemorySchedulerFunction = () => {
     },
     complete: async (claim) => {
       const entry = heldBy(claim);
-      if (entry === undefined) return;
       if (entry.revision === claim.revision) entries.delete(claim.dedupeKey);
       else release(entry);
     },
     fail: async ({ claim, error, retryAt }) => {
       const entry = heldBy(claim);
-      if (entry === undefined) return;
       if (entry.revision !== claim.revision) {
         release(entry);
         return;
@@ -145,12 +145,14 @@ export const createMemoryScheduler: CreateMemorySchedulerFunction = () => {
     },
     defer: async ({ claim, executeAt }) => {
       const entry = heldBy(claim);
-      if (entry === undefined) return;
       release(
         entry.revision === claim.revision
           ? { ...entry, executeAt: executeAt.toISOString() }
           : entry,
       );
+    },
+    renew: async ({ claim, now }) => {
+      entries.set(claim.dedupeKey, { ...heldBy(claim), claimedAt: now.toISOString() });
     },
     list: async ({ limit, offset = 0 } = {}) =>
       [...entries.values()]

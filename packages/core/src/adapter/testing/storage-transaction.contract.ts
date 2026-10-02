@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { ConcurrencyError } from "../../contracts/errors.ts";
+import { ConcurrencyError, ScheduledClaimLostError } from "../../contracts/errors.ts";
 import type { StoragePorts, StorageTransaction } from "../adapter.ts";
 import type { NewDeadLetter } from "../ports/dead-letter-store.ts";
 import { pendingEvent, testCommand, testContext } from "./fixtures.ts";
@@ -123,6 +123,38 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
         }),
       ).rejects.toBeInstanceOf(ConcurrencyError);
       await nothingWritten();
+    });
+
+    it("writes nothing when the scheduler entry it settles was claimed again", async () => {
+      await storage.scheduler.schedule({
+        dedupeKey: "command:c1",
+        command: testCommand("1"),
+        executeAt: now,
+        context: testContext,
+      });
+      const [stale] = await storage.scheduler.claimDue({ now, limit: 1, leaseMs: 1_000 });
+      const later = new Date(now.getTime() + 1_001);
+      expect(
+        await storage.scheduler.claimDue({ now: later, limit: 1, leaseMs: 1_000 }),
+      ).toHaveLength(1);
+      if (stale === undefined) throw new Error("nothing claimed");
+      await expect(
+        storage.transact(async (tx) => {
+          await tx.eventStore.append({
+            aggregateType: "order",
+            aggregateId: "1",
+            expectedVersion: 0,
+            events: [pendingEvent({ aggregateId: "1", version: 1 })],
+          });
+          await tx.inboxLedger.complete(key);
+          await tx.scheduler.complete(stale);
+        }),
+      ).rejects.toBeInstanceOf(ScheduledClaimLostError);
+      expect(await storage.eventStore.lastPosition()).toBe(0);
+      expect((await storage.inboxLedger.get(key))?.status).toBe("pending");
+      expect(await storage.scheduler.list()).toMatchObject([
+        { dedupeKey: "command:c1", attempts: 1 },
+      ]);
     });
 
     it("lets the work read the events it appended", async () => {

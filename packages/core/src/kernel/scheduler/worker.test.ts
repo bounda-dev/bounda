@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { ClaimedCommand } from "../../adapter/ports/scheduler.ts";
 import { ConcurrencyError, DomainError } from "../../contracts/errors.ts";
 import type { PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
@@ -17,6 +18,8 @@ import {
   sentMessages,
   slowJob,
 } from "../test-support.ts";
+
+const LOST_CLAIM = "scheduled command no longer holds its claim; this run wrote nothing";
 
 describe("scheduled command worker", () => {
   it("runs due commands with their stored context and completes them", async () => {
@@ -359,6 +362,242 @@ describe("scheduled command worker", () => {
       },
     });
     expect(harness.worker.leaseMs).toBe(120_000);
+  });
+
+  it.each([
+    ["succeeds", () => undefined, 0],
+    [
+      "fails for good",
+      () => {
+        throw new DomainError("Orders are closed");
+      },
+      1,
+    ],
+    [
+      "fails and would retry",
+      () => {
+        throw new Error("db unavailable");
+      },
+      1,
+    ],
+  ])(
+    "writes nothing of a run that %s after another instance took its claim over",
+    async (_, outcome, failures) => {
+      const { logger, entries } = createRecordingLogger();
+      const harness = await createReactiveHarness({ registry: orderRegistry, logger });
+      await harness.pipeline.dispatch({
+        type: "PlaceOrder",
+        payload: { orderId: "o-1", total: 10 },
+        options: { delay: "1m" },
+      });
+      harness.clock.advance(60_000);
+      let takenOver: readonly ClaimedCommand[] = [];
+      const dispatch = harness.pipeline.dispatch;
+      vi.spyOn(harness.pipeline, "dispatch").mockImplementationOnce(async (args) => {
+        const result = await dispatch(args);
+        harness.clock.advance(harness.worker.leaseMs + 1);
+        takenOver = await harness.storage.scheduler.claimDue({
+          now: harness.clock.now(),
+          limit: 10,
+          leaseMs: harness.worker.leaseMs,
+        });
+        outcome();
+        return result;
+      });
+
+      const fail = vi.spyOn(harness.storage.scheduler, "fail");
+      expect(await harness.worker.runOnce()).toBe(1);
+
+      expect(fail).toHaveBeenCalledTimes(failures);
+      expect(takenOver).toHaveLength(1);
+      expect(await harness.storage.eventStore.lastPosition()).toBe(0);
+      expect(await harness.storage.deadLetterStore.count()).toBe(0);
+      expect(await harness.storage.scheduler.list()).toMatchObject([{ attempts: 1 }]);
+      expect(entries).toEqual([
+        {
+          level: "warn",
+          message: LOST_CLAIM,
+          fields: { command: "PlaceOrder", dedupeKey: expect.stringMatching(/^command:/) },
+        },
+      ]);
+      const [current] = takenOver;
+      if (current === undefined) throw new Error("nothing taken over");
+      await harness.storage.scheduler.complete(current);
+      expect(await harness.storage.scheduler.list()).toEqual([]);
+    },
+  );
+
+  it("runs none of the entries of its batch another instance took over before it reached them", async () => {
+    const { logger, entries } = createRecordingLogger();
+    const harness = await createReactiveHarness({ registry: orderRegistry, logger });
+    sentMessages.length = 0;
+    for (const orderId of ["o-1", "o-2", "o-3"]) {
+      await harness.pipeline.dispatch({
+        type: "PlaceOrder",
+        payload: { orderId, total: 10 },
+        options: { delay: "1m" },
+      });
+    }
+    harness.clock.advance(60_000);
+    let takenOver: readonly ClaimedCommand[] = [];
+    const dispatch = harness.pipeline.dispatch;
+    vi.spyOn(harness.pipeline, "dispatch").mockImplementationOnce(async (args) => {
+      const result = await dispatch(args);
+      harness.clock.advance(harness.worker.leaseMs + 1);
+      takenOver = await harness.storage.scheduler.claimDue({
+        now: harness.clock.now(),
+        limit: 10,
+        leaseMs: harness.worker.leaseMs,
+      });
+      return result;
+    });
+
+    expect(await harness.worker.runOnce()).toBe(3);
+
+    expect(takenOver).toHaveLength(3);
+    expect(sentMessages).toHaveLength(1);
+    expect(await harness.storage.eventStore.lastPosition()).toBe(0);
+    expect(entries.map((entry) => entry.message)).toEqual(
+      Array.from({ length: 3 }, () => LOST_CLAIM),
+    );
+  });
+
+  it("hands back unrun, without an attempt, the entries of a batch it reaches too late in their lease", async () => {
+    const harness = await createReactiveHarness({ registry: orderRegistry });
+    sentMessages.length = 0;
+    for (const orderId of ["o-1", "o-2", "o-3"]) {
+      await harness.pipeline.dispatch({
+        type: "PlaceOrder",
+        payload: { orderId, total: 10 },
+        options: { delay: "1m" },
+      });
+    }
+    harness.clock.advance(60_000);
+    const dispatch = harness.pipeline.dispatch;
+    const slow =
+      (ms: number): typeof dispatch =>
+      async (args) => {
+        harness.clock.advance(ms);
+        return dispatch(args);
+      };
+    vi.spyOn(harness.pipeline, "dispatch")
+      .mockImplementationOnce(slow(harness.worker.leaseMs / 4))
+      .mockImplementationOnce(slow(1));
+
+    expect(await harness.worker.runOnce()).toBe(3);
+
+    expect(sentMessages).toHaveLength(2);
+    expect(await harness.storage.scheduler.list()).toMatchObject([{ attempts: 0 }]);
+    expect(await harness.worker.runOnce()).toBe(1);
+    expect(sentMessages).toHaveLength(3);
+    expect(await harness.storage.scheduler.list()).toEqual([]);
+  });
+
+  describe("a run that meets a conflict", () => {
+    const conflicting = async (harness: Awaited<ReturnType<typeof createReactiveHarness>>) => {
+      await harness.pipeline.dispatch({
+        type: "PlaceOrder",
+        payload: { orderId: "o-1", total: 10 },
+        options: { delay: "1m" },
+      });
+      harness.clock.advance(60_000);
+      const dispatch = harness.pipeline.dispatch;
+      const runs = vi.spyOn(harness.pipeline, "dispatch").mockImplementationOnce(async (args) => {
+        const result = await dispatch(args);
+        await dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+        return result;
+      });
+      return runs;
+    };
+
+    const afterTheConflict = (
+      harness: Awaited<ReturnType<typeof createReactiveHarness>>,
+      then: () => Promise<unknown>,
+    ): void => {
+      const transact = harness.storage.transact.bind(harness.storage);
+      harness.storage.transact = async (work) => {
+        harness.storage.transact = transact;
+        try {
+          return await transact(work);
+        } catch (error) {
+          await then();
+          throw error;
+        }
+      };
+    };
+
+    it("renews its claim before running again, and stops once the claim moved", async () => {
+      const { logger, entries } = createRecordingLogger();
+      const harness = await createReactiveHarness({ registry: orderRegistry, logger });
+      const runs = await conflicting(harness);
+      afterTheConflict(harness, async () => {
+        harness.clock.advance(harness.worker.leaseMs + 1);
+        await harness.storage.scheduler.claimDue({
+          now: harness.clock.now(),
+          limit: 10,
+          leaseMs: harness.worker.leaseMs,
+        });
+      });
+
+      expect(await harness.worker.runOnce()).toBe(1);
+
+      expect(runs).toHaveBeenCalledTimes(1);
+      const order = await harness.storage.eventStore.load({
+        aggregateType: "order",
+        aggregateId: "o-1",
+      });
+      expect(order.events.map((event) => event.type)).toEqual(["OrderPlaced"]);
+      expect(await harness.storage.deadLetterStore.count()).toBe(0);
+      expect(entries.map((entry) => entry.message)).toEqual([LOST_CLAIM]);
+    });
+
+    it("keeps its claim for the rerun, past the lease it was claimed with", async () => {
+      const harness = await createReactiveHarness({ registry: orderRegistry });
+      const runs = await conflicting(harness);
+      const transact = harness.storage.transact.bind(harness.storage);
+      let peer: readonly ClaimedCommand[] = [];
+      afterTheConflict(harness, async () => {
+        harness.clock.advance(harness.worker.leaseMs - 1);
+        harness.storage.transact = async (work) => {
+          peer = await harness.storage.scheduler.claimDue({
+            now: new Date(harness.clock.now().getTime() + 2),
+            limit: 10,
+            leaseMs: harness.worker.leaseMs,
+          });
+          return transact(work);
+        };
+      });
+
+      expect(await harness.worker.runOnce()).toBe(1);
+
+      expect(peer).toEqual([]);
+      expect(runs).toHaveBeenCalledTimes(2);
+      expect(await harness.storage.scheduler.list()).toEqual([]);
+    });
+
+    it("leaves its claim to lapse when renewing it fails in the store, spending no attempt", async () => {
+      const { logger, entries } = createRecordingLogger();
+      const harness = await createReactiveHarness({ registry: orderRegistry, logger });
+      const runs = await conflicting(harness);
+      afterTheConflict(harness, async () => {
+        harness.storage.scheduler.renew = async () => {
+          throw new Error("connection reset");
+        };
+      });
+
+      expect(await harness.worker.runOnce()).toBe(1);
+
+      expect(runs).toHaveBeenCalledTimes(1);
+      expect(await harness.storage.scheduler.list()).toMatchObject([{ attempts: 0 }]);
+      expect(await harness.storage.deadLetterStore.count()).toBe(0);
+      expect(entries).toEqual([
+        {
+          level: "error",
+          message: "scheduled command could not be settled; its lease will lapse",
+          fields: expect.objectContaining({ command: "PlaceOrder", message: "connection reset" }),
+        },
+      ]);
+    });
   });
 
   it("holds its claims long enough for the slowest command handler", async () => {

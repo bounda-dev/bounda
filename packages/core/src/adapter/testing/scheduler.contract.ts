@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { ScheduledClaimLostError } from "../../contracts/errors.ts";
 import type { ClaimedCommand, ScheduleArgs, Scheduler } from "../ports/scheduler.ts";
 import { testCommand, testContext } from "./fixtures.ts";
 
@@ -100,6 +101,26 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
       const reclaimed = await scheduler.claimDue({ now: at(60_002), limit: 10, leaseMs: 60_000 });
       expect(reclaimed).toHaveLength(1);
       expect(reclaimed[0]?.attempts).toBe(1);
+    });
+
+    it("counts a renewed claim's lease from the renewal, and leaves the rest of the entry as it is", async () => {
+      await scheduler.schedule({
+        dedupeKey: "a",
+        command: testCommand("1"),
+        executeAt: at(0),
+        context: testContext,
+      });
+      const [claimed] = await scheduler.claimDue({ now: at(1), limit: 10, leaseMs: 60_000 });
+      if (claimed === undefined) throw new Error("nothing claimed");
+      await scheduler.renew({ claim: claimed, now: at(50_000) });
+
+      expect(await scheduler.claimDue({ now: at(60_002), limit: 10, leaseMs: 60_000 })).toEqual([]);
+      expect(await scheduler.nextDueAt({ leaseMs: 60_000 })).toEqual(at(110_001));
+      expect(await scheduler.list()).toMatchObject([
+        { executeAt: at(0).toISOString(), attempts: 0 },
+      ]);
+      await scheduler.complete(claimed);
+      expect(await scheduler.list()).toEqual([]);
     });
 
     it("says when the next command becomes claimable, counting leases", async () => {
@@ -217,7 +238,9 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
 
       const [current] = await scheduler.claimDue({ now: at(200_000), limit: 10, leaseMs: 60_000 });
       if (current === undefined) throw new Error("lease was not taken over");
-      await scheduler.defer({ claim: first, executeAt: at(200_001) });
+      await expect(
+        scheduler.defer({ claim: first, executeAt: at(200_001) }),
+      ).rejects.toBeInstanceOf(ScheduledClaimLostError);
       expect(await scheduler.claimDue({ now: at(200_001), limit: 10, leaseMs: 60_000 })).toEqual(
         [],
       );
@@ -338,7 +361,7 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
       });
     });
 
-    it("ignores a claim whose lease another worker took over", async () => {
+    it("rejects settling a claim whose lease another worker took over, and keeps theirs", async () => {
       await scheduler.schedule({
         dedupeKey: "a",
         command: testCommand("1"),
@@ -349,8 +372,21 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
       const [current] = await scheduler.claimDue({ now: at(1_002), limit: 10, leaseMs: 1_000 });
       if (stale === undefined || current === undefined) throw new Error("nothing claimed");
 
-      await scheduler.complete(stale);
-      await scheduler.fail({ claim: stale, error: "late", retryAt: at(100_000) });
+      const lost = await scheduler.complete(stale).catch((error: unknown) => error);
+      expect(lost).toBeInstanceOf(ScheduledClaimLostError);
+      expect(lost).toMatchObject({ code: "SCHEDULED_CLAIM_LOST", dedupeKey: "a" });
+      await expect(
+        scheduler.fail({ claim: stale, error: "late", retryAt: at(100_000) }),
+      ).rejects.toBeInstanceOf(ScheduledClaimLostError);
+      await expect(scheduler.fail({ claim: stale, error: "late" })).rejects.toBeInstanceOf(
+        ScheduledClaimLostError,
+      );
+      await expect(scheduler.defer({ claim: stale, executeAt: at(1_002) })).rejects.toBeInstanceOf(
+        ScheduledClaimLostError,
+      );
+      await expect(scheduler.renew({ claim: stale, now: at(1_002) })).rejects.toBeInstanceOf(
+        ScheduledClaimLostError,
+      );
       expect(await scheduler.claimDue({ now: at(1_003), limit: 10, leaseMs: 1_000 })).toEqual([]);
       expect(await scheduler.list()).toHaveLength(1);
 
@@ -358,7 +394,7 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
       expect(await scheduler.list()).toEqual([]);
     });
 
-    it("keeps a command scheduled again after a cancel, whatever the old claim does", async () => {
+    it("rejects the old claim on a command scheduled again after a cancel, and keeps the new one", async () => {
       const entry: ScheduleArgs = {
         dedupeKey: "a",
         command: testCommand("1"),
@@ -372,14 +408,16 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
       const [fresh] = await scheduler.claimDue({ now: at(1), limit: 10, leaseMs: 60_000 });
       if (old === undefined || fresh === undefined) throw new Error("nothing claimed");
 
-      await scheduler.complete(old);
-      await scheduler.fail({ claim: old, error: "late" });
+      await expect(scheduler.complete(old)).rejects.toBeInstanceOf(ScheduledClaimLostError);
+      await expect(scheduler.fail({ claim: old, error: "late" })).rejects.toBeInstanceOf(
+        ScheduledClaimLostError,
+      );
       expect(await scheduler.list()).toHaveLength(1);
       await scheduler.complete(fresh);
       expect(await scheduler.list()).toEqual([]);
     });
 
-    it("does not bring back a claimed command that was cancelled", async () => {
+    it("rejects settling a claimed command that was cancelled, and does not bring it back", async () => {
       await scheduler.schedule({
         dedupeKey: "a",
         command: testCommand("1"),
@@ -389,9 +427,36 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
       const [claimed] = await scheduler.claimDue({ now: at(1), limit: 10, leaseMs: 60_000 });
       if (claimed === undefined) throw new Error("nothing claimed");
       await scheduler.cancel("a");
-      await scheduler.fail({ claim: claimed, error: "boom", retryAt: at(5_000) });
-      await scheduler.complete(claimed);
+      await expect(
+        scheduler.fail({ claim: claimed, error: "boom", retryAt: at(5_000) }),
+      ).rejects.toBeInstanceOf(ScheduledClaimLostError);
+      await expect(
+        scheduler.defer({ claim: claimed, executeAt: at(5_000) }),
+      ).rejects.toBeInstanceOf(ScheduledClaimLostError);
+      await expect(scheduler.renew({ claim: claimed, now: at(5_000) })).rejects.toBeInstanceOf(
+        ScheduledClaimLostError,
+      );
+      await expect(scheduler.complete(claimed)).rejects.toBeInstanceOf(ScheduledClaimLostError);
       expect(await scheduler.list()).toEqual([]);
+    });
+
+    it("rejects settling or renewing a claim it never handed out", async () => {
+      await scheduler.schedule({
+        dedupeKey: "a",
+        command: testCommand("1"),
+        executeAt: at(0),
+        context: testContext,
+      });
+      await expect(
+        scheduler.complete({ dedupeKey: "a", revision: 0, claimId: "nobody" }),
+      ).rejects.toBeInstanceOf(ScheduledClaimLostError);
+      await expect(
+        scheduler.complete({ dedupeKey: "b", revision: 0, claimId: "nobody" }),
+      ).rejects.toBeInstanceOf(ScheduledClaimLostError);
+      await expect(
+        scheduler.renew({ claim: { dedupeKey: "a", revision: 0, claimId: "nobody" }, now: at(1) }),
+      ).rejects.toBeInstanceOf(ScheduledClaimLostError);
+      expect(await scheduler.claimDue({ now: at(1), limit: 10, leaseMs: 60_000 })).toHaveLength(1);
     });
 
     it("lists pending commands ordered by execution time with paging", async () => {

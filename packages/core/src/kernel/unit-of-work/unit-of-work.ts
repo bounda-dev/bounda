@@ -65,6 +65,10 @@ export interface CommitAttemptArgs {
    */
   readonly concurrencyRetries: number;
   readonly work: (unit: UnitOfWork) => Promise<void>;
+  /**
+   * Runs before each rerun; what it throws ends the attempt instead.
+   */
+  readonly beforeRerun?: (() => Promise<void>) | undefined;
 }
 
 export interface CommitAttemptFunction {
@@ -80,8 +84,10 @@ export const commitAttempt: CommitAttemptFunction = async ({
   storage,
   concurrencyRetries,
   work,
+  beforeRerun,
 }) => {
   for (let race = 0; ; race += 1) {
+    if (race > 0) await beforeRerun?.();
     const unit = createUnitOfWork({ storage });
     await work(unit);
     try {

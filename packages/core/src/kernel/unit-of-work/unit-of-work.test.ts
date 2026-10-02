@@ -387,6 +387,41 @@ describe("createUnitOfWork", () => {
     expect(attempts).toBe(3);
   });
 
+  it("runs beforeRerun before each rerun only, and ends the attempt with what it throws", async () => {
+    const storage = await memory().createStorage({ logger: silentLogger });
+    const steps: string[] = [];
+    const stale = async (unit: UnitOfWork) => {
+      steps.push("work");
+      const stream = { aggregateType: "order", aggregateId: "3" };
+      const loaded = await unit.eventStore.load(stream);
+      await unit.eventStore.append({
+        ...stream,
+        expectedVersion: loaded.version,
+        events: [pendingEvent({ aggregateId: "3", version: loaded.version + 1 })],
+      });
+      const live = await storage.eventStore.load(stream);
+      await storage.eventStore.append({
+        ...stream,
+        expectedVersion: live.version,
+        events: [pendingEvent({ aggregateId: "3", version: live.version + 1 })],
+      });
+    };
+    let reruns = 0;
+    await expect(
+      commitAttempt({
+        storage,
+        concurrencyRetries: 3,
+        work: stale,
+        beforeRerun: async () => {
+          steps.push("rerun");
+          reruns += 1;
+          if (reruns === 2) throw new Error("claim moved");
+        },
+      }),
+    ).rejects.toThrow("claim moved");
+    expect(steps).toEqual(["work", "rerun", "work", "rerun"]);
+  });
+
   it("tells a commit that failed for another reason apart from what the work threw", async () => {
     const storage = await memory().createStorage({ logger: silentLogger });
     breakNextCommit(storage);

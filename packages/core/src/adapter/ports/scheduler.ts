@@ -17,7 +17,9 @@ export interface ScheduledCommand {
  * Who holds a claimed command and which version of it they hold. `claimId` is new on every claim;
  * `revision` grows each time the key is scheduled again with something different. `complete`,
  * `fail` and `defer` act only while both still match, so a worker finishing a command that was
- * rescheduled meanwhile, or whose lease another worker took over, cannot undo the newer state.
+ * rescheduled meanwhile cannot undo the newer version, and they reject with
+ * `ScheduledClaimLostError` once the key no longer holds `claimId`, so a run whose lease another
+ * worker took over writes nothing.
  */
 export interface ScheduledClaim {
   readonly dedupeKey: string;
@@ -66,6 +68,14 @@ export interface DeferScheduledArgs {
   readonly executeAt: Date;
 }
 
+export interface RenewScheduledArgs {
+  readonly claim: ScheduledClaim;
+  /**
+   * The kernel clock's time, which the lease then counts from.
+   */
+  readonly now: Date;
+}
+
 export interface NextDueAtArgs {
   /**
    * The lease `claimDue` is called with: a claimed command becomes claimable again once it has
@@ -101,7 +111,8 @@ export interface Scheduler {
   nextDueAt(args: NextDueAtArgs): Promise<Date | null>;
   /**
    * Removes a command that ran. If it was rescheduled meanwhile, the claim is released instead and
-   * the new version stays; if the claim is no longer this one, nothing happens.
+   * the new version stays. Rejects with `ScheduledClaimLostError` when the key no longer holds
+   * this claim: another worker claimed it, or it was cancelled.
    */
   complete(claim: ScheduledClaim): Promise<void>;
   /**
@@ -114,5 +125,11 @@ export interface Scheduler {
    * work that was not ready yet rather than work that failed. Same rules as `complete`.
    */
   defer(args: DeferScheduledArgs): Promise<void>;
+  /**
+   * Restarts the claim's lease at `now`, for a worker about to run the command again after a
+   * conflict; nothing else of the entry changes. Rejects with `ScheduledClaimLostError` when the key
+   * no longer holds this claim, so the run does not start again.
+   */
+  renew(args: RenewScheduledArgs): Promise<void>;
   list(args?: ListScheduledArgs): Promise<readonly ScheduledCommand[]>;
 }

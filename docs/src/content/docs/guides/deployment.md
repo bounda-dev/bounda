@@ -79,7 +79,10 @@ const next = idle ? await app.nextDueAt() : new Date();
 Use PostgreSQL. SQLite is a single writer and fine for one process; PostgreSQL is what the
 adapter's concurrency work is for. Handler claims are single `INSERT … ON CONFLICT` statements and
 due scheduled commands are taken `FOR UPDATE SKIP LOCKED`, so any number of instances can run the
-worker role and each policy or process handler and each due command runs on exactly one of them.
+worker role and each policy or process handler and each due command is claimed by one of them at a
+time. Only the instance holding the claim commits: one that stalls past its lease loses the claim
+to another instance, which runs the work again, and the stalled run writes nothing when it ends.
+What a handler does outside the store, such as calling an API, can therefore happen twice.
 
 Projections go further: they are applied exactly once. Each batch runs in one transaction that
 holds an advisory lock named after its read model, writes the rows and advances the checkpoint, so

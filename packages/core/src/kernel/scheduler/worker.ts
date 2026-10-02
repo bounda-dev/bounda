@@ -3,6 +3,7 @@ import type { DeadLetterErrorType, NewDeadLetter } from "../../adapter/ports/dea
 import type { ClaimedCommand, ScheduledCommand } from "../../adapter/ports/scheduler.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
+import { ScheduledClaimLostError } from "../../contracts/errors.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
@@ -29,7 +30,9 @@ export interface ScheduledCommandWorker {
    */
   runOnce(): Promise<number>;
   /**
-   * Outlasts the slowest handler timeout, so no run outlives its claim.
+   * Outlasts the slowest handler timeout. A run renews its claim before each rerun after a
+   * conflict, so the lease covers one run, not a batch; the store has no time limit, so a run can
+   * still outlive it.
    */
   readonly leaseMs: number;
   waitingDeadlines(): number;
@@ -54,6 +57,16 @@ export interface CreateScheduledCommandWorkerFunction {
 const CLAIM_LIMIT = 50;
 
 /**
+ * A renewal before a rerun that failed in the store: the store's failure, not the run's, so it is
+ * neither retried nor dead-lettered as one.
+ */
+class RenewFailed extends Error {
+  constructor(cause: unknown) {
+    super(undefined, { cause });
+  }
+}
+
+/**
  * Rounds a due deadline waits for the process runner to catch up before it runs anyway.
  */
 export const DEADLINE_WAIT_ROUNDS = 10;
@@ -66,11 +79,12 @@ interface DeadlineWait {
 /**
  * Runs delayed commands, process deadlines and delayed policy runs, each claimed under a lease.
  * A run and the settling of its claim are one unit of work: what the run wrote and the claim's
- * completion land together, so a crash between them cannot run the command twice, and a give-up
- * writes its dead letter with the claim's failure. A deadline first waits for the process runner,
- * so an event that cancels it is seen first; this is best effort, since the aggregates still
- * check what it sends. Deadline entries are never removed here: the process runner writes what
- * comes next, so a crash in between leaves the entry to its lease instead of losing it.
+ * completion land together, so a crash between them cannot run the command twice, a run whose
+ * claim another instance took over writes nothing, and a give-up writes its dead letter with the
+ * claim's failure. A deadline first waits for the process runner, so an event that cancels it is
+ * seen first; this is best effort, since the aggregates still check what it sends. Deadline
+ * entries are never removed here: the process runner writes what comes next, so a crash in between
+ * leaves the entry to its lease instead of losing it.
  */
 export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction = ({
   storage,
@@ -87,15 +101,19 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   let cancelWait: (() => void) | undefined;
   let running = false;
   const defaultRetry = config.runtime.policies.retry;
-  const leaseMs =
-    Math.max(
-      config.runtime.commands.timeoutMs,
-      config.runtime.policies.timeoutMs,
-      ...Object.values(config.runtime.overrides).flatMap((override) => [
-        override.commands.timeoutMs,
-        override.policies.timeoutMs,
-      ]),
-    ) * 2;
+  const timeoutMs = Math.max(
+    config.runtime.commands.timeoutMs,
+    config.runtime.policies.timeoutMs,
+    ...Object.values(config.runtime.overrides).flatMap((override) => [
+      override.commands.timeoutMs,
+      override.policies.timeoutMs,
+    ]),
+  );
+  const leaseMs = timeoutMs * 2;
+  // An entry of a batch starts only this soon after the claim, so the entries behind it still hold
+  // theirs when it ends, store time included, and go back unrun without an attempt instead of
+  // lapsing into another worker's claim, which counts one.
+  const startWithinMs = timeoutMs / 2;
 
   const waits = new Map<string, DeadlineWait>();
 
@@ -105,8 +123,22 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   const deadlineOf = (entry: ScheduledCommand): ProcessDeadlinePayload =>
     entry.command.payload as ProcessDeadlinePayload;
 
-  const settled = (work: (unit: UnitOfWork) => Promise<void>): Promise<void> =>
-    commitWork({ storage, concurrencyRetries: config.runtime.commands.concurrencyRetries, work });
+  const settled = (
+    entry: ClaimedCommand,
+    work: (unit: UnitOfWork) => Promise<void>,
+  ): Promise<void> =>
+    commitWork({
+      storage,
+      concurrencyRetries: config.runtime.commands.concurrencyRetries,
+      work,
+      beforeRerun: async () => {
+        try {
+          await storage.scheduler.renew({ claim: entry, now: clock.now() });
+        } catch (error) {
+          throw error instanceof ScheduledClaimLostError ? error : new RenewFailed(error);
+        }
+      },
+    });
 
   const recordFailure = async (
     unit: UnitOfWork,
@@ -209,12 +241,12 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
         error,
         attempts,
         errorType: reason,
+        settle: (unit) => deferToItsTime(entry, unit),
       });
-      await deferToItsTime(entry);
       return;
     }
     const letter = letterOf(entry, error, attempts, reason);
-    await settled(async (unit) => {
+    await settled(entry, async (unit) => {
       if (!delayedPolicies.isDelayedPolicy(entry))
         await recordFailure(unit, entry, error, attempts);
       await unit.deadLetterStore.add(letter);
@@ -253,22 +285,24 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       },
     });
 
-  const deferToItsTime = (entry: ClaimedCommand): Promise<void> =>
-    storage.scheduler.defer({ claim: entry, executeAt: new Date(entry.executeAt) });
+  const deferToItsTime = (
+    entry: ClaimedCommand,
+    { scheduler }: Pick<UnitOfWork, "scheduler">,
+  ): Promise<void> => scheduler.defer({ claim: entry, executeAt: new Date(entry.executeAt) });
 
   const execute = async (entry: ClaimedCommand): Promise<void> => {
     try {
-      await settled(async (unit) => {
+      // Settled before the run stages anything, so a run that schedules or cancels its own key
+      // does not make the claim look lost.
+      await settled(entry, async (unit) => {
+        if (isDeadline(entry)) await deferToItsTime(entry, unit);
+        else await unit.scheduler.complete(entry);
         await run(entry, unit);
-        if (isDeadline(entry)) {
-          await unit.scheduler.defer({ claim: entry, executeAt: new Date(entry.executeAt) });
-        } else {
-          await unit.scheduler.complete(entry);
-        }
       });
     } catch (error) {
+      if (error instanceof ScheduledClaimLostError || error instanceof RenewFailed) throw error;
       if (isDeadline(entry) && processes.lostRace(deadlineOf(entry), error)) {
-        await deferToItsTime(entry);
+        await deferToItsTime(entry, storage);
         return;
       }
       const attempts = entry.attempts + 1;
@@ -325,21 +359,26 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
 
   const runOnce = (): Promise<number> =>
     mutex.run(async () => {
-      const due = await storage.scheduler.claimDue({
-        now: clock.now(),
-        limit: CLAIM_LIMIT,
-        leaseMs,
-      });
+      const claimedAt = clock.now();
+      const due = await storage.scheduler.claimDue({ now: claimedAt, limit: CLAIM_LIMIT, leaseMs });
       const ready = await isDeadlineReady(due);
       for (const entry of due) {
         try {
-          if (ready(entry)) await execute(entry);
-          else await deferToItsTime(entry);
+          const late = clock.now().getTime() - claimedAt.getTime() > startWithinMs;
+          if (!late && ready(entry)) await execute(entry);
+          else await deferToItsTime(entry, storage);
         } catch (error) {
+          if (error instanceof ScheduledClaimLostError) {
+            logger.warn("scheduled command no longer holds its claim; this run wrote nothing", {
+              command: entry.command.type,
+              dedupeKey: entry.dedupeKey,
+            });
+            continue;
+          }
           logger.error("scheduled command could not be settled; its lease will lapse", {
             command: entry.command.type,
             dedupeKey: entry.dedupeKey,
-            ...errorDetails(error),
+            ...errorDetails(error instanceof RenewFailed ? error.cause : error),
           });
         }
       }

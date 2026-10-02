@@ -30,6 +30,11 @@ export interface FailDeadlineArgs {
   readonly error: unknown;
   readonly attempts: number;
   readonly errorType: DeadLetterErrorType;
+  /**
+   * Stages what settles the entry's claim, before anything else, so it commits with the failure
+   * or nothing of the failure does.
+   */
+  readonly settle: (unit: UnitOfWork) => Promise<void>;
 }
 
 /**
@@ -54,8 +59,8 @@ export interface ProcessDeadlines {
   lostRace(payload: DeadlineTarget, error: unknown): boolean;
   /**
    * Fails the process only when a deadline handler threw `error`, with `ProcessFailed`, the dead
-   * letter and the entry written together. Either way the entry is written again, since the
-   * worker has dropped it.
+   * letter and the entry written together. Either way the entry is written again, over what
+   * `settle` left of it.
    */
   failDeadline(args: FailDeadlineArgs): Promise<void>;
 }
@@ -92,7 +97,7 @@ export const createDeadlineDelivery: CreateDeadlineDeliveryFunction = ({
   }: HandleDeadlineArgs): Promise<void> => {
     const process = processes.byName[payload.process];
     if (process === undefined) {
-      await schedule.cancel(payload.process, payload.aggregateId);
+      await schedule.cancel(payload.process, payload.aggregateId, within);
       return;
     }
     const step = async (unit: UnitOfWork): Promise<void> => {
@@ -126,16 +131,21 @@ export const createDeadlineDelivery: CreateDeadlineDeliveryFunction = ({
     error,
     attempts,
     errorType,
+    settle,
   }: FailDeadlineArgs): Promise<void> => {
     const process = processes.byName[payload.process];
     if (process === undefined) {
-      await schedule.cancel(payload.process, payload.aggregateId);
+      await units.commit(async (unit) => {
+        await settle(unit);
+        await schedule.cancel(payload.process, payload.aggregateId, unit);
+      });
       return;
     }
     const failed = deadlineStep.thrownBy(error);
     let letter: NewDeadLetter | undefined;
     let status: ProcessStatus | undefined;
     await units.commit(async (unit, within) => {
+      await settle(unit);
       const instance = await within.load(process, payload.aggregateId);
       letter = undefined;
       status = instance.status;

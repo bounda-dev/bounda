@@ -12,8 +12,8 @@ export type DeferredStores = Pick<
  * The stores with their writes held back: `ports` answer reads from `live` at once and record
  * every write in order, and `flush` runs the writes recorded so far against another set of the
  * same stores, a transaction's or the live ones. `add` answers the letter as filed, whatever the
- * store holds under that id already. `tryClaim` and `claimDue` answer at once, from `live`, since
- * their answer decides what happens next.
+ * store holds under that id already. `tryClaim`, `claimDue` and `renew` act at once, on `live`,
+ * since their answer decides what happens next.
  */
 export interface DeferredWrites {
   readonly ports: DeferredStores;
@@ -67,6 +67,7 @@ export const deferWrites: DeferWritesFunction = ({ inboxLedger, deadLetterStore,
         complete: later((target, claim) => target.scheduler.complete(claim)),
         fail: later((target, args) => target.scheduler.fail(args)),
         defer: later((target, args) => target.scheduler.defer(args)),
+        renew: scheduler.renew,
       },
     },
     flush: async (target) => {

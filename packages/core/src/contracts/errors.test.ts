@@ -7,6 +7,7 @@ import {
   DomainError,
   NotFoundError,
   RebuildSupersededError,
+  ScheduledClaimLostError,
   ValidationError,
 } from "./errors.ts";
 
@@ -59,6 +60,13 @@ describe("errors", () => {
     expect(error.code).toBe("REBUILD_SUPERSEDED");
     expect(error.readModel).toBe("orderSummary");
     expect(error.message).toContain('"orderSummary"');
+  });
+
+  it("name the scheduled command whose claim moved", () => {
+    const error = new ScheduledClaimLostError("command:c-1");
+    expect(error.code).toBe("SCHEDULED_CLAIM_LOST");
+    expect(error.dedupeKey).toBe("command:c-1");
+    expect(error.message).toContain("command:c-1");
   });
 
   it("mark missing resources", () => {
