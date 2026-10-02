@@ -1,5 +1,104 @@
 # @bounda-dev/adapter-cloudflare
 
+## 0.2.0
+
+### Minor Changes
+
+- 04e643b: `importPath` prefixes a target inside a directory whose name starts with a dot with `./`, so
+  importing `.bounda/registry.ts` from the project root no longer yields a bare specifier.
+  `create-bounda` exports `Framework` and `FRAMEWORKS`, which `CreateOptions` already used, and
+  `@bounda-dev/adapter-cloudflare` no longer exports `ConfigForObjectFunction`, the type of a
+  function it never exported. The `createBounda` example and the React Router README no longer call
+  a `payloadOf` helper that does not exist, and the `DomainError` JSDoc says what it does in a policy
+  or a process: it is terminal, and the run is dead-lettered at once.
+
+### Patch Changes
+
+- 7b2f7a0: `connect()` checks a command's `signal` before calling the object and leaves it out of the call,
+  since RPC cannot carry it, instead of failing to send the command. The worker answers
+  `HANDLER_TIMEOUT` with 504.
+- e7d0782: A collaborator implementation can export `create` instead of a default, never both, to build the
+  port when the app starts: a client, a pool, a secret. It receives `{ env, logger, clock }`, may be
+  async and runs once per app: once per process under `boot()`, once per Durable Object, once per
+  `createTestApp`. `env` is the host's environment: `process.env` after `.env` is loaded under
+  `boot()`, the Durable Object's `env` on Cloudflare (typed as `Cloudflare.Env`, which
+  `@bounda-dev/adapter-cloudflare` registers with `@bounda-dev/core/register`), and what a test
+  passes as `createTestApp({ env })`, an empty object otherwise. `createApp` takes `env` as well;
+  both require it when the registered environment is one an empty object does not satisfy, as
+  `Cloudflare.Env` is, and some implementation of the registry exports `create` (`EnvSection`).
+  `CreateAppArgs` and `CreateTestAppArgs` become type aliases.
+  `app.stop()` calls `[Symbol.asyncDispose]` on what each `create` returned, after closing the
+  storage and in reverse order; one that fails to close is logged and the rest still close. A
+  default export is never closed.
+  
+  The `+types` of an implementation adds `Implementation.Create` and `Implementation.CreateArgs`;
+  `CreateArgs`, `CreateImplementation`, `AppEnv` and `EnvSection` are new public types, and
+  `ImplementationModule` accepts either export. `selectCollaborators` now returns the chosen module
+  rather than its default export, and the registry check rejects a module that exports both or
+  neither. Run `bounda generate` to update generated files.
+- 6c504e1: Processes have deadlines, and a deadline is state. A field of a process `state` declared with
+  `deadline()` is a moment the process acts at: a handler schedules it by setting it with
+  `after("24h")`, moves it by changing it and cancels it with `null`, and `at-<field>.ts` runs when
+  it comes due (`nextReminder` runs `at-next-reminder.ts`). `instant()` declares a moment the process
+  only records. Both are `Instant`s, ISO 8601 strings in UTC; `asInstant` makes one for a test.
+  `after()`, which every process handler now receives, counts from what triggered the handler, the
+  event's time or the moment that came due, so a retry or a late run sets the same moment and a
+  daily chain catches up in order after an outage. Each deadline comes due once per moment, the
+  earliest first and the field name breaking a tie; none runs once the process has ended. A deadline
+  waits, for at most ten worker rounds, until the process runner has handled the events stored
+  before it, and `app.getLag()` counts the ones waiting in `waitingDeadlines`. A failing deadline is
+  retried with the process's retry settings, and one that gives up fails the process and is
+  dead-lettered as `deadline:<field>`; replaying it runs the deadline again. Commands a deadline
+  sends start a new chain, so a repeated reminder never reaches `maxChainDepth`. Boot refuses a
+  `deadline()` without its `at-` file and an `at-` file without its `deadline()`, naming the file.
+  The `+types` of every process handler now checks what the handler returns against the state
+  (`Process.ReturnCheck`), so a field of the wrong type, or a plain string for a deadline, no longer
+  compiles.
+  
+  Breaking: the time-out handler is `at-timeout.ts`, typed `Process.DeadlineArgs`, instead of
+  `on-timeout.ts` and `Process.TimeoutArgs`; `bounda generate` says so for a file left behind. The
+  time-out now counts from the starting event's time. For code that does not come from
+  `bounda generate`, `ProcessEntry.timeout` is `ProcessEntry.deadlines.timeout`,
+  `ProcessTimeoutArgs` is gone in favour of `ProcessDeadlineArgs`, and `ProcessStateArgs` gains
+  `deadline` and `instant`. The process runner keeps one scheduler entry per instance,
+  `bounda.ProcessDeadline`, in place of `bounda.ProcessTimeout`, and records
+  `ProcessDeadlineReached` when a deadline comes due. For adapter authors, the `Scheduler` port gains
+  `defer`, which hands a claimed command back without counting an attempt, and `schedule` takes
+  `keepTimingOfSameCommand`, which leaves an entry that already holds the same command and context
+  as it is, a pending retry included. The Cloudflare client's
+  `getLag()` is typed with the new `AppLag`, `waitingDeadlines` included.
+- a77e479: Tighten the JSDoc of the public API to what it guarantees, and correct the comments that no longer matched the code: `boundaMiddleware` is mounted with `export const middleware = [boundaMiddleware]`, `schemaVersion` follows the event's upcasts, and a superseded rebuild's abort does nothing.
+- Updated dependencies [1c7878b]
+- Updated dependencies [e7d0782]
+- Updated dependencies [7b2f7a0]
+- Updated dependencies [81d48dd]
+- Updated dependencies [d88b1a2]
+- Updated dependencies [714ef6a]
+- Updated dependencies [d3d2a06]
+- Updated dependencies [7622ada]
+- Updated dependencies [1ac519f]
+- Updated dependencies [1228d71]
+- Updated dependencies [65985a3]
+- Updated dependencies [c21ab25]
+- Updated dependencies [75bdaca]
+- Updated dependencies [ba8539d]
+- Updated dependencies [247a8e6]
+- Updated dependencies [6c504e1]
+- Updated dependencies [3423cb5]
+- Updated dependencies [13578e8]
+- Updated dependencies [0d485b7]
+- Updated dependencies [7474c0e]
+- Updated dependencies [2333d09]
+- Updated dependencies [66560ea]
+- Updated dependencies [12ad8b1]
+- Updated dependencies [d16ed30]
+- Updated dependencies [71aa601]
+- Updated dependencies [0f7fdb6]
+- Updated dependencies [b3c906e]
+- Updated dependencies [a77e479]
+- Updated dependencies [04e643b]
+  - @bounda-dev/core@0.2.0
+
 ## 0.1.0
 
 ### Minor Changes
