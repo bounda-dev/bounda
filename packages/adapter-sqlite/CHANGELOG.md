@@ -1,5 +1,41 @@
 # @bounda-dev/adapter-sqlite
 
+## 0.2.0
+
+### Patch Changes
+
+- a77e479: Tighten the JSDoc of the public API to what it guarantees, and correct the comments that no longer matched the code: `boundaMiddleware` is mounted with `export const middleware = [boundaMiddleware]`, `schemaVersion` follows the event's upcasts, and a superseded rebuild's abort does nothing.
+- Updated dependencies [1c7878b]
+- Updated dependencies [e7d0782]
+- Updated dependencies [7b2f7a0]
+- Updated dependencies [81d48dd]
+- Updated dependencies [d88b1a2]
+- Updated dependencies [714ef6a]
+- Updated dependencies [d3d2a06]
+- Updated dependencies [7622ada]
+- Updated dependencies [1ac519f]
+- Updated dependencies [1228d71]
+- Updated dependencies [65985a3]
+- Updated dependencies [c21ab25]
+- Updated dependencies [75bdaca]
+- Updated dependencies [ba8539d]
+- Updated dependencies [247a8e6]
+- Updated dependencies [6c504e1]
+- Updated dependencies [3423cb5]
+- Updated dependencies [13578e8]
+- Updated dependencies [0d485b7]
+- Updated dependencies [7474c0e]
+- Updated dependencies [2333d09]
+- Updated dependencies [66560ea]
+- Updated dependencies [12ad8b1]
+- Updated dependencies [d16ed30]
+- Updated dependencies [71aa601]
+- Updated dependencies [0f7fdb6]
+- Updated dependencies [b3c906e]
+- Updated dependencies [a77e479]
+- Updated dependencies [04e643b]
+  - @bounda-dev/core@0.2.0
+
 ## 0.1.0
 
 ### Minor Changes

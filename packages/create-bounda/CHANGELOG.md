@@ -1,5 +1,18 @@
 # create-bounda
 
+## 0.2.0
+
+### Patch Changes
+
+- a77e479: Tighten the JSDoc of the public API to what it guarantees, and correct the comments that no longer matched the code: `boundaMiddleware` is mounted with `export const middleware = [boundaMiddleware]`, `schemaVersion` follows the event's upcasts, and a superseded rebuild's abort does nothing.
+- 04e643b: `importPath` prefixes a target inside a directory whose name starts with a dot with `./`, so
+  importing `.bounda/registry.ts` from the project root no longer yields a bare specifier.
+  `create-bounda` exports `Framework` and `FRAMEWORKS`, which `CreateOptions` already used, and
+  `@bounda-dev/adapter-cloudflare` no longer exports `ConfigForObjectFunction`, the type of a
+  function it never exported. The `createBounda` example and the React Router README no longer call
+  a `payloadOf` helper that does not exist, and the `DomainError` JSDoc says what it does in a policy
+  or a process: it is terminal, and the run is dead-lettered at once.
+
 ## 0.1.0
 
 ### Minor Changes
