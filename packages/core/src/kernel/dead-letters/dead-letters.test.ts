@@ -374,39 +374,75 @@ describe("deadLetters", () => {
     expect((await deadLetters.get(id))?.status).toBe("discarded");
   });
 
-  it("does not run a replay again after a conflict once the letter was settled", async () => {
-    policyMode = "domain";
-    const { harness, deadLetters } = await setUp();
-    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
-    const [letter] = await deadLetters.list();
-    const id = letter?.id ?? "";
-    policyMode = "ok";
-    calls.length = 0;
-    const transact = harness.storage.transact.bind(harness.storage);
-    harness.storage.transact = async (work) => {
-      harness.storage.transact = transact;
+  describe("a replay that meets a conflict", () => {
+    const conflicted = async (
+      afterTheConflict: (
+        args: Awaited<ReturnType<typeof setUp>> & { id: string },
+      ) => Promise<unknown>,
+    ) => {
+      policyMode = "domain";
+      const set = await setUp();
+      const { harness, deadLetters } = set;
       await harness.pipeline.dispatch({
-        type: "PayOrder",
-        payload: { orderId: "o-1", method: "card" },
+        type: "PlaceOrder",
+        payload: { orderId: "o-1", total: 10 },
       });
-      try {
-        return await transact(work);
-      } catch (error) {
-        await deadLetters.discard(id);
-        throw error;
-      }
+      await harness.dispatcher.processUntilIdle();
+      const [letter] = await deadLetters.list();
+      const id = letter?.id ?? "";
+      policyMode = "ok";
+      calls.length = 0;
+      const transact = harness.storage.transact.bind(harness.storage);
+      harness.storage.transact = async (work) => {
+        harness.storage.transact = transact;
+        await harness.pipeline.dispatch({
+          type: "PayOrder",
+          payload: { orderId: "o-1", method: "card" },
+        });
+        try {
+          return await transact(work);
+        } catch (error) {
+          await afterTheConflict({ ...set, id });
+          throw error;
+        }
+      };
+      const types = async (): Promise<readonly string[]> =>
+        (
+          await harness.storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" })
+        ).events.map((event) => event.type);
+      return { harness, deadLetters, id, types };
     };
 
-    await expect(deadLetters.replay(id)).rejects.toBeInstanceOf(DeadLetterSettledError);
+    it("runs again on the new state while the letter is still failed", async () => {
+      const { deadLetters, id, types } = await conflicted(async () => undefined);
 
-    expect(calls).toEqual(["notify:o-1"]);
-    const { events } = await harness.storage.eventStore.load({
-      aggregateType: "order",
-      aggregateId: "o-1",
+      expect((await deadLetters.replay(id)).status).toBe("replayed");
+
+      expect(calls).toEqual(["notify:o-1", "notify:o-1"]);
+      expect(await types()).toEqual(["OrderPlaced", "OrderPaid", "OrderArchived"]);
     });
-    expect(events.map((event) => event.type)).toEqual(["OrderPlaced", "OrderPaid"]);
-    expect((await deadLetters.get(id))?.status).toBe("discarded");
+
+    it("does not run again once the letter was settled", async () => {
+      const { deadLetters, id, types } = await conflicted(({ deadLetters, id }) =>
+        deadLetters.discard(id),
+      );
+
+      await expect(deadLetters.replay(id)).rejects.toBeInstanceOf(DeadLetterSettledError);
+
+      expect(calls).toEqual(["notify:o-1"]);
+      expect(await types()).toEqual(["OrderPlaced", "OrderPaid"]);
+      expect((await deadLetters.get(id))?.status).toBe("discarded");
+    });
+
+    it("does not run again once the letter is gone", async () => {
+      const { deadLetters, id } = await conflicted(({ harness, id }) =>
+        harness.storage.deadLetterStore.remove(id),
+      );
+
+      await expect(deadLetters.replay(id)).rejects.toBeInstanceOf(DeadLetterSettledError);
+
+      expect(calls).toEqual(["notify:o-1"]);
+    });
   });
 
   it("does not discard a letter a replay settled first", async () => {
