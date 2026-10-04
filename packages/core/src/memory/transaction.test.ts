@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { StorageTransaction } from "../adapter/adapter.ts";
-import { testCommand, testContext } from "../adapter/testing/fixtures.ts";
-import { DeadLetterSettledError } from "../contracts/errors.ts";
+import { testCommand, testContext, testDeadLetter } from "../adapter/testing/fixtures.ts";
+import { ScheduledClaimLostError } from "../contracts/errors.ts";
 import { silentLogger } from "../contracts/logger.ts";
 import { createMemoryCheckpointStore } from "./checkpoint-store.ts";
 import { memory } from "./index.ts";
@@ -15,71 +15,120 @@ describe("createMemoryStorageTransaction", () => {
     executeAt: at(minutes),
     context: testContext,
   });
-  const withSettledLetter = async () => {
-    const storage = await memory().createStorage({ logger: silentLogger });
-    await storage.deadLetterStore.add({
-      id: "settled",
-      kind: "policy",
-      subscriber: "order.p",
-      eventId: "e1",
-      eventType: "OrderPlaced",
-      aggregateType: "order",
-      aggregateId: "1",
-      errorType: "terminal",
-      errorMessage: "boom",
-      attempts: 1,
-      firstFailedAt: at(0).toISOString(),
-      lastFailedAt: at(0).toISOString(),
-    });
-    await storage.deadLetterStore.updateStatus("settled", "discarded");
-    return storage;
-  };
+  const storage = () => memory().createStorage({ logger: silentLogger });
+  // Refused when the transaction commits: nobody handed out this claim.
   const refused = (tx: StorageTransaction) =>
-    tx.deadLetterStore.updateStatus("settled", "replayed");
+    tx.scheduler.complete({ dedupeKey: "unclaimed", revision: 0, claimId: "lost" });
 
-  it("undoes its own writes when a later one fails", async () => {
-    const storage = await withSettledLetter();
-    await storage.scheduler.schedule(schedule("kept", 1));
-    await storage.scheduler.schedule(schedule("cancelled", 2));
-    const before = await storage.scheduler.list();
+  it("puts back every entry it changed, newest first, when a later write fails", async () => {
+    const ports = await storage();
+    await ports.scheduler.schedule(schedule("kept", 1));
+    await ports.scheduler.schedule(schedule("cancelled", 2));
+    const before = await ports.scheduler.list();
     await expect(
-      storage.transact(async (tx) => {
+      ports.transact(async (tx) => {
         await tx.scheduler.schedule(schedule("kept", 3));
         await tx.scheduler.schedule(schedule("kept", 4));
         await tx.scheduler.cancel("cancelled");
         await tx.scheduler.schedule(schedule("new", 5));
         await refused(tx);
       }),
-    ).rejects.toBeInstanceOf(DeadLetterSettledError);
-    expect(await storage.scheduler.list()).toEqual(before);
-    expect((await storage.deadLetterStore.get("settled"))?.status).toBe("discarded");
+    ).rejects.toBeInstanceOf(ScheduledClaimLostError);
+    expect(await ports.scheduler.list()).toEqual(before);
   });
 
-  it("keeps what a concurrent transaction wrote over the same entry when it rolls back", async () => {
-    const storage = await withSettledLetter();
-    const outcomes = await Promise.allSettled([
-      storage.transact(async (tx) => {
+  it("leaves an entry alone that someone changed after its write", async () => {
+    const ports = await storage();
+    const live = ports.scheduler.schedule;
+    ports.scheduler.schedule = async (args) => {
+      if (args.dedupeKey === "after") await live(schedule("k", 9));
+      return live(args);
+    };
+    await expect(
+      ports.transact(async (tx) => {
+        await tx.scheduler.schedule(schedule("k", 1));
+        await tx.scheduler.schedule(schedule("after", 2));
+        await refused(tx);
+      }),
+    ).rejects.toBeInstanceOf(ScheduledClaimLostError);
+    expect(await ports.scheduler.list()).toMatchObject([
+      { dedupeKey: "k", executeAt: at(9).toISOString() },
+    ]);
+  });
+
+  it("reads what its write changed before anyone else can write the entry", async () => {
+    const ports = await storage();
+    const live = ports.scheduler.schedule;
+    ports.scheduler.schedule = async (args) => {
+      const written = live(args);
+      if (args.executeAt.getTime() === at(1).getTime()) {
+        queueMicrotask(() => void live(schedule("k", 9)));
+      }
+      return written;
+    };
+    await expect(
+      ports.transact(async (tx) => {
         await tx.scheduler.schedule(schedule("k", 1));
         await refused(tx);
       }),
-      storage.transact(async (tx) => {
+    ).rejects.toBeInstanceOf(ScheduledClaimLostError);
+    expect(await ports.scheduler.list()).toMatchObject([
+      { dedupeKey: "k", executeAt: at(9).toISOString() },
+    ]);
+  });
+
+  it("keeps what a concurrent transaction committed over the same entry when it fails", async () => {
+    const ports = await storage();
+    const outcomes = await Promise.allSettled([
+      ports.transact(async (tx) => {
+        await tx.scheduler.schedule(schedule("k", 1));
+        await refused(tx);
+      }),
+      ports.transact(async (tx) => {
         await tx.scheduler.schedule(schedule("k", 2));
+        await tx.scheduler.schedule(schedule("other", 3));
       }),
     ]);
     expect(outcomes.map((outcome) => outcome.status)).toEqual(["rejected", "fulfilled"]);
-    expect(await storage.scheduler.list()).toMatchObject([{ executeAt: at(2).toISOString() }]);
+    expect(await ports.scheduler.list()).toMatchObject([
+      { dedupeKey: "k", executeAt: at(2).toISOString() },
+      { dedupeKey: "other" },
+    ]);
   });
 
-  it("leaves nothing of two concurrent transactions over the same entry that both roll back", async () => {
-    const storage = await withSettledLetter();
+  it("commits one at a time, so a transaction never sees what another may still put back", async () => {
+    const ports = await storage();
+    await ports.deadLetterStore.add(testDeadLetter("d1"));
+    let discard: Promise<void> | undefined;
+    const live = ports.scheduler.cancel;
+    ports.scheduler.cancel = async (dedupeKey) => {
+      discard ??= ports.transact(async (tx) => {
+        await tx.deadLetterStore.updateStatus("d1", "discarded");
+      });
+      for (let tick = 0; tick < 10; tick += 1) await Promise.resolve();
+      return live(dedupeKey);
+    };
+    await expect(
+      ports.transact(async (tx) => {
+        await tx.deadLetterStore.updateStatus("d1", "replayed");
+        await tx.scheduler.cancel("a");
+        await refused(tx);
+      }),
+    ).rejects.toBeInstanceOf(ScheduledClaimLostError);
+    await discard;
+    expect((await ports.deadLetterStore.get("d1"))?.status).toBe("discarded");
+  });
+
+  it("leaves nothing of two concurrent transactions over the same entry that both fail", async () => {
+    const ports = await storage();
     const failing = (minutes: number) =>
-      storage.transact(async (tx) => {
+      ports.transact(async (tx) => {
         await tx.scheduler.schedule(schedule("k", minutes));
         await refused(tx);
       });
     const outcomes = await Promise.allSettled([failing(1), failing(2)]);
     expect(outcomes.map((outcome) => outcome.status)).toEqual(["rejected", "rejected"]);
-    expect(await storage.scheduler.list()).toEqual([]);
+    expect(await ports.scheduler.list()).toEqual([]);
   });
 });
 

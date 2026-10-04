@@ -6,15 +6,12 @@ import type {
   Scheduler,
 } from "../adapter/ports/scheduler.ts";
 import { ScheduledClaimLostError } from "../contracts/errors.ts";
-import { createEntryJournal, type TrackedWrite } from "./entry-journal.ts";
+import { keepEntries } from "./entries.ts";
 
 /**
- * The in-memory scheduler, with a `track` that a transaction opens around each write, to undo
- * it later.
+ * The in-memory scheduler.
  */
-export interface MemoryScheduler extends Scheduler {
-  track(dedupeKey: string): TrackedWrite;
-}
+export interface MemoryScheduler extends Scheduler {}
 
 export interface CreateMemorySchedulerFunction {
   (): MemoryScheduler;
@@ -51,8 +48,7 @@ const sameCommand = (a: ScheduledCommand, b: ScheduledCommand): boolean =>
  * A scheduler held in memory.
  */
 export const createMemoryScheduler: CreateMemorySchedulerFunction = () => {
-  const journal = createEntryJournal<string, Entry>();
-  const entries = journal.map;
+  const entries = new Map<string, Entry>();
 
   const heldBy = (claim: ScheduledClaim): Entry => {
     const entry = entries.get(claim.dedupeKey);
@@ -64,7 +60,7 @@ export const createMemoryScheduler: CreateMemorySchedulerFunction = () => {
     entries.set(entry.dedupeKey, { ...entry, claimedAt: null, claimId: null });
   };
 
-  return {
+  const store: MemoryScheduler = {
     schedule: async ({ dedupeKey, command, executeAt, context, keepTimingOfSameCommand }) => {
       const scheduled: ScheduledCommand = {
         dedupeKey,
@@ -161,6 +157,6 @@ export const createMemoryScheduler: CreateMemorySchedulerFunction = () => {
         .sort(byExecuteAt)
         .slice(offset, limit === undefined ? undefined : offset + limit)
         .map(toScheduled),
-    track: journal.track,
   };
+  return keepEntries(store, entries, (dedupeKey: string) => dedupeKey);
 };

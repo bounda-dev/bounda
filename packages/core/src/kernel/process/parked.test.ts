@@ -373,20 +373,32 @@ describe("events of a failed process", () => {
     const { harness, deadLetters, types, logs } = context;
     await failOnFirstPayment(context);
     const [letter] = await deadLetters.list();
-    const schedule = harness.storage.scheduler.schedule;
-    let writes = 0;
+    const transact = harness.storage.transact;
     let arrived = false;
-    harness.storage.scheduler.schedule = async (args) => {
-      writes += 1;
-      if (writes === 1) {
-        arrived = true;
-        await harness.pipeline.dispatch({ type: "ArchiveOrder", payload: { orderId: "o-1" } });
-        await harness.dispatcher.processUntilIdle();
-      }
-      return schedule(args);
-    };
+    // The archive arrives once the first transaction of the replay that schedules has decided what
+    // to write, before it commits.
+    harness.storage.transact = (work) =>
+      transact(async (tx) => {
+        let schedules = false;
+        const result = await work({
+          ...tx,
+          scheduler: {
+            ...tx.scheduler,
+            schedule: (args) => {
+              schedules = true;
+              return tx.scheduler.schedule(args);
+            },
+          },
+        });
+        if (schedules && !arrived) {
+          arrived = true;
+          await harness.pipeline.dispatch({ type: "ArchiveOrder", payload: { orderId: "o-1" } });
+          await harness.dispatcher.processUntilIdle();
+        }
+        return result;
+      });
     await deadLetters.replay(letter?.id ?? "");
-    harness.storage.scheduler.schedule = schedule;
+    harness.storage.transact = transact;
     expect(arrived).toBe(true);
     expect((await types()).slice(-4)).toEqual([
       PROCESS_EVENTS.handled,

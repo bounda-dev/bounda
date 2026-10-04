@@ -4,15 +4,12 @@ import type {
   ListDeadLettersArgs,
 } from "../adapter/ports/dead-letter-store.ts";
 import { DeadLetterSettledError } from "../contracts/errors.ts";
-import { createEntryJournal, type TrackedWrite } from "./entry-journal.ts";
+import { keepEntries } from "./entries.ts";
 
 /**
- * The in-memory dead-letter store, with a `track` that a transaction opens around each write, to
- * undo it later.
+ * The in-memory dead-letter store.
  */
-export interface MemoryDeadLetterStore extends DeadLetterStore {
-  track(id: string): TrackedWrite;
-}
+export interface MemoryDeadLetterStore extends DeadLetterStore {}
 
 export interface CreateMemoryDeadLetterStoreFunction {
   (): MemoryDeadLetterStore;
@@ -27,13 +24,12 @@ const matches = (letter: DeadLetter, args: ListDeadLettersArgs): boolean =>
  * A dead-letter store held in memory.
  */
 export const createMemoryDeadLetterStore: CreateMemoryDeadLetterStoreFunction = () => {
-  const journal = createEntryJournal<string, DeadLetter>();
-  const letters = journal.map;
+  const letters = new Map<string, DeadLetter>();
 
   const select = (args: ListDeadLettersArgs): DeadLetter[] =>
     [...letters.values()].filter((letter) => matches(letter, args));
 
-  return {
+  const store: MemoryDeadLetterStore = {
     add: async (letter) => {
       const existing = letters.get(letter.id);
       if (existing !== undefined) return existing;
@@ -56,6 +52,6 @@ export const createMemoryDeadLetterStore: CreateMemoryDeadLetterStoreFunction = 
     remove: async (id) => {
       letters.delete(id);
     },
-    track: journal.track,
   };
+  return keepEntries(store, letters, (id: string) => id);
 };
