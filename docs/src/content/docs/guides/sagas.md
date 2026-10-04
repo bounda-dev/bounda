@@ -146,6 +146,9 @@ failure, so every step tolerates being repeated:
 - **A repeated command appends nothing.** Each handler decides from state: `settlePayment` on a
   settled payment, `recordRefund` once the refund is done, `lockOrderForPayment` on an order that
   is no longer `placed` all return `[]`.
+- **A refusal that triggers a compensation is kept for what cannot happen.** `markOrderPaid`
+  refuses only a cancelled order; on a paid or fulfilled one it returns `[]`. The process refunds
+  the payment when it refuses, so a `DomainError` for a repeat would refund an order that was paid.
 - **Commands the process dispatches do not throw for a state they cannot rule out.**
   `lockOrderForPayment` and `recordPaymentFailure` return `[]` instead of a `DomainError`: the
   order may have moved on since the event, and a `DomainError` nobody catches fails the process.

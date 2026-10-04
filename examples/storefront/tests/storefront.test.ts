@@ -182,6 +182,29 @@ describe("storefront", () => {
     await app.stop();
   });
 
+  it("gives up on an order whose payment never ends, and compensates in place", async () => {
+    const { app, clock, refunds, summary, paymentOf } = await start();
+    await app.commands.placeOrder({ orderId: ORDER, customerId: "ada", items });
+    await app.processUntilIdle();
+    await app.commands.markPaymentProcessing({ paymentId: await paymentOf() });
+    await app.processUntilIdle();
+
+    clock.advance(30 * 24 * HOUR);
+    await app.processUntilIdle();
+    expect(await summary()).toMatchObject({
+      status: "cancelled",
+      cancelledAt: expect.any(Date),
+      paymentStatus: "cancelled",
+    });
+
+    await app.commands.settlePayment({ paymentId: await paymentOf() });
+    await app.processUntilIdle();
+    expect((await summary())?.paymentStatus).toBe("refunded");
+    expect(refunds.size).toBe(1);
+    expect((await app.getLag()).maxLag).toBe(0);
+    await app.stop();
+  });
+
   it("settles a payment once however many times the provider says it succeeded", async () => {
     const { app, refundCalls, summary, paymentOf } = await start();
     await app.commands.placeOrder({ orderId: ORDER, customerId: "ada", items });
@@ -305,14 +328,21 @@ describe("storefront", () => {
       app.commands.placeOrder({ orderId: ORDER, customerId: "ada", items }),
     ).rejects.toBeInstanceOf(DomainError);
     await app.commands.markOrderPaid({ orderId: ORDER });
-    await expect(app.commands.markOrderPaid({ orderId: ORDER })).rejects.toThrow(
-      "Only open orders can be paid; this one is paid",
+    expect(await app.commands.markOrderPaid({ orderId: ORDER })).toMatchObject({ eventTypes: [] });
+    await app.commands.placeOrder({ orderId: OTHER, customerId: "ada", items });
+    await app.commands.cancelOrder({ orderId: OTHER, reason: "changed my mind" });
+    await expect(app.commands.markOrderPaid({ orderId: OTHER })).rejects.toThrow(
+      "Only open orders can be paid; this one is cancelled",
     );
     await expect(
       app.commands.settlePayment({ paymentId: "018f6a5e-4c3c-7c1e-9d4b-0b2c4a1d8e09" }),
     ).rejects.toBeInstanceOf(DomainError);
     await expect(
-      app.commands.placeOrder({ orderId: OTHER, customerId: "ada", items: [] }),
+      app.commands.placeOrder({
+        orderId: "018f6a5e-4c3c-7c1e-9d4b-0b2c4a1d8e03",
+        customerId: "ada",
+        items: [],
+      }),
     ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
     await app.stop();
   });
