@@ -6,15 +6,14 @@ import type {
   Scheduler,
 } from "../adapter/ports/scheduler.ts";
 import { ScheduledClaimLostError } from "../contracts/errors.ts";
-import { keepEntries } from "./entries.ts";
-
-/**
- * The in-memory scheduler.
- */
-export interface MemoryScheduler extends Scheduler {}
+import { createStoreEntries, type WithEntries } from "./entries.ts";
 
 export interface CreateMemorySchedulerFunction {
-  (): MemoryScheduler;
+  (): Scheduler;
+}
+
+export interface CreateKeptSchedulerFunction {
+  (): WithEntries<Scheduler, string>;
 }
 
 interface Entry extends ScheduledCommand {
@@ -44,10 +43,7 @@ const sameCommand = (a: ScheduledCommand, b: ScheduledCommand): boolean =>
   JSON.stringify(a.command) === JSON.stringify(b.command) &&
   JSON.stringify(a.context) === JSON.stringify(b.context);
 
-/**
- * A scheduler held in memory.
- */
-export const createMemoryScheduler: CreateMemorySchedulerFunction = () => {
+export const createKeptScheduler: CreateKeptSchedulerFunction = () => {
   const entries = new Map<string, Entry>();
 
   const heldBy = (claim: ScheduledClaim): Entry => {
@@ -60,7 +56,7 @@ export const createMemoryScheduler: CreateMemorySchedulerFunction = () => {
     entries.set(entry.dedupeKey, { ...entry, claimedAt: null, claimId: null });
   };
 
-  const store: MemoryScheduler = {
+  const store: Scheduler = {
     schedule: async ({ dedupeKey, command, executeAt, context, keepTimingOfSameCommand }) => {
       const scheduled: ScheduledCommand = {
         dedupeKey,
@@ -158,5 +154,11 @@ export const createMemoryScheduler: CreateMemorySchedulerFunction = () => {
         .slice(offset, limit === undefined ? undefined : offset + limit)
         .map(toScheduled),
   };
-  return keepEntries(store, entries, (dedupeKey: string) => dedupeKey);
+  return { store, entries: createStoreEntries(entries, (dedupeKey: string) => dedupeKey) };
 };
+
+/**
+ * A scheduler held in memory.
+ */
+export const createMemoryScheduler: CreateMemorySchedulerFunction = () =>
+  createKeptScheduler().store;

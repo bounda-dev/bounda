@@ -1101,11 +1101,12 @@ describe("events of a failed process", () => {
     const add = harness.storage.deadLetterStore.add;
     let raced = false;
     harness.storage.deadLetterStore.add = async (letter) => {
+      const filed = add(letter);
       if (!raced) {
         raced = true;
         await rawAppend(harness, PROCESS_EVENTS.failed, { eventId: "elsewhere", error: "x" });
       }
-      return add(letter);
+      return filed;
     };
     await context.pay();
     await harness.dispatcher.processUntilIdle();
@@ -1160,11 +1161,12 @@ describe("events of a failed process", () => {
     const add = harness.storage.deadLetterStore.add;
     let raced = false;
     harness.storage.deadLetterStore.add = async (letter) => {
+      const filed = add(letter);
       if (!raced) {
         raced = true;
         await rawAppend(harness, PROCESS_EVENTS.handled, { state: { seen: [], nudge: null } });
       }
-      return add(letter);
+      return filed;
     };
     await context.pay();
     await harness.dispatcher.processUntilIdle();
@@ -1188,11 +1190,12 @@ describe("events of a failed process", () => {
     const add = harness.storage.deadLetterStore.add;
     let raced = false;
     harness.storage.deadLetterStore.add = async (letter) => {
+      const filed = add(letter);
       if (!raced && letter.eventId === "deadline:nudge") {
         raced = true;
         await rawAppend(harness, PROCESS_EVENTS.failed, { eventId: "elsewhere", error: "x" });
       }
-      return add(letter);
+      return filed;
     };
     harness.clock.advance(DAY);
     await settle();

@@ -8,9 +8,6 @@ export type DeferredStores = Pick<
   "inboxLedger" | "deadLetterStore" | "scheduler"
 >;
 
-/**
- * The writes `flush` runs, and only those.
- */
 export interface DeferredWriteTarget {
   readonly inboxLedger: Pick<DeferredStores["inboxLedger"], "complete" | "fail">;
   readonly deadLetterStore: Pick<

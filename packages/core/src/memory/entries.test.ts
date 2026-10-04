@@ -1,17 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { ConfigurationError } from "../contracts/errors.ts";
-import { entriesOf, keepEntries } from "./entries.ts";
+import { createStoreEntries } from "./entries.ts";
 
 const kept = () => {
   const map = new Map([
     ["changed", "a"],
     ["removed", "b"],
   ]);
-  const store = keepEntries({}, map, (key: string) => key);
-  return { map, entries: entriesOf<string>(store) };
+  return { map, entries: createStoreEntries(map, (key: string) => key) };
 };
 
-describe("keepEntries", () => {
+describe("createStoreEntries", () => {
   it("reads an entry and puts back what a write replaced, removed or added", () => {
     const { map, entries } = kept();
     const before = ["changed", "removed", "added"].map((key) => entries.read(key));
@@ -42,22 +40,13 @@ describe("keepEntries", () => {
 
   it("maps a key to the entry it names", () => {
     const map = new Map([["s\u0000e", "claim"]]);
-    const store = keepEntries(
-      {},
+    const entries = createStoreEntries(
       map,
       ({ subscriber, eventId }: { subscriber: string; eventId: string }) =>
         `${subscriber}\u0000${eventId}`,
     );
-    const entries = entriesOf<{ subscriber: string; eventId: string }>(store);
     expect(entries.read({ subscriber: "s", eventId: "e" })).toBe("claim");
     entries.putBack({ subscriber: "s", eventId: "e" }, undefined, "claim");
     expect(map.size).toBe(0);
-  });
-});
-
-describe("entriesOf", () => {
-  it("refuses a store the memory adapter did not make", () => {
-    expect(() => entriesOf({})).toThrow(ConfigurationError);
-    expect(() => entriesOf({})).toThrow("needs the stores the memory adapter made");
   });
 });

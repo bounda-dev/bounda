@@ -41,8 +41,9 @@ describe("createMemoryStorageTransaction", () => {
     const ports = await storage();
     const live = ports.scheduler.schedule;
     ports.scheduler.schedule = async (args) => {
+      const written = live(args);
       if (args.dedupeKey === "after") await live(schedule("k", 9));
-      return live(args);
+      return written;
     };
     await expect(
       ports.transact(async (tx) => {
@@ -69,6 +70,25 @@ describe("createMemoryStorageTransaction", () => {
     await expect(
       ports.transact(async (tx) => {
         await tx.scheduler.schedule(schedule("k", 1));
+        await refused(tx);
+      }),
+    ).rejects.toBeInstanceOf(ScheduledClaimLostError);
+    expect(await ports.scheduler.list()).toMatchObject([
+      { dedupeKey: "k", executeAt: at(9).toISOString() },
+    ]);
+  });
+
+  it("puts back nothing for a write that changed nothing", async () => {
+    const ports = await storage();
+    const live = ports.scheduler.cancel;
+    ports.scheduler.cancel = async (dedupeKey) => {
+      const written = live(dedupeKey);
+      queueMicrotask(() => void ports.scheduler.schedule(schedule(dedupeKey, 9)));
+      return written;
+    };
+    await expect(
+      ports.transact(async (tx) => {
+        await tx.scheduler.cancel("k");
         await refused(tx);
       }),
     ).rejects.toBeInstanceOf(ScheduledClaimLostError);

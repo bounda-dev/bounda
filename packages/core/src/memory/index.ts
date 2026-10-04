@@ -12,11 +12,11 @@ import { rebuildFencing } from "../adapter/rebuild-fencing.ts";
 import { RebuildSupersededError } from "../contracts/errors.ts";
 import type { FieldsRecord } from "../modules/view.ts";
 import { createMemoryCheckpointStore } from "./checkpoint-store.ts";
-import { createMemoryDeadLetterStore } from "./dead-letter-store.ts";
+import { createKeptDeadLetterStore } from "./dead-letter-store.ts";
 import { createMemoryEventNotifier } from "./event-notifier.ts";
 import { createMemoryEventStore } from "./event-store.ts";
-import { createMemoryInboxLedger } from "./inbox-ledger.ts";
-import { createMemoryScheduler } from "./scheduler.ts";
+import { createKeptInboxLedger } from "./inbox-ledger.ts";
+import { createKeptScheduler } from "./scheduler.ts";
 import { createMemoryReadClient, createMemoryTable, type MemoryTable } from "./table.ts";
 import {
   createCheckpointJournal,
@@ -94,17 +94,27 @@ export const memory: MemoryFunction = (options = {}) => {
     options,
     createStorage: async () => {
       const notifier = createMemoryEventNotifier();
+      const inboxLedger = createKeptInboxLedger();
+      const deadLetterStore = createKeptDeadLetterStore();
+      const scheduler = createKeptScheduler();
       const stores = {
         eventStore: createMemoryEventStore({ onAppend: notifier.notify }),
-        inboxLedger: createMemoryInboxLedger(),
-        deadLetterStore: createMemoryDeadLetterStore(),
-        scheduler: createMemoryScheduler(),
+        inboxLedger: inboxLedger.store,
+        deadLetterStore: deadLetterStore.store,
+        scheduler: scheduler.store,
       };
       storage ??= {
         ...stores,
         notifier,
         checkpointStore,
-        transact: createMemoryStorageTransaction(stores),
+        transact: createMemoryStorageTransaction({
+          ...stores,
+          entries: {
+            inboxLedger: inboxLedger.entries,
+            deadLetterStore: deadLetterStore.entries,
+            scheduler: scheduler.entries,
+          },
+        }),
         close: async () => {},
       };
       return storage;
@@ -206,15 +216,12 @@ export const memory: MemoryFunction = (options = {}) => {
 };
 
 export { createMemoryCheckpointStore } from "./checkpoint-store.ts";
-export type { MemoryDeadLetterStore } from "./dead-letter-store.ts";
 export { createMemoryDeadLetterStore } from "./dead-letter-store.ts";
 export type { CreateMemoryEventNotifierFunction, MemoryEventNotifier } from "./event-notifier.ts";
 export { createMemoryEventNotifier } from "./event-notifier.ts";
 export type { CreateMemoryEventStoreArgs, MemoryEventStore } from "./event-store.ts";
 export { createMemoryEventStore } from "./event-store.ts";
-export type { MemoryInboxLedger } from "./inbox-ledger.ts";
 export { createMemoryInboxLedger } from "./inbox-ledger.ts";
-export type { MemoryScheduler } from "./scheduler.ts";
 export { createMemoryScheduler } from "./scheduler.ts";
 export type { CreateMemoryTableArgs, MemoryTable } from "./table.ts";
 export { createMemoryReadClient, createMemoryTable } from "./table.ts";

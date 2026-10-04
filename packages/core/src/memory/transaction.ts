@@ -1,25 +1,30 @@
 import type { StoragePorts } from "../adapter/adapter.ts";
 import { type DeferredWriteTarget, deferWrites } from "../adapter/deferred-writes.ts";
 import type { CheckpointStore } from "../adapter/ports/checkpoint-store.ts";
+import type { DeadLetterStore } from "../adapter/ports/dead-letter-store.ts";
+import type { ClaimKey, InboxLedger } from "../adapter/ports/inbox-ledger.ts";
+import type { Scheduler } from "../adapter/ports/scheduler.ts";
 import { createStagedEventStore } from "../adapter/staged-event-store.ts";
-import type { MemoryDeadLetterStore } from "./dead-letter-store.ts";
-import { entriesOf } from "./entries.ts";
+import type { StoreEntries } from "./entries.ts";
 import type { MemoryEventStore } from "./event-store.ts";
-import type { MemoryInboxLedger } from "./inbox-ledger.ts";
-import type { MemoryScheduler } from "./scheduler.ts";
 
 export interface CreateMemoryStorageTransactionArgs {
   readonly eventStore: MemoryEventStore;
-  readonly inboxLedger: MemoryInboxLedger;
-  readonly deadLetterStore: MemoryDeadLetterStore;
-  readonly scheduler: MemoryScheduler;
+  readonly inboxLedger: InboxLedger;
+  readonly deadLetterStore: DeadLetterStore;
+  readonly scheduler: Scheduler;
+  readonly entries: {
+    readonly inboxLedger: StoreEntries<ClaimKey>;
+    readonly deadLetterStore: StoreEntries<string>;
+    readonly scheduler: StoreEntries<string>;
+  };
 }
 
 export interface CreateMemoryStorageTransactionFunction {
   (args: CreateMemoryStorageTransactionArgs): StoragePorts["transact"];
 }
 
-type MemoryDeferredStores = Omit<CreateMemoryStorageTransactionArgs, "eventStore">;
+type CreateUndoLogArgs = Omit<CreateMemoryStorageTransactionArgs, "eventStore">;
 
 interface UndoLog {
   readonly target: DeferredWriteTarget;
@@ -30,42 +35,46 @@ const createUndoLog = ({
   inboxLedger,
   deadLetterStore,
   scheduler,
-}: MemoryDeferredStores): UndoLog => {
+  entries,
+}: CreateUndoLogArgs): UndoLog => {
   const undos: (() => void)[] = [];
-  const tracked = async <Key, Result>(
-    store: object,
-    key: Key,
+  const tracked = <Key, Result>(
+    store: StoreEntries<Key>,
+    key: NoInfer<Key>,
     write: () => Promise<Result>,
   ): Promise<Result> => {
-    const entries = entriesOf<Key>(store);
-    const before = entries.read(key);
+    const before = store.read(key);
     const written = write();
-    // A memory write changes its map before it returns, so the change is read before anyone else
-    // can write the entry; only a write that awaits first (a test's stand-in) is read once it
-    // settles.
-    if (entries.read(key) === before) await written.catch(() => undefined);
-    const after = entries.read(key);
-    undos.push(() => entries.putBack(key, before, after));
+    // A memory write changes its map before it returns, so this reads its change before anyone
+    // else can write the entry.
+    const after = store.read(key);
+    undos.push(() => store.putBack(key, before, after));
     return written;
   };
   return {
     target: {
       inboxLedger: {
-        complete: (args) => tracked(inboxLedger, args, () => inboxLedger.complete(args)),
-        fail: (args) => tracked(inboxLedger, args, () => inboxLedger.fail(args)),
+        complete: (args) => tracked(entries.inboxLedger, args, () => inboxLedger.complete(args)),
+        fail: (args) => tracked(entries.inboxLedger, args, () => inboxLedger.fail(args)),
       },
       deadLetterStore: {
-        add: (letter) => tracked(deadLetterStore, letter.id, () => deadLetterStore.add(letter)),
+        add: (letter) =>
+          tracked(entries.deadLetterStore, letter.id, () => deadLetterStore.add(letter)),
         updateStatus: (id, status) =>
-          tracked(deadLetterStore, id, () => deadLetterStore.updateStatus(id, status)),
-        remove: (id) => tracked(deadLetterStore, id, () => deadLetterStore.remove(id)),
+          tracked(entries.deadLetterStore, id, () => deadLetterStore.updateStatus(id, status)),
+        remove: (id) => tracked(entries.deadLetterStore, id, () => deadLetterStore.remove(id)),
       },
       scheduler: {
-        schedule: (args) => tracked(scheduler, args.dedupeKey, () => scheduler.schedule(args)),
-        cancel: (dedupeKey) => tracked(scheduler, dedupeKey, () => scheduler.cancel(dedupeKey)),
-        complete: (claim) => tracked(scheduler, claim.dedupeKey, () => scheduler.complete(claim)),
-        fail: (args) => tracked(scheduler, args.claim.dedupeKey, () => scheduler.fail(args)),
-        defer: (args) => tracked(scheduler, args.claim.dedupeKey, () => scheduler.defer(args)),
+        schedule: (args) =>
+          tracked(entries.scheduler, args.dedupeKey, () => scheduler.schedule(args)),
+        cancel: (dedupeKey) =>
+          tracked(entries.scheduler, dedupeKey, () => scheduler.cancel(dedupeKey)),
+        complete: (claim) =>
+          tracked(entries.scheduler, claim.dedupeKey, () => scheduler.complete(claim)),
+        fail: (args) =>
+          tracked(entries.scheduler, args.claim.dedupeKey, () => scheduler.fail(args)),
+        defer: (args) =>
+          tracked(entries.scheduler, args.claim.dedupeKey, () => scheduler.defer(args)),
       },
     },
     undo: () => {
@@ -75,14 +84,11 @@ const createUndoLog = ({
 };
 
 /**
- * `StoragePorts.transact` for the memory stores. Appends are staged and the other writes deferred
- * while the work runs; once it resolves, the transaction commits, one at a time: the deferred
- * writes are applied, then every stream is appended in one synchronous run with every version
- * checked first, so no reader sees one stream appended without the others. A write that fails
- * puts back, newest first, every entry this transaction changed, unless someone changed it since,
- * and nothing has been appended by then; a stale version appends nothing and puts them back too.
- * `tryClaim`, `claimDue` and both `renew` act at once, outside the transaction and its turn, so
- * they can see a write that a commit still under way may put back.
+ * `StoragePorts.transact` for the memory stores. The work's writes are held back; transactions
+ * then commit one at a time, every stream appended in one synchronous run, so no reader sees one
+ * stream appended without the others. A failed commit appends nothing and puts back each entry it
+ * changed, unless someone changed it since. `tryClaim`, `claimDue`, both `renew` and writes made on
+ * the stores themselves do not wait for a commit, so they can see a write it may still put back.
  */
 export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunction = ({
   eventStore,
@@ -93,6 +99,7 @@ export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunct
     const staged = createStagedEventStore(eventStore);
     const { ports, flush } = deferWrites(live);
     const result = await work({ eventStore: staged, ...ports });
+    // A transaction committed from inside this commit, as from a store write, waits forever.
     const release = await commits.acquire("commit", true);
     const log = createUndoLog(live);
     try {

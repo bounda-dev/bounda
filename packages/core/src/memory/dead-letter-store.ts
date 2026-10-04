@@ -4,15 +4,14 @@ import type {
   ListDeadLettersArgs,
 } from "../adapter/ports/dead-letter-store.ts";
 import { DeadLetterSettledError } from "../contracts/errors.ts";
-import { keepEntries } from "./entries.ts";
-
-/**
- * The in-memory dead-letter store.
- */
-export interface MemoryDeadLetterStore extends DeadLetterStore {}
+import { createStoreEntries, type WithEntries } from "./entries.ts";
 
 export interface CreateMemoryDeadLetterStoreFunction {
-  (): MemoryDeadLetterStore;
+  (): DeadLetterStore;
+}
+
+export interface CreateKeptDeadLetterStoreFunction {
+  (): WithEntries<DeadLetterStore, string>;
 }
 
 const matches = (letter: DeadLetter, args: ListDeadLettersArgs): boolean =>
@@ -20,16 +19,13 @@ const matches = (letter: DeadLetter, args: ListDeadLettersArgs): boolean =>
   (args.subscriber === undefined || letter.subscriber === args.subscriber) &&
   (args.status === undefined || letter.status === args.status);
 
-/**
- * A dead-letter store held in memory.
- */
-export const createMemoryDeadLetterStore: CreateMemoryDeadLetterStoreFunction = () => {
+export const createKeptDeadLetterStore: CreateKeptDeadLetterStoreFunction = () => {
   const letters = new Map<string, DeadLetter>();
 
   const select = (args: ListDeadLettersArgs): DeadLetter[] =>
     [...letters.values()].filter((letter) => matches(letter, args));
 
-  const store: MemoryDeadLetterStore = {
+  const store: DeadLetterStore = {
     add: async (letter) => {
       const existing = letters.get(letter.id);
       if (existing !== undefined) return existing;
@@ -53,5 +49,11 @@ export const createMemoryDeadLetterStore: CreateMemoryDeadLetterStoreFunction = 
       letters.delete(id);
     },
   };
-  return keepEntries(store, letters, (id: string) => id);
+  return { store, entries: createStoreEntries(letters, (id: string) => id) };
 };
+
+/**
+ * A dead-letter store held in memory.
+ */
+export const createMemoryDeadLetterStore: CreateMemoryDeadLetterStoreFunction = () =>
+  createKeptDeadLetterStore().store;
