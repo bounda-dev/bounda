@@ -6,5 +6,4 @@ export const handler = async ({ state, event, commands }: Process.HandlerArgs) =
   if (state.paymentId !== null) {
     await commands.cancelPayment({ paymentId: state.paymentId, reason: event.payload.reason });
   }
-  return state;
 };

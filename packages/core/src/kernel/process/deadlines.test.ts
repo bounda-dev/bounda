@@ -97,19 +97,17 @@ const registry: Registry = {
           handlers: {
             order: {
               orderPlaced: {
-                handler: ({ state, after }: Args) => ({
-                  ...state,
+                handler: ({ after }: Args) => ({
                   nextReminder: after("24h"),
                   paymentDeadline:
                     placed === "both" ? after("72h") : placed === "tie" ? after("24h") : null,
                 }),
               },
               orderPaid: {
-                handler: ({ state, event }: Args) => {
+                handler: ({ event }: Args) => {
                   if (paidFails) throw new Error("ledger is down");
-                  if (paidKeeps) return state;
+                  if (paidKeeps) return undefined;
                   return {
-                    ...state,
                     paidAt: asInstant(event.timestamp),
                     nextReminder: null,
                     paymentDeadline: null,
@@ -137,11 +135,10 @@ const registry: Registry = {
                     actualVersion: 2,
                   });
                 }
-                if (reminding === "keep") return state;
+                if (reminding === "keep") return undefined;
                 await commands.touchOrder?.({ orderId: aggregateId });
                 const reminders = state.reminders + 1;
                 return {
-                  ...state,
                   reminders,
                   nextReminder: reminders < reminderLimit ? after("24h") : null,
                 };
@@ -151,13 +148,13 @@ const registry: Registry = {
               handler: async ({ state, aggregateId, commands }: Args) => {
                 calls.push(`payment:${state.paymentDeadline}`);
                 await commands.archiveOrder?.({ orderId: aggregateId });
-                return { ...state, paymentDeadline: null, nextReminder: null };
+                return { paymentDeadline: null, nextReminder: null };
               },
             },
             timeout: {
-              handler: ({ state }: Args) => {
+              handler: () => {
                 calls.push("timeout");
-                return { ...state, reminders: -1 };
+                return { reminders: -1 };
               },
             },
           },

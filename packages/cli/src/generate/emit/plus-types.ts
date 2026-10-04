@@ -163,9 +163,18 @@ const policyFiles = (
 const handlerModuleType = (path: string): string =>
   `type HandlerModule = typeof import("${importPath({ from: plusTypesPath(path), to: path })}");`;
 
-const returnCheck: readonly [string, string] = [
+const deadlineField = (field: string): string =>
+  `core.ProcessDeadlineField<ProcessModule, ${JSON.stringify(field)}>`;
+
+const returnCheck = (field: string | null): readonly [string, string] => [
   "ReturnCheck",
-  "core.ProcessHandlerReturnCheck<core.ProcessStateOf<ProcessModule>, HandlerModule>",
+  field === null
+    ? "core.ProcessHandlerReturnCheck<core.ProcessStateOf<ProcessModule>, HandlerModule>"
+    : generic("core.ProcessHandlerReturnCheck", [
+        "core.ProcessStateOf<ProcessModule>",
+        "HandlerModule",
+        deadlineField(field),
+      ]),
 ];
 
 const processFiles = (
@@ -190,7 +199,7 @@ const processFiles = (
           extraTypes: [handlerModuleType(handler.path)],
           namespace: "Process",
           members: [
-            returnCheck,
+            returnCheck(null),
             [
               "HandlerArgs",
               generic("core.ProcessHandlerArgs", [
@@ -211,14 +220,12 @@ const processFiles = (
           extraTypes: [handlerModuleType(deadline.path)],
           namespace: "Process",
           members: [
-            returnCheck,
+            returnCheck(deadline.field === TIMEOUT_DEADLINE ? null : deadline.field),
             [
               "DeadlineArgs",
               generic("core.ProcessDeadlineArgs", [
                 "core.ProcessStateOf<ProcessModule>",
-                deadline.field === TIMEOUT_DEADLINE
-                  ? "never"
-                  : `core.ProcessDeadlineField<ProcessModule, ${JSON.stringify(deadline.field)}>`,
+                deadline.field === TIMEOUT_DEADLINE ? "never" : deadlineField(deadline.field),
                 "generated.ReactionCommands",
                 collaboratorsType(aggregate),
               ]),

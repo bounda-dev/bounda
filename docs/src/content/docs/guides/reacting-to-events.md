@@ -25,7 +25,7 @@ export const handler = async ({ event, commands }: Policy.HandlerArgs) => {
 Use a **process** when the decision needs memory or a deadline: *cancel the order if it is not
 fulfilled within 72 hours*, *stop chasing once the customer paid*, *count the reminders already
 sent*. The process declares what opens it, what closes it and how long it may stay open, and each
-handler returns the next state:
+handler returns the fields of its state that change:
 
 ```ts
 export const config = ({ events }: Process.ConfigArgs) => ({
@@ -37,6 +37,10 @@ export const config = ({ events }: Process.ConfigArgs) => ({
 export const state = ({ z }: Process.StateArgs) =>
   z.object({ autoFulfilled: z.boolean().default(false) });
 ```
+
+What a handler returns is merged over the state, and returning nothing keeps it as it is. The
+merge is shallow: a nested object is replaced whole. A field goes back to its default only when
+the handler sets it, as in `{ paymentId: null }`; one returned as `undefined` keeps its value.
 
 If you find a policy reading a read model to decide what to do, that is a process asking to be
 written: the state it needs belongs to the process, not to a projection it happens to share with
@@ -61,8 +65,7 @@ export const state = ({ z, deadline, instant }: Process.StateArgs) =>
   });
 
 // processes/order-payment/on-order-placed.ts
-export const handler = ({ state, after }: Process.HandlerArgs) => ({
-  ...state,
+export const handler = ({ after }: Process.HandlerArgs) => ({
   nextReminder: after("24h"),
   paymentDeadline: after("72h"),
 });
@@ -70,8 +73,7 @@ export const handler = ({ state, after }: Process.HandlerArgs) => ({
 // processes/order-payment/on-order-paid.ts
 import { asInstant } from "@bounda-dev/core";
 
-export const handler = ({ state, event }: Process.HandlerArgs) => ({
-  ...state,
+export const handler = ({ event }: Process.HandlerArgs) => ({
   paidAt: asInstant(event.timestamp),
   nextReminder: null,
   paymentDeadline: null,
@@ -81,16 +83,15 @@ export const handler = ({ state, event }: Process.HandlerArgs) => ({
 export const handler = async ({ state, aggregateId, commands, after }: Process.DeadlineArgs) => {
   await commands.sendReminder({ orderId: aggregateId });
   return {
-    ...state,
     reminders: state.reminders + 1,
     nextReminder: state.reminders < 2 ? after("24h") : null,
   };
 };
 
 // processes/order-payment/at-payment-deadline.ts
-export const handler = async ({ state, aggregateId, commands }: Process.DeadlineArgs) => {
+export const handler = async ({ aggregateId, commands }: Process.DeadlineArgs) => {
   await commands.cancelOrder({ orderId: aggregateId, reason: "unpaid" });
-  return { ...state, paymentDeadline: null, nextReminder: null };
+  return { paymentDeadline: null, nextReminder: null };
 };
 ```
 
@@ -107,7 +108,8 @@ How deadlines behave:
   missed reminder runs in turn, soonest first.
 - **Each deadline comes due once at each moment.** When several are due, the earliest runs first
   and the field name breaks a tie; a moment already past runs at once. The handler returns the
-  field as `null` or another moment: leaving it at the moment that came due fails the process.
+  field as `null` or another moment: one that leaves it out does not compile, and one that sets it
+  back to the moment that came due fails the process.
 - **A deadline waits for the events stored before it.** The worker holds a deadline that came due
   until the process runner has handled every event stored by then, so an `OrderPaid` stored a
   second before the payment deadline clears it first. When the process runner is stuck, the
@@ -124,7 +126,7 @@ How deadlines behave:
 
 The time a process may stay open is a deadline too, `timeout`, set from `config.timeout` when the
 process starts. Its handler is `at-timeout.ts`, which receives the same arguments, and reaching it
-ends the process as timed out with the state the handler returns. Boot refuses a `deadline()`
+ends the process as timed out, with what the handler returns merged into the final state. Boot refuses a `deadline()`
 without its `at-` file, an `at-` file without its `deadline()`, and a `deadline()` named `timeout`.
 
 A deadline is not a delay. `delay` on a command or a policy says *do this later*; a deadline says

@@ -67,6 +67,26 @@ describe("what does not compile", () => {
     void checks;
   });
 
+  it("an at- handler that leaves out its deadline", () => {
+    type State = ProcessStateOf<OrderPaymentModule>;
+    type Field = ProcessDeadlineField<OrderPaymentModule, "nextReminder">;
+    type Returning<Result> = { handler: () => Result };
+    type Accepted = [
+      ProcessHandlerReturnCheck<State, Returning<{ nextReminder: null }>, Field>,
+      ProcessHandlerReturnCheck<
+        State,
+        Returning<Promise<{ reminders: number; nextReminder: Instant }>>,
+        Field
+      >,
+    ];
+    // @ts-expect-error left out, the deadline would stay at the moment that came due
+    type LeftOut = ProcessHandlerReturnCheck<State, Returning<{ reminders: number }>, Field>;
+    // @ts-expect-error nothing keeps the deadline at the moment that came due too
+    type Nothing = ProcessHandlerReturnCheck<State, Returning<Promise<undefined>>, Field>;
+    const checks: [Accepted?, LeftOut?, Nothing?] = [];
+    void checks;
+  });
+
   it("a plain string where an Instant is expected", () => {
     // @ts-expect-error a plain string is not an Instant
     const moment: Instant = "2026-01-01T00:00:00.000Z";

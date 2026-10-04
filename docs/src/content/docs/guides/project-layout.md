@@ -307,7 +307,8 @@ A process follows an instance of its aggregate over time. `index.ts` says which 
 complete it and how long it may stay open; `on-<event>.ts` handles an event while it is open;
 `at-<deadline>.ts` runs when a deadline of its state comes due, and `at-timeout.ts` when the time
 is up. `config` receives every event of the app by aggregate, `events.order.OrderPlaced`, so a
-process can start, continue or finish on another aggregate's events.
+process can start, continue or finish on another aggregate's events. A handler returns only the
+fields of the state that change, or nothing.
 
 ```ts
 // app/domain/order/processes/order-payment/index.ts
@@ -334,10 +335,7 @@ an `at-` file without its `deadline()`, and the name `timeout` is kept for `conf
 // app/domain/order/processes/order-payment/on-order-placed.ts
 import type { Process } from "./+types/on-order-placed";
 
-export const handler = ({ state, after }: Process.HandlerArgs) => ({
-  ...state,
-  nextReminder: after("24h"),
-});
+export const handler = ({ after }: Process.HandlerArgs) => ({ nextReminder: after("24h") });
 ```
 
 ```ts
@@ -347,15 +345,14 @@ import type { Process } from "./+types/at-next-reminder";
 export const handler = async ({ state, aggregateId, commands, after }: Process.DeadlineArgs) => {
   await commands.sendReminder({ orderId: aggregateId });
   return {
-    ...state,
     reminders: state.reminders + 1,
     nextReminder: state.reminders < 2 ? after("24h") : null,
   };
 };
 ```
 
-`at-timeout.ts` receives the same arguments and ends the process as timed out, keeping the state it
-returns. See [deadlines](/guides/reacting-to-events/#deadlines) for when they run.
+`at-timeout.ts` receives the same arguments and ends the process as timed out, with what it returns
+merged into the final state. See [deadlines](/guides/reacting-to-events/#deadlines) for when they run.
 
 A handler for another aggregate's event sits in a folder named after that aggregate,
 `processes/order-payment/payment/on-payment-failed.ts`. Such an event carries that aggregate's id,

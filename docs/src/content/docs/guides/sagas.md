@@ -45,14 +45,14 @@ order is no longer open, the refusal is the signal to give the money back:
 
 ```ts
 // order/processes/order-lifecycle/payment/on-payment-settled.ts
-export const handler = async ({ state, event, aggregateId, commands }: Process.HandlerArgs) => {
+export const handler = async ({ event, aggregateId, commands }: Process.HandlerArgs) => {
   try {
     await commands.markOrderPaid({ orderId: aggregateId });
   } catch (error) {
     if (!(error instanceof DomainError)) throw error;
     await commands.cancelPayment({ paymentId: event.aggregateId, reason: "order no longer open" });
   }
-  return { ...state, paymentDeadline: null };
+  return { paymentDeadline: null };
 };
 ```
 
@@ -64,10 +64,10 @@ the process reacts to it like to any other event:
 
 ```ts
 // order/processes/order-lifecycle/payment/on-payment-declined.ts
-export const handler = async ({ state, event, aggregateId, commands }: Process.HandlerArgs) => {
+export const handler = async ({ event, aggregateId, commands }: Process.HandlerArgs) => {
   await commands.recordPaymentFailure({ orderId: aggregateId, reason: event.payload.reason });
   await commands.cancelOrder({ orderId: aggregateId, reason: "payment declined" });
-  return { ...state, paymentDeadline: null };
+  return { paymentDeadline: null };
 };
 ```
 
@@ -130,7 +130,6 @@ export const handler = async ({ state, event, commands }: Process.HandlerArgs) =
   if (state.paymentId !== null) {
     await commands.cancelPayment({ paymentId: state.paymentId, reason: event.payload.reason });
   }
-  return state;
 };
 ```
 
@@ -225,9 +224,9 @@ and cleared as soon as the payment moves:
 
 ```ts
 // order/processes/order-lifecycle/at-payment-deadline.ts
-export const handler = async ({ state, aggregateId, commands }: Process.DeadlineArgs) => {
+export const handler = async ({ aggregateId, commands }: Process.DeadlineArgs) => {
   await commands.cancelOrder({ orderId: aggregateId, reason: "not paid in time" });
-  return { ...state, paymentDeadline: null };
+  return { paymentDeadline: null };
 };
 ```
 

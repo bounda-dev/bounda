@@ -146,27 +146,41 @@ export type ProcessStateOf<Module> = Module extends {
   : EmptyPayload;
 
 /**
- * What a process handler may return: the next state, which the `state` schema parses so missing
- * fields take their defaults, or nothing to keep the state as it is.
+ * What a process handler may return: the fields that change, merged over the state, or nothing to
+ * keep the state as it is. The merge is shallow, so a nested object is replaced whole; a field
+ * goes back to its default only when the handler sets it to that, and keeps its value when
+ * returned as `undefined`.
  */
 export type ProcessHandlerResult<State> = Readonly<Partial<State>> | undefined | void;
 
 /**
+ * What an `at-<field>.ts` handler returns: the fields that change, merged over the state as
+ * {@link ProcessHandlerResult} is, always with `Field` set to `null` or to its next moment.
+ */
+export type ProcessDeadlineResult<State, Field extends keyof State> = Readonly<
+  Partial<State> & { readonly [Key in Field]: Instant | null }
+>;
+
+type ReturnOf<State, Field extends keyof State> = [Field] extends [never]
+  ? ProcessHandlerResult<State>
+  : ProcessDeadlineResult<State, Field>;
+
+/**
  * What the `+types` of every process handler asserts as `ReturnCheck`, so a handler that returns a
- * plain string for a deadline, or a field of the wrong type, does not compile. Not for app code.
+ * plain string for a deadline, or a field of the wrong type, does not compile; nor an
+ * `at-<field>.ts` handler that leaves out its `Field`. Not for app code.
  */
 export type ProcessHandlerReturnCheck<
   State,
   Module extends {
-    readonly handler: (
-      args: never,
-    ) => ProcessHandlerResult<State> | Promise<ProcessHandlerResult<State>>;
+    readonly handler: (args: never) => ReturnOf<State, Field> | Promise<ReturnOf<State, Field>>;
   },
+  Field extends keyof State = never,
 > = Module;
 
 /**
  * Arguments of an `on-<event>.ts` handler, with the aggregate's collaborators spread at the top
- * level. The handler returns the new process state.
+ * level. The handler returns the fields of the process state that change.
  */
 export type ProcessHandlerArgs<
   Event,
@@ -197,10 +211,10 @@ export type ProcessHandlerArgs<
 
 /**
  * Arguments of an `at-<field>.ts` handler, with the aggregate's collaborators spread at the top
- * level: `state` holds the deadline that came due as `Field`. The handler returns the new process
- * state, with the field set to `null` or another moment: leaving it at the one that came due fails
- * the process. For `at-timeout.ts`, `Field` is `never` and the process ends as `timed_out`
- * whatever it returns.
+ * level: `state` holds the deadline that came due as `Field`. The handler returns the fields of
+ * the process state that change, `Field` among them: `null` or another moment, since keeping the
+ * one that came due fails the process. For
+ * `at-timeout.ts`, `Field` is `never` and the process ends as `timed_out` whatever it returns.
  */
 export type ProcessDeadlineArgs<
   State,

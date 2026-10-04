@@ -157,7 +157,8 @@ export const handler = async ({ event, commands, mailer, idempotencyKey }: Polic
 ```
 
 Process (`processes/order-payment/index.ts`, `on-order-placed.ts`, `at-payment-deadline.ts`,
-`at-timeout.ts`). A deadline is a state field declared with `deadline()`; a handler schedules it
+`at-timeout.ts`). A handler returns only the state fields that change (merged shallowly over the
+state; a field returns to its default only when set to it), or nothing. A deadline is a state field declared with `deadline()`; a handler schedules it
 with `after("24h")`, moves it by changing it, cancels it with `null`; `at-<field>.ts` runs when it
 comes due and returns the field as `null` or another moment. `instant()` only records a moment.
 `at-timeout.ts` runs at `config.timeout` and ends the process as timed out:
@@ -177,18 +178,15 @@ export const state = ({ z, deadline, instant }: Process.StateArgs) =>
 ```ts
 import type { Process } from "./+types/on-order-placed";
 
-export const handler = ({ state, after }: Process.HandlerArgs) => ({
-  ...state,
-  paymentDeadline: after("72h"),
-});
+export const handler = ({ after }: Process.HandlerArgs) => ({ paymentDeadline: after("72h") });
 ```
 
 ```ts
 import type { Process } from "./+types/at-payment-deadline";
 
-export const handler = async ({ state, aggregateId, commands }: Process.DeadlineArgs) => {
+export const handler = async ({ aggregateId, commands }: Process.DeadlineArgs) => {
   await commands.cancelOrder({ orderId: aggregateId, reason: "unpaid" });
-  return { ...state, paymentDeadline: null };
+  return { paymentDeadline: null };
 };
 ```
 
@@ -267,7 +265,8 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   due), so retries and late runs set the same moment and a daily chain catches up after an
   outage. Each deadline comes due once per moment, earliest first; nothing runs after the process
   ends. A handler's return is type-checked against the state in its `+types` (`ReturnCheck`):
-  set deadlines with `after()` or `asInstant`, never a plain string. Boot refuses a `deadline()` without its `at-` file and the reverse. Build moments in tests
+  set deadlines with `after()` or `asInstant`, never a plain string; an `at-<field>.ts` that
+  leaves its field out does not compile. Boot refuses a `deadline()` without its `at-` file and the reverse. Build moments in tests
   with `asInstant`. For "do this later" without process state, keep a delayed command or policy.
 - Projections write through `table` (`upsert`, `insert`, `update`, `delete`, `findOne`,
   `findMany`, `count`). Each batch is one transaction with the read model's
