@@ -77,8 +77,9 @@ export interface ClaimLostErrorArgs {
 }
 
 /**
- * Thrown by an inbox ledger asked to settle a claim by an id it no longer holds: the lease
- * expired and another runner claimed the event. Whatever the settling was part of rolls back.
+ * Thrown by an inbox ledger asked to settle or renew a claim by an id it no longer holds: the
+ * lease expired and another runner claimed the event. Whatever the settling was part of rolls
+ * back, and a rejected renewal stops the attempt before the handler runs again.
  */
 export class ClaimLostError extends BoundaError {
   readonly subscriber: string;

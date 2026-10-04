@@ -32,6 +32,14 @@ export interface FailClaimArgs extends SettleClaimArgs {
   readonly error: string;
 }
 
+export interface RenewClaimArgs extends ClaimKey {
+  readonly claimId: string;
+  /**
+   * The kernel clock's time, which the lease then counts from.
+   */
+  readonly now: Date;
+}
+
 export interface ClaimRecord extends ClaimKey {
   readonly status: ClaimStatus;
   readonly attempts: number;
@@ -57,5 +65,11 @@ export interface InboxLedger {
   tryClaim(args: ClaimArgs): Promise<string | null>;
   complete(args: SettleClaimArgs): Promise<void>;
   fail(args: FailClaimArgs): Promise<void>;
+  /**
+   * Restarts the claim's lease at `now`, for a runner about to run the handler again after a
+   * conflict; nothing else of the claim changes. Rejects with `ClaimLostError` when the claim was
+   * handed out again, so the handler does not run again.
+   */
+  renew(args: RenewClaimArgs): Promise<void>;
   get(key: ClaimKey): Promise<ClaimRecord | null>;
 }
