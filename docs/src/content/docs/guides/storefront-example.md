@@ -46,10 +46,10 @@ webhooks.
 [Sagas and compensation](/guides/sagas/) walks through this flow step by step: what each step
 compensates, and what happens when the webhooks arrive late, twice or out of order.
 
-The `order` aggregate has no `state.ts`. Its state is inferred from the `apply` functions, so
-`state.status` is `"placed" | "paying" | "paid" | "fulfilled" | "cancelled" | undefined` in every
-handler. The `payment` aggregate has one, so its handlers read `state.orderId` and
-`state.intentId` as strings instead of `string | undefined`.
+Neither aggregate has a `state.ts`: their state is inferred from what their events return.
+`order-placed.ts` and `payment-requested.ts` open their aggregates with `create`, so a handler
+that has checked `state.status` reads `state.customerId` or `state.intentId` as a string, and
+`state.status === undefined` means the order or the payment does not exist yet.
 
 ## Things worth copying
 

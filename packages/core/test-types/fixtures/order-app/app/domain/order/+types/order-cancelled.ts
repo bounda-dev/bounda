@@ -5,8 +5,12 @@ type Module = typeof import("../order-cancelled.ts");
 
 export declare namespace Event {
   type PayloadArgs = core.PayloadArgs;
+  type CreateArgs = core.EventCreateArgs<
+    "OrderCancelled",
+    core.PayloadOf<Module>
+  >;
   type ApplyArgs = core.EventApplyArgs<
-    generated.OrderState,
+    generated.OrderCreatedState,
     "OrderCancelled",
     core.PayloadOf<Module>
   >;

@@ -1,7 +1,6 @@
 import type { Event } from "./+types/order-fulfilled";
 
-export const apply = ({ state, event }: Event.ApplyArgs) => ({
-  ...state,
+export const apply = ({ event }: Event.ApplyArgs) => ({
   status: "fulfilled" as const,
   fulfilledAt: event.timestamp,
 });

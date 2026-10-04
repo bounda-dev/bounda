@@ -8,7 +8,7 @@ export const payload = ({ z }: Command.PayloadArgs) => z.object({ paymentId: z.u
 // back. A refund already requested means this payment had settled before.
 export const handler = ({ command, state, events }: Command.HandlerArgs) => {
   switch (state.status) {
-    case "new":
+    case undefined:
       throw new DomainError(`Payment ${command.aggregateId} was never requested`);
     case "requested":
     case "processing":

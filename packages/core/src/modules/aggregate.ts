@@ -33,3 +33,10 @@ export type HandlerState<State extends object> = Readonly<State> & AggregateMeta
  * inference result. Every field is unknown; add a `state.ts` with `initialState` to fix it.
  */
 export type UnknownState = Record<string, unknown>;
+
+/**
+ * The state of an aggregate that does not exist yet, when one of its events opens it with
+ * `create`: every field of the created state, `undefined`. A command handler tells the two apart
+ * by any field `create` always sets, so `state.status === undefined` means "not created".
+ */
+export type NotCreated<State extends object> = { readonly [Key in keyof State]?: undefined };

@@ -9,6 +9,7 @@ const TERMINAL_CODES: ReadonlySet<string> = new Set([
   "INVALID_CONFIGURATION",
   "NOT_FOUND",
   "CHAIN_DEPTH_EXCEEDED",
+  "CREATION_ORDER",
 ]);
 
 export interface ClassifyFailureFunction {

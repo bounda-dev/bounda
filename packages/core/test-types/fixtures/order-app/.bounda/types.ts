@@ -1,12 +1,14 @@
 import type * as core from "@bounda-dev/core";
 
 export type CustomerState = core.StateOf<typeof import("../app/domain/customer/state.ts")>;
+export type CustomerCreatedState = CustomerState;
 export type CustomerEvents = {
   readonly customerRegistered: typeof import("../app/domain/customer/customer-registered.ts");
 };
 export type CustomerCollaborators = core.EmptyPayload;
 
 export type OrderState = core.StateOf<typeof import("../app/domain/order/state.ts")>;
+export type OrderCreatedState = OrderState;
 export type OrderEvents = {
   readonly orderCancelled: typeof import("../app/domain/order/order-cancelled.ts");
   readonly orderPaid: typeof import("../app/domain/order/order-paid.ts");

@@ -360,27 +360,31 @@ describe("emitRegistry with one empty side", () => {
 });
 
 describe("emitTypes", () => {
-  it("falls back to UnknownState, uses inferred states when given and handles empty maps", () => {
+  it("falls back to UnknownState, uses inferred states when given, created or not, and handles empty maps", () => {
     const { content } = emitTypes({
       model,
       path: "/project/.bounda/types.ts",
       inferredStates: {
+        shipment: { inferred: "{ readonly carrier: string }", created: true },
         ticket: { inferred: "{ readonly open?: boolean; readonly title?: string }" },
       },
     });
     expect(content).toBe(`import type * as core from "@bounda-dev/core";
 
 export type OrderState = core.UnknownState;
+export type OrderCreatedState = OrderState;
 export type OrderEvents = Record<never, never>;
 export type OrderCollaborators = core.EmptyPayload;
 
-export type ShipmentState = core.UnknownState;
+export type ShipmentCreatedState = { readonly carrier: string };
+export type ShipmentState = core.NotCreated<ShipmentCreatedState> | ShipmentCreatedState;
 export type ShipmentEvents = {
   readonly created: typeof import("../app/domain/shipment/created.ts");
 };
 export type ShipmentCollaborators = core.EmptyPayload;
 
 export type TicketState = { readonly open?: boolean; readonly title?: string };
+export type TicketCreatedState = TicketState;
 export type TicketEvents = {
   readonly created: typeof import("../app/domain/ticket/created.ts");
 };

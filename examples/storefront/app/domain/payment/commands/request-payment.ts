@@ -10,7 +10,7 @@ export const handler = async ({
   gateway,
   idempotencyKey,
 }: Command.HandlerArgs) => {
-  if (state.status !== "new") return [];
+  if (state.status !== undefined) return [];
   const { paymentId, orderId, amount } = command.payload;
   const { intentId } = await gateway.createIntent({ paymentId, orderId, amount }, idempotencyKey);
   return [events.paymentRequested({ orderId, amount, intentId })];

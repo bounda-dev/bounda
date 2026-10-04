@@ -8,6 +8,7 @@ import {
   ChainDepthExceededError,
   ConcurrencyError,
   ConfigurationError,
+  CreationOrderError,
   NotFoundError,
   ValidationError,
 } from "../../contracts/errors.ts";
@@ -138,6 +139,31 @@ const toPendingEvents = (
     };
   });
 
+// What makes the state types true: `apply` only ever runs on an aggregate `create` opened.
+const checkCreationOrder = (
+  aggregate: AggregateRuntime,
+  command: Command,
+  created: boolean,
+  events: readonly PendingEvent[],
+): void => {
+  if (!aggregate.opensWithCreate) return;
+  let exists = created;
+  for (const event of events) {
+    const runtime = aggregate.eventsByType[event.type];
+    if (!exists && runtime?.create === null) {
+      throw new CreationOrderError(
+        `Command "${command.type}" returned "${event.type}" for ${aggregate.name} ${command.aggregateId}, which does not exist yet: it must start with an event that exports create`,
+      );
+    }
+    if (exists && runtime?.apply === null) {
+      throw new CreationOrderError(
+        `Command "${command.type}" returned "${event.type}" for ${aggregate.name} ${command.aggregateId}, which exists already: "${event.type}" only exports create`,
+      );
+    }
+    exists = true;
+  }
+};
+
 /**
  * Commands with `delay` are scheduled with the payload as the caller passed it, in the JSON form
  * every scheduler stores. Validating that form here only rejects early what would fail when the
@@ -153,6 +179,8 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
   clock,
   logger,
 }) => {
+  // Only streams written before `create` existed land here, so the set stays small.
+  const warnedOpenings = new Set<string>();
   const execute = async (
     aggregate: AggregateRuntime,
     runtime: CommandRuntime,
@@ -167,11 +195,17 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         aggregateType: aggregate.name,
         aggregateId: command.aggregateId,
       });
-      const state = {
-        ...foldState({ aggregate, events: loaded.events }),
-        id: command.aggregateId,
-        version: loaded.version,
-      };
+      const folded = foldState({ aggregate, events: loaded.events });
+      const stream = `${aggregate.name}:${command.aggregateId}`;
+      if (folded.openedWithout !== null && !warnedOpenings.has(stream)) {
+        warnedOpenings.add(stream);
+        logger.warn("aggregate opened by an event without create; its state may lack fields", {
+          aggregateType: aggregate.name,
+          aggregateId: command.aggregateId,
+          eventType: folded.openedWithout,
+        });
+      }
+      const state = { ...folded.state, id: command.aggregateId, version: loaded.version };
       const produced = (await withTimeout({
         run: (signal) =>
           runtime.handler(
@@ -197,6 +231,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         ids,
         clock.now().toISOString(),
       );
+      checkCreationOrder(aggregate, command, folded.created, events);
       if (events.length === 0) {
         return {
           scheduled: false,

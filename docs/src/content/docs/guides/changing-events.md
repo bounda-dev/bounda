@@ -86,7 +86,8 @@ what keeps the chain straight.
 ## When to write one, and when not to
 
 - **A field renamed, split, merged or re-typed**: an upcaster.
-- **A new optional field**: nothing. Old payloads simply lack it; `apply` reads `undefined`.
+- **A new optional field**: nothing. Old payloads simply lack it; `create` or `apply` reads
+  `undefined`.
 - **A new required field**: an upcaster that fills it with the value the old world implied, like
   `currency: "EUR"` above.
 - **Something that was never in the payload and cannot be derived**: not an upcaster. Introduce a
@@ -100,8 +101,8 @@ the whole stream once.
 ## What is not covered yet
 
 - **Renaming or removing an event type.** Upcasters change the payload, not the type. A stored
-  event whose module is gone still fails to fold; keep the module, even if `apply` returns the
-  state unchanged.
+  event whose module is gone still fails to fold; keep the module, even if its `apply` changes
+  nothing (`() => ({})`).
 - **Process state.** A process keeps its state in its own lifecycle events. Changing that
   state's shape has the same problem and no upcaster yet; a `state.upcast.ts` in the process
   directory is the natural extension when it is needed.

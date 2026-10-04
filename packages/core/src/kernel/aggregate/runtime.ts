@@ -6,7 +6,10 @@ export interface EventRuntime {
   readonly key: string;
   readonly type: string;
   readonly schema: z.ZodType | null;
-  readonly apply: (args: { readonly state: object; readonly event: StoredEvent }) => object;
+  readonly create: ((args: { readonly event: StoredEvent }) => unknown) | null;
+  readonly apply:
+    | ((args: { readonly state: object; readonly event: StoredEvent }) => unknown)
+    | null;
   /**
    * The event's schema history, oldest first; empty for an event whose payload never changed.
    */
@@ -28,6 +31,7 @@ export interface AggregateRuntime {
   readonly name: string;
   readonly aggregateIdField: string;
   readonly initialState: object;
+  readonly opensWithCreate: boolean;
   /**
    * The chosen implementation of every port, spread into the arguments of every handler of the
    * aggregate: its commands, policies and processes.

@@ -14,8 +14,7 @@ test, and the generator that keeps the types in sync with your files.
 
 ```
 app/domain/order/           the order aggregate
-  state.ts                  initial state and the id field
-  order-placed.ts           an event: payload and apply
+  order-placed.ts           an event: payload and create, which opens the order
   commands/place-order.ts   a command: payload and handler
 app/read/orders/            a read model
   view.ts                   its fields

@@ -18,6 +18,14 @@ const requireFunction = (problems: Problem[], owner: object, path: string, name:
   }
 };
 
+const requireFolding = (problems: Problem[], event: object, path: string): void => {
+  const exported = ["create", "apply"].filter((name) => Reflect.get(event, name) !== undefined);
+  if (exported.length === 0) {
+    problems.push({ path, message: 'missing export "create" or "apply" (expected a function)' });
+  }
+  for (const name of exported) requireFunction(problems, event, path, name);
+};
+
 const requireImplementations = (
   problems: Problem[],
   collaborators: CollaboratorModules | undefined,
@@ -53,7 +61,7 @@ const validateAggregate = (
     problems.push({ path: `${base}.state`, message: 'export "initialState" must be an object' });
   }
   for (const [key, event] of Object.entries(aggregate.events)) {
-    requireFunction(problems, event, `${base}.events.${key}`, "apply");
+    requireFolding(problems, event, `${base}.events.${key}`);
   }
   for (const [key, module] of Object.entries(aggregate.upcasts ?? {})) {
     const path = `${base}.upcasts.${key}`;

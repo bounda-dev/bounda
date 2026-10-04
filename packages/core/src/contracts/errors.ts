@@ -158,6 +158,18 @@ export class ConfigurationError extends BoundaError {
 }
 
 /**
+ * Thrown when a command handler returns events that do not fit whether its aggregate exists: an
+ * aggregate one of whose events exports `create` starts with such an event, and an event that only
+ * exports `create` cannot go on an aggregate that exists. A bug in the handler, not a refusal:
+ * nothing is stored, and a reaction that dispatched the command is never retried for it.
+ */
+export class CreationOrderError extends BoundaError {
+  constructor(message: string) {
+    super("CREATION_ORDER", message);
+  }
+}
+
+/**
  * Thrown when a reactive chain exceeds the configured `maxChainDepth`.
  */
 export class ChainDepthExceededError extends BoundaError {

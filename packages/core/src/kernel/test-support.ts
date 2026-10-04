@@ -269,6 +269,10 @@ export interface KernelHarness {
 export interface CreateKernelHarnessArgs {
   readonly config?: Partial<Omit<Config, "storage">>;
   readonly registry?: Registry;
+  /**
+   * What the pipeline logs to; silent by default.
+   */
+  readonly logger?: Logger;
 }
 
 export interface CreateKernelHarnessFunction {
@@ -281,6 +285,7 @@ export interface CreateKernelHarnessFunction {
 export const createKernelHarness: CreateKernelHarnessFunction = async ({
   config: overrides = {},
   registry = orderRegistry,
+  logger = silentLogger,
 } = {}) => {
   sentMessages.length = 0;
   placeOrderKeys.length = 0;
@@ -307,7 +312,7 @@ export const createKernelHarness: CreateKernelHarnessFunction = async ({
     config,
     ids: createSequentialIdGenerator(),
     clock,
-    logger: silentLogger,
+    logger,
   });
   return { storage, config, aggregates, clock, pipeline };
 };

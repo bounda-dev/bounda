@@ -9,6 +9,11 @@ export interface StateTypeSource {
    * `core.UnknownState`.
    */
   readonly inferred: string | null;
+  /**
+   * Whether one of the aggregate's events exports `create`: `inferred` is then the state of the
+   * created aggregate, and the state a command handler sees is that or `core.NotCreated` of it.
+   */
+  readonly created?: boolean;
 }
 
 export interface EmitTypesArgs {
@@ -33,6 +38,13 @@ export interface StateTypeNameFunction {
 
 export const stateTypeName: StateTypeNameFunction = (aggregateName) =>
   `${typeNameOf(aggregateName)}State`;
+
+export interface CreatedStateTypeNameFunction {
+  (aggregateName: string): string;
+}
+
+export const createdStateTypeName: CreatedStateTypeNameFunction = (aggregateName) =>
+  `${typeNameOf(aggregateName)}CreatedState`;
 
 export interface EventsTypeNameFunction {
   (aggregateName: string): string;
@@ -68,13 +80,20 @@ const emitState = (
   inferred: StateTypeSource | undefined,
 ): string => {
   const name = stateTypeName(aggregate.name);
+  const created = createdStateTypeName(aggregate.name);
+  const whole = (type: string): string =>
+    `export type ${name} = ${type};\nexport type ${created} = ${name};`;
   if (aggregate.state !== null) {
-    return `export type ${name} = core.StateOf<${typeofImport(path, aggregate.state.path)}>;`;
+    return whole(`core.StateOf<${typeofImport(path, aggregate.state.path)}>`);
   }
-  if (inferred?.inferred !== undefined && inferred.inferred !== null) {
-    return `export type ${name} = ${inferred.inferred};`;
+  if (inferred?.inferred === undefined || inferred.inferred === null) {
+    return whole("core.UnknownState");
   }
-  return `export type ${name} = core.UnknownState;`;
+  if (inferred.created !== true) return whole(inferred.inferred);
+  return [
+    `export type ${created} = ${inferred.inferred};`,
+    `export type ${name} = core.NotCreated<${created}> | ${created};`,
+  ].join("\n");
 };
 
 const emitEvents = (aggregate: AggregateModel, path: string): string =>
