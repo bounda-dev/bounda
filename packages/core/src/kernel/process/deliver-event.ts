@@ -18,7 +18,7 @@ import {
   lifecycleEntries,
   type ProcessInstance,
 } from "./lifecycle.ts";
-import { actsOn, completesOn, handledEntries, handlerOf, startsOn } from "./routes.ts";
+import { actsOn, completesOn, followsUp, handledEntries, handlerOf, startsOn } from "./routes.ts";
 import type { DeadlineSchedule } from "./schedule.ts";
 import type { ProcessUnits } from "./units.ts";
 
@@ -30,7 +30,8 @@ export interface EventDelivery {
    * What one event does to its instance is one unit of work: the start, the handler's commands,
    * the lifecycle events, the deadline entry and, for an event its handler runs on, the inbox
    * claim, committed together or not at all. An event for an instance that has ended, or that
-   * was handled already, takes no claim and writes nothing. A retriable failure holds the event for the inbox ledger to
+   * was handled already, takes no claim and writes nothing, except a follow-up of a timed-out
+   * instance: its handler runs as on a running one, and a failure files a letter only. A retriable failure holds the event for the inbox ledger to
    * retry. A commit that finds the instance moved, by a deadline or another instance, runs the
    * step again on the instance as it now is, up to `runtime.commands.concurrencyRetries` times,
    * without spending an attempt. An event for a failed instance is parked behind the failure.
@@ -120,7 +121,7 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
         entries.push(lifecycleEntries.parked(event));
         parked = true;
       }
-    } else if (instance.status === "started") {
+    } else if (instance.status === "started" || followsUp(process, instance, event)) {
       if (handlerOf(process, event) !== undefined && !instance.handledEventIds.has(event.id)) {
         const state = await handlers.runEventHandler({
           process,
@@ -130,7 +131,7 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
           attempt,
           within: unit,
         });
-        entries.push(...handledEntries(process, event, state));
+        entries.push(...handledEntries(process, instance, event, state));
       } else if (completesOn(process, event)) {
         entries.push(lifecycleEntries.completed(event));
       }
@@ -247,6 +248,7 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
     if (instanceId === null) return "done";
     // Routed on the instance as the store holds it; the step loads it again through its unit.
     const instance = await units.live.load(process, instanceId);
+    if (followsUp(process, instance, event)) return handle(process, event, instanceId);
     const ended = instance.exists
       ? instance.status === "completed" || instance.status === "timed_out"
       : !startsOn(process, event);

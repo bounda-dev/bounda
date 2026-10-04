@@ -59,6 +59,7 @@ const instance = (overrides: Partial<ProcessInstance> = {}): ProcessInstance => 
   reached: new Set(),
   correlationId: "c",
   parked: [],
+  followUps: new Set(),
   failure: { eventId: "e-1", letterId: "letter-1" },
   ...overrides,
 });

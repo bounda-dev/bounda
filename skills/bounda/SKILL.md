@@ -175,7 +175,9 @@ Process (`processes/order-payment/index.ts`, `on-order-placed.ts`, `at-payment-d
 state; a field returns to its default only when set to it), or nothing. A deadline is a state field declared with `deadline()`; a handler schedules it
 with `after("24h")`, moves it by changing it, cancels it with `null`; `at-<field>.ts` runs when it
 comes due and returns the field as `null` or another moment. `instant()` only records a moment.
-`at-timeout.ts` runs at `config.timeout` and ends the process as timed out:
+`at-timeout.ts` runs at `config.timeout` and ends the process as timed out; the events its
+commands cause still reach the process's handlers (one hop: not what those handlers cause in
+turn), so compensate in the `on-<event>.ts` of the event it causes, not in `at-timeout.ts`:
 
 ```ts
 import type { Process } from "./+types/index";
@@ -243,7 +245,7 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
 - A process `config` names events as `events.<aggregate>.<Event>`. For every event of another
   aggregate it uses, `index.ts` exports `correlate: Process.Correlate`, a function per event to the
   id of the process's own aggregate (or `null` to ignore it). Events for no open instance are
-  skipped; a completed instance is never reopened. Returned state is validated against `state`.
+  skipped, but for those `at-timeout.ts` caused; a completed instance is never reopened. Returned state is validated against `state`.
 - A command handler returns the events to append, built with `events.<eventKey>(payload)`. It may
   only build events of its own aggregate. Throw `DomainError` to reject a command.
 - `state` in a handler carries `id` and `version` besides the aggregate's fields. Without

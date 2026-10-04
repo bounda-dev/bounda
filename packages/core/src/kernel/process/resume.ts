@@ -109,7 +109,12 @@ export const createResumeParked: CreateResumeParkedFunction = ({
         const instance = await within.load(process, instanceId);
         if (!draining(instance, letter) || instance.parked[0]?.eventId !== event.id) return;
         const state = await stateAfter(unit, process, instanceId, instance, event);
-        await within.append(process, instanceId, instance, handledEntries(process, event, state));
+        await within.append(
+          process,
+          instanceId,
+          instance,
+          handledEntries(process, instance, event, state),
+        );
         await schedule.stage(unit, process, instanceId);
       });
       return true;

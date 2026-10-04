@@ -121,8 +121,9 @@ export const handler = async ({ event, commands, gateway, idempotencyKey }: Poli
 ```
 
 Compensations go through one place. However the order ends up cancelled (the customer, the
-payment deadline, a declined card), `OrderCancelled` completes the process, and its handler runs
-before the instance completes:
+payment deadline, a declined card, the process's own `timeout`), `OrderCancelled` reaches this
+handler: it runs before the instance completes, or, when `at-timeout.ts` caused it, after the
+instance timed out:
 
 ```ts
 // order/processes/order-lifecycle/on-order-cancelled.ts
@@ -137,10 +138,6 @@ Compensations need not run in the reverse order of their steps. The order was pl
 payment was requested, yet the order is cancelled first and the payment after it: cancelling the
 order is what sets the compensation going. Each compensation decides from the state of its own
 aggregate, so their order matters only when one depends on what another did.
-
-The exception is the process's own `timeout`. An instance that times out ends there, and the
-`OrderCancelled` its `at-timeout.ts` causes reaches no open instance, so that handler compensates
-in place: it releases the lock, cancels the order and cancels the payment.
 
 ## Every step is idempotent
 
@@ -231,8 +228,9 @@ export const handler = async ({ aggregateId, commands }: Process.DeadlineArgs) =
 ```
 
 The process's own `timeout`, 30 days in the storefront, is the last resort: it detects an
-instance stuck for any reason, a lock nobody released included, and cancels everything. See
-[deadlines](/guides/reacting-to-events/#deadlines).
+instance stuck for any reason, a lock nobody released included: it releases the lock and cancels
+the order, and the `OrderCancelled` it causes cancels the payment through `on-order-cancelled.ts`,
+as any other cancellation does. See [deadlines](/guides/reacting-to-events/#deadlines).
 
 ## Retry before compensating
 

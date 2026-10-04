@@ -380,7 +380,7 @@ export const handler = async ({ state, aggregateId, commands, after }: Process.D
 ```
 
 `at-timeout.ts` receives the same arguments and ends the process as timed out, with what it returns
-merged into the final state. See [deadlines](/guides/reacting-to-events/#deadlines) for when they run.
+merged into the final state; the events its commands cause still reach the process's handlers. See [deadlines](/guides/reacting-to-events/#deadlines) for when they run.
 
 A handler for another aggregate's event sits in a folder named after that aggregate,
 `processes/order-payment/payment/on-payment-failed.ts`. Such an event carries that aggregate's id,
@@ -400,7 +400,8 @@ export const correlate: Process.Correlate = {
 ```
 
 An event that does not start the process and finds no open instance is skipped, and so is any
-event for an instance that has completed or timed out: a starting event never reopens one. An
+event for an instance that has completed or timed out, but for what its `at-timeout.ts` caused: a
+starting event never reopens one. An
 event for an instance that has failed is parked instead, and handled in order once the failure is
 replayed; see [a failed process](/guides/reacting-to-events/#a-failed-process).
 
