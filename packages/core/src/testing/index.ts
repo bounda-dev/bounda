@@ -63,8 +63,8 @@ export interface CreateTestAppFunction {
  * Creates an app for tests: in-memory storage, a clock that only moves when told to and
  * sequential ids (`id-1`, `id-2`, ...), so assertions are deterministic. Ports get only what
  * `collaborators` passes. `app.runUntilIdle()` also moves the clock to each retry waiting for its
- * back-off, until every failing reaction or scheduled command has succeeded or given up. Call
- * `app.stop()` when done.
+ * back-off, running what falls due on the way, so the failures it can see have gone through or
+ * given up when it resolves. Call `app.stop()` when done.
  */
 export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
   registry,
@@ -89,7 +89,7 @@ export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
     ids,
     clock,
     env,
-    retries: createPendingRetries(clock),
+    pendingRetries: createPendingRetries(clock),
     test: {
       collaborators,
       onMissing: (error) => {

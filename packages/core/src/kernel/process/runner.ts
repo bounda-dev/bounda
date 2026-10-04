@@ -31,7 +31,7 @@ export interface CreateProcessRunnerArgs {
   readonly config: ResolvedConfig;
   readonly ids: IdGenerator;
   readonly clock: Clock;
-  readonly retries: PendingRetries;
+  readonly pendingRetries: PendingRetries;
   readonly logger: Logger;
 }
 
@@ -51,7 +51,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
   config,
   ids,
   clock,
-  retries,
+  pendingRetries,
   logger,
 }) => {
   const units = createProcessUnits({ storage, config, ids, clock });
@@ -68,7 +68,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     storage,
     config,
     clock,
-    retries,
+    pendingRetries,
     logger,
   });
   const deadlines = createDeadlineDelivery({

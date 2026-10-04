@@ -48,11 +48,11 @@ const setUp = async () => {
       leaseMs: 60_000,
       concurrencyRetries,
       clock,
-      retries: {
+      pendingRetries: {
         waiting: (at) => {
           waiting.push(at.toISOString());
         },
-        skipToNext: () => false,
+        skipToNext: async () => false,
       },
       run: async (unit, n) => {
         runs.push(n);

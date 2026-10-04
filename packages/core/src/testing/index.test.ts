@@ -294,7 +294,42 @@ describe("createTestApp runUntilIdle", () => {
     await app.stop();
   });
 
-  it("moves the clock to a scheduled command's retry, but never to what is scheduled", async () => {
+  it("runs a retry without back-off before it resolves", async () => {
+    const sent: string[] = [];
+    const { app, clock } = await createTestApp({
+      registry: shop(ports),
+      config: { runtime: { policies: { retry: { strategy: "fixed", baseDelay: 0 } } } },
+      collaborators: { order: { notifier: recording([]), mailer: flaky(1, sent) } },
+    });
+    await app.commands.placeOrder({ orderId: "o-1" });
+    await expect(app.runUntilIdle()).resolves.toEqual({ idle: true });
+    expect(sent).toEqual(["mail o-1"]);
+    expect(clock.now().toISOString()).toBe("2026-01-01T00:00:00.000Z");
+    await app.stop();
+  });
+
+  it("runs what is scheduled before a retry at its own time, then the retry", async () => {
+    const sent: string[] = [];
+    const deadlines: string[] = [];
+    const { app, clock } = await createTestApp({
+      registry: shop(ports, () => {
+        deadlines.push(clock.now().toISOString());
+        return { due: null };
+      }),
+      config: {
+        runtime: { policies: { retry: { strategy: "fixed", baseDelay: "2h", maxDelay: "2h" } } },
+      },
+      collaborators: { order: { notifier: recording([]), mailer: flaky(1, sent) } },
+    });
+    await app.commands.placeOrder({ orderId: "o-1" });
+    await expect(app.runUntilIdle()).resolves.toEqual({ idle: true });
+    expect(deadlines).toEqual(["2026-01-01T01:00:00.000Z"]);
+    expect(sent).toEqual(["mail o-1"]);
+    expect(clock.now().toISOString()).toBe("2026-01-01T02:00:00.000Z");
+    await app.stop();
+  });
+
+  it("moves the clock to a scheduled command's retry, but never past it", async () => {
     let calls = 0;
     const { app, clock } = await createTestApp({
       registry: shop(ports, () => {

@@ -7,14 +7,16 @@ import type { FixedClock } from "../../contracts/clock.ts";
 export interface PendingRetries {
   waiting(at: Date): void;
   /**
-   * Moves the clock to the earliest retry still to come; `false` when there is none.
+   * Called once the app is idle. Moves the clock to the earliest retry still to come, or to what
+   * `scheduled` says falls due before it, so everything runs in the order it falls due; `false`
+   * when no retry is waiting.
    */
-  skipToNext(): boolean;
+  skipToNext(scheduled: () => Promise<Date | null>): Promise<boolean>;
 }
 
 export const ignoredRetries: PendingRetries = {
   waiting: () => {},
-  skipToNext: () => false,
+  skipToNext: async () => false,
 };
 
 export interface CreatePendingRetriesFunction {
@@ -23,17 +25,26 @@ export interface CreatePendingRetriesFunction {
 
 export const createPendingRetries: CreatePendingRetriesFunction = (clock) => {
   const due = new Set<number>();
+  // A retry without back-off is due as soon as it fails, so the app is idle with it still waiting.
+  let dueNow = false;
   return {
     waiting: (at) => {
-      due.add(at.getTime());
+      if (at.getTime() <= clock.now().getTime()) dueNow = true;
+      else due.add(at.getTime());
     },
-    skipToNext: () => {
-      // Only called once the app is idle, so a retry whose time has come has run, and reported
-      // its next time if it failed again.
+    skipToNext: async (scheduled) => {
+      if (dueNow) {
+        dueNow = false;
+        return true;
+      }
+      // The app is idle, so a retry whose time has come has run, and reported its next time if
+      // it failed again.
       const now = clock.now().getTime();
       for (const at of due) if (at <= now) due.delete(at);
       if (due.size === 0) return false;
-      clock.set(new Date(Math.min(...due)));
+      const retry = Math.min(...due);
+      const before = (await scheduled())?.getTime() ?? retry;
+      clock.set(new Date(before > now && before < retry ? before : retry));
       return true;
     },
   };

@@ -48,7 +48,7 @@ export interface CreateScheduledCommandWorkerArgs {
   readonly config: ResolvedConfig;
   readonly ids: IdGenerator;
   readonly clock: Clock;
-  readonly retries: PendingRetries;
+  readonly pendingRetries: PendingRetries;
   readonly logger: Logger;
 }
 
@@ -97,7 +97,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   config,
   ids,
   clock,
-  retries,
+  pendingRetries,
   logger,
 }) => {
   const mutex = createMutex();
@@ -324,7 +324,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
           error: errorDetails(error).message,
           retryAt,
         });
-        retries.waiting(retryAt);
+        pendingRetries.waiting(retryAt);
         logger.warn("scheduled command failed; rescheduled", {
           command: entry.command.type,
           attempts,

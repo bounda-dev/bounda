@@ -24,7 +24,7 @@ export interface CreatePolicySubscriberArgs {
   readonly storage: StoragePorts;
   readonly config: ResolvedConfig;
   readonly clock: Clock;
-  readonly retries: PendingRetries;
+  readonly pendingRetries: PendingRetries;
   readonly logger: Logger;
 }
 
@@ -42,7 +42,7 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
   storage,
   config,
   clock,
-  retries,
+  pendingRetries,
   logger,
 }) => {
   const deadLetter = async (
@@ -100,7 +100,7 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
       leaseMs: settings.timeoutMs * 2,
       concurrencyRetries: config.runtime.commands.concurrencyRetries,
       clock,
-      retries,
+      pendingRetries,
       run: async (unit, attempt) => {
         if (policy.delayMs === null) {
           await executor.run({ policy, event, attempt, within: unit });

@@ -46,7 +46,7 @@ export interface CreateEventDeliveryArgs {
   readonly storage: StoragePorts;
   readonly config: ResolvedConfig;
   readonly clock: Clock;
-  readonly retries: PendingRetries;
+  readonly pendingRetries: PendingRetries;
   readonly logger: Logger;
 }
 
@@ -62,7 +62,7 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
   storage,
   config,
   clock,
-  retries,
+  pendingRetries,
   logger,
 }) => {
   const leaseMs = (process: ProcessRuntime): number =>
@@ -184,7 +184,7 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
       leaseMs: leaseMs(process),
       concurrencyRetries: config.runtime.commands.concurrencyRetries,
       clock,
-      retries,
+      pendingRetries,
       run: async (unit, attempt) => {
         parked = await step(unit, process, event, instanceId, attempt);
       },

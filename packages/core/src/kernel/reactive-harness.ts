@@ -103,7 +103,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     config,
     ids,
     clock,
-    retries: ignoredRetries,
+    pendingRetries: ignoredRetries,
     logger,
   });
   const worker = createScheduledCommandWorker({
@@ -120,7 +120,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     config,
     ids,
     clock,
-    retries: ignoredRetries,
+    pendingRetries: ignoredRetries,
     logger,
   });
   const makeDispatcher = (): Dispatcher =>
@@ -141,7 +141,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
           storage,
           config,
           clock,
-          retries: ignoredRetries,
+          pendingRetries: ignoredRetries,
           logger,
         }),
         processes,

@@ -19,7 +19,7 @@ export interface RunAttemptArgs {
    */
   readonly concurrencyRetries: number;
   readonly clock: Clock;
-  readonly retries: PendingRetries;
+  readonly pendingRetries: PendingRetries;
   /**
    * The reaction itself, writing through `unit`; `attempt` counts from 1 across retries.
    */
@@ -67,7 +67,7 @@ export const runAttempt: RunAttemptFunction = async ({
   leaseMs,
   concurrencyRetries,
   clock,
-  retries,
+  pendingRetries,
   run,
   giveUp,
   gaveUp: reportGaveUp,
@@ -88,7 +88,7 @@ export const runAttempt: RunAttemptFunction = async ({
       new Date(existing.claimedAt).getTime() + retryDelayMs({ retry, attempt: existing.attempts }),
     );
     if (now < dueAt) {
-      retries.waiting(dueAt);
+      pendingRetries.waiting(dueAt);
       return "hold";
     }
   }
@@ -127,7 +127,9 @@ export const runAttempt: RunAttemptFunction = async ({
     try {
       if (gaveUp === undefined) {
         await storage.inboxLedger.fail({ ...claim, error: message });
-        retries.waiting(new Date(now.getTime() + retryDelayMs({ retry, attempt: attempts })));
+        pendingRetries.waiting(
+          new Date(now.getTime() + retryDelayMs({ retry, attempt: attempts })),
+        );
         willRetry(attempts);
         return "hold";
       }

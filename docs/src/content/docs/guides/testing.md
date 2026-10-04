@@ -99,8 +99,9 @@ that fails with an error worth retrying waits for its back-off, and `runUntilIdl
 clock to it itself: by the time it resolves, every such failure has been retried until it went
 through or gave up as a [dead letter](/guides/reacting-to-events/#dead-letters). A test of a
 provider that fails once dispatches, runs until idle and asserts the second call; `clock.now()`
-says how far the retries took it. Nothing else moves the clock for you: what is scheduled still
-waits for your advance.
+says how far the retries took it. It never moves the clock past the last retry: what is
+scheduled before it runs on the way, in order, and what is scheduled after it waits for your
+advance.
 
 A test that builds a process state by hand, say to call a handler on its own, needs its moments
 typed as `Instant`, which a plain string is not: `asInstant` from `@bounda-dev/core` makes one from
@@ -111,9 +112,10 @@ Pass `now` to start somewhere else: `createTestApp({ registry, now: new Date("20
 The clock also owns every wait the runtime makes. A handler time-out fires when the clock passes
 it, not after real milliseconds: a command handler that never finishes holds
 `await app.commands.x()` until you advance the clock past `runtime.commands.timeout`, and a policy
-or process handler holds `runUntilIdle()` until it passes `runtime.policies.timeout`. The background loops that `app.start()`
-arms wait on it too: in a test they run only when you advance the clock, and `clock.pending()`
-says how many waits are armed, which is none once `app.stop()` has resolved.
+or process handler holds `runUntilIdle()` until it passes `runtime.policies.timeout`. The
+background loops that `app.start()` arms wait on it too: in a test they run only when you advance
+the clock, and `clock.pending()` says how many waits are armed, which is none once `app.stop()`
+has resolved.
 
 ## Against a real database
 
