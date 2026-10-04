@@ -67,8 +67,8 @@ export interface InboxLedger {
   fail(args: FailClaimArgs): Promise<void>;
   /**
    * Restarts the claim's lease at `now`, for a runner about to run the handler again after a
-   * conflict; nothing else of the claim changes. Rejects with `ClaimLostError` when the claim was
-   * handed out again, so the handler does not run again.
+   * conflict; nothing else of the claim changes. Rejects with `ClaimLostError` when the key does
+   * not hold `claimId`: the claim was handed out again, or never was.
    */
   renew(args: RenewClaimArgs): Promise<void>;
   get(key: ClaimKey): Promise<ClaimRecord | null>;

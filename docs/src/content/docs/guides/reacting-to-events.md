@@ -149,9 +149,9 @@ events (`ProcessStarted`, `ProcessHandled`, `ProcessCompleted`, `ProcessDeadline
 disagree with the state it was computed from. A handler that throws, runs out of time or dies
 before that leaves no command behind, immediate or delayed, and the next attempt decides afresh.
 When the instance moved meanwhile, because a deadline or another instance wrote to it, the step
-runs again on the instance as it now is, without spending an attempt, and with its claim's lease
-started again, unless another instance has taken the claim over meanwhile. What `await commands.x()`
-returns is the aggregate's decision, not something stored yet: call the outside world before
+runs again on the instance as it now is, without spending an attempt; it first starts its claim's
+lease again, and stops there if another instance has taken the claim over. What
+`await commands.x()` returns is the aggregate's decision, not something stored yet: call the outside world before
 dispatching, not after, and pass `idempotencyKey`, because the attempt may run again. What stays
 outside the promise, and why, is in [Your event store is your outbox](/concepts/event-store-as-outbox/):
 the outside calls, the claim, and what a read model shows a handler.

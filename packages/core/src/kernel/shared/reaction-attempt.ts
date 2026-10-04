@@ -92,14 +92,12 @@ export const runAttempt: RunAttemptFunction = async ({
       storage,
       concurrencyRetries,
       work,
-      // A renewal that failed in the store is the store's failure, not the reaction's.
-      beforeRerun: async () => {
-        try {
-          await storage.inboxLedger.renew({ ...claim, now: clock.now() });
-        } catch (error) {
-          throw error instanceof ClaimLostError ? error : new CommitFailed(error);
-        }
-      },
+      // A renewal that failed is the store's failure, not the reaction's; `lost` still tells a
+      // claim handed out again.
+      beforeRerun: () =>
+        storage.inboxLedger.renew({ ...claim, now: clock.now() }).catch((error: unknown) => {
+          throw new CommitFailed(error);
+        }),
     });
   // The claim was handed out again while this attempt ran: whoever holds it now decides, and
   // nothing of this attempt is written.

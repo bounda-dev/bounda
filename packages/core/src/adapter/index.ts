@@ -43,6 +43,7 @@ export type {
   ClaimStatus,
   FailClaimArgs,
   InboxLedger,
+  RenewClaimArgs,
   SettleClaimArgs,
 } from "./ports/inbox-ledger.ts";
 export type {
