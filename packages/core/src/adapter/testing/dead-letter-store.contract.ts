@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { DeadLetterSettledError } from "../../contracts/errors.ts";
 import type { DeadLetterStore, NewDeadLetter } from "../ports/dead-letter-store.ts";
 
 export interface DeadLetterStoreContractArgs {
@@ -93,9 +94,43 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       expect(await store.list({ limit: 2 })).toHaveLength(2);
     });
 
-    it("ignores a status update for a letter it does not hold", async () => {
-      await expect(store.updateStatus("missing", "replayed")).resolves.toBeUndefined();
+    it("rejects a status update for a letter it does not hold", async () => {
+      const settled = await store
+        .updateStatus("missing", "replayed")
+        .catch((error: unknown) => error);
+      expect(settled).toBeInstanceOf(DeadLetterSettledError);
+      expect(settled).toMatchObject({ code: "DEAD_LETTER_SETTLED", id: "missing" });
       expect(await store.get("missing")).toBeNull();
+    });
+
+    it("changes a letter's status only while it is failed, and keeps the first change", async () => {
+      await store.add(letter("a"));
+      await store.add(letter("b"));
+      await store.updateStatus("a", "replayed");
+      await store.updateStatus("b", "discarded");
+
+      await expect(store.updateStatus("a", "discarded")).rejects.toBeInstanceOf(
+        DeadLetterSettledError,
+      );
+      await expect(store.updateStatus("a", "replayed")).rejects.toBeInstanceOf(
+        DeadLetterSettledError,
+      );
+      await expect(store.updateStatus("b", "replayed")).rejects.toBeInstanceOf(
+        DeadLetterSettledError,
+      );
+      expect((await store.get("a"))?.status).toBe("replayed");
+      expect((await store.get("b"))?.status).toBe("discarded");
+    });
+
+    it("lets one of two concurrent status changes through", async () => {
+      await store.add(letter("a"));
+      const outcomes = await Promise.allSettled([
+        store.updateStatus("a", "replayed"),
+        store.updateStatus("a", "discarded"),
+      ]);
+      expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+      const [rejected] = outcomes.filter((outcome) => outcome.status === "rejected");
+      expect(rejected?.reason).toBeInstanceOf(DeadLetterSettledError);
     });
 
     it("updates status and removes letters", async () => {

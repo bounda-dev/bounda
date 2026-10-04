@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { ConcurrencyError, ScheduledClaimLostError } from "../../contracts/errors.ts";
+import {
+  ConcurrencyError,
+  DeadLetterSettledError,
+  ScheduledClaimLostError,
+} from "../../contracts/errors.ts";
 import type { StoragePorts, StorageTransaction } from "../adapter.ts";
 import type { NewDeadLetter } from "../ports/dead-letter-store.ts";
 import { pendingEvent, testCommand, testContext } from "./fixtures.ts";
@@ -155,6 +159,24 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       expect(await storage.scheduler.list()).toMatchObject([
         { dedupeKey: "command:c1", attempts: 1 },
       ]);
+    });
+
+    it("writes nothing when the dead letter it settles was settled first", async () => {
+      await storage.deadLetterStore.add(letter("d1"));
+      await storage.deadLetterStore.updateStatus("d1", "discarded");
+      await expect(
+        storage.transact(async (tx) => {
+          await tx.eventStore.append({
+            aggregateType: "order",
+            aggregateId: "1",
+            expectedVersion: 0,
+            events: [pendingEvent({ aggregateId: "1", version: 1 })],
+          });
+          await tx.deadLetterStore.updateStatus("d1", "replayed");
+        }),
+      ).rejects.toBeInstanceOf(DeadLetterSettledError);
+      expect(await storage.eventStore.lastPosition()).toBe(0);
+      expect((await storage.deadLetterStore.get("d1"))?.status).toBe("discarded");
     });
 
     it("lets the work read the events it appended", async () => {

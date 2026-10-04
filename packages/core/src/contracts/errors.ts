@@ -93,6 +93,23 @@ export class ClaimLostError extends BoundaError {
 }
 
 /**
+ * Thrown by a dead-letter store asked to change the status of a letter that is missing or no
+ * longer `failed`: another replay or discard settled it first. Whatever the change was part of
+ * rolls back, so of two operators settling one letter only the first gets through.
+ */
+export class DeadLetterSettledError extends BoundaError {
+  readonly id: string;
+
+  constructor(id: string) {
+    super(
+      "DEAD_LETTER_SETTLED",
+      `Dead letter "${id}" is no longer failed: another replay or discard settled it first`,
+    );
+    this.id = id;
+  }
+}
+
+/**
  * Thrown by a scheduler asked to complete, fail, defer or renew a claimed command by a claim it no
  * longer holds: the lease expired and another runner claimed the command, or the command was
  * cancelled. Whatever the settling was part of rolls back, and a rejected renewal stops the run

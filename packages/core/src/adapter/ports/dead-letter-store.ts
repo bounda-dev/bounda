@@ -56,6 +56,11 @@ export interface DeadLetterStore {
   get(id: string): Promise<DeadLetter | null>;
   list(args?: ListDeadLettersArgs): Promise<readonly DeadLetter[]>;
   count(args?: ListDeadLettersArgs): Promise<number>;
+  /**
+   * Moves a `failed` letter to `status`. Rejects with `DeadLetterSettledError` when the letter is
+   * missing or no longer `failed`, so of two replays or discards of one letter only the first
+   * changes it.
+   */
   updateStatus(id: string, status: DeadLetterStatus): Promise<void>;
   remove(id: string): Promise<void>;
 }

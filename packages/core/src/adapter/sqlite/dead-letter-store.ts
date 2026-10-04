@@ -1,3 +1,4 @@
+import { DeadLetterSettledError } from "../../contracts/errors.ts";
 import type {
   DeadLetter,
   DeadLetterErrorType,
@@ -109,8 +110,13 @@ export const createSqliteDeadLetterStore: CreateSqliteDeadLetterStoreFunction = 
       );
       return Number(row?.count ?? 0);
     },
-    updateStatus: (id, status) =>
-      db.run(`UPDATE ${table} SET "status" = ? WHERE "id" = ?`, [status, id]),
+    updateStatus: async (id, status) => {
+      const updated = await db.all(
+        `UPDATE ${table} SET "status" = ? WHERE "id" = ? AND "status" = 'failed' RETURNING "id"`,
+        [status, id],
+      );
+      if (updated.length === 0) throw new DeadLetterSettledError(id);
+    },
     remove: (id) => db.run(`DELETE FROM ${table} WHERE "id" = ?`, [id]),
   };
 };

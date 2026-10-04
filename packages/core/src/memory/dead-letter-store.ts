@@ -3,6 +3,7 @@ import type {
   DeadLetterStore,
   ListDeadLettersArgs,
 } from "../adapter/ports/dead-letter-store.ts";
+import { DeadLetterSettledError } from "../contracts/errors.ts";
 import { snapshotMap } from "./transaction.ts";
 
 /**
@@ -48,7 +49,8 @@ export const createMemoryDeadLetterStore: CreateMemoryDeadLetterStoreFunction = 
     count: async (args = {}) => select(args).length,
     updateStatus: async (id, status) => {
       const existing = letters.get(id);
-      if (existing !== undefined) letters.set(id, { ...existing, status });
+      if (existing?.status !== "failed") throw new DeadLetterSettledError(id);
+      letters.set(id, { ...existing, status });
     },
     remove: async (id) => {
       letters.delete(id);
