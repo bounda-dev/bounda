@@ -161,21 +161,39 @@ export type ProcessDeadlineResult<State, Field extends keyof State> = Readonly<
   Partial<State> & { readonly [Key in Field]: Instant | null }
 >;
 
-type ReturnOf<State, Field extends keyof State> = [Field] extends [never]
-  ? ProcessHandlerResult<State>
-  : ProcessDeadlineResult<State, Field>;
+// A field the state does not declare would be dropped by the schema without a word, so a key the
+// handler returns beyond the state's must be `never`: the error then names it. With no such key it
+// is `unknown`, since intersecting with `{}` would let a string through `Partial<State>`.
+type UndeclaredFields<Keys extends PropertyKey> = [Keys] extends [never]
+  ? unknown
+  : { readonly [Key in Keys]?: never };
+
+type ReturnOf<State, Field extends keyof State, Undeclared extends PropertyKey> = [Field] extends [
+  never,
+]
+  ? (Readonly<Partial<State>> & UndeclaredFields<Undeclared>) | undefined | void
+  : ProcessDeadlineResult<State, Field> & UndeclaredFields<Undeclared>;
+
+type KeysOf<Result> = Result extends object ? keyof Result : never;
+
+type ReturnedKeys<Module> = Module extends { readonly handler: (args: never) => infer Returned }
+  ? KeysOf<Awaited<Returned>>
+  : never;
 
 /**
  * What the `+types` of every process handler asserts as `ReturnCheck`, so a handler that returns a
- * plain string for a deadline, or a field of the wrong type, does not compile; nor an
- * `at-<field>.ts` handler that leaves out its `Field`. Not for app code.
+ * plain string for a deadline, a field of the wrong type or one the state does not declare does
+ * not compile; nor an `at-<field>.ts` handler that leaves out its `Field`. Not for app code.
  */
 export type ProcessHandlerReturnCheck<
   State,
   Module extends {
-    readonly handler: (args: never) => ReturnOf<State, Field> | Promise<ReturnOf<State, Field>>;
+    readonly handler: (
+      args: never,
+    ) => ReturnOf<State, Field, Undeclared> | Promise<ReturnOf<State, Field, Undeclared>>;
   },
   Field extends keyof State = never,
+  Undeclared extends PropertyKey = Exclude<ReturnedKeys<Module>, keyof State>,
 > = Module;
 
 /**

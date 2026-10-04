@@ -53,6 +53,11 @@ describe("what does not compile", () => {
       ProcessHandlerReturnCheck<State, Returning<Promise<State>>>,
       ProcessHandlerReturnCheck<State, Returning<undefined>>,
       ProcessHandlerReturnCheck<State, Returning<{ nextReminder: Instant | null }>>,
+      ProcessHandlerReturnCheck<
+        State,
+        Returning<Promise<{ reminders: number } | { paidAt: null } | undefined>>
+      >,
+      ProcessHandlerReturnCheck<State, Returning<void>>,
     ];
     type Plain = Returning<{ nextReminder: string }>;
     type Wrong = Returning<{ reminders: "1" }>;
@@ -63,7 +68,15 @@ describe("what does not compile", () => {
     type WrongField = ProcessHandlerReturnCheck<State, Wrong>;
     // @ts-expect-error a handler returns the next state, not anything else
     type NotAState = ProcessHandlerReturnCheck<State, Other>;
-    const checks: [Accepted?, PlainString?, WrongField?, NotAState?] = [];
+    type Misspelt = Returning<{ reminders: number; remindrs: number }>;
+    type MisspeltInABranch = Returning<
+      Promise<{ reminders: number } | { paidAt: null; remindrs: number } | undefined>
+    >;
+    // @ts-expect-error remindrs is not a field of the state, so the schema would drop it
+    type Typo = ProcessHandlerReturnCheck<State, Misspelt>;
+    // @ts-expect-error in any branch of what it returns
+    type TypoInABranch = ProcessHandlerReturnCheck<State, MisspeltInABranch>;
+    const checks: [Accepted?, PlainString?, WrongField?, NotAState?, Typo?, TypoInABranch?] = [];
     void checks;
   });
 
@@ -83,7 +96,10 @@ describe("what does not compile", () => {
     type LeftOut = ProcessHandlerReturnCheck<State, Returning<{ reminders: number }>, Field>;
     // @ts-expect-error nothing keeps the deadline at the moment that came due too
     type Nothing = ProcessHandlerReturnCheck<State, Returning<Promise<undefined>>, Field>;
-    const checks: [Accepted?, LeftOut?, Nothing?] = [];
+    type Misspelt = Returning<{ nextReminder: null; remindrs: number }>;
+    // @ts-expect-error remindrs is not a field of the state
+    type Typo = ProcessHandlerReturnCheck<State, Misspelt, Field>;
+    const checks: [Accepted?, LeftOut?, Nothing?, Typo?] = [];
     void checks;
   });
 

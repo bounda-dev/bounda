@@ -40,7 +40,8 @@ export const state = ({ z }: Process.StateArgs) =>
 
 What a handler returns is merged over the state, and returning nothing keeps it as it is. The
 merge is shallow: a nested object is replaced whole. A field goes back to its default only when
-the handler sets it, as in `{ paymentId: null }`; one returned as `undefined` keeps its value.
+the handler sets it, as in `{ paymentId: null }`; one returned as `undefined` keeps its value. A
+field the state does not declare does not compile, so a misspelt one is not dropped in silence.
 
 If you find a policy reading a read model to decide what to do, that is a process asking to be
 written: the state it needs belongs to the process, not to a projection it happens to share with

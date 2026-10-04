@@ -12,4 +12,5 @@ field goes back to its default only when the handler sets it; one returned as `u
 value. A handler that returns anything but an object or nothing fails the process, a deadline
 handler's `null` and a process without `state` included. The `ReturnCheck` of an `at-<field>.ts`
 requires its field, as `null` or another moment, so leaving it out no longer compiles;
-`ProcessDeadlineResult` is the type it checks against.
+`ProcessDeadlineResult` is the type it checks against. And a handler that returns a field its state
+does not declare no longer compiles, so a misspelt one is not dropped by the schema without a word.
