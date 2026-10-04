@@ -71,10 +71,15 @@ describe("errors", () => {
   });
 
   it("name the dead letter that was settled first", () => {
-    const error = new DeadLetterSettledError("d-1");
+    const error = new DeadLetterSettledError({ id: "d-1" });
     expect(error.code).toBe("DEAD_LETTER_SETTLED");
     expect(error.id).toBe("d-1");
-    expect(error.message).toContain('"d-1"');
+    expect(error.message).toBe(
+      'Dead letter "d-1" is no longer failed: another replay or discard settled it',
+    );
+    expect(new DeadLetterSettledError({ id: "d-1", status: "discarded" }).message).toBe(
+      'Dead letter "d-1" was already discarded',
+    );
   });
 
   it("mark missing resources", () => {

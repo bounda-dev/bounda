@@ -115,7 +115,7 @@ export const createSqliteDeadLetterStore: CreateSqliteDeadLetterStoreFunction = 
         `UPDATE ${table} SET "status" = ? WHERE "id" = ? AND "status" = 'failed' RETURNING "id"`,
         [status, id],
       );
-      if (updated.length === 0) throw new DeadLetterSettledError(id);
+      if (updated.length === 0) throw new DeadLetterSettledError({ id });
     },
     remove: (id) => db.run(`DELETE FROM ${table} WHERE "id" = ?`, [id]),
   };

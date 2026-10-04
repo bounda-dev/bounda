@@ -113,7 +113,7 @@ export const createPostgresqlDeadLetterStore: CreatePostgresqlDeadLetterStoreFun
         `UPDATE ${table} SET "status" = $1 WHERE "id" = $2 AND "status" = 'failed' RETURNING "id"`,
         [status, id],
       );
-      if (updated.length === 0) throw new DeadLetterSettledError(id);
+      if (updated.length === 0) throw new DeadLetterSettledError({ id });
     },
     remove: (id) => db.run(`DELETE FROM ${table} WHERE "id" = $1`, [id]),
   };

@@ -49,7 +49,7 @@ export const createMemoryDeadLetterStore: CreateMemoryDeadLetterStoreFunction = 
     count: async (args = {}) => select(args).length,
     updateStatus: async (id, status) => {
       const existing = letters.get(id);
-      if (existing?.status !== "failed") throw new DeadLetterSettledError(id);
+      if (existing?.status !== "failed") throw new DeadLetterSettledError({ id });
       letters.set(id, { ...existing, status });
     },
     remove: async (id) => {

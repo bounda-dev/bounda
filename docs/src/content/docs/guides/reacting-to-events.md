@@ -343,10 +343,12 @@ transaction as what the run writes, so a replay that ran but could not be marked
 behind; for a process, once its instance has drained what was parked, since a replay cut short
 there is taken up again by replaying the same letter. When it fails again the error is printed and
 the letter stays `failed`. `discard` marks it `discarded` without running anything. Two replays
-of one letter, or a replay and a discard, never both settle it: whichever gets there second is
-refused with `DeadLetterSettledError` (`DEAD_LETTER_SETTLED`), and a policy's or a command's
-replay refused that way writes nothing, so a double click or a retried request does not decide a
-command twice. Letters are never deleted by these commands; they are the record of what happened.
+of one letter, or a replay and a discard, never both settle it, even when they run at once:
+whichever gets there second is refused with `DeadLetterSettledError` (`DEAD_LETTER_SETTLED`).
+A policy's or a command's replay refused that way stores nothing, so a double click does not
+store a command's decision twice, though the handler may have run in both; a process's has
+already handled its events by then. Letters are never deleted by these commands; they are the
+record of what happened.
 
 What a replay does depends on the kind:
 

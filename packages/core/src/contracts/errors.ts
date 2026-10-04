@@ -92,18 +92,29 @@ export class ClaimLostError extends BoundaError {
   }
 }
 
+export interface DeadLetterSettledErrorArgs {
+  readonly id: string;
+  /**
+   * The status the letter was found in, when it was read.
+   */
+  readonly status?: string | undefined;
+}
+
 /**
- * Thrown by a dead-letter store asked to change the status of a letter that is missing or no
- * longer `failed`: another replay or discard settled it first. Whatever the change was part of
- * rolls back, so of two operators settling one letter only the first gets through.
+ * Thrown when a dead letter is replayed or discarded once it is no longer `failed`: another
+ * replay or discard settled it first, before or while this one ran. Of two operators settling
+ * one letter only the first gets through; a policy's or a command's replay refused this way
+ * writes nothing.
  */
 export class DeadLetterSettledError extends BoundaError {
   readonly id: string;
 
-  constructor(id: string) {
+  constructor({ id, status }: DeadLetterSettledErrorArgs) {
     super(
       "DEAD_LETTER_SETTLED",
-      `Dead letter "${id}" is no longer failed: another replay or discard settled it first`,
+      status === undefined
+        ? `Dead letter "${id}" is no longer failed: another replay or discard settled it`
+        : `Dead letter "${id}" was already ${status}`,
     );
     this.id = id;
   }
