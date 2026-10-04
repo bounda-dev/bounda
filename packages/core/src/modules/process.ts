@@ -146,27 +146,59 @@ export type ProcessStateOf<Module> = Module extends {
   : EmptyPayload;
 
 /**
- * What a process handler may return: the next state, which the `state` schema parses so missing
- * fields take their defaults, or nothing to keep the state as it is.
+ * What a process handler may return: the fields that change, merged over the state, or nothing to
+ * keep the state as it is. The merge is shallow, so a nested object is replaced whole; a field
+ * goes back to its default only when the handler sets it to that, and keeps its value when
+ * returned as `undefined`.
  */
 export type ProcessHandlerResult<State> = Readonly<Partial<State>> | undefined | void;
 
 /**
+ * What an `at-<field>.ts` handler returns: the fields that change, merged over the state as
+ * {@link ProcessHandlerResult} is, always with `Field` set to `null` or to its next moment.
+ */
+export type ProcessDeadlineResult<State, Field extends keyof State> = Readonly<
+  Partial<State> & { readonly [Key in Field]: Instant | null }
+>;
+
+// A field the state does not declare would be dropped by the schema without a word, so a key the
+// handler returns beyond the state's must be `never`: the error then names it. With no such key it
+// is `unknown`, since intersecting with `{}` would let a string through `Partial<State>`.
+type UndeclaredFields<Keys extends PropertyKey> = [Keys] extends [never]
+  ? unknown
+  : { readonly [Key in Keys]?: never };
+
+type ReturnOf<State, Field extends keyof State, Undeclared extends PropertyKey> = [Field] extends [
+  never,
+]
+  ? (Readonly<Partial<State>> & UndeclaredFields<Undeclared>) | undefined | void
+  : ProcessDeadlineResult<State, Field> & UndeclaredFields<Undeclared>;
+
+type KeysOf<Result> = Result extends object ? keyof Result : never;
+
+type ReturnedKeys<Module> = Module extends { readonly handler: (args: never) => infer Returned }
+  ? KeysOf<Awaited<Returned>>
+  : never;
+
+/**
  * What the `+types` of every process handler asserts as `ReturnCheck`, so a handler that returns a
- * plain string for a deadline, or a field of the wrong type, does not compile. Not for app code.
+ * plain string for a deadline, a field of the wrong type or one the state does not declare does
+ * not compile; nor an `at-<field>.ts` handler that leaves out its `Field`. Not for app code.
  */
 export type ProcessHandlerReturnCheck<
   State,
   Module extends {
     readonly handler: (
       args: never,
-    ) => ProcessHandlerResult<State> | Promise<ProcessHandlerResult<State>>;
+    ) => ReturnOf<State, Field, Undeclared> | Promise<ReturnOf<State, Field, Undeclared>>;
   },
+  Field extends keyof State = never,
+  Undeclared extends PropertyKey = Exclude<ReturnedKeys<Module>, keyof State>,
 > = Module;
 
 /**
  * Arguments of an `on-<event>.ts` handler, with the aggregate's collaborators spread at the top
- * level. The handler returns the new process state.
+ * level. The handler returns the fields of the process state that change.
  */
 export type ProcessHandlerArgs<
   Event,
@@ -197,10 +229,10 @@ export type ProcessHandlerArgs<
 
 /**
  * Arguments of an `at-<field>.ts` handler, with the aggregate's collaborators spread at the top
- * level: `state` holds the deadline that came due as `Field`. The handler returns the new process
- * state, with the field set to `null` or another moment: leaving it at the one that came due fails
- * the process. For `at-timeout.ts`, `Field` is `never` and the process ends as `timed_out`
- * whatever it returns.
+ * level: `state` holds the deadline that came due as `Field`. The handler returns the fields of
+ * the process state that change, `Field` among them: `null` or another moment, since keeping the
+ * one that came due fails the process. For
+ * `at-timeout.ts`, `Field` is `never` and the process ends as `timed_out` whatever it returns.
  */
 export type ProcessDeadlineArgs<
   State,

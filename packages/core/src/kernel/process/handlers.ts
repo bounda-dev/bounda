@@ -50,9 +50,9 @@ export interface RunDeadlineHandlerArgs {
 
 /**
  * Handlers are bounded by the aggregate's policy timeout, as policy handlers are. Each resolves to
- * the state the handler returned, validated by the process schema, or the state as it was when
- * the handler returned nothing. A run whose handler fails or runs out of time is abandoned: its
- * commands are refused from then on.
+ * the state with the fields the handler returned merged over it, validated by the process schema.
+ * A run whose handler fails or runs out of time is abandoned: its commands are refused from then
+ * on.
  */
 export interface ProcessHandlers {
   runEventHandler(args: RunEventHandlerArgs): Promise<object>;
@@ -162,7 +162,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
             clock,
           }),
       });
-      return validState(process, next === undefined ? instance.state : next);
+      return validState(process, merged(instance.state, next));
     });
   };
 
@@ -214,19 +214,42 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
             clock,
           }),
       });
-      return validState(process, returned ?? instance.state);
+      return validState(process, merged(instance.state, returned));
     });
   };
 
   return { runEventHandler, runDeadlineHandler };
 };
 
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+// Shallow, as `Partial<State>` types it: a nested object is replaced whole, and a field left
+// `undefined` counts as left out, so it keeps its value instead of falling back to its default.
+// What is not an object goes on as returned, for `validState` to refuse.
+const merged = (state: object, returned: unknown): unknown =>
+  returned === undefined
+    ? state
+    : isRecord(returned)
+      ? {
+          ...state,
+          ...Object.fromEntries(
+            Object.entries(returned).filter(([, value]) => value !== undefined),
+          ),
+        }
+      : returned;
+
 export interface ValidStateFunction {
   (process: Pick<ProcessRuntime, "name" | "stateSchema">, state: unknown): object;
 }
 
 export const validState: ValidStateFunction = (process, state) => {
-  if (process.stateSchema === null) return state as object;
+  if (process.stateSchema === null) {
+    if (isRecord(state)) return state;
+    throw new ValidationError(`Process ${process.name} returned a state that is not an object`, [
+      { path: [], message: "Return the fields that change, or nothing" },
+    ]);
+  }
   const parsed = process.stateSchema.safeParse(state);
   if (parsed.success) return parsed.data as object;
   throw new ValidationError(

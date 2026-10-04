@@ -56,6 +56,7 @@ export type {
   ProcessDeadlineArgs,
   ProcessDeadlineField,
   ProcessDeadlineFields,
+  ProcessDeadlineResult,
   ProcessEntry,
   ProcessHandlerArgs,
   ProcessHandlerModule,

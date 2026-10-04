@@ -24,6 +24,17 @@ describe("validState", () => {
     expect(validState({ name: "order.orderPayment", stateSchema: null }, state)).toBe(state);
   });
 
+  it("refuses a state that is not an object when the process has no schema", () => {
+    const error = refused(() =>
+      validState({ name: "order.orderPayment", stateSchema: null }, null),
+    );
+
+    expect(error.message).toBe("Process order.orderPayment returned a state that is not an object");
+    expect(error.issues).toEqual([
+      { path: [], message: "Return the fields that change, or nothing" },
+    ]);
+  });
+
   it("returns the state its schema parses", () => {
     const stateSchema = z.object({ attempts: z.number().default(0) });
 
@@ -238,5 +249,135 @@ describe("a process handler run that fails", () => {
       aggregateId: "o-1",
     });
     expect(order.events.map((event) => event.type)).toEqual(["OrderPlaced"]);
+  });
+});
+
+describe("what a process handler returns", () => {
+  interface State {
+    readonly paymentId: string | null;
+    readonly method: string | null;
+    readonly nudge: string | null;
+  }
+  interface PaidArgs {
+    readonly event: { readonly payload: { readonly method: string } };
+    readonly after: (delay: string) => string;
+  }
+
+  let paid: (args: PaidArgs) => unknown = () => undefined;
+  let nudged: () => unknown = () => undefined;
+
+  const registry: Registry = {
+    aggregates: {
+      order: {
+        ...orderAggregateEntry(),
+        processes: {
+          checkout: {
+            module: {
+              config: ({ events }: OrderProcessConfigArgs<"OrderPlaced">) => ({
+                startedBy: [events.order.OrderPlaced],
+              }),
+              state: ({ z, deadline }: ProcessStateArgs) =>
+                z.object({
+                  paymentId: z.string().nullable().default(null),
+                  method: z.string().nullable().default(null),
+                  nudge: deadline(),
+                }),
+            },
+            handlers: {
+              order: {
+                orderPlaced: { handler: () => ({ paymentId: "p-1" }) },
+                orderPaid: { handler: (args: PaidArgs) => paid(args) },
+              },
+            },
+            deadlines: { nudge: { handler: () => nudged() } },
+          },
+        },
+      },
+    },
+    readModels: {},
+  };
+
+  const run = async (): Promise<ReactiveHarness> => {
+    const harness = await createReactiveHarness({
+      registry,
+      config: { runtime: { processes: { retry: { strategy: "none" } } } },
+    });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.pipeline.dispatch({
+      type: "PayOrder",
+      payload: { orderId: "o-1", method: "card" },
+    });
+    await harness.dispatcher.processUntilIdle();
+    return harness;
+  };
+
+  const states = async (harness: ReactiveHarness) =>
+    (
+      await harness.storage.eventStore.load({
+        aggregateType: "process:Checkout",
+        aggregateId: "o-1",
+      })
+    ).events.map((event) => (event.payload as { readonly state?: State }).state);
+
+  it("is merged over the state, so the fields it leaves out keep their value", async () => {
+    paid = ({ event }) => ({ method: event.payload.method });
+
+    expect((await states(await run())).at(-1)).toEqual({
+      paymentId: "p-1",
+      method: "card",
+      nudge: null,
+    });
+  });
+
+  it("sets a field back to its default only when it says so, not when it is undefined", async () => {
+    paid = () => ({ paymentId: null, method: undefined });
+
+    expect((await states(await run())).at(-1)).toEqual({
+      paymentId: null,
+      method: null,
+      nudge: null,
+    });
+
+    paid = () => ({ paymentId: undefined, method: "card" });
+
+    expect((await states(await run())).at(-1)).toEqual({
+      paymentId: "p-1",
+      method: "card",
+      nudge: null,
+    });
+  });
+
+  it.each([
+    ["null", null],
+    ["a string", "card"],
+    ["an array", [{ method: "card" }]],
+  ])("fails the process when it is %s", async (_, returned) => {
+    paid = () => returned;
+    const harness = await run();
+
+    expect(await harness.storage.deadLetterStore.list()).toMatchObject([
+      {
+        eventType: "OrderPaid",
+        errorType: "terminal",
+        errorMessage: "Process order.checkout returned a state its schema refuses",
+      },
+    ]);
+  });
+
+  it("fails the process when a deadline handler returns null", async () => {
+    paid = ({ after }) => ({ nudge: after("1h") });
+    nudged = () => null;
+    const harness = await run();
+
+    harness.clock.advance(3_600_000);
+    await harness.worker.runOnce();
+
+    expect(await harness.storage.deadLetterStore.list()).toMatchObject([
+      {
+        eventId: "deadline:nudge",
+        errorType: "terminal",
+        errorMessage: "Process order.checkout returned a state its schema refuses",
+      },
+    ]);
   });
 });

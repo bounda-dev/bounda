@@ -9,5 +9,4 @@ export const handler = async ({ state, aggregateId, commands }: Process.Deadline
   if (state.paymentId !== null) {
     await commands.cancelPayment({ paymentId: state.paymentId, reason });
   }
-  return state;
 };

@@ -53,6 +53,11 @@ describe("what does not compile", () => {
       ProcessHandlerReturnCheck<State, Returning<Promise<State>>>,
       ProcessHandlerReturnCheck<State, Returning<undefined>>,
       ProcessHandlerReturnCheck<State, Returning<{ nextReminder: Instant | null }>>,
+      ProcessHandlerReturnCheck<
+        State,
+        Returning<Promise<{ reminders: number } | { paidAt: null } | undefined>>
+      >,
+      ProcessHandlerReturnCheck<State, Returning<void>>,
     ];
     type Plain = Returning<{ nextReminder: string }>;
     type Wrong = Returning<{ reminders: "1" }>;
@@ -63,7 +68,53 @@ describe("what does not compile", () => {
     type WrongField = ProcessHandlerReturnCheck<State, Wrong>;
     // @ts-expect-error a handler returns the next state, not anything else
     type NotAState = ProcessHandlerReturnCheck<State, Other>;
-    const checks: [Accepted?, PlainString?, WrongField?, NotAState?] = [];
+    type Misspelt = Returning<{ reminders: number; remindrs: number }>;
+    type MisspeltInABranch = Returning<
+      Promise<{ reminders: number } | { paidAt: null; remindrs: number } | undefined>
+    >;
+    // @ts-expect-error remindrs is not a field of the state, so the schema would drop it
+    type Typo = ProcessHandlerReturnCheck<State, Misspelt>;
+    // @ts-expect-error in any branch of what it returns
+    type TypoInABranch = ProcessHandlerReturnCheck<State, MisspeltInABranch>;
+    const checks: [Accepted?, PlainString?, WrongField?, NotAState?, Typo?, TypoInABranch?] = [];
+    void checks;
+  });
+
+  it("an at- handler that leaves out its deadline", () => {
+    type State = ProcessStateOf<OrderPaymentModule>;
+    type Field = ProcessDeadlineField<OrderPaymentModule, "nextReminder">;
+    type Returning<Result> = { handler: () => Result };
+    type Accepted = [
+      ProcessHandlerReturnCheck<State, Returning<{ nextReminder: null }>, Field>,
+      ProcessHandlerReturnCheck<
+        State,
+        Returning<Promise<{ reminders: number; nextReminder: Instant }>>,
+        Field
+      >,
+    ];
+    // @ts-expect-error left out, the deadline would stay at the moment that came due
+    type LeftOut = ProcessHandlerReturnCheck<State, Returning<{ reminders: number }>, Field>;
+    // @ts-expect-error nothing keeps the deadline at the moment that came due too
+    type Nothing = ProcessHandlerReturnCheck<State, Returning<Promise<undefined>>, Field>;
+    type Misspelt = Returning<{ nextReminder: null; remindrs: number }>;
+    // @ts-expect-error remindrs is not a field of the state
+    type Typo = ProcessHandlerReturnCheck<State, Misspelt, Field>;
+    const checks: [Accepted?, LeftOut?, Nothing?, Typo?] = [];
+    void checks;
+  });
+
+  it("a field returned by a process without state", () => {
+    type State = ProcessStateOf<{ readonly config: () => { readonly startedBy: [] } }>;
+    type Returning<Result> = { handler: () => Result };
+    type Accepted = [
+      ProcessHandlerReturnCheck<State, Returning<undefined>>,
+      ProcessHandlerReturnCheck<State, Returning<Promise<void>>>,
+      ProcessHandlerReturnCheck<State, Returning<Record<never, never>>>,
+    ];
+    type Seen = Returning<{ seen: true }>;
+    // @ts-expect-error a process without state has no field to set
+    type Field = ProcessHandlerReturnCheck<State, Seen>;
+    const checks: [Accepted?, Field?] = [];
     void checks;
   });
 
