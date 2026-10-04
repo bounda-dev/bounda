@@ -133,8 +133,11 @@ collaborator, after the event is stored, passing `idempotencyKey` to the provide
 with a command whose handler ignores a duplicate by state. The handler always passes
 `idempotencyKey` as it is: effects on different providers go in a reaction each, and two calls to
 one provider go behind one collaborator method whose implementation derives a key per call with
-`idempotencyKeyFor(idempotencyKey, "refund")` from `@bounda-dev/core`. A provider's refusal
-becomes an event (`PaymentFailed`); throw only when there is no answer.
+`idempotencyKeyFor(idempotencyKey, "refund")` from `@bounda-dev/core`. That is for provider
+keys; the id of an aggregate the reaction creates (a new payment) is derived in the handler,
+`idempotencyKeyFor(idempotencyKey, "payment")`, never `randomUUID()`, so a retry dispatches the
+same payload and the provider gets the command's key with the same parameters. A provider's refusal becomes an event (`PaymentFailed`); throw only when
+there is no answer.
 
 Policy (`policies/issue-invoice-on-order-paid.ts`):
 

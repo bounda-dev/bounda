@@ -156,11 +156,11 @@ failure, so every step tolerates being repeated:
 - **Commands the process dispatches do not throw for a state they cannot rule out.**
   `lockOrderForPayment` and `recordPaymentFailure` return `[]` instead of a `DomainError`: the
   order may have moved on since the event, and a `DomainError` nobody catches fails the process.
-- **Ids that leave the app are deterministic.** The process uses its `idempotencyKey` as the
-  payment's id, not `randomUUID()`. The id of the command it dispatches comes from that key, and
-  the command's `idempotencyKey` is what `requestPayment` hands the provider, so a retry asks for
-  the same intent with the same parameters. A random id would send the same key with other
-  parameters, which Stripe refuses.
+- **Ids that leave the app are deterministic.** The process derives the payment's id from its key,
+  `idempotencyKeyFor(idempotencyKey, "payment")`, as any reaction does for an id it creates (see
+  [Calling the outside world](/guides/reacting-to-events/#calling-the-outside-world)). A retry
+  dispatches `requestPayment` with the same id, and that command's `idempotencyKey` is what it
+  hands the provider, so the retry asks for the same intent with the same parameters.
 
 ## Commutative compensations
 
