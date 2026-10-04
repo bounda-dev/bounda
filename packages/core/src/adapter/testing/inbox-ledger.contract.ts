@@ -68,6 +68,44 @@ export const inboxLedgerContract: InboxLedgerContractFunction = ({ create }) => 
       expect(await ledger.get(key)).toMatchObject({ status: "succeeded", claimId: third });
     });
 
+    it("counts a renewed claim's lease from the renewal, and leaves the rest of the claim as it is", async () => {
+      const claimId = await ledger.tryClaim({ ...key, now, leaseMs: 60_000 });
+      if (claimId === null) throw new Error("nothing claimed");
+      await ledger.renew({ ...key, claimId, now: later(50_000) });
+
+      expect(await ledger.tryClaim({ ...key, now: later(60_001), leaseMs: 60_000 })).toBeNull();
+      expect(await ledger.tryClaim({ ...key, now: later(110_000), leaseMs: 60_000 })).toBeNull();
+      expect(await ledger.get(key)).toMatchObject({
+        status: "pending",
+        attempts: 1,
+        claimId,
+        claimedAt: later(50_000).toISOString(),
+      });
+      await ledger.complete({ ...key, claimId });
+      expect(await ledger.get(key)).toMatchObject({ status: "succeeded" });
+    });
+
+    it("rejects renewing a claim handed out again, or never handed out, and keeps the holder's", async () => {
+      const stale = await ledger.tryClaim({ ...key, now, leaseMs: 60_000 });
+      const current = await ledger.tryClaim({ ...key, now: later(60_001), leaseMs: 60_000 });
+      if (stale === null || current === null) throw new Error("nothing claimed");
+
+      const lost = await ledger
+        .renew({ ...key, claimId: stale, now: later(60_002) })
+        .catch((error: unknown) => error);
+      expect(lost).toBeInstanceOf(ClaimLostError);
+      expect(lost).toMatchObject({ code: "CLAIM_LOST", ...key });
+      await expect(
+        ledger.renew({ subscriber: "nobody", eventId: "evt-1", claimId: stale, now: later(1) }),
+      ).rejects.toBeInstanceOf(ClaimLostError);
+      expect(await ledger.get(key)).toMatchObject({
+        status: "pending",
+        attempts: 2,
+        claimId: current,
+        claimedAt: later(60_001).toISOString(),
+      });
+    });
+
     it("hands out a failed claim again and counts attempts", async () => {
       await ledger.tryClaim({ ...key, now, leaseMs: 60_000 });
       await ledger.fail({ ...key, error: "boom" });

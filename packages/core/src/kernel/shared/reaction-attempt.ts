@@ -51,10 +51,12 @@ export interface RunAttemptFunction {
  * Runs one attempt of a reaction to one event: claims the event in the inbox, runs the reaction
  * on a unit of work and commits the unit with the claim's completion, or records the failure. A
  * commit that finds a stream moved runs the attempt again on a fresh unit, without spending an
- * attempt; once the reruns are spent the conflict is a retriable failure. A failure of the
- * reaction spends an attempt and holds the event for its back-off, until the attempts run out or
- * the failure is terminal, when the give-up is committed with the claim. A commit that fails for
- * any other reason is thrown as it is: the claim stays pending until its lease expires.
+ * attempt; the claim's lease starts again before each rerun, and an attempt whose claim was handed
+ * out again meanwhile stops there. Once the reruns are spent the conflict is a retriable failure.
+ * A failure of the reaction spends an attempt and holds the event for its back-off, until the
+ * attempts run out or the failure is terminal, when the give-up is committed with the claim. A
+ * commit or a renewal that fails for any other reason is thrown as it is: the claim stays pending
+ * until its lease expires.
  */
 export const runAttempt: RunAttemptFunction = async ({
   storage,
@@ -75,8 +77,6 @@ export const runAttempt: RunAttemptFunction = async ({
     if (spent(attempts)) return "retriable_exhausted";
     return undefined;
   };
-  const committed = (work: (unit: UnitOfWork) => Promise<void>): Promise<void> =>
-    commitAttempt({ storage, concurrencyRetries, work });
   const now = clock.now();
   const existing = await storage.inboxLedger.get(key);
   if (existing?.status === "succeeded") return "done";
@@ -87,6 +87,18 @@ export const runAttempt: RunAttemptFunction = async ({
   const claimId = await storage.inboxLedger.tryClaim({ ...key, now, leaseMs });
   if (claimId === null) return "hold";
   const claim = { ...key, claimId };
+  const committed = (work: (unit: UnitOfWork) => Promise<void>): Promise<void> =>
+    commitAttempt({
+      storage,
+      concurrencyRetries,
+      work,
+      // A renewal that failed is the store's failure, not the reaction's; `lost` still tells a
+      // claim handed out again.
+      beforeRerun: () =>
+        storage.inboxLedger.renew({ ...claim, now: clock.now() }).catch((error: unknown) => {
+          throw new CommitFailed(error);
+        }),
+    });
   // The claim was handed out again while this attempt ran: whoever holds it now decides, and
   // nothing of this attempt is written.
   const lost = (error: unknown): boolean =>

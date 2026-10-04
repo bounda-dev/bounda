@@ -66,6 +66,12 @@ export const createMemoryInboxLedger: CreateMemoryInboxLedgerFunction = () => {
       if (existing !== undefined)
         claims.set(key, { ...existing, status: "failed", lastError: error });
     },
+    renew: async ({ subscriber, eventId, claimId, now }) => {
+      const key = keyOf(subscriber, eventId);
+      const existing = claims.get(key);
+      if (existing?.claimId !== claimId) throw new ClaimLostError({ subscriber, eventId });
+      claims.set(key, { ...existing, claimedAt: now.toISOString() });
+    },
     get: async ({ subscriber, eventId }) => claims.get(keyOf(subscriber, eventId)) ?? null,
     snapshot: () => snapshotMap(claims),
   };

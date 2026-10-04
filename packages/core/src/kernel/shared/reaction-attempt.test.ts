@@ -198,6 +198,106 @@ describe("runAttempt", () => {
     expect(await storage.inboxLedger.get(key)).toMatchObject({ status: "failed", attempts: 1 });
   });
 
+  describe("an attempt that meets a conflict", () => {
+    const conflicting =
+      (stage: (unit: UnitOfWork) => Promise<void>) =>
+      async (unit: UnitOfWork, _n: number, live: StoragePorts): Promise<void> => {
+        await stage(unit);
+        const { version } = await live.eventStore.load(order);
+        if (version > 0) return;
+        await live.eventStore.append({
+          ...order,
+          expectedVersion: 0,
+          events: [pendingEvent({ aggregateId: "1", version: 1, id: "theirs" })],
+        });
+      };
+
+    const afterTheConflict = (storage: StoragePorts, then: () => Promise<unknown>): void => {
+      const transact = storage.transact.bind(storage);
+      storage.transact = async (work) => {
+        storage.transact = transact;
+        try {
+          return await transact(work);
+        } catch (error) {
+          await then();
+          throw error;
+        }
+      };
+    };
+
+    it("stops before running again once another instance took the claim over and committed first", async () => {
+      const { storage, clock, runs, retries, gaveUp, attempt, stage } = await setUp();
+      afterTheConflict(storage, async () => {
+        clock.advance(60_001);
+        const claimId = await storage.inboxLedger.tryClaim({
+          ...key,
+          now: clock.now(),
+          leaseMs: 60_000,
+        });
+        if (claimId === null) throw new Error("claim was not taken over");
+        await storage.inboxLedger.complete({ ...key, claimId });
+      });
+
+      expect(await attempt({ run: conflicting(stage) })).toBe("hold");
+
+      expect(runs).toEqual([1]);
+      expect(retries).toEqual([]);
+      expect(gaveUp).toEqual([]);
+      const { events } = await storage.eventStore.load(order);
+      expect(events.map((event) => event.id)).toEqual(["theirs"]);
+      expect(await storage.inboxLedger.get(key)).toMatchObject({
+        status: "succeeded",
+        attempts: 2,
+      });
+    });
+
+    it("keeps its claim for the rerun, past the lease it was claimed with", async () => {
+      const { storage, clock, runs, attempt, stage } = await setUp();
+      afterTheConflict(storage, async () => {
+        clock.advance(50_000);
+      });
+      let takeover: string | null = "not tried";
+
+      expect(
+        await attempt({
+          run: async (unit, n, live) => {
+            await conflicting(stage)(unit, n, live);
+            if (runs.length < 2) return;
+            clock.advance(20_000);
+            takeover = await live.inboxLedger.tryClaim({
+              ...key,
+              now: clock.now(),
+              leaseMs: 60_000,
+            });
+          },
+        }),
+      ).toBe("done");
+
+      expect(takeover).toBeNull();
+      expect(runs).toEqual([1, 1]);
+      expect(await storage.inboxLedger.get(key)).toMatchObject({
+        status: "succeeded",
+        attempts: 1,
+      });
+    });
+
+    it("lets a store failure while renewing reach the caller, with the claim still pending", async () => {
+      const { storage, runs, retries, gaveUp, attempt, stage } = await setUp();
+      afterTheConflict(storage, async () => {
+        storage.inboxLedger.renew = async () => {
+          throw new Error("connection lost");
+        };
+      });
+
+      await expect(attempt({ run: conflicting(stage) })).rejects.toThrow("connection lost");
+
+      expect(runs).toEqual([1]);
+      expect(retries).toEqual([]);
+      expect(gaveUp).toEqual([]);
+      expect(await storage.inboxLedger.get(key)).toMatchObject({ status: "pending", attempts: 1 });
+    });
+  });
+
   it("lets a store failure at commit reach the caller, with the claim still pending", async () => {
     const { storage, runs, retries, gaveUp, attempt } = await setUp();
     const transact = storage.transact.bind(storage);

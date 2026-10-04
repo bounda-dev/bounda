@@ -30,7 +30,7 @@ const toRecord = (row: Record<string, unknown>): ClaimRecord => ({
 
 /**
  * `tryClaim` is a single upsert: PostgreSQL locks the conflicting row, so exactly one racing
- * claimer gets it back. Settling by claim id updates only the row that still carries it.
+ * claimer gets it back. Settling or renewing by claim id updates only the row that still carries it.
  */
 export const createPostgresqlInboxLedger: CreatePostgresqlInboxLedgerFunction = ({ db, table }) => {
   const settle = async (
@@ -71,6 +71,7 @@ export const createPostgresqlInboxLedger: CreatePostgresqlInboxLedgerFunction = 
     },
     complete: (args) => settle(`"status" = 'succeeded'`, [], args),
     fail: (args) => settle(`"status" = 'failed', "last_error" = $1`, [args.error], args),
+    renew: (args) => settle(`"claimed_at" = $1`, [args.now.toISOString()], args),
     get: async ({ subscriber, eventId }) => {
       const [row] = await db.all(
         `SELECT "subscriber", "event_id", "status", "attempts", "claimed_at", "claim_id", "last_error" FROM ${table} WHERE "subscriber" = $1 AND "event_id" = $2`,

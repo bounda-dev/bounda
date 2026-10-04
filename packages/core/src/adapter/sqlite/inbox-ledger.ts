@@ -26,7 +26,7 @@ const toRecord = (row: Record<string, unknown>): ClaimRecord => ({
 /**
  * Inbox ledger on one table. `tryClaim` is a single `INSERT ... ON CONFLICT DO UPDATE ... WHERE
  * ... RETURNING`: the row comes back only when the claim was won, so two racing claimers can never
- * both succeed. Settling by claim id updates only the row that still carries it.
+ * both succeed. Settling or renewing by claim id updates only the row that still carries it.
  */
 export const createSqliteInboxLedger: CreateSqliteInboxLedgerFunction = ({ db, table }) => {
   const settle = async (
@@ -67,6 +67,7 @@ export const createSqliteInboxLedger: CreateSqliteInboxLedgerFunction = ({ db, t
     },
     complete: (args) => settle(`"status" = 'succeeded'`, [], args),
     fail: (args) => settle(`"status" = 'failed', "last_error" = ?`, [args.error], args),
+    renew: (args) => settle(`"claimed_at" = ?`, [args.now.toISOString()], args),
     get: async ({ subscriber, eventId }) => {
       const [row] = await db.all(
         `SELECT "subscriber", "event_id", "status", "attempts", "claimed_at", "claim_id", "last_error" FROM ${table} WHERE "subscriber" = ? AND "event_id" = ?`,

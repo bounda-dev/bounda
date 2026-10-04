@@ -39,10 +39,11 @@ A handler that throws, runs out of time, or dies before the commit leaves nothin
 The claim it took expires with its lease, and the next attempt starts from the store as it is,
 not from a half-written one. A commit that finds a stream moved since the handler loaded it, by
 a deadline that came due or by another instance, rolls back and runs the handler again on the
-new state, without counting an attempt. The scheduled-command worker follows the same rule: a
-delayed command, a delayed policy run or a process deadline commits its writes together with the
-release of its claim, so a worker that dies between the two does not run it twice, and one whose
-claim another instance took over writes nothing.
+new state, without counting an attempt; its claim's lease starts again first, and an attempt
+whose claim another instance took over meanwhile stops instead. The scheduled-command worker
+follows the same rule: a delayed command, a delayed policy run or a process deadline commits its
+writes together with the release of its claim, so a worker that dies between the two does not run
+it twice, and one whose claim another instance took over writes nothing.
 
 ## What `await commands.x()` means inside a handler
 
