@@ -35,6 +35,7 @@ let timeoutFails = false;
 let awaiting = true;
 let placing = false;
 let paying: "ok" | "domain" = "ok";
+let beforeTimeout: (() => Promise<void>) | undefined;
 
 const registry: Registry = {
   aggregates: {
@@ -79,6 +80,7 @@ const registry: Registry = {
               handler: async ({ aggregateId, commands }: HandlerArgs) => {
                 calls.push(`timeout:${aggregateId}`);
                 if (timeoutFails) throw new DomainError("not yet");
+                await beforeTimeout?.();
                 if (placing) await commands.placeOrder?.({ orderId: "o-3", total: 1 });
                 for (const orderId of targets(aggregateId)) {
                   const archived = commands.archiveOrder?.(
@@ -139,6 +141,7 @@ const setUp = async (
   awaiting = true;
   placing = false;
   paying = "ok";
+  beforeTimeout = undefined;
   const harness = await createReactiveHarness({ registry: app, config, adapter: adapter() });
   const deadLetters = createDeadLetters({
     storage: harness.storage,
@@ -452,7 +455,10 @@ describe.each(adapters)("the follow-ups of a process that timed out, on %s", (_n
         ],
       });
     };
-    await expect(deadLetters.replay(letter.id)).rejects.toThrow(DeadLetterSettledError);
+    await expect(deadLetters.replay(letter.id)).rejects.toMatchObject({
+      name: DeadLetterSettledError.name,
+      id: letter.id,
+    });
     expect(calls).toEqual(["timeout:o-1", "archived:o-1", "archived:o-1"]);
     expect(await types()).toEqual([
       PROCESS_EVENTS.started,
@@ -493,6 +499,15 @@ describe.each(adapters)("the follow-ups of a process that timed out, on %s", (_n
         events,
       });
     }
+    await deployed.dispatcher.runUntilIdle();
+    const before = await deployed.storage.eventStore.load({
+      aggregateType: "process:OrderPayment",
+      aggregateId: "o-1",
+    });
+    expect(before.events.map((event) => event.type)).toEqual([
+      PROCESS_EVENTS.started,
+      PROCESS_EVENTS.timedOut,
+    ]);
     const archived = await archivedOf();
     if (archived === undefined) throw new Error("not archived");
     expect(
@@ -548,5 +563,27 @@ describe.each(adapters)("the follow-ups of a process that timed out, on %s", (_n
       payload: { eventId: followUp?.id },
     });
     expect(followUp?.id).not.toBe((await archivedOf())?.id);
+  });
+
+  it("runs the timeout once when two replays of its letter overlap", async () => {
+    const { harness, deadLetters, place, timeOut, types } = await setUp(adapter);
+    timeoutFails = true;
+    await place("o-1");
+    await timeOut();
+    const [letter] = await deadLetters.list();
+    if (letter === undefined) throw new Error("no letter");
+    timeoutFails = false;
+    beforeTimeout = async () => {
+      beforeTimeout = undefined;
+      await harness.processes.replayDeadline({
+        payload: { process: "order.orderPayment", aggregateId: "o-1" },
+        context: { correlationId: "c", causationId: letter.id, depth: 0 },
+        replay: "overlapping",
+        letter: letter.id,
+      });
+    };
+    await deadLetters.replay(letter.id);
+    expect(calls).toEqual(["timeout:o-1", "timeout:o-1", "timeout:o-1"]);
+    expect((await types()).filter((type) => type === PROCESS_EVENTS.timedOut)).toHaveLength(1);
   });
 });
