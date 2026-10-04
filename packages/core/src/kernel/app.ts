@@ -34,6 +34,7 @@ import {
   rebuildReadModel,
 } from "./read-model/rebuild.ts";
 import { createScheduledCommandWorker } from "./scheduler/worker.ts";
+import { ignoredRetries, type PendingRetries } from "./shared/pending-retries.ts";
 import { ATTRIBUTES, METRICS, meter } from "./telemetry.ts";
 
 /**
@@ -66,11 +67,13 @@ export interface BoundaApp<R extends Registry = AppRegistry> {
   stop(): Promise<void>;
   /**
    * Runs dispatcher passes and due scheduled commands until nothing moves, or until `maxPasses`
-   * rounds when given, and says whether it got there. What tests await after dispatching commands,
-   * and what a host without a background loop, such as a Durable Object alarm, runs in bounded
-   * slices. Works in every role.
+   * rounds when given, and says whether it got there. A retry waiting for its back-off is left
+   * for later, except in an app from `createTestApp`, which moves its clock to it, running what
+   * falls due on the way, and counts that move as a round. What tests
+   * await after dispatching commands, and what a host without a background loop, such as a
+   * Durable Object alarm, runs in bounded slices. Works in every role.
    */
-  processUntilIdle(options?: ProcessUntilIdleOptions): Promise<ProcessUntilIdleResult>;
+  runUntilIdle(options?: RunUntilIdleOptions): Promise<RunUntilIdleResult>;
   /**
    * The earliest moment a scheduled command or a process deadline becomes due, or `null` when
    * nothing is scheduled. A host without a polling worker arms its wake-up for it.
@@ -120,7 +123,7 @@ export interface RebuildReadModelOptions {
   readonly maxEvents?: number;
 }
 
-export interface ProcessUntilIdleOptions {
+export interface RunUntilIdleOptions {
   /**
    * At most this many rounds of one dispatcher pass plus one run of due scheduled commands.
    * Unbounded when omitted.
@@ -128,10 +131,11 @@ export interface ProcessUntilIdleOptions {
   readonly maxPasses?: number;
 }
 
-export interface ProcessUntilIdleResult {
+export interface RunUntilIdleResult {
   /**
-   * `true` when a round moved nothing: every subscriber is caught up and nothing is due. `false`
-   * when `maxPasses` ran out with work left.
+   * `true` when a round moved nothing: every subscriber is caught up, nothing is due and, in an
+   * app from `createTestApp`, no retry is waiting. `false` when `maxPasses` ran out with work
+   * left.
    */
   readonly idle: boolean;
 }
@@ -187,6 +191,10 @@ export interface AssembleAppArgs<R extends Registry> {
    * Given by `createTestApp`: the ports come from the test instead of `config.collaborators`.
    */
   readonly test?: TestChoice;
+  /**
+   * Given by `createTestApp`, whose `runUntilIdle` moves its clock to the retries waiting.
+   */
+  readonly pendingRetries?: PendingRetries;
 }
 
 export interface AssembleAppFunction {
@@ -201,6 +209,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
   clock,
   env,
   test,
+  pendingRetries = ignoredRetries,
 }: AssembleAppArgs<R>): Promise<BoundaApp<R>> => {
   validateRegistry(registry);
   const config = resolveConfig(rawConfig);
@@ -245,6 +254,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       config,
       ids,
       clock,
+      pendingRetries,
       logger,
     });
     const policies = buildPolicies({ registry, aggregates });
@@ -257,6 +267,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           storage,
           config,
           clock,
+          pendingRetries,
           logger,
         }),
         following: policies.all.length > 0,
@@ -306,6 +317,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       config,
       ids,
       clock,
+      pendingRetries,
       logger,
     });
     const deadLetters = createDeadLetters({
@@ -331,6 +343,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     };
     lag.addCallback(observeLag);
     const role = config.runtime.role;
+    const nextDueAt = (): Promise<Date | null> =>
+      storage.scheduler.nextDueAt({ leaseMs: worker.leaseMs });
     let stopping: Promise<void> | undefined;
 
     logger.info("bounda app created", {
@@ -365,15 +379,16 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         })();
         return stopping;
       },
-      processUntilIdle: async ({ maxPasses = Number.POSITIVE_INFINITY } = {}) => {
+      runUntilIdle: async ({ maxPasses = Number.POSITIVE_INFINITY } = {}) => {
         for (let round = 0; round < maxPasses; round += 1) {
           const advanced = await dispatcher.processOnce();
           const ran = await worker.runOnce();
-          if (!advanced && ran === 0) return { idle: true };
+          if (advanced || ran > 0) continue;
+          if (!(await pendingRetries.skipToNext(nextDueAt))) return { idle: true };
         }
         return { idle: false };
       },
-      nextDueAt: () => storage.scheduler.nextDueAt({ leaseMs: worker.leaseMs }),
+      nextDueAt,
       catchUpReadModels: async ({ through } = {}) => {
         if (through === undefined) return dispatcher.catchUp("projection");
         if (through.scheduled) return;

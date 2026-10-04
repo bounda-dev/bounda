@@ -104,7 +104,7 @@ checks the welcome email was sent; advances a week and checks the registration e
 
 ```ts
 clock.advance(7 * DAY);
-await app.processUntilIdle();
+await app.runUntilIdle();
 expect(await app.queries.getUserDetails({ userId })).toMatchObject({ status: "expired" });
 ```
 

@@ -266,7 +266,7 @@ const run = async (seed: number): Promise<void> => {
   };
   let rounds = 0;
   for (; rounds < 40 && (rounds === 0 || !(await settled())); rounds += 1) {
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     for (let pass = 0; pass < 12; pass += 1) await harness.worker.runOnce();
     for (const letter of await harness.storage.deadLetterStore.list({ status: "failed" })) {
       await deadLetters.replay(letter.id).catch(() => undefined);

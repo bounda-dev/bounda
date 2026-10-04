@@ -331,7 +331,7 @@ export const loader = ({ context }: Route.LoaderArgs) => context.get(bounda).que
   for CI, because `react-router typegen && tsc` needs the generated files first.
 - `@bounda-dev/react-router/app` is server-only: loaders, actions, middleware. Never in components.
 - The app in the context reads its own writes by default (`bounda({ consistency: "immediate" })`):
-  a page reached right after a command sees its read models. Never call `processUntilIdle()` in a
+  a page reached right after a command sees its read models. Never call `runUntilIdle()` in a
   route.
 - Map `ValidationError` to a 400 with `error.issues` and `DomainError` to a 409 in one helper
   (`failure`); let anything else reach the `ErrorBoundary`.
@@ -344,14 +344,16 @@ export const loader = ({ context }: Route.LoaderArgs) => context.get(bounda).que
   code 1 and name the file; fix the name or the location.
 - Tests: `createTestApp({ registry, adapter?, collaborators? })` from `@bounda-dev/core/testing`
   gives an app on the in-memory adapter with a fixed clock (`clock.advance(ms)`) and sequential
-  ids; call `await app.processUntilIdle()` after dispatching to run policies, processes and
+  ids; call `await app.runUntilIdle()` after dispatching to run policies, processes and
   projections. The clock drives handler time-outs and background polling too: never wait real
-  time in a test, advance the clock.
+  time in a test, advance the clock. Never advance it for a retry: `runUntilIdle()` moves it to
+  each retry waiting for its back-off, so a failure has been retried, or dead-lettered, when it
+  resolves.
   `import { registry } from "../.bounda/registry.ts"`.
 - A test passes each port it exercises, by aggregate and port: a double written in the test (a
   spy, a stub that throws or hangs) or an implementation's file name. It does not read
   `bounda.config.ts`, and a port left out has no implementation even with only one file: reading
-  it throws a `ConfigurationError` saying what to pass, which every later `processUntilIdle()`
+  it throws a `ConfigurationError` saying what to pass, which every later `runUntilIdle()`
   rethrows, even when a policy or process read it. Never export state from an implementation for tests to read.
 
   ```ts

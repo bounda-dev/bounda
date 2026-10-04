@@ -98,7 +98,7 @@ describe("rebuildReadModel", () => {
     await app.commands.placeOrder({ orderId: "o-1", total: 10 });
     await app.commands.placeOrder({ orderId: "o-2", total: 20 });
     await app.commands.payOrder({ orderId: "o-1", method: "card" });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     expect(await rows()).toEqual([
       { orderId: "o-1", total: 5 },
       { orderId: "o-2", total: 10 },
@@ -135,7 +135,7 @@ describe("rebuildReadModel", () => {
     mode = "ok";
     const { app, storage, rows } = await setUp();
     await app.commands.placeOrder({ orderId: "o-1", total: 10 });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     await storage.checkpointStore.set(SUBSCRIBER, 40);
     await app.rebuildReadModel("orderSummary");
     expect(await storage.checkpointStore.get(SUBSCRIBER)).toBe(1);
@@ -144,7 +144,7 @@ describe("rebuildReadModel", () => {
     await storage.checkpointStore.set(SUBSCRIBER, 0);
     expect(await app.rebuildReadModel("orderSummary")).toMatchObject({ position: 2 });
     expect(await storage.checkpointStore.get(SUBSCRIBER)).toBe(2);
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     expect(await rows()).toEqual([
       { orderId: "o-1", total: 10 },
       { orderId: "o-2", total: 20 },
@@ -156,7 +156,7 @@ describe("rebuildReadModel", () => {
     mode = "ok";
     const { app, storage, rows } = await setUp();
     await app.commands.placeOrder({ orderId: "o-1", total: 10 });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
 
     mode = "throws";
     await expect(app.rebuildReadModel("orderSummary")).rejects.toThrow("projection broken");
@@ -226,7 +226,7 @@ describe("rebuildReadModel", () => {
     ] as const) {
       await app.commands.placeOrder({ orderId, total });
     }
-    await app.processUntilIdle();
+    await app.runUntilIdle();
 
     mode = "ok";
     expect(await app.rebuildReadModel("orderSummary", { maxEvents: 2 })).toEqual({
@@ -272,7 +272,7 @@ describe("rebuildReadModel", () => {
     const { app, config, storage, rows } = await setUp();
     await app.commands.placeOrder({ orderId: "o-1", total: 10 });
     await app.commands.placeOrder({ orderId: "o-2", total: 20 });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     await app.rebuildReadModel("orderSummary", { maxEvents: 1 });
 
     const doubled = {
@@ -331,7 +331,7 @@ describe("rebuildReadModel", () => {
     const app = await createApp({ registry, config });
     await app.commands.placeOrder({ orderId: "o-1", total: 10 });
     await app.commands.placeOrder({ orderId: "o-2", total: 20 });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     const mainCheckpoints = (await main.createStorage({ logger: silentLogger })).checkpointStore;
     const reportingCheckpoints = (await reporting.createStorage({ logger: silentLogger }))
       .checkpointStore;
@@ -364,7 +364,7 @@ describe("rebuildReadModel", () => {
     const { app, rows } = await setUp();
     await app.commands.placeOrder({ orderId: "o-1", total: 10 });
     await app.commands.placeOrder({ orderId: "o-2", total: 20 });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     let release = (): void => {};
     const gate = new Promise<void>((resolve) => {
       release = resolve;

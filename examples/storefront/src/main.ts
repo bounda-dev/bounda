@@ -25,7 +25,7 @@ await app.commands.placeOrder({
   customerId: "ada",
   items: [{ productId: "lamp", quantity: 1, price: 42 }],
 });
-await app.processUntilIdle();
+await app.runUntilIdle();
 
 // The provider's webhooks name the payment, which the order summary keeps.
 const paymentOf = async (orderId: string) => {
@@ -41,11 +41,11 @@ await app.commands.declinePayment({
   reason: "card declined",
 });
 await app.commands.cancelOrder({ orderId: cancelled, reason: "changed my mind" });
-await app.processUntilIdle();
+await app.runUntilIdle();
 
 // The customer pays the cancelled order with the link they still had: the payment goes back.
 await app.commands.settlePayment({ paymentId: await paymentOf(cancelled) });
-await app.processUntilIdle();
+await app.runUntilIdle();
 
 const summary = await app.queries.listOrdersByCustomer({ customerId: "ada" });
 for (const order of summary.orders) {

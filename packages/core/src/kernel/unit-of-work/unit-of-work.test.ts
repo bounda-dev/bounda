@@ -145,7 +145,7 @@ const claimOf = async (harness: ReactiveHarness, subscriber: string) => {
 const place = (harness: ReactiveHarness) =>
   harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
 const settle = async (harness: ReactiveHarness) => {
-  await harness.dispatcher.processUntilIdle();
+  await harness.dispatcher.runUntilIdle();
   await harness.worker.runOnce();
 };
 const pastLease = (harness: ReactiveHarness) =>

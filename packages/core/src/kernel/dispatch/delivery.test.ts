@@ -395,12 +395,12 @@ describe("the dispatcher with a checkpointed subscriber", () => {
 
     transactions.acquired = true;
     expect(await dispatcher.processOnce()).toBe(true);
-    await dispatcher.processUntilIdle();
+    await dispatcher.runUntilIdle();
     await dispatcher.catchUp("projection");
     expect(transactions.waits).toEqual([false, true]);
     expect(outcomes).toEqual(["busy", "advanced", "idle", "idle"]);
     await checkpointStore.set("shared", 0);
-    await dispatcher.processUntilIdle();
+    await dispatcher.runUntilIdle();
     await checkpointStore.set("shared", 0);
     await dispatcher.catchUp("projection");
     expect(transactions.waits).toEqual([false, true, true, true]);

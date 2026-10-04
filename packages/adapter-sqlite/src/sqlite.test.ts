@@ -493,7 +493,7 @@ describe("an app on the sqlite adapter", () => {
     const { app, clock } = await createTestApp({ registry, adapter: sqlite({ memory: true }) });
     await app.commands.placeOrder({ orderId: "o-1", total: 42 });
     await app.commands.placeOrder({ orderId: "o-2", total: 7 }, { delay: "1h" });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     expect(await app.queries.getOrder({ orderId: "o-1" })).toEqual({
       orderId: "o-1",
       status: "paid",
@@ -502,7 +502,7 @@ describe("an app on the sqlite adapter", () => {
     expect(await app.queries.getOrder({ orderId: "o-2" })).toBeNull();
 
     clock.advance(3_600_000);
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     expect(await app.queries.getOrder({ orderId: "o-2" })).toMatchObject({ status: "paid" });
     expect((await app.getLag()).maxLag).toBe(0);
     await app.stop();

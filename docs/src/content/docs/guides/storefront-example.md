@@ -98,7 +98,7 @@ and a payment window three days away are two lines:
 
 ```ts
 clock.advance(24 * HOUR);
-await app.processUntilIdle();
+await app.runUntilIdle();
 ```
 
 **A query in SQL.** `list-orders-by-customer.ts` reads the table directly through `client` and

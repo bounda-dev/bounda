@@ -185,7 +185,7 @@ describe("createApp", () => {
     const placed = await app.commands.placeOrder({ orderId: "o-1", total: 42 });
     expect(placed).toMatchObject({ scheduled: false, version: 1 });
     await app.commands.payOrder({ orderId: "o-1", method: "card" });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
 
     expect(await app.queries.getOrder({ orderId: "o-1" })).toEqual({
       orderId: "o-1",
@@ -202,13 +202,13 @@ describe("createApp", () => {
 
   it("stops after maxPasses rounds and says whether it reached idle", async () => {
     const { app } = await start();
-    expect(await app.processUntilIdle()).toEqual({ idle: true });
+    expect(await app.runUntilIdle()).toEqual({ idle: true });
     await app.commands.placeOrder({ orderId: "o-1", total: 42 });
     await app.commands.payOrder({ orderId: "o-1", method: "card" });
-    expect(await app.processUntilIdle({ maxPasses: 0 })).toEqual({ idle: false });
-    expect(await app.processUntilIdle({ maxPasses: 1 })).toEqual({ idle: false });
+    expect(await app.runUntilIdle({ maxPasses: 0 })).toEqual({ idle: false });
+    expect(await app.runUntilIdle({ maxPasses: 1 })).toEqual({ idle: false });
     expect((await app.getLag()).maxLag).toBeGreaterThan(0);
-    expect(await app.processUntilIdle({ maxPasses: 50 })).toEqual({ idle: true });
+    expect(await app.runUntilIdle({ maxPasses: 50 })).toEqual({ idle: true });
     expect((await app.getLag()).maxLag).toBe(0);
     expect(await app.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "paid" });
     await app.stop();
@@ -220,19 +220,19 @@ describe("createApp", () => {
     await app.commands.archiveOrder({ orderId: "o-9" }, { delay: "10m" });
     expect(await app.nextDueAt()).toEqual(new Date(clock.now().getTime() + 600_000));
     clock.advance(600_000);
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     expect(await app.nextDueAt()).toBeNull();
     await app.stop();
   });
 
-  it("runs due scheduled commands and process time-outs inside processUntilIdle", async () => {
+  it("runs due scheduled commands and process time-outs inside runUntilIdle", async () => {
     const { app, clock } = await start();
     await app.commands.placeOrder({ orderId: "o-1", total: 10 });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     expect(await app.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "placed" });
 
     clock.advance(3_600_000);
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     const lag = await app.getLag();
     expect(lag.maxLag).toBe(0);
     expect(lag.subscribers.map((entry) => entry.subscriber).sort()).toEqual([
@@ -284,7 +284,7 @@ describe("createApp", () => {
     ]);
 
     expect((await fresh.getLag()).maxLag).toBeGreaterThan(0);
-    await fresh.processUntilIdle();
+    await fresh.runUntilIdle();
     expect((await fresh.getLag()).maxLag).toBe(0);
     expect(fresh.role).toBe("web");
     await fresh.stop();
@@ -298,7 +298,7 @@ describe("createApp", () => {
     await app.commands.placeOrder({ orderId: "o-1", total: 10 });
     clock.advance(1_000);
     expect(await app.queries.getOrder({ orderId: "o-1" })).toBeNull();
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     expect(await app.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "placed" });
     await app.stop();
   });
@@ -569,7 +569,7 @@ describe("policies and processes follow the stream from when they are deployed",
     expect(await checkpointStore.get("processes")).toBe(2);
     await after.commands.placeOrder({ orderId: "o-2", total: 7 });
     await after.commands.payOrder({ orderId: "o-2", method: "card" });
-    await after.processUntilIdle();
+    await after.runUntilIdle();
 
     expect(await archived(storage)).toEqual(["o-2"]);
     expect(await after.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "paid" });
@@ -584,7 +584,7 @@ describe("policies and processes follow the stream from when they are deployed",
     await first.stop();
 
     const second = await open(registry, storage);
-    await second.processUntilIdle();
+    await second.runUntilIdle();
     expect(await archived(storage)).toEqual(["o-1"]);
     await second.stop();
   });
@@ -594,7 +594,7 @@ describe("policies and processes follow the stream from when they are deployed",
     const first = await open(registry, storage);
     await first.commands.placeOrder({ orderId: "o-1", total: 42 });
     await first.commands.payOrder({ orderId: "o-1", method: "card" });
-    await first.processUntilIdle();
+    await first.runUntilIdle();
     await first.commands.placeOrder({ orderId: "o-2", total: 7 });
     await first.commands.payOrder({ orderId: "o-2", method: "card" });
     await first.stop();
@@ -605,7 +605,7 @@ describe("policies and processes follow the stream from when they are deployed",
 
     const second = await open(registry, storage);
     expect(await checkpointStore.get("policies")).toBe(halfway);
-    await second.processUntilIdle();
+    await second.runUntilIdle();
     expect(await archived(storage)).toEqual(["o-1", "o-2"]);
     await second.stop();
   });

@@ -155,7 +155,7 @@ describe("telemetry", () => {
     active = telemetry;
     const placed = await app.commands.placeOrder({ orderId: "o-1", total: 10 });
     await app.commands.payOrder({ orderId: "o-1", method: "card" }, { delay: "0s" });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     const correlationId = named(telemetry, "bounda.command")[0]?.attributes[
       ATTRIBUTES.correlationId
     ];
@@ -249,7 +249,7 @@ describe("telemetry", () => {
         },
       ]),
     );
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     expect(named(telemetry, "bounda.policy")[0]).toMatchObject({
       status: { code: SpanStatusCode.ERROR, message: "no mail today" },
       exceptions: ["no mail today"],
@@ -295,7 +295,7 @@ describe("telemetry", () => {
       config: { runtime: { policies: { retry: { strategy: "none" } } } },
     });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     harness.clock.advance(2 * 3_600_000);
     expect(await harness.worker.runOnce()).toBe(1);
     expect(named(telemetry, "bounda.scheduled")).toEqual([

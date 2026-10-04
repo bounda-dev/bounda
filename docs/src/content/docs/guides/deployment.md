@@ -59,17 +59,17 @@ Splitting them means a slow policy cannot compete with request handling for the 
 the two scale separately. Commands still work in `web`: dispatching stores events, and the worker
 picks up their consequences.
 
-`processUntilIdle()` and `catchUpReadModels()` work in every role, which is what makes a `web`
+`runUntilIdle()` and `catchUpReadModels()` work in every role, which is what makes a `web`
 process able to wait for its own writes without running the background loop.
 
 A host with no background loop at all, such as a serverless function or a Durable Object, drives
-the same work in slices. `processUntilIdle({ maxPasses })` stops after that many rounds and
+the same work in slices. `runUntilIdle({ maxPasses })` stops after that many rounds and
 resolves to `{ idle }`, `false` when work is left; `app.nextDueAt()` is the earliest moment a
 scheduled command or a process deadline becomes due, or `null`. Together they say when to come
 back:
 
 ```ts
-const { idle } = await app.processUntilIdle({ maxPasses: 20 });
+const { idle } = await app.runUntilIdle({ maxPasses: 20 });
 const next = idle ? await app.nextDueAt() : new Date();
 // arm a timer, an alarm or a cron trigger for `next`, if there is one
 ```
@@ -163,7 +163,7 @@ batch that goes through resets it. When another subscriber that was failing reco
 the database is back after an outage, every failing one is retried at once instead of waiting out
 its delay. `app.catchUpReadModels()`, and read-your-writes with it, respects the backoff too, so a
 request does not stumble on the same failure over and over: it answers with the read model as far
-as it got. `app.processUntilIdle()` ignores the backoff, so a test that fixes a projection and
+as it got. `app.runUntilIdle()` ignores the backoff, so a test that fixes a projection and
 processes again sees it advance at once.
 
 `app.getLag()` says what a subscriber is stuck on:

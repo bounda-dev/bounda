@@ -12,7 +12,7 @@ Breaking: `createTestApp` no longer accepts `config.collaborators`, and no longe
 only implementation. A port the test leaves out has no implementation, so a test never reaches a
 provider it did not ask for: reading it throws a `ConfigurationError` that says what to pass. A
 command rejects with it, a policy or a process sends it to its dead letter without retrying, and
-from then on every `app.processUntilIdle()` throws it.
+from then on every `app.runUntilIdle()` throws it.
 
 The generator emits `TestCollaborators` in `.bounda/types.ts` and registers it with
 `@bounda-dev/core/register` as `testCollaborators`, which the new `AppTestCollaborators` reads,
