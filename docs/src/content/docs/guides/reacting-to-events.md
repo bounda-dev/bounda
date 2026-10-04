@@ -260,6 +260,12 @@ A few rules keep it correct:
       };
     };
     ```
+- **An id the run creates comes from its key.** The key a provider receives stays as it is, but
+  the id of an aggregate the run starts (a payment, a shipment) is derived from it in the handler,
+  `idempotencyKeyFor(idempotencyKey, "payment")`, one name per id, never `randomUUID()`. A retry
+  then dispatches the same command with the same payload, so the provider gets the command's own
+  key with the same parameters again. A random id would send it that key with other parameters,
+  which a provider such as Stripe refuses.
 - **Without a key on the provider's side**, look the operation up by your own reference before
   calling again, and give a process a time-out for a provider that may never answer.
 - **The command a reaction dispatches can arrive twice**, when the reaction is retried after

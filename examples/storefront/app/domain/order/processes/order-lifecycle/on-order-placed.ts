@@ -1,8 +1,6 @@
-import { asDuration } from "@bounda-dev/core";
+import { asDuration, idempotencyKeyFor } from "@bounda-dev/core";
 import type { Process } from "./+types/on-order-placed";
 
-// The payment id is the handler's idempotency key, not a random one: a retry has to request the
-// same payment, which the provider sees as the same key with the same parameters.
 export const handler = async ({
   event,
   aggregateId,
@@ -10,13 +8,10 @@ export const handler = async ({
   idempotencyKey,
   after,
 }: Process.HandlerArgs) => {
-  await commands.requestPayment({
-    paymentId: idempotencyKey,
-    orderId: aggregateId,
-    amount: event.payload.total,
-  });
+  const paymentId = idempotencyKeyFor(idempotencyKey, "payment");
+  await commands.requestPayment({ paymentId, orderId: aggregateId, amount: event.payload.total });
   return {
-    paymentId: idempotencyKey,
+    paymentId,
     paymentDeadline: after(asDuration(process.env.PAYMENT_WINDOW ?? "72h")),
   };
 };

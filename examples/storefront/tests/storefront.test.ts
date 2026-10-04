@@ -89,7 +89,7 @@ describe("storefront", () => {
       paymentStatus: "pending",
     });
     expect([...intents.values()]).toEqual([{ paymentId, orderId: ORDER, amount: 139 }]);
-    // The key is the requestPayment command's own, not the process's that became the payment id.
+    // The key is the requestPayment command's own, not the payment id.
     expect(intentCalls).toEqual([
       { request: expect.any(Object), idempotencyKey: expect.stringMatching(UUID) },
     ]);
