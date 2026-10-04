@@ -103,6 +103,21 @@ describe("what does not compile", () => {
     void checks;
   });
 
+  it("a field returned by a process without state", () => {
+    type State = ProcessStateOf<{ readonly config: () => { readonly startedBy: [] } }>;
+    type Returning<Result> = { handler: () => Result };
+    type Accepted = [
+      ProcessHandlerReturnCheck<State, Returning<undefined>>,
+      ProcessHandlerReturnCheck<State, Returning<Promise<void>>>,
+      ProcessHandlerReturnCheck<State, Returning<Record<never, never>>>,
+    ];
+    type Seen = Returning<{ seen: true }>;
+    // @ts-expect-error a process without state has no field to set
+    type Field = ProcessHandlerReturnCheck<State, Seen>;
+    const checks: [Accepted?, Field?] = [];
+    void checks;
+  });
+
   it("a plain string where an Instant is expected", () => {
     // @ts-expect-error a plain string is not an Instant
     const moment: Instant = "2026-01-01T00:00:00.000Z";

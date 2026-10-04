@@ -13,4 +13,5 @@ value. A handler that returns anything but an object or nothing fails the proces
 handler's `null` and a process without `state` included. The `ReturnCheck` of an `at-<field>.ts`
 requires its field, as `null` or another moment, so leaving it out no longer compiles;
 `ProcessDeadlineResult` is the type it checks against. And a handler that returns a field its state
-does not declare no longer compiles, so a misspelt one is not dropped by the schema without a word.
+does not declare no longer compiles, so a misspelt one is not dropped by the schema without a word;
+in a process without `state`, that is any field.
