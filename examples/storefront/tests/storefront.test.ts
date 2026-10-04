@@ -68,6 +68,7 @@ const start = async ({ failingIntents = 0, failingRefunds = 0 }: StartArgs = {})
   return { ...test, sent, intentCalls, refundCalls, intents, refunds, summary, paymentOf };
 };
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SECOND = 1_000;
 const HOUR = 3_600_000;
 
@@ -88,7 +89,11 @@ describe("storefront", () => {
       paymentStatus: "pending",
     });
     expect([...intents.values()]).toEqual([{ paymentId, orderId: ORDER, amount: 139 }]);
-    expect(intentCalls).toHaveLength(1);
+    // The key is the requestPayment command's own, not the process's that became the payment id.
+    expect(intentCalls).toEqual([
+      { request: expect.any(Object), idempotencyKey: expect.stringMatching(UUID) },
+    ]);
+    expect(intentCalls[0]?.idempotencyKey).not.toBe(paymentId);
 
     await app.commands.settlePayment({ paymentId });
     await app.processUntilIdle();

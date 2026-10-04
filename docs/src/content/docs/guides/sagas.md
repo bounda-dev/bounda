@@ -134,6 +134,11 @@ export const handler = async ({ state, event, commands }: Process.HandlerArgs) =
 };
 ```
 
+Compensations need not run in the reverse order of their steps. The order was placed before the
+payment was requested, yet the order is cancelled first and the payment after it: cancelling the
+order is what sets the compensation going. Each compensation decides from the state of its own
+aggregate, so their order matters only when one depends on what another did.
+
 The exception is the process's own `timeout`. An instance that times out ends there, and the
 `OrderCancelled` its `at-timeout.ts` causes reaches no open instance, so that handler compensates
 in place: it releases the lock, cancels the order and cancels the payment.
