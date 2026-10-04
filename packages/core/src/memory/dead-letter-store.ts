@@ -4,18 +4,14 @@ import type {
   ListDeadLettersArgs,
 } from "../adapter/ports/dead-letter-store.ts";
 import { DeadLetterSettledError } from "../contracts/errors.ts";
-import { snapshotMap } from "./transaction.ts";
-
-/**
- * The in-memory dead-letter store, with a `snapshot` that returns what puts it back the way it
- * is.
- */
-export interface MemoryDeadLetterStore extends DeadLetterStore {
-  snapshot(): () => void;
-}
+import { createStoreEntries, type WithEntries } from "./entries.ts";
 
 export interface CreateMemoryDeadLetterStoreFunction {
-  (): MemoryDeadLetterStore;
+  (): DeadLetterStore;
+}
+
+export interface CreateKeptDeadLetterStoreFunction {
+  (): WithEntries<DeadLetterStore, string>;
 }
 
 const matches = (letter: DeadLetter, args: ListDeadLettersArgs): boolean =>
@@ -23,16 +19,13 @@ const matches = (letter: DeadLetter, args: ListDeadLettersArgs): boolean =>
   (args.subscriber === undefined || letter.subscriber === args.subscriber) &&
   (args.status === undefined || letter.status === args.status);
 
-/**
- * A dead-letter store held in memory.
- */
-export const createMemoryDeadLetterStore: CreateMemoryDeadLetterStoreFunction = () => {
+export const createKeptDeadLetterStore: CreateKeptDeadLetterStoreFunction = () => {
   const letters = new Map<string, DeadLetter>();
 
   const select = (args: ListDeadLettersArgs): DeadLetter[] =>
     [...letters.values()].filter((letter) => matches(letter, args));
 
-  return {
+  const store: DeadLetterStore = {
     add: async (letter) => {
       const existing = letters.get(letter.id);
       if (existing !== undefined) return existing;
@@ -55,6 +48,12 @@ export const createMemoryDeadLetterStore: CreateMemoryDeadLetterStoreFunction = 
     remove: async (id) => {
       letters.delete(id);
     },
-    snapshot: () => snapshotMap(letters),
   };
+  return { store, entries: createStoreEntries(letters, (id: string) => id) };
 };
+
+/**
+ * A dead-letter store held in memory.
+ */
+export const createMemoryDeadLetterStore: CreateMemoryDeadLetterStoreFunction = () =>
+  createKeptDeadLetterStore().store;

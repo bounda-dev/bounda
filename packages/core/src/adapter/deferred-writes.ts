@@ -8,6 +8,18 @@ export type DeferredStores = Pick<
   "inboxLedger" | "deadLetterStore" | "scheduler"
 >;
 
+export interface DeferredWriteTarget {
+  readonly inboxLedger: Pick<DeferredStores["inboxLedger"], "complete" | "fail">;
+  readonly deadLetterStore: Pick<
+    DeferredStores["deadLetterStore"],
+    "add" | "updateStatus" | "remove"
+  >;
+  readonly scheduler: Pick<
+    DeferredStores["scheduler"],
+    "schedule" | "cancel" | "complete" | "fail" | "defer"
+  >;
+}
+
 /**
  * The stores with their writes held back: `ports` answer reads from `live` at once and record
  * every write in order, and `flush` runs the writes recorded so far against another set of the
@@ -17,7 +29,7 @@ export type DeferredStores = Pick<
  */
 export interface DeferredWrites {
   readonly ports: DeferredStores;
-  flush(target: DeferredStores): Promise<void>;
+  flush(target: DeferredWriteTarget): Promise<void>;
   /**
    * Whether any write is recorded and not flushed yet.
    */
@@ -28,12 +40,14 @@ export interface DeferWritesFunction {
   (live: DeferredStores): DeferredWrites;
 }
 
-type Recorded = (target: DeferredStores) => Promise<unknown>;
+type Recorded = (target: DeferredWriteTarget) => Promise<unknown>;
 
 export const deferWrites: DeferWritesFunction = ({ inboxLedger, deadLetterStore, scheduler }) => {
   const recorded: Recorded[] = [];
   const later =
-    <Args extends unknown[]>(write: (target: DeferredStores, ...args: Args) => Promise<unknown>) =>
+    <Args extends unknown[]>(
+      write: (target: DeferredWriteTarget, ...args: Args) => Promise<unknown>,
+    ) =>
     async (...args: Args): Promise<void> => {
       recorded.push((target) => write(target, ...args));
     };

@@ -1,25 +1,19 @@
 import { v4 as randomUUID } from "uuid";
 import type { ClaimKey, ClaimRecord, InboxLedger } from "../adapter/ports/inbox-ledger.ts";
 import { ClaimLostError } from "../contracts/errors.ts";
-import { snapshotMap } from "./transaction.ts";
-
-/**
- * The in-memory inbox ledger, with a `snapshot` that returns what puts it back the way it is.
- */
-export interface MemoryInboxLedger extends InboxLedger {
-  snapshot(): () => void;
-}
+import { createStoreEntries, type WithEntries } from "./entries.ts";
 
 export interface CreateMemoryInboxLedgerFunction {
-  (): MemoryInboxLedger;
+  (): InboxLedger;
+}
+
+export interface CreateKeptInboxLedgerFunction {
+  (): WithEntries<InboxLedger, ClaimKey>;
 }
 
 const keyOf = (subscriber: string, eventId: string): string => `${subscriber}\u0000${eventId}`;
 
-/**
- * An inbox ledger held in memory.
- */
-export const createMemoryInboxLedger: CreateMemoryInboxLedgerFunction = () => {
+export const createKeptInboxLedger: CreateKeptInboxLedgerFunction = () => {
   const claims = new Map<string, ClaimRecord>();
 
   const held = (
@@ -33,7 +27,7 @@ export const createMemoryInboxLedger: CreateMemoryInboxLedgerFunction = () => {
     return existing;
   };
 
-  return {
+  const store: InboxLedger = {
     tryClaim: async ({ subscriber, eventId, now, leaseMs }) => {
       const key = keyOf(subscriber, eventId);
       const existing = claims.get(key);
@@ -73,6 +67,17 @@ export const createMemoryInboxLedger: CreateMemoryInboxLedgerFunction = () => {
       claims.set(key, { ...existing, claimedAt: now.toISOString() });
     },
     get: async ({ subscriber, eventId }) => claims.get(keyOf(subscriber, eventId)) ?? null,
-    snapshot: () => snapshotMap(claims),
+  };
+  return {
+    store,
+    entries: createStoreEntries(claims, ({ subscriber, eventId }: ClaimKey) =>
+      keyOf(subscriber, eventId),
+    ),
   };
 };
+
+/**
+ * An inbox ledger held in memory.
+ */
+export const createMemoryInboxLedger: CreateMemoryInboxLedgerFunction = () =>
+  createKeptInboxLedger().store;

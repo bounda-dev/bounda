@@ -1,64 +1,119 @@
 import type { StoragePorts } from "../adapter/adapter.ts";
-import { deferWrites } from "../adapter/deferred-writes.ts";
+import { type DeferredWriteTarget, deferWrites } from "../adapter/deferred-writes.ts";
 import type { CheckpointStore } from "../adapter/ports/checkpoint-store.ts";
+import type { DeadLetterStore } from "../adapter/ports/dead-letter-store.ts";
+import type { ClaimKey, InboxLedger } from "../adapter/ports/inbox-ledger.ts";
+import type { Scheduler } from "../adapter/ports/scheduler.ts";
 import { createStagedEventStore } from "../adapter/staged-event-store.ts";
-import type { MemoryDeadLetterStore } from "./dead-letter-store.ts";
+import type { StoreEntries } from "./entries.ts";
 import type { MemoryEventStore } from "./event-store.ts";
-import type { MemoryInboxLedger } from "./inbox-ledger.ts";
-import type { MemoryScheduler } from "./scheduler.ts";
-
-export interface SnapshotMapFunction {
-  <Key, Value>(map: Map<Key, Value>): () => void;
-}
-
-/**
- * Copies `map` and returns what puts it back the way it was.
- */
-export const snapshotMap: SnapshotMapFunction = (map) => {
-  const saved = new Map(map);
-  return () => {
-    map.clear();
-    for (const [key, value] of saved) map.set(key, value);
-  };
-};
 
 export interface CreateMemoryStorageTransactionArgs {
   readonly eventStore: MemoryEventStore;
-  readonly inboxLedger: MemoryInboxLedger;
-  readonly deadLetterStore: MemoryDeadLetterStore;
-  readonly scheduler: MemoryScheduler;
+  readonly inboxLedger: InboxLedger;
+  readonly deadLetterStore: DeadLetterStore;
+  readonly scheduler: Scheduler;
+  readonly entries: {
+    readonly inboxLedger: StoreEntries<ClaimKey>;
+    readonly deadLetterStore: StoreEntries<string>;
+    readonly scheduler: StoreEntries<string>;
+  };
 }
 
 export interface CreateMemoryStorageTransactionFunction {
   (args: CreateMemoryStorageTransactionArgs): StoragePorts["transact"];
 }
 
+type CreateUndoLogArgs = Omit<CreateMemoryStorageTransactionArgs, "eventStore">;
+
+interface UndoLog {
+  readonly target: DeferredWriteTarget;
+  undo(): void;
+}
+
+const createUndoLog = ({
+  inboxLedger,
+  deadLetterStore,
+  scheduler,
+  entries,
+}: CreateUndoLogArgs): UndoLog => {
+  const undos: (() => void)[] = [];
+  const tracked = <Key, Result>(
+    store: StoreEntries<Key>,
+    key: NoInfer<Key>,
+    write: () => Promise<Result>,
+  ): Promise<Result> => {
+    const before = store.read(key);
+    const written = write();
+    // A memory write changes its map before it returns, so this reads its change before anyone
+    // else can write the entry.
+    const after = store.read(key);
+    undos.push(() => store.putBack(key, before, after));
+    return written;
+  };
+  return {
+    target: {
+      inboxLedger: {
+        complete: (args) => tracked(entries.inboxLedger, args, () => inboxLedger.complete(args)),
+        fail: (args) => tracked(entries.inboxLedger, args, () => inboxLedger.fail(args)),
+      },
+      deadLetterStore: {
+        add: (letter) =>
+          tracked(entries.deadLetterStore, letter.id, () => deadLetterStore.add(letter)),
+        updateStatus: (id, status) =>
+          tracked(entries.deadLetterStore, id, () => deadLetterStore.updateStatus(id, status)),
+        remove: (id) => tracked(entries.deadLetterStore, id, () => deadLetterStore.remove(id)),
+      },
+      scheduler: {
+        schedule: (args) =>
+          tracked(entries.scheduler, args.dedupeKey, () => scheduler.schedule(args)),
+        cancel: (dedupeKey) =>
+          tracked(entries.scheduler, dedupeKey, () => scheduler.cancel(dedupeKey)),
+        complete: (claim) =>
+          tracked(entries.scheduler, claim.dedupeKey, () => scheduler.complete(claim)),
+        fail: (args) =>
+          tracked(entries.scheduler, args.claim.dedupeKey, () => scheduler.fail(args)),
+        defer: (args) =>
+          tracked(entries.scheduler, args.claim.dedupeKey, () => scheduler.defer(args)),
+      },
+    },
+    undo: () => {
+      for (const undo of undos.splice(0).reverse()) undo();
+    },
+  };
+};
+
 /**
- * `StoragePorts.transact` for the memory stores. Appends are staged and the other writes deferred
- * while the work runs; once it resolves, the deferred writes are applied, then every stream is
- * appended in one synchronous run with every version checked first, so no reader sees one stream
- * appended without the others. A write that fails puts the ledger, the dead letters and the
- * scheduler back from their snapshots, and nothing has been appended by then; a stale version
- * appends nothing and puts them back too. `tryClaim`, `claimDue` and both `renew` act at once,
- * outside the transaction.
+ * `StoragePorts.transact` for the memory stores. The work's writes are held back; transactions
+ * then commit one at a time, every stream appended in one synchronous run, so no reader sees one
+ * stream appended without the others. A failed commit appends nothing and puts back each entry it
+ * changed, unless someone changed it since. `tryClaim`, `claimDue`, both `renew` and writes made on
+ * the stores themselves do not wait for a commit, so they can see a write it may still put back.
  */
-export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunction =
-  ({ eventStore, inboxLedger, deadLetterStore, scheduler }) =>
-  async (work) => {
+export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunction = ({
+  eventStore,
+  ...live
+}) => {
+  const commits = createMemoryLocks();
+  return async (work) => {
     const staged = createStagedEventStore(eventStore);
-    const live = { inboxLedger, deadLetterStore, scheduler };
     const { ports, flush } = deferWrites(live);
     const result = await work({ eventStore: staged, ...ports });
-    const restore = [inboxLedger, deadLetterStore, scheduler].map((store) => store.snapshot());
+    // A transaction committed from inside this commit, as from a store write, waits forever.
+    const release = await commits.acquire("commit", true);
+    const log = createUndoLog(live);
     try {
-      await flush(live);
+      await flush(log.target);
       await eventStore.appendAll(staged.batches());
     } catch (error) {
-      for (const undo of restore) undo();
+      log.undo();
       throw error;
+    } finally {
+      release?.();
     }
     return result;
   };
+};
 
 export interface MemoryLocks {
   /**

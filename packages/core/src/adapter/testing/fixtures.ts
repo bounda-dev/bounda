@@ -1,5 +1,6 @@
 import type { NewCommand } from "../../contracts/command.ts";
 import type { CausationContext, EventMetadata } from "../../contracts/metadata.ts";
+import type { NewDeadLetter } from "../ports/dead-letter-store.ts";
 import type { PendingEvent } from "../ports/event-store.ts";
 
 /**
@@ -67,4 +68,23 @@ export const testCommand: TestCommandFunction = (aggregateId, payload = {}) => (
   type: "RemindCustomer",
   aggregateId,
   payload,
+});
+
+export interface TestDeadLetterFunction {
+  (id: string): NewDeadLetter;
+}
+
+export const testDeadLetter: TestDeadLetterFunction = (id) => ({
+  id,
+  kind: "policy",
+  subscriber: "order.p",
+  eventId: "e1",
+  eventType: "OrderPlaced",
+  aggregateType: "order",
+  aggregateId: "1",
+  errorType: "terminal",
+  errorMessage: "boom",
+  attempts: 1,
+  firstFailedAt: "2026-01-01T00:00:00.000Z",
+  lastFailedAt: "2026-01-01T00:00:00.000Z",
 });

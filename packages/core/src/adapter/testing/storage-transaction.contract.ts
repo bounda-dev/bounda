@@ -5,8 +5,7 @@ import {
   ScheduledClaimLostError,
 } from "../../contracts/errors.ts";
 import type { StoragePorts, StorageTransaction } from "../adapter.ts";
-import type { NewDeadLetter } from "../ports/dead-letter-store.ts";
-import { pendingEvent, testCommand, testContext } from "./fixtures.ts";
+import { pendingEvent, testCommand, testContext, testDeadLetter } from "./fixtures.ts";
 
 export interface StorageTransactionContractArgs {
   readonly create: () => Promise<StoragePorts>;
@@ -18,21 +17,6 @@ export interface StorageTransactionContractFunction {
 
 const now = new Date("2026-01-01T00:00:00.000Z");
 const key = { subscriber: "order.p", eventId: "e1" };
-
-const letter = (id: string): NewDeadLetter => ({
-  id,
-  kind: "policy",
-  subscriber: "order.p",
-  eventId: "e1",
-  eventType: "OrderPlaced",
-  aggregateType: "order",
-  aggregateId: "1",
-  errorType: "terminal",
-  errorMessage: "boom",
-  attempts: 1,
-  firstFailedAt: now.toISOString(),
-  lastFailedAt: now.toISOString(),
-});
 
 /**
  * The behaviour every `StoragePorts.transact` must exhibit. Call it inside a `describe` of the
@@ -76,8 +60,8 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
           executeAt: new Date(now.getTime() + 60_000),
           context: testContext,
         });
-        expect(await tx.deadLetterStore.add(letter("dl-1"))).toEqual({
-          ...letter("dl-1"),
+        expect(await tx.deadLetterStore.add(testDeadLetter("dl-1"))).toEqual({
+          ...testDeadLetter("dl-1"),
           status: "failed",
         });
         await tx.inboxLedger.complete(key);
@@ -162,7 +146,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
     });
 
     it("writes nothing when the dead letter it settles was settled first", async () => {
-      await storage.deadLetterStore.add(letter("d1"));
+      await storage.deadLetterStore.add(testDeadLetter("d1"));
       await storage.deadLetterStore.updateStatus("d1", "discarded");
       await expect(
         storage.transact(async (tx) => {
@@ -176,6 +160,42 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
         }),
       ).rejects.toBeInstanceOf(DeadLetterSettledError);
       expect(await storage.eventStore.lastPosition()).toBe(0);
+      expect((await storage.deadLetterStore.get("d1"))?.status).toBe("discarded");
+    });
+
+    it("keeps what a concurrent transaction wrote when it rolls back", async () => {
+      await storage.deadLetterStore.add(testDeadLetter("d1"));
+      const replay = (dedupeKey: string) =>
+        storage.transact(async (tx) => {
+          await tx.scheduler.schedule({
+            dedupeKey,
+            command: testCommand("1"),
+            executeAt: new Date(now.getTime() + 60_000),
+            context: testContext,
+          });
+          await tx.deadLetterStore.updateStatus("d1", "replayed");
+        });
+      const outcomes = await Promise.allSettled([replay("command:a"), replay("command:b")]);
+      expect(outcomes.map((outcome) => outcome.status).sort()).toEqual(["fulfilled", "rejected"]);
+      expect(outcomes.find((outcome) => outcome.status === "rejected")).toMatchObject({
+        reason: expect.any(DeadLetterSettledError),
+      });
+      expect((await storage.deadLetterStore.get("d1"))?.status).toBe("replayed");
+      expect(await storage.scheduler.list()).toHaveLength(1);
+    });
+
+    it("lets a transaction through that a concurrent one held up and then rolled back", async () => {
+      await storage.deadLetterStore.add(testDeadLetter("d1"));
+      const outcomes = await Promise.allSettled([
+        storage.transact(async (tx) => {
+          await tx.deadLetterStore.updateStatus("d1", "replayed");
+          await tx.scheduler.complete({ dedupeKey: "unclaimed", revision: 0, claimId: "lost" });
+        }),
+        storage.transact(async (tx) => {
+          await tx.deadLetterStore.updateStatus("d1", "discarded");
+        }),
+      ]);
+      expect(outcomes.map((outcome) => outcome.status)).toEqual(["rejected", "fulfilled"]);
       expect((await storage.deadLetterStore.get("d1"))?.status).toBe("discarded");
     });
 
@@ -205,8 +225,8 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
     });
 
     it("changes and removes dead letters with the rest, or not at all", async () => {
-      await storage.deadLetterStore.add(letter("d1"));
-      await storage.deadLetterStore.add(letter("d2"));
+      await storage.deadLetterStore.add(testDeadLetter("d1"));
+      await storage.deadLetterStore.add(testDeadLetter("d2"));
       const settle = async (tx: StorageTransaction) => {
         await tx.deadLetterStore.updateStatus("d1", "replayed");
         await tx.deadLetterStore.remove("d2");
