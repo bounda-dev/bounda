@@ -1,3 +1,4 @@
+import { DeadLetterSettledError } from "@bounda-dev/core";
 import type {
   DeadLetter,
   DeadLetterErrorType,
@@ -107,8 +108,13 @@ export const createPostgresqlDeadLetterStore: CreatePostgresqlDeadLetterStoreFun
       );
       return Number(row?.count ?? 0);
     },
-    updateStatus: (id, status) =>
-      db.run(`UPDATE ${table} SET "status" = $1 WHERE "id" = $2`, [status, id]),
+    updateStatus: async (id, status) => {
+      const updated = await db.all(
+        `UPDATE ${table} SET "status" = $1 WHERE "id" = $2 AND "status" = 'failed' RETURNING "id"`,
+        [status, id],
+      );
+      if (updated.length === 0) throw new DeadLetterSettledError({ id });
+    },
     remove: (id) => db.run(`DELETE FROM ${table} WHERE "id" = $1`, [id]),
   };
 };

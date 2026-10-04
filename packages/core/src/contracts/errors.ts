@@ -92,6 +92,34 @@ export class ClaimLostError extends BoundaError {
   }
 }
 
+export interface DeadLetterSettledErrorArgs {
+  readonly id: string;
+  /**
+   * The status the letter was found in, when it was read.
+   */
+  readonly status?: string | undefined;
+}
+
+/**
+ * Thrown when a dead letter is replayed or discarded once it is no longer `failed`: another
+ * replay or discard settled it first, before or while this one ran. Of two operators settling
+ * one letter only the first gets through; a policy's or a command's replay refused this way
+ * writes nothing.
+ */
+export class DeadLetterSettledError extends BoundaError {
+  readonly id: string;
+
+  constructor({ id, status }: DeadLetterSettledErrorArgs) {
+    super(
+      "DEAD_LETTER_SETTLED",
+      status === undefined
+        ? `Dead letter "${id}" is no longer failed: another replay or discard settled it`
+        : `Dead letter "${id}" was already ${status}`,
+    );
+    this.id = id;
+  }
+}
+
 /**
  * Thrown by a scheduler asked to complete, fail, defer or renew a claimed command by a claim it no
  * longer holds: the lease expired and another runner claimed the command, or the command was

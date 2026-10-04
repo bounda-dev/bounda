@@ -2,7 +2,11 @@ import type { StoragePorts } from "../../adapter/adapter.ts";
 import type { DeadLetter, ListDeadLettersArgs } from "../../adapter/ports/dead-letter-store.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
-import { ConfigurationError, NotFoundError } from "../../contracts/errors.ts";
+import {
+  ConfigurationError,
+  DeadLetterSettledError,
+  NotFoundError,
+} from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
@@ -35,14 +39,16 @@ export interface DeadLetters {
    * a process's once its instance has drained what was parked, since a replay cut short there is
    * taken up again by replaying the same letter. Rejects with the handler's error when it fails
    * again, and the letter stays `failed`. Rejects, without running anything, a letter that is
-   * missing or no longer `failed`,
-   * a projection letter (a rebuild of the read model fixes it instead), a letter whose policy is
-   * no longer in the registry or whose event is gone, and a command letter recorded without its
-   * payload.
+   * missing, a projection letter (a rebuild of the read model fixes it instead), a letter whose
+   * policy is no longer in the registry or whose event is gone, and a command letter recorded
+   * without its payload. Rejects with `DeadLetterSettledError` a letter that is no longer
+   * `failed`, or that another replay or a discard settled while this one ran: a policy's or a
+   * command's replay then writes nothing, a process's has already handled its events.
    */
   replay(id: string): Promise<DeadLetter>;
   /**
-   * Marks the letter `discarded`. Rejects a letter that is missing or no longer `failed`.
+   * Marks the letter `discarded`. Rejects a letter that is missing, and with
+   * `DeadLetterSettledError` one that is no longer `failed`.
    */
   discard(id: string): Promise<DeadLetter>;
 }
@@ -78,7 +84,8 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
   clock,
   logger,
 }) => {
-  // The replay's writes and the letter's new status, together or not at all.
+  // The replay's writes and the letter's new status, together or not at all. A replay that
+  // another one settled first writes nothing, and does not run again after a conflict.
   const replayed = (letter: DeadLetter, run: (unit: UnitOfWork) => Promise<void>): Promise<void> =>
     commitWork({
       storage,
@@ -87,13 +94,17 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
         await run(unit);
         await unit.deadLetterStore.updateStatus(letter.id, "replayed");
       },
+      beforeRerun: async () => {
+        const current = await storage.deadLetterStore.get(letter.id);
+        if (current?.status !== "failed") throw new DeadLetterSettledError({ id: letter.id });
+      },
     });
 
   const failedLetter = async (id: string): Promise<DeadLetter> => {
     const letter = await storage.deadLetterStore.get(id);
     if (letter === null) throw new NotFoundError(`Dead letter "${id}" not found`);
     if (letter.status !== "failed") {
-      throw new ConfigurationError(`Dead letter "${id}" was already ${letter.status}`);
+      throw new DeadLetterSettledError({ id, status: letter.status });
     }
     return letter;
   };

@@ -23,6 +23,8 @@ export {
   ConcurrencyError,
   type ConcurrencyErrorArgs,
   ConfigurationError,
+  DeadLetterSettledError,
+  type DeadLetterSettledErrorArgs,
   DomainError,
   NotFoundError,
   RebuildSupersededError,

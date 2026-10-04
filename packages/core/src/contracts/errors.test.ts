@@ -4,6 +4,7 @@ import {
   ChainDepthExceededError,
   ConcurrencyError,
   ConfigurationError,
+  DeadLetterSettledError,
   DomainError,
   NotFoundError,
   RebuildSupersededError,
@@ -67,6 +68,18 @@ describe("errors", () => {
     expect(error.code).toBe("SCHEDULED_CLAIM_LOST");
     expect(error.dedupeKey).toBe("command:c-1");
     expect(error.message).toContain("command:c-1");
+  });
+
+  it("name the dead letter that was settled first", () => {
+    const error = new DeadLetterSettledError({ id: "d-1" });
+    expect(error.code).toBe("DEAD_LETTER_SETTLED");
+    expect(error.id).toBe("d-1");
+    expect(error.message).toBe(
+      'Dead letter "d-1" is no longer failed: another replay or discard settled it',
+    );
+    expect(new DeadLetterSettledError({ id: "d-1", status: "discarded" }).message).toBe(
+      'Dead letter "d-1" was already discarded',
+    );
   });
 
   it("mark missing resources", () => {

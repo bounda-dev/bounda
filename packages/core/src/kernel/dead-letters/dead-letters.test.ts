@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ConfigurationError, DomainError, NotFoundError } from "../../contracts/errors.ts";
+import { DeadLetterSettledError, DomainError, NotFoundError } from "../../contracts/errors.ts";
 import type { PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { PROCESS_DEADLINE_COMMAND } from "../process/deadlines.ts";
@@ -19,8 +19,9 @@ import { createDeadLetters, type DeadLetters } from "./dead-letters.ts";
 
 const calls: string[] = [];
 const keys: string[] = [];
-let policyMode: "ok" | "domain" | "hangs" = "domain";
+let policyMode: "ok" | "domain" | "hangs" | "waits" = "domain";
 let handlerStarted = Promise.withResolvers<void>();
+let gate = Promise.withResolvers<void>();
 let processMode: "ok" | "domain" = "domain";
 let timeoutMode: "ok" | "domain" = "ok";
 
@@ -52,6 +53,10 @@ const registry = {
               if (policyMode === "hangs") {
                 handlerStarted.resolve();
                 await new Promise<never>(() => undefined);
+              }
+              if (policyMode === "waits") {
+                handlerStarted.resolve();
+                await gate.promise;
               }
               await commands.archiveOrder({ orderId: event.aggregateId });
             },
@@ -278,14 +283,181 @@ describe("deadLetters", () => {
       fields: { id, kind: "policy", subscriber: "order.notifyOnOrderPlaced" },
     });
     await expect(deadLetters.replay(id)).rejects.toThrow(
-      new ConfigurationError(`Dead letter "${id}" was already discarded`),
+      new DeadLetterSettledError({ id, status: "discarded" }),
     );
-    await expect(deadLetters.discard(id)).rejects.toThrow(/already discarded/);
+    await expect(deadLetters.discard(id)).rejects.toBeInstanceOf(DeadLetterSettledError);
     await expect(deadLetters.replay("nope")).rejects.toThrow(
       new NotFoundError('Dead letter "nope" not found'),
     );
     await expect(deadLetters.discard("nope")).rejects.toBeInstanceOf(NotFoundError);
     expect(calls).toEqual(["notify:o-1"]);
+  });
+
+  it("lets one of two concurrent replays of a policy letter through, and the other writes nothing", async () => {
+    policyMode = "domain";
+    const { harness, deadLetters } = await setUp();
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.dispatcher.processUntilIdle();
+    const [letter] = await deadLetters.list();
+    const id = letter?.id ?? "";
+    policyMode = "ok";
+    calls.length = 0;
+
+    const outcomes = await Promise.allSettled([deadLetters.replay(id), deadLetters.replay(id)]);
+
+    expect(outcomes.map((outcome) => outcome.status).sort()).toEqual(["fulfilled", "rejected"]);
+    const [rejected] = outcomes.filter((outcome) => outcome.status === "rejected");
+    expect(rejected?.reason).toBeInstanceOf(DeadLetterSettledError);
+    expect(calls).toEqual(["notify:o-1", "notify:o-1"]);
+    const { events } = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    expect(events.map((event) => event.type)).toEqual(["OrderPlaced", "OrderArchived"]);
+    expect((await deadLetters.get(id))?.status).toBe("replayed");
+  });
+
+  it("lets one of two concurrent replays of a command letter through, deciding the command once", async () => {
+    policyMode = "ok";
+    const { harness, deadLetters } = await setUp();
+    await harness.pipeline.dispatch({
+      type: "PayOrder",
+      payload: { orderId: "o-1", method: "card" },
+      options: { delay: "1m" },
+    });
+    harness.clock.advance(60_000);
+    await harness.worker.runOnce();
+    const [letter] = await deadLetters.list({ kind: "command" });
+    const id = letter?.id ?? "";
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+
+    const outcomes = await Promise.allSettled([deadLetters.replay(id), deadLetters.replay(id)]);
+
+    const [rejected] = outcomes.filter((outcome) => outcome.status === "rejected");
+    expect(rejected?.reason).toBeInstanceOf(DeadLetterSettledError);
+    expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+    const { events } = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    expect(events.filter((event) => event.type === "OrderPaid")).toHaveLength(1);
+    expect((await deadLetters.get(id))?.status).toBe("replayed");
+  });
+
+  it("keeps a letter discarded while its replay ran, and the replay writes nothing", async () => {
+    policyMode = "domain";
+    const { harness, deadLetters } = await setUp();
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.dispatcher.processUntilIdle();
+    const [letter] = await deadLetters.list();
+    const id = letter?.id ?? "";
+    policyMode = "waits";
+    handlerStarted = Promise.withResolvers<void>();
+    gate = Promise.withResolvers<void>();
+
+    const replaying = deadLetters.replay(id);
+    await handlerStarted.promise;
+    expect(await deadLetters.discard(id)).toMatchObject({ status: "discarded" });
+    gate.resolve();
+
+    await expect(replaying).rejects.toBeInstanceOf(DeadLetterSettledError);
+    const { events } = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    expect(events.map((event) => event.type)).toEqual(["OrderPlaced"]);
+    expect((await deadLetters.get(id))?.status).toBe("discarded");
+  });
+
+  describe("a replay that meets a conflict", () => {
+    const conflicted = async (
+      afterTheConflict: (
+        args: Awaited<ReturnType<typeof setUp>> & { id: string },
+      ) => Promise<unknown>,
+    ) => {
+      policyMode = "domain";
+      const set = await setUp();
+      const { harness, deadLetters } = set;
+      await harness.pipeline.dispatch({
+        type: "PlaceOrder",
+        payload: { orderId: "o-1", total: 10 },
+      });
+      await harness.dispatcher.processUntilIdle();
+      const [letter] = await deadLetters.list();
+      const id = letter?.id ?? "";
+      policyMode = "ok";
+      calls.length = 0;
+      const transact = harness.storage.transact.bind(harness.storage);
+      harness.storage.transact = async (work) => {
+        harness.storage.transact = transact;
+        await harness.pipeline.dispatch({
+          type: "PayOrder",
+          payload: { orderId: "o-1", method: "card" },
+        });
+        try {
+          return await transact(work);
+        } catch (error) {
+          await afterTheConflict({ ...set, id });
+          throw error;
+        }
+      };
+      const types = async (): Promise<readonly string[]> =>
+        (
+          await harness.storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" })
+        ).events.map((event) => event.type);
+      return { harness, deadLetters, id, types };
+    };
+
+    it("runs again on the new state while the letter is still failed", async () => {
+      const { deadLetters, id, types } = await conflicted(async () => undefined);
+
+      expect((await deadLetters.replay(id)).status).toBe("replayed");
+
+      expect(calls).toEqual(["notify:o-1", "notify:o-1"]);
+      expect(await types()).toEqual(["OrderPlaced", "OrderPaid", "OrderArchived"]);
+    });
+
+    it("does not run again once the letter was settled", async () => {
+      const { deadLetters, id, types } = await conflicted(({ deadLetters, id }) =>
+        deadLetters.discard(id),
+      );
+
+      await expect(deadLetters.replay(id)).rejects.toThrow(new DeadLetterSettledError({ id }));
+
+      expect(calls).toEqual(["notify:o-1"]);
+      expect(await types()).toEqual(["OrderPlaced", "OrderPaid"]);
+      expect((await deadLetters.get(id))?.status).toBe("discarded");
+    });
+
+    it("does not run again once the letter is gone", async () => {
+      const { deadLetters, id } = await conflicted(({ harness, id }) =>
+        harness.storage.deadLetterStore.remove(id),
+      );
+
+      await expect(deadLetters.replay(id)).rejects.toBeInstanceOf(DeadLetterSettledError);
+
+      expect(calls).toEqual(["notify:o-1"]);
+    });
+  });
+
+  it("does not discard a letter a replay settled first", async () => {
+    policyMode = "domain";
+    const { harness, deadLetters } = await setUp();
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.dispatcher.processUntilIdle();
+    const [letter] = await deadLetters.list();
+    const id = letter?.id ?? "";
+    policyMode = "ok";
+    const get = harness.storage.deadLetterStore.get.bind(harness.storage.deadLetterStore);
+    harness.storage.deadLetterStore.get = async (letterId) => {
+      const read = await get(letterId);
+      harness.storage.deadLetterStore.get = get;
+      await deadLetters.replay(id);
+      return read;
+    };
+
+    await expect(deadLetters.discard(id)).rejects.toBeInstanceOf(DeadLetterSettledError);
+    expect((await deadLetters.get(id))?.status).toBe("replayed");
   });
 
   it("replays a process handler, reopens the failed process and schedules its deadlines again", async () => {
@@ -325,6 +497,32 @@ describe("deadLetters", () => {
       PROCESS_EVENTS.completed,
     ]);
     expect(await harness.storage.scheduler.list()).toEqual([]);
+  });
+
+  it("keeps a process letter discarded while its replay ran, and says the replay was refused", async () => {
+    policyMode = "ok";
+    processMode = "domain";
+    const { harness, deadLetters } = await setUp();
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.dispatcher.processUntilIdle();
+    await harness.pipeline.dispatch({
+      type: "PayOrder",
+      payload: { orderId: "o-1", method: "card" },
+    });
+    await harness.dispatcher.processUntilIdle();
+    const [letter] = await deadLetters.list({ kind: "process" });
+    const id = letter?.id ?? "";
+    processMode = "ok";
+    const transact = harness.storage.transact.bind(harness.storage);
+    harness.storage.transact = async (work) => {
+      harness.storage.transact = transact;
+      await deadLetters.discard(id);
+      return transact(work);
+    };
+
+    await expect(deadLetters.replay(id)).rejects.toBeInstanceOf(DeadLetterSettledError);
+
+    expect((await deadLetters.get(id))?.status).toBe("discarded");
   });
 
   it("schedules the timeout again at its moment when the process stays open", async () => {
