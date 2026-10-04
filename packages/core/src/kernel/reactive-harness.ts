@@ -20,6 +20,7 @@ import { createProcessRunner, type ProcessRunner } from "./process/runner.ts";
 import { createProjectionSubscriber } from "./projection/runner.ts";
 import { buildReadModels, type ReadModelsRuntime } from "./read-model/build-read-models.ts";
 import { createScheduledCommandWorker, type ScheduledCommandWorker } from "./scheduler/worker.ts";
+import { ignoredRetries } from "./shared/pending-retries.ts";
 import { defaultCollaborators } from "./test-support.ts";
 
 export interface ReactiveHarness {
@@ -102,6 +103,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     config,
     ids,
     clock,
+    retries: ignoredRetries,
     logger,
   });
   const worker = createScheduledCommandWorker({
@@ -118,6 +120,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     config,
     ids,
     clock,
+    retries: ignoredRetries,
     logger,
   });
   const makeDispatcher = (): Dispatcher =>
@@ -138,6 +141,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
           storage,
           config,
           clock,
+          retries: ignoredRetries,
           logger,
         }),
         processes,

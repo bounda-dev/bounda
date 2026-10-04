@@ -92,7 +92,7 @@ describe("projection subscriber", () => {
       type: "PayOrder",
       payload: { orderId: "o-1", method: "card" },
     });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(await (await table(harness)).findOne({ orderId: "o-1" })).toEqual({
       orderId: "o-1",
       status: "paid",
@@ -106,7 +106,7 @@ describe("projection subscriber", () => {
     failProjection = false;
     const harness = await createReactiveHarness({ registry });
     await harness.pipeline.dispatch({ type: "ArchiveOrder", payload: { orderId: "o-9" } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(await (await table(harness)).count()).toBe(0);
     expect(await harness.storage.checkpointStore.get("projection:orderSummary")).toBe(1);
   });
@@ -115,12 +115,12 @@ describe("projection subscriber", () => {
     failProjection = true;
     const harness = await createReactiveHarness({ registry });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 1 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(await harness.storage.checkpointStore.get("projection:orderSummary")).toBe(0);
     expect(await (await table(harness)).count()).toBe(0);
 
     failProjection = false;
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(await harness.storage.checkpointStore.get("projection:orderSummary")).toBe(1);
     expect((await (await table(harness)).findOne({ orderId: "o-1" }))?.touched).toBe(1);
   });
@@ -129,9 +129,9 @@ describe("projection subscriber", () => {
     failProjection = false;
     const harness = await createReactiveHarness({ registry });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 5 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     await harness.storage.checkpointStore.set("projection:orderSummary", 0);
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     const row = await (await table(harness)).findOne({ orderId: "o-1" });
     expect(row).toMatchObject({ status: "placed", total: 5 });
   });
@@ -312,7 +312,7 @@ describe("projections and the aggregate whose events they project", () => {
     });
     await harness.pipeline.dispatch({ type: "Record", payload: { ledgerId: "l-1" } });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(seen).toEqual(["order.OrderPlaced"]);
   });
 });

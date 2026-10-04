@@ -7,6 +7,7 @@ import type { Logger } from "../../contracts/logger.ts";
 import type { Subscriber } from "../dispatch/dispatcher.ts";
 import { deriveDeadLetterId } from "../shared/idempotency-key.ts";
 import { deliverInOrder, type ReactionOutcome } from "../shared/in-order.ts";
+import type { PendingRetries } from "../shared/pending-retries.ts";
 import { runAttempt } from "../shared/reaction-attempt.ts";
 import { errorDetails } from "../shared/retry.ts";
 import { deadLettered } from "../telemetry.ts";
@@ -23,6 +24,7 @@ export interface CreatePolicySubscriberArgs {
   readonly storage: StoragePorts;
   readonly config: ResolvedConfig;
   readonly clock: Clock;
+  readonly retries: PendingRetries;
   readonly logger: Logger;
 }
 
@@ -40,6 +42,7 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
   storage,
   config,
   clock,
+  retries,
   logger,
 }) => {
   const deadLetter = async (
@@ -97,6 +100,7 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
       leaseMs: settings.timeoutMs * 2,
       concurrencyRetries: config.runtime.commands.concurrencyRetries,
       clock,
+      retries,
       run: async (unit, attempt) => {
         if (policy.delayMs === null) {
           await executor.run({ policy, event, attempt, within: unit });

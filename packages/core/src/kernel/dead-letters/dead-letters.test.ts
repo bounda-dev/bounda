@@ -135,7 +135,7 @@ describe("deadLetters", () => {
     policyMode = "domain";
     const { harness, deadLetters, entries } = await setUp();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     const [letter] = await deadLetters.list();
     expect(letter).toMatchObject({ kind: "policy", subscriber: "order.notifyOnOrderPlaced" });
     expect(await deadLetters.count({ status: "failed" })).toBe(1);
@@ -169,7 +169,7 @@ describe("deadLetters", () => {
         at: harness.clock.now().toISOString(),
       },
     });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(calls).toHaveLength(3);
     const { events } = await harness.storage.eventStore.load({
       aggregateType: "order",
@@ -187,7 +187,7 @@ describe("deadLetters", () => {
     policyMode = "domain";
     const { harness, deadLetters } = await setUp();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     const [letter] = await deadLetters.list();
     policyMode = "ok";
     const crash = breakNextCommit(harness.storage);
@@ -255,7 +255,7 @@ describe("deadLetters", () => {
       logger,
     });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     const [letter] = await deadLetters.list();
     policyMode = "hangs";
     handlerStarted = Promise.withResolvers<void>();
@@ -272,7 +272,7 @@ describe("deadLetters", () => {
     policyMode = "domain";
     const { harness, deadLetters, entries } = await setUp();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     const [letter] = await deadLetters.list();
     const id = letter?.id ?? "";
 
@@ -297,7 +297,7 @@ describe("deadLetters", () => {
     policyMode = "domain";
     const { harness, deadLetters } = await setUp();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     const [letter] = await deadLetters.list();
     const id = letter?.id ?? "";
     policyMode = "ok";
@@ -348,7 +348,7 @@ describe("deadLetters", () => {
     policyMode = "domain";
     const { harness, deadLetters } = await setUp();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     const [letter] = await deadLetters.list();
     const id = letter?.id ?? "";
     policyMode = "waits";
@@ -382,7 +382,7 @@ describe("deadLetters", () => {
         type: "PlaceOrder",
         payload: { orderId: "o-1", total: 10 },
       });
-      await harness.dispatcher.processUntilIdle();
+      await harness.dispatcher.runUntilIdle();
       const [letter] = await deadLetters.list();
       const id = letter?.id ?? "";
       policyMode = "ok";
@@ -444,7 +444,7 @@ describe("deadLetters", () => {
     policyMode = "domain";
     const { harness, deadLetters } = await setUp();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     const [letter] = await deadLetters.list();
     const id = letter?.id ?? "";
     policyMode = "ok";
@@ -465,13 +465,13 @@ describe("deadLetters", () => {
     processMode = "domain";
     const { harness, deadLetters } = await setUp();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     harness.clock.advance(3_600_000);
     await harness.pipeline.dispatch({
       type: "PayOrder",
       payload: { orderId: "o-1", method: "card" },
     });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     const [letter] = await deadLetters.list({ kind: "process" });
     expect(letter).toMatchObject({ subscriber: "order.orderPayment", eventType: "OrderPaid" });
     expect(await harness.storage.scheduler.list()).toEqual([]);
@@ -504,12 +504,12 @@ describe("deadLetters", () => {
     processMode = "domain";
     const { harness, deadLetters } = await setUp();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     await harness.pipeline.dispatch({
       type: "PayOrder",
       payload: { orderId: "o-1", method: "card" },
     });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     const [letter] = await deadLetters.list({ kind: "process" });
     const id = letter?.id ?? "";
     processMode = "ok";
@@ -568,13 +568,13 @@ describe("deadLetters", () => {
     });
     const startedAt = harness.clock.now().getTime();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     harness.clock.advance(3_600_000);
     await harness.pipeline.dispatch({
       type: "PayOrder",
       payload: { orderId: "o-1", method: "card" },
     });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(await harness.storage.scheduler.list()).toEqual([]);
 
     processMode = "ok";
@@ -633,12 +633,12 @@ describe("deadLetters", () => {
     });
     const startedAt = harness.clock.now().getTime();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     await harness.pipeline.dispatch({
       type: "PayOrder",
       payload: { orderId: "o-1", method: "card" },
     });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     harness.clock.advance(5 * 3_600_000);
     processMode = "ok";
     const [letter] = await deadLetters.list({ kind: "process" });
@@ -646,7 +646,7 @@ describe("deadLetters", () => {
     expect(await harness.storage.scheduler.list()).toMatchObject([
       { executeAt: new Date(startedAt + 3_600_000).toISOString() },
     ]);
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(await harness.worker.runOnce()).toBe(1);
     const { events } = await harness.storage.eventStore.load({
       aggregateType: "process:OrderPayment",
@@ -742,7 +742,7 @@ describe("deadLetters", () => {
     timeoutMode = "domain";
     const { harness, deadLetters } = await setUp();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-9", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     harness.clock.advance(48 * 3_600_000);
     expect(await harness.worker.runOnce()).toBe(1);
     const stream = { aggregateType: "process:OrderPayment", aggregateId: "o-9" };
@@ -782,7 +782,7 @@ describe("deadLetters", () => {
     policyMode = "ok";
     const { harness, deadLetters } = await setUp();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-9", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     await harness.storage.deadLetterStore.add({
       id: "d",
       kind: "process",

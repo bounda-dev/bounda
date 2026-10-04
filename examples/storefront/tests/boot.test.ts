@@ -32,7 +32,7 @@ describe("boot", () => {
       customerId: "grace",
       items: [{ productId: "lamp", quantity: 1, price: 42 }],
     });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     expect(await app.queries.getOrderSummary({ orderId })).toMatchObject({
       status: "placed",
       confirmationSent: true,

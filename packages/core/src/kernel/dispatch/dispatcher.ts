@@ -80,7 +80,7 @@ export interface Dispatcher {
    * Resolves to whether any subscriber moved.
    */
   processOnce(): Promise<boolean>;
-  processUntilIdle(): Promise<void>;
+  runUntilIdle(): Promise<void>;
   catchUp(kind: SubscriberKind): Promise<void>;
   /**
    * Resolves to whether every projection reacting to `eventTypes` reached `position` in time.
@@ -290,7 +290,7 @@ export const createDispatcher: CreateDispatcherFunction = ({
       await mutex.drain();
     },
     processOnce: () => mutex.run(() => pass(true, false)),
-    processUntilIdle: async () => {
+    runUntilIdle: async () => {
       while (await mutex.run(() => pass(true, false))) {
         // keep passing until nothing moves
       }

@@ -235,7 +235,7 @@ describe("process runner", () => {
     reset("ok");
     const harness = await createReactiveHarness({ registry });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
 
     let stream = await processStream(harness);
     expect(stream.events.map((event) => event.type)).toEqual([PROCESS_EVENTS.started]);
@@ -265,7 +265,7 @@ describe("process runner", () => {
       type: "PayOrder",
       payload: { orderId: "o-1", method: "card" },
     });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     stream = await processStream(harness);
     expect(stream.events.map((event) => event.type)).toEqual([
       PROCESS_EVENTS.started,
@@ -285,16 +285,16 @@ describe("process runner", () => {
     reset("ok");
     const harness = await createReactiveHarness({ registry });
     await harness.pipeline.dispatch({ type: "ArchiveOrder", payload: { orderId: "o-2" } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect((await processStream(harness, "o-2")).events).toEqual([]);
 
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
     await harness.pipeline.dispatch({ type: "ArchiveOrder", payload: { orderId: "o-1" } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     await harness.pipeline
       .dispatch({ type: "PayOrder", payload: { orderId: "o-1", method: "card" } })
       .catch(() => undefined);
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     const stream = await processStream(harness);
     expect(stream.events.map((event) => event.type)).toEqual([
       PROCESS_EVENTS.started,
@@ -303,10 +303,10 @@ describe("process runner", () => {
     expect(calls).toEqual([]);
 
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-3", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     harness.clock.advance(48 * 3_600_000);
     await harness.worker.runOnce();
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect((await processStream(harness, "o-3")).events.map((event) => event.type)).toEqual([
       PROCESS_EVENTS.started,
       PROCESS_EVENTS.timedOut,
@@ -333,7 +333,7 @@ describe("process runner", () => {
       return id;
     };
     const late = [await paidLate("o-1"), await paidLate("o-3")];
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(calls).toEqual(["timeout:o-3"]);
     for (const eventId of late) {
       expect(
@@ -351,7 +351,7 @@ describe("process runner", () => {
     reset("ok");
     const harness = await createReactiveHarness({ registry });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
 
     expect(await harness.worker.runOnce()).toBe(0);
     harness.clock.advance(172_800_000);
@@ -372,7 +372,7 @@ describe("process runner", () => {
     expect(order.events[1]?.metadata.depth).toBe(1);
     expect(await harness.storage.scheduler.list()).toEqual([]);
 
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect((await processStream(harness)).events).toHaveLength(2);
   });
 
@@ -384,7 +384,7 @@ describe("process runner", () => {
       type: "PayOrder",
       payload: { orderId: "o-1", method: "card" },
     });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
 
     const stream = await processStream(harness);
     expect(stream.events.map((event) => event.type)).toEqual([
@@ -421,15 +421,15 @@ describe("process runner", () => {
       type: "PayOrder",
       payload: { orderId: "o-1", method: "card" },
     });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(calls).toEqual(["paid:o-1"]);
     expect(await harness.storage.checkpointStore.get("processes")).toBe(1);
 
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(calls).toEqual(["paid:o-1"]);
 
     harness.clock.advance(1_000);
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(calls).toEqual(["paid:o-1", "paid:o-1"]);
     const stream = await processStream(harness);
     expect(stream.events.map((event) => event.type)).toEqual([
@@ -450,7 +450,7 @@ describe("process runner", () => {
       type: "PayOrder",
       payload: { orderId: "o-2", method: "transfer" },
     });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect((await processStream(harness, "o-1")).events.map((event) => event.type)).toEqual([
       PROCESS_EVENTS.started,
     ]);
@@ -505,7 +505,7 @@ describe("process runner", () => {
     const load = () =>
       harness.storage.eventStore.load({ aggregateType: "process:OrderTotals", aggregateId: "o-1" });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     let stream = await load();
     expect(stream.events.map((event) => event.type)).toEqual([
       PROCESS_EVENTS.started,
@@ -518,7 +518,7 @@ describe("process runner", () => {
     expect(totals).toEqual([10]);
 
     await harness.storage.checkpointStore.set("processes", 0);
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     stream = await load();
     expect(stream.events).toHaveLength(2);
     expect(totals).toEqual([10]);
@@ -532,7 +532,7 @@ describe("process runner", () => {
       type: "PayOrder",
       payload: { orderId: "o-1", method: "card" },
     });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     const stream = await processStream(harness);
     expect(stream.events.map((event) => event.type)).toEqual([
       PROCESS_EVENTS.started,
@@ -561,7 +561,7 @@ describe("process runner", () => {
       type: "PayOrder",
       payload: { orderId: "o-1", method: "card" },
     });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(calls).toEqual(["paid:o-1"]);
     expect(entries).toEqual([
       {
@@ -572,7 +572,7 @@ describe("process runner", () => {
     ]);
 
     harness.clock.advance(1_000);
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(calls).toEqual(["paid:o-1", "paid:o-1"]);
     const stream = await processStream(harness);
     expect(stream.events.map((event) => event.type)).toEqual([
@@ -613,7 +613,7 @@ describe("process runner", () => {
       type: "PayOrder",
       payload: { orderId: "o-1", method: "card" },
     });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(calls).toEqual(["paid:o-1"]);
     expect(await harness.storage.deadLetterStore.list()).toMatchObject([
       { errorType: "retriable_exhausted", attempts: 1 },
@@ -638,7 +638,7 @@ describe("process runner", () => {
       type: "PayOrder",
       payload: { orderId: "o-1", method: "card" },
     });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(leases).toEqual([20_000]);
   });
 
@@ -646,7 +646,7 @@ describe("process runner", () => {
     reset("ok");
     const harness = await createReactiveHarness({ registry });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     const paid = await harness.pipeline.dispatch({
       type: "PayOrder",
       payload: { orderId: "o-1", method: "card" },
@@ -658,14 +658,14 @@ describe("process runner", () => {
       leaseMs: 60_000,
     });
 
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(calls).toEqual([]);
     expect(await harness.storage.checkpointStore.get("processes")).toBeLessThan(
       await harness.storage.eventStore.lastPosition(),
     );
 
     harness.clock.advance(60_001);
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(calls).toEqual(["paid:o-1"]);
     expect(await harness.storage.checkpointStore.get("processes")).toBe(
       await harness.storage.eventStore.lastPosition(),
@@ -722,7 +722,7 @@ describe("process runner", () => {
       },
     ]);
 
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(await harness.storage.checkpointStore.get("processes")).toBe(
       await harness.storage.eventStore.lastPosition(),
     );
@@ -777,7 +777,7 @@ describe("process runner", () => {
       type: "PayOrder",
       payload: { orderId: "o-1", method: "card" },
     });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     harness.clock.advance(172_800_000);
     await harness.processes.handleDeadline({
       payload: { process: "order.orderPayment", aggregateId: "o-1" },
@@ -849,7 +849,7 @@ describe("process collaborators", () => {
       config: { collaborators: { order: { notifier: "memory", audit: "memory" } } },
     });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     harness.clock.advance(3_600_000);
     await harness.worker.runOnce();
     expect(recorded).toEqual(["memory:placed o-1", "memory:timed out o-1"]);
@@ -865,7 +865,7 @@ describe("process collaborators", () => {
       type: "PlaceOrder",
       payload: { orderId: "o-1", total: 10 },
     });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     const timeoutAt = new Date(harness.clock.now().getTime() + 3_600_000).toISOString();
     harness.clock.advance(3_600_000);
     await harness.worker.runOnce();
@@ -1015,7 +1015,7 @@ describe("processes that listen to other aggregates", () => {
       type: "SettlePayment",
       payload: { paymentId: "p-2", orderId: "o-1" },
     });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(seen).toEqual(["o-1 failed: declined"]);
     const events = (await stream(harness, "o-1")).events;
     expect(events.map((event) => event.type)).toEqual([
@@ -1048,7 +1048,7 @@ describe("processes that listen to other aggregates", () => {
       type: "FailPayment",
       payload: { paymentId: "p-2", orderId: "o-never" },
     });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(seen).toEqual([]);
     expect((await stream(harness, "o-never")).events).toEqual([]);
     expect(await harness.storage.checkpointStore.get("processes")).toBe(
@@ -1129,7 +1129,7 @@ describe("processes that listen to other aggregates", () => {
       type: "FailPayment",
       payload: { paymentId: "p-1", orderId: "o-1" },
     });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect((await stream(harness, "null")).events).toEqual([]);
     expect((await stream(harness, "o-1")).events).toEqual([]);
   });
@@ -1206,14 +1206,14 @@ describe("processes that listen to other aggregates", () => {
     await harness.dispatcher.processOnce();
     expect(await harness.storage.deadLetterStore.count()).toBe(0);
     harness.clock.advance(60_001);
-    await harness.dispatcher.processUntilIdle();
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(seen).toEqual(["o-1 failed: p-3"]);
     expect(await harness.storage.inboxLedger.get(key)).toMatchObject({ status: "succeeded" });
     expect(entries.filter((entry) => entry.message === "process dead-lettered")).toHaveLength(3);
     const filed = await harness.storage.deadLetterStore.count();
     await harness.storage.checkpointStore.set("processes", 0);
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(await harness.storage.deadLetterStore.count()).toBe(filed);
     expect(await harness.storage.checkpointStore.get("processes")).toBe(
       await harness.storage.eventStore.lastPosition(),
@@ -1251,7 +1251,7 @@ describe("processes that listen to other aggregates", () => {
       type: "FailPayment",
       payload: { paymentId: "p-1", orderId: "o-1", reason: "declined" },
     });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect((await stream(harness, "o-1")).events.map((event) => event.type)).toEqual([
       PROCESS_EVENTS.started,
       PROCESS_EVENTS.failed,
@@ -1281,12 +1281,12 @@ describe("processes that listen to other aggregates", () => {
       type: "FailPayment",
       payload: { paymentId: "p-1", orderId: "o-1", reason: "declined" },
     });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     await harness.pipeline.dispatch({
       type: "FailPayment",
       payload: { paymentId: "p-2", orderId: "o-1", reason: "declined" },
     });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     const [letter] = await harness.storage.deadLetterStore.list();
     if (letter === undefined) throw new Error("no letter");
     expect(await harness.processes.parkedBehind(letter)).toBe(1);

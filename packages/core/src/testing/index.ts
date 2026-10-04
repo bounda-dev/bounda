@@ -5,6 +5,7 @@ import type { ConfigurationError } from "../contracts/errors.ts";
 import { createSequentialIdGenerator, type IdGenerator } from "../contracts/ids.ts";
 import { type Logger, silentLogger } from "../contracts/logger.ts";
 import { assembleApp, type BoundaApp } from "../kernel/app.ts";
+import { createPendingRetries } from "../kernel/shared/pending-retries.ts";
 import { memory } from "../memory/index.ts";
 import type { Registry } from "../modules/registry.ts";
 import type {
@@ -30,7 +31,7 @@ export type CreateTestAppArgs<R extends Registry> = {
    * app's `env`, clock and logger and closed by `app.stop()`. A port left out has no
    * implementation, even when it has only one, so a test never reaches a provider it did not ask
    * for: reading it throws a `ConfigurationError`, which a command rejects with; once any handler
-   * has read it, every `app.processUntilIdle()` throws it too, since a reaction does not retry it.
+   * has read it, every `app.runUntilIdle()` throws it too, since a reaction does not retry it.
    */
   readonly collaborators?: AppTestCollaborators;
   /**
@@ -48,7 +49,7 @@ export interface TestApp<R extends Registry> {
   readonly app: BoundaApp<R>;
   /**
    * The app's clock. Advance it to make scheduled commands and process time-outs due, then call
-   * `app.processUntilIdle()`.
+   * `app.runUntilIdle()`, which moves it on its own only to retries waiting for their back-off.
    */
   readonly clock: FixedClock;
   readonly ids: IdGenerator;
@@ -61,7 +62,9 @@ export interface CreateTestAppFunction {
 /**
  * Creates an app for tests: in-memory storage, a clock that only moves when told to and
  * sequential ids (`id-1`, `id-2`, ...), so assertions are deterministic. Ports get only what
- * `collaborators` passes. Call `app.stop()` when done.
+ * `collaborators` passes. `app.runUntilIdle()` also moves the clock to each retry waiting for its
+ * back-off, until every failing reaction or scheduled command has succeeded or given up. Call
+ * `app.stop()` when done.
  */
 export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
   registry,
@@ -75,7 +78,7 @@ export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
   const clock = createFixedClock(now);
   const ids = createSequentialIdGenerator();
   // A reaction's failure stays in its dead letter, so the first port read without a value is
-  // kept here for `processUntilIdle` to throw: the test fails saying what to pass.
+  // kept here for `runUntilIdle` to throw: the test fails saying what to pass.
   let missing: ConfigurationError | undefined;
   const app = await assembleApp<R>({
     registry,
@@ -86,6 +89,7 @@ export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
     ids,
     clock,
     env,
+    retries: createPendingRetries(clock),
     test: {
       collaborators,
       onMissing: (error) => {
@@ -96,8 +100,8 @@ export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
   return {
     app: {
       ...app,
-      processUntilIdle: async (options) => {
-        const result = await app.processUntilIdle(options);
+      runUntilIdle: async (options) => {
+        const result = await app.runUntilIdle(options);
         if (missing !== undefined) throw missing;
         return result;
       },

@@ -9,7 +9,7 @@ describe("orders", () => {
   it("places an order and lists it for the customer", async () => {
     const { app } = await createTestApp({ registry });
     await app.commands.placeOrder({ orderId, customerId: "ada", total: 42 });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
 
     expect(await app.queries.listOrders({ customerId: "ada" })).toEqual({
       orders: [{ orderId, customerId: "ada", total: 42, placedAt: expect.any(Date) }],

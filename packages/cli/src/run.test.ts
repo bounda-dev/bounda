@@ -325,7 +325,7 @@ describe("bounda dead-letters", () => {
     });
     const app = await createApp({ ...project, logger: silentLogger });
     await app.commands.increment({ counterId: `c-${Date.now()}` });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     const letters = await app.deadLetters.list();
     await app.stop();
     const id = letters.at(-1)?.id;

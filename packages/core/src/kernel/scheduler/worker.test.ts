@@ -787,7 +787,7 @@ describe("delayed command payload", () => {
     await app.commands.writeNote({ noteId: "n-1", text: "hello" }, { delay: "1m" });
 
     clock.advance(60_000);
-    await app.processUntilIdle();
+    await app.runUntilIdle();
 
     expect(receivedNotes).toEqual([{ noteId: "n-1", text: "hello!" }]);
     await app.stop();
@@ -799,7 +799,7 @@ describe("delayed command payload", () => {
     const { app, clock } = await createTestApp({ registry: noteRegistry });
     await app.commands.writeNote({ noteId: "n-1", text: "hello" }, { delay: "1m" });
     clock.advance(60_000);
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     const [letter] = await app.deadLetters.list();
 
     rejectNotes = false;
@@ -820,7 +820,7 @@ describe("delayed command payload", () => {
     payload.text = "changed";
 
     clock.advance(60_000);
-    await app.processUntilIdle();
+    await app.runUntilIdle();
 
     expect(receivedNotes).toEqual([{ noteId: "n-1", text: "hello!" }]);
     await app.stop();
@@ -833,7 +833,7 @@ describe("delayed command payload", () => {
     await app.commands.postponeNote({ noteId: "n-1", until }, { delay: "1m" });
 
     clock.advance(60_000);
-    await app.processUntilIdle();
+    await app.runUntilIdle();
 
     expect(receivedNotes).toEqual([{ noteId: "n-1", until }]);
     await app.stop();

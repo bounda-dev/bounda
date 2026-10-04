@@ -6,6 +6,7 @@ import { ClaimLostError, ConcurrencyError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { ReactionOutcome } from "../shared/in-order.ts";
+import type { PendingRetries } from "../shared/pending-retries.ts";
 import { runAttempt } from "../shared/reaction-attempt.ts";
 import type { UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
@@ -45,6 +46,7 @@ export interface CreateEventDeliveryArgs {
   readonly storage: StoragePorts;
   readonly config: ResolvedConfig;
   readonly clock: Clock;
+  readonly retries: PendingRetries;
   readonly logger: Logger;
 }
 
@@ -60,6 +62,7 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
   storage,
   config,
   clock,
+  retries,
   logger,
 }) => {
   const leaseMs = (process: ProcessRuntime): number =>
@@ -181,6 +184,7 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
       leaseMs: leaseMs(process),
       concurrencyRetries: config.runtime.commands.concurrencyRetries,
       clock,
+      retries,
       run: async (unit, attempt) => {
         parked = await step(unit, process, event, instanceId, attempt);
       },

@@ -13,6 +13,7 @@ import { PROCESS_DEADLINE_COMMAND, type ProcessDeadlinePayload } from "../proces
 import type { ProcessDeadlines } from "../process/deliver-deadline.ts";
 import { PROCESSES_SUBSCRIBER } from "../process/runner.ts";
 import { createMutex } from "../shared/mutex.ts";
+import type { PendingRetries } from "../shared/pending-retries.ts";
 import { classifyFailure, errorDetails, retryDelayMs } from "../shared/retry.ts";
 import {
   appendSystemEvent,
@@ -47,6 +48,7 @@ export interface CreateScheduledCommandWorkerArgs {
   readonly config: ResolvedConfig;
   readonly ids: IdGenerator;
   readonly clock: Clock;
+  readonly retries: PendingRetries;
   readonly logger: Logger;
 }
 
@@ -95,6 +97,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   config,
   ids,
   clock,
+  retries,
   logger,
 }) => {
   const mutex = createMutex();
@@ -321,6 +324,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
           error: errorDetails(error).message,
           retryAt,
         });
+        retries.waiting(retryAt);
         logger.warn("scheduled command failed; rescheduled", {
           command: entry.command.type,
           attempts,

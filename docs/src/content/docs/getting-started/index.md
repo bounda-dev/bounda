@@ -137,7 +137,7 @@ export const project = async ({ event, table }: Projection.Args) => {
 ## Test it
 
 `createTestApp` runs the whole app on an in-memory adapter with a clock that only moves when you
-tell it to. `processUntilIdle` runs projections, policies and processes until nothing is left:
+tell it to. `runUntilIdle` runs projections, policies and processes until nothing is left:
 
 ```ts
 // tests/cancel.test.ts
@@ -150,7 +150,7 @@ it("removes a cancelled order from the list", async () => {
   const orderId = "018f6a5e-4c3c-7c1e-9d4b-0b2c4a1d8e01";
   await app.commands.placeOrder({ orderId, customerId: "ada", total: 42 });
   await app.commands.cancelOrder({ orderId, reason: "changed my mind" });
-  await app.processUntilIdle();
+  await app.runUntilIdle();
 
   expect(await app.queries.listOrders({ customerId: "ada" })).toEqual({ orders: [], total: 0 });
   await app.stop();
@@ -176,7 +176,7 @@ import { boot } from "@bounda-dev/core/node";
 
 const app = await boot();
 await app.commands.placeOrder({ orderId: crypto.randomUUID(), customerId: "ada", total: 42 });
-await app.processUntilIdle();
+await app.runUntilIdle();
 ```
 
 Point `bounda.config.ts` at PostgreSQL when one process is not enough; the app does not change.

@@ -53,7 +53,7 @@ describe("boot", () => {
     expect(process.env.BOUNDA_TEST_MARKER).toBe("loaded");
     expect(app.role).toBe("worker");
     await app.commands.increment({ counterId: "c-1" });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     expect((await app.getLag()).lastPosition).toBe(1);
     await app.stop();
   });

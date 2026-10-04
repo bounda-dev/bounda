@@ -711,8 +711,8 @@ describe.skipIf(container === null)("an app on the postgresql adapter", () => {
       await first.app.commands.placeOrder({ orderId, total: 1 });
     }
 
-    await Promise.all([first.app.processUntilIdle(), second.app.processUntilIdle()]);
-    await Promise.all([first.app.processUntilIdle(), second.app.processUntilIdle()]);
+    await Promise.all([first.app.runUntilIdle(), second.app.runUntilIdle()]);
+    await Promise.all([first.app.runUntilIdle(), second.app.runUntilIdle()]);
 
     expect([...runs].sort()).toEqual(["o-1", "o-2", "o-3", "o-4"]);
     expect(await first.app.deadLetters.count()).toBe(4);
@@ -729,7 +729,7 @@ describe.skipIf(container === null)("an app on the postgresql adapter", () => {
     });
     await app.commands.placeOrder({ orderId: "o-1", total: 42 });
     await app.commands.placeOrder({ orderId: "o-2", total: 7 }, { delay: "1h" });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     expect(await app.queries.getOrder({ orderId: "o-1" })).toEqual({
       orderId: "o-1",
       status: "paid",
@@ -738,7 +738,7 @@ describe.skipIf(container === null)("an app on the postgresql adapter", () => {
     expect(await app.queries.getOrder({ orderId: "o-2" })).toBeNull();
 
     clock.advance(3_600_000);
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     expect(await app.queries.getOrder({ orderId: "o-2" })).toMatchObject({ status: "paid" });
     expect((await app.getLag()).maxLag).toBe(0);
     await app.stop();
@@ -976,7 +976,7 @@ describe.skipIf(container === null)("projections on postgresql", () => {
     });
     await app.commands.placeOrder({ orderId: "r" });
     await app.commands.cancelOrder({ orderId: "r" });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     const lag = await app.getLag();
     await app.stop();
     expect(lag.maxLag).toBe(0);
