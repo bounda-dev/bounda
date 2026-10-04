@@ -1,13 +1,14 @@
 import { v4 as randomUUID } from "uuid";
 import type { ClaimKey, ClaimRecord, InboxLedger } from "../adapter/ports/inbox-ledger.ts";
 import { ClaimLostError } from "../contracts/errors.ts";
-import { snapshotMap } from "./transaction.ts";
+import { createEntryJournal, type TrackedWrite } from "./entry-journal.ts";
 
 /**
- * The in-memory inbox ledger, with a `snapshot` that returns what puts it back the way it is.
+ * The in-memory inbox ledger, with a `track` that a transaction opens around each write, to undo
+ * it later.
  */
 export interface MemoryInboxLedger extends InboxLedger {
-  snapshot(): () => void;
+  track(key: ClaimKey): TrackedWrite;
 }
 
 export interface CreateMemoryInboxLedgerFunction {
@@ -20,7 +21,8 @@ const keyOf = (subscriber: string, eventId: string): string => `${subscriber}\u0
  * An inbox ledger held in memory.
  */
 export const createMemoryInboxLedger: CreateMemoryInboxLedgerFunction = () => {
-  const claims = new Map<string, ClaimRecord>();
+  const journal = createEntryJournal<string, ClaimRecord>();
+  const claims = journal.map;
 
   const held = (
     { subscriber, eventId }: ClaimKey,
@@ -73,6 +75,6 @@ export const createMemoryInboxLedger: CreateMemoryInboxLedgerFunction = () => {
       claims.set(key, { ...existing, claimedAt: now.toISOString() });
     },
     get: async ({ subscriber, eventId }) => claims.get(keyOf(subscriber, eventId)) ?? null,
-    snapshot: () => snapshotMap(claims),
+    track: ({ subscriber, eventId }) => journal.track(keyOf(subscriber, eventId)),
   };
 };

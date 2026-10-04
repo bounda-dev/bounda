@@ -179,6 +179,27 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       expect((await storage.deadLetterStore.get("d1"))?.status).toBe("discarded");
     });
 
+    it("keeps what a concurrent transaction wrote when it rolls back", async () => {
+      await storage.deadLetterStore.add(letter("d1"));
+      const replay = (dedupeKey: string) =>
+        storage.transact(async (tx) => {
+          await tx.scheduler.schedule({
+            dedupeKey,
+            command: testCommand("1"),
+            executeAt: new Date(now.getTime() + 60_000),
+            context: testContext,
+          });
+          await tx.deadLetterStore.updateStatus("d1", "replayed");
+        });
+      const outcomes = await Promise.allSettled([replay("command:a"), replay("command:b")]);
+      expect(outcomes.map((outcome) => outcome.status).sort()).toEqual(["fulfilled", "rejected"]);
+      expect(outcomes.find((outcome) => outcome.status === "rejected")).toMatchObject({
+        reason: expect.any(DeadLetterSettledError),
+      });
+      expect((await storage.deadLetterStore.get("d1"))?.status).toBe("replayed");
+      expect(await storage.scheduler.list()).toHaveLength(1);
+    });
+
     it("lets the work read the events it appended", async () => {
       await storage.transact(async (tx) => {
         await tx.eventStore.append({

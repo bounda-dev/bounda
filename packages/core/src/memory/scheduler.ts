@@ -6,13 +6,14 @@ import type {
   Scheduler,
 } from "../adapter/ports/scheduler.ts";
 import { ScheduledClaimLostError } from "../contracts/errors.ts";
-import { snapshotMap } from "./transaction.ts";
+import { createEntryJournal, type TrackedWrite } from "./entry-journal.ts";
 
 /**
- * The in-memory scheduler, with a `snapshot` that returns what puts it back the way it is.
+ * The in-memory scheduler, with a `track` that a transaction opens around each write, to undo
+ * it later.
  */
 export interface MemoryScheduler extends Scheduler {
-  snapshot(): () => void;
+  track(dedupeKey: string): TrackedWrite;
 }
 
 export interface CreateMemorySchedulerFunction {
@@ -50,7 +51,8 @@ const sameCommand = (a: ScheduledCommand, b: ScheduledCommand): boolean =>
  * A scheduler held in memory.
  */
 export const createMemoryScheduler: CreateMemorySchedulerFunction = () => {
-  const entries = new Map<string, Entry>();
+  const journal = createEntryJournal<string, Entry>();
+  const entries = journal.map;
 
   const heldBy = (claim: ScheduledClaim): Entry => {
     const entry = entries.get(claim.dedupeKey);
@@ -159,6 +161,6 @@ export const createMemoryScheduler: CreateMemorySchedulerFunction = () => {
         .sort(byExecuteAt)
         .slice(offset, limit === undefined ? undefined : offset + limit)
         .map(toScheduled),
-    snapshot: () => snapshotMap(entries),
+    track: journal.track,
   };
 };
