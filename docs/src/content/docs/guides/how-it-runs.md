@@ -2,7 +2,7 @@
 title: How Bounda runs, and how far it scales
 description: One ordered log per store, one writer at a time, subscribers with checkpoints. What that buys, what it costs, and what to do when you hit the ceiling.
 sidebar:
-  order: 8
+  order: 9
 ---
 
 This page is for the moment before you adopt Bounda, or the moment someone asks "does this

@@ -2,7 +2,7 @@
 title: Deployment
 description: Roles, one database, many instances, rebuilds, observability, and an honest list of what is not there yet.
 sidebar:
-  order: 6
+  order: 7
 ---
 
 A Bounda app is a Node process with a database. There is no broker, no scheduler and no separate

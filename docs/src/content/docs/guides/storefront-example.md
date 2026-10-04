@@ -18,6 +18,10 @@ pnpm start
 
 ## What happens when an order is placed
 
+The customer pays through a payment link, in the style of Stripe: the app creates a payment intent,
+the customer pays it whenever they like, and the provider tells the app how it went through
+webhooks.
+
 1. `placeOrder` validates the items, computes the total and appends `OrderPlaced`.
 2. The policy `send-confirmation-on-order-placed` sends the confirmation through the order's
    `notifier` collaborator, then dispatches `recordConfirmationSent`, which appends
@@ -26,14 +30,26 @@ pnpm start
 3. The policy `schedule-reminder-on-order-placed` dispatches `sendReminder` with a delay of a
    day. The reminder is a scheduled command; when it runs, the handler appends `ReminderSent`
    only if the order is still `placed`.
-4. The process `order-lifecycle` starts. When the order is confirmed it dispatches
-   `fulfillOrder`; if nothing completes it within 72 hours, its time-out handler cancels the
-   order.
-5. Two read models follow along: `order-summary`, with a query written in SQL, and `my-orders`.
+4. The process `order-lifecycle` starts and dispatches `requestPayment`, whose handler creates
+   the intent through the `payment` aggregate's `gateway` collaborator. The process gives the
+   customer 72 hours to pay, as a deadline in its state.
+5. The provider's webhooks are commands on the payment: `markPaymentProcessing`,
+   `settlePayment` and `declinePayment`. The process follows the payment's events, which carry
+   the order's id for its `correlate`: `PaymentProcessing` locks the order (`paying`, which
+   refuses a cancellation), `PaymentSettled` marks it paid and `PaymentDeclined` cancels it.
+6. Once the order is paid the process dispatches `fulfillOrder`. When the order is cancelled,
+   whoever cancelled it, the process cancels the payment, and a payment that settles after it was
+   cancelled is refunded by the policy `refund-on-refund-requested`.
+7. Two read models follow along: `order-summary`, with a query written in SQL and the payment's
+   status, and `my-orders`.
 
-The aggregate has no `state.ts`. Its state is inferred from the `apply` functions, so
-`state.status` is `"placed" | "confirmed" | "fulfilled" | "cancelled" | undefined` in every
-handler.
+[Sagas and compensation](/guides/sagas/) walks through this flow step by step: what each step
+compensates, and what happens when the webhooks arrive late, twice or out of order.
+
+The `order` aggregate has no `state.ts`. Its state is inferred from the `apply` functions, so
+`state.status` is `"placed" | "paying" | "paid" | "fulfilled" | "cancelled" | undefined` in every
+handler. The `payment` aggregate has one, so its handlers read `state.orderId` and
+`state.intentId` as strings instead of `string | undefined`.
 
 ## Things worth copying
 
@@ -78,7 +94,7 @@ await commands.sendReminder(
 ```
 
 **Time in tests.** The clock of `createTestApp` moves only when told to, so a reminder a day away
-and a time-out three days away are two lines:
+and a payment window three days away are two lines:
 
 ```ts
 clock.advance(24 * HOUR);

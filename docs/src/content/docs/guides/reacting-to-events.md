@@ -218,7 +218,8 @@ export const handler = async ({ event, commands, payments, idempotencyKey }: Pol
 A refusal from the provider is an answer, not an error: it becomes an event (`PaymentFailed`) that
 other reactions can respond to. Throw only when there is no answer, and the runtime retries with
 back-off. The event store is the outbox, so nothing else is needed for the effect to follow the
-decision.
+decision. When a later step fails and an effect that already happened has to be undone, the
+reaction compensates it: see [Sagas and compensation](/guides/sagas/).
 
 A few rules keep it correct:
 
