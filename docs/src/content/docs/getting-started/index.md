@@ -185,14 +185,16 @@ See [adapters](/adapters/).
 ## Where next
 
 - [Project layout](/guides/project-layout/): every kind of module, with a template each.
-- [The storefront example](/guides/storefront-example/): policies, a process with a time-out,
-  an effect after the commit and hand-written SQL in one small app.
+- [The storefront example](/guides/storefront-example/): policies, a checkout that compensates
+  when the payment fails, an effect after the commit and hand-written SQL in one small app.
 - [Bounda with React Router](/guides/react-router/): actions that dispatch, loaders that query,
   and the [onboarding example](/guides/onboarding-example/) that puts it together.
 - [Testing](/guides/testing/): an app in memory, a clock you move by hand, and assertions that
   do not flake.
 - [Reacting to events](/guides/reacting-to-events/): policies, processes, retries, and what to do
   with a dead letter.
+- [Sagas and compensation](/guides/sagas/): a business transaction of several steps, and how each
+  one is undone when a later one fails.
 - [Changing an event's shape](/guides/changing-events/): an upcaster next to the event, applied as
   old events are read.
 - [Deployment](/guides/deployment/): roles, several instances, rebuilding a read model,

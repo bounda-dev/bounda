@@ -246,6 +246,11 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   call outside first, dispatch after, and await every dispatch. Outside the promise: the outside
   calls themselves, the inbox claim, and what a read model shows a handler (only what was
   committed before the attempt).
+- A saga is a pattern, not a module: a process (or policies) whose steps each have a
+  compensation. A compensation is a command that decides from state and returns `[]` when there
+  is nothing to undo; its effect goes in a policy with `idempotencyKey`. A failure arrives as the
+  `DomainError` of an awaited command (catch it and compensate) or as an event of another
+  aggregate; there is no failure hook.
 - Policies and processes get the aggregate's collaborators spread next to `event` and `commands`,
   like commands do; a policy in `policies/<other-aggregate>/` still gets its own aggregate's.
   A policy that exports `delay` (`"1m"`, or `asDuration(env)`) runs that long

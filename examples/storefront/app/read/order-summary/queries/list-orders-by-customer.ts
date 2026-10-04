@@ -10,7 +10,7 @@ export const repository = ({ client, customerId }: Query.RepositoryArgs) =>
 
 export const handler = ({ repositoryData }: Query.HandlerArgs) => ({
   orders: repositoryData,
-  open: repositoryData.filter((order) => order.status === "placed" || order.status === "confirmed"),
+  open: repositoryData.filter((order) => ["placed", "paying", "paid"].includes(order.status)),
   spent: repositoryData
     .filter((order) => order.status === "fulfilled")
     .reduce((sum, order) => sum + order.total, 0),
