@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  ConfigurationError,
-  DeadLetterSettledError,
-  DomainError,
-  NotFoundError,
-} from "../../contracts/errors.ts";
+import { DeadLetterSettledError, DomainError, NotFoundError } from "../../contracts/errors.ts";
 import type { PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { PROCESS_DEADLINE_COMMAND } from "../process/deadlines.ts";
