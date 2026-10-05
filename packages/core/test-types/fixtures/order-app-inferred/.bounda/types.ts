@@ -1,13 +1,14 @@
 import type * as core from "@bounda-dev/core";
 
-export type OrderState = {
+export type OrderCreatedState = {
   readonly cancellation?: unknown;
-  readonly customerId?: string;
-  readonly lines?: readonly import("../app/domain/order/order-placed.ts").Line[];
+  readonly customerId: string;
+  readonly lines: readonly import("../app/domain/order/order-placed.ts").Line[];
   readonly paidWith?: "card" | "transfer";
-  readonly placedAt?: Date;
-  readonly status?: "cancelled" | "paid" | "placed";
+  readonly placedAt: Date;
+  readonly status: "cancelled" | "paid" | "placed";
 };
+export type OrderState = core.NotCreated<OrderCreatedState> | OrderCreatedState;
 export type OrderEvents = {
   readonly orderCancelled: typeof import("../app/domain/order/order-cancelled.ts");
   readonly orderPaid: typeof import("../app/domain/order/order-paid.ts");

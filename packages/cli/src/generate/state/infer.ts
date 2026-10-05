@@ -1,5 +1,5 @@
 import { dirname, resolve } from "node:path";
-import type { StateTypeSource } from "../emit/types.ts";
+import { createdStateTypeName, type StateTypeSource, stateTypeName } from "../emit/types.ts";
 import type { AggregateModel, EventModel, ProjectModel } from "../model.ts";
 
 /**
@@ -43,6 +43,15 @@ interface FieldTypes {
 
 type Fields = Map<string, FieldTypes>;
 
+interface AggregateFields {
+  readonly fields: Fields;
+  /**
+   * The fields every `create` always sets, required once the aggregate exists; `null` when no
+   * event exports `create`.
+   */
+  readonly required: ReadonlySet<string> | null;
+}
+
 interface Checkers {
   readonly api: import("typescript/unstable/sync").API;
   readonly project: import("typescript/unstable/sync").Project;
@@ -51,7 +60,7 @@ interface Checkers {
 
 const UNKNOWN = "unknown";
 
-const renderState = (fields: Fields): string => {
+const renderState = ({ fields, required }: AggregateFields): string => {
   const names = [...fields.keys()].sort();
   if (names.length === 0) return "Record<never, never>";
   const lines = names.map((name) => {
@@ -61,14 +70,15 @@ const renderState = (fields: Fields): string => {
       .split("\n")
       .map((line, index) => (index === 0 || line.startsWith(" ") ? line : `  ${line}`))
       .join("\n");
-    return `  readonly ${name}?: ${type};`;
+    return `  readonly ${name}${required?.has(name) === true ? "" : "?"}: ${type};`;
   });
   return `{\n${lines.join("\n")}\n}`;
 };
 
-const exportedApply = (
+const exportedFunction = (
   ts: typeof import("typescript/unstable/ast"),
   file: import("typescript/unstable/ast").SourceFile,
+  exportName: "apply" | "create",
 ): import("typescript/unstable/ast").Node | null => {
   for (const statement of file.statements) {
     const isExported = (statement as { modifiers?: readonly { kind: number }[] }).modifiers?.some(
@@ -78,12 +88,12 @@ const exportedApply = (
     if (statement.kind === ts.SyntaxKind.VariableStatement) {
       for (const declaration of (statement as import("typescript/unstable/ast").VariableStatement)
         .declarationList.declarations) {
-        if (declaration.name.getText(file) === "apply") return declaration.name;
+        if (declaration.name.getText(file) === exportName) return declaration.name;
       }
     }
     if (statement.kind === ts.SyntaxKind.FunctionDeclaration) {
       const name = (statement as import("typescript/unstable/ast").FunctionDeclaration).name;
-      if (name !== undefined && name.getText(file) === "apply") return name;
+      if (name !== undefined && name.getText(file) === exportName) return name;
     }
   }
   return null;
@@ -95,46 +105,78 @@ const collectFields = (
   checkers: Checkers,
   aggregate: AggregateModel,
   warn: (message: string) => void,
-): Fields => {
+): AggregateFields => {
   const fields: Fields = new Map();
+  // What each `create` always sets.
+  const opening: ReadonlySet<string>[] = [];
   const { checker, program, emitter } = checkers.project;
   const flags = sync.NodeBuilderFlags.NoTruncation | sync.NodeBuilderFlags.UseFullyQualifiedType;
+  const maybeAbsent =
+    sync.TypeFlags.Any | sync.TypeFlags.Unknown | sync.TypeFlags.Undefined | sync.TypeFlags.Void;
   const addField = (event: EventModel, name: string, type: string) => {
     const existing = fields.get(name) ?? { members: new Set<string>(), events: new Set<string>() };
     existing.members.add(type);
     existing.events.add(event.key);
     fields.set(name, existing);
   };
-  for (const event of aggregate.events) {
-    const file = program.getSourceFile(event.path);
-    if (file === undefined) {
-      warn(`${event.relativePath} is not part of the TypeScript project, so its apply was skipped`);
-      continue;
-    }
-    const applyName = exportedApply(ts, file);
-    if (applyName === null) continue;
-    const symbol = checker.getSymbolAtLocation(applyName);
-    const applyType = symbol === undefined ? undefined : checker.getTypeOfSymbol(symbol);
+  const returnedBy = (
+    event: EventModel,
+    file: import("typescript/unstable/ast").SourceFile,
+    exportName: "apply" | "create",
+  ) => {
+    const name = exportedFunction(ts, file, exportName);
+    if (name === null) return null;
+    const symbol = checker.getSymbolAtLocation(name);
+    const type = symbol === undefined ? undefined : checker.getTypeOfSymbol(symbol);
     const signature =
-      applyType === undefined
+      type === undefined
         ? undefined
-        : checker.getSignaturesOfType(applyType, sync.SignatureKind.Call)[0];
+        : checker.getSignaturesOfType(type, sync.SignatureKind.Call)[0];
     const returned =
       signature === undefined ? undefined : checker.getReturnTypeOfSignature(signature);
     if (returned === undefined) {
-      warn(`${event.relativePath}: apply has no call signature, so it was skipped`);
+      warn(`${event.relativePath}: ${exportName} has no call signature, so it was skipped`);
+      return null;
+    }
+    return checker.getPropertiesOfType(returned);
+  };
+  for (const event of aggregate.events) {
+    const file = program.getSourceFile(event.path);
+    if (file === undefined) {
+      warn(
+        `${event.relativePath} is not part of the TypeScript project, so its apply and create were skipped`,
+      );
       continue;
     }
-    for (const property of checker.getPropertiesOfType(returned)) {
-      const propertyType = checker.getTypeOfSymbol(property);
-      const node =
-        propertyType === undefined
-          ? undefined
-          : checker.typeToTypeNode(propertyType, checkers.enclosing, flags);
-      addField(event, property.name, node === undefined ? UNKNOWN : emitter.printNode(node));
+    for (const exportName of ["create", "apply"] as const) {
+      const properties = returnedBy(event, file, exportName);
+      if (properties === null) continue;
+      const always = new Set<string>();
+      for (const property of properties) {
+        const propertyType = checker.getTypeOfSymbol(property);
+        const node =
+          propertyType === undefined
+            ? undefined
+            : checker.typeToTypeNode(propertyType, checkers.enclosing, flags);
+        addField(event, property.name, node === undefined ? UNKNOWN : emitter.printNode(node));
+        const absent =
+          (property.flags & sync.SymbolFlags.Optional) !== 0 ||
+          propertyType === undefined ||
+          [
+            propertyType,
+            ...(propertyType.isUnionType() ? (propertyType.getTypes() ?? []) : []),
+          ].some((member) => (member.flags & maybeAbsent) !== 0);
+        if (!absent) always.add(property.name);
+      }
+      if (exportName === "create") opening.push(always);
     }
   }
-  return fields;
+  const [first, ...rest] = opening;
+  const required =
+    first === undefined
+      ? null
+      : new Set([...first].filter((name) => rest.every((always) => always.has(name))));
+  return { fields, required };
 };
 
 interface FieldLocation {
@@ -142,19 +184,25 @@ interface FieldLocation {
   readonly field: string;
 }
 
-const fieldAtOffset = (content: string, offset: number): FieldLocation | null => {
+// `aggregates` maps every state alias the generator writes, `OrderState` and `OrderCreatedState`,
+// to its aggregate.
+const fieldAtOffset = (
+  content: string,
+  offset: number,
+  aggregates: ReadonlyMap<string, string>,
+): FieldLocation | null => {
   const before = content.slice(0, offset);
   const line = before.split("\n").length - 1;
   const lines = content.split("\n");
   let aggregate: string | null = null;
   for (let index = 0; index <= line && index < lines.length; index += 1) {
     const current = lines[index] ?? "";
-    const start = /^export type (\w+)State = \{$/.exec(current);
-    if (start?.[1] !== undefined) aggregate = start[1];
+    const start = /^export type (\w+) = \{$/.exec(current);
+    if (start?.[1] !== undefined) aggregate = aggregates.get(start[1]) ?? null;
     if (/^\}?;?$/.test(current) && current.startsWith("}"))
       aggregate = index === line ? aggregate : null;
     if (index === line && aggregate !== null) {
-      const field = /^ {2}readonly (\w+)\?: /.exec(current);
+      const field = /^ {2}readonly (\w+)\??: /.exec(current);
       if (field?.[1] !== undefined) return { aggregate, field: field[1] };
     }
   }
@@ -204,8 +252,10 @@ const openProject = async (
 };
 
 /**
- * Infers `State` for every aggregate without `state.ts` from what its events' exported `apply`
- * functions return: every field optional, typed as the union of what they set. Writes the result
+ * Infers `State` for every aggregate without `state.ts` from what its events' exported `create`
+ * and `apply` functions return, each field typed as the union of what they set. Every field is
+ * optional, unless an event exports `create`: then the state is the created one, where the
+ * fields every `create` always sets are required, or `core.NotCreated` of it. Writes the result
  * to `typesPath`. A field whose type is not visible from there (a non-exported interface, say)
  * becomes `unknown` with a warning; when TypeScript cannot run on the project, every such
  * aggregate keeps `core.UnknownState`, with a warning each.
@@ -232,8 +282,14 @@ export const inferStates: InferStatesFunction = async ({
     return { states: {}, warnings };
   }
   const { checkers, sync, ts } = opened;
+  const aliases = new Map(
+    pending.flatMap((aggregate) => [
+      [stateTypeName(aggregate.name), aggregate.name],
+      [createdStateTypeName(aggregate.name), aggregate.name],
+    ]),
+  );
   try {
-    const fields = new Map<string, Fields>();
+    const fields = new Map<string, AggregateFields>();
     for (const aggregate of pending) {
       fields.set(
         aggregate.name,
@@ -246,7 +302,7 @@ export const inferStates: InferStatesFunction = async ({
       Object.fromEntries(
         [...fields.entries()].map(([name, aggregateFields]) => [
           name,
-          { inferred: renderState(aggregateFields) },
+          { inferred: renderState(aggregateFields), created: aggregateFields.required !== null },
         ]),
       );
 
@@ -259,11 +315,10 @@ export const inferStates: InferStatesFunction = async ({
     const diagnostics = project?.program.getSemanticDiagnostics(typesPath) ?? [];
     const downgraded = new Set<string>();
     for (const diagnostic of diagnostics) {
-      const location = fieldAtOffset(content, diagnostic.pos);
+      const location = fieldAtOffset(content, diagnostic.pos, aliases);
       if (location === null) continue;
-      const aggregateName =
-        location.aggregate.charAt(0).toLowerCase() + location.aggregate.slice(1);
-      const aggregateFields = fields.get(aggregateName);
+      const aggregateName = location.aggregate;
+      const aggregateFields = fields.get(aggregateName)?.fields;
       const field = aggregateFields?.get(location.field);
       if (aggregateFields === undefined || field === undefined) continue;
       const key = `${aggregateName}.${location.field}`;

@@ -32,7 +32,7 @@ export const payload = ({ z }: Command.PayloadArgs) =>
   z.object({ orderId: z.uuid(), customerId: z.string().min(1), total: z.number().positive() });
 
 export const handler = ({ command, state, events }: Command.HandlerArgs) => {
-  if (state.status !== "new") throw new DomainError("Already placed");
+  if (state.status !== undefined) throw new DomainError("Already placed");
   return [events.orderPlaced(command.payload)];
 };
 ```

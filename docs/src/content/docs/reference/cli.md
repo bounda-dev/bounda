@@ -73,16 +73,23 @@ outright, such as a file where `.bounda/` should be, ends it. `Ctrl-C` ends it t
 ### How state is inferred
 
 For an aggregate without `state.ts`, the generator writes a first pass in which the state is
-`UnknownState`, opens the project with TypeScript, reads the return type of every event's `apply`
-and unions the fields it finds. Each field is optional, since a fresh aggregate has none:
+`UnknownState`, opens the project with TypeScript, reads the return type of every event's
+`create` and `apply` and unions the fields it finds. The fields every `create` always sets are
+required once the aggregate exists, and a command handler sees that state or the one of an
+aggregate that does not exist yet, every field `undefined`:
 
 ```ts
-export type OrderState = {
-  readonly customerId?: string;
-  readonly lines?: readonly import("../app/domain/order/order-placed.ts").Line[];
-  readonly status?: "cancelled" | "paid" | "placed";
+export type OrderCreatedState = {
+  readonly customerId: string;
+  readonly lines: readonly import("../app/domain/order/order-placed.ts").Line[];
+  readonly paidWith?: "card" | "transfer";
+  readonly status: "cancelled" | "paid" | "placed";
 };
+export type OrderState = core.NotCreated<OrderCreatedState> | OrderCreatedState;
 ```
+
+`apply` gets `OrderCreatedState`. Without any `create`, there is only `OrderState`, every field
+optional, since any event could come first.
 
 Types exported from your modules are referenced through `import(...)`. A type that is not
 exported cannot be named from `.bounda/types.ts`; that field becomes `unknown` and a warning says

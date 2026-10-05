@@ -75,6 +75,18 @@ describe("validateRegistry", () => {
     expect(() => validateRegistry(validRegistry)).not.toThrow();
   });
 
+  it("takes an event that opens the aggregate with create, apply or both, each a function", () => {
+    expect(() =>
+      validateRegistry(withOrder({ events: { orderPlaced: { create: noop } } })),
+    ).not.toThrow();
+    expect(() =>
+      validateRegistry(withOrder({ events: { orderPlaced: { create: noop, apply: noop } } })),
+    ).not.toThrow();
+    expect(() =>
+      validateRegistry(withOrder({ events: { orderPlaced: { create: "nope" as never } } })),
+    ).toThrow('aggregates.order.events.orderPlaced: missing export "create" (expected a function)');
+  });
+
   it("reports every problem with its registry path", () => {
     const registry: Registry = {
       aggregates: {
@@ -100,7 +112,9 @@ describe("validateRegistry", () => {
     }
     expect(error).toBeInstanceOf(ConfigurationError);
     const message = (error as ConfigurationError).message;
-    expect(message).toContain('aggregates.order.events.orderPlaced: missing export "apply"');
+    expect(message).toContain(
+      'aggregates.order.events.orderPlaced: missing export "create" or "apply" (expected a function)',
+    );
     expect(message).toContain('aggregates.order.commands.placeOrder: missing export "handler"');
     expect(message).toContain("aggregates.order.collaborators.inventory: has no implementations");
     expect(message).toContain('readModels.orderSummary.queries.getOrder: missing export "handler"');

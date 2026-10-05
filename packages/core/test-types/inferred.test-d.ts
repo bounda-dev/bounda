@@ -1,31 +1,58 @@
 import { describe, expectTypeOf, it } from "vitest";
-import type { OrderState } from "./fixtures/order-app-inferred/.bounda/types.ts";
+import type { OrderCreatedState, OrderState } from "./fixtures/order-app-inferred/.bounda/types.ts";
 import type { Event as OrderPaid } from "./fixtures/order-app-inferred/app/domain/order/+types/order-paid.ts";
+import type { Event as OrderPlaced } from "./fixtures/order-app-inferred/app/domain/order/+types/order-placed.ts";
 import type { Command as PayOrder } from "./fixtures/order-app-inferred/app/domain/order/commands/+types/pay-order.ts";
 import type { Line } from "./fixtures/order-app-inferred/app/domain/order/order-placed.ts";
 
-describe("state inferred from apply functions", () => {
-  it("unions the literal types every apply assigns and makes every field optional", () => {
-    expectTypeOf<OrderState["status"]>().toEqualTypeOf<
-      "cancelled" | "paid" | "placed" | undefined
-    >();
-    expectTypeOf<OrderState["paidWith"]>().toEqualTypeOf<"card" | "transfer" | undefined>();
-    expectTypeOf<OrderState["placedAt"]>().toEqualTypeOf<Date | undefined>();
+type HandlerState = PayOrder.HandlerArgs["state"];
+
+describe("state inferred from create and apply functions", () => {
+  it("unions the literal types every event assigns and requires what create always sets", () => {
+    expectTypeOf<OrderCreatedState["status"]>().toEqualTypeOf<"cancelled" | "paid" | "placed">();
+    expectTypeOf<OrderCreatedState["placedAt"]>().toEqualTypeOf<Date>();
+    expectTypeOf<OrderCreatedState["paidWith"]>().toEqualTypeOf<"card" | "transfer" | undefined>();
   });
 
   it("references exported types of the event modules and gives up on private ones", () => {
-    expectTypeOf<OrderState["lines"]>().toEqualTypeOf<readonly Line[] | undefined>();
-    expectTypeOf<OrderState["cancellation"]>().toEqualTypeOf<unknown>();
+    expectTypeOf<OrderCreatedState["lines"]>().toEqualTypeOf<readonly Line[]>();
+    expectTypeOf<OrderCreatedState["cancellation"]>().toEqualTypeOf<unknown>();
   });
 
-  it("reaches handlers and apply through the generated +types", () => {
-    expectTypeOf<PayOrder.HandlerArgs["state"]["status"]>().toEqualTypeOf<
+  it("leaves every field undefined before the aggregate is created", () => {
+    expectTypeOf<OrderState["status"]>().toEqualTypeOf<
       "cancelled" | "paid" | "placed" | undefined
     >();
-    expectTypeOf<PayOrder.HandlerArgs["state"]["version"]>().toEqualTypeOf<number>();
-    expectTypeOf<OrderPaid.ApplyArgs["state"]["customerId"]>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<OrderState["customerId"]>().toEqualTypeOf<string | undefined>();
+  });
+
+  it("narrows a handler's state by a field create always sets", () => {
+    const state = {} as HandlerState;
+    if (state.status === undefined) {
+      expectTypeOf(state.customerId).toEqualTypeOf<undefined>();
+    } else {
+      expectTypeOf(state.customerId).toEqualTypeOf<string>();
+      expectTypeOf(state.lines).toEqualTypeOf<readonly Line[]>();
+    }
+    if (state.status === "placed") expectTypeOf(state.placedAt).toEqualTypeOf<Date>();
+    if (state.customerId !== undefined) expectTypeOf(state.placedAt).toEqualTypeOf<Date>();
+    expectTypeOf(state.version).toEqualTypeOf<number>();
+    expectTypeOf(state.id).toEqualTypeOf<string>();
+  });
+
+  it("does not narrow by version, which the runtime adds to any state", () => {
+    const state = {} as HandlerState;
+    if (state.version === 0) expectTypeOf(state.customerId).toEqualTypeOf<string | undefined>();
+  });
+
+  it("gives apply the created state and create the event alone", () => {
+    expectTypeOf<OrderPaid.ApplyArgs["state"]["customerId"]>().toEqualTypeOf<string>();
     expectTypeOf<OrderPaid.ApplyArgs["event"]["payload"]["method"]>().toEqualTypeOf<
       "card" | "transfer"
     >();
+    expectTypeOf<keyof OrderPlaced.CreateArgs>().toEqualTypeOf<"event">();
+    expectTypeOf<
+      OrderPlaced.CreateArgs["event"]["payload"]["customerId"]
+    >().toEqualTypeOf<string>();
   });
 });

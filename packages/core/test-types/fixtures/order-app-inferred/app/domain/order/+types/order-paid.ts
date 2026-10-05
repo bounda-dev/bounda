@@ -5,8 +5,12 @@ type Module = typeof import("../order-paid.ts");
 
 export declare namespace Event {
   type PayloadArgs = core.PayloadArgs;
+  type CreateArgs = core.EventCreateArgs<
+    "OrderPaid",
+    core.PayloadOf<Module>
+  >;
   type ApplyArgs = core.EventApplyArgs<
-    generated.OrderState,
+    generated.OrderCreatedState,
     "OrderPaid",
     core.PayloadOf<Module>
   >;

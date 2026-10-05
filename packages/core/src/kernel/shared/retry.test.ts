@@ -3,6 +3,7 @@ import {
   ChainDepthExceededError,
   ConcurrencyError,
   ConfigurationError,
+  CreationOrderError,
   DomainError,
   NotFoundError,
   ValidationError,
@@ -16,6 +17,7 @@ describe("classifyFailure", () => {
     expect(classifyFailure(new NotFoundError("no"))).toBe("terminal");
     expect(classifyFailure(new ConfigurationError("no"))).toBe("terminal");
     expect(classifyFailure(new ChainDepthExceededError(3, 2))).toBe("terminal");
+    expect(classifyFailure(new CreationOrderError("no"))).toBe("terminal");
     expect(classifyFailure(new Error("socket hang up"))).toBe("retriable");
     expect(classifyFailure("string")).toBe("retriable");
     expect(

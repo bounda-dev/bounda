@@ -3,6 +3,7 @@ import {
   ChainDepthExceededError,
   ConcurrencyError,
   ConfigurationError,
+  CreationOrderError,
   DomainError,
   NotFoundError,
   ValidationError,
@@ -11,6 +12,7 @@ import type { Registry } from "../../modules/registry.ts";
 import { HandlerTimeoutError } from "../shared/timeout.ts";
 import {
   createKernelHarness,
+  createRecordingLogger,
   drained,
   type KernelHarness,
   orderRegistry,
@@ -327,6 +329,121 @@ describe("command pipeline", () => {
     const loaded = await storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" });
     expect(loaded.events[0]?.metadata.correlationId).toBe("http-1");
   });
+});
+
+type Builders = Record<string, (payload?: unknown) => unknown>;
+const emitting =
+  (...keys: readonly string[]) =>
+  ({ events }: { events: Builders }) =>
+    keys.map((key) => events[key]?.());
+
+const withCases: Registry = {
+  aggregates: {
+    case: {
+      events: {
+        caseOpened: { create: () => ({ status: "open" }) },
+        caseNoted: { apply: () => ({ noted: true }) },
+        caseImported: { create: () => ({ status: "imported" }) },
+      },
+      commands: {
+        openCase: { module: { handler: emitting("caseOpened", "caseNoted") } },
+        noteCase: { module: { handler: emitting("caseNoted") } },
+        importCase: { module: { handler: emitting("caseImported") } },
+        openCaseTwice: { module: { handler: emitting("caseOpened", "caseImported") } },
+      },
+      policies: {},
+      processes: {},
+    },
+  },
+  readModels: {},
+};
+
+describe("an aggregate whose events open it with create", () => {
+  it("starts with an event that exports create, and takes later events through apply", async () => {
+    const { pipeline } = await createKernelHarness({ registry: withCases });
+    await expect(
+      pipeline.dispatch({ type: "OpenCase", payload: { caseId: "c-1" } }),
+    ).resolves.toMatchObject({ eventTypes: ["CaseOpened", "CaseNoted"] });
+    await expect(
+      pipeline.dispatch({ type: "NoteCase", payload: { caseId: "c-1" } }),
+    ).resolves.toMatchObject({ version: 3 });
+    await expect(
+      pipeline.dispatch({ type: "ImportCase", payload: { caseId: "c-2" } }),
+    ).resolves.toMatchObject({ eventTypes: ["CaseImported"] });
+  });
+
+  it("refuses to store an aggregate that would start with an event without create", async () => {
+    const { pipeline, storage } = await createKernelHarness({ registry: withCases });
+    const refused = pipeline.dispatch({ type: "NoteCase", payload: { caseId: "c-1" } });
+    await expect(refused).rejects.toThrow(CreationOrderError);
+    await expect(refused).rejects.toThrow(
+      'Command "NoteCase" returned "CaseNoted" for case c-1, which does not exist yet: it must start with an event that exports create',
+    );
+    expect(await storage.eventStore.lastPosition()).toBe(0);
+  });
+
+  it("refuses an event that only exports create on an aggregate that exists, within one command too", async () => {
+    const { pipeline, storage } = await createKernelHarness({ registry: withCases });
+    await pipeline.dispatch({ type: "OpenCase", payload: { caseId: "c-1" } });
+    await expect(
+      pipeline.dispatch({ type: "ImportCase", payload: { caseId: "c-1" } }),
+    ).rejects.toThrow(
+      'Command "ImportCase" returned "CaseImported" for case c-1, which exists already: "CaseImported" only exports create',
+    );
+    await expect(
+      pipeline.dispatch({ type: "OpenCaseTwice", payload: { caseId: "c-2" } }),
+    ).rejects.toThrow(CreationOrderError);
+    expect(await storage.eventStore.lastPosition()).toBe(2);
+  });
+
+  it("counts an aggregate holding only system events as not created", async () => {
+    const { pipeline, storage } = await createKernelHarness({ registry: withCases });
+    await storage.eventStore.append({
+      aggregateType: "case",
+      aggregateId: "c-1",
+      expectedVersion: 0,
+      events: [pending("CommandFailed", 1, true)],
+    });
+    await expect(
+      pipeline.dispatch({ type: "NoteCase", payload: { caseId: "c-1" } }),
+    ).rejects.toThrow(CreationOrderError);
+    await expect(
+      pipeline.dispatch({ type: "OpenCase", payload: { caseId: "c-1" } }),
+    ).resolves.toMatchObject({ version: 3 });
+  });
+
+  it("warns about a stored aggregate opened by an event without create, and goes on", async () => {
+    const recording = createRecordingLogger();
+    const { pipeline, storage } = await createKernelHarness({
+      registry: withCases,
+      logger: recording.logger,
+    });
+    await storage.eventStore.append({
+      aggregateType: "case",
+      aggregateId: "c-1",
+      expectedVersion: 0,
+      events: [pending("CaseNoted", 1, false)],
+    });
+    await expect(
+      pipeline.dispatch({ type: "NoteCase", payload: { caseId: "c-1" } }),
+    ).resolves.toMatchObject({ version: 2 });
+    expect(recording.entries).toContainEqual({
+      level: "warn",
+      message: "aggregate opened by an event without create; its state may lack fields",
+      fields: { aggregateType: "case", aggregateId: "c-1", eventType: "CaseNoted" },
+    });
+  });
+});
+
+const pending = (type: string, version: number, system: boolean) => ({
+  id: `stored-${version}`,
+  aggregateType: "case",
+  aggregateId: "c-1",
+  version,
+  type,
+  payload: {},
+  timestamp: "2026-01-01T00:00:00.000Z",
+  metadata: { correlationId: "c", causationId: "c", depth: 0, schemaVersion: 1, system },
 });
 
 describe("a command's time limit and signal", () => {

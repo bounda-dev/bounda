@@ -1,6 +1,7 @@
 export type {
   AggregateMeta,
   HandlerState,
+  NotCreated,
   StateModule,
   StateOf,
   UnknownState,
@@ -16,6 +17,7 @@ export type {
   CreateEventBuildersFunction,
   EventApplyArgs,
   EventBuilders,
+  EventCreateArgs,
   EventModule,
   EventModules,
   EventOf,

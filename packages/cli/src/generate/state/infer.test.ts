@@ -61,7 +61,7 @@ afterAll(async () => {
 });
 
 describe("generate with state inference (golden on order-app-inferred)", () => {
-  it("infers the state of an aggregate without state.ts from its apply functions", async () => {
+  it("infers the state of an aggregate without state.ts from its create and apply functions", async () => {
     const root = await freshProject();
     const report = await generate({ root });
     expect(report.removed).toEqual([]);
@@ -87,14 +87,15 @@ describe("generate with state inference (golden on order-app-inferred)", () => {
       );
     }
     const types = await readFile(join(root, ".bounda/types.ts"), "utf8");
-    expect(types).toContain(`export type OrderState = {
+    expect(types).toContain(`export type OrderCreatedState = {
   readonly cancellation?: unknown;
-  readonly customerId?: string;
-  readonly lines?: readonly import("../app/domain/order/order-placed.ts").Line[];
+  readonly customerId: string;
+  readonly lines: readonly import("../app/domain/order/order-placed.ts").Line[];
   readonly paidWith?: "card" | "transfer";
-  readonly placedAt?: Date;
-  readonly status?: "cancelled" | "paid" | "placed";
-};`);
+  readonly placedAt: Date;
+  readonly status: "cancelled" | "paid" | "placed";
+};
+export type OrderState = core.NotCreated<OrderCreatedState> | OrderCreatedState;`);
   });
 
   it("writes nothing on a second run", async () => {
@@ -195,6 +196,67 @@ describe("state inference on the edges", () => {
 };`);
     expect(types).toContain("export type BlankState = Record<never, never>;");
     expect(types).not.toContain("hidden");
+  });
+
+  it("makes required, once created, only what every create always sets", async () => {
+    const root = await syntheticProject({
+      "app/domain/cart/cart-opened.ts": [
+        "export const create = () => ({",
+        '  status: "open" as const,',
+        '  owner: "someone",',
+        "  note: undefined as string | undefined,",
+        "  items: [] as string[],",
+        "});",
+        "",
+      ].join("\n"),
+      "app/domain/cart/item-added.ts": [
+        'export const create = () => ({ status: "open" as const, items: ["first"] });',
+        "export const apply = () => ({ items: [] as string[], total: 1 });",
+        "",
+      ].join("\n"),
+      "app/domain/cart/cart-tagged.ts":
+        'export const create = (): { status: "open"; items: string[]; tag?: string } => ({ status: "open", items: [] });\n',
+      "app/domain/cart/cart-closed.ts":
+        'export const apply = () => ({ status: "closed" as const });\n',
+      "app/domain/plain/plain-made.ts": "export const apply = () => ({ done: true });\n",
+    });
+    const report = await generate({ root });
+    expect(report.warnings).toEqual([]);
+    const types = await readFile(join(root, ".bounda/types.ts"), "utf8");
+    expect(types).toContain(`export type CartCreatedState = {
+  readonly items: string[];
+  readonly note?: string | undefined;
+  readonly owner?: string;
+  readonly status: "closed" | "open";
+  readonly tag?: string | undefined;
+  readonly total?: number;
+};
+export type CartState = core.NotCreated<CartCreatedState> | CartCreatedState;`);
+    expect(types).toContain(`export type PlainState = {
+  readonly done?: boolean;
+};
+export type PlainCreatedState = PlainState;`);
+  });
+
+  it("downgrades a required field of a created state whose type is not visible", async () => {
+    const root = await syntheticProject({
+      "app/domain/gamma/gamma-made.ts": [
+        "interface Hidden {",
+        "  readonly x: number;",
+        "}",
+        'export const create = (): { secret: Hidden; plain: string } => ({ secret: { x: 1 }, plain: "p" });',
+        "",
+      ].join("\n"),
+    });
+    const report = await generate({ root });
+    expect(report.warnings.map((warning) => warning.message)).toEqual([
+      expect.stringMatching(/^field "secret" \(set by gammaMade\) has a type that is not visible/),
+    ]);
+    const types = await readFile(join(root, ".bounda/types.ts"), "utf8");
+    expect(types).toContain(`export type GammaCreatedState = {
+  readonly plain: string;
+  readonly secret: unknown;
+};`);
   });
 
   it("downgrades every field whose type is not visible, once, across aggregates", async () => {

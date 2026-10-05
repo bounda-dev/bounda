@@ -7,6 +7,7 @@ import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
 import { createReactionCommands, type ReactionCommands } from "../command/reaction-commands.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
+import { isRecord, mergeFields } from "../shared/merge-fields.ts";
 import { withTimeout } from "../shared/timeout.ts";
 import { withCollaborators } from "../shared/with-collaborators.ts";
 import { ATTRIBUTES, traced } from "../telemetry.ts";
@@ -221,23 +222,10 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
   return { runEventHandler, runDeadlineHandler };
 };
 
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-// Shallow, as `Partial<State>` types it: a nested object is replaced whole, and a field left
-// `undefined` counts as left out, so it keeps its value instead of falling back to its default.
-// What is not an object goes on as returned, for `validState` to refuse.
+// A field left `undefined` keeps its value instead of falling back to its default. What is not an
+// object goes on as returned, for `validState` to refuse.
 const merged = (state: object, returned: unknown): unknown =>
-  returned === undefined
-    ? state
-    : isRecord(returned)
-      ? {
-          ...state,
-          ...Object.fromEntries(
-            Object.entries(returned).filter(([, value]) => value !== undefined),
-          ),
-        }
-      : returned;
+  returned === undefined ? state : isRecord(returned) ? mergeFields(state, returned) : returned;
 
 export interface ValidStateFunction {
   (process: Pick<ProcessRuntime, "name" | "stateSchema">, state: unknown): object;

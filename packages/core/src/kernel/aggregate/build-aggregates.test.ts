@@ -129,12 +129,122 @@ describe("foldState", () => {
   });
 
   it("applies events in order from the initial state", () => {
-    const state = foldState({
+    const { state } = foldState({
       aggregate: order,
       events: [stored("OrderPlaced", { total: 10 }, 1), stored("OrderPaid", { method: "card" }, 2)],
     });
     expect(state).toEqual({ status: "paid", total: 10 });
-    expect(foldState({ aggregate: order, events: [] })).toEqual({ status: "new", total: 0 });
+    expect(foldState({ aggregate: order, events: [] })).toEqual({
+      state: { status: "new", total: 0 },
+      created: false,
+      openedWithout: null,
+    });
+  });
+
+  interface Ticket {
+    readonly status: string;
+    readonly tags: readonly string[];
+    readonly note?: string;
+  }
+  const ticket = buildAggregates({
+    registry: {
+      aggregates: {
+        ticket: {
+          events: {
+            ticketOpened: {
+              create: ({ event }: { event: { payload: { title: string } } }) => ({
+                status: "open",
+                title: event.payload.title,
+                tags: [],
+              }),
+            },
+            ticketTagged: {
+              apply: ({
+                state,
+                event,
+              }: {
+                state: Ticket;
+                event: { payload: { tag: string } };
+              }) => ({
+                tags: [...state.tags, event.payload.tag],
+                note: `tagged ${event.payload.tag}`,
+              }),
+            },
+            ticketClosed: { apply: () => ({ status: "closed", note: undefined }) },
+            ticketImported: { create: () => ({ status: "imported", tags: [] }) },
+            ticketBroken: { apply: () => "closed" as never },
+          },
+          commands: {},
+          policies: {},
+          processes: {},
+        },
+      },
+      readModels: {},
+    },
+    collaborators: {},
+  }).byName.ticket as NonNullable<ReturnType<typeof buildAggregates>["byName"][string]>;
+  const system = (version: number) => {
+    const event = stored("CommandFailed", {}, version);
+    return { ...event, metadata: { ...event.metadata, system: true } };
+  };
+
+  it("opens the aggregate with create and merges what each apply returns over the state", () => {
+    expect(ticket.opensWithCreate).toBe(true);
+    expect(order.opensWithCreate).toBe(false);
+    expect(
+      foldState({
+        aggregate: ticket,
+        events: [
+          stored("TicketOpened", { title: "Broken login" }, 1),
+          stored("TicketTagged", { tag: "auth" }, 2),
+          stored("TicketClosed", {}, 3),
+        ],
+      }),
+    ).toEqual({
+      state: { status: "closed", title: "Broken login", tags: ["auth"], note: "tagged auth" },
+      created: true,
+      openedWithout: null,
+    });
+  });
+
+  it("leaves the aggregate unopened by a system event, which may come first", () => {
+    expect(foldState({ aggregate: ticket, events: [system(1)] })).toEqual({
+      state: {},
+      created: false,
+      openedWithout: null,
+    });
+    expect(
+      foldState({
+        aggregate: ticket,
+        events: [system(1), stored("TicketOpened", { title: "A" }, 2)],
+      }),
+    ).toMatchObject({ state: { status: "open", title: "A" }, created: true, openedWithout: null });
+  });
+
+  it("applies an opening event without create, and names it, for a stream older than create", () => {
+    expect(foldState({ aggregate: ticket, events: [stored("TicketClosed", {}, 1)] })).toEqual({
+      state: { status: "closed" },
+      created: true,
+      openedWithout: "TicketClosed",
+    });
+  });
+
+  it("folds an event that only exports create on an aggregate that exists over its state", () => {
+    expect(
+      foldState({
+        aggregate: ticket,
+        events: [stored("TicketOpened", { title: "A" }, 1), stored("TicketImported", {}, 2)],
+      }).state,
+    ).toEqual({ status: "imported", title: "A", tags: [] });
+  });
+
+  it("fails on an apply that returns something other than an object", () => {
+    expect(() =>
+      foldState({
+        aggregate: ticket,
+        events: [stored("TicketOpened", { title: "A" }, 1), stored("TicketBroken", {}, 2)],
+      }),
+    ).toThrow('Aggregate "ticket" folded "TicketBroken" into a state that is not an object');
   });
 
   it("fails on a stored event the aggregate no longer defines", () => {

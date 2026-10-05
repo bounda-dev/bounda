@@ -29,8 +29,7 @@ you get a project with one aggregate, one read model and a test, on SQLite:
 
 ```
 app/domain/order/           the order aggregate
-  state.ts                  initial state and the id field
-  order-placed.ts           an event: payload and apply
+  order-placed.ts           an event: payload and create, which opens the order
   commands/place-order.ts   a command: payload and handler
 app/read/orders/            a read model
   view.ts                   its fields
@@ -63,15 +62,17 @@ export const payload = ({ z }: Command.PayloadArgs) =>
   z.object({ orderId: z.uuid(), customerId: z.string().min(1), total: z.number().positive() });
 
 export const handler = ({ command, state, events }: Command.HandlerArgs) => {
-  if (state.status !== "new") {
+  if (state.status !== undefined) {
     throw new DomainError(`Order ${command.aggregateId} was already placed`);
   }
   return [events.orderPlaced({ customerId: command.payload.customerId, total: command.payload.total })];
 };
 ```
 
-`command.payload` is typed from the Zod schema above it, `state` from `state.ts`, and `events`
-only offers the events of this aggregate. Nothing here is registered anywhere: the file's place
+`command.payload` is typed from the Zod schema above it, `state` from what the order's events
+return, and `events` only offers the events of this aggregate. `order-placed.ts` opens the order
+with `create`, so before it every field of `state` is `undefined`, and after it `status` and the
+rest are always set. Nothing here is registered anywhere: the file's place
 and name are the declaration. The [project layout](/guides/project-layout/) guide has the whole
 map.
 
@@ -91,19 +92,11 @@ import type { Event } from "./+types/order-cancelled";
 
 export const payload = ({ z }: Event.PayloadArgs) => z.object({ reason: z.string() });
 
-export const apply = ({ state }: Event.ApplyArgs) => ({ ...state, status: "cancelled" as const });
+export const apply = () => ({ status: "cancelled" as const });
 ```
 
-Allow the new status in `state.ts`:
-
-```ts
-export const initialState = {
-  status: "new" as "new" | "placed" | "cancelled",
-  customerId: "",
-  total: 0,
-};
-export const aggregateId = "orderId";
-```
+`apply` returns the fields the event changes, merged over the order's state. The generator adds
+`"cancelled"` to the type of `status` on its own.
 
 Add the command:
 

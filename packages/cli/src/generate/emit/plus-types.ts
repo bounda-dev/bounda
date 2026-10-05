@@ -1,7 +1,13 @@
 import { basename, dirname, join } from "node:path";
 import type { AggregateModel, ProjectModel, ReadModelModel } from "../model.ts";
 import { type GeneratedFile, importPath } from "./paths.ts";
-import { collaboratorsTypeName, eventsTypeName, rowTypeName, stateTypeName } from "./types.ts";
+import {
+  collaboratorsTypeName,
+  createdStateTypeName,
+  eventsTypeName,
+  rowTypeName,
+  stateTypeName,
+} from "./types.ts";
 
 export interface EmitPlusTypesArgs {
   readonly model: ProjectModel;
@@ -69,9 +75,13 @@ const eventFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFile
       members: [
         ["PayloadArgs", "core.PayloadArgs"],
         [
+          "CreateArgs",
+          generic("core.EventCreateArgs", [`"${event.typeName}"`, "core.PayloadOf<Module>"]),
+        ],
+        [
           "ApplyArgs",
           generic("core.EventApplyArgs", [
-            `generated.${stateTypeName(aggregate.name)}`,
+            `generated.${createdStateTypeName(aggregate.name)}`,
             `"${event.typeName}"`,
             "core.PayloadOf<Module>",
           ]),

@@ -1,3 +1,1 @@
-import type { Event } from "./+types/order-locked-for-payment";
-
-export const apply = ({ state }: Event.ApplyArgs) => ({ ...state, status: "paying" as const });
+export const apply = () => ({ status: "paying" as const });

@@ -355,7 +355,7 @@ get today. Each item says why, so nobody discovers it the hard way:
   events, so a change to that shape has the same problem an event payload has, and no
   `state.upcast.ts` yet. See [Changing an event's shape](/guides/changing-events/#what-is-not-covered-yet).
 - **Renaming or removing an event type.** Upcasters change a payload, not a type. Keep the module,
-  even if `apply` returns the state unchanged.
+  even if its `apply` changes nothing.
 - **One trace per request.** Spans carry `bounda.correlation_id` but a policy's span is a separate
   trace from the command's, because it runs in a later pass. See [Observability](#observability).
 - **Notifications for scheduled commands.** The worker that runs due commands polls at

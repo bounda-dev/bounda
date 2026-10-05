@@ -6,8 +6,7 @@ interface Cancellation {
 
 export const payload = ({ z }: Event.PayloadArgs) => z.object({ reason: z.string() });
 
-export const apply = ({ state, event }: Event.ApplyArgs) => ({
-  ...state,
+export const apply = ({ event }: Event.ApplyArgs) => ({
   status: "cancelled" as const,
   cancellation: { reason: event.payload.reason } as Cancellation,
 });
