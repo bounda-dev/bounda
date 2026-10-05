@@ -69,8 +69,9 @@ export interface BoundaApp<R extends Registry = AppRegistry> {
    * Runs dispatcher passes and due scheduled commands until nothing moves, or until `maxPasses`
    * rounds when given, and says whether it got there. A retry waiting for its back-off is left
    * for later, except in an app from `createTestApp`, which moves its clock to it, running what
-   * falls due on the way, and counts that move as a round. What tests
-   * await after dispatching commands, and what a host without a background loop, such as a
+   * falls due on the way, and counts that move as a round; there, nothing else may run on the app
+   * meanwhile, since moving the clock also runs out the time of a handler still running. What
+   * tests await after dispatching commands, and what a host without a background loop, such as a
    * Durable Object alarm, runs in bounded slices. Works in every role.
    */
   runUntilIdle(options?: RunUntilIdleOptions): Promise<RunUntilIdleResult>;
@@ -125,17 +126,18 @@ export interface RebuildReadModelOptions {
 
 export interface RunUntilIdleOptions {
   /**
-   * At most this many rounds of one dispatcher pass plus one run of due scheduled commands.
-   * Unbounded when omitted.
+   * At most this many rounds of one dispatcher pass plus one run of due scheduled commands; in an
+   * app from `createTestApp`, a round that moves the clock to a retry counts too. Unbounded when
+   * omitted.
    */
   readonly maxPasses?: number;
 }
 
 export interface RunUntilIdleResult {
   /**
-   * `true` when a round moved nothing: every subscriber is caught up, nothing is due and, in an
-   * app from `createTestApp`, no retry is waiting. `false` when `maxPasses` ran out with work
-   * left.
+   * `true` when a round moved nothing: nothing is due, and every subscriber is caught up but for
+   * events whose retry waits for its back-off, which an app from `createTestApp` has run too.
+   * `false` when `maxPasses` ran out with work left.
    */
   readonly idle: boolean;
 }
@@ -317,7 +319,6 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       config,
       ids,
       clock,
-      pendingRetries,
       logger,
     });
     const deadLetters = createDeadLetters({
@@ -345,6 +346,16 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     const role = config.runtime.role;
     const nextDueAt = (): Promise<Date | null> =>
       storage.scheduler.nextDueAt({ leaseMs: worker.leaseMs });
+    // A scheduled command that failed waits for its retry with its attempts counted; scheduling it
+    // anew counts them from zero, so a retry that no longer waits is not taken for one.
+    const nextRetryAt = async (): Promise<Date | null> => {
+      const now = clock.now().getTime();
+      const times = (await storage.scheduler.list())
+        .filter((entry) => entry.attempts > 0)
+        .map((entry) => Date.parse(entry.executeAt))
+        .filter((at) => at > now);
+      return times.length === 0 ? null : new Date(Math.min(...times));
+    };
     let stopping: Promise<void> | undefined;
 
     logger.info("bounda app created", {
@@ -381,10 +392,11 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       },
       runUntilIdle: async ({ maxPasses = Number.POSITIVE_INFINITY } = {}) => {
         for (let round = 0; round < maxPasses; round += 1) {
+          pendingRetries.startRound();
           const advanced = await dispatcher.processOnce();
           const ran = await worker.runOnce();
           if (advanced || ran > 0) continue;
-          if (!(await pendingRetries.skipToNext(nextDueAt))) return { idle: true };
+          if (!(await pendingRetries.skipToNext(nextDueAt, nextRetryAt))) return { idle: true };
         }
         return { idle: false };
       },

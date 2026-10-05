@@ -120,7 +120,6 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     config,
     ids,
     clock,
-    pendingRetries: ignoredRetries,
     logger,
   });
   const makeDispatcher = (): Dispatcher =>

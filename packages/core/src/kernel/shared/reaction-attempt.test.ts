@@ -49,6 +49,7 @@ const setUp = async () => {
       concurrencyRetries,
       clock,
       pendingRetries: {
+        startRound: () => {},
         waiting: (at) => {
           waiting.push(at.toISOString());
         },
