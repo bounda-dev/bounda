@@ -246,6 +246,25 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
       );
     });
 
+    it("counts the attempts of a command scheduled anew from zero, the same one at another time too", async () => {
+      const entry: ScheduleArgs = {
+        dedupeKey: "a",
+        command: testCommand("1"),
+        executeAt: at(0),
+        context: testContext,
+      };
+      await scheduler.schedule(entry);
+      const [claimed] = await scheduler.claimDue({ now: at(1), limit: 10, leaseMs: 60_000 });
+      if (claimed === undefined) throw new Error("nothing claimed");
+      await scheduler.fail({ claim: claimed, error: "boom", retryAt: at(5_000) });
+      expect(await scheduler.list()).toMatchObject([{ attempts: 1 }]);
+
+      await scheduler.schedule({ ...entry, executeAt: at(9_000) });
+      expect(await scheduler.list()).toMatchObject([
+        { executeAt: at(9_000).toISOString(), attempts: 0 },
+      ]);
+    });
+
     it("keeps the time and attempts of a retry when told to and the command has not changed", async () => {
       const entry: ScheduleArgs = {
         dedupeKey: "a",

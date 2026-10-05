@@ -329,6 +329,28 @@ describe("createTestApp runUntilIdle", () => {
     await app.stop();
   });
 
+  it("moves nothing for a retry that no longer waits, its deadline moved by the process", async () => {
+    let calls = 0;
+    const { app, clock } = await createTestApp({
+      registry: shop(ports, () => {
+        calls += 1;
+        if (calls === 1) throw new Error("provider unavailable");
+        return { due: null };
+      }),
+      collaborators: { order: { notifier: recording([]), mailer: recording([]) } },
+    });
+    await app.commands.placeOrder({ orderId: "o-1" });
+    await app.runUntilIdle();
+    clock.advance(HOUR);
+    await expect(app.runUntilIdle({ maxPasses: 1 })).resolves.toEqual({ idle: false });
+    expect(calls).toBe(1);
+    await app.commands.noteOrder({ orderId: "o-1" });
+    await expect(app.runUntilIdle()).resolves.toEqual({ idle: true });
+    expect(calls).toBe(1);
+    expect(clock.now().toISOString()).toBe("2026-01-01T01:00:00.000Z");
+    await app.stop();
+  });
+
   it("moves the clock to a scheduled command's retry, but never past it", async () => {
     let calls = 0;
     const { app, clock } = await createTestApp({

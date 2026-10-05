@@ -94,8 +94,10 @@ export interface ListScheduledArgs {
  */
 export interface Scheduler {
   /**
-   * Replaces what the key held. A command being run keeps its claim, so the new version runs once
-   * the current run ends, never beside it. Scheduling exactly what the key holds changes nothing.
+   * Replaces what the key held, with its attempts counted from zero again: only `fail` keeps them,
+   * so a command with attempts is one waiting for its retry. A command being run keeps its claim,
+   * so the new version runs once the current run ends, never beside it. Scheduling exactly what
+   * the key holds changes nothing.
    */
   schedule(args: ScheduleArgs): Promise<void>;
   /**

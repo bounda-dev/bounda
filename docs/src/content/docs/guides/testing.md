@@ -101,7 +101,9 @@ through or gave up as a [dead letter](/guides/reacting-to-events/#dead-letters).
 provider that fails once dispatches, runs until idle and asserts the second call; `clock.now()`
 says how far the retries took it. It never moves the clock past the last retry: what is
 scheduled before it runs on the way, in order, and what is scheduled after it waits for your
-advance.
+advance. A retry that no longer waits, because its process ended or its deadline moved, moves
+nothing. Await `runUntilIdle()` before dispatching anything else: moving the clock also runs out
+the time of a command or handler that is still running on the same app.
 
 A test that builds a process state by hand, say to call a handler on its own, needs its moments
 typed as `Instant`, which a plain string is not: `asInstant` from `@bounda-dev/core` makes one from
