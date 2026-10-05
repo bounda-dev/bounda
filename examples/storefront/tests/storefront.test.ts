@@ -186,7 +186,7 @@ describe("storefront", () => {
     await app.stop();
   });
 
-  it("gives up on an order whose payment never ends, and compensates in place", async () => {
+  it("gives up on an order whose payment never ends, and compensates as for any cancellation", async () => {
     const { app, clock, refunds, summary, paymentOf } = await start();
     await app.commands.placeOrder({ orderId: ORDER, customerId: "ada", items });
     await app.runUntilIdle();

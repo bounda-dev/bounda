@@ -32,6 +32,11 @@ export interface ReactionCommands {
    */
   readonly signal: AbortSignal;
   /**
+   * What the run's commands decided, in the order they finished, once every dispatch, awaited by
+   * the handler or not, has settled.
+   */
+  decided(): Promise<readonly ReactionDispatchResult[]>;
+  /**
    * Ends a run that failed or timed out: `signal` aborts, which stops the commands still running,
    * and later dispatches are refused. Nothing is undone, since the run's unit of work is never
    * committed. A dispatch the handler does not await is never reported as unhandled for it.
@@ -81,11 +86,12 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
   // await one would leave unhandled, and Node ends the process on that. They are marked handled
   // before they can reject; the handler still sees the rejection through its own await.
   const dispatched = new Set<Promise<ReactionDispatchResult>>();
+  const results: ReactionDispatchResult[] = [];
   const commands = createCommandsFacade({
     aggregates,
     dispatch: (command) => {
-      const dispatch = (async () =>
-        decided(
+      const dispatch = (async () => {
+        const result = decided(
           await pipeline.dispatch({
             ...command,
             context: { ...context, depth: context.depth + 1 },
@@ -93,7 +99,10 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
             within,
             signal: abandoned.signal,
           }),
-        ))();
+        );
+        results.push(result);
+        return result;
+      })();
       if (abandoned.signal.aborted) dispatch.catch(ignore);
       else dispatched.add(dispatch);
       return dispatch;
@@ -102,6 +111,13 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
   return {
     commands,
     signal: handler.signal,
+    decided: async () => {
+      for (let settled = 0; settled < dispatched.size; ) {
+        settled = dispatched.size;
+        await Promise.allSettled(dispatched);
+      }
+      return [...results];
+    },
     abandon: (reason) => {
       for (const dispatch of dispatched) dispatch.catch(ignore);
       abandoned.abort(new ReactionAbandonedError(reason));

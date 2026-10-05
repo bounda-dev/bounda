@@ -1,5 +1,6 @@
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
+import type { ReactionDispatchResult } from "../../contracts/command.ts";
 import { ValidationError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
@@ -51,7 +52,8 @@ export interface RunDeadlineHandlerArgs {
 
 /**
  * Handlers are bounded by the aggregate's policy timeout, as policy handlers are. Each resolves to
- * the state with the fields the handler returned merged over it, validated by the process schema.
+ * the state with the fields the handler returned merged over it, validated by the process schema;
+ * a deadline's also to what its commands decided.
  * A run whose handler fails or runs out of time is abandoned: its commands are refused from then
  * on.
  */
@@ -60,7 +62,12 @@ export interface ProcessHandlers {
   /**
    * Runs the handler of `due`, if it has one.
    */
-  runDeadlineHandler(args: RunDeadlineHandlerArgs): Promise<object>;
+  runDeadlineHandler(args: RunDeadlineHandlerArgs): Promise<DeadlineRun>;
+}
+
+export interface DeadlineRun {
+  readonly state: object;
+  readonly decided: () => Promise<readonly ReactionDispatchResult[]>;
 }
 
 export interface CreateProcessHandlersArgs {
@@ -102,10 +109,10 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
       ...own,
     });
 
-  const runOf = async (
+  const runOf = async <Result>(
     reaction: Pick<ReactionCommands, "abandon">,
-    handle: () => Promise<object>,
-  ): Promise<object> => {
+    handle: () => Promise<Result>,
+  ): Promise<Result> => {
     try {
       return await handle();
     } catch (error) {
@@ -176,10 +183,13 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     causationId,
     replay,
     within,
-  }: RunDeadlineHandlerArgs): Promise<object> => {
+  }: RunDeadlineHandlerArgs): Promise<DeadlineRun> => {
     const handler = process.deadlineHandlers[due.field];
     if (handler === undefined) {
-      return runOf({ abandon: () => undefined }, async () => validState(process, instance.state));
+      return runOf({ abandon: () => undefined }, async () => ({
+        state: validState(process, instance.state),
+        decided: async () => [],
+      }));
     }
     const idempotencyKey = deriveIdempotencyKey({
       kind: "process",
@@ -215,7 +225,10 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
             clock,
           }),
       });
-      return validState(process, merged(instance.state, returned));
+      return {
+        state: validState(process, merged(instance.state, returned)),
+        decided: reaction.decided,
+      };
     });
   };
 

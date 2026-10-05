@@ -30,10 +30,11 @@ of the store:
   the version the handler saw;
 - the scheduler rows of its delayed commands;
 - for a process step, the instance's lifecycle events (`ProcessStarted`, `ProcessHandled`,
-  `ProcessCompleted`, `ProcessDeadlineReached`) and the entry of its next deadline, computed from
+  `ProcessCompleted`, `ProcessDeadlineReached`, `ProcessTimedOut`) and the entry of its next deadline, computed from
   the state it just wrote;
 - the mark in the inbox that says the event is done;
-- and, when the runtime gives up on the event, `ProcessFailed` and the dead letter.
+- and, when the runtime gives up on the event, `ProcessFailed` and the dead letter (only the
+  letter for a follow-up of a timed-out process, which has ended).
 
 A handler that throws, runs out of time, or dies before the commit leaves nothing of that behind.
 The claim it took expires with its lease, and the next attempt starts from the store as it is,

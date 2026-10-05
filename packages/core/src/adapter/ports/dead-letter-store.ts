@@ -31,7 +31,7 @@ export interface DeadLetter {
    * Process letters only: how many steps wait on the instance. While the letter is `failed`, the
    * events parked behind it for its replay to handle; on the letter a replay returns, the steps
    * still waiting because the process failed again, the one it failed on included, so `0` there
-   * means the instance resumed.
+   * means the instance resumed, or, for a follow-up of a timed-out instance, that nothing waits.
    * Filled in by `app.deadLetters`, never stored.
    */
   readonly parked?: number;

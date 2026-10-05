@@ -1,5 +1,9 @@
 import type { DeadLetter } from "../../adapter/ports/dead-letter-store.ts";
-import { ConfigurationError, NotFoundError } from "../../contracts/errors.ts";
+import {
+  ConfigurationError,
+  DeadLetterSettledError,
+  NotFoundError,
+} from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
@@ -11,7 +15,7 @@ import { blockedOn } from "./failures.ts";
 import type { ProcessHandlers } from "./handlers.ts";
 import { lifecycleEntries, type ProcessInstance } from "./lifecycle.ts";
 import type { ResumeParked } from "./resume.ts";
-import { completesOn, handledEntries, handlerOf, letThrough } from "./routes.ts";
+import { completesOn, handledEntries, handlerOf, letThrough, pendingFollowUp } from "./routes.ts";
 import type { DeadlineSchedule } from "./schedule.ts";
 import type { ProcessUnits } from "./units.ts";
 
@@ -22,7 +26,7 @@ interface ReplayArgs {
   readonly replay: string;
   /**
    * The id of the dead letter being replayed: the replay goes on only while it is the failure its
-   * instance is blocked on.
+   * instance is blocked on or, for a follow-up of a timed-out instance, while it is still failed.
    */
   readonly letter?: string | undefined;
 }
@@ -47,9 +51,11 @@ export interface ProcessDeadLetters {
   /**
    * Ignores the inbox ledger. The replayed step is one unit of work; a failed process then drains
    * its parked events in order before it resumes, one unit each; one that fails again becomes the
-   * new failure, and the rest stay parked.
+   * new failure, and the rest stay parked. A follow-up of a timed-out instance has nothing to
+   * drain, so its replay marks `letter` replayed in its own unit and resolves to `true`; any other
+   * resolves to `false`, leaving the letter to the caller.
    */
-  replay(args: ReplayProcessArgs): Promise<void>;
+  replay(args: ReplayProcessArgs): Promise<boolean>;
   /**
    * Runs again the deadline a process failed on, with a new `idempotencyKey`, then resumes the
    * instance as `replay` does.
@@ -111,7 +117,7 @@ export const createProcessReplay: CreateProcessReplayFunction = ({
     event,
     replay,
     letter,
-  }: ReplayProcessArgs): Promise<void> => {
+  }: ReplayProcessArgs): Promise<boolean> => {
     const process = registered(processes, name);
     const instanceId = process.instanceOf(event);
     const instance = instanceId === null ? null : await load(process, instanceId);
@@ -120,7 +126,8 @@ export const createProcessReplay: CreateProcessReplayFunction = ({
       instance.failure?.eventId === event.id &&
       blockedOn(instance, letter);
     const handler = handlerOf(process, event);
-    if (handler === undefined && !failedHere) {
+    const followUp = instance !== null && pendingFollowUp(instance, event);
+    if (handler === undefined && !failedHere && !followUp) {
       throw new ConfigurationError(`Process "${name}" no longer handles ${event.type}`);
     }
     if (instanceId === null || instance === null || !instance.exists) {
@@ -129,9 +136,20 @@ export const createProcessReplay: CreateProcessReplayFunction = ({
       );
     }
     if (instance.status === "failed" && !failedHere) throw failedOnAnotherStep(process, instanceId);
+    let settled = false;
     await units.commit(async (unit, within) => {
+      settled = false;
       const current = await within.load(process, instanceId);
-      if (current.status !== "started" && current.status !== "failed") return;
+      const pending = pendingFollowUp(current, event);
+      if (current.status !== "started" && current.status !== "failed" && !pending) return;
+      if (pending && letter !== undefined) {
+        // On every run, a rerun after a conflict included: a letter settled meanwhile runs nothing.
+        if ((await unit.deadLetterStore.get(letter))?.status !== "failed") {
+          throw new DeadLetterSettledError({ id: letter });
+        }
+        await unit.deadLetterStore.updateStatus(letter, "replayed");
+        settled = true;
+      }
       if (current.handledEventIds.has(event.id)) {
         if (!completesOn(process, event)) return;
         await within.append(process, instanceId, current, [lifecycleEntries.completed(event)]);
@@ -150,12 +168,18 @@ export const createProcessReplay: CreateProcessReplayFunction = ({
             within: unit,
           });
         }
-        await within.append(process, instanceId, current, handledEntries(process, event, state));
+        await within.append(
+          process,
+          instanceId,
+          current,
+          handledEntries(process, current, event, state),
+        );
       }
       await schedule.stage(unit, process, instanceId);
     });
-    await resume.resumeParked(process, instanceId, letter);
+    if (!settled) await resume.resumeParked(process, instanceId, letter);
     logger.info("process handler replayed", { process: process.name, eventId: event.id });
+    return settled;
   };
 
   const replayDeadline = async ({
@@ -177,7 +201,15 @@ export const createProcessReplay: CreateProcessReplayFunction = ({
     }
     await units.commit(async (unit, within) => {
       const current = await within.load(process, payload.aggregateId);
-      if (current.reached.has(reachedKey(failed))) return;
+      // A concurrent replay of the same letter may have run the deadline already: the timeout
+      // then ended the instance, which `reached` does not record.
+      if (
+        current.status !== "failed" ||
+        !blockedOn(current, letter) ||
+        current.reached.has(reachedKey(failed))
+      ) {
+        return;
+      }
       await deadlineStep.attempt({
         unit,
         process,

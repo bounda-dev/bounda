@@ -10,7 +10,8 @@ import type {
 
 /**
  * The deadline every process has: `config.timeout` after it started. Its handler is
- * `at-timeout.ts`, and reaching it ends the process as `timed_out`.
+ * `at-timeout.ts`, and reaching it ends the process as `timed_out`, but for the follow-ups its
+ * commands cause.
  */
 export const TIMEOUT_DEADLINE: "timeout" = "timeout";
 

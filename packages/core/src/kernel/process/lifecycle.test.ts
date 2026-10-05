@@ -27,6 +27,7 @@ describe("foldProcess", () => {
       reached: new Set(),
       correlationId: null,
       parked: [],
+      followUps: new Set(),
       failure: null,
     });
   });
@@ -58,6 +59,7 @@ describe("foldProcess", () => {
       reached: new Set(),
       correlationId: "c",
       parked: [],
+      followUps: new Set(),
       failure: null,
     });
   });
@@ -83,6 +85,23 @@ describe("foldProcess", () => {
     });
   });
 
+  it("keeps the follow-ups of a time-out pending until each is handled, still timed out", () => {
+    const instance = foldProcess({
+      initialState: {},
+      events: [
+        lifecycle(PROCESS_EVENTS.started, { state: {}, eventId: "e1" }, 1),
+        lifecycle(PROCESS_EVENTS.timedOut, { state: { n: 1 }, followUps: ["e2", "e3"] }, 2),
+        lifecycle(PROCESS_EVENTS.handled, { state: { n: 2 }, eventId: "e2" }, 3),
+      ],
+    });
+    expect(instance).toMatchObject({
+      status: "timed_out",
+      state: { n: 2 },
+      handledEventIds: new Set(["e2"]),
+      followUps: new Set(["e3"]),
+    });
+  });
+
   it("records time-outs with their final state and failures", () => {
     const timedOut = foldProcess({
       initialState: {},
@@ -91,7 +110,11 @@ describe("foldProcess", () => {
         lifecycle(PROCESS_EVENTS.timedOut, { state: { reminders: 3 } }, 2),
       ],
     });
-    expect(timedOut).toMatchObject({ status: "timed_out", state: { reminders: 3 } });
+    expect(timedOut).toMatchObject({
+      status: "timed_out",
+      state: { reminders: 3 },
+      followUps: new Set(),
+    });
     const failed = foldProcess({
       initialState: {},
       events: [

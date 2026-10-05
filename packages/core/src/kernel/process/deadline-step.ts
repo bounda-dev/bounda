@@ -1,3 +1,4 @@
+import type { ReactionDispatchResult } from "../../contracts/command.ts";
 import { ValidationError } from "../../contracts/errors.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
@@ -6,6 +7,7 @@ import type { ProcessRuntime } from "./build-processes.ts";
 import { type Deadline, TIMEOUT_DEADLINE } from "./deadlines.ts";
 import type { ProcessHandlers } from "./handlers.ts";
 import { lifecycleEntries, type ProcessInstance } from "./lifecycle.ts";
+import { handlerOf, startsOn } from "./routes.ts";
 import type { ProcessUnits } from "./units.ts";
 
 export interface RunDeadlineArgs {
@@ -23,7 +25,7 @@ export interface RunDeadlineArgs {
 
 /**
  * Runs the handler of a deadline and stages `ProcessDeadlineReached`, or `ProcessTimedOut` for
- * the timeout, on the unit.
+ * the timeout with the follow-ups its commands caused, on the unit.
  */
 export interface DeadlineStep {
   run(args: RunDeadlineArgs): Promise<void>;
@@ -47,6 +49,26 @@ export interface CreateDeadlineStepFunction {
   (args: CreateDeadlineStepArgs): DeadlineStep;
 }
 
+// The events the timeout's commands decided that a handler of the process takes, read from the
+// results so nothing is loaded. They are not routed: delivery only lets through the follow-ups of
+// the instance an event is routed to, so the user's `correlate` never runs here. A starting event
+// is left out, since its handler would start again what has ended.
+const followUpsOf = (
+  process: ProcessRuntime,
+  decided: readonly ReactionDispatchResult[],
+): readonly string[] =>
+  decided.flatMap((result) =>
+    result.scheduled
+      ? []
+      : result.eventIds.filter((_, index) => {
+          const event = {
+            aggregateType: result.aggregateType,
+            type: result.eventTypes[index] ?? "",
+          };
+          return handlerOf(process, event) !== undefined && !startsOn(process, event);
+        }),
+  );
+
 export const createDeadlineStep: CreateDeadlineStepFunction = ({ units, handlers, ids }) => {
   const run = async ({
     unit,
@@ -59,7 +81,7 @@ export const createDeadlineStep: CreateDeadlineStepFunction = ({ units, handlers
   }: RunDeadlineArgs): Promise<void> => {
     const within = units.over(unit);
     const reachedId = ids.next();
-    const state = await handlers.runDeadlineHandler({
+    const { state, decided } = await handlers.runDeadlineHandler({
       process,
       instanceId,
       instance,
@@ -71,7 +93,7 @@ export const createDeadlineStep: CreateDeadlineStepFunction = ({ units, handlers
     });
     if (due.field === TIMEOUT_DEADLINE) {
       await within.append(process, instanceId, instance, [
-        lifecycleEntries.timedOut(state, context, reachedId),
+        lifecycleEntries.timedOut(state, context, reachedId, followUpsOf(process, await decided())),
       ]);
       return;
     }

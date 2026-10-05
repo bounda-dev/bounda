@@ -80,6 +80,11 @@ export interface ProcessInstance {
    */
   readonly parked: readonly ParkedEvent[];
   /**
+   * The events its `at-timeout` caused that a handler of the process takes and that it has not
+   * handled yet: they still reach a `timed_out` instance.
+   */
+  readonly followUps: ReadonlySet<string>;
+  /**
    * What the last `ProcessFailed` failed on: an event, or a deadline at its moment. `null` for an
    * instance that never failed.
    */
@@ -117,6 +122,7 @@ export const foldProcess: FoldProcessFunction = ({ initialState, events }) => {
   const handled = new Set<string>();
   const reached = new Set<string>();
   const parked = new Map<string, ParkedEvent>();
+  const followUps = new Set<string>();
   let failure: ProcessFailure | null = null;
   let status: ProcessStatus = "started";
   let state = initialState;
@@ -136,6 +142,7 @@ export const foldProcess: FoldProcessFunction = ({ initialState, events }) => {
         if (payload.eventId !== undefined) {
           handled.add(payload.eventId);
           parked.delete(payload.eventId);
+          followUps.delete(payload.eventId);
         }
         break;
       }
@@ -147,10 +154,13 @@ export const foldProcess: FoldProcessFunction = ({ initialState, events }) => {
       case PROCESS_EVENTS.completed:
         status = "completed";
         break;
-      case PROCESS_EVENTS.timedOut:
+      case PROCESS_EVENTS.timedOut: {
         state = stateOf(event, state);
         status = "timed_out";
+        const payload = event.payload as { readonly followUps?: readonly string[] };
+        for (const eventId of payload.followUps ?? []) followUps.add(eventId);
         break;
+      }
       case PROCESS_EVENTS.failed: {
         status = "failed";
         const payload = event.payload as {
@@ -195,6 +205,7 @@ export const foldProcess: FoldProcessFunction = ({ initialState, events }) => {
     reached,
     correlationId,
     parked: [...parked.values()],
+    followUps,
     failure,
   };
 };
@@ -252,7 +263,12 @@ export interface LifecycleEntries {
     context: CausationContext,
     id: string,
   ): LifecycleEntry;
-  timedOut(state: object, context: CausationContext, id: string): LifecycleEntry;
+  timedOut(
+    state: object,
+    context: CausationContext,
+    id: string,
+    followUps: readonly string[],
+  ): LifecycleEntry;
 }
 
 export const lifecycleEntries: LifecycleEntries = {
@@ -293,9 +309,9 @@ export const lifecycleEntries: LifecycleEntries = {
     context,
     id,
   }),
-  timedOut: (state, context, id) => ({
+  timedOut: (state, context, id, followUps) => ({
     type: PROCESS_EVENTS.timedOut,
-    payload: { state },
+    payload: followUps.length === 0 ? { state } : { state, followUps },
     context,
     id,
   }),

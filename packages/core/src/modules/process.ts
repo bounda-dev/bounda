@@ -232,7 +232,8 @@ export type ProcessHandlerArgs<
  * level: `state` holds the deadline that came due as `Field`. The handler returns the fields of
  * the process state that change, `Field` among them: `null` or another moment, since keeping the
  * one that came due fails the process. For
- * `at-timeout.ts`, `Field` is `never` and the process ends as `timed_out` whatever it returns.
+ * `at-timeout.ts`, `Field` is `never` and the process ends as `timed_out` whatever it returns; the
+ * events its commands cause still reach the process's handlers.
  */
 export type ProcessDeadlineArgs<
   State,
