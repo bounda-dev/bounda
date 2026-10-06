@@ -1105,6 +1105,45 @@ describe("processes that listen to other aggregates", () => {
       'aggregates.order.processes.checkout: "payment.PaymentSettled" comes from another aggregate; give its payload "orderId" or say which instance it belongs to with from.payment.PaymentSettled(…) in correlate',
     );
     expect(() => processesOf(withCorrelate(byOrder, undefined, referenced), config)).not.toThrow();
+    const bare = {
+      ...payment,
+      events: {
+        paymentFailed: { payload: paymentPayload, apply: () => ({}) },
+        paymentSettled: { apply: () => ({}) },
+      },
+    };
+    expect(() => processesOf(withCorrelate(undefined, undefined, bare), config)).toThrow(
+      '"payment.PaymentSettled" comes from another aggregate; give its payload "orderId" or say which instance it belongs to with from.payment.PaymentSettled(…) in correlate',
+    );
+  });
+
+  it("refuse at boot to read the id field through a payload schema that is not a plain object", () => {
+    const config = resolveConfig({
+      storage: memory(),
+      collaborators: { order: { notifier: "memory" } },
+    });
+    const transformed = ({ z }: PayloadArgs) =>
+      z.object({ orderId: z.string() }).transform((payload) => ({ ...payload, at: "now" }));
+    const piped = {
+      ...payment,
+      events: {
+        paymentFailed: { payload: paymentPayload, apply: () => ({}) },
+        paymentSettled: { payload: transformed, apply: () => ({}) },
+      },
+    };
+    expect(() => processesOf(withCorrelate(undefined, undefined, piped), config)).toThrow(
+      'aggregates.order.processes.checkout: "payment.PaymentSettled" comes from another aggregate; its payload schema is not a plain z.object, so its "orderId" cannot be read; say which instance it belongs to with from.payment.PaymentSettled(…) in correlate',
+    );
+    expect(() =>
+      processesOf(
+        withCorrelate(
+          { payment: { PaymentSettled: byOrder.payment.PaymentSettled } },
+          undefined,
+          piped,
+        ),
+        config,
+      ),
+    ).not.toThrow();
   });
 
   it("refuse at boot a correlate that is not a function, returns no list, names no event or names one twice", () => {

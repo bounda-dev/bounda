@@ -189,23 +189,34 @@ const compileCorrelate = (
   return correlators;
 };
 
+type IdFieldRoute = { readonly correlate: Correlator } | { readonly refused: string };
+
 // An event of another aggregate whose payload schema declares the id field of the process's
 // aggregate belongs to the instance it names, and to none when it is null or empty. Any other
-// value goes on as it is, for `instanceOf` to refuse.
+// value goes on as it is, for `instanceOf` to refuse. Only a plain object schema says what is
+// stored: a transform's output, which is, cannot be read from it.
 const byIdField = (
   aggregates: AggregatesRuntime,
   aggregate: string,
   qualified: string,
-): Correlator | undefined => {
+): IdFieldRoute => {
   const field = aggregates.byName[aggregate]?.aggregateIdField;
   const [source = "", type = ""] = qualified.split(".");
-  const schema = aggregates.byName[source]?.eventsByType[type]?.schema;
-  if (field === undefined || !(schema instanceof z.ZodObject) || !(field in schema.shape)) {
-    return undefined;
+  const schema = aggregates.byName[source]?.eventsByType[type]?.schema ?? null;
+  const correlateIt = `say which instance it belongs to with from.${qualified}(…) in correlate`;
+  if (schema !== null && !(schema instanceof z.ZodObject)) {
+    return {
+      refused: `its payload schema is not a plain z.object, so its "${field}" cannot be read; ${correlateIt}`,
+    };
   }
-  return (event) => {
-    const id: unknown = Reflect.get(event.payload as object, field);
-    return id === null || id === undefined || id === "" ? null : (id as string);
+  if (field === undefined || schema === null || !(field in schema.shape)) {
+    return { refused: `give its payload "${field}" or ${correlateIt}` };
+  }
+  return {
+    correlate: (event) => {
+      const id: unknown = Reflect.get(event.payload as object, field);
+      return id === null || id === undefined || id === "" ? null : (id as string);
+    },
   };
 };
 
@@ -233,14 +244,13 @@ const buildProcess = (
   const own = (qualified: string): boolean => qualified.startsWith(`${aggregate}.`);
   for (const qualified of new Set([...startedBy, ...completedBy, ...Object.keys(handlers)])) {
     if (own(qualified) || correlate[qualified] !== undefined) continue;
-    const conventional = byIdField(aggregates, aggregate, qualified);
-    if (conventional === undefined) {
-      const field = aggregates.byName[aggregate]?.aggregateIdField;
+    const route = byIdField(aggregates, aggregate, qualified);
+    if ("refused" in route) {
       throw new ConfigurationError(
-        `${path}: "${qualified}" comes from another aggregate; give its payload "${field}" or say which instance it belongs to with from.${qualified}(…) in correlate`,
+        `${path}: "${qualified}" comes from another aggregate; ${route.refused}`,
       );
     }
-    correlate[qualified] = conventional;
+    correlate[qualified] = route.correlate;
   }
   return {
     name: `${aggregate}.${key}`,

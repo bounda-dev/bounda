@@ -413,7 +413,8 @@ A handler for another aggregate's event sits in a folder named after that aggreg
 `processes/order-payment/payment/on-payment-failed.ts`. Such an event carries that aggregate's id,
 not the order's. When its payload declares the order's id field, `orderId` (or the `aggregateId`
 of the order's `state.ts`), it belongs to the instance that field names, and to none when it is
-`null`: nothing else to write. Otherwise `index.ts` says which instance it belongs to in
+`null`: nothing else to write. Boot reads the field from a plain `z.object`; behind a
+`.transform()` what is stored cannot be read, so such an event needs `correlate`. Otherwise `index.ts` says which instance it belongs to in
 `correlate`, which gets `from` and returns `from.<aggregate>.<Event>(…)` for each such event: a
 function from the event to the id of the process's own aggregate, or `null` to ignore it. It
 also overrides the id field. Boot refuses an event of another aggregate the process listens to
