@@ -274,7 +274,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       logger,
     });
     const policies = buildPolicies({ registry, aggregates });
-    const policyExecutor = createPolicyExecutor({ aggregates, pipeline, config, clock });
+    const policyExecutor = createPolicyExecutor({ aggregates, pipeline, config, clock, logger });
     const reactive = [
       {
         subscriber: createPolicySubscriber({

@@ -2,24 +2,36 @@ import { describe, expect, it } from "vitest";
 import { ValidationError } from "../../contracts/errors.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { createReactionCommandIds } from "../shared/idempotency-key.ts";
-import { createKernelHarness, drained, orderRegistry, slowJob } from "../test-support.ts";
+import {
+  createKernelHarness,
+  createRecordingLogger,
+  drained,
+  orderRegistry,
+  slowJob,
+} from "../test-support.ts";
 import { createUnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import { scheduledCommandKey } from "./pipeline.ts";
-import { createReactionCommands, ReactionAbandonedError } from "./reaction-commands.ts";
+import {
+  createReactionCommands,
+  ReactionAbandonedError,
+  ReactionFinishedError,
+} from "./reaction-commands.ts";
 
 const context = { correlationId: "req-1", causationId: "evt-1", depth: 4 };
 
 const setUp = async (registry: Registry = orderRegistry) => {
   const harness = await createKernelHarness({ registry });
   const unit = createUnitOfWork({ storage: harness.storage });
+  const { logger, entries } = createRecordingLogger();
   const reaction = createReactionCommands({
     aggregates: harness.aggregates,
     pipeline: harness.pipeline,
     context,
     idempotencyKey: "key-1",
     within: unit,
+    logger,
   });
-  return { ...harness, reaction, unit };
+  return { ...harness, reaction, unit, entries };
 };
 
 describe("createReactionCommands", () => {
@@ -71,6 +83,69 @@ describe("createReactionCommands", () => {
       ["OrderPaid", 2],
     ]);
     expect(await storage.scheduler.list()).toHaveLength(1);
+  });
+
+  it("refuses a command dispatched once decided has resolved, naming it, and logs the refusal", async () => {
+    const { reaction, unit, entries } = await setUp();
+    await reaction.decided();
+    const late = reaction.commands.placeOrder?.({ orderId: "o-1", total: 3 });
+
+    await expect(late).rejects.toBeInstanceOf(ReactionFinishedError);
+    await expect(late).rejects.toMatchObject({
+      code: "REACTION_FINISHED",
+      command: "PlaceOrder",
+      message:
+        "Command PlaceOrder was dispatched after its run had finished: dispatch commands while the handler runs",
+    });
+    expect(
+      await unit.eventStore.load({ aggregateType: "order", aggregateId: "o-1" }),
+    ).toMatchObject({ events: [] });
+    expect(entries).toEqual([
+      {
+        level: "error",
+        message: "command dispatched after its run had finished; refused",
+        fields: { command: "PlaceOrder", correlationId: "req-1", causationId: "evt-1" },
+      },
+    ]);
+    expect(reaction.signal.aborted).toBe(false);
+  });
+
+  it("leaves no command refused once the run has finished unhandled", async () => {
+    const { reaction } = await setUp();
+    const unhandled: unknown[] = [];
+    const record = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", record);
+    try {
+      await reaction.decided();
+      void reaction.commands.placeOrder?.({ orderId: "o-1", total: 3 });
+      await drained();
+      await drained();
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", record);
+    }
+  });
+
+  it("refuses commands dispatched once decided has rejected", async () => {
+    const { reaction } = await setUp();
+    void reaction.commands.payOrder?.({ orderId: "o-1", method: "cash" });
+    await expect(reaction.decided()).rejects.toThrow(ValidationError);
+
+    await expect(
+      reaction.commands.placeOrder?.({ orderId: "o-2", total: 3 }),
+    ).rejects.toBeInstanceOf(ReactionFinishedError);
+  });
+
+  it("refuses commands with the abandonment when the run was abandoned after decided settled", async () => {
+    const { reaction } = await setUp();
+    await reaction.decided();
+    reaction.abandon(new Error("timed out"));
+
+    await expect(
+      reaction.commands.placeOrder?.({ orderId: "o-1", total: 3 }),
+    ).rejects.toBeInstanceOf(ReactionAbandonedError);
   });
 
   it("refuses commands after the run is abandoned, saying why, and aborts its signal", async () => {

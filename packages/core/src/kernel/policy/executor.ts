@@ -1,6 +1,7 @@
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
+import type { Logger } from "../../contracts/logger.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
 import { createReactionCommands } from "../command/reaction-commands.ts";
@@ -41,6 +42,7 @@ export interface CreatePolicyExecutorArgs {
   readonly pipeline: CommandPipeline;
   readonly config: ResolvedConfig;
   readonly clock: Clock;
+  readonly logger: Logger;
 }
 
 export interface CreatePolicyExecutorFunction {
@@ -52,6 +54,7 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
   pipeline,
   config,
   clock,
+  logger,
 }) => ({
   run: async ({ policy, event, attempt, replay, within }) => {
     const idempotencyKey = deriveIdempotencyKey({
@@ -70,6 +73,7 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
       },
       idempotencyKey,
       within,
+      logger,
     });
     const handled = traced({
       name: `bounda.policy ${policy.name}`,

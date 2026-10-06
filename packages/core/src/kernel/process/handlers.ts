@@ -3,6 +3,7 @@ import type { Clock } from "../../contracts/clock.ts";
 import type { ReactionDispatchResult } from "../../contracts/command.ts";
 import { ValidationError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
+import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
@@ -75,6 +76,7 @@ export interface CreateProcessHandlersArgs {
   readonly pipeline: CommandPipeline;
   readonly config: ResolvedConfig;
   readonly clock: Clock;
+  readonly logger: Logger;
 }
 
 export interface CreateProcessHandlersFunction {
@@ -86,13 +88,14 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
   pipeline,
   config,
   clock,
+  logger,
 }) => {
   const reactionFor = (
     context: CausationContext,
     idempotencyKey: string,
     within: UnitStores,
   ): ReactionCommands =>
-    createReactionCommands({ aggregates, pipeline, context, idempotencyKey, within });
+    createReactionCommands({ aggregates, pipeline, context, idempotencyKey, within, logger });
 
   const handlerArgs = (
     process: ProcessRuntime,

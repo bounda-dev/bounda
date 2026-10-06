@@ -232,8 +232,8 @@ if (paid.rejected === "NotOpen") {
 A rejection nobody looks at is logged (`command rejected`, at `info`) and recorded on the
 command's span; a test asserts the ones it expects from what
 [`runUntilIdle()`](/guides/testing/#rejections) returns. A delayed command that is rejected when it
-runs changes nothing in the same way. Only a failure rejects the `await`: a payload that does not
-validate, a concurrency conflict that outlasts its retries, an error the handler throws. The run
+runs changes nothing in the same way. While the run lasts, only a failure rejects the `await`: a
+payload that does not validate, a concurrency conflict that outlasts its retries, an error the handler throws. The run
 fails with it, and the runtime retries it or dead-letters it (see [Retries and timeouts](#retries-and-timeouts)).
 
 ## Calling the outside world
@@ -276,7 +276,9 @@ A few rules keep it correct:
   awaited or not, within the handler's time, and one that fails fails the run, even if the handler
   catches its error; one the handler withdraws with its own `signal` does not. Awaiting is what
   keeps them in order, so a second command sees what the first decided, and what gives the
-  handler their answers.
+  handler their answers. A command dispatched once the run has finished, from a timer or a promise
+  the handler left behind, is not part of it: it is refused (the error's `code` is
+  `REACTION_FINISHED`) and logged at `error`, and decides nothing.
 - **Pass `idempotencyKey` to every provider that takes one.** It is one key per handler run, and
   the handler passes it as it is, even when the run causes two effects:
   - Two effects on **different providers** (charging the card, sending the receipt) go in a
