@@ -3,11 +3,14 @@ export { createFixedClock, systemClock } from "./clock.ts";
 export type {
   Command,
   CommandRejection,
+  DecidedDispatch,
   DispatchOptions,
   DispatchResult,
   NewCommand,
   ReactionDispatchResult,
   RejectedDispatch,
+  ScheduledDispatch,
+  StoredDispatch,
 } from "./command.ts";
 export type {
   AsDurationFunction,

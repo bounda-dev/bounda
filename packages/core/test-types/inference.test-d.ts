@@ -3,8 +3,10 @@ import type {
   BoundaApp,
   CatchUpReadModelsArgs,
   Clock,
+  CommandInvoker,
   CommandsFacade,
   CreateArgs,
+  DecidedDispatch,
   DispatchOptions,
   DispatchResult,
   DomainError,
@@ -16,8 +18,11 @@ import type {
   ProcessCorrelation,
   QueriesFacade,
   ReactionDispatchResult,
+  RejectedDispatch,
   RejectFunction,
   RejectionCodeOf,
+  ScheduledDispatch,
+  StoredDispatch,
   StoredEvent,
   Table,
 } from "@bounda-dev/core";
@@ -48,6 +53,10 @@ import type { Query as GetOrder } from "./fixtures/order-app/app/read/order-summ
 import type { Query as ListUnpaidOrders } from "./fixtures/order-app/app/read/order-summary/queries/+types/list-unpaid-orders.ts";
 
 type Registry = typeof registry;
+
+declare const commands: Commands;
+declare const reactionCommands: SendReceipt.HandlerArgs["commands"];
+declare const options: DispatchOptions;
 type OrderStatus = "new" | "placed" | "paid" | "cancelled";
 
 interface OrderSummaryRow {
@@ -274,19 +283,20 @@ describe("policies", () => {
   });
 
   it("get each command's decision, typed like app.commands but without a position", () => {
-    expectTypeOf<SendReceipt.HandlerArgs["commands"]["payOrder"]>().returns.toEqualTypeOf<
+    const payment = { orderId: "o-1", method: "card", reference: "r-1" } as const;
+    expectTypeOf<ReturnType<SendReceipt.HandlerArgs["commands"]["payOrder"]>>().toEqualTypeOf<
       Promise<ReactionDispatchResult<"NotPlaced">>
     >();
     expectTypeOf<Parameters<SendReceipt.HandlerArgs["commands"]["payOrder"]>>().toEqualTypeOf<
       Parameters<Commands["payOrder"]>
     >();
-    expectTypeOf<OnOrderPaid.HandlerArgs["commands"]["payOrder"]>().returns.toEqualTypeOf<
+    expectTypeOf<ReturnType<OnOrderPaid.HandlerArgs["commands"]["payOrder"]>>().toEqualTypeOf<
       Promise<ReactionDispatchResult<"NotPlaced">>
     >();
-    expectTypeOf<AtNextReminder.DeadlineArgs["commands"]["payOrder"]>().returns.toEqualTypeOf<
+    expectTypeOf<ReturnType<AtNextReminder.DeadlineArgs["commands"]["payOrder"]>>().toEqualTypeOf<
       Promise<ReactionDispatchResult<"NotPlaced">>
     >();
-    expectTypeOf<Extract<ReactionDispatchResult, { scheduled: false }>>().toEqualTypeOf<{
+    expectTypeOf<DecidedDispatch>().toEqualTypeOf<{
       readonly rejected: false;
       readonly scheduled: false;
       readonly aggregateType: string;
@@ -295,10 +305,20 @@ describe("policies", () => {
       readonly eventIds: readonly string[];
       readonly eventTypes: readonly string[];
     }>();
-    expectTypeOf<Extract<ReactionDispatchResult, { scheduled: false }>>().not.toHaveProperty(
-      "position",
-    );
-    expectTypeOf<Extract<DispatchResult, { scheduled: false }>>().toHaveProperty("position");
+    expectTypeOf<DecidedDispatch>().not.toHaveProperty("position");
+    expectTypeOf<StoredDispatch>().toHaveProperty("position");
+    expectTypeOf(reactionCommands.payOrder(payment)).resolves.toEqualTypeOf<
+      DecidedDispatch | RejectedDispatch<"NotPlaced">
+    >();
+    expectTypeOf(reactionCommands.payOrder(payment, { delay: "1h" })).resolves.toEqualTypeOf<
+      ScheduledDispatch & { readonly rejected: false }
+    >();
+    expectTypeOf(reactionCommands.payOrder(payment, options)).resolves.toEqualTypeOf<
+      ReactionDispatchResult<"NotPlaced">
+    >();
+    expectTypeOf(
+      reactionCommands.cancelOrder({ orderId: "o-1", reason: "r" }),
+    ).resolves.toEqualTypeOf<DecidedDispatch>();
   });
 
   it("get a rejection as a value, with the codes the command declares", () => {
@@ -311,7 +331,7 @@ describe("policies", () => {
       readonly aggregateId: string;
     }>();
     expectTypeOf<Extract<Paid, { rejected: "NotPlaced" }>>().not.toHaveProperty("eventIds");
-    expectTypeOf<Extract<Paid, { scheduled: true }>>().toEqualTypeOf<{
+    expectTypeOf<Extract<Paid, { scheduled: true }>>().branded.toEqualTypeOf<{
       readonly rejected: false;
       readonly scheduled: true;
       readonly aggregateType: string;
@@ -450,10 +470,13 @@ describe("facades", () => {
       method: "card" | "transfer";
       reference: string;
     }>();
-    expectTypeOf<Commands["payOrder"]>().parameter(1).toEqualTypeOf<DispatchOptions | undefined>();
+    expectTypeOf<Parameters<Commands["payOrder"]>[1]>().toEqualTypeOf<
+      DispatchOptions | undefined
+    >();
     expectTypeOf<DispatchOptions["signal"]>().toEqualTypeOf<AbortSignal | undefined>();
-    expectTypeOf<Commands["payOrder"]>().returns.toEqualTypeOf<Promise<DispatchResult>>();
-    expectTypeOf<Extract<DispatchResult, { scheduled: false }>>().toEqualTypeOf<{
+    expectTypeOf<ReturnType<Commands["payOrder"]>>().toEqualTypeOf<Promise<DispatchResult>>();
+    expectTypeOf<DispatchResult>().toEqualTypeOf<StoredDispatch | ScheduledDispatch>();
+    expectTypeOf<StoredDispatch>().toEqualTypeOf<{
       readonly scheduled: false;
       readonly aggregateType: string;
       readonly aggregateId: string;
@@ -462,11 +485,50 @@ describe("facades", () => {
       readonly eventTypes: readonly string[];
       readonly position: number;
     }>();
+    expectTypeOf<ScheduledDispatch>().toEqualTypeOf<{
+      readonly scheduled: true;
+      readonly aggregateType: string;
+      readonly aggregateId: string;
+      readonly executeAt: string;
+    }>();
     expectTypeOf<DispatchResult>().not.toHaveProperty("rejected");
     expectTypeOf<BoundaApp<Registry>["catchUpReadModels"]>()
       .parameter(0)
       .toEqualTypeOf<CatchUpReadModelsArgs | undefined>();
     expectTypeOf<CatchUpReadModelsArgs["through"]>().toEqualTypeOf<DispatchResult | undefined>();
+  });
+
+  it("type a command's result by whether it has a delay", async () => {
+    const payment = { orderId: "o-1", method: "card", reference: "r-1" } as const;
+    const signal = new AbortController().signal;
+    expectTypeOf(commands.payOrder(payment)).resolves.toEqualTypeOf<StoredDispatch>();
+    expectTypeOf(commands.payOrder(payment, { signal })).resolves.toEqualTypeOf<StoredDispatch>();
+    expectTypeOf(
+      commands.payOrder(payment, { correlationId: "c-1" }),
+    ).resolves.toEqualTypeOf<StoredDispatch>();
+    expectTypeOf(
+      commands.payOrder(payment, { delay: "1h", signal }),
+    ).resolves.toEqualTypeOf<ScheduledDispatch>();
+    expectTypeOf(commands.payOrder(payment, options)).resolves.toEqualTypeOf<DispatchResult>();
+    expectTypeOf((await commands.payOrder(payment)).eventTypes).toEqualTypeOf<readonly string[]>();
+  });
+
+  it("type the result of a command without a payload, or with an optional one, the same way", () => {
+    interface Bare {
+      readonly handler: () => readonly [];
+    }
+    interface Loose {
+      readonly payload?: unknown;
+      readonly handler: () => readonly [];
+    }
+    const bare = {} as CommandInvoker<Bare>;
+    const loose = {} as CommandInvoker<Loose>;
+    expectTypeOf(bare()).resolves.toEqualTypeOf<StoredDispatch>();
+    expectTypeOf(bare({ delay: "1h" })).resolves.toEqualTypeOf<ScheduledDispatch>();
+    expectTypeOf(bare(options)).resolves.toEqualTypeOf<DispatchResult>();
+    expectTypeOf(loose()).resolves.toEqualTypeOf<StoredDispatch>();
+    expectTypeOf(loose(undefined, { delay: "1h" })).resolves.toEqualTypeOf<ScheduledDispatch>();
+    expectTypeOf(loose(undefined, options)).resolves.toEqualTypeOf<DispatchResult>();
   });
 
   it("match the facades derived from the runtime registry", () => {

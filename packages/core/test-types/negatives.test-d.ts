@@ -10,6 +10,7 @@ import {
 import type { AdapterDefinition } from "@bounda-dev/core/adapter";
 import { defineConfig } from "@bounda-dev/core/config";
 import { describe, it } from "vitest";
+import type { Commands } from "./fixtures/order-app/.bounda/types.ts";
 import type { Command as RegisterCustomer } from "./fixtures/order-app/app/domain/customer/commands/+types/register-customer.ts";
 import type { Command as PayOrder } from "./fixtures/order-app/app/domain/order/commands/+types/pay-order.ts";
 import type { Command as PlaceOrder } from "./fixtures/order-app/app/domain/order/commands/+types/place-order.ts";
@@ -52,6 +53,26 @@ describe("what does not compile", () => {
       if (cancelled.rejected === "NotPlaced") return;
     };
     void policy;
+  });
+
+  it("reading the case a command's delay rules out", () => {
+    const policy = async ({ commands }: OnOrderPaid.HandlerArgs) => {
+      const payment = { orderId: "o-1", method: "card", reference: "r" } as const;
+      const paid = await commands.payOrder(payment);
+      // @ts-expect-error without delay the command is never scheduled
+      if (paid.scheduled === true) return;
+      const later = await commands.payOrder(payment, { delay: "1h" });
+      // @ts-expect-error with delay nothing was decided yet
+      return later.eventTypes;
+    };
+    void policy;
+    const request = async (commands: Commands) => {
+      const payment = { orderId: "o-1", method: "card", reference: "r" } as const;
+      const paid = await commands.payOrder(payment);
+      // @ts-expect-error without delay the command is stored, not scheduled
+      return paid.executeAt;
+    };
+    void request;
   });
 
   it("a DomainError built by hand", () => {
