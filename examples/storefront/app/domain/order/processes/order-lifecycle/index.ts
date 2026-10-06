@@ -8,11 +8,3 @@ export const config = ({ events }: Process.ConfigArgs) => ({
 
 export const state = ({ z, deadline }: Process.StateArgs) =>
   z.object({ paymentId: z.uuid().nullable().default(null), paymentDeadline: deadline() });
-
-export const correlate: Process.Correlate = {
-  payment: {
-    PaymentProcessing: (event) => event.payload.orderId,
-    PaymentSettled: (event) => event.payload.orderId,
-    PaymentDeclined: (event) => event.payload.orderId,
-  },
-};

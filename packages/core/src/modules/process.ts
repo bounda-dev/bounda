@@ -41,18 +41,30 @@ export interface ProcessConfigArgs<Events extends AppEventModules> {
 }
 
 /**
- * How the events of other aggregates find their process instance: per aggregate and event type,
- * a function from the event to the id of the process's own aggregate, or `null` to ignore it.
- * `{ payment: { PaymentFailed: (event) => event.payload.orderId } }`. The process's own events
- * find their instance by their `aggregateId` unless an entry says otherwise.
+ * Which instance of a process an event belongs to, as `from.<aggregate>.<Event>(…)` makes it.
  */
-export type ProcessCorrelate<Events extends AppEventModules> = {
-  readonly [Aggregate in keyof Events & string]?: {
-    readonly [Key in keyof Events[Aggregate] & string as TypeNameOf<Key>]?: (
-      event: StoredEventOf<Events[Aggregate], Key>,
-    ) => string | null;
+export interface ProcessCorrelation {
+  readonly event: string;
+  readonly correlate: (event: never) => string | null;
+}
+
+/**
+ * Arguments of a process `correlate`: `from.payment.PaymentFailed((event) => …)` says which
+ * instance an event belongs to, from the event to the id of the process's own aggregate, or
+ * `null` to ignore it; `correlate` returns one for each event it decides. An event of another
+ * aggregate whose payload declares the id field of the process's aggregate (`orderId`) needs none:
+ * it belongs to the instance that field names, and to none when it is `null`. The process's own
+ * events find their instance by their `aggregateId`.
+ */
+export interface ProcessCorrelateArgs<Events extends AppEventModules> {
+  readonly from: {
+    readonly [Aggregate in keyof Events & string]: {
+      readonly [Key in keyof Events[Aggregate] & string as TypeNameOf<Key>]: (
+        correlate: (event: StoredEventOf<Events[Aggregate], Key>) => string | null,
+      ) => ProcessCorrelation;
+    };
   };
-};
+}
 
 /**
  * The schema `instant()` returns: a moment the process only records, `null` until it is set.
@@ -105,15 +117,13 @@ export interface ProcessAfterFunction {
 }
 
 /**
- * The shape of a process `index.ts`: a `config`, an optional `state` schema and, when it listens
- * to other aggregates, `correlate`.
+ * The shape of a process `index.ts`: a `config`, an optional `state` schema and, when an event of
+ * another aggregate does not name its instance by itself, `correlate`.
  */
 export interface ProcessModule {
   readonly config: (args: never) => ProcessConfig;
   readonly state?: (args: ProcessStateArgs) => unknown;
-  readonly correlate?: Readonly<
-    Record<string, Readonly<Record<string, ((event: never) => string | null) | undefined>>>
-  >;
+  readonly correlate?: (args: never) => readonly ProcessCorrelation[];
 }
 
 /**

@@ -209,7 +209,7 @@ const processFiles = (
         members: [
           ["ConfigArgs", "core.ProcessConfigArgs<generated.Events>"],
           ["StateArgs", "core.ProcessStateArgs"],
-          ["Correlate", "core.ProcessCorrelate<generated.Events>"],
+          ["CorrelateArgs", "core.ProcessCorrelateArgs<generated.Events>"],
         ],
       }),
       ...process.handlers.map((handler) =>

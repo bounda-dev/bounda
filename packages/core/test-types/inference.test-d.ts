@@ -13,6 +13,7 @@ import type {
   ImplementationModule,
   Instant,
   Logger,
+  ProcessCorrelation,
   QueriesFacade,
   ReactionDispatchResult,
   RejectFunction,
@@ -350,13 +351,24 @@ describe("processes", () => {
   });
 
   it("type correlate by aggregate and event, from the event to an instance id or null", () => {
-    type Correlator = NonNullable<
-      NonNullable<OrderPayment.Correlate["customer"]>["CustomerRegistered"]
-    >;
+    type From = OrderPayment.CorrelateArgs["from"]["customer"]["CustomerRegistered"];
+    type Correlator = Parameters<From>[0];
     expectTypeOf<Parameters<Correlator>[0]>().toEqualTypeOf<
       StoredEvent<"CustomerRegistered", { email: string }>
     >();
     expectTypeOf<ReturnType<Correlator>>().toEqualTypeOf<string | null>();
+    expectTypeOf<ReturnType<From>>().toEqualTypeOf<ProcessCorrelation>();
+    expectTypeOf<keyof OrderPayment.CorrelateArgs["from"]>().toEqualTypeOf<"customer" | "order">();
+  });
+
+  it("infer the event of a correlate entry without annotating it", () => {
+    const correlate = ({ from }: OrderPayment.CorrelateArgs) => [
+      from.customer.CustomerRegistered((event) => {
+        expectTypeOf(event.payload).toEqualTypeOf<{ email: string }>();
+        return null;
+      }),
+    ];
+    expectTypeOf(correlate).returns.toEqualTypeOf<ProcessCorrelation[]>();
   });
 
   it("type a handler for another aggregate's event against that aggregate", () => {

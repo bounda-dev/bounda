@@ -411,19 +411,19 @@ merged into the final state; the events its commands cause still reach the proce
 
 A handler for another aggregate's event sits in a folder named after that aggregate,
 `processes/order-payment/payment/on-payment-failed.ts`. Such an event carries that aggregate's id,
-not the order's, so `index.ts` says which instance it belongs to in `correlate`: a function per
-event that returns the id of the process's own aggregate, or `null` to ignore the event. Boot
-refuses an event of another aggregate the process listens to without one. A `correlate` that
-throws, or returns anything but an id or `null`, dead-letters that event for the process and the
-rest carry on.
+not the order's. When its payload declares the order's id field, `orderId` (or the `aggregateId`
+of the order's `state.ts`), it belongs to the instance that field names, and to none when it is
+`null`: nothing else to write. Otherwise `index.ts` says which instance it belongs to in
+`correlate`, which gets `from` and returns `from.<aggregate>.<Event>(…)` for each such event: a
+function from the event to the id of the process's own aggregate, or `null` to ignore it. It
+also overrides the id field. Boot refuses an event of another aggregate the process listens to
+with neither. A correlator that throws, or returns anything but an id or `null`, dead-letters
+that event for the process and the rest carry on.
 
 ```ts
-export const correlate: Process.Correlate = {
-  payment: {
-    PaymentFailed: (event) => event.payload.orderId,
-    PaymentSettled: (event) => event.payload.orderId,
-  },
-};
+export const correlate = ({ from }: Process.CorrelateArgs) => [
+  from.shipping.ParcelLost((event) => event.payload.reference),
+];
 ```
 
 An event that does not start the process and finds no open instance is skipped, and so is any

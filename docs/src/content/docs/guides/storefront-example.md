@@ -35,8 +35,9 @@ webhooks.
    customer 72 hours to pay, as a deadline in its state.
 5. The provider's webhooks are commands on the payment: `markPaymentProcessing`,
    `settlePayment` and `declinePayment`. The process follows the payment's events, which carry
-   the order's id for its `correlate`: `PaymentProcessing` locks the order (`paying`, which
-   refuses a cancellation), `PaymentSettled` marks it paid and `PaymentDeclined` cancels it.
+   the order's id as `orderId`, so they reach its instance with no `correlate`:
+   `PaymentProcessing` locks the order (`paying`, which refuses a cancellation), `PaymentSettled`
+   marks it paid and `PaymentDeclined` cancels it.
 6. Once the order is paid the process dispatches `fulfillOrder`. When the order is cancelled,
    whoever cancelled it, the process cancels the payment, and a payment that settles after it was
    cancelled is refunded by the policy `refund-on-refund-requested`.
