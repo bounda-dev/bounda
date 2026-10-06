@@ -329,7 +329,10 @@ so it never collides with an `order` policy of the same name. A policy cannot be
 aggregate, and one whose trigger is not an event of the aggregate it listens to fails at boot.
 
 Policies dispatch through `commands`, the typed facade of every command in the app. A command can
-be delayed: `commands.sendReminder({ orderId }, { delay: "24h" })`. The compiler checks a literal
+be delayed: `commands.sendReminder({ orderId }, { delay: "24h" })`. The call's type follows: one
+with `delay` resolves with `scheduled: true` and `executeAt`, one without with what the command
+decided (`eventTypes`, and `position` from `app.commands`), with no scheduled case to rule out
+first. The compiler checks a literal
 duration; for one that comes from the environment, `asDuration` from `@bounda-dev/core` checks it
 at the call site and returns it typed. A delayed command's payload is stored as JSON and validated
 in that form when it is dispatched, so what would fail when it runs fails at once: a `z.date()`

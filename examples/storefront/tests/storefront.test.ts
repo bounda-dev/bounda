@@ -215,12 +215,11 @@ describe("storefront", () => {
     await app.runUntilIdle();
     const paymentId = await paymentOf();
 
-    expect(await app.commands.settlePayment({ paymentId })).toMatchObject({
-      eventTypes: ["PaymentSettled"],
-    });
-    expect(await app.commands.settlePayment({ paymentId })).toMatchObject({ eventTypes: [] });
+    const settle = async () => (await app.commands.settlePayment({ paymentId })).eventTypes;
+    expect(await settle()).toEqual(["PaymentSettled"]);
+    expect(await settle()).toEqual([]);
     await app.runUntilIdle();
-    expect(await app.commands.settlePayment({ paymentId })).toMatchObject({ eventTypes: [] });
+    expect(await settle()).toEqual([]);
     await app.runUntilIdle();
     expect(await summary()).toMatchObject({ status: "fulfilled", paymentStatus: "settled" });
     expect(refundCalls).toEqual([]);
@@ -323,7 +322,7 @@ describe("storefront", () => {
       app.commands.placeOrder({ orderId: ORDER, customerId: "ada", items }),
     ).rejects.toMatchObject({ rejected: "AlreadyPlaced" });
     await app.commands.markOrderPaid({ orderId: ORDER });
-    expect(await app.commands.markOrderPaid({ orderId: ORDER })).toMatchObject({ eventTypes: [] });
+    expect((await app.commands.markOrderPaid({ orderId: ORDER })).eventTypes).toEqual([]);
     await app.commands.placeOrder({ orderId: OTHER, customerId: "ada", items });
     await app.commands.cancelOrder({ orderId: OTHER, reason: "changed my mind" });
     await expect(app.commands.markOrderPaid({ orderId: OTHER })).rejects.toThrow(

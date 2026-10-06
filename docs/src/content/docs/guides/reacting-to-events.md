@@ -212,7 +212,8 @@ way out: see [Dead letters](#dead-letters).
 - `rejected: false` and `scheduled: false`: the aggregate decided, with its `version` and the
   `eventIds` and `eventTypes` it decided, in order;
 - `rejected: false` and `scheduled: true`: a command with `delay`, with when it runs in
-  `executeAt`;
+  `executeAt`. A call with `delay` is typed with this answer alone, since a delayed command is
+  rejected, if at all, when it runs; a call without `delay` is typed without it;
 - `rejected` set to a code: the command's handler rejected it with one of the codes its module
   declares in [`rejections`](/guides/project-layout/#rejections), and `message` says why. Nothing
   was decided.
