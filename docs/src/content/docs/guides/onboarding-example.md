@@ -97,7 +97,8 @@ The loader calls `listUsers({ page })` and the component gets `users`, `total`, 
 and `pages` typed.
 
 **Domain errors as form feedback.** `app/errors.server.ts` turns `ValidationError` into a 400 with
-the issues and `DomainError` into a 409; the route components render `actionData.error`.
+the issues and a command's rejection, a `DomainError`, into a 409 with its code; the route
+components render `actionData.error`.
 
 **Time in tests.** `tests/onboarding.test.ts` registers a user, advances the clock a minute and
 checks the welcome email was sent; advances a week and checks the registration expired:

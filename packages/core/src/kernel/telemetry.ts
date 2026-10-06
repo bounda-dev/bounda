@@ -37,6 +37,7 @@ export const ATTRIBUTES: {
   readonly process: "bounda.process";
   readonly attempt: "bounda.attempt";
   readonly outcome: "bounda.outcome";
+  readonly rejected: "bounda.rejected";
 } = {
   correlationId: "bounda.correlation_id",
   causationId: "bounda.causation_id",
@@ -55,6 +56,17 @@ export const ATTRIBUTES: {
   process: "bounda.process",
   attempt: "bounda.attempt",
   outcome: "bounda.outcome",
+  rejected: "bounda.rejected",
+};
+
+/**
+ * Users' queries rely on these names too. `bounda.command.rejected` carries the code in
+ * `bounda.rejected`.
+ */
+export const SPAN_EVENTS: {
+  readonly commandRejected: "bounda.command.rejected";
+} = {
+  commandRejected: "bounda.command.rejected",
 };
 
 export interface TracedArgs<T> {

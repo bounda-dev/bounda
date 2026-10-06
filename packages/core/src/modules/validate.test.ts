@@ -71,6 +71,36 @@ describe("validateRegistry", () => {
     ).toThrow(/must be a non-empty array of functions/);
   });
 
+  it("takes rejections only as a function", () => {
+    const rejections = () => ({ AlreadyPlaced: "Order already placed" });
+    expect(() =>
+      validateRegistry(
+        withOrder({ commands: { placeOrder: { module: { handler: noop, rejections } } } }),
+      ),
+    ).not.toThrow();
+    expect(() =>
+      validateRegistry(
+        withOrder({
+          commands: {
+            placeOrder: {
+              module: {
+                handler: noop,
+                rejections: { AlreadyPlaced: "Order already placed" } as never,
+              },
+            },
+          },
+        }),
+      ),
+    ).toThrow(
+      new ConfigurationError(
+        [
+          "Invalid registry:",
+          '  aggregates.order.commands.placeOrder: export "rejections" must be a function returning a message for each code',
+        ].join("\n"),
+      ),
+    );
+  });
+
   it("accepts a well-formed registry", () => {
     expect(() => validateRegistry(validRegistry)).not.toThrow();
   });

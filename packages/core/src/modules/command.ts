@@ -1,14 +1,43 @@
 import type { Command } from "../contracts/command.ts";
+import type { DomainError } from "../contracts/errors.ts";
 import type { HandlerState } from "./aggregate.ts";
 import type { EventBuilders, EventModules } from "./event.ts";
 import type { PayloadFunction } from "./payload.ts";
 
 /**
- * The shape of a command module: an optional `payload` schema and a `handler`.
+ * The shape of a command module: an optional `payload` schema, the optional `rejections` it may
+ * answer with and a `handler`.
  */
 export interface CommandModule {
   readonly payload?: PayloadFunction;
+  readonly rejections?: (args: never) => Readonly<Record<string, string>>;
   readonly handler: (args: never) => unknown;
+}
+
+/**
+ * The codes a command module declares in `rejections`; `never` without it.
+ */
+export type RejectionCodeOf<Module> = Module extends {
+  readonly rejections: (args: never) => infer Messages;
+}
+  ? Extract<keyof Messages, string>
+  : never;
+
+/**
+ * Arguments of a command's `rejections`, which the runtime calls when the handler rejects: the
+ * command and the state the handler saw, for the message to tell why.
+ */
+export interface CommandRejectionsArgs<Type extends string, Payload, State extends object> {
+  readonly command: Command<Type, Payload>;
+  readonly state: HandlerState<State>;
+}
+
+/**
+ * Rejects the command with one of the codes its module declares, and the message `rejections`
+ * gives it unless `message` is passed. `return reject(code)` and `throw reject(code)` do the same.
+ */
+export interface RejectFunction<Code extends string> {
+  (code: Code, message?: string): DomainError<Code>;
 }
 
 /**
@@ -28,6 +57,7 @@ export type CommandHandlerArgs<
   State extends object,
   Events extends EventModules,
   Collaborators extends object,
+  Rejected extends string = never,
 > = {
   readonly command: Command<Type, Payload>;
   readonly state: HandlerState<State>;
@@ -43,4 +73,5 @@ export type CommandHandlerArgs<
    * (`fetch(url, { signal })`) so it stops. Nothing the handler returns after that is stored.
    */
   readonly signal: AbortSignal;
-} & Readonly<Collaborators>;
+} & ([Rejected] extends [never] ? unknown : { readonly reject: RejectFunction<Rejected> }) &
+  Readonly<Collaborators>;

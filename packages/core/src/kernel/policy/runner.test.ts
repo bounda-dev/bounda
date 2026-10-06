@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resolveConfig } from "../../config/schema.ts";
-import { DomainError } from "../../contracts/errors.ts";
+import { ValidationError } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
@@ -37,7 +37,7 @@ const registry: Registry = {
             handler: async ({ event, commands, idempotencyKey }: PolicyArgs) => {
               calls.push(`pay:${event.aggregateId}`);
               keys.push(idempotencyKey);
-              if (behaviour === "domain") throw new DomainError("cannot pay");
+              if (behaviour === "domain") throw new ValidationError("cannot pay", []);
               if (behaviour === "flaky" && flakyFailures > 0) {
                 flakyFailures -= 1;
                 throw new Error("network");
@@ -669,6 +669,95 @@ describe("commands a policy dispatches", () => {
   });
 });
 
+describe("the commands of a policy run", () => {
+  const withHandler = (handler: (args: PolicyArgs) => Promise<void>): Registry => ({
+    aggregates: {
+      order: {
+        ...orderAggregateEntry(),
+        policies: { followOnOrderPlaced: { module: { handler } } },
+      },
+    },
+    readModels: {},
+  });
+
+  const typesOf = async (harness: ReactiveHarness, orderId: string) =>
+    (
+      await harness.storage.eventStore.load({ aggregateType: "order", aggregateId: orderId })
+    ).events.map((event) => event.type);
+
+  it("go on past a rejection the handler does not look at, which is logged", async () => {
+    const { logger, entries } = createRecordingLogger();
+    const harness = await createReactiveHarness({
+      registry: withHandler(async ({ event, commands }) => {
+        await commands.placeOrder?.({ orderId: event.aggregateId, total: 1 });
+        await commands.archiveOrder?.({ orderId: event.aggregateId });
+      }),
+      logger,
+    });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.dispatcher.runUntilIdle();
+
+    expect(await typesOf(harness, "o-1")).toEqual(["OrderPlaced", "OrderArchived"]);
+    expect(await harness.storage.deadLetterStore.count()).toBe(0);
+    expect(entries).toContainEqual({
+      level: "info",
+      message: "command rejected",
+      fields: {
+        type: "PlaceOrder",
+        rejected: "AlreadyPlaced",
+        message: "Order already placed",
+        aggregateType: "order",
+        aggregateId: "o-1",
+      },
+    });
+  });
+
+  it("commit with the run even when the handler does not await them", async () => {
+    const harness = await createReactiveHarness({
+      registry: withHandler(async ({ event, commands }) => {
+        void commands.archiveOrder?.({ orderId: event.aggregateId });
+      }),
+    });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.dispatcher.runUntilIdle();
+
+    expect(await typesOf(harness, "o-1")).toEqual(["OrderPlaced", "OrderArchived"]);
+  });
+
+  it("fail the run when one the handler does not await fails, without an unhandled rejection", async () => {
+    const unhandled: unknown[] = [];
+    const record = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", record);
+    try {
+      const harness = await createReactiveHarness({
+        registry: withHandler(async ({ event, commands }) => {
+          void commands.archiveOrder?.({ orderId: event.aggregateId });
+          void commands.payOrder?.({ orderId: event.aggregateId, method: "cash" });
+        }),
+      });
+      await harness.pipeline.dispatch({
+        type: "PlaceOrder",
+        payload: { orderId: "o-1", total: 10 },
+      });
+      await harness.dispatcher.runUntilIdle();
+
+      expect(await typesOf(harness, "o-1")).toEqual(["OrderPlaced"]);
+      expect(await harness.storage.deadLetterStore.list()).toMatchObject([
+        {
+          subscriber: "order.followOnOrderPlaced",
+          errorType: "terminal",
+          errorMessage: "Invalid payload for command PayOrder",
+        },
+      ]);
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", record);
+    }
+  });
+});
+
 describe("policies and the aggregate whose events they react to", () => {
   const reacted: string[] = [];
   const apply = () => ({});
@@ -800,7 +889,7 @@ describe("a policy run that fails", () => {
     const harness = await createReactiveHarness({
       registry: withPolicy(async ({ event, commands }) => {
         await commands.payOrder?.({ orderId: event.aggregateId, method: "card" }, { delay: "1h" });
-        throw new DomainError("refused");
+        throw new ValidationError("refused", []);
       }),
     });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });

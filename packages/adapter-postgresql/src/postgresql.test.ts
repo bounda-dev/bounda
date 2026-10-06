@@ -1,7 +1,6 @@
 import {
   ConfigurationError,
   createApp,
-  DomainError,
   type FieldsArgs,
   fieldBuilder as f,
   type PayloadArgs,
@@ -9,6 +8,7 @@ import {
   readYourWrites,
   silentLogger,
   type Table,
+  ValidationError,
 } from "@bounda-dev/core";
 import type { StoragePorts } from "@bounda-dev/core/adapter";
 import type { SqlExecutor } from "@bounda-dev/core/adapter/sql";
@@ -682,7 +682,7 @@ const refusingRegistry = (runs: string[]) =>
               handler: async ({ event }: { event: { aggregateId: string } }) => {
                 runs.push(event.aggregateId);
                 await new Promise((resolve) => setTimeout(resolve, 20));
-                throw new DomainError("refused");
+                throw new ValidationError("refused", []);
               },
             },
           },

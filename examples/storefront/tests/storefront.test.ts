@@ -251,7 +251,8 @@ describe("storefront", () => {
 
     await app.commands.settlePayment({ paymentId: await paymentOf() });
     await app.commands.cancelOrder({ orderId: ORDER, reason: "changed my mind" });
-    await app.runUntilIdle();
+    const { rejections } = await app.runUntilIdle();
+    expect(rejections).toMatchObject([{ type: "MarkOrderPaid", rejected: "NotOpen" }]);
     expect(await summary()).toMatchObject({ status: "cancelled", paymentStatus: "refunded" });
     expect(refunds.size).toBe(1);
     expect((await app.getLag()).maxLag).toBe(0);
@@ -320,7 +321,7 @@ describe("storefront", () => {
     await app.commands.placeOrder({ orderId: ORDER, customerId: "ada", items });
     await expect(
       app.commands.placeOrder({ orderId: ORDER, customerId: "ada", items }),
-    ).rejects.toBeInstanceOf(DomainError);
+    ).rejects.toMatchObject({ rejected: "AlreadyPlaced" });
     await app.commands.markOrderPaid({ orderId: ORDER });
     expect(await app.commands.markOrderPaid({ orderId: ORDER })).toMatchObject({ eventTypes: [] });
     await app.commands.placeOrder({ orderId: OTHER, customerId: "ada", items });
@@ -331,6 +332,9 @@ describe("storefront", () => {
     await expect(
       app.commands.settlePayment({ paymentId: "018f6a5e-4c3c-7c1e-9d4b-0b2c4a1d8e09" }),
     ).rejects.toBeInstanceOf(DomainError);
+    await expect(
+      app.commands.settlePayment({ paymentId: "018f6a5e-4c3c-7c1e-9d4b-0b2c4a1d8e09" }),
+    ).rejects.toMatchObject({ rejected: "NeverRequested" });
     await expect(
       app.commands.placeOrder({
         orderId: "018f6a5e-4c3c-7c1e-9d4b-0b2c4a1d8e03",

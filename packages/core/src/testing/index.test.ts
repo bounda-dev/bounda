@@ -200,9 +200,9 @@ describe("createTestApp collaborators", () => {
     await expect(app.commands.noteOrder({ orderId: "o-1" })).resolves.toMatchObject({
       eventTypes: ["OrderPlaced"],
     });
-    await expect(app.runUntilIdle()).resolves.toEqual({ idle: true });
+    await expect(app.runUntilIdle()).resolves.toMatchObject({ idle: true });
     clock.advance(HOUR);
-    await expect(app.runUntilIdle()).resolves.toEqual({ idle: true });
+    await expect(app.runUntilIdle()).resolves.toMatchObject({ idle: true });
     await expect(app.commands.placeOrder({ orderId: "o-2" })).rejects.toThrow(
       missing("notifier", '"smtp"'),
     );
@@ -274,7 +274,7 @@ describe("createTestApp runUntilIdle", () => {
       collaborators: { order: { notifier: recording([]), mailer: flaky(1, sent) } },
     });
     await app.commands.placeOrder({ orderId: "o-1" });
-    await expect(app.runUntilIdle()).resolves.toEqual({ idle: true });
+    await expect(app.runUntilIdle()).resolves.toMatchObject({ idle: true });
     expect(sent).toEqual(["mail o-1"]);
     expect(clock.now().toISOString()).toBe("2026-01-01T00:00:01.000Z");
     await app.stop();
@@ -286,7 +286,7 @@ describe("createTestApp runUntilIdle", () => {
       collaborators: { order: { notifier: recording([]), mailer: flaky(3, []) } },
     });
     await app.commands.placeOrder({ orderId: "o-1" });
-    await expect(app.runUntilIdle()).resolves.toEqual({ idle: true });
+    await expect(app.runUntilIdle()).resolves.toMatchObject({ idle: true });
     expect(clock.now().toISOString()).toBe("2026-01-01T00:00:03.000Z");
     expect(await app.deadLetters.list()).toMatchObject([
       { kind: "policy", subscriber: "order.mailOnOrderPlaced", attempts: 3 },
@@ -302,7 +302,7 @@ describe("createTestApp runUntilIdle", () => {
       collaborators: { order: { notifier: recording([]), mailer: flaky(1, sent) } },
     });
     await app.commands.placeOrder({ orderId: "o-1" });
-    await expect(app.runUntilIdle()).resolves.toEqual({ idle: true });
+    await expect(app.runUntilIdle()).resolves.toMatchObject({ idle: true });
     expect(sent).toEqual(["mail o-1"]);
     expect(clock.now().toISOString()).toBe("2026-01-01T00:00:00.000Z");
     await app.stop();
@@ -322,7 +322,7 @@ describe("createTestApp runUntilIdle", () => {
       collaborators: { order: { notifier: recording([]), mailer: flaky(1, sent) } },
     });
     await app.commands.placeOrder({ orderId: "o-1" });
-    await expect(app.runUntilIdle()).resolves.toEqual({ idle: true });
+    await expect(app.runUntilIdle()).resolves.toMatchObject({ idle: true });
     expect(deadlines).toEqual(["2026-01-01T01:00:00.000Z"]);
     expect(sent).toEqual(["mail o-1"]);
     expect(clock.now().toISOString()).toBe("2026-01-01T02:00:00.000Z");
@@ -342,10 +342,10 @@ describe("createTestApp runUntilIdle", () => {
     await app.commands.placeOrder({ orderId: "o-1" });
     await app.runUntilIdle();
     clock.advance(HOUR);
-    await expect(app.runUntilIdle({ maxPasses: 1 })).resolves.toEqual({ idle: false });
+    await expect(app.runUntilIdle({ maxPasses: 1 })).resolves.toMatchObject({ idle: false });
     expect(calls).toBe(1);
     await app.commands.noteOrder({ orderId: "o-1" });
-    await expect(app.runUntilIdle()).resolves.toEqual({ idle: true });
+    await expect(app.runUntilIdle()).resolves.toMatchObject({ idle: true });
     expect(calls).toBe(1);
     expect(clock.now().toISOString()).toBe("2026-01-01T01:00:00.000Z");
     await app.stop();
@@ -365,7 +365,7 @@ describe("createTestApp runUntilIdle", () => {
     await app.runUntilIdle();
     expect(clock.now().toISOString()).toBe("2026-01-01T00:00:00.000Z");
     clock.advance(HOUR);
-    await expect(app.runUntilIdle()).resolves.toEqual({ idle: true });
+    await expect(app.runUntilIdle()).resolves.toMatchObject({ idle: true });
     expect(calls).toBe(2);
     expect(clock.now().toISOString()).toBe("2026-01-01T01:00:01.000Z");
     await app.stop();

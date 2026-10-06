@@ -73,14 +73,18 @@ Command (the payload must carry the aggregate id field, `orderId` for `order` un
 says otherwise):
 
 ```ts
-import { DomainError } from "@bounda-dev/core";
 import type { Command } from "./+types/pay-order";
 
 export const payload = ({ z }: Command.PayloadArgs) =>
   z.object({ orderId: z.uuid(), method: z.enum(["card", "transfer"]) });
 
-export const handler = ({ command, state, events }: Command.HandlerArgs) => {
-  if (state.status !== "placed") throw new DomainError("Only placed orders can be paid");
+export const rejections = ({ state }: Command.RejectionsArgs) => ({
+  NotPlaced: `Only placed orders can be paid; this one is ${state.status ?? "new"}`,
+});
+
+export const handler = ({ command, state, events, reject }: Command.HandlerArgs) => {
+  if (state.status === "paid") return [];
+  if (state.status !== "placed") return reject("NotPlaced");
   return [events.orderPaid({ method: command.payload.method })];
 };
 ```
@@ -111,8 +115,10 @@ export const create: Implementation.Create = ({ env }) => {
 };
 
 // order/commands/place-order.ts
-export const handler = async ({ command, events, inventory }: Command.HandlerArgs) => {
-  if (!(await inventory.available(command.payload.skus))) throw new DomainError("Out of stock");
+export const rejections = () => ({ OutOfStock: "Some of the items are out of stock" });
+
+export const handler = async ({ command, events, inventory, reject }: Command.HandlerArgs) => {
+  if (!(await inventory.available(command.payload.skus))) return reject("OutOfStock");
   return [events.orderPlaced(command.payload)];
 };
 ```
@@ -247,7 +253,13 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   id of the process's own aggregate (or `null` to ignore it). Events for no open instance are
   skipped, but for those `at-timeout.ts` caused; a completed instance is never reopened. Returned state is validated against `state`.
 - A command handler returns the events to append, built with `events.<eventKey>(payload)`. It may
-  only build events of its own aggregate. Throw `DomainError` to reject a command.
+  only build events of its own aggregate. To say no, the module exports `rejections`, a function
+  of `{ command, state }` to `{ Code: message }`, and the handler returns `reject("Code")` (or
+  throws it); `reject` exists only then and only takes those codes. Name codes after the reason
+  (`NotOpen`, never `OrderClosed`). Never `new DomainError`. Repeating what is done returns `[]`,
+  not a rejection. A "no" the business remembers, someone else listens to, or that comes from
+  another store is an event instead. `app.commands` throws the rejection as a `DomainError` with
+  the code in `rejected`.
 - `state` in a handler carries `id` and `version` besides the aggregate's fields. Without
   `state.ts` it is inferred: give the event that opens the aggregate a `create`, and a handler sees
   either a fresh aggregate, every field `undefined` (`state.status === undefined`), or a created
@@ -262,14 +274,19 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   with its claim, its lifecycle events and its deadline entry when it ends, so a failed or crashed
   attempt leaves nothing behind, and a step whose instance moved meanwhile runs again on the new
   state; what `await commands.x()` returns is the aggregate's decision, not something stored yet:
-  call outside first, dispatch after, and await every dispatch. Outside the promise: the outside
+  call outside first, dispatch after, and await the dispatches (the attempt waits for every one
+  before it commits anyway; awaiting keeps their order). `await commands.x()` resolves with
+  `rejected: false`, or with `rejected` set to one of the command's codes and `message`: a
+  rejection the handler does not look at changes nothing and the run goes on; only a failure
+  rejects the promise and fails the run. Tests assert the expected ones from
+  `(await app.runUntilIdle()).rejections`. Outside the promise: the outside
   calls themselves, the inbox claim, and what a read model shows a handler (only what was
   committed before the attempt).
 - A saga is a pattern, not a module: a process (or policies) whose steps each have a
   compensation. A compensation is a command that decides from state and returns `[]` when there
   is nothing to undo; its effect goes in a policy with `idempotencyKey`. A failure arrives as the
-  `DomainError` of an awaited command (catch it and compensate) or as an event of another
-  aggregate; there is no failure hook.
+  rejection of an awaited command (`if (paid.rejected === "NotOpen")`, then compensate) or as an
+  event of another aggregate; there is no failure hook and no `try/catch`.
 - Policies and processes get the aggregate's collaborators spread next to `event` and `commands`,
   like commands do; a policy in `policies/<other-aggregate>/` still gets its own aggregate's.
   A policy that exports `delay` (`"1m"`, or `asDuration(env)`) runs that long
@@ -351,8 +368,8 @@ export const loader = ({ context }: Route.LoaderArgs) => context.get(bounda).que
 - The app in the context reads its own writes by default (`bounda({ consistency: "immediate" })`):
   a page reached right after a command sees its read models. Never call `runUntilIdle()` in a
   route.
-- Map `ValidationError` to a 400 with `error.issues` and `DomainError` to a 409 in one helper
-  (`failure`); let anything else reach the `ErrorBoundary`.
+- Map `ValidationError` to a 400 with `error.issues` and `DomainError` to a 409 with
+  `error.rejected` in one helper (`failure`); let anything else reach the `ErrorBoundary`.
 - Typecheck with `react-router typegen && tsc`; `.react-router/types` holds the route types and
   Bounda's `+types` sit next to the modules. They do not clash.
 

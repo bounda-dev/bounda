@@ -8,18 +8,20 @@ import {
   DomainError,
   NotFoundError,
   RebuildSupersededError,
+  rejectionOf,
   ScheduledClaimLostError,
   ValidationError,
 } from "./errors.ts";
 
 describe("errors", () => {
   it("expose a stable code and the subclass name", () => {
-    const error = new DomainError("Order already placed");
+    const error = new DomainError(rejectionOf("AlreadyPlaced", "Order already placed"));
     expect(error).toBeInstanceOf(BoundaError);
     expect(error).toBeInstanceOf(Error);
     expect(error.code).toBe("DOMAIN_ERROR");
     expect(error.name).toBe("DomainError");
     expect(error.message).toBe("Order already placed");
+    expect(error.rejected).toBe("AlreadyPlaced");
   });
 
   it("preserve the cause", () => {

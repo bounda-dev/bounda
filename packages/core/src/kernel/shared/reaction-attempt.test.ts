@@ -4,7 +4,7 @@ import type { DeadLetterErrorType } from "../../adapter/ports/dead-letter-store.
 import { pendingEvent } from "../../adapter/testing/fixtures.ts";
 import type { ResolvedRetryConfig } from "../../config/types.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
-import { DomainError } from "../../contracts/errors.ts";
+import { ValidationError } from "../../contracts/errors.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import type { UnitOfWork } from "../unit-of-work/unit-of-work.ts";
@@ -132,7 +132,7 @@ describe("runAttempt", () => {
 
   it("gives up on a terminal failure at once, committing the dead letter with the claim and nothing of the run", async () => {
     const { storage, runs, gaveUp, attempt, failing } = await setUp();
-    expect(await attempt({ run: failing(() => new DomainError("refused")) })).toBe("done");
+    expect(await attempt({ run: failing(() => new ValidationError("refused", [])) })).toBe("done");
     expect(runs).toEqual([1]);
     expect(gaveUp).toEqual(["1:terminal"]);
     expect(await storage.eventStore.lastPosition()).toBe(0);
@@ -355,9 +355,9 @@ describe("runAttempt", () => {
         }
         return result;
       });
-    await expect(attempt({ run: failing(() => new DomainError("refused")) })).rejects.toThrow(
-      "connection lost",
-    );
+    await expect(
+      attempt({ run: failing(() => new ValidationError("refused", [])) }),
+    ).rejects.toThrow("connection lost");
     expect(gaveUp).toEqual([]);
     expect(await storage.deadLetterStore.count()).toBe(0);
     expect(await storage.inboxLedger.get(key)).toMatchObject({ status: "pending", attempts: 1 });
@@ -371,7 +371,7 @@ describe("runAttempt", () => {
           await stage(unit);
           clock.advance(60_001);
           await storage.inboxLedger.tryClaim({ ...key, now: clock.now(), leaseMs: 60_000 });
-          throw new DomainError("refused");
+          throw new ValidationError("refused", []);
         },
       }),
     ).toBe("hold");

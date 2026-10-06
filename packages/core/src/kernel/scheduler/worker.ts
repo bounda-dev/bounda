@@ -280,6 +280,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
             context: entry.context,
             commandId: scheduledCommandId(entry.dedupeKey),
             within: unit,
+            unattended: true,
           });
         }
       },

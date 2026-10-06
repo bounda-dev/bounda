@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { resolveConfig } from "../../config/schema.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
-import { DomainError } from "../../contracts/errors.ts";
+import { ValidationError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { memory } from "../../memory/index.ts";
 import type { PayloadArgs } from "../../modules/payload.ts";
@@ -55,7 +55,7 @@ const registry: Registry = {
               orderPaid: {
                 handler: ({ event, state }: HandlerArgs) => {
                   calls.push(`paid:${event.aggregateId}`);
-                  if (mode === "domain") throw new DomainError("bad payment");
+                  if (mode === "domain") throw new ValidationError("bad payment", []);
                   if (mode === "void") return undefined;
                   if (mode === "flaky" && flakyFailures > 0) {
                     flakyFailures -= 1;
@@ -653,7 +653,7 @@ describe("process runner", () => {
     });
     await harness.storage.inboxLedger.tryClaim({
       subscriber: "order.orderPayment",
-      eventId: paid.scheduled ? "" : (paid.eventIds[0] ?? ""),
+      eventId: "eventIds" in paid ? (paid.eventIds[0] ?? "") : "",
       now: harness.clock.now(),
       leaseMs: 60_000,
     });
@@ -873,7 +873,7 @@ describe("process collaborators", () => {
       deriveIdempotencyKey({
         kind: "process",
         handler: "order.orderPayment",
-        subject: placed.scheduled ? "" : (placed.eventIds[0] ?? ""),
+        subject: "eventIds" in placed ? (placed.eventIds[0] ?? "") : "",
       }),
       deriveIdempotencyKey({
         kind: "process",

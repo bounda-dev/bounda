@@ -250,6 +250,46 @@ describe("a process handler run that fails", () => {
     });
     expect(order.events.map((event) => event.type)).toEqual(["OrderPlaced"]);
   });
+
+  it("commits the commands its handler did not await, and goes on past a rejection", async () => {
+    let again: unknown;
+    placed = async ({ aggregateId, commands }) => {
+      void commands.archiveOrder?.({ orderId: aggregateId });
+      again = await commands.placeOrder?.({ orderId: aggregateId, total: 1 });
+      return undefined;
+    };
+    const harness = await setUp();
+    await place(harness);
+
+    const { events } = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    expect(events.map((event) => event.type)).toEqual(["OrderPlaced", "OrderArchived"]);
+    expect(again).toMatchObject({ rejected: "AlreadyPlaced", message: "Order already placed" });
+    expect(await harness.storage.deadLetterStore.count()).toBe(0);
+  });
+
+  it("fails a deadline when a command its handler did not await fails", async () => {
+    placed = async (args) => ({ nudge: args.after("1h") });
+    nudged = async ({ aggregateId, commands }) => {
+      void commands.payOrder?.({ orderId: aggregateId, method: "cash" });
+      return { nudge: null };
+    };
+    const harness = await setUp();
+    await place(harness);
+
+    harness.clock.advance(3_600_000);
+    await harness.worker.runOnce();
+
+    expect(await harness.storage.deadLetterStore.list()).toMatchObject([
+      {
+        eventId: "deadline:nudge",
+        errorType: "terminal",
+        errorMessage: "Invalid payload for command PayOrder",
+      },
+    ]);
+  });
 });
 
 describe("what a process handler returns", () => {

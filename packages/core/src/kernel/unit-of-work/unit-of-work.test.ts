@@ -3,7 +3,7 @@ import type { Adapter, StoragePorts, StorageTransaction } from "../../adapter/ad
 import { createNodeSqliteAdapter } from "../../adapter/sqlite/node-sqlite.ts";
 import { pendingEvent } from "../../adapter/testing/fixtures.ts";
 import type { RetryConfig } from "../../config/types.ts";
-import { ConcurrencyError, DomainError } from "../../contracts/errors.ts";
+import { ConcurrencyError, ValidationError } from "../../contracts/errors.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import type { ProcessAfterFunction, ProcessStateArgs } from "../../modules/process.ts";
@@ -27,7 +27,11 @@ interface Commands {
   readonly [name: string]: (
     payload: unknown,
     options?: object,
-  ) => Promise<{ readonly version?: number; readonly eventTypes?: readonly string[] }>;
+  ) => Promise<{
+    readonly rejected: string | false;
+    readonly version?: number;
+    readonly eventTypes?: readonly string[];
+  }>;
 }
 
 interface PolicyArgs {
@@ -61,14 +65,11 @@ const policyRegistry: Registry = {
               const orderId = event.aggregateId;
               seen.push(await commands.payOrder?.({ orderId, method: "card" }));
               await commands.archiveOrder?.({ orderId }, { delay: "1h" });
-              if (mode === "refuse") throw new DomainError("provider refused");
+              if (mode === "refuse") throw new ValidationError("provider refused", []);
               if (mode === "compensate") {
-                try {
-                  await commands.payOrder?.({ orderId, method: "card" });
-                } catch (error) {
-                  seen.push(error);
-                  await commands.touchOrder?.({ orderId });
-                }
+                const again = await commands.payOrder?.({ orderId, method: "card" });
+                seen.push(again);
+                if (again?.rejected === "NotPlaced") await commands.touchOrder?.({ orderId });
               }
             },
           },
@@ -111,7 +112,7 @@ const processRegistry: Registry = {
                   const orderId = event.aggregateId;
                   seen.push(await commands.payOrder?.({ orderId, method: "card" }));
                   await commands.archiveOrder?.({ orderId }, { delay: "1h" });
-                  if (mode === "refuse") throw new DomainError("provider refused");
+                  if (mode === "refuse") throw new ValidationError("provider refused", []);
                   return { ...state, remind: after("1d") };
                 },
               },
@@ -442,10 +443,10 @@ describe("createUnitOfWork", () => {
         storage,
         concurrencyRetries: 3,
         work: async () => {
-          throw new DomainError("refused");
+          throw new ValidationError("refused", []);
         },
       }),
-    ).rejects.toBeInstanceOf(DomainError);
+    ).rejects.toBeInstanceOf(ValidationError);
   });
 
   it("hands a commit failure on as the store threw it, for a caller that does not tell it apart", async () => {
@@ -616,15 +617,19 @@ describe.each(adapters)("a reaction attempt as a unit of work on %s", (_name, ad
     expect(providerCalls).toHaveLength(2);
   });
 
-  it("gives the handler each command's result at once, its DomainError included, and commits the compensation with the rest", async () => {
+  it("gives the handler each command's result at once, its rejection included, and commits the compensation with the rest", async () => {
     reset("compensate");
     const harness = await policyHarness();
     await place(harness);
     await settle(harness);
 
-    expect(seen[0]).toMatchObject({ version: 2, eventTypes: ["OrderPaid"] });
-    expect(seen[1]).toBeInstanceOf(DomainError);
-    expect(seen[1]).toMatchObject({ message: "Only placed orders can be paid" });
+    expect(seen[0]).toMatchObject({ rejected: false, version: 2, eventTypes: ["OrderPaid"] });
+    expect(seen[1]).toEqual({
+      rejected: "NotPlaced",
+      message: "Only placed orders can be paid; this one is paid",
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
     expect(await orderTypes(harness)).toEqual(["OrderPlaced", "OrderPaid"]);
     expect(await scheduledTypes(harness)).toEqual(["ArchiveOrder"]);
     expect(await harness.storage.deadLetterStore.count()).toBe(0);

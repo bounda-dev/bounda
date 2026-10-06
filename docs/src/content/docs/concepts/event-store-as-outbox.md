@@ -49,7 +49,7 @@ it twice, and one whose claim another instance took over writes nothing.
 ## What `await commands.x()` means inside a handler
 
 The handler still dispatches commands one at a time and waits for each: the aggregate loads,
-decides, and the handler gets the result at once, a `DomainError` included, so it can compensate
+decides, and the handler gets the result at once, a rejection included, so it can compensate
 in the same run. What it gets is the **decision**, not something stored. The events are staged in
 the attempt, visible to the handler's own later commands against the same aggregate, and land in
 the store when the attempt commits. That is why the result carries the new version and the event

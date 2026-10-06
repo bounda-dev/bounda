@@ -2,10 +2,12 @@ export type { Clock, CreateFixedClockFunction, FixedClock } from "./clock.ts";
 export { createFixedClock, systemClock } from "./clock.ts";
 export type {
   Command,
+  CommandRejection,
   DispatchOptions,
   DispatchResult,
   NewCommand,
   ReactionDispatchResult,
+  RejectedDispatch,
 } from "./command.ts";
 export type {
   AsDurationFunction,
@@ -29,6 +31,7 @@ export {
   DomainError,
   NotFoundError,
   RebuildSupersededError,
+  type Rejection,
   ScheduledClaimLostError,
   ValidationError,
   type ValidationIssue,

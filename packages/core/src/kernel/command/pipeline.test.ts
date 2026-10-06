@@ -8,6 +8,7 @@ import {
   NotFoundError,
   ValidationError,
 } from "../../contracts/errors.ts";
+import type { RejectFunction } from "../../modules/command.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { HandlerTimeoutError } from "../shared/timeout.ts";
 import {
@@ -94,17 +95,73 @@ describe("command pipeline", () => {
       payload: { orderId: "o-1", method: "card" },
     });
     expect(paid).toMatchObject({ version: 2, eventIds: ["id-4"] });
-    await expect(
-      pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 1 } }),
-    ).rejects.toThrow(DomainError);
+    expect(
+      await pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 1 } }),
+    ).toMatchObject({ error: { rejected: "AlreadyPlaced" } });
   });
 
-  it("returns domain errors untouched and persists nothing", async () => {
+  it("returns a rejection as the handler made it, with the message rejections gives, and persists nothing", async () => {
     const { pipeline, storage } = await createKernelHarness();
-    await expect(
-      pipeline.dispatch({ type: "PayOrder", payload: { orderId: "o-1", method: "card" } }),
-    ).rejects.toThrow("Only placed orders can be paid");
+    const rejection = await pipeline.dispatch({
+      type: "PayOrder",
+      payload: { orderId: "o-1", method: "card" },
+    });
+    expect(rejection).toEqual({
+      error: expect.any(DomainError),
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    expect(rejection).toMatchObject({
+      error: {
+        rejected: "NotPlaced",
+        message: "Only placed orders can be paid; this one is new",
+        stack: expect.stringContaining("test-support.ts"),
+      },
+    });
     expect(await storage.eventStore.lastPosition()).toBe(0);
+  });
+
+  it("gives reject only to a command that declares rejections, and takes the message it is passed", async () => {
+    const given: boolean[] = [];
+    const order = orderRegistry.aggregates.order as Registry["aggregates"][string];
+    const { pipeline } = await createKernelHarness({
+      registry: {
+        aggregates: {
+          order: {
+            ...order,
+            commands: {
+              ...order.commands,
+              closeOrder: {
+                module: {
+                  payload: ({ z }) => z.object({ orderId: z.string() }),
+                  rejections: () => ({ NotOpen: "Only open orders can be closed" }),
+                  handler: (args: { readonly reject: RejectFunction<"NotOpen"> }) => {
+                    given.push("reject" in args);
+                    return args.reject("NotOpen", "Closed twice");
+                  },
+                },
+              },
+              noteOrder: {
+                module: {
+                  payload: ({ z }) => z.object({ orderId: z.string() }),
+                  handler: (args: object) => {
+                    given.push("reject" in args);
+                    return [];
+                  },
+                },
+              },
+            },
+          },
+        },
+        readModels: {},
+      },
+    });
+
+    expect(
+      await pipeline.dispatch({ type: "CloseOrder", payload: { orderId: "o-1" } }),
+    ).toMatchObject({ error: { rejected: "NotOpen", message: "Closed twice" } });
+    await pipeline.dispatch({ type: "NoteOrder", payload: { orderId: "o-1" } });
+    expect(given).toEqual([true, false]);
   });
 
   it("rejects an invalid payload with issues and never runs the handler", async () => {
@@ -236,9 +293,9 @@ describe("command pipeline", () => {
       }
       return original(args);
     };
-    await expect(
-      pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 42 } }),
-    ).rejects.toThrow("Order already placed");
+    expect(
+      await pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 42 } }),
+    ).toMatchObject({ error: { message: "Order already placed" } });
     expect(sentMessages).toEqual(["placed o-1 v0"]);
     const loaded = await storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" });
     expect(loaded.events.map((event) => event.id)).toEqual(["sneaky"]);

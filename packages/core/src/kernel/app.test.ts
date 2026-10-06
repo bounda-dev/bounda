@@ -194,21 +194,69 @@ describe("createApp", () => {
     });
     expect(sentMessages).toEqual(["placed o-1 v0"]);
     expect((await app.getLag()).maxLag).toBe(0);
-    await expect(app.commands.placeOrder({ orderId: "o-1", total: 1 })).rejects.toBeInstanceOf(
-      DomainError,
-    );
+    const refused = app.commands.placeOrder({ orderId: "o-1", total: 1 });
+    await expect(refused).rejects.toBeInstanceOf(DomainError);
+    await expect(refused).rejects.toMatchObject({
+      rejected: "AlreadyPlaced",
+      message: "Order already placed",
+    });
+    await app.stop();
+  });
+
+  it("reports the rejections of the commands its reactions dispatched from runUntilIdle", async () => {
+    const app = await createApp({
+      registry: {
+        aggregates: {
+          order: {
+            ...orderAggregateEntry(),
+            policies: {
+              placeAgainOnOrderPlaced: {
+                module: {
+                  handler: async ({
+                    event,
+                    commands,
+                  }: {
+                    readonly event: { readonly aggregateId: string };
+                    readonly commands: Record<string, (payload: unknown) => Promise<unknown>>;
+                  }) => {
+                    await commands.placeOrder?.({ orderId: event.aggregateId, total: 1 });
+                  },
+                },
+              },
+            },
+          },
+        },
+        readModels: {},
+      },
+      config: { storage: memory(), collaborators: { order: { notifier: "memory" } } },
+    });
+    await app.commands.placeOrder({ orderId: "o-1", total: 42 });
+
+    expect(await app.runUntilIdle()).toEqual({
+      idle: true,
+      rejections: [
+        {
+          type: "PlaceOrder",
+          rejected: "AlreadyPlaced",
+          message: "Order already placed",
+          aggregateType: "order",
+          aggregateId: "o-1",
+        },
+      ],
+    });
+    expect((await app.deadLetters.list()).length).toBe(0);
     await app.stop();
   });
 
   it("stops after maxPasses rounds and says whether it reached idle", async () => {
     const { app } = await start();
-    expect(await app.runUntilIdle()).toEqual({ idle: true });
+    expect(await app.runUntilIdle()).toMatchObject({ idle: true });
     await app.commands.placeOrder({ orderId: "o-1", total: 42 });
     await app.commands.payOrder({ orderId: "o-1", method: "card" });
-    expect(await app.runUntilIdle({ maxPasses: 0 })).toEqual({ idle: false });
-    expect(await app.runUntilIdle({ maxPasses: 1 })).toEqual({ idle: false });
+    expect(await app.runUntilIdle({ maxPasses: 0 })).toMatchObject({ idle: false });
+    expect(await app.runUntilIdle({ maxPasses: 1 })).toMatchObject({ idle: false });
     expect((await app.getLag()).maxLag).toBeGreaterThan(0);
-    expect(await app.runUntilIdle({ maxPasses: 50 })).toEqual({ idle: true });
+    expect(await app.runUntilIdle({ maxPasses: 50 })).toMatchObject({ idle: true });
     expect((await app.getLag()).maxLag).toBe(0);
     expect(await app.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "paid" });
     await app.stop();

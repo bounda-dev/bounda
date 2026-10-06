@@ -25,6 +25,9 @@ export interface CommandRuntime {
   readonly type: string;
   readonly schema: z.ZodType | null;
   readonly handler: (args: Record<string, unknown>) => unknown;
+  readonly rejections:
+    | ((args: Record<string, unknown>) => Readonly<Record<string, string | undefined>>)
+    | null;
 }
 
 export interface AggregateRuntime {

@@ -5,7 +5,7 @@ import type {
 } from "../contracts/command.ts";
 import type { StateModule } from "./aggregate.ts";
 import type { CollaboratorModules } from "./collaborator.ts";
-import type { CommandEntry, CommandModule } from "./command.ts";
+import type { CommandEntry, CommandModule, RejectionCodeOf } from "./command.ts";
 import type { EventModules } from "./event.ts";
 import type { Simplify, UnionToIntersection } from "./naming.ts";
 import type { HasPayload, PayloadInputOf } from "./payload.ts";
@@ -75,17 +75,20 @@ export type CommandsFacadeOf<Modules extends Readonly<Record<string, CommandModu
 
 /**
  * The function a policy or process handler's `commands.<name>` exposes for one command: as
- * `CommandInvoker`, resolving with the decision instead of what was stored.
+ * `CommandInvoker`, resolving with the decision instead of what was stored, or with the rejection,
+ * typed by the codes the command declares.
  */
 export type ReactionCommandInvoker<Module> =
   HasPayload<Module> extends true
     ? (
         payload: PayloadInputOf<Module>,
         options?: DispatchOptions,
-      ) => Promise<ReactionDispatchResult>
+      ) => Promise<ReactionResultOf<Module>>
     : "payload" extends keyof Module
-      ? (payload?: unknown, options?: DispatchOptions) => Promise<ReactionDispatchResult>
-      : (options?: DispatchOptions) => Promise<ReactionDispatchResult>;
+      ? (payload?: unknown, options?: DispatchOptions) => Promise<ReactionResultOf<Module>>
+      : (options?: DispatchOptions) => Promise<ReactionResultOf<Module>>;
+
+type ReactionResultOf<Module> = ReactionDispatchResult<RejectionCodeOf<Module>>;
 
 /**
  * The `commands` of policy and process handlers, typed from a map of command modules.

@@ -51,11 +51,11 @@ export interface RunDeadlineHandlerArgs {
 }
 
 /**
- * Handlers are bounded by the aggregate's policy timeout, as policy handlers are. Each resolves to
- * the state with the fields the handler returned merged over it, validated by the process schema;
- * a deadline's also to what its commands decided.
- * A run whose handler fails or runs out of time is abandoned: its commands are refused from then
- * on.
+ * Handlers are bounded by the aggregate's policy timeout, as policy handlers are, and so are the
+ * commands they dispatch, awaited or not. Each resolves to the state with the fields the handler
+ * returned merged over it, validated by the process schema; a deadline's also to what its commands
+ * decided. A run whose handler or one of whose commands fails, or that runs out of time, is
+ * abandoned: its commands are refused from then on.
  */
 export interface ProcessHandlers {
   runEventHandler(args: RunEventHandlerArgs): Promise<object>;
@@ -121,6 +121,16 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     }
   };
 
+  // What the handler returned, once every command it dispatched has settled.
+  const settled = async (
+    reaction: Pick<ReactionCommands, "decided">,
+    handle: () => unknown,
+  ): Promise<unknown> => {
+    const returned = await handle();
+    await reaction.decided();
+    return returned;
+  };
+
   const timeoutMs = (process: ProcessRuntime): number =>
     config.forAggregate(process.aggregate).policies.timeoutMs;
 
@@ -155,15 +165,17 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
         run: () =>
           withTimeout({
             run: () =>
-              handlerOf(
-                process,
-                event,
-              )?.(
-                handlerArgs(process, reaction, idempotencyKey, event.timestamp, {
+              settled(reaction, () =>
+                handlerOf(
+                  process,
                   event,
-                  state: instance.state,
-                  aggregateId: instanceId,
-                }),
+                )?.(
+                  handlerArgs(process, reaction, idempotencyKey, event.timestamp, {
+                    event,
+                    state: instance.state,
+                    aggregateId: instanceId,
+                  }),
+                ),
               ),
             timeoutMs: timeoutMs(process),
             subject: `process ${process.name}`,
@@ -214,11 +226,13 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
         run: () =>
           withTimeout({
             run: () =>
-              handler(
-                handlerArgs(process, reaction, idempotencyKey, due.at, {
-                  state: instance.state,
-                  aggregateId: instanceId,
-                }),
+              settled(reaction, () =>
+                handler(
+                  handlerArgs(process, reaction, idempotencyKey, due.at, {
+                    state: instance.state,
+                    aggregateId: instanceId,
+                  }),
+                ),
               ),
             timeoutMs: timeoutMs(process),
             subject: `process ${process.name} at ${due.field}`,

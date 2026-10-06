@@ -6,7 +6,7 @@ import { createReactionCommandIds } from "../shared/idempotency-key.ts";
 import { errorDetails } from "../shared/retry.ts";
 import type { UnitStores } from "../unit-of-work/unit-of-work.ts";
 import { type CommandsFacadeRuntime, createCommandsFacade } from "./facade.ts";
-import type { CommandPipeline } from "./pipeline.ts";
+import { type CommandPipeline, isRejection, type PipelineRejection } from "./pipeline.ts";
 
 /**
  * Thrown by a command a handler dispatches after its run was abandoned, or that was still running
@@ -33,13 +33,14 @@ export interface ReactionCommands {
   readonly signal: AbortSignal;
   /**
    * What the run's commands decided, in the order they finished, once every dispatch, awaited by
-   * the handler or not, has settled.
+   * the handler or not, has settled; rejects with the first that failed. The run awaits it before
+   * its attempt commits, so a dispatch the handler did not await still counts.
    */
   decided(): Promise<readonly ReactionDispatchResult[]>;
   /**
    * Ends a run that failed or timed out: `signal` aborts, which stops the commands still running,
    * and later dispatches are refused. Nothing is undone, since the run's unit of work is never
-   * committed. A dispatch the handler does not await is never reported as unhandled for it.
+   * committed.
    */
   abandon(reason: unknown): void;
 }
@@ -62,13 +63,15 @@ export interface CreateReactionCommandsFunction {
   (args: CreateReactionCommandsArgs): ReactionCommands;
 }
 
-const decided = (result: DispatchResult): ReactionDispatchResult => {
-  if (result.scheduled) return result;
+const decided = (result: DispatchResult | PipelineRejection): ReactionDispatchResult => {
+  if (isRejection(result)) {
+    const { error, aggregateType, aggregateId } = result;
+    return { rejected: error.rejected, message: error.message, aggregateType, aggregateId };
+  }
+  if (result.scheduled) return { rejected: false, ...result };
   const { position: _position, ...decision } = result;
-  return decision;
+  return { rejected: false, ...decision };
 };
-
-const ignore = (): void => undefined;
 
 export const createReactionCommands: CreateReactionCommandsFunction = ({
   aggregates,
@@ -82,11 +85,12 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
   // A second signal, so the commands are refused with the reason wrapped while the handler's
   // signal carries it as it is.
   const abandoned = new AbortController();
-  // Abandoning the run rejects the dispatches it stops or refuses, which a handler that did not
-  // await one would leave unhandled, and Node ends the process on that. They are marked handled
-  // before they can reject; the handler still sees the rejection through its own await.
+  // A dispatch the handler does not await would leave its failure unhandled, and Node ends the
+  // process on that. Each is marked handled when it is made, and `decided` reports the failure;
+  // the handler still sees it through its own await.
   const dispatched = new Set<Promise<ReactionDispatchResult>>();
   const results: ReactionDispatchResult[] = [];
+  const failures: unknown[] = [];
   const commands = createCommandsFacade({
     aggregates,
     dispatch: (command) => {
@@ -98,13 +102,19 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
             commandId: commandIds(command.type),
             within,
             signal: abandoned.signal,
+            unattended: true,
           }),
         );
         results.push(result);
         return result;
       })();
-      if (abandoned.signal.aborted) dispatch.catch(ignore);
-      else dispatched.add(dispatch);
+      // A command the handler withdrew with its own signal is not a failure of the run.
+      const withdrawal = command.options?.signal;
+      dispatch.catch((error: unknown) => {
+        if (withdrawal?.aborted && error === withdrawal.reason) return;
+        failures.push(error);
+      });
+      if (!abandoned.signal.aborted) dispatched.add(dispatch);
       return dispatch;
     },
   });
@@ -116,10 +126,10 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
         settled = dispatched.size;
         await Promise.allSettled(dispatched);
       }
+      if (failures.length > 0) throw failures[0];
       return [...results];
     },
     abandon: (reason) => {
-      for (const dispatch of dispatched) dispatch.catch(ignore);
       abandoned.abort(new ReactionAbandonedError(reason));
       handler.abort(reason);
     },

@@ -51,7 +51,7 @@ describe("createWorker", () => {
     );
     expect(conflict.status).toBe(409);
     expect(await conflict.json()).toEqual({
-      error: { code: "DOMAIN_ERROR", message: "Order already placed" },
+      error: { code: "DOMAIN_ERROR", message: "Order already placed", rejected: "AlreadyPlaced" },
     });
 
     const invalid = await post("/commands/placeOrder", { orderId: "o-4", total: "lots" }, "errors");

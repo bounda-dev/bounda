@@ -204,6 +204,37 @@ retried on later passes with the configured back-off and dead-lettered when the 
 Dead letters keep the event, the handler, the error and the number of attempts, and they have a
 way out: see [Dead letters](#dead-letters).
 
+## What a command answers
+
+`await commands.x()` in a policy or process resolves with what the command answered, and
+`rejected` says which answer it is:
+
+- `rejected: false` and `scheduled: false`: the aggregate decided, with its `version` and the
+  `eventIds` and `eventTypes` it decided, in order;
+- `rejected: false` and `scheduled: true`: a command with `delay`, with when it runs in
+  `executeAt`;
+- `rejected` set to a code: the command's handler rejected it with one of the codes its module
+  declares in [`rejections`](/guides/project-layout/#rejections), and `message` says why. Nothing
+  was decided.
+
+`rejected` is typed by the codes the command declares, and is only ever `false` for a command
+without `rejections`, so comparing it with a code it never answers does not compile. A handler
+that compensates looks at it; one that does not changes nothing, and the run goes on:
+
+```ts
+const paid = await commands.markOrderPaid({ orderId: aggregateId });
+if (paid.rejected === "NotOpen") {
+  await commands.cancelPayment({ paymentId: event.aggregateId, reason: "order no longer open" });
+}
+```
+
+A rejection nobody looks at is logged (`command rejected`, at `info`) and recorded on the
+command's span; a test asserts the ones it expects from what
+[`runUntilIdle()`](/guides/testing/#rejections) returns. A delayed command that is rejected when it
+runs changes nothing in the same way. Only a failure rejects the `await`: a payload that does not
+validate, a concurrency conflict that outlasts its retries, an error the handler throws. The run
+fails with it, and the runtime retries it or dead-letters it (see [Retries and timeouts](#retries-and-timeouts)).
+
 ## Calling the outside world
 
 A command handler decides; it does not act on the world. It can run more than once for one
@@ -240,9 +271,10 @@ reaction compensates it: see [Sagas and compensation](/guides/sagas/).
 
 A few rules keep it correct:
 
-- **Await every command the handler dispatches.** The run's outcome is what the handler returns
-  or throws: a command it does not await may be left out of the run, and its failure reaches no
-  one.
+- **Await the commands the handler dispatches.** The run waits for every one before it commits,
+  awaited or not, within the handler's time, and one that fails fails the run. Awaiting is what
+  keeps them in order, so a second command sees what the first decided, and what gives the
+  handler their answers.
 - **Pass `idempotencyKey` to every provider that takes one.** It is one key per handler run, and
   the handler passes it as it is, even when the run causes two effects:
   - Two effects on **different providers** (charging the card, sending the receipt) go in a

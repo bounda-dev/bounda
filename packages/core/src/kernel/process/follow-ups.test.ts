@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Adapter } from "../../adapter/adapter.ts";
 import { createNodeSqliteAdapter } from "../../adapter/sqlite/node-sqlite.ts";
 import { asDuration } from "../../contracts/duration.ts";
-import { DeadLetterSettledError, DomainError } from "../../contracts/errors.ts";
+import { DeadLetterSettledError, ValidationError } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
 import type { PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
@@ -34,6 +34,7 @@ let beforeArchive: (() => Promise<void>) | undefined;
 let timeoutFails = false;
 let awaiting = true;
 let placing = false;
+let placingAgain = false;
 let paying: "ok" | "domain" = "ok";
 let beforeTimeout: (() => Promise<void>) | undefined;
 
@@ -59,7 +60,7 @@ const registry: Registry = {
                 handler: async ({ state, aggregateId }: HandlerArgs) => {
                   calls.push(`archived:${aggregateId}`);
                   await beforeArchive?.();
-                  if (archiving === "domain") throw new DomainError("cannot compensate");
+                  if (archiving === "domain") throw new ValidationError("cannot compensate", []);
                   if (archiving === "flaky" && flakyFailures > 0) {
                     flakyFailures -= 1;
                     throw new Error("network");
@@ -70,7 +71,7 @@ const registry: Registry = {
               orderPaid: {
                 handler: ({ aggregateId }: HandlerArgs) => {
                   calls.push(`paid:${aggregateId}`);
-                  if (paying === "domain") throw new DomainError("cannot take payment");
+                  if (paying === "domain") throw new ValidationError("cannot take payment", []);
                 },
               },
             },
@@ -79,9 +80,10 @@ const registry: Registry = {
             timeout: {
               handler: async ({ aggregateId, commands }: HandlerArgs) => {
                 calls.push(`timeout:${aggregateId}`);
-                if (timeoutFails) throw new DomainError("not yet");
+                if (timeoutFails) throw new ValidationError("not yet", []);
                 await beforeTimeout?.();
                 if (placing) await commands.placeOrder?.({ orderId: "o-3", total: 1 });
+                if (placingAgain) await commands.placeOrder?.({ orderId: aggregateId, total: 1 });
                 for (const orderId of targets(aggregateId)) {
                   const archived = commands.archiveOrder?.(
                     { orderId },
@@ -140,6 +142,7 @@ const setUp = async (
   timeoutFails = false;
   awaiting = true;
   placing = false;
+  placingAgain = false;
   paying = "ok";
   beforeTimeout = undefined;
   const harness = await createReactiveHarness({ registry: app, config, adapter: adapter() });
@@ -224,6 +227,18 @@ describe.each(adapters)("the follow-ups of a process that timed out, on %s", (_n
 
     await harness.dispatcher.runUntilIdle();
     expect(await stream()).toHaveLength(3);
+  });
+
+  it("records no follow-up for a command its at-timeout dispatched that was rejected", async () => {
+    const { place, timeOut, stream, archivedOf } = await setUp(adapter);
+    placingAgain = true;
+    await place("o-1");
+    await timeOut();
+
+    expect((await stream())[1]?.payload).toEqual({
+      state: { archived: 0 },
+      followUps: [(await archivedOf())?.id],
+    });
   });
 
   it("still drops every other event once the instance timed out", async () => {

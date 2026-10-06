@@ -121,7 +121,7 @@ sees either an order that does not exist yet, every field `undefined`, or one wh
 `total: number`, with `paidAt?: string`. Any field `create` sets tells the two apart:
 
 ```ts
-if (state.status === undefined) throw new DomainError("No such order");
+if (state.status === undefined) return reject("NotPlaced");
 state.total; // number
 ```
 
@@ -249,15 +249,19 @@ A command is `commands/<name>.ts`.
 
 ```ts
 // app/domain/order/commands/place-order.ts
-import { DomainError } from "@bounda-dev/core";
 import type { Command } from "./+types/place-order";
 
 export const payload = ({ z }: Command.PayloadArgs) =>
   z.object({ orderId: z.uuid(), customerId: z.string(), skus: z.array(z.string()).min(1) });
 
-export const handler = async ({ command, state, events, inventory }: Command.HandlerArgs) => {
-  if (state.status !== undefined) throw new DomainError("Order already placed");
-  if (!(await inventory.available(command.payload.skus))) throw new DomainError("Out of stock");
+export const rejections = ({ command }: Command.RejectionsArgs) => ({
+  AlreadyPlaced: `Order ${command.aggregateId} was already placed`,
+  OutOfStock: "Some of the items are out of stock",
+});
+
+export const handler = async ({ command, state, events, inventory, reject }: Command.HandlerArgs) => {
+  if (state.status !== undefined) return reject("AlreadyPlaced");
+  if (!(await inventory.available(command.payload.skus))) return reject("OutOfStock");
   return [events.orderPlaced({ customerId: command.payload.customerId, skus: command.payload.skus })];
 };
 ```
@@ -280,6 +284,29 @@ Each run has a time limit, `runtime.commands.timeout` (30 seconds by default): p
 dispatch rejects with `HANDLER_TIMEOUT` and nothing the handler returns is stored. The handler
 receives `signal`, which aborts then; pass it to what it calls outside (`fetch(url, { signal })`)
 so a provider that hangs does not hold the request.
+
+#### Rejections
+
+A command that may say no declares how in `rejections`: each key is a code, named after the reason
+(`NotOpen`, never as a fact like `OrderClosed`), and each value its message. The runtime calls it
+when the handler rejects, with the `command` and the `state` the handler saw, so the message can
+tell why. Only a module that exports `rejections` gets `reject`, and `reject` only takes its codes.
+
+`reject(code)` returns the `DomainError` the caller gets, with the code in `rejected`;
+`return reject(code)` and `throw reject(code)` do the same, the second from a helper the handler
+calls. Pass a second argument to give that rejection another message. A `DomainError` is never
+built with `new`.
+
+A rejection stores nothing and is not retried. `app.commands` throws it to the caller; a policy or
+a process gets it as a value instead: `commands.<name>()` resolves with `rejected` set to the code,
+or `false` when the aggregate decided (see
+[reacting to events](/guides/reacting-to-events/#what-a-command-answers)).
+
+Repeating what is already done is not a rejection: return `[]`, so a retry, a webhook that arrives
+twice or a reaction that runs again changes nothing. Before an aggregate exists `state.status` is
+`undefined`, so a message reads it with a fallback, `state.status ?? "new"`. A "no" the business
+remembers, or that someone else listens to, is an event instead: see
+[rejection or event](/guides/sagas/#two-ways-to-fail-no-hook-for-either).
 
 ### Policies: `policies/`
 

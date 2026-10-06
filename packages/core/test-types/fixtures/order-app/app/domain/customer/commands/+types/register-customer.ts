@@ -5,11 +5,17 @@ type Module = typeof import("../register-customer.ts");
 
 export declare namespace Command {
   type PayloadArgs = core.PayloadArgs;
+  type RejectionsArgs = core.CommandRejectionsArgs<
+    "RegisterCustomer",
+    core.PayloadOf<Module>,
+    generated.CustomerState
+  >;
   type HandlerArgs = core.CommandHandlerArgs<
     "RegisterCustomer",
     core.PayloadOf<Module>,
     generated.CustomerState,
     generated.CustomerEvents,
-    generated.CustomerCollaborators
+    generated.CustomerCollaborators,
+    core.RejectionCodeOf<Module>
   >;
 }

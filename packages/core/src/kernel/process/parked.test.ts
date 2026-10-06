@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RetryConfig } from "../../config/types.ts";
-import { DomainError } from "../../contracts/errors.ts";
+import { ValidationError } from "../../contracts/errors.ts";
 import type { Instant } from "../../contracts/instant.ts";
 import type { ProcessAfterFunction, ProcessStateArgs } from "../../modules/process.ts";
 import type { Registry } from "../../modules/registry.ts";
@@ -30,7 +30,7 @@ const failingEvents = new Map<string, "terminal" | "retriable">();
 
 const failIfAsked = (label: string): void => {
   const kind = failing.get(label);
-  if (kind === "terminal") throw new DomainError(`${label} refuses`);
+  if (kind === "terminal") throw new ValidationError(`${label} refuses`, []);
   if (kind === "retriable") throw new Error(`${label} is down`);
 };
 
@@ -44,7 +44,8 @@ const tally =
     whileHandling = undefined;
     await during?.();
     failIfAsked(label);
-    if (failingEvents.get(event.id) === "terminal") throw new DomainError(`${event.id} refuses`);
+    if (failingEvents.get(event.id) === "terminal")
+      throw new ValidationError(`${event.id} refuses`, []);
     if (failingEvents.get(event.id) === "retriable") throw new Error(`${event.id} is down`);
     return { ...state, seen: [...state.seen, label] };
   };
@@ -563,7 +564,7 @@ describe("events of a failed process", () => {
                 order: {
                   orderPlaced: {
                     handler: () => {
-                      throw new DomainError("no");
+                      throw new ValidationError("no", []);
                     },
                   },
                 },
@@ -1562,7 +1563,7 @@ describe("a parked event that is handled and completes the process", () => {
                 order: {
                   orderPlaced: {
                     handler: () => {
-                      if (placedFails) throw new DomainError("not yet");
+                      if (placedFails) throw new ValidationError("not yet", []);
                     },
                   },
                   orderPaid: { handler: () => undefined },

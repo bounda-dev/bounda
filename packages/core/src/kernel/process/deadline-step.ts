@@ -50,7 +50,7 @@ export interface CreateDeadlineStepFunction {
 }
 
 // The events the timeout's commands decided that a handler of the process takes, read from the
-// results so nothing is loaded. They are not routed: delivery only lets through the follow-ups of
+// results so nothing is loaded; a rejected or scheduled command decided none. They are not routed: delivery only lets through the follow-ups of
 // the instance an event is routed to, so the user's `correlate` never runs here. A starting event
 // is left out, since its handler would start again what has ended.
 const followUpsOf = (
@@ -58,7 +58,7 @@ const followUpsOf = (
   decided: readonly ReactionDispatchResult[],
 ): readonly string[] =>
   decided.flatMap((result) =>
-    result.scheduled
+    result.rejected !== false || result.scheduled
       ? []
       : result.eventIds.filter((_, index) => {
           const event = {
