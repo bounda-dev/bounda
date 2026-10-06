@@ -1,10 +1,11 @@
-import type {
-  ImplementationModule,
-  Instant,
-  PolicyModule,
-  ProcessDeadlineField,
-  ProcessHandlerReturnCheck,
-  ProcessStateOf,
+import {
+  DomainError,
+  type ImplementationModule,
+  type Instant,
+  type PolicyModule,
+  type ProcessDeadlineField,
+  type ProcessHandlerReturnCheck,
+  type ProcessStateOf,
 } from "@bounda-dev/core";
 import type { AdapterDefinition } from "@bounda-dev/core/adapter";
 import { defineConfig } from "@bounda-dev/core/config";
@@ -34,6 +35,29 @@ describe("what does not compile", () => {
     type Typo = ProcessDeadlineField<OrderPaymentModule, "nextRemindr">;
     const fields: [RecordedMoment?, Counter?, Typo?] = [];
     void fields;
+  });
+
+  it("a rejection the command does not declare", () => {
+    const handler = ({ reject }: PayOrder.HandlerArgs) => {
+      // @ts-expect-error pay-order declares NotPlaced only
+      return reject("Typo");
+    };
+    void handler;
+    const policy = async ({ commands }: OnOrderPaid.HandlerArgs) => {
+      const paid = await commands.payOrder({ orderId: "o-1", method: "card", reference: "r" });
+      // @ts-expect-error pay-order never rejects with Typo
+      if (paid.rejected === "Typo") return;
+      const cancelled = await commands.cancelOrder({ orderId: "o-1", reason: "r" });
+      // @ts-expect-error cancel-order declares no rejections
+      if (cancelled.rejected === "NotPlaced") return;
+    };
+    void policy;
+  });
+
+  it("a DomainError built by hand", () => {
+    // @ts-expect-error only reject() makes the Rejection a DomainError takes
+    const error = new DomainError({ code: "NotPlaced", message: "no" });
+    void error;
   });
 
   it("a delay after() cannot read", () => {

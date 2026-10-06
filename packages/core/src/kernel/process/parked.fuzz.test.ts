@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ConcurrencyError, DomainError } from "../../contracts/errors.ts";
+import { ConcurrencyError, ValidationError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { Instant } from "../../contracts/instant.ts";
 import type { ProcessAfterFunction, ProcessStateArgs } from "../../modules/process.ts";
@@ -27,7 +27,7 @@ const failing = new Map<string, Failure>();
 let nudgeFails: Failure | undefined;
 
 const fail = (kind: Failure | undefined, what: string): void => {
-  if (kind === "terminal") throw new DomainError(`${what} refuses`);
+  if (kind === "terminal") throw new ValidationError(`${what} refuses`, []);
   if (kind === "retriable") throw new Error(`${what} is down`);
 };
 

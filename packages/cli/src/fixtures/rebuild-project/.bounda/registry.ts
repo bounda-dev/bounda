@@ -1,4 +1,4 @@
-import { DomainError, type FieldsArgs, type PayloadArgs, type Registry } from "@bounda-dev/core";
+import { type FieldsArgs, type PayloadArgs, type Registry, ValidationError } from "@bounda-dev/core";
 
 export const registry = {
   aggregates: {
@@ -18,7 +18,7 @@ export const registry = {
         alertOnIncremented: {
           module: {
             handler: () => {
-              throw new DomainError("alerts are down");
+              throw new ValidationError("alerts are down", []);
             },
           },
         },

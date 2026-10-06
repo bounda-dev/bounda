@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DomainError } from "../../contracts/errors.ts";
+import { ValidationError } from "../../contracts/errors.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { createDeadLetters } from "../dead-letters/dead-letters.ts";
@@ -181,7 +181,7 @@ describe("delayed policies", () => {
     const telemetry = installFakeTelemetry();
     const { logger, entries } = createRecordingLogger();
     const { harness, placed } = await setUp({}, logger);
-    failures = { left: 1, error: () => new DomainError("mailbox closed") };
+    failures = { left: 1, error: () => new ValidationError("mailbox closed", []) };
     await harness.dispatcher.runUntilIdle();
     harness.clock.advance(60_000);
     await harness.worker.runOnce();
@@ -270,7 +270,7 @@ describe("delayed policies", () => {
                       { orderId: event.aggregateId, method: "card" },
                       { delay: "1h" },
                     );
-                    throw new DomainError("card declined");
+                    throw new ValidationError("card declined", []);
                   },
                 },
               },

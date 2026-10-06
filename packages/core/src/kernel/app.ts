@@ -3,7 +3,7 @@ import { isAdapter } from "../adapter/adapter.ts";
 import { resolveConfig } from "../config/schema.ts";
 import type { Config, ResolvedConfig, RuntimeRole } from "../config/types.ts";
 import { type Clock, systemClock } from "../contracts/clock.ts";
-import type { DispatchResult } from "../contracts/command.ts";
+import type { CommandRejection, DispatchResult } from "../contracts/command.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
 import { type IdGenerator, uuidV7IdGenerator } from "../contracts/ids.ts";
 import { type Logger, silentLogger } from "../contracts/logger.ts";
@@ -14,7 +14,7 @@ import { buildAggregates } from "./aggregate/build-aggregates.ts";
 import { createCollaborators, type TestChoice } from "./aggregate/collaborators.ts";
 import { withUpcasting } from "./aggregate/upcasting.ts";
 import { createCommandsFacade } from "./command/facade.ts";
-import { createCommandPipeline } from "./command/pipeline.ts";
+import { createCommandPipeline, isRejection } from "./command/pipeline.ts";
 import { createDeadLetters, type DeadLetters } from "./dead-letters/dead-letters.ts";
 import { createDispatcher, type DispatcherLag } from "./dispatch/dispatcher.ts";
 import { alignReactiveCheckpoints } from "./dispatch/reactive-checkpoints.ts";
@@ -140,6 +140,12 @@ export interface RunUntilIdleResult {
    * `false` when `maxPasses` ran out with work left.
    */
   readonly idle: boolean;
+  /**
+   * The rejections of the commands that policies, processes and the scheduler dispatched while it
+   * ran, in order, so a test can assert the ones it expects. A run that is retried counts each
+   * time its commands are rejected.
+   */
+  readonly rejections: readonly CommandRejection[];
 }
 
 /**
@@ -237,6 +243,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       eventStore: withUpcasting({ eventStore: opened.eventStore, aggregates }),
     };
     const readModels = await buildReadModels({ registry, config, logger });
+    // One list per `runUntilIdle` under way.
+    const observers = new Set<CommandRejection[]>();
     const pipeline = createCommandPipeline({
       aggregates,
       eventStore: storage.eventStore,
@@ -245,6 +253,9 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       ids,
       clock,
       logger,
+      onRejection: (rejection) => {
+        for (const observed of observers) observed.push(rejection);
+      },
     });
     const queryRunner = createQueryRunner({ queries: buildQueries({ readModels }), readModels });
     const processDefinitions = buildProcesses({ registry, aggregates, config });
@@ -367,7 +378,11 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     return {
       commands: createCommandsFacade({
         aggregates,
-        dispatch: (command) => pipeline.dispatch(command),
+        dispatch: async (command) => {
+          const result = await pipeline.dispatch(command);
+          if (isRejection(result)) throw result.error;
+          return result;
+        },
       }) as CommandsFacade<R>,
       queries: queryRunner.facade as QueriesFacade<R>,
       config,
@@ -391,14 +406,22 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         return stopping;
       },
       runUntilIdle: async ({ maxPasses = Number.POSITIVE_INFINITY } = {}) => {
-        for (let round = 0; round < maxPasses; round += 1) {
-          pendingRetries.startRound();
-          const advanced = await dispatcher.processOnce();
-          const ran = await worker.runOnce();
-          if (advanced || ran > 0) continue;
-          if (!(await pendingRetries.skipToNext(nextDueAt, nextRetryAt))) return { idle: true };
+        const rejections: CommandRejection[] = [];
+        observers.add(rejections);
+        try {
+          for (let round = 0; round < maxPasses; round += 1) {
+            pendingRetries.startRound();
+            const advanced = await dispatcher.processOnce();
+            const ran = await worker.runOnce();
+            if (advanced || ran > 0) continue;
+            if (!(await pendingRetries.skipToNext(nextDueAt, nextRetryAt))) {
+              return { idle: true, rejections };
+            }
+          }
+          return { idle: false, rejections };
+        } finally {
+          observers.delete(rejections);
         }
-        return { idle: false };
       },
       nextDueAt,
       catchUpReadModels: async ({ through } = {}) => {

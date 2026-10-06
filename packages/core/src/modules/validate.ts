@@ -78,7 +78,15 @@ const validateAggregate = (
   }
   requireImplementations(problems, aggregate.collaborators, `${base}.collaborators`);
   for (const [key, entry] of Object.entries(aggregate.commands)) {
-    requireFunction(problems, entry.module, `${base}.commands.${key}`, "handler");
+    const path = `${base}.commands.${key}`;
+    requireFunction(problems, entry.module, path, "handler");
+    const rejections: unknown = Reflect.get(entry.module, "rejections");
+    if (rejections !== undefined && !isFunction(rejections)) {
+      problems.push({
+        path,
+        message: 'export "rejections" must be a function returning a message for each code',
+      });
+    }
   }
   for (const [key, policy] of Object.entries(aggregate.policies)) {
     requireFunction(problems, policy.module, `${base}.policies.${key}`, "handler");

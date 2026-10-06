@@ -10,7 +10,6 @@ it, and sequential ids (`id-1`, `id-2`, …). Nothing is shared between tests an
 wall-clock time, so the same assertions hold on every run.
 
 ```ts
-import { DomainError } from "@bounda-dev/core";
 import { createTestApp } from "@bounda-dev/core/testing";
 import { describe, expect, it } from "vitest";
 import { registry } from "../.bounda/registry.ts";
@@ -27,6 +26,9 @@ describe("orders", () => {
       orders: [{ orderId, customerId: "ada", total: 42, placedAt: expect.any(Date) }],
       total: 42,
     });
+    await expect(
+      app.commands.placeOrder({ orderId, customerId: "ada", total: 1 }),
+    ).rejects.toMatchObject({ rejected: "AlreadyPlaced" });
     await app.stop();
   });
 });
@@ -43,21 +45,39 @@ dispatcher passes and due scheduled commands until nothing moves, which is the p
 consequence of what you dispatched has happened.
 
 It works in every runtime role, and it is the reason tests need no timers, no polling and no
-`await sleep(50)`. It resolves to `{ idle: true }`; pass `{ maxPasses }` to stop earlier, which is
-how a test checks that a chain of reactions takes more than one round.
+`await sleep(50)`. It resolves to `{ idle: true, rejections }`; pass `{ maxPasses }` to stop
+earlier, which is how a test checks that a chain of reactions takes more than one round.
 
 Call `app.stop()` when the test ends: it waits for passes in flight and closes storage.
 
 ## Rules that must be refused
 
-A handler that rejects a command throws a `DomainError`. Assert on the type, not on the message,
-so the wording stays free to change:
+A command its handler rejects throws a `DomainError` to `app.commands`, with the code in
+`rejected`. Assert on the code, not on the message, so the wording stays free to change:
 
 ```ts
 await expect(
   app.commands.placeOrder({ orderId, customerId: "ada", total: 1 }),
-).rejects.toBeInstanceOf(DomainError);
+).rejects.toMatchObject({ rejected: "AlreadyPlaced" });
 ```
+
+### Rejections
+
+The commands a policy, a process or the scheduler dispatches have no caller to throw to: a
+rejection there is an answer the handler may ignore, and the run goes on (see
+[what a command answers](/guides/reacting-to-events/#what-a-command-answers)). `runUntilIdle()`
+returns the ones that happened while it ran, in order, each with the command's `type`, the code in
+`rejected`, its `message` and the aggregate it was for. A test asserts the ones it expects, so an
+unexpected one does not pass in silence:
+
+```ts
+await app.commands.settlePayment({ paymentId });
+await app.commands.cancelOrder({ orderId, reason: "changed my mind" });
+const { rejections } = await app.runUntilIdle();
+expect(rejections).toMatchObject([{ type: "MarkOrderPaid", rejected: "NotOpen" }]);
+```
+
+A run that is retried counts its rejections each time.
 
 ## Time
 
@@ -198,8 +218,8 @@ expect((await app.getLag()).maxLag).toBe(0);
 
 ## What is worth testing
 
-- **The rules**, through commands: what is accepted, what throws `DomainError`, and what the
-  aggregate does on the second attempt.
+- **The rules**, through commands: what is accepted, what is rejected and with which code, and
+  what the aggregate does on the second attempt.
 - **The consequences**, through queries: the read model after the events, including fields a
   projection fills from more than one event.
 - **Time**, by advancing the clock: reminders that go out, reminders that no longer apply, and

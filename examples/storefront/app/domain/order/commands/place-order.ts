@@ -1,4 +1,3 @@
-import { DomainError } from "@bounda-dev/core";
 import type { Command } from "./+types/place-order";
 
 export const payload = ({ z }: Command.PayloadArgs) =>
@@ -16,10 +15,12 @@ export const payload = ({ z }: Command.PayloadArgs) =>
       .min(1),
   });
 
-export const handler = ({ command, state, events }: Command.HandlerArgs) => {
-  if (state.status !== undefined) {
-    throw new DomainError(`Order ${command.aggregateId} was already placed`);
-  }
+export const rejections = ({ command }: Command.RejectionsArgs) => ({
+  AlreadyPlaced: `Order ${command.aggregateId} was already placed`,
+});
+
+export const handler = ({ command, state, events, reject }: Command.HandlerArgs) => {
+  if (state.status !== undefined) return reject("AlreadyPlaced");
   const { customerId, items } = command.payload;
   const total = items.reduce((sum, item) => sum + item.quantity * item.price, 0);
   return [events.orderPlaced({ customerId, items, total })];

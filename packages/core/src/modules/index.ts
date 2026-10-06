@@ -12,7 +12,14 @@ export type {
   CreateImplementation,
   ImplementationModule,
 } from "./collaborator.ts";
-export type { CommandEntry, CommandHandlerArgs, CommandModule } from "./command.ts";
+export type {
+  CommandEntry,
+  CommandHandlerArgs,
+  CommandModule,
+  CommandRejectionsArgs,
+  RejectFunction,
+  RejectionCodeOf,
+} from "./command.ts";
 export type {
   CreateEventBuildersFunction,
   EventApplyArgs,

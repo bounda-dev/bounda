@@ -5,11 +5,17 @@ type Module = typeof import("../cancel-order.ts");
 
 export declare namespace Command {
   type PayloadArgs = core.PayloadArgs;
+  type RejectionsArgs = core.CommandRejectionsArgs<
+    "CancelOrder",
+    core.PayloadOf<Module>,
+    generated.OrderState
+  >;
   type HandlerArgs = core.CommandHandlerArgs<
     "CancelOrder",
     core.PayloadOf<Module>,
     generated.OrderState,
     generated.OrderEvents,
-    generated.OrderCollaborators
+    generated.OrderCollaborators,
+    core.RejectionCodeOf<Module>
   >;
 }

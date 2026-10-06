@@ -6,13 +6,14 @@ import {
   CreationOrderError,
   DomainError,
   NotFoundError,
+  rejectionOf,
   ValidationError,
 } from "../../contracts/errors.ts";
 import { classifyFailure, errorDetails, retryDelayMs } from "./retry.ts";
 
 describe("classifyFailure", () => {
   it("treats request errors as terminal and everything else as retriable", () => {
-    expect(classifyFailure(new DomainError("no"))).toBe("terminal");
+    expect(classifyFailure(new DomainError(rejectionOf("Refused", "no")))).toBe("terminal");
     expect(classifyFailure(new ValidationError("no", []))).toBe("terminal");
     expect(classifyFailure(new NotFoundError("no"))).toBe("terminal");
     expect(classifyFailure(new ConfigurationError("no"))).toBe("terminal");

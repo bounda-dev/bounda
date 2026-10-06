@@ -2,14 +2,22 @@ import type { EventStore, PendingEvent } from "../../adapter/ports/event-store.t
 import type { Scheduler } from "../../adapter/ports/scheduler.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
-import type { Command, DispatchOptions, DispatchResult } from "../../contracts/command.ts";
+import type {
+  Command,
+  CommandRejection,
+  DispatchOptions,
+  DispatchResult,
+  RejectedDispatch,
+} from "../../contracts/command.ts";
 import { parseDuration } from "../../contracts/duration.ts";
 import {
   ChainDepthExceededError,
   ConcurrencyError,
   ConfigurationError,
   CreationOrderError,
+  DomainError,
   NotFoundError,
+  rejectionOf,
   ValidationError,
 } from "../../contracts/errors.ts";
 import type { NewEvent } from "../../contracts/event.ts";
@@ -20,7 +28,7 @@ import { foldState } from "../aggregate/fold-state.ts";
 import type { AggregateRuntime, AggregatesRuntime, CommandRuntime } from "../aggregate/runtime.ts";
 import { withTimeout } from "../shared/timeout.ts";
 import { withCollaborators } from "../shared/with-collaborators.ts";
-import { ATTRIBUTES, METRICS, meter, traced } from "../telemetry.ts";
+import { ATTRIBUTES, METRICS, meter, SPAN_EVENTS, traced } from "../telemetry.ts";
 import type { UnitStores } from "../unit-of-work/unit-of-work.ts";
 import { validatePayload } from "./validate.ts";
 
@@ -44,11 +52,30 @@ export interface DispatchArgs {
    * Aborted when the reaction that dispatches the command is abandoned, so the command stops too.
    */
   readonly signal?: AbortSignal | undefined;
+  /**
+   * Set when nobody waits for the command's rejection, as for a reaction's command or a delayed
+   * one: the rejection is logged and reported to `onRejection` instead.
+   */
+  readonly unattended?: boolean;
+}
+
+/**
+ * `error` is what `reject` returned, for a caller to throw.
+ */
+export interface PipelineRejection extends RejectedDispatch {
+  readonly error: DomainError;
 }
 
 export interface CommandPipeline {
-  dispatch(args: DispatchArgs): Promise<DispatchResult>;
+  dispatch(args: DispatchArgs): Promise<DispatchResult | PipelineRejection>;
 }
+
+export interface IsRejectionFunction {
+  (result: DispatchResult | PipelineRejection): result is PipelineRejection;
+}
+
+export const isRejection: IsRejectionFunction = (result): result is PipelineRejection =>
+  "error" in result;
 
 export interface CreateCommandPipelineArgs {
   readonly aggregates: AggregatesRuntime;
@@ -58,6 +85,10 @@ export interface CreateCommandPipelineArgs {
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly logger: Logger;
+  /**
+   * Told of every rejection of an `unattended` dispatch.
+   */
+  readonly onRejection?: (rejection: CommandRejection) => void;
 }
 
 export interface CreateCommandPipelineFunction {
@@ -164,6 +195,28 @@ const checkCreationOrder = (
   }
 };
 
+// Only a command that declares `rejections` gets `reject`, as its handler's arguments say. What it
+// makes goes in `issued`: a DomainError from anywhere else, such as another app's command, is a
+// failure of this one, not a rejection it declared.
+const rejectOf = (
+  runtime: CommandRuntime,
+  command: Command,
+  state: object,
+  issued: WeakSet<DomainError>,
+): { readonly reject?: (code: string, message?: string) => DomainError } => {
+  const { rejections } = runtime;
+  if (rejections === null) return {};
+  return {
+    reject: (code, message) => {
+      const error = new DomainError(
+        rejectionOf(code, message ?? rejections({ command, state })[code] ?? code),
+      );
+      issued.add(error);
+      return error;
+    },
+  };
+};
+
 /**
  * Commands with `delay` are scheduled with the payload as the caller passed it, in the JSON form
  * every scheduler stores. Validating that form here only rejects early what would fail when the
@@ -178,6 +231,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
   ids,
   clock,
   logger,
+  onRejection,
 }) => {
   // Only streams written before `create` existed land here, so the set stays small.
   const warnedOpenings = new Set<string>();
@@ -187,7 +241,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     command: Command,
     store: EventStore,
     signals: readonly AbortSignal[],
-  ): Promise<DispatchResult> => {
+  ): Promise<DispatchResult | PipelineRejection> => {
     const attempts = config.runtime.commands.concurrencyRetries + 1;
     const { timeoutMs } = config.forAggregate(aggregate.name).commands;
     for (let attempt = 1; ; attempt += 1) {
@@ -206,6 +260,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         });
       }
       const state = { ...folded.state, id: command.aggregateId, version: loaded.version };
+      const issued = new WeakSet<DomainError>();
       const produced = (await withTimeout({
         run: (signal) =>
           runtime.handler(
@@ -215,14 +270,28 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
               events: aggregate.eventBuilders,
               idempotencyKey: command.metadata.commandId,
               signal,
+              ...rejectOf(runtime, command, state, issued),
             }),
           ),
         timeoutMs,
         subject: `command ${command.type}`,
         clock,
         signals,
-      })) as readonly NewEvent[] | undefined;
+      }).catch((error: unknown) => {
+        if (error instanceof DomainError && issued.has(error)) return error;
+        throw error;
+      })) as readonly NewEvent[] | DomainError | undefined;
       for (const signal of signals) signal.throwIfAborted();
+      if (produced instanceof DomainError) {
+        if (!issued.has(produced)) throw produced;
+        return {
+          error: produced,
+          rejected: produced.rejected,
+          message: produced.message,
+          aggregateType: aggregate.name,
+          aggregateId: command.aggregateId,
+        };
+      }
       const events = toPendingEvents(
         aggregate,
         command,
@@ -271,7 +340,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     unit: "{command}",
   });
 
-  const count = (type: string, outcome: "stored" | "scheduled" | "rejected"): void => {
+  const count = (type: string, outcome: "stored" | "scheduled" | "rejected" | "failed"): void => {
     commands.add(1, { [ATTRIBUTES.commandType]: type, [ATTRIBUTES.outcome]: outcome });
   };
 
@@ -283,7 +352,8 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     commandId: scheduledId,
     within,
     signal: reactionSignal,
-  }: DispatchArgs): Promise<DispatchResult> => {
+    unattended = false,
+  }: DispatchArgs): Promise<DispatchResult | PipelineRejection> => {
     const stores = within ?? { eventStore, scheduler };
     const entry = aggregates.commandsByType[type];
     if (entry === undefined) throw new NotFoundError(`Unknown command "${type}"`);
@@ -350,6 +420,20 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         }
         try {
           const result = await execute(aggregate, runtime, command, stores.eventStore, signals);
+          if (isRejection(result)) {
+            span.setAttribute(ATTRIBUTES.outcome, "rejected");
+            span.addEvent(SPAN_EVENTS.commandRejected, {
+              [ATTRIBUTES.rejected]: result.rejected,
+            });
+            count(type, "rejected");
+            if (unattended) {
+              const { error: _error, ...rejected } = result;
+              const rejection: CommandRejection = { type, ...rejected };
+              logger.info("command rejected", { ...rejection });
+              onRejection?.(rejection);
+            }
+            return result;
+          }
           span.setAttributes({
             [ATTRIBUTES.outcome]: "stored",
             [ATTRIBUTES.eventCount]: result.scheduled ? 0 : result.eventIds.length,
@@ -357,7 +441,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
           count(type, "stored");
           return result;
         } catch (error) {
-          count(type, "rejected");
+          count(type, "failed");
           throw error;
         }
       },

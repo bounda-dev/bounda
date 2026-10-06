@@ -51,11 +51,11 @@ export interface RunDeadlineHandlerArgs {
 }
 
 /**
- * Handlers are bounded by the aggregate's policy timeout, as policy handlers are. Each resolves to
- * the state with the fields the handler returned merged over it, validated by the process schema;
- * a deadline's also to what its commands decided.
- * A run whose handler fails or runs out of time is abandoned: its commands are refused from then
- * on.
+ * Handlers are bounded by the aggregate's policy timeout, as policy handlers are, and so are the
+ * commands they dispatch, awaited or not. Each resolves to the state with the fields the handler
+ * returned merged over it, validated by the process schema; a deadline's also to what its commands
+ * decided. A run whose handler or one of whose commands fails, or that runs out of time, is
+ * abandoned: its commands are refused from then on.
  */
 export interface ProcessHandlers {
   runEventHandler(args: RunEventHandlerArgs): Promise<object>;
@@ -67,7 +67,7 @@ export interface ProcessHandlers {
 
 export interface DeadlineRun {
   readonly state: object;
-  readonly decided: () => Promise<readonly ReactionDispatchResult[]>;
+  readonly decided: readonly ReactionDispatchResult[];
 }
 
 export interface CreateProcessHandlersArgs {
@@ -121,6 +121,18 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     }
   };
 
+  // Waits for every command the handler dispatched, awaited or not, before the step commits.
+  const settled = async (
+    reaction: Pick<ReactionCommands, "decided">,
+    handle: () => unknown,
+  ): Promise<{
+    readonly returned: unknown;
+    readonly decided: readonly ReactionDispatchResult[];
+  }> => {
+    const returned = await handle();
+    return { returned, decided: await reaction.decided() };
+  };
+
   const timeoutMs = (process: ProcessRuntime): number =>
     config.forAggregate(process.aggregate).policies.timeoutMs;
 
@@ -141,7 +153,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     });
     const reaction = reactionFor(eventContext(event), idempotencyKey, within);
     return runOf(reaction, async () => {
-      const next = await traced({
+      const { returned } = await traced({
         name: `bounda.process ${process.name}`,
         attributes: {
           [ATTRIBUTES.process]: process.name,
@@ -155,22 +167,24 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
         run: () =>
           withTimeout({
             run: () =>
-              handlerOf(
-                process,
-                event,
-              )?.(
-                handlerArgs(process, reaction, idempotencyKey, event.timestamp, {
+              settled(reaction, () =>
+                handlerOf(
+                  process,
                   event,
-                  state: instance.state,
-                  aggregateId: instanceId,
-                }),
+                )?.(
+                  handlerArgs(process, reaction, idempotencyKey, event.timestamp, {
+                    event,
+                    state: instance.state,
+                    aggregateId: instanceId,
+                  }),
+                ),
               ),
             timeoutMs: timeoutMs(process),
             subject: `process ${process.name}`,
             clock,
           }),
       });
-      return validState(process, merged(instance.state, next));
+      return validState(process, merged(instance.state, returned));
     });
   };
 
@@ -188,7 +202,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     if (handler === undefined) {
       return runOf({ abandon: () => undefined }, async () => ({
         state: validState(process, instance.state),
-        decided: async () => [],
+        decided: [],
       }));
     }
     const idempotencyKey = deriveIdempotencyKey({
@@ -203,7 +217,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
       within,
     );
     return runOf(reaction, async () => {
-      const returned = await traced({
+      const { returned, decided } = await traced({
         name: `bounda.process ${process.name} at ${due.field}`,
         attributes: {
           [ATTRIBUTES.process]: process.name,
@@ -214,11 +228,13 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
         run: () =>
           withTimeout({
             run: () =>
-              handler(
-                handlerArgs(process, reaction, idempotencyKey, due.at, {
-                  state: instance.state,
-                  aggregateId: instanceId,
-                }),
+              settled(reaction, () =>
+                handler(
+                  handlerArgs(process, reaction, idempotencyKey, due.at, {
+                    state: instance.state,
+                    aggregateId: instanceId,
+                  }),
+                ),
               ),
             timeoutMs: timeoutMs(process),
             subject: `process ${process.name} at ${due.field}`,
@@ -227,7 +243,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
       });
       return {
         state: validState(process, merged(instance.state, returned)),
-        decided: reaction.decided,
+        decided,
       };
     });
   };

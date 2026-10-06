@@ -81,7 +81,9 @@ describe("onboarding", () => {
       status: "expired",
       expiredAt: expect.any(Date),
     });
-    await expect(app.commands.activateUser({ userId: ADA })).rejects.toThrow(DomainError);
+    await expect(app.commands.activateUser({ userId: ADA })).rejects.toMatchObject({
+      rejected: "Expired",
+    });
     await app.stop();
   });
 
@@ -91,6 +93,9 @@ describe("onboarding", () => {
     await expect(
       app.commands.registerUser({ userId: ADA, email: "ada@example.com", name: "Ada" }),
     ).rejects.toThrow(DomainError);
+    await expect(
+      app.commands.registerUser({ userId: ADA, email: "ada@example.com", name: "Ada" }),
+    ).rejects.toMatchObject({ rejected: "AlreadyRegistered" });
     await expect(
       app.commands.registerUser({ userId: GRACE, email: "not-an-email", name: "" }),
     ).rejects.toThrow(ValidationError);

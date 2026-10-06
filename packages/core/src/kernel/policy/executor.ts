@@ -84,15 +84,17 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
       },
       run: async () => {
         await withTimeout({
-          run: () =>
-            policy.handler(
+          run: async () => {
+            await policy.handler(
               withCollaborators(policy.collaborators, {
                 event,
                 commands: reaction.commands,
                 idempotencyKey,
                 signal: reaction.signal,
               }),
-            ),
+            );
+            await reaction.decided();
+          },
           timeoutMs: config.forAggregate(policy.aggregate).policies.timeoutMs,
           subject: `policy ${policy.name}`,
           clock,

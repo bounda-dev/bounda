@@ -1,17 +1,21 @@
-import { DomainError } from "@bounda-dev/core";
 import type { Command } from "./+types/activate-user";
 
 export const payload = ({ z }: Command.PayloadArgs) => z.object({ userId: z.uuid() });
 
-export const handler = ({ command, state, events }: Command.HandlerArgs) => {
+export const rejections = ({ command }: Command.RejectionsArgs) => ({
+  Expired: `The registration of user ${command.aggregateId} has expired`,
+  NotRegistered: `User ${command.aggregateId} does not exist`,
+});
+
+export const handler = ({ state, events, reject }: Command.HandlerArgs) => {
   switch (state.status) {
     case "registered":
       return [events.userActivated()];
     case "active":
-      throw new DomainError(`User ${command.aggregateId} is already active`);
+      return [];
     case "expired":
-      throw new DomainError(`The registration of user ${command.aggregateId} has expired`);
+      return reject("Expired");
     default:
-      throw new DomainError(`User ${command.aggregateId} does not exist`);
+      return reject("NotRegistered");
   }
 };

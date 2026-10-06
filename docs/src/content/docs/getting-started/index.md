@@ -55,22 +55,24 @@ Every file exports the functions its concept needs and gets its argument types f
 
 ```ts
 // app/domain/order/commands/place-order.ts
-import { DomainError } from "@bounda-dev/core";
 import type { Command } from "./+types/place-order";
 
 export const payload = ({ z }: Command.PayloadArgs) =>
   z.object({ orderId: z.uuid(), customerId: z.string().min(1), total: z.number().positive() });
 
-export const handler = ({ command, state, events }: Command.HandlerArgs) => {
-  if (state.status !== undefined) {
-    throw new DomainError(`Order ${command.aggregateId} was already placed`);
-  }
+export const rejections = ({ command }: Command.RejectionsArgs) => ({
+  AlreadyPlaced: `Order ${command.aggregateId} was already placed`,
+});
+
+export const handler = ({ command, state, events, reject }: Command.HandlerArgs) => {
+  if (state.status !== undefined) return reject("AlreadyPlaced");
   return [events.orderPlaced({ customerId: command.payload.customerId, total: command.payload.total })];
 };
 ```
 
 `command.payload` is typed from the Zod schema above it, `state` from what the order's events
-return, and `events` only offers the events of this aggregate. `order-placed.ts` opens the order
+return, and `events` only offers the events of this aggregate. `rejections` declares how the
+command may say no, and `reject` only takes those codes. `order-placed.ts` opens the order
 with `create`, so before it every field of `state` is `undefined`, and after it `status` and the
 rest are always set. Nothing here is registered anywhere: the file's place
 and name are the declaration. The [project layout](/guides/project-layout/) guide has the whole
@@ -102,14 +104,18 @@ Add the command:
 
 ```ts
 // app/domain/order/commands/cancel-order.ts
-import { DomainError } from "@bounda-dev/core";
 import type { Command } from "./+types/cancel-order";
 
 export const payload = ({ z }: Command.PayloadArgs) =>
   z.object({ orderId: z.uuid(), reason: z.string().min(1) });
 
-export const handler = ({ command, state, events }: Command.HandlerArgs) => {
-  if (state.status !== "placed") throw new DomainError("Only placed orders can be cancelled");
+export const rejections = ({ state }: Command.RejectionsArgs) => ({
+  NotPlaced: `Only placed orders can be cancelled; this one is ${state.status ?? "new"}`,
+});
+
+export const handler = ({ command, state, events, reject }: Command.HandlerArgs) => {
+  if (state.status === "cancelled") return [];
+  if (state.status !== "placed") return reject("NotPlaced");
   return [events.orderCancelled({ reason: command.payload.reason })];
 };
 ```

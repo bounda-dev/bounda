@@ -10,6 +10,10 @@ export interface RpcRefusal {
   readonly code: string;
   readonly message: string;
   readonly issues?: unknown;
+  /**
+   * The code of a command's rejection, set on a `DomainError`.
+   */
+  readonly rejected?: string;
 }
 
 /**
@@ -32,6 +36,7 @@ export const settle: SettleFunction = async (work) => {
   } catch (error) {
     if (!(error instanceof BoundaError)) throw error;
     const issues = Reflect.get(error, "issues");
+    const rejected = Reflect.get(error, "rejected");
     return {
       ok: false,
       refusal: {
@@ -39,6 +44,7 @@ export const settle: SettleFunction = async (work) => {
         code: error.code,
         message: error.message,
         ...(issues === undefined ? {} : { issues }),
+        ...(typeof rejected === "string" ? { rejected } : {}),
       },
     };
   }
@@ -51,10 +57,11 @@ export interface UnwrapFunction {
 export const unwrap: UnwrapFunction = async <T>(pending: PromiseLike<unknown>): Promise<T> => {
   const outcome = (await pending) as RpcOutcome<T>;
   if (outcome.ok) return outcome.value;
-  const { name, code, message, issues } = outcome.refusal;
+  const { name, code, message, issues, rejected } = outcome.refusal;
   throw Object.assign(new Error(message), {
     name,
     code,
     ...(issues === undefined ? {} : { issues }),
+    ...(rejected === undefined ? {} : { rejected }),
   });
 };

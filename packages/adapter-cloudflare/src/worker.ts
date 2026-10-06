@@ -79,9 +79,10 @@ const route = (pathname: string): { readonly kind: string; readonly name: string
  * - `POST /queries/<name>` with the payload as the body answers the query's result.
  *
  * Refusals come back as `{ error: { code, message } }`: 400 for a payload that fails validation,
- * 404 for an unknown command, query or row, 409 for a domain rule or a conflict. Anything else is
- * a 500 without its message, which is logged instead. There is no authentication and no operator
- * endpoint: it is a starting point, and an app with users writes its own `fetch` over `connect`.
+ * with `issues`, 404 for an unknown command, query or row, 409 for a command's rejection, with its
+ * code in `rejected`, or a conflict. Anything else is a 500 without its message, which is logged
+ * instead. There is no authentication and no operator endpoint: it is a starting point, and an
+ * app with users writes its own `fetch` over `connect`.
  */
 export const createWorker: CreateWorkerFunction = ({
   binding,
@@ -121,7 +122,11 @@ export const createWorker: CreateWorkerFunction = ({
       const status = typeof code === "string" ? STATUS_BY_CODE[code] : undefined;
       if (typeof code === "string" && status !== undefined && error instanceof Error) {
         const issues = Reflect.get(error, "issues");
-        return failure(code, error.message, status, issues === undefined ? {} : { issues });
+        const rejected = Reflect.get(error, "rejected");
+        return failure(code, error.message, status, {
+          ...(issues === undefined ? {} : { issues }),
+          ...(typeof rejected === "string" ? { rejected } : {}),
+        });
       }
       logger.error("bounda worker request failed", {
         path: url.pathname,

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ValidationError } from "../../contracts/errors.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { createReactionCommandIds } from "../shared/idempotency-key.ts";
 import { createKernelHarness, drained, orderRegistry, slowJob } from "../test-support.ts";
@@ -44,6 +45,7 @@ describe("createReactionCommands", () => {
     await reaction.commands.archiveOrder?.({ orderId: "o-1" }, { delay: "1h" });
 
     expect(placed).toEqual({
+      rejected: false,
       scheduled: false,
       aggregateType: "order",
       aggregateId: "o-1",
@@ -127,10 +129,59 @@ describe("createReactionCommands", () => {
 
   it("keeps the error of a command that failed on its own when the run is then abandoned", async () => {
     const { reaction } = await setUp();
-    const refused = reaction.commands.payOrder?.({ orderId: "o-1", method: "card" });
-    await expect(refused).rejects.toThrow("Only placed orders can be paid");
+    const failed = reaction.commands.payOrder?.({ orderId: "o-1", method: "cash" });
+    await expect(failed).rejects.toThrow(ValidationError);
     reaction.abandon(new Error("timed out"));
-    await expect(refused).rejects.toThrow("Only placed orders can be paid");
+    await expect(failed).rejects.toThrow(ValidationError);
+  });
+
+  it("resolves a rejected command with its code and message, deciding nothing", async () => {
+    const { reaction, storage, unit } = await setUp();
+    const paid = await reaction.commands.payOrder?.({ orderId: "o-1", method: "card" });
+    await unit.commit();
+
+    expect(paid).toEqual({
+      rejected: "NotPlaced",
+      message: "Only placed orders can be paid; this one is new",
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    expect(await reaction.decided()).toEqual([paid]);
+    expect(await storage.eventStore.lastPosition()).toBe(0);
+  });
+
+  it("waits for the commands the handler did not await, and rejects with the first that failed", async () => {
+    const { reaction } = await setUp();
+    const unhandled: unknown[] = [];
+    const record = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", record);
+    try {
+      void reaction.commands.placeOrder?.({ orderId: "o-1", total: 3 });
+      void reaction.commands.payOrder?.({ orderId: "o-2", method: "cash" });
+      void reaction.commands.archiveOrder?.({});
+      await expect(reaction.decided()).rejects.toThrow("Invalid payload for command PayOrder");
+      await drained();
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", record);
+    }
+  });
+
+  it("resolves decided with every decision, those the handler did not await included", async () => {
+    const { reaction } = await setUp();
+    void reaction.commands.placeOrder?.({ orderId: "o-1", total: 3 });
+    void reaction.commands.payOrder?.({ orderId: "o-2", method: "card" });
+
+    const decided = await reaction.decided();
+    expect(decided).toHaveLength(2);
+    expect(decided).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ rejected: false, eventTypes: ["OrderPlaced"] }),
+        expect.objectContaining({ rejected: "NotPlaced" }),
+      ]),
+    );
   });
 
   it("lets a handler withdraw a command it dispatched without abandoning its run", async () => {
@@ -144,5 +195,30 @@ describe("createReactionCommands", () => {
 
     await expect(outcome).rejects.toBe(reason);
     expect(reaction.signal.aborted).toBe(false);
+    expect(await reaction.decided()).toEqual([]);
+  });
+
+  it("still fails the run for a command that failed before the handler withdrew it", async () => {
+    const { reaction } = await setUp();
+    const controller = new AbortController();
+    const failed = reaction.commands.payOrder?.(
+      { orderId: "o-1", method: "cash" },
+      { signal: controller.signal },
+    );
+    await expect(failed).rejects.toThrow(ValidationError);
+    controller.abort(new Error("no longer needed"));
+
+    await expect(reaction.decided()).rejects.toThrow(ValidationError);
+  });
+
+  it("resolves a delayed command as not rejected and scheduled", async () => {
+    const { reaction } = await setUp();
+    expect(await reaction.commands.archiveOrder?.({ orderId: "o-1" }, { delay: "1h" })).toEqual({
+      rejected: false,
+      scheduled: true,
+      aggregateType: "order",
+      aggregateId: "o-1",
+      executeAt: expect.any(String),
+    });
   });
 });

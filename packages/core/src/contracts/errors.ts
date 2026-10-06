@@ -12,16 +12,40 @@ export class BoundaError extends Error {
   }
 }
 
+declare const rejectionBrand: unique symbol;
+
 /**
- * Thrown by user code to say a rule of the domain forbids what was asked. From a command handler
- * it rejects the command: the runtime returns it to the caller as is and does not retry it. Where
- * there is no caller to return it to, it is terminal: out of a policy or process handler (thrown
- * there or by a command it dispatched) or a delayed command, the runtime dead-letters the run at
- * once instead of retrying it.
+ * A code a command declares in `rejections` and its message, as only the handler's `reject`
+ * produces it.
  */
-export class DomainError extends BoundaError {
-  constructor(message: string, options?: ErrorOptions) {
-    super("DOMAIN_ERROR", message, options);
+export interface Rejection<Code extends string = string> {
+  readonly code: Code;
+  readonly message: string;
+  readonly [rejectionBrand]: true;
+}
+
+export interface RejectionOfFunction {
+  <Code extends string>(code: Code, message: string): Rejection<Code>;
+}
+
+export const rejectionOf: RejectionOfFunction = <Code extends string>(
+  code: Code,
+  message: string,
+) => ({ code, message }) as Rejection<Code>;
+
+/**
+ * A command's rejection: a rule of the domain forbids what was asked. A handler makes one with
+ * `reject(code)`, one of the codes its module declares in `rejections`, never with `new`.
+ * `app.commands` throws it to the caller, with the code in `rejected`, and nothing is retried. A
+ * policy or process handler gets it as a value instead: its `commands.<name>()` resolves with
+ * `rejected` set to the code.
+ */
+export class DomainError<Code extends string = string> extends BoundaError {
+  readonly rejected: Code;
+
+  constructor(rejection: Rejection<Code>, options?: ErrorOptions) {
+    super("DOMAIN_ERROR", rejection.message, options);
+    this.rejected = rejection.code;
   }
 }
 

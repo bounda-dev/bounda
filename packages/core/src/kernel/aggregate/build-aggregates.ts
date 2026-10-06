@@ -49,6 +49,7 @@ const buildCommands = (name: string, entry: AggregateEntry): Record<string, Comm
         type: capitalize(key),
         schema: compileSchema(command.module.payload, `aggregates.${name}.commands.${key}`),
         handler: command.module.handler as CommandRuntime["handler"],
+        rejections: (command.module.rejections ?? null) as CommandRuntime["rejections"],
       },
     ]),
   );

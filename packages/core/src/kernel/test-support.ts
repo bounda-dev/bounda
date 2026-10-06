@@ -4,10 +4,10 @@ import { selectCollaborators } from "../config/collaborators.ts";
 import { resolveConfig } from "../config/schema.ts";
 import type { CollaboratorsConfig, Config, ResolvedConfig } from "../config/types.ts";
 import { createFixedClock, type FixedClock } from "../contracts/clock.ts";
-import { DomainError } from "../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../contracts/ids.ts";
 import { type LogFields, type Logger, silentLogger } from "../contracts/logger.ts";
 import { memory } from "../memory/index.ts";
+import type { RejectFunction } from "../modules/command.ts";
 import type { PayloadArgs } from "../modules/payload.ts";
 import type { Registry } from "../modules/registry.ts";
 import { buildAggregates } from "./aggregate/build-aggregates.ts";
@@ -47,21 +47,24 @@ export const orderAggregate = {
     placeOrder: {
       module: {
         payload: ({ z }: PayloadArgs) => z.object({ orderId: z.string(), total: z.number() }),
+        rejections: () => ({ AlreadyPlaced: "Order already placed" }),
         handler: async ({
           command,
           state,
           events,
           notifier,
           idempotencyKey,
+          reject,
         }: {
           command: { payload: { orderId: string; total: number }; aggregateId: string };
           state: OrderState & { version: number };
           events: Record<string, (payload?: unknown) => unknown>;
           notifier: { send: (message: string) => void };
           idempotencyKey: string;
+          reject: RejectFunction<"AlreadyPlaced">;
         }) => {
           placeOrderKeys.push(idempotencyKey);
-          if (state.status !== "new") throw new DomainError("Order already placed");
+          if (state.status !== "new") return reject("AlreadyPlaced");
           notifier.send(`placed ${command.aggregateId} v${state.version}`);
           return [events.orderPlaced?.({ total: command.payload.total })];
         },
@@ -71,16 +74,21 @@ export const orderAggregate = {
       module: {
         payload: ({ z }: PayloadArgs) =>
           z.object({ orderId: z.string(), method: z.enum(["card", "transfer"]) }),
+        rejections: ({ state }: { state: OrderState }) => ({
+          NotPlaced: `Only placed orders can be paid; this one is ${state.status}`,
+        }),
         handler: ({
           command,
           state,
           events,
+          reject,
         }: {
           command: { payload: { method: "card" | "transfer" } };
           state: OrderState;
           events: Record<string, (payload?: unknown) => unknown>;
+          reject: RejectFunction<"NotPlaced">;
         }) => {
-          if (state.status !== "placed") throw new DomainError("Only placed orders can be paid");
+          if (state.status !== "placed") throw reject("NotPlaced");
           return [events.orderPaid?.({ method: command.payload.method })];
         },
       },

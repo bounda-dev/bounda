@@ -25,6 +25,15 @@ export interface RecordedSpan {
 }
 
 /**
+ * An event added to a span, with the span's name.
+ */
+export interface RecordedSpanEvent {
+  readonly span: string;
+  readonly name: string;
+  readonly attributes: Attributes;
+}
+
+/**
  * One value a counter added, a histogram or gauge recorded, or an observable callback observed.
  */
 export interface RecordedCount {
@@ -41,6 +50,7 @@ export interface RecordedInstrument {
 
 export interface FakeTelemetry {
   readonly spans: readonly RecordedSpan[];
+  readonly spanEvents: readonly RecordedSpanEvent[];
   readonly counts: readonly RecordedCount[];
   readonly instruments: readonly RecordedInstrument[];
   /**
@@ -57,7 +67,12 @@ export interface InstallFakeTelemetryFunction {
   (): FakeTelemetry;
 }
 
-const recordingSpan = (name: string, attributes: Attributes, spans: RecordedSpan[]): Span => {
+const recordingSpan = (
+  name: string,
+  attributes: Attributes,
+  spans: RecordedSpan[],
+  spanEvents: RecordedSpanEvent[],
+): Span => {
   const record = {
     name,
     attributes: { ...attributes },
@@ -88,7 +103,10 @@ const recordingSpan = (name: string, attributes: Attributes, spans: RecordedSpan
       commit();
       return span;
     },
-    addEvent: () => span,
+    addEvent: (event: string, eventAttributes: Attributes = {}) => {
+      spanEvents.push({ span: record.name, name: event, attributes: { ...eventAttributes } });
+      return span;
+    },
     addLink: () => span,
     addLinks: () => span,
     setStatus: (status: RecordedSpan["status"]) => {
@@ -120,6 +138,7 @@ const recordingSpan = (name: string, attributes: Attributes, spans: RecordedSpan
  */
 export const installFakeTelemetry: InstallFakeTelemetryFunction = () => {
   const spans: RecordedSpan[] = [];
+  const spanEvents: RecordedSpanEvent[] = [];
   const counts: RecordedCount[] = [];
   const instruments: RecordedInstrument[] = [];
   const callbacks = new Map<string, ObservableCallback>();
@@ -133,11 +152,11 @@ export const installFakeTelemetry: InstallFakeTelemetryFunction = () => {
 
   const tracer = {
     startSpan: (name: string, options?: SpanOptions) =>
-      recordingSpan(name, options?.attributes ?? {}, spans),
+      recordingSpan(name, options?.attributes ?? {}, spans, spanEvents),
     startActiveSpan: (name: string, ...rest: unknown[]) => {
       const fn = rest.at(-1) as (span: Span) => unknown;
       const options = (rest.length > 1 ? rest[0] : undefined) as SpanOptions | undefined;
-      return fn(recordingSpan(name, options?.attributes ?? {}, spans));
+      return fn(recordingSpan(name, options?.attributes ?? {}, spans, spanEvents));
     },
   } as unknown as Tracer;
   const tracerProvider: TracerProvider = { getTracer: () => tracer };
@@ -187,6 +206,7 @@ export const installFakeTelemetry: InstallFakeTelemetryFunction = () => {
 
   return {
     spans,
+    spanEvents,
     counts,
     instruments,
     observe: async () => {

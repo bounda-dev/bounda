@@ -7,6 +7,7 @@ import type {
   CreateArgs,
   DispatchOptions,
   DispatchResult,
+  DomainError,
   DurationInput,
   EnvSection,
   ImplementationModule,
@@ -14,6 +15,8 @@ import type {
   Logger,
   QueriesFacade,
   ReactionDispatchResult,
+  RejectFunction,
+  RejectionCodeOf,
   StoredEvent,
   Table,
 } from "@bounda-dev/core";
@@ -197,6 +200,41 @@ describe("collaborators", () => {
   });
 });
 
+describe("rejections", () => {
+  it("give reject the codes the command declares, returning the error to return or throw", () => {
+    expectTypeOf<PayOrder.HandlerArgs["reject"]>().toEqualTypeOf<RejectFunction<"NotPlaced">>();
+    expectTypeOf<PayOrder.HandlerArgs["reject"]>().parameter(0).toEqualTypeOf<"NotPlaced">();
+    expectTypeOf<PayOrder.HandlerArgs["reject"]>().returns.toEqualTypeOf<
+      DomainError<"NotPlaced">
+    >();
+    expectTypeOf<DomainError<"NotPlaced">["rejected"]>().toEqualTypeOf<"NotPlaced">();
+    expectTypeOf<PlaceOrder.HandlerArgs["reject"]>().toEqualTypeOf<
+      RejectFunction<"AlreadyPlaced">
+    >();
+    expectTypeOf<
+      RejectionCodeOf<typeof import("./fixtures/order-app/app/domain/order/commands/pay-order.ts")>
+    >().toEqualTypeOf<"NotPlaced">();
+  });
+
+  it("give reject only to a command that declares rejections", () => {
+    expectTypeOf<CancelOrder.HandlerArgs>().not.toHaveProperty("reject");
+    expectTypeOf<RegisterCustomer.HandlerArgs>().not.toHaveProperty("reject");
+    expectTypeOf<
+      RejectionCodeOf<
+        typeof import("./fixtures/order-app/app/domain/order/commands/cancel-order.ts")
+      >
+    >().toBeNever();
+  });
+
+  it("give rejections the command and the state the handler saw", () => {
+    expectTypeOf<PayOrder.RejectionsArgs["state"]>().toEqualTypeOf<PayOrder.HandlerArgs["state"]>();
+    expectTypeOf<PayOrder.RejectionsArgs["command"]>().toEqualTypeOf<
+      PayOrder.HandlerArgs["command"]
+    >();
+    expectTypeOf<PayOrder.RejectionsArgs>().not.toHaveProperty("events");
+  });
+});
+
 describe("idempotency keys", () => {
   it("reach every handler that can call the outside world", () => {
     expectTypeOf<PlaceOrder.HandlerArgs["idempotencyKey"]>().toEqualTypeOf<string>();
@@ -236,18 +274,20 @@ describe("policies", () => {
 
   it("get each command's decision, typed like app.commands but without a position", () => {
     expectTypeOf<SendReceipt.HandlerArgs["commands"]["payOrder"]>().returns.toEqualTypeOf<
-      Promise<ReactionDispatchResult>
+      Promise<ReactionDispatchResult<"NotPlaced">>
     >();
     expectTypeOf<Parameters<SendReceipt.HandlerArgs["commands"]["payOrder"]>>().toEqualTypeOf<
       Parameters<Commands["payOrder"]>
     >();
     expectTypeOf<OnOrderPaid.HandlerArgs["commands"]["payOrder"]>().returns.toEqualTypeOf<
-      Promise<ReactionDispatchResult>
+      Promise<ReactionDispatchResult<"NotPlaced">>
     >();
     expectTypeOf<AtNextReminder.DeadlineArgs["commands"]["payOrder"]>().returns.toEqualTypeOf<
-      Promise<ReactionDispatchResult>
+      Promise<ReactionDispatchResult<"NotPlaced">>
     >();
-    expectTypeOf<Extract<ReactionDispatchResult, { scheduled: false }>>().toMatchObjectType<{
+    expectTypeOf<Extract<ReactionDispatchResult, { scheduled: false }>>().toEqualTypeOf<{
+      readonly rejected: false;
+      readonly scheduled: false;
       readonly aggregateType: string;
       readonly aggregateId: string;
       readonly version: number;
@@ -258,6 +298,30 @@ describe("policies", () => {
       "position",
     );
     expectTypeOf<Extract<DispatchResult, { scheduled: false }>>().toHaveProperty("position");
+  });
+
+  it("get a rejection as a value, with the codes the command declares", () => {
+    type Paid = Awaited<ReturnType<SendReceipt.HandlerArgs["commands"]["payOrder"]>>;
+    expectTypeOf<Paid["rejected"]>().toEqualTypeOf<false | "NotPlaced">();
+    expectTypeOf<Extract<Paid, { rejected: "NotPlaced" }>>().toEqualTypeOf<{
+      readonly rejected: "NotPlaced";
+      readonly message: string;
+      readonly aggregateType: string;
+      readonly aggregateId: string;
+    }>();
+    expectTypeOf<Extract<Paid, { rejected: "NotPlaced" }>>().not.toHaveProperty("eventIds");
+    expectTypeOf<Extract<Paid, { scheduled: true }>>().toEqualTypeOf<{
+      readonly rejected: false;
+      readonly scheduled: true;
+      readonly aggregateType: string;
+      readonly aggregateId: string;
+      readonly executeAt: string;
+    }>();
+  });
+
+  it("get rejected: false only from a command without rejections", () => {
+    type Cancelled = Awaited<ReturnType<SendReceipt.HandlerArgs["commands"]["cancelOrder"]>>;
+    expectTypeOf<Cancelled["rejected"]>().toEqualTypeOf<false>();
   });
 });
 
@@ -377,10 +441,16 @@ describe("facades", () => {
     expectTypeOf<Commands["payOrder"]>().parameter(1).toEqualTypeOf<DispatchOptions | undefined>();
     expectTypeOf<DispatchOptions["signal"]>().toEqualTypeOf<AbortSignal | undefined>();
     expectTypeOf<Commands["payOrder"]>().returns.toEqualTypeOf<Promise<DispatchResult>>();
-    expectTypeOf<Extract<DispatchResult, { scheduled: false }>>().toMatchObjectType<{
+    expectTypeOf<Extract<DispatchResult, { scheduled: false }>>().toEqualTypeOf<{
+      readonly scheduled: false;
+      readonly aggregateType: string;
+      readonly aggregateId: string;
+      readonly version: number;
+      readonly eventIds: readonly string[];
       readonly eventTypes: readonly string[];
       readonly position: number;
     }>();
+    expectTypeOf<DispatchResult>().not.toHaveProperty("rejected");
     expectTypeOf<BoundaApp<Registry>["catchUpReadModels"]>()
       .parameter(0)
       .toEqualTypeOf<CatchUpReadModelsArgs | undefined>();

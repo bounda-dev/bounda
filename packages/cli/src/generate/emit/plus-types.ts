@@ -121,6 +121,14 @@ const commandFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFi
       members: [
         ["PayloadArgs", "core.PayloadArgs"],
         [
+          "RejectionsArgs",
+          generic("core.CommandRejectionsArgs", [
+            `"${command.typeName}"`,
+            "core.PayloadOf<Module>",
+            `generated.${stateTypeName(aggregate.name)}`,
+          ]),
+        ],
+        [
           "HandlerArgs",
           generic("core.CommandHandlerArgs", [
             `"${command.typeName}"`,
@@ -128,6 +136,7 @@ const commandFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFi
             `generated.${stateTypeName(aggregate.name)}`,
             `generated.${eventsTypeName(aggregate.name)}`,
             collaboratorsType(aggregate),
+            "core.RejectionCodeOf<Module>",
           ]),
         ],
       ],

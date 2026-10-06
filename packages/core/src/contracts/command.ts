@@ -36,14 +36,28 @@ export interface DispatchOptions {
 }
 
 /**
- * What a command dispatched from a policy or process handler resolves with: the aggregate's
- * version after the command's events and those events' ids and types, in order, or
- * `scheduled: true` with when a delayed command runs. It is the aggregate's decision, kept in the
- * handler's unit of work until its attempt commits, so it carries no position in the global
- * stream: nothing is stored yet.
+ * A command's rejection as a policy or process handler receives it: the code its handler passed
+ * to `reject` and the message. Nothing was decided, so it carries no events.
  */
-export type ReactionDispatchResult =
+export interface RejectedDispatch<Code extends string = string> {
+  readonly rejected: Code;
+  readonly message: string;
+  readonly aggregateType: string;
+  readonly aggregateId: string;
+}
+
+/**
+ * What a command dispatched from a policy or process handler resolves with. `rejected` is `false`
+ * when the aggregate decided: the aggregate's version after the command's events and those events'
+ * ids and types, in order, or `scheduled: true` with when a delayed command runs. It is the code
+ * of the rejection otherwise, one of those the command declares in `rejections`. The decision is
+ * kept in the handler's unit of work until its attempt commits, so it carries no position in the
+ * global stream: nothing is stored yet. A rejection the handler does not look at changes nothing:
+ * the run goes on. The promise rejects only for a failure, which fails the run.
+ */
+export type ReactionDispatchResult<Code extends string = string> =
   | {
+      readonly rejected: false;
       readonly scheduled: false;
       readonly aggregateType: string;
       readonly aggregateId: string;
@@ -52,11 +66,21 @@ export type ReactionDispatchResult =
       readonly eventTypes: readonly string[];
     }
   | {
+      readonly rejected: false;
       readonly scheduled: true;
       readonly aggregateType: string;
       readonly aggregateId: string;
       readonly executeAt: string;
-    };
+    }
+  | (Code extends string ? RejectedDispatch<Code> : never);
+
+/**
+ * A rejection a command dispatched from a policy, a process or the scheduler met, where no caller
+ * was waiting for it: `type` is the command's.
+ */
+export interface CommandRejection extends RejectedDispatch {
+  readonly type: string;
+}
 
 /**
  * What a successful dispatch returns: the aggregate's version after the append and the ids and
@@ -65,7 +89,18 @@ export type ReactionDispatchResult =
  * scheduled command returns `scheduled: true` and no events.
  */
 export type DispatchResult =
-  | (Extract<ReactionDispatchResult, { readonly scheduled: false }> & {
+  | {
+      readonly scheduled: false;
+      readonly aggregateType: string;
+      readonly aggregateId: string;
+      readonly version: number;
+      readonly eventIds: readonly string[];
+      readonly eventTypes: readonly string[];
       readonly position: number;
-    })
-  | Extract<ReactionDispatchResult, { readonly scheduled: true }>;
+    }
+  | {
+      readonly scheduled: true;
+      readonly aggregateType: string;
+      readonly aggregateId: string;
+      readonly executeAt: string;
+    };

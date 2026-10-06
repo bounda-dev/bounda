@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { DeadLetterSettledError, DomainError, NotFoundError } from "../../contracts/errors.ts";
+import { DeadLetterSettledError, NotFoundError, ValidationError } from "../../contracts/errors.ts";
+import type { RejectFunction } from "../../modules/command.ts";
 import type { PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { PROCESS_DEADLINE_COMMAND } from "../process/deadlines.ts";
@@ -24,13 +25,39 @@ let handlerStarted = Promise.withResolvers<void>();
 let gate = Promise.withResolvers<void>();
 let processMode: "ok" | "domain" = "domain";
 let timeoutMode: "ok" | "domain" = "ok";
+let paymentsClosed = false;
+
+const order = orderAggregateEntry();
+
+interface PayOrderArgs {
+  readonly command: { readonly payload: { readonly method: string } };
+  readonly state: { readonly status: string };
+  readonly events: Record<string, (payload?: unknown) => unknown>;
+  readonly reject: RejectFunction<"Closed">;
+}
+
+// A delayed command is dropped to a dead letter when it fails, never when it is rejected.
+const payOrder = {
+  module: {
+    payload: order.commands.payOrder.module.payload,
+    rejections: () => ({ Closed: "Payments are closed" }),
+    handler: ({ command, state, events, reject }: PayOrderArgs) => {
+      if (paymentsClosed) return reject("Closed");
+      if (state.status !== "placed") {
+        throw new ValidationError("Only placed orders can be paid", []);
+      }
+      return [events.orderPaid?.({ method: command.payload.method })];
+    },
+  },
+};
 
 const registry = {
   aggregates: {
     order: {
-      ...orderAggregateEntry(),
+      ...order,
+      commands: { ...order.commands, payOrder },
       collaborators: {
-        ...orderAggregateEntry().collaborators,
+        ...order.collaborators,
         recorder: { memory: { default: { record: (call: string) => calls.push(call) } } },
       },
       policies: {
@@ -49,7 +76,7 @@ const registry = {
             }) => {
               recorder.record(`notify:${event.aggregateId}`);
               keys.push(`policy ${idempotencyKey}`);
-              if (policyMode === "domain") throw new DomainError("mail server rejects it");
+              if (policyMode === "domain") throw new ValidationError("mail server rejects it", []);
               if (policyMode === "hangs") {
                 handlerStarted.resolve();
                 await new Promise<never>(() => undefined);
@@ -86,7 +113,8 @@ const registry = {
                 }) => {
                   calls.push(`paid:${event.payload.method}`);
                   keys.push(`process ${idempotencyKey}`);
-                  if (processMode === "domain") throw new DomainError("payment provider says no");
+                  if (processMode === "domain")
+                    throw new ValidationError("payment provider says no", []);
                   return { method: event.payload.method };
                 },
               },
@@ -96,7 +124,7 @@ const registry = {
             timeout: {
               handler: ({ idempotencyKey }: { idempotencyKey: string }) => {
                 keys.push(`timeout ${idempotencyKey}`);
-                if (timeoutMode === "domain") throw new DomainError("courier is closed");
+                if (timeoutMode === "domain") throw new ValidationError("courier is closed", []);
               },
             },
           },
@@ -108,6 +136,7 @@ const registry = {
 } satisfies Registry;
 
 const setUp = async () => {
+  paymentsClosed = false;
   calls.length = 0;
   keys.length = 0;
   const { logger, entries } = createRecordingLogger();
@@ -655,26 +684,34 @@ describe("deadLetters", () => {
     expect(events.at(-1)?.type).toBe(PROCESS_EVENTS.timedOut);
   });
 
-  it("dispatches a dropped command again with its recorded payload", async () => {
+  it("dispatches a dropped command again with its recorded payload, throwing its rejection", async () => {
     policyMode = "ok";
     const { harness, deadLetters } = await setUp();
-    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
     await harness.pipeline.dispatch({
-      type: "PlaceOrder",
-      payload: { orderId: "o-1", total: 99 },
+      type: "PayOrder",
+      payload: { orderId: "o-1", method: "transfer" },
       options: { delay: "1m" },
     });
     harness.clock.advance(60_000);
     await harness.worker.runOnce();
     const [letter] = await deadLetters.list({ kind: "command" });
     expect(letter).toMatchObject({
-      eventType: "PlaceOrder",
-      payload: { orderId: "o-1", total: 99 },
+      eventType: "PayOrder",
+      payload: { orderId: "o-1", method: "transfer" },
     });
 
-    await expect(deadLetters.replay(letter?.id ?? "")).rejects.toThrow("Order already placed");
-    await harness.pipeline.dispatch({ type: "ArchiveOrder", payload: { orderId: "o-1" } });
+    paymentsClosed = true;
+    await expect(deadLetters.replay(letter?.id ?? "")).rejects.toMatchObject({
+      name: "DomainError",
+      rejected: "Closed",
+      message: "Payments are closed",
+    });
     expect((await deadLetters.get(letter?.id ?? ""))?.status).toBe("failed");
+    const { events } = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    expect(events.map((event) => event.type)).not.toContain("OrderPaid");
   });
 
   it("dispatches a dropped command that can succeed now", async () => {

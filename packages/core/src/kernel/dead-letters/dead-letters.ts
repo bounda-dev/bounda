@@ -11,7 +11,7 @@ import type { StoredEvent } from "../../contracts/event.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
-import type { CommandPipeline } from "../command/pipeline.ts";
+import { type CommandPipeline, isRejection } from "../command/pipeline.ts";
 import type { PoliciesRuntime } from "../policy/build-policies.ts";
 import type { PolicyExecutor } from "../policy/executor.ts";
 import { PROCESS_DEADLINE_COMMAND } from "../process/deadlines.ts";
@@ -148,7 +148,13 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
     }
     const { payload } = letter;
     await replayed(letter, async (unit) => {
-      await pipeline.dispatch({ type: letter.eventType, payload, context, within: unit });
+      const result = await pipeline.dispatch({
+        type: letter.eventType,
+        payload,
+        context,
+        within: unit,
+      });
+      if (isRejection(result)) throw result.error;
     });
   };
 
