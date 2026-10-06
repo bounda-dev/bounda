@@ -5,6 +5,7 @@ import { ValidationError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { memory } from "../../memory/index.ts";
 import type { PayloadArgs } from "../../modules/payload.ts";
+import type { ProcessCorrelation } from "../../modules/process.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { createReactiveHarness } from "../reactive-harness.ts";
@@ -955,14 +956,27 @@ describe("processes that listen to other aggregates", () => {
     policies: {},
     processes: {},
   };
+  type Correlators = Record<
+    string,
+    Record<string, (event: { payload: { orderId: string } }) => string | null>
+  >;
+  // The process's `correlate` for these correlators, one from.<aggregate>.<Event>(…) each.
+  const correlateWith =
+    (correlators: Correlators) =>
+    ({
+      from,
+    }: {
+      readonly from: Record<string, Record<string, (correlate: unknown) => unknown>>;
+    }) =>
+      Object.entries(correlators).flatMap(([source, byType]) =>
+        Object.entries(byType).map(([type, correlator]) => from[source]?.[type]?.(correlator)),
+      ) as ProcessCorrelation[];
   const withCorrelate = (
-    correlate: Record<
-      string,
-      Record<string, (event: { payload: { orderId: string } }) => string | null>
-    >,
+    correlators: Correlators | undefined,
     returned: (state: { failures: number }) => unknown = (state) => ({
       failures: state.failures + 1,
     }),
+    paymentEntry: Registry["aggregates"][string] = payment,
   ): Registry => ({
     aggregates: {
       order: {
@@ -975,7 +989,7 @@ describe("processes that listen to other aggregates", () => {
                 completedBy: [events.payment.PaymentSettled],
               }),
               state: ({ z }: PayloadArgs) => z.object({ failures: z.int().default(0) }),
-              correlate,
+              ...(correlators === undefined ? {} : { correlate: correlateWith(correlators) }),
             },
             handlers: {
               payment: {
@@ -990,7 +1004,7 @@ describe("processes that listen to other aggregates", () => {
           },
         },
       },
-      payment,
+      payment: paymentEntry,
     },
     readModels: {},
   });
@@ -1003,31 +1017,40 @@ describe("processes that listen to other aggregates", () => {
   const stream = (harness: Awaited<ReturnType<typeof createReactiveHarness>>, id: string) =>
     harness.storage.eventStore.load({ aggregateType: "process:Checkout", aggregateId: id });
 
-  it("hand another aggregate's event to the instance correlate names, and complete on one", async () => {
-    seen.length = 0;
-    const harness = await createReactiveHarness({ registry: withCorrelate(byOrder) });
-    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.pipeline.dispatch({
-      type: "FailPayment",
-      payload: { paymentId: "p-1", orderId: "o-1", reason: "declined" },
-    });
-    await harness.pipeline.dispatch({
-      type: "SettlePayment",
-      payload: { paymentId: "p-2", orderId: "o-1" },
-    });
-    await harness.dispatcher.runUntilIdle();
-    expect(seen).toEqual(["o-1 failed: declined"]);
-    const events = (await stream(harness, "o-1")).events;
-    expect(events.map((event) => event.type)).toEqual([
-      PROCESS_EVENTS.started,
-      PROCESS_EVENTS.handled,
-      PROCESS_EVENTS.completed,
-    ]);
-    expect(events[1]?.payload).toMatchObject({
-      state: { failures: 1 },
-      eventType: "PaymentFailed",
-    });
-  });
+  it.each([
+    ["the payload's id field", undefined],
+    ["correlate", byOrder],
+  ])(
+    "hand another aggregate's event to the instance %s names, and complete on one",
+    async (_, correlators) => {
+      seen.length = 0;
+      const harness = await createReactiveHarness({ registry: withCorrelate(correlators) });
+      await harness.pipeline.dispatch({
+        type: "PlaceOrder",
+        payload: { orderId: "o-1", total: 10 },
+      });
+      await harness.pipeline.dispatch({
+        type: "FailPayment",
+        payload: { paymentId: "p-1", orderId: "o-1", reason: "declined" },
+      });
+      await harness.pipeline.dispatch({
+        type: "SettlePayment",
+        payload: { paymentId: "p-2", orderId: "o-1" },
+      });
+      await harness.dispatcher.runUntilIdle();
+      expect(seen).toEqual(["o-1 failed: declined"]);
+      const events = (await stream(harness, "o-1")).events;
+      expect(events.map((event) => event.type)).toEqual([
+        PROCESS_EVENTS.started,
+        PROCESS_EVENTS.handled,
+        PROCESS_EVENTS.completed,
+      ]);
+      expect(events[1]?.payload).toMatchObject({
+        state: { failures: 1 },
+        eventType: "PaymentFailed",
+      });
+    },
+  );
 
   it("ignore an event correlate says belongs to no instance, or to one that never started", async () => {
     seen.length = 0;
@@ -1056,44 +1079,246 @@ describe("processes that listen to other aggregates", () => {
     );
   });
 
-  it("refuse at boot another aggregate's event without correlate, or correlate for no event", () => {
+  it("refuse at boot another aggregate's event whose payload has no id field and that correlate leaves out", () => {
     const config = resolveConfig({
       storage: memory(),
       collaborators: { order: { notifier: "memory" } },
     });
+    const byReference = ({ z }: PayloadArgs) => z.object({ reference: z.string() });
+    const referenced = {
+      ...payment,
+      events: {
+        paymentFailed: { payload: byReference, apply: () => ({}) },
+        paymentSettled: { payload: byReference, apply: () => ({}) },
+      },
+    };
+    expect(() =>
+      processesOf(
+        withCorrelate(
+          { payment: { PaymentFailed: byOrder.payment.PaymentFailed } },
+          undefined,
+          referenced,
+        ),
+        config,
+      ),
+    ).toThrow(
+      'aggregates.order.processes.checkout: "payment.PaymentSettled" comes from another aggregate; give its payload "orderId" or say which instance it belongs to with from.payment.PaymentSettled(…) in correlate',
+    );
+    expect(() => processesOf(withCorrelate(byOrder, undefined, referenced), config)).not.toThrow();
+    const bare = {
+      ...payment,
+      events: {
+        paymentFailed: { payload: paymentPayload, apply: () => ({}) },
+        paymentSettled: { apply: () => ({}) },
+      },
+    };
+    expect(() => processesOf(withCorrelate(undefined, undefined, bare), config)).toThrow(
+      '"payment.PaymentSettled" comes from another aggregate; give its payload "orderId" or say which instance it belongs to with from.payment.PaymentSettled(…) in correlate',
+    );
+  });
+
+  it("refuse at boot to read the id field through a payload schema that is not a plain object", () => {
+    const config = resolveConfig({
+      storage: memory(),
+      collaborators: { order: { notifier: "memory" } },
+    });
+    const transformed = ({ z }: PayloadArgs) =>
+      z.object({ orderId: z.string() }).transform((payload) => ({ ...payload, at: "now" }));
+    const piped = {
+      ...payment,
+      events: {
+        paymentFailed: { payload: paymentPayload, apply: () => ({}) },
+        paymentSettled: { payload: transformed, apply: () => ({}) },
+      },
+    };
+    expect(() => processesOf(withCorrelate(undefined, undefined, piped), config)).toThrow(
+      'aggregates.order.processes.checkout: "payment.PaymentSettled" comes from another aggregate; its payload schema is not a plain z.object, so its "orderId" cannot be read; say which instance it belongs to with from.payment.PaymentSettled(…) in correlate',
+    );
+    expect(() =>
+      processesOf(
+        withCorrelate(
+          { payment: { PaymentSettled: byOrder.payment.PaymentSettled } },
+          undefined,
+          piped,
+        ),
+        config,
+      ),
+    ).not.toThrow();
+  });
+
+  it("refuse at boot a correlate that is not a function, returns no list, names no event or names one twice", () => {
+    const config = resolveConfig({
+      storage: memory(),
+      collaborators: { order: { notifier: "memory" } },
+    });
+    const withModule = (correlate: unknown): Registry => {
+      const registry = withCorrelate(undefined);
+      const order = registry.aggregates.order as Registry["aggregates"][string];
+      const checkout = order.processes
+        .checkout as Registry["aggregates"][string]["processes"][string];
+      return {
+        ...registry,
+        aggregates: {
+          ...registry.aggregates,
+          order: {
+            ...order,
+            processes: {
+              checkout: {
+                ...checkout,
+                module: { ...checkout.module, correlate: correlate as never },
+              },
+            },
+          },
+        },
+      };
+    };
+    expect(() => processesOf(withModule(byOrder), config)).toThrow(
+      "aggregates.order.processes.checkout: correlate must be a function of { from } returning from.<aggregate>.<Event>(…) for each event",
+    );
+    for (const returned of [
+      byOrder,
+      [null],
+      [{ event: 1, correlate: byOrder.payment.PaymentFailed }],
+      [{ event: "payment.PaymentFailed" }],
+    ]) {
+      expect(() =>
+        processesOf(
+          withModule(() => returned),
+          config,
+        ),
+      ).toThrow(
+        "aggregates.order.processes.checkout.correlate: return a list of from.<aggregate>.<Event>(…), one for each event",
+      );
+    }
+    expect(() =>
+      processesOf(
+        withModule(
+          ({ from }: { from: Record<string, Record<string, (correlate: unknown) => unknown>> }) => [
+            from.payment?.PaymentFailed?.(byOrder.payment.PaymentFailed),
+            { event: "payment.PaymentSettled" },
+          ],
+        ),
+        config,
+      ),
+    ).toThrow("return a list of from.<aggregate>.<Event>(…), one for each event");
+    const broken = new Error("no from here");
+    expect(() =>
+      processesOf(
+        withModule(() => {
+          throw broken;
+        }),
+        config,
+      ),
+    ).toThrow(expect.objectContaining({ cause: broken }));
+    expect(() =>
+      processesOf(
+        withModule(({ from }: { from: Record<string, Record<string, () => unknown>> }) => [
+          from.billing?.Invoiced?.(),
+        ]),
+        config,
+      ),
+    ).toThrow(
+      "aggregates.order.processes.checkout.correlate: return a list of from.<aggregate>.<Event>(…), one for each event",
+    );
+    expect(() =>
+      processesOf(
+        withModule(({ from }: { from: Record<string, Record<string, () => unknown>> }) => [
+          (from.billing as Record<string, () => unknown>).Invoiced?.(),
+        ]),
+        config,
+      ),
+    ).toThrow(/^aggregates\.order\.processes\.checkout\.correlate failed: /);
     expect(() =>
       processesOf(
         withCorrelate({ payment: { PaymentFailed: byOrder.payment.PaymentFailed } }),
         config,
       ),
-    ).toThrow(
-      'aggregates.order.processes.checkout: "payment.PaymentSettled" comes from another aggregate; say which instance it belongs to with correlate.payment.PaymentSettled',
-    );
+    ).not.toThrow();
     expect(() =>
       processesOf(
-        withCorrelate({
-          ...byOrder,
-          billing: { Invoiced: (event) => event.payload.orderId },
-        }),
+        withModule(
+          ({ from }: { from: Record<string, Record<string, (correlate: unknown) => unknown>> }) => [
+            from.payment?.PaymentFailed?.(byOrder.payment.PaymentFailed),
+            from.payment?.PaymentFailed?.(byOrder.payment.PaymentFailed),
+          ],
+        ),
         config,
       ),
     ).toThrow(
-      'aggregates.order.processes.checkout.correlate.billing.Invoiced: "billing.Invoiced" is not an event of the app',
+      'aggregates.order.processes.checkout.correlate: "payment.PaymentFailed" is correlated twice',
     );
   });
 
-  it("treat a correlate entry left undefined as missing", () => {
-    expect(() =>
-      processesOf(
-        withCorrelate({
-          payment: {
-            PaymentFailed: byOrder.payment.PaymentFailed,
-            PaymentSettled: undefined as never,
+  it("dead-letter an event whose id field holds no id, and route an own event by its aggregateId", async () => {
+    seen.length = 0;
+    const numbered = ({ z }: PayloadArgs) =>
+      z.object({ orderId: z.unknown(), reason: z.string().optional() });
+    const harness = await createReactiveHarness({
+      registry: withCorrelate(undefined, undefined, {
+        ...payment,
+        events: {
+          paymentFailed: { payload: numbered, apply: () => ({}) },
+          paymentSettled: { payload: numbered, apply: () => ({}) },
+        },
+        commands: {
+          failPayment: {
+            module: {
+              payload: ({ z }: PayloadArgs) => z.object({ paymentId: z.string() }),
+              handler: ({ events }: { events: Record<string, (payload: unknown) => unknown> }) => [
+                events.paymentFailed?.({ orderId: 42 }),
+                events.paymentFailed?.({ orderId: "" }),
+              ],
+            },
           },
-        }),
-        resolveConfig({ storage: memory(), collaborators: { order: { notifier: "memory" } } }),
-      ),
-    ).toThrow('"payment.PaymentSettled" comes from another aggregate');
+        },
+      }),
+      config: { runtime: { processes: { retry: { strategy: "none" } } } },
+    });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.pipeline.dispatch({ type: "FailPayment", payload: { paymentId: "p-1" } });
+    await harness.dispatcher.runUntilIdle();
+
+    expect(seen).toEqual([]);
+    expect(await harness.storage.deadLetterStore.list()).toMatchObject([
+      { errorMessage: expect.stringMatching(/correlate returned 42 for payment\.PaymentFailed /) },
+    ]);
+    expect((await stream(harness, "o-1")).events.map((event) => event.type)).toEqual([
+      PROCESS_EVENTS.started,
+    ]);
+  });
+
+  it("ignore an event whose id field is null", async () => {
+    seen.length = 0;
+    const optional = ({ z }: PayloadArgs) =>
+      z.object({ orderId: z.string().nullable(), reason: z.string().optional() });
+    const harness = await createReactiveHarness({
+      registry: withCorrelate(undefined, undefined, {
+        ...payment,
+        events: {
+          paymentFailed: { payload: optional, apply: () => ({}) },
+          paymentSettled: { payload: optional, apply: () => ({}) },
+        },
+        commands: {
+          failPayment: {
+            module: {
+              payload: ({ z }: PayloadArgs) => z.object({ paymentId: z.string() }),
+              handler: ({ events }: { events: Record<string, (payload: unknown) => unknown> }) => [
+                events.paymentFailed?.({ orderId: null }),
+              ],
+            },
+          },
+        },
+      }),
+    });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.pipeline.dispatch({ type: "FailPayment", payload: { paymentId: "p-1" } });
+    await harness.dispatcher.runUntilIdle();
+
+    expect(seen).toEqual([]);
+    expect(await harness.storage.deadLetterStore.count()).toBe(0);
+    expect(await harness.storage.checkpointStore.get("processes")).toBe(
+      await harness.storage.eventStore.lastPosition(),
+    );
   });
 
   it("start no instance for a starting event correlate says belongs to none", async () => {

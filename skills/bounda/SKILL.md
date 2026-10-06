@@ -248,9 +248,12 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   (`policies/payment/`, `projections/payment/`) holds what reacts to that aggregate's events.
   Projections always sit in such a folder. A policy's trigger must be an event of the aggregate it
   listens to, or boot fails.
-- A process `config` names events as `events.<aggregate>.<Event>`. For every event of another
-  aggregate it uses, `index.ts` exports `correlate: Process.Correlate`, a function per event to the
-  id of the process's own aggregate (or `null` to ignore it). Events for no open instance are
+- A process `config` names events as `events.<aggregate>.<Event>`. An event of another aggregate
+  reaches the instance its payload's id field names (`orderId` for an `order` process; `null`
+  ignores it), so give such events that field. For one without it, `index.ts` exports
+  `correlate = ({ from }: Process.CorrelateArgs) => [from.payment.PaymentFailed((event) => …)]`,
+  from the event to the id of the process's own aggregate (or `null` to ignore it); it also
+  overrides the field. Events for no open instance are
   skipped, but for those `at-timeout.ts` caused; a completed instance is never reopened. Returned state is validated against `state`.
 - A command handler returns the events to append, built with `events.<eventKey>(payload)`. It may
   only build events of its own aggregate. To say no, the module exports `rejections`, a function

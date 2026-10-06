@@ -232,10 +232,18 @@ describe("what does not compile", () => {
   });
 
   it("correlating an event the aggregate does not have", () => {
-    const correlate: OrderPayment.Correlate = {
+    const correlate = ({ from }: OrderPayment.CorrelateArgs) => [
       // @ts-expect-error CustomerDeleted is not an event of customer
-      customer: { CustomerDeleted: () => null },
-    };
+      from.customer.CustomerDeleted(() => null),
+    ];
+    void correlate;
+  });
+
+  it("a correlate that returns no instance id", () => {
+    const correlate = ({ from }: OrderPayment.CorrelateArgs) => [
+      // @ts-expect-error an instance id is a string, or null for none
+      from.customer.CustomerRegistered(() => 42),
+    ];
     void correlate;
   });
 
