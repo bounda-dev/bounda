@@ -684,9 +684,9 @@ describe("deadLetters", () => {
     expect(events.at(-1)?.type).toBe(PROCESS_EVENTS.timedOut);
   });
 
-  it("dispatches a dropped command again with its recorded payload, throwing its rejection", async () => {
+  it("settles a dropped command that its aggregate now rejects, as the scheduler would have", async () => {
     policyMode = "ok";
-    const { harness, deadLetters } = await setUp();
+    const { harness, deadLetters, entries } = await setUp();
     await harness.pipeline.dispatch({
       type: "PayOrder",
       payload: { orderId: "o-1", method: "transfer" },
@@ -701,12 +701,15 @@ describe("deadLetters", () => {
     });
 
     paymentsClosed = true;
-    await expect(deadLetters.replay(letter?.id ?? "")).rejects.toMatchObject({
-      name: "DomainError",
-      rejected: "Closed",
-      message: "Payments are closed",
+    await expect(deadLetters.replay(letter?.id ?? "")).resolves.toMatchObject({
+      status: "replayed",
     });
-    expect((await deadLetters.get(letter?.id ?? ""))?.status).toBe("failed");
+    expect((await deadLetters.get(letter?.id ?? ""))?.status).toBe("replayed");
+    expect(entries).toContainEqual({
+      level: "info",
+      message: "command rejected",
+      fields: expect.objectContaining({ type: "PayOrder", rejected: "Closed" }),
+    });
     const { events } = await harness.storage.eventStore.load({
       aggregateType: "order",
       aggregateId: "o-1",

@@ -8,6 +8,7 @@ import { ConfigurationError } from "../contracts/errors.ts";
 import type { IdGenerator } from "../contracts/ids.ts";
 import type { Logger } from "../contracts/logger.ts";
 import { type BoundaApp, createApp } from "../kernel/app.ts";
+import { guardedLogger } from "../kernel/shared/guarded-logger.ts";
 import type { Registry } from "../modules/registry.ts";
 import type { AppRegistry } from "../register/index.ts";
 import { createConsoleLogger } from "./console-logger.ts";
@@ -127,7 +128,7 @@ export const loadProject: LoadProjectFunction = async <R extends Registry = AppR
   env = true,
   logger = createConsoleLogger(),
 }: LoadProjectArgs<R> = {}): Promise<LoadedProject<R>> => {
-  if (env) loadEnv(root, logger);
+  if (env) loadEnv(root, guardedLogger(logger));
   return {
     config:
       config ??
@@ -160,10 +161,11 @@ export const boot: BootFunction = async <R extends Registry = AppRegistry>({
   registry,
   env = true,
   signals = true,
-  logger = createConsoleLogger(),
+  logger: rawLogger = createConsoleLogger(),
   ids,
   clock,
 }: BootArgs<R> = {}): Promise<BoundaApp<R>> => {
+  const logger = guardedLogger(rawLogger);
   const project = await loadProject<R>({
     root,
     configPath,

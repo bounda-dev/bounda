@@ -77,8 +77,8 @@ export type ReactionDispatchResult<Code extends string = string> =
   | (Code extends string ? RejectedDispatch<Code> : never);
 
 /**
- * A rejection a command dispatched from a policy, a process or the scheduler met, where no caller
- * was waiting for it: `type` is the command's.
+ * A rejection a command dispatched from a policy, a process, the scheduler or a dead letter's
+ * replay met, where no caller was waiting for it: `type` is the command's.
  */
 export interface CommandRejection extends RejectedDispatch {
   readonly type: string;

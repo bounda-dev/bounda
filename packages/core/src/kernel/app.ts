@@ -14,7 +14,7 @@ import { buildAggregates } from "./aggregate/build-aggregates.ts";
 import { createCollaborators, type TestChoice } from "./aggregate/collaborators.ts";
 import { withUpcasting } from "./aggregate/upcasting.ts";
 import { createCommandsFacade } from "./command/facade.ts";
-import { createCommandPipeline, isRejection } from "./command/pipeline.ts";
+import { createCommandPipeline } from "./command/pipeline.ts";
 import { createDeadLetters, type DeadLetters } from "./dead-letters/dead-letters.ts";
 import { createDispatcher, type DispatcherLag } from "./dispatch/dispatcher.ts";
 import { alignReactiveCheckpoints } from "./dispatch/reactive-checkpoints.ts";
@@ -34,6 +34,7 @@ import {
   rebuildReadModel,
 } from "./read-model/rebuild.ts";
 import { createScheduledCommandWorker } from "./scheduler/worker.ts";
+import { guardedLogger } from "./shared/guarded-logger.ts";
 import { ignoredRetries, type PendingRetries } from "./shared/pending-retries.ts";
 import { ATTRIBUTES, METRICS, meter } from "./telemetry.ts";
 
@@ -141,9 +142,10 @@ export interface RunUntilIdleResult {
    */
   readonly idle: boolean;
   /**
-   * The rejections of the commands that policies, processes and the scheduler dispatched while it
-   * ran, in order, so a test can assert the ones it expects. A run that is retried counts each
-   * time its commands are rejected.
+   * The rejections of the commands that policies, processes, the scheduler and dead-letter
+   * replays dispatched while it ran, those of the background loop `start()` runs included, in
+   * order, so a test can assert the ones it expects. A run that is retried counts them only from
+   * the attempt that commits.
    */
   readonly rejections: readonly CommandRejection[];
 }
@@ -212,7 +214,7 @@ export interface AssembleAppFunction {
 export const assembleApp: AssembleAppFunction = async <R extends Registry>({
   registry,
   config: rawConfig,
-  logger,
+  logger: rawLogger,
   ids,
   clock,
   env,
@@ -221,6 +223,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
 }: AssembleAppArgs<R>): Promise<BoundaApp<R>> => {
   validateRegistry(registry);
   const config = resolveConfig(rawConfig);
+  const logger = guardedLogger(rawLogger);
   if (!isAdapter(config.storage)) {
     throw new ConfigurationError(
       `storage "${config.storage.name}" is a definition without factories. Import the adapter package's factory.`,
@@ -378,11 +381,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     return {
       commands: createCommandsFacade({
         aggregates,
-        dispatch: async (command) => {
-          const result = await pipeline.dispatch(command);
-          if (isRejection(result)) throw result.error;
-          return result;
-        },
+        dispatch: (command) => pipeline.dispatch(command),
       }) as CommandsFacade<R>,
       queries: queryRunner.facade as QueriesFacade<R>,
       config,

@@ -4,6 +4,7 @@ import { selectCollaborators } from "../config/collaborators.ts";
 import { resolveConfig } from "../config/schema.ts";
 import type { CollaboratorsConfig, Config, ResolvedConfig } from "../config/types.ts";
 import { createFixedClock, type FixedClock } from "../contracts/clock.ts";
+import type { CommandRejection } from "../contracts/command.ts";
 import { createSequentialIdGenerator } from "../contracts/ids.ts";
 import { type LogFields, type Logger, silentLogger } from "../contracts/logger.ts";
 import { memory } from "../memory/index.ts";
@@ -272,6 +273,10 @@ export interface KernelHarness {
   readonly aggregates: AggregatesRuntime;
   readonly clock: FixedClock;
   readonly pipeline: ReturnType<typeof createCommandPipeline>;
+  /**
+   * What the pipeline reported to `onRejection`, in order.
+   */
+  readonly rejections: readonly CommandRejection[];
 }
 
 export interface CreateKernelHarnessArgs {
@@ -313,6 +318,7 @@ export const createKernelHarness: CreateKernelHarnessFunction = async ({
     clock,
   });
   const aggregates = buildAggregates({ registry, collaborators: byAggregate });
+  const rejections: CommandRejection[] = [];
   const pipeline = createCommandPipeline({
     aggregates,
     eventStore: storage.eventStore,
@@ -321,8 +327,9 @@ export const createKernelHarness: CreateKernelHarnessFunction = async ({
     ids: createSequentialIdGenerator(),
     clock,
     logger,
+    onRejection: (rejection) => rejections.push(rejection),
   });
-  return { storage, config, aggregates, clock, pipeline };
+  return { storage, config, aggregates, clock, pipeline, rejections };
 };
 
 export interface EventuallyFunction {

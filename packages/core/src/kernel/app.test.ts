@@ -10,10 +10,12 @@ import type { CreateArgs } from "../modules/collaborator.ts";
 import type { PayloadArgs } from "../modules/payload.ts";
 import type { Registry } from "../modules/registry.ts";
 import type { FieldsArgs } from "../modules/view.ts";
+import { createTestApp } from "../testing/index.ts";
 import { createApp } from "./app.ts";
 import { PROCESS_EVENTS } from "./process/lifecycle.ts";
 import { readYourWrites } from "./read-your-writes.ts";
 import {
+  createRecordingLogger,
   eventually,
   type OrderProcessConfigArgs,
   orderAggregateEntry,
@@ -248,6 +250,62 @@ describe("createApp", () => {
     await app.stop();
   });
 
+  it("reports a rejection once from a reaction that is retried, from the attempt that commits", async () => {
+    let attempts = 0;
+    const { app } = await createTestApp({
+      registry: {
+        aggregates: {
+          order: {
+            ...orderAggregateEntry(),
+            policies: {
+              placeAgainOnOrderPlaced: {
+                module: {
+                  handler: async ({
+                    event,
+                    commands,
+                  }: {
+                    readonly event: { readonly aggregateId: string };
+                    readonly commands: Record<string, (payload: unknown) => Promise<unknown>>;
+                  }) => {
+                    await commands.placeOrder?.({ orderId: event.aggregateId, total: 1 });
+                    attempts += 1;
+                    if (attempts === 1) throw new Error("gateway down");
+                  },
+                },
+              },
+            },
+          },
+        },
+        readModels: {},
+      },
+      collaborators: { order: { notifier: "memory" } },
+    });
+    await app.commands.placeOrder({ orderId: "o-1", total: 42 });
+
+    const { rejections } = await app.runUntilIdle();
+    expect(attempts).toBe(2);
+    expect(rejections).toMatchObject([{ type: "PlaceOrder", rejected: "AlreadyPlaced" }]);
+    expect(rejections).toHaveLength(1);
+    await app.stop();
+  });
+
+  it("runs on, rejections included, with a logger that throws", async () => {
+    const failing = (): void => {
+      throw new Error("log sink is down");
+    };
+    const app = await createApp({
+      registry,
+      config: { storage: memory(), collaborators: { order: { notifier: "memory" } } },
+      logger: { debug: failing, info: failing, warn: failing, error: failing },
+    });
+    await app.commands.placeOrder({ orderId: "o-1", total: 42 });
+    await expect(app.commands.placeOrder({ orderId: "o-1", total: 1 })).rejects.toMatchObject({
+      rejected: "AlreadyPlaced",
+    });
+    expect(await app.runUntilIdle()).toEqual({ idle: true, rejections: [] });
+    await app.stop();
+  });
+
   it("stops after maxPasses rounds and says whether it reached idle", async () => {
     const { app } = await start();
     expect(await app.runUntilIdle()).toEqual({ idle: true, rejections: [] });
@@ -472,16 +530,24 @@ describe("collaborators built by create", () => {
     const log: string[] = [];
     const { create, app: lifecycleRegistry } = lifecycle(log);
     const clock = createFixedClock();
+    const { logger, entries } = createRecordingLogger();
     const app = await createApp({
       registry: lifecycleRegistry,
       config: { storage: loggingStorage(log) },
       env: { FROM: "shop" },
+      logger,
       clock,
     });
     await app.commands.placeOrder({ orderId: "o-1", total: 1 });
     await app.commands.placeOrder({ orderId: "o-2", total: 2 });
     expect(create).toHaveBeenCalledTimes(1);
-    expect(create).toHaveBeenCalledWith({ env: { FROM: "shop" }, logger: silentLogger, clock });
+    expect(create).toHaveBeenCalledWith({
+      env: { FROM: "shop" },
+      logger: expect.any(Object),
+      clock,
+    });
+    create.mock.calls[0]?.[0].logger.warn("from create");
+    expect(entries).toContainEqual({ level: "warn", message: "from create" });
     await app.stop();
     await app.stop();
     expect(log).toEqual([

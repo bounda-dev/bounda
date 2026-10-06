@@ -154,8 +154,8 @@ describe("scheduled command worker", () => {
     });
     const [entry] = await harness.storage.scheduler.list();
     if (entry === undefined) throw new Error("nothing scheduled");
-    const dispatch = harness.pipeline.dispatch;
-    vi.spyOn(harness.pipeline, "dispatch").mockImplementationOnce(async (args) => {
+    const dispatch = harness.pipeline.dispatchUnattended;
+    vi.spyOn(harness.pipeline, "dispatchUnattended").mockImplementationOnce(async (args) => {
       await harness.storage.scheduler.schedule({
         dedupeKey: entry.dedupeKey,
         command: { ...entry.command, payload: { orderId: "o-2", total: 5 } },
@@ -242,16 +242,16 @@ describe("scheduled command worker", () => {
         runtime: { policies: { retry: { strategy: "fixed", maxAttempts: 2, baseDelay: "30s" } } },
       },
     });
-    const original = harness.pipeline.dispatch.bind(harness.pipeline);
+    const original = harness.pipeline.dispatchUnattended.bind(harness.pipeline);
     let failures = 5;
-    harness.pipeline.dispatch = async (args) => {
+    harness.pipeline.dispatchUnattended = async (args) => {
       if (failures > 0) {
         failures -= 1;
         throw new Error("db unavailable");
       }
       return original(args);
     };
-    await original({
+    await harness.pipeline.dispatch({
       type: "PlaceOrder",
       payload: { orderId: "o-1", total: 10 },
       options: { delay: 0 },
@@ -320,7 +320,7 @@ describe("scheduled command worker", () => {
       config: { runtime: { policies: { retry: { strategy: "none" } } } },
     });
     const original = harness.pipeline.dispatch.bind(harness.pipeline);
-    harness.pipeline.dispatch = async () => {
+    harness.pipeline.dispatchUnattended = async () => {
       const bare = new Error("db unavailable");
       Reflect.deleteProperty(bare, "stack");
       throw bare;
@@ -421,8 +421,8 @@ describe("scheduled command worker", () => {
       });
       harness.clock.advance(60_000);
       let takenOver: readonly ClaimedCommand[] = [];
-      const dispatch = harness.pipeline.dispatch;
-      vi.spyOn(harness.pipeline, "dispatch").mockImplementationOnce(async (args) => {
+      const dispatch = harness.pipeline.dispatchUnattended;
+      vi.spyOn(harness.pipeline, "dispatchUnattended").mockImplementationOnce(async (args) => {
         const result = await dispatch(args);
         harness.clock.advance(harness.worker.leaseMs + 1);
         takenOver = await harness.storage.scheduler.claimDue({
@@ -469,8 +469,8 @@ describe("scheduled command worker", () => {
     }
     harness.clock.advance(60_000);
     let takenOver: readonly ClaimedCommand[] = [];
-    const dispatch = harness.pipeline.dispatch;
-    vi.spyOn(harness.pipeline, "dispatch").mockImplementationOnce(async (args) => {
+    const dispatch = harness.pipeline.dispatchUnattended;
+    vi.spyOn(harness.pipeline, "dispatchUnattended").mockImplementationOnce(async (args) => {
       const result = await dispatch(args);
       harness.clock.advance(harness.worker.leaseMs + 1);
       takenOver = await harness.storage.scheduler.claimDue({
@@ -502,14 +502,14 @@ describe("scheduled command worker", () => {
       });
     }
     harness.clock.advance(60_000);
-    const dispatch = harness.pipeline.dispatch;
+    const dispatch = harness.pipeline.dispatchUnattended;
     const slow =
       (ms: number): typeof dispatch =>
       async (args) => {
         harness.clock.advance(ms);
         return dispatch(args);
       };
-    vi.spyOn(harness.pipeline, "dispatch")
+    vi.spyOn(harness.pipeline, "dispatchUnattended")
       .mockImplementationOnce(slow(harness.worker.leaseMs / 4))
       .mockImplementationOnce(slow(1));
 
@@ -530,12 +530,17 @@ describe("scheduled command worker", () => {
         options: { delay: "1m" },
       });
       harness.clock.advance(60_000);
-      const dispatch = harness.pipeline.dispatch;
-      const runs = vi.spyOn(harness.pipeline, "dispatch").mockImplementationOnce(async (args) => {
-        const result = await dispatch(args);
-        await dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-        return result;
-      });
+      const dispatch = harness.pipeline.dispatchUnattended;
+      const runs = vi
+        .spyOn(harness.pipeline, "dispatchUnattended")
+        .mockImplementationOnce(async (args) => {
+          const result = await dispatch(args);
+          await harness.pipeline.dispatch({
+            type: "PlaceOrder",
+            payload: { orderId: "o-1", total: 10 },
+          });
+          return result;
+        });
       return runs;
     };
 
@@ -719,7 +724,7 @@ describe("scheduled command worker", () => {
 
   it("treats a concurrency conflict from the pipeline as transient", async () => {
     const harness = await createReactiveHarness({ registry: orderRegistry });
-    harness.pipeline.dispatch = async () => {
+    harness.pipeline.dispatchUnattended = async () => {
       throw new ConcurrencyError({ streamId: "order:o-1", expectedVersion: 0, actualVersion: 1 });
     };
     await harness.storage.scheduler.schedule({
@@ -734,7 +739,7 @@ describe("scheduled command worker", () => {
 
   it("does not record CommandFailed for terminal errors on unknown aggregates and polls in the background", async () => {
     const harness = await createReactiveHarness({ registry: orderRegistry });
-    harness.pipeline.dispatch = async () => {
+    harness.pipeline.dispatchUnattended = async () => {
       throw new ValidationError("nope", []);
     };
     await harness.storage.scheduler.schedule({

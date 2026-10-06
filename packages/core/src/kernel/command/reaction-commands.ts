@@ -1,4 +1,8 @@
-import type { DispatchResult, ReactionDispatchResult } from "../../contracts/command.ts";
+import type {
+  DispatchResult,
+  ReactionDispatchResult,
+  RejectedDispatch,
+} from "../../contracts/command.ts";
 import { BoundaError } from "../../contracts/errors.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
@@ -6,7 +10,7 @@ import { createReactionCommandIds } from "../shared/idempotency-key.ts";
 import { errorDetails } from "../shared/retry.ts";
 import type { UnitStores } from "../unit-of-work/unit-of-work.ts";
 import { type CommandsFacadeRuntime, createCommandsFacade } from "./facade.ts";
-import { type CommandPipeline, isRejection, type PipelineRejection } from "./pipeline.ts";
+import type { CommandPipeline } from "./pipeline.ts";
 
 /**
  * Thrown by a command a handler dispatches after its run was abandoned, or that was still running
@@ -63,11 +67,8 @@ export interface CreateReactionCommandsFunction {
   (args: CreateReactionCommandsArgs): ReactionCommands;
 }
 
-const decided = (result: DispatchResult | PipelineRejection): ReactionDispatchResult => {
-  if (isRejection(result)) {
-    const { error: _error, ...rejection } = result;
-    return rejection;
-  }
+const decided = (result: DispatchResult | RejectedDispatch): ReactionDispatchResult => {
+  if ("rejected" in result) return result;
   if (result.scheduled) return { rejected: false, ...result };
   const { position: _position, ...decision } = result;
   return { rejected: false, ...decision };
@@ -96,13 +97,12 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
     dispatch: (command) => {
       const dispatch = (async () => {
         const result = decided(
-          await pipeline.dispatch({
+          await pipeline.dispatchUnattended({
             ...command,
             context: { ...context, depth: context.depth + 1 },
             commandId: commandIds(command.type),
             within,
             signal: abandoned.signal,
-            unattended: true,
           }),
         );
         results.push(result);
