@@ -166,10 +166,10 @@ describe("command pipeline", () => {
     expect(rejections).toEqual([]);
   });
 
-  it("fails, rather than rejects, a command whose handler throws a DomainError it did not make", async () => {
+  it("fails, rather than rejects, a command whose handler throws or returns a DomainError it did not make", async () => {
     const foreign = new DomainError(rejectionOf("Elsewhere", "Another app said no"));
     const order = orderRegistry.aggregates.order as Registry["aggregates"][string];
-    const { pipeline } = await createKernelHarness({
+    const { pipeline, storage } = await createKernelHarness({
       registry: {
         aggregates: {
           order: {
@@ -185,6 +185,13 @@ describe("command pipeline", () => {
                   },
                 },
               },
+              tagOrder: {
+                module: {
+                  payload: ({ z }) => z.object({ orderId: z.string() }),
+                  rejections: () => ({ Closed: "Tags are closed" }),
+                  handler: () => foreign,
+                },
+              },
             },
           },
         },
@@ -194,6 +201,13 @@ describe("command pipeline", () => {
 
     await expect(
       pipeline.dispatch({ type: "NoteOrder", payload: { orderId: "o-1" } }),
+    ).rejects.toBe(foreign);
+    await expect(
+      pipeline.dispatchUnattended({
+        type: "TagOrder",
+        payload: { orderId: "o-1" },
+        within: createUnitOfWork({ storage }),
+      }),
     ).rejects.toBe(foreign);
   });
 

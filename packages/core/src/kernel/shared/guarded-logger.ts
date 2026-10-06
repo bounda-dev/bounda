@@ -18,7 +18,7 @@ export const guardedLogger: GuardedLoggerFunction = (logger) => {
       try {
         const returned: unknown =
           fields === undefined ? logger[level](message) : logger[level](message, fields);
-        if (returned instanceof Promise) returned.catch(ignore);
+        Promise.resolve(returned).catch(ignore);
       } catch {
         // A logger that fails has nowhere left to report it.
       }
