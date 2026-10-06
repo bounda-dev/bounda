@@ -272,7 +272,8 @@ reaction compensates it: see [Sagas and compensation](/guides/sagas/).
 A few rules keep it correct:
 
 - **Await the commands the handler dispatches.** The run waits for every one before it commits,
-  awaited or not, within the handler's time, and one that fails fails the run. Awaiting is what
+  awaited or not, within the handler's time, and one that fails fails the run, even if the handler
+  catches its error; one the handler withdraws with its own `signal` does not. Awaiting is what
   keeps them in order, so a second command sees what the first decided, and what gives the
   handler their answers.
 - **Pass `idempotencyKey` to every provider that takes one.** It is one key per handler run, and

@@ -250,13 +250,13 @@ describe("createApp", () => {
 
   it("stops after maxPasses rounds and says whether it reached idle", async () => {
     const { app } = await start();
-    expect(await app.runUntilIdle()).toMatchObject({ idle: true });
+    expect(await app.runUntilIdle()).toEqual({ idle: true, rejections: [] });
     await app.commands.placeOrder({ orderId: "o-1", total: 42 });
     await app.commands.payOrder({ orderId: "o-1", method: "card" });
-    expect(await app.runUntilIdle({ maxPasses: 0 })).toMatchObject({ idle: false });
-    expect(await app.runUntilIdle({ maxPasses: 1 })).toMatchObject({ idle: false });
+    expect(await app.runUntilIdle({ maxPasses: 0 })).toEqual({ idle: false, rejections: [] });
+    expect(await app.runUntilIdle({ maxPasses: 1 })).toEqual({ idle: false, rejections: [] });
     expect((await app.getLag()).maxLag).toBeGreaterThan(0);
-    expect(await app.runUntilIdle({ maxPasses: 50 })).toMatchObject({ idle: true });
+    expect(await app.runUntilIdle({ maxPasses: 50 })).toEqual({ idle: true, rejections: [] });
     expect((await app.getLag()).maxLag).toBe(0);
     expect(await app.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "paid" });
     await app.stop();

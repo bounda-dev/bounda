@@ -67,7 +67,7 @@ export interface ProcessHandlers {
 
 export interface DeadlineRun {
   readonly state: object;
-  readonly decided: () => Promise<readonly ReactionDispatchResult[]>;
+  readonly decided: readonly ReactionDispatchResult[];
 }
 
 export interface CreateProcessHandlersArgs {
@@ -121,14 +121,16 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     }
   };
 
-  // What the handler returned, once every command it dispatched has settled.
+  // Waits for every command the handler dispatched, awaited or not, before the step commits.
   const settled = async (
     reaction: Pick<ReactionCommands, "decided">,
     handle: () => unknown,
-  ): Promise<unknown> => {
+  ): Promise<{
+    readonly returned: unknown;
+    readonly decided: readonly ReactionDispatchResult[];
+  }> => {
     const returned = await handle();
-    await reaction.decided();
-    return returned;
+    return { returned, decided: await reaction.decided() };
   };
 
   const timeoutMs = (process: ProcessRuntime): number =>
@@ -151,7 +153,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     });
     const reaction = reactionFor(eventContext(event), idempotencyKey, within);
     return runOf(reaction, async () => {
-      const next = await traced({
+      const { returned } = await traced({
         name: `bounda.process ${process.name}`,
         attributes: {
           [ATTRIBUTES.process]: process.name,
@@ -182,7 +184,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
             clock,
           }),
       });
-      return validState(process, merged(instance.state, next));
+      return validState(process, merged(instance.state, returned));
     });
   };
 
@@ -200,7 +202,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     if (handler === undefined) {
       return runOf({ abandon: () => undefined }, async () => ({
         state: validState(process, instance.state),
-        decided: async () => [],
+        decided: [],
       }));
     }
     const idempotencyKey = deriveIdempotencyKey({
@@ -215,7 +217,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
       within,
     );
     return runOf(reaction, async () => {
-      const returned = await traced({
+      const { returned, decided } = await traced({
         name: `bounda.process ${process.name} at ${due.field}`,
         attributes: {
           [ATTRIBUTES.process]: process.name,
@@ -241,7 +243,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
       });
       return {
         state: validState(process, merged(instance.state, returned)),
-        decided: reaction.decided,
+        decided,
       };
     });
   };

@@ -60,8 +60,7 @@ export const ATTRIBUTES: {
 };
 
 /**
- * Users' queries rely on these names too. `bounda.command.rejected` carries the code in
- * `bounda.rejected`.
+ * Users' queries rely on these names too.
  */
 export const SPAN_EVENTS: {
   readonly commandRejected: "bounda.command.rejected";

@@ -65,8 +65,8 @@ export interface CreateReactionCommandsFunction {
 
 const decided = (result: DispatchResult | PipelineRejection): ReactionDispatchResult => {
   if (isRejection(result)) {
-    const { error, aggregateType, aggregateId } = result;
-    return { rejected: error.rejected, message: error.message, aggregateType, aggregateId };
+    const { error: _error, ...rejection } = result;
+    return rejection;
   }
   if (result.scheduled) return { rejected: false, ...result };
   const { position: _position, ...decision } = result;
@@ -90,7 +90,7 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
   // the handler still sees it through its own await.
   const dispatched = new Set<Promise<ReactionDispatchResult>>();
   const results: ReactionDispatchResult[] = [];
-  const failures: unknown[] = [];
+  let failure: { readonly error: unknown } | undefined;
   const commands = createCommandsFacade({
     aggregates,
     dispatch: (command) => {
@@ -112,7 +112,7 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
       const withdrawal = command.options?.signal;
       dispatch.catch((error: unknown) => {
         if (withdrawal?.aborted && error === withdrawal.reason) return;
-        failures.push(error);
+        failure ??= { error };
       });
       if (!abandoned.signal.aborted) dispatched.add(dispatch);
       return dispatch;
@@ -126,7 +126,7 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
         settled = dispatched.size;
         await Promise.allSettled(dispatched);
       }
-      if (failures.length > 0) throw failures[0];
+      if (failure !== undefined) throw failure.error;
       return [...results];
     },
     abandon: (reason) => {

@@ -7,6 +7,7 @@ import type {
   CommandRejection,
   DispatchOptions,
   DispatchResult,
+  RejectedDispatch,
 } from "../../contracts/command.ts";
 import { parseDuration } from "../../contracts/duration.ts";
 import {
@@ -59,12 +60,10 @@ export interface DispatchArgs {
 }
 
 /**
- * A command its handler rejected: `error` is what `reject` returned, for a caller to throw.
+ * `error` is what `reject` returned, for a caller to throw.
  */
-export interface PipelineRejection {
+export interface PipelineRejection extends RejectedDispatch {
   readonly error: DomainError;
-  readonly aggregateType: string;
-  readonly aggregateId: string;
 }
 
 export interface CommandPipeline {
@@ -196,17 +195,25 @@ const checkCreationOrder = (
   }
 };
 
-// Only a command that declares `rejections` gets `reject`, as its handler's arguments say.
+// Only a command that declares `rejections` gets `reject`, as its handler's arguments say. What it
+// makes goes in `issued`: a DomainError from anywhere else, such as another app's command, is a
+// failure of this one, not a rejection it declared.
 const rejectOf = (
   runtime: CommandRuntime,
   command: Command,
   state: object,
+  issued: WeakSet<DomainError>,
 ): { readonly reject?: (code: string, message?: string) => DomainError } => {
   const { rejections } = runtime;
   if (rejections === null) return {};
   return {
-    reject: (code, message) =>
-      new DomainError(rejectionOf(code, message ?? rejections({ command, state })[code] ?? code)),
+    reject: (code, message) => {
+      const error = new DomainError(
+        rejectionOf(code, message ?? rejections({ command, state })[code] ?? code),
+      );
+      issued.add(error);
+      return error;
+    },
   };
 };
 
@@ -253,6 +260,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         });
       }
       const state = { ...folded.state, id: command.aggregateId, version: loaded.version };
+      const issued = new WeakSet<DomainError>();
       const produced = (await withTimeout({
         run: (signal) =>
           runtime.handler(
@@ -262,7 +270,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
               events: aggregate.eventBuilders,
               idempotencyKey: command.metadata.commandId,
               signal,
-              ...rejectOf(runtime, command, state),
+              ...rejectOf(runtime, command, state, issued),
             }),
           ),
         timeoutMs,
@@ -270,12 +278,19 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         clock,
         signals,
       }).catch((error: unknown) => {
-        if (error instanceof DomainError) return error;
+        if (error instanceof DomainError && issued.has(error)) return error;
         throw error;
       })) as readonly NewEvent[] | DomainError | undefined;
       for (const signal of signals) signal.throwIfAborted();
       if (produced instanceof DomainError) {
-        return { error: produced, aggregateType: aggregate.name, aggregateId: command.aggregateId };
+        if (!issued.has(produced)) throw produced;
+        return {
+          error: produced,
+          rejected: produced.rejected,
+          message: produced.message,
+          aggregateType: aggregate.name,
+          aggregateId: command.aggregateId,
+        };
       }
       const events = toPendingEvents(
         aggregate,
@@ -408,17 +423,12 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
           if (isRejection(result)) {
             span.setAttribute(ATTRIBUTES.outcome, "rejected");
             span.addEvent(SPAN_EVENTS.commandRejected, {
-              [ATTRIBUTES.rejected]: result.error.rejected,
+              [ATTRIBUTES.rejected]: result.rejected,
             });
             count(type, "rejected");
             if (unattended) {
-              const rejection: CommandRejection = {
-                type,
-                rejected: result.error.rejected,
-                message: result.error.message,
-                aggregateType: aggregate.name,
-                aggregateId,
-              };
+              const { error: _error, ...rejected } = result;
+              const rejection: CommandRejection = { type, ...rejected };
               logger.info("command rejected", { ...rejection });
               onRejection?.(rejection);
             }

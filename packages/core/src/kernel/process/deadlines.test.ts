@@ -1246,7 +1246,7 @@ describe("process deadlines in an app", () => {
     await app.runUntilIdle();
     expect(await app.nextDueAt()).toEqual(new Date(at(DAY)));
     clock.advance(3 * DAY);
-    expect(await app.runUntilIdle()).toMatchObject({ idle: true });
+    expect(await app.runUntilIdle()).toEqual({ idle: true, rejections: [] });
     expect(calls).toEqual([
       `reminder:${at(DAY)}`,
       `reminder:${at(2 * DAY)}`,
@@ -1267,7 +1267,7 @@ describe("process deadlines in an app", () => {
     await app.runUntilIdle({ maxPasses: 1 });
     expect((await app.getLag()).waitingDeadlines).toBe(1);
     expect(calls).toEqual([]);
-    expect(await app.runUntilIdle()).toMatchObject({ idle: true });
+    expect(await app.runUntilIdle()).toEqual({ idle: true, rejections: [] });
     expect(calls).toEqual([`reminder:${at(DAY)}`]);
     expect((await app.getLag()).waitingDeadlines).toBe(0);
     await app.stop();

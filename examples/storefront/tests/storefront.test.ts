@@ -329,12 +329,11 @@ describe("storefront", () => {
     await expect(app.commands.markOrderPaid({ orderId: OTHER })).rejects.toThrow(
       "Only open orders can be paid; this one is cancelled",
     );
-    await expect(
-      app.commands.settlePayment({ paymentId: "018f6a5e-4c3c-7c1e-9d4b-0b2c4a1d8e09" }),
-    ).rejects.toBeInstanceOf(DomainError);
-    await expect(
-      app.commands.settlePayment({ paymentId: "018f6a5e-4c3c-7c1e-9d4b-0b2c4a1d8e09" }),
-    ).rejects.toMatchObject({ rejected: "NeverRequested" });
+    const unknownPayment = app.commands.settlePayment({
+      paymentId: "018f6a5e-4c3c-7c1e-9d4b-0b2c4a1d8e09",
+    });
+    await expect(unknownPayment).rejects.toBeInstanceOf(DomainError);
+    await expect(unknownPayment).rejects.toMatchObject({ rejected: "NeverRequested" });
     await expect(
       app.commands.placeOrder({
         orderId: "018f6a5e-4c3c-7c1e-9d4b-0b2c4a1d8e03",

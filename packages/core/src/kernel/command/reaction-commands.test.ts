@@ -197,4 +197,28 @@ describe("createReactionCommands", () => {
     expect(reaction.signal.aborted).toBe(false);
     expect(await reaction.decided()).toEqual([]);
   });
+
+  it("still fails the run for a command that failed before the handler withdrew it", async () => {
+    const { reaction } = await setUp();
+    const controller = new AbortController();
+    const failed = reaction.commands.payOrder?.(
+      { orderId: "o-1", method: "cash" },
+      { signal: controller.signal },
+    );
+    await expect(failed).rejects.toThrow(ValidationError);
+    controller.abort(new Error("no longer needed"));
+
+    await expect(reaction.decided()).rejects.toThrow(ValidationError);
+  });
+
+  it("resolves a delayed command as not rejected and scheduled", async () => {
+    const { reaction } = await setUp();
+    expect(await reaction.commands.archiveOrder?.({ orderId: "o-1" }, { delay: "1h" })).toEqual({
+      rejected: false,
+      scheduled: true,
+      aggregateType: "order",
+      aggregateId: "o-1",
+      executeAt: expect.any(String),
+    });
+  });
 });

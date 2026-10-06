@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import {
   ChainDepthExceededError,
   ConcurrencyError,
@@ -6,11 +6,14 @@ import {
   CreationOrderError,
   DomainError,
   NotFoundError,
+  rejectionOf,
   ValidationError,
 } from "../../contracts/errors.ts";
 import type { RejectFunction } from "../../modules/command.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { HandlerTimeoutError } from "../shared/timeout.ts";
+import { ATTRIBUTES } from "../telemetry.ts";
+import { installFakeTelemetry } from "../telemetry-fake.ts";
 import {
   createKernelHarness,
   createRecordingLogger,
@@ -108,6 +111,8 @@ describe("command pipeline", () => {
     });
     expect(rejection).toEqual({
       error: expect.any(DomainError),
+      rejected: "NotPlaced",
+      message: "Only placed orders can be paid; this one is new",
       aggregateType: "order",
       aggregateId: "o-1",
     });
@@ -119,6 +124,53 @@ describe("command pipeline", () => {
       },
     });
     expect(await storage.eventStore.lastPosition()).toBe(0);
+  });
+
+  it("logs and reports a rejection only when nobody waits for it", async () => {
+    const { logger, entries } = createRecordingLogger();
+    const { pipeline } = await createKernelHarness({ logger });
+    await pipeline.dispatch({ type: "PayOrder", payload: { orderId: "o-1", method: "card" } });
+    expect(entries.filter((entry) => entry.message === "command rejected")).toEqual([]);
+
+    await pipeline.dispatch({
+      type: "PayOrder",
+      payload: { orderId: "o-1", method: "card" },
+      unattended: true,
+    });
+    expect(entries.filter((entry) => entry.message === "command rejected")).toMatchObject([
+      { level: "info", fields: { type: "PayOrder", rejected: "NotPlaced" } },
+    ]);
+  });
+
+  it("fails, rather than rejects, a command whose handler throws a DomainError it did not make", async () => {
+    const foreign = new DomainError(rejectionOf("Elsewhere", "Another app said no"));
+    const order = orderRegistry.aggregates.order as Registry["aggregates"][string];
+    const { pipeline } = await createKernelHarness({
+      registry: {
+        aggregates: {
+          order: {
+            ...order,
+            commands: {
+              ...order.commands,
+              noteOrder: {
+                module: {
+                  payload: ({ z }) => z.object({ orderId: z.string() }),
+                  rejections: () => ({ Closed: "Notes are closed" }),
+                  handler: () => {
+                    throw foreign;
+                  },
+                },
+              },
+            },
+          },
+        },
+        readModels: {},
+      },
+    });
+
+    await expect(
+      pipeline.dispatch({ type: "NoteOrder", payload: { orderId: "o-1" } }),
+    ).rejects.toBe(foreign);
   });
 
   it("gives reject only to a command that declares rejections, and takes the message it is passed", async () => {
@@ -512,6 +564,8 @@ describe("a command's time limit and signal", () => {
     );
 
   it("rejects a handler that runs out of time, aborts its signal and stores nothing it returns late", async () => {
+    const telemetry = installFakeTelemetry();
+    onTestFinished(() => telemetry.restore());
     const { registry, started, finish } = slowJob();
     const harness = await createKernelHarness({ registry });
     const outcome = harness.pipeline.dispatch({ type: "RunJob", payload: job });
@@ -524,6 +578,10 @@ describe("a command's time limit and signal", () => {
     expect(error).toBeInstanceOf(HandlerTimeoutError);
     expect((error as Error).message).toBe("command RunJob did not finish within 30000ms");
     expect(signal.reason).toBe(error);
+    expect(telemetry.counts.at(-1)?.attributes).toEqual({
+      [ATTRIBUTES.commandType]: "RunJob",
+      [ATTRIBUTES.outcome]: "failed",
+    });
     finish();
     await drained();
     expect(await storedTypes(harness)).toEqual([]);
