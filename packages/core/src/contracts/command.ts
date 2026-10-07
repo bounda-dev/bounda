@@ -69,7 +69,8 @@ export interface DecidedDispatch {
  * call without `delay` is typed without the scheduled case, and one with `delay` with that case
  * alone: the command is rejected, if at all, when it runs. A rejection the handler does not look
  * at changes nothing: the run goes on. The promise rejects only for a failure, which fails the
- * run.
+ * run, and with `REACTION_FINISHED` for a command dispatched once the run has finished, which is
+ * logged and decides nothing.
  */
 export type ReactionDispatchResult<Code extends string = string> =
   | DecidedDispatch

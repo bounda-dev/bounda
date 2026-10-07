@@ -10,6 +10,7 @@ import {
   chooseCollaborators,
   createRecordingLogger,
   defaultCollaborators,
+  drained,
   orderAggregateEntry,
   slowJob,
 } from "../test-support.ts";
@@ -751,6 +752,47 @@ describe("the commands of a policy run", () => {
           errorMessage: "Invalid payload for command PayOrder",
         },
       ]);
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", record);
+    }
+  });
+
+  it("refuse one dispatched from a timer once the run has finished, logged, without an unhandled rejection", async () => {
+    const { logger, entries } = createRecordingLogger();
+    const unhandled: unknown[] = [];
+    const record = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", record);
+    try {
+      let late: Promise<unknown> | undefined;
+      const fired = Promise.withResolvers<void>();
+      const harness = await createReactiveHarness({
+        registry: withHandler(async ({ event, commands }) => {
+          setTimeout(() => {
+            late = commands.archiveOrder?.({ orderId: event.aggregateId });
+            fired.resolve();
+          });
+        }),
+        logger,
+      });
+      await harness.pipeline.dispatch({
+        type: "PlaceOrder",
+        payload: { orderId: "o-1", total: 10 },
+      });
+      await harness.dispatcher.runUntilIdle();
+      await fired.promise;
+      await drained();
+
+      await expect(late).rejects.toMatchObject({ code: "REACTION_FINISHED" });
+      expect(await typesOf(harness, "o-1")).toEqual(["OrderPlaced"]);
+      expect(entries).toContainEqual(
+        expect.objectContaining({
+          level: "error",
+          message: "command dispatched after its run had finished; refused",
+        }),
+      );
       expect(unhandled).toEqual([]);
     } finally {
       process.off("unhandledRejection", record);

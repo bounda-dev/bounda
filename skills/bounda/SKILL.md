@@ -278,10 +278,11 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   attempt leaves nothing behind, and a step whose instance moved meanwhile runs again on the new
   state; what `await commands.x()` returns is the aggregate's decision, not something stored yet:
   call outside first, dispatch after, and await the dispatches (the attempt waits for every one
-  before it commits anyway; awaiting keeps their order). `await commands.x()` resolves with
+  before it commits anyway; awaiting keeps their order; one dispatched after the run has finished,
+  from a timer, is refused with `REACTION_FINISHED` and logged). `await commands.x()` resolves with
   `rejected: false`, or with `rejected` set to one of the command's codes and `message`: a
-  rejection the handler does not look at changes nothing and the run goes on; only a failure
-  rejects the promise and fails the run. Tests assert the expected ones from
+  rejection the handler does not look at changes nothing and the run goes on; while the run lasts,
+  only a failure rejects the promise and fails the run. Tests assert the expected ones from
   `(await app.runUntilIdle()).rejections`. Outside the promise: the outside
   calls themselves, the inbox claim, and what a read model shows a handler (only what was
   committed before the attempt).

@@ -4,6 +4,7 @@ import type {
   RejectedDispatch,
 } from "../../contracts/command.ts";
 import { BoundaError } from "../../contracts/errors.ts";
+import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { createReactionCommandIds } from "../shared/idempotency-key.ts";
@@ -27,6 +28,22 @@ export class ReactionAbandonedError extends BoundaError {
 }
 
 /**
+ * Thrown by a command a handler dispatches once its run has finished, from a timer or a promise it
+ * left behind: the run's unit of work no longer takes its commands, whether it committed or not.
+ */
+export class ReactionFinishedError extends BoundaError {
+  readonly command: string;
+
+  constructor(command: string) {
+    super(
+      "REACTION_FINISHED",
+      `Command ${command} was dispatched after its run had finished: dispatch commands while the handler runs`,
+    );
+    this.command = command;
+  }
+}
+
+/**
  * The commands of one run of a policy or process handler.
  */
 export interface ReactionCommands {
@@ -38,7 +55,8 @@ export interface ReactionCommands {
   /**
    * What the run's commands decided, in the order they finished, once every dispatch, awaited by
    * the handler or not, has settled; rejects with the first that failed. The run awaits it before
-   * its attempt commits, so a dispatch the handler did not await still counts.
+   * its attempt commits, so a dispatch the handler did not await still counts. Once it settles,
+   * later dispatches are refused.
    */
   decided(): Promise<readonly ReactionDispatchResult[]>;
   /**
@@ -61,6 +79,10 @@ export interface CreateReactionCommandsArgs {
    * The run's unit of work: its commands write there, to commit with the attempt.
    */
   readonly within: UnitStores;
+  /**
+   * Where a command dispatched once the run has finished is reported.
+   */
+  readonly logger: Logger;
 }
 
 export interface CreateReactionCommandsFunction {
@@ -80,6 +102,7 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
   context,
   idempotencyKey,
   within,
+  logger,
 }) => {
   const commandIds = createReactionCommandIds(idempotencyKey);
   const handler = new AbortController();
@@ -87,14 +110,49 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
   // signal carries it as it is.
   const abandoned = new AbortController();
   // A dispatch the handler does not await would leave its failure unhandled, and Node ends the
-  // process on that. Each is marked handled when it is made, and `decided` reports the failure;
-  // the handler still sees it through its own await.
+  // process on that. Each is marked handled when it is made, and `decided` reports the failure, or
+  // the logger the refusal of one made once the run was abandoned or had finished; the handler
+  // still sees either through its own await.
   const dispatched = new Set<Promise<ReactionDispatchResult>>();
   const results: ReactionDispatchResult[] = [];
   let failure: { readonly error: unknown } | undefined;
+  let finished = false;
+  const refuse = (
+    level: "warn" | "error",
+    message: string,
+    type: string,
+    error: unknown,
+  ): Promise<never> => {
+    logger[level](message, {
+      command: type,
+      correlationId: context.correlationId,
+      causationId: context.causationId,
+    });
+    const refused = Promise.reject(error);
+    refused.catch(() => undefined);
+    return refused;
+  };
   const commands = createCommandsFacade({
     aggregates,
     dispatch: (command) => {
+      // An abandoned run's failure is reported on its own, and the run retried or dead-lettered;
+      // nothing else reports what a finished run refuses, and it is lost.
+      if (abandoned.signal.aborted) {
+        return refuse(
+          "warn",
+          "command dispatched after its run was abandoned; refused",
+          command.type,
+          abandoned.signal.reason,
+        );
+      }
+      if (finished) {
+        return refuse(
+          "error",
+          "command dispatched after its run had finished; refused",
+          command.type,
+          new ReactionFinishedError(command.type),
+        );
+      }
       const dispatch = (async () => {
         const result = decided(
           await pipeline.dispatchUnattended({
@@ -114,7 +172,7 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
         if (withdrawal?.aborted && error === withdrawal.reason) return;
         failure ??= { error };
       });
-      if (!abandoned.signal.aborted) dispatched.add(dispatch);
+      dispatched.add(dispatch);
       return dispatch;
     },
   });
@@ -126,6 +184,7 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
         settled = dispatched.size;
         await Promise.allSettled(dispatched);
       }
+      finished = true;
       if (failure !== undefined) throw failure.error;
       return [...results];
     },
