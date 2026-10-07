@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Adapter } from "../../adapter/adapter.ts";
+import type { Adapter, CreateStorageArgs } from "../../adapter/adapter.ts";
 import type { Table } from "../../adapter/ports/table.ts";
 import { RebuildSupersededError } from "../../contracts/errors.ts";
 import { silentLogger } from "../../contracts/logger.ts";
@@ -166,10 +166,10 @@ describe("rebuildReadModel", () => {
     await app.stop();
   });
 
-  it("works on its own, before the read model ever had a table, and closes what it opened", async () => {
+  it("works on its own, before the read model ever had a table, and closes what it opened, whatever its logger throws", async () => {
     mode = "ok";
     const base = memory();
-    const opened: unknown[] = [];
+    const opened: CreateStorageArgs[] = [];
     let closes = 0;
     const adapter: Adapter = {
       ...base,
@@ -191,13 +191,19 @@ describe("rebuildReadModel", () => {
     await writer.stop();
     closes = 0;
 
-    const logger = { ...silentLogger };
+    const logged: string[] = [];
+    const failing = (message: string): void => {
+      logged.push(message);
+      throw new Error("log sink is down");
+    };
+    const logger = { debug: failing, info: failing, warn: failing, error: failing };
     expect(await rebuildReadModel({ registry, config, name: "orderSummary", logger })).toEqual({
       events: 1,
       position: 1,
       done: true,
     });
-    expect(opened.at(-1)).toEqual({ logger });
+    opened.at(-1)?.logger.warn("from the storage");
+    expect(logged).toEqual(expect.arrayContaining(["read model rebuilt", "from the storage"]));
     expect(closes).toBe(1);
     const app = await createApp({ registry, config });
     expect((await app.getLag()).subscribers).toContainEqual({

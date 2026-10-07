@@ -77,7 +77,7 @@ const { rejections } = await app.runUntilIdle();
 expect(rejections).toMatchObject([{ type: "MarkOrderPaid", rejected: "NotOpen" }]);
 ```
 
-A run that is retried counts its rejections each time.
+A run that is retried counts its rejections only from the attempt that commits.
 
 ## Time
 

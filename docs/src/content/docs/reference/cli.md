@@ -169,6 +169,8 @@ bounda dead-letters discard <id>
 
 `replay` runs the failed handler again and marks the letter `replayed` when it succeeds; if the
 handler fails again its error is printed, the exit code is `2` and the letter stays `failed`. A
+command its aggregate now rejects is `replayed` too: the rejection is the aggregate's answer, and
+it is logged as `command rejected`. A
 letter another replay or discard settled first, even while this one ran, is refused the same way.
 For a process letter it also handles the events parked behind it, and says so when one of them
 failed the process again. See

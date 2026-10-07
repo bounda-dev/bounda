@@ -422,7 +422,9 @@ What a replay does depends on the kind:
   once); see [a failed process](#a-failed-process). The letter of a follow-up of a timed-out
   process runs its handler and nothing else: the process stays timed out, and a handler a deploy
   removed lets the event through.
-- **Command**: the dropped command is dispatched again with the payload the letter recorded.
+- **Command**: the dropped command is dispatched again with the payload the letter recorded. A
+  command its aggregate now rejects settles the letter as `replayed`, as the scheduler would have
+  settled it: a rejection is the aggregate's answer, logged as `command rejected`, not a failure.
 
 The same operations are on the app as `app.deadLetters` — `list`, `count`, `get`, `replay` and
 `discard` — for a script or an admin route.

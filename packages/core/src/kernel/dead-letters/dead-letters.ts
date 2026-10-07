@@ -11,7 +11,7 @@ import type { StoredEvent } from "../../contracts/event.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
-import { type CommandPipeline, isRejection } from "../command/pipeline.ts";
+import type { CommandPipeline } from "../command/pipeline.ts";
 import type { PoliciesRuntime } from "../policy/build-policies.ts";
 import type { PolicyExecutor } from "../policy/executor.ts";
 import { PROCESS_DEADLINE_COMMAND } from "../process/deadlines.ts";
@@ -38,8 +38,9 @@ export interface DeadLetters {
    * letter `replayed`: a policy's, a command's or that of a process event that follows its
    * instance's timeout in the same transaction as what the run writes, any other process's once
    * its instance has drained what was parked, since a replay cut short there is taken up again by
-   * replaying the same letter. Rejects with the handler's error when it fails
-   * again, and the letter stays `failed`. Rejects, without running anything, a letter that is
+   * replaying the same letter. A command its aggregate now rejects counts as replayed, as the
+   * scheduler would have settled it. Rejects with the handler's error when it fails again, and the
+   * letter stays `failed`. Rejects, without running anything, a letter that is
    * missing, a projection letter (a rebuild of the read model fixes it instead), a letter whose
    * policy is no longer in the registry or whose event is gone, and a command letter recorded
    * without its payload. Rejects with `DeadLetterSettledError` a letter that is no longer
@@ -148,13 +149,7 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
     }
     const { payload } = letter;
     await replayed(letter, async (unit) => {
-      const result = await pipeline.dispatch({
-        type: letter.eventType,
-        payload,
-        context,
-        within: unit,
-      });
-      if (isRejection(result)) throw result.error;
+      await pipeline.dispatchUnattended({ type: letter.eventType, payload, context, within: unit });
     });
   };
 

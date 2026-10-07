@@ -274,13 +274,12 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
             within: unit,
           });
         } else {
-          await pipeline.dispatch({
+          await pipeline.dispatchUnattended({
             type: entry.command.type,
             payload: entry.command.payload,
             context: entry.context,
             commandId: scheduledCommandId(entry.dedupeKey),
             within: unit,
-            unattended: true,
           });
         }
       },

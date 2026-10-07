@@ -295,7 +295,8 @@ tell why. Only a module that exports `rejections` gets `reject`, and `reject` on
 `reject(code)` returns the `DomainError` the caller gets, with the code in `rejected`;
 `return reject(code)` and `throw reject(code)` do the same, the second from a helper the handler
 calls. Pass a second argument to give that rejection another message. A `DomainError` is never
-built with `new`.
+built with `new`. If `rejections` throws, or has no message for the code, the rejection still
+stands, with the code as its message, and the runtime logs a warning.
 
 A rejection stores nothing and is not retried. `app.commands` throws it to the caller; a policy or
 a process gets it as a value instead: `commands.<name>()` resolves with `rejected` set to the code,

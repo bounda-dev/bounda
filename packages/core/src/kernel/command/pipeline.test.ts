@@ -25,6 +25,7 @@ import {
   slowJob,
   withJob,
 } from "../test-support.ts";
+import { createUnitOfWork } from "../unit-of-work/unit-of-work.ts";
 
 const withTickets: Registry = {
   aggregates: {
@@ -98,54 +99,77 @@ describe("command pipeline", () => {
       payload: { orderId: "o-1", method: "card" },
     });
     expect(paid).toMatchObject({ version: 2, eventIds: ["id-4"] });
-    expect(
-      await pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 1 } }),
-    ).toMatchObject({ error: { rejected: "AlreadyPlaced" } });
+    await expect(
+      pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 1 } }),
+    ).rejects.toMatchObject({ rejected: "AlreadyPlaced" });
   });
 
-  it("returns a rejection as the handler made it, with the message rejections gives, and persists nothing", async () => {
+  it("throws a rejection as the handler made it, with the message rejections gives, and persists nothing", async () => {
     const { pipeline, storage } = await createKernelHarness();
-    const rejection = await pipeline.dispatch({
+    const rejection = pipeline.dispatch({
       type: "PayOrder",
       payload: { orderId: "o-1", method: "card" },
     });
-    expect(rejection).toEqual({
-      error: expect.any(DomainError),
+    await expect(rejection).rejects.toBeInstanceOf(DomainError);
+    await expect(rejection).rejects.toMatchObject({
+      rejected: "NotPlaced",
+      message: "Only placed orders can be paid; this one is new",
+      stack: expect.stringContaining("test-support.ts"),
+    });
+    expect(await storage.eventStore.lastPosition()).toBe(0);
+  });
+
+  it("resolves with the rejection of a dispatch within a unit of work, and reports it once the unit commits", async () => {
+    const { logger, entries } = createRecordingLogger();
+    const { pipeline, storage, rejections } = await createKernelHarness({ logger });
+    await expect(
+      pipeline.dispatch({ type: "PayOrder", payload: { orderId: "o-1", method: "card" } }),
+    ).rejects.toBeInstanceOf(DomainError);
+    expect(entries.filter((entry) => entry.message === "command rejected")).toEqual([]);
+
+    const unit = createUnitOfWork({ storage });
+    expect(
+      await pipeline.dispatchUnattended({
+        type: "PayOrder",
+        payload: { orderId: "o-1", method: "card" },
+        within: unit,
+      }),
+    ).toEqual({
       rejected: "NotPlaced",
       message: "Only placed orders can be paid; this one is new",
       aggregateType: "order",
       aggregateId: "o-1",
     });
-    expect(rejection).toMatchObject({
-      error: {
-        rejected: "NotPlaced",
-        message: "Only placed orders can be paid; this one is new",
-        stack: expect.stringContaining("test-support.ts"),
-      },
-    });
-    expect(await storage.eventStore.lastPosition()).toBe(0);
-  });
-
-  it("logs and reports a rejection only when nobody waits for it", async () => {
-    const { logger, entries } = createRecordingLogger();
-    const { pipeline } = await createKernelHarness({ logger });
-    await pipeline.dispatch({ type: "PayOrder", payload: { orderId: "o-1", method: "card" } });
-    expect(entries.filter((entry) => entry.message === "command rejected")).toEqual([]);
-
-    await pipeline.dispatch({
-      type: "PayOrder",
-      payload: { orderId: "o-1", method: "card" },
-      unattended: true,
-    });
     expect(entries.filter((entry) => entry.message === "command rejected")).toMatchObject([
       { level: "info", fields: { type: "PayOrder", rejected: "NotPlaced" } },
     ]);
+    expect(rejections).toEqual([]);
+    await unit.commit();
+    expect(rejections).toEqual([
+      {
+        type: "PayOrder",
+        rejected: "NotPlaced",
+        message: "Only placed orders can be paid; this one is new",
+        aggregateType: "order",
+        aggregateId: "o-1",
+      },
+    ]);
   });
 
-  it("fails, rather than rejects, a command whose handler throws a DomainError it did not make", async () => {
+  it("never reports the rejection of a unit of work that does not commit", async () => {
+    const { pipeline, storage, rejections } = await createKernelHarness();
+    await pipeline.dispatchUnattended({
+      type: "PayOrder",
+      payload: { orderId: "o-1", method: "card" },
+      within: createUnitOfWork({ storage }),
+    });
+    expect(rejections).toEqual([]);
+  });
+
+  it("fails, rather than rejects, a command whose handler throws or returns a DomainError it did not make", async () => {
     const foreign = new DomainError(rejectionOf("Elsewhere", "Another app said no"));
     const order = orderRegistry.aggregates.order as Registry["aggregates"][string];
-    const { pipeline } = await createKernelHarness({
+    const { pipeline, storage } = await createKernelHarness({
       registry: {
         aggregates: {
           order: {
@@ -161,6 +185,13 @@ describe("command pipeline", () => {
                   },
                 },
               },
+              tagOrder: {
+                module: {
+                  payload: ({ z }) => z.object({ orderId: z.string() }),
+                  rejections: () => ({ Closed: "Tags are closed" }),
+                  handler: () => foreign,
+                },
+              },
             },
           },
         },
@@ -170,6 +201,13 @@ describe("command pipeline", () => {
 
     await expect(
       pipeline.dispatch({ type: "NoteOrder", payload: { orderId: "o-1" } }),
+    ).rejects.toBe(foreign);
+    await expect(
+      pipeline.dispatchUnattended({
+        type: "TagOrder",
+        payload: { orderId: "o-1" },
+        within: createUnitOfWork({ storage }),
+      }),
     ).rejects.toBe(foreign);
   });
 
@@ -209,11 +247,89 @@ describe("command pipeline", () => {
       },
     });
 
-    expect(
-      await pipeline.dispatch({ type: "CloseOrder", payload: { orderId: "o-1" } }),
-    ).toMatchObject({ error: { rejected: "NotOpen", message: "Closed twice" } });
+    await expect(
+      pipeline.dispatch({ type: "CloseOrder", payload: { orderId: "o-1" } }),
+    ).rejects.toMatchObject({ rejected: "NotOpen", message: "Closed twice" });
     await pipeline.dispatch({ type: "NoteOrder", payload: { orderId: "o-1" } });
     expect(given).toEqual([true, false]);
+  });
+
+  it("keeps a rejection whose rejections throw or leave its code out, with the code as message and a warning", async () => {
+    const { logger, entries } = createRecordingLogger();
+    const order = orderRegistry.aggregates.order as Registry["aggregates"][string];
+    const { pipeline } = await createKernelHarness({
+      logger,
+      registry: {
+        aggregates: {
+          order: {
+            ...order,
+            commands: {
+              ...order.commands,
+              closeOrder: {
+                module: {
+                  payload: ({ z }) => z.object({ orderId: z.string() }),
+                  rejections: (): Record<string, string> => {
+                    throw new TypeError("no items");
+                  },
+                  handler: ({ reject }: { readonly reject: RejectFunction<"NotOpen"> }) =>
+                    reject("NotOpen"),
+                },
+              },
+              noteOrder: {
+                module: {
+                  payload: ({ z }) => z.object({ orderId: z.string() }),
+                  rejections: () => ({ Closed: "Notes are closed" }),
+                  handler: ({ reject }: { readonly reject: RejectFunction<string> }) =>
+                    reject("toString"),
+                },
+              },
+              tagOrder: {
+                module: {
+                  payload: ({ z }) => z.object({ orderId: z.string() }),
+                  rejections: () => undefined as unknown as Record<string, string>,
+                  handler: ({ reject }: { readonly reject: RejectFunction<"Closed"> }) =>
+                    reject("Closed"),
+                },
+              },
+            },
+          },
+        },
+        readModels: {},
+      },
+    });
+
+    await expect(
+      pipeline.dispatch({ type: "CloseOrder", payload: { orderId: "o-1" } }),
+    ).rejects.toMatchObject({ rejected: "NotOpen", message: "NotOpen" });
+    await expect(
+      pipeline.dispatch({ type: "NoteOrder", payload: { orderId: "o-1" } }),
+    ).rejects.toMatchObject({ rejected: "toString", message: "toString" });
+    await expect(
+      pipeline.dispatch({ type: "TagOrder", payload: { orderId: "o-1" } }),
+    ).rejects.toMatchObject({ rejected: "Closed", message: "Closed" });
+    expect(entries.filter((entry) => entry.level === "warn")).toEqual([
+      {
+        level: "warn",
+        message: "command rejections threw; the rejection takes its code as message",
+        fields: {
+          type: "CloseOrder",
+          rejected: "NotOpen",
+          error: { message: "no items", stack: expect.any(String) },
+        },
+      },
+      {
+        level: "warn",
+        message:
+          "command rejected with a code its rejections do not declare; the code is its message",
+        fields: { type: "NoteOrder", rejected: "toString" },
+      },
+      {
+        level: "warn",
+        message:
+          "command rejected with a code its rejections do not declare; the code is its message",
+        fields: { type: "TagOrder", rejected: "Closed" },
+      },
+    ]);
   });
 
   it("rejects an invalid payload with issues and never runs the handler", async () => {
@@ -345,9 +461,9 @@ describe("command pipeline", () => {
       }
       return original(args);
     };
-    expect(
-      await pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 42 } }),
-    ).toMatchObject({ error: { message: "Order already placed" } });
+    await expect(
+      pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 42 } }),
+    ).rejects.toMatchObject({ message: "Order already placed" });
     expect(sentMessages).toEqual(["placed o-1 v0"]);
     const loaded = await storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" });
     expect(loaded.events.map((event) => event.id)).toEqual(["sneaky"]);

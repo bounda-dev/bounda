@@ -249,4 +249,20 @@ describe("boot", () => {
       version: 1,
     });
   });
+
+  it("loads .env and stops on SIGTERM with a logger that throws", async () => {
+    const failing = (): void => {
+      throw new Error("log sink is down");
+    };
+    const sigint = process.listenerCount("SIGINT");
+    const app = await boot<typeof registry>({
+      root,
+      registryPath: "registry.ts",
+      logger: { debug: failing, info: failing, warn: failing, error: failing },
+    });
+    expect(process.listenerCount("SIGINT")).toBe(sigint + 1);
+    process.emit("SIGTERM", "SIGTERM");
+    expect(process.listenerCount("SIGINT")).toBe(sigint);
+    await app.stop();
+  });
 });

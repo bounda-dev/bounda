@@ -4,9 +4,9 @@ import { createStagedEventStore } from "../../adapter/staged-event-store.ts";
 import { ConcurrencyError } from "../../contracts/errors.ts";
 
 /**
- * The stores a reaction's commands write through while its attempt runs.
+ * What a reaction's commands write through while its attempt runs.
  */
-export type UnitStores = Pick<StorageTransaction, "eventStore" | "scheduler">;
+export type UnitStores = Pick<UnitOfWork, "eventStore" | "scheduler" | "afterCommit">;
 
 /**
  * What one attempt of a reaction changes in the store, held back until `commit`: the events its
@@ -20,6 +20,11 @@ export type UnitStores = Pick<StorageTransaction, "eventStore" | "scheduler">;
  */
 export interface UnitOfWork extends StorageTransaction {
   commit(): Promise<void>;
+  /**
+   * Runs `callback` once the unit has committed, once however often it commits; never for a unit
+   * that does not. `callback` must not throw: the commit would look failed when it is done.
+   */
+  afterCommit(callback: () => void): void;
 }
 
 export interface CreateUnitOfWorkArgs {
@@ -33,16 +38,22 @@ export interface CreateUnitOfWorkFunction {
 export const createUnitOfWork: CreateUnitOfWorkFunction = ({ storage }) => {
   const staged = createStagedEventStore(storage.eventStore);
   const { ports, flush, pending } = deferWrites(storage);
+  const committed: (() => void)[] = [];
   return {
     eventStore: staged,
     ...ports,
     commit: async () => {
       const batches = staged.batches();
-      if (batches.length === 0 && !pending()) return;
-      await storage.transact(async (transaction) => {
-        for (const batch of batches) await transaction.eventStore.append(batch);
-        await flush(transaction);
-      });
+      if (batches.length > 0 || pending()) {
+        await storage.transact(async (transaction) => {
+          for (const batch of batches) await transaction.eventStore.append(batch);
+          await flush(transaction);
+        });
+      }
+      for (const callback of committed.splice(0)) callback();
+    },
+    afterCommit: (callback) => {
+      committed.push(callback);
     },
   };
 };
