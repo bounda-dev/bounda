@@ -111,24 +111,47 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
   const abandoned = new AbortController();
   // A dispatch the handler does not await would leave its failure unhandled, and Node ends the
   // process on that. Each is marked handled when it is made, and `decided` reports the failure, or
-  // the logger the refusal of one made once the run has finished; the handler still sees either
-  // through its own await.
+  // the logger the refusal of one made once the run was abandoned or had finished; the handler
+  // still sees either through its own await.
   const dispatched = new Set<Promise<ReactionDispatchResult>>();
   const results: ReactionDispatchResult[] = [];
   let failure: { readonly error: unknown } | undefined;
   let finished = false;
+  const refuse = (
+    level: "warn" | "error",
+    message: string,
+    type: string,
+    error: unknown,
+  ): Promise<never> => {
+    logger[level](message, {
+      command: type,
+      correlationId: context.correlationId,
+      causationId: context.causationId,
+    });
+    const refused = Promise.reject(error);
+    refused.catch(() => undefined);
+    return refused;
+  };
   const commands = createCommandsFacade({
     aggregates,
     dispatch: (command) => {
-      if (finished && !abandoned.signal.aborted) {
-        logger.error("command dispatched after its run had finished; refused", {
-          command: command.type,
-          correlationId: context.correlationId,
-          causationId: context.causationId,
-        });
-        const refused = Promise.reject(new ReactionFinishedError(command.type));
-        refused.catch(() => undefined);
-        return refused;
+      // An abandoned run's failure is reported on its own, and the run retried or dead-lettered;
+      // nothing else reports what a finished run refuses, and it is lost.
+      if (abandoned.signal.aborted) {
+        return refuse(
+          "warn",
+          "command dispatched after its run was abandoned; refused",
+          command.type,
+          abandoned.signal.reason,
+        );
+      }
+      if (finished) {
+        return refuse(
+          "error",
+          "command dispatched after its run had finished; refused",
+          command.type,
+          new ReactionFinishedError(command.type),
+        );
       }
       const dispatch = (async () => {
         const result = decided(
@@ -149,7 +172,7 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
         if (withdrawal?.aborted && error === withdrawal.reason) return;
         failure ??= { error };
       });
-      if (!abandoned.signal.aborted) dispatched.add(dispatch);
+      dispatched.add(dispatch);
       return dispatch;
     },
   });

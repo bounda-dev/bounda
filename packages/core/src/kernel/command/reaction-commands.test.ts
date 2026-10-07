@@ -148,8 +148,8 @@ describe("createReactionCommands", () => {
     ).rejects.toBeInstanceOf(ReactionAbandonedError);
   });
 
-  it("refuses commands after the run is abandoned, saying why, and aborts its signal", async () => {
-    const { reaction, storage } = await setUp();
+  it("refuses commands after the run is abandoned, saying why, logs the refusal and aborts its signal", async () => {
+    const { reaction, unit, entries } = await setUp();
     const reason = new Error("timed out");
 
     reaction.abandon(reason);
@@ -164,8 +164,24 @@ describe("createReactionCommands", () => {
       cause: reason,
     });
     expect(
-      await storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" }),
+      await unit.eventStore.load({ aggregateType: "order", aggregateId: "o-1" }),
     ).toMatchObject({ events: [] });
+    expect(entries).toEqual([
+      {
+        level: "warn",
+        message: "command dispatched after its run was abandoned; refused",
+        fields: { command: "PlaceOrder", correlationId: "req-1", causationId: "evt-1" },
+      },
+    ]);
+  });
+
+  it("refuses a command after the run is abandoned before validating its payload", async () => {
+    const { reaction } = await setUp();
+    reaction.abandon(new Error("timed out"));
+
+    await expect(
+      reaction.commands.payOrder?.({ orderId: "o-1", method: "cash" }),
+    ).rejects.toBeInstanceOf(ReactionAbandonedError);
   });
 
   it("stops a command still running when the run is abandoned", async () => {
