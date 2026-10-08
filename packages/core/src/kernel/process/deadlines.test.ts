@@ -17,7 +17,7 @@ import { DEADLINE_WAIT_ROUNDS } from "../scheduler/worker.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import {
   breakNextCommit,
-  chooseCollaborators,
+  choosePorts,
   createRecordingLogger,
   type OrderProcessConfigArgs,
   orderAggregateEntry,
@@ -259,14 +259,14 @@ describe("deadline helpers", () => {
 describe("process deadlines at boot", () => {
   const config = resolveConfig({
     storage: memory(),
-    collaborators: { order: { notifier: "memory" } },
+    ports: { order: { notifier: "memory" } },
   });
   const processesOf = (registry: Registry, resolved: ResolvedConfig) =>
     buildProcesses({
       registry,
       aggregates: buildAggregates({
         registry,
-        collaborators: chooseCollaborators(registry, resolved),
+        ports: choosePorts(registry, resolved),
       }),
       config: resolved,
     });
@@ -1232,7 +1232,7 @@ describe("process deadlines in an app", () => {
     const clock = createFixedClock();
     const app = await createApp({
       registry,
-      config: { storage: memory(), collaborators: { order: { notifier: "memory" } } },
+      config: { storage: memory(), ports: { order: { notifier: "memory" } } },
       ids: createSequentialIdGenerator(),
       clock,
     });

@@ -6,8 +6,8 @@ import { ConfigurationError, DomainError } from "../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../contracts/ids.ts";
 import { silentLogger } from "../contracts/logger.ts";
 import { memory } from "../memory/index.ts";
-import type { CreateArgs } from "../modules/collaborator.ts";
 import type { PayloadArgs } from "../modules/payload.ts";
+import type { CreateArgs } from "../modules/port.ts";
 import type { Registry } from "../modules/registry.ts";
 import type { FieldsArgs } from "../modules/view.ts";
 import { createTestApp } from "../testing/index.ts";
@@ -173,7 +173,7 @@ const start = async (role: "web" | "worker" | "all" = "all", storage: Adapter = 
     config: {
       storage,
       runtime: { role },
-      collaborators: { order: { notifier: "memory" } },
+      ports: { order: { notifier: "memory" } },
     },
     ids: createSequentialIdGenerator(),
     clock,
@@ -230,7 +230,7 @@ describe("createApp", () => {
         },
         readModels: {},
       },
-      config: { storage: memory(), collaborators: { order: { notifier: "memory" } } },
+      config: { storage: memory(), ports: { order: { notifier: "memory" } } },
     });
     await app.commands.placeOrder({ orderId: "o-1", total: 42 });
 
@@ -278,7 +278,7 @@ describe("createApp", () => {
         },
         readModels: {},
       },
-      collaborators: { order: { notifier: "memory" } },
+      ports: { order: { notifier: "memory" } },
     });
     await app.commands.placeOrder({ orderId: "o-1", total: 42 });
 
@@ -295,7 +295,7 @@ describe("createApp", () => {
     };
     const app = await createApp({
       registry,
-      config: { storage: memory(), collaborators: { order: { notifier: "memory" } } },
+      config: { storage: memory(), ports: { order: { notifier: "memory" } } },
       logger: { debug: failing, info: failing, warn: failing, error: failing },
     });
     await app.commands.placeOrder({ orderId: "o-1", total: 42 });
@@ -486,7 +486,7 @@ describe("createApp", () => {
   });
 });
 
-describe("collaborators built by create", () => {
+describe("implementations built by create", () => {
   interface Notifier {
     send(message: string): void;
   }
@@ -500,7 +500,7 @@ describe("collaborators built by create", () => {
       aggregates: {
         order: {
           ...orderAggregateEntry(),
-          collaborators: { notifier: { smtp: { create } } },
+          ports: { notifier: { smtp: { create } } },
         },
       },
       readModels: registry.readModels,
@@ -586,7 +586,7 @@ describe("collaborators built by create", () => {
       aggregates: {
         order: {
           ...orderAggregateEntry(),
-          collaborators: {
+          ports: {
             notifier: {
               smtp: {
                 create: () => {
@@ -605,7 +605,7 @@ describe("collaborators built by create", () => {
     expect(createStorage).not.toHaveBeenCalled();
   });
 
-  it("builds no collaborator to rebuild a read model", async () => {
+  it("builds no implementation to rebuild a read model", async () => {
     const log: string[] = [];
     const { create, app: lifecycleRegistry } = lifecycle(log);
     const storage = memory();
@@ -626,7 +626,7 @@ const quiet = {
 const open = <R extends Registry>(app: R, storage: Adapter) =>
   createApp({
     registry: app,
-    config: { storage, collaborators: { order: { notifier: "memory" } } },
+    config: { storage, ports: { order: { notifier: "memory" } } },
     ids: createSequentialIdGenerator(),
     clock: createFixedClock(),
   });

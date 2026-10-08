@@ -25,7 +25,7 @@ export interface ProcessRuntime {
    * Includes the `at-timeout.ts` handler under `timeout`, when there is one.
    */
   readonly deadlineHandlers: Readonly<Record<string, (args: Record<string, unknown>) => unknown>>;
-  readonly collaborators: Readonly<Record<string, unknown>>;
+  readonly ports: Readonly<Record<string, unknown>>;
   /**
    * The id of the instance an event belongs to: what `correlate` says for it, the id field of an
    * event of another aggregate, or the event's `aggregateId` for the process's own aggregate;
@@ -267,7 +267,7 @@ const buildProcess = (
     handlers,
     deadlineFields,
     deadlineHandlers: compileDeadlines(path, entry, deadlineFields),
-    collaborators: aggregates.byName[aggregate]?.collaborators ?? {},
+    ports: aggregates.byName[aggregate]?.ports ?? {},
     instanceOf: (event) => {
       const qualified = qualifiedEventType(event.aggregateType, event.type);
       const correlator = correlate[qualified];

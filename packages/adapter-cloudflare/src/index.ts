@@ -28,7 +28,7 @@ export { createWorker, TENANT_HEADER } from "./worker.ts";
 declare module "@bounda-dev/core/register" {
   interface Register {
     /**
-     * On Cloudflare, collaborator implementations receive the Durable Object's `env` in `create`:
+     * On Cloudflare, port implementations receive the Durable Object's `env` in `create`:
      * the Worker's bindings and variables, as `wrangler types` declares them.
      */
     readonly env: Cloudflare.Env;

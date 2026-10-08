@@ -11,7 +11,7 @@ beforeEach(() => {
   regionLog.length = 0;
 });
 
-describe("a collaborator built by create inside a Durable Object", () => {
+describe("an implementation built by create inside a Durable Object", () => {
   it("receives the object's env, once, and serves every command", async () => {
     const store = connect<typeof regionRegistry>(
       env.REGION_STORE.get(env.REGION_STORE.newUniqueId()),

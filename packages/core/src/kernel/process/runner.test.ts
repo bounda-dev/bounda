@@ -11,7 +11,7 @@ import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { createReactiveHarness } from "../reactive-harness.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import {
-  chooseCollaborators,
+  choosePorts,
   createRecordingLogger,
   type OrderProcessConfigArgs,
   orderAggregateEntry,
@@ -95,14 +95,14 @@ const processStream = (harness: Awaited<ReturnType<typeof createReactiveHarness>
 const processesOf = (registry: Registry, config: ResolvedConfig) =>
   buildProcesses({
     registry,
-    aggregates: buildAggregates({ registry, collaborators: chooseCollaborators(registry, config) }),
+    aggregates: buildAggregates({ registry, ports: choosePorts(registry, config) }),
     config,
   });
 
 describe("buildProcesses", () => {
   const config = resolveConfig({
     storage: memory(),
-    collaborators: { order: { notifier: "memory" } },
+    ports: { order: { notifier: "memory" } },
   });
 
   it("compiles config, state defaults, handlers and timeout", () => {
@@ -142,7 +142,7 @@ describe("buildProcesses", () => {
       withoutTimeout,
       resolveConfig({
         storage: memory(),
-        collaborators: { order: { notifier: "memory" } },
+        ports: { order: { notifier: "memory" } },
         runtime: { processes: { timeout: "1h" } },
       }),
     );
@@ -794,7 +794,7 @@ describe("process runner", () => {
   });
 });
 
-describe("process collaborators", () => {
+describe("process ports", () => {
   const recorded: string[] = [];
   const audit = (tag: string) => ({
     record: (entry: string) => {
@@ -834,8 +834,8 @@ describe("process collaborators", () => {
             },
           },
         },
-        collaborators: {
-          ...orderAggregateEntry().collaborators,
+        ports: {
+          ...orderAggregateEntry().ports,
           audit: { log: { default: audit("log") }, memory: { default: audit("memory") } },
         },
       },
@@ -847,7 +847,7 @@ describe("process collaborators", () => {
     recorded.length = 0;
     const harness = await createReactiveHarness({
       registry: withAudit,
-      config: { collaborators: { order: { notifier: "memory", audit: "memory" } } },
+      config: { ports: { order: { notifier: "memory", audit: "memory" } } },
     });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
     await harness.dispatcher.runUntilIdle();
@@ -860,7 +860,7 @@ describe("process collaborators", () => {
     keys.length = 0;
     const harness = await createReactiveHarness({
       registry: withAudit,
-      config: { collaborators: { order: { notifier: "memory", audit: "memory" } } },
+      config: { ports: { order: { notifier: "memory", audit: "memory" } } },
     });
     const placed = await harness.pipeline.dispatch({
       type: "PlaceOrder",
@@ -886,12 +886,12 @@ describe("process collaborators", () => {
 
   it("names the aggregate and where to choose when several implementations exist", () => {
     expect(() =>
-      chooseCollaborators(
+      choosePorts(
         withAudit,
-        resolveConfig({ storage: memory(), collaborators: { order: { notifier: "memory" } } }),
+        resolveConfig({ storage: memory(), ports: { order: { notifier: "memory" } } }),
       ),
     ).toThrow(
-      'Aggregate "order", collaborator "audit": choose an implementation with collaborators.order.audit. Available: "log", "memory"',
+      'Aggregate "order", port "audit": choose an implementation with ports.order.audit. Available: "log", "memory"',
     );
   });
 });
@@ -1082,7 +1082,7 @@ describe("processes that listen to other aggregates", () => {
   it("refuse at boot another aggregate's event whose payload has no id field and that correlate leaves out", () => {
     const config = resolveConfig({
       storage: memory(),
-      collaborators: { order: { notifier: "memory" } },
+      ports: { order: { notifier: "memory" } },
     });
     const byReference = ({ z }: PayloadArgs) => z.object({ reference: z.string() });
     const referenced = {
@@ -1120,7 +1120,7 @@ describe("processes that listen to other aggregates", () => {
   it("refuse at boot to read the id field through a payload schema that is not a plain object", () => {
     const config = resolveConfig({
       storage: memory(),
-      collaborators: { order: { notifier: "memory" } },
+      ports: { order: { notifier: "memory" } },
     });
     const transformed = ({ z }: PayloadArgs) =>
       z.object({ orderId: z.string() }).transform((payload) => ({ ...payload, at: "now" }));
@@ -1149,7 +1149,7 @@ describe("processes that listen to other aggregates", () => {
   it("refuse at boot a correlate that is not a function, returns no list, names no event or names one twice", () => {
     const config = resolveConfig({
       storage: memory(),
-      collaborators: { order: { notifier: "memory" } },
+      ports: { order: { notifier: "memory" } },
     });
     const withModule = (correlate: unknown): Registry => {
       const registry = withCorrelate(undefined);

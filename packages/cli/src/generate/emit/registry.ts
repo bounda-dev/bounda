@@ -35,7 +35,7 @@ const collectImports = (model: ProjectModel): readonly ImportEntry[] => {
     }
     // The port is the owner, not the aggregate: an event named `<aggregate>-<port>` would
     // otherwise share both the alias and the prefix that makes aliases unique.
-    for (const port of aggregate.collaborators) {
+    for (const port of aggregate.ports) {
       add(joinKeys(aggregate.name, port.key), port.key, port.contract.path, "type");
       for (const implementation of port.implementations) {
         add(
@@ -119,16 +119,12 @@ const emitEntries = (owners: readonly OwnerEntry[], aliases: Aliases): string =>
  * Every implementation is checked against the port's interface here, so `tsc` fails on one that
  * does not fulfil it whether or not the module says `satisfies` itself.
  */
-const emitCollaborators = (
-  aggregate: AggregateModel,
-  aliases: Aliases,
-  indent: string,
-): string[] => {
-  if (aggregate.collaborators.length === 0) return [];
+const emitPorts = (aggregate: AggregateModel, aliases: Aliases, indent: string): string[] => {
+  if (aggregate.ports.length === 0) return [];
   const inner = `${indent}  `;
   return [
-    `${indent}collaborators: {`,
-    ...aggregate.collaborators.flatMap((port) => [
+    `${indent}ports: {`,
+    ...aggregate.ports.flatMap((port) => [
       `${inner}${port.key}: {`,
       ...port.implementations.map(
         (implementation) =>
@@ -187,7 +183,7 @@ const emitAggregate = (aggregate: AggregateModel, aliases: Aliases): string => {
     ...(aggregate.state === null ? [] : [`${indent}state: ${aliases.of(aggregate.state.path)},`]),
     `${indent}events: ${record(aggregate.events.map((event) => [event.key, aliases.of(event.path)]))},`,
     ...emitUpcasts(aggregate, aliases, indent),
-    ...emitCollaborators(aggregate, aliases, indent),
+    ...emitPorts(aggregate, aliases, indent),
     `${indent}commands: ${emitEntries(aggregate.commands, aliases)},`,
     `${indent}policies: ${emitEntries(aggregate.policies, aliases)},`,
     `${indent}processes: ${emitProcesses(aggregate, aliases, indent)},`,
@@ -237,9 +233,9 @@ export interface EmitRegistryFunction {
  */
 export const emitRegistry: EmitRegistryFunction = ({ model, path }) => {
   const aliases = resolveAliases(model, path);
-  const hasCollaborators = model.aggregates.some((aggregate) => aggregate.collaborators.length > 0);
+  const hasPorts = model.aggregates.some((aggregate) => aggregate.ports.length > 0);
   const content = [
-    hasCollaborators
+    hasPorts
       ? 'import type { ImplementationModule, Registry } from "@bounda-dev/core";'
       : 'import type { Registry } from "@bounda-dev/core";',
     ...aliases.lines,

@@ -14,6 +14,6 @@ export declare namespace Process {
     core.ProcessStateOf<ProcessModule>,
     core.ProcessDeadlineField<ProcessModule, "nextReminder">,
     generated.ReactionCommands,
-    generated.OrderCollaborators
+    generated.OrderPorts
   >;
 }

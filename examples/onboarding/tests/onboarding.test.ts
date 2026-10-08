@@ -18,7 +18,7 @@ const start = async () => {
   const sent: WelcomeEmail[] = [];
   const test = await createTestApp({
     registry,
-    collaborators: { user: { emailSender: { send: async (email) => void sent.push(email) } } },
+    ports: { user: { emailSender: { send: async (email) => void sent.push(email) } } },
   });
   return { ...test, sent };
 };

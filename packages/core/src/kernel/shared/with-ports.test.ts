@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { withCollaborators } from "./with-collaborators.ts";
+import { withPorts } from "./with-ports.ts";
 
-describe("withCollaborators", () => {
+describe("withPorts", () => {
   it("reads a port only when the handler reads it, and lets the handler's own arguments win", () => {
     const reads: string[] = [];
     const ports = Object.defineProperties(
@@ -11,7 +11,7 @@ describe("withCollaborators", () => {
         signal: { enumerable: true, get: () => reads.push("signal") },
       },
     );
-    const args = withCollaborators(ports, { signal: "own", idempotencyKey: "k" });
+    const args = withPorts(ports, { signal: "own", idempotencyKey: "k" });
     expect(reads).toEqual([]);
     const { signal, idempotencyKey } = args as typeof args & { readonly notifier: unknown };
     expect({ signal, idempotencyKey }).toEqual({ signal: "own", idempotencyKey: "k" });

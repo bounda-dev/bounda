@@ -51,7 +51,7 @@ const start = async ({ failingIntents = 0, failingRefunds = 0 }: StartArgs = {})
   const test = await createTestApp({
     registry,
     adapter: sqlite({ memory: true }),
-    collaborators: {
+    ports: {
       order: { notifier: async (confirmation) => void sent.push(confirmation) },
       payment: { gateway },
     },

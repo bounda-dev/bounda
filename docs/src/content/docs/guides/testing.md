@@ -166,7 +166,7 @@ const sent: Confirmation[] = [];
 const { app } = await createTestApp({
   registry,
   adapter: sqlite({ memory: true }),
-  collaborators: { order: { notifier: async (confirmation) => void sent.push(confirmation) } },
+  ports: { order: { notifier: async (confirmation) => void sent.push(confirmation) } },
 });
 ```
 
@@ -190,7 +190,7 @@ object otherwise:
 ```ts
 const { app } = await createTestApp({
   registry,
-  collaborators: { order: { inventory: "http" } },
+  ports: { order: { inventory: "http" } },
   env: { INVENTORY_URL: "http://localhost:8080" },
 });
 ```

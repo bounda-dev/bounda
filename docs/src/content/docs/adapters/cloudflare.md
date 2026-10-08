@@ -81,9 +81,9 @@ Durable Object has no loop running between requests:
 `createBoundaObject` accepts `passesPerAlarm` (50 by default): how many rounds of work one alarm
 does before it yields and wakes itself again.
 
-## Collaborators and `env`
+## Ports and `env`
 
-A collaborator implementation that exports `create` receives the object's `env`: the Worker's
+A port implementation that exports `create` receives the object's `env`: the Worker's
 bindings and variables, typed as `Cloudflare.Env` from what `wrangler types` writes. That is how
 a queue, a KV namespace, a service binding or a secret reaches it. `create` runs once per object,
 when it starts.
@@ -104,7 +104,7 @@ import { env } from "cloudflare:workers";
 
 export default defineConfig({
   storage: cloudflare(),
-  collaborators: { order: { notifier: env.NOTIFIER === "memory" ? "memory" : "queue" } },
+  ports: { order: { notifier: env.NOTIFIER === "memory" ? "memory" : "queue" } },
 });
 ```
 

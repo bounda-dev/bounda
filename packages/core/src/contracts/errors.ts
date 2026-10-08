@@ -173,7 +173,7 @@ export class NotFoundError extends BoundaError {
 
 /**
  * Thrown at boot when the configuration or the registry is malformed: a module missing a required
- * export, a collaborator without an implementation, an unknown storage type.
+ * export, a port without an implementation, an unknown storage type.
  */
 export class ConfigurationError extends BoundaError {
   constructor(message: string, options?: ErrorOptions) {

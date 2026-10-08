@@ -1,17 +1,17 @@
 import { ConfigurationError } from "../contracts/errors.ts";
-import type { CollaboratorModules, ImplementationModule } from "../modules/collaborator.ts";
+import type { ImplementationModule, PortModules } from "../modules/port.ts";
 
-export interface SelectCollaboratorsArgs {
+export interface SelectImplementationsArgs {
   readonly aggregate: string;
-  readonly implementations: CollaboratorModules;
+  readonly implementations: PortModules;
   /**
-   * The aggregate's entry of `collaborators` in the configuration: port to implementation name.
+   * The aggregate's entry of `ports` in the configuration: port to implementation name.
    */
   readonly config: Readonly<Record<string, string>> | undefined;
 }
 
-export interface SelectCollaboratorsFunction {
-  (args: SelectCollaboratorsArgs): Readonly<Record<string, ImplementationModule<unknown>>>;
+export interface SelectImplementationsFunction {
+  (args: SelectImplementationsArgs): Readonly<Record<string, ImplementationModule<unknown>>>;
 }
 
 export interface DescribeNamesFunction {
@@ -39,7 +39,7 @@ export const implementationNotFound: ImplementationNotFoundFunction = ({
   options,
 }) =>
   new ConfigurationError(
-    `${owner}, collaborator "${port}": implementation "${chosen}" not found. Available: ${describeNames(options)}`,
+    `${owner}, port "${port}": implementation "${chosen}" not found. Available: ${describeNames(options)}`,
   );
 
 /**
@@ -47,7 +47,7 @@ export const implementationNotFound: ImplementationNotFoundFunction = ({
  * only one there is. Anything else is a `ConfigurationError` that names the aggregate, the port and
  * the available options.
  */
-export const selectCollaborators: SelectCollaboratorsFunction = ({
+export const selectImplementations: SelectImplementationsFunction = ({
   aggregate,
   implementations,
   config,
@@ -65,13 +65,13 @@ export const selectCollaborators: SelectCollaboratorsFunction = ({
     const [only, ...others] = Object.values(available);
     if (only !== undefined && others.length === 0) return [port, only] as const;
     throw new ConfigurationError(
-      `${owner}, collaborator "${port}": choose an implementation with collaborators.${aggregate}.${port}. Available: ${describeNames(options)}`,
+      `${owner}, port "${port}": choose an implementation with ports.${aggregate}.${port}. Available: ${describeNames(options)}`,
     );
   });
   const unknown = Object.keys(config ?? {}).filter((port) => !Object.hasOwn(implementations, port));
   if (unknown.length > 0) {
     throw new ConfigurationError(
-      `${owner}: configuration names collaborators that do not exist: ${describeNames(unknown)}`,
+      `${owner}: configuration names ports that do not exist: ${describeNames(unknown)}`,
     );
   }
   return Object.fromEntries(selected);

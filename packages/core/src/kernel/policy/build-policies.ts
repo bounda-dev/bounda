@@ -18,7 +18,7 @@ export interface PolicyRuntime {
    */
   readonly on: readonly string[];
   readonly handler: (args: Record<string, unknown>) => unknown;
-  readonly collaborators: Readonly<Record<string, unknown>>;
+  readonly ports: Readonly<Record<string, unknown>>;
   /**
    * `null` for a policy that runs as soon as its event is delivered.
    */
@@ -122,7 +122,7 @@ export const buildPolicies: BuildPoliciesFunction = ({ registry, aggregates }) =
         on: triggersOf(registry, aggregate, key, policy.module, policy.source ?? aggregate),
         handler: policy.module.handler as PolicyRuntime["handler"],
         delayMs: delayOf(aggregate, key, policy.module),
-        collaborators: aggregates.byName[aggregate]?.collaborators ?? {},
+        ports: aggregates.byName[aggregate]?.ports ?? {},
       }),
     ),
   );

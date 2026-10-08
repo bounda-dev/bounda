@@ -6,33 +6,33 @@ declare const sqlite: AdapterDefinition<"sqlite", { path: string }>;
 declare const env: Readonly<Record<string, string | undefined>>;
 
 /**
- * The fixture registers its `CollaboratorsConfig` through `register.d.ts`, and `inventory` has two
+ * The fixture registers its `PortsConfig` through `register.d.ts`, and `inventory` has two
  * implementations, so every config here has to choose one.
  */
-const collaborators = { order: { inventory: "fake" } } as const;
+const ports = { order: { inventory: "fake" } } as const;
 
 describe("defineConfig", () => {
   it("keeps the literal type of what it is given", () => {
-    const config = defineConfig({ storage: sqlite, collaborators, runtime: { role: "worker" } });
+    const config = defineConfig({ storage: sqlite, ports, runtime: { role: "worker" } });
     expectTypeOf(config.runtime.role).toEqualTypeOf<"worker">();
     expectTypeOf(config.storage).toEqualTypeOf<AdapterDefinition<"sqlite", { path: string }>>();
-    expectTypeOf(config.collaborators.order.inventory).toEqualTypeOf<"fake">();
+    expectTypeOf(config.ports.order.inventory).toEqualTypeOf<"fake">();
   });
 
-  it("checks the collaborators section against the project's ports", () => {
-    defineConfig({ storage: sqlite, collaborators: { order: { inventory: "memory" } } });
+  it("checks the ports section against the project's ports", () => {
+    defineConfig({ storage: sqlite, ports: { order: { inventory: "memory" } } });
     defineConfig({
       storage: sqlite,
-      collaborators: { order: { inventory: "fake", mailer: "memory", reminders: "fake" } },
+      ports: { order: { inventory: "fake", mailer: "memory", reminders: "fake" } },
     });
     const chosen = env.INVENTORY === "memory" ? "memory" : "fake";
-    defineConfig({ storage: sqlite, collaborators: { order: { inventory: chosen } } });
+    defineConfig({ storage: sqlite, ports: { order: { inventory: chosen } } });
   });
 
   it("checks duration strings at compile time", () => {
     defineConfig({
       storage: sqlite,
-      collaborators,
+      ports,
       runtime: {
         commands: { timeout: "10s" },
         policies: { timeout: "30s" },
@@ -42,27 +42,27 @@ describe("defineConfig", () => {
     });
     defineConfig({
       storage: sqlite,
-      collaborators,
+      ports,
       runtime: { dispatcher: { pollInterval: 250 } },
     });
     defineConfig({
       storage: sqlite,
-      collaborators,
+      ports,
       runtime: { dispatcher: { projectionBatchTime: "500ms" } },
     });
     defineConfig({
       storage: sqlite,
-      collaborators,
+      ports,
       runtime: { dispatcher: { projectionBatchTime: 0 } },
     });
     defineConfig({
       storage: sqlite,
-      collaborators,
+      ports,
       runtime: { dispatcher: { catchUp: { timeout: "5s", pollInterval: 20 } } },
     });
     defineConfig({
       storage: sqlite,
-      collaborators,
+      ports,
       runtime: {
         dispatcher: {
           catchUp: {
@@ -74,12 +74,12 @@ describe("defineConfig", () => {
     });
     defineConfig({
       storage: sqlite,
-      collaborators,
+      ports,
       runtime: { dispatcher: { backoff: { baseDelay: "250ms", maxDelay: 60_000 } } },
     });
     defineConfig({
       storage: sqlite,
-      collaborators,
+      ports,
       runtime: {
         dispatcher: {
           backoff: {
@@ -91,7 +91,7 @@ describe("defineConfig", () => {
     });
     defineConfig({
       storage: sqlite,
-      collaborators,
+      ports,
       runtime: {
         dispatcher: {
           // @ts-expect-error "half a second" is not a duration string
@@ -100,10 +100,10 @@ describe("defineConfig", () => {
       },
     });
     // @ts-expect-error "7 days" is not a duration string
-    defineConfig({ storage: sqlite, collaborators, runtime: { policies: { timeout: "7 days" } } });
+    defineConfig({ storage: sqlite, ports, runtime: { policies: { timeout: "7 days" } } });
     defineConfig({
       storage: sqlite,
-      collaborators,
+      ports,
       runtime: {
         commands: {
           // @ts-expect-error "ten seconds" is not a duration string
@@ -112,24 +112,24 @@ describe("defineConfig", () => {
       },
     });
     // @ts-expect-error "48x" uses an unknown unit
-    defineConfig({ storage: sqlite, collaborators, runtime: { processes: { timeout: "48x" } } });
+    defineConfig({ storage: sqlite, ports, runtime: { processes: { timeout: "48x" } } });
   });
 
   it("rejects unknown keys and wrong roles", () => {
     // @ts-expect-error storag is not a config key
-    defineConfig({ storag: sqlite, collaborators });
+    defineConfig({ storag: sqlite, ports });
     defineConfig({
       storage: sqlite,
-      collaborators,
+      ports,
       // @ts-expect-error concurrencyRetries is not overridden per aggregate
       runtime: { overrides: { order: { commands: { concurrencyRetries: 1 } } } },
     });
     // @ts-expect-error batch is not a role
-    defineConfig({ storage: sqlite, collaborators, runtime: { role: "batch" } });
+    defineConfig({ storage: sqlite, ports, runtime: { role: "batch" } });
   });
 
   it("requires storage to be an adapter definition", () => {
     // @ts-expect-error a plain object is not an adapter definition
-    defineConfig({ storage: { path: "./x.db" }, collaborators });
+    defineConfig({ storage: { path: "./x.db" }, ports });
   });
 });

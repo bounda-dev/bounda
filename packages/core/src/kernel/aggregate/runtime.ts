@@ -39,7 +39,7 @@ export interface AggregateRuntime {
    * The chosen implementation of every port, spread into the arguments of every handler of the
    * aggregate: its commands, policies and processes.
    */
-  readonly collaborators: Readonly<Record<string, unknown>>;
+  readonly ports: Readonly<Record<string, unknown>>;
   /**
    * Keyed by module key, `orderPlaced`; `eventsByType` by event type, `OrderPlaced`.
    */

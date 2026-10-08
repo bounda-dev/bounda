@@ -2,9 +2,9 @@ import { basename, dirname, join } from "node:path";
 import type { AggregateModel, ProjectModel, ReadModelModel } from "../model.ts";
 import { type GeneratedFile, importPath } from "./paths.ts";
 import {
-  collaboratorsTypeName,
   createdStateTypeName,
   eventsTypeName,
+  portsTypeName,
   rowTypeName,
   stateTypeName,
 } from "./types.ts";
@@ -91,11 +91,11 @@ const eventFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFile
     }),
   );
 
-const collaboratorsType = (aggregate: AggregateModel): string =>
-  `generated.${collaboratorsTypeName(aggregate.name)}`;
+const portsType = (aggregate: AggregateModel): string =>
+  `generated.${portsTypeName(aggregate.name)}`;
 
 const implementationFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFile[] =>
-  aggregate.collaborators.flatMap((port) =>
+  aggregate.ports.flatMap((port) =>
     port.implementations.map((implementation) => {
       const path = plusTypesPath(implementation.path);
       return render(path, typesPath, {
@@ -135,7 +135,7 @@ const commandFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFi
             "core.PayloadOf<Module>",
             `generated.${stateTypeName(aggregate.name)}`,
             `generated.${eventsTypeName(aggregate.name)}`,
-            collaboratorsType(aggregate),
+            portsType(aggregate),
             "core.RejectionCodeOf<Module>",
           ]),
         ],
@@ -172,7 +172,7 @@ const policyFiles = (
           generic("core.PolicyHandlerArgs", [
             eventOf(model, policy.source ?? aggregate.name, policy.triggerKey),
             "generated.ReactionCommands",
-            collaboratorsType(aggregate),
+            portsType(aggregate),
           ]),
         ],
       ],
@@ -225,7 +225,7 @@ const processFiles = (
                 eventOf(model, handler.aggregate, handler.eventKey),
                 "core.ProcessStateOf<ProcessModule>",
                 "generated.ReactionCommands",
-                collaboratorsType(aggregate),
+                portsType(aggregate),
               ]),
             ],
           ],
@@ -246,7 +246,7 @@ const processFiles = (
                 "core.ProcessStateOf<ProcessModule>",
                 deadline.field === TIMEOUT_DEADLINE ? "never" : deadlineField(deadline.field),
                 "generated.ReactionCommands",
-                collaboratorsType(aggregate),
+                portsType(aggregate),
               ]),
             ],
           ],

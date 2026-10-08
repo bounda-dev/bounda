@@ -56,8 +56,8 @@ const registry = {
     order: {
       ...order,
       commands: { ...order.commands, payOrder },
-      collaborators: {
-        ...order.collaborators,
+      ports: {
+        ...order.ports,
         recorder: { memory: { default: { record: (call: string) => calls.push(call) } } },
       },
       policies: {

@@ -11,7 +11,7 @@ import { createReactionCommands, type ReactionCommands } from "../command/reacti
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { isRecord, mergeFields } from "../shared/merge-fields.ts";
 import { withTimeout } from "../shared/timeout.ts";
-import { withCollaborators } from "../shared/with-collaborators.ts";
+import { withPorts } from "../shared/with-ports.ts";
 import { ATTRIBUTES, traced } from "../telemetry.ts";
 import type { UnitStores } from "../unit-of-work/unit-of-work.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
@@ -104,7 +104,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     triggeredAt: string,
     own: Readonly<Record<string, unknown>>,
   ): Record<string, unknown> =>
-    withCollaborators(process.collaborators, {
+    withPorts(process.ports, {
       commands: reaction.commands,
       signal: reaction.signal,
       idempotencyKey,

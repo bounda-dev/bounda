@@ -1,8 +1,8 @@
 export type { AdapterDefinition } from "../adapter/adapter-definition.ts";
-export type { SelectCollaboratorsArgs, SelectCollaboratorsFunction } from "./collaborators.ts";
-export { selectCollaborators } from "./collaborators.ts";
-export type { DefineConfigFunction, WithExactCollaborators } from "./define-config.ts";
+export type { DefineConfigFunction, WithExactPorts } from "./define-config.ts";
 export { defineConfig } from "./define-config.ts";
+export type { SelectImplementationsArgs, SelectImplementationsFunction } from "./ports.ts";
+export { selectImplementations } from "./ports.ts";
 export type { ResolveConfigFunction } from "./schema.ts";
 export { resolveConfig } from "./schema.ts";
 export type {
@@ -10,12 +10,12 @@ export type {
   AggregateOverrides,
   BackoffConfig,
   CatchUpConfig,
-  CollaboratorsConfig,
-  CollaboratorsSection,
   CommandsRuntimeConfig,
   Config,
   DispatcherConfig,
   PoliciesConfig,
+  PortsConfig,
+  PortsSection,
   ProcessesConfig,
   ResolvedAggregateRuntime,
   ResolvedCommandsConfig,

@@ -207,15 +207,10 @@ export type ProcessHandlerReturnCheck<
 > = Module;
 
 /**
- * Arguments of an `on-<event>.ts` handler, with the aggregate's collaborators spread at the top
+ * Arguments of an `on-<event>.ts` handler, with the aggregate's ports spread at the top
  * level. The handler returns the fields of the process state that change.
  */
-export type ProcessHandlerArgs<
-  Event,
-  State,
-  Commands,
-  Collaborators extends object = EmptyPayload,
-> = {
+export type ProcessHandlerArgs<Event, State, Commands, Ports extends object = EmptyPayload> = {
   readonly event: Event;
   readonly state: Readonly<State>;
   readonly aggregateId: string;
@@ -235,10 +230,10 @@ export type ProcessHandlerArgs<
    * A moment some time after the event: `nextReminder: after("24h")` schedules a deadline.
    */
   readonly after: ProcessAfterFunction;
-} & Readonly<Collaborators>;
+} & Readonly<Ports>;
 
 /**
- * Arguments of an `at-<field>.ts` handler, with the aggregate's collaborators spread at the top
+ * Arguments of an `at-<field>.ts` handler, with the aggregate's ports spread at the top
  * level: `state` holds the deadline that came due as `Field`. The handler returns the fields of
  * the process state that change, `Field` among them: `null` or another moment, since keeping the
  * one that came due fails the process. For
@@ -249,7 +244,7 @@ export type ProcessDeadlineArgs<
   State,
   Field extends keyof State,
   Commands,
-  Collaborators extends object = EmptyPayload,
+  Ports extends object = EmptyPayload,
 > = {
   readonly state: Readonly<State & { readonly [Key in Field]: Instant }>;
   readonly aggregateId: string;
@@ -270,4 +265,4 @@ export type ProcessDeadlineArgs<
    * every day, without drifting when a run is late.
    */
   readonly after: ProcessAfterFunction;
-} & Readonly<Collaborators>;
+} & Readonly<Ports>;

@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { ConfigurationError } from "../contracts/errors.ts";
 import type { OrderProcessConfigArgs } from "../kernel/test-support.ts";
-import type { CollaboratorModules, CreateArgs } from "../modules/collaborator.ts";
 import type { PayloadArgs } from "../modules/payload.ts";
+import type { CreateArgs, PortModules } from "../modules/port.ts";
 import type { ProcessAfterFunction, ProcessStateArgs } from "../modules/process.ts";
 import type { Registry } from "../modules/registry.ts";
 import { registry } from "../node/fixtures/project/registry.ts";
@@ -31,14 +31,14 @@ describe("createTestApp", () => {
     await app.stop();
   });
 
-  it("hands the env it is given to the collaborators' create, and an empty one otherwise", async () => {
+  it("hands the env it is given to the implementations' create, and an empty one otherwise", async () => {
     const seen: unknown[] = [];
     const withPort = {
       ...registry,
       aggregates: {
         counter: {
           ...registry.aggregates.counter,
-          collaborators: {
+          ports: {
             clock: {
               env: {
                 create: ({ env }: CreateArgs) => {
@@ -51,9 +51,9 @@ describe("createTestApp", () => {
         },
       },
     } satisfies Registry;
-    const collaborators = { counter: { clock: "env" } };
-    const given = await createTestApp({ registry: withPort, collaborators, env: { REGION: "eu" } });
-    const empty = await createTestApp({ registry: withPort, collaborators });
+    const ports = { counter: { clock: "env" } };
+    const given = await createTestApp({ registry: withPort, ports, env: { REGION: "eu" } });
+    const empty = await createTestApp({ registry: withPort, ports });
     expect(seen).toEqual([{ REGION: "eu" }, {}]);
     await given.app.stop();
     await empty.app.stop();
@@ -76,7 +76,7 @@ const orderPayload = ({ z }: PayloadArgs) => z.object({ orderId: z.string() });
  * `placeOrder` and the `mailOnOrderPlaced` policy each read one port; `noteOrder` and the
  * `followUp` process, with its deadline an hour after the order, read none.
  */
-const shop = (collaborators: CollaboratorModules, deadline = () => ({ due: null })) =>
+const shop = (ports: PortModules, deadline = () => ({ due: null })) =>
   ({
     aggregates: {
       order: {
@@ -126,7 +126,7 @@ const shop = (collaborators: CollaboratorModules, deadline = () => ({ due: null 
             deadlines: { due: { handler: deadline } },
           },
         },
-        collaborators,
+        ports,
       },
     },
     readModels: {},
@@ -136,10 +136,10 @@ const recording = (sent: string[]): Notifier => ({ send: (message) => sent.push(
 
 const missing = (port: string, options: string) =>
   new ConfigurationError(
-    `Aggregate "order", collaborator "${port}": this test app was given none. Pass createTestApp collaborators: { order: { ${port}: <double> } }, or one of ${options}.`,
+    `Aggregate "order", port "${port}": this test app was given none. Pass createTestApp ports: { order: { ${port}: <double> } }, or one of ${options}.`,
   );
 
-describe("createTestApp collaborators", () => {
+describe("createTestApp ports", () => {
   it("hands a double to the handlers as it is and never closes it", async () => {
     const sent: string[] = [];
     const dispose = vi.fn(async () => {});
@@ -149,7 +149,7 @@ describe("createTestApp collaborators", () => {
         notifier: { smtp: { default: recording([]) } },
         mailer: { smtp: { default: recording([]) } },
       }),
-      collaborators: { order: { notifier, mailer: recording(sent) } },
+      ports: { order: { notifier, mailer: recording(sent) } },
     });
     await app.commands.placeOrder({ orderId: "o-1" });
     await app.runUntilIdle();
@@ -175,9 +175,9 @@ describe("createTestApp collaborators", () => {
       },
       mailer: { smtp: { default: recording([]) } },
     });
-    const collaborators = { order: { notifier: "memory", mailer: recording([]) } };
-    const first = await createTestApp({ registry, collaborators, env: { REGION: "eu" } });
-    const second = await createTestApp({ registry, collaborators });
+    const ports = { order: { notifier: "memory", mailer: recording([]) } };
+    const first = await createTestApp({ registry, ports, env: { REGION: "eu" } });
+    const second = await createTestApp({ registry, ports });
     expect(received).toHaveLength(2);
     expect(received[0]).toMatchObject({ env: { REGION: "eu" }, clock: first.clock });
     expect(received[1]?.clock).toBe(second.clock);
@@ -194,7 +194,7 @@ describe("createTestApp collaborators", () => {
         notifier: { smtp: { create } },
         mailer: { smtp: { default: recording([]) } },
       }),
-      collaborators: { order: { mailer: recording([]) } },
+      ports: { order: { mailer: recording([]) } },
     });
     expect(create).not.toHaveBeenCalled();
     await expect(app.commands.noteOrder({ orderId: "o-1" })).resolves.toMatchObject({
@@ -215,7 +215,7 @@ describe("createTestApp collaborators", () => {
         notifier: { smtp: { default: recording([]) } },
         mailer: { smtp: { default: recording([]) }, memory: { default: recording([]) } },
       }),
-      collaborators: { order: { notifier: recording([]) } },
+      ports: { order: { notifier: recording([]) } },
     });
     await app.runUntilIdle();
     await app.commands.placeOrder({ orderId: "o-1" });
@@ -228,20 +228,20 @@ describe("createTestApp collaborators", () => {
   it("rejects an aggregate, a port or an implementation that does not exist", async () => {
     const registry = shop({ notifier: { smtp: { default: recording([]) } } });
     await expect(
-      createTestApp({ registry, collaborators: { shipping: { carrier: "ups" } } }),
-    ).rejects.toThrow('collaborators.shipping: there is no aggregate "shipping"');
+      createTestApp({ registry, ports: { shipping: { carrier: "ups" } } }),
+    ).rejects.toThrow('ports.shipping: there is no aggregate "shipping"');
     await expect(
-      createTestApp({ registry, collaborators: { order: { sms: recording([]) } } }),
+      createTestApp({ registry, ports: { order: { sms: recording([]) } } }),
     ).rejects.toThrow(
       new ConfigurationError(
-        'Aggregate "order": createTestApp names collaborators that do not exist: "sms"',
+        'Aggregate "order": createTestApp names ports that do not exist: "sms"',
       ),
     );
     await expect(
-      createTestApp({ registry, collaborators: { order: { notifier: "smpt" } } }),
+      createTestApp({ registry, ports: { order: { notifier: "smpt" } } }),
     ).rejects.toThrow(
       new ConfigurationError(
-        'Aggregate "order", collaborator "notifier": implementation "smpt" not found. Available: "smtp"',
+        'Aggregate "order", port "notifier": implementation "smpt" not found. Available: "smtp"',
       ),
     );
   });
@@ -261,7 +261,7 @@ const flaky = (failures: number, sent: string[]): Notifier => {
   };
 };
 
-const ports: CollaboratorModules = {
+const ports: PortModules = {
   notifier: { smtp: { default: recording([]) } },
   mailer: { smtp: { default: recording([]) } },
 };
@@ -271,7 +271,7 @@ describe("createTestApp runUntilIdle", () => {
     const sent: string[] = [];
     const { app, clock } = await createTestApp({
       registry: shop(ports),
-      collaborators: { order: { notifier: recording([]), mailer: flaky(1, sent) } },
+      ports: { order: { notifier: recording([]), mailer: flaky(1, sent) } },
     });
     await app.commands.placeOrder({ orderId: "o-1" });
     await expect(app.runUntilIdle()).resolves.toEqual({ idle: true, rejections: [] });
@@ -283,7 +283,7 @@ describe("createTestApp runUntilIdle", () => {
   it("moves the clock through every retry until the reaction gives up", async () => {
     const { app, clock } = await createTestApp({
       registry: shop(ports),
-      collaborators: { order: { notifier: recording([]), mailer: flaky(3, []) } },
+      ports: { order: { notifier: recording([]), mailer: flaky(3, []) } },
     });
     await app.commands.placeOrder({ orderId: "o-1" });
     await expect(app.runUntilIdle()).resolves.toEqual({ idle: true, rejections: [] });
@@ -299,7 +299,7 @@ describe("createTestApp runUntilIdle", () => {
     const { app, clock } = await createTestApp({
       registry: shop(ports),
       config: { runtime: { policies: { retry: { strategy: "fixed", baseDelay: 0 } } } },
-      collaborators: { order: { notifier: recording([]), mailer: flaky(1, sent) } },
+      ports: { order: { notifier: recording([]), mailer: flaky(1, sent) } },
     });
     await app.commands.placeOrder({ orderId: "o-1" });
     await expect(app.runUntilIdle()).resolves.toEqual({ idle: true, rejections: [] });
@@ -319,7 +319,7 @@ describe("createTestApp runUntilIdle", () => {
       config: {
         runtime: { policies: { retry: { strategy: "fixed", baseDelay: "2h", maxDelay: "2h" } } },
       },
-      collaborators: { order: { notifier: recording([]), mailer: flaky(1, sent) } },
+      ports: { order: { notifier: recording([]), mailer: flaky(1, sent) } },
     });
     await app.commands.placeOrder({ orderId: "o-1" });
     await expect(app.runUntilIdle()).resolves.toEqual({ idle: true, rejections: [] });
@@ -337,7 +337,7 @@ describe("createTestApp runUntilIdle", () => {
         if (calls === 1) throw new Error("provider unavailable");
         return { due: null };
       }),
-      collaborators: { order: { notifier: recording([]), mailer: recording([]) } },
+      ports: { order: { notifier: recording([]), mailer: recording([]) } },
     });
     await app.commands.placeOrder({ orderId: "o-1" });
     await app.runUntilIdle();
@@ -362,7 +362,7 @@ describe("createTestApp runUntilIdle", () => {
         if (calls === 1) throw new Error("provider unavailable");
         return { due: null };
       }),
-      collaborators: { order: { notifier: recording([]), mailer: recording([]) } },
+      ports: { order: { notifier: recording([]), mailer: recording([]) } },
     });
     await app.commands.placeOrder({ orderId: "o-1" });
     await app.runUntilIdle();

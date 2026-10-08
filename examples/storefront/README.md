@@ -1,7 +1,7 @@
 # Storefront
 
 A small shop on Bounda, paid through a payment link: an `order` aggregate, a `payment` aggregate
-that talks to the provider through its `gateway` collaborator, a process that drives the order from
+that talks to the provider through its `gateway` port, a process that drives the order from
 placed to fulfilled and compensates when the payment fails or comes too late, a reminder
 scheduled a day after placing, and two read models. Node, SQLite, no framework.
 

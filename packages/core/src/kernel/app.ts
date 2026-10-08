@@ -11,7 +11,7 @@ import type { CommandsFacade, QueriesFacade, Registry } from "../modules/registr
 import { validateRegistry } from "../modules/validate.ts";
 import type { AppEnv, AppRegistry, EnvSection } from "../register/index.ts";
 import { buildAggregates } from "./aggregate/build-aggregates.ts";
-import { createCollaborators, type TestChoice } from "./aggregate/collaborators.ts";
+import { createPorts, type TestChoice } from "./aggregate/ports.ts";
 import { withUpcasting } from "./aggregate/upcasting.ts";
 import { createCommandsFacade } from "./command/facade.ts";
 import { createCommandPipeline } from "./command/pipeline.ts";
@@ -61,7 +61,7 @@ export interface BoundaApp<R extends Registry = AppRegistry> {
   start(): void;
   /**
    * Stops background work, waits for passes in flight and closes every storage connection, then
-   * every collaborator a `create` export built that has `[Symbol.asyncDispose]`, last built first;
+   * every implementation a `create` export built that has `[Symbol.asyncDispose]`, last built first;
    * one that fails to close is logged and the rest still close. Every call, including one made
    * while a stop is under way, waits for that same stop.
    */
@@ -151,7 +151,7 @@ export interface RunUntilIdleResult {
 }
 
 /**
- * `env` is the host's environment, which every collaborator implementation's `create` receives;
+ * `env` is the host's environment, which every port implementation's `create` receives;
  * `EnvSection` says when it is required.
  */
 export type CreateAppArgs<R extends Registry> = {
@@ -178,7 +178,7 @@ export interface CreateAppFunction {
 /**
  * Wires a Bounda application from its registry and configuration. Nothing here touches the file
  * system or Node APIs; `@bounda-dev/core/node` adds `boot()` for that. Storage is opened and the
- * collaborators' `create` exports run here, so call `stop()` when done.
+ * ports' `create` exports run here, so call `stop()` when done.
  */
 export const createApp: CreateAppFunction = <R extends Registry>({
   registry,
@@ -198,7 +198,7 @@ export interface AssembleAppArgs<R extends Registry> {
   readonly clock: Clock;
   readonly env: AppEnv;
   /**
-   * Given by `createTestApp`: the ports come from the test instead of `config.collaborators`.
+   * Given by `createTestApp`: the ports come from the test instead of `config.ports`.
    */
   readonly test?: TestChoice;
   /**
@@ -231,16 +231,16 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
   }
   // Built before the storage opens and closed after it, so a `create` that fails leaves nothing
   // open; a failure further on closes them again.
-  const collaborators = await createCollaborators({
+  const ports = await createPorts({
     registry,
     env,
     logger,
     clock,
-    ...(test === undefined ? { config: config.collaborators } : { test }),
+    ...(test === undefined ? { config: config.ports } : { test }),
   });
   try {
     const opened = await config.storage.createStorage({ logger });
-    const aggregates = buildAggregates({ registry, collaborators: collaborators.byAggregate });
+    const aggregates = buildAggregates({ registry, ports: ports.byAggregate });
     const storage = {
       ...opened,
       eventStore: withUpcasting({ eventStore: opened.eventStore, aggregates }),
@@ -399,7 +399,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             await readModels.close();
             await storage.close();
           } finally {
-            await collaborators.dispose();
+            await ports.dispose();
           }
         })();
         return stopping;
@@ -451,7 +451,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       }),
     };
   } catch (error) {
-    await collaborators.dispose();
+    await ports.dispose();
     throw error;
   }
 };

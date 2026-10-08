@@ -4,18 +4,18 @@ import { ConfigurationError } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
 import type { PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
-import { chooseCollaborators, orderRegistry } from "../test-support.ts";
+import { choosePorts, orderRegistry } from "../test-support.ts";
 import { buildAggregates } from "./build-aggregates.ts";
 import { foldState } from "./fold-state.ts";
 
-const collaborators = chooseCollaborators(
+const ports = choosePorts(
   orderRegistry,
-  resolveConfig({ storage: memory(), collaborators: { order: { notifier: "silent" } } }),
+  resolveConfig({ storage: memory(), ports: { order: { notifier: "silent" } } }),
 );
 
 describe("buildAggregates", () => {
-  it("compiles events, commands, schemas and collaborators", () => {
-    const { byName } = buildAggregates({ registry: orderRegistry, collaborators });
+  it("compiles events, commands, schemas and ports", () => {
+    const { byName } = buildAggregates({ registry: orderRegistry, ports });
     const order = byName.order;
     expect(order).toBeDefined();
     expect(order?.aggregateIdField).toBe("orderId");
@@ -27,7 +27,7 @@ describe("buildAggregates", () => {
     ]);
     expect(order?.events.orderArchived?.schema).toBeNull();
     expect(order?.events.orderPlaced?.schema).not.toBeNull();
-    expect(byName.order?.collaborators).toHaveProperty("notifier");
+    expect(byName.order?.ports).toHaveProperty("notifier");
     expect(order?.eventBuilders.orderPaid?.({ method: "card" })).toEqual({
       type: "OrderPaid",
       payload: { method: "card" },
@@ -46,7 +46,7 @@ describe("buildAggregates", () => {
         } as Registry["aggregates"],
         readModels: {},
       },
-      collaborators,
+      ports,
     });
     expect(byName.order?.events.orderPlaced).toMatchObject({
       upcasts: [upcast, upcast],
@@ -62,7 +62,7 @@ describe("buildAggregates", () => {
       },
       readModels: {},
     };
-    const { byName } = buildAggregates({ registry, collaborators: {} });
+    const { byName } = buildAggregates({ registry, ports: {} });
     expect(byName.customer?.aggregateIdField).toBe("customerId");
     expect(byName.customer?.initialState).toEqual({});
   });
@@ -79,7 +79,7 @@ describe("buildAggregates", () => {
       },
       readModels: {},
     };
-    expect(() => buildAggregates({ registry, collaborators: {} })).toThrow(
+    expect(() => buildAggregates({ registry, ports: {} })).toThrow(
       new ConfigurationError("aggregates.order.events.broken: payload must return a Zod schema"),
     );
     const brokenCommand: Registry = {
@@ -93,7 +93,7 @@ describe("buildAggregates", () => {
       },
       readModels: {},
     };
-    expect(() => buildAggregates({ registry: brokenCommand, collaborators: {} })).toThrow(
+    expect(() => buildAggregates({ registry: brokenCommand, ports: {} })).toThrow(
       new ConfigurationError("aggregates.order.commands.ship: payload must return a Zod schema"),
     );
   });
@@ -107,14 +107,14 @@ describe("buildAggregates", () => {
       },
       readModels: {},
     };
-    expect(() => buildAggregates({ registry, collaborators: {} })).toThrow(
+    expect(() => buildAggregates({ registry, ports: {} })).toThrow(
       'Command "Archive" is defined in both "order" and "customer"',
     );
   });
 });
 
 describe("foldState", () => {
-  const { byName } = buildAggregates({ registry: orderRegistry, collaborators });
+  const { byName } = buildAggregates({ registry: orderRegistry, ports });
   const order = byName.order as NonNullable<(typeof byName)["order"]>;
   const stored = (type: string, payload: unknown, version: number) => ({
     id: `e${version}`,
@@ -181,7 +181,7 @@ describe("foldState", () => {
       },
       readModels: {},
     },
-    collaborators: {},
+    ports: {},
   }).byName.ticket as NonNullable<ReturnType<typeof buildAggregates>["byName"][string]>;
   const system = (version: number) => {
     const event = stored("CommandFailed", {}, version);

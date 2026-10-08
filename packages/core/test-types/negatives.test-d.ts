@@ -189,7 +189,7 @@ describe("what does not compile", () => {
     void handler;
   });
 
-  it("using a collaborator of another aggregate", () => {
+  it("using a port of another aggregate", () => {
     // @ts-expect-error inventory belongs to order, not to customer
     const handler = ({ inventory }: RegisterCustomer.HandlerArgs) => inventory;
     void handler;
@@ -222,26 +222,26 @@ describe("what does not compile", () => {
     void [both, wrongPort];
   });
 
-  it("a collaborators configuration that leaves a choice open or names what does not exist", () => {
+  it("a ports configuration that leaves a choice open or names what does not exist", () => {
     // @ts-expect-error inventory has two implementations, so the config must choose one
     defineConfig({ storage: sqlite });
     // @ts-expect-error inventory has two implementations, so the config must choose one
-    defineConfig({ storage: sqlite, collaborators: { order: {} } });
+    defineConfig({ storage: sqlite, ports: { order: {} } });
     // @ts-expect-error "fak" is not an implementation of inventory
-    defineConfig({ storage: sqlite, collaborators: { order: { inventory: "fak" } } });
+    defineConfig({ storage: sqlite, ports: { order: { inventory: "fak" } } });
     defineConfig({
       storage: sqlite,
-      // @ts-expect-error notifier is not a collaborator of order
-      collaborators: { order: { inventory: "fake", notifier: "x" } },
+      // @ts-expect-error notifier is not a port of order
+      ports: { order: { inventory: "fake", notifier: "x" } },
     });
     defineConfig({
       storage: sqlite,
-      // @ts-expect-error customer has no collaborators
-      collaborators: { order: { inventory: "fake" }, customer: {} },
+      // @ts-expect-error customer has no ports
+      ports: { order: { inventory: "fake" }, customer: {} },
     });
     const fromEnvironment: string = "fake";
     // @ts-expect-error a plain string is not one of the implementation names
-    defineConfig({ storage: sqlite, collaborators: { order: { inventory: fromEnvironment } } });
+    defineConfig({ storage: sqlite, ports: { order: { inventory: fromEnvironment } } });
   });
 
   it("an unqualified event name in a process config", () => {

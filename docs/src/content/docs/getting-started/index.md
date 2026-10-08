@@ -35,7 +35,7 @@ app/read/orders/            a read model
   view.ts                   its fields
   projections/order/order-placed.ts   projects the order's OrderPlaced
   queries/list-orders.ts
-bounda.config.ts            storage and collaborators
+bounda.config.ts            storage and ports
 tests/orders.test.ts        the app on an in-memory adapter
 src/main.ts                 boots the app and places an order
 ```

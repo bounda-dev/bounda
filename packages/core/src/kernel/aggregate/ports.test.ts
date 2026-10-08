@@ -2,17 +2,17 @@ import { describe, expect, it, vi } from "vitest";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import { silentLogger } from "../../contracts/logger.ts";
-import type { CollaboratorModules, CreateArgs } from "../../modules/collaborator.ts";
+import type { CreateArgs, PortModules } from "../../modules/port.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { createRecordingLogger } from "../test-support.ts";
-import { createCollaborators } from "./collaborators.ts";
+import { createPorts } from "./ports.ts";
 
-const aggregate = (collaborators: CollaboratorModules): Registry["aggregates"][string] => ({
+const aggregate = (ports: PortModules): Registry["aggregates"][string] => ({
   events: {},
   commands: {},
   policies: {},
   processes: {},
-  collaborators,
+  ports,
 });
 
 const registryOf = (aggregates: Registry["aggregates"]): Registry => ({
@@ -23,7 +23,7 @@ const registryOf = (aggregates: Registry["aggregates"]): Registry => ({
 const clock = createFixedClock();
 
 const build = (registry: Registry, config: Readonly<Record<string, Record<string, string>>> = {}) =>
-  createCollaborators({
+  createPorts({
     registry,
     config,
     env: { MAILER_FROM: "shop" },
@@ -46,7 +46,7 @@ const closing = (name: string, closed: string[], fails = false) => ({
   },
 });
 
-describe("createCollaborators", () => {
+describe("createPorts", () => {
   it("hands out a default export as it is and what create returns otherwise", async () => {
     const fake = { reserve: () => "fake" };
     let received: CreateArgs | undefined;
@@ -127,7 +127,7 @@ describe("createCollaborators", () => {
 
   it("leaves alone what create built without a Symbol.asyncDispose function", async () => {
     const { logger, entries } = createRecordingLogger();
-    const { byAggregate, dispose } = await createCollaborators({
+    const { byAggregate, dispose } = await createPorts({
       registry: registryOf({
         order: aggregate({
           plain: { only: { create: () => ({ send: () => {} }) } },
@@ -149,7 +149,7 @@ describe("createCollaborators", () => {
   it("logs a close that fails and closes the rest", async () => {
     const closed: string[] = [];
     const { logger, entries } = createRecordingLogger();
-    const { dispose } = await createCollaborators({
+    const { dispose } = await createPorts({
       registry: registryOf({
         order: aggregate({
           inventory: closing("inventory", closed),
@@ -165,10 +165,10 @@ describe("createCollaborators", () => {
     expect(closed).toEqual(["mailer", "inventory"]);
     expect(entries.filter((entry) => entry.level === "error")).toEqual([
       expect.objectContaining({
-        message: "collaborator could not be closed",
+        message: "implementation could not be closed",
         fields: expect.objectContaining({
           aggregate: "order",
-          collaborator: "mailer",
+          port: "mailer",
           message: "mailer is stuck",
         }),
       }),
@@ -206,7 +206,7 @@ describe("createCollaborators", () => {
           customer: aggregate({ crm: { a: { default: {} }, b: { default: {} } } }),
         }),
       ),
-    ).rejects.toThrow('Aggregate "customer", collaborator "crm": choose an implementation');
+    ).rejects.toThrow('Aggregate "customer", port "crm": choose an implementation');
     expect(create).not.toHaveBeenCalled();
   });
 
@@ -214,7 +214,7 @@ describe("createCollaborators", () => {
     const registry = registryOf({ order: aggregate({}) });
     await expect(build(registry, { shipping: { carrier: "ups" } })).rejects.toThrow(
       new ConfigurationError(
-        'collaborators.shipping: there is no aggregate "shipping" whose collaborators to choose',
+        'ports.shipping: there is no aggregate "shipping" whose ports to choose',
       ),
     );
     await expect(build(registry, { constructor: {} })).rejects.toThrow(

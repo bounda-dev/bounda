@@ -111,12 +111,12 @@ const rejectOthers = (context: Context, directory: string, listing: Listing): vo
   }
 };
 
-const COLLABORATORS_HINT =
-  "collaborators live at the aggregate root, one directory per port: <port>/index.ts with its interface and <port>/<implementation>.ts";
+const PORTS_HINT =
+  "ports live at the aggregate root, one directory per port: <port>/index.ts with its interface and <port>/<implementation>.ts";
 
-const rejectCollaboratorFile = (context: Context, path: string, name: string): boolean => {
+const rejectPortFile = (context: Context, path: string, name: string): boolean => {
   if (!name.includes(".")) return false;
-  context.problems.add(path, COLLABORATORS_HINT);
+  context.problems.add(path, PORTS_HINT);
   return true;
 };
 
@@ -127,12 +127,12 @@ const discoverCommands = async (
   const listing = await list(directory);
   rejectOthers(context, directory, listing);
   for (const name of listing.directories) {
-    context.problems.add(join(directory, name), `a command is a file; ${COLLABORATORS_HINT}`);
+    context.problems.add(join(directory, name), `a command is a file; ${PORTS_HINT}`);
   }
   const commands: CommandModel[] = [];
   for (const name of listing.modules) {
     const path = join(directory, `${name}.ts`);
-    if (rejectCollaboratorFile(context, path, name)) continue;
+    if (rejectPortFile(context, path, name)) continue;
     if (!checkName(context, path, name, "Command")) continue;
     commands.push({
       ...moduleRef(context, path),
@@ -161,12 +161,12 @@ const discoverPolicyModules = (
 ): readonly PolicyModel[] => {
   const foreign = folder.source !== folder.aggregate;
   for (const name of names) {
-    context.problems.add(join(directory, name), `a policy is a file; ${COLLABORATORS_HINT}`);
+    context.problems.add(join(directory, name), `a policy is a file; ${PORTS_HINT}`);
   }
   const policies: PolicyModel[] = [];
   for (const name of listing.modules) {
     const path = join(directory, `${name}.ts`);
-    if (rejectCollaboratorFile(context, path, name)) continue;
+    if (rejectPortFile(context, path, name)) continue;
     if (!checkName(context, path, name, "Policy")) continue;
     policies.push({
       ...moduleRef(context, path),
@@ -279,7 +279,7 @@ const discoverProcess = async (
   for (const module of listing.modules) {
     if (module === INDEX) continue;
     const path = join(directory, `${module}.ts`);
-    if (rejectCollaboratorFile(context, path, module)) continue;
+    if (rejectPortFile(context, path, module)) continue;
     if (module === RENAMED_TIMEOUT_HANDLER && !eventKeys.has("timeout")) {
       context.problems.add(path, "the timeout handler is at-timeout.ts now; rename the file");
       continue;
@@ -366,17 +366,17 @@ const discoverPort = async (
   name: string,
   eventKeys: ReadonlySet<string>,
 ): Promise<PortModel | null> => {
-  if (!checkName(context, directory, name, "Collaborator")) return null;
+  if (!checkName(context, directory, name, "Port")) return null;
   const key = keyOf(name);
   const typeName = typeNameOf(key);
   if (RESERVED_PORT_KEYS.has(key)) {
-    context.problems.add(directory, `"${key}" is reserved; give the collaborator another name`);
+    context.problems.add(directory, `"${key}" is reserved; give the port another name`);
     return null;
   }
   if (eventKeys.has(key)) {
     context.problems.add(
       directory,
-      `"${key}" is also an event of this aggregate; give the collaborator another name`,
+      `"${key}" is also an event of this aggregate; give the port another name`,
     );
     return null;
   }
@@ -384,14 +384,14 @@ const discoverPort = async (
   if (!(await exists(index))) {
     context.problems.add(
       directory,
-      `a collaborator directory needs an index.ts exporting its interface: export interface ${typeName}`,
+      `a port directory needs an index.ts exporting its interface: export interface ${typeName}`,
     );
     return null;
   }
   if (!PORT_DECLARATION(typeName).test(await readFile(index, "utf8"))) {
     context.problems.add(
       index,
-      `must export the collaborator's interface, named after the directory: export interface ${typeName}`,
+      `must export the port's interface, named after the directory: export interface ${typeName}`,
     );
     return null;
   }
@@ -400,7 +400,7 @@ const discoverPort = async (
   for (const child of listing.directories) {
     context.problems.add(
       join(directory, child),
-      "a collaborator directory holds only index.ts and its implementations",
+      "a port directory holds only index.ts and its implementations",
     );
   }
   const implementations: ImplementationModel[] = [];
@@ -413,7 +413,7 @@ const discoverPort = async (
   if (implementations.length === 0) {
     context.problems.add(
       directory,
-      `a collaborator needs at least one implementation next to its index.ts: ${name}/<implementation>.ts`,
+      `a port needs at least one implementation next to its index.ts: ${name}/<implementation>.ts`,
     );
     return null;
   }
@@ -460,18 +460,18 @@ const discoverAggregate = async (
   }));
   const has = (child: string): boolean => listing.directories.includes(child);
   const eventKeys = new Set(events.map((event) => event.key));
-  const collaborators: PortModel[] = [];
+  const ports: PortModel[] = [];
   for (const child of listing.directories) {
     if (AGGREGATE_DIRECTORIES.has(child)) continue;
     const port = await discoverPort(context, join(directory, child), child, eventKeys);
-    if (port !== null) collaborators.push(port);
+    if (port !== null) ports.push(port);
   }
   return {
     name,
     directory,
     state,
     events: eventsWithUpcasts.sort(byKey),
-    collaborators: collaborators.sort(byKey),
+    ports: ports.sort(byKey),
     commands: has("commands") ? await discoverCommands(context, join(directory, "commands")) : [],
     policies: has("policies")
       ? await discoverPolicies(context, join(directory, "policies"), name)

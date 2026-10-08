@@ -54,7 +54,7 @@ const withTickets: Registry = {
 };
 
 describe("command pipeline", () => {
-  it("validates, runs the handler with collaborators and appends with the loaded version", async () => {
+  it("validates, runs the handler with ports and appends with the loaded version", async () => {
     const { pipeline, storage } = await createKernelHarness();
     const result = await pipeline.dispatch({
       type: "PlaceOrder",

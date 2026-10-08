@@ -1,6 +1,6 @@
 import type { AdapterDefinition } from "../adapter/adapter-definition.ts";
 import type { DurationInput } from "../contracts/duration.ts";
-import type { AppCollaboratorsConfig } from "../register/index.ts";
+import type { AppPortsConfig } from "../register/index.ts";
 
 /**
  * How failed policy and process handlers are retried.
@@ -142,16 +142,16 @@ export interface RuntimeConfig {
  * one implementation may be left out; one with several must be named. The generator emits this
  * type for the project, so `defineConfig` checks the names.
  */
-export type CollaboratorsConfig = Readonly<Record<string, Readonly<Record<string, string>>>>;
+export type PortsConfig = Readonly<Record<string, Readonly<Record<string, string>>>>;
 
 /**
- * The `collaborators` section of the configuration: optional as long as every port of the
+ * The `ports` section of the configuration: optional as long as every port of the
  * project has one implementation, required as soon as one has several.
  */
-export type CollaboratorsSection =
-  Record<never, never> extends AppCollaboratorsConfig
-    ? { readonly collaborators?: AppCollaboratorsConfig }
-    : { readonly collaborators: AppCollaboratorsConfig };
+export type PortsSection =
+  Record<never, never> extends AppPortsConfig
+    ? { readonly ports?: AppPortsConfig }
+    : { readonly ports: AppPortsConfig };
 
 /**
  * What `bounda.config.ts` exports.
@@ -161,7 +161,7 @@ export type Config = {
   readonly storage: AdapterDefinition;
   readonly readModels?: Readonly<Record<string, AdapterDefinition>>;
   readonly runtime?: RuntimeConfig;
-} & CollaboratorsSection;
+} & PortsSection;
 
 /**
  * Retry settings with every value present and durations in milliseconds.
@@ -217,6 +217,6 @@ export interface ResolvedConfig {
     };
     readonly overrides: Readonly<Record<string, ResolvedAggregateRuntime>>;
   };
-  readonly collaborators: CollaboratorsConfig;
+  readonly ports: PortsConfig;
   forAggregate(name: string): ResolvedAggregateRuntime;
 }

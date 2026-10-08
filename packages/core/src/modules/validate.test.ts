@@ -126,7 +126,7 @@ describe("validateRegistry", () => {
           commands: {
             placeOrder: { module: {} as never },
           },
-          collaborators: { inventory: {} },
+          ports: { inventory: {} },
         },
       },
       readModels: {
@@ -146,16 +146,16 @@ describe("validateRegistry", () => {
       'aggregates.order.events.orderPlaced: missing export "create" or "apply" (expected a function)',
     );
     expect(message).toContain('aggregates.order.commands.placeOrder: missing export "handler"');
-    expect(message).toContain("aggregates.order.collaborators.inventory: has no implementations");
+    expect(message).toContain("aggregates.order.ports.inventory: has no implementations");
     expect(message).toContain('readModels.orderSummary.queries.getOrder: missing export "handler"');
   });
 
-  it("checks policy handlers and that every implementation of a collaborator exports default or create", () => {
+  it("checks policy handlers and that every implementation of a port exports default or create", () => {
     const registry = withOrder({
       policies: {
         notifyOnOrderPlaced: { module: {} as never },
       },
-      collaborators: {
+      ports: {
         mailer: {},
         gateway: {
           stripe: {} as never,
@@ -171,11 +171,11 @@ describe("validateRegistry", () => {
       new ConfigurationError(
         [
           "Invalid registry:",
-          "  aggregates.order.collaborators.mailer: has no implementations",
-          '  aggregates.order.collaborators.gateway.stripe: missing export "default" or "create"',
-          '  aggregates.order.collaborators.gateway.sdk: missing export "default" or "create"',
-          '  aggregates.order.collaborators.gateway.both: exports both "default" and "create" (expected one)',
-          '  aggregates.order.collaborators.gateway.broken: export "create" must be a function',
+          "  aggregates.order.ports.mailer: has no implementations",
+          '  aggregates.order.ports.gateway.stripe: missing export "default" or "create"',
+          '  aggregates.order.ports.gateway.sdk: missing export "default" or "create"',
+          '  aggregates.order.ports.gateway.both: exports both "default" and "create" (expected one)',
+          '  aggregates.order.ports.gateway.broken: export "create" must be a function',
           '  aggregates.order.policies.notifyOnOrderPlaced: missing export "handler" (expected a function)',
         ].join("\n"),
       ),

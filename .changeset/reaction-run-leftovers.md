@@ -14,4 +14,4 @@ out of time no longer keeps dispatching commands.
   abandoned handler kept running and its commands kept going out.
 - Policy, process and deadline handlers receive `signal`, an `AbortSignal` that aborts when their
   run times out or fails: pass it to calls outside (`fetch(url, { signal })`) so they stop too.
-  `bounda generate` reserves the name, so a collaborator can no longer be called `signal`.
+  `bounda generate` reserves the name, so a port can no longer be called `signal`.

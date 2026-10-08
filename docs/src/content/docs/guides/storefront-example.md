@@ -24,14 +24,14 @@ webhooks.
 
 1. `placeOrder` validates the items, computes the total and appends `OrderPlaced`.
 2. The policy `send-confirmation-on-order-placed` sends the confirmation through the order's
-   `notifier` collaborator, then dispatches `recordConfirmationSent`, which appends
+   `notifier` port, then dispatches `recordConfirmationSent`, which appends
    `ConfirmationSent`. `bounda.config.ts` picks the `console` implementation for the demo, and
    each test passes its own double, which records what was sent.
 3. The policy `schedule-reminder-on-order-placed` dispatches `sendReminder` with a delay of a
    day. The reminder is a scheduled command; when it runs, the handler appends `ReminderSent`
    only if the order is still `placed`.
 4. The process `order-lifecycle` starts and dispatches `requestPayment`, whose handler creates
-   the intent through the `payment` aggregate's `gateway` collaborator. The process gives the
+   the intent through the `payment` aggregate's `gateway` port. The process gives the
    customer 72 hours to pay, as a deadline in its state.
 5. The provider's webhooks are commands on the payment: `markPaymentProcessing`,
    `settlePayment` and `declinePayment`. The process follows the payment's events, which carry
@@ -71,14 +71,14 @@ export const handler = async ({ event, commands, notifier, idempotencyKey }: Pol
 };
 ```
 
-**A collaborator with two implementations.** `order/notifier/index.ts` declares the contract, a
+**A port with two implementations.** `order/notifier/index.ts` declares the contract, a
 callable `Notifier`; `console.ts` and `memory.ts` next to it implement it. The config decides,
 and only one of the two names compiles:
 
 ```ts
 export default defineConfig({
   storage: sqlite({ path: process.env.STOREFRONT_DB ?? "./data/storefront.db" }),
-  collaborators: {
+  ports: {
     order: { notifier: process.env.NOTIFIER === "memory" ? "memory" : "console" },
   },
 });

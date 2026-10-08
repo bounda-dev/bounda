@@ -4,7 +4,7 @@
 "@bounda-dev/adapter-cloudflare": patch
 ---
 
-A collaborator implementation can export `create` instead of a default, never both, to build the
+A port implementation can export `create` instead of a default, never both, to build the
 port when the app starts: a client, a pool, a secret. It receives `{ env, logger, clock }`, may be
 async and runs once per app: once per process under `boot()`, once per Durable Object, once per
 `createTestApp`. `env` is the host's environment: `process.env` after `.env` is loaded under
@@ -20,6 +20,6 @@ default export is never closed.
 
 The `+types` of an implementation adds `Implementation.Create` and `Implementation.CreateArgs`;
 `CreateArgs`, `CreateImplementation`, `AppEnv` and `EnvSection` are new public types, and
-`ImplementationModule` accepts either export. `selectCollaborators` now returns the chosen module
+`ImplementationModule` accepts either export. `selectImplementations` returns the chosen module
 rather than its default export, and the registry check rejects a module that exports both or
 neither. Run `bounda generate` to update generated files.

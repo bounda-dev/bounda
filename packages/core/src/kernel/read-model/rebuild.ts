@@ -114,8 +114,8 @@ export const rebuildReadModel: RebuildReadModelFunction = async ({
   const storage = await config.storage.createStorage({ logger });
   const eventStore = withUpcasting({
     eventStore: storage.eventStore,
-    // A rebuild runs no handler, so it builds no collaborator.
-    aggregates: buildAggregates({ registry, collaborators: {} }),
+    // A rebuild runs no handler, so it builds no implementation.
+    aggregates: buildAggregates({ registry, ports: {} }),
   });
   try {
     const progress = `${progressPrefix(name)}${fingerprintReadModel(entry)}`;

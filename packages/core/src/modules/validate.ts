@@ -1,5 +1,5 @@
 import { ConfigurationError } from "../contracts/errors.ts";
-import type { CollaboratorModules } from "./collaborator.ts";
+import type { PortModules } from "./port.ts";
 import type { Registry } from "./registry.ts";
 
 interface Problem {
@@ -28,10 +28,10 @@ const requireFolding = (problems: Problem[], event: object, path: string): void 
 
 const requireImplementations = (
   problems: Problem[],
-  collaborators: CollaboratorModules | undefined,
+  ports: PortModules | undefined,
   path: string,
 ): void => {
-  for (const [port, implementations] of Object.entries(collaborators ?? {})) {
+  for (const [port, implementations] of Object.entries(ports ?? {})) {
     if (Object.keys(implementations).length === 0) {
       problems.push({ path: `${path}.${port}`, message: "has no implementations" });
     }
@@ -76,7 +76,7 @@ const validateAggregate = (
       });
     }
   }
-  requireImplementations(problems, aggregate.collaborators, `${base}.collaborators`);
+  requireImplementations(problems, aggregate.ports, `${base}.ports`);
   for (const [key, entry] of Object.entries(aggregate.commands)) {
     const path = `${base}.commands.${key}`;
     requireFunction(problems, entry.module, path, "handler");

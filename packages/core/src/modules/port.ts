@@ -25,7 +25,7 @@ export interface CreateImplementation<Port> {
 }
 
 /**
- * The shape of an implementation module of a collaborator, `<aggregate>/<port>/<name>.ts`: either
+ * The shape of an implementation module of a port, `<aggregate>/<port>/<name>.ts`: either
  * a default export, which is what the aggregate's handlers receive as the port, or a `create`
  * export that builds it when the app starts, never both. The generated registry checks every
  * implementation against this with the port's interface, so one that does not fulfil the
@@ -36,9 +36,9 @@ export type ImplementationModule<Port> =
   | { readonly create: CreateImplementation<Port>; readonly default?: never };
 
 /**
- * The collaborators of one aggregate as the registry holds them: by port and then by
- * implementation file name, `collaborators.notifier.smtp`.
+ * The ports of one aggregate as the registry holds them: by port and then by
+ * implementation file name, `ports.notifier.smtp`.
  */
-export type CollaboratorModules = Readonly<
+export type PortModules = Readonly<
   Record<string, Readonly<Record<string, ImplementationModule<unknown>>>>
 >;

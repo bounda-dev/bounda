@@ -29,7 +29,7 @@ import { foldState } from "../aggregate/fold-state.ts";
 import type { AggregateRuntime, AggregatesRuntime, CommandRuntime } from "../aggregate/runtime.ts";
 import { errorDetails } from "../shared/retry.ts";
 import { withTimeout } from "../shared/timeout.ts";
-import { withCollaborators } from "../shared/with-collaborators.ts";
+import { withPorts } from "../shared/with-ports.ts";
 import { ATTRIBUTES, METRICS, meter, SPAN_EVENTS, traced } from "../telemetry.ts";
 import type { UnitStores } from "../unit-of-work/unit-of-work.ts";
 import { validatePayload } from "./validate.ts";
@@ -293,7 +293,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
       const produced = (await withTimeout({
         run: (signal) =>
           runtime.handler(
-            withCollaborators(aggregate.collaborators, {
+            withPorts(aggregate.ports, {
               command,
               state,
               events: aggregate.eventBuilders,

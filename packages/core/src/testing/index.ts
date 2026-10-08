@@ -8,23 +8,19 @@ import { assembleApp, type BoundaApp } from "../kernel/app.ts";
 import { createPendingRetries } from "../kernel/shared/pending-retries.ts";
 import { memory } from "../memory/index.ts";
 import type { Registry } from "../modules/registry.ts";
-import type {
-  AppCollaboratorsConfig,
-  AppTestCollaborators,
-  EnvSection,
-} from "../register/index.ts";
+import type { AppPortsConfig, AppTestPorts, EnvSection } from "../register/index.ts";
 
 /**
- * `env` is what collaborator implementations receive in `create`, never the test's
+ * `env` is what port implementations receive in `create`, never the test's
  * `process.env`; `EnvSection` says when it is required.
  */
 export type CreateTestAppArgs<R extends Registry> = {
   readonly registry: R;
   /**
-   * Configuration without `storage`, which `adapter` replaces, nor `collaborators`, which the
+   * Configuration without `storage`, which `adapter` replaces, nor `ports`, which the
    * option of that name replaces.
    */
-  readonly config?: Omit<Config, "storage" | "collaborators">;
+  readonly config?: Omit<Config, "storage" | "ports">;
   /**
    * What each port of each aggregate receives, `{ order: { notifier: spy } }`: a double, handed
    * to the handlers as it is and never closed, or an implementation's file name, built with this
@@ -33,7 +29,7 @@ export type CreateTestAppArgs<R extends Registry> = {
    * for: reading it throws a `ConfigurationError`, which a command rejects with; once any handler
    * has read it, every `app.runUntilIdle()` throws it too, since a reaction does not retry it.
    */
-  readonly collaborators?: AppTestCollaborators;
+  readonly ports?: AppTestPorts;
   /**
    * Defaults to the in-memory adapter.
    */
@@ -63,14 +59,14 @@ export interface CreateTestAppFunction {
 /**
  * Creates an app for tests: in-memory storage, a clock that only moves when told to and
  * sequential ids (`id-1`, `id-2`, ...), so assertions are deterministic. Ports get only what
- * `collaborators` passes. `app.runUntilIdle()` also moves the clock to each retry waiting for its
+ * `ports` passes. `app.runUntilIdle()` also moves the clock to each retry waiting for its
  * back-off, running what falls due on the way, so the failures it can see have gone through or
  * given up when it resolves. Call `app.stop()` when done.
  */
 export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
   registry,
   config = {},
-  collaborators = {},
+  ports = {},
   adapter = memory(),
   logger = silentLogger,
   now,
@@ -85,14 +81,14 @@ export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
     registry,
     // Required by the `Config` of a project whose ports need a choice, and never read here:
     // `test` replaces it.
-    config: { ...config, storage: adapter, collaborators: {} as AppCollaboratorsConfig },
+    config: { ...config, storage: adapter, ports: {} as AppPortsConfig },
     logger,
     ids,
     clock,
     env,
     pendingRetries: createPendingRetries(clock),
     test: {
-      collaborators,
+      ports,
       onMissing: (error) => {
         missing ??= error;
       },

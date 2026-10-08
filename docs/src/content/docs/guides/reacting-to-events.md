@@ -249,7 +249,7 @@ that hangs fails the command instead of holding the request (see
 [Retries and timeouts](#retries-and-timeouts)).
 
 The effect itself (charging the card, sending the email, telling the warehouse) goes in a policy
-or process that reacts to the stored event, through one of the aggregate's collaborators. It runs
+or process that reacts to the stored event, through one of the aggregate's ports. It runs
 after the commit and at least once, and it reports back with a command:
 
 ```ts
@@ -283,7 +283,7 @@ A few rules keep it correct:
   the handler passes it as it is, even when the run causes two effects:
   - Two effects on **different providers** (charging the card, sending the receipt) go in a
     reaction each. Each gets its own key, and a failing email does not charge the card again.
-  - Two calls to **one provider** (a refund and a new charge) go behind one collaborator method,
+  - Two calls to **one provider** (a refund and a new charge) go behind one port method,
     whose implementation derives a key per call with `idempotencyKeyFor` from
     `@bounda-dev/core`. Each key is the same on every retry and a UUID like the handler's, so it
     fits the provider's length limit:
@@ -528,7 +528,7 @@ export const handler = async ({ event, commands, emailSender, idempotencyKey }: 
 When the event is read, the runtime schedules the policy's run instead of running it, due at the
 event's time plus the delay, so a worker that falls behind does not push it later. When it comes
 due, the worker reads the event, upcast to its shape at that moment, and runs the handler with
-everything a live run gets: collaborators, the commands facade, the same `idempotencyKey`, the
+everything a live run gets: ports, the commands facade, the same `idempotencyKey`, the
 aggregate's retry settings and time budget. A run that fails for good is dead-lettered as the
 policy's, and replaying it runs the handler at once. Delayed runs are not ordered among
 themselves: the worker retries each one on its own, so the run for a later event can overtake an

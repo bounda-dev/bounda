@@ -108,7 +108,7 @@ export interface AggregateModel {
   /**
    * The ports of the aggregate, sorted by key.
    */
-  readonly collaborators: readonly PortModel[];
+  readonly ports: readonly PortModel[];
   readonly commands: readonly CommandModel[];
   readonly policies: readonly PolicyModel[];
   readonly processes: readonly ProcessModel[];

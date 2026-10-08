@@ -5,6 +5,6 @@ export declare namespace Policy {
   type HandlerArgs = core.PolicyHandlerArgs<
     core.StoredEventOf<generated.CustomerEvents, "customerRegistered">,
     generated.ReactionCommands,
-    generated.OrderCollaborators
+    generated.OrderPorts
   >;
 }

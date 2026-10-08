@@ -31,7 +31,7 @@ describe("resolveConfig", () => {
     expect(resolved.rootDir).toBe("app");
     expect(resolved.storage).toBe(sqlite);
     expect(resolved.readModels).toEqual({});
-    expect(resolved.collaborators).toEqual({});
+    expect(resolved.ports).toEqual({});
     expect(resolved.runtime).toEqual({
       role: "all",
       commands: { concurrencyRetries: 3, timeoutMs: 30_000 },
@@ -74,7 +74,7 @@ describe("resolveConfig", () => {
           catchUp: { timeout: "5s", pollInterval: 50 },
         },
       },
-      collaborators: { order: { inventory: "http" } },
+      ports: { order: { inventory: "http" } },
     });
     expect(resolved.runtime.role).toBe("worker");
     expect(resolved.runtime.commands).toEqual({ concurrencyRetries: 0, timeoutMs: 5_000 });
@@ -95,7 +95,7 @@ describe("resolveConfig", () => {
       catchUp: { timeoutMs: 5_000, pollIntervalMs: 50 },
     });
     expect(resolved.readModels["users-directory"]).toBe(sqlite);
-    expect(resolved.collaborators.order?.inventory).toBe("http");
+    expect(resolved.ports.order?.inventory).toBe("http");
   });
 
   it("resolves per-aggregate overrides on top of the global values", () => {
@@ -168,8 +168,8 @@ describe("resolveConfig", () => {
     expect(message({ storage: sqlite, runtime: { policies: { maxChainDepth: 0 } } })).toContain(
       "runtime.policies.maxChainDepth",
     );
-    expect(message({ storage: sqlite, collaborators: { order: { inventory: "" } } })).toContain(
-      "collaborators.order.inventory",
+    expect(message({ storage: sqlite, ports: { order: { inventory: "" } } })).toContain(
+      "ports.order.inventory",
     );
   });
 

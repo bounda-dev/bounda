@@ -56,7 +56,7 @@ const model: ProjectModel = {
       directory: "/project/app/domain/order",
       state: null,
       events: [],
-      collaborators: [],
+      ports: [],
       commands: [],
       policies: [
         {
@@ -92,7 +92,7 @@ const model: ProjectModel = {
           upcasts: null,
         },
       ],
-      collaborators: [],
+      ports: [],
       commands: [],
       policies: [],
       processes: [],
@@ -110,7 +110,7 @@ const model: ProjectModel = {
           upcasts: null,
         },
       ],
-      collaborators: [],
+      ports: [],
       commands: [],
       policies: [],
       processes: [],
@@ -151,15 +151,12 @@ const port = (name: string, typeName: string, implementations: readonly string[]
   })),
 });
 
-const withCollaborators: ProjectModel = {
+const withPorts: ProjectModel = {
   ...model,
   aggregates: [
     {
       ...(model.aggregates[0] as ProjectModel["aggregates"][number]),
-      collaborators: [
-        port("mailer", "Mailer", ["in-memory", "smtp"]),
-        port("sms", "Sms", ["fake"]),
-      ],
+      ports: [port("mailer", "Mailer", ["in-memory", "smtp"]), port("sms", "Sms", ["fake"])],
       policies: [
         ...(model.aggregates[0] as ProjectModel["aggregates"][number]).policies,
         {
@@ -217,7 +214,7 @@ describe("emitRegistry", () => {
 
   it("checks every implementation of every port against its interface, quoting file names that are not identifiers", () => {
     const { content } = emitRegistry({
-      model: withCollaborators,
+      model: withPorts,
       path: "/project/.bounda/registry.ts",
     });
     expect(content).toContain(
@@ -232,7 +229,7 @@ describe("emitRegistry", () => {
     expect(content).toContain(
       [
         "      events: {},",
-        "      collaborators: {",
+        "      ports: {",
         "        mailer: {",
         '          "in-memory": orderMailerInMemory satisfies ImplementationModule<orderMailer.Mailer>,',
         "          smtp: orderMailerSmtp satisfies ImplementationModule<orderMailer.Mailer>,",
@@ -248,10 +245,10 @@ describe("emitRegistry", () => {
   });
 
   it("keeps a port's aliases apart from an event named after the aggregate and the port", () => {
-    const order = withCollaborators.aggregates[0] as ProjectModel["aggregates"][number];
+    const order = withPorts.aggregates[0] as ProjectModel["aggregates"][number];
     const { content } = emitRegistry({
       model: {
-        ...withCollaborators,
+        ...withPorts,
         aggregates: [
           {
             ...order,
@@ -272,7 +269,7 @@ describe("emitRegistry", () => {
               },
             ],
           },
-          ...withCollaborators.aggregates.slice(1),
+          ...withPorts.aggregates.slice(1),
         ],
       },
       path: "/project/.bounda/registry.ts",
@@ -374,21 +371,21 @@ describe("emitTypes", () => {
 export type OrderState = core.UnknownState;
 export type OrderCreatedState = OrderState;
 export type OrderEvents = Record<never, never>;
-export type OrderCollaborators = core.EmptyPayload;
+export type OrderPorts = core.EmptyPayload;
 
 export type ShipmentCreatedState = { readonly carrier: string };
 export type ShipmentState = core.NotCreated<ShipmentCreatedState> | ShipmentCreatedState;
 export type ShipmentEvents = {
   readonly created: typeof import("../app/domain/shipment/created.ts");
 };
-export type ShipmentCollaborators = core.EmptyPayload;
+export type ShipmentPorts = core.EmptyPayload;
 
 export type TicketState = { readonly open?: boolean; readonly title?: string };
 export type TicketCreatedState = TicketState;
 export type TicketEvents = {
   readonly created: typeof import("../app/domain/ticket/created.ts");
 };
-export type TicketCollaborators = core.EmptyPayload;
+export type TicketPorts = core.EmptyPayload;
 
 export type Events = {
   readonly order: OrderEvents;
@@ -396,9 +393,9 @@ export type Events = {
   readonly ticket: TicketEvents;
 };
 
-export type CollaboratorsConfig = Readonly<Record<string, never>>;
+export type PortsConfig = Readonly<Record<string, never>>;
 
-export type TestCollaborators = Readonly<Record<string, never>>;
+export type TestPorts = Readonly<Record<string, never>>;
 
 export type Commands = core.CommandsFacadeOf<Record<never, never>>;
 
@@ -421,12 +418,12 @@ describe("emitTypes for an app without aggregates", () => {
   });
 });
 
-describe("emitTypes with collaborators", () => {
+describe("emitTypes with ports", () => {
   it("types the aggregate's ports by their interface, requires a choice only where there are several implementations and lets a test pass a name or a double for any port", () => {
-    const { content } = emitTypes({ model: withCollaborators, path: "/project/.bounda/types.ts" });
+    const { content } = emitTypes({ model: withPorts, path: "/project/.bounda/types.ts" });
     expect(content).toContain(
       [
-        "export type OrderCollaborators = {",
+        "export type OrderPorts = {",
         '  readonly mailer: import("../app/domain/order/mailer/index.ts").Mailer;',
         '  readonly sms: import("../app/domain/order/sms/index.ts").Sms;',
         "};",
@@ -434,7 +431,7 @@ describe("emitTypes with collaborators", () => {
     );
     expect(content).toContain(
       [
-        "export type CollaboratorsConfig = {",
+        "export type PortsConfig = {",
         "  readonly order: {",
         '    readonly mailer: "in-memory" | "smtp";',
         '    readonly sms?: "fake";',
@@ -444,21 +441,21 @@ describe("emitTypes with collaborators", () => {
     );
     expect(content).toContain(
       [
-        "export type TestCollaborators = {",
+        "export type TestPorts = {",
         "  readonly order?: {",
-        '    readonly mailer?: "in-memory" | "smtp" | OrderCollaborators["mailer"];',
-        '    readonly sms?: "fake" | OrderCollaborators["sms"];',
+        '    readonly mailer?: "in-memory" | "smtp" | OrderPorts["mailer"];',
+        '    readonly sms?: "fake" | OrderPorts["sms"];',
         "  };",
         "};",
       ].join("\n"),
     );
     const single = emitTypes({
       model: {
-        ...withCollaborators,
+        ...withPorts,
         aggregates: [
           {
-            ...(withCollaborators.aggregates[0] as ProjectModel["aggregates"][number]),
-            collaborators: [port("sms", "Sms", ["fake"])],
+            ...(withPorts.aggregates[0] as ProjectModel["aggregates"][number]),
+            ports: [port("sms", "Sms", ["fake"])],
           },
         ],
       },
@@ -466,7 +463,7 @@ describe("emitTypes with collaborators", () => {
     });
     expect(single.content).toContain(
       [
-        "export type CollaboratorsConfig = {",
+        "export type PortsConfig = {",
         "  readonly order?: {",
         '    readonly sms?: "fake";',
         "  };",
@@ -476,14 +473,14 @@ describe("emitTypes with collaborators", () => {
   });
 });
 
-describe("emitProject with collaborators", () => {
-  it("gives every handler of the aggregate its collaborators and each implementation its contract", () => {
-    const files = emitProject({ model: withCollaborators });
+describe("emitProject with ports", () => {
+  it("gives every handler of the aggregate its ports and each implementation its contract", () => {
+    const files = emitProject({ model: withPorts });
     const contentOf = (suffix: string) =>
       files.find((file) => file.path.endsWith(suffix))?.content ?? "";
-    expect(contentOf("policies/+types/audit.ts")).toContain("generated.OrderCollaborators");
+    expect(contentOf("policies/+types/audit.ts")).toContain("generated.OrderPorts");
     expect(contentOf("policies/+types/notify-on-order-placed.ts")).toContain(
-      "generated.OrderCollaborators",
+      "generated.OrderPorts",
     );
     expect(contentOf("mailer/+types/in-memory.ts")).toBe(
       [

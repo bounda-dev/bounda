@@ -1,37 +1,37 @@
 /// <reference lib="esnext.disposable" />
-import { selectCollaborators } from "../../config/collaborators.ts";
-import type { CollaboratorsConfig } from "../../config/types.ts";
+import { selectImplementations } from "../../config/ports.ts";
+import type { PortsConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { Registry } from "../../modules/registry.ts";
-import type { AppEnv, TestCollaboratorsChoice } from "../../register/index.ts";
+import type { AppEnv, TestPortsChoice } from "../../register/index.ts";
 import { errorDetails } from "../shared/retry.ts";
-import { type PortChoice, selectTestCollaborators } from "./test-collaborators.ts";
+import { type PortChoice, selectTestImplementations } from "./test-ports.ts";
 
 /**
  * The ports every handler of an aggregate receives, by aggregate and then by port.
  */
-export type AggregateCollaborators = Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+export type AggregatePorts = Readonly<Record<string, Readonly<Record<string, unknown>>>>;
 
 /**
  * How a test app chooses: only what the test names is built, and a port it leaves out has no
  * implementation, so reading it throws a `ConfigurationError`, which `onMissing` hears first.
  */
 export interface TestChoice {
-  readonly collaborators: TestCollaboratorsChoice;
+  readonly ports: TestPortsChoice;
   onMissing(error: ConfigurationError): void;
 }
 
-export type CreateCollaboratorsArgs = {
+export type CreatePortsArgs = {
   readonly registry: Registry;
   readonly env: AppEnv;
   readonly logger: Logger;
   readonly clock: Clock;
-} & ({ readonly config: CollaboratorsConfig } | { readonly test: TestChoice });
+} & ({ readonly config: PortsConfig } | { readonly test: TestChoice });
 
-export interface CreatedCollaborators {
-  readonly byAggregate: AggregateCollaborators;
+export interface CreatedPorts {
+  readonly byAggregate: AggregatePorts;
   /**
    * Closes what the `create` exports built, in reverse order. Never fails: a close that throws is
    * logged and the rest still close.
@@ -39,8 +39,8 @@ export interface CreatedCollaborators {
   dispose(): Promise<void>;
 }
 
-export interface CreateCollaboratorsFunction {
-  (args: CreateCollaboratorsArgs): Promise<CreatedCollaborators>;
+export interface CreatePortsFunction {
+  (args: CreatePortsArgs): Promise<CreatedPorts>;
 }
 
 interface Disposer {
@@ -64,30 +64,30 @@ const disposerOf = (port: unknown): (() => Promise<void>) | undefined => {
  * creation; a `default` export is shared by every app the process holds, and a test's double
  * belongs to the test, so neither is ever closed.
  */
-export const createCollaborators: CreateCollaboratorsFunction = async (args) => {
+export const createPorts: CreatePortsFunction = async (args) => {
   const { registry, env, logger, clock } = args;
   const test = "test" in args ? args.test : undefined;
   const config = "config" in args ? args.config : {};
-  for (const name of Object.keys(test?.collaborators ?? config)) {
+  for (const name of Object.keys(test?.ports ?? config)) {
     if (!Object.hasOwn(registry.aggregates, name)) {
       throw new ConfigurationError(
-        `collaborators.${name}: there is no aggregate "${name}" whose collaborators to choose`,
+        `ports.${name}: there is no aggregate "${name}" whose ports to choose`,
       );
     }
   }
   const selected = Object.entries(registry.aggregates).map(([aggregate, entry]) => {
-    const implementations = entry.collaborators ?? {};
+    const implementations = entry.ports ?? {};
     const choices: Readonly<Record<string, PortChoice>> =
       test === undefined
         ? Object.fromEntries(
             Object.entries(
-              selectCollaborators({ aggregate, implementations, config: config[aggregate] }),
+              selectImplementations({ aggregate, implementations, config: config[aggregate] }),
             ).map(([port, module]) => [port, { module }]),
           )
-        : selectTestCollaborators({
+        : selectTestImplementations({
             aggregate,
             implementations,
-            chosen: test.collaborators[aggregate],
+            chosen: test.ports[aggregate],
           });
     return [aggregate, choices] as const;
   });
@@ -97,9 +97,9 @@ export const createCollaborators: CreateCollaboratorsFunction = async (args) => 
       try {
         await close();
       } catch (error) {
-        logger.error("collaborator could not be closed", {
+        logger.error("implementation could not be closed", {
           aggregate,
-          collaborator: port,
+          port,
           ...errorDetails(error),
         });
       }

@@ -21,7 +21,7 @@ describe("boot", () => {
       root,
       config: {
         storage: sqlite({ path: join(directory, "storefront.db") }),
-        collaborators: { order: { notifier: "memory" }, payment: { gateway: "fake" } },
+        ports: { order: { notifier: "memory" }, payment: { gateway: "fake" } },
       },
       signals: false,
       logger: silentLogger,
@@ -43,7 +43,7 @@ describe("boot", () => {
       root,
       config: {
         storage: sqlite({ path: join(directory, "storefront.db") }),
-        collaborators: { order: { notifier: "memory" }, payment: { gateway: "fake" } },
+        ports: { order: { notifier: "memory" }, payment: { gateway: "fake" } },
       },
       signals: false,
       logger: silentLogger,

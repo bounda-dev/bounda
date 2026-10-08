@@ -48,8 +48,8 @@ const registryWith = (delay: string | number = "1m"): Registry => ({
           },
         },
       },
-      collaborators: {
-        ...orderAggregateEntry().collaborators,
+      ports: {
+        ...orderAggregateEntry().ports,
         mailer: { memory: { default: { send: (run: Run) => runs.push(run) } } },
       },
     },
@@ -394,7 +394,7 @@ describe("delayed policies", () => {
     expect(() =>
       buildPolicies({
         registry: registryWith("a minute"),
-        aggregates: buildAggregates({ registry: registryWith("a minute"), collaborators: {} }),
+        aggregates: buildAggregates({ registry: registryWith("a minute"), ports: {} }),
       }),
     ).toThrow(
       'aggregates.order.policies.remindOnOrderPlaced: delay "a minute" is not a duration such as "30s", "5m" or 60000',

@@ -123,7 +123,7 @@ describe("event builders", () => {
   });
 });
 
-describe("collaborators", () => {
+describe("ports", () => {
   type Inventory = import("./fixtures/order-app/app/domain/order/inventory/index.ts").Inventory;
   type Reminders = import("./fixtures/order-app/app/domain/order/reminders/index.ts").Reminders;
 

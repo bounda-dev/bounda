@@ -1,5 +1,5 @@
-export interface WithCollaboratorsFunction {
-  <A extends object>(collaborators: Readonly<Record<string, unknown>>, args: A): A;
+export interface WithPortsFunction {
+  <A extends object>(ports: Readonly<Record<string, unknown>>, args: A): A;
 }
 
 /**
@@ -7,11 +7,11 @@ export interface WithCollaboratorsFunction {
  * instead of spreading, because a spread reads every port, and a test app's port that was given
  * nothing throws when read: it must throw only in the handler that uses it.
  */
-export const withCollaborators: WithCollaboratorsFunction = (collaborators, args) =>
+export const withPorts: WithPortsFunction = (ports, args) =>
   Object.defineProperties(
     {},
     {
-      ...Object.getOwnPropertyDescriptors(collaborators),
+      ...Object.getOwnPropertyDescriptors(ports),
       ...Object.getOwnPropertyDescriptors(args),
     },
   ) as typeof args;

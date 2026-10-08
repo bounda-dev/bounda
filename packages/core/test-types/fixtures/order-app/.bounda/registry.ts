@@ -48,7 +48,7 @@ export const registry = {
       state: orderState,
       events: { orderCancelled, orderPaid, orderPlaced },
       upcasts: { orderPlaced: orderPlacedUpcasts },
-      collaborators: {
+      ports: {
         auditLog: {
           memory: orderAuditLogMemory satisfies ImplementationModule<orderAuditLog.AuditLog>,
         },

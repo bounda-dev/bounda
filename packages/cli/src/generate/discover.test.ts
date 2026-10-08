@@ -53,7 +53,7 @@ const relativePaths = (model: ProjectModel): Record<string, unknown> => ({
       event.relativePath,
       event.upcasts?.relativePath ?? null,
     ]),
-    collaborators: aggregate.collaborators.map((port) => ({
+    ports: aggregate.ports.map((port) => ({
       key: port.key,
       typeName: port.typeName,
       contract: port.contract.relativePath,
@@ -109,7 +109,7 @@ describe("discoverProject on the order-app fixture", () => {
               null,
             ],
           ],
-          collaborators: [],
+          ports: [],
           commands: [
             [
               "registerCustomer",
@@ -133,7 +133,7 @@ describe("discoverProject on the order-app fixture", () => {
               "app/domain/order/order-placed.upcast.ts",
             ],
           ],
-          collaborators: [
+          ports: [
             {
               key: "auditLog",
               typeName: "AuditLog",
@@ -301,10 +301,10 @@ describe("discoverProject convention problems", () => {
       "app/domain/loose.ts: Aggregates are directories, not modules",
       "app/domain/order/notes.md: only .ts modules are allowed here",
       "app/domain/order/orderPlaced.ts: Event names must be kebab-case (lower-case letters, digits and dashes)",
-      "app/domain/order/helpers: a collaborator directory needs an index.ts exporting its interface: export interface Helpers",
-      "app/domain/order/commands/audit.memory.ts: collaborators live at the aggregate root, one directory per port: <port>/index.ts with its interface and <port>/<implementation>.ts",
+      "app/domain/order/helpers: a port directory needs an index.ts exporting its interface: export interface Helpers",
+      "app/domain/order/commands/audit.memory.ts: ports live at the aggregate root, one directory per port: <port>/index.ts with its interface and <port>/<implementation>.ts",
       "app/domain/order/commands/pay_order.ts: Command names must be kebab-case (lower-case letters, digits and dashes)",
-      "app/domain/order/policies/nested: a policy is a file; collaborators live at the aggregate root, one directory per port: <port>/index.ts with its interface and <port>/<implementation>.ts",
+      "app/domain/order/policies/nested: a policy is a file; ports live at the aggregate root, one directory per port: <port>/index.ts with its interface and <port>/<implementation>.ts",
       "app/domain/orders_v2: Aggregate names must be kebab-case (lower-case letters, digits and dashes)",
       "app/read/broken: a read model needs a view.ts with its fields",
       "app/read/order-summary/README.md: only .ts modules are allowed here",
@@ -408,7 +408,7 @@ describe("discoverProject convention problems", () => {
     );
     const model = await discoverProject({ root });
     expect(
-      model.aggregates[0]?.collaborators.map((port) => ({
+      model.aggregates[0]?.ports.map((port) => ({
         key: port.key,
         typeName: port.typeName,
         contract: relative(root, port.contract.path),
@@ -457,22 +457,22 @@ describe("discoverProject convention problems", () => {
       );
     }
     expect(await problemsOf(root)).toEqual([
-      "app/domain/order/Bad_Port: Collaborator names must be kebab-case (lower-case letters, digits and dashes)",
-      'app/domain/order/idempotency-key: "idempotencyKey" is reserved; give the collaborator another name',
-      "app/domain/order/no-implementation: a collaborator needs at least one implementation next to its index.ts: no-implementation/<implementation>.ts",
-      "app/domain/order/no-index: a collaborator directory needs an index.ts exporting its interface: export interface NoIndex",
-      "app/domain/order/no-interface/index.ts: must export the collaborator's interface, named after the directory: export interface NoInterface",
+      "app/domain/order/Bad_Port: Port names must be kebab-case (lower-case letters, digits and dashes)",
+      'app/domain/order/idempotency-key: "idempotencyKey" is reserved; give the port another name',
+      "app/domain/order/no-implementation: a port needs at least one implementation next to its index.ts: no-implementation/<implementation>.ts",
+      "app/domain/order/no-index: a port directory needs an index.ts exporting its interface: export interface NoIndex",
+      "app/domain/order/no-interface/index.ts: must export the port's interface, named after the directory: export interface NoInterface",
       "app/domain/order/notes/README.md: only .ts modules are allowed here",
-      "app/domain/order/notes/deep: a collaborator directory holds only index.ts and its implementations",
+      "app/domain/order/notes/deep: a port directory holds only index.ts and its implementations",
       "app/domain/order/notes/Bad_Impl.ts: Implementation names must be kebab-case (lower-case letters, digits and dashes)",
-      'app/domain/order/order-placed: "orderPlaced" is also an event of this aggregate; give the collaborator another name',
-      'app/domain/order/reject: "reject" is reserved; give the collaborator another name',
-      'app/domain/order/signal: "signal" is reserved; give the collaborator another name',
-      'app/domain/order/state: "state" is reserved; give the collaborator another name',
+      'app/domain/order/order-placed: "orderPlaced" is also an event of this aggregate; give the port another name',
+      'app/domain/order/reject: "reject" is reserved; give the port another name',
+      'app/domain/order/signal: "signal" is reserved; give the port another name',
+      'app/domain/order/state: "state" is reserved; give the port another name',
     ]);
   });
 
-  it("rejects command and policy directories, and collaborator files next to commands, policies and process handlers", async () => {
+  it("rejects command and policy directories, and port files next to commands, policies and process handlers", async () => {
     const root = await project([
       "app/domain/order/order-placed.ts",
       "app/domain/order/commands/pay-order.ts",
@@ -487,7 +487,7 @@ describe("discoverProject convention problems", () => {
       "app/domain/payment/payment-failed.ts",
     ]);
     const hint =
-      "collaborators live at the aggregate root, one directory per port: <port>/index.ts with its interface and <port>/<implementation>.ts";
+      "ports live at the aggregate root, one directory per port: <port>/index.ts with its interface and <port>/<implementation>.ts";
     expect(await problemsOf(root)).toEqual([
       `app/domain/order/commands/place-order: a command is a file; ${hint}`,
       `app/domain/order/commands/inventory.fake.ts: ${hint}`,
