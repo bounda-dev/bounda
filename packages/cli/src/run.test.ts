@@ -118,6 +118,17 @@ describe("bounda generate", () => {
     );
   });
 
+  it("warns about a layout that is probably wrong, and exits 0", async () => {
+    const root = await project();
+    await mkdir(join(root, "app/domain/order/command"));
+    await writeFile(join(root, "app/domain/order/command/place-order.ts"), "export {};\n");
+    const result = await cli(["generate", "--no-infer"], root);
+    expect(result.code).toBe(EXIT_OK);
+    expect(result.stderr).toBe(
+      "warning: order: app/domain/order/command: the generator does not read this directory; rename it to commands if that is what it holds\n",
+    );
+  });
+
   it("exits 2 on unexpected failures", async () => {
     const root = await project();
     await writeFile(join(root, ".bounda"), "not a directory\n");

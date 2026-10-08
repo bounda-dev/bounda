@@ -80,6 +80,12 @@ and nothing else at run time: those names are an event's alone. It is a port whe
 alike, is yours: a value object, a domain service, a helper the handlers import, which the
 generator leaves alone. `state.ts` and `<event>.upcast.ts` are the only other names it reads.
 
+Two mistakes leave the layout valid, so the generator warns about them instead of failing: a
+module that imports its own `+types` without exporting an event's function, which was an event
+and lost the export that made it one (a leftover `apply`, a typo in `evolve`), and a directory
+whose name is one letter away from `commands`, `policies`, `processes` or `infrastructure`, or is
+`command`, `policy`, `process` or `infra`, whose modules would go unregistered.
+
 ```ts
 // app/domain/order/order-placed.ts
 import type { Event } from "./+types/order-placed";

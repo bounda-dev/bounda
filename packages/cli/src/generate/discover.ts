@@ -6,6 +6,7 @@ import type {
   CommandModel,
   EventModel,
   ImplementationModel,
+  LayoutWarning,
   ModuleRef,
   PolicyModel,
   PortModel,
@@ -37,8 +38,15 @@ export interface DiscoverProjectArgs {
   readonly appDir?: string;
 }
 
+/**
+ * The project model, with what the layout probably got wrong without breaking a convention.
+ */
+export interface DiscoveredProject extends ProjectModel {
+  readonly warnings: readonly LayoutWarning[];
+}
+
 export interface DiscoverProjectFunction {
-  (args: DiscoverProjectArgs): Promise<ProjectModel>;
+  (args: DiscoverProjectArgs): Promise<DiscoveredProject>;
 }
 
 const IGNORED_DIRECTORIES: ReadonlySet<string> = new Set(["+types", "node_modules"]);
@@ -89,6 +97,7 @@ interface Context {
    * The keys of every aggregate of the app: a folder named after one holds that aggregate's events.
    */
   readonly aggregates: ReadonlySet<string>;
+  readonly warnings: LayoutWarning[];
 }
 
 const moduleRef = (context: Context, path: string): ModuleRef => ({
@@ -342,6 +351,72 @@ const discoverProcesses = async (
 const INFRASTRUCTURE = "infrastructure";
 
 /**
+ * The directories at an aggregate's root the generator reads, with the other names someone might
+ * give them; any other directory there is the app's own.
+ */
+const AGGREGATE_DIRECTORIES: ReadonlyMap<string, readonly string[]> = new Map([
+  ["commands", ["command"]],
+  ["policies", ["policy"]],
+  ["processes", ["process"]],
+  [INFRASTRUCTURE, ["infra"]],
+]);
+
+// Past the first difference, the rest must match once one character is skipped in the longer
+// string, or in both when they are as long; that also rules out a length apart by more than one.
+const withinOneEdit = (a: string, b: string): boolean => {
+  const [shorter, longer] = a.length <= b.length ? [a, b] : [b, a];
+  let i = 0;
+  while (i < shorter.length && shorter[i] === longer[i]) i += 1;
+  const rest = shorter.length === longer.length ? i + 1 : i;
+  return shorter.slice(rest) === longer.slice(i + 1);
+};
+
+const readDirectoryLike = (name: string): string | undefined =>
+  [...AGGREGATE_DIRECTORIES].find(([directory, others]) =>
+    [directory, ...others].some((candidate) => withinOneEdit(name, candidate)),
+  )?.[0];
+
+const warnAbout = (context: Context, aggregate: string, path: string, message: string): void => {
+  context.warnings.push({
+    aggregate,
+    message: `${moduleRef(context, path).relativePath}: ${message}`,
+  });
+};
+
+/**
+ * A directory at the root that is not one the generator reads, but whose name is one edit away
+ * from one, is most likely that directory misspelled, and what it holds would go unregistered.
+ */
+const checkMisspelledDirectories = (
+  context: Context,
+  aggregate: string,
+  directory: string,
+  directories: readonly string[],
+): void => {
+  for (const name of directories) {
+    if (AGGREGATE_DIRECTORIES.has(name)) continue;
+    const meant = readDirectoryLike(name);
+    if (meant === undefined) continue;
+    warnAbout(
+      context,
+      aggregate,
+      join(directory, name),
+      `the generator does not read this directory; rename it to ${meant} if that is what it holds`,
+    );
+  }
+};
+
+// A module has `+types` only while it is an event, so one that imports its own was an event and
+// lost the export that made it one.
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const OWN_TYPES_IMPORT = (module: string): RegExp =>
+  new RegExp(
+    `^\\s*import\\b[^;]*?from\\s*["']\\./\\+types/${escapeRegExp(module)}(?:\\.[jt]s)?["']`,
+    "m",
+  );
+
+/**
  * Names a port cannot take: the state module and every argument a handler of any kind already
  * receives, since the ports are spread next to them.
  */
@@ -529,6 +604,14 @@ const discoverAggregate = async (
     const path = join(directory, `${module}.ts`);
     const text = texts[index] ?? "";
     if (!isEvent(context, path, text)) {
+      if (OWN_TYPES_IMPORT(module).test(text)) {
+        warnAbout(
+          context,
+          name,
+          path,
+          `imports ./+types/${module} but exports no payload, begin or evolve, so it is not an event`,
+        );
+      }
       others.set(module, { path, text });
       continue;
     }
@@ -558,6 +641,7 @@ const discoverAggregate = async (
     }
   }
   const has = (child: string): boolean => listing.directories.includes(child);
+  checkMisspelledDirectories(context, name, directory, listing.directories);
   const eventKeys = new Set(events.map((event) => event.key));
   return {
     name,
@@ -768,6 +852,7 @@ export const discoverProject: DiscoverProjectFunction = async ({ root, appDir = 
   const context: Context = {
     root,
     problems,
+    warnings: [],
     aggregates: new Set(
       (await exists(domain)) ? (await list(domain)).directories.map((name) => keyOf(name)) : [],
     ),
@@ -784,5 +869,5 @@ export const discoverProject: DiscoverProjectFunction = async ({ root, appDir = 
   checkForeignHandlers(context, aggregates);
   checkUniqueNames(context, aggregates, readModels);
   problems.throwIfAny();
-  return { root, appDir, aggregates, readModels };
+  return { root, appDir, aggregates, readModels, warnings: context.warnings };
 };

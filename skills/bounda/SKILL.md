@@ -28,7 +28,7 @@ app/domain/<aggregate>/
   <event>.ts                       export const payload (optional); export const begin (the event that opens the aggregate) and/or export const evolve; nothing else at run time
   <event>.upcast.ts                optional: export const upcasts (oldest version first)
   <port>.ts                        a port: export interface <Port> (PascalCase of the file); a port because infrastructure/<port>/ exists
-  <anything-else>.ts, <dir>/       value objects, domain services, helpers: ignored by the generator, imported by the handlers
+  <anything-else>.ts, <dir>/       value objects, domain services, helpers: ignored by the generator, imported by the handlers (it warns when one imports its own +types or a directory looks like a misspelled commands/policies/processes/infrastructure)
   infrastructure/<port>/<implementation>.ts   export default ... satisfies <Port>, or export const create: CreateImplementation<Port>; every handler of the aggregate receives the port as <port>
   commands/<command>.ts            export const payload, export const handler
   policies/<action>-on-<event>.ts  export const handler; on and delay optional

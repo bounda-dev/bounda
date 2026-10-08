@@ -138,6 +138,16 @@ export interface ReadModelModel {
 }
 
 /**
+ * Something in an aggregate's layout that the generator reads as it is, but that is most likely a
+ * mistake: a module that looks like an event and is not one, a directory that looks like one the
+ * generator reads and is not.
+ */
+export interface LayoutWarning {
+  readonly aggregate: string;
+  readonly message: string;
+}
+
+/**
  * Everything the generator knows about a project, in a stable order: aggregates, read models and
  * their modules sorted by name.
  */

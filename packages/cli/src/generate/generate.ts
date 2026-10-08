@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { discoverProject } from "./discover.ts";
 import { emitProject, GENERATED_DIRECTORY } from "./emit/index.ts";
 import type { GeneratedFile } from "./emit/paths.ts";
-import type { ProjectModel } from "./model.ts";
+import type { LayoutWarning, ProjectModel } from "./model.ts";
 import { inferStates, type StateWarning } from "./state/infer.ts";
 import { removeOrphans, writeGeneratedFile, writeGeneratedFiles } from "./write.ts";
 
@@ -30,7 +30,7 @@ export interface GenerateReport {
   readonly written: readonly string[];
   readonly unchanged: readonly string[];
   readonly removed: readonly string[];
-  readonly warnings: readonly StateWarning[];
+  readonly warnings: readonly (LayoutWarning | StateWarning)[];
 }
 
 export interface GenerateFunction {
@@ -41,7 +41,7 @@ export interface GenerateFunction {
  * Runs the generator: writes `.bounda/` and every `+types` file, with the state of aggregates
  * without `state.ts` inferred, and removes `+types` files whose module is gone. A file whose
  * content is unchanged is not rewritten. Throws `ConventionError` when the layout breaks a
- * convention; inference problems come back as warnings.
+ * convention; a layout that is probably wrong and inference problems come back as warnings.
  */
 export const generate: GenerateFunction = async ({
   root,
@@ -49,7 +49,7 @@ export const generate: GenerateFunction = async ({
   tsconfigPath = join(root, "tsconfig.json"),
   inferState = true,
 }) => {
-  const model = await discoverProject({ root, appDir });
+  const { warnings, ...model } = await discoverProject({ root, appDir });
   const typesPath = join(root, GENERATED_DIRECTORY, "types.ts");
   const typesBefore = await readFile(typesPath, "utf8").catch(() => null);
   const firstPass = emitProject({ model });
@@ -88,6 +88,6 @@ export const generate: GenerateFunction = async ({
       .filter((path) => !written.includes(path))
       .sort(),
     removed,
-    warnings: inferred.warnings,
+    warnings: [...warnings, ...inferred.warnings],
   };
 };

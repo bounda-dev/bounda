@@ -42,7 +42,9 @@ Output lists every file written or removed, then a summary:
 1 aggregate, 1 read model, 10 files (2 written, 8 unchanged, 0 removed)
 ```
 
-Warnings from state inference go to stderr and do not change the exit code:
+Warnings go to stderr and do not change the exit code. They come from a layout that is most likely
+wrong without breaking a convention (see [aggregates](/guides/project-layout/#aggregates-appdomainaggregate))
+and from state inference:
 
 ```
 warning: order: field "cancellation" (set by orderCancelled) has a type that is not visible
@@ -185,7 +187,7 @@ import { generate } from "@bounda-dev/cli";
 
 const report = await generate({ root: process.cwd() });
 report.written; // absolute paths written this run
-report.warnings; // inference warnings, per aggregate
+report.warnings; // layout and inference warnings, per aggregate
 ```
 
 `discoverProject`, `emitProject`, `inferStates`, `watchProject` and `runCli` are the pieces

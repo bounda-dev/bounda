@@ -457,6 +457,73 @@ describe("discoverProject convention problems", () => {
     ]);
   });
 
+  it("warns about a module that imports its own +types without being an event, and about misspelled directories", async () => {
+    const root = await project([
+      "app/domain/order/order-placed.ts",
+      [
+        "app/domain/order/order-paid.ts",
+        '// Paid in full.\nimport type { Event } from "./+types/order-paid";\nexport const apply = ({ state }: Event.EvolveArgs) => state;\n',
+      ],
+      [
+        "app/domain/order/order-shipped.ts",
+        "import type {\n  Event,\n} from './+types/order-shipped.js';\nexport const evolv = (_: Event.EvolveArgs) => ({});\n",
+      ],
+      ["app/domain/order/money.ts", "export const create = () => ({});\n"],
+      [
+        "app/domain/order/pricing.ts",
+        'import type { Event } from "./+types/order-placed";\nexport const discountOf = (_: Event.BeginArgs) => 0;\n',
+      ],
+      "app/domain/order/commands/place-order.ts",
+      "app/domain/order/command/place-order.ts",
+      "app/domain/order/Policies/notify-on-order-placed.ts",
+      "app/domain/order/policys/",
+      "app/domain/order/proceses/",
+      "app/domain/order/infra/",
+      "app/domain/order/infrastucture/",
+      "app/domain/order/common/",
+      "app/domain/order/helpers/",
+      "app/domain/order/model/",
+    ]);
+    const { warnings } = await discoverProject({ root });
+    const notRead = "the generator does not read this directory; rename it to";
+    expect(warnings).toEqual([
+      {
+        aggregate: "order",
+        message:
+          "app/domain/order/order-paid.ts: imports ./+types/order-paid but exports no payload, begin or evolve, so it is not an event",
+      },
+      {
+        aggregate: "order",
+        message:
+          "app/domain/order/order-shipped.ts: imports ./+types/order-shipped but exports no payload, begin or evolve, so it is not an event",
+      },
+      {
+        aggregate: "order",
+        message: `app/domain/order/command: ${notRead} commands if that is what it holds`,
+      },
+      {
+        aggregate: "order",
+        message: `app/domain/order/infra: ${notRead} infrastructure if that is what it holds`,
+      },
+      {
+        aggregate: "order",
+        message: `app/domain/order/infrastucture: ${notRead} infrastructure if that is what it holds`,
+      },
+      {
+        aggregate: "order",
+        message: `app/domain/order/Policies: ${notRead} policies if that is what it holds`,
+      },
+      {
+        aggregate: "order",
+        message: `app/domain/order/policys: ${notRead} policies if that is what it holds`,
+      },
+      {
+        aggregate: "order",
+        message: `app/domain/order/proceses: ${notRead} processes if that is what it holds`,
+      },
+    ]);
+  });
+
   it("finds the ports of an aggregate with their module and implementations, sorted", async () => {
     const root = await project([
       "app/domain/order/order-placed.ts",
