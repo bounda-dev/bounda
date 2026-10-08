@@ -20,7 +20,7 @@ import {
   storageTransactionContract,
   tableContract,
 } from "../testing/index.ts";
-import { createSqliteAdapter, storageSchemaAdditions, storageTablesFor } from "./index.ts";
+import { createSqliteAdapter } from "./index.ts";
 
 const bind = (params: readonly unknown[]): SQLInputValue[] =>
   params.map((value) => (typeof value === "boolean" ? Number(value) : value)) as SQLInputValue[];
@@ -200,81 +200,6 @@ describe("createSqliteAdapter", () => {
     ]);
   });
 
-  it("adds the columns a database created by an earlier version lacks", async () => {
-    const db = new DatabaseSync(":memory:");
-    await nodeSqlite(db).adapter.createStorage({ logger: silentLogger });
-    db.exec('ALTER TABLE "bounda_dead_letters" DROP COLUMN "payload"');
-    db.exec('ALTER TABLE "bounda_scheduled_commands" DROP COLUMN "revision"');
-    db.exec('ALTER TABLE "bounda_scheduled_commands" DROP COLUMN "claim_id"');
-    db.exec('ALTER TABLE "bounda_inbox" DROP COLUMN "claim_id"');
-    const opened = await nodeSqlite(db).adapter.createStorage({ logger: silentLogger });
-    const letter = await opened.deadLetterStore.add({
-      id: "cmd",
-      kind: "command",
-      subscriber: "scheduled:PlaceOrder",
-      eventId: "k",
-      eventType: "PlaceOrder",
-      aggregateType: "order",
-      aggregateId: "o-1",
-      errorType: "terminal",
-      errorMessage: "nope",
-      attempts: 1,
-      firstFailedAt: "2026-01-01T00:00:00.000Z",
-      lastFailedAt: "2026-01-01T00:00:00.000Z",
-      payload: { orderId: "o-1" },
-    });
-    expect(letter.payload).toEqual({ orderId: "o-1" });
-    await opened.scheduler.schedule({
-      dedupeKey: "k",
-      command: { type: "PlaceOrder", aggregateId: "o-1", payload: {} },
-      executeAt: new Date("2026-01-01T00:00:00.000Z"),
-      context: { correlationId: "c", causationId: "c", depth: 0 },
-    });
-    expect(
-      await opened.scheduler.claimDue({
-        now: new Date("2026-01-01T00:00:01.000Z"),
-        limit: 1,
-        leaseMs: 1_000,
-      }),
-    ).toMatchObject([{ dedupeKey: "k", revision: 0 }]);
-    await opened.inboxLedger.tryClaim({
-      subscriber: "policies",
-      eventId: "e-1",
-      now: new Date("2026-01-01T00:00:00.000Z"),
-      leaseMs: 1_000,
-    });
-    await opened.inboxLedger.fail({
-      subscriber: "policies",
-      eventId: "e-1",
-      error: "nope",
-    });
-    expect(await opened.inboxLedger.get({ subscriber: "policies", eventId: "e-1" })).toMatchObject({
-      status: "failed",
-      lastError: "nope",
-    });
-    expect(
-      storageSchemaAdditions({
-        tables: storageTablesFor("x_"),
-        inboxColumns: ["subscriber"],
-        deadLetterColumns: ["id"],
-        scheduledCommandColumns: ["dedupe_key"],
-      }),
-    ).toEqual([
-      'ALTER TABLE "x_inbox" ADD COLUMN "claim_id" TEXT',
-      'ALTER TABLE "x_dead_letters" ADD COLUMN "payload" TEXT',
-      'ALTER TABLE "x_scheduled_commands" ADD COLUMN "revision" INTEGER NOT NULL DEFAULT 0',
-      'ALTER TABLE "x_scheduled_commands" ADD COLUMN "claim_id" TEXT',
-    ]);
-    expect(
-      storageSchemaAdditions({
-        tables: storageTablesFor("x_"),
-        inboxColumns: ["subscriber", "claim_id"],
-        deadLetterColumns: ["id", "payload"],
-        scheduledCommandColumns: ["dedupe_key", "revision", "claim_id"],
-      }),
-    ).toEqual([]);
-  });
-
   it("logs the lifecycle of a rebuild and leaves only the live table behind", async () => {
     const { adapter, db } = nodeSqlite();
     const { logs, logger } = recordingLogger();
@@ -372,7 +297,7 @@ describe("createSqliteAdapter", () => {
 
   it("leaves lastError out of a claim that never failed", async () => {
     const { inboxLedger } = await storage();
-    const key = { subscriber: "policies", eventId: "e-1" };
+    const key = { handler: "order.p", eventId: "e-1" };
     await inboxLedger.tryClaim({ ...key, now: new Date(), leaseMs: 1_000 });
     expect(await inboxLedger.get(key)).not.toHaveProperty("lastError");
     await inboxLedger.fail({ ...key, error: "boom" });

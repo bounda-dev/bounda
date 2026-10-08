@@ -32,15 +32,12 @@ export { createSqliteScheduler } from "./scheduler.ts";
 export type {
   EnsureStorageSchemaArgs,
   EnsureStorageSchemaFunction,
-  StorageSchemaAdditionsArgs,
-  StorageSchemaAdditionsFunction,
   StorageSchemaStatementsFunction,
   StorageTables,
   StorageTablesForFunction,
 } from "./schema.ts";
 export {
   ensureStorageSchema,
-  storageSchemaAdditions,
   storageSchemaStatements,
   storageTablesFor,
 } from "./schema.ts";

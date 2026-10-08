@@ -37,7 +37,7 @@ const subject = {
 const letter: NewDeadLetter = {
   id: "letter-1",
   kind: "process",
-  subscriber: "orderPayment",
+  handler: "orderPayment",
   eventId: "e-1",
   eventType: "OrderPlaced",
   aggregateType: "order",
@@ -117,7 +117,7 @@ describe("letterOf", () => {
     ).toEqual({
       id: "letter-1",
       kind: "process",
-      subscriber: "orderPayment",
+      handler: "orderPayment",
       eventId: "e-1",
       eventType: "OrderPlaced",
       aggregateType: "order",
@@ -188,8 +188,8 @@ describe("filed", () => {
         metric: "bounda.dead_letters",
         value: 1,
         attributes: {
-          "bounda.subscriber.kind": "process",
-          "bounda.subscriber": "orderPayment",
+          "bounda.handler.kind": "process",
+          "bounda.handler": "orderPayment",
           "bounda.outcome": "terminal",
         },
       },

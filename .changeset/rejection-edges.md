@@ -2,8 +2,8 @@
 "@bounda-dev/core": minor
 ---
 
-Replaying the dead letter of a dropped command that its aggregate now rejects marks the letter
-`replayed`, as the scheduler would have settled it, instead of throwing the `DomainError` and
+Retrying the dead letter of a dropped command that its aggregate now rejects marks the letter
+`retried`, as the scheduler would have settled it, instead of throwing the `DomainError` and
 leaving the letter `failed`. The rejection is logged as `command rejected`.
 
 `runUntilIdle().rejections` counts the rejections of a policy or process run that is retried only

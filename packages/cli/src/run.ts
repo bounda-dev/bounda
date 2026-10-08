@@ -7,8 +7,8 @@ import {
   rebuildReadModel,
 } from "@bounda-dev/core";
 import { boot, loadProject } from "@bounda-dev/core/node";
-import { Command, CommanderError } from "commander";
-import { formatLetter, formatReplayed } from "./dead-letter-output.ts";
+import { Command, CommanderError, Option } from "commander";
+import { formatLetter, formatRetried } from "./dead-letter-output.ts";
 import { generate } from "./generate/generate.ts";
 import { ConventionError } from "./generate/problems.ts";
 import { watchFromFirstRun } from "./generate/watch.ts";
@@ -123,7 +123,7 @@ interface ProjectOptions {
 interface ListDeadLettersOptions extends ProjectOptions {
   readonly kind?: string;
   readonly status?: string;
-  readonly subscriber?: string;
+  readonly handler?: string;
   readonly limit?: string;
   readonly json: boolean;
 }
@@ -155,7 +155,7 @@ const withApp = async <T>(
 const listFilters = (options: ListDeadLettersOptions): ListDeadLettersArgs => ({
   ...(options.kind === undefined ? {} : { kind: options.kind as DeadLetterKind }),
   ...(options.status === undefined ? {} : { status: options.status as DeadLetterStatus }),
-  ...(options.subscriber === undefined ? {} : { subscriber: options.subscriber }),
+  ...(options.handler === undefined ? {} : { handler: options.handler }),
   ...(options.limit === undefined ? {} : { limit: Number(options.limit) }),
 });
 
@@ -178,7 +178,7 @@ const runListDeadLetters = (
     return EXIT_OK;
   });
 
-const runReplayDeadLetter = (
+const runRetryDeadLetter = (
   id: string,
   options: ProjectOptions,
   cwd: string,
@@ -186,7 +186,7 @@ const runReplayDeadLetter = (
   stderr: Output,
 ): Promise<number> =>
   withApp(options, cwd, stderr, async (app) => {
-    line(stdout, formatReplayed(await app.deadLetters.replay(id)));
+    line(stdout, formatRetried(await app.deadLetters.retry(id)));
     return EXIT_OK;
   });
 
@@ -201,10 +201,22 @@ const runDiscardDeadLetter = (
     const letter = await app.deadLetters.discard(id);
     line(
       stdout,
-      `discarded dead letter ${id}: ${letter.kind} ${letter.subscriber} for ${letter.eventType}`,
+      `discarded dead letter ${id}: ${letter.kind} ${letter.handler} for ${letter.eventType}`,
     );
     return EXIT_OK;
   });
+
+// Records, so a kind or status added to core fails to compile here until the CLI accepts it.
+const DEAD_LETTER_KINDS = Object.keys({
+  policy: true,
+  process: true,
+  scheduled: true,
+} satisfies Record<DeadLetterKind, true>);
+const DEAD_LETTER_STATUSES = Object.keys({
+  failed: true,
+  retried: true,
+  discarded: true,
+} satisfies Record<DeadLetterStatus, true>);
 
 const projectOptions = <T extends Command>(command: T): T =>
   command
@@ -271,14 +283,20 @@ export const runCli: RunCliFunction = async ({ argv, cwd, stdout, stderr, signal
 
   const deadLetters = program
     .command("dead-letters")
-    .description("list, replay or discard the handler runs that gave up");
+    .description("list, retry or discard the handler runs that gave up");
   projectOptions(
     deadLetters
       .command("list")
       .description("list dead letters, failed ones by default")
-      .option("--kind <kind>", "policy, process or command")
-      .option("--status <status>", "failed, replayed or discarded", "failed")
-      .option("--subscriber <name>", "the policy, process or scheduled command that failed")
+      .addOption(
+        new Option("--kind <kind>", "only letters of this kind").choices(DEAD_LETTER_KINDS),
+      )
+      .addOption(
+        new Option("--status <status>", "only letters in this status")
+          .choices(DEAD_LETTER_STATUSES)
+          .default("failed"),
+      )
+      .option("--handler <name>", "the policy, process or scheduled command that failed")
       .option("--limit <n>", "at most this many letters")
       .option("--json", "print the letters as JSON", false),
   ).action(async (options: ListDeadLettersOptions) => {
@@ -286,11 +304,11 @@ export const runCli: RunCliFunction = async ({ argv, cwd, stdout, stderr, signal
   });
   projectOptions(
     deadLetters
-      .command("replay")
-      .description("run the failed handler again and mark the letter replayed if it succeeds")
+      .command("retry")
+      .description("run the failed handler again and mark the letter retried if it succeeds")
       .argument("<id>", "the dead letter's id"),
   ).action(async (id: string, options: ProjectOptions) => {
-    exitCode = await runReplayDeadLetter(id, options, cwd, stdout, stderr);
+    exitCode = await runRetryDeadLetter(id, options, cwd, stdout, stderr);
   });
   projectOptions(
     deadLetters

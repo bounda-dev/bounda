@@ -65,12 +65,12 @@ const registry: Registry = {
   readModels: {},
 };
 
-const claimFirstEventOf = async (harness: ReactiveHarness, subscriber: string, orderId: string) => {
+const claimFirstEventOf = async (harness: ReactiveHarness, handler: string, orderId: string) => {
   const [first] = (
     await harness.storage.eventStore.load({ aggregateType: "order", aggregateId: orderId })
   ).events;
   await harness.storage.inboxLedger.tryClaim({
-    subscriber,
+    handler,
     eventId: first?.id ?? "",
     now: harness.clock.now(),
     leaseMs: 60_000,
@@ -264,7 +264,7 @@ describe("policy subscriber", () => {
         subject: placed?.id ?? "",
       }),
       kind: "policy",
-      subscriber: "order.payOnOrderPlaced",
+      handler: "order.payOnOrderPlaced",
       eventType: "OrderPlaced",
       aggregateId: "o-1",
       errorType: "terminal",
@@ -429,7 +429,7 @@ describe("policy subscriber", () => {
     expect(calls).toEqual([]);
     expect(
       await harness.storage.inboxLedger.get({
-        subscriber: "order.auditEverything",
+        handler: "order.auditEverything",
         eventId: paid?.id ?? "",
       }),
     ).toBeNull();
@@ -513,7 +513,7 @@ describe("policy subscriber", () => {
     ).events;
     expect(
       await harness.storage.inboxLedger.get({
-        subscriber: "order.payOnOrderPlaced",
+        handler: "order.payOnOrderPlaced",
         eventId: placed?.id ?? "",
       }),
     ).toMatchObject({ status: "pending", attempts: 1 });
@@ -522,7 +522,7 @@ describe("policy subscriber", () => {
     await harness.dispatcher.runUntilIdle();
     expect(calls.filter((call) => call === "pay:o-1")).toHaveLength(2);
     expect(await harness.storage.deadLetterStore.list()).toMatchObject([
-      { subscriber: "order.payOnOrderPlaced", errorType: "retriable_exhausted" },
+      { handler: "order.payOnOrderPlaced", errorType: "retriable_exhausted" },
     ]);
     expect(await harness.storage.deadLetterStore.count()).toBe(1);
   });
@@ -653,7 +653,7 @@ describe("commands a policy dispatches", () => {
     readModels: {},
   };
 
-  it("schedules a delayed command once when the policy is retried after dispatching it", async () => {
+  it("stores a scheduled command once when the policy is retried after dispatching it", async () => {
     failuresLeft = 1;
     const harness = await createReactiveHarness({
       registry: scheduling,
@@ -747,7 +747,7 @@ describe("the commands of a policy run", () => {
       expect(await typesOf(harness, "o-1")).toEqual(["OrderPlaced"]);
       expect(await harness.storage.deadLetterStore.list()).toMatchObject([
         {
-          subscriber: "order.followOnOrderPlaced",
+          handler: "order.followOnOrderPlaced",
           errorType: "terminal",
           errorMessage: "Invalid payload for command PayOrder",
         },
@@ -900,7 +900,7 @@ describe("a policy run that fails", () => {
   const scheduledTypes = async (harness: ReactiveHarness) =>
     (await harness.storage.scheduler.list()).map((entry) => entry.command.type);
 
-  it("leaves none of its delayed commands behind when the retry takes another path", async () => {
+  it("leaves none of its scheduled commands behind when the retry takes another path", async () => {
     let runs = 0;
     const harness = await createReactiveHarness({
       registry: withPolicy(async ({ event, commands }) => {
@@ -927,7 +927,7 @@ describe("a policy run that fails", () => {
     expect(await scheduledTypes(harness)).toEqual(["ArchiveOrder"]);
   });
 
-  it("leaves no delayed command when it is dead-lettered", async () => {
+  it("leaves no scheduled command when it is dead-lettered", async () => {
     const harness = await createReactiveHarness({
       registry: withPolicy(async ({ event, commands }) => {
         await commands.payOrder?.({ orderId: event.aggregateId, method: "card" }, { delay: "1h" });

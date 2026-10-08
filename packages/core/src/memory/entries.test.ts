@@ -42,11 +42,10 @@ describe("createStoreEntries", () => {
     const map = new Map([["s\u0000e", "claim"]]);
     const entries = createStoreEntries(
       map,
-      ({ subscriber, eventId }: { subscriber: string; eventId: string }) =>
-        `${subscriber}\u0000${eventId}`,
+      ({ handler, eventId }: { handler: string; eventId: string }) => `${handler}\u0000${eventId}`,
     );
-    expect(entries.read({ subscriber: "s", eventId: "e" })).toBe("claim");
-    entries.putBack({ subscriber: "s", eventId: "e" }, undefined, "claim");
+    expect(entries.read({ handler: "s", eventId: "e" })).toBe("claim");
+    entries.putBack({ handler: "s", eventId: "e" }, undefined, "claim");
     expect(map.size).toBe(0);
   });
 });

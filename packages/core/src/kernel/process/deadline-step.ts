@@ -20,7 +20,7 @@ export interface RunDeadlineArgs {
   readonly instance: ProcessInstance;
   readonly due: Deadline;
   readonly context: CausationContext;
-  readonly replay?: string | undefined;
+  readonly retryId?: string | undefined;
 }
 
 /**
@@ -78,7 +78,7 @@ export const createDeadlineStep: CreateDeadlineStepFunction = ({ units, handlers
     instance,
     due,
     context,
-    replay,
+    retryId,
   }: RunDeadlineArgs): Promise<void> => {
     const within = units.over(unit);
     const reachedId = ids.next();
@@ -89,7 +89,7 @@ export const createDeadlineStep: CreateDeadlineStepFunction = ({ units, handlers
       due,
       context,
       causationId: reachedId,
-      replay,
+      retryId,
       within: unit,
     });
     if (due.field === TIMEOUT_DEADLINE) {

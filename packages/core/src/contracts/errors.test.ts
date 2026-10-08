@@ -4,6 +4,7 @@ import {
   ChainDepthExceededError,
   ConcurrencyError,
   ConfigurationError,
+  DeadLetterNotRetriableError,
   DeadLetterSettledError,
   DomainError,
   NotFoundError,
@@ -77,11 +78,21 @@ describe("errors", () => {
     expect(error.code).toBe("DEAD_LETTER_SETTLED");
     expect(error.id).toBe("d-1");
     expect(error.message).toBe(
-      'Dead letter "d-1" is no longer failed: another replay or discard settled it',
+      'Dead letter "d-1" is no longer failed: another retry or discard settled it',
     );
     expect(new DeadLetterSettledError({ id: "d-1", status: "discarded" }).message).toBe(
       'Dead letter "d-1" was already discarded',
     );
+  });
+
+  it("say why a dead letter cannot be retried", () => {
+    const error = new DeadLetterNotRetriableError(
+      'Policy "order.gone" is no longer in the registry',
+    );
+    expect(error).toBeInstanceOf(BoundaError);
+    expect(error.code).toBe("DEAD_LETTER_NOT_RETRIABLE");
+    expect(error.name).toBe("DeadLetterNotRetriableError");
+    expect(error.message).toBe('Policy "order.gone" is no longer in the registry');
   });
 
   it("mark missing resources", () => {

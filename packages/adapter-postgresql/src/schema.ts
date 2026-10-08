@@ -74,20 +74,19 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
   )`,
   checkpointTableStatement(tables.checkpoints),
   `CREATE TABLE IF NOT EXISTS ${tables.inbox} (
-    "subscriber" text NOT NULL,
+    "handler" text NOT NULL,
     "event_id" text NOT NULL,
     "status" text NOT NULL,
     "attempts" integer NOT NULL,
     "claimed_at" text NOT NULL,
     "claim_id" text,
     "last_error" text,
-    PRIMARY KEY ("subscriber", "event_id")
+    PRIMARY KEY ("handler", "event_id")
   )`,
-  `ALTER TABLE ${tables.inbox} ADD COLUMN IF NOT EXISTS "claim_id" text`,
   `CREATE TABLE IF NOT EXISTS ${tables.deadLetters} (
     "id" text PRIMARY KEY,
     "kind" text NOT NULL,
-    "subscriber" text NOT NULL,
+    "handler" text NOT NULL,
     "event_id" text NOT NULL,
     "event_type" text NOT NULL,
     "aggregate_type" text NOT NULL,
@@ -101,7 +100,6 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "status" text NOT NULL,
     "payload" jsonb
   )`,
-  `ALTER TABLE ${tables.deadLetters} ADD COLUMN IF NOT EXISTS "payload" jsonb`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "status")} ON ${tables.deadLetters} ("status")`,
   `CREATE TABLE IF NOT EXISTS ${tables.scheduledCommands} (
     "dedupe_key" text PRIMARY KEY,
@@ -116,8 +114,6 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "revision" integer NOT NULL DEFAULT 0,
     "claim_id" text
   )`,
-  `ALTER TABLE ${tables.scheduledCommands} ADD COLUMN IF NOT EXISTS "revision" integer NOT NULL DEFAULT 0`,
-  `ALTER TABLE ${tables.scheduledCommands} ADD COLUMN IF NOT EXISTS "claim_id" text`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.scheduledCommands, "execute_at")} ON ${tables.scheduledCommands} ("execute_at")`,
 ];
 

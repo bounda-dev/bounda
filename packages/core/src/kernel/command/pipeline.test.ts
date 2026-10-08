@@ -497,7 +497,7 @@ describe("command pipeline", () => {
     expect(loaded.version).toBe(1);
   });
 
-  it("schedules delayed commands instead of executing them", async () => {
+  it("schedules a command dispatched with a delay instead of executing it", async () => {
     const { pipeline, storage, clock } = await createKernelHarness();
     const result = await pipeline.dispatch({
       type: "PlaceOrder",
@@ -627,7 +627,7 @@ describe("an aggregate whose events open it with begin", () => {
       aggregateType: "case",
       aggregateId: "c-1",
       expectedVersion: 0,
-      events: [pending("CommandFailed", 1, true)],
+      events: [pending("ScheduledCommandFailed", 1, true)],
     });
     await expect(
       pipeline.dispatch({ type: "NoteCase", payload: { caseId: "c-1" } }),

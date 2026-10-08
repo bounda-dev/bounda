@@ -419,7 +419,7 @@ describe("process deadlines", () => {
     ]);
   });
 
-  it("fail for good when a handler leaves its deadline at the moment that came due, and replay with a new key", async () => {
+  it("fail for good when a handler leaves its deadline at the moment that came due, and retry with a new key", async () => {
     reset();
     reminding = "keep";
     const harness = await setUp();
@@ -439,10 +439,10 @@ describe("process deadlines", () => {
     });
     expect(await harness.storage.scheduler.list()).toEqual([]);
     await expect(
-      harness.processes.replayDeadline({
+      harness.processes.retryDeadline({
         payload: { process: "order.reminders", aggregateId: "o-1" },
         context: { correlationId: "c", causationId: "c", depth: 0 },
-        replay: "r",
+        retryId: "r",
       }),
     ).rejects.toMatchObject({
       issues: [
@@ -462,6 +462,7 @@ describe("process deadlines", () => {
     const deadLetters = createDeadLetters({
       storage: harness.storage,
       pipeline: harness.pipeline,
+      aggregates: harness.aggregates,
       policies: harness.policies,
       policyExecutor: harness.policyExecutor,
       processes: harness.processes,
@@ -470,7 +471,7 @@ describe("process deadlines", () => {
       clock: harness.clock,
       logger: harness.logger,
     });
-    await deadLetters.replay(letter?.id ?? "");
+    await deadLetters.retry(letter?.id ?? "");
     expect(keys).toHaveLength(3);
     expect(keys[0]).toBe(
       deriveIdempotencyKey({
@@ -877,7 +878,7 @@ describe("process deadlines", () => {
     expect(await harness.storage.scheduler.list()).toMatchObject([{ executeAt: at(DAY) }]);
   });
 
-  it("run delayed commands at once beside deadlines that wait, and forget a wait whose entry moved", async () => {
+  it("run scheduled commands at once beside deadlines that wait, and forget a wait whose entry moved", async () => {
     reset();
     const harness = await setUp();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });

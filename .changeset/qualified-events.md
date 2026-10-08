@@ -22,5 +22,5 @@ named after another aggregate holds what reacts to that aggregate's events.
 Breaking: move every projection into the folder of its aggregate and run `bounda generate`. A
 hand-written registry groups `projections` by aggregate (`projections.order.orderPlaced`), and a
 policy for another aggregate's events sets `source`. `DispatchResult` carries `aggregateType`.
-Projection names in logs, traces and dead letters read `order.orderPlaced`, and a read model's
+Projection names in logs and traces read `order.orderPlaced`, and a read model's
 fingerprint changes, so a rebuild paused before the upgrade starts again.

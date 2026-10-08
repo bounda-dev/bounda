@@ -10,7 +10,7 @@ import { memory } from "../../memory/index.ts";
 import type { UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import { runAttempt } from "./reaction-attempt.ts";
 
-const key = { subscriber: "order.p", eventId: "e1" };
+const key = { handler: "order.p", eventId: "e1" };
 const order = { aggregateType: "order", aggregateId: "1" };
 const exponential: ResolvedRetryConfig = {
   strategy: "exponential",
@@ -63,7 +63,7 @@ const setUp = async () => {
         await unit.deadLetterStore.add({
           id: `letter-${attempts}`,
           kind: "policy",
-          subscriber: key.subscriber,
+          handler: key.handler,
           eventId: key.eventId,
           eventType: "OrderPlaced",
           aggregateType: "order",

@@ -19,12 +19,12 @@ export interface CreateSqliteDeadLetterStoreFunction {
 }
 
 const COLUMNS =
-  '"id", "kind", "subscriber", "event_id", "event_type", "aggregate_type", "aggregate_id", "error_type", "error_message", "error_stack", "attempts", "first_failed_at", "last_failed_at", "status", "payload"';
+  '"id", "kind", "handler", "event_id", "event_type", "aggregate_type", "aggregate_id", "error_type", "error_message", "error_stack", "attempts", "first_failed_at", "last_failed_at", "status", "payload"';
 
 const toLetter = (row: Record<string, unknown>): DeadLetter => ({
   id: String(row.id),
   kind: String(row.kind) as DeadLetterKind,
-  subscriber: String(row.subscriber),
+  handler: String(row.handler),
   eventId: String(row.event_id),
   eventType: String(row.event_type),
   aggregateType: String(row.aggregate_type),
@@ -50,7 +50,7 @@ const filters = (
   const params: unknown[] = [];
   for (const [column, value] of [
     ["kind", args.kind],
-    ["subscriber", args.subscriber],
+    ["handler", args.handler],
     ["status", args.status],
   ] as const) {
     if (value !== undefined) {
@@ -77,7 +77,7 @@ export const createSqliteDeadLetterStore: CreateSqliteDeadLetterStoreFunction = 
         [
           letter.id,
           letter.kind,
-          letter.subscriber,
+          letter.handler,
           letter.eventId,
           letter.eventType,
           letter.aggregateType,

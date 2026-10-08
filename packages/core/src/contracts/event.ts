@@ -41,19 +41,3 @@ export interface StreamIdFunction {
  */
 export const streamId: StreamIdFunction = ({ aggregateType, aggregateId }) =>
   `${aggregateType}:${aggregateId}`;
-
-/**
- * Prefix used by the runtime for the internal streams that hold process state.
- */
-export const PROCESS_STREAM_PREFIX: "process" = "process";
-
-export interface ProcessStreamIdFunction {
-  (args: { readonly processType: string; readonly aggregateId: string }): string;
-}
-
-/**
- * Builds the stream id of a process instance. A process is keyed by its type and the aggregate
- * id that started it.
- */
-export const processStreamId: ProcessStreamIdFunction = ({ processType, aggregateId }) =>
-  `${PROCESS_STREAM_PREFIX}:${processType}:${aggregateId}`;

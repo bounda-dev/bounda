@@ -300,7 +300,7 @@ runtime reloads the aggregate and runs the handler again, ports included, up to
 harmless if the second run decides differently: reading a price or a stock level is; charging a
 card is not. The handler receives `idempotencyKey`, the command's id, which stays the same across
 those runs: pass it to a call the provider deduplicates, such as creating a payment intent, so a
-second run does not create another. A delayed command keeps the id it was scheduled with.
+second run does not create another. A scheduled command keeps the id it was scheduled with.
 
 Each run has a time limit, `runtime.commands.timeout` (30 seconds by default): past it the
 dispatch rejects with `HANDLER_TIMEOUT` and nothing the handler returns is stored. The handler
@@ -357,7 +357,7 @@ with `delay` resolves with `scheduled: true` and `executeAt`, one without with w
 decided (`eventTypes`, and `position` from `app.commands`), with no scheduled case to rule out
 first. The compiler checks a literal
 duration; for one that comes from the environment, `asDuration` from `@bounda-dev/core` checks it
-at the call site and returns it typed. A delayed command's payload is stored as JSON and validated
+at the call site and returns it typed. A scheduled command's payload is stored as JSON and validated
 in that form when it is dispatched, so what would fail when it runs fails at once: a `z.date()`
 field rejects the string JSON turns a date into, so declare it as `z.coerce.date()`. The handler
 receives the payload validated when the command runs, so a schema's transforms apply once.
@@ -461,7 +461,7 @@ An event that does not start the process and finds no open instance is skipped, 
 event for an instance that has completed or timed out, but for what its `at-timeout.ts` caused: a
 starting event never reopens one. An
 event for an instance that has failed is parked instead, and handled in order once the failure is
-replayed; see [a failed process](/guides/reacting-to-events/#a-failed-process).
+retried; see [a failed process](/guides/reacting-to-events/#a-failed-process).
 
 The state a handler returns is parsed with `state`: defaults fill what is missing, keys the
 schema does not declare are dropped, and a state it refuses fails the handler for good, like any

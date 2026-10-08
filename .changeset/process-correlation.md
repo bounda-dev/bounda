@@ -15,7 +15,7 @@ string or `null`, dead-letters that event for the process instead of stopping ev
 An event that does not start the process and finds no open instance is skipped, as is any event
 for an instance that completed, timed out or failed; a starting event never reopens one. The state
 a handler returns is now parsed with the process's `state` schema (defaults filled, undeclared keys
-dropped), and a state it refuses fails the handler for good. A dead-letter replay finds the instance through `correlate` too.
+dropped), and a state it refuses fails the handler for good. A dead-letter retry finds the instance through `correlate` too.
 
 Breaking: process configs name events as `events.<aggregate>.<Event>`; run `bounda generate`. A
 hand-written registry groups process handlers by aggregate (`handlers.order.orderPaid`).

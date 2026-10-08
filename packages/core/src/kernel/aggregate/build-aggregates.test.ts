@@ -184,7 +184,7 @@ describe("foldState", () => {
     ports: {},
   }).byName.ticket as NonNullable<ReturnType<typeof buildAggregates>["byName"][string]>;
   const system = (version: number) => {
-    const event = stored("CommandFailed", {}, version);
+    const event = stored("ScheduledCommandFailed", {}, version);
     return { ...event, metadata: { ...event.metadata, system: true } };
   };
 

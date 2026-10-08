@@ -104,7 +104,7 @@ export interface BoundaApp<R extends Registry = AppRegistry> {
    */
   pendingRebuilds(): Promise<readonly string[]>;
   /**
-   * The handler runs that gave up, and what to do about them: list, replay or discard.
+   * The handler runs that gave up, and what to do about them: list, retry or discard.
    */
   readonly deadLetters: DeadLetters;
   getLag(): Promise<AppLag>;
@@ -143,7 +143,7 @@ export interface RunUntilIdleResult {
   readonly idle: boolean;
   /**
    * The rejections of the commands that policies, processes, the scheduler and dead-letter
-   * replays dispatched while it ran, those of the background loop `start()` runs included, in
+   * retries dispatched while it ran, those of the background loop `start()` runs included, in
    * order, so a test can assert the ones it expects. A run that is retried counts them only from
    * the attempt that commits.
    */
@@ -342,6 +342,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     const deadLetters = createDeadLetters({
       storage,
       pipeline,
+      aggregates,
       policies,
       policyExecutor,
       processes,

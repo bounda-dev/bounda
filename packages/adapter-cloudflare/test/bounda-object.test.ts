@@ -76,7 +76,7 @@ describe("a Bounda Durable Object", () => {
     expect(await alarmOf(stub)).toBeNull();
   });
 
-  it("arms its alarm for a delayed command and runs it once the clock gets there", async () => {
+  it("arms its alarm for a scheduled command and runs it once the clock gets there", async () => {
     const { stub, store } = open();
     await store.commands.placeOrder({ orderId: "o-2", total: 7, customer: "ada" });
     await runDurableObjectAlarm(stub);
@@ -171,8 +171,8 @@ describe("a Bounda Durable Object", () => {
     await store.commands.payOrder({ orderId: "fail-1" });
     await runDurableObjectAlarm(stub);
     const [letter] = await store.deadLetters.list();
-    expect(letter).toMatchObject({ kind: "policy", subscriber: "order.archiveOnOrderPaid" });
-    expect(await rejection(store.deadLetters.replay(letter?.id ?? ""))).toMatchObject({
+    expect(letter).toMatchObject({ kind: "policy", handler: "order.archiveOnOrderPaid" });
+    expect(await rejection(store.deadLetters.retry(letter?.id ?? ""))).toMatchObject({
       message: "archive is down",
     });
     expect(await store.deadLetters.discard(letter?.id ?? "")).toMatchObject({

@@ -137,11 +137,11 @@ const orderTypes = async (harness: ReactiveHarness) =>
   ).events.map((event) => event.type);
 const scheduledTypes = async (harness: ReactiveHarness) =>
   (await harness.storage.scheduler.list()).map((entry) => entry.command.type);
-const claimOf = async (harness: ReactiveHarness, subscriber: string) => {
+const claimOf = async (harness: ReactiveHarness, handler: string) => {
   const [placed] = (
     await harness.storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" })
   ).events;
-  return harness.storage.inboxLedger.get({ subscriber, eventId: placed?.id ?? "" });
+  return harness.storage.inboxLedger.get({ handler, eventId: placed?.id ?? "" });
 };
 const place = (harness: ReactiveHarness) =>
   harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
@@ -184,12 +184,12 @@ const breakNextCompletion = (storage: StoragePorts): { readonly broke: () => boo
 
 describe("createUnitOfWork", () => {
   const now = new Date("2026-01-01T00:00:00.000Z");
-  const key = { subscriber: "order.p", eventId: "e1" };
+  const key = { handler: "order.p", eventId: "e1" };
   const context = { correlationId: "c", causationId: "c", depth: 0 };
   const letter = (id: string) => ({
     id,
     kind: "policy" as const,
-    subscriber: "order.p",
+    handler: "order.p",
     eventId: "e1",
     eventType: "OrderPlaced",
     aggregateType: "order",
@@ -512,7 +512,7 @@ describe.each(adapters)("a reaction attempt as a unit of work on %s", (_name, ad
       adapter: adapter(),
     });
 
-  it("writes a successful attempt's immediate command, delayed command and claim together", async () => {
+  it("writes a successful attempt's immediate command, scheduled command and claim together", async () => {
     reset("ok");
     const harness = await policyHarness();
     await place(harness);
@@ -528,7 +528,7 @@ describe.each(adapters)("a reaction attempt as a unit of work on %s", (_name, ad
     expect((await harness.dispatcher.getLag()).maxLag).toBe(0);
   });
 
-  it("leaves nothing of an attempt that fails after dispatching: not the immediate command, not the delayed one", async () => {
+  it("leaves nothing of an attempt that fails after dispatching: not the immediate command, not the scheduled one", async () => {
     reset("refuse");
     const harness = await policyHarness();
     await place(harness);
@@ -537,7 +537,7 @@ describe.each(adapters)("a reaction attempt as a unit of work on %s", (_name, ad
     expect(await orderTypes(harness)).toEqual(["OrderPlaced"]);
     expect(await scheduledTypes(harness)).toEqual([]);
     expect(await harness.storage.deadLetterStore.list()).toMatchObject([
-      { subscriber: "order.settleOnOrderPlaced", errorType: "terminal" },
+      { handler: "order.settleOnOrderPlaced", errorType: "terminal" },
     ]);
     expect(await claimOf(harness, "order.settleOnOrderPlaced")).toMatchObject({
       status: "succeeded",
@@ -641,7 +641,7 @@ describe.each(adapters)("a reaction attempt as a unit of work on %s", (_name, ad
     expect(await processTypes(harness)).toEqual([PROCESS_EVENTS.started, PROCESS_EVENTS.failed]);
     expect(await scheduledTypes(harness)).toEqual([]);
     expect(await harness.storage.deadLetterStore.list()).toMatchObject([
-      { subscriber: "order.settlement", errorType: "terminal", errorMessage: "provider refused" },
+      { handler: "order.settlement", errorType: "terminal", errorMessage: "provider refused" },
     ]);
     expect(await claimOf(harness, "order.settlement")).toMatchObject({
       status: "succeeded",

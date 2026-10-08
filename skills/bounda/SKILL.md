@@ -281,7 +281,7 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
 - Policies and process handlers get `commands`, the typed facade of every command in the app, and
   run with at-least-once delivery: the runtime's inbox skips a handler that already completed for
   an event, but a handler that crashes midway runs again, so make its side effects idempotent. An
-  attempt, a policy's or a process step's, stores its commands, immediate and delayed, together
+  attempt, a policy's or a process step's, stores its commands, immediate and scheduled, together
   with its claim, its lifecycle events and its deadline entry when it ends, so a failed or crashed
   attempt leaves nothing behind, and a step whose instance moved meanwhile runs again on the new
   state; what `await commands.x()` returns is the aggregate's decision, not something stored yet:
@@ -304,9 +304,9 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   A policy that exports `delay` (`"1m"`, or `asDuration(env)`) runs that long
   after the event, through the scheduler, with the same arguments and retries, but its runs are
   not ordered among themselves (each retries on its own); use it when the effect itself waits,
-  and a delayed command when the decision must see the state at that time.
+  and a scheduled command when the decision must see the state at that time.
   Their `idempotencyKey` is the same on every retry for one event (for a
-  deadline, one field at one moment) and new on a dead-letter replay. Their `signal` aborts when
+  deadline, one field at one moment) and new on a dead-letter retry. Their `signal` aborts when
   the run times out or fails, which also stops their commands still running: pass it to outside
   calls. A port cannot be named after a handler
   argument (`event`, `commands`, `state`, `aggregateId`, `command`, `events`, `idempotencyKey`,
@@ -317,7 +317,7 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   ends. A handler's return is type-checked against the state in its `+types` (`ReturnCheck`):
   set deadlines with `after()` or `asInstant`, never a plain string; a field the state does not
   declare, or an `at-<field>.ts` that leaves its field out, does not compile. Boot refuses a `deadline()` without its `at-` file and the reverse. Build moments in tests
-  with `asInstant`. For "do this later" without process state, keep a delayed command or policy.
+  with `asInstant`. For "do this later" without process state, keep a scheduled command or a delayed policy.
 - Projections write through `table` (`upsert`, `insert`, `update`, `delete`, `findOne`,
   `findMany`, `count`). Each batch is one transaction with the read model's
   checkpoint, so every event is applied exactly once and reading a row to update it
@@ -330,7 +330,7 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   kept, retries back off from 1 s to 30 s, and `app.getLag()` shows `failing` with the event and
   the error. Fix the projection and deploy; a read model never skips an event.
 - Queries compose: a handler receives `queries` and may call other queries.
-- Delayed commands: `commands.remindCustomer(payload, { delay: "24h" })`, typed as resolving with
+- Scheduled commands: `commands.remindCustomer(payload, { delay: "24h" })`, typed as resolving with
   `scheduled: true` and `executeAt`; a call without `delay` is typed without that case, so read
   `eventTypes` (or `rejected` in a reaction) directly. The worker commits a
   scheduled run with the release of its claim, so a crash between the two never runs it twice. A duration from the
@@ -382,9 +382,9 @@ export const loader = ({ context }: Route.LoaderArgs) => context.get(bounda).que
   `app/read`; do not run `bounda generate --watch` alongside it. Keep `bounda generate` as a script
   for CI, because `react-router typegen && tsc` needs the generated files first.
 - `@bounda-dev/react-router/app` is server-only: loaders, actions, middleware. Never in components.
-- The app in the context reads its own writes by default (`bounda({ consistency: "immediate" })`):
-  a page reached right after a command sees its read models. Never call `runUntilIdle()` in a
-  route.
+- The app in the context reads its own writes by default
+  (`bounda({ consistency: "read-your-writes" })`): a page reached right after a command sees its
+  read models. Never call `runUntilIdle()` in a route.
 - Map `ValidationError` to a 400 with `error.issues` and `DomainError` to a 409 with
   `error.rejected` in one helper (`failure`); let anything else reach the `ErrorBoundary`.
 - Typecheck with `react-router typegen && tsc`; `.react-router/types` holds the route types and
@@ -448,10 +448,10 @@ export const loader = ({ context }: Route.LoaderArgs) => context.get(bounda).que
   (`satisfies Event.Upcasts` from the event's `+types`). The runtime applies them on read. A new
   optional field needs no upcaster; a field that cannot be derived needs a new event type instead.
 - A policy or process handler that failed for good, or a scheduled command that was dropped, is
-  a dead letter: `bounda dead-letters list`, then `replay <id>` after fixing the cause or
+  a dead letter: `bounda dead-letters list`, then `retry <id>` after fixing the cause or
   `discard <id>`. In code, `app.deadLetters`. Nothing re-runs a dead letter on its own. Events
   that reach a failed process instance are parked in its stream (`ProcessEventParked`), in order;
-  replaying the failure handles them, then the instance resumes (`ProcessResumed`) and its
+  retrying the failure handles them, then the instance resumes (`ProcessResumed`) and its
   deadlines are scheduled again. A letter's `parked` says how many wait behind it; discarding the
   letter gives the instance up.
 - A view may gain fields freely. Removing a field, changing its type, or fixing a projection that

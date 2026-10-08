@@ -71,13 +71,13 @@ describe("memory adapter", () => {
 
   it("puts every store back when a write fails while a transaction is being applied", async () => {
     const storage = await memory().createStorage({ logger: silentLogger });
-    const key = { subscriber: "order.p", eventId: "e1" };
+    const key = { handler: "order.p", eventId: "e1" };
     const now = new Date("2026-01-01T00:00:00.000Z");
     const context = { correlationId: "c", causationId: "c", depth: 0 };
     const letter = (id: string) => ({
       id,
       kind: "policy" as const,
-      subscriber: "order.p",
+      handler: "order.p",
       eventId: "e1",
       eventType: "OrderPlaced",
       aggregateType: "order",

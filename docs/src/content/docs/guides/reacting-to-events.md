@@ -119,7 +119,7 @@ How deadlines behave:
   decides, so `cancelOrder` refuses an order that is already paid.
 - **Nothing runs once the process has ended**, whether it completed or timed out, but for the
   events its `at-timeout.ts` caused (below), nor while it is failed: its deadlines wait, like its
-  events, for the failure to be replayed.
+  events, for the failure to be retried.
 - **A failure is handled like an event handler's**: it is retried with the process's back-off, and
   one that fails for good or runs out of attempts fails the process and is dead-lettered. Losing a
   race with another write to the instance does not count as an attempt.
@@ -159,12 +159,12 @@ harmless.
 
 **An attempt writes everything or nothing.** The commands a policy or process handler dispatches
 are decided on the spot but stored only when the attempt ends, together, in one transaction of
-the store: the events of its immediate commands, its delayed commands, the claim that marks the
+the store: the events of its immediate commands, its scheduled commands, the claim that marks the
 event done and, when the runtime gives up, the dead letter. A process step adds its own lifecycle
 events (`ProcessStarted`, `ProcessHandled`, `ProcessCompleted`, `ProcessDeadlineReached`,
 `ProcessTimedOut`, `ProcessFailed`) and its next deadline's entry to the same transaction, so a deadline can never
 disagree with the state it was computed from. A handler that throws, runs out of time or dies
-before that leaves no command behind, immediate or delayed, and the next attempt decides afresh.
+before that leaves no command behind, immediate or scheduled, and the next attempt decides afresh.
 When the instance moved meanwhile, because a deadline or another instance wrote to it, the step
 runs again on the instance as it now is, without spending an attempt; it first starts its claim's
 lease again, and stops there if another instance has taken the claim over. What
@@ -174,9 +174,9 @@ outside the promise, and why, is in [Your event store is your outbox](/concepts/
 the outside calls, the claim, and what a read model shows a handler.
 
 **Every reaction gets an idempotency key.** Policy and process handlers receive
-`idempotencyKey`, a UUID that is the same on every retry of the handler for one event (for an
-`at-` handler, for one deadline at one moment) and new each time an operator replays the dead letter, so a
-provider that stored the failed attempt's answer sees a new request. Pass it to the providers that
+`idempotencyKey`, a UUID that is the same on every automatic retry of the handler for one event
+(for an `at-` handler, for one deadline at one moment) and new each time an operator retries the
+dead letter, so a provider that stored the failed attempt's answer sees a new request. Pass it to the providers that
 accept one:
 
 ```ts
@@ -212,7 +212,7 @@ way out: see [Dead letters](#dead-letters).
 - `rejected: false` and `scheduled: false`: the aggregate decided, with its `version` and the
   `eventIds` and `eventTypes` it decided, in order;
 - `rejected: false` and `scheduled: true`: a command with `delay`, with when it runs in
-  `executeAt`. A call with `delay` is typed with this answer alone, since a delayed command is
+  `executeAt`. A call with `delay` is typed with this answer alone, since a scheduled command is
   rejected, if at all, when it runs; a call without `delay` is typed without it;
 - `rejected` set to a code: the command's handler rejected it with one of the codes its module
   declares in [`rejections`](/guides/project-layout/#rejections), and `message` says why. Nothing
@@ -231,7 +231,7 @@ if (paid.rejected === "NotOpen") {
 
 A rejection nobody looks at is logged (`command rejected`, at `info`) and recorded on the
 command's span; a test asserts the ones it expects from what
-[`runUntilIdle()`](/guides/testing/#rejections) returns. A delayed command that is rejected when it
+[`runUntilIdle()`](/guides/testing/#rejections) returns. A scheduled command that is rejected when it
 runs changes nothing in the same way. While the run lasts, only a failure rejects the `await`: a
 payload that does not validate, a concurrency conflict that outlasts its retries, an error the handler throws. The run
 fails with it, and the runtime retries it or dead-letters it (see [Retries and timeouts](#retries-and-timeouts)).
@@ -319,11 +319,11 @@ A few rules keep it correct:
 - **Without a key on the provider's side**, look the operation up by your own reference before
   calling again, and give a process a time-out for a provider that may never answer.
 - **The command a reaction dispatches can arrive twice**, when the reaction is retried after
-  dispatching it. The retry gives it the same id, so a delayed command stays scheduled once and
+  dispatching it. The retry gives it the same id, so a scheduled command stays scheduled once and
   the command's own `idempotencyKey` does not change, but one that already ran runs again: its
   handler decides from state and returns no events the second time, as `recordConfirmationSent`
   does in the [storefront example](/guides/storefront-example/).
-- **A run that fails leaves no command behind**, immediate or delayed, whether a policy's or a
+- **A run that fails leaves no command behind**, immediate or scheduled, whether a policy's or a
   process step's: they are stored only when the attempt commits (see
   [what the runtime promises](#what-the-runtime-promises)), so a retry that decides differently
   starts from nothing. A crash mid-run leaves nothing either, only the claim, which expires with
@@ -422,26 +422,30 @@ an operator to decide what happens to it. `bounda dead-letters` is that operator
 
 ```bash
 bounda dead-letters list
-bounda dead-letters replay 019a0c4e-…
+bounda dead-letters retry 019a0c4e-…
 bounda dead-letters discard 019a0c4e-…
 ```
 
-`list` prints the failed letters, with `--kind policy|process|command`, `--subscriber`,
-`--status`, `--limit` and `--json` to narrow or script it. `replay` runs the failed handler once
-more and marks the letter `replayed` if it succeeds: for a policy or a command, in the same
-transaction as what the run writes, so a replay that ran but could not be marked leaves nothing
-behind, and so for a follow-up of a timed-out process; for any other process letter, once its
-instance has drained what was parked, since a replay cut short there is taken up again by replaying
-the same letter. When it fails again the error is printed and
-the letter stays `failed`. `discard` marks it `discarded` without running anything. Two replays
-of one letter, or a replay and a discard, never both settle it, even when they run at once:
-whichever gets there second is refused with `DeadLetterSettledError` (`DEAD_LETTER_SETTLED`).
-A replay marked in its own transaction (a policy's, a command's or a follow-up's) refused that way
-stores nothing, so a double click does not store a command's decision twice, though the handler
-may have run in both; any other process's has already handled its events by then. Letters are never deleted by these commands; they are the
-record of what happened.
+`list` prints the failed letters, with `--kind policy|process|scheduled`, `--handler`,
+`--status`, `--limit` and `--json` to narrow or script it. `retry` runs the failed handler once
+more and marks the letter `retried` if it succeeds: for a policy or a scheduled command, in the
+same transaction as what the run writes, so a retry that ran but could not be marked leaves
+nothing behind, and so for a follow-up of a timed-out process; for any other process letter, once
+its instance has drained what was parked, since a retry cut short there is taken up again by
+retrying the same letter. When it fails again the error is printed and the letter stays `failed`.
+A letter the app as it now is cannot retry (its policy, process or scheduled command is gone from
+the registry, its policy or process no longer handles the event, or its instance failed on another
+step whose letter comes first) is refused with `DeadLetterNotRetriableError`
+(`DEAD_LETTER_NOT_RETRIABLE`) without running anything.
+`discard` marks it `discarded` without running anything. Two retries of one letter, or a retry and
+a discard, never both settle it, even when they run at once: whichever gets there second is
+refused with `DeadLetterSettledError` (`DEAD_LETTER_SETTLED`). A retry marked in its own
+transaction (a policy's, a scheduled command's or a follow-up's) refused that way stores nothing,
+so a double click does not store a command's decision twice, though the handler may have run in
+both; any other process's has already handled its events by then. Letters are never deleted by
+these commands; they are the record of what happened.
 
-What a replay does depends on the kind:
+What a retry does depends on the kind:
 
 - **Policy**: the handler runs again for the stored event, with the event's correlation. The
   inbox ledger is bypassed on purpose: it already says the handler ran, and you are asking for
@@ -454,11 +458,11 @@ What a replay does depends on the kind:
   once); see [a failed process](#a-failed-process). The letter of a follow-up of a timed-out
   process runs its handler and nothing else: the process stays timed out, and a handler a deploy
   removed lets the event through.
-- **Command**: the dropped command is dispatched again with the payload the letter recorded. A
-  command its aggregate now rejects settles the letter as `replayed`, as the scheduler would have
+- **Scheduled**: the dropped command is dispatched again with the payload the letter recorded. A
+  command its aggregate now rejects settles the letter as `retried`, as the scheduler would have
   settled it: a rejection is the aggregate's answer, logged as `command rejected`, not a failure.
 
-The same operations are on the app as `app.deadLetters` — `list`, `count`, `get`, `replay` and
+The same operations are on the app as `app.deadLetters` — `list`, `count`, `get`, `retry` and
 `discard` — for a script or an admin route.
 
 ## A failed process
@@ -470,9 +474,9 @@ the one it must not miss. So the instance parks them. Each event that would do s
 (it has a handler, or completes the process) is recorded in the instance's stream as
 `ProcessEventParked`, in the order it arrived, and nothing of the process runs meanwhile,
 deadlines included. A follow-up of a timed-out process is the exception: the process has ended,
-so its failure is only dead-lettered, and replaying the letter runs the handler again.
+so its failure is only dead-lettered, and retrying the letter runs the handler again.
 
-Replaying the dead letter of the failure is what brings the instance back:
+Retrying the dead letter of the failure is what brings the instance back:
 
 1. the failed handler runs again;
 2. the parked events are handled one by one, in order, with the same `idempotencyKey` each would
@@ -482,14 +486,14 @@ Replaying the dead letter of the failure is what brings the instance back:
    are scheduled again.
 
 A failure whose handler a deploy has since removed, an event's or a deadline's, is let through,
-and the replay goes on with what is parked. When the failure is the process's `timeout`, replaying it ends the process as
+and the retry goes on with what is parked. When the failure is the process's `timeout`, retrying it ends the process as
 timed out and drops what is parked, as for any timed-out instance; what its `at-timeout.ts` causes
 still reaches its handlers.
 
-An event that arrives during the replay is parked too and handled before the instance resumes, so
+An event that arrives during the retry is parked too and handled before the instance resumes, so
 nothing overtakes an older event. If a parked event fails again, for whatever reason, it becomes
 the new failure at once: it is dead-lettered without retries, the instance stays failed, and the
-events after it stay parked until that letter is replayed. A parked event the process no longer
+events after it stay parked until that letter is retried. A parked event the process no longer
 handles, after a deploy removed its handler, is let through. A parked event that completes the
 process completes it, and what is parked after it is dropped, as for any completed instance.
 
@@ -501,9 +505,9 @@ the events that reach it afterwards are dropped, as for an instance that has end
 The failure is state as well: `ProcessFailed` names its dead letter (`letterId`), and the two are
 written in the same transaction, with the claim of the event that failed. A failure that could
 not be written leaves nothing, and the handler runs again once its claim's lease expires. The
-same holds for each step of a replay: the replayed handler, each parked event or deadline drained
-and the final `ProcessResumed` are one transaction each, so a replay cut short goes on from the
-last step written on the next replay.
+same holds for each step of a retry: the retried handler, each parked event or deadline drained
+and the final `ProcessResumed` are one transaction each, so a retry cut short goes on from the
+last step written on the next retry.
 
 This is Axon's sequenced dead-letter queue, which parks the events of one sequence behind the one
 that failed, with the process instance as the sequence.
@@ -541,7 +545,7 @@ for a process deadline.
 
 ## Delaying a policy
 
-A delayed command decides later; a delayed policy acts later. When the effect itself has to wait,
+A scheduled command decides later; a delayed policy acts later. When the effect itself has to wait,
 as in *send the welcome email a minute after the user registers*, the policy exports `delay`:
 
 ```ts
@@ -559,7 +563,7 @@ event's time plus the delay, so a worker that falls behind does not push it late
 due, the worker reads the event, upcast to its shape at that moment, and runs the handler with
 everything a live run gets: ports, the commands facade, the same `idempotencyKey`, the
 aggregate's retry settings and time budget. A run that fails for good is dead-lettered as the
-policy's, and replaying it runs the handler at once. Delayed runs are not ordered among
+policy's, and retrying it runs the handler at once. Delayed runs are not ordered among
 themselves: the worker retries each one on its own, so the run for a later event can overtake an
 earlier one that is waiting for its retry.
 

@@ -130,7 +130,7 @@ describe("createMemoryStorageTransaction", () => {
     };
     await expect(
       ports.transact(async (tx) => {
-        await tx.deadLetterStore.updateStatus("d1", "replayed");
+        await tx.deadLetterStore.updateStatus("d1", "retried");
         await tx.scheduler.cancel("a");
         await refused(tx);
       }),

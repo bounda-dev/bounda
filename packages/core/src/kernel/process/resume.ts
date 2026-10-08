@@ -20,9 +20,10 @@ import type { ProcessUnits } from "./units.ts";
 
 export interface ResumeParked {
   /**
-   * Called once the failed step succeeded on replay. Drains the parked events in order, each
-   * deadline that came due before one of them running first, then writes `ProcessResumed`. Each
-   * step is one unit of work. Stops as soon as the instance is no longer failed on `letter`.
+   * Called once the failed step succeeded on a dead-letter retry. Drains the parked events in
+   * order, each deadline that came due before one of them running first, then writes
+   * `ProcessResumed`. Each step is one unit of work. Stops as soon as the instance is no longer
+   * failed on `letter`.
    */
   resumeParked(
     process: ProcessRuntime,

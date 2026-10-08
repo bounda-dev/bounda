@@ -20,10 +20,10 @@ export interface DeriveIdempotencyKeyArgs extends ReactionIdentity {
    */
   readonly subject: string;
   /**
-   * Set when an operator replays a dead letter, so the provider sees a new request instead of
+   * Set when an operator retries a dead letter, so the provider sees a new request instead of
    * answering with the outcome it stored for the failed one.
    */
-  readonly replay?: string | undefined;
+  readonly retryId?: string | undefined;
 }
 
 export interface DeriveIdempotencyKeyFunction {
@@ -38,10 +38,10 @@ export const deriveIdempotencyKey: DeriveIdempotencyKeyFunction = ({
   kind,
   handler,
   subject,
-  replay,
+  retryId,
 }) =>
   uuidV5(
-    [kind, handler, subject, ...(replay === undefined ? [] : ["replay", replay])].join(":"),
+    [kind, handler, subject, ...(retryId === undefined ? [] : ["retry", retryId])].join(":"),
     NAMESPACE,
   );
 
@@ -70,7 +70,7 @@ export interface CreateReactionCommandIdsFunction {
 /**
  * Ids for the commands one run of a reaction dispatches: a UUID v5 of its idempotency key, the
  * command type and how many commands of that type the run dispatched before. A retry that
- * dispatches the same commands gives them the same ids, so a delayed one is scheduled once.
+ * dispatches the same commands gives them the same ids, so a scheduled one is stored once.
  */
 export const createReactionCommandIds: CreateReactionCommandIdsFunction = (idempotencyKey) => {
   const dispatched = new Map<string, number>();

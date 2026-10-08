@@ -77,7 +77,7 @@ export interface TestDeadLetterFunction {
 export const testDeadLetter: TestDeadLetterFunction = (id) => ({
   id,
   kind: "policy",
-  subscriber: "order.p",
+  handler: "order.p",
   eventId: "e1",
   eventType: "OrderPlaced",
   aggregateType: "order",

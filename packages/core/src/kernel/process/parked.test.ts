@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RetryConfig } from "../../config/types.ts";
-import { ValidationError } from "../../contracts/errors.ts";
+import { DeadLetterNotRetriableError, ValidationError } from "../../contracts/errors.ts";
 import type { Instant } from "../../contracts/instant.ts";
 import type { ProcessAfterFunction, ProcessStateArgs } from "../../modules/process.ts";
 import type { Registry } from "../../modules/registry.ts";
@@ -123,6 +123,7 @@ const setUp = async (retry: RetryConfig = { strategy: "none" }, concurrencyRetri
   const deadLetters = createDeadLetters({
     storage: harness.storage,
     pipeline: harness.pipeline,
+    aggregates: harness.aggregates,
     policies: harness.policies,
     policyExecutor: harness.policyExecutor,
     processes: harness.processes,
@@ -204,7 +205,7 @@ describe("events of a failed process", () => {
     expect(await deadLetters.get(letter?.id ?? "")).toMatchObject({ parked: 2 });
   });
 
-  it("run in order after the failure is replayed, before the process resumes and its deadlines with it", async () => {
+  it("run in order after the failure is retried, before the process resumes and its deadlines with it", async () => {
     const context = await setUp();
     const { harness, deadLetters, settle, types, logs } = context;
     await failOnFirstPayment(context);
@@ -212,8 +213,8 @@ describe("events of a failed process", () => {
     await settle();
     const [letter] = await deadLetters.list();
 
-    const replayed = await deadLetters.replay(letter?.id ?? "");
-    expect(replayed).toMatchObject({ status: "replayed", parked: 0 });
+    const retried = await deadLetters.retry(letter?.id ?? "");
+    expect(retried).toMatchObject({ status: "retried", parked: 0 });
     expect(await types()).toEqual([
       PROCESS_EVENTS.started,
       PROCESS_EVENTS.handled,
@@ -236,7 +237,7 @@ describe("events of a failed process", () => {
     await settle();
     expect(runs).toHaveLength(1);
 
-    await deadLetters.replay((await deadLetters.list())[0]?.id ?? "");
+    await deadLetters.retry((await deadLetters.list())[0]?.id ?? "");
     expect((await types()).slice(-2)).toEqual([PROCESS_EVENTS.handled, PROCESS_EVENTS.resumed]);
     await settle();
     expect(runs.at(-1)).toBe("nudge");
@@ -267,8 +268,8 @@ describe("events of a failed process", () => {
     expect(first).toMatchObject({ parked: 2 });
 
     failingEvents.set("again-1", "terminal");
-    const replayed = await deadLetters.replay(first?.id ?? "");
-    expect(replayed).toMatchObject({ status: "replayed", parked: 2 });
+    const retried = await deadLetters.retry(first?.id ?? "");
+    expect(retried).toMatchObject({ status: "retried", parked: 2 });
     const [second] = await deadLetters.list({ status: "failed" });
     expect(second).toMatchObject({ eventId: "again-1", parked: 1, errorType: "terminal" });
     expect((await types()).at(-1)).toBe(PROCESS_EVENTS.failed);
@@ -279,7 +280,7 @@ describe("events of a failed process", () => {
     });
 
     failingEvents.clear();
-    await deadLetters.replay(second?.id ?? "");
+    await deadLetters.retry(second?.id ?? "");
     expect(runs.filter((run) => run.startsWith("paid:again"))).toEqual([
       "paid:again-1",
       "paid:again-1",
@@ -319,7 +320,7 @@ describe("events of a failed process", () => {
     expect(await deadLetters.get("nope")).toBeNull();
   });
 
-  it("wait behind a failed deadline, which runs first when replayed", async () => {
+  it("wait behind a failed deadline, which runs first when retried", async () => {
     const context = await setUp();
     const { harness, deadLetters, settle, types } = context;
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
@@ -333,7 +334,7 @@ describe("events of a failed process", () => {
     const [letter] = await deadLetters.list();
     expect(letter).toMatchObject({ eventId: "deadline:nudge", parked: 1 });
 
-    await deadLetters.replay(letter?.id ?? "");
+    await deadLetters.retry(letter?.id ?? "");
     expect(runs).toEqual(["nudge", "nudge", expect.stringMatching(/^paid:/)]);
     expect((await types()).slice(-3)).toEqual([
       PROCESS_EVENTS.deadlineReached,
@@ -342,7 +343,7 @@ describe("events of a failed process", () => {
     ]);
   });
 
-  it("carry on from where a replay that broke off left them, without running its failure twice", async () => {
+  it("carry on from where a retry that broke off left them, without running its failure twice", async () => {
     const context = await setUp();
     const { harness, deadLetters, settle, types } = context;
     await failOnFirstPayment(context);
@@ -360,23 +361,23 @@ describe("events of a failed process", () => {
       }
       return load(args);
     };
-    await expect(deadLetters.replay(letter?.id ?? "")).rejects.toThrow("disk hiccup");
+    await expect(deadLetters.retry(letter?.id ?? "")).rejects.toThrow("disk hiccup");
     harness.storage.eventStore.load = load;
     expect(runs.filter((run) => run.startsWith("paid:"))).toHaveLength(2);
 
-    await deadLetters.replay(letter?.id ?? "");
+    await deadLetters.retry(letter?.id ?? "");
     expect(runs.filter((run) => run.startsWith("paid:"))).toHaveLength(2);
     expect((await types()).at(-1)).toBe(PROCESS_EVENTS.completed);
   });
 
-  it("include one parked while the failure is being replayed, before the process resumes", async () => {
+  it("include one parked while the failure is being retried, before the process resumes", async () => {
     const context = await setUp();
     const { harness, deadLetters, types, logs } = context;
     await failOnFirstPayment(context);
     const [letter] = await deadLetters.list();
     const transact = harness.storage.transact;
     let arrived = false;
-    // The archive arrives once the first transaction of the replay that schedules has decided what
+    // The archive arrives once the first transaction of the retry that schedules has decided what
     // to write, before it commits.
     harness.storage.transact = (work) =>
       transact(async (tx) => {
@@ -398,7 +399,7 @@ describe("events of a failed process", () => {
         }
         return result;
       });
-    await deadLetters.replay(letter?.id ?? "");
+    await deadLetters.retry(letter?.id ?? "");
     harness.storage.transact = transact;
     expect(arrived).toBe(true);
     expect((await types()).slice(-4)).toEqual([
@@ -465,7 +466,7 @@ describe("events of a failed process", () => {
       ],
     });
     const [letter] = await deadLetters.list();
-    await expect(deadLetters.replay(letter?.id ?? "")).rejects.toThrow(
+    await expect(deadLetters.retry(letter?.id ?? "")).rejects.toThrow(
       "Parked event ghost of order:o-1 not found",
     );
   });
@@ -488,7 +489,7 @@ describe("events of a failed process", () => {
     });
     await settle();
     failingEvents.set("flaky", "retriable");
-    await deadLetters.replay((await deadLetters.list())[0]?.id ?? "");
+    await deadLetters.retry((await deadLetters.list())[0]?.id ?? "");
     expect(await deadLetters.list({ status: "failed" })).toMatchObject([
       { eventId: "flaky", errorType: "retriable_exhausted", errorMessage: "flaky is down" },
     ]);
@@ -517,7 +518,7 @@ describe("events of a failed process", () => {
         await harness.dispatcher.runUntilIdle();
       };
     };
-    await deadLetters.replay((await deadLetters.list())[0]?.id ?? "");
+    await deadLetters.retry((await deadLetters.list())[0]?.id ?? "");
     expect(runs.filter((run) => run === "paid:late-payment")).toHaveLength(2);
     expect((await types()).slice(-4)).toEqual([
       PROCESS_EVENTS.eventParked,
@@ -528,7 +529,7 @@ describe("events of a failed process", () => {
     expect(await deadLetters.list({ status: "failed" })).toEqual([]);
   });
 
-  it("let a failure to resume reach the caller, and resume on the next replay", async () => {
+  it("let a failure to resume reach the caller, and resume on the next retry", async () => {
     const context = await setUp();
     const { harness, deadLetters, types } = context;
     await failOnFirstPayment(context);
@@ -540,10 +541,10 @@ describe("events of a failed process", () => {
       return schedule(args);
     };
     const [letter] = await deadLetters.list();
-    await expect(deadLetters.replay(letter?.id ?? "")).rejects.toThrow("disk full");
+    await expect(deadLetters.retry(letter?.id ?? "")).rejects.toThrow("disk full");
     harness.storage.scheduler.schedule = schedule;
     expect((await types()).at(-1)).toBe(PROCESS_EVENTS.handled);
-    await deadLetters.replay(letter?.id ?? "");
+    await deadLetters.retry(letter?.id ?? "");
     expect((await types()).at(-1)).toBe(PROCESS_EVENTS.resumed);
     expect(runs.filter((run) => run.startsWith("paid:"))).toHaveLength(2);
   });
@@ -647,7 +648,7 @@ describe("events of a failed process", () => {
       await deployed.storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" })
     ).events.find((event) => event.type === "OrderPaid");
     if (failure === undefined) throw new Error("no payment");
-    await deployed.processes.replay({ process: "order.tally", event: failure, replay: "r" });
+    await deployed.processes.retry({ process: "order.tally", event: failure, retryId: "r" });
     const { events } = await deployed.storage.eventStore.load(stream);
     expect(events.slice(-3).map((event) => event.type)).toEqual([
       PROCESS_EVENTS.handled,
@@ -662,7 +663,7 @@ describe("events of a failed process", () => {
     });
   });
 
-  it("refuse to replay a letter of an instance that is failed on another step", async () => {
+  it("refuse to retry a letter of an instance that is failed on another step", async () => {
     const context = await setUp();
     const { harness, deadLetters } = context;
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
@@ -675,18 +676,20 @@ describe("events of a failed process", () => {
       aggregateId: "o-1",
     });
     await expect(
-      harness.processes.replay({
+      harness.processes.retry({
         process: "order.tally",
         event: order.events[0] as NonNullable<(typeof order.events)[number]>,
-        replay: "r",
+        retryId: "r",
       }),
     ).rejects.toThrow(
-      'Process "order.tally" is failed on another step for o-1; replay the dead letter of that failure first',
+      new DeadLetterNotRetriableError(
+        'Process "order.tally" is failed on another step for o-1; retry the dead letter of that failure first',
+      ),
     );
     expect(await deadLetters.list()).toMatchObject([{ eventId: "deadline:nudge" }]);
   });
 
-  it("say a replay failed again even when the only parked event is the one that failed", async () => {
+  it("say a retry failed again even when the only parked event is the one that failed", async () => {
     const context = await setUp();
     const { harness, deadLetters, settle } = context;
     await failOnFirstPayment(context);
@@ -704,14 +707,14 @@ describe("events of a failed process", () => {
     });
     await settle();
     failingEvents.set("only", "terminal");
-    const replayed = await deadLetters.replay((await deadLetters.list())[0]?.id ?? "");
-    expect(replayed).toMatchObject({ status: "replayed", parked: 1 });
+    const retried = await deadLetters.retry((await deadLetters.list())[0]?.id ?? "");
+    expect(retried).toMatchObject({ status: "retried", parked: 1 });
     expect(await deadLetters.list({ status: "failed" })).toMatchObject([
       { eventId: "only", parked: 0 },
     ]);
   });
 
-  it("finish a replay during which an event was parked, running the failed handler again on the instance as it now is", async () => {
+  it("finish a retry during which an event was parked, running the failed handler again on the instance as it now is", async () => {
     const context = await setUp();
     const { harness, deadLetters, types } = context;
     await failOnFirstPayment(context);
@@ -719,7 +722,7 @@ describe("events of a failed process", () => {
       await harness.pipeline.dispatch({ type: "ArchiveOrder", payload: { orderId: "o-1" } });
       await harness.dispatcher.runUntilIdle();
     };
-    await deadLetters.replay((await deadLetters.list())[0]?.id ?? "");
+    await deadLetters.retry((await deadLetters.list())[0]?.id ?? "");
     expect(runs.filter((run) => run.startsWith("paid:"))).toHaveLength(3);
     expect((await types()).slice(-4)).toEqual([
       PROCESS_EVENTS.eventParked,
@@ -754,7 +757,7 @@ describe("events of a failed process", () => {
       ],
     });
     await settle();
-    await deadLetters.replay((await deadLetters.list())[0]?.id ?? "");
+    await deadLetters.retry((await deadLetters.list())[0]?.id ?? "");
     expect(runs.slice(1)).toEqual([expect.stringMatching(/^paid:/), "nudge", "paid:later"]);
     expect((await types()).at(-1)).toBe(PROCESS_EVENTS.resumed);
   });
@@ -794,7 +797,7 @@ describe("events of a failed process", () => {
       await deployed.storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" })
     ).events.find((event) => event.type === "OrderPaid");
     if (failure === undefined) throw new Error("no payment");
-    await deployed.processes.replay({ process: "order.tally", event: failure, replay: "r" });
+    await deployed.processes.retry({ process: "order.tally", event: failure, retryId: "r" });
     const { events } = await deployed.storage.eventStore.load(stream);
     expect(events.slice(-2).map((event) => event.type)).toEqual([
       PROCESS_EVENTS.handled,
@@ -833,8 +836,8 @@ describe("events of a failed process", () => {
     });
     await settle();
     failing.set("nudge", "retriable");
-    const replayed = await deadLetters.replay((await deadLetters.list())[0]?.id ?? "");
-    expect(replayed.parked).toBe(2);
+    const retried = await deadLetters.retry((await deadLetters.list())[0]?.id ?? "");
+    expect(retried.parked).toBe(2);
     expect((await types()).at(-1)).toBe(PROCESS_EVENTS.failed);
     expect((await harness.storage.eventStore.load(stream)).events.at(-1)?.payload).toMatchObject({
       deadline: "nudge",
@@ -847,12 +850,12 @@ describe("events of a failed process", () => {
     });
 
     failing.delete("nudge");
-    await deadLetters.replay(letter?.id ?? "");
+    await deadLetters.retry(letter?.id ?? "");
     expect(runs.slice(-2)).toEqual(["nudge", "paid:after"]);
     expect((await types()).at(-1)).toBe(PROCESS_EVENTS.resumed);
   });
 
-  it("stop a replay, writing nothing more, when something other than a park ended the instance meanwhile", async () => {
+  it("stop a retry, writing nothing more, when something other than a park ended the instance meanwhile", async () => {
     const context = await setUp();
     const { harness, deadLetters, types } = context;
     await failOnFirstPayment(context);
@@ -872,8 +875,8 @@ describe("events of a failed process", () => {
         ],
       });
     };
-    expect((await deadLetters.replay((await deadLetters.list())[0]?.id ?? "")).status).toBe(
-      "replayed",
+    expect((await deadLetters.retry((await deadLetters.list())[0]?.id ?? "")).status).toBe(
+      "retried",
     );
     expect((await types()).at(-1)).toBe(PROCESS_EVENTS.completed);
     expect(runs.filter((run) => run.startsWith("paid:"))).toHaveLength(2);
@@ -906,7 +909,7 @@ describe("events of a failed process", () => {
         failingEvents.set("shared", "terminal");
       };
     };
-    await deadLetters.replay(letter?.id ?? "");
+    await deadLetters.retry(letter?.id ?? "");
     expect(await deadLetters.list({ status: "failed" })).toEqual([]);
     expect((await types()).at(-1)).toBe(PROCESS_EVENTS.resumed);
   });
@@ -926,7 +929,7 @@ describe("events of a failed process", () => {
         });
       };
     };
-    await deadLetters.replay(letter?.id ?? "");
+    await deadLetters.retry(letter?.id ?? "");
     expect(runs.filter((run) => run === "paid:shared")).toHaveLength(1);
     const handled = (await harness.storage.eventStore.load(stream)).events.filter(
       (event) =>
@@ -950,12 +953,12 @@ describe("events of a failed process", () => {
         failingEvents.set("late", "terminal");
       };
     };
-    expect((await deadLetters.replay(letter?.id ?? "")).status).toBe("replayed");
+    expect((await deadLetters.retry(letter?.id ?? "")).status).toBe("retried");
     expect((await types()).at(-1)).toBe(PROCESS_EVENTS.resumed);
     expect(await deadLetters.list({ status: "failed" })).toEqual([]);
   });
 
-  it("let a store failure while draining reach the caller, and drain again on the next replay", async () => {
+  it("let a store failure while draining reach the caller, and drain again on the next retry", async () => {
     const context = await setUp();
     const { harness, deadLetters, settle, types } = context;
     await failOnFirstPayment(context);
@@ -969,11 +972,11 @@ describe("events of a failed process", () => {
       if (cancels === 2) throw new Error("store down");
       return cancel(key);
     };
-    await expect(deadLetters.replay(letter?.id ?? "")).rejects.toThrow("store down");
+    await expect(deadLetters.retry(letter?.id ?? "")).rejects.toThrow("store down");
     harness.storage.scheduler.cancel = cancel;
     expect((await types()).at(-1)).toBe(PROCESS_EVENTS.handled);
     expect(runs.filter((run) => run === "paid:drained")).toHaveLength(1);
-    await deadLetters.replay(letter?.id ?? "");
+    await deadLetters.retry(letter?.id ?? "");
     expect(runs.filter((run) => run === "paid:drained")).toHaveLength(2);
     expect((await types()).at(-1)).toBe(PROCESS_EVENTS.resumed);
   });
@@ -997,7 +1000,7 @@ describe("events of a failed process", () => {
         failing.set("nudge", "terminal");
       };
     };
-    await deadLetters.replay((await deadLetters.list())[0]?.id ?? "");
+    await deadLetters.retry((await deadLetters.list())[0]?.id ?? "");
     expect(runs.slice(1)).toEqual([expect.stringMatching(/^paid:/), "nudge"]);
     const failures = (await harness.storage.eventStore.load(stream)).events.filter(
       (event) => (event.payload as { deadline?: string }).deadline === "nudge",
@@ -1029,7 +1032,7 @@ describe("events of a failed process", () => {
         failing.set("nudge", "terminal");
       };
     };
-    await deadLetters.replay((await deadLetters.list())[0]?.id ?? "");
+    await deadLetters.retry((await deadLetters.list())[0]?.id ?? "");
     expect(reached).toBe(true);
     expect(runs.slice(1)).toEqual([expect.stringMatching(/^paid:/), "nudge", "paid:later"]);
     expect(
@@ -1060,7 +1063,7 @@ describe("events of a failed process", () => {
         });
       };
     };
-    await deadLetters.replay((await deadLetters.list())[0]?.id ?? "");
+    await deadLetters.retry((await deadLetters.list())[0]?.id ?? "");
     expect(runs.slice(1)).toEqual([expect.stringMatching(/^paid:/), "nudge", "paid:later"]);
     expect(
       (await harness.storage.eventStore.load(stream)).events.filter(
@@ -1083,8 +1086,8 @@ describe("events of a failed process", () => {
         failing.set("nudge", "terminal");
       };
     };
-    expect((await deadLetters.replay((await deadLetters.list())[0]?.id ?? "")).status).toBe(
-      "replayed",
+    expect((await deadLetters.retry((await deadLetters.list())[0]?.id ?? "")).status).toBe(
+      "retried",
     );
     expect(runs.slice(1)).toEqual([expect.stringMatching(/^paid:/), "nudge"]);
     expect((await types()).at(-1)).toBe(PROCESS_EVENTS.resumed);
@@ -1124,7 +1127,7 @@ describe("events of a failed process", () => {
     await harness.storage.deadLetterStore.add({
       id: "orphan-letter",
       kind: "process",
-      subscriber: "order.gone",
+      handler: "order.gone",
       eventId: "deadline:x",
       eventType: "bounda.ProcessDeadline",
       aggregateType: "process:Gone",
@@ -1312,10 +1315,10 @@ describe("events of a failed process", () => {
     });
     const { events } = await harness.storage.eventStore.load(stream);
     await deployed.storage.eventStore.append({ ...stream, expectedVersion: 0, events });
-    await deployed.processes.replayDeadline({
+    await deployed.processes.retryDeadline({
       payload: { process: "order.tally", aggregateId: "o-1" },
       context: { correlationId: "c", causationId: "c", depth: 0 },
-      replay: "r",
+      retryId: "r",
     });
     const after = await deployed.storage.eventStore.load(stream);
     expect(after.events.slice(-2).map((event) => event.type)).toEqual([
@@ -1336,18 +1339,18 @@ describe("events of a failed process", () => {
     await harness.storage.deadLetterStore.add({ ...rest, id: "stale" });
     expect(await deadLetters.get("stale")).toMatchObject({ parked: 0 });
     expect(await deadLetters.get(blocking.id)).toMatchObject({ parked: 1 });
-    await expect(deadLetters.replay("stale")).rejects.toThrow("is failed on another step for o-1");
+    await expect(deadLetters.retry("stale")).rejects.toThrow("is failed on another step for o-1");
     await expect(
-      harness.processes.replayDeadline({
+      harness.processes.retryDeadline({
         payload: { process: "order.tally", aggregateId: "o-1" },
         context: { correlationId: "c", causationId: "c", depth: 0 },
-        replay: "r",
+        retryId: "r",
         letter: blocking.id,
       }),
     ).rejects.toThrow("has no failed deadline for o-1");
   });
 
-  it("refuse to replay a deadline letter that is not the failure its instance is blocked on", async () => {
+  it("refuse to retry a deadline letter that is not the failure its instance is blocked on", async () => {
     const context = await setUp();
     const { harness, deadLetters } = context;
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
@@ -1357,15 +1360,15 @@ describe("events of a failed process", () => {
     await context.settle();
     const [letter] = await deadLetters.list();
     await expect(
-      harness.processes.replayDeadline({
+      harness.processes.retryDeadline({
         payload: { process: "order.tally", aggregateId: "o-1" },
         context: { correlationId: "c", causationId: "c", depth: 0 },
-        replay: "r",
+        retryId: "r",
         letter: "stale",
       }),
     ).rejects.toThrow("is failed on another step for o-1");
     failing.delete("nudge");
-    await deadLetters.replay(letter?.id ?? "");
+    await deadLetters.retry(letter?.id ?? "");
     expect((await harness.storage.eventStore.load(stream)).events.at(-1)?.type).toBe(
       PROCESS_EVENTS.resumed,
     );
@@ -1398,7 +1401,7 @@ describe("events of a failed process", () => {
         failingEvents.set("twice", "terminal");
       };
     };
-    await deadLetters.replay(letter?.id ?? "");
+    await deadLetters.retry(letter?.id ?? "");
     const failures = (await harness.storage.eventStore.load(stream)).events.filter(
       (event) =>
         event.type === PROCESS_EVENTS.failed &&
@@ -1462,7 +1465,7 @@ describe("events of a failed process", () => {
     expect(await deadLetters.list()).toMatchObject([{ eventId: "deadline:nudge", parked: 0 }]);
   });
 
-  it("write a drained step's failure and its letter together, or neither, and record both on the next replay", async () => {
+  it("write a drained step's failure and its letter together, or neither, and record both on the next retry", async () => {
     const context = await setUp();
     const { harness, deadLetters, settle, types } = context;
     await failOnFirstPayment(context);
@@ -1490,12 +1493,12 @@ describe("events of a failed process", () => {
       }
       return add(letter);
     };
-    await expect(deadLetters.replay(first?.id ?? "")).rejects.toThrow("store down");
+    await expect(deadLetters.retry(first?.id ?? "")).rejects.toThrow("store down");
     expect(down).toBe(false);
     expect((await types()).at(-1)).toBe(PROCESS_EVENTS.handled);
     expect(await deadLetters.list({ status: "failed" })).toMatchObject([{ id: first?.id }]);
-    expect(await deadLetters.replay(first?.id ?? "")).toMatchObject({
-      status: "replayed",
+    expect(await deadLetters.retry(first?.id ?? "")).toMatchObject({
+      status: "retried",
       parked: 1,
     });
     expect((await types()).at(-1)).toBe(PROCESS_EVENTS.failed);
@@ -1504,7 +1507,7 @@ describe("events of a failed process", () => {
     expect(runs.filter((run) => run === "paid:again")).toHaveLength(2);
   });
 
-  it("stop a drain once another replay recorded a new failure", async () => {
+  it("stop a drain once another retry recorded a new failure", async () => {
     const context = await setUp();
     const { harness, deadLetters, settle, types } = context;
     await failOnFirstPayment(context);
@@ -1532,12 +1535,12 @@ describe("events of a failed process", () => {
         other = true;
         await rawAppend(harness, PROCESS_EVENTS.failed, {
           eventId: "p2",
-          error: "other replay",
+          error: "other retry",
           letterId: "L2",
         });
       };
     };
-    await deadLetters.replay(letter?.id ?? "");
+    await deadLetters.retry(letter?.id ?? "");
     expect(other).toBe(true);
     expect(runs).not.toContain("paid:p2");
     expect((await types()).at(-1)).toBe(PROCESS_EVENTS.failed);
@@ -1587,7 +1590,7 @@ describe("a parked event that is handled and completes the process", () => {
     ).events[0];
     if (placed === undefined) throw new Error("not placed");
     placedFails = false;
-    await harness.processes.replay({ process: "order.closer", event: placed, replay: "r" });
+    await harness.processes.retry({ process: "order.closer", event: placed, retryId: "r" });
     const { events } = await harness.storage.eventStore.load({
       aggregateType: "process:Closer",
       aggregateId: "o-1",
@@ -1642,18 +1645,18 @@ const failOnNudge = async (context: Context) => {
   failing.delete("nudge");
 };
 
-describe("replaying a failed process", () => {
-  it("log the replay and the resume it ends with", async () => {
+describe("retrying a failed process", () => {
+  it("log the retry and the resume it ends with", async () => {
     const context = await setUp();
     const { deadLetters, logs } = context;
     await failOnFirstPayment(context);
     const [letter] = await deadLetters.list();
 
-    await deadLetters.replay(letter?.id ?? "");
+    await deadLetters.retry(letter?.id ?? "");
 
     expect(logs).toContainEqual({
       level: "info",
-      message: "process handler replayed",
+      message: "process handler retried",
       fields: { process: "order.tally", eventId: letter?.eventId },
     });
     expect(logs).toContainEqual({
@@ -1663,7 +1666,7 @@ describe("replaying a failed process", () => {
     });
   });
 
-  it("run a replayed handler on a running instance, and complete nothing when it was handled", async () => {
+  it("run a retried handler on a running instance, and complete nothing when it was handled", async () => {
     const context = await setUp();
     const { harness, settle, types } = context;
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
@@ -1671,8 +1674,8 @@ describe("replaying a failed process", () => {
     await context.pay();
     const paid = await firstPayment(context);
 
-    await harness.processes.replay({ process: "order.tally", event: paid, replay: "r" });
-    await harness.processes.replay({ process: "order.tally", event: paid, replay: "r" });
+    await harness.processes.retry({ process: "order.tally", event: paid, retryId: "r" });
+    await harness.processes.retry({ process: "order.tally", event: paid, retryId: "r" });
 
     expect(runs).toEqual([`paid:${paid.id}`]);
     expect(await types()).toEqual([
@@ -1728,11 +1731,11 @@ describe("replaying a failed process", () => {
     });
     const archived = order.find((event) => event.type === "OrderArchived");
     if (archived === undefined) throw new Error("not archived");
-    const replay = () =>
-      second.processes.replay({ process: "order.tally", event: archived, replay: "r" });
+    const retry = () =>
+      second.processes.retry({ process: "order.tally", event: archived, retryId: "r" });
 
-    await replay();
-    await replay();
+    await retry();
+    await retry();
 
     const types = (await second.storage.eventStore.load(stream)).events.map((event) => event.type);
     expect(types).toEqual([
@@ -1753,10 +1756,10 @@ describe("replaying a failed process", () => {
     await settle();
     failingEvents.set("after", "terminal");
 
-    await harness.processes.replay({
+    await harness.processes.retry({
       process: "order.tally",
       event: await firstPayment(context),
-      replay: "r",
+      retryId: "r",
     });
 
     expect(runs.filter((run) => run === "paid:after")).toHaveLength(1);
@@ -1772,10 +1775,10 @@ describe("replaying a failed process", () => {
     await settle();
     failing.set("nudge", "terminal");
 
-    await harness.processes.replay({
+    await harness.processes.retry({
       process: "order.tally",
       event: await firstPayment(context),
-      replay: "r",
+      retryId: "r",
     });
 
     expect(runs.filter((run) => run === "nudge")).toHaveLength(1);
@@ -1793,28 +1796,28 @@ describe("replaying a failed process", () => {
     await payAgain(context, "after");
     await settle();
 
-    await deadLetters.replay((await deadLetters.list())[0]?.id ?? "");
+    await deadLetters.retry((await deadLetters.list())[0]?.id ?? "");
 
     expect(runs.slice(-2)).toEqual(["nudge", "paid:after"]);
   });
 
-  it("refuse to replay a deadline the process no longer fails on, and count nothing behind it", async () => {
+  it("refuse to retry a deadline the process no longer fails on, and count nothing behind it", async () => {
     const context = await setUp();
     const { harness, deadLetters } = context;
     await failOnNudge(context);
     const [letter] = await deadLetters.list();
 
-    expect(await deadLetters.replay(letter?.id ?? "")).toMatchObject({ parked: 0 });
+    expect(await deadLetters.retry(letter?.id ?? "")).toMatchObject({ parked: 0 });
     await expect(
-      harness.processes.replayDeadline({
+      harness.processes.retryDeadline({
         payload: { process: "order.tally", aggregateId: "o-1" },
         context: { correlationId: "c", causationId: "c", depth: 0 },
-        replay: "r-2",
+        retryId: "r-2",
       }),
     ).rejects.toThrow("has no failed deadline for o-1");
   });
 
-  it("run a failed deadline once when its replay broke off after reaching it", async () => {
+  it("run a failed deadline once when its retry broke off after reaching it", async () => {
     const context = await setUp();
     const { harness, deadLetters, types } = context;
     await failOnNudge(context);
@@ -1826,10 +1829,10 @@ describe("replaying a failed process", () => {
       return schedule(args);
     };
     const [letter] = await deadLetters.list();
-    await expect(deadLetters.replay(letter?.id ?? "")).rejects.toThrow("disk full");
+    await expect(deadLetters.retry(letter?.id ?? "")).rejects.toThrow("disk full");
     harness.storage.scheduler.schedule = schedule;
 
-    await deadLetters.replay(letter?.id ?? "");
+    await deadLetters.retry(letter?.id ?? "");
 
     expect(runs.filter((run) => run === "nudge")).toHaveLength(2);
     expect((await types()).slice(-2)).toEqual([
@@ -1866,7 +1869,7 @@ describe("an event handled while a deadline writes to its instance", () => {
       PROCESS_EVENTS.handled,
     ]);
     expect(
-      await harness.storage.inboxLedger.get({ subscriber: "order.tally", eventId: paid.id }),
+      await harness.storage.inboxLedger.get({ handler: "order.tally", eventId: paid.id }),
     ).toMatchObject({ status: "succeeded", attempts: 1 });
     expect(await harness.storage.deadLetterStore.list()).toEqual([]);
   });

@@ -219,7 +219,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
 
   it("leaves lastError out of a claim that never failed", async () => {
     const { inboxLedger } = await openStorage();
-    const key = { subscriber: "policies", eventId: "e-1" };
+    const key = { handler: "order.p", eventId: "e-1" };
     await inboxLedger.tryClaim({ ...key, now: new Date(), leaseMs: 1_000 });
     expect(await inboxLedger.get(key)).not.toHaveProperty("lastError");
     await inboxLedger.fail({ ...key, error: "boom" });
@@ -309,71 +309,6 @@ describe.skipIf(container === null)("postgresql adapter", () => {
       "a",
     ]);
     expect(row).toEqual({ id: "a", tags: ["x", "y"], since });
-  });
-
-  it("adds the columns a database created by an earlier version lacks", async () => {
-    await closeOpened();
-    const adapter = fresh();
-    const prefix = `t${run}_${prefixes}_`;
-    const first = await adapter.createStorage({ logger: silentLogger });
-    await first.close();
-    const probe = await openReadModel(adapter, "probe", contractFields);
-    await (probe.client.raw as Sql).unsafe(
-      `ALTER TABLE "${prefix}dead_letters" DROP COLUMN "payload"`,
-    );
-    await (probe.client.raw as Sql).unsafe(
-      `ALTER TABLE "${prefix}scheduled_commands" DROP COLUMN "revision", DROP COLUMN "claim_id"`,
-    );
-    await (probe.client.raw as Sql).unsafe(`ALTER TABLE "${prefix}inbox" DROP COLUMN "claim_id"`);
-    await closeOpened();
-
-    const storage = await openStorage(adapter);
-    const letter = await storage.deadLetterStore.add({
-      id: "cmd",
-      kind: "command",
-      subscriber: "scheduled:PlaceOrder",
-      eventId: "k",
-      eventType: "PlaceOrder",
-      aggregateType: "order",
-      aggregateId: "o-1",
-      errorType: "terminal",
-      errorMessage: "nope",
-      attempts: 1,
-      firstFailedAt: "2026-01-01T00:00:00.000Z",
-      lastFailedAt: "2026-01-01T00:00:00.000Z",
-      payload: { orderId: "o-1" },
-    });
-    expect(letter.payload).toEqual({ orderId: "o-1" });
-    await storage.scheduler.schedule({
-      dedupeKey: "k",
-      command: { type: "PlaceOrder", aggregateId: "o-1", payload: {} },
-      executeAt: new Date("2026-01-01T00:00:00.000Z"),
-      context: { correlationId: "c", causationId: "c", depth: 0 },
-    });
-    expect(
-      await storage.scheduler.claimDue({
-        now: new Date("2026-01-01T00:00:01.000Z"),
-        limit: 1,
-        leaseMs: 1_000,
-      }),
-    ).toMatchObject([{ dedupeKey: "k", revision: 0 }]);
-    await storage.inboxLedger.tryClaim({
-      subscriber: "policies",
-      eventId: "e-1",
-      now: new Date("2026-01-01T00:00:00.000Z"),
-      leaseMs: 1_000,
-    });
-    await storage.inboxLedger.fail({
-      subscriber: "policies",
-      eventId: "e-1",
-      error: "nope",
-    });
-    expect(await storage.inboxLedger.get({ subscriber: "policies", eventId: "e-1" })).toMatchObject(
-      {
-        status: "failed",
-        lastError: "nope",
-      },
-    );
   });
 
   it("logs the lifecycle of a rebuild with the tables involved", async () => {

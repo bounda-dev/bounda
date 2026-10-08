@@ -20,9 +20,9 @@ export interface RunPolicyArgs {
    */
   readonly attempt: number;
   /**
-   * Set when an operator replays a dead letter, so the handler gets a new idempotency key.
+   * Set when an operator retries a dead letter, so the handler gets a new idempotency key.
    */
-  readonly replay?: string | undefined;
+  readonly retryId?: string | undefined;
   /**
    * The unit of work the run's commands write to, to commit with the attempt.
    */
@@ -30,7 +30,7 @@ export interface RunPolicyArgs {
 }
 
 /**
- * The live subscriber, the worker running a delayed policy and a dead-letter replay all run
+ * The live subscriber, the worker running a delayed policy and a dead-letter retry all run
  * policies through it, so the handler always gets the same arguments, time budget and trace.
  */
 export interface PolicyExecutor {
@@ -56,12 +56,12 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
   clock,
   logger,
 }) => ({
-  run: async ({ policy, event, attempt, replay, within }) => {
+  run: async ({ policy, event, attempt, retryId, within }) => {
     const idempotencyKey = deriveIdempotencyKey({
       kind: "policy",
       handler: policy.name,
       subject: event.id,
-      replay,
+      retryId,
     });
     const reaction = createReactionCommands({
       aggregates,

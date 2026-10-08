@@ -289,7 +289,7 @@ describe("createTestApp runUntilIdle", () => {
     await expect(app.runUntilIdle()).resolves.toEqual({ idle: true, rejections: [] });
     expect(clock.now().toISOString()).toBe("2026-01-01T00:00:03.000Z");
     expect(await app.deadLetters.list()).toMatchObject([
-      { kind: "policy", subscriber: "order.mailOnOrderPlaced", attempts: 3 },
+      { kind: "policy", handler: "order.mailOnOrderPlaced", attempts: 3 },
     ]);
     await app.stop();
   });

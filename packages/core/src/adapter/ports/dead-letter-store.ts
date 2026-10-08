@@ -1,16 +1,24 @@
-export type DeadLetterKind = "policy" | "process" | "projection" | "command";
+/**
+ * What gave up: a policy or process handler (a delayed policy run included), or a scheduled
+ * command, one dispatched with `delay`.
+ */
+export type DeadLetterKind = "policy" | "process" | "scheduled";
 
 export type DeadLetterErrorType = "terminal" | "retriable_exhausted";
 
-export type DeadLetterStatus = "failed" | "replayed" | "discarded";
+export type DeadLetterStatus = "failed" | "retried" | "discarded";
 
 /**
- * A handler run that gave up. `status` is `failed` until an operator replays or discards it.
+ * A handler run that gave up. `status` is `failed` until an operator retries or discards it.
  */
 export interface DeadLetter {
   readonly id: string;
   readonly kind: DeadLetterKind;
-  readonly subscriber: string;
+  /**
+   * The policy or process name, `order.notifyOnOrderPlaced`, or the scheduled command's type,
+   * `PlaceOrder`.
+   */
+  readonly handler: string;
   readonly eventId: string;
   readonly eventType: string;
   readonly aggregateType: string;
@@ -23,13 +31,13 @@ export interface DeadLetter {
   readonly lastFailedAt: string;
   readonly status: DeadLetterStatus;
   /**
-   * Only on `command` letters: the dropped scheduled command's payload, to dispatch it again.
+   * Only on `scheduled` letters: the dropped command's payload, to dispatch it again.
    * Policy and process letters point at a stored event instead.
    */
   readonly payload?: unknown;
   /**
    * Process letters only: how many steps wait on the instance. While the letter is `failed`, the
-   * events parked behind it for its replay to handle; on the letter a replay returns, the steps
+   * events parked behind it for its retry to handle; on the letter a retry returns, the steps
    * still waiting because the process failed again, the one it failed on included, so `0` there
    * means the instance resumed, or, for a follow-up of a timed-out instance, that nothing waits.
    * Filled in by `app.deadLetters`, never stored.
@@ -41,7 +49,7 @@ export type NewDeadLetter = Omit<DeadLetter, "status" | "parked">;
 
 export interface ListDeadLettersArgs {
   readonly kind?: DeadLetterKind;
-  readonly subscriber?: string;
+  readonly handler?: string;
   readonly status?: DeadLetterStatus;
   readonly limit?: number;
   readonly offset?: number;
@@ -58,7 +66,7 @@ export interface DeadLetterStore {
   count(args?: ListDeadLettersArgs): Promise<number>;
   /**
    * Moves a `failed` letter to `status`. Rejects with `DeadLetterSettledError` when the letter is
-   * missing or no longer `failed`, so of two replays or discards of one letter only the first
+   * missing or no longer `failed`, so of two retries or discards of one letter only the first
    * changes it.
    */
   updateStatus(id: string, status: DeadLetterStatus): Promise<void>;

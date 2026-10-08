@@ -12,25 +12,25 @@ const parkedEvents = (count: number): string =>
  */
 export const formatLetter: FormatLetterFunction = (letter) =>
   [
-    `${letter.id}  ${letter.status}  ${letter.kind}  ${letter.subscriber}`,
+    `${letter.id}  ${letter.status}  ${letter.kind}  ${letter.handler}`,
     `    ${letter.eventType} on ${letter.aggregateType}:${letter.aggregateId}, ${letter.attempts} attempt${letter.attempts === 1 ? "" : "s"}, last ${letter.lastFailedAt} (${letter.errorType})`,
     `    ${letter.errorMessage}`,
     ...((letter.parked ?? 0) > 0
       ? [
           letter.eventId === "deadline:timeout"
-            ? `    ${parkedEvents(letter.parked ?? 0)} behind it; replaying it times the process out and drops them`
-            : `    ${parkedEvents(letter.parked ?? 0)} behind it; replaying it handles them in order`,
+            ? `    ${parkedEvents(letter.parked ?? 0)} behind it; retrying it times the process out and drops them`
+            : `    ${parkedEvents(letter.parked ?? 0)} behind it; retrying it handles them in order`,
         ]
       : []),
   ].join("\n");
 
 /**
- * What `bounda dead-letters replay` prints for the letter a replay returns, saying when the
+ * What `bounda dead-letters retry` prints for the letter a retry returns, saying when the
  * process failed again while handling what waited behind it.
  */
-export const formatReplayed: FormatLetterFunction = (letter) =>
+export const formatRetried: FormatLetterFunction = (letter) =>
   [
-    `replayed dead letter ${letter.id}: ${letter.kind} ${letter.subscriber} for ${letter.eventType}`,
+    `retried dead letter ${letter.id}: ${letter.kind} ${letter.handler} for ${letter.eventType}`,
     ...((letter.parked ?? 0) > 0
       ? [
           `the process failed again; ${letter.parked} step${letter.parked === 1 ? " still waits" : "s still wait"}, starting with the new dead letter`,

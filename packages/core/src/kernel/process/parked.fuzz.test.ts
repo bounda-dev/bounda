@@ -123,6 +123,7 @@ const run = async (seed: number): Promise<void> => {
   const deadLetters = createDeadLetters({
     storage: harness.storage,
     pipeline: harness.pipeline,
+    aggregates: harness.aggregates,
     policies: harness.policies,
     policyExecutor: harness.policyExecutor,
     processes: harness.processes,
@@ -203,10 +204,10 @@ const run = async (seed: number): Promise<void> => {
     discarded.add(letter.id);
   };
 
-  const replayOne = async (): Promise<void> => {
+  const retryOne = async (): Promise<void> => {
     const failed = await harness.storage.deadLetterStore.list({ status: "failed" });
     if (failed.length === 0) return;
-    await deadLetters.replay(pick(failed).id).catch(() => undefined);
+    await deadLetters.retry(pick(failed).id).catch(() => undefined);
   };
 
   const operations: readonly (() => Promise<unknown>)[] = [
@@ -215,8 +216,8 @@ const run = async (seed: number): Promise<void> => {
     () => harness.dispatcher.processOnce(),
     () => harness.dispatcher.processOnce(),
     () => harness.worker.runOnce(),
-    replayOne,
-    replayOne,
+    retryOne,
+    retryOne,
     async () => harness.clock.advance(Math.floor(next() * 30) * HOUR),
     async () => {
       const ids = [...failing.keys()];
@@ -269,7 +270,7 @@ const run = async (seed: number): Promise<void> => {
     await harness.dispatcher.runUntilIdle();
     for (let pass = 0; pass < 12; pass += 1) await harness.worker.runOnce();
     for (const letter of await harness.storage.deadLetterStore.list({ status: "failed" })) {
-      await deadLetters.replay(letter.id).catch(() => undefined);
+      await deadLetters.retry(letter.id).catch(() => undefined);
     }
     harness.clock.advance(harness.worker.leaseMs + 1);
   }

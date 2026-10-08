@@ -1,6 +1,6 @@
 import type { DeadLetter } from "../../adapter/ports/dead-letter-store.ts";
 import {
-  ConfigurationError,
+  DeadLetterNotRetriableError,
   DeadLetterSettledError,
   NotFoundError,
 } from "../../contracts/errors.ts";
@@ -19,19 +19,19 @@ import { completesOn, handledEntries, handlerOf, letThrough, pendingFollowUp } f
 import type { DeadlineSchedule } from "./schedule.ts";
 import type { ProcessUnits } from "./units.ts";
 
-interface ReplayArgs {
+interface RetryArgs {
   /**
-   * Identifies this replay, so the handler's `idempotencyKey` differs from the failed run's.
+   * Identifies this retry, so the handler's `idempotencyKey` differs from the failed run's.
    */
-  readonly replay: string;
+  readonly retryId: string;
   /**
-   * The id of the dead letter being replayed: the replay goes on only while it is the failure its
+   * The id of the dead letter being retried: the retry goes on only while it is the failure its
    * instance is blocked on or, for a follow-up of a timed-out instance, while it is still failed.
    */
   readonly letter?: string | undefined;
 }
 
-export interface ReplayProcessArgs extends ReplayArgs {
+export interface RetryProcessArgs extends RetryArgs {
   /**
    * The process name as a dead letter records it, e.g. `order.orderPayment`.
    */
@@ -39,7 +39,7 @@ export interface ReplayProcessArgs extends ReplayArgs {
   readonly event: StoredEvent;
 }
 
-export interface ReplayDeadlineArgs extends ReplayArgs {
+export interface RetryDeadlineArgs extends RetryArgs {
   readonly payload: DeadlineTarget;
   readonly context: CausationContext;
 }
@@ -49,32 +49,32 @@ export interface ReplayDeadlineArgs extends ReplayArgs {
  */
 export interface ProcessDeadLetters {
   /**
-   * Ignores the inbox ledger. The replayed step is one unit of work; a failed process then drains
+   * Ignores the inbox ledger. The retried step is one unit of work; a failed process then drains
    * its parked events in order before it resumes, one unit each; one that fails again becomes the
    * new failure, and the rest stay parked. A follow-up of a timed-out instance has nothing to
-   * drain, so its replay marks `letter` replayed in its own unit and resolves to `true`; any other
+   * drain, so its retry marks `letter` retried in its own unit and resolves to `true`; any other
    * resolves to `false`, leaving the letter to the caller.
    */
-  replay(args: ReplayProcessArgs): Promise<boolean>;
+  retry(args: RetryProcessArgs): Promise<boolean>;
   /**
    * Runs again the deadline a process failed on, with a new `idempotencyKey`, then resumes the
-   * instance as `replay` does.
+   * instance as `retry` does.
    */
-  replayDeadline(args: ReplayDeadlineArgs): Promise<void>;
+  retryDeadline(args: RetryDeadlineArgs): Promise<void>;
   /**
    * How many events wait behind a process dead letter: those parked on its instance while the
    * failure it records keeps the instance failed. `0` for any other letter.
    */
   parkedBehind(letter: DeadLetter): Promise<number>;
   /**
-   * After a replay of a process dead letter: how many steps of its instance still wait because
+   * After a retry of a process dead letter: how many steps of its instance still wait because
    * the process failed again, the one it failed on included, whether an event or a deadline. `0`
    * once it resumed.
    */
   stillParked(letter: DeadLetter): Promise<number>;
 }
 
-export interface CreateProcessReplayArgs {
+export interface CreateProcessRetryArgs {
   readonly processes: ProcessesRuntime;
   readonly units: ProcessUnits;
   readonly handlers: ProcessHandlers;
@@ -84,24 +84,27 @@ export interface CreateProcessReplayArgs {
   readonly logger: Logger;
 }
 
-export interface CreateProcessReplayFunction {
-  (args: CreateProcessReplayArgs): ProcessDeadLetters;
+export interface CreateProcessRetryFunction {
+  (args: CreateProcessRetryArgs): ProcessDeadLetters;
 }
 
-const failedOnAnotherStep = (process: ProcessRuntime, instanceId: string): ConfigurationError =>
-  new ConfigurationError(
-    `Process "${process.name}" is failed on another step for ${instanceId}; replay the dead letter of that failure first`,
+const failedOnAnotherStep = (
+  process: ProcessRuntime,
+  instanceId: string,
+): DeadLetterNotRetriableError =>
+  new DeadLetterNotRetriableError(
+    `Process "${process.name}" is failed on another step for ${instanceId}; retry the dead letter of that failure first`,
   );
 
 const registered = (processes: ProcessesRuntime, name: string): ProcessRuntime => {
   const process = processes.byName[name];
   if (process === undefined) {
-    throw new ConfigurationError(`Process "${name}" is no longer in the registry`);
+    throw new DeadLetterNotRetriableError(`Process "${name}" is no longer in the registry`);
   }
   return process;
 };
 
-export const createProcessReplay: CreateProcessReplayFunction = ({
+export const createProcessRetry: CreateProcessRetryFunction = ({
   processes,
   units,
   handlers,
@@ -112,12 +115,12 @@ export const createProcessReplay: CreateProcessReplayFunction = ({
 }) => {
   const { load } = units.live;
 
-  const replay = async ({
+  const retry = async ({
     process: name,
     event,
-    replay,
+    retryId,
     letter,
-  }: ReplayProcessArgs): Promise<boolean> => {
+  }: RetryProcessArgs): Promise<boolean> => {
     const process = registered(processes, name);
     const instanceId = process.instanceOf(event);
     const instance = instanceId === null ? null : await load(process, instanceId);
@@ -128,7 +131,7 @@ export const createProcessReplay: CreateProcessReplayFunction = ({
     const handler = handlerOf(process, event);
     const followUp = instance !== null && pendingFollowUp(instance, event);
     if (handler === undefined && !failedHere && !followUp) {
-      throw new ConfigurationError(`Process "${name}" no longer handles ${event.type}`);
+      throw new DeadLetterNotRetriableError(`Process "${name}" no longer handles ${event.type}`);
     }
     if (instanceId === null || instance === null || !instance.exists) {
       throw new NotFoundError(
@@ -147,7 +150,7 @@ export const createProcessReplay: CreateProcessReplayFunction = ({
         if ((await unit.deadLetterStore.get(letter))?.status !== "failed") {
           throw new DeadLetterSettledError({ id: letter });
         }
-        await unit.deadLetterStore.updateStatus(letter, "replayed");
+        await unit.deadLetterStore.updateStatus(letter, "retried");
         settled = true;
       }
       if (current.handledEventIds.has(event.id)) {
@@ -164,7 +167,7 @@ export const createProcessReplay: CreateProcessReplayFunction = ({
             instanceId,
             instance: current,
             attempt: 1,
-            replay,
+            retryId,
             within: unit,
           });
         }
@@ -178,16 +181,16 @@ export const createProcessReplay: CreateProcessReplayFunction = ({
       await schedule.stage(unit, process, instanceId);
     });
     if (!settled) await resume.resumeParked(process, instanceId, letter);
-    logger.info("process handler replayed", { process: process.name, eventId: event.id });
+    logger.info("process handler retried", { process: process.name, eventId: event.id });
     return settled;
   };
 
-  const replayDeadline = async ({
+  const retryDeadline = async ({
     payload,
     context,
-    replay,
+    retryId,
     letter,
-  }: ReplayDeadlineArgs): Promise<void> => {
+  }: RetryDeadlineArgs): Promise<void> => {
     const process = registered(processes, payload.process);
     const instance = await load(process, payload.aggregateId);
     const failed = instance.failure?.deadline;
@@ -201,7 +204,7 @@ export const createProcessReplay: CreateProcessReplayFunction = ({
     }
     await units.commit(async (unit, within) => {
       const current = await within.load(process, payload.aggregateId);
-      // A concurrent replay of the same letter may have run the deadline already: the timeout
+      // A concurrent retry of the same letter may have run the deadline already: the timeout
       // then ended the instance, which `reached` does not record.
       if (
         current.status !== "failed" ||
@@ -217,7 +220,7 @@ export const createProcessReplay: CreateProcessReplayFunction = ({
         instance: current,
         due: failed,
         context: { ...context, correlationId: current.correlationId ?? context.correlationId },
-        replay,
+        retryId,
       });
       await schedule.stage(unit, process, payload.aggregateId);
     });
@@ -225,7 +228,7 @@ export const createProcessReplay: CreateProcessReplayFunction = ({
   };
 
   const instanceOfLetter = async (letter: DeadLetter): Promise<ProcessInstance | null> => {
-    const process = processes.byName[letter.subscriber];
+    const process = processes.byName[letter.handler];
     if (letter.kind !== "process" || process === undefined) return null;
     const instanceId =
       letter.eventType === PROCESS_DEADLINE_COMMAND
@@ -243,8 +246,8 @@ export const createProcessReplay: CreateProcessReplayFunction = ({
   };
 
   return {
-    replay,
-    replayDeadline,
+    retry,
+    retryDeadline,
     parkedBehind: async (letter) => {
       const instance = letter.status === "failed" ? await instanceOfLetter(letter) : null;
       const failure = instance?.failure;

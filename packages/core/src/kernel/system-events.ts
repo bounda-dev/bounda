@@ -9,13 +9,13 @@ import type { CausationContext } from "../contracts/metadata.ts";
  * Written to an aggregate's stream when a scheduled command for it finally fails. Policies may
  * react to it like to any other event; `foldState` ignores it.
  */
-export const COMMAND_FAILED_EVENT: "CommandFailed" = "CommandFailed";
+export const SCHEDULED_COMMAND_FAILED_EVENT: "ScheduledCommandFailed" = "ScheduledCommandFailed";
 
 /**
- * The payload of `CommandFailed`: the scheduled command that failed for good, its last error and
- * how many attempts it had.
+ * The payload of `ScheduledCommandFailed`: the scheduled command that failed for good, its last
+ * error and how many attempts it had.
  */
-export interface CommandFailedPayload {
+export interface ScheduledCommandFailedPayload {
   readonly commandType: string;
   readonly error: string;
   readonly attempts: number;

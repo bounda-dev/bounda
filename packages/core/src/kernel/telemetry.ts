@@ -6,7 +6,7 @@ import {
   type Tracer,
   trace,
 } from "@opentelemetry/api";
-import type { DeadLetterErrorType } from "../adapter/ports/dead-letter-store.ts";
+import type { DeadLetterErrorType, DeadLetterKind } from "../adapter/ports/dead-letter-store.ts";
 import { errorDetails } from "./shared/retry.ts";
 
 /**
@@ -30,6 +30,8 @@ export const ATTRIBUTES: {
   readonly eventCount: "bounda.event.count";
   readonly subscriber: "bounda.subscriber";
   readonly subscriberKind: "bounda.subscriber.kind";
+  readonly handler: "bounda.handler";
+  readonly handlerKind: "bounda.handler.kind";
   readonly afterPosition: "bounda.position.after";
   readonly readModel: "bounda.read_model";
   readonly projection: "bounda.projection";
@@ -49,6 +51,8 @@ export const ATTRIBUTES: {
   eventCount: "bounda.event.count",
   subscriber: "bounda.subscriber",
   subscriberKind: "bounda.subscriber.kind",
+  handler: "bounda.handler",
+  handlerKind: "bounda.handler.kind",
   afterPosition: "bounda.position.after",
   readModel: "bounda.read_model",
   projection: "bounda.projection",
@@ -132,8 +136,8 @@ export const METRICS: {
 };
 
 export interface DeadLetteredArgs {
-  readonly kind: "policy" | "process" | "command";
-  readonly subscriber: string;
+  readonly kind: DeadLetterKind;
+  readonly handler: string;
   readonly errorType: DeadLetterErrorType;
 }
 
@@ -145,15 +149,15 @@ export interface DeadLetteredFunction {
  * The counter is resolved on each call: dead letters are rare, and an SDK registered late is
  * still counted.
  */
-export const deadLettered: DeadLetteredFunction = ({ kind, subscriber, errorType }) => {
+export const deadLettered: DeadLetteredFunction = ({ kind, handler, errorType }) => {
   meter()
     .createCounter(METRICS.deadLetters, {
-      description: "Handler runs that gave up, by kind, subscriber and error type",
+      description: "Handler runs that gave up, by kind, handler and error type",
       unit: "{letter}",
     })
     .add(1, {
-      [ATTRIBUTES.subscriberKind]: kind,
-      [ATTRIBUTES.subscriber]: subscriber,
+      [ATTRIBUTES.handlerKind]: kind,
+      [ATTRIBUTES.handler]: handler,
       [ATTRIBUTES.outcome]: errorType,
     });
 };

@@ -157,7 +157,7 @@ Runs without the user asking for it: in `pr` before the first push, in `pr ready
    |---|---|
    | Only docs, `skills/`, `.github/`, config or tooling | `medium` |
    | Runtime code: `packages/*/src`, the generator, `create-bounda` templates, public types | `high` |
-   | Concurrency or crash safety: claims, inbox, locks, transactions, retries, dead letters, delayed commands | `max` |
+   | Concurrency or crash safety: claims, inbox, locks, transactions, retries, dead letters, scheduled commands | `max` |
 
    A diff that spans rows takes the highest.
 

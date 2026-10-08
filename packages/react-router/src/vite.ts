@@ -5,7 +5,7 @@ import { createBoundaPlugin } from "./vite-plugin.ts";
 
 export interface BoundaVitePluginOptions {
   /**
-   * Passed to `createBounda`. Defaults to `"immediate"`.
+   * Passed to `createBounda`. Defaults to `"read-your-writes"`.
    */
   readonly consistency?: Consistency;
   /**

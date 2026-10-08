@@ -14,5 +14,4 @@ nothing. A late worker whose lease another one took over no longer undoes that w
 
 For adapter authors, the `Scheduler` port changes: `claimDue` returns `ClaimedCommand`s, and
 `complete` and `fail` take the claim (`ScheduledClaim`: `dedupeKey`, `revision`, `claimId`) instead
-of the key. The SQLite and PostgreSQL tables gain `revision` and `claim_id` columns, added on start
-to databases created by an earlier version.
+of the key. The SQLite and PostgreSQL tables gain `revision` and `claim_id` columns.

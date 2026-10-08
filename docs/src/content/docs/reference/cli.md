@@ -137,23 +137,23 @@ be loaded, the read model is not in the registry, or a projection failed.
 
 ## `bounda dead-letters`
 
-Lists, replays or discards the handler runs that gave up. It boots the project the way `boot()`
+Lists, retries or discards the handler runs that gave up. It boots the project the way `boot()`
 does, without starting the background work, so it runs from the project root with the app's
 environment.
 
 ```bash
 bounda dead-letters list
-bounda dead-letters list --kind policy --subscriber order.notifyOnOrderPlaced
-bounda dead-letters list --status replayed --limit 20 --json
-bounda dead-letters replay <id>
+bounda dead-letters list --kind policy --handler order.notifyOnOrderPlaced
+bounda dead-letters list --status retried --limit 20 --json
+bounda dead-letters retry <id>
 bounda dead-letters discard <id>
 ```
 
 | Option | Applies to | Meaning |
 | --- | --- | --- |
-| `--kind <kind>` | `list` | `policy`, `process` or `command` |
-| `--status <status>` | `list` | `failed` (default), `replayed` or `discarded` |
-| `--subscriber <name>` | `list` | The policy or process name as the letter records it, e.g. `order.notifyOnOrderPlaced`, or `scheduled:<CommandType>` |
+| `--kind <kind>` | `list` | `policy`, `process` or `scheduled` |
+| `--status <status>` | `list` | `failed` (default), `retried` or `discarded` |
+| `--handler <name>` | `list` | The policy or process name as the letter records it, e.g. `order.notifyOnOrderPlaced`, or the scheduled command's type, e.g. `PlaceOrder` |
 | `--limit <n>` | `list` | At most this many letters |
 | `--json` | `list` | Print the letters as JSON |
 | `--root`, `--config`, `--registry` | all | As for `bounda rebuild` |
@@ -165,18 +165,18 @@ bounda dead-letters discard <id>
 019a0c51-8d2f-7c4e-a1b2-3c4d5e6f7a80  failed  process  order.orderPayment
     OrderPaid on order:o-2, 3 attempts, last 2026-09-22T14:05:40.118Z (retriable_exhausted)
     payment provider timed out
-    2 events are parked behind it; replaying it handles them in order
+    2 events are parked behind it; retrying it handles them in order
 2 dead letters
 ```
 
-`replay` runs the failed handler again and marks the letter `replayed` when it succeeds; if the
+`retry` runs the failed handler again and marks the letter `retried` when it succeeds; if the
 handler fails again its error is printed, the exit code is `2` and the letter stays `failed`. A
-command its aggregate now rejects is `replayed` too: the rejection is the aggregate's answer, and
-it is logged as `command rejected`. A
-letter another replay or discard settled first, even while this one ran, is refused the same way.
-For a process letter it also handles the events parked behind it, and says so when one of them
-failed the process again. See
-[Reacting to events](/guides/reacting-to-events/#dead-letters) for what a replay does per kind.
+scheduled command its aggregate now rejects is `retried` too: the rejection is the aggregate's
+answer, and it is logged as `command rejected`. A letter the app can no longer retry, or that
+another retry or discard settled first, even while this one ran, is refused the same way. For a
+process letter it also handles the events parked behind it, and says so when one of them failed
+the process again. See [Reacting to events](/guides/reacting-to-events/#dead-letters) for what a
+retry does per kind.
 
 ## Programmatic use
 

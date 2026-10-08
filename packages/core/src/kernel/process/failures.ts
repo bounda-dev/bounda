@@ -58,7 +58,7 @@ export const createProcessFailures: CreateProcessFailuresFunction = ({ ids, cloc
     return {
       id: ids.next(),
       kind: "process",
-      subscriber: process.name,
+      handler: process.name,
       eventId: subject.id,
       eventType: subject.type,
       aggregateType: subject.aggregateType,
@@ -75,7 +75,7 @@ export const createProcessFailures: CreateProcessFailuresFunction = ({ ids, cloc
     await store.add(stack === undefined ? letter : { ...letter, errorStack: stack });
   },
   filed: (process, letter) => {
-    deadLettered({ kind: "process", subscriber: process.name, errorType: letter.errorType });
+    deadLettered(letter);
     logger.warn("process dead-lettered", {
       process: process.name,
       eventId: letter.eventId,

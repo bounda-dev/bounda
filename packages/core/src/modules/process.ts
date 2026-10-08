@@ -217,7 +217,7 @@ export type ProcessHandlerArgs<Event, State, Commands, Ports extends object = Em
   readonly commands: Commands;
   /**
    * A key to hand the providers this handler calls, so a retry does not repeat an effect: the
-   * same on every automatic retry for this event, new when an operator replays a dead letter.
+   * same on every automatic retry for this event, new when an operator retries a dead letter.
    */
   readonly idempotencyKey: string;
   /**
@@ -250,8 +250,8 @@ export type ProcessDeadlineArgs<
   readonly aggregateId: string;
   readonly commands: Commands;
   /**
-   * A key to hand the providers this handler calls: the same on every retry of this deadline at
-   * this moment, new when an operator replays it from the dead letters.
+   * A key to hand the providers this handler calls: the same on every automatic retry of this
+   * deadline at this moment, new when an operator retries it from the dead letters.
    */
   readonly idempotencyKey: string;
   /**

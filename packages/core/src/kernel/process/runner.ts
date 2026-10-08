@@ -9,12 +9,12 @@ import type { Subscriber } from "../dispatch/dispatcher.ts";
 import { deliverInOrder } from "../shared/in-order.ts";
 import type { PendingRetries } from "../shared/pending-retries.ts";
 import type { ProcessesRuntime } from "./build-processes.ts";
+import { createProcessRetry, type ProcessDeadLetters } from "./dead-letter-retry.ts";
 import { createDeadlineStep } from "./deadline-step.ts";
 import { createDeadlineDelivery, type ProcessDeadlines } from "./deliver-deadline.ts";
 import { createEventDelivery } from "./deliver-event.ts";
 import { createProcessFailures } from "./failures.ts";
 import { createProcessHandlers } from "./handlers.ts";
-import { createProcessReplay, type ProcessDeadLetters } from "./replay.ts";
 import { createResumeParked } from "./resume.ts";
 import { createDeadlineSchedule } from "./schedule.ts";
 import { createProcessUnits } from "./units.ts";
@@ -81,7 +81,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     clock,
     logger,
   });
-  const deadLetters = createProcessReplay({
+  const deadLetters = createProcessRetry({
     processes,
     units,
     handlers,
@@ -99,8 +99,8 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     failDeadline: deadlines.failDeadline,
     lostRace: deadlines.lostRace,
     retryOf: deadlines.retryOf,
-    replay: deadLetters.replay,
-    replayDeadline: deadLetters.replayDeadline,
+    retry: deadLetters.retry,
+    retryDeadline: deadLetters.retryDeadline,
     parkedBehind: deadLetters.parkedBehind,
     stillParked: deadLetters.stillParked,
   };

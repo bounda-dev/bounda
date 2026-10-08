@@ -29,12 +29,12 @@ describe("deriveIdempotencyKey", () => {
         kind: "policy",
         handler: "order.chargeOnOrderPlaced",
         subject: "event-1",
-        replay: "r-1",
+        retryId: "r-1",
       }),
-    ).toBe("1d7dde3c-e21d-5f8d-babe-5ea49ebdfa6b");
+    ).toBe("c07226fe-1ddf-5679-9a91-f50869e11b8b");
   });
 
-  it("changes with the kind, the handler, the subject and every replay", () => {
+  it("changes with the kind, the handler, the subject and every retry", () => {
     const keys = new Set([
       deriveIdempotencyKey({ kind: "policy", handler: "order.a", subject: "event-1" }),
       deriveIdempotencyKey({ kind: "policy", handler: "order.b", subject: "event-1" }),
@@ -44,13 +44,13 @@ describe("deriveIdempotencyKey", () => {
         kind: "policy",
         handler: "order.a",
         subject: "event-1",
-        replay: "r-1",
+        retryId: "r-1",
       }),
       deriveIdempotencyKey({
         kind: "policy",
         handler: "order.a",
         subject: "event-1",
-        replay: "r-2",
+        retryId: "r-2",
       }),
     ]);
     expect(keys.size).toBe(6);

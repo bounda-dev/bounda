@@ -1,7 +1,7 @@
 export type ClaimStatus = "pending" | "succeeded" | "failed";
 
 export interface ClaimArgs {
-  readonly subscriber: string;
+  readonly handler: string;
   readonly eventId: string;
   /**
    * The kernel clock's time, which leases are measured against.
@@ -15,7 +15,7 @@ export interface ClaimArgs {
 }
 
 export interface ClaimKey {
-  readonly subscriber: string;
+  readonly handler: string;
   readonly eventId: string;
 }
 
@@ -53,7 +53,7 @@ export interface ClaimRecord extends ClaimKey {
 
 /**
  * Gives at-least-once delivery its idempotency: a policy or process handler runs for an event only
- * once the runner claims `(subscriber, eventId)`. `tryClaim` must be atomic: of two racing
+ * once the runner claims `(handler, eventId)`. `tryClaim` must be atomic: of two racing
  * claimers exactly one gets `true`. A `succeeded` claim is never handed out again, a `failed` one
  * is, a `pending` one only once its lease expires. Claiming again counts an attempt and keeps
  * `lastError`.

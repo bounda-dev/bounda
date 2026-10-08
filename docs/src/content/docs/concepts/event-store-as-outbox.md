@@ -22,13 +22,13 @@ This page says what that means precisely, because the precise version is what yo
 ## What one attempt is
 
 A reaction runs as an **attempt**: one delivery of one event to one policy, or one step of one
-process instance, whether an event, a deadline, or a step of a dead-letter replay. The runtime
+process instance, whether an event, a deadline, or a step of a dead-letter retry. The runtime
 claims the event in the inbox ledger, runs the handler, and only then writes, in one transaction
 of the store:
 
 - the events of every command the handler dispatched, each appended to its aggregate's stream at
   the version the handler saw;
-- the scheduler rows of its delayed commands;
+- the scheduler rows of its scheduled commands;
 - for a process step, the instance's lifecycle events (`ProcessStarted`, `ProcessHandled`,
   `ProcessCompleted`, `ProcessDeadlineReached`, `ProcessTimedOut`) and the entry of its next deadline, computed from
   the state it just wrote;
@@ -42,7 +42,7 @@ not from a half-written one. A commit that finds a stream moved since the handle
 a deadline that came due or by another instance, rolls back and runs the handler again on the
 new state, without counting an attempt; its claim's lease starts again first, and an attempt
 whose claim another instance took over meanwhile stops instead. The scheduled-command worker
-follows the same rule: a delayed command, a delayed policy run or a process deadline commits its
+follows the same rule: a scheduled command, a delayed policy run or a process deadline commits its
 writes together with the release of its claim, so a worker that dies between the two does not run
 it twice, and one whose claim another instance took over writes nothing.
 

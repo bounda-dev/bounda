@@ -17,7 +17,7 @@ earliest first and the field name breaking a tie; none runs once the process has
 waits, for at most ten worker rounds, until the process runner has handled the events stored
 before it, and `app.getLag()` counts the ones waiting in `waitingDeadlines`. A failing deadline is
 retried with the process's retry settings, and one that gives up fails the process and is
-dead-lettered as `deadline:<field>`; replaying it runs the deadline again. Commands a deadline
+dead-lettered as `deadline:<field>`; retrying it runs the deadline again. Commands a deadline
 sends start a new chain, so a repeated reminder never reaches `maxChainDepth`. Boot refuses a
 `deadline()` without its `at-` file and an `at-` file without its `deadline()`, naming the file.
 The `+types` of every process handler now checks what the handler returns against the state

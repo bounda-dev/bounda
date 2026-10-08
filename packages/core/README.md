@@ -46,7 +46,7 @@ returns the running app, typed for your project. `createTestApp()` from
 
 The runtime carries what a production app needs to recover from its own mistakes, and the
 `bounda` CLI exposes it: `bounda rebuild <read-model>` projects the stream into a fresh table and
-swaps it in without taking the read model offline; `bounda dead-letters` lists, replays or
+swaps it in without taking the read model offline; `bounda dead-letters` lists, retries or
 discards the handler runs that gave up; an `<event>.upcast.ts` next to an event brings stored
 payloads of an older shape up to date as they are read. Every command, batch and handler run is
 an OpenTelemetry span with `bounda.correlation_id`, the lag of every subscriber is a gauge, and on

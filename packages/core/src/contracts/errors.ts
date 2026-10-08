@@ -96,7 +96,7 @@ export class ValidationError extends BoundaError {
 }
 
 export interface ClaimLostErrorArgs {
-  readonly subscriber: string;
+  readonly handler: string;
   readonly eventId: string;
 }
 
@@ -106,12 +106,12 @@ export interface ClaimLostErrorArgs {
  * back, and a rejected renewal stops the attempt before the handler runs again.
  */
 export class ClaimLostError extends BoundaError {
-  readonly subscriber: string;
+  readonly handler: string;
   readonly eventId: string;
 
-  constructor({ subscriber, eventId }: ClaimLostErrorArgs) {
-    super("CLAIM_LOST", `The claim of ${subscriber} on ${eventId} belongs to another runner`);
-    this.subscriber = subscriber;
+  constructor({ handler, eventId }: ClaimLostErrorArgs) {
+    super("CLAIM_LOST", `The claim of ${handler} on ${eventId} belongs to another runner`);
+    this.handler = handler;
     this.eventId = eventId;
   }
 }
@@ -125,10 +125,10 @@ export interface DeadLetterSettledErrorArgs {
 }
 
 /**
- * Thrown when a dead letter is replayed or discarded once it is no longer `failed`: another
- * replay or discard settled it first, before or while this one ran. Of two operators settling
- * one letter only the first gets through; a policy's or a command's replay refused this way
- * writes nothing.
+ * Thrown when a dead letter is retried or discarded once it is no longer `failed`: another
+ * retry or discard settled it first, before or while this one ran. Of two operators settling
+ * one letter only the first gets through; a policy's or a scheduled command's retry refused this
+ * way writes nothing.
  */
 export class DeadLetterSettledError extends BoundaError {
   readonly id: string;
@@ -137,10 +137,22 @@ export class DeadLetterSettledError extends BoundaError {
     super(
       "DEAD_LETTER_SETTLED",
       status === undefined
-        ? `Dead letter "${id}" is no longer failed: another replay or discard settled it`
+        ? `Dead letter "${id}" is no longer failed: another retry or discard settled it`
         : `Dead letter "${id}" was already ${status}`,
     );
     this.id = id;
+  }
+}
+
+/**
+ * Thrown when a dead letter cannot be retried in the app as it now is: its policy, process or
+ * scheduled command is no longer in the registry, its policy or process no longer handles the
+ * event, or its process instance failed on another step, whose letter has to be retried first.
+ * Nothing runs, and the letter stays `failed`.
+ */
+export class DeadLetterNotRetriableError extends BoundaError {
+  constructor(message: string) {
+    super("DEAD_LETTER_NOT_RETRIABLE", message);
   }
 }
 
