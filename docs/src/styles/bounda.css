@@ -1,47 +1,162 @@
-/* The palette and typography of bounda.dev, so the two sites read as one. Their origin is
-   src/styles/global.css in bounda-dev/bounda-website; a change there belongs here too. */
-
-@font-face {
-  font-family: "Inter";
-  font-style: normal;
-  font-weight: 100 900;
-  font-display: swap;
-  src: url("/fonts/inter-latin.woff2") format("woff2");
-  unicode-range:
-    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
-    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
-    U+FEFF, U+FFFD;
-}
+/* The Bounda design system (DESIGN.md in bounda-dev/bounda-website), mapped onto Starlight's variables.
+   Its tokens live in src/styles/tokens.css there; a change to them belongs here too.
+   Starlight's dark mode is Basalt, its light mode Bone. Ochre is the brand and never a state. */
 
 :root {
-  --sl-font: "Inter", system-ui, sans-serif;
+  --sl-font: var(--font-ibm-plex-sans), system-ui, sans-serif;
+  --sl-font-mono: var(--font-red-hat-mono), ui-monospace, monospace;
+  --bounda-display:
+    var(--font-science-gothic), "Eurostile", "Bahnschrift", "Arial Black", sans-serif;
 
-  --sl-color-white: #fafafa;
-  --sl-color-gray-1: #e4e4e7;
-  --sl-color-gray-2: #a1a1aa;
-  --sl-color-gray-3: #71717a;
-  --sl-color-gray-4: #52525b;
-  --sl-color-gray-5: #27272a;
-  --sl-color-gray-6: #18181b;
-  --sl-color-black: #09090b;
+  --sl-text-body: 1.03125rem;
+  --sl-line-height: 1.62;
 
-  --sl-color-accent-low: #1e3a8a;
-  --sl-color-accent: #3b82f6;
-  --sl-color-accent-high: #bfdbfe;
+  /* Basalt */
+  --sl-color-white: #e6e0d3;
+  --sl-color-gray-1: #dcd6c9;
+  --sl-color-gray-2: #cfc9bc;
+  --sl-color-gray-3: #9c978c;
+  --sl-color-gray-4: #6e6a62;
+  --sl-color-gray-5: #2e2f32;
+  --sl-color-gray-6: #1b1c1e;
+  --sl-color-black: #121314;
+
+  --sl-color-accent-low: #2e2414;
+  --sl-color-accent: #d9a04a;
+  --sl-color-accent-high: #d9a04a;
+
+  /* Asides: a note is the brand's, a tip a success, a caution a warning, danger an error. */
+  --sl-color-blue-low: #2e2414;
+  --sl-color-blue: #d9a04a;
+  --sl-color-blue-high: #e8be78;
+  --sl-color-purple-low: #17271f;
+  --sl-color-purple: #7dbf9c;
+  --sl-color-purple-high: #b4ddc6;
+  --sl-color-green-low: #17271f;
+  --sl-color-green: #7dbf9c;
+  --sl-color-green-high: #b4ddc6;
+  --sl-color-orange-low: #2b2610;
+  --sl-color-orange: #e3c457;
+  --sl-color-orange-high: #f0dc93;
+  --sl-color-red-low: #34160f;
+  --sl-color-red: #e8604f;
+  --sl-color-red-high: #f3a99e;
+
+  --sl-color-text-invert: #121314;
+  --sl-color-bg-nav: #121314;
+  --sl-color-bg-sidebar: #121314;
+  --sl-color-hairline-light: #2e2f32;
+  --sl-color-hairline: #2e2f32;
+  --sl-color-backdrop-overlay: rgb(18 19 20 / 0.7);
 }
 
 :root[data-theme="light"] {
-  --sl-color-white: #09090b;
-  --sl-color-gray-1: #18181b;
-  --sl-color-gray-2: #27272a;
-  --sl-color-gray-3: #52525b;
-  --sl-color-gray-4: #71717a;
-  --sl-color-gray-5: #e4e4e7;
-  --sl-color-gray-6: #f4f4f5;
-  --sl-color-gray-7: #fafafa;
-  --sl-color-black: #ffffff;
+  /* Bone */
+  --sl-color-white: #1a1916;
+  --sl-color-gray-1: #23211d;
+  --sl-color-gray-2: #2b2925;
+  --sl-color-gray-3: #5f5b53;
+  --sl-color-gray-4: #8f8a7f;
+  --sl-color-gray-5: #d3cfc5;
+  --sl-color-gray-6: #e3e0d8;
+  --sl-color-gray-7: #f7f6f2;
+  --sl-color-black: #eceae4;
 
-  --sl-color-accent-low: #bfdbfe;
-  --sl-color-accent: #2563eb;
-  --sl-color-accent-high: #1e3a8a;
+  --sl-color-accent-low: #eadfc9;
+  --sl-color-accent: #8a5508;
+  --sl-color-accent-high: #5e3a05;
+
+  --sl-color-blue-low: #eadfc9;
+  --sl-color-blue: #b07114;
+  --sl-color-blue-high: #8a5508;
+  --sl-color-purple-low: #dce9e1;
+  --sl-color-purple: #2c6b53;
+  --sl-color-purple-high: #1f4d3b;
+  --sl-color-green-low: #dce9e1;
+  --sl-color-green: #2c6b53;
+  --sl-color-green-high: #1f4d3b;
+  --sl-color-orange-low: #f1e9c6;
+  --sl-color-orange: #725f0b;
+  --sl-color-orange-high: #5a4a08;
+  --sl-color-red-low: #f3ddd9;
+  --sl-color-red: #b3362a;
+  --sl-color-red-high: #8e2a20;
+
+  --sl-color-text-invert: #eceae4;
+  --sl-color-bg-nav: #eceae4;
+  --sl-color-bg-sidebar: #eceae4;
+  --sl-color-hairline-light: #d3cfc5;
+  --sl-color-hairline: #d3cfc5;
+  --sl-color-backdrop-overlay: rgb(26 25 22 / 0.4);
+}
+
+::selection {
+  background: var(--sl-color-accent);
+  color: var(--sl-color-black);
+}
+
+/* Display: the page title and section titles in Science Gothic 600. */
+h1#_top,
+.sl-markdown-content h2 {
+  font-family: var(--bounda-display);
+  font-weight: 600;
+  font-stretch: 106%;
+  letter-spacing: -0.01em;
+}
+
+.sl-markdown-content h3,
+.sl-markdown-content h4 {
+  font-weight: 600;
+}
+
+/* Labels: the same face at its widest, in capitals. */
+.sidebar-content .group-label .large,
+.right-sidebar-panel h2,
+.sl-markdown-content th {
+  font-family: var(--bounda-display);
+  font-weight: 600;
+  font-stretch: 125%;
+  font-size: 0.6875rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.sidebar-content .group-label .large {
+  color: var(--sl-color-gray-3);
+}
+
+/* The current page: a rule of the accent, not a block of it. */
+.sidebar-content a[aria-current="page"],
+.sidebar-content a[aria-current="page"]:hover,
+.sidebar-content a[aria-current="page"]:focus {
+  background: var(--sl-color-accent-low);
+  color: var(--sl-color-white);
+  box-shadow: inset 2px 0 0 var(--sl-color-accent);
+  font-weight: 600;
+}
+
+/* Code and figures: tabular, without ligatures. */
+code,
+kbd,
+pre {
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.sl-markdown-content td {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Square corners, structure by hairlines. */
+.sl-markdown-content :is(.starlight-aside, .card, .sl-link-card, img, figure),
+.sl-link-button {
+  border-radius: 2px;
+}
+
+/* The lockup at the size bounda.dev sets it. */
+.site-title img {
+  height: 1.375rem;
 }
