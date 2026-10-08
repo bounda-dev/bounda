@@ -24,6 +24,16 @@ const collectImports = (model: ProjectModel): readonly ImportEntry[] => {
   ) => {
     entries.push({ alias, owner, path, kind });
   };
+  // The port is the owner, not the module: an event or a query named `<module>-<port>` would
+  // otherwise share both the alias and the prefix that makes aliases unique.
+  const addPorts = ({ name, ports }: Pick<AggregateModel | ReadModelModel, "name" | "ports">) => {
+    for (const port of ports) {
+      add(joinKeys(name, port.key), port.key, port.path, "type");
+      for (const implementation of port.implementations) {
+        add(joinKeys(name, port.key, keyOf(implementation.name)), port.key, implementation.path);
+      }
+    }
+  };
   for (const aggregate of model.aggregates) {
     if (aggregate.state !== null)
       add(joinKeys(aggregate.name, "state"), aggregate.name, aggregate.state.path);
@@ -33,18 +43,7 @@ const collectImports = (model: ProjectModel): readonly ImportEntry[] => {
         add(joinKeys(event.key, "upcasts"), aggregate.name, event.upcasts.path);
       }
     }
-    // The port is the owner, not the aggregate: an event named `<aggregate>-<port>` would
-    // otherwise share both the alias and the prefix that makes aliases unique.
-    for (const port of aggregate.ports) {
-      add(joinKeys(aggregate.name, port.key), port.key, port.path, "type");
-      for (const implementation of port.implementations) {
-        add(
-          joinKeys(aggregate.name, port.key, keyOf(implementation.name)),
-          port.key,
-          implementation.path,
-        );
-      }
-    }
+    addPorts(aggregate);
     for (const command of aggregate.commands) add(command.key, aggregate.name, command.path);
     for (const policy of aggregate.policies) add(policy.key, aggregate.name, policy.path);
     for (const process of aggregate.processes) {
@@ -65,6 +64,7 @@ const collectImports = (model: ProjectModel): readonly ImportEntry[] => {
   }
   for (const readModel of model.readModels) {
     add(joinKeys(readModel.name, "view"), readModel.name, readModel.view.path);
+    addPorts(readModel);
     for (const projection of readModel.projections) {
       add(
         joinKeys(readModel.name, "on", projection.aggregate, projection.eventKey),
@@ -119,12 +119,16 @@ const emitEntries = (owners: readonly OwnerEntry[], aliases: Aliases): string =>
  * Every implementation is checked against the port's interface here, so `tsc` fails on one that
  * does not fulfil it whether or not the module says `satisfies` itself.
  */
-const emitPorts = (aggregate: AggregateModel, aliases: Aliases, indent: string): string[] => {
-  if (aggregate.ports.length === 0) return [];
+const emitPorts = (
+  owner: Pick<AggregateModel | ReadModelModel, "ports">,
+  aliases: Aliases,
+  indent: string,
+): string[] => {
+  if (owner.ports.length === 0) return [];
   const inner = `${indent}  `;
   return [
     `${indent}ports: {`,
-    ...aggregate.ports.flatMap((port) => [
+    ...owner.ports.flatMap((port) => [
       `${inner}${port.key}: {`,
       ...port.implementations.map(
         (implementation) =>
@@ -206,6 +210,7 @@ const emitReadModel = (readModel: ReadModelModel, aliases: Aliases): string => {
   return [
     `    ${readModel.name}: {`,
     `${indent}view: ${aliases.of(readModel.view.path)},`,
+    ...emitPorts(readModel, aliases, indent),
     `${indent}projections: ${emitProjections(readModel, aliases)},`,
     `${indent}queries: ${record(readModel.queries.map((query) => [query.key, aliases.of(query.path)]))},`,
     "    },",
@@ -233,7 +238,9 @@ export interface EmitRegistryFunction {
  */
 export const emitRegistry: EmitRegistryFunction = ({ model, path }) => {
   const aliases = resolveAliases(model, path);
-  const hasPorts = model.aggregates.some((aggregate) => aggregate.ports.length > 0);
+  const hasPorts = [...model.aggregates, ...model.readModels].some(
+    (owner) => owner.ports.length > 0,
+  );
   const content = [
     hasPorts
       ? 'import type { ImplementationModule, Registry } from "@bounda-dev/core";'

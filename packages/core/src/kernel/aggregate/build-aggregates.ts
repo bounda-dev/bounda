@@ -4,7 +4,7 @@ import { createEventBuilders } from "../../modules/event.ts";
 import { capitalize } from "../../modules/naming.ts";
 import type { PayloadFunction } from "../../modules/payload.ts";
 import type { AggregateEntry, Registry } from "../../modules/registry.ts";
-import type { AggregatePorts } from "../ports/ports.ts";
+import type { ModulePorts } from "../ports/ports.ts";
 import type {
   AggregateRuntime,
   AggregatesRuntime,
@@ -78,7 +78,7 @@ export interface BuildAggregatesArgs {
   /**
    * What `createPorts` built; an aggregate missing here gets no ports.
    */
-  readonly ports: AggregatePorts;
+  readonly ports: ModulePorts;
 }
 
 export interface BuildAggregatesFunction {

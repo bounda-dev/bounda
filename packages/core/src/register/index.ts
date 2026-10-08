@@ -87,7 +87,8 @@ type ModulesOf<C> =
 
 type BuildsWithCreate<R extends Registry> = [
   Extract<
-    ModulesOf<NonNullable<R["aggregates"][keyof R["aggregates"]]["ports"]>>,
+    | ModulesOf<NonNullable<R["aggregates"][keyof R["aggregates"]]["ports"]>>
+    | ModulesOf<NonNullable<R["readModels"][keyof R["readModels"]]["ports"]>>,
     { readonly create: unknown }
   >,
 ] extends [never]

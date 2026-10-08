@@ -20,7 +20,8 @@ describe("createTestApp ports", () => {
     const some: Ports = { order: {} };
     const named: Ports = { order: { inventory: "memory", reminders: "fake" } };
     const double: Ports = { order: { inventory } };
-    void [none, some, named, double];
+    const readModel: Ports = { orderSummary: { rates: async () => 1 } };
+    void [none, some, named, double, readModel];
   });
 
   it("reject a misspelt name, a value of another type, or an unknown port", () => {

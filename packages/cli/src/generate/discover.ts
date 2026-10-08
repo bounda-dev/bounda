@@ -351,15 +351,54 @@ const discoverProcesses = async (
 const INFRASTRUCTURE = "infrastructure";
 
 /**
- * The directories at an aggregate's root the generator reads, with the other names someone might
- * give them; any other directory there is the app's own.
+ * What differs between the two kinds of module that hold ports.
  */
-const AGGREGATE_DIRECTORIES: ReadonlyMap<string, readonly string[]> = new Map([
-  ["commands", ["command"]],
-  ["policies", ["policy"]],
-  ["processes", ["process"]],
-  [INFRASTRUCTURE, ["infra"]],
-]);
+interface ModuleKind {
+  readonly noun: "aggregate" | "read model";
+  /**
+   * The directories at the module's root the generator reads, with the other names someone might
+   * give them; any other directory there is the app's own.
+   */
+  readonly directories: ReadonlyMap<string, readonly string[]>;
+  /**
+   * Names a port cannot take: what the handlers that receive the ports already receive, since the
+   * ports are spread next to it, and the root modules that are not ports.
+   */
+  readonly reservedPortKeys: ReadonlySet<string>;
+}
+
+const AGGREGATE: ModuleKind = {
+  noun: "aggregate",
+  directories: new Map([
+    ["commands", ["command"]],
+    ["policies", ["policy"]],
+    ["processes", ["process"]],
+    [INFRASTRUCTURE, ["infra"]],
+  ]),
+  reservedPortKeys: new Set([
+    "state",
+    "command",
+    "commands",
+    "events",
+    "idempotencyKey",
+    "event",
+    "signal",
+    "aggregateId",
+    "after",
+    "reject",
+  ]),
+};
+
+const READ_MODEL: ModuleKind = {
+  noun: "read model",
+  directories: new Map([
+    ["projections", ["projection"]],
+    ["queries", ["query"]],
+    [INFRASTRUCTURE, ["infra"]],
+  ]),
+  // `client` is what `repository` gets, so a query reads the same names in both.
+  reservedPortKeys: new Set(["view", "query", "repositoryData", "table", "queries", "client"]),
+};
 
 // Past the first difference, the rest must match once one character is skipped in the longer
 // string, or in both when they are as long; that also rules out a length apart by more than one.
@@ -371,8 +410,8 @@ const withinOneEdit = (a: string, b: string): boolean => {
   return shorter.slice(rest) === longer.slice(i + 1);
 };
 
-const readDirectoryLike = (name: string): string | undefined =>
-  [...AGGREGATE_DIRECTORIES].find(([directory, others]) =>
+const readDirectoryLike = (kind: ModuleKind, name: string): string | undefined =>
+  [...kind.directories].find(([directory, others]) =>
     [directory, ...others].some((candidate) => withinOneEdit(name, candidate)),
   )?.[0];
 
@@ -389,17 +428,18 @@ const warnAbout = (context: Context, module: string, path: string, message: stri
  */
 const checkMisspelledDirectories = (
   context: Context,
-  aggregate: string,
+  kind: ModuleKind,
+  module: string,
   directory: string,
   directories: readonly string[],
 ): void => {
   for (const name of directories) {
-    if (AGGREGATE_DIRECTORIES.has(name)) continue;
-    const meant = readDirectoryLike(name);
+    if (kind.directories.has(name)) continue;
+    const meant = readDirectoryLike(kind, name);
     if (meant === undefined) continue;
     warnAbout(
       context,
-      aggregate,
+      module,
       join(directory, name),
       `the generator does not read this directory; rename it to ${meant} if that is what it holds`,
     );
@@ -415,23 +455,6 @@ const OWN_TYPES_IMPORT = (module: string): RegExp =>
     `^\\s*import\\b[^;]*?from\\s*["']\\./\\+types/${escapeRegExp(module)}(?:\\.[jt]s)?["']`,
     "m",
   );
-
-/**
- * Names a port cannot take: the state module and every argument a handler of any kind already
- * receives, since the ports are spread next to them.
- */
-const RESERVED_PORT_KEYS: ReadonlySet<string> = new Set([
-  "state",
-  "command",
-  "commands",
-  "events",
-  "idempotencyKey",
-  "event",
-  "signal",
-  "aggregateId",
-  "after",
-  "reject",
-]);
 
 const PORT_DECLARATION = (typeName: string): RegExp =>
   new RegExp(`^export\\s+(?:type|interface)\\s+${typeName}\\b`, "m");
@@ -535,6 +558,7 @@ interface RootModule {
 
 const discoverPorts = async (
   context: Context,
+  kind: ModuleKind,
   directory: string,
   modules: ReadonlyMap<string, RootModule>,
   eventNames: ReadonlySet<string>,
@@ -552,7 +576,7 @@ const discoverPorts = async (
   for (const name of listing.directories) {
     const portDirectory = join(infrastructure, name);
     if (!checkName(context, portDirectory, name, "Port")) continue;
-    if (RESERVED_PORT_KEYS.has(keyOf(name))) {
+    if (kind.reservedPortKeys.has(keyOf(name))) {
       context.problems.add(
         portDirectory,
         `"${keyOf(name)}" is reserved; give the port another name`,
@@ -570,7 +594,7 @@ const discoverPorts = async (
     if (module === undefined) {
       context.problems.add(
         portDirectory,
-        `has no port: add ${name}.ts at the aggregate root exporting interface ${typeNameOf(keyOf(name))}`,
+        `has no port: add ${name}.ts at the ${kind.noun} root exporting interface ${typeNameOf(keyOf(name))}`,
       );
       continue;
     }
@@ -641,7 +665,7 @@ const discoverAggregate = async (
     }
   }
   const has = (child: string): boolean => listing.directories.includes(child);
-  checkMisspelledDirectories(context, name, directory, listing.directories);
+  checkMisspelledDirectories(context, AGGREGATE, name, directory, listing.directories);
   const eventKeys = new Set(events.map((event) => event.key));
   return {
     name,
@@ -650,7 +674,9 @@ const discoverAggregate = async (
     events: events
       .map((event) => ({ ...event, upcasts: upcastOf.get(event.key) ?? null }))
       .sort(byKey),
-    ports: has(INFRASTRUCTURE) ? await discoverPorts(context, directory, others, eventNames) : [],
+    ports: has(INFRASTRUCTURE)
+      ? await discoverPorts(context, AGGREGATE, directory, others, eventNames)
+      : [],
     commands: has("commands") ? await discoverCommands(context, join(directory, "commands")) : [],
     policies: has("policies")
       ? await discoverPolicies(context, join(directory, "policies"), name)
@@ -723,7 +749,7 @@ const discoverQueries = async (
     .sort(byKey);
 };
 
-const READ_MODEL_DIRECTORIES: ReadonlySet<string> = new Set(["projections", "queries"]);
+const NO_EVENTS: ReadonlySet<string> = new Set();
 
 const discoverReadModel = async (
   context: Context,
@@ -732,31 +758,29 @@ const discoverReadModel = async (
 ): Promise<ReadModelModel | null> => {
   const listing = await list(directory);
   rejectOthers(context, directory, listing);
-  for (const module of listing.modules) {
-    if (module !== VIEW) {
-      context.problems.add(
-        join(directory, `${module}.ts`),
-        "a read model holds view.ts and the directories projections and queries",
-      );
-    }
-  }
-  for (const child of listing.directories) {
-    if (!READ_MODEL_DIRECTORIES.has(child)) {
-      context.problems.add(
-        join(directory, child),
-        "a read model holds view.ts and the directories projections and queries",
-      );
-    }
-  }
   if (!listing.modules.includes(VIEW)) {
     context.problems.add(directory, "a read model needs a view.ts with its fields");
     return null;
   }
+  // `view` is a reserved port name, so view.ts never ends up a port's module.
+  const texts = await Promise.all(
+    listing.modules.map((module) => readFile(join(directory, `${module}.ts`), "utf8")),
+  );
+  const modules = new Map(
+    listing.modules.map((module, index) => [
+      module,
+      { path: join(directory, `${module}.ts`), text: texts[index] ?? "" },
+    ]),
+  );
+  checkMisspelledDirectories(context, READ_MODEL, name, directory, listing.directories);
   const has = (child: string): boolean => listing.directories.includes(child);
   return {
     name,
     directory,
     view: moduleRef(context, join(directory, `${VIEW}.ts`)),
+    ports: has(INFRASTRUCTURE)
+      ? await discoverPorts(context, READ_MODEL, directory, modules, NO_EVENTS)
+      : [],
     projections: has("projections")
       ? await discoverProjections(context, join(directory, "projections"))
       : [],
@@ -835,7 +859,8 @@ const checkUniqueNames = (
 /**
  * Reads the project layout under `<root>/<appDir>` and returns what the generator needs. Names
  * come from files and directories, and no module is imported: the only text read is, at an
- * aggregate's root, what each module exports and the interface a port declares.
+ * aggregate's root, what each module exports, and at an aggregate's or a read model's, the
+ * interface a port declares.
  * Every convention breach is collected and thrown together as one `ConventionError`.
  */
 export const discoverProject: DiscoverProjectFunction = async ({ root, appDir = "app" }) => {

@@ -95,6 +95,11 @@ const relativePaths = (model: ProjectModel): Record<string, unknown> => ({
   readModels: model.readModels.map((readModel) => ({
     name: readModel.name,
     view: readModel.view.relativePath,
+    ports: readModel.ports.map((port) => [
+      port.key,
+      port.relativePath,
+      port.implementations.map((implementation) => implementation.relativePath),
+    ]),
     projections: readModel.projections.map((projection) => [
       projection.eventKey,
       projection.relativePath,
@@ -221,6 +226,13 @@ describe("discoverProject on the order-app fixture", () => {
         {
           name: "orderSummary",
           view: "app/read/order-summary/view.ts",
+          ports: [
+            [
+              "rates",
+              "app/read/order-summary/rates.ts",
+              ["app/read/order-summary/infrastructure/rates/fixed.ts"],
+            ],
+          ],
           projections: [
             ["orderPaid", "app/read/order-summary/projections/order/order-paid.ts"],
             ["orderPlaced", "app/read/order-summary/projections/order/order-placed.ts"],
@@ -319,8 +331,6 @@ describe("discoverProject convention problems", () => {
       "app/domain/orders_v2: Aggregate names must be kebab-case (lower-case letters, digits and dashes)",
       "app/read/broken: a read model needs a view.ts with its fields",
       "app/read/order-summary/README.md: only .ts modules are allowed here",
-      "app/read/order-summary/extra.ts: a read model holds view.ts and the directories projections and queries",
-      "app/read/order-summary/lists: a read model holds view.ts and the directories projections and queries",
     ]);
   });
 
@@ -614,6 +624,73 @@ describe("discoverProject convention problems", () => {
       `${infrastructure}/order-placed: order-placed.ts is an event of this aggregate; give the port another name`,
       `${infrastructure}/signal: "signal" is reserved; give the port another name`,
       `${infrastructure}/state: "state" is reserved; give the port another name`,
+    ]);
+  });
+
+  it("finds a read model's ports and leaves its other modules alone", async () => {
+    const root = await project([
+      "app/domain/order/order-placed.ts",
+      "app/read/order-summary/view.ts",
+      ["app/read/order-summary/rates.ts", "export type Rates = () => Promise<number>;\n"],
+      "app/read/order-summary/infrastructure/rates/fixed.ts",
+      "app/read/order-summary/infrastructure/rates/ecb.ts",
+      ["app/read/order-summary/rounding.ts", "export const roundCents = (n: number) => n;\n"],
+      "app/read/order-summary/formatting/currency.ts",
+      "app/read/order-summary/queries/get-order.ts",
+    ]);
+    const model = await discoverProject({ root });
+    expect(
+      model.readModels[0]?.ports.map((port) => ({
+        key: port.key,
+        typeName: port.typeName,
+        path: relative(root, port.path),
+        implementations: port.implementations.map((implementation) => implementation.name),
+      })),
+    ).toEqual([
+      {
+        key: "rates",
+        typeName: "Rates",
+        path: "app/read/order-summary/rates.ts",
+        implementations: ["ecb", "fixed"],
+      },
+    ]);
+    expect(model.warnings).toEqual([]);
+  });
+
+  it("rejects a read model's port that is reserved, the view or without a module, and warns about misspelled directories", async () => {
+    const infrastructure = "app/read/order-summary/infrastructure";
+    const root = await project([
+      "app/read/order-summary/view.ts",
+      ["app/read/order-summary/table.ts", "export interface Table {}\n"],
+      `${infrastructure}/table/memory.ts`,
+      `${infrastructure}/view/memory.ts`,
+      `${infrastructure}/repository-data/memory.ts`,
+      `${infrastructure}/search/memory.ts`,
+      "app/read/order-summary/query/list-orders.ts",
+      "app/read/order-summary/projection/",
+      "app/read/order-summary/infra/",
+    ]);
+    expect(await problemsOf(root)).toEqual([
+      `${infrastructure}/repository-data: "repositoryData" is reserved; give the port another name`,
+      `${infrastructure}/search: has no port: add search.ts at the read model root exporting interface Search`,
+      `${infrastructure}/table: "table" is reserved; give the port another name`,
+      `${infrastructure}/view: "view" is reserved; give the port another name`,
+    ]);
+    await rm(join(root, "app/read/order-summary/infrastructure"), { recursive: true });
+    const notRead = "the generator does not read this directory; rename it to";
+    expect((await discoverProject({ root })).warnings).toEqual([
+      {
+        module: "orderSummary",
+        message: `app/read/order-summary/infra: ${notRead} infrastructure if that is what it holds`,
+      },
+      {
+        module: "orderSummary",
+        message: `app/read/order-summary/projection: ${notRead} projections if that is what it holds`,
+      },
+      {
+        module: "orderSummary",
+        message: `app/read/order-summary/query: ${notRead} queries if that is what it holds`,
+      },
     ]);
   });
 

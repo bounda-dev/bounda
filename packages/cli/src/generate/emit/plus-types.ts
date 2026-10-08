@@ -91,8 +91,8 @@ const eventFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFile
     }),
   );
 
-const portsType = (aggregate: AggregateModel): string =>
-  `generated.${portsTypeName(aggregate.name)}`;
+const portsType = (owner: AggregateModel | ReadModelModel): string =>
+  `generated.${portsTypeName(owner.name)}`;
 
 const commandFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFile[] =>
   aggregate.commands.map((command) =>
@@ -276,6 +276,7 @@ const readModelFiles = (
               "core.RepositoryDataOf<Module>",
               "Row",
               "generated.Queries",
+              portsType(readModel),
             ]),
           ],
         ],

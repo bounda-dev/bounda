@@ -31,8 +31,8 @@ export interface ImplementationModel extends ModuleRef {
 }
 
 /**
- * A port of an aggregate, `order/notifier.ts`: it exports the interface `typeName`, and every
- * module in `order/infrastructure/notifier/` implements it.
+ * A port of an aggregate or a read model, `order/notifier.ts`: it exports the interface
+ * `typeName`, and every module in `order/infrastructure/notifier/` implements it.
  */
 export interface PortModel extends ModuleRef {
   /**
@@ -133,6 +133,10 @@ export interface ReadModelModel {
   readonly name: string;
   readonly directory: string;
   readonly view: ModuleRef;
+  /**
+   * The ports of the read model, sorted by key; only its queries' handlers receive them.
+   */
+  readonly ports: readonly PortModel[];
   readonly projections: readonly ProjectionModel[];
   readonly queries: readonly QueryModel[];
 }

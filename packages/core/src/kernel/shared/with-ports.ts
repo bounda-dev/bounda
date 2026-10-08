@@ -3,7 +3,7 @@ export interface WithPortsFunction {
 }
 
 /**
- * A handler's arguments with its aggregate's ports beside them. Copies property descriptors
+ * A handler's arguments with its module's ports beside them. Copies property descriptors
  * instead of spreading, because a spread reads every port, and a test app's port that was given
  * nothing throws when read: it must throw only in the handler that uses it.
  */

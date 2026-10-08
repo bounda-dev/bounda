@@ -124,6 +124,7 @@ const model: ProjectModel = {
         path: "/project/app/read/shipments/view.ts",
         relativePath: "app/read/shipments/view.ts",
       },
+      ports: [],
       projections: [
         {
           aggregate: "shipment",
@@ -398,6 +399,7 @@ export type Commands = core.CommandsFacadeOf<Record<never, never>>;
 export type ReactionCommands = core.ReactionCommandsFacadeOf<Record<never, never>>;
 
 export type ShipmentsRow = core.RowOf<typeof import("../app/read/shipments/view.ts")>;
+export type ShipmentsPorts = core.EmptyPayload;
 
 export type Queries = core.QueriesFacadeOf<Record<never, never>>;
 `);
@@ -466,6 +468,64 @@ describe("emitTypes with ports", () => {
         "};",
       ].join("\n"),
     );
+  });
+});
+
+describe("emitProject with a read model's ports", () => {
+  it("types, registers and configures them, and hands them to its queries' handlers only", () => {
+    const shipments = model.readModels[0] as ProjectModel["readModels"][number];
+    const rates = {
+      key: "rates",
+      typeName: "Rates",
+      path: "/project/app/read/shipments/rates.ts",
+      relativePath: "app/read/shipments/rates.ts",
+      implementations: ["ecb", "fixed"].map((name) => ({
+        name,
+        path: `/project/app/read/shipments/infrastructure/rates/${name}.ts`,
+        relativePath: `app/read/shipments/infrastructure/rates/${name}.ts`,
+      })),
+    };
+    const files = emitProject({
+      model: {
+        ...model,
+        readModels: [
+          {
+            ...shipments,
+            ports: [rates],
+            queries: [
+              {
+                key: "listShipments",
+                typeName: "ListShipments",
+                path: "/project/app/read/shipments/queries/list-shipments.ts",
+                relativePath: "app/read/shipments/queries/list-shipments.ts",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const contentOf = (suffix: string) =>
+      files.find((file) => file.path.endsWith(suffix))?.content ?? "";
+    const types = contentOf(".bounda/types.ts");
+    expect(types).toContain(
+      'export type ShipmentsPorts = {\n  readonly rates: import("../app/read/shipments/rates.ts").Rates;\n};',
+    );
+    expect(types).toContain('  readonly shipments: {\n    readonly rates: "ecb" | "fixed";\n  };');
+    expect(types).toContain(
+      '  readonly shipments?: {\n    readonly rates?: "ecb" | "fixed" | ShipmentsPorts["rates"];\n  };',
+    );
+    const registry = contentOf(".bounda/registry.ts");
+    expect(registry).toContain(
+      'import type { ImplementationModule, Registry } from "@bounda-dev/core";',
+    );
+    expect(registry).toContain("      ports: {\n        rates: {");
+    expect(registry).toContain(
+      "ecb: shipmentsRatesEcb satisfies ImplementationModule<shipmentsRates.Rates>,",
+    );
+    const query = contentOf("queries/+types/list-shipments.ts");
+    expect(query).toContain("    generated.Queries,\n    generated.ShipmentsPorts\n  >;");
+    expect(query).not.toMatch(/type RepositoryArgs = [^;]*Ports/s);
+    expect(contentOf("projections/shipment/+types/created.ts")).not.toContain("Ports");
   });
 });
 

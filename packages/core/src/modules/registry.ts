@@ -30,7 +30,7 @@ export interface AggregateEntry {
    */
   readonly upcasts?: Readonly<Record<string, UpcastsModule>>;
   /**
-   * The implementations of every port of the aggregate (`<port>/<name>.ts`), which every handler
+   * The implementations of every port of the aggregate (`infrastructure/<port>/<name>.ts`), which every handler
    * of its commands, policies and processes receives once the configuration has chosen one.
    */
   readonly ports?: PortModules;
@@ -45,6 +45,11 @@ export interface AggregateEntry {
  */
 export interface ReadModelEntry {
   readonly view: ViewModule;
+  /**
+   * The implementations of every port of the read model (`infrastructure/<port>/<name>.ts`),
+   * which its queries' handlers receive once the configuration has chosen one.
+   */
+  readonly ports?: PortModules;
   readonly projections: Readonly<Record<string, Readonly<Record<string, ProjectionModule>>>>;
   readonly queries: Readonly<Record<string, QueryModule>>;
 }

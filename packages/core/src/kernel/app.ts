@@ -260,7 +260,11 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         for (const observed of observers) observed.push(rejection);
       },
     });
-    const queryRunner = createQueryRunner({ queries: buildQueries({ readModels }), readModels });
+    const queryRunner = createQueryRunner({
+      queries: buildQueries({ readModels }),
+      readModels,
+      ports: ports.byReadModel,
+    });
     const processDefinitions = buildProcesses({ registry, aggregates, config });
     const processes = createProcessRunner({
       processes: processDefinitions,

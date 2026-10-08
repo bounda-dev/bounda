@@ -3,6 +3,7 @@ import type {
   CreateAppArgs,
   DeadLetter,
   DispatchResult,
+  Registry,
   ScheduledDispatch,
   StoredDispatch,
 } from "@bounda-dev/core";
@@ -37,6 +38,21 @@ describe("connect", () => {
   });
 });
 
+/**
+ * A registry whose only implementation that exports `create` is a read model's.
+ */
+const readModelRegistry = {
+  aggregates: {},
+  readModels: {
+    summary: {
+      view: { fields: () => ({}) },
+      projections: {},
+      queries: {},
+      ports: { rates: { live: { create: () => async () => 1 } } },
+    },
+  },
+} satisfies Registry;
+
 describe("the env implementations receive on Cloudflare", () => {
   it("is the Worker's Cloudflare.Env, required once an implementation exports create", () => {
     expectTypeOf<
@@ -46,6 +62,16 @@ describe("the env implementations receive on Cloudflare", () => {
     // @ts-expect-error region is built by create, which needs the bindings Cloudflare.Env promises
     const withoutEnv: CreateTestAppArgs<typeof regionRegistry> = { registry: app };
     const withEnv: CreateTestAppArgs<typeof regionRegistry> = { registry: app, env };
+    void [withoutEnv, withEnv];
+  });
+
+  it("is required too when only a read model's implementation exports create", () => {
+    // @ts-expect-error rates is built by create, which needs the bindings Cloudflare.Env promises
+    const withoutEnv: CreateTestAppArgs<typeof readModelRegistry> = { registry: readModelRegistry };
+    const withEnv: CreateTestAppArgs<typeof readModelRegistry> = {
+      registry: readModelRegistry,
+      env,
+    };
     void [withoutEnv, withEnv];
   });
 

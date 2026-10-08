@@ -188,6 +188,14 @@ describe("ports", () => {
     >();
   });
 
+  it("reach a read model's query handlers, and neither its repository nor its projections", () => {
+    type Rates = import("./fixtures/order-app/app/read/order-summary/rates.ts").Rates;
+    expectTypeOf<CustomerOverview.HandlerArgs["rates"]>().toEqualTypeOf<Rates>();
+    expectTypeOf<CustomerOverview.RepositoryArgs>().not.toHaveProperty("rates");
+    expectTypeOf<ProjectOrderPaid.Args>().not.toHaveProperty("rates");
+    expectTypeOf<PlaceOrder.HandlerArgs>().not.toHaveProperty("rates");
+  });
+
   it("leave the aggregate's other modules out of the registry and the events", () => {
     expectTypeOf<Registry["aggregates"]["order"]["events"]>().not.toHaveProperty("money");
     expectTypeOf<PlaceOrder.HandlerArgs["events"]>().not.toHaveProperty("money");
@@ -467,7 +475,12 @@ describe("read models", () => {
   it("let a query compose other queries through the typed facade", () => {
     expectTypeOf<CustomerOverview.HandlerArgs["queries"]>().toHaveProperty("getOrder");
     expectTypeOf<Queries["customerOverview"]>().returns.toEqualTypeOf<
-      Promise<{ unpaidCount: number; outstanding: number; lastStatus: string | null }>
+      Promise<{
+        unpaidCount: number;
+        outstanding: number;
+        outstandingUsd: number;
+        lastStatus: string | null;
+      }>
     >();
   });
 });
