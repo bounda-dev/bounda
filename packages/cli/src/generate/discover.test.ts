@@ -409,7 +409,7 @@ describe("discoverProject convention problems", () => {
       ["app/domain/order/order-paid.ts", "export function evolve() {\n  return {};\n}\n"],
       [
         "app/domain/order/order-shipped.ts",
-        "const evolve = () => ({});\nexport interface Shipped {}\nexport { evolve };\n",
+        "const evolve = () => ({});\ninterface Shipped {}\nexport { type Shipped, evolve, };\n",
       ],
       [
         "app/domain/order/money.ts",
@@ -435,7 +435,7 @@ describe("discoverProject convention problems", () => {
     const root = await project([
       [
         "app/domain/order/order-cancelled.ts",
-        "export const evolve = () => ({});\nexport const reasons = [];\n",
+        "export const evolve = () => ({});\nexport const reasons = [];\nexport function limitOf() {}\n",
       ],
       [
         "app/domain/order/discount.ts",
@@ -444,7 +444,7 @@ describe("discoverProject convention problems", () => {
     ]);
     expect(await problemsOf(root)).toEqual([
       'app/domain/order/discount.ts: exports "evolve", an event\'s, and "apply" besides: an event exports only payload, begin and evolve',
-      'app/domain/order/order-cancelled.ts: exports "evolve", an event\'s, and "reasons" besides: an event exports only payload, begin and evolve',
+      'app/domain/order/order-cancelled.ts: exports "evolve", an event\'s, and "reasons", "limitOf" besides: an event exports only payload, begin and evolve',
     ]);
   });
 

@@ -387,17 +387,17 @@ const quoted = (names: readonly string[]): string => names.map((name) => `"${nam
  * Whether a module at the aggregate's root is an event. One that exports an event's function next
  * to something else is reported rather than guessed at.
  */
-const isEvent = (context: Context, path: string, text: string): boolean | null => {
+const isEvent = (context: Context, path: string, text: string): boolean => {
   const exported = runtimeExportsOf(text);
   const own = exported.filter((name) => EVENT_EXPORTS.has(name));
-  if (own.length === 0) return false;
   const others = exported.filter((name) => !EVENT_EXPORTS.has(name));
-  if (others.length === 0) return true;
-  context.problems.add(
-    path,
-    `exports ${quoted(own)}, an event's, and ${quoted(others)} besides: an event exports only payload, begin and evolve`,
-  );
-  return null;
+  if (own.length > 0 && others.length > 0) {
+    context.problems.add(
+      path,
+      `exports ${quoted(own)}, an event's, and ${quoted(others)} besides: an event exports only payload, begin and evolve`,
+    );
+  }
+  return own.length > 0;
 };
 
 const discoverPort = async (
@@ -514,9 +514,7 @@ const discoverAggregate = async (
       continue;
     }
     const text = await readFile(path, "utf8");
-    const event = isEvent(context, path, text);
-    if (event === null) continue;
-    if (!event) {
+    if (!isEvent(context, path, text)) {
       others.set(module, { path, text });
       continue;
     }
