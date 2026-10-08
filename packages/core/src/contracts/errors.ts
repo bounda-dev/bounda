@@ -183,8 +183,8 @@ export class ConfigurationError extends BoundaError {
 
 /**
  * Thrown when a command handler returns events that do not fit whether its aggregate exists: an
- * aggregate one of whose events exports `create` starts with such an event, and an event that only
- * exports `create` cannot go on an aggregate that exists. A bug in the handler, not a refusal:
+ * aggregate one of whose events exports `begin` starts with such an event, and an event that only
+ * exports `begin` cannot go on an aggregate that exists. A bug in the handler, not a refusal:
  * nothing is stored, and a reaction that dispatched the command is never retried for it.
  */
 export class CreationOrderError extends BoundaError {

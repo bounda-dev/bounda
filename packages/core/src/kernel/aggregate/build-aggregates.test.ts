@@ -71,7 +71,7 @@ describe("buildAggregates", () => {
     const registry: Registry = {
       aggregates: {
         order: {
-          events: { broken: { payload: (() => "nope") as never, apply: () => ({}) } },
+          events: { broken: { payload: (() => "nope") as never, evolve: () => ({}) } },
           commands: {},
           policies: {},
           processes: {},
@@ -152,14 +152,14 @@ describe("foldState", () => {
         ticket: {
           events: {
             ticketOpened: {
-              create: ({ event }: { event: { payload: { title: string } } }) => ({
+              begin: ({ event }: { event: { payload: { title: string } } }) => ({
                 status: "open",
                 title: event.payload.title,
                 tags: [],
               }),
             },
             ticketTagged: {
-              apply: ({
+              evolve: ({
                 state,
                 event,
               }: {
@@ -170,9 +170,9 @@ describe("foldState", () => {
                 note: `tagged ${event.payload.tag}`,
               }),
             },
-            ticketClosed: { apply: () => ({ status: "closed", note: undefined }) },
-            ticketImported: { create: () => ({ status: "imported", tags: [] }) },
-            ticketBroken: { apply: () => "closed" as never },
+            ticketClosed: { evolve: () => ({ status: "closed", note: undefined }) },
+            ticketImported: { begin: () => ({ status: "imported", tags: [] }) },
+            ticketBroken: { evolve: () => "closed" as never },
           },
           commands: {},
           policies: {},
@@ -188,9 +188,9 @@ describe("foldState", () => {
     return { ...event, metadata: { ...event.metadata, system: true } };
   };
 
-  it("opens the aggregate with create and merges what each apply returns over the state", () => {
-    expect(ticket.opensWithCreate).toBe(true);
-    expect(order.opensWithCreate).toBe(false);
+  it("opens the aggregate with begin and merges what each evolve returns over the state", () => {
+    expect(ticket.opensWithBegin).toBe(true);
+    expect(order.opensWithBegin).toBe(false);
     expect(
       foldState({
         aggregate: ticket,
@@ -221,7 +221,7 @@ describe("foldState", () => {
     ).toMatchObject({ state: { status: "open", title: "A" }, created: true, openedWithout: null });
   });
 
-  it("applies an opening event without create, and names it, for a stream older than create", () => {
+  it("applies an opening event without begin, and names it, for a stream older than begin", () => {
     expect(foldState({ aggregate: ticket, events: [stored("TicketClosed", {}, 1)] })).toEqual({
       state: { status: "closed" },
       created: true,
@@ -229,7 +229,7 @@ describe("foldState", () => {
     });
   });
 
-  it("folds an event that only exports create on an aggregate that exists over its state", () => {
+  it("folds an event that only exports begin on an aggregate that exists over its state", () => {
     expect(
       foldState({
         aggregate: ticket,
@@ -238,7 +238,7 @@ describe("foldState", () => {
     ).toEqual({ status: "imported", title: "A", tags: [] });
   });
 
-  it("fails on an apply that returns something other than an object", () => {
+  it("fails on an evolve that returns something other than an object", () => {
     expect(() =>
       foldState({
         aggregate: ticket,

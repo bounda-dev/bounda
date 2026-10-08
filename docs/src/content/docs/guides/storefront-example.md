@@ -48,7 +48,7 @@ webhooks.
 compensates, and what happens when the webhooks arrive late, twice or out of order.
 
 Neither aggregate has a `state.ts`: their state is inferred from what their events return.
-`order-placed.ts` and `payment-requested.ts` open their aggregates with `create`, so a handler
+`order-placed.ts` and `payment-requested.ts` open their aggregates with `begin`, so a handler
 that has checked `state.status` reads `state.customerId` or `state.intentId` as a string, and
 `state.status === undefined` means the order or the payment does not exist yet.
 

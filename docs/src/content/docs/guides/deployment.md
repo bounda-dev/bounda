@@ -349,14 +349,14 @@ get today. Each item says why, so nobody discovers it the hard way:
 - **Snapshots.** An aggregate is folded from its whole stream on every command. That is fine for
   the hundreds of events per instance that Bounda's kind of app produces, and it is not fine for
   hundreds of thousands. Snapshots are deliberately not built yet: the state is inferred and
-  carries no version, so a snapshot written by yesterday's `apply` would silently be wrong after
+  carries no version, so a snapshot written by yesterday's `evolve` would silently be wrong after
   today's deploy. They come with a versioning story or not at all; until then, model long-lived
   things as processes, which close, rather than as aggregates that grow forever.
 - **Changing the shape of a process's state.** A process keeps its state in its own lifecycle
   events, so a change to that shape has the same problem an event payload has, and no
   `state.upcast.ts` yet. See [Changing an event's shape](/guides/changing-events/#what-is-not-covered-yet).
 - **Renaming or removing an event type.** Upcasters change a payload, not a type. Keep the module,
-  even if its `apply` changes nothing.
+  even if its `evolve` changes nothing.
 - **One trace per request.** Spans carry `bounda.correlation_id` but a policy's span is a separate
   trace from the command's, because it runs in a later pass. See [Observability](#observability).
 - **Notifications for scheduled commands.** The worker that runs due commands polls at

@@ -25,7 +25,7 @@ Never edit anything under `.bounda/` or a `+types/` directory; both are generate
 ```
 app/domain/<aggregate>/
   state.ts                         optional: export const initialState = {...}; export const aggregateId = "<field>"
-  <event>.ts                       export const payload (optional); export const create (the event that opens the aggregate) and/or export const apply
+  <event>.ts                       export const payload (optional); export const begin (the event that opens the aggregate) and/or export const evolve
   <event>.upcast.ts                optional: export const upcasts (oldest version first)
   <port>/index.ts                  a port: export interface <Port> (PascalCase of the directory)
   <port>/<implementation>.ts       export default ... satisfies Implementation.Contract, or export const create: Implementation.Create; every handler of the aggregate receives it as <port>
@@ -53,7 +53,7 @@ import type { Event } from "./+types/order-placed";
 
 export const payload = ({ z }: Event.PayloadArgs) => z.object({ total: z.number().positive() });
 
-export const create = ({ event }: Event.CreateArgs) => ({
+export const begin = ({ event }: Event.BeginArgs) => ({
   status: "placed" as const,
   total: event.payload.total,
 });
@@ -63,7 +63,7 @@ export const create = ({ event }: Event.CreateArgs) => ({
 // order-paid.ts: any later event
 import type { Event } from "./+types/order-paid";
 
-export const apply = ({ event }: Event.ApplyArgs) => ({
+export const evolve = ({ event }: Event.EvolveArgs) => ({
   status: "paid" as const,
   paidAt: event.timestamp,
 });
@@ -264,10 +264,10 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   another store is an event instead. `app.commands` throws the rejection as a `DomainError` with
   the code in `rejected`.
 - `state` in a handler carries `id` and `version` besides the aggregate's fields. Without
-  `state.ts` it is inferred: give the event that opens the aggregate a `create`, and a handler sees
+  `state.ts` it is inferred: give the event that opens the aggregate a `begin`, and a handler sees
   either a fresh aggregate, every field `undefined` (`state.status === undefined`), or a created
-  one where the fields `create` sets are always defined. Without any `create` every field is
-  optional. An aggregate with a `create` must start with such an event; a handler that starts it
+  one where the fields `begin` sets are always defined. Without any `begin` every field is
+  optional. An aggregate with a `begin` must start with such an event; a handler that starts it
   with another one throws `CreationOrderError`. Write `state.ts` only for an initial value before
   the first event or a type not visible outside its module.
 - Policies and process handlers get `commands`, the typed facade of every command in the app, and

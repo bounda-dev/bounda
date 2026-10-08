@@ -19,9 +19,9 @@ const requireFunction = (problems: Problem[], owner: object, path: string, name:
 };
 
 const requireFolding = (problems: Problem[], event: object, path: string): void => {
-  const exported = ["create", "apply"].filter((name) => Reflect.get(event, name) !== undefined);
+  const exported = ["begin", "evolve"].filter((name) => Reflect.get(event, name) !== undefined);
   if (exported.length === 0) {
-    problems.push({ path, message: 'missing export "create" or "apply" (expected a function)' });
+    problems.push({ path, message: 'missing export "begin" or "evolve" (expected a function)' });
   }
   for (const name of exported) requireFunction(problems, event, path, name);
 };

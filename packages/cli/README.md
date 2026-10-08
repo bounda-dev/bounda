@@ -28,7 +28,7 @@ bounda dead-letters discard <id>
 It reads `app/domain` and `app/read` by file and directory names only, and writes
 `.bounda/registry.ts`, `.bounda/register.d.ts`, `.bounda/types.ts` and one `+types/<name>.ts` next
 to every module. An aggregate without `state.ts` gets its state inferred from what its
-events' `create` and `apply` return, with the TypeScript compiler. A layout that breaks a convention exits with code 1 and
+events' `begin` and `evolve` return, with the TypeScript compiler. A layout that breaks a convention exits with code 1 and
 names every offending file.
 
 Keep it as `prepare` so a fresh clone generates on install, and `--watch` while you work:

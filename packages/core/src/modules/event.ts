@@ -4,14 +4,14 @@ import { capitalize } from "./naming.ts";
 import type { HasPayload, PayloadFunction, PayloadOf } from "./payload.ts";
 
 /**
- * The shape of an event module: an optional `payload` schema and `create`, `apply` or both. Each
- * returns the state fields the event sets, merged shallowly over the state. `create` opens the
- * aggregate, from the event alone; `apply` folds a later event into the state.
+ * The shape of an event module: an optional `payload` schema and `begin`, `evolve` or both. Each
+ * returns the state fields the event sets, merged shallowly over the state. `begin` opens the
+ * aggregate, from the event alone; `evolve` folds a later event into the state.
  */
 export interface EventModule {
   readonly payload?: PayloadFunction;
-  readonly create?: (args: never) => object;
-  readonly apply?: (args: never) => object;
+  readonly begin?: (args: never) => object;
+  readonly evolve?: (args: never) => object;
 }
 
 /**
@@ -20,18 +20,18 @@ export interface EventModule {
 export type EventModules = Readonly<Record<string, EventModule>>;
 
 /**
- * Arguments of `apply`. When one of the aggregate's events exports `create`, `apply` only ever
- * runs on an aggregate that exists, so `state` has every field `create` always sets.
+ * Arguments of `evolve`. When one of the aggregate's events exports `begin`, `evolve` only ever
+ * runs on an aggregate that exists, so `state` has every field `begin` always sets.
  */
-export interface EventApplyArgs<State extends object, Type extends string, Payload> {
+export interface EventEvolveArgs<State extends object, Type extends string, Payload> {
   readonly state: Readonly<State>;
   readonly event: StoredEvent<Type, Payload>;
 }
 
 /**
- * Arguments of `create`: the event alone, since the aggregate has no state before it.
+ * Arguments of `begin`: the event alone, since the aggregate has no state before it.
  */
-export interface EventCreateArgs<Type extends string, Payload> {
+export interface EventBeginArgs<Type extends string, Payload> {
   readonly event: StoredEvent<Type, Payload>;
 }
 

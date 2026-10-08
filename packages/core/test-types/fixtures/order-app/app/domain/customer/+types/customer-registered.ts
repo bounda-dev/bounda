@@ -5,11 +5,11 @@ type Module = typeof import("../customer-registered.ts");
 
 export declare namespace Event {
   type PayloadArgs = core.PayloadArgs;
-  type CreateArgs = core.EventCreateArgs<
+  type BeginArgs = core.EventBeginArgs<
     "CustomerRegistered",
     core.PayloadOf<Module>
   >;
-  type ApplyArgs = core.EventApplyArgs<
+  type EvolveArgs = core.EventEvolveArgs<
     generated.CustomerCreatedState,
     "CustomerRegistered",
     core.PayloadOf<Module>

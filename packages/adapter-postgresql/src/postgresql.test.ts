@@ -565,10 +565,10 @@ const registry = {
       events: {
         orderPlaced: {
           payload: ({ z }: PayloadArgs) => z.object({ total: z.number() }),
-          apply: ({ state }: { state: OrderState }) => ({ ...state, status: "placed" as const }),
+          evolve: ({ state }: { state: OrderState }) => ({ ...state, status: "placed" as const }),
         },
         orderPaid: {
-          apply: ({ state }: { state: OrderState }) => ({ ...state, status: "paid" as const }),
+          evolve: ({ state }: { state: OrderState }) => ({ ...state, status: "paid" as const }),
         },
       },
       commands: {
@@ -765,8 +765,8 @@ const statusRegistry = (hold: HoldProjection = async () => {}) =>
       order: {
         state: { initialState: {} },
         events: {
-          orderPlaced: { apply: ({ state }: { state: object }) => state },
-          orderCancelled: { apply: ({ state }: { state: object }) => state },
+          orderPlaced: { evolve: ({ state }: { state: object }) => state },
+          orderCancelled: { evolve: ({ state }: { state: object }) => state },
         },
         commands: {
           placeOrder: {

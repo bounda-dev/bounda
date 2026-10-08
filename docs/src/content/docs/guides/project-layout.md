@@ -15,7 +15,7 @@ app/
   domain/
     order/                          an aggregate
       state.ts                      optional: initialState and aggregateId
-      order-placed.ts               an event: payload, and create or apply
+      order-placed.ts               an event: payload, and begin or evolve
       order-placed.upcast.ts        optional: how older payloads become today's
       order-paid.ts
       inventory/                    a port: what the aggregate's handlers call outside
@@ -82,7 +82,7 @@ import type { Event } from "./+types/order-placed";
 export const payload = ({ z }: Event.PayloadArgs) =>
   z.object({ customerId: z.string(), total: z.number().positive() });
 
-export const create = ({ event }: Event.CreateArgs) => ({
+export const begin = ({ event }: Event.BeginArgs) => ({
   status: "placed" as const,
   customerId: event.payload.customerId,
   total: event.payload.total,
@@ -93,7 +93,7 @@ export const create = ({ event }: Event.CreateArgs) => ({
 // app/domain/order/order-paid.ts
 import type { Event } from "./+types/order-paid";
 
-export const apply = ({ event }: Event.ApplyArgs) => ({
+export const evolve = ({ event }: Event.EvolveArgs) => ({
   status: "paid" as const,
   paidAt: event.timestamp,
 });
@@ -101,12 +101,12 @@ export const apply = ({ event }: Event.ApplyArgs) => ({
 
 `payload` is optional; an event without one has an empty payload. An event returns the state
 fields it sets, merged over the state one level deep: a field returned as `undefined` keeps its
-value, so clear one with `null`. `create` opens the aggregate and gets the event alone, since
-there is no state before it; `apply` folds a later event and gets the state too. An event that can
+value, so clear one with `null`. `begin` opens the aggregate and gets the event alone, since
+there is no state before it; `evolve` folds a later event and gets the state too. An event that can
 do both exports both.
 
-Once one of an aggregate's events exports `create`, the aggregate starts with such an event. A
-command that would start it with another event, or put an event that only exports `create` on an
+Once one of an aggregate's events exports `begin`, the aggregate starts with such an event. A
+command that would start it with another event, or put an event that only exports `begin` on an
 aggregate that exists, throws `CreationOrderError` and stores nothing: a bug in the handler, which
 a reaction does not retry.
 When a payload changes shape after events are stored, `<event>.upcast.ts` next to it brings the
@@ -117,16 +117,16 @@ old ones up to date as they are read: see [Changing an event's shape](/guides/ch
 Without `state.ts`, the generator infers the aggregate's state from what its events return, each
 field typed as the union of what the events assign. With the two events above, a command handler
 sees either an order that does not exist yet, every field `undefined`, or one where the fields
-`create` sets are always there: `status: "placed" | "paid"`, `customerId: string` and
-`total: number`, with `paidAt?: string`. Any field `create` sets tells the two apart:
+`begin` sets are always there: `status: "placed" | "paid"`, `customerId: string` and
+`total: number`, with `paidAt?: string`. Any field `begin` sets tells the two apart:
 
 ```ts
 if (state.status === undefined) return reject("NotPlaced");
 state.total; // number
 ```
 
-`apply` only runs on an aggregate that exists, so its `state` is the created one. Without any
-`create`, every field is optional, since any event could come first.
+`evolve` only runs on an aggregate that exists, so its `state` is the created one. Without any
+`begin`, every field is optional, since any event could come first.
 
 Add `state.ts` when you want an initial value before the first event, or when a field's type is
 not visible from outside its module:

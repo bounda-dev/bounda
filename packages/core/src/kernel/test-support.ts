@@ -30,7 +30,7 @@ export const orderAggregate = {
   events: {
     orderPlaced: {
       payload: ({ z }: PayloadArgs) => z.object({ total: z.number().positive() }),
-      apply: ({ state, event }: { state: OrderState; event: { payload: { total: number } } }) => ({
+      evolve: ({ state, event }: { state: OrderState; event: { payload: { total: number } } }) => ({
         ...state,
         status: "placed" as const,
         total: event.payload.total,
@@ -38,10 +38,10 @@ export const orderAggregate = {
     },
     orderPaid: {
       payload: ({ z }: PayloadArgs) => z.object({ method: z.enum(["card", "transfer"]) }),
-      apply: ({ state }: { state: OrderState }) => ({ ...state, status: "paid" as const }),
+      evolve: ({ state }: { state: OrderState }) => ({ ...state, status: "paid" as const }),
     },
     orderArchived: {
-      apply: ({ state }: { state: OrderState }) => state,
+      evolve: ({ state }: { state: OrderState }) => state,
     },
   },
   commands: {
@@ -153,7 +153,7 @@ export const withJob: WithJobFunction = (handler, base = { aggregates: {}, readM
   aggregates: {
     ...base.aggregates,
     job: {
-      events: { jobDone: { apply: ({ state }: { state: object }) => state } },
+      events: { jobDone: { evolve: ({ state }: { state: object }) => state } },
       commands: { runJob: { module: { handler } } },
       policies: {},
       processes: {},

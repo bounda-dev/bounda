@@ -4,9 +4,9 @@ import type { PayloadArgs } from "./payload.ts";
 
 const orderPlaced = {
   payload: ({ z }: PayloadArgs) => z.object({ total: z.number() }),
-  apply: () => ({}),
+  evolve: () => ({}),
 };
-const orderCancelled = { apply: () => ({}) };
+const orderCancelled = { evolve: () => ({}) };
 
 describe("createEventBuilders", () => {
   const events = createEventBuilders({ orderPlaced, orderCancelled });

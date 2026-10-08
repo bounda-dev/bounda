@@ -11,7 +11,7 @@ export const registry = {
       state: { initialState: { count: 0 } satisfies State },
       events: {
         incremented: {
-          apply: ({ state }: { state: State }) => ({ count: state.count + 1 }),
+          evolve: ({ state }: { state: State }) => ({ count: state.count + 1 }),
         },
       },
       commands: {

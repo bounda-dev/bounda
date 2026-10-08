@@ -1,1 +1,1 @@
-export const apply = () => ({ status: "active" as const });
+export const evolve = () => ({ status: "active" as const });

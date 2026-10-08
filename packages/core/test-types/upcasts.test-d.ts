@@ -41,7 +41,7 @@ describe("Event.Upcasts", () => {
 
   it("is the generic the +types file specialises", () => {
     expectTypeOf<OrderPlaced.Upcasts>().toEqualTypeOf<
-      Upcasts<OrderPlaced.ApplyArgs["event"]["payload"]>
+      Upcasts<OrderPlaced.EvolveArgs["event"]["payload"]>
     >();
   });
 });

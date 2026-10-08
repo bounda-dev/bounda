@@ -8,7 +8,7 @@ export const payload = ({ z }: Event.PayloadArgs) =>
     ),
   });
 
-export const apply = ({ state, event }: Event.ApplyArgs) => ({
+export const evolve = ({ state, event }: Event.EvolveArgs) => ({
   ...state,
   status: "placed" as const,
   customerId: event.payload.customerId,

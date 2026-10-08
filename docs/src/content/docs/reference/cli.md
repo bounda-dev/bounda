@@ -74,7 +74,7 @@ outright, such as a file where `.bounda/` should be, ends it. `Ctrl-C` ends it t
 
 For an aggregate without `state.ts`, the generator writes a first pass in which the state is
 `UnknownState`, opens the project with TypeScript, reads the return type of every event's
-`create` and `apply` and unions the fields it finds. The fields every `create` always sets are
+`begin` and `evolve` and unions the fields it finds. The fields every `begin` always sets are
 required once the aggregate exists, and a command handler sees that state or the one of an
 aggregate that does not exist yet, every field `undefined`:
 
@@ -88,7 +88,7 @@ export type OrderCreatedState = {
 export type OrderState = core.NotCreated<OrderCreatedState> | OrderCreatedState;
 ```
 
-`apply` gets `OrderCreatedState`. Without any `create`, there is only `OrderState`, every field
+`evolve` gets `OrderCreatedState`. Without any `begin`, there is only `OrderState`, every field
 optional, since any event could come first.
 
 Types exported from your modules are referenced through `import(...)`. A type that is not

@@ -47,7 +47,7 @@ export const upcastEvent: UpcastEventFunction = ({ event, aggregates }) => {
 };
 
 /**
- * So `apply`, policies, processes and projections only ever see current payloads. Writes pass
+ * So `evolve`, policies, processes and projections only ever see current payloads. Writes pass
  * through untouched, since the pipeline stamps them with the current version.
  */
 export const withUpcasting: WithUpcastingFunction = ({ eventStore, aggregates }) => {

@@ -168,25 +168,25 @@ const toPendingEvents = (
     };
   });
 
-// What makes the state types true: `apply` only ever runs on an aggregate `create` opened.
+// What makes the state types true: `evolve` only ever runs on an aggregate `begin` opened.
 const checkCreationOrder = (
   aggregate: AggregateRuntime,
   command: Command,
   created: boolean,
   events: readonly PendingEvent[],
 ): void => {
-  if (!aggregate.opensWithCreate) return;
+  if (!aggregate.opensWithBegin) return;
   let exists = created;
   for (const event of events) {
     const runtime = aggregate.eventsByType[event.type];
-    if (!exists && runtime?.create === null) {
+    if (!exists && runtime?.begin === null) {
       throw new CreationOrderError(
-        `Command "${command.type}" returned "${event.type}" for ${aggregate.name} ${command.aggregateId}, which does not exist yet: it must start with an event that exports create`,
+        `Command "${command.type}" returned "${event.type}" for ${aggregate.name} ${command.aggregateId}, which does not exist yet: it must start with an event that exports begin`,
       );
     }
-    if (exists && runtime?.apply === null) {
+    if (exists && runtime?.evolve === null) {
       throw new CreationOrderError(
-        `Command "${command.type}" returned "${event.type}" for ${aggregate.name} ${command.aggregateId}, which exists already: "${event.type}" only exports create`,
+        `Command "${command.type}" returned "${event.type}" for ${aggregate.name} ${command.aggregateId}, which exists already: "${event.type}" only exports begin`,
       );
     }
     exists = true;
@@ -262,7 +262,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
   logger,
   onRejection,
 }) => {
-  // Only streams written before `create` existed land here, so the set stays small.
+  // Only streams written before `begin` existed land here, so the set stays small.
   const warnedOpenings = new Set<string>();
   const execute = async (
     aggregate: AggregateRuntime,
@@ -282,7 +282,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
       const stream = `${aggregate.name}:${command.aggregateId}`;
       if (folded.openedWithout !== null && !warnedOpenings.has(stream)) {
         warnedOpenings.add(stream);
-        logger.warn("aggregate opened by an event without create; its state may lack fields", {
+        logger.warn("aggregate opened by an event without begin; its state may lack fields", {
           aggregateType: aggregate.name,
           aggregateId: command.aggregateId,
           eventType: folded.openedWithout,

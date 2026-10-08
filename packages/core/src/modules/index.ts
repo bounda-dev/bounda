@@ -16,9 +16,9 @@ export type {
 } from "./command.ts";
 export type {
   CreateEventBuildersFunction,
-  EventApplyArgs,
+  EventBeginArgs,
   EventBuilders,
-  EventCreateArgs,
+  EventEvolveArgs,
   EventModule,
   EventModules,
   EventOf,

@@ -3,7 +3,7 @@ import { type FieldsArgs, type PayloadArgs, type Registry, ValidationError } fro
 export const registry = {
   aggregates: {
     counter: {
-      events: { incremented: { apply: ({ state }: { state: object }) => state } },
+      events: { incremented: { evolve: ({ state }: { state: object }) => state } },
       commands: {
         increment: {
           module: {

@@ -15,7 +15,7 @@ export interface InferStatesArgs {
   readonly tsconfigPath: string;
   /**
    * Absolute path of `.bounda/types.ts`. Its first-pass content must already be on disk: typing
-   * every state to infer as `core.UnknownState` is what makes each `apply` return only the fields
+   * every state to infer as `core.UnknownState` is what makes each `evolve` return only the fields
    * it sets.
    */
   readonly typesPath: string;
@@ -46,8 +46,8 @@ type Fields = Map<string, FieldTypes>;
 interface AggregateFields {
   readonly fields: Fields;
   /**
-   * The fields every `create` always sets, required once the aggregate exists; `null` when no
-   * event exports `create`.
+   * The fields every `begin` always sets, required once the aggregate exists; `null` when no
+   * event exports `begin`.
    */
   readonly required: ReadonlySet<string> | null;
 }
@@ -78,7 +78,7 @@ const renderState = ({ fields, required }: AggregateFields): string => {
 const exportedFunction = (
   ts: typeof import("typescript/unstable/ast"),
   file: import("typescript/unstable/ast").SourceFile,
-  exportName: "apply" | "create",
+  exportName: "evolve" | "begin",
 ): import("typescript/unstable/ast").Node | null => {
   for (const statement of file.statements) {
     const isExported = (statement as { modifiers?: readonly { kind: number }[] }).modifiers?.some(
@@ -107,7 +107,7 @@ const collectFields = (
   warn: (message: string) => void,
 ): AggregateFields => {
   const fields: Fields = new Map();
-  // What each `create` always sets.
+  // What each `begin` always sets.
   const opening: ReadonlySet<string>[] = [];
   const { checker, program, emitter } = checkers.project;
   const flags = sync.NodeBuilderFlags.NoTruncation | sync.NodeBuilderFlags.UseFullyQualifiedType;
@@ -122,7 +122,7 @@ const collectFields = (
   const returnedBy = (
     event: EventModel,
     file: import("typescript/unstable/ast").SourceFile,
-    exportName: "apply" | "create",
+    exportName: "evolve" | "begin",
   ) => {
     const name = exportedFunction(ts, file, exportName);
     if (name === null) return null;
@@ -144,11 +144,11 @@ const collectFields = (
     const file = program.getSourceFile(event.path);
     if (file === undefined) {
       warn(
-        `${event.relativePath} is not part of the TypeScript project, so its apply and create were skipped`,
+        `${event.relativePath} is not part of the TypeScript project, so its begin and evolve were skipped`,
       );
       continue;
     }
-    for (const exportName of ["create", "apply"] as const) {
+    for (const exportName of ["begin", "evolve"] as const) {
       const properties = returnedBy(event, file, exportName);
       if (properties === null) continue;
       const always = new Set<string>();
@@ -168,7 +168,7 @@ const collectFields = (
           ].some((member) => (member.flags & maybeAbsent) !== 0);
         if (!absent) always.add(property.name);
       }
-      if (exportName === "create") opening.push(always);
+      if (exportName === "begin") opening.push(always);
     }
   }
   const [first, ...rest] = opening;
@@ -252,10 +252,10 @@ const openProject = async (
 };
 
 /**
- * Infers `State` for every aggregate without `state.ts` from what its events' exported `create`
- * and `apply` functions return, each field typed as the union of what they set. Every field is
- * optional, unless an event exports `create`: then the state is the created one, where the
- * fields every `create` always sets are required, or `core.NotCreated` of it. Writes the result
+ * Infers `State` for every aggregate without `state.ts` from what its events' exported `begin`
+ * and `evolve` functions return, each field typed as the union of what they set. Every field is
+ * optional, unless an event exports `begin`: then the state is the created one, where the
+ * fields every `begin` always sets are required, or `core.NotCreated` of it. Writes the result
  * to `typesPath`. A field whose type is not visible from there (a non-exported interface, say)
  * becomes `unknown` with a warning; when TypeScript cannot run on the project, every such
  * aggregate keeps `core.UnknownState`, with a warning each.

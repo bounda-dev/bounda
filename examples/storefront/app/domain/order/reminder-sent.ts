@@ -1,1 +1,1 @@
-export const apply = () => ({ reminderSent: true });
+export const evolve = () => ({ reminderSent: true });

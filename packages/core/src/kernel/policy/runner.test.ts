@@ -110,7 +110,7 @@ describe("policyTriggerFromKey", () => {
     const { all } = policiesOf({
       aggregates: {
         order: {
-          events: { orderPaid: { apply: () => ({}) }, orderPlaced: { apply: () => ({}) } },
+          events: { orderPaid: { evolve: () => ({}) }, orderPlaced: { evolve: () => ({}) } },
           commands: {},
           policies: {
             a: { module: { on: "OrderPaid", handler: () => {} } },
@@ -802,7 +802,7 @@ describe("the commands of a policy run", () => {
 
 describe("policies and the aggregate whose events they react to", () => {
   const reacted: string[] = [];
-  const apply = () => ({});
+  const evolve = () => ({});
   const twoAggregates: Registry = {
     aggregates: {
       order: {
@@ -826,7 +826,7 @@ describe("policies and the aggregate whose events they react to", () => {
         },
       },
       ledger: {
-        events: { orderPlaced: { apply } },
+        events: { orderPlaced: { evolve } },
         commands: {
           record: {
             module: {

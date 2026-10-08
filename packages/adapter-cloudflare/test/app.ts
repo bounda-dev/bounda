@@ -35,13 +35,13 @@ export const registry = {
       events: {
         orderPlaced: {
           payload: ({ z }: PayloadArgs) => z.object({ total: z.number(), customer: z.string() }),
-          apply: ({ state }: { state: OrderState }) => ({ ...state, status: "placed" as const }),
+          evolve: ({ state }: { state: OrderState }) => ({ ...state, status: "placed" as const }),
         },
         orderPaid: {
-          apply: ({ state }: { state: OrderState }) => ({ ...state, status: "paid" as const }),
+          evolve: ({ state }: { state: OrderState }) => ({ ...state, status: "paid" as const }),
         },
         orderArchived: {
-          apply: ({ state }: { state: OrderState }) => ({ ...state, status: "archived" as const }),
+          evolve: ({ state }: { state: OrderState }) => ({ ...state, status: "archived" as const }),
         },
       },
       commands: {

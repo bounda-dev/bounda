@@ -274,7 +274,7 @@ describe("bounda() Vite plugin", () => {
 
     await writeFile(
       join(root, "app/domain/order/order-shipped.ts"),
-      'import type { Event } from "./+types/order-shipped";\n\nexport const apply = ({ state }: Event.ApplyArgs) => state;\n',
+      'import type { Event } from "./+types/order-shipped";\n\nexport const evolve = ({ state }: Event.EvolveArgs) => state;\n',
     );
     watcher.emit("add", join(root, "app/domain/order/order-shipped.ts"));
     watcher.emit("change", join(root, "app/domain/order/order-shipped.ts"));
@@ -403,7 +403,7 @@ describe("bounda() Vite plugin", () => {
     const watcher = serve();
     await writeFile(
       join(root, "app/domain/order/order-shipped.ts"),
-      "export const apply = () => ({});\n",
+      "export const evolve = () => ({});\n",
     );
     watcher.emit("add", join(root, "app/domain/order/order-shipped.ts"));
     expect(clock.pending()).toBe(1);
@@ -422,7 +422,7 @@ describe("bounda() Vite plugin", () => {
     const watcher = serve();
     await writeFile(
       join(root, "app/domain/order/order-shipped.ts"),
-      "export const apply = () => ({});\n",
+      "export const evolve = () => ({});\n",
     );
     watcher.emit("add", join(root, "app/domain/order/order-shipped.ts"));
     clock.advance(20);

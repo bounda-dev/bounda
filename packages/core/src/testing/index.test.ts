@@ -80,7 +80,7 @@ const shop = (ports: PortModules, deadline = () => ({ due: null })) =>
   ({
     aggregates: {
       order: {
-        events: { orderPlaced: { apply: ({ state }: { state: object }) => state } },
+        events: { orderPlaced: { evolve: ({ state }: { state: object }) => state } },
         commands: {
           placeOrder: {
             module: {

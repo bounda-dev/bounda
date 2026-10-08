@@ -12,8 +12,8 @@ export interface FoldedState {
   readonly state: object;
   // A system event never opens the aggregate.
   readonly created: boolean;
-  // The opening event, when it has no `create` but another event of the aggregate does: a stream
-  // written before `create` moved.
+  // The opening event, when it has no `begin` but another event of the aggregate does: a stream
+  // written before `begin` moved.
   readonly openedWithout: string | null;
 }
 
@@ -47,9 +47,9 @@ const merged = (
 /**
  * System events, such as a failed scheduled command, carry no state and are skipped, so they never
  * open the aggregate. Any other event the aggregate does not define is a configuration error: its
- * module no longer exists. An event without the function its place calls for (`create` to open,
- * `apply` after) gets the one it has, since the pipeline only stores such a stream if it predates
- * the event's `create`.
+ * module no longer exists. An event without the function its place calls for (`begin` to open,
+ * `evolve` after) gets the one it has, since the pipeline only stores such a stream if it predates
+ * the event's `begin`.
  */
 export const foldState: FoldStateFunction = ({ aggregate, events }) => {
   let state = aggregate.initialState;
@@ -59,11 +59,10 @@ export const foldState: FoldStateFunction = ({ aggregate, events }) => {
     if (event.metadata.system) continue;
     const runtime = runtimeOf(aggregate, event);
     const fold =
-      (!created && runtime.create !== null) || runtime.apply === null
-        ? runtime.create?.({ event })
-        : runtime.apply({ state, event });
-    if (!created && runtime.create === null && aggregate.opensWithCreate)
-      openedWithout = event.type;
+      (!created && runtime.begin !== null) || runtime.evolve === null
+        ? runtime.begin?.({ event })
+        : runtime.evolve({ state, event });
+    if (!created && runtime.begin === null && aggregate.opensWithBegin) openedWithout = event.type;
     state = merged(aggregate, event, state, fold);
     created = true;
   }

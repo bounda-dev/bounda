@@ -93,11 +93,13 @@ describe("state inference", () => {
     expectTypeOf<PlaceOrder.HandlerArgs["state"]["version"]>().toEqualTypeOf<number>();
   });
 
-  it("reaches apply as well", () => {
-    expectTypeOf<OrderPlaced.ApplyArgs["state"]["status"]>().toEqualTypeOf<OrderStatus>();
-    expectTypeOf<OrderPlaced.ApplyArgs["event"]["payload"]["customerId"]>().toEqualTypeOf<string>();
-    expectTypeOf<OrderPlaced.ApplyArgs["event"]["type"]>().toEqualTypeOf<"OrderPlaced">();
-    expectTypeOf<CustomerRegistered.ApplyArgs["state"]["active"]>().toEqualTypeOf<boolean>();
+  it("reaches evolve as well", () => {
+    expectTypeOf<OrderPlaced.EvolveArgs["state"]["status"]>().toEqualTypeOf<OrderStatus>();
+    expectTypeOf<
+      OrderPlaced.EvolveArgs["event"]["payload"]["customerId"]
+    >().toEqualTypeOf<string>();
+    expectTypeOf<OrderPlaced.EvolveArgs["event"]["type"]>().toEqualTypeOf<"OrderPlaced">();
+    expectTypeOf<CustomerRegistered.EvolveArgs["state"]["active"]>().toEqualTypeOf<boolean>();
   });
 });
 

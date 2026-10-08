@@ -6,7 +6,7 @@ sidebar:
 ---
 
 A stored event never changes. Its payload was written by the code of its day, and a year later
-that shape may no longer be what `apply`, your projections and your policies expect. Bounda's
+that shape may no longer be what `evolve`, your projections and your policies expect. Bounda's
 answer is an **upcaster**: a pure function that takes the payload as one version stored it and
 returns the payload of the next version. Upcasters live next to the event, in
 `<event>.upcast.ts`, and the runtime applies them every time an old event is read.
@@ -55,7 +55,7 @@ module.
 
 What an old event goes through depends on the version it was stored with:
 
-| Stored with | Upcasters applied when it is read | Reaches `apply` as |
+| Stored with | Upcasters applied when it is read | Reaches `evolve` as |
 | --- | --- | --- |
 | `schemaVersion: 1` | both, in order | version 3 |
 | `schemaVersion: 2` | the second one | version 3 |
@@ -71,7 +71,7 @@ reason, rather than deriving them from today's event.
 - Every stored event carries `metadata.schemaVersion`. An event with `n` upcasters is written
   with version `n + 1`; an event that never changed shape stays at `1`.
 - When an event is read, for a command, a policy, a process, a projection or a rebuild, the
-  upcasters from its stored version on are applied to the payload. What reaches `apply` and the
+  upcasters from its stored version on are applied to the payload. What reaches `evolve` and the
   handlers is always the current shape, stamped with the current version. Nothing is rewritten
   in the store.
 - An event written with a version this code does not know, because a newer deploy wrote it,
@@ -86,7 +86,7 @@ what keeps the chain straight.
 ## When to write one, and when not to
 
 - **A field renamed, split, merged or re-typed**: an upcaster.
-- **A new optional field**: nothing. Old payloads simply lack it; `create` or `apply` reads
+- **A new optional field**: nothing. Old payloads simply lack it; `begin` or `evolve` reads
   `undefined`.
 - **A new required field**: an upcaster that fills it with the value the old world implied, like
   `currency: "EUR"` above.
@@ -101,7 +101,7 @@ the whole stream once.
 ## What is not covered yet
 
 - **Renaming or removing an event type.** Upcasters change the payload, not the type. A stored
-  event whose module is gone still fails to fold; keep the module, even if its `apply` changes
+  event whose module is gone still fails to fold; keep the module, even if its `evolve` changes
   nothing (`() => ({})`).
 - **Process state.** A process keeps its state in its own lifecycle events. Changing that
   state's shape has the same problem and no upcaster yet; a `state.upcast.ts` in the process

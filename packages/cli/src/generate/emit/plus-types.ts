@@ -75,12 +75,12 @@ const eventFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFile
       members: [
         ["PayloadArgs", "core.PayloadArgs"],
         [
-          "CreateArgs",
-          generic("core.EventCreateArgs", [`"${event.typeName}"`, "core.PayloadOf<Module>"]),
+          "BeginArgs",
+          generic("core.EventBeginArgs", [`"${event.typeName}"`, "core.PayloadOf<Module>"]),
         ],
         [
-          "ApplyArgs",
-          generic("core.EventApplyArgs", [
+          "EvolveArgs",
+          generic("core.EventEvolveArgs", [
             `generated.${createdStateTypeName(aggregate.name)}`,
             `"${event.typeName}"`,
             "core.PayloadOf<Module>",

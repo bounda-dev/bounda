@@ -919,8 +919,8 @@ describe("processes that listen to other aggregates", () => {
     z.object({ paymentId: z.string(), orderId: z.string(), reason: z.string().optional() });
   const payment: Registry["aggregates"][string] = {
     events: {
-      paymentFailed: { payload: paymentPayload, apply: () => ({}) },
-      paymentSettled: { payload: paymentPayload, apply: () => ({}) },
+      paymentFailed: { payload: paymentPayload, evolve: () => ({}) },
+      paymentSettled: { payload: paymentPayload, evolve: () => ({}) },
     },
     commands: {
       failPayment: {
@@ -1088,8 +1088,8 @@ describe("processes that listen to other aggregates", () => {
     const referenced = {
       ...payment,
       events: {
-        paymentFailed: { payload: byReference, apply: () => ({}) },
-        paymentSettled: { payload: byReference, apply: () => ({}) },
+        paymentFailed: { payload: byReference, evolve: () => ({}) },
+        paymentSettled: { payload: byReference, evolve: () => ({}) },
       },
     };
     expect(() =>
@@ -1108,8 +1108,8 @@ describe("processes that listen to other aggregates", () => {
     const bare = {
       ...payment,
       events: {
-        paymentFailed: { payload: paymentPayload, apply: () => ({}) },
-        paymentSettled: { apply: () => ({}) },
+        paymentFailed: { payload: paymentPayload, evolve: () => ({}) },
+        paymentSettled: { evolve: () => ({}) },
       },
     };
     expect(() => processesOf(withCorrelate(undefined, undefined, bare), config)).toThrow(
@@ -1127,8 +1127,8 @@ describe("processes that listen to other aggregates", () => {
     const piped = {
       ...payment,
       events: {
-        paymentFailed: { payload: paymentPayload, apply: () => ({}) },
-        paymentSettled: { payload: transformed, apply: () => ({}) },
+        paymentFailed: { payload: paymentPayload, evolve: () => ({}) },
+        paymentSettled: { payload: transformed, evolve: () => ({}) },
       },
     };
     expect(() => processesOf(withCorrelate(undefined, undefined, piped), config)).toThrow(
@@ -1257,8 +1257,8 @@ describe("processes that listen to other aggregates", () => {
       registry: withCorrelate(undefined, undefined, {
         ...payment,
         events: {
-          paymentFailed: { payload: numbered, apply: () => ({}) },
-          paymentSettled: { payload: numbered, apply: () => ({}) },
+          paymentFailed: { payload: numbered, evolve: () => ({}) },
+          paymentSettled: { payload: numbered, evolve: () => ({}) },
         },
         commands: {
           failPayment: {
@@ -1295,8 +1295,8 @@ describe("processes that listen to other aggregates", () => {
       registry: withCorrelate(undefined, undefined, {
         ...payment,
         events: {
-          paymentFailed: { payload: optional, apply: () => ({}) },
-          paymentSettled: { payload: optional, apply: () => ({}) },
+          paymentFailed: { payload: optional, evolve: () => ({}) },
+          paymentSettled: { payload: optional, evolve: () => ({}) },
         },
         commands: {
           failPayment: {

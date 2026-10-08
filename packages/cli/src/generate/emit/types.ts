@@ -10,7 +10,7 @@ export interface StateTypeSource {
    */
   readonly inferred: string | null;
   /**
-   * Whether one of the aggregate's events exports `create`: `inferred` is then the state of the
+   * Whether one of the aggregate's events exports `begin`: `inferred` is then the state of the
    * created aggregate, and the state a command handler sees is that or `core.NotCreated` of it.
    */
   readonly created?: boolean;

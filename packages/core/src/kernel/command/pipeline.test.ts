@@ -32,8 +32,8 @@ const withTickets: Registry = {
     ...orderRegistry.aggregates,
     ticket: {
       events: {
-        ticketOpened: { apply: ({ state }: { state: object }) => state },
-        ticketTagged: { apply: ({ state }: { state: object }) => state },
+        ticketOpened: { evolve: ({ state }: { state: object }) => state },
+        ticketTagged: { evolve: ({ state }: { state: object }) => state },
       },
       commands: {
         openTicket: {
@@ -566,9 +566,9 @@ const withCases: Registry = {
   aggregates: {
     case: {
       events: {
-        caseOpened: { create: () => ({ status: "open" }) },
-        caseNoted: { apply: () => ({ noted: true }) },
-        caseImported: { create: () => ({ status: "imported" }) },
+        caseOpened: { begin: () => ({ status: "open" }) },
+        caseNoted: { evolve: () => ({ noted: true }) },
+        caseImported: { begin: () => ({ status: "imported" }) },
       },
       commands: {
         openCase: { module: { handler: emitting("caseOpened", "caseNoted") } },
@@ -583,8 +583,8 @@ const withCases: Registry = {
   readModels: {},
 };
 
-describe("an aggregate whose events open it with create", () => {
-  it("starts with an event that exports create, and takes later events through apply", async () => {
+describe("an aggregate whose events open it with begin", () => {
+  it("starts with an event that exports begin, and takes later events through evolve", async () => {
     const { pipeline } = await createKernelHarness({ registry: withCases });
     await expect(
       pipeline.dispatch({ type: "OpenCase", payload: { caseId: "c-1" } }),
@@ -597,23 +597,23 @@ describe("an aggregate whose events open it with create", () => {
     ).resolves.toMatchObject({ eventTypes: ["CaseImported"] });
   });
 
-  it("refuses to store an aggregate that would start with an event without create", async () => {
+  it("refuses to store an aggregate that would start with an event without begin", async () => {
     const { pipeline, storage } = await createKernelHarness({ registry: withCases });
     const refused = pipeline.dispatch({ type: "NoteCase", payload: { caseId: "c-1" } });
     await expect(refused).rejects.toThrow(CreationOrderError);
     await expect(refused).rejects.toThrow(
-      'Command "NoteCase" returned "CaseNoted" for case c-1, which does not exist yet: it must start with an event that exports create',
+      'Command "NoteCase" returned "CaseNoted" for case c-1, which does not exist yet: it must start with an event that exports begin',
     );
     expect(await storage.eventStore.lastPosition()).toBe(0);
   });
 
-  it("refuses an event that only exports create on an aggregate that exists, within one command too", async () => {
+  it("refuses an event that only exports begin on an aggregate that exists, within one command too", async () => {
     const { pipeline, storage } = await createKernelHarness({ registry: withCases });
     await pipeline.dispatch({ type: "OpenCase", payload: { caseId: "c-1" } });
     await expect(
       pipeline.dispatch({ type: "ImportCase", payload: { caseId: "c-1" } }),
     ).rejects.toThrow(
-      'Command "ImportCase" returned "CaseImported" for case c-1, which exists already: "CaseImported" only exports create',
+      'Command "ImportCase" returned "CaseImported" for case c-1, which exists already: "CaseImported" only exports begin',
     );
     await expect(
       pipeline.dispatch({ type: "OpenCaseTwice", payload: { caseId: "c-2" } }),
@@ -637,7 +637,7 @@ describe("an aggregate whose events open it with create", () => {
     ).resolves.toMatchObject({ version: 3 });
   });
 
-  it("warns about a stored aggregate opened by an event without create, and goes on", async () => {
+  it("warns about a stored aggregate opened by an event without begin, and goes on", async () => {
     const recording = createRecordingLogger();
     const { pipeline, storage } = await createKernelHarness({
       registry: withCases,
@@ -654,7 +654,7 @@ describe("an aggregate whose events open it with create", () => {
     ).resolves.toMatchObject({ version: 2 });
     expect(recording.entries).toContainEqual({
       level: "warn",
-      message: "aggregate opened by an event without create; its state may lack fields",
+      message: "aggregate opened by an event without begin; its state may lack fields",
       fields: { aggregateType: "case", aggregateId: "c-1", eventType: "CaseNoted" },
     });
   });

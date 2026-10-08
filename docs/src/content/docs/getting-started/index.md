@@ -29,7 +29,7 @@ you get a project with one aggregate, one read model and a test, on SQLite:
 
 ```
 app/domain/order/           the order aggregate
-  order-placed.ts           an event: payload and create, which opens the order
+  order-placed.ts           an event: payload and begin, which opens the order
   commands/place-order.ts   a command: payload and handler
 app/read/orders/            a read model
   view.ts                   its fields
@@ -73,7 +73,7 @@ export const handler = ({ command, state, events, reject }: Command.HandlerArgs)
 `command.payload` is typed from the Zod schema above it, `state` from what the order's events
 return, and `events` only offers the events of this aggregate. `rejections` declares how the
 command may say no, and `reject` only takes those codes. `order-placed.ts` opens the order
-with `create`, so before it every field of `state` is `undefined`, and after it `status` and the
+with `begin`, so before it every field of `state` is `undefined`, and after it `status` and the
 rest are always set. Nothing here is registered anywhere: the file's place
 and name are the declaration. The [project layout](/guides/project-layout/) guide has the whole
 map.
@@ -94,10 +94,10 @@ import type { Event } from "./+types/order-cancelled";
 
 export const payload = ({ z }: Event.PayloadArgs) => z.object({ reason: z.string() });
 
-export const apply = () => ({ status: "cancelled" as const });
+export const evolve = () => ({ status: "cancelled" as const });
 ```
 
-`apply` returns the fields the event changes, merged over the order's state. The generator adds
+`evolve` returns the fields the event changes, merged over the order's state. The generator adds
 `"cancelled"` to the type of `status` on its own.
 
 Add the command:

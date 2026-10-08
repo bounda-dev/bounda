@@ -210,7 +210,7 @@ describe("bounda generate", () => {
     try {
       await writeFile(
         join(root, "app/domain/order/order-shipped.ts"),
-        "export const apply = () => ({});\n",
+        "export const evolve = () => ({});\n",
       );
       await vi.waitFor(() => expect(stderr.text()).toMatch(/^error: .*\.bounda\/registry\.ts/m), {
         timeout: 5_000,
@@ -220,7 +220,7 @@ describe("bounda generate", () => {
     }
     await writeFile(
       join(root, "app/domain/order/order-returned.ts"),
-      "export const apply = () => ({});\n",
+      "export const evolve = () => ({});\n",
     );
     await vi.waitFor(() => stat(join(root, "app/domain/order/+types/order-returned.ts")), {
       timeout: 5_000,
@@ -238,7 +238,7 @@ describe("bounda generate", () => {
       saved = true;
       writeFileSync(
         join(root, "app/domain/order/order-shipped.ts"),
-        'import type { Event } from "./+types/order-shipped";\n\nexport const apply = ({ state }: Event.ApplyArgs) => state;\n',
+        'import type { Event } from "./+types/order-shipped";\n\nexport const evolve = ({ state }: Event.EvolveArgs) => state;\n',
       );
     });
     const running = runCli({

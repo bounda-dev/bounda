@@ -41,7 +41,7 @@ const registry = {
         orderPlaced: {
           payload: ({ z }: PayloadArgs) =>
             z.object({ money: z.object({ amount: z.number(), currency: z.string() }) }),
-          apply: ({
+          evolve: ({
             state,
             event,
           }: {
