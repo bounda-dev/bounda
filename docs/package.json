@@ -12,5 +12,9 @@
     "@astrojs/starlight": "catalog:",
     "astro": "catalog:",
     "starlight-llms-txt": "catalog:"
+  },
+  "devDependencies": {
+    "@astrojs/check": "catalog:docs",
+    "typescript": "catalog:docs"
   }
 }
