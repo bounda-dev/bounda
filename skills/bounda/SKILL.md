@@ -40,6 +40,8 @@ app/read/<read-model>/
   view.ts                          export const fields
   projections/<aggregate>/<event>.ts   export const project
   queries/<query>.ts               export const payload (optional), repository (optional), handler
+  <port>.ts, infrastructure/<port>/<implementation>.ts   ports as in an aggregate; only query handlers receive them (not repository, not projections)
+  <anything-else>.ts, <dir>/       modules the projections and queries share, ignored by the generator
 bounda.config.ts                   export default defineConfig({ storage, readModels?, runtime?, ports? })
 ```
 
@@ -320,7 +322,10 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   `findMany`, `count`). Each batch is one transaction with the read model's
   checkpoint, so every event is applied exactly once and reading a row to update it
   (`count + 1`) is safe. That holds only for the read model: a projection must not call HTTP,
-  other databases or timers; that work goes in a policy.
+  other databases or timers, and gets no ports; that work goes in a policy. An external index
+  (Typesense, Elasticsearch) is fed by a policy through a port, upserting by id with
+  `event.version` so a late or repeated run never overwrites a newer document. Data from outside
+  that a read needs goes in a query handler, through a port of the read model.
 - A projection that keeps throwing stops its read model at that event: the events before it are
   kept, retries back off from 1 s to 30 s, and `app.getLag()` shows `failing` with the event and
   the error. Fix the projection and deploy; a read model never skips an event.

@@ -329,6 +329,35 @@ A few rules keep it correct:
   starts from nothing. A crash mid-run leaves nothing either, only the claim, which expires with
   its lease.
 
+### Keeping an external index
+
+A search index in Typesense, Elasticsearch or Algolia is a read model in another store, but it is
+not a projection: a projection commits with its checkpoint in one transaction of the read model's
+database, which a call to another service cannot join ([why](/guides/project-layout/#ports-of-a-read-model)).
+Feed it from a policy instead, through a port of the aggregate whose events it indexes. The policy
+runs at least once and may run late, so each write is an upsert by id that carries the event's
+`version`, the aggregate's own count of its events, and the index keeps a document only when that
+version is newer than the one it has:
+
+```ts
+// app/domain/order/policies/index-order.ts
+import type { Policy } from "./+types/index-order";
+
+export const on = ["OrderPlaced", "OrderPaid", "OrderCancelled"];
+
+export const handler = async ({ event, searchIndex }: Policy.HandlerArgs) => {
+  await searchIndex.upsert({
+    id: event.aggregateId,
+    version: event.version,
+    fields: { status: event.type, at: event.timestamp },
+  });
+};
+```
+
+Elasticsearch does the comparison itself with `version_type=external`; with a store that cannot,
+the implementation reads the stored version first. An index over two aggregates is a policy and a
+port in each, whose implementations share the client from outside `app/domain`.
+
 ## Retries and timeouts
 
 Defaults, when the configuration says nothing:

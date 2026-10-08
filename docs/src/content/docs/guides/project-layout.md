@@ -40,11 +40,15 @@ app/
   read/
     order-summary/                  a read model
       view.ts                       fields
+      rates.ts                      a port, for its queries
       projections/
         order/                      events of the order aggregate
           order-placed.ts           reacts to order's OrderPlaced
       queries/
         get-order.ts                payload, repository, handler
+      infrastructure/
+        rates/                      the implementations of the port rates.ts
+          ecb.ts
 ```
 
 ## Names
@@ -158,7 +162,7 @@ export const aggregateId = "orderId";
 ### Ports: `<port>.ts`
 
 A port is what the aggregate's handlers call outside the app: an inventory service, a mailer, a
-payment provider. It is a module at the root of the aggregate that exports its interface, named
+payment provider. A read model has ports too, for its queries ([read models](#read-models-appreadread-model)). It is a module at the root of the aggregate that exports its interface, named
 after the file in PascalCase, and every handler of the aggregate receives it under that name: its
 commands, its policies and every handler of its processes. Its implementations live in
 `infrastructure/<port>/`, one file each, with a default export or with a `create` function.
@@ -229,7 +233,7 @@ imports every implementation, also those the configuration does not choose. Only
 `create` runs. Keeping SDKs and clients under `infrastructure/` also keeps the rest of the
 aggregate free of them, which a lint rule can hold by path.
 
-`bounda.config.ts` picks one implementation per port, by aggregate and port in camelCase, with
+`bounda.config.ts` picks one implementation per port, by aggregate or read model and port in camelCase, with
 the implementation's file name as the value. The generator emits the type of that section, so a
 name that does not exist does not compile, and a port with several implementations must be
 named: no implementation is a default. A port with one may be left out.
@@ -255,7 +259,7 @@ contract each aggregate needs; the client they share lives outside `app/domain`,
 `app/lib/stripe.ts` for instance, and each implementation imports it.
 
 The runtime chooses once, when the app is created, and a config that names a port, an
-implementation or an aggregate that does not exist fails at boot as well.
+implementation, an aggregate or a read model that does not exist fails at boot as well.
 
 Tests do not read this section: `createTestApp` takes its own `ports`, a double or a file
 name per port, and gives a port it leaves out no implementation at all
@@ -518,6 +522,53 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
 
 Payload fields with a `.default()` are optional for whoever calls the command or query and
 always present in the handler: callers see the schema's input type, handlers its output type.
+
+The root of a read model is read like an aggregate's, without events: `view.ts`, the ports, and
+any other module or directory the projections and queries share, which the generator leaves
+alone. It warns about a directory one letter away from `projections`, `queries` or
+`infrastructure`, or named `projection`, `query` or `infra`.
+
+### Ports of a read model
+
+A read model's port is declared and implemented as an aggregate's
+([ports](#ports-portts)), and only the `handler` of its queries receives it: a query that
+completes its rows with something from outside, an exchange rate or a profile from the identity
+provider.
+
+```ts
+// app/read/order-summary/queries/get-order-in-usd.ts
+import type { Query } from "./+types/get-order-in-usd";
+
+export const repository = ({ table, orderId }: Query.RepositoryArgs) => table.findOne({ orderId });
+
+export const handler = async ({ repositoryData, rates }: Query.HandlerArgs) =>
+  repositoryData && {
+    ...repositoryData,
+    totalUsd: repositoryData.total * (await rates({ from: "EUR", to: "USD" })),
+  };
+```
+
+A query only reads, so it needs no `idempotencyKey`, and a port that fails fails the query. The
+config chooses its implementation in the same `ports` section, `ports: { orderSummary: { rates:
+"ecb" } }`, and a read model's port cannot be named after what a query's arguments already hold
+(`query`, `repositoryData`, `table`, `queries`, `client`) nor `view`.
+
+`repository` reads the storage and gets no ports, and neither do the projections, for three
+reasons, each enough on its own:
+
+- **Exactly once.** A batch of projected events commits in one transaction with its checkpoint. A
+  call to the outside is not part of it, so a batch that fails after the call makes it again.
+- **Rebuilds.** Rebuilding a read model replays its whole history, so the call would be made once
+  per event again, and an answer that has changed since (a rate, a geocode) gives other rows than
+  the first time.
+- **The command's request.** Projections run inside the request of the command whose events they
+  project, so a slow provider slows every command, and one that is down blocks the read model,
+  since a projection that fails is never skipped.
+
+Data from outside belongs in the event, fetched when the command or the policy decides, or in the
+query, fetched when it is read. An index kept in another store, such as Typesense or
+Elasticsearch, is fed by a policy instead: see
+[keeping an external index](/guides/reacting-to-events/#keeping-an-external-index).
 
 ## Generated files
 
