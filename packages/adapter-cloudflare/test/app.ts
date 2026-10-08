@@ -35,13 +35,13 @@ export const registry = {
       events: {
         orderPlaced: {
           payload: ({ z }: PayloadArgs) => z.object({ total: z.number(), customer: z.string() }),
-          apply: ({ state }: { state: OrderState }) => ({ ...state, status: "placed" as const }),
+          evolve: ({ state }: { state: OrderState }) => ({ ...state, status: "placed" as const }),
         },
         orderPaid: {
-          apply: ({ state }: { state: OrderState }) => ({ ...state, status: "paid" as const }),
+          evolve: ({ state }: { state: OrderState }) => ({ ...state, status: "paid" as const }),
         },
         orderArchived: {
-          apply: ({ state }: { state: OrderState }) => ({ ...state, status: "archived" as const }),
+          evolve: ({ state }: { state: OrderState }) => ({ ...state, status: "archived" as const }),
         },
       },
       commands: {
@@ -255,20 +255,20 @@ export const quietRegistry = {
 const placeOrder = quietRegistry.aggregates.order.commands.placeOrder.module.handler;
 
 /**
- * What the `region` collaborator saw: the orders it recorded, prefixed with the binding its
+ * What the `region` port saw: the orders it recorded, prefixed with the binding its
  * `create` read, and when it was closed.
  */
 export const regionLog: string[] = [];
 
 /**
- * The order app with a collaborator built by `create` from a variable of the Worker's `env`.
+ * The order app with an implementation built by `create` from a variable of the Worker's `env`.
  */
 export const regionRegistry = {
   ...quietRegistry,
   aggregates: {
     order: {
       ...quietRegistry.aggregates.order,
-      collaborators: {
+      ports: {
         region: {
           binding: {
             create: ({ env }: CreateArgs) => ({

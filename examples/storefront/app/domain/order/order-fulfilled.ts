@@ -1,6 +1,6 @@
 import type { Event } from "./+types/order-fulfilled";
 
-export const apply = ({ event }: Event.ApplyArgs) => ({
+export const evolve = ({ event }: Event.EvolveArgs) => ({
   status: "fulfilled" as const,
   fulfilledAt: event.timestamp,
 });

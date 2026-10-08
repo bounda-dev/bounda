@@ -7,8 +7,8 @@ import type { Line } from "./fixtures/order-app-inferred/app/domain/order/order-
 
 type HandlerState = PayOrder.HandlerArgs["state"];
 
-describe("state inferred from create and apply functions", () => {
-  it("unions the literal types every event assigns and requires what create always sets", () => {
+describe("state inferred from begin and evolve functions", () => {
+  it("unions the literal types every event assigns and requires what begin always sets", () => {
     expectTypeOf<OrderCreatedState["status"]>().toEqualTypeOf<"cancelled" | "paid" | "placed">();
     expectTypeOf<OrderCreatedState["placedAt"]>().toEqualTypeOf<Date>();
     expectTypeOf<OrderCreatedState["paidWith"]>().toEqualTypeOf<"card" | "transfer" | undefined>();
@@ -26,7 +26,7 @@ describe("state inferred from create and apply functions", () => {
     expectTypeOf<OrderState["customerId"]>().toEqualTypeOf<string | undefined>();
   });
 
-  it("narrows a handler's state by a field create always sets", () => {
+  it("narrows a handler's state by a field begin always sets", () => {
     const state = {} as HandlerState;
     if (state.status === undefined) {
       expectTypeOf(state.customerId).toEqualTypeOf<undefined>();
@@ -45,14 +45,12 @@ describe("state inferred from create and apply functions", () => {
     if (state.version === 0) expectTypeOf(state.customerId).toEqualTypeOf<string | undefined>();
   });
 
-  it("gives apply the created state and create the event alone", () => {
-    expectTypeOf<OrderPaid.ApplyArgs["state"]["customerId"]>().toEqualTypeOf<string>();
-    expectTypeOf<OrderPaid.ApplyArgs["event"]["payload"]["method"]>().toEqualTypeOf<
+  it("gives evolve the created state and begin the event alone", () => {
+    expectTypeOf<OrderPaid.EvolveArgs["state"]["customerId"]>().toEqualTypeOf<string>();
+    expectTypeOf<OrderPaid.EvolveArgs["event"]["payload"]["method"]>().toEqualTypeOf<
       "card" | "transfer"
     >();
-    expectTypeOf<keyof OrderPlaced.CreateArgs>().toEqualTypeOf<"event">();
-    expectTypeOf<
-      OrderPlaced.CreateArgs["event"]["payload"]["customerId"]
-    >().toEqualTypeOf<string>();
+    expectTypeOf<keyof OrderPlaced.BeginArgs>().toEqualTypeOf<"event">();
+    expectTypeOf<OrderPlaced.BeginArgs["event"]["payload"]["customerId"]>().toEqualTypeOf<string>();
   });
 });

@@ -287,7 +287,7 @@ describe("projections and the aggregate whose events they project", () => {
         aggregates: {
           ...orderRegistry.aggregates,
           ledger: {
-            events: { orderPlaced: { apply: () => ({}) } },
+            events: { orderPlaced: { evolve: () => ({}) } },
             commands: {
               record: {
                 module: {

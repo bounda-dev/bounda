@@ -88,7 +88,7 @@ export interface IdempotencyKeyForFunction {
 /**
  * A key of its own for one of the effects a handler run causes, when it causes more than one
  * (a refund and a charge), or the id of an aggregate a reaction creates (a payment): give each a
- * different name. Derived from any key, the handler's or one a collaborator received, it is the
+ * different name. Derived from any key, the handler's or one a port received, it is the
  * same for one name on every retry and in every release, and a UUID as long as the handler's own
  * key, whatever the length of the name.
  */

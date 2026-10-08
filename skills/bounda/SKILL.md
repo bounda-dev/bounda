@@ -25,10 +25,11 @@ Never edit anything under `.bounda/` or a `+types/` directory; both are generate
 ```
 app/domain/<aggregate>/
   state.ts                         optional: export const initialState = {...}; export const aggregateId = "<field>"
-  <event>.ts                       export const payload (optional); export const create (the event that opens the aggregate) and/or export const apply
+  <event>.ts                       export const payload (optional); export const begin (the event that opens the aggregate) and/or export const evolve; nothing else at run time
   <event>.upcast.ts                optional: export const upcasts (oldest version first)
-  <port>/index.ts                  a collaborator: export interface <Port> (PascalCase of the directory)
-  <port>/<implementation>.ts       export default ... satisfies Implementation.Contract, or export const create: Implementation.Create; every handler of the aggregate receives it as <port>
+  <port>.ts                        a port: export interface <Port> (PascalCase of the file); a port because infrastructure/<port>/ exists
+  <anything-else>.ts, <dir>/       value objects, domain services, helpers: ignored by the generator, imported by the handlers (it warns when one imports its own +types or a directory looks like a misspelled commands/policies/processes/infrastructure)
+  infrastructure/<port>/<implementation>.ts   export default ... satisfies <Port>, or export const create: CreateImplementation<Port>; every handler of the aggregate receives the port as <port>
   commands/<command>.ts            export const payload, export const handler
   policies/<action>-on-<event>.ts  export const handler; on and delay optional
   policies/<other-aggregate>/...   the same shape, reacting to that aggregate's events
@@ -39,7 +40,7 @@ app/read/<read-model>/
   view.ts                          export const fields
   projections/<aggregate>/<event>.ts   export const project
   queries/<query>.ts               export const payload (optional), repository (optional), handler
-bounda.config.ts                   export default defineConfig({ storage, readModels?, runtime?, collaborators? })
+bounda.config.ts                   export default defineConfig({ storage, readModels?, runtime?, ports? })
 ```
 
 ## Templates
@@ -53,7 +54,7 @@ import type { Event } from "./+types/order-placed";
 
 export const payload = ({ z }: Event.PayloadArgs) => z.object({ total: z.number().positive() });
 
-export const create = ({ event }: Event.CreateArgs) => ({
+export const begin = ({ event }: Event.BeginArgs) => ({
   status: "placed" as const,
   total: event.payload.total,
 });
@@ -63,7 +64,7 @@ export const create = ({ event }: Event.CreateArgs) => ({
 // order-paid.ts: any later event
 import type { Event } from "./+types/order-paid";
 
-export const apply = ({ event }: Event.ApplyArgs) => ({
+export const evolve = ({ event }: Event.EvolveArgs) => ({
   status: "paid" as const,
   paidAt: event.timestamp,
 });
@@ -89,36 +90,41 @@ export const handler = ({ command, state, events, reject }: Command.HandlerArgs)
 };
 ```
 
-Collaborator (`order/inventory/index.ts` with the interface, `order/inventory/fake.ts` and
-`order/inventory/http.ts` implementing it; `bounda.config.ts` selects one with
-`collaborators: { order: { inventory: "fake" } }`, and every handler of `order` receives it as
-`inventory`):
+Port (`order/inventory.ts` with the interface, `order/infrastructure/inventory/fake.ts` and
+`order/infrastructure/inventory/http.ts` implementing it; `bounda.config.ts` selects one with
+`ports: { order: { inventory: "fake" } }`, and every handler of `order` receives it as
+`inventory`). Each operation takes one `XxxArgs` object; a port with one operation may be callable:
 
 ```ts
-// order/inventory/index.ts
-export interface Inventory {
-  available(skus: readonly string[]): Promise<boolean>;
+// order/inventory.ts
+export interface AvailableArgs {
+  readonly skus: readonly string[];
 }
 
-// order/inventory/fake.ts
-import type { Implementation } from "./+types/fake";
+export interface Inventory {
+  available(args: AvailableArgs): Promise<boolean>;
+}
 
-export default { available: async () => true } satisfies Implementation.Contract;
+// order/infrastructure/inventory/fake.ts: no +types, it imports its port
+import type { Inventory } from "../../inventory.ts";
 
-// order/inventory/http.ts: an implementation with state (client, pool, secret) builds it in create
-import type { Implementation } from "./+types/http";
+export default { available: async () => true } satisfies Inventory;
 
-export const create: Implementation.Create = ({ env }) => {
+// order/infrastructure/inventory/http.ts: an implementation with state (client, pool, secret) builds it in create
+import type { CreateImplementation } from "@bounda-dev/core";
+import type { Inventory } from "../../inventory.ts";
+
+export const create: CreateImplementation<Inventory> = ({ env }) => {
   const url = env.INVENTORY_URL;
   if (url === undefined) throw new Error("INVENTORY_URL is not set");
-  return { available: async (skus) => (await fetch(`${url}/${skus.join(",")}`)).ok };
+  return { available: async ({ skus }) => (await fetch(`${url}/${skus.join(",")}`)).ok };
 };
 
 // order/commands/place-order.ts
 export const rejections = () => ({ OutOfStock: "Some of the items are out of stock" });
 
 export const handler = async ({ command, events, inventory, reject }: Command.HandlerArgs) => {
-  if (!(await inventory.available(command.payload.skus))) return reject("OutOfStock");
+  if (!(await inventory.available({ skus: command.payload.skus }))) return reject("OutOfStock");
   return [events.orderPlaced(command.payload)];
 };
 ```
@@ -126,8 +132,8 @@ export const handler = async ({ command, events, inventory, reject }: Command.Ha
 The config type is generated: a port with several implementations must be named, the value is
 one of the file names, and a choice from the environment spells both branches
 (`process.env.INVENTORY === "fake" ? "fake" : "http"`). Shared domain logic without
-implementations is a `_name.ts` file the generator ignores; a provider two aggregates use is a
-port in each, sharing a client from outside `app/domain`.
+implementations is any other module of the aggregate, which the generator ignores; a provider two
+aggregates use is a port in each, sharing a client from outside `app/domain`.
 
 An implementation exports `default` or `create`, never both. `create` may be async and runs once
 per app with `{ env, logger, clock }`: `env` is `process.env` under `boot()`, the Durable
@@ -135,9 +141,9 @@ Object's `env` on Cloudflare, and what `createTestApp({ env })` passes in a test
 runs for a port the test names. `app.stop()` calls `[Symbol.asyncDispose]` on what it returned. Never open a connection or read the environment at the top of an implementation
 module: the registry imports every implementation, chosen or not.
 
-Command handlers decide; they do not act on the world. A handler reruns, collaborators included,
+Command handlers decide; they do not act on the world. A handler reruns, ports included,
 when its append loses a concurrency race, and its decision is not stored until the append
-succeeds. So its collaborator calls must be safe to repeat and harmless if the decision never
+succeeds. So its port calls must be safe to repeat and harmless if the decision never
 lands: a read, or a call the provider deduplicates, such as creating a payment intent. Every
 handler receives `idempotencyKey`, stable across its reruns (the command id); pass it to those calls.
 It also receives `signal`, which aborts after `runtime.commands.timeout` (30s, per aggregate in
@@ -146,10 +152,10 @@ It also receives `signal`, which aborts after `runtime.commands.timeout` (30s, p
 outside calls. Past the timeout the dispatch rejects with `HANDLER_TIMEOUT` and nothing is stored.
 
 Effects (charging, emailing, calling another service) go in a policy or process with the
-collaborator, after the event is stored, passing `idempotencyKey` to the provider, and report back
+port, after the event is stored, passing `idempotencyKey` to the provider, and report back
 with a command whose handler ignores a duplicate by state. The handler always passes
 `idempotencyKey` as it is: effects on different providers go in a reaction each, and two calls to
-one provider go behind one collaborator method whose implementation derives a key per call with
+one provider go behind one port method whose implementation derives a key per call with
 `idempotencyKeyFor(idempotencyKey, "refund")` from `@bounda-dev/core`. That is for provider
 keys; the id of an aggregate the reaction creates (a new payment) is derived in the handler,
 `idempotencyKeyFor(idempotencyKey, "payment")`, never `randomUUID()`, so a retry dispatches the
@@ -166,12 +172,12 @@ export const handler = async ({ event, commands }: Policy.HandlerArgs) => {
 };
 ```
 
-Policy using a collaborator of its aggregate (`policies/send-receipt-on-order-paid.ts`, with
-`order/mailer/`):
+Policy using a port of its aggregate (`policies/send-receipt-on-order-paid.ts`, with
+`order/mailer.ts`):
 
 ```ts
 export const handler = async ({ event, commands, mailer, idempotencyKey }: Policy.HandlerArgs) => {
-  await mailer.sendReceipt({ orderId: event.aggregateId }, idempotencyKey);
+  await mailer.sendReceipt({ orderId: event.aggregateId, idempotencyKey });
   await commands.recordReceiptSent({ orderId: event.aggregateId });
 };
 ```
@@ -264,10 +270,10 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   another store is an event instead. `app.commands` throws the rejection as a `DomainError` with
   the code in `rejected`.
 - `state` in a handler carries `id` and `version` besides the aggregate's fields. Without
-  `state.ts` it is inferred: give the event that opens the aggregate a `create`, and a handler sees
+  `state.ts` it is inferred: give the event that opens the aggregate a `begin`, and a handler sees
   either a fresh aggregate, every field `undefined` (`state.status === undefined`), or a created
-  one where the fields `create` sets are always defined. Without any `create` every field is
-  optional. An aggregate with a `create` must start with such an event; a handler that starts it
+  one where the fields `begin` sets are always defined. Without any `begin` every field is
+  optional. An aggregate with a `begin` must start with such an event; a handler that starts it
   with another one throws `CreationOrderError`. Write `state.ts` only for an initial value before
   the first event or a type not visible outside its module.
 - Policies and process handlers get `commands`, the typed facade of every command in the app, and
@@ -291,7 +297,7 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   is nothing to undo; its effect goes in a policy with `idempotencyKey`. A failure arrives as the
   rejection of an awaited command (`if (paid.rejected === "NotOpen")`, then compensate) or as an
   event of another aggregate; there is no failure hook and no `try/catch`.
-- Policies and processes get the aggregate's collaborators spread next to `event` and `commands`,
+- Policies and processes get the aggregate's ports spread next to `event` and `commands`,
   like commands do; a policy in `policies/<other-aggregate>/` still gets its own aggregate's.
   A policy that exports `delay` (`"1m"`, or `asDuration(env)`) runs that long
   after the event, through the scheduler, with the same arguments and retries, but its runs are
@@ -383,7 +389,7 @@ export const loader = ({ context }: Route.LoaderArgs) => context.get(bounda).que
 
 - After changing the layout: `bounda generate`, then type-check. Convention problems exit with
   code 1 and name the file; fix the name or the location.
-- Tests: `createTestApp({ registry, adapter?, collaborators? })` from `@bounda-dev/core/testing`
+- Tests: `createTestApp({ registry, adapter?, ports? })` from `@bounda-dev/core/testing`
   gives an app on the in-memory adapter with a fixed clock (`clock.advance(ms)`) and sequential
   ids; call `await app.runUntilIdle()` after dispatching to run policies, processes and
   projections. The clock drives handler time-outs and background polling too: never wait real
@@ -401,7 +407,7 @@ export const loader = ({ context }: Route.LoaderArgs) => context.get(bounda).que
   const sent: Confirmation[] = [];
   const { app } = await createTestApp({
     registry,
-    collaborators: { order: { notifier: async (confirmation) => void sent.push(confirmation) } },
+    ports: { order: { notifier: async (confirmation) => void sent.push(confirmation) } },
   });
   ```
 - `boot()` from `@bounda-dev/core/node` is typed for the project without a type argument:

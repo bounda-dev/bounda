@@ -15,7 +15,7 @@ export declare namespace Command {
     core.PayloadOf<Module>,
     generated.CustomerState,
     generated.CustomerEvents,
-    generated.CustomerCollaborators,
+    generated.CustomerPorts,
     core.RejectionCodeOf<Module>
   >;
 }

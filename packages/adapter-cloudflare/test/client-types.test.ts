@@ -37,7 +37,7 @@ describe("connect", () => {
   });
 });
 
-describe("the env collaborators receive on Cloudflare", () => {
+describe("the env implementations receive on Cloudflare", () => {
   it("is the Worker's Cloudflare.Env, required once an implementation exports create", () => {
     expectTypeOf<
       NonNullable<CreateAppArgs<typeof regionRegistry>["env"]>

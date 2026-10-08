@@ -14,15 +14,15 @@ export type OrderEvents = {
   readonly orderPaid: typeof import("../app/domain/order/order-paid.ts");
   readonly orderPlaced: typeof import("../app/domain/order/order-placed.ts");
 };
-export type OrderCollaborators = core.EmptyPayload;
+export type OrderPorts = core.EmptyPayload;
 
 export type Events = {
   readonly order: OrderEvents;
 };
 
-export type CollaboratorsConfig = Readonly<Record<string, never>>;
+export type PortsConfig = Readonly<Record<string, never>>;
 
-export type TestCollaborators = Readonly<Record<string, never>>;
+export type TestPorts = Readonly<Record<string, never>>;
 
 export type Commands = core.CommandsFacadeOf<{
   readonly payOrder: typeof import("../app/domain/order/commands/pay-order.ts");

@@ -1,8 +1,8 @@
 import { expect, vi } from "vitest";
 import type { StoragePorts } from "../adapter/adapter.ts";
-import { selectCollaborators } from "../config/collaborators.ts";
+import { selectImplementations } from "../config/ports.ts";
 import { resolveConfig } from "../config/schema.ts";
-import type { CollaboratorsConfig, Config, ResolvedConfig } from "../config/types.ts";
+import type { Config, PortsConfig, ResolvedConfig } from "../config/types.ts";
 import { createFixedClock, type FixedClock } from "../contracts/clock.ts";
 import type { CommandRejection } from "../contracts/command.ts";
 import { createSequentialIdGenerator } from "../contracts/ids.ts";
@@ -12,7 +12,7 @@ import type { RejectFunction } from "../modules/command.ts";
 import type { PayloadArgs } from "../modules/payload.ts";
 import type { Registry } from "../modules/registry.ts";
 import { buildAggregates } from "./aggregate/build-aggregates.ts";
-import { type AggregateCollaborators, createCollaborators } from "./aggregate/collaborators.ts";
+import { type AggregatePorts, createPorts } from "./aggregate/ports.ts";
 import type { AggregatesRuntime } from "./aggregate/runtime.ts";
 import { createCommandPipeline } from "./command/pipeline.ts";
 
@@ -30,7 +30,7 @@ export const orderAggregate = {
   events: {
     orderPlaced: {
       payload: ({ z }: PayloadArgs) => z.object({ total: z.number().positive() }),
-      apply: ({ state, event }: { state: OrderState; event: { payload: { total: number } } }) => ({
+      evolve: ({ state, event }: { state: OrderState; event: { payload: { total: number } } }) => ({
         ...state,
         status: "placed" as const,
         total: event.payload.total,
@@ -38,10 +38,10 @@ export const orderAggregate = {
     },
     orderPaid: {
       payload: ({ z }: PayloadArgs) => z.object({ method: z.enum(["card", "transfer"]) }),
-      apply: ({ state }: { state: OrderState }) => ({ ...state, status: "paid" as const }),
+      evolve: ({ state }: { state: OrderState }) => ({ ...state, status: "paid" as const }),
     },
     orderArchived: {
-      apply: ({ state }: { state: OrderState }) => state,
+      evolve: ({ state }: { state: OrderState }) => state,
     },
   },
   commands: {
@@ -117,7 +117,7 @@ export const orderAggregate = {
   },
   policies: {},
   processes: {},
-  collaborators: {
+  ports: {
     notifier: {
       memory: { default: { send: (message: string) => sentMessages.push(message) } },
       silent: { default: { send: () => {} } },
@@ -153,7 +153,7 @@ export const withJob: WithJobFunction = (handler, base = { aggregates: {}, readM
   aggregates: {
     ...base.aggregates,
     job: {
-      events: { jobDone: { apply: ({ state }: { state: object }) => state } },
+      events: { jobDone: { evolve: ({ state }: { state: object }) => state } },
       commands: { runJob: { module: { handler } } },
       policies: {},
       processes: {},
@@ -189,32 +189,30 @@ export const slowJob: SlowJobFunction = (base) => {
 };
 
 /**
- * The `collaborators` configuration kernel tests boot with: the in-memory notifier for a registry
+ * The `ports` configuration kernel tests boot with: the in-memory notifier for a registry
  * built on `orderAggregate`, nothing for any other.
  */
-export const defaultCollaborators = (registry: Registry): CollaboratorsConfig =>
-  registry.aggregates.order?.collaborators?.notifier === undefined
-    ? {}
-    : { order: { notifier: "memory" } };
+export const defaultPorts = (registry: Registry): PortsConfig =>
+  registry.aggregates.order?.ports?.notifier === undefined ? {} : { order: { notifier: "memory" } };
 
 /**
- * What `createCollaborators` builds, chosen synchronously, for kernel tests that build aggregates
+ * What `createPorts` builds, chosen synchronously, for kernel tests that build aggregates
  * by hand from a registry whose implementations are all default exports.
  */
-export interface ChooseCollaboratorsFunction {
-  (registry: Registry, config: ResolvedConfig): AggregateCollaborators;
+export interface ChoosePortsFunction {
+  (registry: Registry, config: ResolvedConfig): AggregatePorts;
 }
 
-export const chooseCollaborators: ChooseCollaboratorsFunction = (registry, config) =>
+export const choosePorts: ChoosePortsFunction = (registry, config) =>
   Object.fromEntries(
     Object.entries(registry.aggregates).map(([aggregate, entry]) => [
       aggregate,
       Object.fromEntries(
         Object.entries(
-          selectCollaborators({
+          selectImplementations({
             aggregate,
-            implementations: entry.collaborators ?? {},
-            config: config.collaborators[aggregate],
+            implementations: entry.ports ?? {},
+            config: config.ports[aggregate],
           }),
         ).map(([port, module]) => [port, module.default]),
       ),
@@ -222,7 +220,7 @@ export const chooseCollaborators: ChooseCollaboratorsFunction = (registry, confi
   );
 
 /**
- * Messages sent through the in-memory notifier collaborator, reset by `createKernelHarness`.
+ * Messages sent through the in-memory notifier port, reset by `createKernelHarness`.
  */
 export const sentMessages: string[] = [];
 
@@ -306,18 +304,18 @@ export const createKernelHarness: CreateKernelHarnessFunction = async ({
   const storage = await adapter.createStorage({ logger: silentLogger });
   const config = resolveConfig({
     storage: adapter,
-    collaborators: defaultCollaborators(registry),
+    ports: defaultPorts(registry),
     ...overrides,
   });
   const clock = createFixedClock();
-  const { byAggregate } = await createCollaborators({
+  const { byAggregate } = await createPorts({
     registry,
-    config: config.collaborators,
+    config: config.ports,
     env: {},
     logger: silentLogger,
     clock,
   });
-  const aggregates = buildAggregates({ registry, collaborators: byAggregate });
+  const aggregates = buildAggregates({ registry, ports: byAggregate });
   const rejections: CommandRejection[] = [];
   const pipeline = createCommandPipeline({
     aggregates,

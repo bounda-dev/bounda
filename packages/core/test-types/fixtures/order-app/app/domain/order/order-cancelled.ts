@@ -1,3 +1,3 @@
 import type { Event } from "./+types/order-cancelled";
 
-export const apply = ({ state }: Event.ApplyArgs) => ({ ...state, status: "cancelled" as const });
+export const evolve = ({ state }: Event.EvolveArgs) => ({ ...state, status: "cancelled" as const });

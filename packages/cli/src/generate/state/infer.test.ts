@@ -61,7 +61,7 @@ afterAll(async () => {
 });
 
 describe("generate with state inference (golden on order-app-inferred)", () => {
-  it("infers the state of an aggregate without state.ts from its create and apply functions", async () => {
+  it("infers the state of an aggregate without state.ts from its begin and evolve functions", async () => {
     const root = await freshProject();
     const report = await generate({ root });
     expect(report.removed).toEqual([]);
@@ -171,22 +171,22 @@ const syntheticProject = async (
 };
 
 describe("state inference on the edges", () => {
-  it("reads function declarations, skips a non-exported apply, warns on one that is not a function and sorts members", async () => {
+  it("reads function declarations, skips a non-exported evolve, warns on one that is not a function and sorts members", async () => {
     const root = await syntheticProject({
       "app/domain/ticket/a-first.ts":
-        'export function apply() {\n  return { status: "zeta" as const, opened: true };\n}\n',
+        'export function evolve() {\n  return { status: "zeta" as const, opened: true };\n}\n',
       "app/domain/ticket/b-second.ts":
-        'export const apply = () => ({ status: "alpha" as const });\n',
+        'export const evolve = () => ({ status: "alpha" as const });\n',
       "app/domain/ticket/c-quiet.ts":
-        "const apply = () => ({ hidden: true });\nexport const note = apply;\n",
-      "app/domain/ticket/d-broken.ts": "export const apply = 42;\n",
-      "app/domain/blank/blank-made.ts": "export const apply = () => ({});\n",
+        "const evolve = () => ({ hidden: true });\nexport { evolve as payload };\n",
+      "app/domain/ticket/d-broken.ts": "export const evolve = 42;\n",
+      "app/domain/blank/blank-made.ts": "export const evolve = () => ({});\n",
     });
     const report = await generate({ root });
     expect(report.warnings).toEqual([
       {
         aggregate: "ticket",
-        message: "app/domain/ticket/d-broken.ts: apply has no call signature, so it was skipped",
+        message: "app/domain/ticket/d-broken.ts: evolve has no call signature, so it was skipped",
       },
     ]);
     const types = await readFile(join(root, ".bounda/types.ts"), "utf8");
@@ -198,10 +198,10 @@ describe("state inference on the edges", () => {
     expect(types).not.toContain("hidden");
   });
 
-  it("makes required, once created, only what every create always sets", async () => {
+  it("makes required, once created, only what every begin always sets", async () => {
     const root = await syntheticProject({
       "app/domain/cart/cart-opened.ts": [
-        "export const create = () => ({",
+        "export const begin = () => ({",
         '  status: "open" as const,',
         '  owner: "someone",',
         "  note: undefined as string | undefined,",
@@ -210,15 +210,15 @@ describe("state inference on the edges", () => {
         "",
       ].join("\n"),
       "app/domain/cart/item-added.ts": [
-        'export const create = () => ({ status: "open" as const, items: ["first"] });',
-        "export const apply = () => ({ items: [] as string[], total: 1 });",
+        'export const begin = () => ({ status: "open" as const, items: ["first"] });',
+        "export const evolve = () => ({ items: [] as string[], total: 1 });",
         "",
       ].join("\n"),
       "app/domain/cart/cart-tagged.ts":
-        'export const create = (): { status: "open"; items: string[]; tag?: string } => ({ status: "open", items: [] });\n',
+        'export const begin = (): { status: "open"; items: string[]; tag?: string } => ({ status: "open", items: [] });\n',
       "app/domain/cart/cart-closed.ts":
-        'export const apply = () => ({ status: "closed" as const });\n',
-      "app/domain/plain/plain-made.ts": "export const apply = () => ({ done: true });\n",
+        'export const evolve = () => ({ status: "closed" as const });\n',
+      "app/domain/plain/plain-made.ts": "export const evolve = () => ({ done: true });\n",
     });
     const report = await generate({ root });
     expect(report.warnings).toEqual([]);
@@ -244,7 +244,7 @@ export type PlainCreatedState = PlainState;`);
         "interface Hidden {",
         "  readonly x: number;",
         "}",
-        'export const create = (): { secret: Hidden; plain: string } => ({ secret: { x: 1 }, plain: "p" });',
+        'export const begin = (): { secret: Hidden; plain: string } => ({ secret: { x: 1 }, plain: "p" });',
         "",
       ].join("\n"),
     });
@@ -265,15 +265,15 @@ export type PlainCreatedState = PlainState;`);
         "interface Hidden {",
         "  readonly x: number;",
         "}",
-        "export const apply = (): { secret: Hidden; other: Hidden; plain: string } => ({",
+        "export const evolve = (): { secret: Hidden; other: Hidden; plain: string } => ({",
         '  secret: { x: 1 }, other: { x: 2 }, plain: "p",',
         "});",
         "",
       ].join("\n"),
       "app/domain/alpha/alpha-touched.ts":
-        "interface Hidden {\n  readonly x: number;\n}\nexport const apply = (): { secret: Hidden } => ({ secret: { x: 3 } });\n",
+        "interface Hidden {\n  readonly x: number;\n}\nexport const evolve = (): { secret: Hidden } => ({ secret: { x: 3 } });\n",
       "app/domain/beta/beta-made.ts":
-        'interface Private {\n  readonly y: string;\n}\nexport const apply = (): { token: Private; count: number } => ({ token: { y: "t" }, count: 1 });\n',
+        'interface Private {\n  readonly y: string;\n}\nexport const evolve = (): { token: Private; count: number } => ({ token: { y: "t" }, count: 1 });\n',
     });
     const report = await generate({ root });
     const messages = report.warnings.map((warning) => `${warning.aggregate}: ${warning.message}`);
@@ -301,7 +301,7 @@ export type PlainCreatedState = PlainState;`);
 
   it("explains when the generated types are not part of the TypeScript project", async () => {
     const root = await syntheticProject(
-      { "app/domain/solo/solo-made.ts": "export const apply = () => ({ done: true });\n" },
+      { "app/domain/solo/solo-made.ts": "export const evolve = () => ({ done: true });\n" },
       { files: ["app/domain/solo/solo-made.ts"] },
     );
     const report = await generate({ root });

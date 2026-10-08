@@ -28,7 +28,7 @@ A policy or process run now waits for every command it dispatched before it comm
 not, within its time limit, and one that fails fails the run, even when the handler caught its
 error; one the handler withdrew with its own signal does not. Before, a command the handler did not
 await could be left out of the run, and its failure ended Node with an unhandled rejection.
-`bounda generate` refuses a collaborator named `reject`.
+`bounda generate` refuses a port named `reject`.
 
 `app.commands` still throws the rejection, now with `rejected`. The `bounda.commands` counter
 counts a failure as `failed`, apart from a rejection. The Cloudflare worker's 409 and the error

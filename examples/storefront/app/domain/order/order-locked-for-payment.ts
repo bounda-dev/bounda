@@ -1,1 +1,1 @@
-export const apply = () => ({ status: "paying" as const });
+export const evolve = () => ({ status: "paying" as const });

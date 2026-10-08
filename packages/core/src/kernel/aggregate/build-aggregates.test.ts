@@ -4,18 +4,18 @@ import { ConfigurationError } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
 import type { PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
-import { chooseCollaborators, orderRegistry } from "../test-support.ts";
+import { choosePorts, orderRegistry } from "../test-support.ts";
 import { buildAggregates } from "./build-aggregates.ts";
 import { foldState } from "./fold-state.ts";
 
-const collaborators = chooseCollaborators(
+const ports = choosePorts(
   orderRegistry,
-  resolveConfig({ storage: memory(), collaborators: { order: { notifier: "silent" } } }),
+  resolveConfig({ storage: memory(), ports: { order: { notifier: "silent" } } }),
 );
 
 describe("buildAggregates", () => {
-  it("compiles events, commands, schemas and collaborators", () => {
-    const { byName } = buildAggregates({ registry: orderRegistry, collaborators });
+  it("compiles events, commands, schemas and ports", () => {
+    const { byName } = buildAggregates({ registry: orderRegistry, ports });
     const order = byName.order;
     expect(order).toBeDefined();
     expect(order?.aggregateIdField).toBe("orderId");
@@ -27,7 +27,7 @@ describe("buildAggregates", () => {
     ]);
     expect(order?.events.orderArchived?.schema).toBeNull();
     expect(order?.events.orderPlaced?.schema).not.toBeNull();
-    expect(byName.order?.collaborators).toHaveProperty("notifier");
+    expect(byName.order?.ports).toHaveProperty("notifier");
     expect(order?.eventBuilders.orderPaid?.({ method: "card" })).toEqual({
       type: "OrderPaid",
       payload: { method: "card" },
@@ -46,7 +46,7 @@ describe("buildAggregates", () => {
         } as Registry["aggregates"],
         readModels: {},
       },
-      collaborators,
+      ports,
     });
     expect(byName.order?.events.orderPlaced).toMatchObject({
       upcasts: [upcast, upcast],
@@ -62,7 +62,7 @@ describe("buildAggregates", () => {
       },
       readModels: {},
     };
-    const { byName } = buildAggregates({ registry, collaborators: {} });
+    const { byName } = buildAggregates({ registry, ports: {} });
     expect(byName.customer?.aggregateIdField).toBe("customerId");
     expect(byName.customer?.initialState).toEqual({});
   });
@@ -71,7 +71,7 @@ describe("buildAggregates", () => {
     const registry: Registry = {
       aggregates: {
         order: {
-          events: { broken: { payload: (() => "nope") as never, apply: () => ({}) } },
+          events: { broken: { payload: (() => "nope") as never, evolve: () => ({}) } },
           commands: {},
           policies: {},
           processes: {},
@@ -79,7 +79,7 @@ describe("buildAggregates", () => {
       },
       readModels: {},
     };
-    expect(() => buildAggregates({ registry, collaborators: {} })).toThrow(
+    expect(() => buildAggregates({ registry, ports: {} })).toThrow(
       new ConfigurationError("aggregates.order.events.broken: payload must return a Zod schema"),
     );
     const brokenCommand: Registry = {
@@ -93,7 +93,7 @@ describe("buildAggregates", () => {
       },
       readModels: {},
     };
-    expect(() => buildAggregates({ registry: brokenCommand, collaborators: {} })).toThrow(
+    expect(() => buildAggregates({ registry: brokenCommand, ports: {} })).toThrow(
       new ConfigurationError("aggregates.order.commands.ship: payload must return a Zod schema"),
     );
   });
@@ -107,14 +107,14 @@ describe("buildAggregates", () => {
       },
       readModels: {},
     };
-    expect(() => buildAggregates({ registry, collaborators: {} })).toThrow(
+    expect(() => buildAggregates({ registry, ports: {} })).toThrow(
       'Command "Archive" is defined in both "order" and "customer"',
     );
   });
 });
 
 describe("foldState", () => {
-  const { byName } = buildAggregates({ registry: orderRegistry, collaborators });
+  const { byName } = buildAggregates({ registry: orderRegistry, ports });
   const order = byName.order as NonNullable<(typeof byName)["order"]>;
   const stored = (type: string, payload: unknown, version: number) => ({
     id: `e${version}`,
@@ -152,14 +152,14 @@ describe("foldState", () => {
         ticket: {
           events: {
             ticketOpened: {
-              create: ({ event }: { event: { payload: { title: string } } }) => ({
+              begin: ({ event }: { event: { payload: { title: string } } }) => ({
                 status: "open",
                 title: event.payload.title,
                 tags: [],
               }),
             },
             ticketTagged: {
-              apply: ({
+              evolve: ({
                 state,
                 event,
               }: {
@@ -170,9 +170,9 @@ describe("foldState", () => {
                 note: `tagged ${event.payload.tag}`,
               }),
             },
-            ticketClosed: { apply: () => ({ status: "closed", note: undefined }) },
-            ticketImported: { create: () => ({ status: "imported", tags: [] }) },
-            ticketBroken: { apply: () => "closed" as never },
+            ticketClosed: { evolve: () => ({ status: "closed", note: undefined }) },
+            ticketImported: { begin: () => ({ status: "imported", tags: [] }) },
+            ticketBroken: { evolve: () => "closed" as never },
           },
           commands: {},
           policies: {},
@@ -181,16 +181,16 @@ describe("foldState", () => {
       },
       readModels: {},
     },
-    collaborators: {},
+    ports: {},
   }).byName.ticket as NonNullable<ReturnType<typeof buildAggregates>["byName"][string]>;
   const system = (version: number) => {
     const event = stored("CommandFailed", {}, version);
     return { ...event, metadata: { ...event.metadata, system: true } };
   };
 
-  it("opens the aggregate with create and merges what each apply returns over the state", () => {
-    expect(ticket.opensWithCreate).toBe(true);
-    expect(order.opensWithCreate).toBe(false);
+  it("opens the aggregate with begin and merges what each evolve returns over the state", () => {
+    expect(ticket.opensWithBegin).toBe(true);
+    expect(order.opensWithBegin).toBe(false);
     expect(
       foldState({
         aggregate: ticket,
@@ -221,7 +221,7 @@ describe("foldState", () => {
     ).toMatchObject({ state: { status: "open", title: "A" }, created: true, openedWithout: null });
   });
 
-  it("applies an opening event without create, and names it, for a stream older than create", () => {
+  it("applies an opening event without begin, and names it, for a stream older than begin", () => {
     expect(foldState({ aggregate: ticket, events: [stored("TicketClosed", {}, 1)] })).toEqual({
       state: { status: "closed" },
       created: true,
@@ -229,7 +229,7 @@ describe("foldState", () => {
     });
   });
 
-  it("folds an event that only exports create on an aggregate that exists over its state", () => {
+  it("folds an event that only exports begin on an aggregate that exists over its state", () => {
     expect(
       foldState({
         aggregate: ticket,
@@ -238,7 +238,7 @@ describe("foldState", () => {
     ).toEqual({ status: "imported", title: "A", tags: [] });
   });
 
-  it("fails on an apply that returns something other than an object", () => {
+  it("fails on an evolve that returns something other than an object", () => {
     expect(() =>
       foldState({
         aggregate: ticket,

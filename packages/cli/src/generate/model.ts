@@ -23,27 +23,26 @@ export interface EventModel extends ModuleRef {
 }
 
 /**
- * An implementation of a port: `notifier/in-memory.ts`. `name` is the file name as the
- * configuration names it, `in-memory`.
+ * An implementation of a port: `infrastructure/notifier/in-memory.ts`. `name` is the file name as
+ * the configuration names it, `in-memory`.
  */
 export interface ImplementationModel extends ModuleRef {
   readonly name: string;
 }
 
 /**
- * A port of an aggregate, `order/notifier/`: its `index.ts` exports the interface `typeName`,
- * and every other module in the directory implements it.
+ * A port of an aggregate, `order/notifier.ts`: it exports the interface `typeName`, and every
+ * module in `order/infrastructure/notifier/` implements it.
  */
-export interface PortModel {
+export interface PortModel extends ModuleRef {
   /**
-   * The registry key and the name every handler receives it as: `audit-log/` → `auditLog`.
+   * The registry key and the name every handler receives it as: `audit-log.ts` → `auditLog`.
    */
   readonly key: string;
   /**
-   * The interface `index.ts` exports: `AuditLog`.
+   * The interface the port's module exports: `AuditLog`.
    */
   readonly typeName: string;
-  readonly contract: ModuleRef;
   /**
    * Sorted by name; never empty.
    */
@@ -108,7 +107,7 @@ export interface AggregateModel {
   /**
    * The ports of the aggregate, sorted by key.
    */
-  readonly collaborators: readonly PortModel[];
+  readonly ports: readonly PortModel[];
   readonly commands: readonly CommandModel[];
   readonly policies: readonly PolicyModel[];
   readonly processes: readonly ProcessModel[];
@@ -136,6 +135,16 @@ export interface ReadModelModel {
   readonly view: ModuleRef;
   readonly projections: readonly ProjectionModel[];
   readonly queries: readonly QueryModel[];
+}
+
+/**
+ * Something in an aggregate's layout that the generator reads as it is, but that is most likely a
+ * mistake: a module that looks like an event and is not one, a directory that looks like one the
+ * generator reads and is not.
+ */
+export interface LayoutWarning {
+  readonly aggregate: string;
+  readonly message: string;
 }
 
 /**

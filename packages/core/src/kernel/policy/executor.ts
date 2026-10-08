@@ -7,7 +7,7 @@ import type { CommandPipeline } from "../command/pipeline.ts";
 import { createReactionCommands } from "../command/reaction-commands.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { withTimeout } from "../shared/timeout.ts";
-import { withCollaborators } from "../shared/with-collaborators.ts";
+import { withPorts } from "../shared/with-ports.ts";
 import { ATTRIBUTES, traced } from "../telemetry.ts";
 import type { UnitStores } from "../unit-of-work/unit-of-work.ts";
 import type { PolicyRuntime } from "./build-policies.ts";
@@ -90,7 +90,7 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
         await withTimeout({
           run: async () => {
             await policy.handler(
-              withCollaborators(policy.collaborators, {
+              withPorts(policy.ports, {
                 event,
                 commands: reaction.commands,
                 idempotencyKey,

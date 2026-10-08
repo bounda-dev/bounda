@@ -42,7 +42,9 @@ Output lists every file written or removed, then a summary:
 1 aggregate, 1 read model, 10 files (2 written, 8 unchanged, 0 removed)
 ```
 
-Warnings from state inference go to stderr and do not change the exit code:
+Warnings go to stderr and do not change the exit code. They come from a layout that is most likely
+wrong without breaking a convention (see [aggregates](/guides/project-layout/#aggregates-appdomainaggregate))
+and from state inference:
 
 ```
 warning: order: field "cancellation" (set by orderCancelled) has a type that is not visible
@@ -74,7 +76,7 @@ outright, such as a file where `.bounda/` should be, ends it. `Ctrl-C` ends it t
 
 For an aggregate without `state.ts`, the generator writes a first pass in which the state is
 `UnknownState`, opens the project with TypeScript, reads the return type of every event's
-`create` and `apply` and unions the fields it finds. The fields every `create` always sets are
+`begin` and `evolve` and unions the fields it finds. The fields every `begin` always sets are
 required once the aggregate exists, and a command handler sees that state or the one of an
 aggregate that does not exist yet, every field `undefined`:
 
@@ -88,7 +90,7 @@ export type OrderCreatedState = {
 export type OrderState = core.NotCreated<OrderCreatedState> | OrderCreatedState;
 ```
 
-`apply` gets `OrderCreatedState`. Without any `create`, there is only `OrderState`, every field
+`evolve` gets `OrderCreatedState`. Without any `begin`, there is only `OrderState`, every field
 optional, since any event could come first.
 
 Types exported from your modules are referenced through `import(...)`. A type that is not
@@ -185,7 +187,7 @@ import { generate } from "@bounda-dev/cli";
 
 const report = await generate({ root: process.cwd() });
 report.written; // absolute paths written this run
-report.warnings; // inference warnings, per aggregate
+report.warnings; // layout and inference warnings, per aggregate
 ```
 
 `discoverProject`, `emitProject`, `inferStates`, `watchProject` and `runCli` are the pieces

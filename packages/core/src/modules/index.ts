@@ -7,12 +7,6 @@ export type {
   UnknownState,
 } from "./aggregate.ts";
 export type {
-  CollaboratorModules,
-  CreateArgs,
-  CreateImplementation,
-  ImplementationModule,
-} from "./collaborator.ts";
-export type {
   CommandEntry,
   CommandHandlerArgs,
   CommandModule,
@@ -22,9 +16,9 @@ export type {
 } from "./command.ts";
 export type {
   CreateEventBuildersFunction,
-  EventApplyArgs,
+  EventBeginArgs,
   EventBuilders,
-  EventCreateArgs,
+  EventEvolveArgs,
   EventModule,
   EventModules,
   EventOf,
@@ -54,6 +48,12 @@ export type {
   ZodApi,
 } from "./payload.ts";
 export type { PolicyEntry, PolicyHandlerArgs, PolicyModule } from "./policy.ts";
+export type {
+  CreateArgs,
+  CreateImplementation,
+  ImplementationModule,
+  PortModules,
+} from "./port.ts";
 export type {
   AppEventModules,
   DeadlineFieldSchema,

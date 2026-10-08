@@ -7,9 +7,9 @@ import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { createReactiveHarness, type ReactiveHarness } from "../reactive-harness.ts";
 import { deriveDeadLetterId, deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import {
-  chooseCollaborators,
+  choosePorts,
   createRecordingLogger,
-  defaultCollaborators,
+  defaultPorts,
   drained,
   orderAggregateEntry,
   slowJob,
@@ -90,9 +90,9 @@ const policiesOf = (registry: Registry) =>
     registry,
     aggregates: buildAggregates({
       registry,
-      collaborators: chooseCollaborators(
+      ports: choosePorts(
         registry,
-        resolveConfig({ storage: memory(), collaborators: defaultCollaborators(registry) }),
+        resolveConfig({ storage: memory(), ports: defaultPorts(registry) }),
       ),
     }),
   });
@@ -110,7 +110,7 @@ describe("policyTriggerFromKey", () => {
     const { all } = policiesOf({
       aggregates: {
         order: {
-          events: { orderPaid: { apply: () => ({}) }, orderPlaced: { apply: () => ({}) } },
+          events: { orderPaid: { evolve: () => ({}) }, orderPlaced: { evolve: () => ({}) } },
           commands: {},
           policies: {
             a: { module: { on: "OrderPaid", handler: () => {} } },
@@ -577,7 +577,7 @@ describe("policy subscriber", () => {
   });
 });
 
-describe("policy collaborators", () => {
+describe("policy ports", () => {
   const sent: string[] = [];
   const mailer = (tag: string) => ({
     send: async (to: string) => {
@@ -597,8 +597,8 @@ describe("policy collaborators", () => {
             module: { handler: ({ event, mailer }: MailerArgs) => mailer.send(event.aggregateId) },
           },
         },
-        collaborators: {
-          ...orderAggregateEntry().collaborators,
+        ports: {
+          ...orderAggregateEntry().ports,
           mailer: { smtp: { default: mailer("smtp") }, memory: { default: mailer("memory") } },
         },
       },
@@ -610,7 +610,7 @@ describe("policy collaborators", () => {
     sent.length = 0;
     const harness = await createReactiveHarness({
       registry: withMailer,
-      config: { collaborators: { order: { notifier: "memory", mailer: "memory" } } },
+      config: { ports: { order: { notifier: "memory", mailer: "memory" } } },
     });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
     await harness.dispatcher.runUntilIdle();
@@ -619,12 +619,12 @@ describe("policy collaborators", () => {
 
   it("names the aggregate and where to choose when several implementations exist", () => {
     expect(() =>
-      chooseCollaborators(
+      choosePorts(
         withMailer,
-        resolveConfig({ storage: memory(), collaborators: { order: { notifier: "memory" } } }),
+        resolveConfig({ storage: memory(), ports: { order: { notifier: "memory" } } }),
       ),
     ).toThrow(
-      'Aggregate "order", collaborator "mailer": choose an implementation with collaborators.order.mailer. Available: "smtp", "memory"',
+      'Aggregate "order", port "mailer": choose an implementation with ports.order.mailer. Available: "smtp", "memory"',
     );
   });
 });
@@ -802,7 +802,7 @@ describe("the commands of a policy run", () => {
 
 describe("policies and the aggregate whose events they react to", () => {
   const reacted: string[] = [];
-  const apply = () => ({});
+  const evolve = () => ({});
   const twoAggregates: Registry = {
     aggregates: {
       order: {
@@ -826,7 +826,7 @@ describe("policies and the aggregate whose events they react to", () => {
         },
       },
       ledger: {
-        events: { orderPlaced: { apply } },
+        events: { orderPlaced: { evolve } },
         commands: {
           record: {
             module: {

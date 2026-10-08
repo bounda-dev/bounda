@@ -160,13 +160,13 @@ written in the test, so each test owns what it records and tests running in para
 nothing:
 
 ```ts
-import type { Confirmation } from "../app/domain/order/notifier/index.ts";
+import type { NotifierArgs } from "../app/domain/order/notifier.ts";
 
-const sent: Confirmation[] = [];
+const sent: NotifierArgs[] = [];
 const { app } = await createTestApp({
   registry,
   adapter: sqlite({ memory: true }),
-  collaborators: { order: { notifier: async (confirmation) => void sent.push(confirmation) } },
+  ports: { order: { notifier: async (confirmation) => void sent.push(confirmation) } },
 });
 ```
 
@@ -190,7 +190,7 @@ object otherwise:
 ```ts
 const { app } = await createTestApp({
   registry,
-  collaborators: { order: { inventory: "http" } },
+  ports: { order: { inventory: "http" } },
   env: { INVENTORY_URL: "http://localhost:8080" },
 });
 ```

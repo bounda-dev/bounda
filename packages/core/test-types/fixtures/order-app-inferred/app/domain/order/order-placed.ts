@@ -11,7 +11,7 @@ export const payload = ({ z }: Event.PayloadArgs) =>
     lines: z.array(z.object({ sku: z.string(), quantity: z.int().positive() })),
   });
 
-export const create = ({ event }: Event.CreateArgs) => ({
+export const begin = ({ event }: Event.BeginArgs) => ({
   status: "placed" as const,
   customerId: event.payload.customerId,
   lines: event.payload.lines as readonly Line[],

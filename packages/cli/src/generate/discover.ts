@@ -6,6 +6,7 @@ import type {
   CommandModel,
   EventModel,
   ImplementationModel,
+  LayoutWarning,
   ModuleRef,
   PolicyModel,
   PortModel,
@@ -37,8 +38,15 @@ export interface DiscoverProjectArgs {
   readonly appDir?: string;
 }
 
+/**
+ * The project model, with what the layout probably got wrong without breaking a convention.
+ */
+export interface DiscoveredProject extends ProjectModel {
+  readonly warnings: readonly LayoutWarning[];
+}
+
 export interface DiscoverProjectFunction {
-  (args: DiscoverProjectArgs): Promise<ProjectModel>;
+  (args: DiscoverProjectArgs): Promise<DiscoveredProject>;
 }
 
 const IGNORED_DIRECTORIES: ReadonlySet<string> = new Set(["+types", "node_modules"]);
@@ -89,6 +97,7 @@ interface Context {
    * The keys of every aggregate of the app: a folder named after one holds that aggregate's events.
    */
   readonly aggregates: ReadonlySet<string>;
+  readonly warnings: LayoutWarning[];
 }
 
 const moduleRef = (context: Context, path: string): ModuleRef => ({
@@ -111,12 +120,12 @@ const rejectOthers = (context: Context, directory: string, listing: Listing): vo
   }
 };
 
-const COLLABORATORS_HINT =
-  "collaborators live at the aggregate root, one directory per port: <port>/index.ts with its interface and <port>/<implementation>.ts";
+const PORTS_HINT =
+  "a port is <port>.ts at the aggregate root; its implementations live in infrastructure/<port>/<implementation>.ts";
 
-const rejectCollaboratorFile = (context: Context, path: string, name: string): boolean => {
+const rejectPortFile = (context: Context, path: string, name: string): boolean => {
   if (!name.includes(".")) return false;
-  context.problems.add(path, COLLABORATORS_HINT);
+  context.problems.add(path, PORTS_HINT);
   return true;
 };
 
@@ -127,12 +136,12 @@ const discoverCommands = async (
   const listing = await list(directory);
   rejectOthers(context, directory, listing);
   for (const name of listing.directories) {
-    context.problems.add(join(directory, name), `a command is a file; ${COLLABORATORS_HINT}`);
+    context.problems.add(join(directory, name), `a command is a file; ${PORTS_HINT}`);
   }
   const commands: CommandModel[] = [];
   for (const name of listing.modules) {
     const path = join(directory, `${name}.ts`);
-    if (rejectCollaboratorFile(context, path, name)) continue;
+    if (rejectPortFile(context, path, name)) continue;
     if (!checkName(context, path, name, "Command")) continue;
     commands.push({
       ...moduleRef(context, path),
@@ -161,12 +170,12 @@ const discoverPolicyModules = (
 ): readonly PolicyModel[] => {
   const foreign = folder.source !== folder.aggregate;
   for (const name of names) {
-    context.problems.add(join(directory, name), `a policy is a file; ${COLLABORATORS_HINT}`);
+    context.problems.add(join(directory, name), `a policy is a file; ${PORTS_HINT}`);
   }
   const policies: PolicyModel[] = [];
   for (const name of listing.modules) {
     const path = join(directory, `${name}.ts`);
-    if (rejectCollaboratorFile(context, path, name)) continue;
+    if (rejectPortFile(context, path, name)) continue;
     if (!checkName(context, path, name, "Policy")) continue;
     policies.push({
       ...moduleRef(context, path),
@@ -279,7 +288,7 @@ const discoverProcess = async (
   for (const module of listing.modules) {
     if (module === INDEX) continue;
     const path = join(directory, `${module}.ts`);
-    if (rejectCollaboratorFile(context, path, module)) continue;
+    if (rejectPortFile(context, path, module)) continue;
     if (module === RENAMED_TIMEOUT_HANDLER && !eventKeys.has("timeout")) {
       context.problems.add(path, "the timeout handler is at-timeout.ts now; rename the file");
       continue;
@@ -339,15 +348,82 @@ const discoverProcesses = async (
   return processes.sort(byKey);
 };
 
-const AGGREGATE_DIRECTORIES: ReadonlySet<string> = new Set(["commands", "policies", "processes"]);
+const INFRASTRUCTURE = "infrastructure";
+
+/**
+ * The directories at an aggregate's root the generator reads, with the other names someone might
+ * give them; any other directory there is the app's own.
+ */
+const AGGREGATE_DIRECTORIES: ReadonlyMap<string, readonly string[]> = new Map([
+  ["commands", ["command"]],
+  ["policies", ["policy"]],
+  ["processes", ["process"]],
+  [INFRASTRUCTURE, ["infra"]],
+]);
+
+// Past the first difference, the rest must match once one character is skipped in the longer
+// string, or in both when they are as long; that also rules out a length apart by more than one.
+const withinOneEdit = (a: string, b: string): boolean => {
+  const [shorter, longer] = a.length <= b.length ? [a, b] : [b, a];
+  let i = 0;
+  while (i < shorter.length && shorter[i] === longer[i]) i += 1;
+  const rest = shorter.length === longer.length ? i + 1 : i;
+  return shorter.slice(rest) === longer.slice(i + 1);
+};
+
+const readDirectoryLike = (name: string): string | undefined =>
+  [...AGGREGATE_DIRECTORIES].find(([directory, others]) =>
+    [directory, ...others].some((candidate) => withinOneEdit(name, candidate)),
+  )?.[0];
+
+const warnAbout = (context: Context, aggregate: string, path: string, message: string): void => {
+  context.warnings.push({
+    aggregate,
+    message: `${moduleRef(context, path).relativePath}: ${message}`,
+  });
+};
+
+/**
+ * A directory at the root that is not one the generator reads, but whose name is one edit away
+ * from one, is most likely that directory misspelled, and what it holds would go unregistered.
+ */
+const checkMisspelledDirectories = (
+  context: Context,
+  aggregate: string,
+  directory: string,
+  directories: readonly string[],
+): void => {
+  for (const name of directories) {
+    if (AGGREGATE_DIRECTORIES.has(name)) continue;
+    const meant = readDirectoryLike(name);
+    if (meant === undefined) continue;
+    warnAbout(
+      context,
+      aggregate,
+      join(directory, name),
+      `the generator does not read this directory; rename it to ${meant} if that is what it holds`,
+    );
+  }
+};
+
+// A module has `+types` only while it is an event, so one that imports its own was an event and
+// lost the export that made it one.
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const OWN_TYPES_IMPORT = (module: string): RegExp =>
+  new RegExp(
+    `^\\s*import\\b[^;]*?from\\s*["']\\./\\+types/${escapeRegExp(module)}(?:\\.[jt]s)?["']`,
+    "m",
+  );
 
 /**
  * Names a port cannot take: the state module and every argument a handler of any kind already
- * receives, since the ports are spread next to them. The three module directories never get here.
+ * receives, since the ports are spread next to them.
  */
 const RESERVED_PORT_KEYS: ReadonlySet<string> = new Set([
   "state",
   "command",
+  "commands",
   "events",
   "idempotencyKey",
   "event",
@@ -360,38 +436,71 @@ const RESERVED_PORT_KEYS: ReadonlySet<string> = new Set([
 const PORT_DECLARATION = (typeName: string): RegExp =>
   new RegExp(`^export\\s+(?:type|interface)\\s+${typeName}\\b`, "m");
 
+// An event is the module at the aggregate's root that exports one of these. They are an event's
+// alone, so the `create` of a value object or the `apply` of a domain service next to it never
+// makes one.
+const EVENT_EXPORTS: ReadonlySet<string> = new Set(["payload", "begin", "evolve"]);
+
+const BLOCK_COMMENT = /\/\*[\s\S]*?\*\//g;
+
+const DECLARED_EXPORT =
+  /^export\s+(?:abstract\s+)?(?:async\s+)?(?:const|let|var|function\*?|class|enum)\s+([\w$]+)/gm;
+
+const LISTED_EXPORTS = /^export\s*\{([^}]*)\}/gm;
+
+// What else a module can export at run time, under the name the error reports it by.
+const UNNAMED_EXPORTS: readonly (readonly [RegExp, string])[] = [
+  [/^export\s+default\b/m, "default"],
+  [/^export\s*\*/m, "*"],
+];
+
+const runtimeExportsOf = (source: string): readonly string[] => {
+  const text = source.replace(BLOCK_COMMENT, "");
+  return [
+    ...[...text.matchAll(DECLARED_EXPORT)].map((match) => match[1] ?? ""),
+    ...[...text.matchAll(LISTED_EXPORTS)].flatMap((match) =>
+      (match[1] ?? "")
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter((entry) => entry !== "" && !entry.startsWith("type "))
+        .map((entry) => entry.split(/\s+as\s+/).at(-1) ?? entry),
+    ),
+    ...UNNAMED_EXPORTS.filter(([pattern]) => pattern.test(text)).map(([, name]) => name),
+  ];
+};
+
+const quoted = (names: readonly string[]): string => names.map((name) => `"${name}"`).join(", ");
+
+/**
+ * Whether a module at the aggregate's root is an event. One that exports an event's function next
+ * to something else is reported rather than guessed at.
+ */
+const isEvent = (context: Context, path: string, text: string): boolean => {
+  const exported = runtimeExportsOf(text);
+  const own = exported.filter((name) => EVENT_EXPORTS.has(name));
+  const others = exported.filter((name) => !EVENT_EXPORTS.has(name));
+  if (own.length > 0 && others.length > 0) {
+    context.problems.add(
+      path,
+      `exports ${quoted(own)}, an event's, and ${quoted(others)} besides: an event exports only payload, begin and evolve`,
+    );
+  }
+  return own.length > 0;
+};
+
 const discoverPort = async (
   context: Context,
+  path: string,
+  text: string,
   directory: string,
   name: string,
-  eventKeys: ReadonlySet<string>,
 ): Promise<PortModel | null> => {
-  if (!checkName(context, directory, name, "Collaborator")) return null;
   const key = keyOf(name);
   const typeName = typeNameOf(key);
-  if (RESERVED_PORT_KEYS.has(key)) {
-    context.problems.add(directory, `"${key}" is reserved; give the collaborator another name`);
-    return null;
-  }
-  if (eventKeys.has(key)) {
+  if (!PORT_DECLARATION(typeName).test(text)) {
     context.problems.add(
-      directory,
-      `"${key}" is also an event of this aggregate; give the collaborator another name`,
-    );
-    return null;
-  }
-  const index = join(directory, `${INDEX}.ts`);
-  if (!(await exists(index))) {
-    context.problems.add(
-      directory,
-      `a collaborator directory needs an index.ts exporting its interface: export interface ${typeName}`,
-    );
-    return null;
-  }
-  if (!PORT_DECLARATION(typeName).test(await readFile(index, "utf8"))) {
-    context.problems.add(
-      index,
-      `must export the collaborator's interface, named after the directory: export interface ${typeName}`,
+      path,
+      `must export the port's interface, named after the file: export interface ${typeName}`,
     );
     return null;
   }
@@ -400,24 +509,75 @@ const discoverPort = async (
   for (const child of listing.directories) {
     context.problems.add(
       join(directory, child),
-      "a collaborator directory holds only index.ts and its implementations",
+      "a port's directory in infrastructure holds only its implementations",
     );
   }
   const implementations: ImplementationModel[] = [];
   for (const module of listing.modules) {
-    if (module === INDEX) continue;
-    const path = join(directory, `${module}.ts`);
-    if (!checkName(context, path, module, "Implementation")) continue;
-    implementations.push({ ...moduleRef(context, path), name: module });
+    const implementation = join(directory, `${module}.ts`);
+    if (!checkName(context, implementation, module, "Implementation")) continue;
+    implementations.push({ ...moduleRef(context, implementation), name: module });
   }
   if (implementations.length === 0) {
     context.problems.add(
       directory,
-      `a collaborator needs at least one implementation next to its index.ts: ${name}/<implementation>.ts`,
+      `a port needs at least one implementation: ${INFRASTRUCTURE}/${name}/<implementation>.ts`,
     );
     return null;
   }
-  return { key, typeName, contract: moduleRef(context, index), implementations };
+  return { ...moduleRef(context, path), key, typeName, implementations };
+};
+
+interface RootModule {
+  readonly path: string;
+  readonly text: string;
+}
+
+const discoverPorts = async (
+  context: Context,
+  directory: string,
+  modules: ReadonlyMap<string, RootModule>,
+  eventNames: ReadonlySet<string>,
+): Promise<readonly PortModel[]> => {
+  const infrastructure = join(directory, INFRASTRUCTURE);
+  const listing = await list(infrastructure);
+  rejectOthers(context, infrastructure, listing);
+  for (const name of listing.modules) {
+    context.problems.add(
+      join(infrastructure, `${name}.ts`),
+      `${INFRASTRUCTURE} holds one directory per port: ${INFRASTRUCTURE}/<port>/<implementation>.ts`,
+    );
+  }
+  const ports: PortModel[] = [];
+  for (const name of listing.directories) {
+    const portDirectory = join(infrastructure, name);
+    if (!checkName(context, portDirectory, name, "Port")) continue;
+    if (RESERVED_PORT_KEYS.has(keyOf(name))) {
+      context.problems.add(
+        portDirectory,
+        `"${keyOf(name)}" is reserved; give the port another name`,
+      );
+      continue;
+    }
+    if (eventNames.has(name)) {
+      context.problems.add(
+        portDirectory,
+        `${name}.ts is an event of this aggregate; give the port another name`,
+      );
+      continue;
+    }
+    const module = modules.get(name);
+    if (module === undefined) {
+      context.problems.add(
+        portDirectory,
+        `has no port: add ${name}.ts at the aggregate root exporting interface ${typeNameOf(keyOf(name))}`,
+      );
+      continue;
+    }
+    const port = await discoverPort(context, module.path, module.text, portDirectory, name);
+    if (port !== null) ports.push(port);
+  }
+  return ports.sort(byKey);
 };
 
 const discoverAggregate = async (
@@ -428,22 +588,31 @@ const discoverAggregate = async (
   const listing = await list(directory);
   rejectOthers(context, directory, listing);
   const events: EventModel[] = [];
-  const upcasts = new Map<string, ModuleRef>();
+  const others = new Map<string, RootModule>();
+  const upcasts: string[] = [];
   let state: ModuleRef | null = null;
+  const rest: string[] = [];
   for (const module of listing.modules) {
+    if (module === STATE) state = moduleRef(context, join(directory, `${module}.ts`));
+    else if (module.endsWith(UPCAST_SUFFIX)) upcasts.push(module);
+    else rest.push(module);
+  }
+  const texts = await Promise.all(
+    rest.map((module) => readFile(join(directory, `${module}.ts`), "utf8")),
+  );
+  for (const [index, module] of rest.entries()) {
     const path = join(directory, `${module}.ts`);
-    if (module === STATE) {
-      state = moduleRef(context, path);
-      continue;
-    }
-    if (module.endsWith(UPCAST_SUFFIX)) {
-      const eventName = module.slice(0, -UPCAST_SUFFIX.length);
-      if (!checkName(context, path, eventName, "Event")) continue;
-      if (!listing.modules.includes(eventName)) {
-        context.problems.add(path, `an upcast module needs the event ${eventName}.ts next to it`);
-        continue;
+    const text = texts[index] ?? "";
+    if (!isEvent(context, path, text)) {
+      if (OWN_TYPES_IMPORT(module).test(text)) {
+        warnAbout(
+          context,
+          name,
+          path,
+          `imports ./+types/${module} but exports no payload, begin or evolve, so it is not an event`,
+        );
       }
-      upcasts.set(keyOf(eventName), moduleRef(context, path));
+      others.set(module, { path, text });
       continue;
     }
     if (!checkName(context, path, module, "Event")) continue;
@@ -454,24 +623,34 @@ const discoverAggregate = async (
       upcasts: null,
     });
   }
-  const eventsWithUpcasts = events.map((event) => ({
-    ...event,
-    upcasts: upcasts.get(event.key) ?? null,
-  }));
-  const has = (child: string): boolean => listing.directories.includes(child);
-  const eventKeys = new Set(events.map((event) => event.key));
-  const collaborators: PortModel[] = [];
-  for (const child of listing.directories) {
-    if (AGGREGATE_DIRECTORIES.has(child)) continue;
-    const port = await discoverPort(context, join(directory, child), child, eventKeys);
-    if (port !== null) collaborators.push(port);
+  const eventNames = new Set(events.map((event) => basename(event.path, ".ts")));
+  const upcastOf = new Map<string, ModuleRef>();
+  for (const module of upcasts) {
+    const path = join(directory, `${module}.ts`);
+    const eventName = module.slice(0, -UPCAST_SUFFIX.length);
+    if (!checkName(context, path, eventName, "Event")) continue;
+    if (eventNames.has(eventName)) {
+      upcastOf.set(keyOf(eventName), moduleRef(context, path));
+    } else if (others.has(eventName)) {
+      context.problems.add(
+        path,
+        `${eventName}.ts is not an event: an event exports payload, begin or evolve`,
+      );
+    } else {
+      context.problems.add(path, `an upcast module needs the event ${eventName}.ts next to it`);
+    }
   }
+  const has = (child: string): boolean => listing.directories.includes(child);
+  checkMisspelledDirectories(context, name, directory, listing.directories);
+  const eventKeys = new Set(events.map((event) => event.key));
   return {
     name,
     directory,
     state,
-    events: eventsWithUpcasts.sort(byKey),
-    collaborators: collaborators.sort(byKey),
+    events: events
+      .map((event) => ({ ...event, upcasts: upcastOf.get(event.key) ?? null }))
+      .sort(byKey),
+    ports: has(INFRASTRUCTURE) ? await discoverPorts(context, directory, others, eventNames) : [],
     commands: has("commands") ? await discoverCommands(context, join(directory, "commands")) : [],
     policies: has("policies")
       ? await discoverPolicies(context, join(directory, "policies"), name)
@@ -637,10 +816,27 @@ const checkForeignHandlers = (context: Context, aggregates: readonly AggregateMo
   }
 };
 
+const checkUniqueNames = (
+  context: Context,
+  aggregates: readonly AggregateModel[],
+  readModels: readonly ReadModelModel[],
+): void => {
+  const names = new Set(aggregates.map((aggregate) => aggregate.name));
+  for (const readModel of readModels) {
+    if (names.has(readModel.name)) {
+      context.problems.add(
+        readModel.directory,
+        `"${readModel.name}" is also an aggregate; give the read model another name`,
+      );
+    }
+  }
+};
+
 /**
  * Reads the project layout under `<root>/<appDir>` and returns what the generator needs. Names
- * come from files and directories only, and no module is imported. Every convention breach is
- * collected and thrown together as one `ConventionError`.
+ * come from files and directories, and no module is imported: the only text read is, at an
+ * aggregate's root, what each module exports and the interface a port declares.
+ * Every convention breach is collected and thrown together as one `ConventionError`.
  */
 export const discoverProject: DiscoverProjectFunction = async ({ root, appDir = "app" }) => {
   const problems = createProblemCollector();
@@ -656,6 +852,7 @@ export const discoverProject: DiscoverProjectFunction = async ({ root, appDir = 
   const context: Context = {
     root,
     problems,
+    warnings: [],
     aggregates: new Set(
       (await exists(domain)) ? (await list(domain)).directories.map((name) => keyOf(name)) : [],
     ),
@@ -670,6 +867,7 @@ export const discoverProject: DiscoverProjectFunction = async ({ root, appDir = 
     (directory, name) => discoverReadModel(context, directory, name),
   );
   checkForeignHandlers(context, aggregates);
+  checkUniqueNames(context, aggregates, readModels);
   problems.throwIfAny();
-  return { root, appDir, aggregates, readModels };
+  return { root, appDir, aggregates, readModels, warnings: context.warnings };
 };

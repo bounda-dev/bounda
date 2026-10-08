@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="900" height="516" viewBox="0 0 900 516" role="img" aria-label="The app sends commands to command handlers in the domain, which decide from the state apply folds from the aggregate's own stream and return events for the event store, one ordered log. After commit, and asynchronously, policies and processes in the domain follow the log and send new commands, and projections turn events into rows in tables, in the same database or their own. Query handlers read those rows to answer the app's queries">
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="516" viewBox="0 0 900 516" role="img" aria-label="The app sends commands to command handlers in the domain, which decide from the state evolve folds from the aggregate's own stream and return events for the event store, one ordered log. After commit, and asynchronously, policies and processes in the domain follow the log and send new commands, and projections turn events into rows in tables, in the same database or their own. Query handlers read those rows to answer the app's queries">
   <title>How a command becomes events, and what reads them</title>
   <g font-family="'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif">
     <rect x="4" y="16" width="888" height="36" rx="2" stroke="#5F5B53" fill="none" stroke-width="1" />
@@ -98,7 +98,7 @@
       <g fill="#1A1916" font-size="15" font-weight="500">
         <text x="448" y="39">App</text>
         <text x="148" y="140">Command handlers</text>
-        <text x="148" y="228" font-family="'Red Hat Mono', ui-monospace, SFMono-Regular, Menlo, monospace">apply</text>
+        <text x="148" y="228" font-family="'Red Hat Mono', ui-monospace, SFMono-Regular, Menlo, monospace">evolve</text>
         <text x="148" y="316">Policies</text>
         <text x="148" y="404">Processes</text>
         <text x="447" y="236">Event store</text>

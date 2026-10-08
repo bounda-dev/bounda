@@ -13,7 +13,7 @@ export const payload = ({ z }: Event.PayloadArgs) =>
     total: z.number().positive(),
   });
 
-export const create = ({ event }: Event.CreateArgs) => ({
+export const begin = ({ event }: Event.BeginArgs) => ({
   status: "placed" as const,
   customerId: event.payload.customerId,
   items: event.payload.items,

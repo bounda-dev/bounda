@@ -138,7 +138,7 @@ is stored first, and a policy carries it out with its `idempotencyKey`, as any
 // payment/policies/refund-on-refund-requested.ts
 export const handler = async ({ event, commands, gateway, idempotencyKey }: Policy.HandlerArgs) => {
   const { intentId, amount } = event.payload;
-  const { refundId } = await gateway.refund({ intentId, amount }, idempotencyKey);
+  const { refundId } = await gateway.refund({ intentId, amount, idempotencyKey });
   await commands.recordRefund({ paymentId: event.aggregateId, refundId });
 };
 ```

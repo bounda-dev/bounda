@@ -66,7 +66,7 @@ describe("readYourWrites", () => {
     const { app } = await createTestApp({
       registry,
       config: { runtime: { role: "web" } },
-      collaborators: { order: { notifier: "silent" } },
+      ports: { order: { notifier: "silent" } },
     });
     const lagOf = async (name: string) =>
       (await app.getLag()).subscribers.find((lag) => lag.subscriber === name)?.lag;

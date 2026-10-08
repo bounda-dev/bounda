@@ -48,7 +48,7 @@ export interface CommandEntry {
 }
 
 /**
- * Arguments of a command `handler`. The aggregate's collaborators are spread at the top level so
+ * Arguments of a command `handler`. The aggregate's ports are spread at the top level so
  * a handler destructures them next to `command`, `state` and `events`.
  */
 export type CommandHandlerArgs<
@@ -56,7 +56,7 @@ export type CommandHandlerArgs<
   Payload,
   State extends object,
   Events extends EventModules,
-  Collaborators extends object,
+  Ports extends object,
   Rejected extends string = never,
 > = {
   readonly command: Command<Type, Payload>;
@@ -74,4 +74,4 @@ export type CommandHandlerArgs<
    */
   readonly signal: AbortSignal;
 } & ([Rejected] extends [never] ? unknown : { readonly reject: RejectFunction<Rejected> }) &
-  Readonly<Collaborators>;
+  Readonly<Ports>;

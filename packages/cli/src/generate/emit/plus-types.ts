@@ -2,9 +2,9 @@ import { basename, dirname, join } from "node:path";
 import type { AggregateModel, ProjectModel, ReadModelModel } from "../model.ts";
 import { type GeneratedFile, importPath } from "./paths.ts";
 import {
-  collaboratorsTypeName,
   createdStateTypeName,
   eventsTypeName,
+  portsTypeName,
   rowTypeName,
   stateTypeName,
 } from "./types.ts";
@@ -75,12 +75,12 @@ const eventFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFile
       members: [
         ["PayloadArgs", "core.PayloadArgs"],
         [
-          "CreateArgs",
-          generic("core.EventCreateArgs", [`"${event.typeName}"`, "core.PayloadOf<Module>"]),
+          "BeginArgs",
+          generic("core.EventBeginArgs", [`"${event.typeName}"`, "core.PayloadOf<Module>"]),
         ],
         [
-          "ApplyArgs",
-          generic("core.EventApplyArgs", [
+          "EvolveArgs",
+          generic("core.EventEvolveArgs", [
             `generated.${createdStateTypeName(aggregate.name)}`,
             `"${event.typeName}"`,
             "core.PayloadOf<Module>",
@@ -91,27 +91,8 @@ const eventFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFile
     }),
   );
 
-const collaboratorsType = (aggregate: AggregateModel): string =>
-  `generated.${collaboratorsTypeName(aggregate.name)}`;
-
-const implementationFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFile[] =>
-  aggregate.collaborators.flatMap((port) =>
-    port.implementations.map((implementation) => {
-      const path = plusTypesPath(implementation.path);
-      return render(path, typesPath, {
-        imports: { generated: false, module: null },
-        extraTypes: [
-          `type Port = import("${importPath({ from: path, to: port.contract.path })}").${port.typeName};`,
-        ],
-        namespace: "Implementation",
-        members: [
-          ["Contract", "Port"],
-          ["CreateArgs", "core.CreateArgs"],
-          ["Create", "core.CreateImplementation<Port>"],
-        ],
-      });
-    }),
-  );
+const portsType = (aggregate: AggregateModel): string =>
+  `generated.${portsTypeName(aggregate.name)}`;
 
 const commandFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFile[] =>
   aggregate.commands.map((command) =>
@@ -135,7 +116,7 @@ const commandFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFi
             "core.PayloadOf<Module>",
             `generated.${stateTypeName(aggregate.name)}`,
             `generated.${eventsTypeName(aggregate.name)}`,
-            collaboratorsType(aggregate),
+            portsType(aggregate),
             "core.RejectionCodeOf<Module>",
           ]),
         ],
@@ -172,7 +153,7 @@ const policyFiles = (
           generic("core.PolicyHandlerArgs", [
             eventOf(model, policy.source ?? aggregate.name, policy.triggerKey),
             "generated.ReactionCommands",
-            collaboratorsType(aggregate),
+            portsType(aggregate),
           ]),
         ],
       ],
@@ -225,7 +206,7 @@ const processFiles = (
                 eventOf(model, handler.aggregate, handler.eventKey),
                 "core.ProcessStateOf<ProcessModule>",
                 "generated.ReactionCommands",
-                collaboratorsType(aggregate),
+                portsType(aggregate),
               ]),
             ],
           ],
@@ -246,7 +227,7 @@ const processFiles = (
                 "core.ProcessStateOf<ProcessModule>",
                 deadline.field === TIMEOUT_DEADLINE ? "never" : deadlineField(deadline.field),
                 "generated.ReactionCommands",
-                collaboratorsType(aggregate),
+                portsType(aggregate),
               ]),
             ],
           ],
@@ -311,7 +292,6 @@ const readModelFiles = (
 export const emitPlusTypes: EmitPlusTypesFunction = ({ model, typesPath }) => [
   ...model.aggregates.flatMap((aggregate) => [
     ...eventFiles(aggregate, typesPath),
-    ...implementationFiles(aggregate, typesPath),
     ...commandFiles(aggregate, typesPath),
     ...policyFiles(model, aggregate, typesPath),
     ...processFiles(model, aggregate, typesPath),

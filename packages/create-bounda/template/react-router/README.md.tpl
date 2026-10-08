@@ -24,7 +24,7 @@ app/read/orders/            a read model
 app/routes/home.tsx         a loader that queries and an action that dispatches
 app/root.tsx                mounts boundaMiddleware
 vite.config.ts              plugins: [bounda(), reactRouter()]
-bounda.config.ts            storage and collaborators
+bounda.config.ts            storage and ports
 tests/orders.test.ts        the app on an in-memory adapter
 ```
 

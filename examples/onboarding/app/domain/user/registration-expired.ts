@@ -1,1 +1,1 @@
-export const apply = () => ({ status: "expired" as const });
+export const evolve = () => ({ status: "expired" as const });

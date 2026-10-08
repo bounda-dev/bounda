@@ -100,8 +100,11 @@ describe("bounda generate", () => {
 
   it("exits 1 and lists every problem when the layout breaks a convention", async () => {
     const root = await project();
-    await mkdir(join(root, "app/domain/order/helpers"));
-    await writeFile(join(root, "app/domain/order/Order_Shipped.ts"), "export {};\n");
+    await mkdir(join(root, "app/domain/order/infrastructure/helpers"), { recursive: true });
+    await writeFile(
+      join(root, "app/domain/order/Order_Shipped.ts"),
+      "export const evolve = () => ({});\n",
+    );
     const result = await cli(["generate"], root);
     expect(result.code).toBe(EXIT_CONVENTION);
     expect(result.stdout).toBe("");
@@ -109,9 +112,20 @@ describe("bounda generate", () => {
       [
         "error: 2 problems in the project layout",
         "  app/domain/order/Order_Shipped.ts: Event names must be kebab-case (lower-case letters, digits and dashes)",
-        "  app/domain/order/helpers: a collaborator directory needs an index.ts exporting its interface: export interface Helpers",
+        "  app/domain/order/infrastructure/helpers: has no port: add helpers.ts at the aggregate root exporting interface Helpers",
         "",
       ].join("\n"),
+    );
+  });
+
+  it("warns about a layout that is probably wrong, and exits 0", async () => {
+    const root = await project();
+    await mkdir(join(root, "app/domain/order/command"));
+    await writeFile(join(root, "app/domain/order/command/place-order.ts"), "export {};\n");
+    const result = await cli(["generate", "--no-infer"], root);
+    expect(result.code).toBe(EXIT_OK);
+    expect(result.stderr).toBe(
+      "warning: order: app/domain/order/command: the generator does not read this directory; rename it to commands if that is what it holds\n",
     );
   });
 
@@ -210,7 +224,7 @@ describe("bounda generate", () => {
     try {
       await writeFile(
         join(root, "app/domain/order/order-shipped.ts"),
-        "export const apply = () => ({});\n",
+        "export const evolve = () => ({});\n",
       );
       await vi.waitFor(() => expect(stderr.text()).toMatch(/^error: .*\.bounda\/registry\.ts/m), {
         timeout: 5_000,
@@ -220,7 +234,7 @@ describe("bounda generate", () => {
     }
     await writeFile(
       join(root, "app/domain/order/order-returned.ts"),
-      "export const apply = () => ({});\n",
+      "export const evolve = () => ({});\n",
     );
     await vi.waitFor(() => stat(join(root, "app/domain/order/+types/order-returned.ts")), {
       timeout: 5_000,
@@ -238,7 +252,7 @@ describe("bounda generate", () => {
       saved = true;
       writeFileSync(
         join(root, "app/domain/order/order-shipped.ts"),
-        'import type { Event } from "./+types/order-shipped";\n\nexport const apply = ({ state }: Event.ApplyArgs) => state;\n',
+        'import type { Event } from "./+types/order-shipped";\n\nexport const evolve = ({ state }: Event.EvolveArgs) => state;\n',
       );
     });
     const running = runCli({

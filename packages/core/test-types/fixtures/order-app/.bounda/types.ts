@@ -5,7 +5,7 @@ export type CustomerCreatedState = CustomerState;
 export type CustomerEvents = {
   readonly customerRegistered: typeof import("../app/domain/customer/customer-registered.ts");
 };
-export type CustomerCollaborators = core.EmptyPayload;
+export type CustomerPorts = core.EmptyPayload;
 
 export type OrderState = core.StateOf<typeof import("../app/domain/order/state.ts")>;
 export type OrderCreatedState = OrderState;
@@ -14,11 +14,11 @@ export type OrderEvents = {
   readonly orderPaid: typeof import("../app/domain/order/order-paid.ts");
   readonly orderPlaced: typeof import("../app/domain/order/order-placed.ts");
 };
-export type OrderCollaborators = {
-  readonly auditLog: import("../app/domain/order/audit-log/index.ts").AuditLog;
-  readonly inventory: import("../app/domain/order/inventory/index.ts").Inventory;
-  readonly mailer: import("../app/domain/order/mailer/index.ts").Mailer;
-  readonly reminders: import("../app/domain/order/reminders/index.ts").Reminders;
+export type OrderPorts = {
+  readonly auditLog: import("../app/domain/order/audit-log.ts").AuditLog;
+  readonly inventory: import("../app/domain/order/inventory.ts").Inventory;
+  readonly mailer: import("../app/domain/order/mailer.ts").Mailer;
+  readonly reminders: import("../app/domain/order/reminders.ts").Reminders;
 };
 
 export type Events = {
@@ -26,7 +26,7 @@ export type Events = {
   readonly order: OrderEvents;
 };
 
-export type CollaboratorsConfig = {
+export type PortsConfig = {
   readonly order: {
     readonly auditLog?: "memory";
     readonly inventory: "fake" | "http" | "memory";
@@ -35,12 +35,12 @@ export type CollaboratorsConfig = {
   };
 };
 
-export type TestCollaborators = {
+export type TestPorts = {
   readonly order?: {
-    readonly auditLog?: "memory" | OrderCollaborators["auditLog"];
-    readonly inventory?: "fake" | "http" | "memory" | OrderCollaborators["inventory"];
-    readonly mailer?: "memory" | OrderCollaborators["mailer"];
-    readonly reminders?: "fake" | OrderCollaborators["reminders"];
+    readonly auditLog?: "memory" | OrderPorts["auditLog"];
+    readonly inventory?: "fake" | "http" | "memory" | OrderPorts["inventory"];
+    readonly mailer?: "memory" | OrderPorts["mailer"];
+    readonly reminders?: "fake" | OrderPorts["reminders"];
   };
 };
 

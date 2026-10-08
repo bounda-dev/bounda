@@ -1,6 +1,6 @@
 import type { Event } from "./+types/order-paid";
 
-export const apply = ({ event }: Event.ApplyArgs) => ({
+export const evolve = ({ event }: Event.EvolveArgs) => ({
   status: "paid" as const,
   paidAt: event.timestamp,
 });

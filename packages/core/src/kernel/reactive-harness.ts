@@ -7,7 +7,7 @@ import { type Logger, silentLogger } from "../contracts/logger.ts";
 import { memory } from "../memory/index.ts";
 import type { Registry } from "../modules/registry.ts";
 import { buildAggregates } from "./aggregate/build-aggregates.ts";
-import { createCollaborators } from "./aggregate/collaborators.ts";
+import { createPorts } from "./aggregate/ports.ts";
 import type { AggregatesRuntime } from "./aggregate/runtime.ts";
 import { createCommandPipeline } from "./command/pipeline.ts";
 import { createDispatcher, type Dispatcher } from "./dispatch/dispatcher.ts";
@@ -21,7 +21,7 @@ import { createProjectionSubscriber } from "./projection/runner.ts";
 import { buildReadModels, type ReadModelsRuntime } from "./read-model/build-read-models.ts";
 import { createScheduledCommandWorker, type ScheduledCommandWorker } from "./scheduler/worker.ts";
 import { ignoredRetries } from "./shared/pending-retries.ts";
-import { defaultCollaborators } from "./test-support.ts";
+import { defaultPorts } from "./test-support.ts";
 
 export interface ReactiveHarness {
   readonly storage: StoragePorts;
@@ -70,19 +70,19 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
   const storage = await adapter.createStorage({ logger });
   const config = resolveConfig({
     storage: adapter,
-    collaborators: defaultCollaborators(registry),
+    ports: defaultPorts(registry),
     ...overrides,
   });
   const ids = createSequentialIdGenerator();
   const clock = createFixedClock();
-  const { byAggregate } = await createCollaborators({
+  const { byAggregate } = await createPorts({
     registry,
-    config: config.collaborators,
+    config: config.ports,
     env: {},
     logger,
     clock,
   });
-  const aggregates = buildAggregates({ registry, collaborators: byAggregate });
+  const aggregates = buildAggregates({ registry, ports: byAggregate });
   const readModels = await buildReadModels({ registry, config, logger });
   const pipeline = createCommandPipeline({
     aggregates,

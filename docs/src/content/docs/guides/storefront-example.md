@@ -24,14 +24,14 @@ webhooks.
 
 1. `placeOrder` validates the items, computes the total and appends `OrderPlaced`.
 2. The policy `send-confirmation-on-order-placed` sends the confirmation through the order's
-   `notifier` collaborator, then dispatches `recordConfirmationSent`, which appends
+   `notifier` port, then dispatches `recordConfirmationSent`, which appends
    `ConfirmationSent`. `bounda.config.ts` picks the `console` implementation for the demo, and
    each test passes its own double, which records what was sent.
 3. The policy `schedule-reminder-on-order-placed` dispatches `sendReminder` with a delay of a
    day. The reminder is a scheduled command; when it runs, the handler appends `ReminderSent`
    only if the order is still `placed`.
 4. The process `order-lifecycle` starts and dispatches `requestPayment`, whose handler creates
-   the intent through the `payment` aggregate's `gateway` collaborator. The process gives the
+   the intent through the `payment` aggregate's `gateway` port. The process gives the
    customer 72 hours to pay, as a deadline in its state.
 5. The provider's webhooks are commands on the payment: `markPaymentProcessing`,
    `settlePayment` and `declinePayment`. The process follows the payment's events, which carry
@@ -48,7 +48,7 @@ webhooks.
 compensates, and what happens when the webhooks arrive late, twice or out of order.
 
 Neither aggregate has a `state.ts`: their state is inferred from what their events return.
-`order-placed.ts` and `payment-requested.ts` open their aggregates with `create`, so a handler
+`order-placed.ts` and `payment-requested.ts` open their aggregates with `begin`, so a handler
 that has checked `state.status` reads `state.customerId` or `state.intentId` as a string, and
 `state.status === undefined` means the order or the payment does not exist yet.
 
@@ -63,22 +63,25 @@ second report:
 ```ts
 // policies/send-confirmation-on-order-placed.ts
 export const handler = async ({ event, commands, notifier, idempotencyKey }: Policy.HandlerArgs) => {
-  await notifier(
-    { orderId: event.aggregateId, customerId: event.payload.customerId, total: event.payload.total },
+  await notifier({
+    orderId: event.aggregateId,
+    customerId: event.payload.customerId,
+    total: event.payload.total,
     idempotencyKey,
-  );
+  });
   await commands.recordConfirmationSent({ orderId: event.aggregateId });
 };
 ```
 
-**A collaborator with two implementations.** `order/notifier/index.ts` declares the contract, a
-callable `Notifier`; `console.ts` and `memory.ts` next to it implement it. The config decides,
+**A port with two implementations.** `order/notifier.ts` declares the contract, a callable
+`Notifier` that takes `NotifierArgs`; `console.ts` and `memory.ts` in
+`order/infrastructure/notifier/` implement it. The config decides,
 and only one of the two names compiles:
 
 ```ts
 export default defineConfig({
   storage: sqlite({ path: process.env.STOREFRONT_DB ?? "./data/storefront.db" }),
-  collaborators: {
+  ports: {
     order: { notifier: process.env.NOTIFIER === "memory" ? "memory" : "console" },
   },
 });

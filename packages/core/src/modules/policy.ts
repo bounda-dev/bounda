@@ -23,9 +23,9 @@ export interface PolicyEntry {
 
 /**
  * Arguments of a policy `handler`: the event that triggered it, the typed commands facade and the
- * aggregate's collaborators, spread at the top level.
+ * aggregate's ports, spread at the top level.
  */
-export type PolicyHandlerArgs<Event, Commands, Collaborators extends object = EmptyPayload> = {
+export type PolicyHandlerArgs<Event, Commands, Ports extends object = EmptyPayload> = {
   readonly event: Event;
   readonly commands: Commands;
   /**
@@ -39,4 +39,4 @@ export type PolicyHandlerArgs<Event, Commands, Collaborators extends object = Em
    * those dispatched after that are refused, both with `REACTION_ABANDONED`.
    */
   readonly signal: AbortSignal;
-} & Readonly<Collaborators>;
+} & Readonly<Ports>;

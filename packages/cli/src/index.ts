@@ -1,4 +1,8 @@
-export type { DiscoverProjectArgs, DiscoverProjectFunction } from "./generate/discover.ts";
+export type {
+  DiscoveredProject,
+  DiscoverProjectArgs,
+  DiscoverProjectFunction,
+} from "./generate/discover.ts";
 export { discoverProject } from "./generate/discover.ts";
 export type {
   EmitPlusTypesArgs,
@@ -28,6 +32,7 @@ export type {
   CommandModel,
   EventModel,
   ImplementationModel,
+  LayoutWarning,
   ModuleRef,
   PolicyModel,
   PortModel,

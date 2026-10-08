@@ -1,1 +1,1 @@
-export const apply = () => ({ confirmationSent: true });
+export const evolve = () => ({ confirmationSent: true });

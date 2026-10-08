@@ -3,8 +3,8 @@ import { DomainError } from "@bounda-dev/core";
 import { createTestApp } from "@bounda-dev/core/testing";
 import { describe, expect, it } from "vitest";
 import { registry } from "../.bounda/registry.ts";
-import type { Confirmation } from "../app/domain/order/notifier/index.ts";
-import type { Gateway, Intent, Refund } from "../app/domain/payment/gateway/index.ts";
+import type { NotifierArgs } from "../app/domain/order/notifier.ts";
+import type { CreateIntentArgs, Gateway, RefundArgs } from "../app/domain/payment/gateway.ts";
 
 const ORDER = "018f6a5e-4c3c-7c1e-9d4b-0b2c4a1d8e01";
 const OTHER = "018f6a5e-4c3c-7c1e-9d4b-0b2c4a1d8e02";
@@ -12,11 +12,6 @@ const items = [
   { productId: "keyboard", quantity: 1, price: 120 },
   { productId: "cable", quantity: 2, price: 9.5 },
 ];
-
-interface Call<Request> {
-  readonly request: Request;
-  readonly idempotencyKey: string;
-}
 
 interface StartArgs {
   readonly failingIntents?: number;
@@ -29,29 +24,29 @@ interface StartArgs {
  * throws on its first calls, as a provider that cannot be reached.
  */
 const start = async ({ failingIntents = 0, failingRefunds = 0 }: StartArgs = {}) => {
-  const sent: Confirmation[] = [];
-  const intentCalls: Call<Intent>[] = [];
-  const refundCalls: Call<Refund>[] = [];
-  const intents = new Map<string, Intent>();
-  const refunds = new Map<string, Refund>();
+  const sent: NotifierArgs[] = [];
+  const intentCalls: CreateIntentArgs[] = [];
+  const refundCalls: RefundArgs[] = [];
+  const intents = new Map<string, CreateIntentArgs>();
+  const refunds = new Map<string, RefundArgs>();
   const gateway: Gateway = {
-    createIntent: async (request, idempotencyKey) => {
-      intentCalls.push({ request, idempotencyKey });
+    createIntent: async (intent) => {
+      intentCalls.push(intent);
       if (intentCalls.length <= failingIntents) throw new Error("gateway unreachable");
-      intents.set(idempotencyKey, intents.get(idempotencyKey) ?? request);
-      return { intentId: `pi_${idempotencyKey}` };
+      intents.set(intent.idempotencyKey, intents.get(intent.idempotencyKey) ?? intent);
+      return { intentId: `pi_${intent.idempotencyKey}` };
     },
-    refund: async (request, idempotencyKey) => {
-      refundCalls.push({ request, idempotencyKey });
+    refund: async (refund) => {
+      refundCalls.push(refund);
       if (refundCalls.length <= failingRefunds) throw new Error("gateway unreachable");
-      refunds.set(idempotencyKey, refunds.get(idempotencyKey) ?? request);
-      return { refundId: `re_${idempotencyKey}` };
+      refunds.set(refund.idempotencyKey, refunds.get(refund.idempotencyKey) ?? refund);
+      return { refundId: `re_${refund.idempotencyKey}` };
     },
   };
   const test = await createTestApp({
     registry,
     adapter: sqlite({ memory: true }),
-    collaborators: {
+    ports: {
       order: { notifier: async (confirmation) => void sent.push(confirmation) },
       payment: { gateway },
     },
@@ -77,7 +72,14 @@ describe("storefront", () => {
     await app.commands.placeOrder({ orderId: ORDER, customerId: "ada", items });
     await app.runUntilIdle();
 
-    expect(sent).toEqual([{ orderId: ORDER, customerId: "ada", total: 139 }]);
+    expect(sent).toEqual([
+      {
+        orderId: ORDER,
+        customerId: "ada",
+        total: 139,
+        idempotencyKey: expect.stringMatching(UUID),
+      },
+    ]);
     const paymentId = await paymentOf();
     expect(await summary()).toMatchObject({
       status: "placed",
@@ -87,11 +89,11 @@ describe("storefront", () => {
       reminderSent: false,
       paymentStatus: "pending",
     });
-    expect([...intents.values()]).toEqual([{ paymentId, orderId: ORDER, amount: 139 }]);
     // The key is the requestPayment command's own, not the payment id.
-    expect(intentCalls).toEqual([
-      { request: expect.any(Object), idempotencyKey: expect.stringMatching(UUID) },
+    expect([...intents.values()]).toEqual([
+      { paymentId, orderId: ORDER, amount: 139, idempotencyKey: expect.stringMatching(UUID) },
     ]);
+    expect(intentCalls).toHaveLength(1);
     expect(intentCalls[0]?.idempotencyKey).not.toBe(paymentId);
 
     await app.commands.settlePayment({ paymentId });
@@ -159,7 +161,9 @@ describe("storefront", () => {
     await app.commands.settlePayment({ paymentId: await paymentOf() });
     await app.runUntilIdle();
     expect(await summary()).toMatchObject({ status: "cancelled", paymentStatus: "refunded" });
-    expect([...refunds.values()]).toEqual([{ intentId: expect.any(String), amount: 139 }]);
+    expect([...refunds.values()]).toEqual([
+      { intentId: expect.any(String), amount: 139, idempotencyKey: expect.stringMatching(UUID) },
+    ]);
     await app.stop();
   });
 
@@ -309,7 +313,7 @@ describe("storefront", () => {
     await app.commands.placeOrder({ orderId: ORDER, customerId: "ada", items });
     await app.runUntilIdle();
     const paymentId = await paymentOf();
-    expect(intentCalls.map((call) => call.request.paymentId)).toEqual([paymentId, paymentId]);
+    expect(intentCalls.map((call) => call.paymentId)).toEqual([paymentId, paymentId]);
     expect(intentCalls[1]?.idempotencyKey).toBe(intentCalls[0]?.idempotencyKey);
     expect(intents.size).toBe(1);
     await app.stop();

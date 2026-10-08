@@ -22,7 +22,7 @@ pnpm dev
    already shows the user: the app in the context reads its own writes.
 2. `UserRegistered` starts the process `user-onboarding`. A minute later the delayed policy
    `send-welcome-email-on-user-registered` sends the email through the user's `emailSender`
-   collaborator (its `console` implementation in the demo, `memory` in the tests) and
+   port (its `console` implementation in the demo, `memory` in the tests) and
    dispatches `recordWelcomeEmailSent`, which appends `WelcomeEmailSent`.
 3. Activating the user completes the process. A registration nobody activates within a week hits
    the process time-out, which dispatches `expireRegistration`.
@@ -35,7 +35,7 @@ pnpm dev
 plugin generates the types and serves `@bounda-dev/react-router/app`, which `root.tsx` and the
 routes import. Nothing in the app knows how Bounda boots.
 
-**Storage and collaborators from the environment.** `bounda.config.ts` picks the adapter and
+**Storage and ports from the environment.** `bounda.config.ts` picks the adapter and
 the email sender:
 
 ```ts
@@ -43,7 +43,7 @@ const url = process.env.DATABASE_URL;
 
 export default defineConfig({
   storage: url === undefined ? sqlite({ path: "./data/onboarding.db" }) : postgresql({ url }),
-  collaborators: {
+  ports: {
     user: { emailSender: process.env.EMAIL_SENDER === "memory" ? "memory" : "console" },
   },
 });
@@ -54,12 +54,14 @@ instead of a default: it reads its sender address from `EMAIL_FROM` in `env` and
 the app's logger, once, when the app starts:
 
 ```ts
-export const create: Implementation.Create = ({ env, logger }) => {
+// app/domain/user/infrastructure/email-sender/console.ts
+import type { CreateImplementation } from "@bounda-dev/core";
+import type { EmailSender } from "../../email-sender.ts";
+
+export const create: CreateImplementation<EmailSender> = ({ env, logger }) => {
   const from = env.EMAIL_FROM ?? "welcome@onboarding.localhost";
-  return {
-    send: async ({ to, name }, idempotencyKey) => {
-      logger.info("welcome email", { from, to, name, idempotencyKey });
-    },
+  return async ({ to, name, idempotencyKey }) => {
+    logger.info("welcome email", { from, to, name, idempotencyKey });
   };
 };
 ```

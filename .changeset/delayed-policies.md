@@ -6,7 +6,7 @@ A policy can wait before it acts: `export const delay = "1m"` (or `asDuration(..
 from the environment) runs its handler that long after the event was stored. When the event is
 read, the runtime schedules the run, due at the event's time plus the delay; when it comes due,
 the worker reads the event, upcast to its current shape, and runs the handler with the same
-collaborators, commands facade, `idempotencyKey`, retry settings and time budget as a live run. A
+ports, commands facade, `idempotencyKey`, retry settings and time budget as a live run. A
 run that fails for good is dead-lettered as the policy's, so a replay runs the policy again. The
 compiler checks a literal delay and the runtime refuses an invalid one at boot. Sending an email a
 minute after an event no longer takes a scheduled command and an event of its own.

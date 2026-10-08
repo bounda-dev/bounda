@@ -4,7 +4,7 @@ import { createEventBuilders } from "../../modules/event.ts";
 import { capitalize } from "../../modules/naming.ts";
 import type { PayloadFunction } from "../../modules/payload.ts";
 import type { AggregateEntry, Registry } from "../../modules/registry.ts";
-import type { AggregateCollaborators } from "./collaborators.ts";
+import type { AggregatePorts } from "./ports.ts";
 import type {
   AggregateRuntime,
   AggregatesRuntime,
@@ -31,8 +31,8 @@ const buildEvents = (name: string, entry: AggregateEntry): Record<string, EventR
           key,
           type: capitalize(key),
           schema: compileSchema(module.payload, `aggregates.${name}.events.${key}`),
-          create: (module.create ?? null) as EventRuntime["create"],
-          apply: (module.apply ?? null) as EventRuntime["apply"],
+          begin: (module.begin ?? null) as EventRuntime["begin"],
+          evolve: (module.evolve ?? null) as EventRuntime["evolve"],
           upcasts,
           schemaVersion: upcasts.length + 1,
         },
@@ -57,18 +57,18 @@ const buildCommands = (name: string, entry: AggregateEntry): Record<string, Comm
 const buildAggregate = (
   name: string,
   entry: AggregateEntry,
-  collaborators: Readonly<Record<string, unknown>>,
+  ports: Readonly<Record<string, unknown>>,
 ): AggregateRuntime => {
   const events = buildEvents(name, entry);
   return {
     name,
     aggregateIdField: entry.state?.aggregateId ?? `${name}Id`,
     initialState: entry.state?.initialState ?? {},
-    opensWithCreate: Object.values(events).some((event) => event.create !== null),
+    opensWithBegin: Object.values(events).some((event) => event.begin !== null),
     events,
     eventsByType: Object.fromEntries(Object.values(events).map((event) => [event.type, event])),
     eventBuilders: createEventBuilders(entry.events) as AggregateRuntime["eventBuilders"],
-    collaborators,
+    ports,
     commands: buildCommands(name, entry),
   };
 };
@@ -76,9 +76,9 @@ const buildAggregate = (
 export interface BuildAggregatesArgs {
   readonly registry: Registry;
   /**
-   * What `createCollaborators` built; an aggregate missing here gets no collaborators.
+   * What `createPorts` built; an aggregate missing here gets no ports.
    */
-  readonly collaborators: AggregateCollaborators;
+  readonly ports: AggregatePorts;
 }
 
 export interface BuildAggregatesFunction {
@@ -88,11 +88,11 @@ export interface BuildAggregatesFunction {
 /**
  * Command type names must be unique across aggregates, since `app.commands` is one flat namespace.
  */
-export const buildAggregates: BuildAggregatesFunction = ({ registry, collaborators }) => {
+export const buildAggregates: BuildAggregatesFunction = ({ registry, ports }) => {
   const byName = Object.fromEntries(
     Object.entries(registry.aggregates).map(([name, entry]) => [
       name,
-      buildAggregate(name, entry, collaborators[name] ?? {}),
+      buildAggregate(name, entry, ports[name] ?? {}),
     ]),
   );
   const commandsByType: Record<string, AggregatesRuntime["commandsByType"][string]> = {};

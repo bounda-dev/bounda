@@ -7,7 +7,7 @@ const noop = (): object => ({});
 
 const order: Registry["aggregates"][string] = {
   state: { initialState: { status: "new" } },
-  events: { orderPlaced: { apply: noop } },
+  events: { orderPlaced: { evolve: noop } },
   commands: {
     placeOrder: { module: { handler: noop } },
   },
@@ -105,16 +105,16 @@ describe("validateRegistry", () => {
     expect(() => validateRegistry(validRegistry)).not.toThrow();
   });
 
-  it("takes an event that opens the aggregate with create, apply or both, each a function", () => {
+  it("takes an event that opens the aggregate with begin, evolve or both, each a function", () => {
     expect(() =>
-      validateRegistry(withOrder({ events: { orderPlaced: { create: noop } } })),
+      validateRegistry(withOrder({ events: { orderPlaced: { begin: noop } } })),
     ).not.toThrow();
     expect(() =>
-      validateRegistry(withOrder({ events: { orderPlaced: { create: noop, apply: noop } } })),
+      validateRegistry(withOrder({ events: { orderPlaced: { begin: noop, evolve: noop } } })),
     ).not.toThrow();
     expect(() =>
-      validateRegistry(withOrder({ events: { orderPlaced: { create: "nope" as never } } })),
-    ).toThrow('aggregates.order.events.orderPlaced: missing export "create" (expected a function)');
+      validateRegistry(withOrder({ events: { orderPlaced: { begin: "nope" as never } } })),
+    ).toThrow('aggregates.order.events.orderPlaced: missing export "begin" (expected a function)');
   });
 
   it("reports every problem with its registry path", () => {
@@ -126,7 +126,7 @@ describe("validateRegistry", () => {
           commands: {
             placeOrder: { module: {} as never },
           },
-          collaborators: { inventory: {} },
+          ports: { inventory: {} },
         },
       },
       readModels: {
@@ -143,19 +143,19 @@ describe("validateRegistry", () => {
     expect(error).toBeInstanceOf(ConfigurationError);
     const message = (error as ConfigurationError).message;
     expect(message).toContain(
-      'aggregates.order.events.orderPlaced: missing export "create" or "apply" (expected a function)',
+      'aggregates.order.events.orderPlaced: missing export "begin" or "evolve" (expected a function)',
     );
     expect(message).toContain('aggregates.order.commands.placeOrder: missing export "handler"');
-    expect(message).toContain("aggregates.order.collaborators.inventory: has no implementations");
+    expect(message).toContain("aggregates.order.ports.inventory: has no implementations");
     expect(message).toContain('readModels.orderSummary.queries.getOrder: missing export "handler"');
   });
 
-  it("checks policy handlers and that every implementation of a collaborator exports default or create", () => {
+  it("checks policy handlers and that every implementation of a port exports default or create", () => {
     const registry = withOrder({
       policies: {
         notifyOnOrderPlaced: { module: {} as never },
       },
-      collaborators: {
+      ports: {
         mailer: {},
         gateway: {
           stripe: {} as never,
@@ -171,11 +171,11 @@ describe("validateRegistry", () => {
       new ConfigurationError(
         [
           "Invalid registry:",
-          "  aggregates.order.collaborators.mailer: has no implementations",
-          '  aggregates.order.collaborators.gateway.stripe: missing export "default" or "create"',
-          '  aggregates.order.collaborators.gateway.sdk: missing export "default" or "create"',
-          '  aggregates.order.collaborators.gateway.both: exports both "default" and "create" (expected one)',
-          '  aggregates.order.collaborators.gateway.broken: export "create" must be a function',
+          "  aggregates.order.ports.mailer: has no implementations",
+          '  aggregates.order.ports.gateway.stripe: missing export "default" or "create"',
+          '  aggregates.order.ports.gateway.sdk: missing export "default" or "create"',
+          '  aggregates.order.ports.gateway.both: exports both "default" and "create" (expected one)',
+          '  aggregates.order.ports.gateway.broken: export "create" must be a function',
           '  aggregates.order.policies.notifyOnOrderPlaced: missing export "handler" (expected a function)',
         ].join("\n"),
       ),

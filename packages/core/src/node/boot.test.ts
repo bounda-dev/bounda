@@ -9,7 +9,7 @@ import { createSequentialIdGenerator } from "../contracts/ids.ts";
 import { silentLogger } from "../contracts/logger.ts";
 import { createRecordingLogger } from "../kernel/test-support.ts";
 import { memory } from "../memory/index.ts";
-import type { CreateArgs } from "../modules/collaborator.ts";
+import type { CreateArgs } from "../modules/port.ts";
 import type { Registry } from "../modules/registry.ts";
 import { boot, loadProject } from "./boot.ts";
 import { registry } from "./fixtures/project/registry.ts";
@@ -58,14 +58,14 @@ describe("boot", () => {
     await app.stop();
   });
 
-  it("hands process.env, with .env loaded, to the collaborators' create", async () => {
+  it("hands process.env, with .env loaded, to the implementations' create", async () => {
     let marker: string | undefined;
     const withPort = {
       ...registry,
       aggregates: {
         counter: {
           ...registry.aggregates.counter,
-          collaborators: {
+          ports: {
             probe: {
               env: {
                 create: ({ env }: CreateArgs) => {

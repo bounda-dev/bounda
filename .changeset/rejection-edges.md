@@ -14,5 +14,5 @@ longer turns the rejection into a failure or passes unnoticed: the rejection sta
 as its message, and the runtime logs a warning.
 
 A logger that throws, or whose `async` methods reject, no longer fails what was being logged:
-`createApp`, `boot` and `rebuildReadModel` ignore it. Collaborators and adapters receive that
+`createApp`, `boot` and `rebuildReadModel` ignore it. Port implementations and adapters receive that
 guarded logger.

@@ -6,12 +6,12 @@ import type {
 } from "../contracts/command.ts";
 import type { DurationInput } from "../contracts/duration.ts";
 import type { StateModule } from "./aggregate.ts";
-import type { CollaboratorModules } from "./collaborator.ts";
 import type { CommandEntry, CommandModule, RejectionCodeOf } from "./command.ts";
 import type { EventModules } from "./event.ts";
 import type { Simplify, UnionToIntersection } from "./naming.ts";
 import type { HasPayload, PayloadInputOf } from "./payload.ts";
 import type { PolicyEntry } from "./policy.ts";
+import type { PortModules } from "./port.ts";
 import type { ProcessEntry } from "./process.ts";
 import type { ProjectionModule } from "./projection.ts";
 import type { QueryModule, QueryResultOf } from "./query.ts";
@@ -33,7 +33,7 @@ export interface AggregateEntry {
    * The implementations of every port of the aggregate (`<port>/<name>.ts`), which every handler
    * of its commands, policies and processes receives once the configuration has chosen one.
    */
-  readonly collaborators?: CollaboratorModules;
+  readonly ports?: PortModules;
   readonly commands: Readonly<Record<string, CommandEntry>>;
   readonly policies: Readonly<Record<string, PolicyEntry>>;
   readonly processes: Readonly<Record<string, ProcessEntry>>;

@@ -23,7 +23,7 @@ const orderPayment: ProcessRuntime = {
   handlers: {},
   deadlineFields: [],
   deadlineHandlers: {},
-  collaborators: {},
+  ports: {},
   instanceOf: (event) => event.aggregateId,
 };
 

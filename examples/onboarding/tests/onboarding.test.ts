@@ -2,7 +2,7 @@ import { DomainError, ValidationError } from "@bounda-dev/core";
 import { createTestApp } from "@bounda-dev/core/testing";
 import { describe, expect, it } from "vitest";
 import { registry } from "../.bounda/registry.ts";
-import type { WelcomeEmail } from "../app/domain/user/email-sender/index.ts";
+import type { EmailSenderArgs } from "../app/domain/user/email-sender.ts";
 
 const ADA = "018f6a5e-4c3c-7c1e-9d4b-0b2c4a1d8e01";
 const GRACE = "018f6a5e-4c3c-7c1e-9d4b-0b2c4a1d8e02";
@@ -15,10 +15,10 @@ const DAY = 24 * 60 * MINUTE;
  * Each test gets its own email sender, which records what it was asked to send.
  */
 const start = async () => {
-  const sent: WelcomeEmail[] = [];
+  const sent: EmailSenderArgs[] = [];
   const test = await createTestApp({
     registry,
-    collaborators: { user: { emailSender: { send: async (email) => void sent.push(email) } } },
+    ports: { user: { emailSender: async (email) => void sent.push(email) } },
   });
   return { ...test, sent };
 };
@@ -41,7 +41,9 @@ describe("onboarding", () => {
 
     clock.advance(MINUTE);
     await app.runUntilIdle();
-    expect(sent).toEqual([{ to: "ada@example.com", name: "Ada" }]);
+    expect(sent).toEqual([
+      { to: "ada@example.com", name: "Ada", idempotencyKey: expect.any(String) },
+    ]);
     expect(await app.queries.getUserDetails({ userId: ADA })).toMatchObject({
       welcomeEmailSentAt: expect.any(Date),
     });
@@ -60,7 +62,9 @@ describe("onboarding", () => {
     const details = await app.queries.getUserDetails({ userId: ADA });
     expect(details).toMatchObject({ status: "active", activatedAt: expect.any(Date) });
     expect(details?.expiredAt).toBeUndefined();
-    expect(sent).toEqual([{ to: "ada@example.com", name: "Ada" }]);
+    expect(sent).toEqual([
+      { to: "ada@example.com", name: "Ada", idempotencyKey: expect.any(String) },
+    ]);
     await app.stop();
   });
 

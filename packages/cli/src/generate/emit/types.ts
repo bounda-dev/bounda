@@ -10,7 +10,7 @@ export interface StateTypeSource {
    */
   readonly inferred: string | null;
   /**
-   * Whether one of the aggregate's events exports `create`: `inferred` is then the state of the
+   * Whether one of the aggregate's events exports `begin`: `inferred` is then the state of the
    * created aggregate, and the state a command handler sees is that or `core.NotCreated` of it.
    */
   readonly created?: boolean;
@@ -60,16 +60,16 @@ export interface RowTypeNameFunction {
 export const rowTypeName: RowTypeNameFunction = (readModelName) =>
   `${typeNameOf(readModelName)}Row`;
 
-export interface CollaboratorsTypeNameFunction {
+export interface PortsTypeNameFunction {
   (aggregateName: string): string;
 }
 
-export const collaboratorsTypeName: CollaboratorsTypeNameFunction = (aggregateName) =>
-  `${typeNameOf(aggregateName)}Collaborators`;
+export const portsTypeName: PortsTypeNameFunction = (aggregateName) =>
+  `${typeNameOf(aggregateName)}Ports`;
 
-export const COLLABORATORS_CONFIG_TYPE_NAME = "CollaboratorsConfig";
+export const PORTS_CONFIG_TYPE_NAME = "PortsConfig";
 
-export const TEST_COLLABORATORS_TYPE_NAME = "TestCollaborators";
+export const TEST_PORTS_TYPE_NAME = "TestPorts";
 
 const typeofImport = (from: string, to: string): string =>
   `typeof import("${importPath({ from, to })}")`;
@@ -107,14 +107,14 @@ const emitEvents = (aggregate: AggregateModel, path: string): string =>
         "};",
       ].join("\n");
 
-const emitCollaborators = (aggregate: AggregateModel, path: string): string =>
-  aggregate.collaborators.length === 0
-    ? `export type ${collaboratorsTypeName(aggregate.name)} = core.EmptyPayload;`
+const emitPorts = (aggregate: AggregateModel, path: string): string =>
+  aggregate.ports.length === 0
+    ? `export type ${portsTypeName(aggregate.name)} = core.EmptyPayload;`
     : [
-        `export type ${collaboratorsTypeName(aggregate.name)} = {`,
-        ...aggregate.collaborators.map(
+        `export type ${portsTypeName(aggregate.name)} = {`,
+        ...aggregate.ports.map(
           (port) =>
-            `  readonly ${port.key}: import("${importPath({ from: path, to: port.contract.path })}").${port.typeName};`,
+            `  readonly ${port.key}: import("${importPath({ from: path, to: port.path })}").${port.typeName};`,
         ),
         "};",
       ].join("\n");
@@ -126,18 +126,18 @@ const implementationNames = (names: readonly string[]): string =>
  * A port with one implementation may be left out of the configuration; one with several must be
  * named, and so must the aggregate that has such a port.
  */
-const emitCollaboratorsConfig = (model: ProjectModel): string => {
-  const aggregates = model.aggregates.filter((aggregate) => aggregate.collaborators.length > 0);
+const emitPortsConfig = (model: ProjectModel): string => {
+  const aggregates = model.aggregates.filter((aggregate) => aggregate.ports.length > 0);
   if (aggregates.length === 0) {
-    return `export type ${COLLABORATORS_CONFIG_TYPE_NAME} = Readonly<Record<string, never>>;`;
+    return `export type ${PORTS_CONFIG_TYPE_NAME} = Readonly<Record<string, never>>;`;
   }
   return [
-    `export type ${COLLABORATORS_CONFIG_TYPE_NAME} = {`,
+    `export type ${PORTS_CONFIG_TYPE_NAME} = {`,
     ...aggregates.flatMap((aggregate) => {
-      const required = aggregate.collaborators.some((port) => port.implementations.length > 1);
+      const required = aggregate.ports.some((port) => port.implementations.length > 1);
       return [
         `  readonly ${aggregate.name}${required ? "" : "?"}: {`,
-        ...aggregate.collaborators.map(
+        ...aggregate.ports.map(
           (port) =>
             `    readonly ${port.key}${port.implementations.length > 1 ? "" : "?"}: ${implementationNames(
               port.implementations.map((implementation) => implementation.name),
@@ -154,20 +154,20 @@ const emitCollaboratorsConfig = (model: ProjectModel): string => {
  * Everything is optional, since a test only passes the ports it exercises, and each port takes a
  * double of its interface as well as an implementation name.
  */
-const emitTestCollaborators = (model: ProjectModel): string => {
-  const aggregates = model.aggregates.filter((aggregate) => aggregate.collaborators.length > 0);
+const emitTestPorts = (model: ProjectModel): string => {
+  const aggregates = model.aggregates.filter((aggregate) => aggregate.ports.length > 0);
   if (aggregates.length === 0) {
-    return `export type ${TEST_COLLABORATORS_TYPE_NAME} = Readonly<Record<string, never>>;`;
+    return `export type ${TEST_PORTS_TYPE_NAME} = Readonly<Record<string, never>>;`;
   }
   return [
-    `export type ${TEST_COLLABORATORS_TYPE_NAME} = {`,
+    `export type ${TEST_PORTS_TYPE_NAME} = {`,
     ...aggregates.flatMap((aggregate) => [
       `  readonly ${aggregate.name}?: {`,
-      ...aggregate.collaborators.map(
+      ...aggregate.ports.map(
         (port) =>
           `    readonly ${port.key}?: ${implementationNames(
             port.implementations.map((implementation) => implementation.name),
-          )} | ${collaboratorsTypeName(aggregate.name)}["${port.key}"];`,
+          )} | ${portsTypeName(aggregate.name)}["${port.key}"];`,
       ),
       "  };",
     ]),
@@ -189,8 +189,8 @@ const emitMap = (
       ].join("\n");
 
 /**
- * Renders `.bounda/types.ts`: each aggregate's `State`, `Events` and `Collaborators`, the app's
- * `Events`, the types of the `collaborators` of the configuration and of `createTestApp`, each
+ * Renders `.bounda/types.ts`: each aggregate's `State`, `Events` and `Ports`, the app's
+ * `Events`, the types of the `ports` of the configuration and of `createTestApp`, each
  * read model's `Row`, and the `Commands` and `Queries` facade types. Modules are referenced only
  * through `import(...)` types, so the file never imports the registry.
  */
@@ -201,7 +201,7 @@ export const emitTypes: EmitTypesFunction = ({ model, path, inferredStates = {} 
       [
         emitState(aggregate, path, inferredStates[aggregate.name]),
         emitEvents(aggregate, path),
-        emitCollaborators(aggregate, path),
+        emitPorts(aggregate, path),
       ].join("\n"),
     );
   }
@@ -216,8 +216,8 @@ export const emitTypes: EmitTypesFunction = ({ model, path, inferredStates = {} 
           "};",
         ].join("\n"),
   );
-  sections.push(emitCollaboratorsConfig(model));
-  sections.push(emitTestCollaborators(model));
+  sections.push(emitPortsConfig(model));
+  sections.push(emitTestPorts(model));
   const commandModules = model.aggregates.flatMap((aggregate) =>
     aggregate.commands.map((command) => [command.key, typeofImport(path, command.path)] as const),
   );

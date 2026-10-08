@@ -15,13 +15,11 @@ app/
   domain/
     order/                          an aggregate
       state.ts                      optional: initialState and aggregateId
-      order-placed.ts               an event: payload, and create or apply
+      order-placed.ts               an event: payload, and begin or evolve
       order-placed.upcast.ts        optional: how older payloads become today's
       order-paid.ts
-      inventory/                    a collaborator: what the aggregate's handlers call outside
-        index.ts                    its interface, Inventory
-        http.ts                     an implementation
-        fake.ts                     another; bounda.config.ts picks one
+      inventory.ts                  a port: the interface of what the handlers call outside
+      money.ts                      any other module: a value object, a domain service
       commands/
         pay-order.ts                a command: payload and handler
         place-order.ts
@@ -35,6 +33,10 @@ app/
           on-order-paid.ts          handler for OrderPaid
           at-next-reminder.ts       handler for the deadline nextReminder
           at-timeout.ts             handler for the time-out
+      infrastructure/
+        inventory/                  the implementations of the port inventory.ts
+          http.ts                   an implementation
+          fake.ts                   another; bounda.config.ts picks one
   read/
     order-summary/                  a read model
       view.ts                       fields
@@ -56,8 +58,8 @@ them into the names your code sees:
 | `place-order.ts` | `placeOrder` | `PlaceOrder` |
 | `issue-invoice-on-order-paid.ts` | `issueInvoiceOnOrderPaid` | reacts to `OrderPaid` |
 | `on-order-paid.ts` | handler for `orderPaid` | |
-| `audit-log/` | collaborator `auditLog` | `AuditLog`, exported by its `index.ts` |
-| `audit-log/in-memory.ts` | implementation `"in-memory"`, as the config names it | |
+| `audit-log.ts` with `infrastructure/audit-log/` | port `auditLog` | `AuditLog`, exported by `audit-log.ts` |
+| `infrastructure/audit-log/in-memory.ts` | implementation `"in-memory"`, as the config names it | |
 | `policies/payment/refund-on-payment-failed.ts` | `paymentRefundOnPaymentFailed` | reacts to payment's `PaymentFailed` |
 | `order-summary/` | `orderSummary` | `OrderSummaryRow` |
 
@@ -72,8 +74,17 @@ of those folders.
 
 ## Aggregates: `app/domain/<aggregate>/`
 
-Every `.ts` file at the root of the aggregate is an event, except `state.ts`; every directory
-there is a collaborator, except `commands`, `policies` and `processes`.
+A module at the root of the aggregate is an event when it exports `payload`, `begin` or `evolve`,
+and nothing else at run time: those names are an event's alone. It is a port when
+`infrastructure/` holds a directory named after it. Anything else there, files and directories
+alike, is yours: a value object, a domain service, a helper the handlers import, which the
+generator leaves alone. `state.ts` and `<event>.upcast.ts` are the only other names it reads.
+
+Two mistakes leave the layout valid, so the generator warns about them instead of failing: a
+module that imports its own `+types` without exporting an event's function, which was an event
+and lost the export that made it one (a leftover `apply`, a typo in `evolve`), and a directory
+whose name is one letter away from `commands`, `policies`, `processes` or `infrastructure`, or is
+`command`, `policy`, `process` or `infra`, whose modules would go unregistered.
 
 ```ts
 // app/domain/order/order-placed.ts
@@ -82,7 +93,7 @@ import type { Event } from "./+types/order-placed";
 export const payload = ({ z }: Event.PayloadArgs) =>
   z.object({ customerId: z.string(), total: z.number().positive() });
 
-export const create = ({ event }: Event.CreateArgs) => ({
+export const begin = ({ event }: Event.BeginArgs) => ({
   status: "placed" as const,
   customerId: event.payload.customerId,
   total: event.payload.total,
@@ -93,7 +104,7 @@ export const create = ({ event }: Event.CreateArgs) => ({
 // app/domain/order/order-paid.ts
 import type { Event } from "./+types/order-paid";
 
-export const apply = ({ event }: Event.ApplyArgs) => ({
+export const evolve = ({ event }: Event.EvolveArgs) => ({
   status: "paid" as const,
   paidAt: event.timestamp,
 });
@@ -101,12 +112,12 @@ export const apply = ({ event }: Event.ApplyArgs) => ({
 
 `payload` is optional; an event without one has an empty payload. An event returns the state
 fields it sets, merged over the state one level deep: a field returned as `undefined` keeps its
-value, so clear one with `null`. `create` opens the aggregate and gets the event alone, since
-there is no state before it; `apply` folds a later event and gets the state too. An event that can
+value, so clear one with `null`. `begin` opens the aggregate and gets the event alone, since
+there is no state before it; `evolve` folds a later event and gets the state too. An event that can
 do both exports both.
 
-Once one of an aggregate's events exports `create`, the aggregate starts with such an event. A
-command that would start it with another event, or put an event that only exports `create` on an
+Once one of an aggregate's events exports `begin`, the aggregate starts with such an event. A
+command that would start it with another event, or put an event that only exports `begin` on an
 aggregate that exists, throws `CreationOrderError` and stores nothing: a bug in the handler, which
 a reaction does not retry.
 When a payload changes shape after events are stored, `<event>.upcast.ts` next to it brings the
@@ -117,16 +128,16 @@ old ones up to date as they are read: see [Changing an event's shape](/guides/ch
 Without `state.ts`, the generator infers the aggregate's state from what its events return, each
 field typed as the union of what the events assign. With the two events above, a command handler
 sees either an order that does not exist yet, every field `undefined`, or one where the fields
-`create` sets are always there: `status: "placed" | "paid"`, `customerId: string` and
-`total: number`, with `paidAt?: string`. Any field `create` sets tells the two apart:
+`begin` sets are always there: `status: "placed" | "paid"`, `customerId: string` and
+`total: number`, with `paidAt?: string`. Any field `begin` sets tells the two apart:
 
 ```ts
 if (state.status === undefined) return reject("NotPlaced");
 state.total; // number
 ```
 
-`apply` only runs on an aggregate that exists, so its `state` is the created one. Without any
-`create`, every field is optional, since any event could come first.
+`evolve` only runs on an aggregate that exists, so its `state` is the created one. Without any
+`begin`, every field is optional, since any event could come first.
 
 Add `state.ts` when you want an initial value before the first event, or when a field's type is
 not visible from outside its module:
@@ -144,50 +155,56 @@ export const aggregateId = "orderId";
 `aggregateId` names the payload field that identifies the aggregate. It defaults to
 `<aggregate>Id`, so `orderId` for `order`.
 
-### Collaborators: `<port>/`
+### Ports: `<port>.ts`
 
-A collaborator is what the aggregate's handlers call outside the app: an inventory service, a
-mailer, a payment provider. It is a directory at the root of the aggregate, named after the
-port, and every handler of the aggregate receives it under that name: its commands, its policies
-and every handler of its processes. `index.ts` exports the interface, named after the directory
-in PascalCase; every other file in the directory implements it, with a default export or with a
-`create` function.
+A port is what the aggregate's handlers call outside the app: an inventory service, a mailer, a
+payment provider. It is a module at the root of the aggregate that exports its interface, named
+after the file in PascalCase, and every handler of the aggregate receives it under that name: its
+commands, its policies and every handler of its processes. Its implementations live in
+`infrastructure/<port>/`, one file each, with a default export or with a `create` function.
 
 ```ts
-// app/domain/order/inventory/index.ts
+// app/domain/order/inventory.ts
+export interface AvailableArgs {
+  readonly skus: readonly string[];
+}
+
 export interface Inventory {
-  available(skus: readonly string[]): Promise<boolean>;
+  available(args: AvailableArgs): Promise<boolean>;
 }
 ```
 
 ```ts
-// app/domain/order/inventory/fake.ts
-import type { Implementation } from "./+types/fake";
+// app/domain/order/infrastructure/inventory/fake.ts
+import type { Inventory } from "../../inventory.ts";
 
 export default {
   available: async () => true,
-} satisfies Implementation.Contract;
+} satisfies Inventory;
 ```
 
-`Implementation.Contract` is the port's interface; the `satisfies` gives completion and an error
-in place, and the generated registry checks every implementation against the interface anyway, so
-one that does not fulfil it fails `tsc` either way. An interface may be callable instead of an
-object, `export type Notifier = (message: string) => Promise<void>;`, and the handler then calls
-`notifier(...)`.
+An implementation is plain TypeScript: it imports the port and fulfils it, and the `satisfies`
+gives completion and an error in place. The generated registry checks every implementation against
+the interface anyway, so one that does not fulfil it fails `tsc` either way. Each operation takes
+one object, `XxxArgs`, as every handler of Bounda does: a field can be added without breaking a
+call, and `idempotencyKey` travels as one more. A port with one operation can be callable instead,
+`export interface Notifier { (args: NotifierArgs): Promise<void> }`, and the handler then calls
+`notifier({ ... })`.
 
 An implementation with state, such as a client, a connection pool or a secret, exports `create`
-instead of a default, never both. The app calls it once when it is created, and every handler
-receives what it returns; it may be async.
+instead of a default, never both, typed as `CreateImplementation` of its port. The app calls it
+once when it is created, and every handler receives what it returns; it may be async.
 
 ```ts
-// app/domain/order/inventory/http.ts
-import type { Implementation } from "./+types/http";
+// app/domain/order/infrastructure/inventory/http.ts
+import type { CreateImplementation } from "@bounda-dev/core";
+import type { Inventory } from "../../inventory.ts";
 
-export const create: Implementation.Create = ({ env, logger }) => {
+export const create: CreateImplementation<Inventory> = ({ env, logger }) => {
   const url = env.INVENTORY_URL;
   if (url === undefined) throw new Error("INVENTORY_URL is not set");
   return {
-    available: async (skus) => {
+    available: async ({ skus }) => {
       const response = await fetch(`${url}/available`, {
         method: "POST",
         body: JSON.stringify(skus),
@@ -209,7 +226,8 @@ the process shares the module.
 
 Open no connection and read no environment at the top of an implementation module: the registry
 imports every implementation, also those the configuration does not choose. Only the chosen one's
-`create` runs.
+`create` runs. Keeping SDKs and clients under `infrastructure/` also keeps the rest of the
+aggregate free of them, which a lint rule can hold by path.
 
 `bounda.config.ts` picks one implementation per port, by aggregate and port in camelCase, with
 the implementation's file name as the value. The generator emits the type of that section, so a
@@ -219,7 +237,7 @@ named: no implementation is a default. A port with one may be left out.
 ```ts
 export default defineConfig({
   storage: sqlite({ path: "./data/app.db" }),
-  collaborators: {
+  ports: {
     order: { inventory: process.env.INVENTORY === "fake" ? "fake" : "http" },
   },
 });
@@ -230,16 +248,16 @@ as above; a plain `process.env.INVENTORY ?? "http"` is a `string` and does not c
 
 A port cannot be named after an event of the aggregate, nor after an argument a handler already
 receives (`command`, `state`, `events`, `event`, `commands`, `idempotencyKey`, `signal`,
-`aggregateId`, `after`); the generator says which. Domain logic the handlers share but that has no
-implementations to choose from is not a collaborator: put it in a file whose name starts with
-`_`, which the generator ignores, and import it. A provider two aggregates use is two ports, one
-in each, with the contract each aggregate needs; the client they share lives outside `app/domain`,
-in `app/lib/stripe.ts` for instance, and each implementation imports it.
+`aggregateId`, `after`, `reject`); the generator says which. Domain logic the handlers share but
+that has no implementations to choose from is not a port: it is a module of the aggregate like any
+other, which the handlers import. A provider two aggregates use is two ports, one in each, with the
+contract each aggregate needs; the client they share lives outside `app/domain`, in
+`app/lib/stripe.ts` for instance, and each implementation imports it.
 
 The runtime chooses once, when the app is created, and a config that names a port, an
 implementation or an aggregate that does not exist fails at boot as well.
 
-Tests do not read this section: `createTestApp` takes its own `collaborators`, a double or a file
+Tests do not read this section: `createTestApp` takes its own `ports`, a double or a file
 name per port, and gives a port it leaves out no implementation at all
 ([Testing](/guides/testing/#doubles)).
 
@@ -261,20 +279,20 @@ export const rejections = ({ command }: Command.RejectionsArgs) => ({
 
 export const handler = async ({ command, state, events, inventory, reject }: Command.HandlerArgs) => {
   if (state.status !== undefined) return reject("AlreadyPlaced");
-  if (!(await inventory.available(command.payload.skus))) return reject("OutOfStock");
+  if (!(await inventory.available({ skus: command.payload.skus }))) return reject("OutOfStock");
   return [events.orderPlaced({ customerId: command.payload.customerId, skus: command.payload.skus })];
 };
 ```
 
-The handler receives the aggregate's collaborators next to `command`, `state` and `events`. In a
+The handler receives the aggregate's ports next to `command`, `state` and `events`. In a
 command they are what the handler reads from outside to decide: stock, prices, a feature flag.
 Effects on the world (a charge, an email) belong in the policy or process that reacts to the
 event, after it is stored; see
 [calling the outside world](/guides/reacting-to-events/#calling-the-outside-world).
 
 A handler can run more than once for one command. When the append loses a concurrency race, the
-runtime reloads the aggregate and runs the handler again, collaborators included, up to
-`runtime.commands.concurrencyRetries` times. So a collaborator call must be safe to repeat, and
+runtime reloads the aggregate and runs the handler again, ports included, up to
+`runtime.commands.concurrencyRetries` times. So a port call must be safe to repeat, and
 harmless if the second run decides differently: reading a price or a stock level is; charging a
 card is not. The handler receives `idempotencyKey`, the command's id, which stays the same across
 those runs: pass it to a call the provider deduplicates, such as creating a payment intent, so a
@@ -340,7 +358,7 @@ in that form when it is dispatched, so what would fail when it runs fails at onc
 field rejects the string JSON turns a date into, so declare it as `z.coerce.date()`. The handler
 receives the payload validated when the command runs, so a schema's transforms apply once.
 
-A policy receives the aggregate's collaborators next to `event` and `commands`: an `order` policy
+A policy receives the aggregate's ports next to `event` and `commands`: an `order` policy
 gets `order`'s, also when it reacts to another aggregate's event.
 
 ```ts
@@ -348,7 +366,11 @@ gets `order`'s, also when it reacts to another aggregate's event.
 import type { Policy } from "./+types/notify-on-order-placed";
 
 export const handler = async ({ event, mailer, idempotencyKey }: Policy.HandlerArgs) => {
-  await mailer.send(event.payload.customerId, `Order ${event.aggregateId} placed`, idempotencyKey);
+  await mailer.send({
+    to: event.payload.customerId,
+    text: `Order ${event.aggregateId} placed`,
+    idempotencyKey,
+  });
 };
 ```
 
@@ -443,7 +465,7 @@ other terminal error. The compiler checks it first: the `+types` of every handle
 returns fits the state, so a field of the wrong type, or a plain string where a deadline wants an
 `Instant`, is a type error reported in that `+types` file.
 
-Every handler of the process, the `at-` ones included, receives the aggregate's collaborators,
+Every handler of the process, the `at-` ones included, receives the aggregate's ports,
 as its commands and policies do.
 
 ## Read models: `app/read/<read-model>/`
@@ -504,9 +526,9 @@ always present in the handler: callers see the schema's input type, handlers its
 | Path | Holds |
 | --- | --- |
 | `.bounda/registry.ts` | Every module, grouped as the runtime needs it. `boot()` imports it |
-| `.bounda/register.d.ts` | Registers the registry type and the type of the `collaborators` section with `@bounda-dev/core/register`, so `boot()` and `BoundaApp` are typed for the project without a type argument and `defineConfig` checks the implementation names |
-| `.bounda/types.ts` | The state, events, collaborators, commands, rows and queries maps the `+types` build on |
-| `**/+types/<name>.ts` | The argument types each module imports; for an implementation, its port's interface as `Implementation.Contract`, and `Implementation.Create` and `Implementation.CreateArgs` for a `create` |
+| `.bounda/register.d.ts` | Registers the registry type and the type of the `ports` section with `@bounda-dev/core/register`, so `boot()` and `BoundaApp` are typed for the project without a type argument and `defineConfig` checks the implementation names |
+| `.bounda/types.ts` | The state, events, ports, commands, rows and queries maps the `+types` build on |
+| `**/+types/<name>.ts` | The argument types each module imports. An implementation has none: it imports its port |
 
 They are derived from your code, so they are not versioned. `tsconfig.json` must include them as
 `.bounda/**/*` (TypeScript skips a bare `.bounda` entry because the directory starts with a dot);

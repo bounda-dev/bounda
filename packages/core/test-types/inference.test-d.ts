@@ -6,6 +6,7 @@ import type {
   CommandInvoker,
   CommandsFacade,
   CreateArgs,
+  CreateImplementation,
   DecidedDispatch,
   DispatchOptions,
   DispatchResult,
@@ -36,8 +37,6 @@ import type { Event as OrderPlaced } from "./fixtures/order-app/app/domain/order
 import type { Command as CancelOrder } from "./fixtures/order-app/app/domain/order/commands/+types/cancel-order.ts";
 import type { Command as PayOrder } from "./fixtures/order-app/app/domain/order/commands/+types/pay-order.ts";
 import type { Command as PlaceOrder } from "./fixtures/order-app/app/domain/order/commands/+types/place-order.ts";
-import type { Implementation as InventoryFake } from "./fixtures/order-app/app/domain/order/inventory/+types/fake.ts";
-import type { Implementation as InventoryHttp } from "./fixtures/order-app/app/domain/order/inventory/+types/http.ts";
 import type { Policy as NotifyOnOrderPlaced } from "./fixtures/order-app/app/domain/order/policies/+types/notify-on-order-placed.ts";
 import type { Policy as SendReceipt } from "./fixtures/order-app/app/domain/order/policies/+types/send-receipt-on-order-paid.ts";
 import type { Policy as GreetOnCustomerRegistered } from "./fixtures/order-app/app/domain/order/policies/customer/+types/greet-on-customer-registered.ts";
@@ -46,7 +45,6 @@ import type { Process as AtTimeout } from "./fixtures/order-app/app/domain/order
 import type { Process as OrderPayment } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/index.ts";
 import type { Process as OnOrderPaid } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/on-order-paid.ts";
 import type { Process as OnCustomerRegistered } from "./fixtures/order-app/app/domain/order/processes/order-payment/customer/+types/on-customer-registered.ts";
-import type { Implementation as RemindersFake } from "./fixtures/order-app/app/domain/order/reminders/+types/fake.ts";
 import type { Projection as ProjectOrderPaid } from "./fixtures/order-app/app/read/order-summary/projections/order/+types/order-paid.ts";
 import type { Query as CustomerOverview } from "./fixtures/order-app/app/read/order-summary/queries/+types/customer-overview.ts";
 import type { Query as GetOrder } from "./fixtures/order-app/app/read/order-summary/queries/+types/get-order.ts";
@@ -93,11 +91,13 @@ describe("state inference", () => {
     expectTypeOf<PlaceOrder.HandlerArgs["state"]["version"]>().toEqualTypeOf<number>();
   });
 
-  it("reaches apply as well", () => {
-    expectTypeOf<OrderPlaced.ApplyArgs["state"]["status"]>().toEqualTypeOf<OrderStatus>();
-    expectTypeOf<OrderPlaced.ApplyArgs["event"]["payload"]["customerId"]>().toEqualTypeOf<string>();
-    expectTypeOf<OrderPlaced.ApplyArgs["event"]["type"]>().toEqualTypeOf<"OrderPlaced">();
-    expectTypeOf<CustomerRegistered.ApplyArgs["state"]["active"]>().toEqualTypeOf<boolean>();
+  it("reaches evolve as well", () => {
+    expectTypeOf<OrderPlaced.EvolveArgs["state"]["status"]>().toEqualTypeOf<OrderStatus>();
+    expectTypeOf<
+      OrderPlaced.EvolveArgs["event"]["payload"]["customerId"]
+    >().toEqualTypeOf<string>();
+    expectTypeOf<OrderPlaced.EvolveArgs["event"]["type"]>().toEqualTypeOf<"OrderPlaced">();
+    expectTypeOf<CustomerRegistered.EvolveArgs["state"]["active"]>().toEqualTypeOf<boolean>();
   });
 });
 
@@ -123,11 +123,17 @@ describe("event builders", () => {
   });
 });
 
-describe("collaborators", () => {
-  type Inventory = import("./fixtures/order-app/app/domain/order/inventory/index.ts").Inventory;
-  type Reminders = import("./fixtures/order-app/app/domain/order/reminders/index.ts").Reminders;
+describe("ports", () => {
+  type Inventory = import("./fixtures/order-app/app/domain/order/inventory.ts").Inventory;
+  type Reminders = import("./fixtures/order-app/app/domain/order/reminders.ts").Reminders;
+  type InventoryFake =
+    typeof import("./fixtures/order-app/app/domain/order/infrastructure/inventory/fake.ts");
+  type InventoryHttp =
+    typeof import("./fixtures/order-app/app/domain/order/infrastructure/inventory/http.ts");
+  type RemindersFake =
+    typeof import("./fixtures/order-app/app/domain/order/infrastructure/reminders/fake.ts");
 
-  it("are typed by the interface each port's index.ts exports", () => {
+  it("are typed by the interface each port's module exports", () => {
     expectTypeOf<PlaceOrder.HandlerArgs["inventory"]>().toEqualTypeOf<Inventory>();
     expectTypeOf<PlaceOrder.HandlerArgs["inventory"]["reserve"]>().toEqualTypeOf<
       (skus: readonly string[]) => Promise<void>
@@ -166,21 +172,26 @@ describe("collaborators", () => {
     >();
   });
 
-  it("give each implementation its port's interface as Implementation.Contract", () => {
-    expectTypeOf<InventoryFake.Contract>().toEqualTypeOf<Inventory>();
-    expectTypeOf<RemindersFake.Contract>().toEqualTypeOf<Reminders>();
+  it("type an implementation by the port it satisfies, without +types of its own", () => {
+    expectTypeOf<InventoryFake["default"]>().toExtend<Inventory>();
+    expectTypeOf<RemindersFake["default"]>().toExtend<Reminders>();
   });
 
   it("type create by the port, with the host's environment, the logger and the clock", () => {
-    expectTypeOf<InventoryHttp.CreateArgs>().toEqualTypeOf<CreateArgs>();
-    expectTypeOf<InventoryHttp.CreateArgs["env"]>().toEqualTypeOf<
-      Readonly<Record<string, string | undefined>>
-    >();
-    expectTypeOf<InventoryHttp.CreateArgs["logger"]>().toEqualTypeOf<Logger>();
-    expectTypeOf<InventoryHttp.CreateArgs["clock"]>().toEqualTypeOf<Clock>();
-    expectTypeOf<ReturnType<InventoryHttp.Create>>().toEqualTypeOf<
+    expectTypeOf<InventoryHttp["create"]>().toEqualTypeOf<CreateImplementation<Inventory>>();
+    expectTypeOf<Parameters<InventoryHttp["create"]>[0]>().toEqualTypeOf<CreateArgs>();
+    expectTypeOf<CreateArgs["env"]>().toEqualTypeOf<Readonly<Record<string, string | undefined>>>();
+    expectTypeOf<CreateArgs["logger"]>().toEqualTypeOf<Logger>();
+    expectTypeOf<CreateArgs["clock"]>().toEqualTypeOf<Clock>();
+    expectTypeOf<ReturnType<InventoryHttp["create"]>>().toEqualTypeOf<
       Inventory | Promise<Inventory>
     >();
+  });
+
+  it("leave the aggregate's other modules out of the registry and the events", () => {
+    expectTypeOf<Registry["aggregates"]["order"]["events"]>().not.toHaveProperty("money");
+    expectTypeOf<PlaceOrder.HandlerArgs["events"]>().not.toHaveProperty("money");
+    expectTypeOf<PlaceOrder.HandlerArgs>().not.toHaveProperty("money");
   });
 
   it("leave env optional for createApp and createTestApp when no host registers one", () => {

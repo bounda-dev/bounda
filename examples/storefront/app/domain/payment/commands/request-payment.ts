@@ -12,6 +12,6 @@ export const handler = async ({
 }: Command.HandlerArgs) => {
   if (state.status !== undefined) return [];
   const { paymentId, orderId, amount } = command.payload;
-  const { intentId } = await gateway.createIntent({ paymentId, orderId, amount }, idempotencyKey);
+  const { intentId } = await gateway.createIntent({ paymentId, orderId, amount, idempotencyKey });
   return [events.paymentRequested({ orderId, amount, intentId })];
 };

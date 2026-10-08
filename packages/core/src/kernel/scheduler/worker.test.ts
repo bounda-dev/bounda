@@ -769,7 +769,7 @@ const noteRegistry = {
       events: {
         noteWritten: {
           payload: ({ z }: PayloadArgs) => z.object({ text: z.string() }),
-          apply: ({ state }: { state: object }) => state,
+          evolve: ({ state }: { state: object }) => state,
         },
       },
       commands: {

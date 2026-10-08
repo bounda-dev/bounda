@@ -44,7 +44,7 @@ export const SlicedStore = createBoundaObject({
 });
 
 /**
- * The app without policies, with a collaborator its `create` builds from the object's `env`.
+ * The app without policies, with an implementation its `create` builds from the object's `env`.
  */
 export const RegionStore = createBoundaObject({
   registry: regionRegistry,
