@@ -16,6 +16,7 @@ export declare namespace Query {
     core.PayloadOf<Module>,
     core.RepositoryDataOf<Module>,
     Row,
-    generated.Queries
+    generated.Queries,
+    generated.OrderSummaryPorts
   >;
 }

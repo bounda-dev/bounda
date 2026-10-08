@@ -29,6 +29,12 @@ describe("defineConfig", () => {
     defineConfig({ storage: sqlite, ports: { order: { inventory: chosen } } });
   });
 
+  it("checks a read model's ports in the same section", () => {
+    defineConfig({ storage: sqlite, ports: { ...ports, orderSummary: { rates: "fixed" } } });
+    // @ts-expect-error "ecb" is not an implementation of rates
+    defineConfig({ storage: sqlite, ports: { ...ports, orderSummary: { rates: "ecb" } } });
+  });
+
   it("checks duration strings at compile time", () => {
     defineConfig({
       storage: sqlite,

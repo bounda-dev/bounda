@@ -1,4 +1,9 @@
-import { describeNames, implementationNotFound } from "../../config/ports.ts";
+import {
+  describeNames,
+  describeOwner,
+  implementationNotFound,
+  type PortOwner,
+} from "../../config/ports.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import type { ImplementationModule, PortModules } from "../../modules/port.ts";
 
@@ -12,10 +17,10 @@ export type PortChoice =
   | { readonly missing: () => ConfigurationError };
 
 export interface SelectTestImplementationsArgs {
-  readonly aggregate: string;
+  readonly owner: PortOwner;
   readonly implementations: PortModules;
   /**
-   * The aggregate's entry of `createTestApp`'s `ports`: port to a file name or a double.
+   * The owner's entry of `createTestApp`'s `ports`: port to a file name or a double.
    */
   readonly chosen: Readonly<Record<string, unknown>> | undefined;
 }
@@ -29,15 +34,15 @@ export interface SelectTestImplementationsFunction {
  * has only one, so a test never reaches a real provider it did not ask for.
  */
 export const selectTestImplementations: SelectTestImplementationsFunction = ({
-  aggregate,
+  owner,
   implementations,
   chosen = {},
 }) => {
-  const owner = `Aggregate "${aggregate}"`;
+  const label = describeOwner(owner);
   const unknown = Object.keys(chosen).filter((port) => !Object.hasOwn(implementations, port));
   if (unknown.length > 0) {
     throw new ConfigurationError(
-      `${owner}: createTestApp names ports that do not exist: ${describeNames(unknown)}`,
+      `${label}: createTestApp names ports that do not exist: ${describeNames(unknown)}`,
     );
   }
   return Object.fromEntries(
@@ -50,7 +55,7 @@ export const selectTestImplementations: SelectTestImplementationsFunction = ({
           {
             missing: () =>
               new ConfigurationError(
-                `${owner}, port "${port}": this test app was given none. Pass createTestApp ports: { ${aggregate}: { ${port}: <double> } }, or one of ${describeNames(options)}.`,
+                `${label}, port "${port}": this test app was given none. Pass createTestApp ports: { ${owner.name}: { ${port}: <double> } }, or one of ${describeNames(options)}.`,
               ),
           },
         ];
@@ -58,7 +63,7 @@ export const selectTestImplementations: SelectTestImplementationsFunction = ({
       if (typeof given !== "string") return [port, { double: given }];
       const module = Object.hasOwn(available, given) ? available[given] : undefined;
       if (module === undefined)
-        throw implementationNotFound({ owner, port, chosen: given, options });
+        throw implementationNotFound({ owner: label, port, chosen: given, options });
       return [port, { module }];
     }),
   );

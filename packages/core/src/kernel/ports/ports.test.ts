@@ -167,7 +167,7 @@ describe("createPorts", () => {
       expect.objectContaining({
         message: "implementation could not be closed",
         fields: expect.objectContaining({
-          aggregate: "order",
+          module: "order",
           port: "mailer",
           message: "mailer is stuck",
         }),
@@ -210,15 +210,55 @@ describe("createPorts", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
-  it("rejects configuration for an aggregate that does not exist", async () => {
+  it("rejects configuration for a module that does not exist", async () => {
     const registry = registryOf({ order: aggregate({}) });
     await expect(build(registry, { shipping: { carrier: "ups" } })).rejects.toThrow(
       new ConfigurationError(
-        'ports.shipping: there is no aggregate "shipping" whose ports to choose',
+        'ports.shipping: there is no aggregate or read model "shipping" whose ports to choose',
       ),
     );
     await expect(build(registry, { constructor: {} })).rejects.toThrow(
-      'there is no aggregate "constructor"',
+      'there is no aggregate or read model "constructor"',
+    );
+  });
+
+  it("builds a read model's ports apart from an aggregate's, names it in its errors and closes what it built", async () => {
+    const closed: string[] = [];
+    const registry: Registry = {
+      aggregates: { order: aggregate({ mailer: closing("mailer", closed) }) },
+      readModels: {
+        orderSummary: {
+          view: { fields: () => ({}) },
+          projections: {},
+          queries: {},
+          ports: { rates: { fixed: { default: async () => 1 } }, index: closing("index", closed) },
+        },
+      },
+    };
+    const { byAggregate, byReadModel, dispose } = await build(registry);
+    expect(Object.keys(byAggregate)).toEqual(["order"]);
+    expect(Object.keys(byReadModel.orderSummary ?? {})).toEqual(["rates", "index"]);
+    await dispose();
+    expect(closed).toEqual(["index", "mailer"]);
+    await expect(
+      build(
+        {
+          ...registry,
+          readModels: {
+            orderSummary: {
+              view: { fields: () => ({}) },
+              projections: {},
+              queries: {},
+              ports: {
+                rates: { fixed: { default: async () => 1 }, live: { default: async () => 2 } },
+              },
+            },
+          },
+        },
+        {},
+      ),
+    ).rejects.toThrow(
+      'Read model "orderSummary", port "rates": choose an implementation with ports.orderSummary.rates.',
     );
   });
 });

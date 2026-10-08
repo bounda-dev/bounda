@@ -1,4 +1,4 @@
-import type { AggregateModel, ProjectModel } from "../model.ts";
+import type { AggregateModel, ProjectModel, ReadModelModel } from "../model.ts";
 import { typeNameOf } from "../naming.ts";
 import { type GeneratedFile, importPath } from "./paths.ts";
 
@@ -61,11 +61,11 @@ export const rowTypeName: RowTypeNameFunction = (readModelName) =>
   `${typeNameOf(readModelName)}Row`;
 
 export interface PortsTypeNameFunction {
-  (aggregateName: string): string;
+  (moduleName: string): string;
 }
 
-export const portsTypeName: PortsTypeNameFunction = (aggregateName) =>
-  `${typeNameOf(aggregateName)}Ports`;
+export const portsTypeName: PortsTypeNameFunction = (moduleName) =>
+  `${typeNameOf(moduleName)}Ports`;
 
 export const PORTS_CONFIG_TYPE_NAME = "PortsConfig";
 
@@ -107,12 +107,17 @@ const emitEvents = (aggregate: AggregateModel, path: string): string =>
         "};",
       ].join("\n");
 
-const emitPorts = (aggregate: AggregateModel, path: string): string =>
-  aggregate.ports.length === 0
-    ? `export type ${portsTypeName(aggregate.name)} = core.EmptyPayload;`
+type PortsOwner = Pick<AggregateModel | ReadModelModel, "name" | "ports">;
+
+const portsOwners = (model: ProjectModel): readonly PortsOwner[] =>
+  [...model.aggregates, ...model.readModels].filter((owner) => owner.ports.length > 0);
+
+const emitPorts = (owner: PortsOwner, path: string): string =>
+  owner.ports.length === 0
+    ? `export type ${portsTypeName(owner.name)} = core.EmptyPayload;`
     : [
-        `export type ${portsTypeName(aggregate.name)} = {`,
-        ...aggregate.ports.map(
+        `export type ${portsTypeName(owner.name)} = {`,
+        ...owner.ports.map(
           (port) =>
             `  readonly ${port.key}: import("${importPath({ from: path, to: port.path })}").${port.typeName};`,
         ),
@@ -124,20 +129,20 @@ const implementationNames = (names: readonly string[]): string =>
 
 /**
  * A port with one implementation may be left out of the configuration; one with several must be
- * named, and so must the aggregate that has such a port.
+ * named, and so must the aggregate or read model that has such a port.
  */
 const emitPortsConfig = (model: ProjectModel): string => {
-  const aggregates = model.aggregates.filter((aggregate) => aggregate.ports.length > 0);
-  if (aggregates.length === 0) {
+  const owners = portsOwners(model);
+  if (owners.length === 0) {
     return `export type ${PORTS_CONFIG_TYPE_NAME} = Readonly<Record<string, never>>;`;
   }
   return [
     `export type ${PORTS_CONFIG_TYPE_NAME} = {`,
-    ...aggregates.flatMap((aggregate) => {
-      const required = aggregate.ports.some((port) => port.implementations.length > 1);
+    ...owners.flatMap((owner) => {
+      const required = owner.ports.some((port) => port.implementations.length > 1);
       return [
-        `  readonly ${aggregate.name}${required ? "" : "?"}: {`,
-        ...aggregate.ports.map(
+        `  readonly ${owner.name}${required ? "" : "?"}: {`,
+        ...owner.ports.map(
           (port) =>
             `    readonly ${port.key}${port.implementations.length > 1 ? "" : "?"}: ${implementationNames(
               port.implementations.map((implementation) => implementation.name),
@@ -155,19 +160,19 @@ const emitPortsConfig = (model: ProjectModel): string => {
  * double of its interface as well as an implementation name.
  */
 const emitTestPorts = (model: ProjectModel): string => {
-  const aggregates = model.aggregates.filter((aggregate) => aggregate.ports.length > 0);
-  if (aggregates.length === 0) {
+  const owners = portsOwners(model);
+  if (owners.length === 0) {
     return `export type ${TEST_PORTS_TYPE_NAME} = Readonly<Record<string, never>>;`;
   }
   return [
     `export type ${TEST_PORTS_TYPE_NAME} = {`,
-    ...aggregates.flatMap((aggregate) => [
-      `  readonly ${aggregate.name}?: {`,
-      ...aggregate.ports.map(
+    ...owners.flatMap((owner) => [
+      `  readonly ${owner.name}?: {`,
+      ...owner.ports.map(
         (port) =>
           `    readonly ${port.key}?: ${implementationNames(
             port.implementations.map((implementation) => implementation.name),
-          )} | ${portsTypeName(aggregate.name)}["${port.key}"];`,
+          )} | ${portsTypeName(owner.name)}["${port.key}"];`,
       ),
       "  };",
     ]),
@@ -191,7 +196,7 @@ const emitMap = (
 /**
  * Renders `.bounda/types.ts`: each aggregate's `State`, `Events` and `Ports`, the app's
  * `Events`, the types of the `ports` of the configuration and of `createTestApp`, each
- * read model's `Row`, and the `Commands` and `Queries` facade types. Modules are referenced only
+ * read model's `Row` and `Ports`, and the `Commands` and `Queries` facade types. Modules are referenced only
  * through `import(...)` types, so the file never imports the registry.
  */
 export const emitTypes: EmitTypesFunction = ({ model, path, inferredStates = {} }) => {
@@ -225,7 +230,10 @@ export const emitTypes: EmitTypesFunction = ({ model, path, inferredStates = {} 
   sections.push(emitMap("ReactionCommands", "ReactionCommandsFacadeOf", commandModules));
   for (const readModel of model.readModels) {
     sections.push(
-      `export type ${rowTypeName(readModel.name)} = core.RowOf<${typeofImport(path, readModel.view.path)}>;`,
+      [
+        `export type ${rowTypeName(readModel.name)} = core.RowOf<${typeofImport(path, readModel.view.path)}>;`,
+        emitPorts(readModel, path),
+      ].join("\n"),
     );
   }
   sections.push(

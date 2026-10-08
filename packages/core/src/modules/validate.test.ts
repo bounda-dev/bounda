@@ -150,6 +150,27 @@ describe("validateRegistry", () => {
     expect(message).toContain('readModels.orderSummary.queries.getOrder: missing export "handler"');
   });
 
+  it("checks the implementations of a read model's ports as an aggregate's", () => {
+    const registry: Registry = {
+      aggregates: {},
+      readModels: {
+        orderSummary: {
+          view: { fields: () => ({}) },
+          projections: {},
+          queries: {},
+          ports: { rates: {}, fees: { both: { default: noop, create: noop } as never } },
+        },
+      },
+    };
+    expect(() => validateRegistry(registry)).toThrow(
+      [
+        "Invalid registry:",
+        "  readModels.orderSummary.ports.rates: has no implementations",
+        '  readModels.orderSummary.ports.fees.both: exports both "default" and "create" (expected one)',
+      ].join("\n"),
+    );
+  });
+
   it("checks policy handlers and that every implementation of a port exports default or create", () => {
     const registry = withOrder({
       policies: {

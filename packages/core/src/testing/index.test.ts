@@ -229,7 +229,7 @@ describe("createTestApp ports", () => {
     const registry = shop({ notifier: { smtp: { default: recording([]) } } });
     await expect(
       createTestApp({ registry, ports: { shipping: { carrier: "ups" } } }),
-    ).rejects.toThrow('ports.shipping: there is no aggregate "shipping"');
+    ).rejects.toThrow('ports.shipping: there is no aggregate or read model "shipping"');
     await expect(
       createTestApp({ registry, ports: { order: { sms: recording([]) } } }),
     ).rejects.toThrow(

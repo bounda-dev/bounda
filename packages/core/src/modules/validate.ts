@@ -131,6 +131,7 @@ const validateReadModel = (
   for (const [key, query] of Object.entries(readModel.queries)) {
     requireFunction(problems, query, `${base}.queries.${key}`, "handler");
   }
+  requireImplementations(problems, readModel.ports, `${base}.ports`);
 };
 
 export interface ValidateRegistryFunction {

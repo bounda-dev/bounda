@@ -31,8 +31,8 @@ export interface ImplementationModel extends ModuleRef {
 }
 
 /**
- * A port of an aggregate, `order/notifier.ts`: it exports the interface `typeName`, and every
- * module in `order/infrastructure/notifier/` implements it.
+ * A port of an aggregate or a read model, `order/notifier.ts`: it exports the interface
+ * `typeName`, and every module in `order/infrastructure/notifier/` implements it.
  */
 export interface PortModel extends ModuleRef {
   /**
@@ -133,17 +133,24 @@ export interface ReadModelModel {
   readonly name: string;
   readonly directory: string;
   readonly view: ModuleRef;
+  /**
+   * The ports of the read model, sorted by key; only its queries' handlers receive them.
+   */
+  readonly ports: readonly PortModel[];
   readonly projections: readonly ProjectionModel[];
   readonly queries: readonly QueryModel[];
 }
 
 /**
- * Something in an aggregate's layout that the generator reads as it is, but that is most likely a
- * mistake: a module that looks like an event and is not one, a directory that looks like one the
- * generator reads and is not.
+ * Something the generator went on despite: a layout that is most likely a mistake without
+ * breaking a convention, such as a module that looks like an event and is not one, or something
+ * state inference could not do.
  */
-export interface LayoutWarning {
-  readonly aggregate: string;
+export interface GenerateWarning {
+  /**
+   * The aggregate or read model, by key.
+   */
+  readonly module: string;
   readonly message: string;
 }
 

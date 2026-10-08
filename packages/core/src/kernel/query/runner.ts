@@ -1,6 +1,8 @@
 import { NotFoundError } from "../../contracts/errors.ts";
 import { validatePayload } from "../command/validate.ts";
+import type { ModulePorts } from "../ports/ports.ts";
 import type { ReadModelsRuntime } from "../read-model/build-read-models.ts";
+import { withPorts } from "../shared/with-ports.ts";
 import type { QueriesRuntime } from "./build-queries.ts";
 
 /**
@@ -23,30 +25,33 @@ export interface QueryRunner {
 export interface CreateQueryRunnerArgs {
   readonly queries: QueriesRuntime;
   readonly readModels: ReadModelsRuntime;
+  /**
+   * What each read model's query handlers receive; `repository` reads the storage and gets none.
+   */
+  readonly ports: ModulePorts;
 }
 
 export interface CreateQueryRunnerFunction {
   (args: CreateQueryRunnerArgs): QueryRunner;
 }
 
-export const createQueryRunner: CreateQueryRunnerFunction = ({ queries, readModels }) => {
+export const createQueryRunner: CreateQueryRunnerFunction = ({ queries, readModels, ports }) => {
   const run = async ({ type, payload }: RunQueryArgs): Promise<unknown> => {
     const query = queries.byType[type];
     if (query === undefined) throw new NotFoundError(`Unknown query "${type}"`);
     const readModel = readModels.byName[query.readModel];
     if (readModel === undefined) throw new NotFoundError(`Unknown read model "${query.readModel}"`);
     const parsed = validatePayload({ schema: query.schema, payload, subject: `query ${type}` });
-    const { table, client } = readModel.ports;
+    const { table, client } = readModel.storage;
     const repositoryData =
       query.repository === null
         ? undefined
         : await query.repository({ ...(parsed as Record<string, unknown>), client, table });
-    return query.handler({
-      query: { type, payload: parsed },
-      repositoryData,
-      table,
-      queries: facade,
-    });
+    const args = { query: { type, payload: parsed }, repositoryData, table, queries: facade };
+    const readModelPorts = ports[query.readModel] ?? {};
+    return query.handler(
+      Object.keys(readModelPorts).length === 0 ? args : withPorts(readModelPorts, args),
+    );
   };
 
   const facade: QueriesFacadeRuntime = Object.fromEntries(

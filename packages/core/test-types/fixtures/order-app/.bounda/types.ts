@@ -33,6 +33,9 @@ export type PortsConfig = {
     readonly mailer?: "memory";
     readonly reminders?: "fake";
   };
+  readonly orderSummary?: {
+    readonly rates?: "fixed";
+  };
 };
 
 export type TestPorts = {
@@ -41,6 +44,9 @@ export type TestPorts = {
     readonly inventory?: "fake" | "http" | "memory" | OrderPorts["inventory"];
     readonly mailer?: "memory" | OrderPorts["mailer"];
     readonly reminders?: "fake" | OrderPorts["reminders"];
+  };
+  readonly orderSummary?: {
+    readonly rates?: "fixed" | OrderSummaryPorts["rates"];
   };
 };
 
@@ -59,6 +65,9 @@ export type ReactionCommands = core.ReactionCommandsFacadeOf<{
 }>;
 
 export type OrderSummaryRow = core.RowOf<typeof import("../app/read/order-summary/view.ts")>;
+export type OrderSummaryPorts = {
+  readonly rates: import("../app/read/order-summary/rates.ts").Rates;
+};
 
 export type Queries = core.QueriesFacadeOf<{
   readonly customerOverview: typeof import("../app/read/order-summary/queries/customer-overview.ts");

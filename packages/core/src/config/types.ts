@@ -137,8 +137,8 @@ export interface RuntimeConfig {
 }
 
 /**
- * Which implementation each port of each aggregate uses, by aggregate and port in camelCase, with
- * the implementation's file name as the value: `{ order: { notifier: "smtp" } }`. A port with
+ * Which implementation each port of each aggregate or read model uses, by module and port in
+ * camelCase, with the implementation's file name as the value: `{ order: { notifier: "smtp" } }`. A port with
  * one implementation may be left out; one with several must be named. The generator emits this
  * type for the project, so `defineConfig` checks the names.
  */

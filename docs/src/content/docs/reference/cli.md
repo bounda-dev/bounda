@@ -187,7 +187,7 @@ import { generate } from "@bounda-dev/cli";
 
 const report = await generate({ root: process.cwd() });
 report.written; // absolute paths written this run
-report.warnings; // layout and inference warnings, per aggregate
+report.warnings; // layout and inference warnings, per aggregate or read model
 ```
 
 `discoverProject`, `emitProject`, `inferStates`, `watchProject` and `runCli` are the pieces

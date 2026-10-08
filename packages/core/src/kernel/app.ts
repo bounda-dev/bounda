@@ -11,7 +11,6 @@ import type { CommandsFacade, QueriesFacade, Registry } from "../modules/registr
 import { validateRegistry } from "../modules/validate.ts";
 import type { AppEnv, AppRegistry, EnvSection } from "../register/index.ts";
 import { buildAggregates } from "./aggregate/build-aggregates.ts";
-import { createPorts, type TestChoice } from "./aggregate/ports.ts";
 import { withUpcasting } from "./aggregate/upcasting.ts";
 import { createCommandsFacade } from "./command/facade.ts";
 import { createCommandPipeline } from "./command/pipeline.ts";
@@ -22,6 +21,7 @@ import { buildPolicies } from "./policy/build-policies.ts";
 import { createDelayedPolicies } from "./policy/delayed.ts";
 import { createPolicyExecutor } from "./policy/executor.ts";
 import { createPolicySubscriber } from "./policy/runner.ts";
+import { createPorts, type TestChoice } from "./ports/ports.ts";
 import { buildProcesses } from "./process/build-processes.ts";
 import { createProcessRunner } from "./process/runner.ts";
 import { createProjectionSubscriber } from "./projection/runner.ts";
@@ -260,7 +260,11 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         for (const observed of observers) observed.push(rejection);
       },
     });
-    const queryRunner = createQueryRunner({ queries: buildQueries({ readModels }), readModels });
+    const queryRunner = createQueryRunner({
+      queries: buildQueries({ readModels }),
+      readModels,
+      ports: ports.byReadModel,
+    });
     const processDefinitions = buildProcesses({ registry, aggregates, config });
     const processes = createProcessRunner({
       processes: processDefinitions,
@@ -438,8 +442,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         }),
       pendingRebuilds: async () => {
         const paused = await Promise.all(
-          Object.values(readModels.byName).map(async ({ name, ports }) =>
-            (await pendingRebuilds(ports.checkpointStore)).includes(name) ? [name] : [],
+          Object.values(readModels.byName).map(async ({ name, storage }) =>
+            (await pendingRebuilds(storage.checkpointStore)).includes(name) ? [name] : [],
           ),
         );
         return paused.flat();

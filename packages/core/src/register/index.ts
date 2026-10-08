@@ -49,7 +49,7 @@ export type AppPortsConfig = Register extends {
 export type TestPortsChoice = Readonly<Record<string, Readonly<Record<string, unknown>>>>;
 
 /**
- * What `createTestApp` takes as `ports`, by aggregate and port: an implementation's file
+ * What `createTestApp` takes as `ports`, by aggregate or read model and port: an implementation's file
  * name or a double of the port. The one registered through {@link Register}, or untyped values
  * when none is.
  */
@@ -87,7 +87,8 @@ type ModulesOf<C> =
 
 type BuildsWithCreate<R extends Registry> = [
   Extract<
-    ModulesOf<NonNullable<R["aggregates"][keyof R["aggregates"]]["ports"]>>,
+    | ModulesOf<NonNullable<R["aggregates"][keyof R["aggregates"]]["ports"]>>
+    | ModulesOf<NonNullable<R["readModels"][keyof R["readModels"]]["ports"]>>,
     { readonly create: unknown }
   >,
 ] extends [never]

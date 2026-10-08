@@ -7,6 +7,7 @@ import { memory } from "../../memory/index.ts";
 import type { PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
+import type { ModulePorts } from "../ports/ports.ts";
 import { buildReadModels } from "../read-model/build-read-models.ts";
 import { buildQueries } from "./build-queries.ts";
 import { createQueryRunner } from "./runner.ts";
@@ -24,6 +25,10 @@ const view = {
     total: f.number(),
   }),
 };
+
+type Rates = (args: { readonly from: string; readonly to: string }) => Promise<number>;
+
+const seenByRepository: string[][] = [];
 
 const registry: Registry = {
   aggregates: {},
@@ -68,19 +73,30 @@ const registry: Registry = {
         countOrders: {
           handler: ({ table }: { table: Table<Row> }) => table.count(),
         },
+        getOrderInUsd: {
+          payload: ({ z }: PayloadArgs) => z.object({ orderId: z.string() }),
+          repository: (args: Record<string, unknown>) => {
+            seenByRepository.push(Object.keys(args).sort());
+            return (args.table as Table<Row>).findOne({ orderId: args.orderId as string });
+          },
+          handler: async ({ repositoryData, rates }: { repositoryData: Row; rates: Rates }) => ({
+            orderId: repositoryData.orderId,
+            totalUsd: repositoryData.total * (await rates({ from: "EUR", to: "USD" })),
+          }),
+        },
       },
     },
   },
 };
 
-const setup = async () => {
+const setup = async (ports: ModulePorts = {}) => {
   const config = resolveConfig({ storage: memory() });
   const readModels = await buildReadModels({ registry, config, logger: silentLogger });
-  const table = readModels.byName.orderSummary?.ports.table as unknown as Table<Row>;
+  const table = readModels.byName.orderSummary?.storage.table as unknown as Table<Row>;
   await table.insert({ orderId: "o-1", customerId: "c-1", total: 10 });
   await table.insert({ orderId: "o-2", customerId: "c-1", total: 25 });
   await table.insert({ orderId: "o-3", customerId: "c-2", total: 5 });
-  return createQueryRunner({ queries: buildQueries({ readModels }), readModels });
+  return createQueryRunner({ queries: buildQueries({ readModels }), readModels, ports });
 };
 
 describe("query runner", () => {
@@ -107,6 +123,31 @@ describe("query runner", () => {
       outstanding: 35,
     });
     expect(await runner.facade.countOrders?.()).toBe(3);
+  });
+
+  it("hands a read model's ports to its query handlers, never to their repository", async () => {
+    const runner = await setup({ orderSummary: { rates: async () => 1.5 } });
+    seenByRepository.length = 0;
+    expect(await runner.facade.getOrderInUsd?.({ orderId: "o-2" })).toEqual({
+      orderId: "o-2",
+      totalUsd: 37.5,
+    });
+    expect(seenByRepository).toEqual([["client", "orderId", "table"]]);
+  });
+
+  it("throws a port that was given nothing only in the query that reads it", async () => {
+    const missing = new ConfigurationError("rates was given none");
+    const ports: ModulePorts = {
+      orderSummary: Object.defineProperty({}, "rates", {
+        enumerable: true,
+        get: () => {
+          throw missing;
+        },
+      }),
+    };
+    const runner = await setup(ports);
+    expect(await runner.facade.countOrders?.()).toBe(3);
+    await expect(runner.facade.getOrderInUsd?.({ orderId: "o-2" })).rejects.toBe(missing);
   });
 
   it("validates payloads and rejects unknown queries", async () => {

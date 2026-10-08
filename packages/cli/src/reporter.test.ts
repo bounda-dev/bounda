@@ -54,8 +54,8 @@ describe("formatWarnings", () => {
       formatWarnings(
         report({
           warnings: [
-            { aggregate: "order", message: "one" },
-            { aggregate: "customer", message: "two" },
+            { module: "order", message: "one" },
+            { module: "customer", message: "two" },
           ],
         }),
       ),

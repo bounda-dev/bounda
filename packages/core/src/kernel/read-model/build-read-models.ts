@@ -20,7 +20,7 @@ export interface ProjectionRuntime {
 export interface ReadModelRuntime {
   readonly name: string;
   readonly fields: FieldsRecord;
-  readonly ports: ReadModelPorts;
+  readonly storage: ReadModelPorts;
   /**
    * Keyed by qualified event type, `order.OrderPlaced`.
    */
@@ -103,17 +103,17 @@ export const compileProjections: CompileProjectionsFunction = ({ name, entry }) 
 export interface CompileReadModelArgs {
   readonly name: string;
   readonly entry: ReadModelEntry;
-  readonly ports: ReadModelPorts;
+  readonly storage: ReadModelPorts;
 }
 
 export interface CompileReadModelFunction {
   (args: CompileReadModelArgs): ReadModelRuntime;
 }
 
-export const compileReadModel: CompileReadModelFunction = ({ name, entry, ports }) => ({
+export const compileReadModel: CompileReadModelFunction = ({ name, entry, storage }) => ({
   ...compileProjections({ name, entry }),
   fields: entry.view.fields({ f: fieldBuilder }),
-  ports,
+  storage,
   queries: entry.queries,
 });
 
@@ -124,12 +124,12 @@ const buildReadModel = async (
   logger: Logger,
 ): Promise<ReadModelRuntime> => {
   const fields = entry.view.fields({ f: fieldBuilder });
-  const ports = await adapterFor(name, config).createReadModel<Record<string, unknown>>({
+  const storage = await adapterFor(name, config).createReadModel<Record<string, unknown>>({
     name,
     fields,
     logger,
   });
-  return compileReadModel({ name, entry, ports });
+  return compileReadModel({ name, entry, storage });
 };
 
 export interface BuildReadModelsArgs {
@@ -152,7 +152,7 @@ export const buildReadModels: BuildReadModelsFunction = async ({ registry, confi
   return {
     byName,
     close: async () => {
-      await Promise.all(Object.values(byName).map((readModel) => readModel.ports.close()));
+      await Promise.all(Object.values(byName).map((readModel) => readModel.storage.close()));
     },
   };
 };

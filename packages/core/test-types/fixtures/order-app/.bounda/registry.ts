@@ -28,11 +28,13 @@ import * as orderPayment from "../app/domain/order/processes/order-payment/index
 import * as orderPaymentOnOrderPaid from "../app/domain/order/processes/order-payment/on-order-paid.ts";
 import type * as orderReminders from "../app/domain/order/reminders.ts";
 import * as orderState from "../app/domain/order/state.ts";
+import * as orderSummaryRatesFixed from "../app/read/order-summary/infrastructure/rates/fixed.ts";
 import * as orderSummaryOnOrderOrderPaid from "../app/read/order-summary/projections/order/order-paid.ts";
 import * as orderSummaryOnOrderOrderPlaced from "../app/read/order-summary/projections/order/order-placed.ts";
 import * as customerOverview from "../app/read/order-summary/queries/customer-overview.ts";
 import * as getOrder from "../app/read/order-summary/queries/get-order.ts";
 import * as listUnpaidOrders from "../app/read/order-summary/queries/list-unpaid-orders.ts";
+import type * as orderSummaryRates from "../app/read/order-summary/rates.ts";
 import * as orderSummaryView from "../app/read/order-summary/view.ts";
 
 export const registry = {
@@ -78,6 +80,11 @@ export const registry = {
   readModels: {
     orderSummary: {
       view: orderSummaryView,
+      ports: {
+        rates: {
+          fixed: orderSummaryRatesFixed satisfies ImplementationModule<orderSummaryRates.Rates>,
+        },
+      },
       projections: { order: { orderPaid: orderSummaryOnOrderOrderPaid, orderPlaced: orderSummaryOnOrderOrderPlaced } },
       queries: { customerOverview, getOrder, listUnpaidOrders },
     },

@@ -155,7 +155,7 @@ and fast. Use the same for PostgreSQL when a query relies on something only Post
 
 ## Doubles
 
-A test passes what each port of each aggregate receives, by aggregate and port. Pass a double
+A test passes what each port of each aggregate or read model receives, by module and port. Pass a double
 written in the test, so each test owns what it records and tests running in parallel share
 nothing:
 

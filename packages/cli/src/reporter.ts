@@ -38,10 +38,10 @@ export interface FormatWarningsFunction {
 }
 
 /**
- * One line per inference warning, for stderr. Empty when there is nothing to say.
+ * One line per layout or inference warning, for stderr. Empty when there is nothing to say.
  */
 export const formatWarnings: FormatWarningsFunction = (report) =>
-  report.warnings.map((warning) => `warning: ${warning.aggregate}: ${warning.message}`).join("\n");
+  report.warnings.map((warning) => `warning: ${warning.module}: ${warning.message}`).join("\n");
 
 export interface FormatConventionErrorArgs {
   readonly error: ConventionError;

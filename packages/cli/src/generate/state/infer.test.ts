@@ -67,7 +67,7 @@ describe("generate with state inference (golden on order-app-inferred)", () => {
     expect(report.removed).toEqual([]);
     expect(report.warnings).toEqual([
       {
-        aggregate: "order",
+        module: "order",
         message: expect.stringMatching(
           /^field "cancellation" \(set by orderCancelled\) has a type that is not visible from \.bounda\/types\.ts \(.*Cancellation.*\); it is typed as unknown\. Export the type or add state\.ts$/,
         ),
@@ -112,7 +112,7 @@ export type OrderState = core.NotCreated<OrderCreatedState> | OrderCreatedState;
     const report = await generate({ root, tsconfigPath: join(root, "missing.json") });
     expect(report.warnings).toEqual([
       {
-        aggregate: "order",
+        module: "order",
         message: expect.stringMatching(
           /State stays core\.UnknownState; add app\/domain\/order\/state\.ts to type it$/,
         ),
@@ -185,7 +185,7 @@ describe("state inference on the edges", () => {
     const report = await generate({ root });
     expect(report.warnings).toEqual([
       {
-        aggregate: "ticket",
+        module: "ticket",
         message: "app/domain/ticket/d-broken.ts: evolve has no call signature, so it was skipped",
       },
     ]);
@@ -276,7 +276,7 @@ export type PlainCreatedState = PlainState;`);
         'interface Private {\n  readonly y: string;\n}\nexport const evolve = (): { token: Private; count: number } => ({ token: { y: "t" }, count: 1 });\n',
     });
     const report = await generate({ root });
-    const messages = report.warnings.map((warning) => `${warning.aggregate}: ${warning.message}`);
+    const messages = report.warnings.map((warning) => `${warning.module}: ${warning.message}`);
     expect(messages).toHaveLength(3);
     expect(messages[0]).toMatch(
       /^alpha: field "other" \(set by alphaMade\) has a type that is not visible from \.bounda\/types\.ts \(.*\); it is typed as unknown\. Export the type or add state\.ts$/,
@@ -307,7 +307,7 @@ export type PlainCreatedState = PlainState;`);
     const report = await generate({ root });
     expect(report.warnings).toEqual([
       {
-        aggregate: "solo",
+        module: "solo",
         message: expect.stringMatching(
           /^.*\.bounda\/types\.ts is not part of the TypeScript project at .*tsconfig\.json; include it so state can be inferred\. State stays core\.UnknownState; add app\/domain\/solo\/state\.ts to type it$/,
         ),
