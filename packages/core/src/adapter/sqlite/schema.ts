@@ -1,5 +1,5 @@
 import type { SqlDatabase } from "../sql/database.ts";
-import { quoteIdentifier, tableNameFor } from "../sql/index.ts";
+import { quoteIdentifier, storageTableNameFor } from "../sql/index.ts";
 
 /**
  * The quoted names of the five storage tables for a table prefix.
@@ -17,11 +17,11 @@ export interface StorageTablesForFunction {
 }
 
 export const storageTablesFor: StorageTablesForFunction = (prefix) => ({
-  events: quoteIdentifier(tableNameFor({ prefix, readModel: "events" })),
-  checkpoints: quoteIdentifier(tableNameFor({ prefix, readModel: "checkpoints" })),
-  inbox: quoteIdentifier(tableNameFor({ prefix, readModel: "inbox" })),
-  deadLetters: quoteIdentifier(tableNameFor({ prefix, readModel: "deadLetters" })),
-  scheduledCommands: quoteIdentifier(tableNameFor({ prefix, readModel: "scheduledCommands" })),
+  events: quoteIdentifier(storageTableNameFor({ prefix, table: "events" })),
+  checkpoints: quoteIdentifier(storageTableNameFor({ prefix, table: "checkpoints" })),
+  inbox: quoteIdentifier(storageTableNameFor({ prefix, table: "inbox" })),
+  deadLetters: quoteIdentifier(storageTableNameFor({ prefix, table: "deadLetters" })),
+  scheduledCommands: quoteIdentifier(storageTableNameFor({ prefix, table: "scheduledCommands" })),
 });
 
 const indexName = (table: string, suffix: string): string =>

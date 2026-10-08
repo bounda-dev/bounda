@@ -6,6 +6,8 @@ export type {
   AssertIdentifierFunction,
   FromSnakeCaseFunction,
   QuoteIdentifierFunction,
+  StorageTableNameForArgs,
+  StorageTableNameForFunction,
   TableNameForArgs,
   TableNameForFunction,
   ToSnakeCaseFunction,
@@ -14,6 +16,7 @@ export {
   assertIdentifier,
   fromSnakeCase,
   quoteIdentifier,
+  storageTableNameFor,
   tableNameFor,
   toSnakeCase,
 } from "./identifiers.ts";

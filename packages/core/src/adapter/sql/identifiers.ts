@@ -57,6 +57,12 @@ export interface QuoteIdentifierFunction {
 export const quoteIdentifier: QuoteIdentifierFunction = (name) =>
   `"${assertIdentifier({ name, subject: "Identifier" })}"`;
 
+/**
+ * Between the prefix and a read model's name, so no read model can take the name of a storage
+ * table: a read model called `events` would otherwise open, and rebuild, the event store.
+ */
+const READ_MODEL_TABLE_INFIX = "rm_";
+
 export interface TableNameForArgs {
   readonly prefix: string;
   readonly readModel: string;
@@ -67,7 +73,25 @@ export interface TableNameForFunction {
 }
 
 /**
- * The table of a read model: `<prefix><read_model>`, e.g. `bounda_order_summary`.
+ * The table of a read model: `<prefix>rm_<read_model>`, e.g. `bounda_rm_order_summary`.
  */
 export const tableNameFor: TableNameForFunction = ({ prefix, readModel }) =>
-  assertIdentifier({ name: `${prefix}${toSnakeCase(readModel)}`, subject: "Table name" });
+  assertIdentifier({
+    name: `${prefix}${READ_MODEL_TABLE_INFIX}${toSnakeCase(readModel)}`,
+    subject: "Table name",
+  });
+
+export interface StorageTableNameForArgs {
+  readonly prefix: string;
+  readonly table: string;
+}
+
+export interface StorageTableNameForFunction {
+  (args: StorageTableNameForArgs): string;
+}
+
+/**
+ * A storage table: `<prefix><table>`, e.g. `bounda_scheduled_commands`.
+ */
+export const storageTableNameFor: StorageTableNameForFunction = ({ prefix, table }) =>
+  assertIdentifier({ name: `${prefix}${toSnakeCase(table)}`, subject: "Table name" });

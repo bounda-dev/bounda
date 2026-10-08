@@ -5,6 +5,7 @@ import { fieldBuilder as f } from "../../modules/view.ts";
 import type { Adapter, ReadModelRebuild } from "../adapter.ts";
 import type { Checkpoint } from "../ports/checkpoint-store.ts";
 import { rebuildFencing } from "../rebuild-fencing.ts";
+import { pendingEvent } from "./fixtures.ts";
 import type { AdapterContractArgs } from "./read-model-transaction.contract.ts";
 import { type ContractRow, contractFields } from "./table.contract.ts";
 
@@ -365,6 +366,37 @@ export const readModelRebuildContract: ReadModelRebuildContractFunction = ({
       expect(await ports.table.findMany({ where: { customerId: "c-1" } })).toEqual([rebuilt("2")]);
       expect(await ports.checkpointStore.get(SUBSCRIBER)).toBe(2);
       await ports.close();
+    });
+
+    it("keeps a read model named after a storage table apart from the storage", async () => {
+      const storage = await adapter.createStorage({ logger: silentLogger });
+      await storage.eventStore.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events: [pendingEvent({ aggregateId: "1", version: 1 })],
+      });
+      for (const name of ["events", "checkpoints", "inbox", "deadLetters", "scheduledCommands"]) {
+        const ports = await adapter.createReadModel<ContractRow>({
+          name,
+          fields: contractFields,
+          logger: silentLogger,
+        });
+        await ports.table.insert(live("1"));
+        await ports.close();
+        const rebuild = await adapter.rebuildReadModel<RebuiltRow>({
+          name,
+          fields: rebuiltFields,
+          logger: silentLogger,
+          progress: `rebuild:${name}:0000000000000001`,
+        });
+        await rebuild.commit({ subscriber: `projection:${name}`, position: 1 });
+      }
+      expect(await storage.eventStore.lastPosition()).toBe(1);
+      expect(
+        (await storage.eventStore.load({ aggregateType: "order", aggregateId: "1" })).version,
+      ).toBe(1);
+      await storage.close();
     });
   });
 };

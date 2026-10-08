@@ -56,10 +56,11 @@ On first use the adapter creates its tables, prefixed with `bounda_` by default:
 | `bounda_scheduled_commands` | Scheduled commands and process time-outs |
 | `bounda_dead_letters` | Handler runs that gave up, with the error and the attempt count |
 
-Read models get one table each, named after the read model in snake_case: `orderSummary` becomes
-`bounda_order_summary`. Its columns come from the `fields` of the view, also in snake_case. While
-a read model is being rebuilt there is also `bounda_order_summary__rebuild`, and for an instant
-during the swap `bounda_order_summary__retired`.
+Read models get one table each, named after the read model in snake_case behind `rm_`, so no
+read model can take one of the names above: `orderSummary` becomes `bounda_rm_order_summary`.
+Its columns come from the `fields` of the view, also in snake_case. While a read model is being
+rebuilt there is also `bounda_rm_order_summary__rebuild`, and for an instant during the swap
+`bounda_rm_order_summary__retired`.
 
 ## Evolving a read model
 
@@ -78,7 +79,7 @@ the driver, for anything the adapter does not cover.
 ```ts
 export const repository: Query.RepositoryFunction = ({ customerId, client }) =>
   client.all(
-    "SELECT order_id, total FROM bounda_order_summary WHERE customer_id = ? ORDER BY total DESC",
+    "SELECT order_id, total FROM bounda_rm_order_summary WHERE customer_id = ? ORDER BY total DESC",
     [customerId],
   );
 ```

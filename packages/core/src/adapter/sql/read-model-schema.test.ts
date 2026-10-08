@@ -67,10 +67,10 @@ describe("columnsOf", () => {
 describe("createTableStatements", () => {
   it("creates the table and one index per indexed, non-unique column", () => {
     const columns = columnsOf({ readModel: "orderSummary", fields, dialect: sqliteDialect });
-    expect(createTableStatements({ table: "bounda_order_summary", columns })).toEqual([
-      'CREATE TABLE IF NOT EXISTS "bounda_order_summary" ("order_id" TEXT PRIMARY KEY, "customer_id" TEXT NOT NULL, "email" TEXT NOT NULL UNIQUE, "total" REAL NOT NULL, "paid" INTEGER NOT NULL, "paid_at" TEXT, "lines" TEXT)',
-      'CREATE INDEX IF NOT EXISTS "bounda_order_summary_customer_id_idx" ON "bounda_order_summary" ("customer_id")',
-      'CREATE INDEX IF NOT EXISTS "bounda_order_summary_lines_idx" ON "bounda_order_summary" ("lines")',
+    expect(createTableStatements({ table: "bounda_rm_order_summary", columns })).toEqual([
+      'CREATE TABLE IF NOT EXISTS "bounda_rm_order_summary" ("order_id" TEXT PRIMARY KEY, "customer_id" TEXT NOT NULL, "email" TEXT NOT NULL UNIQUE, "total" REAL NOT NULL, "paid" INTEGER NOT NULL, "paid_at" TEXT, "lines" TEXT)',
+      'CREATE INDEX IF NOT EXISTS "bounda_rm_order_summary_customer_id_idx" ON "bounda_rm_order_summary" ("customer_id")',
+      'CREATE INDEX IF NOT EXISTS "bounda_rm_order_summary_lines_idx" ON "bounda_rm_order_summary" ("lines")',
     ]);
   });
 
@@ -146,9 +146,9 @@ describe("rebuild statements", () => {
   const columns = columnsOf({ readModel: "orderSummary", fields, dialect: sqliteDialect });
 
   it("names the shadow and the retired table after the live one", () => {
-    expect(rebuildTablesFor("bounda_order_summary")).toEqual({
-      shadow: "bounda_order_summary__rebuild",
-      retired: "bounda_order_summary__retired",
+    expect(rebuildTablesFor("bounda_rm_order_summary")).toEqual({
+      shadow: "bounda_rm_order_summary__rebuild",
+      retired: "bounda_rm_order_summary__retired",
     });
   });
 
