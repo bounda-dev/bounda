@@ -172,6 +172,9 @@ describe("boot", () => {
     await expect(
       boot({ root, registryPath: "bounda.config.ts", signals: false, logger: silentLogger }),
     ).rejects.toThrow(/does not export the registry/);
+    await expect(
+      boot({ root, configPath: "registry.ts", registry, signals: false, logger: silentLogger }),
+    ).rejects.toThrow(/registry\.ts does not export the configuration \(default export\)$/);
   });
 
   it("removes its signal listeners once the app is stopped", async () => {
