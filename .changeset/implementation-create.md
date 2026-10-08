@@ -18,8 +18,8 @@ both require it when the registered environment is one an empty object does not 
 storage and in reverse order; one that fails to close is logged and the rest still close. A
 default export is never closed.
 
-The `+types` of an implementation adds `Implementation.Create` and `Implementation.CreateArgs`;
-`CreateArgs`, `CreateImplementation`, `AppEnv` and `EnvSection` are new public types, and
+`create` is typed as `CreateImplementation<Port>`; `CreateArgs`, `CreateImplementation`, `AppEnv`
+and `EnvSection` are new public types, and
 `ImplementationModule` accepts either export. `selectImplementations` returns the chosen module
 rather than its default export, and the registry check rejects a module that exports both or
 neither. Run `bounda generate` to update generated files.

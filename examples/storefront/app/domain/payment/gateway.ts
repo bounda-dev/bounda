@@ -1,12 +1,14 @@
-export interface Intent {
+export interface CreateIntentArgs {
   readonly paymentId: string;
   readonly orderId: string;
   readonly amount: number;
+  readonly idempotencyKey: string;
 }
 
-export interface Refund {
+export interface RefundArgs {
   readonly intentId: string;
   readonly amount: number;
+  readonly idempotencyKey: string;
 }
 
 /**
@@ -14,6 +16,6 @@ export interface Refund {
  * the provider tells the app how it went through webhooks. Both calls honour the idempotency key.
  */
 export interface Gateway {
-  createIntent(intent: Intent, idempotencyKey: string): Promise<{ readonly intentId: string }>;
-  refund(refund: Refund, idempotencyKey: string): Promise<{ readonly refundId: string }>;
+  createIntent(args: CreateIntentArgs): Promise<{ readonly intentId: string }>;
+  refund(args: RefundArgs): Promise<{ readonly refundId: string }>;
 }

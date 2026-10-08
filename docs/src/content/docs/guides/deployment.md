@@ -28,7 +28,7 @@ that yourself, as a script would.
 
 The environment implementations' `create` receives is `process.env`, with `.env` already loaded, so
 a secret such as an API key reaches the implementation that needs it without being read at the
-top of a module. See [Ports](/guides/project-layout/#ports-port).
+top of a module. See [Ports](/guides/project-layout/#ports-portts).
 
 ## Roles
 

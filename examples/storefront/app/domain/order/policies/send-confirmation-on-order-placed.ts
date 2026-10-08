@@ -6,13 +6,11 @@ export const handler = async ({
   notifier,
   idempotencyKey,
 }: Policy.HandlerArgs) => {
-  await notifier(
-    {
-      orderId: event.aggregateId,
-      customerId: event.payload.customerId,
-      total: event.payload.total,
-    },
+  await notifier({
+    orderId: event.aggregateId,
+    customerId: event.payload.customerId,
+    total: event.payload.total,
     idempotencyKey,
-  );
+  });
   await commands.recordConfirmationSent({ orderId: event.aggregateId });
 };

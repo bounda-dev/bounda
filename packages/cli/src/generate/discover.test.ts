@@ -10,17 +10,29 @@ const fixtureRoot = resolve(import.meta.dirname, "../../../core/test-types/fixtu
 
 const temporaryRoots: string[] = [];
 
-const project = async (files: readonly string[]): Promise<string> => {
+// A module at an aggregate's root is an event only when it exports an event's function, so that
+// is what one gets unless the test gives the content.
+const contentOf = (file: string): string => {
+  const module = /^[^/]+\/domain\/[^/]+\/([^/]+)\.ts$/.exec(file)?.[1];
+  return module === undefined || module === "state" || module.endsWith(".upcast")
+    ? "export {};\n"
+    : "export const evolve = () => ({});\n";
+};
+
+const project = async (
+  files: readonly (string | readonly [file: string, content: string])[],
+): Promise<string> => {
   const root = await mkdtemp(join(tmpdir(), "bounda-discover-"));
   temporaryRoots.push(root);
-  for (const file of files) {
+  for (const entry of files) {
+    const [file, content] = typeof entry === "string" ? [entry, contentOf(entry)] : entry;
     const path = join(root, file);
     if (file.endsWith("/")) {
       await mkdir(path, { recursive: true });
       continue;
     }
     await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, "export {};\n");
+    await writeFile(path, content);
   }
   return root;
 };
@@ -56,7 +68,7 @@ const relativePaths = (model: ProjectModel): Record<string, unknown> => ({
     ports: aggregate.ports.map((port) => ({
       key: port.key,
       typeName: port.typeName,
-      contract: port.contract.relativePath,
+      path: port.relativePath,
       implementations: port.implementations.map((implementation) => [
         implementation.name,
         implementation.relativePath,
@@ -137,30 +149,30 @@ describe("discoverProject on the order-app fixture", () => {
             {
               key: "auditLog",
               typeName: "AuditLog",
-              contract: "app/domain/order/audit-log/index.ts",
-              implementations: [["memory", "app/domain/order/audit-log/memory.ts"]],
+              path: "app/domain/order/audit-log.ts",
+              implementations: [["memory", "app/domain/order/infrastructure/audit-log/memory.ts"]],
             },
             {
               key: "inventory",
               typeName: "Inventory",
-              contract: "app/domain/order/inventory/index.ts",
+              path: "app/domain/order/inventory.ts",
               implementations: [
-                ["fake", "app/domain/order/inventory/fake.ts"],
-                ["http", "app/domain/order/inventory/http.ts"],
-                ["memory", "app/domain/order/inventory/memory.ts"],
+                ["fake", "app/domain/order/infrastructure/inventory/fake.ts"],
+                ["http", "app/domain/order/infrastructure/inventory/http.ts"],
+                ["memory", "app/domain/order/infrastructure/inventory/memory.ts"],
               ],
             },
             {
               key: "mailer",
               typeName: "Mailer",
-              contract: "app/domain/order/mailer/index.ts",
-              implementations: [["memory", "app/domain/order/mailer/memory.ts"]],
+              path: "app/domain/order/mailer.ts",
+              implementations: [["memory", "app/domain/order/infrastructure/mailer/memory.ts"]],
             },
             {
               key: "reminders",
               typeName: "Reminders",
-              contract: "app/domain/order/reminders/index.ts",
-              implementations: [["fake", "app/domain/order/reminders/fake.ts"]],
+              path: "app/domain/order/reminders.ts",
+              implementations: [["fake", "app/domain/order/infrastructure/reminders/fake.ts"]],
             },
           ],
           commands: [
@@ -301,10 +313,9 @@ describe("discoverProject convention problems", () => {
       "app/domain/loose.ts: Aggregates are directories, not modules",
       "app/domain/order/notes.md: only .ts modules are allowed here",
       "app/domain/order/orderPlaced.ts: Event names must be kebab-case (lower-case letters, digits and dashes)",
-      "app/domain/order/helpers: a port directory needs an index.ts exporting its interface: export interface Helpers",
-      "app/domain/order/commands/audit.memory.ts: ports live at the aggregate root, one directory per port: <port>/index.ts with its interface and <port>/<implementation>.ts",
+      "app/domain/order/commands/audit.memory.ts: a port is <port>.ts at the aggregate root; its implementations live in infrastructure/<port>/<implementation>.ts",
       "app/domain/order/commands/pay_order.ts: Command names must be kebab-case (lower-case letters, digits and dashes)",
-      "app/domain/order/policies/nested: a policy is a file; ports live at the aggregate root, one directory per port: <port>/index.ts with its interface and <port>/<implementation>.ts",
+      "app/domain/order/policies/nested: a policy is a file; a port is <port>.ts at the aggregate root; its implementations live in infrastructure/<port>/<implementation>.ts",
       "app/domain/orders_v2: Aggregate names must be kebab-case (lower-case letters, digits and dashes)",
       "app/read/broken: a read model needs a view.ts with its fields",
       "app/read/order-summary/README.md: only .ts modules are allowed here",
@@ -319,9 +330,12 @@ describe("discoverProject convention problems", () => {
       "app/domain/order/order-placed.upcast.ts",
       "app/domain/order/order-shipped.upcast.ts",
       "app/domain/order/Order_Paid.upcast.ts",
+      ["app/domain/order/order-refunded.ts", "export const refund = () => ({});\n"],
+      "app/domain/order/order-refunded.upcast.ts",
     ]);
     expect(await problemsOf(root)).toEqual([
       "app/domain/order/Order_Paid.upcast.ts: Event names must be kebab-case (lower-case letters, digits and dashes)",
+      "app/domain/order/order-refunded.upcast.ts: order-refunded.ts is not an event: an event exports payload, begin or evolve",
       "app/domain/order/order-shipped.upcast.ts: an upcast module needs the event order-shipped.ts next to it",
     ]);
     const valid = await project([
@@ -386,89 +400,155 @@ describe("discoverProject convention problems", () => {
     );
   });
 
-  it("finds the ports of an aggregate with their contract and implementations, sorted", async () => {
+  it("takes for an event the root module that exports an event's function, and leaves the rest alone", async () => {
+    const root = await project([
+      [
+        "app/domain/order/order-placed.ts",
+        'import type { Event } from "./+types/order-placed";\nexport const payload = ({ z }: Event.PayloadArgs) => z.object({});\nexport const begin = () => ({});\n',
+      ],
+      ["app/domain/order/order-paid.ts", "export function evolve() {\n  return {};\n}\n"],
+      [
+        "app/domain/order/order-shipped.ts",
+        "const evolve = () => ({});\nexport interface Shipped {}\nexport { evolve };\n",
+      ],
+      [
+        "app/domain/order/money.ts",
+        "export interface Money {}\nexport const create = () => ({});\nexport const apply = () => ({});\n",
+      ],
+      ["app/domain/order/pricing.ts", "export async function totalOf() {\n  return 0;\n}\n"],
+      [
+        "app/domain/order/notes.ts",
+        "// export const evolve = () => ({});\nexport type Note = string;\n",
+      ],
+      "app/domain/order/helpers/format.ts",
+    ]);
+    const model = await discoverProject({ root });
+    expect(model.aggregates[0]?.events.map((event) => event.key)).toEqual([
+      "orderPaid",
+      "orderPlaced",
+      "orderShipped",
+    ]);
+    expect(model.aggregates[0]?.ports).toEqual([]);
+  });
+
+  it("rejects a root module that exports an event's function next to anything else", async () => {
+    const root = await project([
+      [
+        "app/domain/order/order-cancelled.ts",
+        "export const evolve = () => ({});\nexport const reasons = [];\n",
+      ],
+      [
+        "app/domain/order/discount.ts",
+        "const apply = () => 0;\nexport { apply as evolve, apply };\nexport type { Discount } from './x';\n",
+      ],
+    ]);
+    expect(await problemsOf(root)).toEqual([
+      'app/domain/order/discount.ts: exports "evolve", an event\'s, and "apply" besides: an event exports only payload, begin and evolve',
+      'app/domain/order/order-cancelled.ts: exports "evolve", an event\'s, and "reasons" besides: an event exports only payload, begin and evolve',
+    ]);
+  });
+
+  it("finds the ports of an aggregate with their module and implementations, sorted", async () => {
     const root = await project([
       "app/domain/order/order-placed.ts",
-      "app/domain/order/notifier/index.ts",
-      "app/domain/order/notifier/smtp.ts",
-      "app/domain/order/notifier/in-memory.ts",
-      "app/domain/order/notifier/_shared.ts",
-      "app/domain/order/notifier/+types/smtp.ts",
-      "app/domain/order/notifier/smtp.test.ts",
-      "app/domain/order/audit-log/index.ts",
-      "app/domain/order/audit-log/memory.ts",
+      [
+        "app/domain/order/notifier.ts",
+        "export type Notifier = (message: string) => Promise<void>;\n",
+      ],
+      "app/domain/order/infrastructure/notifier/smtp.ts",
+      "app/domain/order/infrastructure/notifier/in-memory.ts",
+      "app/domain/order/infrastructure/notifier/_shared.ts",
+      "app/domain/order/infrastructure/notifier/+types/smtp.ts",
+      "app/domain/order/infrastructure/notifier/smtp.test.ts",
+      [
+        "app/domain/order/audit-log.ts",
+        "import type { X } from './x';\nexport interface AuditLog {\n  record(entry: string): void;\n}\n",
+      ],
+      "app/domain/order/infrastructure/audit-log/memory.ts",
+      ["app/domain/order/money.ts", "export interface Money {}\n"],
     ]);
-    await writeFile(
-      join(root, "app/domain/order/notifier/index.ts"),
-      "export type Notifier = (message: string) => Promise<void>;\n",
-    );
-    await writeFile(
-      join(root, "app/domain/order/audit-log/index.ts"),
-      "import type { X } from './x';\nexport interface AuditLog {\n  record(entry: string): void;\n}\n",
-    );
     const model = await discoverProject({ root });
     expect(
       model.aggregates[0]?.ports.map((port) => ({
         key: port.key,
         typeName: port.typeName,
-        contract: relative(root, port.contract.path),
-        implementations: port.implementations.map((implementation) => implementation.name),
+        path: relative(root, port.path),
+        implementations: port.implementations.map((implementation) => [
+          implementation.name,
+          relative(root, implementation.path),
+        ]),
       })),
     ).toEqual([
       {
         key: "auditLog",
         typeName: "AuditLog",
-        contract: "app/domain/order/audit-log/index.ts",
-        implementations: ["memory"],
+        path: "app/domain/order/audit-log.ts",
+        implementations: [["memory", "app/domain/order/infrastructure/audit-log/memory.ts"]],
       },
       {
         key: "notifier",
         typeName: "Notifier",
-        contract: "app/domain/order/notifier/index.ts",
-        implementations: ["in-memory", "smtp"],
+        path: "app/domain/order/notifier.ts",
+        implementations: [
+          ["in-memory", "app/domain/order/infrastructure/notifier/in-memory.ts"],
+          ["smtp", "app/domain/order/infrastructure/notifier/smtp.ts"],
+        ],
       },
+    ]);
+    expect(model.aggregates[0]?.events.map((event) => event.key)).toEqual(["orderPlaced"]);
+  });
+
+  it("rejects a port without a module, interface or implementations, with extra entries, reserved or named like an event", async () => {
+    const infrastructure = "app/domain/order/infrastructure";
+    const root = await project([
+      "app/domain/order/order-placed.ts",
+      `${infrastructure}/order-placed/memory.ts`,
+      `${infrastructure}/state/memory.ts`,
+      ["app/domain/order/signal.ts", "export interface Signal {}\n"],
+      `${infrastructure}/signal/memory.ts`,
+      ["app/domain/order/commands.ts", "export interface Commands {}\n"],
+      `${infrastructure}/commands/memory.ts`,
+      `${infrastructure}/idempotency-key/memory.ts`,
+      `${infrastructure}/no-port/memory.ts`,
+      ["app/domain/order/no-interface.ts", "export const noInterface = 1;\n"],
+      `${infrastructure}/no-interface/memory.ts`,
+      ["app/domain/order/no-implementation.ts", "export interface NoImplementation {}\n"],
+      `${infrastructure}/no-implementation/`,
+      `${infrastructure}/Bad_Port/memory.ts`,
+      ["app/domain/order/notes.ts", "export interface Notes {}\n"],
+      `${infrastructure}/notes/memory.ts`,
+      `${infrastructure}/notes/Bad_Impl.ts`,
+      `${infrastructure}/notes/README.md`,
+      `${infrastructure}/notes/deep/`,
+      `${infrastructure}/loose.ts`,
+      `${infrastructure}/README.md`,
+    ]);
+    expect(await problemsOf(root)).toEqual([
+      `${infrastructure}/README.md: only .ts modules are allowed here`,
+      `${infrastructure}/loose.ts: infrastructure holds one directory per port: infrastructure/<port>/<implementation>.ts`,
+      `${infrastructure}/Bad_Port: Port names must be kebab-case (lower-case letters, digits and dashes)`,
+      `${infrastructure}/commands: "commands" is reserved; give the port another name`,
+      `${infrastructure}/idempotency-key: "idempotencyKey" is reserved; give the port another name`,
+      `${infrastructure}/no-implementation: a port needs at least one implementation: infrastructure/no-implementation/<implementation>.ts`,
+      "app/domain/order/no-interface.ts: must export the port's interface, named after the file: export interface NoInterface",
+      `${infrastructure}/no-port: has no port: add no-port.ts at the aggregate root exporting interface NoPort`,
+      `${infrastructure}/notes/README.md: only .ts modules are allowed here`,
+      `${infrastructure}/notes/deep: a port's directory in infrastructure holds only its implementations`,
+      `${infrastructure}/notes/Bad_Impl.ts: Implementation names must be kebab-case (lower-case letters, digits and dashes)`,
+      `${infrastructure}/order-placed: order-placed.ts is an event of this aggregate; give the port another name`,
+      `${infrastructure}/signal: "signal" is reserved; give the port another name`,
+      `${infrastructure}/state: "state" is reserved; give the port another name`,
     ]);
   });
 
-  it("rejects a port without index.ts, interface or implementations, with extra entries, reserved or named like an event", async () => {
+  it("rejects a read model named like an aggregate", async () => {
     const root = await project([
       "app/domain/order/order-placed.ts",
-      "app/domain/order/order-placed/index.ts",
-      "app/domain/order/order-placed/memory.ts",
-      "app/domain/order/state/index.ts",
-      "app/domain/order/signal/index.ts",
-      "app/domain/order/reject/index.ts",
-      "app/domain/order/idempotency-key/index.ts",
-      "app/domain/order/no-index/memory.ts",
-      "app/domain/order/no-interface/index.ts",
-      "app/domain/order/no-interface/memory.ts",
-      "app/domain/order/no-implementation/index.ts",
-      "app/domain/order/Bad_Port/index.ts",
-      "app/domain/order/notes/index.ts",
-      "app/domain/order/notes/memory.ts",
-      "app/domain/order/notes/Bad_Impl.ts",
-      "app/domain/order/notes/README.md",
-      "app/domain/order/notes/deep/",
+      "app/read/order/view.ts",
+      "app/read/order-summary/view.ts",
     ]);
-    for (const port of ["order-placed", "no-implementation", "notes"]) {
-      await writeFile(
-        join(root, `app/domain/order/${port}/index.ts`),
-        `export interface ${port === "order-placed" ? "OrderPlaced" : port === "notes" ? "Notes" : "NoImplementation"} {}\n`,
-      );
-    }
     expect(await problemsOf(root)).toEqual([
-      "app/domain/order/Bad_Port: Port names must be kebab-case (lower-case letters, digits and dashes)",
-      'app/domain/order/idempotency-key: "idempotencyKey" is reserved; give the port another name',
-      "app/domain/order/no-implementation: a port needs at least one implementation next to its index.ts: no-implementation/<implementation>.ts",
-      "app/domain/order/no-index: a port directory needs an index.ts exporting its interface: export interface NoIndex",
-      "app/domain/order/no-interface/index.ts: must export the port's interface, named after the directory: export interface NoInterface",
-      "app/domain/order/notes/README.md: only .ts modules are allowed here",
-      "app/domain/order/notes/deep: a port directory holds only index.ts and its implementations",
-      "app/domain/order/notes/Bad_Impl.ts: Implementation names must be kebab-case (lower-case letters, digits and dashes)",
-      'app/domain/order/order-placed: "orderPlaced" is also an event of this aggregate; give the port another name',
-      'app/domain/order/reject: "reject" is reserved; give the port another name',
-      'app/domain/order/signal: "signal" is reserved; give the port another name',
-      'app/domain/order/state: "state" is reserved; give the port another name',
+      'app/read/order: "order" is also an aggregate; give the read model another name',
     ]);
   });
 
@@ -487,7 +567,7 @@ describe("discoverProject convention problems", () => {
       "app/domain/payment/payment-failed.ts",
     ]);
     const hint =
-      "ports live at the aggregate root, one directory per port: <port>/index.ts with its interface and <port>/<implementation>.ts";
+      "a port is <port>.ts at the aggregate root; its implementations live in infrastructure/<port>/<implementation>.ts";
     expect(await problemsOf(root)).toEqual([
       `app/domain/order/commands/place-order: a command is a file; ${hint}`,
       `app/domain/order/commands/inventory.fake.ts: ${hint}`,

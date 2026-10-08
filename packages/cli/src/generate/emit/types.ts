@@ -114,7 +114,7 @@ const emitPorts = (aggregate: AggregateModel, path: string): string =>
         `export type ${portsTypeName(aggregate.name)} = {`,
         ...aggregate.ports.map(
           (port) =>
-            `  readonly ${port.key}: import("${importPath({ from: path, to: port.contract.path })}").${port.typeName};`,
+            `  readonly ${port.key}: import("${importPath({ from: path, to: port.path })}").${port.typeName};`,
         ),
         "};",
       ].join("\n");

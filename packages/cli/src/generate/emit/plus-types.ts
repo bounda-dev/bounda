@@ -94,25 +94,6 @@ const eventFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFile
 const portsType = (aggregate: AggregateModel): string =>
   `generated.${portsTypeName(aggregate.name)}`;
 
-const implementationFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFile[] =>
-  aggregate.ports.flatMap((port) =>
-    port.implementations.map((implementation) => {
-      const path = plusTypesPath(implementation.path);
-      return render(path, typesPath, {
-        imports: { generated: false, module: null },
-        extraTypes: [
-          `type Port = import("${importPath({ from: path, to: port.contract.path })}").${port.typeName};`,
-        ],
-        namespace: "Implementation",
-        members: [
-          ["Contract", "Port"],
-          ["CreateArgs", "core.CreateArgs"],
-          ["Create", "core.CreateImplementation<Port>"],
-        ],
-      });
-    }),
-  );
-
 const commandFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFile[] =>
   aggregate.commands.map((command) =>
     render(plusTypesPath(command.path), typesPath, {
@@ -311,7 +292,6 @@ const readModelFiles = (
 export const emitPlusTypes: EmitPlusTypesFunction = ({ model, typesPath }) => [
   ...model.aggregates.flatMap((aggregate) => [
     ...eventFiles(aggregate, typesPath),
-    ...implementationFiles(aggregate, typesPath),
     ...commandFiles(aggregate, typesPath),
     ...policyFiles(model, aggregate, typesPath),
     ...processFiles(model, aggregate, typesPath),

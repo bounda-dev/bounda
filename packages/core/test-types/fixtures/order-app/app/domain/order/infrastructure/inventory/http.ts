@@ -1,6 +1,7 @@
-import type { Implementation } from "./+types/http";
+import type { CreateImplementation } from "@bounda-dev/core";
+import type { Inventory } from "../../inventory.ts";
 
-export const create: Implementation.Create = ({ env }) => {
+export const create: CreateImplementation<Inventory> = ({ env }) => {
   const url = env.INVENTORY_URL ?? "http://localhost:8080";
   return {
     async reserve(skus) {

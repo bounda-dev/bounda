@@ -25,10 +25,11 @@ Never edit anything under `.bounda/` or a `+types/` directory; both are generate
 ```
 app/domain/<aggregate>/
   state.ts                         optional: export const initialState = {...}; export const aggregateId = "<field>"
-  <event>.ts                       export const payload (optional); export const begin (the event that opens the aggregate) and/or export const evolve
+  <event>.ts                       export const payload (optional); export const begin (the event that opens the aggregate) and/or export const evolve; nothing else at run time
   <event>.upcast.ts                optional: export const upcasts (oldest version first)
-  <port>/index.ts                  a port: export interface <Port> (PascalCase of the directory)
-  <port>/<implementation>.ts       export default ... satisfies Implementation.Contract, or export const create: Implementation.Create; every handler of the aggregate receives it as <port>
+  <port>.ts                        a port: export interface <Port> (PascalCase of the file); a port because infrastructure/<port>/ exists
+  <anything-else>.ts, <dir>/       value objects, domain services, helpers: ignored by the generator, imported by the handlers
+  infrastructure/<port>/<implementation>.ts   export default ... satisfies <Port>, or export const create: CreateImplementation<Port>; every handler of the aggregate receives the port as <port>
   commands/<command>.ts            export const payload, export const handler
   policies/<action>-on-<event>.ts  export const handler; on and delay optional
   policies/<other-aggregate>/...   the same shape, reacting to that aggregate's events
@@ -89,36 +90,41 @@ export const handler = ({ command, state, events, reject }: Command.HandlerArgs)
 };
 ```
 
-Port (`order/inventory/index.ts` with the interface, `order/inventory/fake.ts` and
-`order/inventory/http.ts` implementing it; `bounda.config.ts` selects one with
+Port (`order/inventory.ts` with the interface, `order/infrastructure/inventory/fake.ts` and
+`order/infrastructure/inventory/http.ts` implementing it; `bounda.config.ts` selects one with
 `ports: { order: { inventory: "fake" } }`, and every handler of `order` receives it as
-`inventory`):
+`inventory`). Each operation takes one `XxxArgs` object; a port with one operation may be callable:
 
 ```ts
-// order/inventory/index.ts
-export interface Inventory {
-  available(skus: readonly string[]): Promise<boolean>;
+// order/inventory.ts
+export interface AvailableArgs {
+  readonly skus: readonly string[];
 }
 
-// order/inventory/fake.ts
-import type { Implementation } from "./+types/fake";
+export interface Inventory {
+  available(args: AvailableArgs): Promise<boolean>;
+}
 
-export default { available: async () => true } satisfies Implementation.Contract;
+// order/infrastructure/inventory/fake.ts: no +types, it imports its port
+import type { Inventory } from "../../inventory.ts";
 
-// order/inventory/http.ts: an implementation with state (client, pool, secret) builds it in create
-import type { Implementation } from "./+types/http";
+export default { available: async () => true } satisfies Inventory;
 
-export const create: Implementation.Create = ({ env }) => {
+// order/infrastructure/inventory/http.ts: an implementation with state (client, pool, secret) builds it in create
+import type { CreateImplementation } from "@bounda-dev/core";
+import type { Inventory } from "../../inventory.ts";
+
+export const create: CreateImplementation<Inventory> = ({ env }) => {
   const url = env.INVENTORY_URL;
   if (url === undefined) throw new Error("INVENTORY_URL is not set");
-  return { available: async (skus) => (await fetch(`${url}/${skus.join(",")}`)).ok };
+  return { available: async ({ skus }) => (await fetch(`${url}/${skus.join(",")}`)).ok };
 };
 
 // order/commands/place-order.ts
 export const rejections = () => ({ OutOfStock: "Some of the items are out of stock" });
 
 export const handler = async ({ command, events, inventory, reject }: Command.HandlerArgs) => {
-  if (!(await inventory.available(command.payload.skus))) return reject("OutOfStock");
+  if (!(await inventory.available({ skus: command.payload.skus }))) return reject("OutOfStock");
   return [events.orderPlaced(command.payload)];
 };
 ```
@@ -126,8 +132,8 @@ export const handler = async ({ command, events, inventory, reject }: Command.Ha
 The config type is generated: a port with several implementations must be named, the value is
 one of the file names, and a choice from the environment spells both branches
 (`process.env.INVENTORY === "fake" ? "fake" : "http"`). Shared domain logic without
-implementations is a `_name.ts` file the generator ignores; a provider two aggregates use is a
-port in each, sharing a client from outside `app/domain`.
+implementations is any other module of the aggregate, which the generator ignores; a provider two
+aggregates use is a port in each, sharing a client from outside `app/domain`.
 
 An implementation exports `default` or `create`, never both. `create` may be async and runs once
 per app with `{ env, logger, clock }`: `env` is `process.env` under `boot()`, the Durable
@@ -167,11 +173,11 @@ export const handler = async ({ event, commands }: Policy.HandlerArgs) => {
 ```
 
 Policy using a port of its aggregate (`policies/send-receipt-on-order-paid.ts`, with
-`order/mailer/`):
+`order/mailer.ts`):
 
 ```ts
 export const handler = async ({ event, commands, mailer, idempotencyKey }: Policy.HandlerArgs) => {
-  await mailer.sendReceipt({ orderId: event.aggregateId }, idempotencyKey);
+  await mailer.sendReceipt({ orderId: event.aggregateId, idempotencyKey });
   await commands.recordReceiptSent({ orderId: event.aggregateId });
 };
 ```

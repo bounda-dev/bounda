@@ -9,6 +9,6 @@ export const handler = async ({
   emailSender,
   idempotencyKey,
 }: Policy.HandlerArgs) => {
-  await emailSender.send({ to: event.payload.email, name: event.payload.name }, idempotencyKey);
+  await emailSender({ to: event.payload.email, name: event.payload.name, idempotencyKey });
   await commands.recordWelcomeEmailSent({ userId: event.aggregateId, to: event.payload.email });
 };

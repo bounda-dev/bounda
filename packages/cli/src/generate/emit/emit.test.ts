@@ -140,14 +140,12 @@ const model: ProjectModel = {
 const port = (name: string, typeName: string, implementations: readonly string[]) => ({
   key: name,
   typeName,
-  contract: {
-    path: `/project/app/domain/order/${name}/index.ts`,
-    relativePath: `app/domain/order/${name}/index.ts`,
-  },
+  path: `/project/app/domain/order/${name}.ts`,
+  relativePath: `app/domain/order/${name}.ts`,
   implementations: implementations.map((implementation) => ({
     name: implementation,
-    path: `/project/app/domain/order/${name}/${implementation}.ts`,
-    relativePath: `app/domain/order/${name}/${implementation}.ts`,
+    path: `/project/app/domain/order/infrastructure/${name}/${implementation}.ts`,
+    relativePath: `app/domain/order/infrastructure/${name}/${implementation}.ts`,
   })),
 });
 
@@ -220,11 +218,9 @@ describe("emitRegistry", () => {
     expect(content).toContain(
       'import type { ImplementationModule, Registry } from "@bounda-dev/core";',
     );
+    expect(content).toContain('import type * as orderMailer from "../app/domain/order/mailer.ts";');
     expect(content).toContain(
-      'import type * as orderMailer from "../app/domain/order/mailer/index.ts";',
-    );
-    expect(content).toContain(
-      'import * as orderMailerInMemory from "../app/domain/order/mailer/in-memory.ts";',
+      'import * as orderMailerInMemory from "../app/domain/order/infrastructure/mailer/in-memory.ts";',
     );
     expect(content).toContain(
       [
@@ -275,10 +271,10 @@ describe("emitRegistry", () => {
       path: "/project/.bounda/registry.ts",
     });
     expect(content).toContain(
-      'import type * as mailerOrderMailer from "../app/domain/order/mailer/index.ts";',
+      'import type * as mailerOrderMailer from "../app/domain/order/mailer.ts";',
     );
     expect(content).toContain(
-      'import * as mailerOrderMailerSmtp from "../app/domain/order/mailer/smtp.ts";',
+      'import * as mailerOrderMailerSmtp from "../app/domain/order/infrastructure/mailer/smtp.ts";',
     );
     expect(content).toContain(
       'import * as orderOrderMailer from "../app/domain/order/order-mailer.ts";',
@@ -424,8 +420,8 @@ describe("emitTypes with ports", () => {
     expect(content).toContain(
       [
         "export type OrderPorts = {",
-        '  readonly mailer: import("../app/domain/order/mailer/index.ts").Mailer;',
-        '  readonly sms: import("../app/domain/order/sms/index.ts").Sms;',
+        '  readonly mailer: import("../app/domain/order/mailer.ts").Mailer;',
+        '  readonly sms: import("../app/domain/order/sms.ts").Sms;',
         "};",
       ].join("\n"),
     );
@@ -474,7 +470,7 @@ describe("emitTypes with ports", () => {
 });
 
 describe("emitProject with ports", () => {
-  it("gives every handler of the aggregate its ports and each implementation its contract", () => {
+  it("gives every handler of the aggregate its ports, and implementations no +types", () => {
     const files = emitProject({ model: withPorts });
     const contentOf = (suffix: string) =>
       files.find((file) => file.path.endsWith(suffix))?.content ?? "";
@@ -482,20 +478,7 @@ describe("emitProject with ports", () => {
     expect(contentOf("policies/+types/notify-on-order-placed.ts")).toContain(
       "generated.OrderPorts",
     );
-    expect(contentOf("mailer/+types/in-memory.ts")).toBe(
-      [
-        'import type * as core from "@bounda-dev/core";',
-        "",
-        'type Port = import("../index.ts").Mailer;',
-        "",
-        "export declare namespace Implementation {",
-        "  type Contract = Port;",
-        "  type CreateArgs = core.CreateArgs;",
-        "  type Create = core.CreateImplementation<Port>;",
-        "}",
-        "",
-      ].join("\n"),
-    );
+    expect(files.filter((file) => file.path.includes("/infrastructure/"))).toEqual([]);
   });
 });
 

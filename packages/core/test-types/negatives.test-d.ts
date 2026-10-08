@@ -14,7 +14,7 @@ import type { Commands } from "./fixtures/order-app/.bounda/types.ts";
 import type { Command as RegisterCustomer } from "./fixtures/order-app/app/domain/customer/commands/+types/register-customer.ts";
 import type { Command as PayOrder } from "./fixtures/order-app/app/domain/order/commands/+types/pay-order.ts";
 import type { Command as PlaceOrder } from "./fixtures/order-app/app/domain/order/commands/+types/place-order.ts";
-import type { Implementation as InventoryFake } from "./fixtures/order-app/app/domain/order/inventory/+types/fake.ts";
+import type { Inventory } from "./fixtures/order-app/app/domain/order/inventory.ts";
 import type { Process as AtNextReminder } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/at-next-reminder.ts";
 import type { Process as OrderPayment } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/index.ts";
 import type { Process as OnOrderPaid } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/on-order-paid.ts";
@@ -197,15 +197,15 @@ describe("what does not compile", () => {
 
   it("an implementation that does not fulfil its port's contract", () => {
     // @ts-expect-error reserve is missing
-    const wrongShape = { default: {} } satisfies ImplementationModule<InventoryFake.Contract>;
+    const wrongShape = { default: {} } satisfies ImplementationModule<Inventory>;
     const wrongSignature = {
       // @ts-expect-error reserve takes the skus, not a number
       default: { reserve: async (count: number) => count },
-    } satisfies ImplementationModule<InventoryFake.Contract>;
+    } satisfies ImplementationModule<Inventory>;
     const namedExport = {
       // @ts-expect-error an implementation module exports the port as default
       reserve: async () => {},
-    } satisfies ImplementationModule<InventoryFake.Contract>;
+    } satisfies ImplementationModule<Inventory>;
     void [wrongShape, wrongSignature, namedExport];
   });
 
@@ -214,11 +214,11 @@ describe("what does not compile", () => {
       default: { reserve: async () => {} },
       create: () => ({ reserve: async () => {} }),
       // @ts-expect-error an implementation exports default or create, never both
-    } satisfies ImplementationModule<InventoryFake.Contract>;
+    } satisfies ImplementationModule<Inventory>;
     const wrongPort = {
       // @ts-expect-error create must build an Inventory
       create: () => ({ reserve: async (count: number) => count }),
-    } satisfies ImplementationModule<InventoryFake.Contract>;
+    } satisfies ImplementationModule<Inventory>;
     void [both, wrongPort];
   });
 

@@ -63,16 +63,19 @@ second report:
 ```ts
 // policies/send-confirmation-on-order-placed.ts
 export const handler = async ({ event, commands, notifier, idempotencyKey }: Policy.HandlerArgs) => {
-  await notifier(
-    { orderId: event.aggregateId, customerId: event.payload.customerId, total: event.payload.total },
+  await notifier({
+    orderId: event.aggregateId,
+    customerId: event.payload.customerId,
+    total: event.payload.total,
     idempotencyKey,
-  );
+  });
   await commands.recordConfirmationSent({ orderId: event.aggregateId });
 };
 ```
 
-**A port with two implementations.** `order/notifier/index.ts` declares the contract, a
-callable `Notifier`; `console.ts` and `memory.ts` next to it implement it. The config decides,
+**A port with two implementations.** `order/notifier.ts` declares the contract, a callable
+`Notifier` that takes `NotifierArgs`; `console.ts` and `memory.ts` in
+`order/infrastructure/notifier/` implement it. The config decides,
 and only one of the two names compiles:
 
 ```ts

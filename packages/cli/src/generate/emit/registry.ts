@@ -36,7 +36,7 @@ const collectImports = (model: ProjectModel): readonly ImportEntry[] => {
     // The port is the owner, not the aggregate: an event named `<aggregate>-<port>` would
     // otherwise share both the alias and the prefix that makes aliases unique.
     for (const port of aggregate.ports) {
-      add(joinKeys(aggregate.name, port.key), port.key, port.contract.path, "type");
+      add(joinKeys(aggregate.name, port.key), port.key, port.path, "type");
       for (const implementation of port.implementations) {
         add(
           joinKeys(aggregate.name, port.key, keyOf(implementation.name)),
@@ -128,7 +128,7 @@ const emitPorts = (aggregate: AggregateModel, aliases: Aliases, indent: string):
       `${inner}${port.key}: {`,
       ...port.implementations.map(
         (implementation) =>
-          `${inner}  ${propertyKey(implementation.name)}: ${aliases.of(implementation.path)} satisfies ImplementationModule<${aliases.of(port.contract.path)}.${port.typeName}>,`,
+          `${inner}  ${propertyKey(implementation.name)}: ${aliases.of(implementation.path)} satisfies ImplementationModule<${aliases.of(port.path)}.${port.typeName}>,`,
       ),
       `${inner}},`,
     ]),

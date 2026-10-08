@@ -3,13 +3,13 @@
 "@bounda-dev/cli": minor
 ---
 
-Ports belong to the aggregate, and replace collaborators. A port is a directory at the aggregate's root,
-`order/notifier/`, whose `index.ts` exports its interface named after the directory
-(`Notifier`) and whose other files implement it with a default export
-(`order/notifier/smtp.ts`); every handler of the aggregate receives it, its commands, policies
-and processes alike, so a call to the outside world can run in the policy or process that reacts
-to a stored event instead of inside a command handler that a concurrency conflict reruns. The
-`+types` of an implementation gives it the interface as `Implementation.Contract`, and the
+Ports belong to the aggregate, and replace collaborators. A port is a module at the aggregate's
+root, `order/notifier.ts`, that exports its interface named after the file (`Notifier`), and its
+implementations live in `order/infrastructure/notifier/`, one file each with a default export
+(`order/infrastructure/notifier/smtp.ts`). Every handler of the aggregate receives it, its
+commands, policies and processes alike, so a call to the outside world can run in the policy or
+process that reacts to a stored event instead of inside a command handler that a concurrency
+conflict reruns. An implementation imports its port and fulfils it with `satisfies`, and the
 generated registry checks each implementation against it, so one that does not fulfil the
 contract fails `tsc`.
 
@@ -29,5 +29,5 @@ of the command, policy and process entries become the aggregate entry's `ports`,
 and `PortsSection` are new, and `selectCollaborators` becomes `selectImplementations`, with
 `SelectImplementationsArgs` and `SelectImplementationsFunction`, and takes the aggregate. `bounda generate`
 rejects a port named after a handler argument (`command`, `state`, `events`, `event`, `commands`,
-`idempotencyKey`, `signal`, `aggregateId`, `after`), after an event of its aggregate, or
-`commands`, `policies` or `processes`. Run `bounda generate` to update generated files.
+`idempotencyKey`, `signal`, `aggregateId`, `after`, `reject`) or after an event of its aggregate.
+Run `bounda generate` to update generated files.

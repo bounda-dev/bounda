@@ -13,7 +13,7 @@ pnpm start           # runs a scenario against data/storefront.db and prints the
 ```
 
 `pnpm start` places three orders: one paid, one whose payment is declined, and one the customer
-cancels and then pays anyway, which is refunded. The provider is a fake (`payment/gateway/fake.ts`)
+cancels and then pays anyway, which is refunded. The provider is a fake (`payment/infrastructure/gateway/fake.ts`)
 and its webhooks are commands the script dispatches: `markPaymentProcessing`, `settlePayment` and
 `declinePayment`.
 

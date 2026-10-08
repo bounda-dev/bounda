@@ -178,7 +178,7 @@ describe("state inference on the edges", () => {
       "app/domain/ticket/b-second.ts":
         'export const evolve = () => ({ status: "alpha" as const });\n',
       "app/domain/ticket/c-quiet.ts":
-        "const evolve = () => ({ hidden: true });\nexport const note = evolve;\n",
+        "const evolve = () => ({ hidden: true });\nexport { evolve as payload };\n",
       "app/domain/ticket/d-broken.ts": "export const evolve = 42;\n",
       "app/domain/blank/blank-made.ts": "export const evolve = () => ({});\n",
     });

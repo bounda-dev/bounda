@@ -100,8 +100,11 @@ describe("bounda generate", () => {
 
   it("exits 1 and lists every problem when the layout breaks a convention", async () => {
     const root = await project();
-    await mkdir(join(root, "app/domain/order/helpers"));
-    await writeFile(join(root, "app/domain/order/Order_Shipped.ts"), "export {};\n");
+    await mkdir(join(root, "app/domain/order/infrastructure/helpers"), { recursive: true });
+    await writeFile(
+      join(root, "app/domain/order/Order_Shipped.ts"),
+      "export const evolve = () => ({});\n",
+    );
     const result = await cli(["generate"], root);
     expect(result.code).toBe(EXIT_CONVENTION);
     expect(result.stdout).toBe("");
@@ -109,7 +112,7 @@ describe("bounda generate", () => {
       [
         "error: 2 problems in the project layout",
         "  app/domain/order/Order_Shipped.ts: Event names must be kebab-case (lower-case letters, digits and dashes)",
-        "  app/domain/order/helpers: a port directory needs an index.ts exporting its interface: export interface Helpers",
+        "  app/domain/order/infrastructure/helpers: has no port: add helpers.ts at the aggregate root exporting interface Helpers",
         "",
       ].join("\n"),
     );

@@ -254,7 +254,10 @@ describe("bounda() Vite plugin", () => {
 
   it("logs convention problems in dev and fails the build with them", async () => {
     const root = await project();
-    await writeFile(join(root, "app/domain/order/BadName.ts"), "export {};\n");
+    await writeFile(
+      join(root, "app/domain/order/BadName.ts"),
+      "export const evolve = () => ({});\n",
+    );
     const dev = harness(root);
     dev.configure("serve");
     await dev.start();
@@ -381,7 +384,7 @@ describe("bounda() Vite plugin", () => {
     await start();
     const watcher = serve();
 
-    await writeFile(join(root, "app/domain/order/Loose.ts"), "export {};\n");
+    await writeFile(join(root, "app/domain/order/Loose.ts"), "export const evolve = () => ({});\n");
     watcher.emit("add", join(root, "app/domain/order/Loose.ts"));
     clock.advance(20);
     await until(async () => recorded.errors.join("\n").includes("Loose.ts"));

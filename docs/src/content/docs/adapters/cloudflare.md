@@ -89,10 +89,11 @@ a queue, a KV namespace, a service binding or a secret reaches it. `create` runs
 when it starts.
 
 ```ts
-// app/domain/order/notifier/queue.ts
-import type { Implementation } from "./+types/queue";
+// app/domain/order/infrastructure/notifier/queue.ts
+import type { CreateImplementation } from "@bounda-dev/core";
+import type { Notifier } from "../../notifier.ts";
 
-export const create: Implementation.Create = ({ env }) => (message) =>
+export const create: CreateImplementation<Notifier> = ({ env }) => (message) =>
   env.NOTIFICATIONS.send(message);
 ```
 

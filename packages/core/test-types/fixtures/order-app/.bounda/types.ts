@@ -15,10 +15,10 @@ export type OrderEvents = {
   readonly orderPlaced: typeof import("../app/domain/order/order-placed.ts");
 };
 export type OrderPorts = {
-  readonly auditLog: import("../app/domain/order/audit-log/index.ts").AuditLog;
-  readonly inventory: import("../app/domain/order/inventory/index.ts").Inventory;
-  readonly mailer: import("../app/domain/order/mailer/index.ts").Mailer;
-  readonly reminders: import("../app/domain/order/reminders/index.ts").Reminders;
+  readonly auditLog: import("../app/domain/order/audit-log.ts").AuditLog;
+  readonly inventory: import("../app/domain/order/inventory.ts").Inventory;
+  readonly mailer: import("../app/domain/order/mailer.ts").Mailer;
+  readonly reminders: import("../app/domain/order/reminders.ts").Reminders;
 };
 
 export type Events = {

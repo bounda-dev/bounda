@@ -289,15 +289,15 @@ A few rules keep it correct:
     fits the provider's length limit:
 
     ```ts
-    // app/domain/order/payments/stripe.ts
-    import { idempotencyKeyFor } from "@bounda-dev/core";
+    // app/domain/order/infrastructure/payments/stripe.ts
+    import { type CreateImplementation, idempotencyKeyFor } from "@bounda-dev/core";
     import Stripe from "stripe";
-    import type { Implementation } from "./+types/stripe";
+    import type { Payments } from "../../payments.ts";
 
-    export const create: Implementation.Create = ({ env }) => {
+    export const create: CreateImplementation<Payments> = ({ env }) => {
       const stripe = new Stripe(env.STRIPE_SECRET_KEY);
       return {
-        replaceCharge: async ({ chargeId, amount }, idempotencyKey) => {
+        replaceCharge: async ({ chargeId, amount, idempotencyKey }) => {
           await stripe.refunds.create(
             { charge: chargeId },
             { idempotencyKey: idempotencyKeyFor(idempotencyKey, "refund") },
@@ -520,7 +520,7 @@ as in *send the welcome email a minute after the user registers*, the policy exp
 export const delay = asDuration(process.env.WELCOME_EMAIL_DELAY ?? "1m");
 
 export const handler = async ({ event, commands, emailSender, idempotencyKey }: Policy.HandlerArgs) => {
-  await emailSender.send({ to: event.payload.email, name: event.payload.name }, idempotencyKey);
+  await emailSender({ to: event.payload.email, name: event.payload.name, idempotencyKey });
   await commands.recordWelcomeEmailSent({ userId: event.aggregateId, to: event.payload.email });
 };
 ```

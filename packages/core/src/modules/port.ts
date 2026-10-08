@@ -17,7 +17,8 @@ export interface CreateArgs {
 
 /**
  * Builds an implementation when the app starts, once per app instance. An implementation with
- * state (a client, a pool, a secret) uses this instead of a default export. When the port it
+ * state (a client, a pool, a secret) exports one instead of a default, typed with the port it
+ * builds: `export const create: CreateImplementation<Notifier> = ({ env }) => ...`. When what it
  * returns has `[Symbol.asyncDispose]`, `app.stop()` calls it.
  */
 export interface CreateImplementation<Port> {
@@ -25,11 +26,11 @@ export interface CreateImplementation<Port> {
 }
 
 /**
- * The shape of an implementation module of a port, `<aggregate>/<port>/<name>.ts`: either
- * a default export, which is what the aggregate's handlers receive as the port, or a `create`
- * export that builds it when the app starts, never both. The generated registry checks every
- * implementation against this with the port's interface, so one that does not fulfil the
- * contract does not compile.
+ * The shape of an implementation module of a port, `<aggregate>/infrastructure/<port>/<name>.ts`:
+ * either a default export, which is what the aggregate's handlers receive as the port, or a
+ * `create` export that builds it when the app starts, never both. The generated registry checks
+ * every implementation against this with the port's interface, so one that does not fulfil it does
+ * not compile.
  */
 export type ImplementationModule<Port> =
   | { readonly default: Port; readonly create?: never }

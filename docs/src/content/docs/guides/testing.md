@@ -160,9 +160,9 @@ written in the test, so each test owns what it records and tests running in para
 nothing:
 
 ```ts
-import type { Confirmation } from "../app/domain/order/notifier/index.ts";
+import type { NotifierArgs } from "../app/domain/order/notifier.ts";
 
-const sent: Confirmation[] = [];
+const sent: NotifierArgs[] = [];
 const { app } = await createTestApp({
   registry,
   adapter: sqlite({ memory: true }),

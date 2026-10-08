@@ -23,27 +23,26 @@ export interface EventModel extends ModuleRef {
 }
 
 /**
- * An implementation of a port: `notifier/in-memory.ts`. `name` is the file name as the
- * configuration names it, `in-memory`.
+ * An implementation of a port: `infrastructure/notifier/in-memory.ts`. `name` is the file name as
+ * the configuration names it, `in-memory`.
  */
 export interface ImplementationModel extends ModuleRef {
   readonly name: string;
 }
 
 /**
- * A port of an aggregate, `order/notifier/`: its `index.ts` exports the interface `typeName`,
- * and every other module in the directory implements it.
+ * A port of an aggregate, `order/notifier.ts`: it exports the interface `typeName`, and every
+ * module in `order/infrastructure/notifier/` implements it.
  */
-export interface PortModel {
+export interface PortModel extends ModuleRef {
   /**
-   * The registry key and the name every handler receives it as: `audit-log/` → `auditLog`.
+   * The registry key and the name every handler receives it as: `audit-log.ts` → `auditLog`.
    */
   readonly key: string;
   /**
-   * The interface `index.ts` exports: `AuditLog`.
+   * The interface the port's module exports: `AuditLog`.
    */
   readonly typeName: string;
-  readonly contract: ModuleRef;
   /**
    * Sorted by name; never empty.
    */
