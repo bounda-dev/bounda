@@ -719,6 +719,23 @@ describe("discoverProject convention problems", () => {
     ]);
   });
 
+  it("rejects a policy and a process of one aggregate with the same name, and two policies whose keys meet", async () => {
+    const root = await project([
+      "app/domain/order/order-placed.ts",
+      "app/domain/order/policies/checkout.ts",
+      "app/domain/order/processes/checkout/index.ts",
+      "app/domain/order/policies/payment-refund-on-payment-failed.ts",
+      "app/domain/order/policies/payment/refund-on-payment-failed.ts",
+      "app/domain/payment/payment-failed.ts",
+      "app/domain/payment/policies/checkout.ts",
+    ]);
+    const distinct = "the policies and processes of an aggregate need distinct names";
+    expect(await problemsOf(root)).toEqual([
+      `app/domain/order/policies/payment/refund-on-payment-failed.ts: "paymentRefundOnPaymentFailed" is also the name of app/domain/order/policies/payment-refund-on-payment-failed.ts; ${distinct}, so give the policy another name`,
+      `app/domain/order/processes/checkout: "checkout" is also the name of app/domain/order/policies/checkout.ts; ${distinct}, so give the process another name`,
+    ]);
+  });
+
   it("rejects command and policy directories, and port files next to commands, policies and process handlers", async () => {
     const root = await project([
       "app/domain/order/order-placed.ts",

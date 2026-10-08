@@ -3,9 +3,6 @@ import { v5 as uuidV5 } from "uuid";
 const NAMESPACE = "55684f7b-5682-4a97-837e-a64a7c205ba5";
 
 interface ReactionIdentity {
-  /**
-   * Whether the handler is a policy's or a process's: their names can be equal.
-   */
   readonly kind: "policy" | "process";
   /**
    * A policy or process name, e.g. `order.chargeOnOrderPlaced`.

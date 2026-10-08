@@ -92,6 +92,14 @@ const validateAggregate = (
     requireFunction(problems, policy.module, `${base}.policies.${key}`, "handler");
   }
   for (const [key, process] of Object.entries(aggregate.processes)) {
+    // A reaction's qualified name is its identity in the inbox: sharing it, the policy and the
+    // process would each skip the events the other handled.
+    if (Object.hasOwn(aggregate.policies, key)) {
+      problems.push({
+        path: `${base}.processes.${key}`,
+        message: `is also the name of ${base}.policies.${key}; give one of them another name`,
+      });
+    }
     requireFunction(problems, process.module, `${base}.processes.${key}`, "config");
     for (const [source, handlers] of Object.entries(process.handlers)) {
       for (const [event, handler] of Object.entries(handlers)) {

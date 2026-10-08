@@ -853,11 +853,35 @@ const checkForeignHandlers = (context: Context, aggregates: readonly AggregateMo
   }
 };
 
+// A reaction's qualified name is its identity in the inbox, which records that it handled an event,
+// so two reactions of one aggregate sharing a key would each skip what the other handled.
+const checkUniqueReactions = (context: Context, aggregate: AggregateModel): void => {
+  const seen = new Map<string, string>();
+  const claim = (key: string, relativePath: string, what: string, at: string): void => {
+    const other = seen.get(key);
+    if (other === undefined) {
+      seen.set(key, relativePath);
+      return;
+    }
+    context.problems.add(
+      at,
+      `"${key}" is also the name of ${other}; the policies and processes of an aggregate need distinct names, so give the ${what} another name`,
+    );
+  };
+  for (const policy of aggregate.policies) {
+    claim(policy.key, policy.relativePath, "policy", policy.path);
+  }
+  for (const process of aggregate.processes) {
+    claim(process.key, process.relativePath, "process", process.directory);
+  }
+};
+
 const checkUniqueNames = (
   context: Context,
   aggregates: readonly AggregateModel[],
   readModels: readonly ReadModelModel[],
 ): void => {
+  for (const aggregate of aggregates) checkUniqueReactions(context, aggregate);
   const names = new Set(aggregates.map((aggregate) => aggregate.name));
   for (const readModel of readModels) {
     if (names.has(readModel.name)) {
