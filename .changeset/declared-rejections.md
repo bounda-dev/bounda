@@ -17,8 +17,8 @@ In a policy or a process, `await commands.x()` resolves with the rejection inste
 with its `message`, so compensating is `if (paid.rejected === "NotOpen")`, without `try/catch`. A
 rejection the handler does not look at changes nothing and the run goes on; it is logged and
 recorded on the command's span as the event `bounda.command.rejected`. Before, it failed the run
-for good. A delayed command that is rejected when it runs is no longer dead-lettered either, nor
-recorded as `CommandFailed`. The promise rejects only for a failure. Only what the command's own
+for good. A scheduled command that is rejected when it runs is no longer dead-lettered either, nor
+recorded as `ScheduledCommandFailed`. The promise rejects only for a failure. Only what the command's own
 `reject` made is a rejection: a `DomainError` from anywhere else, such as another app's command,
 fails the command. A policy or process can no longer throw a `DomainError` to give up at once.
 `runUntilIdle()` returns the rejections that happened while it ran, in `rejections`, for tests to

@@ -181,7 +181,7 @@ describe("processAggregateType", () => {
         { eventId, eventType: "OrderPaid", aggregateType: "order", aggregateId: "o-1", extra: 1 },
         version,
       );
-    const replaying = [
+    const retrying = [
       lifecycle(PROCESS_EVENTS.started, { state: { step: 0 } }, 1),
       lifecycle(PROCESS_EVENTS.failed, { eventId: "e2", error: "boom" }, 2),
       parked("e3", 3),
@@ -189,7 +189,7 @@ describe("processAggregateType", () => {
       lifecycle(PROCESS_EVENTS.handled, { state: { step: 1 }, eventId: "e2" }, 5),
       lifecycle(PROCESS_EVENTS.handled, { state: { step: 2 }, eventId: "e3" }, 6),
     ];
-    expect(foldProcess({ initialState: {}, events: replaying })).toMatchObject({
+    expect(foldProcess({ initialState: {}, events: retrying })).toMatchObject({
       status: "failed",
       state: { step: 2 },
       handledEventIds: new Set(["e2", "e3"]),
@@ -198,13 +198,13 @@ describe("processAggregateType", () => {
       ],
       failure: { eventId: "e2" },
     });
-    expect(foldProcess({ initialState: {}, events: replaying }).parked[0]).not.toHaveProperty(
+    expect(foldProcess({ initialState: {}, events: retrying }).parked[0]).not.toHaveProperty(
       "extra",
     );
     const resumed = foldProcess({
       initialState: {},
       events: [
-        ...replaying,
+        ...retrying,
         lifecycle(PROCESS_EVENTS.handled, { state: { step: 3 }, eventId: "e4" }, 7),
         lifecycle(PROCESS_EVENTS.resumed, {}, 8),
       ],

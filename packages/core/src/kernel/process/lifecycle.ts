@@ -34,7 +34,7 @@ export const PROCESS_EVENTS: {
 };
 
 /**
- * Where to load an event parked on a failed instance until its failure is replayed.
+ * Where to load an event parked on a failed instance until its failure is retried.
  */
 export interface ParkedEvent {
   readonly eventId: string;

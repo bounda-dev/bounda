@@ -1,4 +1,4 @@
-import type { BoundaApp } from "@bounda-dev/core";
+import { type BoundaApp, ConfigurationError } from "@bounda-dev/core";
 import { RouterContextProvider } from "react-router";
 import { describe, expect, it } from "vitest";
 import { createBounda } from "./create-bounda.ts";
@@ -78,6 +78,20 @@ describe("createBounda", () => {
     expect(context.get(bounda)).toBe(fake.app);
     await (context.get(bounda).commands as unknown as OrderCommands).placeOrder();
     expect(fake.calls).toEqual(["start", "placeOrder"]);
+  });
+
+  it('refuses a consistency it does not know, such as the old "immediate"', () => {
+    const create = () =>
+      createBounda({
+        key: uniqueKey(),
+        consistency: "immediate" as never,
+        boot: async () => fakeApp("one").app,
+      });
+    expect(create).toThrow(
+      new ConfigurationError(
+        'consistency must be "read-your-writes" or "eventual", got "immediate"',
+      ),
+    );
   });
 
   it("boots once, starts the app and provides it to every request", async () => {

@@ -5,7 +5,7 @@ import { ConcurrencyError } from "../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../contracts/ids.ts";
 import { silentLogger } from "../contracts/logger.ts";
 import { memory } from "../memory/index.ts";
-import { appendSystemEvent, COMMAND_FAILED_EVENT } from "./system-events.ts";
+import { appendSystemEvent, SCHEDULED_COMMAND_FAILED_EVENT } from "./system-events.ts";
 
 const context = { correlationId: "corr", causationId: "cause", depth: 2 };
 
@@ -29,7 +29,7 @@ const setup = async () => {
       clock: createFixedClock(),
       aggregateType: "order",
       aggregateId: "o-1",
-      type: COMMAND_FAILED_EVENT,
+      type: SCHEDULED_COMMAND_FAILED_EVENT,
       payload: { commandType: "PayOrder", error: "boom", attempts: 3 },
       context,
     });
@@ -59,12 +59,12 @@ describe("appendSystemEvent", () => {
       aggregateId: "o-1",
       version: 3,
       position: 3,
-      type: "CommandFailed",
+      type: "ScheduledCommandFailed",
       payload: { commandType: "PayOrder", error: "boom", attempts: 3 },
       timestamp: "2026-01-01T00:00:00.000Z",
       metadata: { ...context, schemaVersion: 1, system: true },
     });
-    expect(COMMAND_FAILED_EVENT).toBe("CommandFailed");
+    expect(SCHEDULED_COMMAND_FAILED_EVENT).toBe("ScheduledCommandFailed");
   });
 
   it("reloads and retries when the stream moves under it", async () => {

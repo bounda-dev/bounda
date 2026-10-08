@@ -16,7 +16,7 @@ export interface StorageTransactionContractFunction {
 }
 
 const now = new Date("2026-01-01T00:00:00.000Z");
-const key = { subscriber: "order.p", eventId: "e1" };
+const key = { handler: "order.p", eventId: "e1" };
 
 /**
  * The behaviour every `StoragePorts.transact` must exhibit. Call it inside a `describe` of the
@@ -156,7 +156,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
             expectedVersion: 0,
             events: [pendingEvent({ aggregateId: "1", version: 1 })],
           });
-          await tx.deadLetterStore.updateStatus("d1", "replayed");
+          await tx.deadLetterStore.updateStatus("d1", "retried");
         }),
       ).rejects.toBeInstanceOf(DeadLetterSettledError);
       expect(await storage.eventStore.lastPosition()).toBe(0);
@@ -165,7 +165,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
 
     it("keeps what a concurrent transaction wrote when it rolls back", async () => {
       await storage.deadLetterStore.add(testDeadLetter("d1"));
-      const replay = (dedupeKey: string) =>
+      const retry = (dedupeKey: string) =>
         storage.transact(async (tx) => {
           await tx.scheduler.schedule({
             dedupeKey,
@@ -173,14 +173,14 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
             executeAt: new Date(now.getTime() + 60_000),
             context: testContext,
           });
-          await tx.deadLetterStore.updateStatus("d1", "replayed");
+          await tx.deadLetterStore.updateStatus("d1", "retried");
         });
-      const outcomes = await Promise.allSettled([replay("command:a"), replay("command:b")]);
+      const outcomes = await Promise.allSettled([retry("command:a"), retry("command:b")]);
       expect(outcomes.map((outcome) => outcome.status).sort()).toEqual(["fulfilled", "rejected"]);
       expect(outcomes.find((outcome) => outcome.status === "rejected")).toMatchObject({
         reason: expect.any(DeadLetterSettledError),
       });
-      expect((await storage.deadLetterStore.get("d1"))?.status).toBe("replayed");
+      expect((await storage.deadLetterStore.get("d1"))?.status).toBe("retried");
       expect(await storage.scheduler.list()).toHaveLength(1);
     });
 
@@ -188,7 +188,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       await storage.deadLetterStore.add(testDeadLetter("d1"));
       const outcomes = await Promise.allSettled([
         storage.transact(async (tx) => {
-          await tx.deadLetterStore.updateStatus("d1", "replayed");
+          await tx.deadLetterStore.updateStatus("d1", "retried");
           await tx.scheduler.complete({ dedupeKey: "unclaimed", revision: 0, claimId: "lost" });
         }),
         storage.transact(async (tx) => {
@@ -228,7 +228,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       await storage.deadLetterStore.add(testDeadLetter("d1"));
       await storage.deadLetterStore.add(testDeadLetter("d2"));
       const settle = async (tx: StorageTransaction) => {
-        await tx.deadLetterStore.updateStatus("d1", "replayed");
+        await tx.deadLetterStore.updateStatus("d1", "retried");
         await tx.deadLetterStore.remove("d2");
       };
       await expect(
@@ -240,7 +240,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       expect((await storage.deadLetterStore.get("d1"))?.status).toBe("failed");
       expect(await storage.deadLetterStore.count()).toBe(2);
       await storage.transact(settle);
-      expect((await storage.deadLetterStore.get("d1"))?.status).toBe("replayed");
+      expect((await storage.deadLetterStore.get("d1"))?.status).toBe("retried");
       expect(await storage.deadLetterStore.get("d2")).toBeNull();
     });
   });

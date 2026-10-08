@@ -79,7 +79,7 @@ export type ReactionDispatchResult<Code extends string = string> =
 
 /**
  * A rejection a command dispatched from a policy, a process, the scheduler or a dead letter's
- * replay met, where no caller was waiting for it: `type` is the command's.
+ * retry met, where no caller was waiting for it: `type` is the command's.
  */
 export interface CommandRejection extends RejectedDispatch {
   readonly type: string;

@@ -3,12 +3,12 @@
 "@bounda-dev/adapter-postgresql": patch
 ---
 
-A delayed command, a delayed policy run or a process deadline whose run outlives its claim no
+A scheduled command, a delayed policy run or a process deadline whose run outlives its claim no
 longer writes anything. The worker claimed a batch of entries under one lease and ran them one
 after another, each up to `runtime.commands.concurrencyRetries` more times after a conflict, so a
 lease could lapse mid-run. Another instance then claimed the entry and ran it, and the first run
 still committed its events once it ended, so the command was decided twice (the second time
-possibly dead-lettered with `CommandFailed`). Settling a claim another instance took over, or one
+possibly dead-lettered with `ScheduledCommandFailed`). Settling a claim another instance took over, or one
 whose entry was cancelled, now rolls back the whole run, its give-up included, and the worker logs
 it as a warning.
 

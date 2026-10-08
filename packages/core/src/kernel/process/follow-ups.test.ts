@@ -149,6 +149,7 @@ const setUp = async (
   const deadLetters = createDeadLetters({
     storage: harness.storage,
     pipeline: harness.pipeline,
+    aggregates: harness.aggregates,
     policies: harness.policies,
     policyExecutor: harness.policyExecutor,
     processes: harness.processes,
@@ -219,7 +220,7 @@ describe.each(adapters)("the follow-ups of a process that timed out, on %s", (_n
     expect(events[2]?.payload).toMatchObject({ state: { archived: 1 }, eventId: archived?.id });
     expect(
       await harness.storage.inboxLedger.get({
-        subscriber: "order.orderPayment",
+        handler: "order.orderPayment",
         eventId: archived?.id ?? "",
       }),
     ).toMatchObject({ status: "succeeded" });
@@ -316,7 +317,7 @@ describe.each(adapters)("the follow-ups of a process that timed out, on %s", (_n
     ]);
   });
 
-  it("files a letter without failing the ended instance, and replays it in its own transaction", async () => {
+  it("files a letter without failing the ended instance, and retries it in its own transaction", async () => {
     const { harness, deadLetters, place, timeOut, stream } = await setUp(adapter);
     archiving = "domain";
     await place("o-1");
@@ -329,17 +330,17 @@ describe.each(adapters)("the follow-ups of a process that timed out, on %s", (_n
     const [letter] = await deadLetters.list();
     expect(letter).toMatchObject({
       kind: "process",
-      subscriber: "order.orderPayment",
+      handler: "order.orderPayment",
       eventType: "OrderArchived",
       parked: 0,
     });
 
     archiving = "ok";
-    expect(await deadLetters.replay(letter?.id ?? "")).toMatchObject({
-      status: "replayed",
+    expect(await deadLetters.retry(letter?.id ?? "")).toMatchObject({
+      status: "retried",
       parked: 0,
     });
-    expect((await deadLetters.get(letter?.id ?? ""))?.status).toBe("replayed");
+    expect((await deadLetters.get(letter?.id ?? ""))?.status).toBe("retried");
     expect(calls).toEqual(["timeout:o-1", "archived:o-1", "archived:o-1"]);
     expect((await stream()).map((event) => event.type)).toEqual([
       PROCESS_EVENTS.started,
@@ -360,7 +361,7 @@ describe.each(adapters)("the follow-ups of a process that timed out, on %s", (_n
       beforeArchive = undefined;
       await deadLetters.discard(letter?.id ?? "");
     };
-    await expect(deadLetters.replay(letter?.id ?? "")).rejects.toThrow(DeadLetterSettledError);
+    await expect(deadLetters.retry(letter?.id ?? "")).rejects.toThrow(DeadLetterSettledError);
     expect((await stream()).map((event) => event.type)).toEqual([
       PROCESS_EVENTS.started,
       PROCESS_EVENTS.timedOut,
@@ -368,7 +369,7 @@ describe.each(adapters)("the follow-ups of a process that timed out, on %s", (_n
     expect((await deadLetters.get(letter?.id ?? ""))?.status).toBe("discarded");
   });
 
-  it("keeps the follow-ups of a timeout replayed from its letter", async () => {
+  it("keeps the follow-ups of a timeout retried from its letter", async () => {
     const { harness, deadLetters, place, timeOut, stream } = await setUp(adapter);
     timeoutFails = true;
     await place("o-1");
@@ -376,7 +377,7 @@ describe.each(adapters)("the follow-ups of a process that timed out, on %s", (_n
     const [letter] = await deadLetters.list();
     expect(letter).toMatchObject({ kind: "process", eventType: PROCESS_DEADLINE_COMMAND });
     timeoutFails = false;
-    await deadLetters.replay(letter?.id ?? "");
+    await deadLetters.retry(letter?.id ?? "");
     await harness.dispatcher.runUntilIdle();
     expect(calls).toEqual(["timeout:o-1", "timeout:o-1", "archived:o-1"]);
     expect((await stream()).map((event) => event.type)).toEqual([
@@ -387,7 +388,7 @@ describe.each(adapters)("the follow-ups of a process that timed out, on %s", (_n
     ]);
   });
 
-  it("writes nothing when a follow-up letter is replayed after the event was handled", async () => {
+  it("writes nothing when a follow-up letter is retried after the event was handled", async () => {
     const { harness, deadLetters, place, timeOut, stream, archivedOf } = await setUp(adapter);
     archiving = "domain";
     await place("o-1");
@@ -395,12 +396,12 @@ describe.each(adapters)("the follow-ups of a process that timed out, on %s", (_n
     await harness.dispatcher.runUntilIdle();
     const [letter] = await deadLetters.list();
     archiving = "ok";
-    await deadLetters.replay(letter?.id ?? "");
+    await deadLetters.retry(letter?.id ?? "");
     const archived = await archivedOf();
-    await harness.processes.replay({
+    await harness.processes.retry({
       process: "order.orderPayment",
       event: archived as NonNullable<typeof archived>,
-      replay: "again",
+      retryId: "again",
     });
     expect(await stream()).toHaveLength(3);
   });
@@ -470,7 +471,7 @@ describe.each(adapters)("the follow-ups of a process that timed out, on %s", (_n
         ],
       });
     };
-    await expect(deadLetters.replay(letter.id)).rejects.toMatchObject({
+    await expect(deadLetters.retry(letter.id)).rejects.toMatchObject({
       name: DeadLetterSettledError.name,
       id: letter.id,
     });
@@ -482,7 +483,7 @@ describe.each(adapters)("the follow-ups of a process that timed out, on %s", (_n
     ]);
   });
 
-  it("lets a follow-up through on replay once a deploy removed its handler", async () => {
+  it("lets a follow-up through on retry once a deploy removed its handler", async () => {
     const { harness, archivedOf, failFollowUp } = await setUp(adapter);
     await failFollowUp();
     const order = registry.aggregates.order as NonNullable<Registry["aggregates"][string]>;
@@ -526,10 +527,10 @@ describe.each(adapters)("the follow-ups of a process that timed out, on %s", (_n
     const archived = await archivedOf();
     if (archived === undefined) throw new Error("not archived");
     expect(
-      await deployed.processes.replay({
+      await deployed.processes.retry({
         process: "order.orderPayment",
         event: archived,
-        replay: "r",
+        retryId: "r",
       }),
     ).toBe(false);
     const { events } = await deployed.storage.eventStore.load({
@@ -548,7 +549,7 @@ describe.each(adapters)("the follow-ups of a process that timed out, on %s", (_n
     });
   });
 
-  it("keeps the follow-ups of a timeout that comes due while a replay drains", async () => {
+  it("keeps the follow-ups of a timeout that comes due while a retry drains", async () => {
     const { harness, deadLetters, place, stream, archivedOf } = await setUp(adapter);
     paying = "domain";
     await place("o-1");
@@ -563,7 +564,7 @@ describe.each(adapters)("the follow-ups of a process that timed out, on %s", (_n
     await harness.pipeline.dispatch({ type: "ArchiveOrder", payload: { orderId: "o-1" } });
     await harness.dispatcher.runUntilIdle();
     paying = "ok";
-    await deadLetters.replay(letter?.id ?? "");
+    await deadLetters.retry(letter?.id ?? "");
     await harness.dispatcher.runUntilIdle();
     const events = await stream();
     const timedOut = events.find((event) => event.type === PROCESS_EVENTS.timedOut);
@@ -580,7 +581,7 @@ describe.each(adapters)("the follow-ups of a process that timed out, on %s", (_n
     expect(followUp?.id).not.toBe((await archivedOf())?.id);
   });
 
-  it("runs the timeout once when two replays of its letter overlap", async () => {
+  it("runs the timeout once when two retries of its letter overlap", async () => {
     const { harness, deadLetters, place, timeOut, types } = await setUp(adapter);
     timeoutFails = true;
     await place("o-1");
@@ -590,14 +591,14 @@ describe.each(adapters)("the follow-ups of a process that timed out, on %s", (_n
     timeoutFails = false;
     beforeTimeout = async () => {
       beforeTimeout = undefined;
-      await harness.processes.replayDeadline({
+      await harness.processes.retryDeadline({
         payload: { process: "order.orderPayment", aggregateId: "o-1" },
         context: { correlationId: "c", causationId: letter.id, depth: 0 },
-        replay: "overlapping",
+        retryId: "overlapping",
         letter: letter.id,
       });
     };
-    await deadLetters.replay(letter.id);
+    await deadLetters.retry(letter.id);
     expect(calls).toEqual(["timeout:o-1", "timeout:o-1", "timeout:o-1"]);
     expect((await types()).filter((type) => type === PROCESS_EVENTS.timedOut)).toHaveLength(1);
   });

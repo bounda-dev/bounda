@@ -124,7 +124,7 @@ describe("a process handler run that fails", () => {
     await harness.dispatcher.runUntilIdle();
   };
 
-  it("leaves none of its delayed commands behind when the retry takes another path", async () => {
+  it("leaves none of its scheduled commands behind when the retry takes another path", async () => {
     let runs = 0;
     placed = async ({ aggregateId, commands }) => {
       runs += 1;

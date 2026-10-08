@@ -61,13 +61,8 @@ export const sqlite: SqliteFunction = (options) => {
   });
 };
 
-export type {
-  StorageSchemaAdditionsArgs,
-  StorageSchemaAdditionsFunction,
-  StorageTables,
-} from "@bounda-dev/core/adapter/sqlite";
+export type { StorageTables } from "@bounda-dev/core/adapter/sqlite";
 export {
-  storageSchemaAdditions,
   storageSchemaStatements,
   storageTablesFor,
 } from "@bounda-dev/core/adapter/sqlite";

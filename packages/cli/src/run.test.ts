@@ -364,7 +364,7 @@ describe("bounda dead-letters", () => {
       expect.arrayContaining([expect.objectContaining({ id, kind: "policy", status: "failed" })]),
     );
 
-    const none = await cli(["dead-letters", "list", "--status", "replayed"], fixture);
+    const none = await cli(["dead-letters", "list", "--status", "retried"], fixture);
     expect(none.code).toBe(EXIT_OK);
     expect(none.stdout).toBe("no dead letters\n");
   });
@@ -380,34 +380,34 @@ describe("bounda dead-letters", () => {
     const two = await cli(["dead-letters", "list", "--limit", "2"], fixture);
     expect(two.stdout).toMatch(/\n2 dead letters\n$/);
     for (const filter of [
-      ["--kind", "command"],
-      ["--subscriber", "counter.nobody"],
+      ["--kind", "scheduled"],
+      ["--handler", "counter.nobody"],
       ["--status", "discarded", "--limit", "0"],
     ]) {
       const result = await cli(["dead-letters", "list", ...filter], fixture);
       expect(result.code).toBe(EXIT_OK);
       expect(result.stdout).toBe("no dead letters\n");
     }
-    const bySubscriber = await cli(
-      [
-        "dead-letters",
-        "list",
-        "--subscriber",
-        "counter.alertOnIncremented",
-        "--limit",
-        "1",
-        "--json",
-      ],
+    const byHandler = await cli(
+      ["dead-letters", "list", "--handler", "counter.alertOnIncremented", "--limit", "1", "--json"],
       fixture,
     );
-    expect(JSON.parse(bySubscriber.stdout)).toHaveLength(1);
+    expect(JSON.parse(byHandler.stdout)).toHaveLength(1);
+    for (const filter of [
+      ["--kind", "command"],
+      ["--status", "replayed"],
+    ]) {
+      const result = await cli(["dead-letters", "list", ...filter], fixture);
+      expect(result.code).toBe(EXIT_CONVENTION);
+      expect(result.stderr).toContain("is invalid. Allowed choices are");
+    }
   });
 
-  it("replays a letter, reporting the handler's error when it fails again, and discards one", async () => {
+  it("retries a letter, reporting the handler's error when it fails again, and discards one", async () => {
     const id = await deadLetter();
-    const replay = await cli(["dead-letters", "replay", id], fixture);
-    expect(replay.code).toBe(EXIT_FAILURE);
-    expect(replay.stderr).toBe("error: alerts are down\n");
+    const retry = await cli(["dead-letters", "retry", id], fixture);
+    expect(retry.code).toBe(EXIT_FAILURE);
+    expect(retry.stderr).toBe("error: alerts are down\n");
 
     const discard = await cli(["dead-letters", "discard", id], fixture);
     expect(discard.stderr).toBe("");
@@ -416,7 +416,7 @@ describe("bounda dead-letters", () => {
       `discarded dead letter ${id}: policy counter.alertOnIncremented for Incremented\n`,
     );
 
-    const again = await cli(["dead-letters", "replay", id], fixture);
+    const again = await cli(["dead-letters", "retry", id], fixture);
     expect(again.code).toBe(EXIT_FAILURE);
     expect(again.stderr).toBe(`error: Dead letter "${id}" was already discarded\n`);
     const missing = await cli(["dead-letters", "discard", "nope"], fixture);
@@ -427,15 +427,15 @@ describe("bounda dead-letters", () => {
   it("documents its subcommands and options in its help", async () => {
     const help = await cli(["dead-letters", "--help"], fixture);
     expect(help.code).toBe(EXIT_OK);
-    expect(help.stdout).toContain("list, replay or discard the handler runs that gave up");
-    for (const sub of ["list", "replay", "discard"]) expect(help.stdout).toContain(sub);
+    expect(help.stdout).toContain("list, retry or discard the handler runs that gave up");
+    for (const sub of ["list", "retry", "discard"]) expect(help.stdout).toContain(sub);
     const list = await cli(["dead-letters", "list", "--help"], fixture);
     for (const option of [
       "--kind <kind>",
-      "policy, process or command",
+      "only letters of this kind",
       "--status <status>",
-      "failed, replayed or discarded",
-      "--subscriber <name>",
+      "only letters in this status",
+      "--handler <name>",
       "the policy, process or scheduled command that failed",
       "--limit <n>",
       "at most this many letters",
@@ -448,13 +448,18 @@ describe("bounda dead-letters", () => {
     ]) {
       expect(list.stdout).toContain(option);
     }
-    expect(list.stdout).toMatch(/--status <status>.*\(default:\s+"failed"\)/s);
-    expect(list.stdout).toContain("list dead letters, failed ones by default");
-    const replay = await cli(["dead-letters", "replay", "--help"], fixture);
-    expect(replay.stdout).toContain(
-      "run the failed handler again and mark the letter replayed if it succeeds",
+    expect(list.stdout).toMatch(
+      /--kind <kind>.*\(choices:\s+"policy",\s+"process",\s+"scheduled"\)/s,
     );
-    expect(replay.stdout).toContain("<id>");
+    expect(list.stdout).toMatch(
+      /--status <status>.*\(choices:\s+"failed",\s+"retried",\s+"discarded",\s+default:\s+"failed"\)/s,
+    );
+    expect(list.stdout).toContain("list dead letters, failed ones by default");
+    const retry = await cli(["dead-letters", "retry", "--help"], fixture);
+    expect(retry.stdout).toContain(
+      "run the failed handler again and mark the letter retried if it succeeds",
+    );
+    expect(retry.stdout).toContain("<id>");
     const discard = await cli(["dead-letters", "discard", "--help"], fixture);
     expect(discard.stdout).toContain("mark the letter discarded without running anything");
     expect(discard.stdout).toContain("the dead letter's id");

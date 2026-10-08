@@ -63,19 +63,19 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
   )`,
   checkpointTableStatement(tables.checkpoints),
   `CREATE TABLE IF NOT EXISTS ${tables.inbox} (
-    "subscriber" TEXT NOT NULL,
+    "handler" TEXT NOT NULL,
     "event_id" TEXT NOT NULL,
     "status" TEXT NOT NULL,
     "attempts" INTEGER NOT NULL,
     "claimed_at" TEXT NOT NULL,
     "claim_id" TEXT,
     "last_error" TEXT,
-    PRIMARY KEY ("subscriber", "event_id")
+    PRIMARY KEY ("handler", "event_id")
   )`,
   `CREATE TABLE IF NOT EXISTS ${tables.deadLetters} (
     "id" TEXT PRIMARY KEY,
     "kind" TEXT NOT NULL,
-    "subscriber" TEXT NOT NULL,
+    "handler" TEXT NOT NULL,
     "event_id" TEXT NOT NULL,
     "event_type" TEXT NOT NULL,
     "aggregate_type" TEXT NOT NULL,
@@ -116,60 +116,8 @@ export interface EnsureStorageSchemaFunction {
 }
 
 /**
- * The `*Columns` are the tables' columns as `PRAGMA table_info` reports them.
- */
-export interface StorageSchemaAdditionsArgs {
-  readonly tables: StorageTables;
-  readonly inboxColumns: readonly string[];
-  readonly deadLetterColumns: readonly string[];
-  readonly scheduledCommandColumns: readonly string[];
-}
-
-export interface StorageSchemaAdditionsFunction {
-  (args: StorageSchemaAdditionsArgs): readonly string[];
-}
-
-/**
- * Columns added to the storage tables after their first release, for databases created before.
- * SQLite has no `ADD COLUMN IF NOT EXISTS`, so the caller says which columns exist.
- */
-export const storageSchemaAdditions: StorageSchemaAdditionsFunction = ({
-  tables,
-  inboxColumns,
-  deadLetterColumns,
-  scheduledCommandColumns,
-}) => [
-  ...(inboxColumns.includes("claim_id")
-    ? []
-    : [`ALTER TABLE ${tables.inbox} ADD COLUMN "claim_id" TEXT`]),
-  ...(deadLetterColumns.includes("payload")
-    ? []
-    : [`ALTER TABLE ${tables.deadLetters} ADD COLUMN "payload" TEXT`]),
-  ...(scheduledCommandColumns.includes("revision")
-    ? []
-    : [`ALTER TABLE ${tables.scheduledCommands} ADD COLUMN "revision" INTEGER NOT NULL DEFAULT 0`]),
-  ...(scheduledCommandColumns.includes("claim_id")
-    ? []
-    : [`ALTER TABLE ${tables.scheduledCommands} ADD COLUMN "claim_id" TEXT`]),
-];
-
-/**
- * Creates the storage tables that do not exist yet and adds the columns a table created by an
- * earlier version lacks.
+ * Creates the storage tables that do not exist yet.
  */
 export const ensureStorageSchema: EnsureStorageSchemaFunction = async ({ db, tables }) => {
   for (const statement of storageSchemaStatements(tables)) await db.run(statement, []);
-  const columnsOf = async (table: string): Promise<readonly string[]> =>
-    (await db.all(`PRAGMA table_info(${table})`, [])).map((column) => String(column.name));
-  const inboxColumns = await columnsOf(tables.inbox);
-  const deadLetterColumns = await columnsOf(tables.deadLetters);
-  const scheduledCommandColumns = await columnsOf(tables.scheduledCommands);
-  for (const statement of storageSchemaAdditions({
-    tables,
-    inboxColumns,
-    deadLetterColumns,
-    scheduledCommandColumns,
-  })) {
-    await db.run(statement, []);
-  }
 };

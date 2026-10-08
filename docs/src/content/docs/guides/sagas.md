@@ -267,7 +267,7 @@ compensated.
 
 A compensation that fails for good is not compensated in turn. It becomes a
 [dead letter](/guides/reacting-to-events/#dead-letters): an operator looks at it, fixes the
-cause and replays it.
+cause and retries it.
 
 The storefront cancels the order at the first declined payment, for simplicity. In Stripe a
 declined intent can be retried with another card, so a real checkout would keep the order open
@@ -279,7 +279,7 @@ Without the process, the same saga is a set of policies that answer each other's
 `request-payment-on-order-placed` in the order, `lock-order-on-payment-processing`,
 `mark-order-paid-on-payment-settled` and `cancel-order-on-payment-declined` reacting to the
 payment, `cancel-payment-on-order-cancelled` in the payment. The payment window becomes a
-delayed command, `expireOrder` a few days after `OrderPlaced`, whose handler decides from the
+scheduled command, `expireOrder` a few days after `OrderPlaced`, whose handler decides from the
 order's state when it runs. Each piece is simpler, and no single file says how the checkout goes.
 Choose choreography when the steps are few and independent; choose a process when the saga needs
 memory of its own, such as which payment belongs to the order or a deadline that moves.

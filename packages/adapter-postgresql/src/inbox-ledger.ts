@@ -17,7 +17,7 @@ export interface CreatePostgresqlInboxLedgerFunction {
 }
 
 const toRecord = (row: Record<string, unknown>): ClaimRecord => ({
-  subscriber: String(row.subscriber),
+  handler: String(row.handler),
   eventId: String(row.event_id),
   status: String(row.status) as ClaimStatus,
   attempts: Number(row.attempts),
@@ -36,46 +36,46 @@ export const createPostgresqlInboxLedger: CreatePostgresqlInboxLedgerFunction = 
   const settle = async (
     set: string,
     params: readonly unknown[],
-    { subscriber, eventId, claimId }: SettleClaimArgs,
+    { handler, eventId, claimId }: SettleClaimArgs,
   ): Promise<void> => {
     const at = (offset: number) => `$${params.length + offset}`;
     if (claimId === undefined) {
       await db.run(
-        `UPDATE ${table} SET ${set} WHERE "subscriber" = ${at(1)} AND "event_id" = ${at(2)}`,
-        [...params, subscriber, eventId],
+        `UPDATE ${table} SET ${set} WHERE "handler" = ${at(1)} AND "event_id" = ${at(2)}`,
+        [...params, handler, eventId],
       );
       return;
     }
     const rows = await db.all(
-      `UPDATE ${table} SET ${set} WHERE "subscriber" = ${at(1)} AND "event_id" = ${at(2)} AND "claim_id" = ${at(3)} RETURNING "claim_id"`,
-      [...params, subscriber, eventId, claimId],
+      `UPDATE ${table} SET ${set} WHERE "handler" = ${at(1)} AND "event_id" = ${at(2)} AND "claim_id" = ${at(3)} RETURNING "claim_id"`,
+      [...params, handler, eventId, claimId],
     );
-    if (rows.length === 0) throw new ClaimLostError({ subscriber, eventId });
+    if (rows.length === 0) throw new ClaimLostError({ handler, eventId });
   };
 
   return {
-    tryClaim: async ({ subscriber, eventId, now, leaseMs }) => {
+    tryClaim: async ({ handler, eventId, now, leaseMs }) => {
       const expiredBefore = new Date(now.getTime() - leaseMs).toISOString();
       const [row] = await db.all(
-        `INSERT INTO ${table} ("subscriber", "event_id", "status", "attempts", "claimed_at", "claim_id") VALUES ($1, $2, 'pending', 1, $3, gen_random_uuid()::text)
-       ON CONFLICT ("subscriber", "event_id") DO UPDATE SET
+        `INSERT INTO ${table} ("handler", "event_id", "status", "attempts", "claimed_at", "claim_id") VALUES ($1, $2, 'pending', 1, $3, gen_random_uuid()::text)
+       ON CONFLICT ("handler", "event_id") DO UPDATE SET
          "status" = 'pending',
          "attempts" = ${table}."attempts" + 1,
          "claimed_at" = excluded."claimed_at",
          "claim_id" = excluded."claim_id"
        WHERE ${table}."status" = 'failed' OR (${table}."status" = 'pending' AND ${table}."claimed_at" < $4)
        RETURNING "claim_id"`,
-        [subscriber, eventId, now.toISOString(), expiredBefore],
+        [handler, eventId, now.toISOString(), expiredBefore],
       );
       return row === undefined ? null : String(row.claim_id);
     },
     complete: (args) => settle(`"status" = 'succeeded'`, [], args),
     fail: (args) => settle(`"status" = 'failed', "last_error" = $1`, [args.error], args),
     renew: (args) => settle(`"claimed_at" = $1`, [args.now.toISOString()], args),
-    get: async ({ subscriber, eventId }) => {
+    get: async ({ handler, eventId }) => {
       const [row] = await db.all(
-        `SELECT "subscriber", "event_id", "status", "attempts", "claimed_at", "claim_id", "last_error" FROM ${table} WHERE "subscriber" = $1 AND "event_id" = $2`,
-        [subscriber, eventId],
+        `SELECT "handler", "event_id", "status", "attempts", "claimed_at", "claim_id", "last_error" FROM ${table} WHERE "handler" = $1 AND "event_id" = $2`,
+        [handler, eventId],
       );
       return row === undefined ? null : toRecord(row);
     },

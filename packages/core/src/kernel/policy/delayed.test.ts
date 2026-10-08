@@ -177,7 +177,7 @@ describe("delayed policies", () => {
     expect(await harness.storage.deadLetterStore.list()).toEqual([]);
   });
 
-  it("dead-letter a run that fails for good as the policy's, which a replay runs again", async () => {
+  it("dead-letter a run that fails for good as the policy's, which a retry runs again", async () => {
     const telemetry = installFakeTelemetry();
     const { logger, entries } = createRecordingLogger();
     const { harness, placed } = await setUp({}, logger);
@@ -192,8 +192,8 @@ describe("delayed policies", () => {
       metric: METRICS.deadLetters,
       value: 1,
       attributes: {
-        [ATTRIBUTES.subscriberKind]: "policy",
-        [ATTRIBUTES.subscriber]: "order.remindOnOrderPlaced",
+        [ATTRIBUTES.handlerKind]: "policy",
+        [ATTRIBUTES.handler]: "order.remindOnOrderPlaced",
         [ATTRIBUTES.outcome]: "terminal",
       },
     });
@@ -212,7 +212,7 @@ describe("delayed policies", () => {
     const [letter] = await harness.storage.deadLetterStore.list();
     expect(letter).toMatchObject({
       kind: "policy",
-      subscriber: "order.remindOnOrderPlaced",
+      handler: "order.remindOnOrderPlaced",
       eventId: placed?.id,
       eventType: "OrderPlaced",
       aggregateType: "order",
@@ -227,6 +227,7 @@ describe("delayed policies", () => {
     const deadLetters = createDeadLetters({
       storage: harness.storage,
       pipeline: harness.pipeline,
+      aggregates: harness.aggregates,
       policies: harness.policies,
       policyExecutor: harness.policyExecutor,
       processes: harness.processes,
@@ -235,7 +236,7 @@ describe("delayed policies", () => {
       clock: harness.clock,
       logger: harness.logger,
     });
-    await deadLetters.replay(letter?.id ?? "");
+    await deadLetters.retry(letter?.id ?? "");
     expect(runs).toHaveLength(1);
     expect(runs[0]?.key).not.toBe(
       deriveIdempotencyKey({
@@ -247,7 +248,7 @@ describe("delayed policies", () => {
     expect(await orderEvents(harness)).toEqual(["OrderPlaced", "OrderArchived"]);
   });
 
-  it("leave no delayed command behind when the run fails", async () => {
+  it("leave no scheduled command behind when the run fails", async () => {
     const harness = await createReactiveHarness({
       registry: {
         aggregates: {
@@ -286,7 +287,7 @@ describe("delayed policies", () => {
     await harness.worker.runOnce();
 
     expect(await harness.storage.deadLetterStore.list()).toMatchObject([
-      { subscriber: "order.chaseOnOrderPlaced", errorType: "terminal" },
+      { handler: "order.chaseOnOrderPlaced", errorType: "terminal" },
     ]);
     expect(
       (await harness.storage.scheduler.list()).map((entry) => entry.command.type),
@@ -381,7 +382,7 @@ describe("delayed policies", () => {
     await harness.worker.runOnce();
     const letters = await harness.storage.deadLetterStore.list();
     expect(
-      letters.map((letter) => [letter.subscriber, letter.errorType, letter.errorMessage]),
+      letters.map((letter) => [letter.handler, letter.errorType, letter.errorMessage]),
     ).toEqual([
       ["order.renamedAway", "terminal", 'Policy "order.renamedAway" is no longer in the registry'],
       ["order.remindOnOrderPlaced", "terminal", "Event not-the-event of order:o-1 not found"],

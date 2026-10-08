@@ -181,7 +181,7 @@ describe("bounda() Vite plugin", () => {
         "",
         "export const { bounda, boundaMiddleware, dispose } = createBounda({",
         '  boot: () => boot({ root: "/project", registry }),',
-        '  consistency: "immediate",',
+        '  consistency: "read-your-writes",',
         "});",
         "",
       ].join("\n"),

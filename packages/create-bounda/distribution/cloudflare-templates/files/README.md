@@ -6,7 +6,7 @@
 
 An event-sourced app on [Durable Objects](https://developers.cloudflare.com/durable-objects/), built with [Bounda](https://bounda.dev), a TypeScript framework for event sourcing and CQRS. Placing an order is a command: its handler decides, the resulting event is appended to the order's history, and a projection turns it into a row of a read model before the request answers, so the next query already sees it.
 
-Everything lives in one Durable Object per tenant, in its [SQLite storage](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/): the ordered log of events, the read models, scheduled commands and the checkpoints that say how far each read model has got. Work that reacts to events after the request, such as policies, long-running processes and delayed commands, runs in the object's [alarm](https://developers.cloudflare.com/durable-objects/api/alarms/). There is nothing else to run: no queue, no cron, no external database.
+Everything lives in one Durable Object per tenant, in its [SQLite storage](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/): the ordered log of events, the read models, scheduled commands and the checkpoints that say how far each read model has got. Work that reacts to events after the request, such as policies, long-running processes and scheduled commands, runs in the object's [alarm](https://developers.cloudflare.com/durable-objects/api/alarms/). There is nothing else to run: no queue, no cron, no external database.
 
 - **Commands, events, read models and queries** are plain modules under `app/`, and their types are inferred from those modules.
 - **History is kept**: a read model can be rebuilt from the events at any time, without taking it offline.

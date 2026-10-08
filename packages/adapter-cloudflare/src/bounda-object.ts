@@ -68,7 +68,7 @@ export interface BoundaObjectMethods {
   query(name: string, payload?: unknown): Promise<RpcOutcome<unknown>>;
   lag(): Promise<RpcOutcome<AppLag>>;
   listDeadLetters(args?: ListDeadLettersArgs): Promise<RpcOutcome<readonly DeadLetter[]>>;
-  replayDeadLetter(id: string): Promise<RpcOutcome<DeadLetter>>;
+  retryDeadLetter(id: string): Promise<RpcOutcome<DeadLetter>>;
   discardDeadLetter(id: string): Promise<RpcOutcome<DeadLetter>>;
   /**
    * Starts or continues rebuilding a read model with one slice of `eventsPerRebuildSlice` events.
@@ -256,9 +256,9 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
       return settle(() => this.#ready().deadLetters.list(args));
     }
 
-    replayDeadLetter(id: string): Promise<RpcOutcome<DeadLetter>> {
+    retryDeadLetter(id: string): Promise<RpcOutcome<DeadLetter>> {
       return settle(async () => {
-        const letter = await this.#ready().deadLetters.replay(id);
+        const letter = await this.#ready().deadLetters.retry(id);
         await this.#rearm(false, true);
         return letter;
       });

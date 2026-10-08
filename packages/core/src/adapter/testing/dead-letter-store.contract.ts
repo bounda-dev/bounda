@@ -13,7 +13,7 @@ export interface DeadLetterStoreContractFunction {
 const letter = (id: string, overrides: Partial<NewDeadLetter> = {}): NewDeadLetter => ({
   id,
   kind: "policy",
-  subscriber: "policies",
+  handler: "order.notifyOnOrderPlaced",
   eventId: `evt-${id}`,
   eventType: "OrderPlaced",
   aggregateType: "order",
@@ -52,8 +52,8 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       const payload = { orderId: "o-1", items: [{ sku: "a", quantity: 2 }], note: null };
       await store.add(
         letter("cmd", {
-          kind: "command",
-          subscriber: "scheduled:PlaceOrder",
+          kind: "scheduled",
+          handler: "PlaceOrder",
           eventType: "PlaceOrder",
           payload,
         }),
@@ -61,7 +61,7 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       await store.add(letter("evt"));
       expect((await store.get("cmd"))?.payload).toEqual(payload);
       expect(await store.get("evt")).not.toHaveProperty("payload");
-      expect((await store.list({ kind: "command" }))[0]?.payload).toEqual(payload);
+      expect((await store.list({ kind: "scheduled" }))[0]?.payload).toEqual(payload);
     });
 
     it("is idempotent on id", async () => {
@@ -73,21 +73,21 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
 
     it("lists and counts with filters and paging", async () => {
       await store.add(letter("a"));
-      await store.add(letter("b", { kind: "process", subscriber: "process:OrderPayment" }));
-      await store.add(letter("c", { subscriber: "policies:other" }));
-      await store.updateStatus("c", "replayed");
+      await store.add(letter("b", { kind: "process", handler: "order.orderPayment" }));
+      await store.add(letter("c", { handler: "order.archiveOnOrderPaid" }));
+      await store.updateStatus("c", "retried");
 
       expect((await store.list()).map((entry) => entry.id).sort()).toEqual(["a", "b", "c"]);
       expect((await store.list({ kind: "process" })).map((entry) => entry.id)).toEqual(["b"]);
-      expect((await store.list({ subscriber: "policies" })).map((entry) => entry.id)).toEqual([
-        "a",
-      ]);
+      expect(
+        (await store.list({ handler: "order.notifyOnOrderPlaced" })).map((entry) => entry.id),
+      ).toEqual(["a"]);
       expect((await store.list({ status: "failed" })).map((entry) => entry.id).sort()).toEqual([
         "a",
         "b",
       ]);
       expect(await store.count()).toBe(3);
-      expect(await store.count({ status: "replayed" })).toBe(1);
+      expect(await store.count({ status: "retried" })).toBe(1);
       const page = await store.list({ limit: 1, offset: 1 });
       expect(page).toHaveLength(1);
       expect(await store.list({ offset: 2 })).toHaveLength(1);
@@ -96,7 +96,7 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
 
     it("rejects a status update for a letter it does not hold", async () => {
       const settled = await store
-        .updateStatus("missing", "replayed")
+        .updateStatus("missing", "retried")
         .catch((error: unknown) => error);
       expect(settled).toBeInstanceOf(DeadLetterSettledError);
       expect(settled).toMatchObject({ code: "DEAD_LETTER_SETTLED", id: "missing" });
@@ -106,26 +106,26 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
     it("changes a letter's status only while it is failed, and keeps the first change", async () => {
       await store.add(letter("a"));
       await store.add(letter("b"));
-      await store.updateStatus("a", "replayed");
+      await store.updateStatus("a", "retried");
       await store.updateStatus("b", "discarded");
 
       await expect(store.updateStatus("a", "discarded")).rejects.toBeInstanceOf(
         DeadLetterSettledError,
       );
-      await expect(store.updateStatus("a", "replayed")).rejects.toBeInstanceOf(
+      await expect(store.updateStatus("a", "retried")).rejects.toBeInstanceOf(
         DeadLetterSettledError,
       );
-      await expect(store.updateStatus("b", "replayed")).rejects.toBeInstanceOf(
+      await expect(store.updateStatus("b", "retried")).rejects.toBeInstanceOf(
         DeadLetterSettledError,
       );
-      expect((await store.get("a"))?.status).toBe("replayed");
+      expect((await store.get("a"))?.status).toBe("retried");
       expect((await store.get("b"))?.status).toBe("discarded");
     });
 
     it("lets one of two concurrent status changes through", async () => {
       await store.add(letter("a"));
       const outcomes = await Promise.allSettled([
-        store.updateStatus("a", "replayed"),
+        store.updateStatus("a", "retried"),
         store.updateStatus("a", "discarded"),
       ]);
       expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);

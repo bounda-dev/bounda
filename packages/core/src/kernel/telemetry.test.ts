@@ -275,7 +275,7 @@ describe("telemetry", () => {
         },
         {
           metric: METRICS.deadLetters,
-          description: "Handler runs that gave up, by kind, subscriber and error type",
+          description: "Handler runs that gave up, by kind, handler and error type",
           unit: "{letter}",
         },
       ]),
@@ -284,8 +284,8 @@ describe("telemetry", () => {
       metric: METRICS.deadLetters,
       value: 1,
       attributes: {
-        [ATTRIBUTES.subscriberKind]: "policy",
-        [ATTRIBUTES.subscriber]: "order.notifyOnOrderPlaced",
+        [ATTRIBUTES.handlerKind]: "policy",
+        [ATTRIBUTES.handler]: "order.notifyOnOrderPlaced",
         [ATTRIBUTES.outcome]: "terminal",
       },
     });

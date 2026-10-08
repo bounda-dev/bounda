@@ -180,7 +180,7 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
     let letter: NewDeadLetter | undefined;
     const outcome = await runAttempt({
       storage,
-      key: { subscriber: process.name, eventId: event.id },
+      key: { handler: process.name, eventId: event.id },
       retry: config.forAggregate(process.aggregate).processes.retry,
       leaseMs: leaseMs(process),
       concurrencyRetries: config.runtime.commands.concurrencyRetries,
@@ -213,7 +213,7 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
     event: StoredEvent,
     error: unknown,
   ): Promise<ReactionOutcome> => {
-    const key = { subscriber: process.name, eventId: event.id };
+    const key = { handler: process.name, eventId: event.id };
     if ((await storage.inboxLedger.get(key))?.status === "succeeded") return "done";
     const claimId = await storage.inboxLedger.tryClaim({
       ...key,

@@ -76,7 +76,7 @@ const regenerate = async ({ root, logger, failOnConvention }: Generation): Promi
 };
 
 export const createBoundaPlugin: CreateBoundaPluginFunction = ({
-  consistency = "immediate",
+  consistency = "read-your-writes",
   debounceMs = 100,
   clock,
 }) => {

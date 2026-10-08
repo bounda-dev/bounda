@@ -3,10 +3,10 @@
 "@bounda-dev/cli": minor
 ---
 
-A policy or process run that fails no longer leaves its delayed commands behind, and one that runs
+A policy or process run that fails no longer leaves its scheduled commands behind, and one that runs
 out of time no longer keeps dispatching commands.
 
-- When a handler throws, times out, or its outcome cannot be recorded, the delayed commands that
+- When a handler throws, times out, or its outcome cannot be recorded, the scheduled commands that
   run scheduled are cancelled. A retry that takes another path used to leave them in the scheduler,
   where they ran when due, even after the reaction was dead-lettered.
 - When a handler runs out of time, the commands it dispatches from then on are refused with an

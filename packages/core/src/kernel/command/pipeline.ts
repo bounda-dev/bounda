@@ -52,8 +52,8 @@ export interface DispatchArgs {
 }
 
 /**
- * A command the runtime dispatches on its own, for a reaction, the scheduler or a replay, where
- * nobody waits for its rejection.
+ * A command the runtime dispatches on its own, for a reaction, the scheduler or a dead-letter
+ * retry, where nobody waits for its rejection.
  */
 export interface UnattendedDispatchArgs extends DispatchArgs {
   /**
@@ -100,7 +100,7 @@ export interface ScheduledCommandKeyFunction {
 }
 
 /**
- * The scheduler's dedupe key for a delayed command.
+ * The scheduler's dedupe key for a scheduled command.
  */
 export const scheduledCommandKey: ScheduledCommandKeyFunction = (commandId) =>
   `${SCHEDULED_COMMAND_PREFIX}${commandId}`;
@@ -110,7 +110,7 @@ export interface ScheduledCommandIdFunction {
 }
 
 /**
- * The id a delayed command was scheduled with; `undefined` for a key that is not a command's.
+ * The id a scheduled command was scheduled with; `undefined` for a key that is not a command's.
  */
 export const scheduledCommandId: ScheduledCommandIdFunction = (dedupeKey) =>
   dedupeKey.startsWith(SCHEDULED_COMMAND_PREFIX)
@@ -388,12 +388,12 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     const maxDepth = config.forAggregate(aggregate.name).policies.maxChainDepth;
     if (depth > maxDepth) throw new ChainDepthExceededError(depth, maxDepth);
 
-    const delayed = options.delay !== undefined;
-    const input = delayed ? asStored(payload) : payload;
+    const scheduled = options.delay !== undefined;
+    const input = scheduled ? asStored(payload) : payload;
     const parsed = validatePayload({
       schema: runtime.schema,
       payload: input,
-      subject: delayed ? `delayed command ${type}` : `command ${type}`,
+      subject: scheduled ? `scheduled command ${type}` : `command ${type}`,
     });
     const aggregateId = resolveAggregateId(aggregate, parsed);
     const commandId = scheduledId ?? ids.next();

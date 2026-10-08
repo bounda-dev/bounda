@@ -180,7 +180,7 @@ behaviour is available to any host through `readYourWrites(app)` and
 
 | Option | Default | What it does |
 |---|---|---|
-| `consistency` | `"immediate"` | `"immediate"` reads its own writes; `"eventual"` serves the app as booted. |
+| `consistency` | `"read-your-writes"` | `"read-your-writes"` reads its own writes; `"eventual"` serves the app as booted. |
 | `debounceMs` | `100` | Quiet time after a change before regenerating. |
 
 ## Without the plugin

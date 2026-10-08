@@ -12,7 +12,7 @@ export interface InboxLedgerContractFunction {
 
 const now = new Date("2026-01-01T00:00:00.000Z");
 const later = (ms: number): Date => new Date(now.getTime() + ms);
-const key = { subscriber: "policies", eventId: "evt-1" };
+const key = { handler: "order.notifyOnOrderPlaced", eventId: "evt-1" };
 
 /**
  * The behaviour every inbox ledger must exhibit.
@@ -56,7 +56,7 @@ export const inboxLedgerContract: InboxLedgerContractFunction = ({ create }) => 
         .catch((error: unknown) => error);
       expect(lost).toBeInstanceOf(ClaimLostError);
       expect(lost).toMatchObject({ code: "CLAIM_LOST", ...key });
-      expect((lost as Error).message).toContain(key.subscriber);
+      expect((lost as Error).message).toContain(key.handler);
       await expect(
         ledger.fail({ ...key, error: "late", claimId: first ?? undefined }),
       ).rejects.toBeInstanceOf(ClaimLostError);
@@ -96,7 +96,7 @@ export const inboxLedgerContract: InboxLedgerContractFunction = ({ create }) => 
       expect(lost).toBeInstanceOf(ClaimLostError);
       expect(lost).toMatchObject({ code: "CLAIM_LOST", ...key });
       await expect(
-        ledger.renew({ subscriber: "nobody", eventId: "evt-1", claimId: stale, now: later(1) }),
+        ledger.renew({ handler: "nobody", eventId: "evt-1", claimId: stale, now: later(1) }),
       ).rejects.toBeInstanceOf(ClaimLostError);
       expect(await ledger.get(key)).toMatchObject({
         status: "pending",
@@ -143,15 +143,25 @@ export const inboxLedgerContract: InboxLedgerContractFunction = ({ create }) => 
       expect(await ledger.get(key)).toMatchObject({ status: "pending", attempts: 2 });
     });
 
-    it("keeps subscribers and events independent", async () => {
+    it("keeps handlers and events independent", async () => {
       await ledger.tryClaim({ ...key, now, leaseMs: 60_000 });
       expect(
-        await ledger.tryClaim({ subscriber: "processes", eventId: "evt-1", now, leaseMs: 60_000 }),
+        await ledger.tryClaim({
+          handler: "order.orderPayment",
+          eventId: "evt-1",
+          now,
+          leaseMs: 60_000,
+        }),
       ).toBeTypeOf("string");
       expect(
-        await ledger.tryClaim({ subscriber: "policies", eventId: "evt-2", now, leaseMs: 60_000 }),
+        await ledger.tryClaim({
+          handler: "order.notifyOnOrderPlaced",
+          eventId: "evt-2",
+          now,
+          leaseMs: 60_000,
+        }),
       ).toBeTypeOf("string");
-      expect(await ledger.get({ subscriber: "nobody", eventId: "evt-1" })).toBeNull();
+      expect(await ledger.get({ handler: "nobody", eventId: "evt-1" })).toBeNull();
     });
   });
 };

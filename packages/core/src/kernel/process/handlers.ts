@@ -26,10 +26,10 @@ export interface RunEventHandlerArgs {
   readonly instance: ProcessInstance;
   readonly attempt: number;
   /**
-   * Set when a dead letter is replayed, so the handler's `idempotencyKey` differs from the failed
+   * Set when a dead letter is retried, so the handler's `idempotencyKey` differs from the failed
    * run's.
    */
-  readonly replay?: string | undefined;
+  readonly retryId?: string | undefined;
   /**
    * The unit of work the run's commands write to, to commit with the step that runs it.
    */
@@ -47,7 +47,7 @@ export interface RunDeadlineHandlerArgs {
    * caused by.
    */
   readonly causationId: string;
-  readonly replay?: string | undefined;
+  readonly retryId?: string | undefined;
   readonly within: UnitStores;
 }
 
@@ -145,14 +145,14 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     instanceId,
     instance,
     attempt,
-    replay,
+    retryId,
     within,
   }: RunEventHandlerArgs): Promise<object> => {
     const idempotencyKey = deriveIdempotencyKey({
       kind: "process",
       handler: process.name,
       subject: event.id,
-      replay,
+      retryId,
     });
     const reaction = reactionFor(eventContext(event), idempotencyKey, within);
     return runOf(reaction, async () => {
@@ -198,7 +198,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     due,
     context,
     causationId,
-    replay,
+    retryId,
     within,
   }: RunDeadlineHandlerArgs): Promise<DeadlineRun> => {
     const handler = process.deadlineHandlers[due.field];
@@ -212,7 +212,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
       kind: "process",
       handler: process.name,
       subject: `${instanceId}:deadline:${due.field}:${new Date(due.at).toISOString()}`,
-      replay,
+      retryId,
     });
     const reaction = reactionFor(
       { correlationId: context.correlationId, causationId, depth: 0 },

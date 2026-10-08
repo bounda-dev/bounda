@@ -1,4 +1,10 @@
-import { type AppRegistry, type BoundaApp, type Registry, readYourWrites } from "@bounda-dev/core";
+import {
+  type AppRegistry,
+  type BoundaApp,
+  ConfigurationError,
+  type Registry,
+  readYourWrites,
+} from "@bounda-dev/core";
 import { boot } from "@bounda-dev/core/node";
 import { createContext, type MiddlewareFunction, type RouterContext } from "react-router";
 
@@ -11,11 +17,11 @@ export interface BootBoundaFunction<R extends Registry> {
 }
 
 /**
- * What a loader sees right after an action dispatched a command. `immediate` (the default) brings
- * the read models up to date before the command resolves, so the page a redirect lands on already
- * reflects it. `eventual` leaves projections to the background and reads may lag behind.
+ * What a loader sees right after an action dispatched a command. `read-your-writes` (the default)
+ * brings the read models up to date before the command resolves, so the page a redirect lands on
+ * already reflects it. `eventual` leaves projections to the background and reads may lag behind.
  */
-export type Consistency = "immediate" | "eventual";
+export type Consistency = "read-your-writes" | "eventual";
 
 export interface CreateBoundaArgs<R extends Registry = AppRegistry> {
   /**
@@ -111,7 +117,7 @@ const load = <R extends Registry>(
   if (slot.app !== undefined) return slot.app;
   const starting = (slot.retired === undefined ? bootApp() : slot.retired.then(() => bootApp()))
     .then(started)
-    .then((app) => (consistency === "immediate" ? readYourWrites(app) : app));
+    .then((app) => (consistency === "read-your-writes" ? readYourWrites(app) : app));
   slot.app = starting;
   starting.catch(() => {
     if (slot.app === starting) slot.app = undefined;
@@ -125,7 +131,7 @@ const load = <R extends Registry>(
  * and mount the middleware in `root.tsx`. By default a command resolves once the read models
  * reflect it (see `Consistency`). When the server module is re-evaluated in development, the next
  * request boots from the new modules only once the previous app has stopped, so the two never
- * hold the storage at once.
+ * hold the storage at once. Throws `ConfigurationError` for a `consistency` it does not know.
  *
  * @example
  * // app/bounda.server.ts
@@ -141,8 +147,14 @@ const load = <R extends Registry>(
 export const createBounda: CreateBoundaFunction = <R extends Registry = AppRegistry>({
   boot: bootApp = () => boot<R>(),
   key = DEFAULT_KEY,
-  consistency = "immediate",
+  consistency = "read-your-writes",
 }: CreateBoundaArgs<R> = {}): Bounda<R> => {
+  // Config files and the Vite plugin's options are often not type-checked.
+  if (consistency !== "read-your-writes" && consistency !== "eventual") {
+    throw new ConfigurationError(
+      `consistency must be "read-your-writes" or "eventual", got ${JSON.stringify(consistency)}`,
+    );
+  }
   const bounda = createContext<BoundaApp<R>>();
   const slot = slotFor<R>(key);
   void retire(slot);

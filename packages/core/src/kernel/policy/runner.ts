@@ -59,7 +59,7 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
     await unit.deadLetterStore.add({
       id,
       kind: "policy",
-      subscriber: policy.name,
+      handler: policy.name,
       eventId: event.id,
       eventType: event.type,
       aggregateType: event.aggregateType,
@@ -79,7 +79,7 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
     attempts: number,
     errorType: DeadLetterErrorType,
   ): void => {
-    deadLettered({ kind: "policy", subscriber: policy.name, errorType });
+    deadLettered({ kind: "policy", handler: policy.name, errorType });
     logger.warn("policy dead-lettered", {
       policy: policy.name,
       eventId: event.id,
@@ -95,7 +95,7 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
   ): Promise<ReactionOutcome> =>
     runAttempt({
       storage,
-      key: { subscriber: policy.name, eventId: event.id },
+      key: { handler: policy.name, eventId: event.id },
       retry: settings.retry,
       leaseMs: settings.timeoutMs * 2,
       concurrencyRetries: config.runtime.commands.concurrencyRetries,

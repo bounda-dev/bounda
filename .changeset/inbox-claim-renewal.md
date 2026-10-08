@@ -12,6 +12,6 @@ its commit failed with `ClaimLostError`, so the handler's outside calls repeated
 renews its claim before every rerun, so the lease keeps covering one run, and stops there when the
 claim moved. A store failure while renewing leaves the claim to lapse, as a failed commit does.
 
-For adapter authors, the `InboxLedger` port has a new `renew({ subscriber, eventId, claimId, now })`
+For adapter authors, the `InboxLedger` port has a new `renew({ handler, eventId, claimId, now })`
 that restarts a claim's lease and rejects with `ClaimLostError` when the claim was handed out
 again.

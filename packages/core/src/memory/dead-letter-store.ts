@@ -16,7 +16,7 @@ export interface CreateKeptDeadLetterStoreFunction {
 
 const matches = (letter: DeadLetter, args: ListDeadLettersArgs): boolean =>
   (args.kind === undefined || letter.kind === args.kind) &&
-  (args.subscriber === undefined || letter.subscriber === args.subscriber) &&
+  (args.handler === undefined || letter.handler === args.handler) &&
   (args.status === undefined || letter.status === args.status);
 
 export const createKeptDeadLetterStore: CreateKeptDeadLetterStoreFunction = () => {

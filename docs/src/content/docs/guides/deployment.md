@@ -148,7 +148,7 @@ runs every projection until every read model reflects what is stored. Both leave
 processes and scheduled commands to the background.
 
 In a React Router app this is a setting rather than a call — `createBounda({ consistency })`,
-`"immediate"` by default. See [Bounda with React Router](/guides/react-router/).
+`"read-your-writes"` by default. See [Bounda with React Router](/guides/react-router/).
 
 ## A projection that keeps failing
 
@@ -328,7 +328,7 @@ Metrics:
 | --- | --- | --- |
 | `bounda.dispatcher.lag` | observable gauge, events each subscriber is behind the head | `bounda.subscriber` |
 | `bounda.commands` | counter | `bounda.command.type`, `bounda.outcome` (`stored`, `scheduled`, `rejected`, `failed`) |
-| `bounda.dead_letters` | counter | `bounda.subscriber.kind`, `bounda.subscriber`, `bounda.outcome` (`terminal`, `retriable_exhausted`) |
+| `bounda.dead_letters` | counter | `bounda.handler.kind`, `bounda.handler`, `bounda.outcome` (`terminal`, `retriable_exhausted`) |
 
 The lag gauge is what to alert on: a subscriber whose lag grows is a projection or a policy that
 is failing or stuck, and `app.getLag()` returns the same numbers for a health endpoint, with what

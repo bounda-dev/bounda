@@ -22,7 +22,7 @@ export interface BoundaStub {
   query(name: string, payload?: unknown): PromiseLike<unknown>;
   lag(): PromiseLike<unknown>;
   listDeadLetters(args?: ListDeadLettersArgs): PromiseLike<unknown>;
-  replayDeadLetter(id: string): PromiseLike<unknown>;
+  retryDeadLetter(id: string): PromiseLike<unknown>;
   discardDeadLetter(id: string): PromiseLike<unknown>;
   rebuildReadModel(name: string): PromiseLike<unknown>;
 }
@@ -39,7 +39,7 @@ export interface BoundaClient<R extends Registry> {
   getLag(): Promise<AppLag>;
   readonly deadLetters: {
     list(args?: ListDeadLettersArgs): Promise<readonly DeadLetter[]>;
-    replay(id: string): Promise<DeadLetter>;
+    retry(id: string): Promise<DeadLetter>;
     discard(id: string): Promise<DeadLetter>;
   };
   /**
@@ -89,7 +89,7 @@ export const connect: ConnectFunction = <R extends Registry = AppRegistry>(
   getLag: () => unwrap<AppLag>(stub.lag()),
   deadLetters: {
     list: (args) => unwrap<readonly DeadLetter[]>(stub.listDeadLetters(args)),
-    replay: (id) => unwrap<DeadLetter>(stub.replayDeadLetter(id)),
+    retry: (id) => unwrap<DeadLetter>(stub.retryDeadLetter(id)),
     discard: (id) => unwrap<DeadLetter>(stub.discardDeadLetter(id)),
   },
   rebuildReadModel: (name) => unwrap<RebuildReadModelResult>(stub.rebuildReadModel(name)),

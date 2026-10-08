@@ -6,10 +6,10 @@
 Events that reach a failed process instance are no longer dropped. Each one that would do
 something in it (it has a handler, or completes the process) is parked in the instance's stream as
 `ProcessEventParked`, in the order it arrived, and nothing of the process runs meanwhile, its
-deadlines included. Replaying the dead letter of the failure runs the failed handler, then handles
+deadlines included. Retrying the dead letter of the failure runs the failed handler, then handles
 the parked events in order with the `idempotencyKey` each would have had, and only then records
 `ProcessResumed`, puts the instance back to `started` and schedules its deadlines again. An event
-that arrives during the replay is parked and handled before the instance resumes, so nothing
+that arrives during the retry is parked and handled before the instance resumes, so nothing
 overtakes an older one, and a deadline that came due before a parked event arrived runs before
 it. A parked event that fails again becomes the new dead letter at once, with the rest still
 parked behind it. Discarding the letter gives the instance up: it stays failed, its parked
@@ -20,11 +20,11 @@ A process that holds an event for a retry is no longer handed the later events o
 batch, so none of them overtakes it, as the guide already promised.
 
 `app.deadLetters` fills in `parked` on process letters, how many events wait behind the failure,
-and `bounda dead-letters list` prints it; on the letter a replay returns, it counts what still
-waits because the process failed again, and `bounda dead-letters replay` says so. A failure whose
-handler a deploy removed is let through on replay.
+and `bounda dead-letters list` prints it; on the letter a retry returns, it counts what still
+waits because the process failed again, and `bounda dead-letters retry` says so. A failure whose
+handler a deploy removed is let through on retry.
 
 Breaking, for code that reads process streams: a failed instance is back to `started` only on
-`ProcessResumed`, no longer on the `ProcessHandled` or `ProcessDeadlineReached` a replay writes,
+`ProcessResumed`, no longer on the `ProcessHandled` or `ProcessDeadlineReached` a retry writes,
 and `ProcessFailed` for a deadline records its moment as `at`. A failure recorded by an earlier
-version, whose `ProcessFailed` carries no dead letter, cannot be replayed through `app.deadLetters`.
+version, whose `ProcessFailed` carries no dead letter, cannot be retried through `app.deadLetters`.

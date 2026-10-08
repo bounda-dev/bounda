@@ -50,7 +50,7 @@ describe("createReactionCommands", () => {
     expect(reaction.signal.aborted).toBe(false);
   });
 
-  it("keeps a run's commands, immediate and delayed, in its unit until it commits, as decisions without a position", async () => {
+  it("keeps a run's commands, immediate and scheduled, in its unit until it commits, as decisions without a position", async () => {
     const { reaction, storage, unit } = await setUp();
     const placed = await reaction.commands.placeOrder?.({ orderId: "o-1", total: 3 });
     const paid = await reaction.commands.payOrder?.({ orderId: "o-1", method: "card" });
@@ -302,7 +302,7 @@ describe("createReactionCommands", () => {
     await expect(reaction.decided()).rejects.toThrow(ValidationError);
   });
 
-  it("resolves a delayed command as not rejected and scheduled", async () => {
+  it("resolves a command dispatched with a delay as not rejected and scheduled", async () => {
     const { reaction } = await setUp();
     expect(await reaction.commands.archiveOrder?.({ orderId: "o-1" }, { delay: "1h" })).toEqual({
       rejected: false,

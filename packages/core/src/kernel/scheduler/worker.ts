@@ -16,8 +16,8 @@ import { createMutex } from "../shared/mutex.ts";
 import { classifyFailure, errorDetails, retryDelayMs } from "../shared/retry.ts";
 import {
   appendSystemEvent,
-  COMMAND_FAILED_EVENT,
-  type CommandFailedPayload,
+  SCHEDULED_COMMAND_FAILED_EVENT,
+  type ScheduledCommandFailedPayload,
 } from "../system-events.ts";
 import { ATTRIBUTES, deadLettered, traced } from "../telemetry.ts";
 import { commitWork, type UnitOfWork } from "../unit-of-work/unit-of-work.ts";
@@ -77,7 +77,7 @@ interface DeadlineWait {
 }
 
 /**
- * Runs delayed commands, process deadlines and delayed policy runs, each claimed under a lease.
+ * Runs scheduled commands, process deadlines and delayed policy runs, each claimed under a lease.
  * A run and the settling of its claim are one unit of work: what the run wrote and the claim's
  * completion land together, so a crash between them cannot run the command twice, a run whose
  * claim another instance took over writes nothing, and a give-up writes its dead letter with the
@@ -154,12 +154,12 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       clock,
       aggregateType,
       aggregateId: entry.command.aggregateId,
-      type: COMMAND_FAILED_EVENT,
+      type: SCHEDULED_COMMAND_FAILED_EVENT,
       payload: {
         commandType: entry.command.type,
         error: errorDetails(error).message,
         attempts,
-      } satisfies CommandFailedPayload,
+      } satisfies ScheduledCommandFailedPayload,
       context: entry.context,
     });
   };
@@ -178,7 +178,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       return {
         id: ids.next(),
         kind: "policy",
-        subscriber: payload.policy,
+        handler: payload.policy,
         eventId: payload.eventId,
         eventType: payload.eventType,
         aggregateType: payload.aggregateType,
@@ -193,8 +193,8 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     }
     return {
       id: ids.next(),
-      kind: "command",
-      subscriber: `scheduled:${entry.command.type}`,
+      kind: "scheduled",
+      handler: entry.command.type,
       eventId: entry.dedupeKey,
       eventType: entry.command.type,
       aggregateType: aggregates.commandsByType[entry.command.type]?.aggregate.name ?? "",
@@ -210,17 +210,16 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   };
 
   const dropped = (entry: ScheduledCommand, letter: NewDeadLetter): void => {
+    deadLettered(letter);
     if (letter.kind === "policy") {
-      deadLettered({ kind: "policy", subscriber: letter.subscriber, errorType: letter.errorType });
       logger.warn("policy dead-lettered", {
-        policy: letter.subscriber,
+        policy: letter.handler,
         eventId: letter.eventId,
         errorType: letter.errorType,
         attempts: letter.attempts,
       });
       return;
     }
-    deadLettered({ kind: "command", subscriber: letter.subscriber, errorType: letter.errorType });
     logger.warn("scheduled command dropped", {
       command: entry.command.type,
       dedupeKey: entry.dedupeKey,

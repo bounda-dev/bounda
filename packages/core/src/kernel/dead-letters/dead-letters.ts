@@ -3,7 +3,7 @@ import type { DeadLetter, ListDeadLettersArgs } from "../../adapter/ports/dead-l
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import {
-  ConfigurationError,
+  DeadLetterNotRetriableError,
   DeadLetterSettledError,
   NotFoundError,
 } from "../../contracts/errors.ts";
@@ -11,15 +11,16 @@ import type { StoredEvent } from "../../contracts/event.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
+import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
 import type { PoliciesRuntime } from "../policy/build-policies.ts";
 import type { PolicyExecutor } from "../policy/executor.ts";
+import type { ProcessDeadLetters } from "../process/dead-letter-retry.ts";
 import { PROCESS_DEADLINE_COMMAND } from "../process/deadlines.ts";
-import type { ProcessDeadLetters } from "../process/replay.ts";
 import { commitWork, type UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 
 /**
- * What an operator can do with the handler runs that gave up. Replaying or discarding a letter
+ * What an operator can do with the handler runs that gave up. Retrying or discarding a letter
  * leaves its row in place as a record.
  */
 export interface DeadLetters {
@@ -34,20 +35,20 @@ export interface DeadLetters {
   get(id: string): Promise<DeadLetter | null>;
   /**
    * Runs the failed handler once more: the policy or process handler for the stored event, the
-   * process deadline that failed, or the dropped command with its recorded payload, and marks the
-   * letter `replayed`: a policy's, a command's or that of a process event that follows its
-   * instance's timeout in the same transaction as what the run writes, any other process's once
-   * its instance has drained what was parked, since a replay cut short there is taken up again by
-   * replaying the same letter. A command its aggregate now rejects counts as replayed, as the
-   * scheduler would have settled it. Rejects with the handler's error when it fails again, and the
-   * letter stays `failed`. Rejects, without running anything, a letter that is
-   * missing, a projection letter (a rebuild of the read model fixes it instead), a letter whose
-   * policy is no longer in the registry or whose event is gone, and a command letter recorded
-   * without its payload. Rejects with `DeadLetterSettledError` a letter that is no longer
-   * `failed`, or that another replay or a discard settled while this one ran: a replay marked in
-   * its own transaction then writes nothing, any other process's has already handled its events.
+   * process deadline that failed, or the dropped scheduled command with its recorded payload, and
+   * marks the letter `retried`: a policy's, a scheduled command's or that of a process event that
+   * follows its instance's timeout in the same transaction as what the run writes, any other
+   * process's once its instance has drained what was parked, since a retry cut short there is
+   * taken up again by retrying the same letter. A scheduled command its aggregate now rejects
+   * counts as retried, as the scheduler would have settled it. Rejects with the handler's error
+   * when it fails again, and the letter stays `failed`. Rejects without running anything with
+   * `NotFoundError` when the letter, or the event or process instance it names, is missing, and
+   * with `DeadLetterNotRetriableError` when the app as it now is cannot retry it. Rejects with
+   * `DeadLetterSettledError` a letter that is no longer `failed`, or that another retry or a
+   * discard settled while this one ran: a retry marked in its own transaction then writes
+   * nothing, any other process's has already handled its events.
    */
-  replay(id: string): Promise<DeadLetter>;
+  retry(id: string): Promise<DeadLetter>;
   /**
    * Marks the letter `discarded`. Rejects a letter that is missing, and with
    * `DeadLetterSettledError` one that is no longer `failed`.
@@ -58,6 +59,7 @@ export interface DeadLetters {
 export interface CreateDeadLettersArgs {
   readonly storage: StoragePorts;
   readonly pipeline: CommandPipeline;
+  readonly aggregates: AggregatesRuntime;
   readonly policies: PoliciesRuntime;
   readonly policyExecutor: PolicyExecutor;
   readonly processes: ProcessDeadLetters;
@@ -72,12 +74,13 @@ export interface CreateDeadLettersFunction {
 }
 
 /**
- * A replay bypasses the inbox ledger on purpose: the ledger already says the handler ran, and the
+ * A retry bypasses the inbox ledger on purpose: the ledger already says the handler ran, and the
  * operator is asking for another run.
  */
 export const createDeadLetters: CreateDeadLettersFunction = ({
   storage,
   pipeline,
+  aggregates,
   policies,
   policyExecutor,
   processes,
@@ -86,15 +89,15 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
   clock,
   logger,
 }) => {
-  // The replay's writes and the letter's new status, together or not at all. A replay that
+  // The retry's writes and the letter's new status, together or not at all. A retry that
   // another one settled first writes nothing, and does not run again after a conflict.
-  const replayed = (letter: DeadLetter, run: (unit: UnitOfWork) => Promise<void>): Promise<void> =>
+  const settled = (letter: DeadLetter, run: (unit: UnitOfWork) => Promise<void>): Promise<void> =>
     commitWork({
       storage,
       concurrencyRetries: config.runtime.commands.concurrencyRetries,
       work: async (unit) => {
         await run(unit);
-        await unit.deadLetterStore.updateStatus(letter.id, "replayed");
+        await unit.deadLetterStore.updateStatus(letter.id, "retried");
       },
       beforeRerun: async () => {
         const current = await storage.deadLetterStore.get(letter.id);
@@ -125,64 +128,76 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
     return event;
   };
 
-  const replayPolicy = async (letter: DeadLetter, replay: string): Promise<void> => {
-    const policy = policies.byName[letter.subscriber];
+  const retryPolicy = async (letter: DeadLetter, retryId: string): Promise<void> => {
+    const policy = policies.byName[letter.handler];
     if (policy === undefined) {
-      throw new ConfigurationError(`Policy "${letter.subscriber}" is no longer in the registry`);
+      throw new DeadLetterNotRetriableError(
+        `Policy "${letter.handler}" is no longer in the registry`,
+      );
     }
     const event = await eventOf(letter);
-    await replayed(letter, (unit) =>
-      policyExecutor.run({ policy, event, attempt: letter.attempts + 1, replay, within: unit }),
+    if (event.aggregateType !== policy.source || !policy.on.includes(event.type)) {
+      throw new DeadLetterNotRetriableError(
+        `Policy "${policy.name}" no longer handles ${event.aggregateType}.${event.type}`,
+      );
+    }
+    await settled(letter, (unit) =>
+      policyExecutor.run({ policy, event, attempt: letter.attempts + 1, retryId, within: unit }),
     );
   };
 
-  const replayCommand = async (letter: DeadLetter): Promise<void> => {
+  const retryScheduled = async (letter: DeadLetter): Promise<void> => {
+    if (aggregates.commandsByType[letter.eventType] === undefined) {
+      throw new DeadLetterNotRetriableError(
+        `Command "${letter.eventType}" is no longer in the registry`,
+      );
+    }
     const context: CausationContext = {
       correlationId: ids.next(),
       causationId: letter.id,
       depth: 0,
     };
-    if (letter.payload === undefined) {
-      throw new ConfigurationError(
-        `Dead letter "${letter.id}" was recorded without the command's payload and cannot be replayed`,
-      );
-    }
-    const { payload } = letter;
-    await replayed(letter, async (unit) => {
-      await pipeline.dispatchUnattended({ type: letter.eventType, payload, context, within: unit });
+    await settled(letter, async (unit) => {
+      await pipeline.dispatchUnattended({
+        type: letter.eventType,
+        payload: letter.payload,
+        context,
+        within: unit,
+      });
     });
   };
 
-  // Resolves to whether the letter still has to be marked replayed: a policy, command or
-  // follow-up replay marks it in its own unit; any other process replay leaves it for after the
+  // Resolves to whether the letter still has to be marked retried: a policy, scheduled command
+  // or follow-up retry marks it in its own unit; any other process retry leaves it for after the
   // drain.
-  const run = async (letter: DeadLetter, replay: string): Promise<boolean> => {
+  const run = async (letter: DeadLetter, retryId: string): Promise<boolean> => {
     switch (letter.kind) {
       case "policy":
-        await replayPolicy(letter, replay);
+        await retryPolicy(letter, retryId);
         return false;
       case "process":
         if (letter.eventType === PROCESS_DEADLINE_COMMAND) {
-          await processes.replayDeadline({
-            payload: { process: letter.subscriber, aggregateId: letter.aggregateId },
+          await processes.retryDeadline({
+            payload: { process: letter.handler, aggregateId: letter.aggregateId },
             context: { correlationId: ids.next(), causationId: letter.id, depth: 0 },
-            replay,
+            retryId,
             letter: letter.id,
           });
           return true;
         }
-        return !(await processes.replay({
-          process: letter.subscriber,
+        return !(await processes.retry({
+          process: letter.handler,
           event: await eventOf(letter),
-          replay,
+          retryId,
           letter: letter.id,
         }));
-      case "command":
-        await replayCommand(letter);
+      case "scheduled":
+        await retryScheduled(letter);
         return false;
-      case "projection":
-        throw new ConfigurationError(
-          `Dead letter "${letter.id}" is a projection failure; rebuild the read model instead`,
+      default:
+        // Stores cast the stored kind, so a row no release writes still reaches here.
+        throw new DeadLetterNotRetriableError(
+          `Dead letter "${letter.id}" has an unknown kind "${String(letter.kind satisfies never)}"`,
         );
     }
   };
@@ -199,18 +214,18 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
       const letter = await storage.deadLetterStore.get(id);
       return letter === null ? null : withParked(letter);
     },
-    replay: async (id) => {
+    retry: async (id) => {
       const letter = await failedLetter(id);
-      if (await run(letter, ids.next())) await storage.deadLetterStore.updateStatus(id, "replayed");
-      logger.info("dead letter replayed", {
+      if (await run(letter, ids.next())) await storage.deadLetterStore.updateStatus(id, "retried");
+      logger.info("dead letter retried", {
         id,
         kind: letter.kind,
-        subscriber: letter.subscriber,
+        handler: letter.handler,
         at: clock.now().toISOString(),
       });
-      const replayed: DeadLetter = { ...letter, status: "replayed" };
-      if (letter.kind !== "process") return replayed;
-      return { ...replayed, parked: await processes.stillParked(letter) };
+      const retried: DeadLetter = { ...letter, status: "retried" };
+      if (letter.kind !== "process") return retried;
+      return { ...retried, parked: await processes.stillParked(letter) };
     },
     discard: async (id) => {
       const letter = await failedLetter(id);
@@ -218,7 +233,7 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
       logger.info("dead letter discarded", {
         id,
         kind: letter.kind,
-        subscriber: letter.subscriber,
+        handler: letter.handler,
       });
       return { ...letter, status: "discarded" };
     },

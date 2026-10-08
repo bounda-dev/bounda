@@ -29,6 +29,7 @@ export {
   type ConcurrencyErrorArgs,
   ConfigurationError,
   CreationOrderError,
+  DeadLetterNotRetriableError,
   DeadLetterSettledError,
   type DeadLetterSettledErrorArgs,
   DomainError,
@@ -41,12 +42,11 @@ export {
 } from "./errors.ts";
 export type {
   NewEvent,
-  ProcessStreamIdFunction,
   StoredEvent,
   StreamIdentity,
   StreamIdFunction,
 } from "./event.ts";
-export { PROCESS_STREAM_PREFIX, processStreamId, streamId } from "./event.ts";
+export { streamId } from "./event.ts";
 export type {
   CreateSequentialIdGeneratorArgs,
   CreateSequentialIdGeneratorFunction,

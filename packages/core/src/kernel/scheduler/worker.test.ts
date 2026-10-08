@@ -6,7 +6,7 @@ import type { PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { createTestApp } from "../../testing/index.ts";
 import { createReactiveHarness } from "../reactive-harness.ts";
-import { COMMAND_FAILED_EVENT } from "../system-events.ts";
+import { SCHEDULED_COMMAND_FAILED_EVENT } from "../system-events.ts";
 import { ATTRIBUTES, METRICS } from "../telemetry.ts";
 import { installFakeTelemetry } from "../telemetry-fake.ts";
 import {
@@ -25,7 +25,7 @@ const LOST_CLAIM = "scheduled command no longer holds its claim; this run wrote 
 
 const order = orderAggregateEntry();
 
-// A delayed command is dropped when it fails, never when it is rejected: placing an order twice
+// A scheduled command is dropped when it fails, never when it is rejected: placing an order twice
 // fails here.
 const failingRegistry: Registry = {
   aggregates: {
@@ -114,7 +114,7 @@ describe("scheduled command worker", () => {
     expect(await harness.storage.scheduler.list()).toEqual([]);
   });
 
-  it("drops a command with its dead letter, CommandFailed and the claim's failure together, or neither", async () => {
+  it("drops a command with its dead letter, ScheduledCommandFailed and the claim's failure together, or neither", async () => {
     const harness = await createReactiveHarness({ registry: failingRegistry });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
     await harness.pipeline.dispatch({
@@ -138,9 +138,9 @@ describe("scheduled command worker", () => {
     expect(await harness.worker.runOnce()).toBe(1);
     expect(
       (await harness.storage.eventStore.load(order)).events.map((event) => event.type),
-    ).toEqual(["OrderPlaced", COMMAND_FAILED_EVENT]);
+    ).toEqual(["OrderPlaced", SCHEDULED_COMMAND_FAILED_EVENT]);
     expect(await harness.storage.deadLetterStore.list()).toMatchObject([
-      { kind: "command", eventType: "PlaceOrder", errorMessage: "Order already placed" },
+      { kind: "scheduled", eventType: "PlaceOrder", errorMessage: "Order already placed" },
     ]);
     expect(await harness.storage.scheduler.list()).toEqual([]);
   });
@@ -177,7 +177,7 @@ describe("scheduled command worker", () => {
     expect(await harness.storage.scheduler.list()).toEqual([]);
   });
 
-  it("drops a command that fails for good, records CommandFailed and dead-letters it", async () => {
+  it("drops a command that fails for good, records ScheduledCommandFailed and dead-letters it", async () => {
     const telemetry = installFakeTelemetry();
     const { logger, entries } = createRecordingLogger();
     const harness = await createReactiveHarness({ registry: failingRegistry, logger });
@@ -195,14 +195,17 @@ describe("scheduled command worker", () => {
       aggregateType: "order",
       aggregateId: "o-1",
     });
-    expect(order.events.map((event) => event.type)).toEqual(["OrderPlaced", COMMAND_FAILED_EVENT]);
+    expect(order.events.map((event) => event.type)).toEqual([
+      "OrderPlaced",
+      SCHEDULED_COMMAND_FAILED_EVENT,
+    ]);
     expect(order.events[1]).toMatchObject({
       payload: { commandType: "PlaceOrder", error: "Order already placed", attempts: 1 },
       metadata: { system: true },
     });
     expect(await harness.storage.deadLetterStore.list()).toMatchObject([
       {
-        kind: "command",
+        kind: "scheduled",
         eventType: "PlaceOrder",
         aggregateType: "order",
         aggregateId: "o-1",
@@ -217,8 +220,8 @@ describe("scheduled command worker", () => {
       metric: METRICS.deadLetters,
       value: 1,
       attributes: {
-        [ATTRIBUTES.subscriberKind]: "command",
-        [ATTRIBUTES.subscriber]: "scheduled:PlaceOrder",
+        [ATTRIBUTES.handlerKind]: "scheduled",
+        [ATTRIBUTES.handler]: "PlaceOrder",
         [ATTRIBUTES.outcome]: "terminal",
       },
     });
@@ -268,7 +271,7 @@ describe("scheduled command worker", () => {
     expect(await harness.storage.scheduler.list()).toEqual([]);
     expect(await harness.storage.deadLetterStore.list()).toMatchObject([
       {
-        kind: "command",
+        kind: "scheduled",
         errorType: "retriable_exhausted",
         attempts: 2,
         errorMessage: "db unavailable",
@@ -277,7 +280,7 @@ describe("scheduled command worker", () => {
     ]);
   });
 
-  it("runs a delayed command with the id it was scheduled with, on every retry", async () => {
+  it("runs a scheduled command with the id it was scheduled with, on every retry", async () => {
     const harness = await createReactiveHarness({
       registry: orderRegistry,
       config: {
@@ -737,7 +740,7 @@ describe("scheduled command worker", () => {
     expect((await harness.storage.scheduler.list())[0]?.attempts).toBe(1);
   });
 
-  it("does not record CommandFailed for terminal errors on unknown aggregates and polls in the background", async () => {
+  it("does not record ScheduledCommandFailed for terminal errors on unknown aggregates and polls in the background", async () => {
     const harness = await createReactiveHarness({ registry: orderRegistry });
     harness.pipeline.dispatchUnattended = async () => {
       throw new ValidationError("nope", []);
@@ -818,7 +821,7 @@ const noteRegistry = {
   readModels: {},
 } as const satisfies Registry;
 
-describe("delayed command payload", () => {
+describe("scheduled command payload", () => {
   it("is validated once, when the command runs", async () => {
     receivedNotes.length = 0;
     rejectNotes = false;
@@ -832,7 +835,7 @@ describe("delayed command payload", () => {
     await app.stop();
   });
 
-  it("is validated once when a dropped command is replayed from its dead letter", async () => {
+  it("is validated once when a dropped command is retried from its dead letter", async () => {
     receivedNotes.length = 0;
     rejectNotes = true;
     const { app, clock } = await createTestApp({ registry: noteRegistry });
@@ -843,7 +846,7 @@ describe("delayed command payload", () => {
 
     rejectNotes = false;
     receivedNotes.length = 0;
-    await app.deadLetters.replay(letter?.id ?? "");
+    await app.deadLetters.retry(letter?.id ?? "");
 
     expect(letter?.payload).toEqual({ noteId: "n-1", text: "hello" });
     expect(receivedNotes).toEqual([{ noteId: "n-1", text: "hello!" }]);
@@ -912,7 +915,7 @@ describe("delayed command payload", () => {
     const at = new Date("2026-02-01T00:00:00.000Z");
 
     await expect(app.commands.pinNote({ noteId: "n-1", at }, { delay: "1m" })).rejects.toThrow(
-      "Invalid payload for delayed command PinNote",
+      "Invalid payload for scheduled command PinNote",
     );
     await expect(app.commands.pinNote({ noteId: "n-1", at })).resolves.toMatchObject({
       scheduled: false,
@@ -929,7 +932,7 @@ describe("delayed command payload", () => {
         payload: { noteId: "n-1" },
         options: { delay: "1m" },
       }),
-    ).rejects.toThrow("Invalid payload for delayed command WriteNote");
+    ).rejects.toThrow("Invalid payload for scheduled command WriteNote");
     expect(await harness.storage.scheduler.list()).toEqual([]);
   });
 });

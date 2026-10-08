@@ -338,7 +338,7 @@ describe("process runner", () => {
     expect(calls).toEqual(["timeout:o-3"]);
     for (const eventId of late) {
       expect(
-        await harness.storage.inboxLedger.get({ subscriber: "order.orderPayment", eventId }),
+        await harness.storage.inboxLedger.get({ handler: "order.orderPayment", eventId }),
       ).toBeNull();
     }
     expect((await processStream(harness)).events).toHaveLength(2);
@@ -399,7 +399,7 @@ describe("process runner", () => {
     expect(await harness.storage.deadLetterStore.list()).toMatchObject([
       {
         kind: "process",
-        subscriber: "order.orderPayment",
+        handler: "order.orderPayment",
         errorType: "terminal",
         errorMessage: "bad payment",
         errorStack: expect.stringContaining("bad payment"),
@@ -653,7 +653,7 @@ describe("process runner", () => {
       payload: { orderId: "o-1", method: "card" },
     });
     await harness.storage.inboxLedger.tryClaim({
-      subscriber: "order.orderPayment",
+      handler: "order.orderPayment",
       eventId: "eventIds" in paid ? (paid.eventIds[0] ?? "") : "",
       now: harness.clock.now(),
       leaseMs: 60_000,
@@ -1359,7 +1359,7 @@ describe("processes that listen to other aggregates", () => {
     expect((await stream(harness, "o-1")).events).toEqual([]);
   });
 
-  it("refuse to replay an event that belongs to no instance, or to one that is not there", async () => {
+  it("refuse to retry an event that belongs to no instance, or to one that is not there", async () => {
     const harness = await createReactiveHarness({
       registry: withCorrelate({
         payment: {
@@ -1382,10 +1382,10 @@ describe("processes that listen to other aggregates", () => {
         .events[0] as StoredEvent;
     for (const paymentId of ["p-1", "p-2"]) {
       await expect(
-        harness.processes.replay({
+        harness.processes.retry({
           process: "order.checkout",
           event: await eventOf(paymentId),
-          replay: "r",
+          retryId: "r",
         }),
       ).rejects.toThrow(`Process "order.checkout" has no instance for payment:${paymentId}`);
     }
@@ -1422,7 +1422,7 @@ describe("processes that listen to other aggregates", () => {
     const [boom] = (
       await harness.storage.eventStore.load({ aggregateType: "payment", aggregateId: "p-1" })
     ).events;
-    const key = { subscriber: "order.checkout", eventId: boom?.id ?? "" };
+    const key = { handler: "order.checkout", eventId: boom?.id ?? "" };
     await harness.storage.inboxLedger.tryClaim({
       ...key,
       now: harness.clock.now(),
@@ -1484,7 +1484,7 @@ describe("processes that listen to other aggregates", () => {
     const [letter] = await harness.storage.deadLetterStore.list();
     expect(letter).toMatchObject({
       kind: "process",
-      subscriber: "order.checkout",
+      handler: "order.checkout",
       eventType: "PaymentFailed",
       aggregateType: "payment",
       aggregateId: "p-1",
@@ -1493,7 +1493,7 @@ describe("processes that listen to other aggregates", () => {
     });
   });
 
-  it("replay a dead-lettered handler of another aggregate's event on the instance correlate names", async () => {
+  it("retry a dead-lettered handler of another aggregate's event on the instance correlate names", async () => {
     seen.length = 0;
     let broken = true;
     const harness = await createReactiveHarness({
@@ -1520,10 +1520,10 @@ describe("processes that listen to other aggregates", () => {
       aggregateId: "p-1",
     });
     broken = false;
-    await harness.processes.replay({
-      process: letter.subscriber,
+    await harness.processes.retry({
+      process: letter.handler,
       event: events[0] as (typeof events)[number],
-      replay: "r-1",
+      retryId: "r-1",
     });
     expect((await stream(harness, "o-1")).events.map((event) => event.type)).toEqual([
       PROCESS_EVENTS.started,
