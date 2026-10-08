@@ -47,13 +47,10 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({ queries, readMode
       query.repository === null
         ? undefined
         : await query.repository({ ...(parsed as Record<string, unknown>), client, table });
+    const args = { query: { type, payload: parsed }, repositoryData, table, queries: facade };
+    const readModelPorts = ports[query.readModel] ?? {};
     return query.handler(
-      withPorts(ports[query.readModel] ?? {}, {
-        query: { type, payload: parsed },
-        repositoryData,
-        table,
-        queries: facade,
-      }),
+      Object.keys(readModelPorts).length === 0 ? args : withPorts(readModelPorts, args),
     );
   };
 

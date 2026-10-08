@@ -526,7 +526,9 @@ always present in the handler: callers see the schema's input type, handlers its
 The root of a read model is read like an aggregate's, without events: `view.ts`, the ports, and
 any other module or directory the projections and queries share, which the generator leaves
 alone. It warns about a directory one letter away from `projections`, `queries` or
-`infrastructure`, or named `projection`, `query` or `infra`.
+`infrastructure`, or named `projection`, `query` or `infra`, and about a module there that
+exports `project`, `repository` or `handler`: a projection or a query put in the wrong place,
+which would go unregistered.
 
 ### Ports of a read model
 
@@ -551,7 +553,7 @@ export const handler = async ({ repositoryData, rates }: Query.HandlerArgs) =>
 A query only reads, so it needs no `idempotencyKey`, and a port that fails fails the query. The
 config chooses its implementation in the same `ports` section, `ports: { orderSummary: { rates:
 "ecb" } }`, and a read model's port cannot be named after what a query's arguments already hold
-(`query`, `repositoryData`, `table`, `queries`, `client`) nor `view`.
+(`query`, `repositoryData`, `table`, `queries`) nor `view`.
 
 `repository` reads the storage and gets no ports, and neither do the projections, for three
 reasons, each enough on its own:

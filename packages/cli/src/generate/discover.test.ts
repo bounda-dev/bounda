@@ -669,6 +669,11 @@ describe("discoverProject convention problems", () => {
       "app/read/order-summary/query/list-orders.ts",
       "app/read/order-summary/projection/",
       "app/read/order-summary/infra/",
+      ["app/read/order-summary/order-placed.ts", "export const project = () => {};\n"],
+      [
+        "app/read/order-summary/get-order.ts",
+        "export const repository = () => null;\nexport const handler = () => null;\n",
+      ],
     ]);
     expect(await problemsOf(root)).toEqual([
       `${infrastructure}/repository-data: "repositoryData" is reserved; give the port another name`,
@@ -678,7 +683,16 @@ describe("discoverProject convention problems", () => {
     ]);
     await rm(join(root, "app/read/order-summary/infrastructure"), { recursive: true });
     const notRead = "the generator does not read this directory; rename it to";
+    const misplaced = "which only a projection or a query does, so it is neither: move it to";
     expect((await discoverProject({ root })).warnings).toEqual([
+      {
+        module: "orderSummary",
+        message: `app/read/order-summary/get-order.ts: exports "repository", "handler", ${misplaced} projections/<aggregate>/get-order.ts or queries/get-order.ts`,
+      },
+      {
+        module: "orderSummary",
+        message: `app/read/order-summary/order-placed.ts: exports "project", ${misplaced} projections/<aggregate>/order-placed.ts or queries/order-placed.ts`,
+      },
       {
         module: "orderSummary",
         message: `app/read/order-summary/infra: ${notRead} infrastructure if that is what it holds`,

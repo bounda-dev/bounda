@@ -15,4 +15,6 @@ letter away from `projections`, `queries` or `infrastructure`.
 `bounda.config.ts` chooses a read model's implementations in the same `ports` section, by read model
 and port (`ports: { orderSummary: { rates: "ecb" } }`), and `createTestApp` takes their doubles the
 same way. `.bounda/types.ts` gains `<ReadModel>Ports`, and `Query.HandlerArgs` takes it. A read
-model's port cannot be called `view`, `query`, `repositoryData`, `table`, `queries` or `client`.
+model's port cannot be called `view`, `query`, `repositoryData`, `table` or `queries`, and a module
+at a read model's root that exports `project`, `repository` or `handler` is warned about, since
+it belongs in `projections/` or `queries/`.

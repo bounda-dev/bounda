@@ -396,8 +396,7 @@ const READ_MODEL: ModuleKind = {
     ["queries", ["query"]],
     [INFRASTRUCTURE, ["infra"]],
   ]),
-  // `client` is what `repository` gets, so a query reads the same names in both.
-  reservedPortKeys: new Set(["view", "query", "repositoryData", "table", "queries", "client"]),
+  reservedPortKeys: new Set(["view", "query", "repositoryData", "table", "queries"]),
 };
 
 // Past the first difference, the rest must match once one character is skipped in the longer
@@ -751,6 +750,10 @@ const discoverQueries = async (
 
 const NO_EVENTS: ReadonlySet<string> = new Set();
 
+// What a projection or a query exports: one of them at a read model's root was put in the wrong
+// place, and would go unregistered.
+const MISPLACED_EXPORTS: ReadonlySet<string> = new Set(["project", "repository", "handler"]);
+
 const discoverReadModel = async (
   context: Context,
   directory: string,
@@ -772,6 +775,16 @@ const discoverReadModel = async (
       { path: join(directory, `${module}.ts`), text: texts[index] ?? "" },
     ]),
   );
+  for (const [module, { path, text }] of modules) {
+    const misplaced = runtimeExportsOf(text).filter((name) => MISPLACED_EXPORTS.has(name));
+    if (misplaced.length === 0) continue;
+    warnAbout(
+      context,
+      name,
+      path,
+      `exports ${quoted(misplaced)}, which only a projection or a query does, so it is neither: move it to projections/<aggregate>/${module}.ts or queries/${module}.ts`,
+    );
+  }
   checkMisspelledDirectories(context, READ_MODEL, name, directory, listing.directories);
   const has = (child: string): boolean => listing.directories.includes(child);
   return {

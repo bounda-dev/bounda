@@ -66,10 +66,9 @@ const disposerOf = (port: unknown): (() => Promise<void>) | undefined => {
 
 /**
  * Chooses every aggregate's and read model's implementations before building any, so a
- * configuration error never
- * leaves a client open. `create` runs one at a time, so closing in reverse undoes the order of
- * creation; a `default` export is shared by every app the process holds, and a test's double
- * belongs to the test, so neither is ever closed.
+ * configuration error never leaves a client open. `create` runs one at a time, so closing in
+ * reverse undoes the order of creation; a `default` export is shared by every app the process
+ * holds, and a test's double belongs to the test, so neither is ever closed.
  */
 export const createPorts: CreatePortsFunction = async (args) => {
   const { registry, env, logger, clock } = args;
