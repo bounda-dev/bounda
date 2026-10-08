@@ -4,7 +4,7 @@ import type { DeadLetterErrorType } from "../../adapter/ports/dead-letter-store.
 import { pendingEvent } from "../../adapter/testing/fixtures.ts";
 import type { ResolvedRetryConfig } from "../../config/types.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
-import { DomainError } from "../../contracts/errors.ts";
+import { ValidationError } from "../../contracts/errors.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import type { UnitOfWork } from "../unit-of-work/unit-of-work.ts";
@@ -31,6 +31,7 @@ const setUp = async () => {
   const runs: number[] = [];
   const retries: number[] = [];
   const gaveUp: string[] = [];
+  const waiting: string[] = [];
   const stage = async (unit: UnitOfWork): Promise<void> => {
     const { version } = await unit.eventStore.load(order);
     await unit.eventStore.append({
@@ -47,6 +48,13 @@ const setUp = async () => {
       leaseMs: 60_000,
       concurrencyRetries,
       clock,
+      pendingRetries: {
+        startRound: () => {},
+        waiting: (at) => {
+          waiting.push(at.toISOString());
+        },
+        skipToNext: async () => false,
+      },
       run: async (unit, n) => {
         runs.push(n);
         await (run ?? stage)(unit, n, storage);
@@ -80,7 +88,7 @@ const setUp = async () => {
       await stage(unit);
       throw error();
     };
-  return { storage, clock, runs, retries, gaveUp, attempt, stage, failing };
+  return { storage, clock, runs, retries, gaveUp, waiting, attempt, stage, failing };
 };
 
 describe("runAttempt", () => {
@@ -101,26 +109,30 @@ describe("runAttempt", () => {
   });
 
   it("holds a retriable failure, waits out its back-off, and counts the next attempt", async () => {
-    const { storage, clock, runs, retries, attempt, failing } = await setUp();
+    const { storage, clock, runs, retries, waiting, attempt, failing } = await setUp();
     expect(await attempt({ run: failing(() => new Error("network")) })).toBe("hold");
     expect(retries).toEqual([1]);
+    expect(waiting).toEqual(["2026-01-01T00:00:01.000Z"]);
     expect(await storage.eventStore.lastPosition()).toBe(0);
     expect(await storage.inboxLedger.get(key)).toMatchObject({
       status: "failed",
       attempts: 1,
       lastError: "network",
     });
+    clock.advance(999);
     expect(await attempt()).toBe("hold");
     expect(runs).toEqual([1]);
-    clock.advance(1_000);
+    expect(waiting).toEqual(["2026-01-01T00:00:01.000Z", "2026-01-01T00:00:01.000Z"]);
+    clock.advance(1);
     expect(await attempt()).toBe("done");
     expect(runs).toEqual([1, 2]);
+    expect(waiting).toHaveLength(2);
     expect(await storage.inboxLedger.get(key)).toMatchObject({ status: "succeeded", attempts: 2 });
   });
 
   it("gives up on a terminal failure at once, committing the dead letter with the claim and nothing of the run", async () => {
     const { storage, runs, gaveUp, attempt, failing } = await setUp();
-    expect(await attempt({ run: failing(() => new DomainError("refused")) })).toBe("done");
+    expect(await attempt({ run: failing(() => new ValidationError("refused", [])) })).toBe("done");
     expect(runs).toEqual([1]);
     expect(gaveUp).toEqual(["1:terminal"]);
     expect(await storage.eventStore.lastPosition()).toBe(0);
@@ -343,9 +355,9 @@ describe("runAttempt", () => {
         }
         return result;
       });
-    await expect(attempt({ run: failing(() => new DomainError("refused")) })).rejects.toThrow(
-      "connection lost",
-    );
+    await expect(
+      attempt({ run: failing(() => new ValidationError("refused", [])) }),
+    ).rejects.toThrow("connection lost");
     expect(gaveUp).toEqual([]);
     expect(await storage.deadLetterStore.count()).toBe(0);
     expect(await storage.inboxLedger.get(key)).toMatchObject({ status: "pending", attempts: 1 });
@@ -359,7 +371,7 @@ describe("runAttempt", () => {
           await stage(unit);
           clock.advance(60_001);
           await storage.inboxLedger.tryClaim({ ...key, now: clock.now(), leaseMs: 60_000 });
-          throw new DomainError("refused");
+          throw new ValidationError("refused", []);
         },
       }),
     ).toBe("hold");

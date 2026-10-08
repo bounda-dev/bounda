@@ -5,11 +5,17 @@ type Module = typeof import("../place-order.ts");
 
 export declare namespace Command {
   type PayloadArgs = core.PayloadArgs;
+  type RejectionsArgs = core.CommandRejectionsArgs<
+    "PlaceOrder",
+    core.PayloadOf<Module>,
+    generated.OrderState
+  >;
   type HandlerArgs = core.CommandHandlerArgs<
     "PlaceOrder",
     core.PayloadOf<Module>,
     generated.OrderState,
     generated.OrderEvents,
-    generated.OrderCollaborators
+    generated.OrderCollaborators,
+    core.RejectionCodeOf<Module>
   >;
 }

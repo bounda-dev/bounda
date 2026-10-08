@@ -59,17 +59,17 @@ Splitting them means a slow policy cannot compete with request handling for the 
 the two scale separately. Commands still work in `web`: dispatching stores events, and the worker
 picks up their consequences.
 
-`processUntilIdle()` and `catchUpReadModels()` work in every role, which is what makes a `web`
+`runUntilIdle()` and `catchUpReadModels()` work in every role, which is what makes a `web`
 process able to wait for its own writes without running the background loop.
 
 A host with no background loop at all, such as a serverless function or a Durable Object, drives
-the same work in slices. `processUntilIdle({ maxPasses })` stops after that many rounds and
+the same work in slices. `runUntilIdle({ maxPasses })` stops after that many rounds and
 resolves to `{ idle }`, `false` when work is left; `app.nextDueAt()` is the earliest moment a
 scheduled command or a process deadline becomes due, or `null`. Together they say when to come
 back:
 
 ```ts
-const { idle } = await app.processUntilIdle({ maxPasses: 20 });
+const { idle } = await app.runUntilIdle({ maxPasses: 20 });
 const next = idle ? await app.nextDueAt() : new Date();
 // arm a timer, an alarm or a cron trigger for `next`, if there is one
 ```
@@ -163,7 +163,7 @@ batch that goes through resets it. When another subscriber that was failing reco
 the database is back after an outage, every failing one is retried at once instead of waiting out
 its delay. `app.catchUpReadModels()`, and read-your-writes with it, respects the backoff too, so a
 request does not stumble on the same failure over and over: it answers with the read model as far
-as it got. `app.processUntilIdle()` ignores the backoff, so a test that fixes a projection and
+as it got. `app.runUntilIdle()` ignores the backoff, so a test that fixes a projection and
 processes again sees it advance at once.
 
 `app.getLag()` says what a subscriber is stuck on:
@@ -307,14 +307,15 @@ Everything is reported under the scope `@bounda-dev/core`. Spans:
 
 | Span | When | Attributes |
 | --- | --- | --- |
-| `bounda.command <Type>` | a command is dispatched | `bounda.command.type`, `bounda.aggregate.type`, `bounda.aggregate.id`, `bounda.correlation_id`, `bounda.causation_id`, `bounda.outcome` (`stored`, `scheduled`), `bounda.event.count` |
+| `bounda.command <Type>` | a command is dispatched | `bounda.command.type`, `bounda.aggregate.type`, `bounda.aggregate.id`, `bounda.correlation_id`, `bounda.causation_id`, `bounda.outcome` (`stored`, `scheduled`, `rejected`), `bounda.event.count`; a rejection adds the event `bounda.command.rejected`, its code in `bounda.rejected` |
 | `bounda.subscriber <name>` | the dispatcher hands a batch to a projection, the policy runner or the process runner; idle passes produce none | `bounda.subscriber`, `bounda.subscriber.kind`, `bounda.position.after`, `bounda.event.count`, `bounda.outcome` (`advanced`, `held`, `failed`, `moved`) |
 | `bounda.projection <readModel>.<projection>` | a projection handles one event | `bounda.read_model`, `bounda.projection`, the event's id, type and aggregate, `bounda.correlation_id` |
 | `bounda.policy <aggregate>.<policy>` | a policy handler runs | `bounda.policy`, the event's id, type and aggregate, `bounda.correlation_id`, `bounda.attempt` |
 | `bounda.process <aggregate>.<process>` | a process handler runs; `… at <field>` for an `at-<field>.ts`, `… at timeout` for `at-timeout.ts` | `bounda.process`, the event's id, type and aggregate, `bounda.correlation_id`, `bounda.attempt`; for a deadline, `bounda.process`, the process's aggregate type and id and `bounda.correlation_id` |
 | `bounda.scheduled <Type>` | the worker runs a due command or a process deadline (`bounda.ProcessDeadline`) | `bounda.command.type`, `bounda.aggregate.id`, `bounda.correlation_id`, `bounda.attempt` |
 
-A handler that throws marks its span as an error with the message and records the exception.
+A handler that throws marks its span as an error with the message and records the exception. A
+command's rejection is an answer, not an error: its span keeps an unset status.
 
 One request is not one trace. A policy runs in a later dispatcher pass, in whatever process picks
 it up, so the command's span and the policy's span are separate traces. What ties them together is
@@ -326,7 +327,7 @@ Metrics:
 | Metric | Kind | Attributes |
 | --- | --- | --- |
 | `bounda.dispatcher.lag` | observable gauge, events each subscriber is behind the head | `bounda.subscriber` |
-| `bounda.commands` | counter | `bounda.command.type`, `bounda.outcome` (`stored`, `scheduled`, `rejected`) |
+| `bounda.commands` | counter | `bounda.command.type`, `bounda.outcome` (`stored`, `scheduled`, `rejected`, `failed`) |
 | `bounda.dead_letters` | counter | `bounda.subscriber.kind`, `bounda.subscriber`, `bounda.outcome` (`terminal`, `retriable_exhausted`) |
 
 The lag gauge is what to alert on: a subscriber whose lag grows is a projection or a policy that
@@ -355,7 +356,7 @@ get today. Each item says why, so nobody discovers it the hard way:
   events, so a change to that shape has the same problem an event payload has, and no
   `state.upcast.ts` yet. See [Changing an event's shape](/guides/changing-events/#what-is-not-covered-yet).
 - **Renaming or removing an event type.** Upcasters change a payload, not a type. Keep the module,
-  even if `apply` returns the state unchanged.
+  even if its `apply` changes nothing.
 - **One trace per request.** Spans carry `bounda.correlation_id` but a policy's span is a separate
   trace from the command's, because it runs in a later pass. See [Observability](#observability).
 - **Notifications for scheduled commands.** The worker that runs due commands polls at

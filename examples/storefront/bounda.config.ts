@@ -5,6 +5,5 @@ export default defineConfig({
   storage: sqlite({ path: process.env.STOREFRONT_DB ?? "./data/storefront.db" }),
   collaborators: {
     order: { notifier: process.env.NOTIFIER === "memory" ? "memory" : "console" },
-    payment: { gateway: "fake" },
   },
 });

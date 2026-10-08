@@ -4,10 +4,11 @@ import { selectCollaborators } from "../config/collaborators.ts";
 import { resolveConfig } from "../config/schema.ts";
 import type { CollaboratorsConfig, Config, ResolvedConfig } from "../config/types.ts";
 import { createFixedClock, type FixedClock } from "../contracts/clock.ts";
-import { DomainError } from "../contracts/errors.ts";
+import type { CommandRejection } from "../contracts/command.ts";
 import { createSequentialIdGenerator } from "../contracts/ids.ts";
 import { type LogFields, type Logger, silentLogger } from "../contracts/logger.ts";
 import { memory } from "../memory/index.ts";
+import type { RejectFunction } from "../modules/command.ts";
 import type { PayloadArgs } from "../modules/payload.ts";
 import type { Registry } from "../modules/registry.ts";
 import { buildAggregates } from "./aggregate/build-aggregates.ts";
@@ -47,21 +48,24 @@ export const orderAggregate = {
     placeOrder: {
       module: {
         payload: ({ z }: PayloadArgs) => z.object({ orderId: z.string(), total: z.number() }),
+        rejections: () => ({ AlreadyPlaced: "Order already placed" }),
         handler: async ({
           command,
           state,
           events,
           notifier,
           idempotencyKey,
+          reject,
         }: {
           command: { payload: { orderId: string; total: number }; aggregateId: string };
           state: OrderState & { version: number };
           events: Record<string, (payload?: unknown) => unknown>;
           notifier: { send: (message: string) => void };
           idempotencyKey: string;
+          reject: RejectFunction<"AlreadyPlaced">;
         }) => {
           placeOrderKeys.push(idempotencyKey);
-          if (state.status !== "new") throw new DomainError("Order already placed");
+          if (state.status !== "new") return reject("AlreadyPlaced");
           notifier.send(`placed ${command.aggregateId} v${state.version}`);
           return [events.orderPlaced?.({ total: command.payload.total })];
         },
@@ -71,16 +75,21 @@ export const orderAggregate = {
       module: {
         payload: ({ z }: PayloadArgs) =>
           z.object({ orderId: z.string(), method: z.enum(["card", "transfer"]) }),
+        rejections: ({ state }: { state: OrderState }) => ({
+          NotPlaced: `Only placed orders can be paid; this one is ${state.status}`,
+        }),
         handler: ({
           command,
           state,
           events,
+          reject,
         }: {
           command: { payload: { method: "card" | "transfer" } };
           state: OrderState;
           events: Record<string, (payload?: unknown) => unknown>;
+          reject: RejectFunction<"NotPlaced">;
         }) => {
-          if (state.status !== "placed") throw new DomainError("Only placed orders can be paid");
+          if (state.status !== "placed") throw reject("NotPlaced");
           return [events.orderPaid?.({ method: command.payload.method })];
         },
       },
@@ -264,11 +273,19 @@ export interface KernelHarness {
   readonly aggregates: AggregatesRuntime;
   readonly clock: FixedClock;
   readonly pipeline: ReturnType<typeof createCommandPipeline>;
+  /**
+   * What the pipeline reported to `onRejection`, in order.
+   */
+  readonly rejections: readonly CommandRejection[];
 }
 
 export interface CreateKernelHarnessArgs {
   readonly config?: Partial<Omit<Config, "storage">>;
   readonly registry?: Registry;
+  /**
+   * What the pipeline logs to; silent by default.
+   */
+  readonly logger?: Logger;
 }
 
 export interface CreateKernelHarnessFunction {
@@ -281,6 +298,7 @@ export interface CreateKernelHarnessFunction {
 export const createKernelHarness: CreateKernelHarnessFunction = async ({
   config: overrides = {},
   registry = orderRegistry,
+  logger = silentLogger,
 } = {}) => {
   sentMessages.length = 0;
   placeOrderKeys.length = 0;
@@ -300,6 +318,7 @@ export const createKernelHarness: CreateKernelHarnessFunction = async ({
     clock,
   });
   const aggregates = buildAggregates({ registry, collaborators: byAggregate });
+  const rejections: CommandRejection[] = [];
   const pipeline = createCommandPipeline({
     aggregates,
     eventStore: storage.eventStore,
@@ -307,9 +326,10 @@ export const createKernelHarness: CreateKernelHarnessFunction = async ({
     config,
     ids: createSequentialIdGenerator(),
     clock,
-    logger: silentLogger,
+    logger,
+    onRejection: (rejection) => rejections.push(rejection),
   });
-  return { storage, config, aggregates, clock, pipeline };
+  return { storage, config, aggregates, clock, pipeline, rejections };
 };
 
 export interface EventuallyFunction {

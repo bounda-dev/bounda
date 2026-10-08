@@ -7,12 +7,10 @@ A process can listen to other aggregates. Its `config` receives every event of t
 aggregate, `events.payment.PaymentFailed`, so another aggregate's event can start, feed or complete
 it, and a handler for one sits in a folder named after that aggregate,
 `processes/<process>/payment/on-payment-failed.ts`. Such an event carries its own aggregate's id,
-so the process's `index.ts` exports `correlate`, typed as `Process.Correlate`: per aggregate and
-event, a function to the id of the process's own aggregate, or `null` to ignore it. The process's
-own events still find their instance by `aggregateId`. Boot refuses an event of another aggregate
-the process listens to without an entry, and an entry for an event the app does not have. A
-`correlate` that throws, or returns anything but a non-empty string or `null`, dead-letters that
-event for the process instead of stopping every process at it.
+so it finds its instance through the id field of its payload or through the process's
+`correlate` (see the entry on correlating by convention). The process's own events still find
+their instance by `aggregateId`. A correlator that throws, or returns anything but a non-empty
+string or `null`, dead-letters that event for the process instead of stopping every process at it.
 
 An event that does not start the process and finds no open instance is skipped, as is any event
 for an instance that completed, timed out or failed; a starting event never reopens one. The state

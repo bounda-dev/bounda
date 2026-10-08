@@ -15,7 +15,7 @@ app/
   domain/
     order/                          an aggregate
       state.ts                      optional: initialState and aggregateId
-      order-placed.ts               an event: payload and apply
+      order-placed.ts               an event: payload, and create or apply
       order-placed.upcast.ts        optional: how older payloads become today's
       order-paid.ts
       inventory/                    a collaborator: what the aggregate's handlers call outside
@@ -82,26 +82,54 @@ import type { Event } from "./+types/order-placed";
 export const payload = ({ z }: Event.PayloadArgs) =>
   z.object({ customerId: z.string(), total: z.number().positive() });
 
-export const apply = ({ state, event }: Event.ApplyArgs) => ({
-  ...state,
+export const create = ({ event }: Event.CreateArgs) => ({
   status: "placed" as const,
   customerId: event.payload.customerId,
   total: event.payload.total,
 });
 ```
 
-`payload` is optional; an event without one has an empty payload. `apply` returns the next state.
+```ts
+// app/domain/order/order-paid.ts
+import type { Event } from "./+types/order-paid";
+
+export const apply = ({ event }: Event.ApplyArgs) => ({
+  status: "paid" as const,
+  paidAt: event.timestamp,
+});
+```
+
+`payload` is optional; an event without one has an empty payload. An event returns the state
+fields it sets, merged over the state one level deep: a field returned as `undefined` keeps its
+value, so clear one with `null`. `create` opens the aggregate and gets the event alone, since
+there is no state before it; `apply` folds a later event and gets the state too. An event that can
+do both exports both.
+
+Once one of an aggregate's events exports `create`, the aggregate starts with such an event. A
+command that would start it with another event, or put an event that only exports `create` on an
+aggregate that exists, throws `CreationOrderError` and stores nothing: a bug in the handler, which
+a reaction does not retry.
 When a payload changes shape after events are stored, `<event>.upcast.ts` next to it brings the
 old ones up to date as they are read: see [Changing an event's shape](/guides/changing-events/).
 
 ### State
 
-Without `state.ts`, the generator infers the aggregate's state from what every `apply` returns:
-each field is optional and its type is the union of what the events assign. `status` above,
-together with an `order-paid.ts` that sets `"paid"`, becomes `status?: "placed" | "paid"`.
+Without `state.ts`, the generator infers the aggregate's state from what its events return, each
+field typed as the union of what the events assign. With the two events above, a command handler
+sees either an order that does not exist yet, every field `undefined`, or one where the fields
+`create` sets are always there: `status: "placed" | "paid"`, `customerId: string` and
+`total: number`, with `paidAt?: string`. Any field `create` sets tells the two apart:
 
-Add `state.ts` when you want fields with an initial value and no `undefined`, or when a field's
-type is not visible from outside its module:
+```ts
+if (state.status === undefined) return reject("NotPlaced");
+state.total; // number
+```
+
+`apply` only runs on an aggregate that exists, so its `state` is the created one. Without any
+`create`, every field is optional, since any event could come first.
+
+Add `state.ts` when you want an initial value before the first event, or when a field's type is
+not visible from outside its module:
 
 ```ts
 // app/domain/order/state.ts
@@ -221,15 +249,19 @@ A command is `commands/<name>.ts`.
 
 ```ts
 // app/domain/order/commands/place-order.ts
-import { DomainError } from "@bounda-dev/core";
 import type { Command } from "./+types/place-order";
 
 export const payload = ({ z }: Command.PayloadArgs) =>
   z.object({ orderId: z.uuid(), customerId: z.string(), skus: z.array(z.string()).min(1) });
 
-export const handler = async ({ command, state, events, inventory }: Command.HandlerArgs) => {
-  if (state.status !== "new") throw new DomainError("Order already placed");
-  if (!(await inventory.available(command.payload.skus))) throw new DomainError("Out of stock");
+export const rejections = ({ command }: Command.RejectionsArgs) => ({
+  AlreadyPlaced: `Order ${command.aggregateId} was already placed`,
+  OutOfStock: "Some of the items are out of stock",
+});
+
+export const handler = async ({ command, state, events, inventory, reject }: Command.HandlerArgs) => {
+  if (state.status !== undefined) return reject("AlreadyPlaced");
+  if (!(await inventory.available(command.payload.skus))) return reject("OutOfStock");
   return [events.orderPlaced({ customerId: command.payload.customerId, skus: command.payload.skus })];
 };
 ```
@@ -253,6 +285,30 @@ dispatch rejects with `HANDLER_TIMEOUT` and nothing the handler returns is store
 receives `signal`, which aborts then; pass it to what it calls outside (`fetch(url, { signal })`)
 so a provider that hangs does not hold the request.
 
+#### Rejections
+
+A command that may say no declares how in `rejections`: each key is a code, named after the reason
+(`NotOpen`, never as a fact like `OrderClosed`), and each value its message. The runtime calls it
+when the handler rejects, with the `command` and the `state` the handler saw, so the message can
+tell why. Only a module that exports `rejections` gets `reject`, and `reject` only takes its codes.
+
+`reject(code)` returns the `DomainError` the caller gets, with the code in `rejected`;
+`return reject(code)` and `throw reject(code)` do the same, the second from a helper the handler
+calls. Pass a second argument to give that rejection another message. A `DomainError` is never
+built with `new`. If `rejections` throws, or has no message for the code, the rejection still
+stands, with the code as its message, and the runtime logs a warning.
+
+A rejection stores nothing and is not retried. `app.commands` throws it to the caller; a policy or
+a process gets it as a value instead: `commands.<name>()` resolves with `rejected` set to the code,
+or `false` when the aggregate decided (see
+[reacting to events](/guides/reacting-to-events/#what-a-command-answers)).
+
+Repeating what is already done is not a rejection: return `[]`, so a retry, a webhook that arrives
+twice or a reaction that runs again changes nothing. Before an aggregate exists `state.status` is
+`undefined`, so a message reads it with a fallback, `state.status ?? "new"`. A "no" the business
+remembers, or that someone else listens to, is an event instead: see
+[rejection or event](/guides/sagas/#two-ways-to-fail-no-hook-for-either).
+
 ### Policies: `policies/`
 
 A policy reacts to an event with commands. `<action>-on-<event>.ts` names the event; a policy
@@ -274,7 +330,10 @@ so it never collides with an `order` policy of the same name. A policy cannot be
 aggregate, and one whose trigger is not an event of the aggregate it listens to fails at boot.
 
 Policies dispatch through `commands`, the typed facade of every command in the app. A command can
-be delayed: `commands.sendReminder({ orderId }, { delay: "24h" })`. The compiler checks a literal
+be delayed: `commands.sendReminder({ orderId }, { delay: "24h" })`. The call's type follows: one
+with `delay` resolves with `scheduled: true` and `executeAt`, one without with what the command
+decided (`eventTypes`, and `position` from `app.commands`), with no scheduled case to rule out
+first. The compiler checks a literal
 duration; for one that comes from the environment, `asDuration` from `@bounda-dev/core` checks it
 at the call site and returns it typed. A delayed command's payload is stored as JSON and validated
 in that form when it is dispatched, so what would fail when it runs fails at once: a `z.date()`
@@ -352,27 +411,29 @@ export const handler = async ({ state, aggregateId, commands, after }: Process.D
 ```
 
 `at-timeout.ts` receives the same arguments and ends the process as timed out, with what it returns
-merged into the final state. See [deadlines](/guides/reacting-to-events/#deadlines) for when they run.
+merged into the final state; the events its commands cause still reach the process's handlers. See [deadlines](/guides/reacting-to-events/#deadlines) for when they run.
 
 A handler for another aggregate's event sits in a folder named after that aggregate,
 `processes/order-payment/payment/on-payment-failed.ts`. Such an event carries that aggregate's id,
-not the order's, so `index.ts` says which instance it belongs to in `correlate`: a function per
-event that returns the id of the process's own aggregate, or `null` to ignore the event. Boot
-refuses an event of another aggregate the process listens to without one. A `correlate` that
-throws, or returns anything but an id or `null`, dead-letters that event for the process and the
-rest carry on.
+not the order's. When its payload declares the order's id field, `orderId` (or the `aggregateId`
+of the order's `state.ts`), it belongs to the instance that field names, and to none when it is
+`null`: nothing else to write. Boot reads the field from a plain `z.object`; behind a
+`.transform()` what is stored cannot be read, so such an event needs `correlate`. Otherwise `index.ts` says which instance it belongs to in
+`correlate`, which gets `from` and returns `from.<aggregate>.<Event>(…)` for each such event: a
+function from the event to the id of the process's own aggregate, or `null` to ignore it. It
+also overrides the id field. Boot refuses an event of another aggregate the process listens to
+with neither. A correlator that throws, or returns anything but an id or `null`, dead-letters
+that event for the process and the rest carry on.
 
 ```ts
-export const correlate: Process.Correlate = {
-  payment: {
-    PaymentFailed: (event) => event.payload.orderId,
-    PaymentSettled: (event) => event.payload.orderId,
-  },
-};
+export const correlate = ({ from }: Process.CorrelateArgs) => [
+  from.shipping.ParcelLost((event) => event.payload.reference),
+];
 ```
 
 An event that does not start the process and finds no open instance is skipped, and so is any
-event for an instance that has completed or timed out: a starting event never reopens one. An
+event for an instance that has completed or timed out, but for what its `at-timeout.ts` caused: a
+starting event never reopens one. An
 event for an instance that has failed is parked instead, and handled in order once the failure is
 replayed; see [a failed process](/guides/reacting-to-events/#a-failed-process).
 

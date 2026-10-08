@@ -35,15 +35,17 @@ export interface DeadLetters {
   /**
    * Runs the failed handler once more: the policy or process handler for the stored event, the
    * process deadline that failed, or the dropped command with its recorded payload, and marks the
-   * letter `replayed`: a policy's or a command's in the same transaction as what the run writes,
-   * a process's once its instance has drained what was parked, since a replay cut short there is
-   * taken up again by replaying the same letter. Rejects with the handler's error when it fails
-   * again, and the letter stays `failed`. Rejects, without running anything, a letter that is
+   * letter `replayed`: a policy's, a command's or that of a process event that follows its
+   * instance's timeout in the same transaction as what the run writes, any other process's once
+   * its instance has drained what was parked, since a replay cut short there is taken up again by
+   * replaying the same letter. A command its aggregate now rejects counts as replayed, as the
+   * scheduler would have settled it. Rejects with the handler's error when it fails again, and the
+   * letter stays `failed`. Rejects, without running anything, a letter that is
    * missing, a projection letter (a rebuild of the read model fixes it instead), a letter whose
    * policy is no longer in the registry or whose event is gone, and a command letter recorded
    * without its payload. Rejects with `DeadLetterSettledError` a letter that is no longer
-   * `failed`, or that another replay or a discard settled while this one ran: a policy's or a
-   * command's replay then writes nothing, a process's has already handled its events.
+   * `failed`, or that another replay or a discard settled while this one ran: a replay marked in
+   * its own transaction then writes nothing, any other process's has already handled its events.
    */
   replay(id: string): Promise<DeadLetter>;
   /**
@@ -147,31 +149,37 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
     }
     const { payload } = letter;
     await replayed(letter, async (unit) => {
-      await pipeline.dispatch({ type: letter.eventType, payload, context, within: unit });
+      await pipeline.dispatchUnattended({ type: letter.eventType, payload, context, within: unit });
     });
   };
 
-  const run = async (letter: DeadLetter, replay: string): Promise<void> => {
+  // Resolves to whether the letter still has to be marked replayed: a policy, command or
+  // follow-up replay marks it in its own unit; any other process replay leaves it for after the
+  // drain.
+  const run = async (letter: DeadLetter, replay: string): Promise<boolean> => {
     switch (letter.kind) {
       case "policy":
-        return replayPolicy(letter, replay);
+        await replayPolicy(letter, replay);
+        return false;
       case "process":
         if (letter.eventType === PROCESS_DEADLINE_COMMAND) {
-          return processes.replayDeadline({
+          await processes.replayDeadline({
             payload: { process: letter.subscriber, aggregateId: letter.aggregateId },
             context: { correlationId: ids.next(), causationId: letter.id, depth: 0 },
             replay,
             letter: letter.id,
           });
+          return true;
         }
-        return processes.replay({
+        return !(await processes.replay({
           process: letter.subscriber,
           event: await eventOf(letter),
           replay,
           letter: letter.id,
-        });
+        }));
       case "command":
-        return replayCommand(letter);
+        await replayCommand(letter);
+        return false;
       case "projection":
         throw new ConfigurationError(
           `Dead letter "${letter.id}" is a projection failure; rebuild the read model instead`,
@@ -193,8 +201,7 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
     },
     replay: async (id) => {
       const letter = await failedLetter(id);
-      await run(letter, ids.next());
-      if (letter.kind === "process") await storage.deadLetterStore.updateStatus(id, "replayed");
+      if (await run(letter, ids.next())) await storage.deadLetterStore.updateStatus(id, "replayed");
       logger.info("dead letter replayed", {
         id,
         kind: letter.kind,

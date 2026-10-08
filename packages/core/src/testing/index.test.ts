@@ -15,7 +15,7 @@ describe("createTestApp", () => {
     const result = await app.commands.increment({ counterId: "c-1" });
     expect(result).toMatchObject({ version: 1, eventIds: ["id-2"] });
     expect(ids.next()).toBe("id-3");
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     expect((await app.getLag()).maxLag).toBe(0);
     await app.stop();
   });
@@ -76,7 +76,7 @@ const orderPayload = ({ z }: PayloadArgs) => z.object({ orderId: z.string() });
  * `placeOrder` and the `mailOnOrderPlaced` policy each read one port; `noteOrder` and the
  * `followUp` process, with its deadline an hour after the order, read none.
  */
-const shop = (collaborators: CollaboratorModules) =>
+const shop = (collaborators: CollaboratorModules, deadline = () => ({ due: null })) =>
   ({
     aggregates: {
       order: {
@@ -123,7 +123,7 @@ const shop = (collaborators: CollaboratorModules) =>
                 },
               },
             },
-            deadlines: { due: { handler: () => ({ due: null }) } },
+            deadlines: { due: { handler: deadline } },
           },
         },
         collaborators,
@@ -152,7 +152,7 @@ describe("createTestApp collaborators", () => {
       collaborators: { order: { notifier, mailer: recording(sent) } },
     });
     await app.commands.placeOrder({ orderId: "o-1" });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     expect(sent).toEqual(["placed", "mail o-1"]);
     await app.stop();
     expect(dispose).not.toHaveBeenCalled();
@@ -200,16 +200,16 @@ describe("createTestApp collaborators", () => {
     await expect(app.commands.noteOrder({ orderId: "o-1" })).resolves.toMatchObject({
       eventTypes: ["OrderPlaced"],
     });
-    await expect(app.processUntilIdle()).resolves.toEqual({ idle: true });
+    await expect(app.runUntilIdle()).resolves.toEqual({ idle: true, rejections: [] });
     clock.advance(HOUR);
-    await expect(app.processUntilIdle()).resolves.toEqual({ idle: true });
+    await expect(app.runUntilIdle()).resolves.toEqual({ idle: true, rejections: [] });
     await expect(app.commands.placeOrder({ orderId: "o-2" })).rejects.toThrow(
       missing("notifier", '"smtp"'),
     );
     await app.stop();
   });
 
-  it("makes processUntilIdle throw, then and on every later call, once a reaction reads a port left out", async () => {
+  it("makes runUntilIdle throw, then and on every later call, once a reaction reads a port left out", async () => {
     const { app } = await createTestApp({
       registry: shop({
         notifier: { smtp: { default: recording([]) } },
@@ -217,11 +217,11 @@ describe("createTestApp collaborators", () => {
       }),
       collaborators: { order: { notifier: recording([]) } },
     });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     await app.commands.placeOrder({ orderId: "o-1" });
     const error = missing("mailer", '"smtp", "memory"');
-    await expect(app.processUntilIdle()).rejects.toThrow(error);
-    await expect(app.processUntilIdle()).rejects.toThrow(error);
+    await expect(app.runUntilIdle()).rejects.toThrow(error);
+    await expect(app.runUntilIdle()).rejects.toThrow(error);
     await app.stop();
   });
 
@@ -244,5 +244,133 @@ describe("createTestApp collaborators", () => {
         'Aggregate "order", collaborator "notifier": implementation "smpt" not found. Available: "smtp"',
       ),
     );
+  });
+});
+
+/**
+ * Throws its first `failures` calls with an error worth retrying, then records what it sends.
+ */
+const flaky = (failures: number, sent: string[]): Notifier => {
+  let calls = 0;
+  return {
+    send: (message) => {
+      calls += 1;
+      if (calls <= failures) throw new Error("provider unavailable");
+      sent.push(message);
+    },
+  };
+};
+
+const ports: CollaboratorModules = {
+  notifier: { smtp: { default: recording([]) } },
+  mailer: { smtp: { default: recording([]) } },
+};
+
+describe("createTestApp runUntilIdle", () => {
+  it("moves the clock to a reaction's retry and runs it", async () => {
+    const sent: string[] = [];
+    const { app, clock } = await createTestApp({
+      registry: shop(ports),
+      collaborators: { order: { notifier: recording([]), mailer: flaky(1, sent) } },
+    });
+    await app.commands.placeOrder({ orderId: "o-1" });
+    await expect(app.runUntilIdle()).resolves.toEqual({ idle: true, rejections: [] });
+    expect(sent).toEqual(["mail o-1"]);
+    expect(clock.now().toISOString()).toBe("2026-01-01T00:00:01.000Z");
+    await app.stop();
+  });
+
+  it("moves the clock through every retry until the reaction gives up", async () => {
+    const { app, clock } = await createTestApp({
+      registry: shop(ports),
+      collaborators: { order: { notifier: recording([]), mailer: flaky(3, []) } },
+    });
+    await app.commands.placeOrder({ orderId: "o-1" });
+    await expect(app.runUntilIdle()).resolves.toEqual({ idle: true, rejections: [] });
+    expect(clock.now().toISOString()).toBe("2026-01-01T00:00:03.000Z");
+    expect(await app.deadLetters.list()).toMatchObject([
+      { kind: "policy", subscriber: "order.mailOnOrderPlaced", attempts: 3 },
+    ]);
+    await app.stop();
+  });
+
+  it("runs a retry without back-off before it resolves", async () => {
+    const sent: string[] = [];
+    const { app, clock } = await createTestApp({
+      registry: shop(ports),
+      config: { runtime: { policies: { retry: { strategy: "fixed", baseDelay: 0 } } } },
+      collaborators: { order: { notifier: recording([]), mailer: flaky(1, sent) } },
+    });
+    await app.commands.placeOrder({ orderId: "o-1" });
+    await expect(app.runUntilIdle()).resolves.toEqual({ idle: true, rejections: [] });
+    expect(sent).toEqual(["mail o-1"]);
+    expect(clock.now().toISOString()).toBe("2026-01-01T00:00:00.000Z");
+    await app.stop();
+  });
+
+  it("runs what is scheduled before a retry at its own time, then the retry", async () => {
+    const sent: string[] = [];
+    const deadlines: string[] = [];
+    const { app, clock } = await createTestApp({
+      registry: shop(ports, () => {
+        deadlines.push(clock.now().toISOString());
+        return { due: null };
+      }),
+      config: {
+        runtime: { policies: { retry: { strategy: "fixed", baseDelay: "2h", maxDelay: "2h" } } },
+      },
+      collaborators: { order: { notifier: recording([]), mailer: flaky(1, sent) } },
+    });
+    await app.commands.placeOrder({ orderId: "o-1" });
+    await expect(app.runUntilIdle()).resolves.toEqual({ idle: true, rejections: [] });
+    expect(deadlines).toEqual(["2026-01-01T01:00:00.000Z"]);
+    expect(sent).toEqual(["mail o-1"]);
+    expect(clock.now().toISOString()).toBe("2026-01-01T02:00:00.000Z");
+    await app.stop();
+  });
+
+  it("moves nothing for a retry that no longer waits, its deadline moved by the process", async () => {
+    let calls = 0;
+    const { app, clock } = await createTestApp({
+      registry: shop(ports, () => {
+        calls += 1;
+        if (calls === 1) throw new Error("provider unavailable");
+        return { due: null };
+      }),
+      collaborators: { order: { notifier: recording([]), mailer: recording([]) } },
+    });
+    await app.commands.placeOrder({ orderId: "o-1" });
+    await app.runUntilIdle();
+    clock.advance(HOUR);
+    await expect(app.runUntilIdle({ maxPasses: 1 })).resolves.toEqual({
+      idle: false,
+      rejections: [],
+    });
+    expect(calls).toBe(1);
+    await app.commands.noteOrder({ orderId: "o-1" });
+    await expect(app.runUntilIdle()).resolves.toEqual({ idle: true, rejections: [] });
+    expect(calls).toBe(1);
+    expect(clock.now().toISOString()).toBe("2026-01-01T01:00:00.000Z");
+    await app.stop();
+  });
+
+  it("moves the clock to a scheduled command's retry, but never past it", async () => {
+    let calls = 0;
+    const { app, clock } = await createTestApp({
+      registry: shop(ports, () => {
+        calls += 1;
+        if (calls === 1) throw new Error("provider unavailable");
+        return { due: null };
+      }),
+      collaborators: { order: { notifier: recording([]), mailer: recording([]) } },
+    });
+    await app.commands.placeOrder({ orderId: "o-1" });
+    await app.runUntilIdle();
+    expect(clock.now().toISOString()).toBe("2026-01-01T00:00:00.000Z");
+    clock.advance(HOUR);
+    await expect(app.runUntilIdle()).resolves.toEqual({ idle: true, rejections: [] });
+    expect(calls).toBe(2);
+    expect(clock.now().toISOString()).toBe("2026-01-01T01:00:01.000Z");
+    await app.stop();
   });
 });

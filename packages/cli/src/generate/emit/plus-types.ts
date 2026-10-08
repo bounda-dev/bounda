@@ -1,7 +1,13 @@
 import { basename, dirname, join } from "node:path";
 import type { AggregateModel, ProjectModel, ReadModelModel } from "../model.ts";
 import { type GeneratedFile, importPath } from "./paths.ts";
-import { collaboratorsTypeName, eventsTypeName, rowTypeName, stateTypeName } from "./types.ts";
+import {
+  collaboratorsTypeName,
+  createdStateTypeName,
+  eventsTypeName,
+  rowTypeName,
+  stateTypeName,
+} from "./types.ts";
 
 export interface EmitPlusTypesArgs {
   readonly model: ProjectModel;
@@ -69,9 +75,13 @@ const eventFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFile
       members: [
         ["PayloadArgs", "core.PayloadArgs"],
         [
+          "CreateArgs",
+          generic("core.EventCreateArgs", [`"${event.typeName}"`, "core.PayloadOf<Module>"]),
+        ],
+        [
           "ApplyArgs",
           generic("core.EventApplyArgs", [
-            `generated.${stateTypeName(aggregate.name)}`,
+            `generated.${createdStateTypeName(aggregate.name)}`,
             `"${event.typeName}"`,
             "core.PayloadOf<Module>",
           ]),
@@ -111,6 +121,14 @@ const commandFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFi
       members: [
         ["PayloadArgs", "core.PayloadArgs"],
         [
+          "RejectionsArgs",
+          generic("core.CommandRejectionsArgs", [
+            `"${command.typeName}"`,
+            "core.PayloadOf<Module>",
+            `generated.${stateTypeName(aggregate.name)}`,
+          ]),
+        ],
+        [
           "HandlerArgs",
           generic("core.CommandHandlerArgs", [
             `"${command.typeName}"`,
@@ -118,6 +136,7 @@ const commandFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFi
             `generated.${stateTypeName(aggregate.name)}`,
             `generated.${eventsTypeName(aggregate.name)}`,
             collaboratorsType(aggregate),
+            "core.RejectionCodeOf<Module>",
           ]),
         ],
       ],
@@ -190,7 +209,7 @@ const processFiles = (
         members: [
           ["ConfigArgs", "core.ProcessConfigArgs<generated.Events>"],
           ["StateArgs", "core.ProcessStateArgs"],
-          ["Correlate", "core.ProcessCorrelate<generated.Events>"],
+          ["CorrelateArgs", "core.ProcessCorrelateArgs<generated.Events>"],
         ],
       }),
       ...process.handlers.map((handler) =>

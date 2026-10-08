@@ -1,6 +1,6 @@
 import { SpanStatusCode } from "@opentelemetry/api";
 import { afterEach, describe, expect, it } from "vitest";
-import { DomainError } from "../contracts/errors.ts";
+import { DomainError, ValidationError } from "../contracts/errors.ts";
 import { silentLogger } from "../contracts/logger.ts";
 import { memory } from "../memory/index.ts";
 import type { PayloadArgs } from "../modules/payload.ts";
@@ -9,7 +9,7 @@ import type { FieldsArgs } from "../modules/view.ts";
 import { createApp } from "./app.ts";
 import { PROCESS_DEADLINE_COMMAND } from "./process/deadlines.ts";
 import { createReactiveHarness } from "./reactive-harness.ts";
-import { ATTRIBUTES, METRICS, TELEMETRY_SCOPE, traced } from "./telemetry.ts";
+import { ATTRIBUTES, METRICS, SPAN_EVENTS, TELEMETRY_SCOPE, traced } from "./telemetry.ts";
 import { type FakeTelemetry, installFakeTelemetry } from "./telemetry-fake.ts";
 import { type OrderProcessConfigArgs, orderAggregateEntry } from "./test-support.ts";
 
@@ -23,7 +23,7 @@ const registry = {
         notifyOnOrderPlaced: {
           module: {
             handler: async () => {
-              if (policyMode === "domain") throw new DomainError("no mail today");
+              if (policyMode === "domain") throw new ValidationError("no mail today", []);
             },
           },
         },
@@ -120,11 +120,18 @@ describe("telemetry", () => {
     });
     expect(rejected).toMatchObject({
       name: "bounda.command PlaceOrder",
-      status: { code: SpanStatusCode.ERROR, message: "Order already placed" },
-      exceptions: ["Order already placed"],
+      attributes: { [ATTRIBUTES.outcome]: "rejected" },
+      status: { code: SpanStatusCode.UNSET },
+      exceptions: [],
       ended: true,
     });
-    expect(rejected?.attributes).not.toHaveProperty(ATTRIBUTES.outcome);
+    expect(telemetry.spanEvents).toEqual([
+      {
+        span: "bounda.command PlaceOrder",
+        name: SPAN_EVENTS.commandRejected,
+        attributes: { [ATTRIBUTES.rejected]: "AlreadyPlaced" },
+      },
+    ]);
     expect(scheduled).toMatchObject({
       name: "bounda.command PayOrder",
       attributes: { [ATTRIBUTES.outcome]: "scheduled" },
@@ -155,7 +162,7 @@ describe("telemetry", () => {
     active = telemetry;
     const placed = await app.commands.placeOrder({ orderId: "o-1", total: 10 });
     await app.commands.payOrder({ orderId: "o-1", method: "card" }, { delay: "0s" });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     const correlationId = named(telemetry, "bounda.command")[0]?.attributes[
       ATTRIBUTES.correlationId
     ];
@@ -249,7 +256,7 @@ describe("telemetry", () => {
         },
       ]),
     );
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     expect(named(telemetry, "bounda.policy")[0]).toMatchObject({
       status: { code: SpanStatusCode.ERROR, message: "no mail today" },
       exceptions: ["no mail today"],
@@ -295,7 +302,7 @@ describe("telemetry", () => {
       config: { runtime: { policies: { retry: { strategy: "none" } } } },
     });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     harness.clock.advance(2 * 3_600_000);
     expect(await harness.worker.runOnce()).toBe(1);
     expect(named(telemetry, "bounda.scheduled")).toEqual([

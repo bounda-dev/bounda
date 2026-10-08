@@ -1,5 +1,11 @@
 import { env } from "cloudflare:workers";
-import type { CreateAppArgs, DeadLetter, DispatchResult } from "@bounda-dev/core";
+import type {
+  CreateAppArgs,
+  DeadLetter,
+  DispatchResult,
+  ScheduledDispatch,
+  StoredDispatch,
+} from "@bounda-dev/core";
 import type { CreateTestAppArgs } from "@bounda-dev/core/testing";
 import { describe, expectTypeOf, it } from "vitest";
 import { connect } from "../src/client.ts";
@@ -13,7 +19,15 @@ describe("connect", () => {
       total: number;
       customer: string;
     }>();
-    expectTypeOf(store.commands.payOrder).returns.resolves.toEqualTypeOf<DispatchResult>();
+    expectTypeOf<ReturnType<typeof store.commands.payOrder>>().toEqualTypeOf<
+      Promise<DispatchResult>
+    >();
+    expectTypeOf(
+      store.commands.payOrder({ orderId: "o-1" }),
+    ).resolves.toEqualTypeOf<StoredDispatch>();
+    expectTypeOf(
+      store.commands.payOrder({ orderId: "o-1" }, { delay: "1h" }),
+    ).resolves.toEqualTypeOf<ScheduledDispatch>();
     expectTypeOf(store.queries.getOrder).parameter(0).toEqualTypeOf<{ orderId: string }>();
     expectTypeOf(store.deadLetters.list).returns.resolves.toEqualTypeOf<readonly DeadLetter[]>();
     // @ts-expect-error total must be a number

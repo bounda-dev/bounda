@@ -12,6 +12,7 @@ import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { withUpcasting } from "../aggregate/upcasting.ts";
 import { PartialBatchError } from "../dispatch/delivery.ts";
 import { projectBatch, projectionSubscriberName } from "../projection/runner.ts";
+import { guardedLogger } from "../shared/guarded-logger.ts";
 import { adapterForReadModel, compileProjections } from "./build-read-models.ts";
 import { fingerprintReadModel } from "./fingerprint.ts";
 
@@ -90,10 +91,11 @@ export const rebuildReadModel: RebuildReadModelFunction = async ({
   registry,
   config: rawConfig,
   name,
-  logger = silentLogger,
+  logger: rawLogger = silentLogger,
   maxEvents,
 }) => {
   validateRegistry(registry);
+  const logger = guardedLogger(rawLogger);
   if (maxEvents !== undefined && !(maxEvents >= 1)) {
     throw new ConfigurationError(`maxEvents must be at least 1, got ${maxEvents}`);
   }

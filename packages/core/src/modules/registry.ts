@@ -1,11 +1,13 @@
 import type {
   DispatchOptions,
-  DispatchResult,
   ReactionDispatchResult,
+  ScheduledDispatch,
+  StoredDispatch,
 } from "../contracts/command.ts";
+import type { DurationInput } from "../contracts/duration.ts";
 import type { StateModule } from "./aggregate.ts";
 import type { CollaboratorModules } from "./collaborator.ts";
-import type { CommandEntry, CommandModule } from "./command.ts";
+import type { CommandEntry, CommandModule, RejectionCodeOf } from "./command.ts";
 import type { EventModules } from "./event.ts";
 import type { Simplify, UnionToIntersection } from "./naming.ts";
 import type { HasPayload, PayloadInputOf } from "./payload.ts";
@@ -56,15 +58,40 @@ export interface Registry {
   readonly readModels: Readonly<Record<string, ReadModelEntry>>;
 }
 
-/**
- * The function `app.commands.<name>` exposes for one command.
- */
-export type CommandInvoker<Module> =
+// One overload per kind of call, so a result is typed by whether `options` carries `delay`. The
+// one taking any `DispatchOptions` goes last: `ReturnType` and `Parameters` read the last overload.
+interface PayloadInvoker<Payload, Now, Later> {
+  (payload: Payload, options?: DispatchOptions & { readonly delay?: never }): Promise<Now>;
+  (payload: Payload, options: DispatchOptions & { readonly delay: DurationInput }): Promise<Later>;
+  (payload: Payload, options?: DispatchOptions): Promise<Now | Later>;
+}
+
+// The delayed overload takes the payload, even `undefined`: a required parameter cannot follow an
+// optional one.
+interface OptionalPayloadInvoker<Now, Later> {
+  (payload?: unknown, options?: DispatchOptions & { readonly delay?: never }): Promise<Now>;
+  (payload: unknown, options: DispatchOptions & { readonly delay: DurationInput }): Promise<Later>;
+  (payload?: unknown, options?: DispatchOptions): Promise<Now | Later>;
+}
+
+interface PayloadlessInvoker<Now, Later> {
+  (options?: DispatchOptions & { readonly delay?: never }): Promise<Now>;
+  (options: DispatchOptions & { readonly delay: DurationInput }): Promise<Later>;
+  (options?: DispatchOptions): Promise<Now | Later>;
+}
+
+type InvokerOf<Module, Now, Later> =
   HasPayload<Module> extends true
-    ? (payload: PayloadInputOf<Module>, options?: DispatchOptions) => Promise<DispatchResult>
+    ? PayloadInvoker<PayloadInputOf<Module>, Now, Later>
     : "payload" extends keyof Module
-      ? (payload?: unknown, options?: DispatchOptions) => Promise<DispatchResult>
-      : (options?: DispatchOptions) => Promise<DispatchResult>;
+      ? OptionalPayloadInvoker<Now, Later>
+      : PayloadlessInvoker<Now, Later>;
+
+/**
+ * The function `app.commands.<name>` exposes for one command. It resolves with `StoredDispatch`,
+ * or with `ScheduledDispatch` when `options` has `delay`.
+ */
+export type CommandInvoker<Module> = InvokerOf<Module, StoredDispatch, ScheduledDispatch>;
 
 /**
  * `app.commands` typed from a map of command modules.
@@ -75,17 +102,16 @@ export type CommandsFacadeOf<Modules extends Readonly<Record<string, CommandModu
 
 /**
  * The function a policy or process handler's `commands.<name>` exposes for one command: as
- * `CommandInvoker`, resolving with the decision instead of what was stored.
+ * `CommandInvoker`, resolving with the decision instead of what was stored, or with the rejection,
+ * typed by the codes the command declares.
  */
-export type ReactionCommandInvoker<Module> =
-  HasPayload<Module> extends true
-    ? (
-        payload: PayloadInputOf<Module>,
-        options?: DispatchOptions,
-      ) => Promise<ReactionDispatchResult>
-    : "payload" extends keyof Module
-      ? (payload?: unknown, options?: DispatchOptions) => Promise<ReactionDispatchResult>
-      : (options?: DispatchOptions) => Promise<ReactionDispatchResult>;
+export type ReactionCommandInvoker<Module> = InvokerOf<
+  Module,
+  Exclude<ReactionResultOf<Module>, { readonly scheduled: true }>,
+  Extract<ReactionResultOf<Module>, { readonly scheduled: true }>
+>;
+
+type ReactionResultOf<Module> = ReactionDispatchResult<RejectionCodeOf<Module>>;
 
 /**
  * The `commands` of policy and process handlers, typed from a map of command modules.

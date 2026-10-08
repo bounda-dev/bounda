@@ -27,7 +27,7 @@ describe("onboarding", () => {
   it("registers a user, lists it and welcomes it a minute later", async () => {
     const { app, clock, sent } = await start();
     await app.commands.registerUser({ userId: ADA, email: "ada@example.com", name: "Ada" });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
 
     expect(await app.queries.listUsers({})).toMatchObject({
       total: 1,
@@ -40,7 +40,7 @@ describe("onboarding", () => {
     expect((await app.queries.getUserDetails({ userId: ADA }))?.welcomeEmailSentAt).toBeUndefined();
 
     clock.advance(MINUTE);
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     expect(sent).toEqual([{ to: "ada@example.com", name: "Ada" }]);
     expect(await app.queries.getUserDetails({ userId: ADA })).toMatchObject({
       welcomeEmailSentAt: expect.any(Date),
@@ -53,10 +53,10 @@ describe("onboarding", () => {
     const { app, clock, sent } = await start();
     await app.commands.registerUser({ userId: ADA, email: "ada@example.com", name: "Ada" });
     await app.commands.activateUser({ userId: ADA });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
 
     clock.advance(8 * DAY);
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     const details = await app.queries.getUserDetails({ userId: ADA });
     expect(details).toMatchObject({ status: "active", activatedAt: expect.any(Date) });
     expect(details?.expiredAt).toBeUndefined();
@@ -67,21 +67,23 @@ describe("onboarding", () => {
   it("expires a registration nobody activates within a week", async () => {
     const { app, clock } = await start();
     await app.commands.registerUser({ userId: ADA, email: "ada@example.com", name: "Ada" });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
 
     clock.advance(7 * DAY - MINUTE);
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     expect(await app.queries.getUserDetails({ userId: ADA })).toMatchObject({
       status: "registered",
     });
 
     clock.advance(MINUTE);
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     expect(await app.queries.getUserDetails({ userId: ADA })).toMatchObject({
       status: "expired",
       expiredAt: expect.any(Date),
     });
-    await expect(app.commands.activateUser({ userId: ADA })).rejects.toThrow(DomainError);
+    await expect(app.commands.activateUser({ userId: ADA })).rejects.toMatchObject({
+      rejected: "Expired",
+    });
     await app.stop();
   });
 
@@ -91,6 +93,9 @@ describe("onboarding", () => {
     await expect(
       app.commands.registerUser({ userId: ADA, email: "ada@example.com", name: "Ada" }),
     ).rejects.toThrow(DomainError);
+    await expect(
+      app.commands.registerUser({ userId: ADA, email: "ada@example.com", name: "Ada" }),
+    ).rejects.toMatchObject({ rejected: "AlreadyRegistered" });
     await expect(
       app.commands.registerUser({ userId: GRACE, email: "not-an-email", name: "" }),
     ).rejects.toThrow(ValidationError);
@@ -103,7 +108,7 @@ describe("onboarding", () => {
     await app.commands.registerUser({ userId: ADA, email: "ada@example.com", name: "Ada" });
     await app.commands.updateProfile({ userId: ADA, name: "Ada Lovelace" });
     await app.commands.updateProfile({ userId: ADA, name: "Ada Lovelace" });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
 
     expect(await app.queries.getUserDetails({ userId: ADA })).toMatchObject({
       name: "Ada Lovelace",
@@ -120,7 +125,7 @@ describe("onboarding", () => {
     clock.advance(MINUTE);
     await app.commands.registerUser({ userId: LINUS, email: "linus@example.com", name: "Linus" });
     await app.commands.activateUser({ userId: GRACE });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
 
     const first = await app.queries.listUsers({ page: 1, pageSize: 2 });
     expect(first).toMatchObject({ total: 3, active: 1, page: 1, pageSize: 2, pages: 2 });

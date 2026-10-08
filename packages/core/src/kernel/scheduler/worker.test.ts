@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ClaimedCommand } from "../../adapter/ports/scheduler.ts";
-import { ConcurrencyError, DomainError } from "../../contracts/errors.ts";
+import { ConcurrencyError, ValidationError } from "../../contracts/errors.ts";
+import type { RejectFunction } from "../../modules/command.ts";
 import type { PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { createTestApp } from "../../testing/index.ts";
@@ -13,6 +14,7 @@ import {
   breakNextCommit,
   createRecordingLogger,
   eventually,
+  orderAggregateEntry,
   orderRegistry,
   placeOrderKeys,
   sentMessages,
@@ -20,6 +22,33 @@ import {
 } from "../test-support.ts";
 
 const LOST_CLAIM = "scheduled command no longer holds its claim; this run wrote nothing";
+
+const order = orderAggregateEntry();
+
+// A delayed command is dropped when it fails, never when it is rejected: placing an order twice
+// fails here.
+const failingRegistry: Registry = {
+  aggregates: {
+    order: {
+      ...order,
+      commands: {
+        ...order.commands,
+        placeOrder: {
+          module: {
+            ...order.commands.placeOrder.module,
+            handler: (args: Parameters<typeof order.commands.placeOrder.module.handler>[0]) => {
+              if (args.state.status !== "new") {
+                throw new ValidationError("Order already placed", []);
+              }
+              return order.commands.placeOrder.module.handler(args);
+            },
+          },
+        },
+      },
+    },
+  },
+  readModels: {},
+};
 
 describe("scheduled command worker", () => {
   it("runs due commands with their stored context and completes them", async () => {
@@ -86,7 +115,7 @@ describe("scheduled command worker", () => {
   });
 
   it("drops a command with its dead letter, CommandFailed and the claim's failure together, or neither", async () => {
-    const harness = await createReactiveHarness({ registry: orderRegistry });
+    const harness = await createReactiveHarness({ registry: failingRegistry });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
     await harness.pipeline.dispatch({
       type: "PlaceOrder",
@@ -125,8 +154,8 @@ describe("scheduled command worker", () => {
     });
     const [entry] = await harness.storage.scheduler.list();
     if (entry === undefined) throw new Error("nothing scheduled");
-    const dispatch = harness.pipeline.dispatch;
-    vi.spyOn(harness.pipeline, "dispatch").mockImplementationOnce(async (args) => {
+    const dispatch = harness.pipeline.dispatchUnattended;
+    vi.spyOn(harness.pipeline, "dispatchUnattended").mockImplementationOnce(async (args) => {
       await harness.storage.scheduler.schedule({
         dedupeKey: entry.dedupeKey,
         command: { ...entry.command, payload: { orderId: "o-2", total: 5 } },
@@ -151,7 +180,7 @@ describe("scheduled command worker", () => {
   it("drops a command that fails for good, records CommandFailed and dead-letters it", async () => {
     const telemetry = installFakeTelemetry();
     const { logger, entries } = createRecordingLogger();
-    const harness = await createReactiveHarness({ registry: orderRegistry, logger });
+    const harness = await createReactiveHarness({ registry: failingRegistry, logger });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
     await harness.pipeline.dispatch({
       type: "PlaceOrder",
@@ -213,16 +242,16 @@ describe("scheduled command worker", () => {
         runtime: { policies: { retry: { strategy: "fixed", maxAttempts: 2, baseDelay: "30s" } } },
       },
     });
-    const original = harness.pipeline.dispatch.bind(harness.pipeline);
+    const original = harness.pipeline.dispatchUnattended.bind(harness.pipeline);
     let failures = 5;
-    harness.pipeline.dispatch = async (args) => {
+    harness.pipeline.dispatchUnattended = async (args) => {
       if (failures > 0) {
         failures -= 1;
         throw new Error("db unavailable");
       }
       return original(args);
     };
-    await original({
+    await harness.pipeline.dispatch({
       type: "PlaceOrder",
       payload: { orderId: "o-1", total: 10 },
       options: { delay: 0 },
@@ -291,7 +320,7 @@ describe("scheduled command worker", () => {
       config: { runtime: { policies: { retry: { strategy: "none" } } } },
     });
     const original = harness.pipeline.dispatch.bind(harness.pipeline);
-    harness.pipeline.dispatch = async () => {
+    harness.pipeline.dispatchUnattended = async () => {
       const bare = new Error("db unavailable");
       Reflect.deleteProperty(bare, "stack");
       throw bare;
@@ -369,7 +398,7 @@ describe("scheduled command worker", () => {
     [
       "fails for good",
       () => {
-        throw new DomainError("Orders are closed");
+        throw new ValidationError("Orders are closed", []);
       },
       1,
     ],
@@ -392,8 +421,8 @@ describe("scheduled command worker", () => {
       });
       harness.clock.advance(60_000);
       let takenOver: readonly ClaimedCommand[] = [];
-      const dispatch = harness.pipeline.dispatch;
-      vi.spyOn(harness.pipeline, "dispatch").mockImplementationOnce(async (args) => {
+      const dispatch = harness.pipeline.dispatchUnattended;
+      vi.spyOn(harness.pipeline, "dispatchUnattended").mockImplementationOnce(async (args) => {
         const result = await dispatch(args);
         harness.clock.advance(harness.worker.leaseMs + 1);
         takenOver = await harness.storage.scheduler.claimDue({
@@ -440,8 +469,8 @@ describe("scheduled command worker", () => {
     }
     harness.clock.advance(60_000);
     let takenOver: readonly ClaimedCommand[] = [];
-    const dispatch = harness.pipeline.dispatch;
-    vi.spyOn(harness.pipeline, "dispatch").mockImplementationOnce(async (args) => {
+    const dispatch = harness.pipeline.dispatchUnattended;
+    vi.spyOn(harness.pipeline, "dispatchUnattended").mockImplementationOnce(async (args) => {
       const result = await dispatch(args);
       harness.clock.advance(harness.worker.leaseMs + 1);
       takenOver = await harness.storage.scheduler.claimDue({
@@ -473,14 +502,14 @@ describe("scheduled command worker", () => {
       });
     }
     harness.clock.advance(60_000);
-    const dispatch = harness.pipeline.dispatch;
+    const dispatch = harness.pipeline.dispatchUnattended;
     const slow =
       (ms: number): typeof dispatch =>
       async (args) => {
         harness.clock.advance(ms);
         return dispatch(args);
       };
-    vi.spyOn(harness.pipeline, "dispatch")
+    vi.spyOn(harness.pipeline, "dispatchUnattended")
       .mockImplementationOnce(slow(harness.worker.leaseMs / 4))
       .mockImplementationOnce(slow(1));
 
@@ -501,12 +530,17 @@ describe("scheduled command worker", () => {
         options: { delay: "1m" },
       });
       harness.clock.advance(60_000);
-      const dispatch = harness.pipeline.dispatch;
-      const runs = vi.spyOn(harness.pipeline, "dispatch").mockImplementationOnce(async (args) => {
-        const result = await dispatch(args);
-        await dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-        return result;
-      });
+      const dispatch = harness.pipeline.dispatchUnattended;
+      const runs = vi
+        .spyOn(harness.pipeline, "dispatchUnattended")
+        .mockImplementationOnce(async (args) => {
+          const result = await dispatch(args);
+          await harness.pipeline.dispatch({
+            type: "PlaceOrder",
+            payload: { orderId: "o-1", total: 10 },
+          });
+          return result;
+        });
       return runs;
     };
 
@@ -690,7 +724,7 @@ describe("scheduled command worker", () => {
 
   it("treats a concurrency conflict from the pipeline as transient", async () => {
     const harness = await createReactiveHarness({ registry: orderRegistry });
-    harness.pipeline.dispatch = async () => {
+    harness.pipeline.dispatchUnattended = async () => {
       throw new ConcurrencyError({ streamId: "order:o-1", expectedVersion: 0, actualVersion: 1 });
     };
     await harness.storage.scheduler.schedule({
@@ -703,10 +737,10 @@ describe("scheduled command worker", () => {
     expect((await harness.storage.scheduler.list())[0]?.attempts).toBe(1);
   });
 
-  it("does not record CommandFailed for domain errors on unknown aggregates and polls in the background", async () => {
+  it("does not record CommandFailed for terminal errors on unknown aggregates and polls in the background", async () => {
     const harness = await createReactiveHarness({ registry: orderRegistry });
-    harness.pipeline.dispatch = async () => {
-      throw new DomainError("nope");
+    harness.pipeline.dispatchUnattended = async () => {
+      throw new ValidationError("nope", []);
     };
     await harness.storage.scheduler.schedule({
       dedupeKey: "command:y",
@@ -727,6 +761,7 @@ describe("scheduled command worker", () => {
 
 const receivedNotes: unknown[] = [];
 let rejectNotes = false;
+let closeNotes = false;
 
 const noteRegistry = {
   aggregates: {
@@ -742,15 +777,19 @@ const noteRegistry = {
           module: {
             payload: ({ z }: PayloadArgs) =>
               z.object({ noteId: z.string(), text: z.string().transform((text) => `${text}!`) }),
+            rejections: () => ({ Closed: "Notes are closed" }),
             handler: ({
               command,
               events,
+              reject,
             }: {
               command: { payload: { text: string } };
               events: Record<string, (payload?: unknown) => unknown>;
+              reject: RejectFunction<"Closed">;
             }) => {
               receivedNotes.push(command.payload);
-              if (rejectNotes) throw new DomainError("Notes are closed");
+              if (closeNotes) return reject("Closed");
+              if (rejectNotes) throw new ValidationError("Notes are unreadable", []);
               return [events.noteWritten?.({ text: command.payload.text })];
             },
           },
@@ -787,7 +826,7 @@ describe("delayed command payload", () => {
     await app.commands.writeNote({ noteId: "n-1", text: "hello" }, { delay: "1m" });
 
     clock.advance(60_000);
-    await app.processUntilIdle();
+    await app.runUntilIdle();
 
     expect(receivedNotes).toEqual([{ noteId: "n-1", text: "hello!" }]);
     await app.stop();
@@ -799,7 +838,7 @@ describe("delayed command payload", () => {
     const { app, clock } = await createTestApp({ registry: noteRegistry });
     await app.commands.writeNote({ noteId: "n-1", text: "hello" }, { delay: "1m" });
     clock.advance(60_000);
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     const [letter] = await app.deadLetters.list();
 
     rejectNotes = false;
@@ -808,6 +847,35 @@ describe("delayed command payload", () => {
 
     expect(letter?.payload).toEqual({ noteId: "n-1", text: "hello" });
     expect(receivedNotes).toEqual([{ noteId: "n-1", text: "hello!" }]);
+    await app.stop();
+  });
+
+  it("changes nothing when the handler rejects it, and is reported by runUntilIdle", async () => {
+    receivedNotes.length = 0;
+    closeNotes = true;
+    const { logger, entries } = createRecordingLogger();
+    const { app, clock } = await createTestApp({ registry: noteRegistry, logger });
+    await app.commands.writeNote({ noteId: "n-1", text: "hello" }, { delay: "1m" });
+    clock.advance(60_000);
+
+    const { rejections } = await app.runUntilIdle();
+
+    closeNotes = false;
+    const rejection = {
+      type: "WriteNote",
+      rejected: "Closed",
+      message: "Notes are closed",
+      aggregateType: "note",
+      aggregateId: "n-1",
+    };
+    expect(rejections).toEqual([rejection]);
+    expect(entries).toContainEqual({
+      level: "info",
+      message: "command rejected",
+      fields: rejection,
+    });
+    expect(await app.deadLetters.list()).toEqual([]);
+    expect((await app.runUntilIdle()).rejections).toEqual([]);
     await app.stop();
   });
 
@@ -820,7 +888,7 @@ describe("delayed command payload", () => {
     payload.text = "changed";
 
     clock.advance(60_000);
-    await app.processUntilIdle();
+    await app.runUntilIdle();
 
     expect(receivedNotes).toEqual([{ noteId: "n-1", text: "hello!" }]);
     await app.stop();
@@ -833,7 +901,7 @@ describe("delayed command payload", () => {
     await app.commands.postponeNote({ noteId: "n-1", until }, { delay: "1m" });
 
     clock.advance(60_000);
-    await app.processUntilIdle();
+    await app.runUntilIdle();
 
     expect(receivedNotes).toEqual([{ noteId: "n-1", until }]);
     await app.stop();

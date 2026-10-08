@@ -2,10 +2,15 @@ export type { Clock, CreateFixedClockFunction, FixedClock } from "./clock.ts";
 export { createFixedClock, systemClock } from "./clock.ts";
 export type {
   Command,
+  CommandRejection,
+  DecidedDispatch,
   DispatchOptions,
   DispatchResult,
   NewCommand,
   ReactionDispatchResult,
+  RejectedDispatch,
+  ScheduledDispatch,
+  StoredDispatch,
 } from "./command.ts";
 export type {
   AsDurationFunction,
@@ -23,11 +28,13 @@ export {
   ConcurrencyError,
   type ConcurrencyErrorArgs,
   ConfigurationError,
+  CreationOrderError,
   DeadLetterSettledError,
   type DeadLetterSettledErrorArgs,
   DomainError,
   NotFoundError,
   RebuildSupersededError,
+  type Rejection,
   ScheduledClaimLostError,
   ValidationError,
   type ValidationIssue,

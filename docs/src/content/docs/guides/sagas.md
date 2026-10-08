@@ -39,24 +39,40 @@ the compensation of a failed checkout.
 
 A step fails in one of two ways, and neither needs a special file.
 
-**The command refuses.** The handler that dispatches it gets the `DomainError` from the `await`
-and compensates on the spot. When the payment settles, the process marks the order paid; if the
-order is no longer open, the refusal is the signal to give the money back:
+**The command rejects.** Its module declares the rejections it may answer with, and its handler
+returns `reject(code)` (see [Rejections](/guides/project-layout/#rejections)). The handler that
+dispatched it gets the rejection as a value from the `await`, its code in `rejected`, and
+compensates on the spot. When the payment settles, the process marks the order paid; if the
+order is no longer open, the rejection is the signal to give the money back:
+
+```ts
+// order/commands/mark-order-paid.ts
+export const rejections = ({ state }: Command.RejectionsArgs) => ({
+  NotOpen: `Only open orders can be paid; this one is ${state.status ?? "new"}`,
+});
+
+export const handler = ({ state, events, reject }: Command.HandlerArgs) => {
+  if (state.status === "paid" || state.status === "fulfilled") return [];
+  if (state.status !== "placed" && state.status !== "paying") return reject("NotOpen");
+  return [events.orderPaid()];
+};
+```
 
 ```ts
 // order/processes/order-lifecycle/payment/on-payment-settled.ts
 export const handler = async ({ event, aggregateId, commands }: Process.HandlerArgs) => {
-  try {
-    await commands.markOrderPaid({ orderId: aggregateId });
-  } catch (error) {
-    if (!(error instanceof DomainError)) throw error;
+  const paid = await commands.markOrderPaid({ orderId: aggregateId });
+  if (paid.rejected === "NotOpen") {
     await commands.cancelPayment({ paymentId: event.aggregateId, reason: "order no longer open" });
   }
   return { paymentDeadline: null };
 };
 ```
 
-Only a `DomainError` is an answer. Anything else is rethrown, so the runtime retries the step.
+`rejected` is typed by the codes `markOrderPaid` declares, so a typo does not compile, and it is
+`false` when the order decided. A rejection is an answer, not a failure: the step goes on. A
+failure, such as a payload that does not validate or an error the handler throws, rejects the
+`await`, and the runtime retries the step.
 
 **Another aggregate says no.** A failure that happens elsewhere, later, arrives as an event of
 that aggregate. The provider declines the card, `declinePayment` appends `PaymentDeclined`, and
@@ -77,6 +93,13 @@ Both commands run in one attempt, and the second sees what the first decided: th
 There is no `on-failed.ts`. A failure is either the answer to a command, which the caller already
 holds, or a fact of another aggregate, which is an event. A hook would be a third channel for
 something the two already carry.
+
+**Rejection or event.** An event is what the domain remembers; a rejection is the answer to whoever
+asked. A "no" is an event when the business remembers it, someone else listens to it, or whoever
+asks lives in another store and cannot await the answer: the card is declined by a provider that
+calls back later, so `PaymentDeclined` is an event. Otherwise it is a rejection, which is neither
+stored nor published. Whether it changes the state is not the test, since some events change
+nothing. Rejections are named after the reason (`NotOpen`), events after what happened.
 
 ## A compensation is a command that decides from state
 
@@ -121,8 +144,9 @@ export const handler = async ({ event, commands, gateway, idempotencyKey }: Poli
 ```
 
 Compensations go through one place. However the order ends up cancelled (the customer, the
-payment deadline, a declined card), `OrderCancelled` completes the process, and its handler runs
-before the instance completes:
+payment deadline, a declined card, the process's own `timeout`), `OrderCancelled` reaches this
+handler: it runs before the instance completes, or, when `at-timeout.ts` caused it, after the
+instance timed out:
 
 ```ts
 // order/processes/order-lifecycle/on-order-cancelled.ts
@@ -138,10 +162,6 @@ payment was requested, yet the order is cancelled first and the payment after it
 order is what sets the compensation going. Each compensation decides from the state of its own
 aggregate, so their order matters only when one depends on what another did.
 
-The exception is the process's own `timeout`. An instance that times out ends there, and the
-`OrderCancelled` its `at-timeout.ts` causes reaches no open instance, so that handler compensates
-in place: it releases the lock, cancels the order and cancels the payment.
-
 ## Every step is idempotent
 
 A process step can run more than once, a webhook can arrive twice and a policy is retried after a
@@ -149,18 +169,20 @@ failure, so every step tolerates being repeated:
 
 - **A repeated command appends nothing.** Each handler decides from state: `settlePayment` on a
   settled payment, `recordRefund` once the refund is done, `lockOrderForPayment` on an order that
-  is no longer `placed` all return `[]`.
-- **A refusal that triggers a compensation is kept for what cannot happen.** `markOrderPaid`
-  refuses only a cancelled order; on a paid or fulfilled one it returns `[]`. The process refunds
-  the payment when it refuses, so a `DomainError` for a repeat would refund an order that was paid.
-- **Commands the process dispatches do not throw for a state they cannot rule out.**
-  `lockOrderForPayment` and `recordPaymentFailure` return `[]` instead of a `DomainError`: the
-  order may have moved on since the event, and a `DomainError` nobody catches fails the process.
-- **Ids that leave the app are deterministic.** The process uses its `idempotencyKey` as the
-  payment's id, not `randomUUID()`. The id of the command it dispatches comes from that key, and
-  the command's `idempotencyKey` is what `requestPayment` hands the provider, so a retry asks for
-  the same intent with the same parameters. A random id would send the same key with other
-  parameters, which Stripe refuses.
+  is already `paying` all return `[]`. Repeating what is done is not a rejection.
+- **A rejection that triggers a compensation is kept for what cannot happen.** `markOrderPaid`
+  rejects only an order that is no longer open; on a paid or fulfilled one it returns `[]`. The
+  process refunds the payment on that rejection, so rejecting a repeat would refund an order that
+  was paid.
+- **A rejection nobody looks at changes nothing.** `lockOrderForPayment` and
+  `recordPaymentFailure` reject an order that moved on since the event, and the process does not
+  look: the step goes on, and the rejection is logged and traced. A test asserts the ones it
+  expects with [`runUntilIdle()`](/guides/testing/#rejections).
+- **Ids that leave the app are deterministic.** The process derives the payment's id from its key,
+  `idempotencyKeyFor(idempotencyKey, "payment")`, as any reaction does for an id it creates (see
+  [Calling the outside world](/guides/reacting-to-events/#calling-the-outside-world)). A retry
+  dispatches `requestPayment` with the same id, and that command's `idempotencyKey` is what it
+  hands the provider, so the retry asks for the same intent with the same parameters.
 
 ## Commutative compensations
 
@@ -198,7 +220,7 @@ While the provider processes the payment, the order should not be cancelled: the
 its way. `lockOrderForPayment` puts the order in `paying`, a state that means *a step is in
 flight*, and `cancelOrder` decides what to do with it. There are three possible answers to a lock:
 
-- **Refuse.** `cancelOrder` on a `paying` order throws `DomainError("Payment in progress")`. For
+- **Refuse.** `cancelOrder` on a `paying` order rejects with `PaymentInProgress`. For
   a card the provider answers within seconds, so asking the customer to try again is acceptable;
   a payment method that takes days to clear would call for the next answer instead.
 - **Accept and compensate.** `cancelOrder` on a `placed` order is accepted, even though a payment
@@ -214,7 +236,7 @@ compensate for one that may last days.
 The lock reaches the order asynchronously, through the process, after `PaymentProcessing` is
 stored. It narrows the race between a cancellation and a payment; it does not close it. When the
 two cross, the compensation of the previous section catches it: the payment settles, the order is
-no longer open, `markOrderPaid` refuses and the payment is cancelled with a refund.
+no longer open, `markOrderPaid` rejects and the payment is cancelled with a refund.
 
 ## A step that never answers
 
@@ -231,15 +253,16 @@ export const handler = async ({ aggregateId, commands }: Process.DeadlineArgs) =
 ```
 
 The process's own `timeout`, 30 days in the storefront, is the last resort: it detects an
-instance stuck for any reason, a lock nobody released included, and cancels everything. See
-[deadlines](/guides/reacting-to-events/#deadlines).
+instance stuck for any reason, a lock nobody released included: it releases the lock and cancels
+the order, and the `OrderCancelled` it causes cancels the payment through `on-order-cancelled.ts`,
+as any other cancellation does. See [deadlines](/guides/reacting-to-events/#deadlines).
 
 ## Retry before compensating
 
 A compensation is expensive: the customer loses the order. A failure that may go away on its own
 is retried first, and only an answer is compensated. The runtime does it for every policy and
 process step: a provider that cannot be reached throws, and the step is retried with back-off
-under the same `idempotencyKey`; a refusal is an answer, `DomainError` or event, and is
+under the same `idempotencyKey`; a refusal is an answer, rejection or event, and is
 compensated.
 
 A compensation that fails for good is not compensated in turn. It becomes a

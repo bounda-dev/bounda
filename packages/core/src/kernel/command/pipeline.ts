@@ -2,13 +2,23 @@ import type { EventStore, PendingEvent } from "../../adapter/ports/event-store.t
 import type { Scheduler } from "../../adapter/ports/scheduler.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
-import type { Command, DispatchOptions, DispatchResult } from "../../contracts/command.ts";
+import type {
+  Command,
+  CommandRejection,
+  DispatchOptions,
+  DispatchResult,
+  RejectedDispatch,
+  StoredDispatch,
+} from "../../contracts/command.ts";
 import { parseDuration } from "../../contracts/duration.ts";
 import {
   ChainDepthExceededError,
   ConcurrencyError,
   ConfigurationError,
+  CreationOrderError,
+  DomainError,
   NotFoundError,
+  rejectionOf,
   ValidationError,
 } from "../../contracts/errors.ts";
 import type { NewEvent } from "../../contracts/event.ts";
@@ -17,9 +27,10 @@ import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
 import { foldState } from "../aggregate/fold-state.ts";
 import type { AggregateRuntime, AggregatesRuntime, CommandRuntime } from "../aggregate/runtime.ts";
+import { errorDetails } from "../shared/retry.ts";
 import { withTimeout } from "../shared/timeout.ts";
 import { withCollaborators } from "../shared/with-collaborators.ts";
-import { ATTRIBUTES, METRICS, meter, traced } from "../telemetry.ts";
+import { ATTRIBUTES, METRICS, meter, SPAN_EVENTS, traced } from "../telemetry.ts";
 import type { UnitStores } from "../unit-of-work/unit-of-work.ts";
 import { validatePayload } from "./validate.ts";
 
@@ -35,18 +46,33 @@ export interface DispatchArgs {
    */
   readonly commandId?: string | undefined;
   /**
-   * The stores to load from and write to instead of the storage's own: a reaction's unit of work,
-   * which holds the command's events and schedule until the attempt commits.
-   */
-  readonly within?: UnitStores | undefined;
-  /**
    * Aborted when the reaction that dispatches the command is abandoned, so the command stops too.
    */
   readonly signal?: AbortSignal | undefined;
 }
 
+/**
+ * A command the runtime dispatches on its own, for a reaction, the scheduler or a replay, where
+ * nobody waits for its rejection.
+ */
+export interface UnattendedDispatchArgs extends DispatchArgs {
+  /**
+   * The unit of work to load from and write to instead of the storage's own, which holds the
+   * command's events and schedule until it commits.
+   */
+  readonly within: UnitStores;
+}
+
 export interface CommandPipeline {
+  /**
+   * Throws a rejection, as the `DomainError` its handler's `reject` made, to the caller.
+   */
   dispatch(args: DispatchArgs): Promise<DispatchResult>;
+  /**
+   * Resolves with a rejection, logged at once and reported to `onRejection` once `within`
+   * commits, so an attempt that is retried reports it only from the run that counts.
+   */
+  dispatchUnattended(args: UnattendedDispatchArgs): Promise<DispatchResult | RejectedDispatch>;
 }
 
 export interface CreateCommandPipelineArgs {
@@ -57,6 +83,10 @@ export interface CreateCommandPipelineArgs {
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly logger: Logger;
+  /**
+   * Told of every rejection of an unattended dispatch whose unit of work commits.
+   */
+  readonly onRejection?: (rejection: CommandRejection) => void;
 }
 
 export interface CreateCommandPipelineFunction {
@@ -138,6 +168,84 @@ const toPendingEvents = (
     };
   });
 
+// What makes the state types true: `apply` only ever runs on an aggregate `create` opened.
+const checkCreationOrder = (
+  aggregate: AggregateRuntime,
+  command: Command,
+  created: boolean,
+  events: readonly PendingEvent[],
+): void => {
+  if (!aggregate.opensWithCreate) return;
+  let exists = created;
+  for (const event of events) {
+    const runtime = aggregate.eventsByType[event.type];
+    if (!exists && runtime?.create === null) {
+      throw new CreationOrderError(
+        `Command "${command.type}" returned "${event.type}" for ${aggregate.name} ${command.aggregateId}, which does not exist yet: it must start with an event that exports create`,
+      );
+    }
+    if (exists && runtime?.apply === null) {
+      throw new CreationOrderError(
+        `Command "${command.type}" returned "${event.type}" for ${aggregate.name} ${command.aggregateId}, which exists already: "${event.type}" only exports create`,
+      );
+    }
+    exists = true;
+  }
+};
+
+// The handler has decided by the time it calls `reject`: a `rejections` that throws, or that does
+// not declare the code, costs the rejection its message, never the rejection itself.
+const declaredMessage = (
+  rejections: NonNullable<CommandRuntime["rejections"]>,
+  command: Command,
+  state: object,
+  code: string,
+  logger: Logger,
+): string => {
+  const fields = { type: command.type, rejected: code };
+  let message: unknown;
+  try {
+    // `Object` so a module that returns no object, as plain JS can, finds no message either.
+    const messages: Readonly<Record<string, unknown>> = Object(rejections({ command, state }));
+    message = Object.hasOwn(messages, code) ? messages[code] : undefined;
+  } catch (error) {
+    logger.warn("command rejections threw; the rejection takes its code as message", {
+      ...fields,
+      error: errorDetails(error),
+    });
+    return code;
+  }
+  if (typeof message === "string") return message;
+  logger.warn(
+    "command rejected with a code its rejections do not declare; the code is its message",
+    fields,
+  );
+  return code;
+};
+
+// Only a command that declares `rejections` gets `reject`, as its handler's arguments say. What it
+// makes goes in `issued`: a DomainError from anywhere else, such as another app's command, is a
+// failure of this one, not a rejection it declared.
+const rejectOf = (
+  runtime: CommandRuntime,
+  command: Command,
+  state: object,
+  issued: WeakSet<DomainError>,
+  logger: Logger,
+): { readonly reject?: (code: string, message?: string) => DomainError } => {
+  const { rejections } = runtime;
+  if (rejections === null) return {};
+  return {
+    reject: (code, message) => {
+      const error = new DomainError(
+        rejectionOf(code, message ?? declaredMessage(rejections, command, state, code, logger)),
+      );
+      issued.add(error);
+      return error;
+    },
+  };
+};
+
 /**
  * Commands with `delay` are scheduled with the payload as the caller passed it, in the JSON form
  * every scheduler stores. Validating that form here only rejects early what would fail when the
@@ -152,14 +260,17 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
   ids,
   clock,
   logger,
+  onRejection,
 }) => {
+  // Only streams written before `create` existed land here, so the set stays small.
+  const warnedOpenings = new Set<string>();
   const execute = async (
     aggregate: AggregateRuntime,
     runtime: CommandRuntime,
     command: Command,
     store: EventStore,
     signals: readonly AbortSignal[],
-  ): Promise<DispatchResult> => {
+  ): Promise<StoredDispatch | DomainError> => {
     const attempts = config.runtime.commands.concurrencyRetries + 1;
     const { timeoutMs } = config.forAggregate(aggregate.name).commands;
     for (let attempt = 1; ; attempt += 1) {
@@ -167,11 +278,18 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         aggregateType: aggregate.name,
         aggregateId: command.aggregateId,
       });
-      const state = {
-        ...foldState({ aggregate, events: loaded.events }),
-        id: command.aggregateId,
-        version: loaded.version,
-      };
+      const folded = foldState({ aggregate, events: loaded.events });
+      const stream = `${aggregate.name}:${command.aggregateId}`;
+      if (folded.openedWithout !== null && !warnedOpenings.has(stream)) {
+        warnedOpenings.add(stream);
+        logger.warn("aggregate opened by an event without create; its state may lack fields", {
+          aggregateType: aggregate.name,
+          aggregateId: command.aggregateId,
+          eventType: folded.openedWithout,
+        });
+      }
+      const state = { ...folded.state, id: command.aggregateId, version: loaded.version };
+      const issued = new WeakSet<DomainError>();
       const produced = (await withTimeout({
         run: (signal) =>
           runtime.handler(
@@ -181,14 +299,22 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
               events: aggregate.eventBuilders,
               idempotencyKey: command.metadata.commandId,
               signal,
+              ...rejectOf(runtime, command, state, issued, logger),
             }),
           ),
         timeoutMs,
         subject: `command ${command.type}`,
         clock,
         signals,
-      })) as readonly NewEvent[] | undefined;
+      }).catch((error: unknown) => {
+        if (error instanceof DomainError && issued.has(error)) return error;
+        throw error;
+      })) as readonly NewEvent[] | DomainError | undefined;
       for (const signal of signals) signal.throwIfAborted();
+      if (produced instanceof DomainError) {
+        if (!issued.has(produced)) throw produced;
+        return produced;
+      }
       const events = toPendingEvents(
         aggregate,
         command,
@@ -197,6 +323,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         ids,
         clock.now().toISOString(),
       );
+      checkCreationOrder(aggregate, command, folded.created, events);
       if (events.length === 0) {
         return {
           scheduled: false,
@@ -236,19 +363,23 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     unit: "{command}",
   });
 
-  const count = (type: string, outcome: "stored" | "scheduled" | "rejected"): void => {
+  const count = (type: string, outcome: "stored" | "scheduled" | "rejected" | "failed"): void => {
     commands.add(1, { [ATTRIBUTES.commandType]: type, [ATTRIBUTES.outcome]: outcome });
   };
 
-  const dispatch = async ({
-    type,
-    payload,
-    options = {},
-    context,
-    commandId: scheduledId,
-    within,
-    signal: reactionSignal,
-  }: DispatchArgs): Promise<DispatchResult> => {
+  // `rejected` answers a rejection inside the command's span, where its log line belongs.
+  const send = async <Rejected>(
+    {
+      type,
+      payload,
+      options = {},
+      context,
+      commandId: scheduledId,
+      signal: reactionSignal,
+    }: DispatchArgs,
+    within: UnitStores | undefined,
+    rejected: (error: DomainError, rejection: CommandRejection) => Rejected,
+  ): Promise<DispatchResult | Rejected> => {
     const stores = within ?? { eventStore, scheduler };
     const entry = aggregates.commandsByType[type];
     if (entry === undefined) throw new NotFoundError(`Unknown command "${type}"`);
@@ -291,7 +422,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         [ATTRIBUTES.correlationId]: command.metadata.correlationId,
         [ATTRIBUTES.causationId]: command.metadata.causationId,
       },
-      run: async (span) => {
+      run: async (span): Promise<DispatchResult | Rejected> => {
         if (options.delay !== undefined) {
           const executeAt = new Date(clock.now().getTime() + parseDuration(options.delay));
           await stores.scheduler.schedule({
@@ -313,21 +444,48 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
             executeAt: executeAt.toISOString(),
           };
         }
+        let result: StoredDispatch | DomainError;
         try {
-          const result = await execute(aggregate, runtime, command, stores.eventStore, signals);
-          span.setAttributes({
-            [ATTRIBUTES.outcome]: "stored",
-            [ATTRIBUTES.eventCount]: result.scheduled ? 0 : result.eventIds.length,
-          });
-          count(type, "stored");
-          return result;
+          result = await execute(aggregate, runtime, command, stores.eventStore, signals);
         } catch (error) {
-          count(type, "rejected");
+          count(type, "failed");
           throw error;
         }
+        if (result instanceof DomainError) {
+          span.setAttribute(ATTRIBUTES.outcome, "rejected");
+          span.addEvent(SPAN_EVENTS.commandRejected, { [ATTRIBUTES.rejected]: result.rejected });
+          count(type, "rejected");
+          return rejected(result, {
+            type,
+            rejected: result.rejected,
+            message: result.message,
+            aggregateType: aggregate.name,
+            aggregateId,
+          });
+        }
+        span.setAttributes({
+          [ATTRIBUTES.outcome]: "stored",
+          [ATTRIBUTES.eventCount]: result.eventIds.length,
+        });
+        count(type, "stored");
+        return result;
       },
     });
   };
 
-  return { dispatch };
+  return {
+    dispatch: async (args) => {
+      const outcome = await send(args, undefined, (error) => error);
+      // Thrown outside the span: a rejection is the command's answer, not a failure of it.
+      if (outcome instanceof DomainError) throw outcome;
+      return outcome;
+    },
+    dispatchUnattended: ({ within, ...args }) =>
+      send(args, within, (_error, rejection) => {
+        logger.info("command rejected", { ...rejection });
+        within.afterCommit(() => onRejection?.(rejection));
+        const { type: _type, ...answer } = rejection;
+        return answer;
+      }),
+  };
 };

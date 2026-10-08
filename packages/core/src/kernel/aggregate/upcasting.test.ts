@@ -235,7 +235,7 @@ describe("an app over events stored with an older shape", () => {
       version: 2,
     });
     await app.commands.placeOrder({ orderId: "o-2", amount: 5 });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
 
     const { events } = await raw.eventStore.load({ aggregateType: "order", aggregateId: "o-2" });
     expect(events[0]).toMatchObject({

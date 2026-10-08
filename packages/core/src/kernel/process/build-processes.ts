@@ -4,7 +4,7 @@ import { parseDuration } from "../../contracts/duration.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { capitalize, toKebabCase } from "../../modules/naming.ts";
-import type { ProcessEntry } from "../../modules/process.ts";
+import type { ProcessCorrelation, ProcessEntry } from "../../modules/process.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { qualifiedEventType } from "../shared/qualified-event.ts";
@@ -27,9 +27,10 @@ export interface ProcessRuntime {
   readonly deadlineHandlers: Readonly<Record<string, (args: Record<string, unknown>) => unknown>>;
   readonly collaborators: Readonly<Record<string, unknown>>;
   /**
-   * The id of the instance an event belongs to: what `correlate` says for it, or the event's
-   * `aggregateId` for the process's own aggregate; `null` when the event belongs to none. Throws
-   * when `correlate` throws or returns anything but a non-empty string or `null`.
+   * The id of the instance an event belongs to: what `correlate` says for it, the id field of an
+   * event of another aggregate, or the event's `aggregateId` for the process's own aggregate;
+   * `null` when the event belongs to none. Throws when `correlate` throws or either gives anything
+   * but a non-empty string or `null`.
    */
   instanceOf(event: StoredEvent): string | null;
 }
@@ -62,6 +63,8 @@ const compileState = (
 };
 
 type Correlator = (event: StoredEvent) => string | null;
+
+type AppEvents = Readonly<Record<string, Readonly<Record<string, string>>>>;
 
 const compileDeadlines = (
   path: string,
@@ -130,34 +133,101 @@ const compileHandlers = (
     ),
   );
 
+const isCorrelation = (value: unknown): value is ProcessCorrelation =>
+  typeof value === "object" &&
+  value !== null &&
+  typeof Reflect.get(value, "event") === "string" &&
+  typeof Reflect.get(value, "correlate") === "function";
+
 const compileCorrelate = (
   path: string,
   entry: ProcessEntry,
-  known: ReadonlySet<string>,
-): Readonly<Record<string, Correlator>> =>
-  Object.fromEntries(
-    Object.entries(entry.module.correlate ?? {}).flatMap(([source, correlators]) =>
-      Object.entries(correlators).flatMap(([type, correlator]) => {
-        if (correlator === undefined) return [];
-        const qualified = qualifiedEventType(source, type);
-        if (!known.has(qualified)) {
-          throw new ConfigurationError(
-            `${path}.correlate.${source}.${type}: "${qualified}" is not an event of the app`,
-          );
-        }
-        return [[qualified, correlator as Correlator]];
-      }),
-    ),
+  events: AppEvents,
+): Record<string, Correlator> => {
+  const { correlate } = entry.module;
+  if (correlate === undefined) return {};
+  if (typeof correlate !== "function") {
+    throw new ConfigurationError(
+      `${path}: correlate must be a function of { from } returning from.<aggregate>.<Event>(…) for each event`,
+    );
+  }
+  const from = Object.fromEntries(
+    Object.entries(events).map(([aggregate, byType]) => [
+      aggregate,
+      Object.fromEntries(
+        Object.entries(byType).map(([type, qualified]) => [
+          type,
+          (correlator: Correlator): ProcessCorrelation => ({
+            event: qualified,
+            correlate: correlator,
+          }),
+        ]),
+      ),
+    ]),
   );
+  let declared: unknown;
+  try {
+    declared = (correlate as (args: { readonly from: object }) => unknown)({ from });
+  } catch (error) {
+    throw new ConfigurationError(
+      `${path}.correlate failed: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
+  if (!Array.isArray(declared) || !declared.every(isCorrelation)) {
+    throw new ConfigurationError(
+      `${path}.correlate: return a list of from.<aggregate>.<Event>(…), one for each event`,
+    );
+  }
+  const correlators: Record<string, Correlator> = {};
+  for (const { event, correlate: correlator } of declared) {
+    if (correlators[event] !== undefined) {
+      throw new ConfigurationError(`${path}.correlate: "${event}" is correlated twice`);
+    }
+    correlators[event] = correlator as Correlator;
+  }
+  return correlators;
+};
+
+type IdFieldRoute = { readonly correlate: Correlator } | { readonly refused: string };
+
+// An event of another aggregate whose payload schema declares the id field of the process's
+// aggregate belongs to the instance it names, and to none when it is null or empty. Any other
+// value goes on as it is, for `instanceOf` to refuse. Only a plain object schema says what is
+// stored: a transform's output, which is, cannot be read from it.
+const byIdField = (
+  aggregates: AggregatesRuntime,
+  aggregate: string,
+  qualified: string,
+): IdFieldRoute => {
+  const field = aggregates.byName[aggregate]?.aggregateIdField;
+  const [source = "", type = ""] = qualified.split(".");
+  const schema = aggregates.byName[source]?.eventsByType[type]?.schema ?? null;
+  const correlateIt = `say which instance it belongs to with from.${qualified}(…) in correlate`;
+  if (schema !== null && !(schema instanceof z.ZodObject)) {
+    return {
+      refused: `its payload schema is not a plain z.object, so its "${field}" cannot be read; ${correlateIt}`,
+    };
+  }
+  if (field === undefined || schema === null || !(field in schema.shape)) {
+    return { refused: `give its payload "${field}" or ${correlateIt}` };
+  }
+  return {
+    correlate: (event) => {
+      const id: unknown = Reflect.get(event.payload as object, field);
+      return id === null || id === undefined || id === "" ? null : (id as string);
+    },
+  };
+};
 
 const buildProcess = (
   aggregate: string,
   key: string,
   entry: ProcessEntry,
-  events: Readonly<Record<string, Readonly<Record<string, string>>>>,
+  events: AppEvents,
   known: ReadonlySet<string>,
   config: ResolvedConfig,
-  collaborators: ProcessRuntime["collaborators"],
+  aggregates: AggregatesRuntime,
 ): ProcessRuntime => {
   const path = `aggregates.${aggregate}.processes.${key}`;
   const declared = (
@@ -170,15 +240,17 @@ const buildProcess = (
   const startedBy = knownEvents(path, declared.startedBy, known);
   const completedBy = knownEvents(path, declared.completedBy ?? [], known);
   const handlers = compileHandlers(path, entry, known);
-  const correlate = compileCorrelate(path, entry, known);
+  const correlate = compileCorrelate(path, entry, events);
   const own = (qualified: string): boolean => qualified.startsWith(`${aggregate}.`);
   for (const qualified of new Set([...startedBy, ...completedBy, ...Object.keys(handlers)])) {
-    if (!own(qualified) && correlate[qualified] === undefined) {
-      const [source, type] = qualified.split(".");
+    if (own(qualified) || correlate[qualified] !== undefined) continue;
+    const route = byIdField(aggregates, aggregate, qualified);
+    if ("refused" in route) {
       throw new ConfigurationError(
-        `${path}: "${qualified}" comes from another aggregate; say which instance it belongs to with correlate.${source}.${type}`,
+        `${path}: "${qualified}" comes from another aggregate; ${route.refused}`,
       );
     }
+    correlate[qualified] = route.correlate;
   }
   return {
     name: `${aggregate}.${key}`,
@@ -195,7 +267,7 @@ const buildProcess = (
     handlers,
     deadlineFields,
     deadlineHandlers: compileDeadlines(path, entry, deadlineFields),
-    collaborators,
+    collaborators: aggregates.byName[aggregate]?.collaborators ?? {},
     instanceOf: (event) => {
       const qualified = qualifiedEventType(event.aggregateType, event.type);
       const correlator = correlate[qualified];
@@ -225,8 +297,8 @@ export interface BuildProcessesFunction {
 }
 
 /**
- * An event of another aggregate that a process listens to without saying, in `correlate`, which
- * instance it belongs to is a configuration error.
+ * An event of another aggregate that a process listens to belongs to the instance its payload's
+ * id field names, unless `correlate` says otherwise; one with neither is a configuration error.
  */
 export const buildProcesses: BuildProcessesFunction = ({ registry, aggregates, config }) => {
   const events = Object.fromEntries(
@@ -243,15 +315,7 @@ export const buildProcesses: BuildProcessesFunction = ({ registry, aggregates, c
   const known = new Set(Object.values(events).flatMap((byType) => Object.values(byType)));
   const all = Object.entries(registry.aggregates).flatMap(([aggregate, entry]) =>
     Object.entries(entry.processes).map(([key, process]) =>
-      buildProcess(
-        aggregate,
-        key,
-        process,
-        events,
-        known,
-        config,
-        aggregates.byName[aggregate]?.collaborators ?? {},
-      ),
+      buildProcess(aggregate, key, process, events, known, config, aggregates),
     ),
   );
   const byEvent: Record<string, ProcessRuntime[]> = {};

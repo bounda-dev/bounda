@@ -97,7 +97,8 @@ type.
 ## Errors from the domain
 
 A command throws `ValidationError` when the payload does not match its schema and `DomainError`
-when a rule rejects it. Map them once and return them as data, so the form can show them:
+when its handler rejects it, with the code in `rejected`. Map them once and return them as data,
+so the form can show them:
 
 ```ts
 // app/errors.server.ts
@@ -108,7 +109,9 @@ export const failure = (error: unknown) => {
   if (error instanceof ValidationError) {
     return data({ error: error.message, issues: error.issues }, { status: 400 });
   }
-  if (error instanceof DomainError) return data({ error: error.message, issues: [] }, { status: 409 });
+  if (error instanceof DomainError) {
+    return data({ error: error.message, issues: [], rejected: error.rejected }, { status: 409 });
+  }
   throw error;
 };
 ```

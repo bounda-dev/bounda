@@ -1,6 +1,7 @@
 export type {
   AggregateMeta,
   HandlerState,
+  NotCreated,
   StateModule,
   StateOf,
   UnknownState,
@@ -11,11 +12,19 @@ export type {
   CreateImplementation,
   ImplementationModule,
 } from "./collaborator.ts";
-export type { CommandEntry, CommandHandlerArgs, CommandModule } from "./command.ts";
+export type {
+  CommandEntry,
+  CommandHandlerArgs,
+  CommandModule,
+  CommandRejectionsArgs,
+  RejectFunction,
+  RejectionCodeOf,
+} from "./command.ts";
 export type {
   CreateEventBuildersFunction,
   EventApplyArgs,
   EventBuilders,
+  EventCreateArgs,
   EventModule,
   EventModules,
   EventOf,
@@ -52,7 +61,8 @@ export type {
   ProcessAfterFunction,
   ProcessConfig,
   ProcessConfigArgs,
-  ProcessCorrelate,
+  ProcessCorrelateArgs,
+  ProcessCorrelation,
   ProcessDeadlineArgs,
   ProcessDeadlineField,
   ProcessDeadlineFields,

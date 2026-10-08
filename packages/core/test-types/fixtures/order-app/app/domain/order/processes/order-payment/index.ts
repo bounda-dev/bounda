@@ -9,6 +9,6 @@ export const config = ({ events }: Process.ConfigArgs) => ({
 export const state = ({ z, deadline, instant }: Process.StateArgs) =>
   z.object({ reminders: z.int().default(0), nextReminder: deadline(), paidAt: instant() });
 
-export const correlate: Process.Correlate = {
-  customer: { CustomerRegistered: () => null },
-};
+export const correlate = ({ from }: Process.CorrelateArgs) => [
+  from.customer.CustomerRegistered(() => null),
+];

@@ -1,14 +1,15 @@
 /// <reference lib="esnext.disposable" />
 import {
   type CreateArgs,
-  DomainError,
   type FieldsArgs,
   type Instant,
   type PayloadArgs,
   type ProcessAfterFunction,
   type ProcessStateArgs,
   type Registry,
+  type RejectFunction,
   type Table,
+  ValidationError,
 } from "@bounda-dev/core";
 
 interface OrderState {
@@ -48,16 +49,19 @@ export const registry = {
           module: {
             payload: ({ z }: PayloadArgs) =>
               z.object({ orderId: z.string(), total: z.number(), customer: z.string() }),
+            rejections: () => ({ AlreadyPlaced: "Order already placed" }),
             handler: ({
               command,
               state,
               events,
+              reject,
             }: {
               command: { payload: { total: number; customer: string } };
               state: OrderState;
               events: Events;
+              reject: RejectFunction<"AlreadyPlaced">;
             }) => {
-              if (state.status !== "new") throw new DomainError("Order already placed");
+              if (state.status !== "new") return reject("AlreadyPlaced");
               return [
                 events.orderPlaced?.({
                   total: command.payload.total,
@@ -70,9 +74,17 @@ export const registry = {
         payOrder: {
           module: {
             payload: ({ z }: PayloadArgs) => z.object({ orderId: z.string() }),
-            handler: ({ state, events }: { state: OrderState; events: Events }) => {
-              if (state.status !== "placed")
-                throw new DomainError("Only placed orders can be paid");
+            rejections: () => ({ NotPlaced: "Only placed orders can be paid" }),
+            handler: ({
+              state,
+              events,
+              reject,
+            }: {
+              state: OrderState;
+              events: Events;
+              reject: RejectFunction<"NotPlaced">;
+            }) => {
+              if (state.status !== "placed") return reject("NotPlaced");
               return [events.orderPaid?.()];
             },
           },
@@ -94,7 +106,8 @@ export const registry = {
               event: { aggregateId: string };
               commands: { archiveOrder: (payload: { orderId: string }) => Promise<unknown> };
             }) => {
-              if (event.aggregateId.startsWith("fail")) throw new DomainError("archive is down");
+              if (event.aggregateId.startsWith("fail"))
+                throw new ValidationError("archive is down", []);
               await commands.archiveOrder({ orderId: event.aggregateId });
             },
           },

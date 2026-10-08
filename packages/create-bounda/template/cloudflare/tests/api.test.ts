@@ -47,7 +47,9 @@ describe("the orders API, on the Durable Object", () => {
   it("refuses to place the same order twice", async () => {
     const body = { orderId: crypto.randomUUID(), customerId: "ada", total: 1 };
     expect((await post("/commands/placeOrder", body, "twice")).status).toBe(200);
-    expect((await post("/commands/placeOrder", body, "twice")).status).toBe(409);
+    const twice = await post("/commands/placeOrder", body, "twice");
+    expect(twice.status).toBe(409);
+    expect(await twice.json()).toMatchObject({ error: { rejected: "AlreadyPlaced" } });
   });
 
   it("names what it does not know", async () => {

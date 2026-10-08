@@ -354,6 +354,7 @@ const RESERVED_PORT_KEYS: ReadonlySet<string> = new Set([
   "signal",
   "aggregateId",
   "after",
+  "reject",
 ]);
 
 const PORT_DECLARATION = (typeName: string): RegExp =>

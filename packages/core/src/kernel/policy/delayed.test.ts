@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DomainError } from "../../contracts/errors.ts";
+import { ValidationError } from "../../contracts/errors.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { createDeadLetters } from "../dead-letters/dead-letters.ts";
@@ -83,7 +83,7 @@ describe("delayed policies", () => {
   it("run the handler once the delay has passed since the event, with the live arguments", async () => {
     const { harness, placed } = await setUp();
     harness.clock.advance(30_000);
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(runs).toEqual([]);
     const [entry] = await harness.storage.scheduler.list();
     expect(entry).toMatchObject({
@@ -127,7 +127,7 @@ describe("delayed policies", () => {
     });
     expect(await harness.storage.scheduler.list()).toEqual([]);
 
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     await harness.worker.runOnce();
     expect(runs).toHaveLength(1);
   });
@@ -149,7 +149,7 @@ describe("delayed policies", () => {
     expect(crashed).toBe(true);
     expect(await harness.storage.scheduler.list()).toEqual([]);
     harness.clock.advance(harness.config.runtime.policies.timeoutMs * 2 + 1);
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(await harness.storage.scheduler.list()).toHaveLength(1);
     await harness.worker.runOnce();
     expect(runs).toHaveLength(1);
@@ -164,7 +164,7 @@ describe("delayed policies", () => {
       },
     });
     failures = { left: 2, error: () => new Error("network") };
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     harness.clock.advance(60_000);
     await harness.worker.runOnce();
     const [rescheduled] = await harness.storage.scheduler.list();
@@ -181,8 +181,8 @@ describe("delayed policies", () => {
     const telemetry = installFakeTelemetry();
     const { logger, entries } = createRecordingLogger();
     const { harness, placed } = await setUp({}, logger);
-    failures = { left: 1, error: () => new DomainError("mailbox closed") };
-    await harness.dispatcher.processUntilIdle();
+    failures = { left: 1, error: () => new ValidationError("mailbox closed", []) };
+    await harness.dispatcher.runUntilIdle();
     harness.clock.advance(60_000);
     await harness.worker.runOnce();
     expect(
@@ -270,7 +270,7 @@ describe("delayed policies", () => {
                       { orderId: event.aggregateId, method: "card" },
                       { delay: "1h" },
                     );
-                    throw new DomainError("card declined");
+                    throw new ValidationError("card declined", []);
                   },
                 },
               },
@@ -281,7 +281,7 @@ describe("delayed policies", () => {
       },
     });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     harness.clock.advance(60_000);
     await harness.worker.runOnce();
 
@@ -331,7 +331,7 @@ describe("delayed policies", () => {
       config: { runtime: { policies: { retry: { strategy: "none" } } } },
     });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     harness.clock.advance(60_000);
     await harness.worker.runOnce();
 

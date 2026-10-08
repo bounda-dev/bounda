@@ -1,5 +1,10 @@
-import type { DispatchResult, ReactionDispatchResult } from "../../contracts/command.ts";
+import type {
+  DispatchResult,
+  ReactionDispatchResult,
+  RejectedDispatch,
+} from "../../contracts/command.ts";
 import { BoundaError } from "../../contracts/errors.ts";
+import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { createReactionCommandIds } from "../shared/idempotency-key.ts";
@@ -23,6 +28,22 @@ export class ReactionAbandonedError extends BoundaError {
 }
 
 /**
+ * Thrown by a command a handler dispatches once its run has finished, from a timer or a promise it
+ * left behind: the run's unit of work no longer takes its commands, whether it committed or not.
+ */
+export class ReactionFinishedError extends BoundaError {
+  readonly command: string;
+
+  constructor(command: string) {
+    super(
+      "REACTION_FINISHED",
+      `Command ${command} was dispatched after its run had finished: dispatch commands while the handler runs`,
+    );
+    this.command = command;
+  }
+}
+
+/**
  * The commands of one run of a policy or process handler.
  */
 export interface ReactionCommands {
@@ -32,9 +53,16 @@ export interface ReactionCommands {
    */
   readonly signal: AbortSignal;
   /**
+   * What the run's commands decided, in the order they finished, once every dispatch, awaited by
+   * the handler or not, has settled; rejects with the first that failed. The run awaits it before
+   * its attempt commits, so a dispatch the handler did not await still counts. Once it settles,
+   * later dispatches are refused.
+   */
+  decided(): Promise<readonly ReactionDispatchResult[]>;
+  /**
    * Ends a run that failed or timed out: `signal` aborts, which stops the commands still running,
    * and later dispatches are refused. Nothing is undone, since the run's unit of work is never
-   * committed. A dispatch the handler does not await is never reported as unhandled for it.
+   * committed.
    */
   abandon(reason: unknown): void;
 }
@@ -51,19 +79,22 @@ export interface CreateReactionCommandsArgs {
    * The run's unit of work: its commands write there, to commit with the attempt.
    */
   readonly within: UnitStores;
+  /**
+   * Where a command dispatched once the run has finished is reported.
+   */
+  readonly logger: Logger;
 }
 
 export interface CreateReactionCommandsFunction {
   (args: CreateReactionCommandsArgs): ReactionCommands;
 }
 
-const decided = (result: DispatchResult): ReactionDispatchResult => {
-  if (result.scheduled) return result;
+const decided = (result: DispatchResult | RejectedDispatch): ReactionDispatchResult => {
+  if ("rejected" in result) return result;
+  if (result.scheduled) return { rejected: false, ...result };
   const { position: _position, ...decision } = result;
-  return decision;
+  return { rejected: false, ...decision };
 };
-
-const ignore = (): void => undefined;
 
 export const createReactionCommands: CreateReactionCommandsFunction = ({
   aggregates,
@@ -71,39 +102,93 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
   context,
   idempotencyKey,
   within,
+  logger,
 }) => {
   const commandIds = createReactionCommandIds(idempotencyKey);
   const handler = new AbortController();
   // A second signal, so the commands are refused with the reason wrapped while the handler's
   // signal carries it as it is.
   const abandoned = new AbortController();
-  // Abandoning the run rejects the dispatches it stops or refuses, which a handler that did not
-  // await one would leave unhandled, and Node ends the process on that. They are marked handled
-  // before they can reject; the handler still sees the rejection through its own await.
+  // A dispatch the handler does not await would leave its failure unhandled, and Node ends the
+  // process on that. Each is marked handled when it is made, and `decided` reports the failure, or
+  // the logger the refusal of one made once the run was abandoned or had finished; the handler
+  // still sees either through its own await.
   const dispatched = new Set<Promise<ReactionDispatchResult>>();
+  const results: ReactionDispatchResult[] = [];
+  let failure: { readonly error: unknown } | undefined;
+  let finished = false;
+  const refuse = (
+    level: "warn" | "error",
+    message: string,
+    type: string,
+    error: unknown,
+  ): Promise<never> => {
+    logger[level](message, {
+      command: type,
+      correlationId: context.correlationId,
+      causationId: context.causationId,
+    });
+    const refused = Promise.reject(error);
+    refused.catch(() => undefined);
+    return refused;
+  };
   const commands = createCommandsFacade({
     aggregates,
     dispatch: (command) => {
-      const dispatch = (async () =>
-        decided(
-          await pipeline.dispatch({
+      // An abandoned run's failure is reported on its own, and the run retried or dead-lettered;
+      // nothing else reports what a finished run refuses, and it is lost.
+      if (abandoned.signal.aborted) {
+        return refuse(
+          "warn",
+          "command dispatched after its run was abandoned; refused",
+          command.type,
+          abandoned.signal.reason,
+        );
+      }
+      if (finished) {
+        return refuse(
+          "error",
+          "command dispatched after its run had finished; refused",
+          command.type,
+          new ReactionFinishedError(command.type),
+        );
+      }
+      const dispatch = (async () => {
+        const result = decided(
+          await pipeline.dispatchUnattended({
             ...command,
             context: { ...context, depth: context.depth + 1 },
             commandId: commandIds(command.type),
             within,
             signal: abandoned.signal,
           }),
-        ))();
-      if (abandoned.signal.aborted) dispatch.catch(ignore);
-      else dispatched.add(dispatch);
+        );
+        results.push(result);
+        return result;
+      })();
+      // A command the handler withdrew with its own signal is not a failure of the run.
+      const withdrawal = command.options?.signal;
+      dispatch.catch((error: unknown) => {
+        if (withdrawal?.aborted && error === withdrawal.reason) return;
+        failure ??= { error };
+      });
+      dispatched.add(dispatch);
       return dispatch;
     },
   });
   return {
     commands,
     signal: handler.signal,
+    decided: async () => {
+      for (let settled = 0; settled < dispatched.size; ) {
+        settled = dispatched.size;
+        await Promise.allSettled(dispatched);
+      }
+      finished = true;
+      if (failure !== undefined) throw failure.error;
+      return [...results];
+    },
     abandon: (reason) => {
-      for (const dispatch of dispatched) dispatch.catch(ignore);
       abandoned.abort(new ReactionAbandonedError(reason));
       handler.abort(reason);
     },

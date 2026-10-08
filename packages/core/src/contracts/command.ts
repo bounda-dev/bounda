@@ -36,36 +36,82 @@ export interface DispatchOptions {
 }
 
 /**
- * What a command dispatched from a policy or process handler resolves with: the aggregate's
- * version after the command's events and those events' ids and types, in order, or
- * `scheduled: true` with when a delayed command runs. It is the aggregate's decision, kept in the
- * handler's unit of work until its attempt commits, so it carries no position in the global
- * stream: nothing is stored yet.
+ * A command's rejection as a policy or process handler receives it: the code its handler passed
+ * to `reject` and the message. Nothing was decided, so it carries no events.
  */
-export type ReactionDispatchResult =
-  | {
-      readonly scheduled: false;
-      readonly aggregateType: string;
-      readonly aggregateId: string;
-      readonly version: number;
-      readonly eventIds: readonly string[];
-      readonly eventTypes: readonly string[];
-    }
-  | {
-      readonly scheduled: true;
-      readonly aggregateType: string;
-      readonly aggregateId: string;
-      readonly executeAt: string;
-    };
+export interface RejectedDispatch<Code extends string = string> {
+  readonly rejected: Code;
+  readonly message: string;
+  readonly aggregateType: string;
+  readonly aggregateId: string;
+}
 
 /**
- * What a successful dispatch returns: the aggregate's version after the append and the ids and
- * types of the persisted events, in order. `position` is the global position of the last one, 0
- * when the command stored none; a read model projected up to it reflects the command. A
- * scheduled command returns `scheduled: true` and no events.
+ * A command a policy or process handler dispatched without `delay`, as its aggregate decided it:
+ * the aggregate's version after the command's events and those events' ids and types, in order.
+ * The decision is kept in the handler's unit of work until its attempt commits, so it carries no
+ * position in the global stream: nothing is stored yet.
  */
-export type DispatchResult =
-  | (Extract<ReactionDispatchResult, { readonly scheduled: false }> & {
-      readonly position: number;
-    })
-  | Extract<ReactionDispatchResult, { readonly scheduled: true }>;
+export interface DecidedDispatch {
+  readonly rejected: false;
+  readonly scheduled: false;
+  readonly aggregateType: string;
+  readonly aggregateId: string;
+  readonly version: number;
+  readonly eventIds: readonly string[];
+  readonly eventTypes: readonly string[];
+}
+
+/**
+ * What a command dispatched from a policy or process handler resolves with. `rejected` is `false`
+ * when the aggregate decided (`DecidedDispatch`), or when a command with `delay` was scheduled. It
+ * is the code of the rejection otherwise, one of those the command declares in `rejections`. A
+ * call without `delay` is typed without the scheduled case, and one with `delay` with that case
+ * alone: the command is rejected, if at all, when it runs. A rejection the handler does not look
+ * at changes nothing: the run goes on. The promise rejects only for a failure, which fails the
+ * run, and with `REACTION_FINISHED` for a command dispatched once the run has finished, which is
+ * logged and decides nothing.
+ */
+export type ReactionDispatchResult<Code extends string = string> =
+  | DecidedDispatch
+  | (ScheduledDispatch & { readonly rejected: false })
+  | (Code extends string ? RejectedDispatch<Code> : never);
+
+/**
+ * A rejection a command dispatched from a policy, a process, the scheduler or a dead letter's
+ * replay met, where no caller was waiting for it: `type` is the command's.
+ */
+export interface CommandRejection extends RejectedDispatch {
+  readonly type: string;
+}
+
+/**
+ * A command dispatched without `delay`, once stored: the aggregate's version after the append and
+ * the ids and types of the persisted events, in order. `position` is the global position of the
+ * last one, 0 when the command stored none; a read model projected up to it reflects the command.
+ */
+export interface StoredDispatch {
+  readonly scheduled: false;
+  readonly aggregateType: string;
+  readonly aggregateId: string;
+  readonly version: number;
+  readonly eventIds: readonly string[];
+  readonly eventTypes: readonly string[];
+  readonly position: number;
+}
+
+/**
+ * A command dispatched with `delay`: nothing ran yet, and `executeAt` says when it will.
+ */
+export interface ScheduledDispatch {
+  readonly scheduled: true;
+  readonly aggregateType: string;
+  readonly aggregateId: string;
+  readonly executeAt: string;
+}
+
+/**
+ * What a successful dispatch returns. A call without `delay` is typed `StoredDispatch`, one with
+ * `delay` `ScheduledDispatch`; this union is for options whose `delay` the compiler cannot know.
+ */
+export type DispatchResult = StoredDispatch | ScheduledDispatch;

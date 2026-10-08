@@ -35,8 +35,9 @@ webhooks.
    customer 72 hours to pay, as a deadline in its state.
 5. The provider's webhooks are commands on the payment: `markPaymentProcessing`,
    `settlePayment` and `declinePayment`. The process follows the payment's events, which carry
-   the order's id for its `correlate`: `PaymentProcessing` locks the order (`paying`, which
-   refuses a cancellation), `PaymentSettled` marks it paid and `PaymentDeclined` cancels it.
+   the order's id as `orderId`, so they reach its instance with no `correlate`:
+   `PaymentProcessing` locks the order (`paying`, which refuses a cancellation), `PaymentSettled`
+   marks it paid and `PaymentDeclined` cancels it.
 6. Once the order is paid the process dispatches `fulfillOrder`. When the order is cancelled,
    whoever cancelled it, the process cancels the payment, and a payment that settles after it was
    cancelled is refunded by the policy `refund-on-refund-requested`.
@@ -46,10 +47,10 @@ webhooks.
 [Sagas and compensation](/guides/sagas/) walks through this flow step by step: what each step
 compensates, and what happens when the webhooks arrive late, twice or out of order.
 
-The `order` aggregate has no `state.ts`. Its state is inferred from the `apply` functions, so
-`state.status` is `"placed" | "paying" | "paid" | "fulfilled" | "cancelled" | undefined` in every
-handler. The `payment` aggregate has one, so its handlers read `state.orderId` and
-`state.intentId` as strings instead of `string | undefined`.
+Neither aggregate has a `state.ts`: their state is inferred from what their events return.
+`order-placed.ts` and `payment-requested.ts` open their aggregates with `create`, so a handler
+that has checked `state.status` reads `state.customerId` or `state.intentId` as a string, and
+`state.status === undefined` means the order or the payment does not exist yet.
 
 ## Things worth copying
 
@@ -98,7 +99,7 @@ and a payment window three days away are two lines:
 
 ```ts
 clock.advance(24 * HOUR);
-await app.processUntilIdle();
+await app.runUntilIdle();
 ```
 
 **A query in SQL.** `list-orders-by-customer.ts` reads the table directly through `client` and

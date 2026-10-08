@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resolveConfig } from "../../config/schema.ts";
-import { DomainError } from "../../contracts/errors.ts";
+import { ValidationError } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
@@ -10,6 +10,7 @@ import {
   chooseCollaborators,
   createRecordingLogger,
   defaultCollaborators,
+  drained,
   orderAggregateEntry,
   slowJob,
 } from "../test-support.ts";
@@ -37,7 +38,7 @@ const registry: Registry = {
             handler: async ({ event, commands, idempotencyKey }: PolicyArgs) => {
               calls.push(`pay:${event.aggregateId}`);
               keys.push(idempotencyKey);
-              if (behaviour === "domain") throw new DomainError("cannot pay");
+              if (behaviour === "domain") throw new ValidationError("cannot pay", []);
               if (behaviour === "flaky" && flakyFailures > 0) {
                 flakyFailures -= 1;
                 throw new Error("network");
@@ -151,7 +152,7 @@ describe("policy subscriber", () => {
       payload: { orderId: "o-1", total: 10 },
       options: { correlationId: "req-1" },
     });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
 
     expect(calls).toEqual(["pay:o-1", "audit:o-1:0", "audit:o-1:1"]);
     const loaded = await harness.storage.eventStore.load({
@@ -173,8 +174,8 @@ describe("policy subscriber", () => {
     const harness = await createReactiveHarness({ registry });
     const other = harness.createDispatcher();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await Promise.all([harness.dispatcher.processUntilIdle(), other.processUntilIdle()]);
-    await Promise.all([harness.dispatcher.processUntilIdle(), other.processUntilIdle()]);
+    await Promise.all([harness.dispatcher.runUntilIdle(), other.runUntilIdle()]);
+    await Promise.all([harness.dispatcher.runUntilIdle(), other.runUntilIdle()]);
     expect(calls.filter((call) => call === "pay:o-1")).toHaveLength(1);
     const loaded = await harness.storage.eventStore.load({
       aggregateType: "order",
@@ -189,12 +190,12 @@ describe("policy subscriber", () => {
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
     await claimFirstEventOf(harness, "order.payOnOrderPlaced", "o-1");
 
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(calls).not.toContain("pay:o-1");
     expect(await harness.storage.checkpointStore.get("policies")).toBe(0);
 
     harness.clock.advance(60_001);
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(calls.filter((call) => call === "pay:o-1")).toHaveLength(1);
     expect(await harness.storage.checkpointStore.get("policies")).toBe(
       await harness.storage.eventStore.lastPosition(),
@@ -217,7 +218,7 @@ describe("policy subscriber", () => {
     };
     await harness.dispatcher.processOnce().catch(() => undefined);
     expect(calls.filter((call) => call === "pay:o-1")).toHaveLength(1);
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(calls.filter((call) => call === "pay:o-1")).toHaveLength(1);
     expect(await harness.storage.checkpointStore.get("policies")).toBeGreaterThan(0);
   });
@@ -231,9 +232,9 @@ describe("policy subscriber", () => {
       },
     });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     harness.clock.advance(1_000);
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     const [placed] = (
       await harness.storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" })
     ).events;
@@ -250,7 +251,7 @@ describe("policy subscriber", () => {
     const { logger, entries } = createRecordingLogger();
     const harness = await createReactiveHarness({ registry, logger });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     const [placed] = (
       await harness.storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" })
     ).events;
@@ -293,7 +294,7 @@ describe("policy subscriber", () => {
     const harness = await createReactiveHarness({ registry });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-2", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     const letters = await harness.storage.deadLetterStore.list();
     expect(letters.map((letter) => letter.aggregateId).sort()).toEqual(["o-1", "o-2"]);
     expect(new Set(letters.map((letter) => letter.id)).size).toBe(2);
@@ -309,19 +310,19 @@ describe("policy subscriber", () => {
     });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
 
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(calls.filter((call) => call === "pay:o-1")).toHaveLength(1);
     expect(await harness.storage.checkpointStore.get("policies")).toBe(0);
 
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(calls.filter((call) => call === "pay:o-1")).toHaveLength(1);
 
     harness.clock.advance(1_000);
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(calls.filter((call) => call === "pay:o-1")).toHaveLength(2);
 
     harness.clock.advance(1_000);
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(calls.filter((call) => call === "pay:o-1")).toHaveLength(3);
     const letters = await harness.storage.deadLetterStore.list();
     expect(letters[0]).toMatchObject({
@@ -343,12 +344,12 @@ describe("policy subscriber", () => {
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-2", total: 20 } });
 
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(calls).toEqual(["pay:o-1", "audit:o-1:0", "audit:o-2:0"]);
     expect(await harness.storage.checkpointStore.get("policies")).toBe(0);
 
     harness.clock.advance(1_000);
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(calls.filter((call) => call.startsWith("pay:"))).toEqual([
       "pay:o-1",
       "pay:o-1",
@@ -366,11 +367,11 @@ describe("policy subscriber", () => {
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-2", total: 20 } });
     await claimFirstEventOf(harness, "order.payOnOrderPlaced", "o-1");
 
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(calls).toEqual(["audit:o-1:0", "audit:o-2:0"]);
 
     harness.clock.advance(60_001);
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(calls.filter((call) => call.startsWith("pay:"))).toEqual(["pay:o-1", "pay:o-2"]);
     expect(calls.filter((call) => call.startsWith("audit:") && call.endsWith(":0"))).toEqual([
       "audit:o-1:0",
@@ -392,12 +393,12 @@ describe("policy subscriber", () => {
       await harness.storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" })
     ).events;
 
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(calls.filter((call) => call.startsWith("pay:"))).toEqual(["pay:o-1"]);
     expect(await harness.storage.checkpointStore.get("policies")).toBe(placed?.position);
 
     harness.clock.advance(60_001);
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(calls.filter((call) => call.startsWith("pay:"))).toEqual(["pay:o-1", "pay:o-2"]);
     expect(await harness.storage.checkpointStore.get("policies")).toBe(
       await harness.storage.eventStore.lastPosition(),
@@ -424,7 +425,7 @@ describe("policy subscriber", () => {
       await harness.storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" })
     ).events;
 
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(calls).toEqual([]);
     expect(
       await harness.storage.inboxLedger.get({
@@ -434,7 +435,7 @@ describe("policy subscriber", () => {
     ).toBeNull();
 
     harness.clock.advance(60_001);
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(calls).toEqual(["audit:o-1:0", "audit:o-1:0"]);
     expect((await harness.dispatcher.getLag()).maxLag).toBe(0);
   });
@@ -448,8 +449,8 @@ describe("policy subscriber", () => {
       },
     });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(calls.filter((call) => call === "pay:o-1")).toHaveLength(2);
     expect(await harness.storage.deadLetterStore.count()).toBe(0);
     const loaded = await harness.storage.eventStore.load({
@@ -466,7 +467,7 @@ describe("policy subscriber", () => {
       config: { runtime: { policies: { retry: { strategy: "none" } } } },
     });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(calls.filter((call) => call === "pay:o-1")).toHaveLength(1);
     expect(await harness.storage.deadLetterStore.list()).toMatchObject([
       { errorType: "retriable_exhausted", attempts: 1, errorMessage: "network" },
@@ -503,7 +504,7 @@ describe("policy subscriber", () => {
       });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
 
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(broken).toBe(false);
     expect(calls.filter((call) => call === "pay:o-1")).toHaveLength(1);
     expect(await harness.storage.deadLetterStore.count()).toBe(0);
@@ -518,7 +519,7 @@ describe("policy subscriber", () => {
     ).toMatchObject({ status: "pending", attempts: 1 });
 
     harness.clock.advance(harness.config.runtime.policies.timeoutMs * 2 + 1);
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(calls.filter((call) => call === "pay:o-1")).toHaveLength(2);
     expect(await harness.storage.deadLetterStore.list()).toMatchObject([
       { subscriber: "order.payOnOrderPlaced", errorType: "retriable_exhausted" },
@@ -545,8 +546,8 @@ describe("policy subscriber", () => {
       return original(args);
     };
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(calls.filter((call) => call === "pay:o-1")).toHaveLength(2);
     expect(new Set(leases)).toEqual(new Set([20_000]));
     expect(entries).toEqual([
@@ -565,7 +566,7 @@ describe("policy subscriber", () => {
       config: { runtime: { policies: { timeout: "1h", retry: { strategy: "none" } } } },
     });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    const processing = harness.dispatcher.processUntilIdle();
+    const processing = harness.dispatcher.runUntilIdle();
     await handlerStarted.promise;
     harness.clock.advance(3_600_000);
     await processing;
@@ -612,7 +613,7 @@ describe("policy collaborators", () => {
       config: { collaborators: { order: { notifier: "memory", mailer: "memory" } } },
     });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(sent).toEqual(["memory:o-1"]);
   });
 
@@ -661,11 +662,141 @@ describe("commands a policy dispatches", () => {
       },
     });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     harness.clock.advance(1_000);
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(failuresLeft).toBe(0);
     expect(await harness.storage.scheduler.list()).toHaveLength(1);
+  });
+});
+
+describe("the commands of a policy run", () => {
+  const withHandler = (handler: (args: PolicyArgs) => Promise<void>): Registry => ({
+    aggregates: {
+      order: {
+        ...orderAggregateEntry(),
+        policies: { followOnOrderPlaced: { module: { handler } } },
+      },
+    },
+    readModels: {},
+  });
+
+  const typesOf = async (harness: ReactiveHarness, orderId: string) =>
+    (
+      await harness.storage.eventStore.load({ aggregateType: "order", aggregateId: orderId })
+    ).events.map((event) => event.type);
+
+  it("go on past a rejection the handler does not look at, which is logged", async () => {
+    const { logger, entries } = createRecordingLogger();
+    const harness = await createReactiveHarness({
+      registry: withHandler(async ({ event, commands }) => {
+        await commands.placeOrder?.({ orderId: event.aggregateId, total: 1 });
+        await commands.archiveOrder?.({ orderId: event.aggregateId });
+      }),
+      logger,
+    });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.dispatcher.runUntilIdle();
+
+    expect(await typesOf(harness, "o-1")).toEqual(["OrderPlaced", "OrderArchived"]);
+    expect(await harness.storage.deadLetterStore.count()).toBe(0);
+    expect(entries).toContainEqual({
+      level: "info",
+      message: "command rejected",
+      fields: {
+        type: "PlaceOrder",
+        rejected: "AlreadyPlaced",
+        message: "Order already placed",
+        aggregateType: "order",
+        aggregateId: "o-1",
+      },
+    });
+  });
+
+  it("commit with the run even when the handler does not await them", async () => {
+    const harness = await createReactiveHarness({
+      registry: withHandler(async ({ event, commands }) => {
+        void commands.archiveOrder?.({ orderId: event.aggregateId });
+      }),
+    });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.dispatcher.runUntilIdle();
+
+    expect(await typesOf(harness, "o-1")).toEqual(["OrderPlaced", "OrderArchived"]);
+  });
+
+  it("fail the run when one the handler does not await fails, without an unhandled rejection", async () => {
+    const unhandled: unknown[] = [];
+    const record = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", record);
+    try {
+      const harness = await createReactiveHarness({
+        registry: withHandler(async ({ event, commands }) => {
+          void commands.archiveOrder?.({ orderId: event.aggregateId });
+          void commands.payOrder?.({ orderId: event.aggregateId, method: "cash" });
+        }),
+      });
+      await harness.pipeline.dispatch({
+        type: "PlaceOrder",
+        payload: { orderId: "o-1", total: 10 },
+      });
+      await harness.dispatcher.runUntilIdle();
+
+      expect(await typesOf(harness, "o-1")).toEqual(["OrderPlaced"]);
+      expect(await harness.storage.deadLetterStore.list()).toMatchObject([
+        {
+          subscriber: "order.followOnOrderPlaced",
+          errorType: "terminal",
+          errorMessage: "Invalid payload for command PayOrder",
+        },
+      ]);
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", record);
+    }
+  });
+
+  it("refuse one dispatched from a timer once the run has finished, logged, without an unhandled rejection", async () => {
+    const { logger, entries } = createRecordingLogger();
+    const unhandled: unknown[] = [];
+    const record = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", record);
+    try {
+      let late: Promise<unknown> | undefined;
+      const fired = Promise.withResolvers<void>();
+      const harness = await createReactiveHarness({
+        registry: withHandler(async ({ event, commands }) => {
+          setTimeout(() => {
+            late = commands.archiveOrder?.({ orderId: event.aggregateId });
+            fired.resolve();
+          });
+        }),
+        logger,
+      });
+      await harness.pipeline.dispatch({
+        type: "PlaceOrder",
+        payload: { orderId: "o-1", total: 10 },
+      });
+      await harness.dispatcher.runUntilIdle();
+      await fired.promise;
+      await drained();
+
+      await expect(late).rejects.toMatchObject({ code: "REACTION_FINISHED" });
+      expect(await typesOf(harness, "o-1")).toEqual(["OrderPlaced"]);
+      expect(entries).toContainEqual(
+        expect.objectContaining({
+          level: "error",
+          message: "command dispatched after its run had finished; refused",
+        }),
+      );
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", record);
+    }
   });
 });
 
@@ -716,12 +847,12 @@ describe("policies and the aggregate whose events they react to", () => {
     reacted.length = 0;
     const harness = await createReactiveHarness({ registry: twoAggregates });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(reacted).toEqual(["order saw order.OrderPlaced"]);
 
     reacted.length = 0;
     await harness.pipeline.dispatch({ type: "Record", payload: { ledgerId: "l-1" } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(reacted).toEqual(["order saw ledger.OrderPlaced from ledger/"]);
   });
 
@@ -786,11 +917,11 @@ describe("a policy run that fails", () => {
       config: { runtime: { policies: { retry: { strategy: "fixed", baseDelay: "1s" } } } },
     });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(await scheduledTypes(harness)).toEqual([]);
 
     harness.clock.advance(1_000);
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
 
     expect(runs).toBe(2);
     expect(await scheduledTypes(harness)).toEqual(["ArchiveOrder"]);
@@ -800,11 +931,11 @@ describe("a policy run that fails", () => {
     const harness = await createReactiveHarness({
       registry: withPolicy(async ({ event, commands }) => {
         await commands.payOrder?.({ orderId: event.aggregateId, method: "card" }, { delay: "1h" });
-        throw new DomainError("refused");
+        throw new ValidationError("refused", []);
       }),
     });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
 
     expect(await harness.storage.deadLetterStore.count()).toBe(1);
     expect(await scheduledTypes(harness)).toEqual([]);
@@ -833,7 +964,7 @@ describe("a policy run that fails", () => {
       config: { runtime: { policies: { timeout: "1m", retry: { strategy: "none" } } } },
     });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    const processing = harness.dispatcher.processUntilIdle();
+    const processing = harness.dispatcher.runUntilIdle();
     await started.promise;
     harness.clock.advance(60_000);
     await processing;
@@ -872,7 +1003,7 @@ describe("a policy run that fails", () => {
       },
     });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    const processing = harness.dispatcher.processUntilIdle();
+    const processing = harness.dispatcher.runUntilIdle();
     const signal = await started;
     harness.clock.advance(60_000);
     await processing;

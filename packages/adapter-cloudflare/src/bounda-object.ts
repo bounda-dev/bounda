@@ -288,7 +288,7 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
         logger.error("bounda rebuilds could not be listed", { message: errorMessage(error) });
       }
       try {
-        ({ idle } = await this.#ready().processUntilIdle({ maxPasses: passesPerAlarm }));
+        ({ idle } = await this.#ready().runUntilIdle({ maxPasses: passesPerAlarm }));
       } catch (error) {
         logger.error("bounda alarm failed; it will be retried", { message: errorMessage(error) });
       }

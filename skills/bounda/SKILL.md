@@ -25,7 +25,7 @@ Never edit anything under `.bounda/` or a `+types/` directory; both are generate
 ```
 app/domain/<aggregate>/
   state.ts                         optional: export const initialState = {...}; export const aggregateId = "<field>"
-  <event>.ts                       export const payload (optional), export const apply
+  <event>.ts                       export const payload (optional); export const create (the event that opens the aggregate) and/or export const apply
   <event>.upcast.ts                optional: export const upcasts (oldest version first)
   <port>/index.ts                  a collaborator: export interface <Port> (PascalCase of the directory)
   <port>/<implementation>.ts       export default ... satisfies Implementation.Contract, or export const create: Implementation.Create; every handler of the aggregate receives it as <port>
@@ -44,17 +44,28 @@ bounda.config.ts                   export default defineConfig({ storage, readMo
 
 ## Templates
 
-Event:
+Events (each returns only the state fields it sets, merged shallowly over the state; `undefined`
+keeps a field, `null` clears it):
 
 ```ts
+// order-placed.ts: opens the aggregate, gets no state
 import type { Event } from "./+types/order-placed";
 
 export const payload = ({ z }: Event.PayloadArgs) => z.object({ total: z.number().positive() });
 
-export const apply = ({ state, event }: Event.ApplyArgs) => ({
-  ...state,
+export const create = ({ event }: Event.CreateArgs) => ({
   status: "placed" as const,
   total: event.payload.total,
+});
+```
+
+```ts
+// order-paid.ts: any later event
+import type { Event } from "./+types/order-paid";
+
+export const apply = ({ event }: Event.ApplyArgs) => ({
+  status: "paid" as const,
+  paidAt: event.timestamp,
 });
 ```
 
@@ -62,14 +73,18 @@ Command (the payload must carry the aggregate id field, `orderId` for `order` un
 says otherwise):
 
 ```ts
-import { DomainError } from "@bounda-dev/core";
 import type { Command } from "./+types/pay-order";
 
 export const payload = ({ z }: Command.PayloadArgs) =>
   z.object({ orderId: z.uuid(), method: z.enum(["card", "transfer"]) });
 
-export const handler = ({ command, state, events }: Command.HandlerArgs) => {
-  if (state.status !== "placed") throw new DomainError("Only placed orders can be paid");
+export const rejections = ({ state }: Command.RejectionsArgs) => ({
+  NotPlaced: `Only placed orders can be paid; this one is ${state.status ?? "new"}`,
+});
+
+export const handler = ({ command, state, events, reject }: Command.HandlerArgs) => {
+  if (state.status === "paid") return [];
+  if (state.status !== "placed") return reject("NotPlaced");
   return [events.orderPaid({ method: command.payload.method })];
 };
 ```
@@ -100,8 +115,10 @@ export const create: Implementation.Create = ({ env }) => {
 };
 
 // order/commands/place-order.ts
-export const handler = async ({ command, events, inventory }: Command.HandlerArgs) => {
-  if (!(await inventory.available(command.payload.skus))) throw new DomainError("Out of stock");
+export const rejections = () => ({ OutOfStock: "Some of the items are out of stock" });
+
+export const handler = async ({ command, events, inventory, reject }: Command.HandlerArgs) => {
+  if (!(await inventory.available(command.payload.skus))) return reject("OutOfStock");
   return [events.orderPlaced(command.payload)];
 };
 ```
@@ -133,8 +150,11 @@ collaborator, after the event is stored, passing `idempotencyKey` to the provide
 with a command whose handler ignores a duplicate by state. The handler always passes
 `idempotencyKey` as it is: effects on different providers go in a reaction each, and two calls to
 one provider go behind one collaborator method whose implementation derives a key per call with
-`idempotencyKeyFor(idempotencyKey, "refund")` from `@bounda-dev/core`. A provider's refusal
-becomes an event (`PaymentFailed`); throw only when there is no answer.
+`idempotencyKeyFor(idempotencyKey, "refund")` from `@bounda-dev/core`. That is for provider
+keys; the id of an aggregate the reaction creates (a new payment) is derived in the handler,
+`idempotencyKeyFor(idempotencyKey, "payment")`, never `randomUUID()`, so a retry dispatches the
+same payload and the provider gets the command's key with the same parameters. A provider's refusal becomes an event (`PaymentFailed`); throw only when
+there is no answer.
 
 Policy (`policies/issue-invoice-on-order-paid.ts`):
 
@@ -161,7 +181,9 @@ Process (`processes/order-payment/index.ts`, `on-order-placed.ts`, `at-payment-d
 state; a field returns to its default only when set to it), or nothing. A deadline is a state field declared with `deadline()`; a handler schedules it
 with `after("24h")`, moves it by changing it, cancels it with `null`; `at-<field>.ts` runs when it
 comes due and returns the field as `null` or another moment. `instant()` only records a moment.
-`at-timeout.ts` runs at `config.timeout` and ends the process as timed out:
+`at-timeout.ts` runs at `config.timeout` and ends the process as timed out; the events its
+commands cause still reach the process's handlers (one hop: not what those handlers cause in
+turn), so compensate in the `on-<event>.ts` of the event it causes, not in `at-timeout.ts`:
 
 ```ts
 import type { Process } from "./+types/index";
@@ -226,14 +248,28 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   (`policies/payment/`, `projections/payment/`) holds what reacts to that aggregate's events.
   Projections always sit in such a folder. A policy's trigger must be an event of the aggregate it
   listens to, or boot fails.
-- A process `config` names events as `events.<aggregate>.<Event>`. For every event of another
-  aggregate it uses, `index.ts` exports `correlate: Process.Correlate`, a function per event to the
-  id of the process's own aggregate (or `null` to ignore it). Events for no open instance are
-  skipped; a completed instance is never reopened. Returned state is validated against `state`.
+- A process `config` names events as `events.<aggregate>.<Event>`. An event of another aggregate
+  reaches the instance its payload's id field names (`orderId` for an `order` process; `null`
+  ignores it), so give such events that field. For one without it, `index.ts` exports
+  `correlate = ({ from }: Process.CorrelateArgs) => [from.payment.PaymentFailed((event) => …)]`,
+  from the event to the id of the process's own aggregate (or `null` to ignore it); it also
+  overrides the field. Events for no open instance are
+  skipped, but for those `at-timeout.ts` caused; a completed instance is never reopened. Returned state is validated against `state`.
 - A command handler returns the events to append, built with `events.<eventKey>(payload)`. It may
-  only build events of its own aggregate. Throw `DomainError` to reject a command.
+  only build events of its own aggregate. To say no, the module exports `rejections`, a function
+  of `{ command, state }` to `{ Code: message }`, and the handler returns `reject("Code")` (or
+  throws it); `reject` exists only then and only takes those codes. Name codes after the reason
+  (`NotOpen`, never `OrderClosed`). Never `new DomainError`. Repeating what is done returns `[]`,
+  not a rejection. A "no" the business remembers, someone else listens to, or that comes from
+  another store is an event instead. `app.commands` throws the rejection as a `DomainError` with
+  the code in `rejected`.
 - `state` in a handler carries `id` and `version` besides the aggregate's fields. Without
-  `state.ts` every field is optional (`state.status === undefined` means a fresh aggregate).
+  `state.ts` it is inferred: give the event that opens the aggregate a `create`, and a handler sees
+  either a fresh aggregate, every field `undefined` (`state.status === undefined`), or a created
+  one where the fields `create` sets are always defined. Without any `create` every field is
+  optional. An aggregate with a `create` must start with such an event; a handler that starts it
+  with another one throws `CreationOrderError`. Write `state.ts` only for an initial value before
+  the first event or a type not visible outside its module.
 - Policies and process handlers get `commands`, the typed facade of every command in the app, and
   run with at-least-once delivery: the runtime's inbox skips a handler that already completed for
   an event, but a handler that crashes midway runs again, so make its side effects idempotent. An
@@ -241,14 +277,20 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   with its claim, its lifecycle events and its deadline entry when it ends, so a failed or crashed
   attempt leaves nothing behind, and a step whose instance moved meanwhile runs again on the new
   state; what `await commands.x()` returns is the aggregate's decision, not something stored yet:
-  call outside first, dispatch after, and await every dispatch. Outside the promise: the outside
+  call outside first, dispatch after, and await the dispatches (the attempt waits for every one
+  before it commits anyway; awaiting keeps their order; one dispatched after the run has finished,
+  from a timer, is refused with `REACTION_FINISHED` and logged). `await commands.x()` resolves with
+  `rejected: false`, or with `rejected` set to one of the command's codes and `message`: a
+  rejection the handler does not look at changes nothing and the run goes on; while the run lasts,
+  only a failure rejects the promise and fails the run. Tests assert the expected ones from
+  `(await app.runUntilIdle()).rejections`. Outside the promise: the outside
   calls themselves, the inbox claim, and what a read model shows a handler (only what was
   committed before the attempt).
 - A saga is a pattern, not a module: a process (or policies) whose steps each have a
   compensation. A compensation is a command that decides from state and returns `[]` when there
   is nothing to undo; its effect goes in a policy with `idempotencyKey`. A failure arrives as the
-  `DomainError` of an awaited command (catch it and compensate) or as an event of another
-  aggregate; there is no failure hook.
+  rejection of an awaited command (`if (paid.rejected === "NotOpen")`, then compensate) or as an
+  event of another aggregate; there is no failure hook and no `try/catch`.
 - Policies and processes get the aggregate's collaborators spread next to `event` and `commands`,
   like commands do; a policy in `policies/<other-aggregate>/` still gets its own aggregate's.
   A policy that exports `delay` (`"1m"`, or `asDuration(env)`) runs that long
@@ -277,7 +319,9 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   kept, retries back off from 1 s to 30 s, and `app.getLag()` shows `failing` with the event and
   the error. Fix the projection and deploy; a read model never skips an event.
 - Queries compose: a handler receives `queries` and may call other queries.
-- Delayed commands: `commands.remindCustomer(payload, { delay: "24h" })`. The worker commits a
+- Delayed commands: `commands.remindCustomer(payload, { delay: "24h" })`, typed as resolving with
+  `scheduled: true` and `executeAt`; a call without `delay` is typed without that case, so read
+  `eventTypes` (or `rejected` in a reaction) directly. The worker commits a
   scheduled run with the release of its claim, so a crash between the two never runs it twice. A duration from the
   environment is a `string`; wrap it: `{ delay: asDuration(process.env.DELAY ?? "24h") }`. The
   payload is stored as JSON and validated in that form at dispatch: a date field must be
@@ -328,10 +372,10 @@ export const loader = ({ context }: Route.LoaderArgs) => context.get(bounda).que
   for CI, because `react-router typegen && tsc` needs the generated files first.
 - `@bounda-dev/react-router/app` is server-only: loaders, actions, middleware. Never in components.
 - The app in the context reads its own writes by default (`bounda({ consistency: "immediate" })`):
-  a page reached right after a command sees its read models. Never call `processUntilIdle()` in a
+  a page reached right after a command sees its read models. Never call `runUntilIdle()` in a
   route.
-- Map `ValidationError` to a 400 with `error.issues` and `DomainError` to a 409 in one helper
-  (`failure`); let anything else reach the `ErrorBoundary`.
+- Map `ValidationError` to a 400 with `error.issues` and `DomainError` to a 409 with
+  `error.rejected` in one helper (`failure`); let anything else reach the `ErrorBoundary`.
 - Typecheck with `react-router typegen && tsc`; `.react-router/types` holds the route types and
   Bounda's `+types` sit next to the modules. They do not clash.
 
@@ -341,14 +385,16 @@ export const loader = ({ context }: Route.LoaderArgs) => context.get(bounda).que
   code 1 and name the file; fix the name or the location.
 - Tests: `createTestApp({ registry, adapter?, collaborators? })` from `@bounda-dev/core/testing`
   gives an app on the in-memory adapter with a fixed clock (`clock.advance(ms)`) and sequential
-  ids; call `await app.processUntilIdle()` after dispatching to run policies, processes and
+  ids; call `await app.runUntilIdle()` after dispatching to run policies, processes and
   projections. The clock drives handler time-outs and background polling too: never wait real
-  time in a test, advance the clock.
+  time in a test, advance the clock. Never advance it for a retry: `runUntilIdle()` moves it to
+  each retry waiting for its back-off, so a failure has been retried, or dead-lettered, when it
+  resolves.
   `import { registry } from "../.bounda/registry.ts"`.
 - A test passes each port it exercises, by aggregate and port: a double written in the test (a
   spy, a stub that throws or hangs) or an implementation's file name. It does not read
   `bounda.config.ts`, and a port left out has no implementation even with only one file: reading
-  it throws a `ConfigurationError` saying what to pass, which every later `processUntilIdle()`
+  it throws a `ConfigurationError` saying what to pass, which every later `runUntilIdle()`
   rethrows, even when a policy or process read it. Never export state from an implementation for tests to read.
 
   ```ts

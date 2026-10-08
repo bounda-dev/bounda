@@ -437,6 +437,7 @@ describe("discoverProject convention problems", () => {
       "app/domain/order/order-placed/memory.ts",
       "app/domain/order/state/index.ts",
       "app/domain/order/signal/index.ts",
+      "app/domain/order/reject/index.ts",
       "app/domain/order/idempotency-key/index.ts",
       "app/domain/order/no-index/memory.ts",
       "app/domain/order/no-interface/index.ts",
@@ -465,6 +466,7 @@ describe("discoverProject convention problems", () => {
       "app/domain/order/notes/deep: a collaborator directory holds only index.ts and its implementations",
       "app/domain/order/notes/Bad_Impl.ts: Implementation names must be kebab-case (lower-case letters, digits and dashes)",
       'app/domain/order/order-placed: "orderPlaced" is also an event of this aggregate; give the collaborator another name',
+      'app/domain/order/reject: "reject" is reserved; give the collaborator another name',
       'app/domain/order/signal: "signal" is reserved; give the collaborator another name',
       'app/domain/order/state: "state" is reserved; give the collaborator another name',
     ]);

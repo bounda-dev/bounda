@@ -7,6 +7,7 @@ import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
 import type { Subscriber } from "../dispatch/dispatcher.ts";
 import { deliverInOrder } from "../shared/in-order.ts";
+import type { PendingRetries } from "../shared/pending-retries.ts";
 import type { ProcessesRuntime } from "./build-processes.ts";
 import { createDeadlineStep } from "./deadline-step.ts";
 import { createDeadlineDelivery, type ProcessDeadlines } from "./deliver-deadline.ts";
@@ -30,6 +31,7 @@ export interface CreateProcessRunnerArgs {
   readonly config: ResolvedConfig;
   readonly ids: IdGenerator;
   readonly clock: Clock;
+  readonly pendingRetries: PendingRetries;
   readonly logger: Logger;
 }
 
@@ -49,11 +51,12 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
   config,
   ids,
   clock,
+  pendingRetries,
   logger,
 }) => {
   const units = createProcessUnits({ storage, config, ids, clock });
   const failures = createProcessFailures({ ids, clock, logger });
-  const handlers = createProcessHandlers({ aggregates, pipeline, config, clock });
+  const handlers = createProcessHandlers({ aggregates, pipeline, config, clock, logger });
   const schedule = createDeadlineSchedule({ storage, units });
   const deadlineStep = createDeadlineStep({ units, handlers, ids });
   const resume = createResumeParked({ units, failures, handlers, deadlineStep, schedule, logger });
@@ -65,6 +68,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     storage,
     config,
     clock,
+    pendingRetries,
     logger,
   });
   const deadlines = createDeadlineDelivery({

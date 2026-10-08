@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { DeadLetterSettledError, DomainError, NotFoundError } from "../../contracts/errors.ts";
+import { DeadLetterSettledError, NotFoundError, ValidationError } from "../../contracts/errors.ts";
+import type { RejectFunction } from "../../modules/command.ts";
 import type { PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { PROCESS_DEADLINE_COMMAND } from "../process/deadlines.ts";
@@ -24,13 +25,39 @@ let handlerStarted = Promise.withResolvers<void>();
 let gate = Promise.withResolvers<void>();
 let processMode: "ok" | "domain" = "domain";
 let timeoutMode: "ok" | "domain" = "ok";
+let paymentsClosed = false;
+
+const order = orderAggregateEntry();
+
+interface PayOrderArgs {
+  readonly command: { readonly payload: { readonly method: string } };
+  readonly state: { readonly status: string };
+  readonly events: Record<string, (payload?: unknown) => unknown>;
+  readonly reject: RejectFunction<"Closed">;
+}
+
+// A delayed command is dropped to a dead letter when it fails, never when it is rejected.
+const payOrder = {
+  module: {
+    payload: order.commands.payOrder.module.payload,
+    rejections: () => ({ Closed: "Payments are closed" }),
+    handler: ({ command, state, events, reject }: PayOrderArgs) => {
+      if (paymentsClosed) return reject("Closed");
+      if (state.status !== "placed") {
+        throw new ValidationError("Only placed orders can be paid", []);
+      }
+      return [events.orderPaid?.({ method: command.payload.method })];
+    },
+  },
+};
 
 const registry = {
   aggregates: {
     order: {
-      ...orderAggregateEntry(),
+      ...order,
+      commands: { ...order.commands, payOrder },
       collaborators: {
-        ...orderAggregateEntry().collaborators,
+        ...order.collaborators,
         recorder: { memory: { default: { record: (call: string) => calls.push(call) } } },
       },
       policies: {
@@ -49,7 +76,7 @@ const registry = {
             }) => {
               recorder.record(`notify:${event.aggregateId}`);
               keys.push(`policy ${idempotencyKey}`);
-              if (policyMode === "domain") throw new DomainError("mail server rejects it");
+              if (policyMode === "domain") throw new ValidationError("mail server rejects it", []);
               if (policyMode === "hangs") {
                 handlerStarted.resolve();
                 await new Promise<never>(() => undefined);
@@ -86,7 +113,8 @@ const registry = {
                 }) => {
                   calls.push(`paid:${event.payload.method}`);
                   keys.push(`process ${idempotencyKey}`);
-                  if (processMode === "domain") throw new DomainError("payment provider says no");
+                  if (processMode === "domain")
+                    throw new ValidationError("payment provider says no", []);
                   return { method: event.payload.method };
                 },
               },
@@ -96,7 +124,7 @@ const registry = {
             timeout: {
               handler: ({ idempotencyKey }: { idempotencyKey: string }) => {
                 keys.push(`timeout ${idempotencyKey}`);
-                if (timeoutMode === "domain") throw new DomainError("courier is closed");
+                if (timeoutMode === "domain") throw new ValidationError("courier is closed", []);
               },
             },
           },
@@ -108,6 +136,7 @@ const registry = {
 } satisfies Registry;
 
 const setUp = async () => {
+  paymentsClosed = false;
   calls.length = 0;
   keys.length = 0;
   const { logger, entries } = createRecordingLogger();
@@ -135,7 +164,7 @@ describe("deadLetters", () => {
     policyMode = "domain";
     const { harness, deadLetters, entries } = await setUp();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     const [letter] = await deadLetters.list();
     expect(letter).toMatchObject({ kind: "policy", subscriber: "order.notifyOnOrderPlaced" });
     expect(await deadLetters.count({ status: "failed" })).toBe(1);
@@ -169,7 +198,7 @@ describe("deadLetters", () => {
         at: harness.clock.now().toISOString(),
       },
     });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(calls).toHaveLength(3);
     const { events } = await harness.storage.eventStore.load({
       aggregateType: "order",
@@ -187,7 +216,7 @@ describe("deadLetters", () => {
     policyMode = "domain";
     const { harness, deadLetters } = await setUp();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     const [letter] = await deadLetters.list();
     policyMode = "ok";
     const crash = breakNextCommit(harness.storage);
@@ -255,7 +284,7 @@ describe("deadLetters", () => {
       logger,
     });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     const [letter] = await deadLetters.list();
     policyMode = "hangs";
     handlerStarted = Promise.withResolvers<void>();
@@ -272,7 +301,7 @@ describe("deadLetters", () => {
     policyMode = "domain";
     const { harness, deadLetters, entries } = await setUp();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     const [letter] = await deadLetters.list();
     const id = letter?.id ?? "";
 
@@ -297,7 +326,7 @@ describe("deadLetters", () => {
     policyMode = "domain";
     const { harness, deadLetters } = await setUp();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     const [letter] = await deadLetters.list();
     const id = letter?.id ?? "";
     policyMode = "ok";
@@ -348,7 +377,7 @@ describe("deadLetters", () => {
     policyMode = "domain";
     const { harness, deadLetters } = await setUp();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     const [letter] = await deadLetters.list();
     const id = letter?.id ?? "";
     policyMode = "waits";
@@ -382,7 +411,7 @@ describe("deadLetters", () => {
         type: "PlaceOrder",
         payload: { orderId: "o-1", total: 10 },
       });
-      await harness.dispatcher.processUntilIdle();
+      await harness.dispatcher.runUntilIdle();
       const [letter] = await deadLetters.list();
       const id = letter?.id ?? "";
       policyMode = "ok";
@@ -444,7 +473,7 @@ describe("deadLetters", () => {
     policyMode = "domain";
     const { harness, deadLetters } = await setUp();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     const [letter] = await deadLetters.list();
     const id = letter?.id ?? "";
     policyMode = "ok";
@@ -465,13 +494,13 @@ describe("deadLetters", () => {
     processMode = "domain";
     const { harness, deadLetters } = await setUp();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     harness.clock.advance(3_600_000);
     await harness.pipeline.dispatch({
       type: "PayOrder",
       payload: { orderId: "o-1", method: "card" },
     });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     const [letter] = await deadLetters.list({ kind: "process" });
     expect(letter).toMatchObject({ subscriber: "order.orderPayment", eventType: "OrderPaid" });
     expect(await harness.storage.scheduler.list()).toEqual([]);
@@ -504,12 +533,12 @@ describe("deadLetters", () => {
     processMode = "domain";
     const { harness, deadLetters } = await setUp();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     await harness.pipeline.dispatch({
       type: "PayOrder",
       payload: { orderId: "o-1", method: "card" },
     });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     const [letter] = await deadLetters.list({ kind: "process" });
     const id = letter?.id ?? "";
     processMode = "ok";
@@ -568,13 +597,13 @@ describe("deadLetters", () => {
     });
     const startedAt = harness.clock.now().getTime();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     harness.clock.advance(3_600_000);
     await harness.pipeline.dispatch({
       type: "PayOrder",
       payload: { orderId: "o-1", method: "card" },
     });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(await harness.storage.scheduler.list()).toEqual([]);
 
     processMode = "ok";
@@ -633,12 +662,12 @@ describe("deadLetters", () => {
     });
     const startedAt = harness.clock.now().getTime();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     await harness.pipeline.dispatch({
       type: "PayOrder",
       payload: { orderId: "o-1", method: "card" },
     });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     harness.clock.advance(5 * 3_600_000);
     processMode = "ok";
     const [letter] = await deadLetters.list({ kind: "process" });
@@ -646,7 +675,7 @@ describe("deadLetters", () => {
     expect(await harness.storage.scheduler.list()).toMatchObject([
       { executeAt: new Date(startedAt + 3_600_000).toISOString() },
     ]);
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(await harness.worker.runOnce()).toBe(1);
     const { events } = await harness.storage.eventStore.load({
       aggregateType: "process:OrderPayment",
@@ -655,26 +684,37 @@ describe("deadLetters", () => {
     expect(events.at(-1)?.type).toBe(PROCESS_EVENTS.timedOut);
   });
 
-  it("dispatches a dropped command again with its recorded payload", async () => {
+  it("settles a dropped command that its aggregate now rejects, as the scheduler would have", async () => {
     policyMode = "ok";
-    const { harness, deadLetters } = await setUp();
-    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    const { harness, deadLetters, entries } = await setUp();
     await harness.pipeline.dispatch({
-      type: "PlaceOrder",
-      payload: { orderId: "o-1", total: 99 },
+      type: "PayOrder",
+      payload: { orderId: "o-1", method: "transfer" },
       options: { delay: "1m" },
     });
     harness.clock.advance(60_000);
     await harness.worker.runOnce();
     const [letter] = await deadLetters.list({ kind: "command" });
     expect(letter).toMatchObject({
-      eventType: "PlaceOrder",
-      payload: { orderId: "o-1", total: 99 },
+      eventType: "PayOrder",
+      payload: { orderId: "o-1", method: "transfer" },
     });
 
-    await expect(deadLetters.replay(letter?.id ?? "")).rejects.toThrow("Order already placed");
-    await harness.pipeline.dispatch({ type: "ArchiveOrder", payload: { orderId: "o-1" } });
-    expect((await deadLetters.get(letter?.id ?? ""))?.status).toBe("failed");
+    paymentsClosed = true;
+    await expect(deadLetters.replay(letter?.id ?? "")).resolves.toMatchObject({
+      status: "replayed",
+    });
+    expect((await deadLetters.get(letter?.id ?? ""))?.status).toBe("replayed");
+    expect(entries).toContainEqual({
+      level: "info",
+      message: "command rejected",
+      fields: expect.objectContaining({ type: "PayOrder", rejected: "Closed" }),
+    });
+    const { events } = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    expect(events.map((event) => event.type)).not.toContain("OrderPaid");
   });
 
   it("dispatches a dropped command that can succeed now", async () => {
@@ -742,7 +782,7 @@ describe("deadLetters", () => {
     timeoutMode = "domain";
     const { harness, deadLetters } = await setUp();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-9", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     harness.clock.advance(48 * 3_600_000);
     expect(await harness.worker.runOnce()).toBe(1);
     const stream = { aggregateType: "process:OrderPayment", aggregateId: "o-9" };
@@ -782,7 +822,7 @@ describe("deadLetters", () => {
     policyMode = "ok";
     const { harness, deadLetters } = await setUp();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-9", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     await harness.storage.deadLetterStore.add({
       id: "d",
       kind: "process",

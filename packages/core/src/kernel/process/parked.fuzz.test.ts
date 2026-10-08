@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ConcurrencyError, DomainError } from "../../contracts/errors.ts";
+import { ConcurrencyError, ValidationError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { Instant } from "../../contracts/instant.ts";
 import type { ProcessAfterFunction, ProcessStateArgs } from "../../modules/process.ts";
@@ -27,7 +27,7 @@ const failing = new Map<string, Failure>();
 let nudgeFails: Failure | undefined;
 
 const fail = (kind: Failure | undefined, what: string): void => {
-  if (kind === "terminal") throw new DomainError(`${what} refuses`);
+  if (kind === "terminal") throw new ValidationError(`${what} refuses`, []);
   if (kind === "retriable") throw new Error(`${what} is down`);
 };
 
@@ -266,7 +266,7 @@ const run = async (seed: number): Promise<void> => {
   };
   let rounds = 0;
   for (; rounds < 40 && (rounds === 0 || !(await settled())); rounds += 1) {
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     for (let pass = 0; pass < 12; pass += 1) await harness.worker.runOnce();
     for (const letter of await harness.storage.deadLetterStore.list({ status: "failed" })) {
       await deadLetters.replay(letter.id).catch(() => undefined);

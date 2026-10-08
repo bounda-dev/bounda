@@ -117,8 +117,9 @@ How deadlines behave:
   deadline runs anyway after ten rounds of the worker, and `app.getLag()` counts it in
   `waitingDeadlines` meanwhile. This is best effort: the aggregate that receives the command still
   decides, so `cancelOrder` refuses an order that is already paid.
-- **Nothing runs once the process has ended**, whether it completed or timed out, nor while it is
-  failed: its deadlines wait, like its events, for the failure to be replayed.
+- **Nothing runs once the process has ended**, whether it completed or timed out, but for the
+  events its `at-timeout.ts` caused (below), nor while it is failed: its deadlines wait, like its
+  events, for the failure to be replayed.
 - **A failure is handled like an event handler's**: it is retried with the process's back-off, and
   one that fails for good or runs out of attempts fails the process and is dead-lettered. Losing a
   race with another write to the instance does not count as an attempt.
@@ -129,6 +130,19 @@ The time a process may stay open is a deadline too, `timeout`, set from `config.
 process starts. Its handler is `at-timeout.ts`, which receives the same arguments, and reaching it
 ends the process as timed out, with what the handler returns merged into the final state. Boot refuses a `deadline()`
 without its `at-` file, an `at-` file without its `deadline()`, and a `deadline()` named `timeout`.
+
+The events the commands of `at-timeout.ts` cause still reach the process's own handlers: an
+`OrderCancelled` it causes runs `on-order-cancelled.ts` as any other would, once the process has
+ended, so a compensation written once, where the cancellation is handled, runs however the
+process ends. `ProcessTimedOut` lists them as `followUps`, and only they get through: each runs
+with its own claim and retries, never completes the process again, and one that fails for good is
+dead-lettered without failing the process, which has ended already. A command sent with `delay`,
+or an event no handler of the process takes, or one that starts it, is not a follow-up. A
+follow-up's handler sees the state the timeout left, with what earlier follow-ups changed, and a
+deadline it sets never comes due. Follow-ups go one hop only: what their own commands cause finds
+the process ended, so compensate in the handler of the event `at-timeout.ts` causes, not further
+down a chain. Like any process event, a follow-up that fails retriably holds the events after it
+until its retry.
 
 A deadline is not a delay. `delay` on a command or a policy says *do this later*; a deadline says
 *this process expects something by then*, and it lives in the process's history: the state holds
@@ -148,7 +162,7 @@ are decided on the spot but stored only when the attempt ends, together, in one 
 the store: the events of its immediate commands, its delayed commands, the claim that marks the
 event done and, when the runtime gives up, the dead letter. A process step adds its own lifecycle
 events (`ProcessStarted`, `ProcessHandled`, `ProcessCompleted`, `ProcessDeadlineReached`,
-`ProcessFailed`) and its next deadline's entry to the same transaction, so a deadline can never
+`ProcessTimedOut`, `ProcessFailed`) and its next deadline's entry to the same transaction, so a deadline can never
 disagree with the state it was computed from. A handler that throws, runs out of time or dies
 before that leaves no command behind, immediate or delayed, and the next attempt decides afresh.
 When the instance moved meanwhile, because a deadline or another instance wrote to it, the step
@@ -190,6 +204,38 @@ retried on later passes with the configured back-off and dead-lettered when the 
 Dead letters keep the event, the handler, the error and the number of attempts, and they have a
 way out: see [Dead letters](#dead-letters).
 
+## What a command answers
+
+`await commands.x()` in a policy or process resolves with what the command answered, and
+`rejected` says which answer it is:
+
+- `rejected: false` and `scheduled: false`: the aggregate decided, with its `version` and the
+  `eventIds` and `eventTypes` it decided, in order;
+- `rejected: false` and `scheduled: true`: a command with `delay`, with when it runs in
+  `executeAt`. A call with `delay` is typed with this answer alone, since a delayed command is
+  rejected, if at all, when it runs; a call without `delay` is typed without it;
+- `rejected` set to a code: the command's handler rejected it with one of the codes its module
+  declares in [`rejections`](/guides/project-layout/#rejections), and `message` says why. Nothing
+  was decided.
+
+`rejected` is typed by the codes the command declares, and is only ever `false` for a command
+without `rejections`, so comparing it with a code it never answers does not compile. A handler
+that compensates looks at it; one that does not changes nothing, and the run goes on:
+
+```ts
+const paid = await commands.markOrderPaid({ orderId: aggregateId });
+if (paid.rejected === "NotOpen") {
+  await commands.cancelPayment({ paymentId: event.aggregateId, reason: "order no longer open" });
+}
+```
+
+A rejection nobody looks at is logged (`command rejected`, at `info`) and recorded on the
+command's span; a test asserts the ones it expects from what
+[`runUntilIdle()`](/guides/testing/#rejections) returns. A delayed command that is rejected when it
+runs changes nothing in the same way. While the run lasts, only a failure rejects the `await`: a
+payload that does not validate, a concurrency conflict that outlasts its retries, an error the handler throws. The run
+fails with it, and the runtime retries it or dead-letters it (see [Retries and timeouts](#retries-and-timeouts)).
+
 ## Calling the outside world
 
 A command handler decides; it does not act on the world. It can run more than once for one
@@ -226,9 +272,13 @@ reaction compensates it: see [Sagas and compensation](/guides/sagas/).
 
 A few rules keep it correct:
 
-- **Await every command the handler dispatches.** The run's outcome is what the handler returns
-  or throws: a command it does not await may be left out of the run, and its failure reaches no
-  one.
+- **Await the commands the handler dispatches.** The run waits for every one before it commits,
+  awaited or not, within the handler's time, and one that fails fails the run, even if the handler
+  catches its error; one the handler withdraws with its own `signal` does not. Awaiting is what
+  keeps them in order, so a second command sees what the first decided, and what gives the
+  handler their answers. A command dispatched once the run has finished, from a timer or a promise
+  the handler left behind, is not part of it: it is refused (the error's `code` is
+  `REACTION_FINISHED`) and logged at `error`, and decides nothing.
 - **Pass `idempotencyKey` to every provider that takes one.** It is one key per handler run, and
   the handler passes it as it is, even when the run causes two effects:
   - Two effects on **different providers** (charging the card, sending the receipt) go in a
@@ -260,6 +310,12 @@ A few rules keep it correct:
       };
     };
     ```
+- **An id the run creates comes from its key.** The key a provider receives stays as it is, but
+  the id of an aggregate the run starts (a payment, a shipment) is derived from it in the handler,
+  `idempotencyKeyFor(idempotencyKey, "payment")`, one name per id, never `randomUUID()`. A retry
+  then dispatches the same command with the same payload, so the provider gets the command's own
+  key with the same parameters again. A random id would send it that key with other parameters,
+  which a provider such as Stripe refuses.
 - **Without a key on the provider's side**, look the operation up by your own reference before
   calling again, and give a process a time-out for a provider that may never answer.
 - **The command a reaction dispatches can arrive twice**, when the reaction is retried after
@@ -296,8 +352,9 @@ Three different things are called a timeout, and it is worth keeping them apart:
   events start being stored.
 - **How long one policy or process handler run may take** is `runtime.policies.timeout`, 30
   seconds by default; the process runner reads the policy setting. When a run runs out of time,
-  its commands still running stop and those it dispatches from then on are refused (the error's
-  `code` is `REACTION_ABANDONED`, its `cause` the timeout), and the handler's `signal` aborts.
+  its commands still running stop and those it dispatches from then on are refused and logged at
+  `warn` (the error's `code` is `REACTION_ABANDONED`, its `cause` the timeout), and the handler's
+  `signal` aborts.
   JavaScript cannot stop the handler itself, so pass `signal` to what it calls outside
   (`fetch(url, { signal })`) and that stops too.
 - **How long a process may stay open** before `at-timeout.ts` runs is the process's own `timeout`
@@ -344,14 +401,15 @@ bounda dead-letters discard 019a0c4e-…
 `--status`, `--limit` and `--json` to narrow or script it. `replay` runs the failed handler once
 more and marks the letter `replayed` if it succeeds: for a policy or a command, in the same
 transaction as what the run writes, so a replay that ran but could not be marked leaves nothing
-behind; for a process, once its instance has drained what was parked, since a replay cut short
-there is taken up again by replaying the same letter. When it fails again the error is printed and
+behind, and so for a follow-up of a timed-out process; for any other process letter, once its
+instance has drained what was parked, since a replay cut short there is taken up again by replaying
+the same letter. When it fails again the error is printed and
 the letter stays `failed`. `discard` marks it `discarded` without running anything. Two replays
 of one letter, or a replay and a discard, never both settle it, even when they run at once:
 whichever gets there second is refused with `DeadLetterSettledError` (`DEAD_LETTER_SETTLED`).
-A policy's or a command's replay refused that way stores nothing, so a double click does not
-store a command's decision twice, though the handler may have run in both; a process's has
-already handled its events by then. Letters are never deleted by these commands; they are the
+A replay marked in its own transaction (a policy's, a command's or a follow-up's) refused that way
+stores nothing, so a double click does not store a command's decision twice, though the handler
+may have run in both; any other process's has already handled its events by then. Letters are never deleted by these commands; they are the
 record of what happened.
 
 What a replay does depends on the kind:
@@ -364,8 +422,12 @@ What a replay does depends on the kind:
   on, with a new `idempotencyKey`. An event that completes the process completes it. Then the
   events parked behind the failure are handled in order, and once none is left the process is
   back to `started`, its deadlines scheduled again at their moments (one already past runs at
-  once); see [a failed process](#a-failed-process).
-- **Command**: the dropped command is dispatched again with the payload the letter recorded.
+  once); see [a failed process](#a-failed-process). The letter of a follow-up of a timed-out
+  process runs its handler and nothing else: the process stays timed out, and a handler a deploy
+  removed lets the event through.
+- **Command**: the dropped command is dispatched again with the payload the letter recorded. A
+  command its aggregate now rejects settles the letter as `replayed`, as the scheduler would have
+  settled it: a rejection is the aggregate's answer, logged as `command rejected`, not a failure.
 
 The same operations are on the app as `app.deadLetters` — `list`, `count`, `get`, `replay` and
 `discard` — for a script or an admin route.
@@ -378,7 +440,8 @@ would lose them: the `OrderPaid` that comes while the process is failed on a rem
 the one it must not miss. So the instance parks them. Each event that would do something in it
 (it has a handler, or completes the process) is recorded in the instance's stream as
 `ProcessEventParked`, in the order it arrived, and nothing of the process runs meanwhile,
-deadlines included.
+deadlines included. A follow-up of a timed-out process is the exception: the process has ended,
+so its failure is only dead-lettered, and replaying the letter runs the handler again.
 
 Replaying the dead letter of the failure is what brings the instance back:
 
@@ -391,7 +454,8 @@ Replaying the dead letter of the failure is what brings the instance back:
 
 A failure whose handler a deploy has since removed, an event's or a deadline's, is let through,
 and the replay goes on with what is parked. When the failure is the process's `timeout`, replaying it ends the process as
-timed out and drops what is parked, as for any timed-out instance.
+timed out and drops what is parked, as for any timed-out instance; what its `at-timeout.ts` causes
+still reaches its handlers.
 
 An event that arrives during the replay is parked too and handled before the instance resumes, so
 nothing overtakes an older event. If a parked event fails again, for whatever reason, it becomes

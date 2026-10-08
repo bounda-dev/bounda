@@ -10,10 +10,12 @@ import type { CreateArgs } from "../modules/collaborator.ts";
 import type { PayloadArgs } from "../modules/payload.ts";
 import type { Registry } from "../modules/registry.ts";
 import type { FieldsArgs } from "../modules/view.ts";
+import { createTestApp } from "../testing/index.ts";
 import { createApp } from "./app.ts";
 import { PROCESS_EVENTS } from "./process/lifecycle.ts";
 import { readYourWrites } from "./read-your-writes.ts";
 import {
+  createRecordingLogger,
   eventually,
   type OrderProcessConfigArgs,
   orderAggregateEntry,
@@ -185,7 +187,7 @@ describe("createApp", () => {
     const placed = await app.commands.placeOrder({ orderId: "o-1", total: 42 });
     expect(placed).toMatchObject({ scheduled: false, version: 1 });
     await app.commands.payOrder({ orderId: "o-1", method: "card" });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
 
     expect(await app.queries.getOrder({ orderId: "o-1" })).toEqual({
       orderId: "o-1",
@@ -194,21 +196,125 @@ describe("createApp", () => {
     });
     expect(sentMessages).toEqual(["placed o-1 v0"]);
     expect((await app.getLag()).maxLag).toBe(0);
-    await expect(app.commands.placeOrder({ orderId: "o-1", total: 1 })).rejects.toBeInstanceOf(
-      DomainError,
-    );
+    const refused = app.commands.placeOrder({ orderId: "o-1", total: 1 });
+    await expect(refused).rejects.toBeInstanceOf(DomainError);
+    await expect(refused).rejects.toMatchObject({
+      rejected: "AlreadyPlaced",
+      message: "Order already placed",
+    });
+    await app.stop();
+  });
+
+  it("reports the rejections of the commands its reactions dispatched from runUntilIdle", async () => {
+    const app = await createApp({
+      registry: {
+        aggregates: {
+          order: {
+            ...orderAggregateEntry(),
+            policies: {
+              placeAgainOnOrderPlaced: {
+                module: {
+                  handler: async ({
+                    event,
+                    commands,
+                  }: {
+                    readonly event: { readonly aggregateId: string };
+                    readonly commands: Record<string, (payload: unknown) => Promise<unknown>>;
+                  }) => {
+                    await commands.placeOrder?.({ orderId: event.aggregateId, total: 1 });
+                  },
+                },
+              },
+            },
+          },
+        },
+        readModels: {},
+      },
+      config: { storage: memory(), collaborators: { order: { notifier: "memory" } } },
+    });
+    await app.commands.placeOrder({ orderId: "o-1", total: 42 });
+
+    expect(await app.runUntilIdle()).toEqual({
+      idle: true,
+      rejections: [
+        {
+          type: "PlaceOrder",
+          rejected: "AlreadyPlaced",
+          message: "Order already placed",
+          aggregateType: "order",
+          aggregateId: "o-1",
+        },
+      ],
+    });
+    expect((await app.deadLetters.list()).length).toBe(0);
+    await app.stop();
+  });
+
+  it("reports a rejection once from a reaction that is retried, from the attempt that commits", async () => {
+    let attempts = 0;
+    const { app } = await createTestApp({
+      registry: {
+        aggregates: {
+          order: {
+            ...orderAggregateEntry(),
+            policies: {
+              placeAgainOnOrderPlaced: {
+                module: {
+                  handler: async ({
+                    event,
+                    commands,
+                  }: {
+                    readonly event: { readonly aggregateId: string };
+                    readonly commands: Record<string, (payload: unknown) => Promise<unknown>>;
+                  }) => {
+                    await commands.placeOrder?.({ orderId: event.aggregateId, total: 1 });
+                    attempts += 1;
+                    if (attempts === 1) throw new Error("gateway down");
+                  },
+                },
+              },
+            },
+          },
+        },
+        readModels: {},
+      },
+      collaborators: { order: { notifier: "memory" } },
+    });
+    await app.commands.placeOrder({ orderId: "o-1", total: 42 });
+
+    const { rejections } = await app.runUntilIdle();
+    expect(attempts).toBe(2);
+    expect(rejections).toMatchObject([{ type: "PlaceOrder", rejected: "AlreadyPlaced" }]);
+    expect(rejections).toHaveLength(1);
+    await app.stop();
+  });
+
+  it("runs on, rejections included, with a logger that throws", async () => {
+    const failing = (): void => {
+      throw new Error("log sink is down");
+    };
+    const app = await createApp({
+      registry,
+      config: { storage: memory(), collaborators: { order: { notifier: "memory" } } },
+      logger: { debug: failing, info: failing, warn: failing, error: failing },
+    });
+    await app.commands.placeOrder({ orderId: "o-1", total: 42 });
+    await expect(app.commands.placeOrder({ orderId: "o-1", total: 1 })).rejects.toMatchObject({
+      rejected: "AlreadyPlaced",
+    });
+    expect(await app.runUntilIdle()).toEqual({ idle: true, rejections: [] });
     await app.stop();
   });
 
   it("stops after maxPasses rounds and says whether it reached idle", async () => {
     const { app } = await start();
-    expect(await app.processUntilIdle()).toEqual({ idle: true });
+    expect(await app.runUntilIdle()).toEqual({ idle: true, rejections: [] });
     await app.commands.placeOrder({ orderId: "o-1", total: 42 });
     await app.commands.payOrder({ orderId: "o-1", method: "card" });
-    expect(await app.processUntilIdle({ maxPasses: 0 })).toEqual({ idle: false });
-    expect(await app.processUntilIdle({ maxPasses: 1 })).toEqual({ idle: false });
+    expect(await app.runUntilIdle({ maxPasses: 0 })).toEqual({ idle: false, rejections: [] });
+    expect(await app.runUntilIdle({ maxPasses: 1 })).toEqual({ idle: false, rejections: [] });
     expect((await app.getLag()).maxLag).toBeGreaterThan(0);
-    expect(await app.processUntilIdle({ maxPasses: 50 })).toEqual({ idle: true });
+    expect(await app.runUntilIdle({ maxPasses: 50 })).toEqual({ idle: true, rejections: [] });
     expect((await app.getLag()).maxLag).toBe(0);
     expect(await app.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "paid" });
     await app.stop();
@@ -220,19 +326,19 @@ describe("createApp", () => {
     await app.commands.archiveOrder({ orderId: "o-9" }, { delay: "10m" });
     expect(await app.nextDueAt()).toEqual(new Date(clock.now().getTime() + 600_000));
     clock.advance(600_000);
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     expect(await app.nextDueAt()).toBeNull();
     await app.stop();
   });
 
-  it("runs due scheduled commands and process time-outs inside processUntilIdle", async () => {
+  it("runs due scheduled commands and process time-outs inside runUntilIdle", async () => {
     const { app, clock } = await start();
     await app.commands.placeOrder({ orderId: "o-1", total: 10 });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     expect(await app.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "placed" });
 
     clock.advance(3_600_000);
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     const lag = await app.getLag();
     expect(lag.maxLag).toBe(0);
     expect(lag.subscribers.map((entry) => entry.subscriber).sort()).toEqual([
@@ -284,7 +390,7 @@ describe("createApp", () => {
     ]);
 
     expect((await fresh.getLag()).maxLag).toBeGreaterThan(0);
-    await fresh.processUntilIdle();
+    await fresh.runUntilIdle();
     expect((await fresh.getLag()).maxLag).toBe(0);
     expect(fresh.role).toBe("web");
     await fresh.stop();
@@ -298,7 +404,7 @@ describe("createApp", () => {
     await app.commands.placeOrder({ orderId: "o-1", total: 10 });
     clock.advance(1_000);
     expect(await app.queries.getOrder({ orderId: "o-1" })).toBeNull();
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     expect(await app.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "placed" });
     await app.stop();
   });
@@ -424,16 +530,24 @@ describe("collaborators built by create", () => {
     const log: string[] = [];
     const { create, app: lifecycleRegistry } = lifecycle(log);
     const clock = createFixedClock();
+    const { logger, entries } = createRecordingLogger();
     const app = await createApp({
       registry: lifecycleRegistry,
       config: { storage: loggingStorage(log) },
       env: { FROM: "shop" },
+      logger,
       clock,
     });
     await app.commands.placeOrder({ orderId: "o-1", total: 1 });
     await app.commands.placeOrder({ orderId: "o-2", total: 2 });
     expect(create).toHaveBeenCalledTimes(1);
-    expect(create).toHaveBeenCalledWith({ env: { FROM: "shop" }, logger: silentLogger, clock });
+    expect(create).toHaveBeenCalledWith({
+      env: { FROM: "shop" },
+      logger: expect.any(Object),
+      clock,
+    });
+    create.mock.calls[0]?.[0].logger.warn("from create");
+    expect(entries).toContainEqual({ level: "warn", message: "from create" });
     await app.stop();
     await app.stop();
     expect(log).toEqual([
@@ -569,7 +683,7 @@ describe("policies and processes follow the stream from when they are deployed",
     expect(await checkpointStore.get("processes")).toBe(2);
     await after.commands.placeOrder({ orderId: "o-2", total: 7 });
     await after.commands.payOrder({ orderId: "o-2", method: "card" });
-    await after.processUntilIdle();
+    await after.runUntilIdle();
 
     expect(await archived(storage)).toEqual(["o-2"]);
     expect(await after.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "paid" });
@@ -584,7 +698,7 @@ describe("policies and processes follow the stream from when they are deployed",
     await first.stop();
 
     const second = await open(registry, storage);
-    await second.processUntilIdle();
+    await second.runUntilIdle();
     expect(await archived(storage)).toEqual(["o-1"]);
     await second.stop();
   });
@@ -594,7 +708,7 @@ describe("policies and processes follow the stream from when they are deployed",
     const first = await open(registry, storage);
     await first.commands.placeOrder({ orderId: "o-1", total: 42 });
     await first.commands.payOrder({ orderId: "o-1", method: "card" });
-    await first.processUntilIdle();
+    await first.runUntilIdle();
     await first.commands.placeOrder({ orderId: "o-2", total: 7 });
     await first.commands.payOrder({ orderId: "o-2", method: "card" });
     await first.stop();
@@ -605,7 +719,7 @@ describe("policies and processes follow the stream from when they are deployed",
 
     const second = await open(registry, storage);
     expect(await checkpointStore.get("policies")).toBe(halfway);
-    await second.processUntilIdle();
+    await second.runUntilIdle();
     expect(await archived(storage)).toEqual(["o-1", "o-2"]);
     await second.stop();
   });

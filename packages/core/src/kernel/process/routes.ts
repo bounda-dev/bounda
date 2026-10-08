@@ -2,19 +2,22 @@ import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { qualifiedEventType } from "../shared/qualified-event.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
-import { type LifecycleEntry, lifecycleEntries } from "./lifecycle.ts";
+import { type LifecycleEntry, lifecycleEntries, type ProcessInstance } from "./lifecycle.ts";
 
 type EventHandler = ProcessRuntime["handlers"][string];
 
+// What routing reads of an event: a decided one that is not stored yet routes as it will.
+type RoutedEvent = Pick<StoredEvent, "aggregateType" | "type">;
+
 export interface HandlerOfFunction {
-  (process: ProcessRuntime, event: StoredEvent): EventHandler | undefined;
+  (process: ProcessRuntime, event: RoutedEvent): EventHandler | undefined;
 }
 
 export const handlerOf: HandlerOfFunction = (process, event) =>
   process.handlers[qualifiedEventType(event.aggregateType, event.type)];
 
 export interface EventRouteFunction {
-  (process: ProcessRuntime, event: StoredEvent): boolean;
+  (process: ProcessRuntime, event: RoutedEvent): boolean;
 }
 
 export const startsOn: EventRouteFunction = (process, event) =>
@@ -29,13 +32,44 @@ export const completesOn: EventRouteFunction = (process, event) =>
 export const actsOn: EventRouteFunction = (process, event) =>
   handlerOf(process, event) !== undefined || completesOn(process, event);
 
-export interface HandledEntriesFunction {
-  (process: ProcessRuntime, event: StoredEvent, state: object): LifecycleEntry[];
+export interface PendingFollowUpFunction {
+  (instance: ProcessInstance, event: StoredEvent): boolean;
 }
 
-export const handledEntries: HandledEntriesFunction = (process, event, state) => [
+/**
+ * Whether `event` is one the `at-timeout` of an instance that timed out caused, not handled yet.
+ */
+export const pendingFollowUp: PendingFollowUpFunction = (instance, event) =>
+  instance.followUps.has(event.id);
+
+export interface FollowsUpFunction {
+  (process: ProcessRuntime, instance: ProcessInstance, event: StoredEvent): boolean;
+}
+
+/**
+ * Whether `event` still reaches an instance that timed out: a pending follow-up the process still
+ * has a handler for.
+ */
+export const followsUp: FollowsUpFunction = (process, instance, event) =>
+  pendingFollowUp(instance, event) && handlerOf(process, event) !== undefined;
+
+export interface HandledEntriesFunction {
+  (
+    process: ProcessRuntime,
+    instance: ProcessInstance,
+    event: StoredEvent,
+    state: object,
+  ): LifecycleEntry[];
+}
+
+/**
+ * A follow-up of a timed-out instance never completes it: the instance has ended already.
+ */
+export const handledEntries: HandledEntriesFunction = (process, instance, event, state) => [
   lifecycleEntries.handled(event, state),
-  ...(completesOn(process, event) ? [lifecycleEntries.completed(event)] : []),
+  ...(completesOn(process, event) && instance.status !== "timed_out"
+    ? [lifecycleEntries.completed(event)]
+    : []),
 ];
 
 export interface LetThroughFunction {

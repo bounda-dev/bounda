@@ -6,6 +6,7 @@ import type { Clock } from "../../contracts/clock.ts";
 import { ClaimLostError } from "../../contracts/errors.ts";
 import { CommitFailed, commitAttempt, type UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import type { ReactionOutcome } from "./in-order.ts";
+import type { PendingRetries } from "./pending-retries.ts";
 import { classifyFailure, errorDetails, retryDelayMs } from "./retry.ts";
 
 export interface RunAttemptArgs {
@@ -18,6 +19,7 @@ export interface RunAttemptArgs {
    */
   readonly concurrencyRetries: number;
   readonly clock: Clock;
+  readonly pendingRetries: PendingRetries;
   /**
    * The reaction itself, writing through `unit`; `attempt` counts from 1 across retries.
    */
@@ -65,6 +67,7 @@ export const runAttempt: RunAttemptFunction = async ({
   leaseMs,
   concurrencyRetries,
   clock,
+  pendingRetries,
   run,
   giveUp,
   gaveUp: reportGaveUp,
@@ -81,8 +84,13 @@ export const runAttempt: RunAttemptFunction = async ({
   const existing = await storage.inboxLedger.get(key);
   if (existing?.status === "succeeded") return "done";
   if (existing?.status === "failed") {
-    const waitMs = retryDelayMs({ retry, attempt: existing.attempts });
-    if (now.getTime() - new Date(existing.claimedAt).getTime() < waitMs) return "hold";
+    const dueAt = new Date(
+      new Date(existing.claimedAt).getTime() + retryDelayMs({ retry, attempt: existing.attempts }),
+    );
+    if (now < dueAt) {
+      pendingRetries.waiting(dueAt);
+      return "hold";
+    }
   }
   const claimId = await storage.inboxLedger.tryClaim({ ...key, now, leaseMs });
   if (claimId === null) return "hold";
@@ -119,6 +127,9 @@ export const runAttempt: RunAttemptFunction = async ({
     try {
       if (gaveUp === undefined) {
         await storage.inboxLedger.fail({ ...claim, error: message });
+        pendingRetries.waiting(
+          new Date(now.getTime() + retryDelayMs({ retry, attempt: attempts })),
+        );
         willRetry(attempts);
         return "hold";
       }

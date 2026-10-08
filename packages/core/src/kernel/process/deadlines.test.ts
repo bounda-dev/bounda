@@ -178,7 +178,7 @@ const setUp = (config: object = {}): Promise<Harness> =>
 
 const settle = async (harness: Harness): Promise<void> => {
   for (;;) {
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     if ((await harness.worker.runOnce()) === 0) return;
   }
 };
@@ -744,7 +744,7 @@ describe("process deadlines", () => {
           await handleDeadline(args);
         } finally {
           await harness.pipeline.dispatch({ type: "ArchiveOrder", payload: { orderId: "o-1" } });
-          await harness.dispatcher.processUntilIdle();
+          await harness.dispatcher.runUntilIdle();
         }
       },
     });
@@ -866,7 +866,7 @@ describe("process deadlines", () => {
       return schedule(args);
     };
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     expect(raced).toBe(true);
     const events = await lifecycle(harness);
     expect(events.map((event) => event.type)).toEqual([
@@ -899,7 +899,7 @@ describe("process deadlines", () => {
     expect(calls).toEqual([]);
     expect(harness.worker.waitingDeadlines()).toBe(1);
 
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     await harness.pipeline.dispatch({
       type: "TouchOrder",
       payload: { orderId: "o-2" },
@@ -1055,7 +1055,7 @@ describe("deadline entries under races and partial failures", () => {
           type: "PayOrder",
           payload: { orderId: "o-1", method: "card" },
         });
-        await harness.dispatcher.processUntilIdle();
+        await harness.dispatcher.runUntilIdle();
         await handleDeadline(args);
       },
     });
@@ -1081,7 +1081,7 @@ describe("deadline entries under races and partial failures", () => {
       type: "PayOrder",
       payload: { orderId: "o-1", method: "card" },
     });
-    await harness.dispatcher.processUntilIdle();
+    await harness.dispatcher.runUntilIdle();
     const schedule = harness.storage.scheduler.schedule;
     let blip = true;
     harness.storage.scheduler.schedule = async (args) => {
@@ -1239,14 +1239,14 @@ describe("process deadlines in an app", () => {
     return { app, clock };
   };
 
-  it("come due with one clock advance and one processUntilIdle", async () => {
+  it("come due with one clock advance and one runUntilIdle", async () => {
     reset();
     const { app, clock } = await startApp();
     await app.commands.placeOrder?.({ orderId: "o-1", total: 10 });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     expect(await app.nextDueAt()).toEqual(new Date(at(DAY)));
     clock.advance(3 * DAY);
-    expect(await app.processUntilIdle()).toEqual({ idle: true });
+    expect(await app.runUntilIdle()).toEqual({ idle: true, rejections: [] });
     expect(calls).toEqual([
       `reminder:${at(DAY)}`,
       `reminder:${at(2 * DAY)}`,
@@ -1260,14 +1260,14 @@ describe("process deadlines in an app", () => {
     reset();
     const { app, clock } = await startApp();
     await app.commands.placeOrder?.({ orderId: "o-1", total: 10 });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     paidFails = true;
     await app.commands.payOrder?.({ orderId: "o-1", method: "card" });
     clock.advance(DAY);
-    await app.processUntilIdle({ maxPasses: 1 });
+    await app.runUntilIdle({ maxPasses: 1 });
     expect((await app.getLag()).waitingDeadlines).toBe(1);
     expect(calls).toEqual([]);
-    expect(await app.processUntilIdle()).toEqual({ idle: true });
+    expect(await app.runUntilIdle()).toEqual({ idle: true, rejections: [] });
     expect(calls).toEqual([`reminder:${at(DAY)}`]);
     expect((await app.getLag()).waitingDeadlines).toBe(0);
     await app.stop();

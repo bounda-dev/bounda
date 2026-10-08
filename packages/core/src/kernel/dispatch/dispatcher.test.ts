@@ -67,7 +67,7 @@ describe("createDispatcher", () => {
     expect(b.seen).toEqual([[1, 2]]);
     expect(await checkpointStore.get("a")).toBe(2);
 
-    await dispatcher.processUntilIdle();
+    await dispatcher.runUntilIdle();
     expect(a.seen).toEqual([[1, 2], [3, 4], [5]]);
     expect(await checkpointStore.get("b")).toBe(5);
     expect(await dispatcher.processOnce()).toBe(false);
@@ -261,7 +261,7 @@ describe("createDispatcher", () => {
       },
     ]);
 
-    await dispatcher.processUntilIdle();
+    await dispatcher.runUntilIdle();
     expect(seen).toEqual([[3, 4], [1, 2], [3, 4], [5]]);
     expect(await checkpointStore.get("orders")).toBe(5);
     expect(entries).toHaveLength(1);
@@ -297,9 +297,9 @@ describe("createDispatcher", () => {
     dispatcher.start();
     dispatcher.start();
     const manual = Promise.all([
-      dispatcher.processUntilIdle(),
+      dispatcher.runUntilIdle(),
       dispatcher.processOnce(),
-      dispatcher.processUntilIdle(),
+      dispatcher.runUntilIdle(),
     ]);
     let settled = false;
     void manual.then(() => {

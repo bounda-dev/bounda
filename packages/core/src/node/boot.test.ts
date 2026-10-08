@@ -53,7 +53,7 @@ describe("boot", () => {
     expect(process.env.BOUNDA_TEST_MARKER).toBe("loaded");
     expect(app.role).toBe("worker");
     await app.commands.increment({ counterId: "c-1" });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     expect((await app.getLag()).lastPosition).toBe(1);
     await app.stop();
   });
@@ -248,5 +248,21 @@ describe("boot", () => {
     await expect(app.commands.increment({ counterId: "c-after-sigterm" })).resolves.toMatchObject({
       version: 1,
     });
+  });
+
+  it("loads .env and stops on SIGTERM with a logger that throws", async () => {
+    const failing = (): void => {
+      throw new Error("log sink is down");
+    };
+    const sigint = process.listenerCount("SIGINT");
+    const app = await boot<typeof registry>({
+      root,
+      registryPath: "registry.ts",
+      logger: { debug: failing, info: failing, warn: failing, error: failing },
+    });
+    expect(process.listenerCount("SIGINT")).toBe(sigint + 1);
+    process.emit("SIGTERM", "SIGTERM");
+    expect(process.listenerCount("SIGINT")).toBe(sigint);
+    await app.stop();
   });
 });

@@ -142,7 +142,11 @@ describe("a Bounda Durable Object", () => {
     const refused = await rejection(
       store.commands.placeOrder({ orderId: "o-3", total: 1, customer: "ada" }),
     );
-    expect(refused).toMatchObject({ name: "DomainError", message: "Order already placed" });
+    expect(refused).toMatchObject({
+      name: "DomainError",
+      message: "Order already placed",
+      rejected: "AlreadyPlaced",
+    });
     expect(refused.code).toBe("DOMAIN_ERROR");
     expect(await stub.command("nope")).toEqual({
       ok: false,

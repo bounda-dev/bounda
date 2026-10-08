@@ -10,7 +10,6 @@ it, and sequential ids (`id-1`, `id-2`, …). Nothing is shared between tests an
 wall-clock time, so the same assertions hold on every run.
 
 ```ts
-import { DomainError } from "@bounda-dev/core";
 import { createTestApp } from "@bounda-dev/core/testing";
 import { describe, expect, it } from "vitest";
 import { registry } from "../.bounda/registry.ts";
@@ -21,43 +20,64 @@ describe("orders", () => {
   it("places an order and lists it for the customer", async () => {
     const { app } = await createTestApp({ registry });
     await app.commands.placeOrder({ orderId, customerId: "ada", total: 42 });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
 
     expect(await app.queries.listOrders({ customerId: "ada" })).toEqual({
       orders: [{ orderId, customerId: "ada", total: 42, placedAt: expect.any(Date) }],
       total: 42,
     });
+    await expect(
+      app.commands.placeOrder({ orderId, customerId: "ada", total: 1 }),
+    ).rejects.toMatchObject({ rejected: "AlreadyPlaced" });
     await app.stop();
   });
 });
 ```
 
-That is the shape of every test: dispatch a command, `await app.processUntilIdle()`, assert
+That is the shape of every test: dispatch a command, `await app.runUntilIdle()`, assert
 through a query. This one is the test a new project comes with.
 
-## `processUntilIdle` is the whole trick
+## `runUntilIdle` is the whole trick
 
 A command returns as soon as its events are stored. Projections, policies and processes run
-afterwards, so asserting straight after the command would race them. `processUntilIdle()` runs
+afterwards, so asserting straight after the command would race them. `runUntilIdle()` runs
 dispatcher passes and due scheduled commands until nothing moves, which is the point where every
 consequence of what you dispatched has happened.
 
 It works in every runtime role, and it is the reason tests need no timers, no polling and no
-`await sleep(50)`. It resolves to `{ idle: true }`; pass `{ maxPasses }` to stop earlier, which is
-how a test checks that a chain of reactions takes more than one round.
+`await sleep(50)`. It resolves to `{ idle: true, rejections }`; pass `{ maxPasses }` to stop
+earlier, which is how a test checks that a chain of reactions takes more than one round.
 
 Call `app.stop()` when the test ends: it waits for passes in flight and closes storage.
 
 ## Rules that must be refused
 
-A handler that rejects a command throws a `DomainError`. Assert on the type, not on the message,
-so the wording stays free to change:
+A command its handler rejects throws a `DomainError` to `app.commands`, with the code in
+`rejected`. Assert on the code, not on the message, so the wording stays free to change:
 
 ```ts
 await expect(
   app.commands.placeOrder({ orderId, customerId: "ada", total: 1 }),
-).rejects.toBeInstanceOf(DomainError);
+).rejects.toMatchObject({ rejected: "AlreadyPlaced" });
 ```
+
+### Rejections
+
+The commands a policy, a process or the scheduler dispatches have no caller to throw to: a
+rejection there is an answer the handler may ignore, and the run goes on (see
+[what a command answers](/guides/reacting-to-events/#what-a-command-answers)). `runUntilIdle()`
+returns the ones that happened while it ran, in order, each with the command's `type`, the code in
+`rejected`, its `message` and the aggregate it was for. A test asserts the ones it expects, so an
+unexpected one does not pass in silence:
+
+```ts
+await app.commands.settlePayment({ paymentId });
+await app.commands.cancelOrder({ orderId, reason: "changed my mind" });
+const { rejections } = await app.runUntilIdle();
+expect(rejections).toMatchObject([{ type: "MarkOrderPaid", rejected: "NotOpen" }]);
+```
+
+A run that is retried counts its rejections only from the attempt that commits.
 
 ## Time
 
@@ -71,10 +91,10 @@ const HOUR = 3_600_000;
 it("reminds the customer a day later only while the order is still placed", async () => {
   const { app, clock } = await createTestApp({ registry });
   await app.commands.placeOrder({ orderId: ORDER, customerId: "ada", items });
-  await app.processUntilIdle();
+  await app.runUntilIdle();
 
   clock.advance(24 * HOUR);
-  await app.processUntilIdle();
+  await app.runUntilIdle();
   expect((await app.queries.getOrderSummary({ orderId: ORDER }))?.reminderSent).toBe(true);
   await app.stop();
 });
@@ -84,15 +104,26 @@ The same two lines — advance, then process — test a process that gives up:
 
 ```ts
 clock.advance(72 * HOUR);
-await app.processUntilIdle();
+await app.runUntilIdle();
 expect(await app.queries.getOrderSummary({ orderId: ORDER })).toMatchObject({
   status: "cancelled",
   cancelledAt: expect.any(Date),
 });
 ```
 
-One advance is enough however many deadlines it passes: `processUntilIdle()` runs a daily reminder
+One advance is enough however many deadlines it passes: `runUntilIdle()` runs a daily reminder
 for every day the clock skipped, in order, before it resolves.
+
+Retries are the one wait you never advance for. A policy, a process handler or a scheduled command
+that fails with an error worth retrying waits for its back-off, and `runUntilIdle()` moves the
+clock to it itself: by the time it resolves, every such failure has been retried until it went
+through or gave up as a [dead letter](/guides/reacting-to-events/#dead-letters). A test of a
+provider that fails once dispatches, runs until idle and asserts the second call; `clock.now()`
+says how far the retries took it. It never moves the clock past the last retry: what is
+scheduled before it runs on the way, in order, and what is scheduled after it waits for your
+advance. A retry that no longer waits, because its process ended or its deadline moved, moves
+nothing. Await `runUntilIdle()` before dispatching anything else: moving the clock also runs out
+the time of a command or handler that is still running on the same app.
 
 A test that builds a process state by hand, say to call a handler on its own, needs its moments
 typed as `Instant`, which a plain string is not: `asInstant` from `@bounda-dev/core` makes one from
@@ -103,9 +134,10 @@ Pass `now` to start somewhere else: `createTestApp({ registry, now: new Date("20
 The clock also owns every wait the runtime makes. A handler time-out fires when the clock passes
 it, not after real milliseconds: a command handler that never finishes holds
 `await app.commands.x()` until you advance the clock past `runtime.commands.timeout`, and a policy
-or process handler holds `processUntilIdle()` until it passes `runtime.policies.timeout`. The background loops that `app.start()`
-arms wait on it too: in a test they run only when you advance the clock, and `clock.pending()`
-says how many waits are armed, which is none once `app.stop()` has resolved.
+or process handler holds `runUntilIdle()` until it passes `runtime.policies.timeout`. The
+background loops that `app.start()` arms wait on it too: in a test they run only when you advance
+the clock, and `clock.pending()` says how many waits are armed, which is none once `app.stop()`
+has resolved.
 
 ## Against a real database
 
@@ -142,7 +174,7 @@ A policy runs after the command, so let it run, then assert on what the double r
 
 ```ts
 await app.commands.placeOrder({ orderId: ORDER, customerId: "ada", items });
-await app.processUntilIdle();
+await app.runUntilIdle();
 expect(sent).toEqual([{ orderId: ORDER, customerId: "ada", total: 139 }]);
 ```
 
@@ -171,7 +203,7 @@ pass `env` from `cloudflare:workers`.
 implementation, even when it has only one, so a test never calls a real provider it did not ask
 for. A handler that reads that port throws a `ConfigurationError` that names the aggregate and the
 port and says what to pass. A command rejects with it, a policy or a process does not retry it,
-and from then on every `app.processUntilIdle()` throws it, so the test fails with that message
+and from then on every `app.runUntilIdle()` throws it, so the test fails with that message
 instead of an assertion further down. Handlers that never read the port run as usual, but reading every port
 at once, as `({ notifier, ...rest })` does, reads that one too.
 
@@ -186,8 +218,8 @@ expect((await app.getLag()).maxLag).toBe(0);
 
 ## What is worth testing
 
-- **The rules**, through commands: what is accepted, what throws `DomainError`, and what the
-  aggregate does on the second attempt.
+- **The rules**, through commands: what is accepted, what is rejected and with which code, and
+  what the aggregate does on the second attempt.
 - **The consequences**, through queries: the read model after the events, including fields a
   projection fills from more than one event.
 - **Time**, by advancing the clock: reminders that go out, reminders that no longer apply, and

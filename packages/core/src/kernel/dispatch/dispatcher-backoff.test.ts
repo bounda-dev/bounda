@@ -168,13 +168,13 @@ describe("the dispatcher's backoff", () => {
     expect(delays).toEqual([1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000]);
   });
 
-  it("makes catchUp wait for the backoff while processUntilIdle tries regardless", async () => {
+  it("makes catchUp wait for the backoff while runUntilIdle tries regardless", async () => {
     const poisoned = scripted("projection:poisoned", [failed, failed, failed]);
     const { clock, dispatcher } = await setUp([poisoned]);
     await dispatcher.catchUp("projection");
     await dispatcher.catchUp("projection");
     expect(poisoned.deliveries).toBe(1);
-    await dispatcher.processUntilIdle();
+    await dispatcher.runUntilIdle();
     expect(poisoned.deliveries).toBe(2);
     clock.advance(1_999);
     await dispatcher.catchUp("projection");

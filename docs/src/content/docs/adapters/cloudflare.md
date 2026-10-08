@@ -133,8 +133,9 @@ stores, not a split log.
 | `POST /queries/<name>` with the payload as the body | The query's result |
 
 Refusals come back as `{ "error": { "code", "message" } }`: 400 for `VALIDATION_FAILED`
-(with the `issues`) and `INVALID_JSON`, 404 for `NOT_FOUND`, 409 for `DOMAIN_ERROR`,
-`CONCURRENCY_CONFLICT` and `CHAIN_DEPTH_EXCEEDED`, 504 for `HANDLER_TIMEOUT`. Anything else is
+(with the `issues`) and `INVALID_JSON`, 404 for `NOT_FOUND`, 409 for `DOMAIN_ERROR` (a command's
+rejection, its code in `rejected`), `CONCURRENCY_CONFLICT` and `CHAIN_DEPTH_EXCEEDED`, 504 for
+`HANDLER_TIMEOUT`. Anything else is
 a 500 whose message goes to the logs, not to the caller.
 
 It has **no authentication** and no operator endpoint, on purpose: it is a starting point. An

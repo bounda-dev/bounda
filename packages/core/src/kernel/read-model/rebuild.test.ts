@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Adapter } from "../../adapter/adapter.ts";
+import type { Adapter, CreateStorageArgs } from "../../adapter/adapter.ts";
 import type { Table } from "../../adapter/ports/table.ts";
 import { RebuildSupersededError } from "../../contracts/errors.ts";
 import { silentLogger } from "../../contracts/logger.ts";
@@ -98,7 +98,7 @@ describe("rebuildReadModel", () => {
     await app.commands.placeOrder({ orderId: "o-1", total: 10 });
     await app.commands.placeOrder({ orderId: "o-2", total: 20 });
     await app.commands.payOrder({ orderId: "o-1", method: "card" });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     expect(await rows()).toEqual([
       { orderId: "o-1", total: 5 },
       { orderId: "o-2", total: 10 },
@@ -135,7 +135,7 @@ describe("rebuildReadModel", () => {
     mode = "ok";
     const { app, storage, rows } = await setUp();
     await app.commands.placeOrder({ orderId: "o-1", total: 10 });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     await storage.checkpointStore.set(SUBSCRIBER, 40);
     await app.rebuildReadModel("orderSummary");
     expect(await storage.checkpointStore.get(SUBSCRIBER)).toBe(1);
@@ -144,7 +144,7 @@ describe("rebuildReadModel", () => {
     await storage.checkpointStore.set(SUBSCRIBER, 0);
     expect(await app.rebuildReadModel("orderSummary")).toMatchObject({ position: 2 });
     expect(await storage.checkpointStore.get(SUBSCRIBER)).toBe(2);
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     expect(await rows()).toEqual([
       { orderId: "o-1", total: 10 },
       { orderId: "o-2", total: 20 },
@@ -156,7 +156,7 @@ describe("rebuildReadModel", () => {
     mode = "ok";
     const { app, storage, rows } = await setUp();
     await app.commands.placeOrder({ orderId: "o-1", total: 10 });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
 
     mode = "throws";
     await expect(app.rebuildReadModel("orderSummary")).rejects.toThrow("projection broken");
@@ -166,10 +166,10 @@ describe("rebuildReadModel", () => {
     await app.stop();
   });
 
-  it("works on its own, before the read model ever had a table, and closes what it opened", async () => {
+  it("works on its own, before the read model ever had a table, and closes what it opened, whatever its logger throws", async () => {
     mode = "ok";
     const base = memory();
-    const opened: unknown[] = [];
+    const opened: CreateStorageArgs[] = [];
     let closes = 0;
     const adapter: Adapter = {
       ...base,
@@ -191,13 +191,19 @@ describe("rebuildReadModel", () => {
     await writer.stop();
     closes = 0;
 
-    const logger = { ...silentLogger };
+    const logged: string[] = [];
+    const failing = (message: string): void => {
+      logged.push(message);
+      throw new Error("log sink is down");
+    };
+    const logger = { debug: failing, info: failing, warn: failing, error: failing };
     expect(await rebuildReadModel({ registry, config, name: "orderSummary", logger })).toEqual({
       events: 1,
       position: 1,
       done: true,
     });
-    expect(opened.at(-1)).toEqual({ logger });
+    opened.at(-1)?.logger.warn("from the storage");
+    expect(logged).toEqual(expect.arrayContaining(["read model rebuilt", "from the storage"]));
     expect(closes).toBe(1);
     const app = await createApp({ registry, config });
     expect((await app.getLag()).subscribers).toContainEqual({
@@ -226,7 +232,7 @@ describe("rebuildReadModel", () => {
     ] as const) {
       await app.commands.placeOrder({ orderId, total });
     }
-    await app.processUntilIdle();
+    await app.runUntilIdle();
 
     mode = "ok";
     expect(await app.rebuildReadModel("orderSummary", { maxEvents: 2 })).toEqual({
@@ -272,7 +278,7 @@ describe("rebuildReadModel", () => {
     const { app, config, storage, rows } = await setUp();
     await app.commands.placeOrder({ orderId: "o-1", total: 10 });
     await app.commands.placeOrder({ orderId: "o-2", total: 20 });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     await app.rebuildReadModel("orderSummary", { maxEvents: 1 });
 
     const doubled = {
@@ -331,7 +337,7 @@ describe("rebuildReadModel", () => {
     const app = await createApp({ registry, config });
     await app.commands.placeOrder({ orderId: "o-1", total: 10 });
     await app.commands.placeOrder({ orderId: "o-2", total: 20 });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     const mainCheckpoints = (await main.createStorage({ logger: silentLogger })).checkpointStore;
     const reportingCheckpoints = (await reporting.createStorage({ logger: silentLogger }))
       .checkpointStore;
@@ -364,7 +370,7 @@ describe("rebuildReadModel", () => {
     const { app, rows } = await setUp();
     await app.commands.placeOrder({ orderId: "o-1", total: 10 });
     await app.commands.placeOrder({ orderId: "o-2", total: 20 });
-    await app.processUntilIdle();
+    await app.runUntilIdle();
     let release = (): void => {};
     const gate = new Promise<void>((resolve) => {
       release = resolve;

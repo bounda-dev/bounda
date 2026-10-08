@@ -29,8 +29,7 @@ you get a project with one aggregate, one read model and a test, on SQLite:
 
 ```
 app/domain/order/           the order aggregate
-  state.ts                  initial state and the id field
-  order-placed.ts           an event: payload and apply
+  order-placed.ts           an event: payload and create, which opens the order
   commands/place-order.ts   a command: payload and handler
 app/read/orders/            a read model
   view.ts                   its fields
@@ -56,22 +55,26 @@ Every file exports the functions its concept needs and gets its argument types f
 
 ```ts
 // app/domain/order/commands/place-order.ts
-import { DomainError } from "@bounda-dev/core";
 import type { Command } from "./+types/place-order";
 
 export const payload = ({ z }: Command.PayloadArgs) =>
   z.object({ orderId: z.uuid(), customerId: z.string().min(1), total: z.number().positive() });
 
-export const handler = ({ command, state, events }: Command.HandlerArgs) => {
-  if (state.status !== "new") {
-    throw new DomainError(`Order ${command.aggregateId} was already placed`);
-  }
+export const rejections = ({ command }: Command.RejectionsArgs) => ({
+  AlreadyPlaced: `Order ${command.aggregateId} was already placed`,
+});
+
+export const handler = ({ command, state, events, reject }: Command.HandlerArgs) => {
+  if (state.status !== undefined) return reject("AlreadyPlaced");
   return [events.orderPlaced({ customerId: command.payload.customerId, total: command.payload.total })];
 };
 ```
 
-`command.payload` is typed from the Zod schema above it, `state` from `state.ts`, and `events`
-only offers the events of this aggregate. Nothing here is registered anywhere: the file's place
+`command.payload` is typed from the Zod schema above it, `state` from what the order's events
+return, and `events` only offers the events of this aggregate. `rejections` declares how the
+command may say no, and `reject` only takes those codes. `order-placed.ts` opens the order
+with `create`, so before it every field of `state` is `undefined`, and after it `status` and the
+rest are always set. Nothing here is registered anywhere: the file's place
 and name are the declaration. The [project layout](/guides/project-layout/) guide has the whole
 map.
 
@@ -91,32 +94,28 @@ import type { Event } from "./+types/order-cancelled";
 
 export const payload = ({ z }: Event.PayloadArgs) => z.object({ reason: z.string() });
 
-export const apply = ({ state }: Event.ApplyArgs) => ({ ...state, status: "cancelled" as const });
+export const apply = () => ({ status: "cancelled" as const });
 ```
 
-Allow the new status in `state.ts`:
-
-```ts
-export const initialState = {
-  status: "new" as "new" | "placed" | "cancelled",
-  customerId: "",
-  total: 0,
-};
-export const aggregateId = "orderId";
-```
+`apply` returns the fields the event changes, merged over the order's state. The generator adds
+`"cancelled"` to the type of `status` on its own.
 
 Add the command:
 
 ```ts
 // app/domain/order/commands/cancel-order.ts
-import { DomainError } from "@bounda-dev/core";
 import type { Command } from "./+types/cancel-order";
 
 export const payload = ({ z }: Command.PayloadArgs) =>
   z.object({ orderId: z.uuid(), reason: z.string().min(1) });
 
-export const handler = ({ command, state, events }: Command.HandlerArgs) => {
-  if (state.status !== "placed") throw new DomainError("Only placed orders can be cancelled");
+export const rejections = ({ state }: Command.RejectionsArgs) => ({
+  NotPlaced: `Only placed orders can be cancelled; this one is ${state.status ?? "new"}`,
+});
+
+export const handler = ({ command, state, events, reject }: Command.HandlerArgs) => {
+  if (state.status === "cancelled") return [];
+  if (state.status !== "placed") return reject("NotPlaced");
   return [events.orderCancelled({ reason: command.payload.reason })];
 };
 ```
@@ -137,7 +136,7 @@ export const project = async ({ event, table }: Projection.Args) => {
 ## Test it
 
 `createTestApp` runs the whole app on an in-memory adapter with a clock that only moves when you
-tell it to. `processUntilIdle` runs projections, policies and processes until nothing is left:
+tell it to. `runUntilIdle` runs projections, policies and processes until nothing is left:
 
 ```ts
 // tests/cancel.test.ts
@@ -150,7 +149,7 @@ it("removes a cancelled order from the list", async () => {
   const orderId = "018f6a5e-4c3c-7c1e-9d4b-0b2c4a1d8e01";
   await app.commands.placeOrder({ orderId, customerId: "ada", total: 42 });
   await app.commands.cancelOrder({ orderId, reason: "changed my mind" });
-  await app.processUntilIdle();
+  await app.runUntilIdle();
 
   expect(await app.queries.listOrders({ customerId: "ada" })).toEqual({ orders: [], total: 0 });
   await app.stop();
@@ -176,7 +175,7 @@ import { boot } from "@bounda-dev/core/node";
 
 const app = await boot();
 await app.commands.placeOrder({ orderId: crypto.randomUUID(), customerId: "ada", total: 42 });
-await app.processUntilIdle();
+await app.runUntilIdle();
 ```
 
 Point `bounda.config.ts` at PostgreSQL when one process is not enough; the app does not change.

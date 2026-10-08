@@ -1,12 +1,15 @@
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
+import type { ReactionDispatchResult } from "../../contracts/command.ts";
 import { ValidationError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
+import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
 import { createReactionCommands, type ReactionCommands } from "../command/reaction-commands.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
+import { isRecord, mergeFields } from "../shared/merge-fields.ts";
 import { withTimeout } from "../shared/timeout.ts";
 import { withCollaborators } from "../shared/with-collaborators.ts";
 import { ATTRIBUTES, traced } from "../telemetry.ts";
@@ -49,17 +52,23 @@ export interface RunDeadlineHandlerArgs {
 }
 
 /**
- * Handlers are bounded by the aggregate's policy timeout, as policy handlers are. Each resolves to
- * the state with the fields the handler returned merged over it, validated by the process schema.
- * A run whose handler fails or runs out of time is abandoned: its commands are refused from then
- * on.
+ * Handlers are bounded by the aggregate's policy timeout, as policy handlers are, and so are the
+ * commands they dispatch, awaited or not. Each resolves to the state with the fields the handler
+ * returned merged over it, validated by the process schema; a deadline's also to what its commands
+ * decided. A run whose handler or one of whose commands fails, or that runs out of time, is
+ * abandoned: its commands are refused from then on.
  */
 export interface ProcessHandlers {
   runEventHandler(args: RunEventHandlerArgs): Promise<object>;
   /**
    * Runs the handler of `due`, if it has one.
    */
-  runDeadlineHandler(args: RunDeadlineHandlerArgs): Promise<object>;
+  runDeadlineHandler(args: RunDeadlineHandlerArgs): Promise<DeadlineRun>;
+}
+
+export interface DeadlineRun {
+  readonly state: object;
+  readonly decided: readonly ReactionDispatchResult[];
 }
 
 export interface CreateProcessHandlersArgs {
@@ -67,6 +76,7 @@ export interface CreateProcessHandlersArgs {
   readonly pipeline: CommandPipeline;
   readonly config: ResolvedConfig;
   readonly clock: Clock;
+  readonly logger: Logger;
 }
 
 export interface CreateProcessHandlersFunction {
@@ -78,13 +88,14 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
   pipeline,
   config,
   clock,
+  logger,
 }) => {
   const reactionFor = (
     context: CausationContext,
     idempotencyKey: string,
     within: UnitStores,
   ): ReactionCommands =>
-    createReactionCommands({ aggregates, pipeline, context, idempotencyKey, within });
+    createReactionCommands({ aggregates, pipeline, context, idempotencyKey, within, logger });
 
   const handlerArgs = (
     process: ProcessRuntime,
@@ -101,16 +112,28 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
       ...own,
     });
 
-  const runOf = async (
+  const runOf = async <Result>(
     reaction: Pick<ReactionCommands, "abandon">,
-    handle: () => Promise<object>,
-  ): Promise<object> => {
+    handle: () => Promise<Result>,
+  ): Promise<Result> => {
     try {
       return await handle();
     } catch (error) {
       reaction.abandon(error);
       throw error;
     }
+  };
+
+  // Waits for every command the handler dispatched, awaited or not, before the step commits.
+  const settled = async (
+    reaction: Pick<ReactionCommands, "decided">,
+    handle: () => unknown,
+  ): Promise<{
+    readonly returned: unknown;
+    readonly decided: readonly ReactionDispatchResult[];
+  }> => {
+    const returned = await handle();
+    return { returned, decided: await reaction.decided() };
   };
 
   const timeoutMs = (process: ProcessRuntime): number =>
@@ -133,7 +156,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     });
     const reaction = reactionFor(eventContext(event), idempotencyKey, within);
     return runOf(reaction, async () => {
-      const next = await traced({
+      const { returned } = await traced({
         name: `bounda.process ${process.name}`,
         attributes: {
           [ATTRIBUTES.process]: process.name,
@@ -147,22 +170,24 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
         run: () =>
           withTimeout({
             run: () =>
-              handlerOf(
-                process,
-                event,
-              )?.(
-                handlerArgs(process, reaction, idempotencyKey, event.timestamp, {
+              settled(reaction, () =>
+                handlerOf(
+                  process,
                   event,
-                  state: instance.state,
-                  aggregateId: instanceId,
-                }),
+                )?.(
+                  handlerArgs(process, reaction, idempotencyKey, event.timestamp, {
+                    event,
+                    state: instance.state,
+                    aggregateId: instanceId,
+                  }),
+                ),
               ),
             timeoutMs: timeoutMs(process),
             subject: `process ${process.name}`,
             clock,
           }),
       });
-      return validState(process, merged(instance.state, next));
+      return validState(process, merged(instance.state, returned));
     });
   };
 
@@ -175,10 +200,13 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     causationId,
     replay,
     within,
-  }: RunDeadlineHandlerArgs): Promise<object> => {
+  }: RunDeadlineHandlerArgs): Promise<DeadlineRun> => {
     const handler = process.deadlineHandlers[due.field];
     if (handler === undefined) {
-      return runOf({ abandon: () => undefined }, async () => validState(process, instance.state));
+      return runOf({ abandon: () => undefined }, async () => ({
+        state: validState(process, instance.state),
+        decided: [],
+      }));
     }
     const idempotencyKey = deriveIdempotencyKey({
       kind: "process",
@@ -192,7 +220,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
       within,
     );
     return runOf(reaction, async () => {
-      const returned = await traced({
+      const { returned, decided } = await traced({
         name: `bounda.process ${process.name} at ${due.field}`,
         attributes: {
           [ATTRIBUTES.process]: process.name,
@@ -203,41 +231,33 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
         run: () =>
           withTimeout({
             run: () =>
-              handler(
-                handlerArgs(process, reaction, idempotencyKey, due.at, {
-                  state: instance.state,
-                  aggregateId: instanceId,
-                }),
+              settled(reaction, () =>
+                handler(
+                  handlerArgs(process, reaction, idempotencyKey, due.at, {
+                    state: instance.state,
+                    aggregateId: instanceId,
+                  }),
+                ),
               ),
             timeoutMs: timeoutMs(process),
             subject: `process ${process.name} at ${due.field}`,
             clock,
           }),
       });
-      return validState(process, merged(instance.state, returned));
+      return {
+        state: validState(process, merged(instance.state, returned)),
+        decided,
+      };
     });
   };
 
   return { runEventHandler, runDeadlineHandler };
 };
 
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-// Shallow, as `Partial<State>` types it: a nested object is replaced whole, and a field left
-// `undefined` counts as left out, so it keeps its value instead of falling back to its default.
-// What is not an object goes on as returned, for `validState` to refuse.
+// A field left `undefined` keeps its value instead of falling back to its default. What is not an
+// object goes on as returned, for `validState` to refuse.
 const merged = (state: object, returned: unknown): unknown =>
-  returned === undefined
-    ? state
-    : isRecord(returned)
-      ? {
-          ...state,
-          ...Object.fromEntries(
-            Object.entries(returned).filter(([, value]) => value !== undefined),
-          ),
-        }
-      : returned;
+  returned === undefined ? state : isRecord(returned) ? mergeFields(state, returned) : returned;
 
 export interface ValidStateFunction {
   (process: Pick<ProcessRuntime, "name" | "stateSchema">, state: unknown): object;

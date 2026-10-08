@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { NewDeadLetter } from "../../adapter/ports/dead-letter-store.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
-import { DomainError, ValidationError } from "../../contracts/errors.ts";
+import { ValidationError } from "../../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
@@ -59,6 +59,7 @@ const instance = (overrides: Partial<ProcessInstance> = {}): ProcessInstance => 
   reached: new Set(),
   correlationId: "c",
   parked: [],
+  followUps: new Set(),
   failure: { eventId: "e-1", letterId: "letter-1" },
   ...overrides,
 });
@@ -230,7 +231,7 @@ describe("blockedOn", () => {
 
 describe("drainFailureType", () => {
   it("keeps terminal errors terminal", () => {
-    expect(drainFailureType(new DomainError("refused"))).toBe("terminal");
+    expect(drainFailureType(new ValidationError("refused", []))).toBe("terminal");
     expect(drainFailureType(new ValidationError("invalid", []))).toBe("terminal");
   });
 

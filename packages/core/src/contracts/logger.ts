@@ -5,7 +5,8 @@ export type LogFields = Readonly<Record<string, unknown>>;
 
 /**
  * The runtime logs through this interface only. Hosts provide an implementation; the kernel never
- * writes to the console itself.
+ * writes to the console itself. `createApp`, `boot` and `rebuildReadModel` ignore what a method
+ * throws or an `async` one rejects with, so a logger that fails never fails what was being logged.
  */
 export interface Logger {
   debug(message: string, fields?: LogFields): void;
