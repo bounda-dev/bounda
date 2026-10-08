@@ -3,8 +3,8 @@ import { join } from "node:path";
 import { discoverProject } from "./discover.ts";
 import { emitProject, GENERATED_DIRECTORY } from "./emit/index.ts";
 import type { GeneratedFile } from "./emit/paths.ts";
-import type { LayoutWarning, ProjectModel } from "./model.ts";
-import { inferStates, type StateWarning } from "./state/infer.ts";
+import type { GenerateWarning, ProjectModel } from "./model.ts";
+import { inferStates } from "./state/infer.ts";
 import { removeOrphans, writeGeneratedFile, writeGeneratedFiles } from "./write.ts";
 
 export interface GenerateArgs {
@@ -30,7 +30,7 @@ export interface GenerateReport {
   readonly written: readonly string[];
   readonly unchanged: readonly string[];
   readonly removed: readonly string[];
-  readonly warnings: readonly (LayoutWarning | StateWarning)[];
+  readonly warnings: readonly GenerateWarning[];
 }
 
 export interface GenerateFunction {
@@ -88,6 +88,9 @@ export const generate: GenerateFunction = async ({
       .filter((path) => !written.includes(path))
       .sort(),
     removed,
-    warnings: [...warnings, ...inferred.warnings],
+    warnings: [
+      ...warnings,
+      ...inferred.warnings.map(({ aggregate, message }) => ({ module: aggregate, message })),
+    ],
   };
 };

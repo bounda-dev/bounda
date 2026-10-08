@@ -81,7 +81,7 @@ const registry: Registry = {
 };
 
 const table = async (harness: Awaited<ReturnType<typeof createReactiveHarness>>) =>
-  harness.readModels.byName.orderSummary?.ports.table as unknown as Table<Row>;
+  harness.readModels.byName.orderSummary?.storage.table as unknown as Table<Row>;
 
 describe("projection subscriber", () => {
   it("projects events into the read model table through the dispatcher", async () => {

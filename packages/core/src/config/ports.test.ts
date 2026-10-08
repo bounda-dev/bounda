@@ -9,7 +9,7 @@ const mailer = { send: () => Promise.resolve() };
 describe("selectImplementations", () => {
   it("uses the configured implementation", () => {
     const selected = selectImplementations({
-      aggregate: "order",
+      owner: { kind: "aggregate", name: "order" },
       implementations: { inventory: { http: { default: http }, fake: { default: fake } } },
       config: { inventory: "fake" },
     });
@@ -18,7 +18,7 @@ describe("selectImplementations", () => {
 
   it("picks the only implementation when nothing is configured", () => {
     const selected = selectImplementations({
-      aggregate: "order",
+      owner: { kind: "aggregate", name: "order" },
       implementations: {
         inventory: { http: { default: http } },
         mailer: { resend: { default: mailer } },
@@ -30,14 +30,18 @@ describe("selectImplementations", () => {
 
   it("returns an empty object for an aggregate without ports", () => {
     expect(
-      selectImplementations({ aggregate: "order", implementations: {}, config: undefined }),
+      selectImplementations({
+        owner: { kind: "aggregate", name: "order" },
+        implementations: {},
+        config: undefined,
+      }),
     ).toEqual({});
   });
 
   it("demands a choice when several implementations exist and none is configured", () => {
     expect(() =>
       selectImplementations({
-        aggregate: "order",
+        owner: { kind: "aggregate", name: "order" },
         implementations: { inventory: { http: { default: http }, fake: { default: fake } } },
         config: undefined,
       }),
@@ -49,7 +53,7 @@ describe("selectImplementations", () => {
   it("refuses a port without implementations rather than handing out nothing", () => {
     expect(() =>
       selectImplementations({
-        aggregate: "order",
+        owner: { kind: "aggregate", name: "order" },
         implementations: { inventory: {} },
         config: undefined,
       }),
@@ -61,7 +65,7 @@ describe("selectImplementations", () => {
   it("rejects an implementation that does not exist", () => {
     expect(() =>
       selectImplementations({
-        aggregate: "order",
+        owner: { kind: "aggregate", name: "order" },
         implementations: { inventory: { http: { default: http }, fake: { default: fake } } },
         config: { inventory: "grpc" },
       }),
@@ -74,13 +78,17 @@ describe("selectImplementations", () => {
     const implementations = { inventory: { http: { default: http } } };
     expect(() =>
       selectImplementations({
-        aggregate: "order",
+        owner: { kind: "aggregate", name: "order" },
         implementations,
         config: { inventory: "constructor" },
       }),
     ).toThrow('implementation "constructor" not found');
     expect(() =>
-      selectImplementations({ aggregate: "order", implementations, config: { toString: "x" } }),
+      selectImplementations({
+        owner: { kind: "aggregate", name: "order" },
+        implementations,
+        config: { toString: "x" },
+      }),
     ).toThrow('configuration names ports that do not exist: "toString"');
   });
 
@@ -88,7 +96,7 @@ describe("selectImplementations", () => {
     let error: unknown;
     try {
       selectImplementations({
-        aggregate: "order",
+        owner: { kind: "aggregate", name: "order" },
         implementations: { inventory: { http: { default: http } } },
         config: { inventory: "http", notifier: "console" },
       });

@@ -138,12 +138,15 @@ export interface ReadModelModel {
 }
 
 /**
- * Something in an aggregate's layout that the generator reads as it is, but that is most likely a
- * mistake: a module that looks like an event and is not one, a directory that looks like one the
- * generator reads and is not.
+ * Something the generator went on despite: a layout that is most likely a mistake without
+ * breaking a convention, such as a module that looks like an event and is not one, or something
+ * state inference could not do.
  */
-export interface LayoutWarning {
-  readonly aggregate: string;
+export interface GenerateWarning {
+  /**
+   * The aggregate or read model, by key.
+   */
+  readonly module: string;
   readonly message: string;
 }
 

@@ -76,7 +76,7 @@ const registry: Registry = {
 const setup = async () => {
   const config = resolveConfig({ storage: memory() });
   const readModels = await buildReadModels({ registry, config, logger: silentLogger });
-  const table = readModels.byName.orderSummary?.ports.table as unknown as Table<Row>;
+  const table = readModels.byName.orderSummary?.storage.table as unknown as Table<Row>;
   await table.insert({ orderId: "o-1", customerId: "c-1", total: 10 });
   await table.insert({ orderId: "o-2", customerId: "c-1", total: 25 });
   await table.insert({ orderId: "o-3", customerId: "c-2", total: 5 });

@@ -122,13 +122,13 @@ export const createProjectionSubscriber: CreateProjectionSubscriberFunction = ({
   budget,
 }) => {
   const name = projectionSubscriberName(readModel.name);
-  const { ports } = readModel;
+  const { storage } = readModel;
   const subscriber = createCheckpointedSubscriber<ProjectionClaim>({
     name,
     kind: "projection",
-    position: () => ports.checkpointStore.get(name),
+    position: () => storage.checkpointStore.get(name),
     claim: ({ wait, work }) =>
-      ports.transact({
+      storage.transact({
         subscriber: name,
         wait,
         work: (transaction) =>

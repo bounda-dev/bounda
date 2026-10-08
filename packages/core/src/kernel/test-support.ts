@@ -12,9 +12,9 @@ import type { RejectFunction } from "../modules/command.ts";
 import type { PayloadArgs } from "../modules/payload.ts";
 import type { Registry } from "../modules/registry.ts";
 import { buildAggregates } from "./aggregate/build-aggregates.ts";
-import { type AggregatePorts, createPorts } from "./aggregate/ports.ts";
 import type { AggregatesRuntime } from "./aggregate/runtime.ts";
 import { createCommandPipeline } from "./command/pipeline.ts";
+import { type AggregatePorts, createPorts } from "./ports/ports.ts";
 
 interface OrderState {
   readonly status: "new" | "placed" | "paid";
@@ -210,7 +210,7 @@ export const choosePorts: ChoosePortsFunction = (registry, config) =>
       Object.fromEntries(
         Object.entries(
           selectImplementations({
-            aggregate,
+            owner: { kind: "aggregate", name: aggregate },
             implementations: entry.ports ?? {},
             config: config.ports[aggregate],
           }),

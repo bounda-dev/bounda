@@ -7,7 +7,6 @@ import { type Logger, silentLogger } from "../contracts/logger.ts";
 import { memory } from "../memory/index.ts";
 import type { Registry } from "../modules/registry.ts";
 import { buildAggregates } from "./aggregate/build-aggregates.ts";
-import { createPorts } from "./aggregate/ports.ts";
 import type { AggregatesRuntime } from "./aggregate/runtime.ts";
 import { createCommandPipeline } from "./command/pipeline.ts";
 import { createDispatcher, type Dispatcher } from "./dispatch/dispatcher.ts";
@@ -15,6 +14,7 @@ import { buildPolicies, type PoliciesRuntime } from "./policy/build-policies.ts"
 import { createDelayedPolicies } from "./policy/delayed.ts";
 import { createPolicyExecutor, type PolicyExecutor } from "./policy/executor.ts";
 import { createPolicySubscriber } from "./policy/runner.ts";
+import { createPorts } from "./ports/ports.ts";
 import { buildProcesses } from "./process/build-processes.ts";
 import { createProcessRunner, type ProcessRunner } from "./process/runner.ts";
 import { createProjectionSubscriber } from "./projection/runner.ts";

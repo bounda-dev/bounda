@@ -12,4 +12,5 @@ that imports its own `+types` without exporting an event's function (an event th
 reads, or named `command`, `policy`, `process` or `infra`, whose modules would go unregistered.
 
 Breaking: a read model can no longer share its name with an aggregate, since the configuration
-groups ports by module name.
+groups ports by module name. `report.warnings` from `generate` holds both kinds as
+`GenerateWarning`, `{ module, message }`, instead of the inference warning's `aggregate`.

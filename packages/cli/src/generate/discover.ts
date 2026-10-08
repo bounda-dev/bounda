@@ -5,8 +5,8 @@ import type {
   AggregateModel,
   CommandModel,
   EventModel,
+  GenerateWarning,
   ImplementationModel,
-  LayoutWarning,
   ModuleRef,
   PolicyModel,
   PortModel,
@@ -42,7 +42,7 @@ export interface DiscoverProjectArgs {
  * The project model, with what the layout probably got wrong without breaking a convention.
  */
 export interface DiscoveredProject extends ProjectModel {
-  readonly warnings: readonly LayoutWarning[];
+  readonly warnings: readonly GenerateWarning[];
 }
 
 export interface DiscoverProjectFunction {
@@ -97,7 +97,7 @@ interface Context {
    * The keys of every aggregate of the app: a folder named after one holds that aggregate's events.
    */
   readonly aggregates: ReadonlySet<string>;
-  readonly warnings: LayoutWarning[];
+  readonly warnings: GenerateWarning[];
 }
 
 const moduleRef = (context: Context, path: string): ModuleRef => ({
@@ -376,9 +376,9 @@ const readDirectoryLike = (name: string): string | undefined =>
     [directory, ...others].some((candidate) => withinOneEdit(name, candidate)),
   )?.[0];
 
-const warnAbout = (context: Context, aggregate: string, path: string, message: string): void => {
+const warnAbout = (context: Context, module: string, path: string, message: string): void => {
   context.warnings.push({
-    aggregate,
+    module,
     message: `${moduleRef(context, path).relativePath}: ${message}`,
   });
 };

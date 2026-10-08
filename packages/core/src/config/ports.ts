@@ -1,11 +1,26 @@
 import { ConfigurationError } from "../contracts/errors.ts";
 import type { ImplementationModule, PortModules } from "../modules/port.ts";
 
+/**
+ * The module whose ports are chosen: an aggregate or a read model, as the errors name it.
+ */
+export interface PortOwner {
+  readonly kind: "aggregate" | "read model";
+  readonly name: string;
+}
+
+export interface DescribeOwnerFunction {
+  (owner: PortOwner): string;
+}
+
+export const describeOwner: DescribeOwnerFunction = ({ kind, name }) =>
+  `${kind === "aggregate" ? "Aggregate" : "Read model"} "${name}"`;
+
 export interface SelectImplementationsArgs {
-  readonly aggregate: string;
+  readonly owner: PortOwner;
   readonly implementations: PortModules;
   /**
-   * The aggregate's entry of `ports` in the configuration: port to implementation name.
+   * The owner's entry of `ports` in the configuration: port to implementation name.
    */
   readonly config: Readonly<Record<string, string>> | undefined;
 }
@@ -43,35 +58,35 @@ export const implementationNotFound: ImplementationNotFoundFunction = ({
   );
 
 /**
- * Picks one implementation module per port of an aggregate: what the configuration names, or the
- * only one there is. Anything else is a `ConfigurationError` that names the aggregate, the port and
- * the available options.
+ * Picks one implementation module per port of an aggregate or a read model: what the
+ * configuration names, or the only one there is. Anything else is a `ConfigurationError` that
+ * names the owner, the port and the available options.
  */
 export const selectImplementations: SelectImplementationsFunction = ({
-  aggregate,
+  owner,
   implementations,
   config,
 }) => {
-  const owner = `Aggregate "${aggregate}"`;
+  const label = describeOwner(owner);
   const selected = Object.entries(implementations).map(([port, available]) => {
     const options = Object.keys(available);
     const chosen = config?.[port];
     if (chosen !== undefined) {
       const implementation = Object.hasOwn(available, chosen) ? available[chosen] : undefined;
       if (implementation === undefined)
-        throw implementationNotFound({ owner, port, chosen, options });
+        throw implementationNotFound({ owner: label, port, chosen, options });
       return [port, implementation] as const;
     }
     const [only, ...others] = Object.values(available);
     if (only !== undefined && others.length === 0) return [port, only] as const;
     throw new ConfigurationError(
-      `${owner}, port "${port}": choose an implementation with ports.${aggregate}.${port}. Available: ${describeNames(options)}`,
+      `${label}, port "${port}": choose an implementation with ports.${owner.name}.${port}. Available: ${describeNames(options)}`,
     );
   });
   const unknown = Object.keys(config ?? {}).filter((port) => !Object.hasOwn(implementations, port));
   if (unknown.length > 0) {
     throw new ConfigurationError(
-      `${owner}: configuration names ports that do not exist: ${describeNames(unknown)}`,
+      `${label}: configuration names ports that do not exist: ${describeNames(unknown)}`,
     );
   }
   return Object.fromEntries(selected);

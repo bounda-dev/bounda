@@ -36,7 +36,7 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({ queries, readMode
     const readModel = readModels.byName[query.readModel];
     if (readModel === undefined) throw new NotFoundError(`Unknown read model "${query.readModel}"`);
     const parsed = validatePayload({ schema: query.schema, payload, subject: `query ${type}` });
-    const { table, client } = readModel.ports;
+    const { table, client } = readModel.storage;
     const repositoryData =
       query.repository === null
         ? undefined

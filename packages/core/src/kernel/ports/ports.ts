@@ -81,11 +81,15 @@ export const createPorts: CreatePortsFunction = async (args) => {
       test === undefined
         ? Object.fromEntries(
             Object.entries(
-              selectImplementations({ aggregate, implementations, config: config[aggregate] }),
+              selectImplementations({
+                owner: { kind: "aggregate", name: aggregate },
+                implementations,
+                config: config[aggregate],
+              }),
             ).map(([port, module]) => [port, { module }]),
           )
         : selectTestImplementations({
-            aggregate,
+            owner: { kind: "aggregate", name: aggregate },
             implementations,
             chosen: test.ports[aggregate],
           });

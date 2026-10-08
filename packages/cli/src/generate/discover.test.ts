@@ -488,37 +488,37 @@ describe("discoverProject convention problems", () => {
     const notRead = "the generator does not read this directory; rename it to";
     expect(warnings).toEqual([
       {
-        aggregate: "order",
+        module: "order",
         message:
           "app/domain/order/order-paid.ts: imports ./+types/order-paid but exports no payload, begin or evolve, so it is not an event",
       },
       {
-        aggregate: "order",
+        module: "order",
         message:
           "app/domain/order/order-shipped.ts: imports ./+types/order-shipped but exports no payload, begin or evolve, so it is not an event",
       },
       {
-        aggregate: "order",
+        module: "order",
         message: `app/domain/order/command: ${notRead} commands if that is what it holds`,
       },
       {
-        aggregate: "order",
+        module: "order",
         message: `app/domain/order/infra: ${notRead} infrastructure if that is what it holds`,
       },
       {
-        aggregate: "order",
+        module: "order",
         message: `app/domain/order/infrastucture: ${notRead} infrastructure if that is what it holds`,
       },
       {
-        aggregate: "order",
+        module: "order",
         message: `app/domain/order/Policies: ${notRead} policies if that is what it holds`,
       },
       {
-        aggregate: "order",
+        module: "order",
         message: `app/domain/order/policys: ${notRead} policies if that is what it holds`,
       },
       {
-        aggregate: "order",
+        module: "order",
         message: `app/domain/order/proceses: ${notRead} processes if that is what it holds`,
       },
     ]);
