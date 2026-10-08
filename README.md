@@ -8,11 +8,11 @@
 <p align="center">Event sourcing and CQRS for TypeScript without the ceremony.</p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/@bounda-dev/core"><img src="https://img.shields.io/npm/v/@bounda-dev/core?style=flat&label=npm&color=2563eb" alt="npm version" /></a>
+  <a href="https://www.npmjs.com/package/@bounda-dev/core"><img src="https://img.shields.io/npm/v/@bounda-dev/core?style=flat&label=npm&color=b07114" alt="npm version" /></a>
   <a href="https://github.com/bounda-dev/bounda/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/bounda-dev/bounda/ci.yml?branch=main&style=flat&label=CI" alt="CI status" /></a>
   <a href="https://dashboard.stryker-mutator.io/reports/github.com/bounda-dev/bounda/main"><img src="https://img.shields.io/endpoint?style=flat&url=https%3A%2F%2Fbadge-api.stryker-mutator.io%2Fgithub.com%2Fbounda-dev%2Fbounda%2Fmain" alt="Mutation score" /></a>
-  <img src="https://img.shields.io/node/v/@bounda-dev/core?style=flat&label=node" alt="Node version" />
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue?style=flat" alt="License" /></a>
+  <img src="https://img.shields.io/node/v/@bounda-dev/core?style=flat&label=node&color=b07114" alt="Node version" />
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-b07114?style=flat" alt="License" /></a>
 </p>
 
 Bounda gives you aggregates, commands, events, policies, processes and read models through file
