@@ -137,7 +137,7 @@ describe("scaffoldProject", () => {
       "app/app.css",
       "app/domain/order/commands/place-order.ts",
       "app/domain/order/order-placed.ts",
-      "app/errors.server.ts",
+      "app/form.server.ts",
       "app/read/orders/projections/order/order-placed.ts",
       "app/read/orders/queries/list-orders.ts",
       "app/read/orders/view.ts",

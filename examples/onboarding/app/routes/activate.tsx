@@ -1,6 +1,6 @@
-import { bounda } from "@bounda-dev/react-router/app";
+import { bounda, failure } from "@bounda-dev/react-router/app";
 import { Form, redirect, useNavigation, useSearchParams } from "react-router";
-import { failure, field } from "../errors.server.ts";
+import { field } from "../form.server.ts";
 import type { Route } from "./+types/activate";
 
 export const action = async ({ request, context }: Route.ActionArgs) => {

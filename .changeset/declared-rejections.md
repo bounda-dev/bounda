@@ -32,5 +32,6 @@ await could be left out of the run, and its failure ended Node with an unhandled
 
 `app.commands` still throws the rejection, now with `rejected`. The `bounda.commands` counter
 counts a failure as `failed`, apart from a rejection. The Cloudflare worker's 409 and the error
-`connect` throws carry `rejected`, as does the `errors.server.ts` of a React Router project from
-`create-bounda`, whose order rejects a second placement with `AlreadyPlaced`.
+`connect` throws carry `rejected`, as does what `failure` from `@bounda-dev/react-router/app`
+answers in a React Router project from `create-bounda`, whose order rejects a second placement
+with `AlreadyPlaced`.

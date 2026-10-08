@@ -360,8 +360,7 @@ import { boundaMiddleware } from "@bounda-dev/react-router/app";
 export const middleware: Route.MiddlewareFunction[] = [boundaMiddleware];
 
 // a route: actions dispatch, loaders query
-import { bounda } from "@bounda-dev/react-router/app";
-import { failure } from "../errors.server";
+import { bounda, failure } from "@bounda-dev/react-router/app";
 export const action = async ({ request, context }: Route.ActionArgs) => {
   const form = await request.formData();
   try {
@@ -385,8 +384,9 @@ export const loader = ({ context }: Route.LoaderArgs) => context.get(bounda).que
 - The app in the context reads its own writes by default
   (`bounda({ consistency: "read-your-writes" })`): a page reached right after a command sees its
   read models. Never call `runUntilIdle()` in a route.
-- Map `ValidationError` to a 400 with `error.issues` and `DomainError` to a 409 with
-  `error.rejected` in one helper (`failure`); let anything else reach the `ErrorBoundary`.
+- Return `failure(error)` from an action's `catch`: a `ValidationError` becomes a 400 with its
+  `issues`, a `DomainError` a 409 with its code in `rejected`, and anything else reaches the
+  `ErrorBoundary`. Never write that mapping in the app.
 - Typecheck with `react-router typegen && tsc`; `.react-router/types` holds the route types and
   Bounda's `+types` sit next to the modules. They do not clash.
 

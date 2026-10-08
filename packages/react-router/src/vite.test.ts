@@ -183,6 +183,7 @@ describe("bounda() Vite plugin", () => {
         '  boot: () => boot({ root: "/project", registry }),',
         '  consistency: "read-your-writes",',
         "});",
+        'export { failure } from "@bounda-dev/react-router";',
         "",
       ].join("\n"),
     );
@@ -207,15 +208,18 @@ describe("bounda() Vite plugin", () => {
         "export const bounda = new Proxy({}, { get: serverOnly });",
         "export const boundaMiddleware = serverOnly;",
         "export const dispose = serverOnly;",
+        "export const failure = serverOnly;",
         "",
       ].join("\n"),
     );
     const module = (await import(`data:text/javascript,${encodeURIComponent(code)}`)) as {
       bounda: { defaultValue?: unknown };
       boundaMiddleware: () => unknown;
+      failure: () => unknown;
     };
     expect(() => module.bounda.defaultValue).toThrow("server-only");
     expect(() => module.boundaMiddleware()).toThrow("server-only");
+    expect(() => module.failure()).toThrow("server-only");
   });
 
   it("serves nothing before the config is resolved", () => {

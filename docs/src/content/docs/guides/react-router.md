@@ -35,8 +35,8 @@ export default defineConfig({ plugins: [bounda(), reactRouter()] });
 The plugin does two things. It runs `bounda generate` when the dev server or the build starts and
 after every change under `app/domain` and `app/read`, so there is no generator to keep running on
 the side. And it serves `@bounda-dev/react-router/app`: the `bounda` context, the
-`boundaMiddleware` and a `dispose()`, wired to the generated registry and typed for your project
-through `.bounda/register.d.ts`.
+`boundaMiddleware`, a `dispose()` and `failure`, wired to the generated registry and typed for
+your project through `.bounda/register.d.ts`.
 
 Bounda's modules live in the same `app/` directory as your routes: `app/domain` and `app/read`
 next to `app/routes`, `app/root.tsx` and `app/routes.ts`. The generator only looks at those two
@@ -56,9 +56,8 @@ export const middleware: Route.MiddlewareFunction[] = [boundaMiddleware];
 
 ```tsx
 // app/routes/register.tsx
-import { bounda } from "@bounda-dev/react-router/app";
+import { bounda, failure } from "@bounda-dev/react-router/app";
 import { redirect } from "react-router";
-import { failure } from "../errors.server";
 import type { Route } from "./+types/register";
 
 export const action = async ({ request, context }: Route.ActionArgs) => {
@@ -97,26 +96,16 @@ type.
 ## Errors from the domain
 
 A command throws `ValidationError` when the payload does not match its schema and `DomainError`
-when its handler rejects it, with the code in `rejected`. Map them once and return them as data,
-so the form can show them:
+when its handler rejects it, with the code in `rejected`. Return `failure(error)` from the action's
+`catch`, as above, and the form gets them as `actionData`:
 
-```ts
-// app/errors.server.ts
-import { DomainError, ValidationError } from "@bounda-dev/core";
-import { data } from "react-router";
+| Thrown | Status | `actionData` |
+|---|---|---|
+| `ValidationError` | 400 | `{ error, issues }`, each issue with the `path` of the field and its `message` |
+| `DomainError` | 409 | `{ error, issues: [], rejected }`, the code the command declares |
 
-export const failure = (error: unknown) => {
-  if (error instanceof ValidationError) {
-    return data({ error: error.message, issues: error.issues }, { status: 400 });
-  }
-  if (error instanceof DomainError) {
-    return data({ error: error.message, issues: [], rejected: error.rejected }, { status: 409 });
-  }
-  throw error;
-};
-```
-
-Anything else propagates to the route's `ErrorBoundary`.
+Anything else is rethrown and reaches the route's `ErrorBoundary`. `Failure`, the shape of that
+data, is exported from `@bounda-dev/react-router`.
 
 ## When the client goes away
 
@@ -204,6 +193,7 @@ in development; `createBounda` then stops the app booted before, and the next re
 one once that stop has finished, so the two never hold the storage at the same time. Its options
 are `boot` (how to create the app, `boot()` by default), `consistency` and `key` (where the
 running app is kept on `globalThis`, one app per key). `dispose()` stops the running app and
-forgets it, and resolves once every app booted under that key has stopped.
+forgets it, and resolves once every app booted under that key has stopped. Import `failure` from
+`@bounda-dev/react-router`.
 
 The [onboarding example](/guides/onboarding-example/) is a complete app built this way.
