@@ -1,6 +1,5 @@
 import { bounda, failure } from "@bounda-dev/react-router/app";
 import { Form, redirect, useNavigation } from "react-router";
-import { field } from "../form.server.ts";
 import type { Route } from "./+types/register";
 
 export const action = async ({ request, context }: Route.ActionArgs) => {
@@ -9,8 +8,8 @@ export const action = async ({ request, context }: Route.ActionArgs) => {
   try {
     await context.get(bounda).commands.registerUser({
       userId,
-      email: field(form, "email"),
-      name: field(form, "name"),
+      email: String(form.get("email") ?? ""),
+      name: String(form.get("name") ?? ""),
     });
   } catch (error) {
     return failure(error);

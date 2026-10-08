@@ -1,10 +1,10 @@
 import { bounda, failure } from "@bounda-dev/react-router/app";
 import { Form, redirect, useNavigation, useSearchParams } from "react-router";
-import { field } from "../form.server.ts";
 import type { Route } from "./+types/activate";
 
 export const action = async ({ request, context }: Route.ActionArgs) => {
-  const userId = field(await request.formData(), "userId");
+  const form = await request.formData();
+  const userId = String(form.get("userId") ?? "");
   try {
     await context.get(bounda).commands.activateUser({ userId });
   } catch (error) {

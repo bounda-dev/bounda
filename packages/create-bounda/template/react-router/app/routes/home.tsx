@@ -1,6 +1,5 @@
 import { bounda, failure } from "@bounda-dev/react-router/app";
 import { Form, redirect, useNavigation } from "react-router";
-import { field } from "../form.server.ts";
 import type { Route } from "./+types/home";
 
 export const loader = async ({ request, context }: Route.LoaderArgs) => {
@@ -11,12 +10,12 @@ export const loader = async ({ request, context }: Route.LoaderArgs) => {
 
 export const action = async ({ request, context }: Route.ActionArgs) => {
   const form = await request.formData();
-  const customerId = field(form, "customerId");
+  const customerId = String(form.get("customerId") ?? "");
   try {
     await context.get(bounda).commands.placeOrder({
       orderId: crypto.randomUUID(),
       customerId,
-      total: Number(field(form, "total")),
+      total: Number(form.get("total")),
     });
   } catch (error) {
     return failure(error);
