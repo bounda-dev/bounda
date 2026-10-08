@@ -40,6 +40,7 @@ const serverModule = (root: string, consistency: Consistency): string =>
     `  boot: () => boot({ root: ${JSON.stringify(root)}, registry }),`,
     `  consistency: ${JSON.stringify(consistency)},`,
     "});",
+    'export { failure } from "@bounda-dev/react-router";',
     "",
   ].join("\n");
 
@@ -51,6 +52,7 @@ const clientModule = (): string =>
     "export const bounda = new Proxy({}, { get: serverOnly });",
     "export const boundaMiddleware = serverOnly;",
     "export const dispose = serverOnly;",
+    "export const failure = serverOnly;",
     "",
   ].join("\n");
 
