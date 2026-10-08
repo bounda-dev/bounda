@@ -23,18 +23,23 @@ describe("connect", () => {
     expectTypeOf<ReturnType<typeof store.commands.payOrder>>().toEqualTypeOf<
       Promise<DispatchResult>
     >();
-    expectTypeOf(
-      store.commands.payOrder({ orderId: "o-1" }),
-    ).resolves.toEqualTypeOf<StoredDispatch>();
-    expectTypeOf(
-      store.commands.payOrder({ orderId: "o-1" }, { delay: "1h" }),
-    ).resolves.toEqualTypeOf<ScheduledDispatch>();
     expectTypeOf(store.queries.getOrder).parameter(0).toEqualTypeOf<{ orderId: string }>();
     expectTypeOf(store.deadLetters.list).returns.resolves.toEqualTypeOf<readonly DeadLetter[]>();
-    // @ts-expect-error total must be a number
-    void store.commands.placeOrder({ orderId: "o-1", total: "42", customer: "ada" });
     // @ts-expect-error there is no such command
     void store.commands.shipOrder;
+    // Never called: each call is an RPC to the object, and one still in flight when the file ends
+    // fails the run once workerd is torn down.
+    const calls = () => {
+      expectTypeOf(
+        store.commands.payOrder({ orderId: "o-1" }),
+      ).resolves.toEqualTypeOf<StoredDispatch>();
+      expectTypeOf(
+        store.commands.payOrder({ orderId: "o-1" }, { delay: "1h" }),
+      ).resolves.toEqualTypeOf<ScheduledDispatch>();
+      // @ts-expect-error total must be a number
+      void store.commands.placeOrder({ orderId: "o-1", total: "42", customer: "ada" });
+    };
+    void calls;
   });
 });
 
