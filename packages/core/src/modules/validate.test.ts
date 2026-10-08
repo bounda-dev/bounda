@@ -223,6 +223,20 @@ describe("validateRegistry", () => {
     );
   });
 
+  it("rejects a process named like a policy of its aggregate", () => {
+    const registry = withOrder({
+      policies: { ...order.policies, orderPayment: { module: { handler: noop } } },
+    });
+    expect(() => validateRegistry(registry)).toThrow(
+      new ConfigurationError(
+        [
+          "Invalid registry:",
+          "  aggregates.order.processes.orderPayment: is also the name of aggregates.order.policies.orderPayment; give one of them another name",
+        ].join("\n"),
+      ),
+    );
+  });
+
   it("rejects a state module whose initialState is not an object", () => {
     const registry = withOrder({ state: { initialState: "new" as never } });
     expect(() => validateRegistry(registry)).toThrow('export "initialState" must be an object');

@@ -468,6 +468,23 @@ describe("createApp", () => {
     ).rejects.toThrow(/without factories/);
   });
 
+  it("refuses a policy and a process of one aggregate that share a name", async () => {
+    const { order } = registry.aggregates;
+    await expect(
+      createApp({
+        registry: {
+          ...registry,
+          aggregates: {
+            order: { ...order, policies: { orderPayment: order.policies.archiveOnOrderPaid } },
+          },
+        },
+        config: { storage: memory() },
+      }),
+    ).rejects.toThrow(
+      "aggregates.order.processes.orderPayment: is also the name of aggregates.order.policies.orderPayment",
+    );
+  });
+
   it("exposes typed facades from the registry", async () => {
     const { app } = await start();
     const keys = Object.keys(app.commands).sort();

@@ -351,6 +351,11 @@ reacts to `payment`'s `PaymentFailed`. Its key carries the aggregate, `paymentCa
 so it never collides with an `order` policy of the same name. A policy cannot be named after an
 aggregate, and one whose trigger is not an event of the aggregate it listens to fails at boot.
 
+The policies and processes of an aggregate need distinct keys, since the key is what the runtime
+records a handled event under: `bounda generate` refuses `policies/checkout.ts` next to
+`processes/checkout/`, and `policies/payment-refund-on-payment-failed.ts` next to
+`policies/payment/refund-on-payment-failed.ts`. Boot refuses a policy and a process that share one.
+
 Policies dispatch through `commands`, the typed facade of every command in the app. A command can
 be delayed: `commands.sendReminder({ orderId }, { delay: "24h" })`. The call's type follows: one
 with `delay` resolves with `scheduled: true` and `executeAt`, one without with what the command

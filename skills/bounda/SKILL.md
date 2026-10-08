@@ -255,7 +255,9 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   A file reacts to events of the aggregate it sits in; a folder named after another aggregate
   (`policies/payment/`, `projections/payment/`) holds what reacts to that aggregate's events.
   Projections always sit in such a folder. A policy's trigger must be an event of the aggregate it
-  listens to, or boot fails.
+  listens to, or boot fails. The policies and processes of an aggregate need distinct keys
+  (`policies/payment/refund.ts` is `paymentRefund`): `bounda generate` refuses
+  `policies/checkout.ts` next to `processes/checkout/`.
 - A process `config` names events as `events.<aggregate>.<Event>`. An event of another aggregate
   reaches the instance its payload's id field names (`orderId` for an `order` process; `null`
   ignores it), so give such events that field. For one without it, `index.ts` exports
