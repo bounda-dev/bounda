@@ -23,26 +23,36 @@ const PACKAGE_ID = "@bounda-dev/react-router";
  */
 const PACKAGE_PATTERN = /^@bounda-dev\/react-router(\/|$)/;
 const APP_DIRECTORY = "app";
+const CONFIG_FILE = "bounda.config.ts";
 const WATCHED = ["domain", "read"];
 const EVENTS = ["add", "change", "unlink", "addDir", "unlinkDir"] as const;
 
 /**
- * The registry is imported here rather than loaded by `boot`, so that Vite re-evaluates this
- * module, and the app reboots, whenever it is regenerated.
+ * The registry and the configuration are imported here rather than by `boot`, so that Vite
+ * re-evaluates this module, and the app reboots, whenever either changes, and so that a build
+ * bundles both. The configuration is imported once `boot` has loaded `.env`, which it may read.
+ * Only the dev server pins `root`: a build runs wherever it is deployed, from the working
+ * directory.
  */
-const serverModule = (root: string, consistency: Consistency): string =>
-  [
+const serverModule = ({ root, command }: Generation, consistency: Consistency): string => {
+  const options = [
+    ...(command === "serve" ? [`root: ${JSON.stringify(root)}`] : []),
+    "registry",
+    `importConfig: () => import(${JSON.stringify(join(root, CONFIG_FILE))})`,
+  ];
+  return [
     'import { boot } from "@bounda-dev/core/node";',
     'import { createBounda } from "@bounda-dev/react-router";',
     `import { registry } from ${JSON.stringify(join(root, ".bounda/registry.ts"))};`,
     "",
     "export const { bounda, boundaMiddleware, dispose } = createBounda({",
-    `  boot: () => boot({ root: ${JSON.stringify(root)}, registry }),`,
+    `  boot: () => boot({ ${options.join(", ")} }),`,
     `  consistency: ${JSON.stringify(consistency)},`,
     "});",
     'export { failure } from "@bounda-dev/react-router";',
     "",
   ].join("\n");
+};
 
 const clientModule = (): string =>
   [
@@ -59,10 +69,14 @@ const clientModule = (): string =>
 interface Generation {
   readonly root: string;
   readonly logger: Logger;
+  readonly command: "serve" | "build";
+}
+
+interface Regeneration extends Pick<Generation, "root" | "logger"> {
   readonly failOnConvention: boolean;
 }
 
-const regenerate = async ({ root, logger, failOnConvention }: Generation): Promise<void> => {
+const regenerate = async ({ root, logger, failOnConvention }: Regeneration): Promise<void> => {
   const cli = await import("@bounda-dev/cli");
   try {
     const report = await cli.generate({ root });
@@ -83,6 +97,7 @@ export const createBoundaPlugin: CreateBoundaPluginFunction = ({
   clock,
 }) => {
   let generation: Generation | undefined;
+  let generated: Promise<void> | undefined;
   let queue: Promise<void> = Promise.resolve();
   let cancelPending: (() => void) | undefined;
   const isWatched = (root: string, file: string): boolean =>
@@ -92,19 +107,22 @@ export const createBoundaPlugin: CreateBoundaPluginFunction = ({
   return {
     name: "bounda",
     enforce: "pre",
+    // One instance for every environment of a build, so `buildStart` generates once.
+    sharedDuringBuild: true,
     configEnvironment: (name) =>
       name === "client"
         ? { optimizeDeps: { exclude: [PACKAGE_ID] } }
         : { resolve: { noExternal: [PACKAGE_PATTERN] } },
     configResolved(config) {
-      generation = {
-        root: config.root,
-        logger: config.logger,
-        failOnConvention: config.command === "build",
-      };
+      generation = { root: config.root, logger: config.logger, command: config.command };
     },
     async buildStart() {
-      if (generation !== undefined) await regenerate(generation);
+      const current = generation;
+      if (current === undefined) return;
+      const run = () => regenerate({ ...current, failOnConvention: current.command === "build" });
+      // A watching build starts again after every change, and each start has to see it.
+      generated = this.meta.watchMode ? run() : (generated ?? run());
+      await generated;
     },
     configureServer(server) {
       const schedule = (file: string): void => {
@@ -139,7 +157,7 @@ export const createBoundaPlugin: CreateBoundaPluginFunction = ({
       if (id !== RESOLVED_ID || generation === undefined) return null;
       return this.environment.config.consumer === "client"
         ? clientModule()
-        : serverModule(generation.root, consistency);
+        : serverModule(generation, consistency);
     },
   };
 };

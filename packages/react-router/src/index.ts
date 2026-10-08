@@ -1,4 +1,3 @@
-export { APP_MODULE_ID } from "./app-module.ts";
 export type {
   BootBoundaFunction,
   Bounda,

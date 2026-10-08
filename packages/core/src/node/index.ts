@@ -1,6 +1,7 @@
 export type {
   BootArgs,
   BootFunction,
+  ImportModuleFunction,
   LoadedProject,
   LoadProjectArgs,
   LoadProjectFunction,

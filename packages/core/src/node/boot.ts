@@ -32,6 +32,12 @@ export interface BootArgs<R extends Registry = AppRegistry> {
    */
   readonly config?: Config;
   /**
+   * Imports the configuration module instead of `configPath`, after `.env` is loaded; its
+   * default export is the configuration. For a bundler that has to see the import to include the
+   * configuration in its output, such as Vite.
+   */
+  readonly importConfig?: ImportModuleFunction;
+  /**
    * Used instead of importing `registryPath`.
    */
   readonly registry?: R;
@@ -58,13 +64,20 @@ export interface BootArgs<R extends Registry = AppRegistry> {
   readonly clock?: Clock;
 }
 
+/**
+ * Imports a module and resolves with its namespace: `() => import("./bounda.config.ts")`.
+ */
+export interface ImportModuleFunction {
+  (): Promise<Readonly<Record<string, unknown>>>;
+}
+
 export interface BootFunction {
   <R extends Registry = AppRegistry>(args?: BootArgs<R>): Promise<BoundaApp<R>>;
 }
 
 export type LoadProjectArgs<R extends Registry = AppRegistry> = Pick<
   BootArgs<R>,
-  "root" | "configPath" | "registryPath" | "config" | "registry" | "env" | "logger"
+  "root" | "configPath" | "registryPath" | "config" | "importConfig" | "registry" | "env" | "logger"
 >;
 
 export interface LoadedProject<R extends Registry = AppRegistry> {
@@ -85,24 +98,30 @@ const exists = async (path: string): Promise<boolean> => {
   }
 };
 
-const importModule = async <T>(
-  path: string,
+const importFile =
+  (path: string, what: string): ImportModuleFunction =>
+  async () => {
+    if (!(await exists(path))) {
+      throw new ConfigurationError(`Cannot find ${what} at ${path}`);
+    }
+    return (await import(/* @vite-ignore */ pathToFileURL(path).href)) as Record<string, unknown>;
+  };
+
+const importExport = async <T>(
+  load: ImportModuleFunction,
+  source: string,
   what: string,
-  pick: (module: Record<string, unknown>) => T | undefined,
+  pick: (module: Readonly<Record<string, unknown>>) => T | undefined,
 ): Promise<T> => {
-  if (!(await exists(path))) {
-    throw new ConfigurationError(`Cannot find ${what} at ${path}`);
-  }
-  const module = (await import(/* @vite-ignore */ pathToFileURL(path).href)) as Record<
-    string,
-    unknown
-  >;
-  const value = pick(module);
+  const value = pick(await load());
   if (value === undefined) {
-    throw new ConfigurationError(`${path} does not export ${what}`);
+    throw new ConfigurationError(`${source} does not export ${what}`);
   }
   return value;
 };
+
+const CONFIG = "the configuration (default export)";
+const REGISTRY = 'the registry (export "registry")';
 
 const loadEnv = (root: string, logger: Logger): void => {
   const path = resolve(root, ".env");
@@ -124,24 +143,29 @@ export const loadProject: LoadProjectFunction = async <R extends Registry = AppR
   configPath = "bounda.config.ts",
   registryPath = ".bounda/registry.ts",
   config,
+  importConfig,
   registry,
   env = true,
   logger = createConsoleLogger(),
 }: LoadProjectArgs<R> = {}): Promise<LoadedProject<R>> => {
   if (env) loadEnv(root, guardedLogger(logger));
+  const configFile = resolve(root, configPath);
+  const registryFile = resolve(root, registryPath);
   return {
     config:
       config ??
-      (await importModule<Config>(
-        resolve(root, configPath),
-        "the configuration (default export)",
+      (await importExport<Config>(
+        importConfig ?? importFile(configFile, CONFIG),
+        importConfig === undefined ? configFile : "The imported configuration module",
+        CONFIG,
         (module) => module.default as Config | undefined,
       )),
     registry:
       registry ??
-      (await importModule<R>(
-        resolve(root, registryPath),
-        'the registry (export "registry")',
+      (await importExport<R>(
+        importFile(registryFile, REGISTRY),
+        registryFile,
+        REGISTRY,
         (module) => module.registry as R | undefined,
       )),
   };
@@ -158,6 +182,7 @@ export const boot: BootFunction = async <R extends Registry = AppRegistry>({
   configPath = "bounda.config.ts",
   registryPath = ".bounda/registry.ts",
   config,
+  importConfig,
   registry,
   env = true,
   signals = true,
@@ -171,6 +196,7 @@ export const boot: BootFunction = async <R extends Registry = AppRegistry>({
     configPath,
     registryPath,
     ...(config === undefined ? {} : { config }),
+    ...(importConfig === undefined ? {} : { importConfig }),
     ...(registry === undefined ? {} : { registry }),
     env,
     logger,
