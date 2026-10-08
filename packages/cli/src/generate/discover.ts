@@ -366,20 +366,33 @@ const PORT_DECLARATION = (typeName: string): RegExp =>
 // makes one.
 const EVENT_EXPORTS: ReadonlySet<string> = new Set(["payload", "begin", "evolve"]);
 
-const DECLARED_EXPORT = /^export\s+(?:async\s+)?(?:const|let|var|function\*?|class)\s+([\w$]+)/gm;
+const BLOCK_COMMENT = /\/\*[\s\S]*?\*\//g;
+
+const DECLARED_EXPORT =
+  /^export\s+(?:abstract\s+)?(?:async\s+)?(?:const|let|var|function\*?|class|enum)\s+([\w$]+)/gm;
 
 const LISTED_EXPORTS = /^export\s*\{([^}]*)\}/gm;
 
-const runtimeExportsOf = (text: string): readonly string[] => [
-  ...[...text.matchAll(DECLARED_EXPORT)].map((match) => match[1] ?? ""),
-  ...[...text.matchAll(LISTED_EXPORTS)].flatMap((match) =>
-    (match[1] ?? "")
-      .split(",")
-      .map((entry) => entry.trim())
-      .filter((entry) => entry !== "" && !entry.startsWith("type "))
-      .map((entry) => entry.split(/\s+as\s+/).at(-1) ?? entry),
-  ),
+// What else a module can export at run time, under the name the error reports it by.
+const UNNAMED_EXPORTS: readonly (readonly [RegExp, string])[] = [
+  [/^export\s+default\b/m, "default"],
+  [/^export\s*\*/m, "*"],
 ];
+
+const runtimeExportsOf = (source: string): readonly string[] => {
+  const text = source.replace(BLOCK_COMMENT, "");
+  return [
+    ...[...text.matchAll(DECLARED_EXPORT)].map((match) => match[1] ?? ""),
+    ...[...text.matchAll(LISTED_EXPORTS)].flatMap((match) =>
+      (match[1] ?? "")
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter((entry) => entry !== "" && !entry.startsWith("type "))
+        .map((entry) => entry.split(/\s+as\s+/).at(-1) ?? entry),
+    ),
+    ...UNNAMED_EXPORTS.filter(([pattern]) => pattern.test(text)).map(([, name]) => name),
+  ];
+};
 
 const quoted = (names: readonly string[]): string => names.map((name) => `"${name}"`).join(", ");
 
@@ -503,17 +516,18 @@ const discoverAggregate = async (
   const others = new Map<string, RootModule>();
   const upcasts: string[] = [];
   let state: ModuleRef | null = null;
+  const rest: string[] = [];
   for (const module of listing.modules) {
+    if (module === STATE) state = moduleRef(context, join(directory, `${module}.ts`));
+    else if (module.endsWith(UPCAST_SUFFIX)) upcasts.push(module);
+    else rest.push(module);
+  }
+  const texts = await Promise.all(
+    rest.map((module) => readFile(join(directory, `${module}.ts`), "utf8")),
+  );
+  for (const [index, module] of rest.entries()) {
     const path = join(directory, `${module}.ts`);
-    if (module === STATE) {
-      state = moduleRef(context, path);
-      continue;
-    }
-    if (module.endsWith(UPCAST_SUFFIX)) {
-      upcasts.push(module);
-      continue;
-    }
-    const text = await readFile(path, "utf8");
+    const text = texts[index] ?? "";
     if (!isEvent(context, path, text)) {
       others.set(module, { path, text });
       continue;

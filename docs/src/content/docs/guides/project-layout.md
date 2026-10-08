@@ -273,7 +273,7 @@ export const rejections = ({ command }: Command.RejectionsArgs) => ({
 
 export const handler = async ({ command, state, events, inventory, reject }: Command.HandlerArgs) => {
   if (state.status !== undefined) return reject("AlreadyPlaced");
-  if (!(await inventory.available(command.payload.skus))) return reject("OutOfStock");
+  if (!(await inventory.available({ skus: command.payload.skus }))) return reject("OutOfStock");
   return [events.orderPlaced({ customerId: command.payload.customerId, skus: command.payload.skus })];
 };
 ```

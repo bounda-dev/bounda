@@ -420,6 +420,10 @@ describe("discoverProject convention problems", () => {
         "app/domain/order/notes.ts",
         "// export const evolve = () => ({});\nexport type Note = string;\n",
       ],
+      [
+        "app/domain/order/draft.ts",
+        "/*\nexport const evolve = () => ({});\n*/\nexport * from './notes.ts';\n",
+      ],
       "app/domain/order/helpers/format.ts",
     ]);
     const model = await discoverProject({ root });
@@ -441,10 +445,15 @@ describe("discoverProject convention problems", () => {
         "app/domain/order/discount.ts",
         "const apply = () => 0;\nexport { apply as evolve, apply };\nexport type { Discount } from './x';\n",
       ],
+      [
+        "app/domain/order/order-refunded.ts",
+        "export const evolve = () => ({});\nexport enum Reason {}\nexport default evolve;\nexport * from './x';\n",
+      ],
     ]);
     expect(await problemsOf(root)).toEqual([
       'app/domain/order/discount.ts: exports "evolve", an event\'s, and "apply" besides: an event exports only payload, begin and evolve',
       'app/domain/order/order-cancelled.ts: exports "evolve", an event\'s, and "reasons", "limitOf" besides: an event exports only payload, begin and evolve',
+      'app/domain/order/order-refunded.ts: exports "evolve", an event\'s, and "Reason", "default", "*" besides: an event exports only payload, begin and evolve',
     ]);
   });
 
