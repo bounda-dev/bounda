@@ -185,6 +185,12 @@ describe("evolveTableStatements with keys and indexes", () => {
     );
   });
 
+  it("lets a table whose primary key the engine did not report evolve", () => {
+    expect(
+      evolve({ id: f.string().primaryKey(), email: f.string() }, [column("id"), column("email")]),
+    ).toEqual([]);
+  });
+
   it("refuses a column that is no longer unique", () => {
     expect(() =>
       evolve({ id: f.string().primaryKey(), email: f.string() }, [

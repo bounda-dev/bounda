@@ -350,6 +350,16 @@ describe("createSqliteAdapter", () => {
     );
   });
 
+  it("does not take a column of a unique index over several columns for a unique column", async () => {
+    const db = new DatabaseSync(":memory:");
+    const fields = { id: f.string().primaryKey(), city: f.string(), street: f.string() };
+    const open = () =>
+      nodeSqlite(db).adapter.createReadModel({ name: "places", fields, logger: silentLogger });
+    await open();
+    db.exec('CREATE UNIQUE INDEX "places_address" ON "bounda_rm_places" ("city", "street")');
+    await expect(open()).resolves.toBeDefined();
+  });
+
   it("reports the stream version when loading past its end", async () => {
     const { eventStore } = await storage();
     await eventStore.append({

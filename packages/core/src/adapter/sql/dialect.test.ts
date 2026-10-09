@@ -64,6 +64,9 @@ describe("postgresqlDialect", () => {
     const tags = [true, 2];
     expect(JSON.stringify(postgresqlDialect.encode("json", tags))).toBe("[true,2]");
     expect(JSON.stringify(postgresqlDialect.encode("json", "pending"))).toBe('"pending"');
+    expect(typeof postgresqlDialect.encode("json", true)).toBe("object");
+    expect(JSON.stringify(postgresqlDialect.encode("json", false))).toBe("false");
+    expect(postgresqlDialect.encode("json", null)).toBeNull();
     expect(JSON.stringify(postgresqlDialect.encode("json", new Date(0)))).toBe(
       '"1970-01-01T00:00:00.000Z"',
     );
