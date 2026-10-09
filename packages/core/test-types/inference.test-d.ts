@@ -1,6 +1,7 @@
 import type {
   AppRegistry,
   BoundaApp,
+  BoundaClient,
   CatchUpReadModelsArgs,
   Clock,
   CommandHandlerArgs,
@@ -601,6 +602,12 @@ describe("facades", () => {
     expectTypeOf<AppRegistry>().toEqualTypeOf<Registry>();
     expectTypeOf<BoundaApp["commands"]>().toEqualTypeOf<Commands>();
     expectTypeOf<BoundaApp["queries"]>().toEqualTypeOf<Queries>();
+    expectTypeOf<BoundaClient["commands"]>().toEqualTypeOf<Commands>();
+    expectTypeOf<BoundaClient["queries"]>().toEqualTypeOf<Queries>();
+  });
+
+  it("are what a request sees of the app, wherever it runs", () => {
+    expectTypeOf<BoundaApp<Registry>>().toExtend<BoundaClient<Registry>>();
   });
 
   it("expose every query with the result type its handler returns", () => {

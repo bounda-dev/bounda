@@ -91,6 +91,7 @@ The hosts map the codes a client can cause to a status:
 | anything else | 500, code `INTERNAL`, logged | rethrown, for the route's `ErrorBoundary` |
 
 `createWorker` answers with `{ error: { code, message } }`, and 400 with `INVALID_JSON` for a
-body it cannot parse. See
+body it cannot parse. `failure()` goes by the code too, so it answers the same whether the app runs
+in the process or in a Durable Object, whose refusals arrive as plain errors. See
 [errors from the domain](/guides/react-router/#errors-from-the-domain) and
 [the Cloudflare adapter](/adapters/cloudflare/).

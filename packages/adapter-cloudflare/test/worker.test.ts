@@ -1,8 +1,9 @@
 import { createExecutionContext, runDurableObjectAlarm } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
-import { ConfigurationError, type Consistency } from "@bounda-dev/core";
+import { ConfigurationError, type Consistency, type Logger } from "@bounda-dev/core";
 import { describe, expect, it } from "vitest";
-import { createWorker } from "../src/worker.ts";
+import { cloudflare } from "../src/definition.ts";
+import { type CreateWorkerArgs, createWorker } from "../src/worker.ts";
 import { recordingStub } from "./recording-stub.ts";
 
 const post = (path: string, body?: unknown, tenant?: string) =>
@@ -38,10 +39,22 @@ describe("createWorker", () => {
     expect(await byDefault.json()).toBeNull();
   });
 
-  it("sends commands to the object with its consistency, read-your-writes unless told otherwise", async () => {
-    const sent = async (worker: ReturnType<typeof createWorker>) => {
+  it("sends commands through the binding the config names, with the worker's consistency, read-your-writes unless told otherwise", async () => {
+    const sent = async (consistency?: Consistency) => {
       const { stub, commands } = recordingStub();
-      const spy = { idFromName: (name: string) => name, get: () => stub };
+      const addressed: string[] = [];
+      const spy = {
+        idFromName: (name: string) => {
+          addressed.push(name);
+          return name;
+        },
+        get: () => stub,
+      };
+      const worker = createWorker({
+        config: { storage: cloudflare({ binding: "SPY" }) },
+        tenantOf: () => "acme",
+        ...(consistency === undefined ? {} : { consistency }),
+      });
       const response = await worker.fetch?.(
         new Request("https://bounda.test/commands/payOrder", {
           method: "POST",
@@ -51,19 +64,75 @@ describe("createWorker", () => {
         createExecutionContext(),
       );
       expect(response?.status).toBe(200);
+      expect(addressed).toEqual(["acme"]);
       return commands;
     };
-    expect(await sent(createWorker({ binding: "SPY", consistency: "eventual" }))).toEqual([
-      ["payOrder", { orderId: "o-1" }, {}, "eventual"],
+    expect(await sent("eventual")).toEqual([["payOrder", { orderId: "o-1" }, {}, "eventual"]]);
+    expect(await sent()).toEqual([["payOrder", { orderId: "o-1" }, {}, "read-your-writes"]]);
+  });
+
+  it("answers a 500 and logs it when tenantOf throws", async () => {
+    const errors: unknown[][] = [];
+    const logger: Logger = {
+      debug: () => undefined,
+      info: () => undefined,
+      warn: () => undefined,
+      error: (...entry) => void errors.push(entry),
+    };
+    const worker = createWorker({
+      config: { storage: cloudflare({ binding: "SPY" }) },
+      tenantOf: () => {
+        throw new Error("no session");
+      },
+      logger,
+    });
+    const response = await worker.fetch?.(
+      new Request("https://bounda.test/queries/getOrder", {
+        method: "POST",
+        body: JSON.stringify({ orderId: "o-1" }),
+      }) as Request<unknown, IncomingRequestCfProperties>,
+      {
+        SPY: { idFromName: () => "id", get: () => recordingStub().stub },
+      } as unknown as Cloudflare.Env,
+      createExecutionContext(),
+    );
+    expect(response?.status).toBe(500);
+    expect(await response?.json()).toEqual({
+      error: { code: "INTERNAL", message: "Internal error" },
+    });
+    expect(errors).toEqual([
+      ["bounda worker request failed", { path: "/queries/getOrder", message: "no session" }],
     ]);
-    expect(await sent(createWorker({ binding: "SPY" }))).toEqual([
-      ["payOrder", { orderId: "o-1" }, {}, "read-your-writes"],
-    ]);
+  });
+
+  it("refuses a configuration without cloudflare() storage, or none at all", () => {
+    expect(() => createWorker({ binding: "STORE" } as unknown as CreateWorkerArgs)).toThrow(
+      new ConfigurationError(
+        "A Bounda app on Cloudflare stores its events in its Durable Object's SQLite: set storage to cloudflare(), not undefined",
+      ),
+    );
+  });
+
+  it("refuses a storage that is not cloudflare()", () => {
+    expect(() =>
+      createWorker({
+        config: { storage: { kind: "bounda-adapter", name: "sqlite", options: {} } },
+        tenantOf: () => "acme",
+      }),
+    ).toThrow(
+      new ConfigurationError(
+        'A Bounda app on Cloudflare stores its events in its Durable Object\'s SQLite: set storage to cloudflare(), not "sqlite"',
+      ),
+    );
   });
 
   it("refuses a consistency it does not know", () => {
     expect(() =>
-      createWorker({ binding: "STORE", consistency: "eventually" as Consistency }),
+      createWorker({
+        config: { storage: cloudflare() },
+        tenantOf: () => "acme",
+        consistency: "eventually" as Consistency,
+      }),
     ).toThrow(
       new ConfigurationError(
         'consistency must be "read-your-writes" or "eventual", got "eventually"',

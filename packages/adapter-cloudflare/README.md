@@ -32,7 +32,10 @@ import { registry } from "../.bounda/registry.ts";
 import config from "../bounda.config.ts";
 
 export const Store = createBoundaObject({ registry, config });
-export default createWorker({ binding: "STORE" });
+export default createWorker({
+  config,
+  tenantOf: (request) => request.headers.get("x-bounda-tenant") ?? "default",
+});
 ```
 
 `wrangler.jsonc` binds `STORE` to the `Store` class with a `new_sqlite_classes` migration.
@@ -42,8 +45,9 @@ export default createWorker({ binding: "STORE" });
 - Policies, processes, scheduled commands and retries run in the object's alarm, which it arms
   itself.
 - `createWorker` serves `POST /commands/<name>` and `POST /queries/<name>` as JSON, one store per
-  `x-bounda-tenant` header. It has no authentication: a starting point. Your own `fetch` talks to a
-  store with `connect(stub)`, which types `commands` and `queries` from your modules.
+  tenant, which `tenantOf` names. It has no authentication: a starting point. Your own `fetch`
+  talks to a store with `connect(stub)`, which types `commands` and `queries` from your modules.
+- A React Router app runs in the Worker too, through `@bounda-dev/react-router`.
 
 ## Status
 

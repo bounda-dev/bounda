@@ -57,4 +57,7 @@ export const RegionStore = createBoundaObject({
  */
 export class Bare extends DurableObject {}
 
-export default createWorker({ binding: "STORE" });
+export default createWorker({
+  config: { storage: cloudflare() },
+  tenantOf: (request) => request.headers.get("x-bounda-tenant") ?? "default",
+});

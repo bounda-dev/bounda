@@ -22,7 +22,7 @@ Breaking:
   - `@bounda-dev/cli`: everything but `generate`, `ConventionError`, `formatConventionError`, `formatWarnings` and their types. `GenerateReport` no longer carries the project `model` and the generated `files`.
   - `create-bounda`: everything; it is a command, with no library entry.
   - `@bounda-dev/adapter-sqlite` and `@bounda-dev/adapter-postgresql`: `storageTablesFor`, `storageSchemaStatements`, `StorageTables`, `resolve*Options`, the `DEFAULT_*` constants and the database types. Bounda creates and evolves its tables itself.
-  - `@bounda-dev/adapter-cloudflare`: `durableObjectAdapter`, `isCloudflareDefinition`, `createDurableSqlDatabase`, `nextWake`, `workersLogger`, `TENANT_HEADER` and `DEFAULT_TABLE_PREFIX`.
+  - `@bounda-dev/adapter-cloudflare`: `durableObjectAdapter`, `createDurableSqlDatabase`, `nextWake`, `workersLogger`, `TENANT_HEADER` and `DEFAULT_TABLE_PREFIX`.
 
 Fixed:
 

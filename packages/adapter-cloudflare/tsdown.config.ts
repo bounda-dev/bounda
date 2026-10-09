@@ -6,7 +6,7 @@ export default defineConfig({
   unbundle: true,
   dts: true,
   platform: "neutral",
-  external: ["cloudflare:workers"],
+  deps: { neverBundle: ["cloudflare:workers"] },
   publint: true,
   attw: true,
 });

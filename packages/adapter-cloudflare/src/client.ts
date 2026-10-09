@@ -1,9 +1,10 @@
 import {
   type AppLag,
   type AppRegistry,
+  type BoundaClient,
   type CommandsFacade,
-  ConfigurationError,
   type Consistency,
+  checkConsistency,
   type DeadLetter,
   type DispatchOptions,
   type DispatchResult,
@@ -34,27 +35,6 @@ export interface BoundaStub {
   rebuildReadModel(name: string): PromiseLike<unknown>;
 }
 
-/**
- * One store, seen from a Worker: the same `commands` and `queries` as `app.commands` and
- * `app.queries`, typed from the registry, plus the operations an operator needs. Every call is a
- * round trip to the object. A command's `signal` only counts before the call leaves the Worker:
- * RPC cannot carry it into the object, where the command then runs to the end.
- */
-export interface BoundaClient<R extends Registry> {
-  readonly commands: CommandsFacade<R>;
-  readonly queries: QueriesFacade<R>;
-  getLag(): Promise<AppLag>;
-  readonly deadLetters: {
-    list(args?: ListDeadLettersArgs): Promise<readonly DeadLetter[]>;
-    retry(id: string): Promise<DeadLetter>;
-    discard(id: string): Promise<DeadLetter>;
-  };
-  /**
-   * Runs the first slice of a rebuild; when it is not `done`, the object's alarm finishes it.
-   */
-  rebuildReadModel(name: string): Promise<RebuildReadModelResult>;
-}
-
 export interface ConnectOptions {
   /**
    * Whether a command resolves once the read models reflect it, `"read-your-writes"` by default,
@@ -67,19 +47,6 @@ export interface ConnectOptions {
 export interface ConnectFunction {
   <R extends Registry = AppRegistry>(stub: BoundaStub, options?: ConnectOptions): BoundaClient<R>;
 }
-
-export interface CheckConsistencyFunction {
-  (consistency: Consistency): void;
-}
-
-// A Worker's code is not always type-checked.
-export const checkConsistency: CheckConsistencyFunction = (consistency) => {
-  if (consistency !== "read-your-writes" && consistency !== "eventual") {
-    throw new ConfigurationError(
-      `consistency must be "read-your-writes" or "eventual", got ${JSON.stringify(consistency)}`,
-    );
-  }
-};
 
 const sendable = (options: DispatchOptions | undefined): DispatchOptions | undefined => {
   if (options === undefined) return undefined;
@@ -98,14 +65,17 @@ const byName = <T extends object>(call: (name: string, ...args: unknown[]) => un
   });
 
 /**
- * A typed client for a Bounda Durable Object. Without a type argument it takes the registry the
- * generator registered, like `boot()`:
+ * A typed client for a Bounda Durable Object: the same `commands` and `queries` as the app's,
+ * typed from the registry, plus the operations an operator needs. Without a type argument it
+ * takes the registry the generator registered, like `boot()`:
  *
  * ```ts
  * const store = connect(env.STORE.get(env.STORE.idFromName(tenant)));
  * await store.commands.placeOrder({ orderId, customerId, total });
  * ```
  *
+ * Every call is a round trip to the object. A command's `signal` only counts before the call
+ * leaves the Worker: RPC cannot carry it into the object, where the command then runs to the end.
  * Throws `ConfigurationError` for a `consistency` it does not know.
  */
 export const connect: ConnectFunction = <R extends Registry = AppRegistry>(

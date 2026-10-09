@@ -28,7 +28,8 @@ types refuse; wrap it with `asDuration(process.env.X ?? "1m")`, which checks it.
 ## Top level
 
 - **`storage`**, required. The adapter that holds the store: `sqlite({...})`, `postgresql({...})` or
-  `cloudflare()`. See [adapters](/adapters/).
+  `cloudflare()`, whose `binding` names the Durable Object binding the Worker reaches it through,
+  `"STORE"` by default. See [adapters](/adapters/).
 - **`readModels`**, default `{}`. A different adapter for some read models, by read model name: `{
   orderSummary: postgresql({ url: READ_URL }) }`. The rest stay in `storage`.
 - **`ports`**, default `{}`. The implementation each port uses, by module and port: `{ order: {
@@ -139,6 +140,8 @@ runtime: {
 
 - **React Router**: the `bounda()` Vite plugin takes `consistency` and `debounceMs`; see
   [its options](/guides/react-router/#options).
-- **Cloudflare**: `createBoundaObject` takes `passesPerAlarm`, and `connect` and `createWorker`
-  take `consistency`; see [the Cloudflare adapter](/adapters/cloudflare/#how-it-runs).
+- **Cloudflare**: `createBoundaObject` takes `passesPerAlarm`, `createWorker` takes `tenantOf`
+  and `consistency`, and `connect` takes `consistency`; see
+  [the Cloudflare adapter](/adapters/cloudflare/#how-it-runs). With React Router, `app/tenant.ts`
+  names the tenant; see [on Cloudflare](/guides/react-router/#on-cloudflare).
 - **Tests**: `createTestApp` takes its own `ports` and `config`; see [testing](/guides/testing/).

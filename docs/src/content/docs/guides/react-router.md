@@ -6,8 +6,9 @@ sidebar:
 ---
 
 `@bounda-dev/react-router` puts a running Bounda app in the router context of every request. It
-works with React Router 8 in framework mode; the middleware boots the app on the first request and
-loaders and actions read it with `context.get(bounda)`.
+works with React Router 8 in framework mode, on Node or [on Cloudflare](#on-cloudflare); the
+middleware boots the app on the first request and loaders and actions read it with
+`context.get(bounda)`.
 
 The quickest start is a new project:
 
@@ -91,7 +92,8 @@ export const loader = async ({ params, context }: Route.LoaderArgs) => {
 
 `commands` and `queries` are typed from the generated registry: payloads, options and results
 are checked in the route module, and `loaderData` in the component carries the query's result
-type.
+type. What the context holds is a `BoundaClient`: besides them, `getLag()`, `deadLetters` and
+`rebuildReadModel`, the same on Node and on Cloudflare.
 
 ## Errors from the domain
 
@@ -104,6 +106,8 @@ when its handler rejects it, with the code in `rejected`. Return `failure(error)
 | `ValidationError` | 400 | `{ error, issues }`, each issue with the `path` of the field and its `message` |
 | `DomainError` | 409 | `{ error, issues: [], rejected }`, the code the command declares |
 
+`failure` goes by the error's `code`, `VALIDATION_FAILED` or `DOMAIN_ERROR`, so it answers the
+same for the refusals a Durable Object sends back on Cloudflare, which arrive as plain errors.
 Anything else is rethrown and reaches the route's `ErrorBoundary`. `Failure`, the shape of that
 data, is exported from `@bounda-dev/react-router`.
 
@@ -121,7 +125,8 @@ await context.get(bounda).commands.registerUser(payload, { signal: request.signa
 ```
 
 The option takes any signal, such as `AbortSignal.timeout(2_000)` for one action that must answer
-sooner than the app's limit.
+sooner than the app's limit. On Cloudflare it only counts before the call leaves the Worker: RPC
+cannot carry it into the Durable Object, where the command runs to the end.
 
 ## Reading what you just wrote
 
@@ -137,9 +142,11 @@ bounda({ consistency: "eventual" });
 ```
 
 `consistency: "eventual"` serves the app exactly as booted, and reads may lag behind writes. Use
-it when a separate worker owns the projections and the pages tolerate the delay.
+it when a separate worker owns the projections and the pages tolerate the delay. On Cloudflare a
+command then answers once its events are stored, and the Durable Object's alarm projects them
+right after.
 
-## Development and production
+## Development and production on Node
 
 - `react-router dev` boots the app on the first request. A change under `app/domain` or
   `app/read` regenerates the types, and the next request boots an app from the new modules; so
@@ -164,6 +171,90 @@ it when a separate worker owns the projections and the pages tolerate the delay.
 - Booting fails loudly: the request that triggered it gets the error, and the next request tries
   again. Nothing exits the process.
 
+## On Cloudflare
+
+When `bounda.config.ts` sets `storage: cloudflare()`, the app runs in a Durable Object, one per
+tenant, and React Router runs in the Worker in front of it, through
+[`@cloudflare/vite-plugin`](https://developers.cloudflare.com/workers/vite-plugin/). Each loader
+and action then reaches the tenant's object over RPC. The `bounda()` plugin, the routes and
+`app/root.tsx` stay as above; the Worker needs four more things.
+
+```bash
+npm install @bounda-dev/core @bounda-dev/react-router @bounda-dev/adapter-cloudflare
+npm install -D @bounda-dev/cli @cloudflare/vite-plugin wrangler
+```
+
+```ts
+// vite.config.ts
+import { bounda } from "@bounda-dev/react-router/vite";
+import { cloudflare } from "@cloudflare/vite-plugin";
+import { reactRouter } from "@react-router/dev/vite";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  plugins: [cloudflare({ viteEnvironment: { name: "ssr" } }), bounda(), reactRouter()],
+});
+```
+
+```ts
+// workers/app.ts
+import { createBoundaObject } from "@bounda-dev/adapter-cloudflare";
+import { createRequestHandler } from "react-router";
+import { registry } from "../.bounda/registry.ts";
+import config from "../bounda.config.ts";
+
+export const Store = createBoundaObject({ registry, config });
+
+const handler = createRequestHandler(
+  () => import("virtual:react-router/server-build"),
+  import.meta.env.MODE,
+);
+
+export default { fetch: (request: Request) => handler(request) };
+```
+
+```jsonc
+// wrangler.jsonc
+{
+  "name": "my-app",
+  "main": "./workers/app.ts",
+  "compatibility_date": "2026-09-21",
+  "durable_objects": { "bindings": [{ "name": "STORE", "class_name": "Store" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Store"] }]
+}
+```
+
+```ts
+// app/tenant.ts
+import type { TenantFunction } from "@bounda-dev/react-router/cloudflare";
+
+// One store for every request. Name one per customer instead to keep their data apart.
+export const tenant: TenantFunction = () => "default";
+```
+
+`app/tenant.ts` names the store each request reaches. It receives what a middleware does, the
+`request`, the route's `params` and the `context`, so the tenant can come from the URL, such as
+`({ params }) => params.workspace ?? "default"`, or from what an earlier middleware put in the
+context, such as the signed-in user. It runs the first time a request uses `bounda`, once per
+request. Every tenant is its own object with its own events and read models; a single tenant is a
+choice, so there is no default, and without the file the first request fails saying what to
+create.
+
+The binding is `STORE` unless the configuration names another with `cloudflare({ binding })`.
+What runs in the Worker is a client of the object, so there is no app to boot there: the first
+request imports the configuration and `app/tenant.ts`, and `dispose()` does nothing. Policies,
+processes and scheduled commands run in the object's alarm, as
+[on the adapter](/adapters/cloudflare/#how-it-runs).
+
+- `react-router dev` runs the Worker and the object in `workerd`, as in production. A change
+  under `app/domain` or `app/read` reloads both, and adding or removing `app/tenant.ts` is picked
+  up on the next request.
+- `react-router build` writes the Worker and its `wrangler.json`; `wrangler deploy` deploys it.
+- Bounda loads no `.env` here: the Worker's variables and secrets come from Wrangler, locally from
+  `.dev.vars`, and port implementations receive them as `env` in `create`.
+- With `storage: cloudflare()` but without `@cloudflare/vite-plugin`, the server runs in Node,
+  which cannot import the Workers runtime, and the first request fails saying to add the plugin.
+
 ## Options
 
 `bounda()` takes:
@@ -175,8 +266,8 @@ it when a separate worker owns the projections and the pages tolerate the delay.
 
 ## Without the plugin
 
-`createBounda()` from `@bounda-dev/react-router` is what the served module calls, and you can call
-it yourself in a server module when the plugin does not fit:
+`createBounda()` from `@bounda-dev/react-router` is what the served module calls on Node, and you
+can call it yourself in a server module when the plugin does not fit:
 
 ```ts
 // app/bounda.server.ts
@@ -197,3 +288,21 @@ create the app, `boot()` by default), `consistency` and `key` (where the running
 `globalThis`, one app per key). `dispose()` stops the running app and forgets it, and resolves
 once every app booted under that key has stopped. Import `failure` from
 `@bounda-dev/react-router`.
+
+On Cloudflare, `createBounda` from `@bounda-dev/react-router/cloudflare` takes the configuration
+and the tenant instead, and reads the binding from the Worker's `env`:
+
+```ts
+// app/bounda.server.ts
+import { createBounda } from "@bounda-dev/react-router/cloudflare";
+import config from "../bounda.config.ts";
+
+export const { bounda, boundaMiddleware } = createBounda({
+  config,
+  tenant: ({ params }) => params.workspace ?? "default",
+});
+```
+
+It takes `consistency` too, and throws `ConfigurationError` when `storage` is not `cloudflare()`,
+when the Worker has no such binding, without a `tenant` function, or for a `consistency` it does
+not know.

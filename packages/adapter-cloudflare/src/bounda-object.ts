@@ -20,7 +20,7 @@ import {
 } from "@bounda-dev/core";
 import type { Config } from "@bounda-dev/core/config";
 import { durableObjectAdapter } from "./adapter.ts";
-import { isCloudflareDefinition } from "./definition.ts";
+import { cloudflareStorageOf, isCloudflareDefinition } from "./definition.ts";
 import { workersLogger } from "./logger.ts";
 import { type RpcOutcome, settle } from "./outcome.ts";
 import type { DurableSqlStorage } from "./sql-database.ts";
@@ -109,16 +109,11 @@ export interface ConfigForObjectFunction {
 }
 
 export const configForObject: ConfigForObjectFunction = (config, storage) => {
-  if (!isCloudflareDefinition(config.storage)) {
-    throw new ConfigurationError(
-      `A Bounda Durable Object stores its events in its own SQLite: set storage to cloudflare(), not "${config.storage.name}"`,
-    );
-  }
   const own = (options: { readonly tablePrefix?: string }) =>
     durableObjectAdapter({ storage, options });
   return {
     ...config,
-    storage: own(config.storage.options),
+    storage: own(cloudflareStorageOf(config).options),
     ...(config.readModels === undefined
       ? {}
       : {

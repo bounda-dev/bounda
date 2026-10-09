@@ -61,6 +61,34 @@ describe("failure", () => {
     expect(answer.init).toEqual({ status: 409 });
   });
 
+  it("answers the refusals a Durable Object sends back, which arrive as plain errors with their code", () => {
+    const issues = [{ path: ["total"], message: "Expected number" }];
+    const invalid = failure(
+      Object.assign(new Error("Invalid command PlaceOrder"), {
+        name: "ValidationError",
+        code: "VALIDATION_FAILED",
+        issues,
+      }),
+    );
+    expect(invalid.data).toEqual({ error: "Invalid command PlaceOrder", issues });
+    expect(invalid.init).toEqual({ status: 400 });
+    const rejected = failure(
+      Object.assign(new Error("Order o-1 was already placed"), {
+        name: "DomainError",
+        code: "DOMAIN_ERROR",
+        rejected: "AlreadyPlaced",
+      }),
+    );
+    expect(rejected.data).toEqual({
+      error: "Order o-1 was already placed",
+      issues: [],
+      rejected: "AlreadyPlaced",
+    });
+    expect(rejected.init).toEqual({ status: 409 });
+    const conflict = Object.assign(new Error("Conflict"), { code: "CONCURRENCY_CONFLICT" });
+    expect(() => failure(conflict)).toThrow(conflict);
+  });
+
   it("rethrows anything else, for the route's ErrorBoundary", () => {
     const conflict = new ConcurrencyError({
       streamId: "order:o-1",
@@ -70,6 +98,15 @@ describe("failure", () => {
     expect(() => failure(conflict)).toThrow(conflict);
     const bug = new TypeError("boom");
     expect(() => failure(bug)).toThrow(bug);
+    const thrown = (value: unknown): unknown => {
+      try {
+        return failure(value);
+      } catch (error) {
+        return error;
+      }
+    };
+    expect(thrown("boom")).toBe("boom");
+    expect(thrown(null)).toBeNull();
   });
 
   it("answers only the command's own rejection, and rethrows another command's it let through", async () => {

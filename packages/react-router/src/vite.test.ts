@@ -153,37 +153,61 @@ describe("bounda() Vite plugin", () => {
     const configEnvironment = hookOf(plugin, "configEnvironment") as unknown as (
       this: unknown,
       name: string,
+      config: { readonly resolve?: { readonly conditions?: readonly string[] } },
     ) => {
       readonly resolve?: { readonly noExternal?: readonly RegExp[] };
-      readonly optimizeDeps?: { readonly exclude?: readonly string[] };
+      readonly optimizeDeps?: {
+        readonly exclude?: readonly string[];
+        readonly include?: readonly string[];
+      };
     };
-    const server = configEnvironment.call({}, "ssr");
+    const server = configEnvironment.call({}, "ssr", { resolve: { conditions: ["node"] } });
     const pattern = server.resolve?.noExternal?.[0] as RegExp;
     expect(pattern.test("@bounda-dev/react-router/app")).toBe(true);
     expect(pattern.test("@bounda-dev/react-router")).toBe(true);
     expect(pattern.test("@bounda-dev/react-router-other")).toBe(false);
     expect(pattern.test("not-@bounda-dev/react-router")).toBe(false);
-    expect(configEnvironment.call({}, "client").optimizeDeps?.exclude).toEqual([
-      "@bounda-dev/react-router",
-    ]);
-    expect(configEnvironment.call({}, "client").resolve).toBeUndefined();
+    expect(server.optimizeDeps).toBeUndefined();
+    expect(configEnvironment.call({}, "ssr", {}).optimizeDeps).toBeUndefined();
+    expect(configEnvironment.call({}, "ssr", { resolve: {} }).optimizeDeps).toBeUndefined();
+    const client = configEnvironment.call({}, "client", {});
+    expect(client.optimizeDeps?.exclude).toEqual(["@bounda-dev/react-router"]);
+    expect(client.resolve).toBeUndefined();
   });
 
-  it("serves the server module wired to the project's registry and configuration, reading its own writes", () => {
+  it("pre-bundles the host where the server runs in a Worker", () => {
+    const configEnvironment = hookOf(bounda(), "configEnvironment") as unknown as (
+      this: unknown,
+      name: string,
+      config: { readonly resolve?: { readonly conditions?: readonly string[] } },
+    ) => {
+      readonly resolve?: { readonly noExternal?: readonly RegExp[] };
+      readonly optimizeDeps?: { readonly include?: readonly string[] };
+    };
+    const worker = configEnvironment.call({}, "ssr", {
+      resolve: { conditions: ["workerd", "worker", "module", "browser"] },
+    });
+    expect(worker.optimizeDeps?.include).toEqual(["@bounda-dev/react-router/host"]);
+    expect(worker.resolve?.noExternal?.[0]?.test("@bounda-dev/react-router/host")).toBe(true);
+  });
+
+  it("serves the server module wired to the project's registry, configuration and tenant, reading its own writes", () => {
     const { configure, load } = harness("/project");
     configure("serve");
     const code = load("\0@bounda-dev/react-router/app", "server");
     expect(code).toBe(
       [
-        'import { boot } from "@bounda-dev/core/node";',
-        'import { createBounda } from "@bounda-dev/react-router";',
+        'import { createHost } from "@bounda-dev/react-router/host";',
         'import { registry } from "/project/.bounda/registry.ts";',
         "",
-        "export const { bounda, boundaMiddleware, dispose } = createBounda({",
-        '  boot: () => boot({ root: "/project", registry, importConfig: () => import("/project/bounda.config.ts") }),',
+        "export const { bounda, boundaMiddleware, dispose } = createHost({",
+        '  root: "/project",',
+        "  registry,",
+        '  importConfig: () => import("/project/bounda.config.ts"),',
+        '  importTenant: Object.values(import.meta.glob("/app/tenant.ts"))[0],',
         '  consistency: "read-your-writes",',
         "});",
-        'export { failure } from "@bounda-dev/react-router";',
+        'export { failure } from "@bounda-dev/react-router/host";',
         "",
       ].join("\n"),
     );
@@ -195,7 +219,7 @@ describe("bounda() Vite plugin", () => {
     configure("build");
     const code = load("\0@bounda-dev/react-router/app", "server") as string;
     expect(code).toContain(
-      '  boot: () => boot({ registry, importConfig: () => import("/project/bounda.config.ts") }),',
+      'createHost({\n  registry,\n  importConfig: () => import("/project/bounda.config.ts"),',
     );
     expect(code).not.toContain("root:");
   });

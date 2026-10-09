@@ -33,8 +33,9 @@ their settings.
 ## Who decides, and how
 
 - **React Router.** `createBounda({ consistency })`, or `bounda({ consistency })` in the Vite
-  plugin, defaults to `"read-your-writes"`: the app it puts in every request's context is wrapped
-  in `readYourWrites`. `"eventual"` serves the app as booted, for pages that tolerate the delay
+  plugin, defaults to `"read-your-writes"`: on Node the app it puts in every request's context is
+  wrapped in `readYourWrites`, and on Cloudflare the setting goes to `connect`. `"eventual"` serves
+  the app as booted, for pages that tolerate the delay
   ([Reading what you just wrote](/guides/react-router/#reading-what-you-just-wrote)).
 - **Cloudflare.** `connect(stub, { consistency })` and `createWorker({ consistency })` default to
   `"read-your-writes"`: the Durable Object's command call runs `catchUpReadModels({ through })`

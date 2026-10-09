@@ -14,6 +14,7 @@ export interface CreateBoundaPluginFunction {
 
 const RESOLVED_ID = `\0${APP_MODULE_ID}`;
 const PACKAGE_ID = "@bounda-dev/react-router";
+const HOST_ID = `${PACKAGE_ID}/host`;
 /**
  * Vite externalises `node_modules` on the server, and Node loads an external import without
  * asking any plugin, so `resolveId` would never serve the app module. `noExternal` matches the
@@ -23,35 +24,33 @@ const PACKAGE_ID = "@bounda-dev/react-router";
 const PACKAGE_PATTERN = /^@bounda-dev\/react-router(\/|$)/;
 const APP_DIRECTORY = "app";
 const CONFIG_FILE = "bounda.config.ts";
+const TENANT_FILE = "tenant.ts";
 const WATCHED = ["domain", "read"];
 const EVENTS = ["add", "change", "unlink", "addDir", "unlinkDir"] as const;
 
 /**
- * The registry and the configuration are imported here rather than by `boot`, so that Vite
+ * The registry and the configuration are imported here rather than by the host, so that Vite
  * re-evaluates this module, and the app reboots, whenever either changes, and so that a build
- * bundles both. The configuration is imported once `boot` has loaded `.env`, which it may read.
- * Only the dev server pins `root`: a build runs wherever it is deployed, from the working
- * directory.
+ * bundles both. In Node the configuration is imported once `boot` has loaded `.env`, which it may
+ * read. Only the dev server pins `root`: a build runs wherever it is deployed, from the working
+ * directory. The `workerd` condition picks the Cloudflare host. The glob makes `app/tenant.ts`
+ * optional, and Vite serves this module again when the file appears or goes.
  */
-const serverModule = ({ root, command }: Generation, consistency: Consistency): string => {
-  const options = [
-    ...(command === "serve" ? [`root: ${JSON.stringify(root)}`] : []),
-    "registry",
-    `importConfig: () => import(${JSON.stringify(join(root, CONFIG_FILE))})`,
-  ];
-  return [
-    'import { boot } from "@bounda-dev/core/node";',
-    'import { createBounda } from "@bounda-dev/react-router";',
+const serverModule = ({ root, command }: Generation, consistency: Consistency): string =>
+  [
+    `import { createHost } from ${JSON.stringify(HOST_ID)};`,
     `import { registry } from ${JSON.stringify(join(root, ".bounda/registry.ts"))};`,
     "",
-    "export const { bounda, boundaMiddleware, dispose } = createBounda({",
-    `  boot: () => boot({ ${options.join(", ")} }),`,
+    "export const { bounda, boundaMiddleware, dispose } = createHost({",
+    ...(command === "serve" ? [`  root: ${JSON.stringify(root)},`] : []),
+    "  registry,",
+    `  importConfig: () => import(${JSON.stringify(join(root, CONFIG_FILE))}),`,
+    `  importTenant: Object.values(import.meta.glob(${JSON.stringify(`/${APP_DIRECTORY}/${TENANT_FILE}`)}))[0],`,
     `  consistency: ${JSON.stringify(consistency)},`,
     "});",
-    'export { failure } from "@bounda-dev/react-router";',
+    `export { failure } from ${JSON.stringify(HOST_ID)};`,
     "",
   ].join("\n");
-};
 
 const clientModule = (): string =>
   [
@@ -108,10 +107,17 @@ export const createBoundaPlugin: CreateBoundaPluginFunction = ({
     enforce: "pre",
     // One instance for every environment of a build, so `buildStart` generates once.
     sharedDuringBuild: true,
-    configEnvironment: (name) =>
+    configEnvironment: (name, config) =>
       name === "client"
         ? { optimizeDeps: { exclude: [PACKAGE_ID] } }
-        : { resolve: { noExternal: [PACKAGE_PATTERN] } },
+        : {
+            resolve: { noExternal: [PACKAGE_PATTERN] },
+            // A Worker's environment pre-bundles its dependencies, and only the app module imports
+            // the host: found on the first request, it would make Vite pre-bundle again and reload.
+            ...(config.resolve?.conditions?.includes("workerd")
+              ? { optimizeDeps: { include: [HOST_ID] } }
+              : {}),
+          },
     configResolved(config) {
       generation = { root: config.root, logger: config.logger, command: config.command };
     },
