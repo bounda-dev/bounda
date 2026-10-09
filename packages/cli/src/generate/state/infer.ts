@@ -75,25 +75,53 @@ const renderState = ({ fields, required }: AggregateFields): string => {
   return `{\n${lines.join("\n")}\n}`;
 };
 
-const exportedFunction = (
+// The name a top-level `const` or `function` declares, exported or not.
+const declaredName = (
   ts: typeof import("typescript/unstable/ast"),
   file: import("typescript/unstable/ast").SourceFile,
-  exportName: "evolve" | "begin",
+  name: string,
+  exported: boolean,
 ): import("typescript/unstable/ast").Node | null => {
   for (const statement of file.statements) {
     const isExported = (statement as { modifiers?: readonly { kind: number }[] }).modifiers?.some(
       (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
     );
-    if (!isExported) continue;
+    if (exported && !isExported) continue;
     if (statement.kind === ts.SyntaxKind.VariableStatement) {
       for (const declaration of (statement as import("typescript/unstable/ast").VariableStatement)
         .declarationList.declarations) {
-        if (declaration.name.getText(file) === exportName) return declaration.name;
+        if (declaration.name.getText(file) === name) return declaration.name;
       }
     }
     if (statement.kind === ts.SyntaxKind.FunctionDeclaration) {
-      const name = (statement as import("typescript/unstable/ast").FunctionDeclaration).name;
-      if (name !== undefined && name.getText(file) === exportName) return name;
+      const declared = (statement as import("typescript/unstable/ast").FunctionDeclaration).name;
+      if (declared !== undefined && declared.getText(file) === name) return declared;
+    }
+  }
+  return null;
+};
+
+/**
+ * The declaration a module exports under `exportName`, as `export const`, `export function` or
+ * an `export { local as exportName }` list, which discovery counts as an export too.
+ */
+const exportedFunction = (
+  ts: typeof import("typescript/unstable/ast"),
+  file: import("typescript/unstable/ast").SourceFile,
+  exportName: "evolve" | "begin",
+): import("typescript/unstable/ast").Node | null => {
+  const declared = declaredName(ts, file, exportName, true);
+  if (declared !== null) return declared;
+  for (const statement of file.statements) {
+    if (statement.kind !== ts.SyntaxKind.ExportDeclaration) continue;
+    const declaration = statement as import("typescript/unstable/ast").ExportDeclaration;
+    const clause = declaration.exportClause;
+    if (declaration.moduleSpecifier !== undefined || clause?.kind !== ts.SyntaxKind.NamedExports) {
+      continue;
+    }
+    for (const element of (clause as import("typescript/unstable/ast").NamedExports).elements) {
+      if (element.name.getText(file) !== exportName) continue;
+      return declaredName(ts, file, (element.propertyName ?? element.name).getText(file), false);
     }
   }
   return null;
@@ -195,15 +223,23 @@ const fieldAtOffset = (
   const line = before.split("\n").length - 1;
   const lines = content.split("\n");
   let aggregate: string | null = null;
+  // A field's type may run over several lines: what is diagnosed on any of them is the field's.
+  let field: string | null = null;
   for (let index = 0; index <= line && index < lines.length; index += 1) {
     const current = lines[index] ?? "";
     const start = /^export type (\w+) = \{$/.exec(current);
-    if (start?.[1] !== undefined) aggregate = aggregates.get(start[1]) ?? null;
-    if (/^\}?;?$/.test(current) && current.startsWith("}"))
-      aggregate = index === line ? aggregate : null;
-    if (index === line && aggregate !== null) {
-      const field = /^ {2}readonly (\w+)\??: /.exec(current);
-      if (field?.[1] !== undefined) return { aggregate, field: field[1] };
+    if (start?.[1] !== undefined) {
+      aggregate = aggregates.get(start[1]) ?? null;
+      field = null;
+    }
+    const own = /^ {2}readonly (\w+)\??: /.exec(current);
+    if (own?.[1] !== undefined) field = own[1];
+    if (current.startsWith("}")) {
+      aggregate = null;
+      field = null;
+    }
+    if (index === line) {
+      return aggregate !== null && field !== null ? { aggregate, field } : null;
     }
   }
   return null;
