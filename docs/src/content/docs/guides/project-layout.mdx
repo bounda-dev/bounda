@@ -321,8 +321,10 @@ remembers, or that someone else listens to, is an event instead: see
 
 ### Policies: `policies/`
 
-A policy reacts to an event with commands. `<action>-on-<event>.ts` names the event; a policy
-without `-on-` exports `on` with the event type names it reacts to.
+A policy reacts to an event with commands. `<action>-on-<event>.ts` names the event: the longest
+event the name ends with, so `put-on-hold-on-payment-failed.ts` reacts to `PaymentFailed`. A
+policy whose name ends with no event exports `on` with the event type names it reacts to, and
+`bounda generate` warns about one that has `-on-` but names no event, a misspelling most likely.
 
 ```ts
 // app/domain/order/policies/issue-invoice-on-order-paid.ts

@@ -98,12 +98,18 @@ const policiesOf = (registry: Registry) =>
   });
 
 describe("policyTriggerFromKey", () => {
-  it("derives the event from the on-<event> suffix", () => {
-    expect(policyTriggerFromKey("sendReceiptOnOrderPaid")).toBe("OrderPaid");
-    expect(policyTriggerFromKey("notifyOnCustomerRegistered")).toBe("CustomerRegistered");
-    expect(policyTriggerFromKey("cleanup")).toBeNull();
-    expect(policyTriggerFromKey("onboarding")).toBeNull();
-    expect(policyTriggerFromKey("sendOnOrder_v2")).toBeNull();
+  it("derives the longest event the name ends with after On", () => {
+    const events = ["OrderPaid", "CustomerRegistered", "PaymentFailed", "AddOnRemoved", "Removed"];
+    const trigger = (key: string) => policyTriggerFromKey({ key, events });
+    expect(trigger("sendReceiptOnOrderPaid")).toBe("OrderPaid");
+    expect(trigger("notifyOnCustomerRegistered")).toBe("CustomerRegistered");
+    expect(trigger("putOnHoldOnPaymentFailed")).toBe("PaymentFailed");
+    expect(trigger("notifyOnAddOnRemoved")).toBe("AddOnRemoved");
+    expect(trigger("addOnNotifyOnRemoved")).toBe("Removed");
+    expect(trigger("cleanup")).toBeNull();
+    expect(trigger("onboarding")).toBeNull();
+    expect(trigger("OnOrderPaid")).toBeNull();
+    expect(trigger("sendOnOrderShipped")).toBeNull();
   });
 
   it("accepts an explicit on as a string or a list", () => {
@@ -138,7 +144,7 @@ describe("policyTriggerFromKey", () => {
         readModels: {},
       }),
     ).toThrow(
-      'aggregates.order.policies.cleanup: name the file "<action>-on-<event>.ts" or export "on"',
+      'aggregates.order.policies.cleanup: its name ends with no event of the aggregate "order"; name the file "<action>-on-<event>.ts" or export "on"',
     );
   });
 });
@@ -865,6 +871,11 @@ describe("policies and the aggregate whose events they react to", () => {
       },
     });
     expect(() => policiesOf(withPolicy({ module: { handler: () => {} } }))).toThrow(
+      'aggregates.order.policies.payOnOrderShipped: its name ends with no event of the aggregate "order"; name the file "<action>-on-<event>.ts" or export "on"',
+    );
+    expect(() =>
+      policiesOf(withPolicy({ module: { on: "OrderShipped", handler: () => {} } })),
+    ).toThrow(
       'aggregates.order.policies.payOnOrderShipped: "OrderShipped" is not an event of the aggregate "order"',
     );
     expect(() =>

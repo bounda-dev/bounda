@@ -180,7 +180,8 @@ const discoverPolicyModules = (
     policies.push({
       ...moduleRef(context, path),
       key: foreign ? joinKeys(folder.source, keyOf(name)) : keyOf(name),
-      triggerKey: policyTriggerOf(name),
+      // Resolved once every aggregate's events are known: see `resolvePolicyTriggers`.
+      triggerKey: null,
       source: foreign ? folder.source : null,
     });
   }
@@ -900,6 +901,31 @@ const checkUniqueNames = (
  * interface a port declares.
  * Every convention breach is collected and thrown together as one `ConventionError`.
  */
+const resolvePolicyTriggers = (
+  context: Context,
+  aggregates: readonly AggregateModel[],
+): readonly AggregateModel[] =>
+  aggregates.map((aggregate) => ({
+    ...aggregate,
+    policies: aggregate.policies.map((policy) => {
+      const source = policy.source ?? aggregate.name;
+      const events =
+        aggregates.find((candidate) => candidate.name === source)?.events.map(({ key }) => key) ??
+        [];
+      const fileName = basename(policy.path, ".ts");
+      const triggerKey = policyTriggerOf({ fileName, events });
+      if (triggerKey === null && fileName.includes("-on-")) {
+        warnAbout(
+          context,
+          aggregate.name,
+          policy.path,
+          `its name ends with no event of "${source}" after "-on-", so it must export "on"; is the event misspelled?`,
+        );
+      }
+      return { ...policy, triggerKey };
+    }),
+  }));
+
 export const discoverProject: DiscoverProjectFunction = async ({ root, appDir = "app" }) => {
   const problems = createProblemCollector();
   const app = join(root, appDir);
@@ -931,5 +957,11 @@ export const discoverProject: DiscoverProjectFunction = async ({ root, appDir = 
   checkForeignHandlers(context, aggregates);
   checkUniqueNames(context, aggregates, readModels);
   problems.throwIfAny();
-  return { root, appDir, aggregates, readModels, warnings: context.warnings };
+  return {
+    root,
+    appDir,
+    aggregates: resolvePolicyTriggers(context, aggregates),
+    readModels,
+    warnings: context.warnings,
+  };
 };

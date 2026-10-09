@@ -34,29 +34,45 @@ export interface PoliciesRuntime {
   readonly byEvent: Readonly<Record<string, readonly PolicyRuntime[]>>;
 }
 
-const TRIGGER_SUFFIX = /On([A-Z][A-Za-z0-9]*)$/;
+export interface PolicyTriggerFromKeyArgs {
+  readonly key: string;
+  /**
+   * The event types of the aggregate the policy reacts to.
+   */
+  readonly events: readonly string[];
+}
 
 export interface PolicyTriggerFromKeyFunction {
-  (key: string): string | null;
+  (args: PolicyTriggerFromKeyArgs): string | null;
 }
 
 /**
- * Derives the triggering event type from a policy's file name: `send-receipt-on-order-paid`
- * (registry key `sendReceiptOnOrderPaid`) reacts to `OrderPaid`.
+ * The event a policy's file name ends with, after an `-on-`: `send-receipt-on-order-paid`
+ * (registry key `sendReceiptOnOrderPaid`) reacts to `OrderPaid`. Of the events that fit, the
+ * longest: `put-on-hold-on-payment-failed` reacts to `PaymentFailed`, and
+ * `notify-on-add-on-removed` to `AddOnRemoved` rather than `Removed`. The generator types the
+ * handler by the same rule.
  */
-export const policyTriggerFromKey: PolicyTriggerFromKeyFunction = (key) =>
-  TRIGGER_SUFFIX.exec(key)?.[1] ?? null;
+export const policyTriggerFromKey: PolicyTriggerFromKeyFunction = ({ key, events }) =>
+  events
+    .filter((event) => key.length > `On${event}`.length && key.endsWith(`On${event}`))
+    .reduce<string | null>(
+      (longest, event) => (longest === null || event.length > longest.length ? event : longest),
+      null,
+    );
 
 const declaredTriggers = (
-  aggregate: string,
+  path: string,
   key: string,
   module: PolicyModule,
+  source: string,
+  events: readonly string[],
 ): readonly string[] => {
   if (module.on !== undefined) return typeof module.on === "string" ? [module.on] : module.on;
-  const derived = policyTriggerFromKey(key);
+  const derived = policyTriggerFromKey({ key, events });
   if (derived === null) {
     throw new ConfigurationError(
-      `aggregates.${aggregate}.policies.${key}: name the file "<action>-on-<event>.ts" or export "on"`,
+      `${path}: its name ends with no event of the aggregate "${source}"; name the file "<action>-on-<event>.ts" or export "on"`,
     );
   }
   return [derived];
@@ -76,8 +92,9 @@ const triggersOf = (
       `${path}: there is no aggregate "${source}" whose events to react to`,
     );
   }
-  const known = new Set<string>(Object.keys(events).map(capitalize));
-  const triggers = declaredTriggers(aggregate, key, module);
+  const types = Object.keys(events).map(capitalize);
+  const known = new Set<string>(types);
+  const triggers = declaredTriggers(path, key, module, source, types);
   for (const trigger of triggers) {
     if (!known.has(trigger)) {
       throw new ConfigurationError(

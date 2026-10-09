@@ -30,18 +30,32 @@ export interface JoinKeysFunction {
 export const joinKeys: JoinKeysFunction = (...parts) =>
   parts.map((part, index) => (index === 0 ? part : capitalize(part))).join("");
 
-const POLICY_TRIGGER = /^(.+)-on-([a-z0-9]+(?:-[a-z0-9]+)*)$/;
+export interface PolicyTriggerOfArgs {
+  readonly fileName: string;
+  /**
+   * The event keys of the aggregate the policy reacts to.
+   */
+  readonly events: readonly string[];
+}
 
 export interface PolicyTriggerOfFunction {
-  (fileName: string): string | null;
+  (args: PolicyTriggerOfArgs): string | null;
 }
 
 /**
- * Takes the event after the last `-on-`: `send-receipt-on-order-paid` → `orderPaid`.
+ * The longest event the file name ends with after an `-on-`: `send-receipt-on-order-paid` →
+ * `orderPaid`, `put-on-hold-on-payment-failed` → `paymentFailed`. Core derives the trigger by the
+ * same rule, so the handler is typed with the event it receives.
  */
-export const policyTriggerOf: PolicyTriggerOfFunction = (fileName) => {
-  const match = POLICY_TRIGGER.exec(fileName);
-  return match?.[2] === undefined ? null : toCamelCase(match[2]);
+export const policyTriggerOf: PolicyTriggerOfFunction = ({ fileName, events }) => {
+  const key = toCamelCase(fileName);
+  return events
+    .map((event) => [event, `On${capitalize(event)}`] as const)
+    .filter(([, suffix]) => key.length > suffix.length && key.endsWith(suffix))
+    .reduce<string | null>(
+      (longest, [event]) => (longest === null || event.length > longest.length ? event : longest),
+      null,
+    );
 };
 
 const PROCESS_HANDLER = /^on-([a-z0-9]+(?:-[a-z0-9]+)*)$/;

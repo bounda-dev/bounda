@@ -57,7 +57,7 @@ export interface CommandModel extends ModuleRef {
 export interface PolicyModel extends ModuleRef {
   readonly key: string;
   /**
-   * The event key derived from the `...-on-<event>` suffix of the file name, or `null` when the
+   * The event of the source aggregate the file name ends with after `-on-`, or `null` when the
    * module has to declare `on` itself.
    */
   readonly triggerKey: string | null;

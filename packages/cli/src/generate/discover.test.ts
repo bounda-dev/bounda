@@ -884,6 +884,31 @@ describe("discoverProject convention problems", () => {
     ]);
   });
 
+  it("types a policy with the longest event its name ends with, and warns when it names none", async () => {
+    const root = await project([
+      "app/domain/order/payment-failed.ts",
+      "app/domain/order/policies/put-on-hold-on-payment-failed.ts",
+      "app/domain/order/policies/archive-on-paymnet-failed.ts",
+      "app/domain/order/policies/add-on/notify-on-add-on-removed.ts",
+      "app/domain/add-on/add-on-removed.ts",
+      "app/domain/add-on/removed.ts",
+    ]);
+    const model = await discoverProject({ root });
+    const order = model.aggregates.find((aggregate) => aggregate.name === "order");
+    expect(order?.policies.map((policy) => [policy.key, policy.triggerKey])).toEqual([
+      ["addOnNotifyOnAddOnRemoved", "addOnRemoved"],
+      ["archiveOnPaymnetFailed", null],
+      ["putOnHoldOnPaymentFailed", "paymentFailed"],
+    ]);
+    expect(model.warnings).toEqual([
+      {
+        module: "order",
+        message:
+          'app/domain/order/policies/archive-on-paymnet-failed.ts: its name ends with no event of "order" after "-on-", so it must export "on"; is the event misspelled?',
+      },
+    ]);
+  });
+
   it("rejects an aggregate's own folder and aggregate folders inside another's", async () => {
     const root = await project([
       "app/domain/order/order-placed.ts",

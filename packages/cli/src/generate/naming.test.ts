@@ -35,11 +35,16 @@ describe("keyOf / typeNameOf / joinKeys", () => {
 });
 
 describe("policyTriggerOf", () => {
-  it("takes the event after the last -on-", () => {
-    expect(policyTriggerOf("send-receipt-on-order-paid")).toBe("orderPaid");
-    expect(policyTriggerOf("notify-on-customer-registered")).toBe("customerRegistered");
-    expect(policyTriggerOf("cleanup")).toBeNull();
-    expect(policyTriggerOf("on-order-paid")).toBeNull();
+  it("takes the longest event the name ends with after -on-", () => {
+    const events = ["orderPaid", "customerRegistered", "paymentFailed", "addOnRemoved", "removed"];
+    const trigger = (fileName: string) => policyTriggerOf({ fileName, events });
+    expect(trigger("send-receipt-on-order-paid")).toBe("orderPaid");
+    expect(trigger("notify-on-customer-registered")).toBe("customerRegistered");
+    expect(trigger("put-on-hold-on-payment-failed")).toBe("paymentFailed");
+    expect(trigger("notify-on-add-on-removed")).toBe("addOnRemoved");
+    expect(trigger("cleanup")).toBeNull();
+    expect(trigger("on-order-paid")).toBeNull();
+    expect(trigger("send-on-order-shipped")).toBeNull();
   });
 });
 
