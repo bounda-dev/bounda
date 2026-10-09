@@ -554,6 +554,7 @@ describe("watchFromFirstRun", () => {
     await drained();
     first.resolve(true);
     await expect(run.done).rejects.toThrow("disk gone");
+    expect(run.announced()).toBe(0);
   });
 
   it("makes no first run when the signal aborts before the watcher is listening", async () => {

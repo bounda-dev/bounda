@@ -54,6 +54,7 @@ describe("processHandlerEventOf", () => {
 
 describe("compareNames", () => {
   it("orders by code unit, whatever the machine's locale", () => {
+    expect(compareNames("same", "same")).toBe(0);
     expect(["zebra", "tz", "aaron", "Zed", "b"].sort(compareNames)).toEqual([
       "Zed",
       "aaron",
@@ -76,6 +77,19 @@ describe("uniqueAliases", () => {
       }),
     ).toEqual(["orderCreated", "customerCreated", "orderPlaced"]);
     expect(uniqueAliases({ entries: [] })).toEqual([]);
+  });
+
+  it("numbers past an alias already taken, however many repeat", () => {
+    expect(
+      uniqueAliases({
+        entries: [
+          { alias: "checkout", owner: "order" },
+          { alias: "checkout", owner: "order" },
+          { alias: "checkout", owner: "order" },
+          { alias: "orderCheckout2", owner: "order" },
+        ],
+      }),
+    ).toEqual(["orderCheckout", "orderCheckout3", "orderCheckout4", "orderCheckout2"]);
   });
 
   it("prefixes a reserved word and numbers an alias that still repeats", () => {

@@ -922,8 +922,14 @@ describe("discoverProject convention problems", () => {
   it("warns about a projection named after no event that exports no on", async () => {
     const root = await project([
       "app/domain/order/order-placed.ts",
+      "app/domain/order/order-paid.ts",
+      "app/domain/customer/customer-registered.ts",
       "app/read/orders/view.ts",
       ["app/read/orders/projections/order/order-placed.ts", "export const project = () => {};\n"],
+      [
+        "app/read/orders/projections/customer/customer-registered.ts",
+        "export const project = () => {};\n",
+      ],
       ["app/read/orders/projections/order/order-plcaed.ts", "export const project = () => {};\n"],
       [
         "app/read/orders/projections/order/any-order.ts",
@@ -966,6 +972,10 @@ describe("discoverProject convention problems", () => {
     expect(await problemsOf(root)).toEqual([
       "app/domain/order-created: its generated type OrderCreatedState is also that of app/domain/order; give it another name",
       "app/domain/test: its generated type TestPorts is also one of Bounda's own; give it another name",
+    ]);
+    const readModel = await project(["app/domain/order/order-placed.ts", "app/read/test/view.ts"]);
+    expect(await problemsOf(readModel)).toEqual([
+      "app/read/test: its generated type TestPorts is also one of Bounda's own; give it another name",
     ]);
   });
 
