@@ -7,18 +7,18 @@ const { entry, sidebar } = Astro.locals.starlightRoute;
 const position = positionsOf(sidebar).find(({ link }) => link.isCurrent);
 ---
 
-{/* Interface, not content: kept out of the search index. */}
-<div class="bounda-masthead" data-pagefind-ignore="all">
-  {
-    position && (
+{
+  /* A page of the sidebar: its position and its actions. Interface, so out of the search index. */
+  position && (
+    <div class="bounda-masthead" data-pagefind-ignore="all">
       <p class="bounda-position">
         <span class="bounda-label">{position.group}</span>
         <span class="bounda-number">{position.number}</span>
       </p>
-    )
-  }
-  <PageActions />
-</div>
+      <PageActions />
+    </div>
+  )
+}
 <Default />
 {entry.data.description && <p class="lead">{entry.data.description}</p>}
 

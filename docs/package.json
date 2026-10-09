@@ -16,6 +16,11 @@
   },
   "devDependencies": {
     "@astrojs/check": "catalog:docs",
+    "@fontsource/ibm-plex-sans": "catalog:docs",
+    "@fontsource/red-hat-mono": "catalog:docs",
+    "@fontsource/science-gothic": "catalog:docs",
+    "@resvg/resvg-js": "catalog:docs",
+    "satori": "catalog:docs",
     "typescript": "catalog:docs"
   }
 }

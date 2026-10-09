@@ -2,7 +2,7 @@ import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, posix, relative, sep } from "node:path";
 import { INDEX, type Page, parsePage, renderComponents, renderPage } from "./markdown.ts";
 
-// The sidebar's groups, in its order (`docs/astro.config.mjs`). A directory missing here fails the
+// The sidebar's groups, in its order (`docs/src/sidebar.ts`). A directory missing here fails the
 // pack, so a new group cannot ship without a place in the index.
 export const GROUPS: readonly { readonly directory: string; readonly label: string }[] = [
   { directory: "getting-started", label: "Getting started" },

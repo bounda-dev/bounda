@@ -24,24 +24,26 @@ const links = [
 );
 ---
 
-<div class="pagination-links print:hidden" dir={dir}>
-  {
-    links.map(({ rel, icon, label, link, position }) => (
-      <a href={link.href} rel={rel}>
-        <span class="bounda-position">
-          <Icon name={icon} size="0.875rem" class="arrow" />
-          <span class="bounda-label">{label}</span>
-          {position && (
-            <span class="bounda-number">
-              {position.group} {position.number}
-            </span>
-          )}
-        </span>
-        <span class="title">{link.label}</span>
-      </a>
-    ))
-  }
-</div>
+{
+  links.length > 0 && (
+    <div class="pagination-links print:hidden" dir={dir}>
+      {links.map(({ rel, icon, label, link, position }) => (
+        <a href={link.href} rel={rel}>
+          <span class="bounda-position">
+            <Icon name={icon} size="0.875rem" class="arrow" />
+            <span class="bounda-label">{label}</span>
+            {position && (
+              <span class="bounda-number">
+                {position.group} {position.number}
+              </span>
+            )}
+          </span>
+          <span class="title">{link.label}</span>
+        </a>
+      ))}
+    </div>
+  )
+}
 
 <style>
   .pagination-links {

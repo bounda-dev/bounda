@@ -56,6 +56,12 @@ catalogs:
   # astro check accepts TypeScript up to 6, so the docs check their types with their own.
   docs:
     "@astrojs/check": 0.9.10
+    # The social card of every page, drawn at build: Satori lays it out, resvg rasterises it.
+    "@fontsource/ibm-plex-sans": 5.3.0
+    "@fontsource/red-hat-mono": 5.3.0
+    "@fontsource/science-gothic": 5.3.0
+    "@resvg/resvg-js": 2.6.2
+    satori: 0.35.1
     typescript: 6.0.3
 
 allowBuilds:

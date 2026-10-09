@@ -4,6 +4,7 @@ import starlightLlmsTxt from "starlight-llms-txt";
 import starlightPageActions from "starlight-page-actions";
 import { codeHeader } from "./src/code-header.ts";
 import { basalt, bone } from "./src/code-themes.ts";
+import { SIDEBAR } from "./src/sidebar.ts";
 import { DESCRIPTION, PROMPT, SITE, socialImage } from "./src/site.ts";
 
 // The fonts of bounda.dev, self-hosted at build time with metric-matched fallbacks. Science Gothic
@@ -56,12 +57,15 @@ export default defineConfig({
       customCss: ["./src/styles/bounda.css"],
       head: socialImage(`${SITE}/og.jpg`),
       routeMiddleware: "./src/route-data.ts",
+      // src/pages/404.astro keeps the sidebar and offers the search.
+      disable404Route: true,
       components: {
         Head: "./src/components/Head.astro",
         PageTitle: "./src/components/PageTitle.astro",
         Pagination: "./src/components/Pagination.astro",
         Sidebar: "./src/components/Sidebar.astro",
         TableOfContents: "./src/components/TableOfContents.astro",
+        MobileTableOfContents: "./src/components/MobileTableOfContents.astro",
         Footer: "./src/components/Footer.astro",
         ThemeSelect: "./src/components/ThemeSelect.astro",
         SocialIcons: "./src/components/SocialIcons.astro",
@@ -99,6 +103,19 @@ export default defineConfig({
             terminalTitlebarDotsOpacity: "0",
             inlineButtonBorderOpacity: "0",
           },
+          // Marked lines in the brand's tint; inserted and deleted ones in the success and error
+          // colours, the only meaning DESIGN.md gives green and red.
+          textMarkers: {
+            markBackground: "var(--sl-color-accent-low)",
+            markBorderColor: "var(--sl-color-accent)",
+            insBackground: "var(--sl-color-green-low)",
+            insBorderColor: "var(--sl-color-green)",
+            insDiffIndicatorColor: "var(--sl-color-green)",
+            delBackground: "var(--sl-color-red-low)",
+            delBorderColor: "var(--sl-color-red)",
+            delDiffIndicatorColor: "var(--sl-color-red)",
+            inlineMarkerBorderRadius: "2px",
+          },
         },
       },
       // starlight-page-actions writes each page's `.md`; its interface is replaced by
@@ -120,14 +137,7 @@ export default defineConfig({
           },
         }),
       ],
-      sidebar: [
-        { label: "Getting started", items: [{ autogenerate: { directory: "getting-started" } }] },
-        { label: "Guides", items: [{ autogenerate: { directory: "guides" } }] },
-        { label: "Examples", items: [{ autogenerate: { directory: "examples" } }] },
-        { label: "Concepts", items: [{ autogenerate: { directory: "concepts" } }] },
-        { label: "Adapters", items: [{ autogenerate: { directory: "adapters" } }] },
-        { label: "Reference", items: [{ autogenerate: { directory: "reference" } }] },
-      ],
+      sidebar: SIDEBAR,
     }),
   ],
 });
