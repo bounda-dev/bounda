@@ -79,4 +79,28 @@ describe("uniqueAliases", () => {
     ).toEqual(["orderCreated", "customerCreated", "orderPlaced"]);
     expect(uniqueAliases({ entries: [] })).toEqual([]);
   });
+
+  it("prefixes a reserved word and numbers an alias that still repeats", () => {
+    expect(
+      uniqueAliases({
+        entries: [
+          { alias: "delete", owner: "order" },
+          { alias: "default", owner: "order" },
+          { alias: "checkout", owner: "order" },
+          { alias: "checkout", owner: "order" },
+          { alias: "created", owner: "order" },
+          { alias: "created", owner: "customer" },
+          { alias: "orderCreated", owner: "order" },
+        ],
+      }),
+    ).toEqual([
+      "orderDelete",
+      "orderDefault",
+      "orderCheckout",
+      "orderCheckout2",
+      "orderCreated",
+      "customerCreated",
+      "orderCreated2",
+    ]);
+  });
 });

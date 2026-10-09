@@ -1,4 +1,5 @@
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { discoverProject } from "../discover.ts";
@@ -333,6 +334,33 @@ export const registry = {
   },
 } as const satisfies Registry;
 `);
+  });
+});
+
+describe("emitRegistry with modules named like reserved words or one another", () => {
+  it("never binds a reserved word, nor one alias twice", async () => {
+    const root = await mkdtemp(join(tmpdir(), "bounda-emit-"));
+    try {
+      for (const file of [
+        "app/domain/order/order-placed.ts",
+        "app/domain/order/commands/delete.ts",
+        "app/domain/order/commands/checkout.ts",
+        "app/domain/order/processes/checkout/index.ts",
+      ]) {
+        await mkdir(dirname(join(root, file)), { recursive: true });
+        await writeFile(join(root, file), "export const evolve = () => ({});\n");
+      }
+      const model = await discoverProject({ root });
+      const { content } = emitRegistry({ model, path: join(root, ".bounda/registry.ts") });
+      const bound = [...content.matchAll(/^import \* as (\w+) from/gm)].map((match) => match[1]);
+      expect(new Set(bound).size).toBe(bound.length);
+      expect(bound).toEqual(
+        expect.arrayContaining(["orderDelete", "orderCheckout", "orderCheckout2"]),
+      );
+      expect(content).toContain("delete: { module: orderDelete }");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 

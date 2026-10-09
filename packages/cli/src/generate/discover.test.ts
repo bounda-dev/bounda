@@ -946,6 +946,19 @@ describe("discoverProject convention problems", () => {
     ]);
   });
 
+  it("rejects an aggregate or read model whose generated types meet others", async () => {
+    const root = await project([
+      "app/domain/order/order-placed.ts",
+      "app/domain/order-created/order-created-placed.ts",
+      "app/domain/test/test-run.ts",
+      "app/read/orders/view.ts",
+    ]);
+    expect(await problemsOf(root)).toEqual([
+      "app/domain/order-created: its generated type OrderCreatedState is also that of app/domain/order; give it another name",
+      "app/domain/test: its generated type TestPorts is also one of Bounda's own; give it another name",
+    ]);
+  });
+
   it("rejects an aggregate's own folder and aggregate folders inside another's", async () => {
     const root = await project([
       "app/domain/order/order-placed.ts",

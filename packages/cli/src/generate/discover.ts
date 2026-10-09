@@ -1,6 +1,15 @@
 import type { Dirent } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
+import {
+  createdStateTypeName,
+  eventsTypeName,
+  PORTS_CONFIG_TYPE_NAME,
+  portsTypeName,
+  rowTypeName,
+  stateTypeName,
+  TEST_PORTS_TYPE_NAME,
+} from "./emit/types.ts";
 import type {
   AggregateModel,
   CommandModel,
@@ -877,6 +886,60 @@ const checkUniqueReactions = (context: Context, aggregate: AggregateModel): void
   }
 };
 
+const OWN_TYPE_NAMES = [
+  "Events",
+  "Commands",
+  "ReactionCommands",
+  "Queries",
+  PORTS_CONFIG_TYPE_NAME,
+  TEST_PORTS_TYPE_NAME,
+];
+
+/**
+ * `.bounda/types.ts` declares types named after each aggregate and read model next to its own:
+ * an aggregate `test` would declare `TestPorts` twice, one named `order-created` would meet the
+ * `OrderCreatedState` of `order`.
+ */
+const checkTypeNames = (
+  context: Context,
+  aggregates: readonly AggregateModel[],
+  readModels: readonly ReadModelModel[],
+): void => {
+  const owners = new Map<string, string>(OWN_TYPE_NAMES.map((name) => [name, "Bounda's own"]));
+  const declare = (names: readonly string[], directory: string): void => {
+    const owner = moduleRef(context, directory).relativePath;
+    for (const name of names) {
+      const other = owners.get(name);
+      if (other === undefined) {
+        owners.set(name, owner);
+        continue;
+      }
+      context.problems.add(
+        directory,
+        `its generated type ${name} is also ${other === "Bounda's own" ? "one of Bounda's own" : `that of ${other}`}; give it another name`,
+      );
+      return;
+    }
+  };
+  for (const aggregate of aggregates) {
+    declare(
+      [
+        stateTypeName(aggregate.name),
+        createdStateTypeName(aggregate.name),
+        eventsTypeName(aggregate.name),
+        portsTypeName(aggregate.name),
+      ],
+      aggregate.directory,
+    );
+  }
+  const names = new Set(aggregates.map((aggregate) => aggregate.name));
+  for (const readModel of readModels) {
+    // One named like an aggregate is reported as such.
+    if (names.has(readModel.name)) continue;
+    declare([rowTypeName(readModel.name), portsTypeName(readModel.name)], readModel.directory);
+  }
+};
+
 const checkUniqueNames = (
   context: Context,
   aggregates: readonly AggregateModel[],
@@ -902,6 +965,7 @@ const checkUniqueNames = (
   for (const readModel of readModels) {
     for (const query of readModel.queries) claim(query.key, query.path, "query");
   }
+  checkTypeNames(context, aggregates, readModels);
   const names = new Set(aggregates.map((aggregate) => aggregate.name));
   for (const readModel of readModels) {
     if (names.has(readModel.name)) {
