@@ -34,8 +34,11 @@ const toClaimed = (row: Record<string, unknown>): ClaimedCommand => ({
   claimId: String(row.claim_id),
 });
 
+const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+// `RETURNING` keeps no order: the claimed rows are sorted again as the query sorted them.
 const byExecuteAt = (a: ScheduledCommand, b: ScheduledCommand): number =>
-  a.executeAt.localeCompare(b.executeAt) || a.dedupeKey.localeCompare(b.dedupeKey);
+  byCodeUnit(a.executeAt, b.executeAt) || byCodeUnit(a.dedupeKey, b.dedupeKey);
 
 /**
  * Scheduler on one table. `claimDue` is a single `UPDATE ... WHERE dedupe_key IN (SELECT ...)

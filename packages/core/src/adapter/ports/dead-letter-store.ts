@@ -62,6 +62,10 @@ export interface ListDeadLettersArgs {
 export interface DeadLetterStore {
   add(letter: NewDeadLetter): Promise<DeadLetter>;
   get(id: string): Promise<DeadLetter | null>;
+  /**
+   * The letters that match, oldest `firstFailedAt` first, then by `id`, so a page is the same on
+   * every store.
+   */
   list(args?: ListDeadLettersArgs): Promise<readonly DeadLetter[]>;
   count(args?: ListDeadLettersArgs): Promise<number>;
   /**

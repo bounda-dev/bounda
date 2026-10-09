@@ -69,6 +69,14 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       expect((await store.get("bool"))?.payload).toBe(true);
     });
 
+    it("lists the oldest failure first, then by id, whatever the order they were added in", async () => {
+      await store.add(letter("b", { firstFailedAt: "2026-01-02T00:00:00.000Z" }));
+      await store.add(letter("c", { firstFailedAt: "2026-01-01T00:00:00.000Z" }));
+      await store.add(letter("a", { firstFailedAt: "2026-01-02T00:00:00.000Z" }));
+      expect((await store.list()).map(({ id }) => id)).toEqual(["c", "a", "b"]);
+      expect((await store.list({ limit: 1 })).map(({ id }) => id)).toEqual(["c"]);
+    });
+
     it("is idempotent on id", async () => {
       await store.add(letter("a"));
       await store.add(letter("a", { attempts: 99 }));

@@ -31,6 +31,21 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
       scheduler = await create();
     });
 
+    it("orders commands due at one moment by key, by code unit, in claims and listings", async () => {
+      for (const dedupeKey of ["b", "a", "B", "a-2"]) {
+        await scheduler.schedule({
+          dedupeKey,
+          command: testCommand("1"),
+          executeAt: at(1_000),
+          context: testContext,
+        });
+      }
+      const order = ["B", "a", "a-2", "b"];
+      expect((await scheduler.list()).map((entry) => entry.dedupeKey)).toEqual(order);
+      const due = await scheduler.claimDue({ now: at(5_000), limit: 10, leaseMs: 60_000 });
+      expect(due.map((entry) => entry.dedupeKey)).toEqual(order);
+    });
+
     it("hands out only commands that are due, oldest first, up to the limit", async () => {
       await scheduler.schedule({
         dedupeKey: "later",

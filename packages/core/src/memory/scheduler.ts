@@ -23,7 +23,11 @@ interface Entry extends ScheduledCommand {
   readonly lastError?: string;
 }
 
-const byExecuteAt = (a: Entry, b: Entry): number => a.executeAt.localeCompare(b.executeAt);
+const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+// The order of the SQL schedulers: `execute_at`, then `dedupe_key`, by code unit.
+const byExecuteAt = (a: Entry, b: Entry): number =>
+  byCodeUnit(a.executeAt, b.executeAt) || byCodeUnit(a.dedupeKey, b.dedupeKey);
 
 const toScheduled = ({
   dedupeKey,

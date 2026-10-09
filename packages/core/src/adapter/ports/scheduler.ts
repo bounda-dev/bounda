@@ -104,6 +104,9 @@ export interface Scheduler {
    * Removes the key's command, claimed or not.
    */
   cancel(dedupeKey: string): Promise<void>;
+  /**
+   * Claims the due commands, earliest `executeAt` first, then by `dedupeKey`.
+   */
   claimDue(args: ClaimDueArgs): Promise<readonly ClaimedCommand[]>;
   /**
    * The earliest moment `claimDue` could hand something out: the soonest execution time of a
@@ -133,5 +136,8 @@ export interface Scheduler {
    * no longer holds this claim, so the run does not start again.
    */
   renew(args: RenewScheduledArgs): Promise<void>;
+  /**
+   * Every command, earliest `executeAt` first, then by `dedupeKey`.
+   */
   list(args?: ListScheduledArgs): Promise<readonly ScheduledCommand[]>;
 }

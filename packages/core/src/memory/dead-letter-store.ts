@@ -19,11 +19,17 @@ const matches = (letter: DeadLetter, args: ListDeadLettersArgs): boolean =>
   (args.handler === undefined || letter.handler === args.handler) &&
   (args.status === undefined || letter.status === args.status);
 
+const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+// The order of the SQL stores: `first_failed_at`, then `id`.
+const byFirstFailure = (a: DeadLetter, b: DeadLetter): number =>
+  byCodeUnit(a.firstFailedAt, b.firstFailedAt) || byCodeUnit(a.id, b.id);
+
 export const createKeptDeadLetterStore: CreateKeptDeadLetterStoreFunction = () => {
   const letters = new Map<string, DeadLetter>();
 
   const select = (args: ListDeadLettersArgs): DeadLetter[] =>
-    [...letters.values()].filter((letter) => matches(letter, args));
+    [...letters.values()].filter((letter) => matches(letter, args)).sort(byFirstFailure);
 
   const store: DeadLetterStore = {
     add: async (letter) => {
