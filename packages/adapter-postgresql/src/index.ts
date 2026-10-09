@@ -41,6 +41,7 @@ interface Connection {
 export const postgresql: PostgresqlFunction = (options) => {
   const { url, schema, tablePrefix, maxConnections, ...connection } =
     resolvePostgresqlOptions(options);
+  const tables = storageTablesFor({ prefix: tablePrefix, schema });
   let shared: Connection | null = null;
 
   const open = (): Connection => {
@@ -87,7 +88,6 @@ export const postgresql: PostgresqlFunction = (options) => {
     options,
     createStorage: () =>
       using(async ({ db, sql }) => {
-        const tables = storageTablesFor(tablePrefix);
         await ensureStorageSchema({ db, schema, tables });
         const storesOver = (database: PostgresqlDatabase): StorageTransaction => ({
           eventStore: createPostgresqlEventStore({
@@ -130,7 +130,8 @@ export const postgresql: PostgresqlFunction = (options) => {
           sql,
           schema,
           tablePrefix,
-          checkpoints: storageTablesFor(tablePrefix).checkpoints,
+          checkpoints: tables.checkpoints,
+          checkpointsLockKey: tables.checkpointsLockKey,
           name,
           fields,
           logger,
@@ -150,7 +151,8 @@ export const postgresql: PostgresqlFunction = (options) => {
           sql,
           schema,
           tablePrefix,
-          checkpoints: storageTablesFor(tablePrefix).checkpoints,
+          checkpoints: tables.checkpoints,
+          checkpointsLockKey: tables.checkpointsLockKey,
           name,
           fields,
           logger,

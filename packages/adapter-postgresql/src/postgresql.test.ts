@@ -161,6 +161,67 @@ describe.skipIf(container === null)("postgresql adapter", () => {
     locking: "per-subscriber",
   });
 
+  it("keeps the stores of two schemas apart: neither waits on the other's append or projection lock", async () => {
+    const [first, second] = [`a_${run}`, `b_${run}`].map((schema) =>
+      fresh({ schema, tablePrefix: "bounda_" }),
+    );
+    const one = await openStorage(first as PostgresqlAdapter);
+    const other = await openStorage(second as PostgresqlAdapter);
+    const append = (storage: StoragePorts) =>
+      storage.eventStore.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events: [pendingEvent({ aggregateId: "1", version: 1 })],
+      });
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered: () => void = () => undefined;
+    const holding = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const transaction = one.transact(async (tx) => {
+      entered();
+      await held;
+      await tx.eventStore.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events: [pendingEvent({ aggregateId: "1", version: 1 })],
+      });
+    });
+    await holding;
+    await append(other);
+    expect(await other.eventStore.lastPosition()).toBe(1);
+
+    const readModels = await Promise.all(
+      [first, second].map((adapter) =>
+        openReadModel(adapter as PostgresqlAdapter, "orderSummary", contractFields),
+      ),
+    );
+    const projecting = readModels[0]?.transact({
+      subscriber: "projection:orderSummary",
+      wait: true,
+      work: async () => {
+        await held;
+      },
+    });
+    const elsewhere = await readModels[1]?.transact({
+      subscriber: "projection:orderSummary",
+      wait: false,
+      work: async () => "done",
+    });
+    expect(elsewhere).toEqual({ acquired: true, value: "done" });
+    release();
+    await Promise.all([transaction, projecting]);
+  });
+
+  it("refuses a schema and prefix whose notification channel PostgreSQL cannot hold", () => {
+    expect(() => postgresql({ url, schema: "s".repeat(50) })).toThrow(ConfigurationError);
+  });
+
   it("notifies listeners of every committed append with the last position", async () => {
     const storage = await openStorage();
     const notifier = storage.notifier as NonNullable<typeof storage.notifier>;

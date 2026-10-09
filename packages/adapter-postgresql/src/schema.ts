@@ -1,9 +1,11 @@
+import { ConfigurationError } from "@bounda-dev/core";
 import { quoteIdentifier, storageTableNameFor } from "@bounda-dev/core/adapter/sql";
 import type { PostgresqlDatabase } from "./database.ts";
 
 /**
- * The quoted names of the storage tables for a table prefix, plus the advisory-lock key that
- * serialises appends to the event store.
+ * The quoted names of the storage tables for a table prefix, plus what serialises appends and
+ * announces them. Advisory locks and channels belong to the whole database, so each is qualified
+ * by the schema: stores in two schemas of one database never wait on each other.
  */
 export interface StorageTables {
   readonly events: string;
@@ -13,28 +15,51 @@ export interface StorageTables {
   readonly scheduledCommands: string;
   readonly appendLockKey: string;
   /**
-   * The `NOTIFY` channel appends publish on: the events table name, which is unique per prefix.
+   * The first key of the advisory locks read models take on the checkpoints table.
+   */
+  readonly checkpointsLockKey: string;
+  /**
+   * The `NOTIFY` channel appends publish on: `<schema>.<events table>`.
    */
   readonly channel: string;
 }
 
+export interface StorageTablesForArgs {
+  readonly prefix: string;
+  readonly schema: string;
+}
+
 export interface StorageTablesForFunction {
-  (prefix: string): StorageTables;
+  (args: StorageTablesForArgs): StorageTables;
 }
 
 /**
- * The tables, lock key and channel `postgresql()` uses for a table prefix.
+ * PostgreSQL's limit on an identifier, which a channel name is.
  */
-export const storageTablesFor: StorageTablesForFunction = (prefix) => {
+const MAX_CHANNEL_BYTES = 63;
+
+/**
+ * The tables, lock keys and channel `postgresql()` uses for a table prefix in a schema. Throws
+ * `ConfigurationError` when the schema and prefix make a channel name PostgreSQL cannot hold.
+ */
+export const storageTablesFor: StorageTablesForFunction = ({ prefix, schema }) => {
   const events = storageTableNameFor({ prefix, table: "events" });
+  const checkpoints = storageTableNameFor({ prefix, table: "checkpoints" });
+  const channel = `${schema}.${events}`;
+  if (Buffer.byteLength(channel) > MAX_CHANNEL_BYTES) {
+    throw new ConfigurationError(
+      `schema "${schema}" and tablePrefix "${prefix}" make the notification channel "${channel}", longer than PostgreSQL's ${MAX_CHANNEL_BYTES} bytes; shorten one of them`,
+    );
+  }
   return {
     events: quoteIdentifier(events),
-    checkpoints: quoteIdentifier(storageTableNameFor({ prefix, table: "checkpoints" })),
+    checkpoints: quoteIdentifier(checkpoints),
     inbox: quoteIdentifier(storageTableNameFor({ prefix, table: "inbox" })),
     deadLetters: quoteIdentifier(storageTableNameFor({ prefix, table: "deadLetters" })),
     scheduledCommands: quoteIdentifier(storageTableNameFor({ prefix, table: "scheduledCommands" })),
-    appendLockKey: `bounda:${events}`,
-    channel: events,
+    appendLockKey: `bounda:${schema}.${events}`,
+    checkpointsLockKey: `bounda:${schema}.${checkpoints}`,
+    channel,
   };
 };
 

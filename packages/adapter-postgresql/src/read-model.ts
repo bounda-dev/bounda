@@ -32,6 +32,10 @@ export interface OpenPostgresqlReadModelArgs {
    * The quoted name of the checkpoints table the read model's projections advance in.
    */
   readonly checkpoints: string;
+  /**
+   * The first key of the advisory locks taken on the checkpoints table, qualified by its schema.
+   */
+  readonly checkpointsLockKey: string;
   readonly name: string;
   readonly fields: FieldsRecord;
   readonly logger: Logger;
@@ -46,7 +50,7 @@ export interface OpenPostgresqlReadModelFunction {
  * The checkpoints table is created too, so a read model in a database of its own keeps its
  * projections' checkpoints there.
  *
- * `transact` locks on two keys, the checkpoints table and the subscriber: two-key advisory locks
+ * `transact` locks on two keys, the checkpoints table's and the subscriber: two-key advisory locks
  * never collide with the one-key lock appends take, and a transaction-scoped lock goes with its
  * transaction however it ends, so a crashed process never leaves it behind.
  */
@@ -56,6 +60,7 @@ export const openPostgresqlReadModel: OpenPostgresqlReadModelFunction = async <R
   schema,
   tablePrefix,
   checkpoints,
+  checkpointsLockKey,
   name,
   fields,
   logger,
@@ -96,7 +101,7 @@ export const openPostgresqlReadModel: OpenPostgresqlReadModelFunction = async <R
     checkpointStore: createPostgresqlCheckpointStore({ db, table: checkpoints }),
     transact: ({ subscriber, wait, work }) =>
       db.write(async (tx) => {
-        const keys = [checkpoints, subscriber];
+        const keys = [checkpointsLockKey, subscriber];
         if (wait) {
           await tx.run("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", keys);
         } else {
@@ -165,6 +170,7 @@ export const rebuildPostgresqlReadModel: RebuildPostgresqlReadModelFunction = as
   schema,
   tablePrefix,
   checkpoints,
+  checkpointsLockKey,
   progress,
   name,
   fields,
@@ -178,7 +184,10 @@ export const rebuildPostgresqlReadModel: RebuildPostgresqlReadModelFunction = as
   const checkpointsIn = (executor: SqlExecutor) =>
     createPostgresqlCheckpointStore({ db: executor, table: checkpoints });
   const lock = (executor: SqlExecutor, key: string) =>
-    executor.run("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", [checkpoints, key]);
+    executor.run("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", [
+      checkpointsLockKey,
+      key,
+    ]);
   await db.run(checkpointTableStatement(checkpoints), []);
   const opened = await db.write(async (tx) => {
     await lock(tx, fencing.lock);
