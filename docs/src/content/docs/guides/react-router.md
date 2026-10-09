@@ -145,15 +145,19 @@ behaviour is available to any host through `readYourWrites(app)` and
 ## Development and production
 
 - `react-router dev` boots the app on the first request. A change under `app/domain` or
-  `app/read` regenerates the types, and the next request boots an app from the new modules.
-  Nothing to restart, no second generator process; a layout that breaks a convention is reported
-  in the terminal and the last good registry keeps serving. `react-router build` fails on it.
+  `app/read` regenerates the types, and the next request boots an app from the new modules; so
+  does a change to `bounda.config.ts`. Nothing to restart, no second generator process; a layout
+  that breaks a convention is reported in the terminal and the last good registry keeps serving.
+  `react-router build` fails on it.
   Closing the dev server waits for a regeneration already running and drops one still waiting
   for its quiet time, so nothing writes to the project after the server has gone.
 - `react-router typegen && tsc` still needs the generated files first, so keep
   `bounda generate` as a script for CI and fresh clones.
 - `.env` is read when the app boots and never overrides a variable that is already set, so a
-  change to it needs the dev server restarted.
+  change to it needs the dev server restarted. In development it is read from the project root;
+  the built app reads it from the directory it runs in.
+- `react-router build` bundles `bounda.config.ts` and the generated registry into the server
+  build, so the build runs from wherever it is deployed, with no need to ship either file.
 - A component that touches `@bounda-dev/react-router/app` gets a clear error: the client build
   receives a stub. Loaders, actions and middleware are where it belongs.
 - In production `react-router-serve` runs the app with `runtime.role: "all"` unless
@@ -184,16 +188,15 @@ import { createBounda } from "@bounda-dev/react-router";
 import { registry } from "../.bounda/registry.ts";
 
 export const { bounda, boundaMiddleware, dispose } = createBounda({
-  boot: () => boot({ registry }),
+  boot: () => boot({ registry, importConfig: () => import("../bounda.config.ts") }),
 });
 ```
 
-Import the registry by value, as above, so that a change in your modules re-evaluates this file
-in development; `createBounda` then stops the app booted before, and the next request boots a new
-one once that stop has finished, so the two never hold the storage at the same time. Its options
-are `boot` (how to create the app, `boot()` by default), `consistency` and `key` (where the
-running app is kept on `globalThis`, one app per key). `dispose()` stops the running app and
-forgets it, and resolves once every app booted under that key has stopped. Import `failure` from
+Import the registry by value and the configuration through `importConfig`, as above, so that the
+build bundles both and a change to either re-evaluates this file in development; `createBounda`
+then stops the app booted before, and the next request boots a new one once that stop has
+finished, so the two never hold the storage at the same time. Its options are `boot` (how to
+create the app, `boot()` by default), `consistency` and `key` (where the running app is kept on
+`globalThis`, one app per key). `dispose()` stops the running app and forgets it, and resolves
+once every app booted under that key has stopped. Import `failure` from
 `@bounda-dev/react-router`.
-
-The [onboarding example](/guides/onboarding-example/) is a complete app built this way.

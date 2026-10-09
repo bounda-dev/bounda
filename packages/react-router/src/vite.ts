@@ -21,9 +21,10 @@ export interface BoundaVitePluginFunction {
 
 /**
  * Runs `bounda generate` inside Vite and serves `@bounda-dev/react-router/app`: the project's
- * `bounda` context, `boundaMiddleware` and `dispose`, wired to the generated registry. A change
- * under `app/domain` or `app/read` regenerates the project and reboots the app on the next
- * request. A convention error fails `vite build` and is only logged by the dev server. In the
+ * `bounda` context, `boundaMiddleware` and `dispose`, wired to the generated registry and to
+ * `bounda.config.ts`. A change under `app/domain` or `app/read`, or to the configuration,
+ * regenerates the project where needed and reboots the app on the next request. A build bundles
+ * the registry and the configuration, and reads `.env` from the directory it runs in. A convention error fails `vite build` and is only logged by the dev server. In the
  * client the module throws as soon as a component touches it.
  *
  * @example

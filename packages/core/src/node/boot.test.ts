@@ -34,6 +34,37 @@ describe("loadProject", () => {
     expect(project.config.runtime?.role).toBe("worker");
   });
 
+  it("imports the configuration through importConfig once .env is loaded", async () => {
+    const seen: (string | undefined)[] = [];
+    const project = await loadProject({
+      root,
+      registry,
+      importConfig: async () => {
+        seen.push(process.env.BOUNDA_TEST_MARKER);
+        return { default: { storage: memory() } };
+      },
+      logger: silentLogger,
+    });
+    expect(seen).toEqual(["loaded"]);
+    expect(project.config.runtime).toBeUndefined();
+  });
+
+  it("explains an imported configuration module without a default export", async () => {
+    await expect(
+      loadProject({
+        root,
+        env: false,
+        registry,
+        importConfig: async () => ({ config: { storage: memory() } }),
+        logger: silentLogger,
+      }),
+    ).rejects.toThrow(
+      new ConfigurationError(
+        "The imported configuration module does not export the configuration (default export)",
+      ),
+    );
+  });
+
   it("takes what it is given instead of importing it", async () => {
     const config = { storage: memory() };
     const project = await loadProject({ root, env: false, registry, config, logger: silentLogger });
@@ -116,6 +147,18 @@ describe("boot", () => {
     await app.stop();
   });
 
+  it("imports the configuration through importConfig instead of configPath", async () => {
+    const app = await boot({
+      root,
+      signals: false,
+      logger: silentLogger,
+      registry,
+      importConfig: async () => ({ default: { storage: memory(), runtime: { role: "all" } } }),
+    });
+    expect(app.role).toBe("all");
+    await app.stop();
+  });
+
   it("explains a missing configuration or registry file", async () => {
     await expect(
       boot({ root, registryPath: "missing.ts", signals: false, logger: silentLogger }),
@@ -129,6 +172,9 @@ describe("boot", () => {
     await expect(
       boot({ root, registryPath: "bounda.config.ts", signals: false, logger: silentLogger }),
     ).rejects.toThrow(/does not export the registry/);
+    await expect(
+      boot({ root, configPath: "registry.ts", registry, signals: false, logger: silentLogger }),
+    ).rejects.toThrow(/registry\.ts does not export the configuration \(default export\)$/);
   });
 
   it("removes its signal listeners once the app is stopped", async () => {

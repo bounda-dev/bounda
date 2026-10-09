@@ -71,7 +71,7 @@ interface Harness {
   readonly plugin: Plugin;
   readonly recorded: Recorded;
   readonly configure: (command: "serve" | "build") => void;
-  readonly start: () => Promise<void>;
+  readonly start: (watchMode?: boolean) => Promise<void>;
   readonly load: (id: string, consumer: "client" | "server") => unknown;
   readonly resolve: (id: string) => unknown;
   readonly serve: () => EventEmitter;
@@ -98,9 +98,9 @@ const harness = (root: string, options?: Parameters<typeof bounda>[0]): Harness 
       ) => void;
       configResolved.call({}, { root, command, logger: recorded.logger } as ResolvedConfig);
     },
-    start: async () => {
+    start: async (watchMode = false) => {
       const buildStart = hookOf(plugin, "buildStart") as (this: unknown) => Promise<void>;
-      await buildStart.call({});
+      await buildStart.call({ meta: { watchMode } });
     },
     load: (id, consumer) => {
       const load = hookOf(plugin, "load") as (this: unknown, id: string) => unknown;
@@ -169,7 +169,7 @@ describe("bounda() Vite plugin", () => {
     expect(configEnvironment.call({}, "client").resolve).toBeUndefined();
   });
 
-  it("serves the server module wired to the project's registry, reading its own writes", () => {
+  it("serves the server module wired to the project's registry and configuration, reading its own writes", () => {
     const { configure, load } = harness("/project");
     configure("serve");
     const code = load("\0@bounda-dev/react-router/app", "server");
@@ -180,7 +180,7 @@ describe("bounda() Vite plugin", () => {
         'import { registry } from "/project/.bounda/registry.ts";',
         "",
         "export const { bounda, boundaMiddleware, dispose } = createBounda({",
-        '  boot: () => boot({ root: "/project", registry }),',
+        '  boot: () => boot({ root: "/project", registry, importConfig: () => import("/project/bounda.config.ts") }),',
         '  consistency: "read-your-writes",',
         "});",
         'export { failure } from "@bounda-dev/react-router";',
@@ -188,6 +188,16 @@ describe("bounda() Vite plugin", () => {
       ].join("\n"),
     );
     expect(load("\0other", "server")).toBeNull();
+  });
+
+  it("leaves the root of a build to the directory it runs from", () => {
+    const { configure, load } = harness("/project");
+    configure("build");
+    const code = load("\0@bounda-dev/react-router/app", "server") as string;
+    expect(code).toContain(
+      '  boot: () => boot({ registry, importConfig: () => import("/project/bounda.config.ts") }),',
+    );
+    expect(code).not.toContain("root:");
   });
 
   it("passes the consistency option through", () => {
@@ -237,6 +247,28 @@ describe("bounda() Vite plugin", () => {
     expect(await exists(join(root, "app/domain/order/+types/order-placed.ts"))).toBe(true);
     expect(recorded.warnings.join("\n")).toContain("[bounda] warning: order:");
     expect(recorded.errors).toEqual([]);
+  });
+
+  it("generates once for every environment of a build, sharing one instance between them", async () => {
+    const root = await project("order-app");
+    const { plugin, configure, start } = harness(root);
+    expect(plugin.sharedDuringBuild).toBe(true);
+    configure("build");
+    await start();
+    await rm(join(root, ".bounda/registry.ts"));
+    configure("build");
+    await start();
+    expect(await exists(join(root, ".bounda/registry.ts"))).toBe(false);
+  });
+
+  it("generates on every start of a watching build", async () => {
+    const root = await project("order-app");
+    const { configure, start } = harness(root);
+    configure("build");
+    await start(true);
+    await rm(join(root, ".bounda/registry.ts"));
+    await start(true);
+    expect(await exists(join(root, ".bounda/registry.ts"))).toBe(true);
   });
 
   it("stays quiet when there is nothing to warn about", async () => {

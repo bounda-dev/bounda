@@ -1,5 +1,5 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -180,10 +180,18 @@ const portTaken = (port: number): Promise<boolean> =>
     server.listen(port, "127.0.0.1", () => server.close(() => done(false)));
   });
 
-interface DevServer {
+interface Server {
   readonly url: string;
   readonly port: number;
   readonly stop: () => Promise<void>;
+}
+
+/**
+ * How to start a server on a port: its arguments to `node`, and what it adds to the environment.
+ */
+interface ServerCommand {
+  readonly args: (port: number) => readonly string[];
+  readonly env?: (port: number) => Readonly<Record<string, string>>;
 }
 
 const PORT_ATTEMPTS = 3;
@@ -194,26 +202,27 @@ const READY_WITHIN_MS = 90_000;
  * resolved the app module through the plugin and succeeded while every request 500ed.
  *
  * Readiness is a request that answers, not a line in the log: the banner's wording is Vite's to
- * change. `bind` makes the server listen on 127.0.0.1 and exit rather than move when the port is
- * taken, so the port found free is the one it listens on. Between finding it and binding it
+ * change. The command makes the server listen on 127.0.0.1 and exit rather than move when the
+ * port is taken, so the port found free is the one it listens on. Between finding it and binding it
  * another process can take it; the server then exits, and a port found busy afterwards means
  * exactly that, so it tries another. Any other exit fails with what the server printed. A request
  * is dropped when the server exits or the deadline passes: whatever held the port may accept the
  * connection and never answer.
  */
-const devServer = async (
-  project: string,
-  bin: string,
-  bind: readonly string[],
-): Promise<DevServer> => {
+const startServer = async (project: string, command: ServerCommand): Promise<Server> => {
   for (let attempt = 1; ; attempt += 1) {
     const port = await freePort();
     const url = `http://127.0.0.1:${port}`;
-    const child = spawn(process.execPath, [bin, "dev", "--port", String(port), ...bind], {
+    const child = spawn(process.execPath, [...command.args(port)], {
       cwd: project,
       stdio: ["ignore", "pipe", "pipe"],
       detached: true,
-      env: { ...process.env, CI: "1", WRANGLER_SEND_METRICS: "false" },
+      env: {
+        ...process.env,
+        CI: "1",
+        WRANGLER_SEND_METRICS: "false",
+        ...command.env?.(port),
+      },
     });
     let output = "";
     const record = (chunk: Buffer): void => {
@@ -232,7 +241,7 @@ const devServer = async (
       );
     await until(
       async () => exited() || (await answers()),
-      () => `the dev server never answered on ${port}:\n${output}`,
+      () => `the server never answered on ${port}:\n${output}`,
       READY_WITHIN_MS,
     ).catch(async (error: Error) => {
       await stop(child);
@@ -242,7 +251,7 @@ const devServer = async (
     await stop(child);
     if (attempt < PORT_ATTEMPTS && (await portTaken(port))) continue;
     throw new Error(
-      `the dev server exited (${child.exitCode ?? child.signalCode}) before answering on ${port}:\n${output}`,
+      `the server exited (${child.exitCode ?? child.signalCode}) before answering on ${port}:\n${output}`,
     );
   }
 };
@@ -314,7 +323,19 @@ describe("a project created by create-bounda", () => {
     const built = await run(process.execPath, [reactRouter, "build"], { cwd: project });
     expect(`${built.stdout}${built.stderr}`).toMatch(/built in/);
 
-    const server = await devServer(project, reactRouter, ["--host", "127.0.0.1", "--strictPort"]);
+    const server = await startServer(project, {
+      args: (port) => [
+        reactRouter,
+        "dev",
+        "--port",
+        String(port),
+        "--host",
+        "127.0.0.1",
+        "--strictPort",
+      ],
+    });
+    const config = join(project, "bounda.config.ts");
+    const original = await readFile(config, "utf8");
     try {
       const home = await fetch(`${server.url}/`);
       expect(home.status).toBe(200);
@@ -330,10 +351,40 @@ describe("a project created by create-bounda", () => {
 
       const grace = await fetch(`${server.url}/?customer=grace`);
       expect(await rendered(grace)).toContain("grace: 1 order(s), 99 in total");
+
+      // An edited configuration reboots the app: here, on a database of its own.
+      expect(original).toContain("./data/app.db");
+      await writeFile(config, original.replace("./data/app.db", "./data/edited.db"));
+      await until(
+        async () =>
+          (await rendered(await fetch(`${server.url}/?customer=grace`))).includes(
+            "grace: 0 order(s)",
+          ),
+        () => "the dev server kept the configuration it booted with",
+      );
     } finally {
       await server.stop();
+      await writeFile(config, original);
     }
     expect(await portTaken(server.port)).toBe(false);
+
+    // The build runs wherever it is deployed: nothing points back at where it was built.
+    const deployed = `${project}-deployed`;
+    await rename(project, deployed);
+    const production = await startServer(deployed, {
+      args: () => [
+        join(deployed, "node_modules/@react-router/serve/bin.cjs"),
+        "./build/server/index.js",
+      ],
+      env: (port) => ({ PORT: String(port), HOST: "127.0.0.1" }),
+    });
+    try {
+      const grace = await fetch(`${production.url}/?customer=grace`);
+      expect(grace.status).toBe(200);
+      expect(await rendered(grace)).toContain("grace: 1 order(s), 99 in total");
+    } finally {
+      await production.stop();
+    }
   }, 300_000);
 
   it("scaffolds a Cloudflare app that generates, type-checks, tests and serves its store", async () => {
@@ -361,7 +412,9 @@ describe("a project created by create-bounda", () => {
     );
     expect(`${tested.stdout}${tested.stderr}`).toMatch(/7 passed/);
 
-    const server = await devServer(project, wrangler, ["--ip", "127.0.0.1"]);
+    const server = await startServer(project, {
+      args: (port) => [wrangler, "dev", "--port", String(port), "--ip", "127.0.0.1"],
+    });
     const post = (path: string, body: unknown) =>
       fetch(`${server.url}${path}`, {
         method: "POST",
