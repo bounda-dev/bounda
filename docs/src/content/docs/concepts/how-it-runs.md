@@ -42,8 +42,8 @@ aggregate. The distinction matters for everything below.
     </tbody>
   </table>
   <figcaption>
-    Three aggregates' streams in one global order, as they were committed. Each subscriber has
-    read up to its checkpoint; the projection is at the head. The next event enters at the end.
+    The events of three aggregates in one global order, as they were committed. Each subscriber
+    has read up to its checkpoint; the projection is at the head. The next event enters at the end.
   </figcaption>
 </figure>
 
