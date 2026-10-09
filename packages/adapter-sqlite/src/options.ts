@@ -38,6 +38,14 @@ export interface ResolveSqliteOptionsFunction {
  */
 export const DEFAULT_TABLE_PREFIX: string = "bounda_";
 
+// libSQL keeps these in the process's memory, with a single connection.
+const IN_MEMORY = /^(?:file:)?:memory:(?:\?|$)/;
+
+const locationOf = (url: string): ResolvedSqliteOptions["location"] => {
+  if (IN_MEMORY.test(url)) return "memory";
+  return url.startsWith("file:") ? "file" : "remote";
+};
+
 /**
  * Turns the user's options into the libSQL client configuration.
  */
@@ -49,6 +57,6 @@ export const resolveSqliteOptions: ResolveSqliteOptionsFunction = (options) => {
     url: options.url,
     ...(options.authToken === undefined ? {} : { authToken: options.authToken }),
     tablePrefix,
-    location: options.url.startsWith("file:") ? "file" : "remote",
+    location: locationOf(options.url),
   };
 };

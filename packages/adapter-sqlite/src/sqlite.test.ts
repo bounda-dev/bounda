@@ -73,8 +73,14 @@ describe("sqlite adapter in memory, under concurrent use", () => {
     locking: "single-writer",
   });
 
-  it("lets a read wait for a write transaction in flight instead of failing", async () => {
-    const storage = await openStorage(sqlite({ memory: true }));
+  it("lets a read, its own or a query's on client.raw, wait for a write transaction in flight", async () => {
+    const adapter = sqlite({ memory: true });
+    const storage = await openStorage(adapter);
+    const readModel = await adapter.createReadModel({
+      name: "orderSummary",
+      fields: contractFields,
+      logger: silentLogger,
+    });
     let release: () => void = () => undefined;
     const held = new Promise<void>((resolve) => {
       release = resolve;
@@ -95,9 +101,12 @@ describe("sqlite adapter in memory, under concurrent use", () => {
     });
     await inside;
     const reading = storage.eventStore.lastPosition();
+    const raw = readModel.client.raw as Client;
+    const querying = raw.execute("SELECT 1 AS one");
     release();
     await writing;
     expect(await reading).toBe(1);
+    expect((await querying).rows[0]?.one).toBe(1);
   });
 });
 
@@ -127,6 +136,35 @@ describe("sqlite adapter on a file", () => {
   readModelTransactionContract({
     create: async () => sqlite({ path: freshPath() }),
     locking: "single-writer",
+  });
+
+  it("lets its own statements wait for its own write transaction, without blocking the process", async () => {
+    const storage = await openStorage(sqlite({ path: freshPath() }));
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered: () => void = () => undefined;
+    const inside = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const writing = storage.transact(async (tx) => {
+      await tx.eventStore.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events: [pendingEvent({ aggregateId: "1", version: 1 })],
+      });
+      entered();
+      await held;
+    });
+    await inside;
+    const started = Date.now();
+    const claiming = storage.checkpointStore.set("projection:x", 1);
+    setTimeout(release, 20);
+    await Promise.all([writing, claiming]);
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(await storage.checkpointStore.get("projection:x")).toBe(1);
   });
 
   it("waits for another process's write on the file, in WAL mode, instead of failing", async () => {
@@ -382,6 +420,10 @@ describe("resolveSqliteOptions", () => {
       location: "remote",
     });
     expect(resolveSqliteOptions({ url: "file:./app.db" })).toMatchObject({ location: "file" });
+    expect(resolveSqliteOptions({ url: ":memory:" })).toMatchObject({ location: "memory" });
+    expect(resolveSqliteOptions({ url: "file::memory:?cache=shared" })).toMatchObject({
+      location: "memory",
+    });
     expect(resolveSqliteOptions({ url: "libsql://db.turso.io" })).not.toHaveProperty("authToken");
   });
 });

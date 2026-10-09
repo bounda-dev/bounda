@@ -76,8 +76,9 @@ const next = idle ? await app.nextDueAt() : new Date();
 
 ## More than one instance
 
-Use PostgreSQL. SQLite is a single writer and fine for one process; PostgreSQL is what the
-adapter's concurrency work is for. Handler claims are single `INSERT … ON CONFLICT` statements and
+Use PostgreSQL. SQLite has a single writer: a few processes on one file, such as a web process,
+a worker and `bounda rebuild`, take turns at it, which is as far as it goes on one machine;
+PostgreSQL is what the adapter's concurrency work is for. Handler claims are single `INSERT … ON CONFLICT` statements and
 due scheduled commands are taken `FOR UPDATE SKIP LOCKED`, so any number of instances can run the
 worker role and each policy or process handler and each due command is claimed by one of them at a
 time. Only the instance holding the claim commits: one that stalls past its lease loses the claim
