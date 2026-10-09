@@ -23,13 +23,32 @@ export interface CreateMemoryEventStoreFunction {
   (args?: CreateMemoryEventStoreArgs): MemoryEventStore;
 }
 
+// An event as a SQL store keeps it: payload and metadata as JSON text, so each read is a fresh
+// copy and holds what JSON holds, as the SQL stores hand them out.
+interface Kept extends Omit<StoredEvent, "payload" | "metadata"> {
+  readonly payload: string | undefined;
+  readonly metadata: string;
+}
+
+const keep = ({ payload, metadata, ...rest }: StoredEvent): Kept => ({
+  ...rest,
+  payload: payload === undefined ? undefined : JSON.stringify(payload),
+  metadata: JSON.stringify(metadata),
+});
+
+const restore = ({ payload, metadata, ...rest }: Kept): StoredEvent => ({
+  ...rest,
+  payload: payload === undefined ? undefined : JSON.parse(payload),
+  metadata: JSON.parse(metadata),
+});
+
 /**
  * An event store held in memory. Appends are atomic because nothing yields between the version
  * check and the write.
  */
 export const createMemoryEventStore: CreateMemoryEventStoreFunction = ({ onAppend } = {}) => {
-  const streams = new Map<string, StoredEvent[]>();
-  const global: StoredEvent[] = [];
+  const streams = new Map<string, Kept[]>();
+  const global: Kept[] = [];
 
   const appendAll = async (batches: readonly AppendArgs[]): Promise<readonly AppendResult[]> => {
     const versions = new Map<string, number>();
@@ -44,13 +63,12 @@ export const createMemoryEventStore: CreateMemoryEventStoreFunction = ({ onAppen
     const results = batches.map(({ aggregateType, aggregateId, expectedVersion, events }) => {
       const key = streamId({ aggregateType, aggregateId });
       const stream = streams.get(key) ?? [];
-      const stored = events.map((event, index) => ({
-        ...event,
-        position: global.length + index + 1,
-      }));
+      const stored = events.map((event, index) =>
+        keep({ ...event, position: global.length + index + 1 }),
+      );
       streams.set(key, [...stream, ...stored]);
       global.push(...stored);
-      return { version: expectedVersion + stored.length, events: stored };
+      return { version: expectedVersion + stored.length, events: stored.map(restore) };
     });
     if (results.some((result) => result.events.length > 0)) onAppend?.(global.length);
     return results;
@@ -62,11 +80,12 @@ export const createMemoryEventStore: CreateMemoryEventStoreFunction = ({ onAppen
     load: async ({ aggregateType, aggregateId, fromVersion = 1 }) => {
       const stream = streams.get(streamId({ aggregateType, aggregateId })) ?? [];
       return {
-        events: stream.filter((event) => event.version >= fromVersion),
+        events: stream.filter((event) => event.version >= fromVersion).map(restore),
         version: stream.length,
       };
     },
-    readAll: async ({ afterPosition, limit }) => global.slice(afterPosition, afterPosition + limit),
+    readAll: async ({ afterPosition, limit }) =>
+      global.slice(afterPosition, afterPosition + limit).map(restore),
     lastPosition: async () => global.length,
   };
 };
