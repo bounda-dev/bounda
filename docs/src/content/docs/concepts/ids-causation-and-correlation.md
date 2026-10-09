@@ -59,7 +59,7 @@ Reading it back is a filter on `metadata.correlationId`, ordered by `position`; 
 stored as JSON, `jsonb` on PostgreSQL. In traces, every `bounda.command`, `bounda.policy` and
 `bounda.process` span carries `bounda.correlation_id`, and a command's span adds
 `bounda.causation_id`: the event the command reacted to, or the command itself when it came from
-outside (see [Observability](/guides/deployment/#observability)).
+outside (see [Observability](/reference/observability/)).
 
 ## Ids a reaction creates
 
@@ -149,7 +149,7 @@ Router sense, is the host's: the place where a request dispatches a command.
 - **No query by correlation.** There is no API for it, and no index on the metadata column.
 - **One request is not one trace.** A policy runs in a later pass, so its span starts a new
   trace; the correlation id is what joins them
-  ([what is not there yet](/guides/deployment/#what-is-not-there-yet)).
+  ([what is not there yet](/reference/limitations/)).
 - **A key names its handler.** Renaming a policy or a process changes the key, and every id derived
   from it, for a retry in flight. And a command a reaction dispatches hands its command id to its
   own handler as `idempotencyKey`, so a deploy that reorders dispatches of one type changes the
@@ -161,7 +161,7 @@ Router sense, is the host's: the place where a request dispatches a command.
 
 - [Calling the outside world](/guides/reacting-to-events/#calling-the-outside-world), for keys and
   derived ids in a handler, and [Every step is idempotent](/guides/sagas/#every-step-is-idempotent).
-- [Observability](/guides/deployment/#observability), for the spans and their attributes.
+- [Observability](/reference/observability/), for the spans and their attributes.
 - The other frameworks: Axon's [message correlation](https://docs.axoniq.io/axon-framework-reference/4.11/messaging-concepts/message-correlation/),
   Marten's [event metadata](https://martendb.io/events/metadata.html), Kurrent's
   [system projections](https://docs.kurrent.io/server/v24.10/features/projections/system.html) and

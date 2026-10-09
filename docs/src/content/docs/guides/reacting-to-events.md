@@ -363,14 +363,9 @@ port in each, whose implementations share the client from outside `app/domain`.
 
 ## Retries and timeouts
 
-Defaults, when the configuration says nothing:
-
-| | Policies | Processes |
-| --- | --- | --- |
-| Strategy | exponential | exponential |
-| Attempts | 3 | 3 |
-| Base delay | 1s | 1s |
-| Maximum delay | 30s | 30s |
+A policy or process run that fails runs again, waiting longer each time, up to three runs in all,
+before it becomes a dead letter; [Configuration](/reference/configuration/#retry) has every setting and
+its default.
 
 Three different things are called a timeout, and it is worth keeping them apart:
 

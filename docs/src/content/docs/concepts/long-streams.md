@@ -145,7 +145,7 @@ There is no date and no API for snapshots yet.
 
 ## Where to read more
 
-- [What is not there yet](/guides/deployment/#what-is-not-there-yet), the short version of this
+- [What is not there yet](/reference/limitations/), the short version of this
   page, and [Changing an event's shape](/guides/changing-events/) for the upcasters every fold
   runs.
 - [State](/guides/project-layout/#state) and [policies](/guides/project-layout/#policies-policies),

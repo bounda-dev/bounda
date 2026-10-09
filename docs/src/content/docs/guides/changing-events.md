@@ -95,7 +95,7 @@ what keeps the chain straight.
 
 Upcasters are cheap but not free: they run on every read of an old event. An aggregate with
 thousands of old events re-runs the chain on every command, since Bounda has no snapshots yet
-([what is not there yet](/guides/deployment/#what-is-not-there-yet)), and a rebuild runs it over
+([what is not there yet](/reference/limitations/)), and a rebuild runs it over
 the whole global stream once.
 
 ## What is not covered yet

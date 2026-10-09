@@ -191,10 +191,12 @@ See [adapters](/adapters/).
   old events are read.
 - [Bounda with React Router](/guides/react-router/): actions that dispatch, loaders that query,
   and the [onboarding example](/examples/onboarding/) that puts it together.
-- [Deployment](/guides/deployment/): roles, several instances, rebuilding a read model,
-  observability, and the honest list of what is not there yet.
+- [Deployment](/guides/deployment/): roles, several instances, rebuilding a read model and
+  observability.
 - [The storefront example](/examples/storefront/): policies, a checkout that compensates
   when the payment fails, an effect after the commit and hand-written SQL in one small app.
 - [How Bounda runs](/concepts/how-it-runs/): one global stream per store, the ceiling with numbers,
   and the way out when you reach it.
-- [CLI](/reference/cli/): `bounda generate`, `bounda rebuild` and `bounda dead-letters`.
+- Reference: the [CLI](/reference/cli/), every [configuration](/reference/configuration/) key,
+  the [conventions](/reference/conventions/) the generator reads, [errors](/reference/errors/),
+  [observability](/reference/observability/) and [what is not there yet](/reference/limitations/).

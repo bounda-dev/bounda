@@ -84,11 +84,9 @@ and nothing else at run time: those names are an event's alone. It is a port whe
 alike, is yours: a value object, a domain service, a helper the handlers import, which the
 generator leaves alone. `state.ts` and `<event>.upcast.ts` are the only other names it reads.
 
-Two mistakes leave the layout valid, so the generator warns about them instead of failing: a
-module that imports its own `+types` without exporting an event's function, which was an event
-and lost the export that made it one (a leftover `apply`, a typo in `evolve`), and a directory
-whose name is one letter away from `commands`, `policies`, `processes` or `infrastructure`, or is
-`command`, `policy`, `process` or `infra`, whose modules would go unregistered.
+A mistake that leaves the layout valid, such as an event that lost its `evolve` export or a
+directory named `policy` instead of `policies`, gets a warning instead of a failure; the full list
+is in [Conventions](/reference/conventions/#what-the-generator-warns-about).
 
 ```ts
 // app/domain/order/order-placed.ts
@@ -251,8 +249,8 @@ The value has to be one of the names, so a choice made from the environment says
 as above; a plain `process.env.INVENTORY ?? "http"` is a `string` and does not compile.
 
 A port cannot be named after an event of the aggregate, nor after an argument a handler already
-receives (`command`, `state`, `events`, `event`, `commands`, `idempotencyKey`, `signal`,
-`aggregateId`, `after`, `reject`); the generator says which. Domain logic the handlers share but
+receives ([reserved names](/reference/conventions/#what-the-generator-refuses)); the generator says
+which. Domain logic the handlers share but
 that has no implementations to choose from is not a port: it is a module of the aggregate like any
 other, which the handlers import. A provider two aggregates use is two ports, one in each, with the
 contract each aggregate needs; the client they share lives outside `app/domain`, in
@@ -530,10 +528,8 @@ always present in the handler: callers see the schema's input type, handlers its
 
 The root of a read model is read like an aggregate's, without events: `view.ts`, the ports, and
 any other module or directory the projections and queries share, which the generator leaves
-alone. It warns about a directory one letter away from `projections`, `queries` or
-`infrastructure`, or named `projection`, `query` or `infra`, and about a module there that
-exports `project`, `repository` or `handler`: a projection or a query put in the wrong place,
-which would go unregistered.
+alone. A projection or a query put in the wrong place gets a
+[warning](/reference/conventions/#what-the-generator-warns-about).
 
 ### Ports of a read model
 
@@ -580,29 +576,7 @@ Elasticsearch, is fed by a policy instead: see
 
 ## Generated files
 
-`bounda generate` writes:
-
-| Path | Holds |
-| --- | --- |
-| `.bounda/registry.ts` | Every module, grouped as the runtime needs it. `boot()` imports it |
-| `.bounda/register.d.ts` | Registers the registry type and the type of the `ports` section with `@bounda-dev/core/register`, so `boot()` and `BoundaApp` are typed for the project without a type argument and `defineConfig` checks the implementation names |
-| `.bounda/types.ts` | The state, events, ports, commands, rows and queries maps the `+types` build on |
-| `**/+types/<name>.ts` | The argument types each module imports. An implementation has none: it imports its port |
-
-They are derived from your code, so they are not versioned. `tsconfig.json` must include them as
-`.bounda/**/*` (TypeScript skips a bare `.bounda` entry because the directory starts with a dot);
-`create-bounda` sets this up. Add to `.gitignore`:
-
-```
-.bounda/
-**/+types/
-```
-
-and run the generator before anything type-checks, typically as `prepare` in `package.json`:
-
-```json
-{ "scripts": { "prepare": "bounda generate", "dev": "bounda generate --watch" } }
-```
-
-If your formatter or linter picks up generated files, exclude the same two patterns; their layout
-is fixed by the generator.
+`bounda generate` writes `.bounda/` and a `+types/` directory next to each module. They are
+derived from your code: keep them out of git, include `.bounda/**/*` in `tsconfig.json` and run
+the generator before anything type-checks. [Conventions](/reference/conventions/#generated-files)
+says what each file holds and how to set it up; `create-bounda` does it for you.
