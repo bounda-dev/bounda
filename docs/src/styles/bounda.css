@@ -180,7 +180,6 @@ pre {
 /* Square corners, structure by hairlines. */
 .sl-markdown-content :is(.card, .sl-link-card, img, figure),
 .sl-link-button,
-site-search :is(button[data-open-modal], kbd, dialog),
 mobile-starlight-toc .toggle {
   border-radius: 2px;
 }
@@ -239,9 +238,8 @@ mobile-starlight-toc .toggle {
 }
 
 /* Controls are ghosts, as on bounda.dev: a hairline and muted text, which brighten on hover. No
-   fills, no shadows. */
-.actions-container .action-button,
-site-search button[data-open-modal] {
+   fills, no shadows. The page actions come from a plugin; the rest are this site's components. */
+.actions-container .action-button {
   border: 1px solid var(--sl-color-hairline);
   border-radius: 2px;
   background: transparent;
@@ -253,8 +251,7 @@ site-search button[data-open-modal] {
 }
 
 .actions-container .action-button:hover,
-.actions-container .action-button:focus-visible,
-site-search button[data-open-modal]:hover {
+.actions-container .action-button:focus-visible {
   border-color: var(--sl-color-gray-3);
   background: transparent;
   color: var(--sl-color-white);

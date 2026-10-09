@@ -8,16 +8,17 @@ const { entry, sidebar } = Astro.locals.starlightRoute;
 const position = positionsOf(sidebar).find(({ isCurrent }) => isCurrent);
 ---
 
-<div class="bounda-title">
+<div class="bounda-title" data-pagefind-meta={`title:${entry.data.title}`}>
   {
     position && (
-      <p class="bounda-position">
+      <p class="bounda-position" data-pagefind-ignore>
         <span class="bounda-label">{position.group}</span>
         <span class="bounda-number">{position.number}</span>
       </p>
     )
   }
-  <WithActions />
+  {/* Out of the search index: the page actions are interface, and the title is the meta above. */}
+  <div class="with-actions" data-pagefind-ignore="all"><WithActions /></div>
   {entry.data.description && <p class="lead">{entry.data.description}</p>}
 </div>
 
@@ -28,7 +29,11 @@ const position = positionsOf(sidebar).find(({ isCurrent }) => isCurrent);
     flex-direction: column;
   }
 
-  .bounda-title > :global(*) {
+  .with-actions {
+    display: contents;
+  }
+
+  .with-actions > :global(*) {
     order: 3;
   }
 
@@ -37,11 +42,11 @@ const position = positionsOf(sidebar).find(({ isCurrent }) => isCurrent);
     margin-top: 1rem;
   }
 
-  .bounda-title > :global(h1) {
+  .with-actions > :global(h1) {
     order: 1;
   }
 
-  .bounda-position + :global(h1) {
+  .bounda-position + .with-actions > :global(h1) {
     margin-top: 0.5rem;
   }
 

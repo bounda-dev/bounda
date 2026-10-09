@@ -66,6 +66,7 @@ export default defineConfig({
         ThemeSelect: "./src/components/ThemeSelect.astro",
         SocialIcons: "./src/components/SocialIcons.astro",
         MobileMenuToggle: "./src/components/MobileMenuToggle.astro",
+        Search: "./src/components/Search.astro",
       },
       expressiveCode: {
         themes: [basalt, bone],

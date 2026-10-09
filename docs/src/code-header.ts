@@ -82,12 +82,20 @@ export const codeHeader = (): ExpressiveCodePlugin =>
     hooks: {
       postprocessRenderedBlock: ({ codeBlock, renderData }) => {
         const header = findHeader(renderData.blockAst);
+        if (!header) return;
+        // The header is interface, not content: search should not find "Terminal window".
+        for (const child of header.children.filter(isElement)) {
+          const names = child.properties.className;
+          if (Array.isArray(names) && names.includes("sr-only")) {
+            child.properties.dataPagefindIgnore = "";
+          }
+        }
         const language = LANGUAGES[codeBlock.language];
-        if (!header || !language) return;
+        if (!language) return;
         header.children.push({
           type: "element",
           tagName: "span",
-          properties: { className: ["bounda-code-language"] },
+          properties: { className: ["bounda-code-language"], dataPagefindIgnore: "" },
           children: [{ type: "text", value: language }],
         });
       },
