@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# The docs as Markdown, packed into @bounda-dev/core by its build.
+packages/core/docs/
 coverage/
 .vitest/
 .stryker-tmp/

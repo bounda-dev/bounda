@@ -222,6 +222,16 @@ await app.stop();
 Point `bounda.config.ts` at PostgreSQL when one process is not enough; the app does not change.
 See [adapters](/adapters/).
 
+## Working with an agent
+
+A new project carries an `AGENTS.md`, which Claude Code, Codex, Cursor and other coding agents
+read, telling the agent to read the docs before it writes a module. The docs it points at ship inside `@bounda-dev/core`, as
+plain Markdown in `node_modules/@bounda-dev/core/docs/`, so the agent reads the ones for the
+version you installed, not whatever it remembers. Every page here, past the front page, also has
+**Copy Markdown** and **Open** in ChatGPT or Claude, and
+[llms.txt](https://docs.bounda.dev/llms.txt) lists the whole site for an agent that is still
+deciding.
+
 ## Where next
 
 - [Core concepts](/getting-started/core-concepts/): every word the docs use, one line each.

@@ -60,6 +60,7 @@ describe("scaffoldProject", () => {
     });
     expect(report.files).toEqual([
       ".gitignore",
+      "AGENTS.md",
       "README.md",
       "app/domain/order/commands/place-order.ts",
       "app/domain/order/order-placed.ts",
@@ -88,6 +89,10 @@ describe("scaffoldProject", () => {
     );
     expect(await readFile(join(target, "README.md"), "utf8")).toContain("pnpm install");
     expect(await readFile(join(target, ".gitignore"), "utf8")).toContain(".bounda/");
+    expect(await readFile(join(target, "AGENTS.md"), "utf8")).toContain(
+      "node_modules/@bounda-dev/core/docs/",
+    );
+    await expect(readFile(join(target, "CLAUDE.md"), "utf8")).rejects.toThrow();
   });
 
   it("uses the postgresql overlay when asked", async () => {
@@ -133,6 +138,7 @@ describe("scaffoldProject", () => {
     });
     expect(report.files).toEqual([
       ".gitignore",
+      "AGENTS.md",
       "README.md",
       "app/app.css",
       "app/domain/order/commands/place-order.ts",
@@ -195,6 +201,7 @@ describe("scaffoldProject", () => {
     });
     expect(report.files).toEqual([
       ".gitignore",
+      "AGENTS.md",
       "README.md",
       "app/domain/order/commands/place-order.ts",
       "app/domain/order/order-placed.ts",
