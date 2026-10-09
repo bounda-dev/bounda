@@ -12,9 +12,7 @@ export const followReading: FollowReadingFunction = (links, onChange) => {
     const heading = document.getElementById(decodeURIComponent(link.hash.slice(1)));
     return heading ? [{ link, heading }] : [];
   });
-  let frame = 0;
   const update = () => {
-    frame = 0;
     const line = innerHeight / 4;
     const atEnd = innerHeight + scrollY >= document.documentElement.scrollHeight - 2;
     const current = atEnd
@@ -26,10 +24,17 @@ export const followReading: FollowReadingFunction = (links, onChange) => {
     }
     onChange(current?.link);
   };
+  // One update per frame, however many scroll events arrive in it.
+  let scheduled = false;
   addEventListener(
     "scroll",
     () => {
-      frame ||= requestAnimationFrame(update);
+      if (scheduled) return;
+      scheduled = true;
+      requestAnimationFrame(() => {
+        scheduled = false;
+        update();
+      });
     },
     { passive: true },
   );
