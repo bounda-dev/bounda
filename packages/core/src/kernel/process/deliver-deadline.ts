@@ -95,6 +95,14 @@ export const createDeadlineDelivery: CreateDeadlineDeliveryFunction = ({
   clock,
   logger,
 }) => {
+  const dueDeadline = (
+    process: ProcessRuntime,
+    instance: ProcessInstance,
+  ): Deadline | undefined => {
+    const due = pendingDeadline(process, instance);
+    return due !== null && Date.parse(due.at) <= clock.now().getTime() ? due : undefined;
+  };
+
   const handleDeadline = async ({
     payload,
     context,
@@ -107,12 +115,8 @@ export const createDeadlineDelivery: CreateDeadlineDeliveryFunction = ({
     }
     const step = async (unit: UnitOfWork): Promise<void> => {
       const instance = await units.over(unit).load(process, payload.aggregateId);
-      const due = pendingDeadline(process, instance);
-      if (
-        instance.status === "started" &&
-        due !== null &&
-        Date.parse(due.at) <= clock.now().getTime()
-      ) {
+      const due = dueDeadline(process, instance);
+      if (instance.status === "started" && due !== undefined) {
         await deadlineStep.attempt({
           unit,
           process,
@@ -129,14 +133,6 @@ export const createDeadlineDelivery: CreateDeadlineDeliveryFunction = ({
       return;
     }
     await units.commit(step);
-  };
-
-  const dueDeadline = (
-    process: ProcessRuntime,
-    instance: ProcessInstance,
-  ): Deadline | undefined => {
-    const due = pendingDeadline(process, instance);
-    return due !== null && Date.parse(due.at) <= clock.now().getTime() ? due : undefined;
   };
 
   const failDeadline = async ({

@@ -11,17 +11,6 @@ const context = { correlationId: "corr", causationId: "cause", depth: 2 };
 
 const setup = async () => {
   const storage = await memory().createStorage({ logger: silentLogger });
-  const original = storage.eventStore.append.bind(storage.eventStore);
-  let appends = 0;
-  let conflicts = 0;
-  storage.eventStore.append = async (args) => {
-    appends += 1;
-    if (conflicts > 0) {
-      conflicts -= 1;
-      throw new ConcurrencyError({ streamId: "order:o-1", expectedVersion: 0, actualVersion: 1 });
-    }
-    return original(args);
-  };
   const append = () =>
     appendSystemEvent({
       eventStore: storage.eventStore,
@@ -33,14 +22,7 @@ const setup = async () => {
       payload: { commandType: "PayOrder", error: "boom", attempts: 3 },
       context,
     });
-  return {
-    storage,
-    append,
-    appends: () => appends,
-    conflict: (times: number) => {
-      conflicts = times;
-    },
-  };
+  return { storage, append };
 };
 
 describe("appendSystemEvent", () => {
@@ -68,10 +50,14 @@ describe("appendSystemEvent", () => {
   });
 
   it("lets a stream that moved fail, for the unit of work to run again", async () => {
-    const { append, appends, conflict } = await setup();
-    conflict(1);
+    const { storage, append } = await setup();
+    let appends = 0;
+    storage.eventStore.append = async () => {
+      appends += 1;
+      throw new ConcurrencyError({ streamId: "order:o-1", expectedVersion: 0, actualVersion: 1 });
+    };
     await expect(append()).rejects.toBeInstanceOf(ConcurrencyError);
-    expect(appends()).toBe(1);
+    expect(appends).toBe(1);
   });
 
   it("reads only the version of the stream, not its events", async () => {
