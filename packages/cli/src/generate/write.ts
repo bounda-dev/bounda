@@ -17,10 +17,18 @@ export interface IsGeneratedPathFunction {
   (path: string): boolean;
 }
 
-export const isGeneratedPath: IsGeneratedPathFunction = (path) =>
-  dirname(path)
-    .split(/[\\/]/)
-    .some((segment) => GENERATED_SEGMENTS.has(segment));
+export const isGeneratedPath: IsGeneratedPathFunction = (path) => isInGenerated(dirname(path));
+
+export interface IsInGeneratedFunction {
+  (path: string): boolean;
+}
+
+/**
+ * Whether `path` is a generated directory or lies inside one: what a watcher of the project
+ * ignores, so the generator's writes never trigger it again.
+ */
+export const isInGenerated: IsInGeneratedFunction = (path) =>
+  path.split(/[\\/]/).some((segment) => GENERATED_SEGMENTS.has(segment));
 
 /**
  * Writes a file only when its content differs, so watchers downstream see no spurious change.

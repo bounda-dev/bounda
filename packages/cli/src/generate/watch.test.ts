@@ -321,7 +321,7 @@ describe("watchProject", () => {
     await expect(watching).resolves.toBeUndefined();
   });
 
-  it("coalesces a burst into one onChange and ignores +types", async () => {
+  it("coalesces a burst into one onChange and ignores +types and .bounda", async () => {
     const watcher = fakeWatcher();
     const { watching, runs, clock } = await harness(watcher);
     watcher.emit("domain/order/a.ts");
@@ -337,6 +337,8 @@ describe("watchProject", () => {
 
     watcher.emit("domain/order/+types/a.ts");
     watcher.emit("domain/order/commands/+types/b.ts");
+    watcher.emit(".bounda/types.ts");
+    watcher.emit(".bounda");
     await drained();
     expect(clock.pending()).toBe(0);
 
