@@ -27,15 +27,33 @@ interface Connection {
  * (`{ memory: true }`) or a libSQL server such as Turso (`{ url, authToken }`). Storage and read
  * models opened from the same adapter share one connection, closed when the last of them closes.
  */
+/**
+ * How long a statement on a local file waits for another process's lock before failing with
+ * `SQLITE_BUSY`.
+ */
+const BUSY_TIMEOUT_MS = 5_000;
+
 export const sqlite: SqliteFunction = (options) => {
-  const { url, authToken, tablePrefix } = resolveSqliteOptions(options);
+  const { url, authToken, tablePrefix, location } = resolveSqliteOptions(options);
   let connection: Connection | null = null;
 
   const open = (): Connection => {
     if (connection === null) {
       if ("path" in options) mkdirSync(dirname(options.path), { recursive: true });
-      const client = createClient({ url, ...(authToken === undefined ? {} : { authToken }) });
-      connection = { client, db: createSqliteDatabase(client), uses: 0 };
+      const client = createClient({
+        url,
+        ...(authToken === undefined ? {} : { authToken }),
+        ...(location === "file" ? { timeout: BUSY_TIMEOUT_MS } : {}),
+      });
+      connection = {
+        client,
+        // WAL lets other processes on the file read while one writes.
+        db: createSqliteDatabase(client, {
+          setup: location === "file" ? ["PRAGMA journal_mode = WAL"] : [],
+          singleConnection: location === "memory",
+        }),
+        uses: 0,
+      };
     }
     connection.uses += 1;
     return connection;
