@@ -91,6 +91,7 @@ describe("sqlite adapter in memory, under concurrent use", () => {
     await inside;
     const reading = storage.eventStore.lastPosition();
     const raw = readModel.client.raw as Client;
+    expect(raw.closed).toBe(false);
     const querying = raw.execute("SELECT 1 AS one");
     release();
     await writing;
