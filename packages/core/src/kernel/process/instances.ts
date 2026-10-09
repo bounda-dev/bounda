@@ -13,7 +13,8 @@ import {
 } from "./lifecycle.ts";
 
 /**
- * The streams `process:<Type>:<aggregateId>`, appended at the version the instance was folded at.
+ * The streams `process:<aggregate>.<process>:<instanceId>`, appended at the version the instance
+ * was folded at.
  */
 export interface ProcessInstances {
   load(process: ProcessRuntime, instanceId: string): Promise<ProcessInstance>;

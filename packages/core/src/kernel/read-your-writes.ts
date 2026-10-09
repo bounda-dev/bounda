@@ -11,7 +11,7 @@ export interface ReadYourWritesFunction {
  * The same app with `commands` that, before resolving, wait for the read models that project
  * their events to reach them, so a query issued right after a command sees its writes. The wait
  * lasts at most `runtime.dispatcher.catchUp.timeout`; then the command resolves anyway and a
- * warning is logged. Meant for request handlers that redirect to a page reading what they just
+ * warning is logged, as it does when a read model cannot be read. Meant for request handlers that redirect to a page reading what they just
  * wrote. Policies, processes, scheduled commands and commands dispatched from inside the runtime
  * are not waited for.
  */

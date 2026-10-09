@@ -161,11 +161,19 @@ export interface CreateReadModelArgs {
  */
 export interface Adapter<Name extends string = string, Options = unknown>
   extends AdapterDefinition<Name, Options> {
+  /**
+   * Opens the write side, creating its tables when missing. A factory that throws has released
+   * whatever it took: the kernel only closes the ports it was given.
+   */
   createStorage(args: CreateStorageArgs): Promise<StoragePorts>;
+  /**
+   * Opens a read model's table, creating or evolving it from `fields`; throws `ConfigurationError`
+   * on a change that needs a rebuild. Releases what it took when it throws, as `createStorage`.
+   */
   createReadModel<Row extends object>(args: CreateReadModelArgs): Promise<ReadModelPorts<Row>>;
   /**
    * Opens a shadow of the read model with the current `fields`; the live table stays untouched
-   * until `commit`.
+   * until `commit`. Releases what it took when it throws, as `createStorage`.
    */
   rebuildReadModel<Row extends object>(
     args: CreateReadModelRebuildArgs,
