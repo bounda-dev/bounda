@@ -1,14 +1,16 @@
 ---
-// The menu button as a label in a hairline box, saying what it does next.
+import { Icon } from "@astrojs/starlight/components";
+
+// Starlight's button is a filled circle with a shadow; this one is a hairline square.
 ---
 
 <button
   popovertarget="starlight__sidebar"
-  class="bounda-label sl-flex md:sl-hidden print:hidden"
+  class="sl-flex md:sl-hidden print:hidden"
   aria-label={Astro.locals.t("menuButton.accessibleLabel")}
 >
-  <span class="open-menu" aria-hidden="true">Menu</span>
-  <span class="close-menu" aria-hidden="true">Close</span>
+  <Icon name="bars" class="open-menu" />
+  <Icon name="close" class="close-menu" />
 </button>
 
 <style>
@@ -18,8 +20,10 @@
     inset-inline-end: var(--sl-nav-pad-x);
     z-index: var(--sl-z-index-navbar);
     align-items: center;
+    justify-content: center;
+    width: var(--sl-menu-button-size);
     height: var(--sl-menu-button-size);
-    padding: 0 0.75rem;
+    padding: 0;
     border: 1px solid var(--sl-color-hairline);
     background: var(--sl-color-black);
     color: var(--sl-color-white);
@@ -30,8 +34,8 @@
     background: var(--sl-color-gray-6);
   }
 
-  button:has(~ :popover-open) .open-menu,
-  button:not(:has(~ :popover-open)) .close-menu {
+  button:has(~ :popover-open) :global(.open-menu),
+  button:not(:has(~ :popover-open)) :global(.close-menu) {
     display: none;
   }
 </style>

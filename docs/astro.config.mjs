@@ -2,6 +2,7 @@ import starlight from "@astrojs/starlight";
 import { defineConfig, fontProviders } from "astro/config";
 import starlightLlmsTxt from "starlight-llms-txt";
 import starlightPageActions from "starlight-page-actions";
+import { codeHeader } from "./src/code-header.ts";
 import { basalt, bone } from "./src/code-themes.ts";
 import { DESCRIPTION, socialImage } from "./src/site.ts";
 
@@ -68,11 +69,35 @@ export default defineConfig({
       },
       expressiveCode: {
         themes: [basalt, bone],
+        plugins: [codeHeader()],
         styleOverrides: {
           borderRadius: "2px",
+          borderColor: "var(--sl-color-hairline)",
           codeFontFamily: "var(--sl-font-mono)",
-          uiFontFamily: "var(--sl-font)",
-          frames: { shadowColor: "transparent" },
+          codeFontSize: "0.8125rem",
+          uiFontFamily: "var(--sl-font-mono)",
+          uiFontSize: "0.75rem",
+          // One header for every frame, the editor's and the terminal's alike: no tab, no window
+          // dots, a hairline under it.
+          frames: {
+            shadowColor: "transparent",
+            frameBoxShadowCssValue: "none",
+            editorTabBarBackground: "var(--sl-color-gray-6)",
+            editorTabBarBorderBottomColor: "var(--sl-color-hairline)",
+            editorActiveTabBackground: "transparent",
+            editorActiveTabForeground: "var(--sl-color-gray-3)",
+            editorActiveTabBorderColor: "transparent",
+            editorActiveTabIndicatorTopColor: "transparent",
+            editorActiveTabIndicatorBottomColor: "transparent",
+            editorTabBorderRadius: "0",
+            editorTabsMarginInlineStart: "0",
+            editorTabsMarginBlockStart: "0",
+            terminalTitlebarBackground: "var(--sl-color-gray-6)",
+            terminalTitlebarForeground: "var(--sl-color-gray-3)",
+            terminalTitlebarBorderBottomColor: "var(--sl-color-hairline)",
+            terminalTitlebarDotsOpacity: "0",
+            inlineButtonBorderOpacity: "0",
+          },
         },
       },
       // No `baseUrl` for the page actions: with one they write their own llms.txt over

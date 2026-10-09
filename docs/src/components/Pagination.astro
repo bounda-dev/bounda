@@ -1,11 +1,22 @@
 ---
+import { Icon } from "@astrojs/starlight/components";
 import { positionsOf } from "../positions.ts";
 
 const { dir, pagination, sidebar } = Astro.locals.starlightRoute;
 const positions = positionsOf(sidebar);
 const links = [
-  { rel: "prev", label: Astro.locals.t("page.previousLink"), link: pagination.prev },
-  { rel: "next", label: Astro.locals.t("page.nextLink"), link: pagination.next },
+  {
+    rel: "prev",
+    icon: "left-arrow" as const,
+    label: Astro.locals.t("page.previousLink"),
+    link: pagination.prev,
+  },
+  {
+    rel: "next",
+    icon: "right-arrow" as const,
+    label: Astro.locals.t("page.nextLink"),
+    link: pagination.next,
+  },
 ].flatMap(({ link, ...rest }) =>
   link ? [{ ...rest, link, position: positions.find(({ href }) => href === link.href) }] : [],
 );
@@ -13,9 +24,10 @@ const links = [
 
 <div class="pagination-links print:hidden" dir={dir}>
   {
-    links.map(({ rel, label, link, position }) => (
+    links.map(({ rel, icon, label, link, position }) => (
       <a href={link.href} rel={rel}>
         <span class="bounda-position">
+          <Icon name={icon} size="0.875rem" class="arrow" />
           <span class="bounda-label">{label}</span>
           {position && (
             <span class="bounda-number">
@@ -49,6 +61,15 @@ const links = [
   [rel="next"] {
     align-items: end;
     text-align: end;
+  }
+
+  [rel="next"] .bounda-position {
+    flex-direction: row-reverse;
+  }
+
+  .bounda-position :global(.arrow) {
+    align-self: center;
+    color: var(--sl-color-gray-3);
   }
 
   .bounda-label {

@@ -151,8 +151,7 @@ h1#_top,
   color: var(--sl-color-gray-3);
 }
 
-/* Asides: a rule and a label, not a box of colour. The label carries the meaning, so the icon
-   goes. */
+/* Asides: a rule, an icon and a label, not a box of colour. */
 .starlight-aside {
   padding: 0.125rem 0 0.125rem 1.25rem;
   border-inline-start-width: 2px;
@@ -160,7 +159,7 @@ h1#_top,
 }
 
 .starlight-aside__icon {
-  display: none;
+  font-size: 1rem;
 }
 
 /* Code and figures: tabular, without ligatures. */
@@ -182,15 +181,9 @@ pre {
 .sl-markdown-content :is(.card, .sl-link-card, img, figure),
 .sl-link-button,
 site-search :is(button[data-open-modal], kbd, dialog),
-mobile-starlight-toc .toggle {
+mobile-starlight-toc .toggle,
+.actions-container :is(.action-button, #dropdown-menu, .dropdown-item) {
   border-radius: 2px;
-}
-
-/* Room in the header for the menu button, which is a word rather than an icon. */
-@media (max-width: 49.99rem) {
-  :root[data-has-sidebar] header.header {
-    padding-inline-end: calc(var(--sl-nav-gap) + var(--sl-nav-pad-x) + 4.5rem);
-  }
 }
 
 /* The lockup at the size bounda.dev sets it. */
