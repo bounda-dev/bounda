@@ -25,13 +25,16 @@ import { Icon } from "@astrojs/starlight/components";
     height: var(--sl-menu-button-size);
     padding: 0;
     border: 1px solid var(--sl-color-hairline);
+    border-radius: 2px;
     background: var(--sl-color-black);
-    color: var(--sl-color-white);
+    color: var(--sl-color-gray-3);
     cursor: pointer;
   }
 
+  button:hover,
   button:has(~ :popover-open) {
-    background: var(--sl-color-gray-6);
+    border-color: var(--sl-color-gray-3);
+    color: var(--sl-color-white);
   }
 
   button:has(~ :popover-open) :global(.open-menu),
