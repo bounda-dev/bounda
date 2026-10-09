@@ -18,13 +18,13 @@ import {
   deadLetterStoreContract,
   eventStoreContract,
   inboxLedgerContract,
-  jsonValuesContract,
   pendingEvent,
   readModelRebuildContract,
   readModelTransactionContract,
   schedulerContract,
   storageTransactionContract,
   tableContract,
+  viewContract,
 } from "@bounda-dev/core/adapter/testing";
 import { createTestApp } from "@bounda-dev/core/testing";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
@@ -148,7 +148,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
       ).table;
     },
   });
-  jsonValuesContract({
+  viewContract({
     create: async () => {
       await closeOpened();
       return fresh();

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import { fieldBuilder as f } from "../../modules/view.ts";
 import { postgresqlDialect, sqliteDialect } from "./dialect.ts";
-import { buildLimit, buildOrderBy, buildWhere, columnFor } from "./query-builder.ts";
+import { assertPage, buildLimit, buildOrderBy, buildWhere, columnFor } from "./query-builder.ts";
 import { columnsOf } from "./read-model-schema.ts";
 
 const fields = {
@@ -104,5 +104,16 @@ describe("buildLimit", () => {
     expect(() =>
       buildLimit({ limit: 1, offset: 1.5, dialect: sqliteDialect, paramOffset: 0 }),
     ).toThrow("offset must be a non-negative integer, got 1.5");
+  });
+});
+
+describe("assertPage", () => {
+  it("takes no count or non-negative integers, zero included, and names a wrong one", () => {
+    expect(() => assertPage({})).not.toThrow();
+    expect(() => assertPage({ limit: 0, offset: 0 })).not.toThrow();
+    expect(() => assertPage({ limit: -1 })).toThrow("limit must be a non-negative integer, got -1");
+    expect(() => assertPage({ offset: 1.5 })).toThrow(
+      "offset must be a non-negative integer, got 1.5",
+    );
   });
 });

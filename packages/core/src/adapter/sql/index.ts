@@ -58,8 +58,8 @@ export {
   shadowTableStatements,
   swapTableStatements,
 } from "./read-model-schema.ts";
-export type { EarliestDueArgs, EarliestDueFunction } from "./scheduling.ts";
-export { earliestDue } from "./scheduling.ts";
+export type { ByExecuteAtFunction, EarliestDueArgs, EarliestDueFunction } from "./scheduling.ts";
+export { byExecuteAt, earliestDue } from "./scheduling.ts";
 export type {
   CreateSqlReadClientArgs,
   CreateSqlReadClientFunction,

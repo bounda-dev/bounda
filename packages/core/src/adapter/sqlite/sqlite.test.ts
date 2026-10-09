@@ -13,13 +13,13 @@ import {
   deadLetterStoreContract,
   eventStoreContract,
   inboxLedgerContract,
-  jsonValuesContract,
   pendingEvent,
   readModelRebuildContract,
   readModelTransactionContract,
   schedulerContract,
   storageTransactionContract,
   tableContract,
+  viewContract,
 } from "../testing/index.ts";
 import { createSqliteAdapter } from "./index.ts";
 
@@ -109,7 +109,7 @@ describe("the SQLite stores on node:sqlite", () => {
         })
       ).table,
   });
-  jsonValuesContract({ create: async () => nodeSqlite().adapter });
+  viewContract({ create: async () => nodeSqlite().adapter });
   readModelRebuildContract({ create: async () => nodeSqlite().adapter });
   readModelTransactionContract({
     create: async () => nodeSqlite().adapter,

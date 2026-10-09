@@ -7,13 +7,13 @@ import {
   deadLetterStoreContract,
   eventStoreContract,
   inboxLedgerContract,
-  jsonValuesContract,
   pendingEvent,
   readModelRebuildContract,
   readModelTransactionContract,
   schedulerContract,
   storageTransactionContract,
   tableContract,
+  viewContract,
 } from "../adapter/testing/index.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
 import { silentLogger } from "../contracts/logger.ts";
@@ -39,7 +39,7 @@ describe("memory adapter", () => {
       return ports.table;
     },
   });
-  jsonValuesContract({ create: async () => memory() });
+  viewContract({ create: async () => memory() });
   it("appends several batches in order, a stream's later batch on its earlier one, and notifies once", async () => {
     const positions: number[] = [];
     const store = createMemoryEventStore({ onAppend: (position) => positions.push(position) });
@@ -69,6 +69,41 @@ describe("memory adapter", () => {
     ).rejects.toMatchObject({ streamId: "order:1", expectedVersion: 2, actualVersion: 3 });
     expect((await store.load(order)).version).toBe(2);
     expect(positions).toEqual([2]);
+  });
+
+  it("appends nothing and notifies nobody when JSON refuses a payload of a later batch", async () => {
+    const positions: number[] = [];
+    const store = createMemoryEventStore({ onAppend: (position) => positions.push(position) });
+    await expect(
+      store.appendAll([
+        {
+          aggregateType: "order",
+          aggregateId: "1",
+          expectedVersion: 0,
+          events: [pendingEvent({ aggregateId: "1", version: 1 })],
+        },
+        {
+          aggregateType: "order",
+          aggregateId: "2",
+          expectedVersion: 0,
+          events: [pendingEvent({ aggregateId: "2", version: 1, payload: { total: 1n } })],
+        },
+      ]),
+    ).rejects.toThrow(TypeError);
+    expect(await store.lastPosition()).toBe(0);
+    expect((await store.load({ aggregateType: "order", aggregateId: "1" })).version).toBe(0);
+    expect(positions).toEqual([]);
+  });
+
+  it("says which payload has no JSON", async () => {
+    await expect(
+      createMemoryEventStore().append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events: [{ ...pendingEvent({ aggregateId: "1", version: 1 }), payload: undefined }],
+      }),
+    ).rejects.toMatchObject({ message: "undefined has no JSON to store" });
   });
 
   it("puts every store back when a write fails while a transaction is being applied", async () => {
@@ -249,5 +284,76 @@ describe("memory adapter", () => {
         logger: silentLogger,
       }),
     ).rejects.toThrow('Read model "no-key" declares no primary key field');
+  });
+
+  it("keeps each row in its place through an update, a new key included, as SQLite keeps its rowid", async () => {
+    const { table } = await memory().createReadModel<{ id: string; name?: string }>({
+      name: "people",
+      fields: { id: f.string().primaryKey(), name: f.string().optional() },
+      logger: silentLogger,
+    });
+    for (const id of ["1", "2", "3"]) await table.insert({ id });
+    await table.update({ id: "1" }, { name: "Ada" });
+    await table.update({ id: "2" }, { id: "0" });
+    expect((await table.findMany()).map(({ id }) => id)).toEqual(["1", "0", "3"]);
+  });
+
+  it("orders by SQLite's rules: no value first, text by code point", async () => {
+    const { table } = await memory().createReadModel<{ id: string; name?: string }>({
+      name: "people",
+      fields: { id: f.string().primaryKey(), name: f.string().optional() },
+      logger: silentLogger,
+    });
+    for (const [id, name] of [
+      ["1", "\u{1F600}"],
+      ["2", "！"],
+      ["3", undefined],
+      ["4", "b"],
+    ]) {
+      await table.insert(name === undefined ? { id: String(id) } : { id: String(id), name });
+    }
+    const names = async (direction: "asc" | "desc") =>
+      (await table.findMany({ orderBy: { field: "name", direction } })).map(({ id }) => id);
+    expect(await names("asc")).toEqual(["3", "4", "2", "1"]);
+    expect(await names("desc")).toEqual(["1", "2", "4", "3"]);
+  });
+
+  it("names the constraint a write breaks, as SQLite does", async () => {
+    const { table } = await memory().createReadModel<{ id: string; email: string }>({
+      name: "people",
+      fields: { id: f.string().primaryKey(), email: f.string().unique() },
+      logger: silentLogger,
+    });
+    await table.insert({ id: "1", email: "ada@example.com" });
+    await table.insert({ id: "2", email: "grace@example.com" });
+    await expect(table.insert({ id: "3", email: "ada@example.com" })).rejects.toMatchObject({
+      message: "UNIQUE constraint failed: people.email",
+    });
+    await expect(table.insert({ id: "3" } as never)).rejects.toMatchObject({
+      message: "NOT NULL constraint failed: people.email",
+    });
+    await expect(table.update({ id: "1" }, { id: "2" })).rejects.toMatchObject({
+      message: "UNIQUE constraint failed: people.id",
+    });
+  });
+
+  it("orders numbers by value, below none when descending", async () => {
+    const { table } = await memory().createReadModel<{ id: string; total?: number }>({
+      name: "totals",
+      fields: { id: f.string().primaryKey(), total: f.number().optional() },
+      logger: silentLogger,
+    });
+    for (const [id, total] of [
+      ["1", 5],
+      ["2", -3],
+      ["3", undefined],
+      ["4", 0],
+    ] as const) {
+      await table.insert(total === undefined ? { id } : { id, total });
+    }
+    const ids = async (direction: "asc" | "desc") =>
+      (await table.findMany({ orderBy: { field: "total", direction } })).map(({ id }) => id);
+    expect(await ids("asc")).toEqual(["3", "2", "4", "1"]);
+    expect(await ids("desc")).toEqual(["1", "4", "2", "3"]);
   });
 });

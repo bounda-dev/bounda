@@ -5,7 +5,7 @@ import type {
   ScheduledCommand,
   Scheduler,
 } from "@bounda-dev/core/adapter";
-import { earliestDue, postgresqlDialect } from "@bounda-dev/core/adapter/sql";
+import { byExecuteAt, earliestDue, postgresqlDialect } from "@bounda-dev/core/adapter/sql";
 import type { PostgresqlDatabase } from "./database.ts";
 
 export interface CreatePostgresqlSchedulerArgs {
@@ -37,9 +37,6 @@ const toClaimed = (row: Record<string, unknown>): ClaimedCommand => ({
   revision: Number(row.revision),
   claimId: String(row.claim_id),
 });
-
-const byExecuteAt = (a: ScheduledCommand, b: ScheduledCommand): number =>
-  a.executeAt.localeCompare(b.executeAt) || a.dedupeKey.localeCompare(b.dedupeKey);
 
 /**
  * `claimDue` selects the due rows `FOR UPDATE SKIP LOCKED` and updates them in the same
@@ -115,7 +112,7 @@ export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ d
        WHERE "dedupe_key" IN (
          SELECT "dedupe_key" FROM ${table}
          WHERE "execute_at" <= $2 AND ("claimed_at" IS NULL OR "claimed_at" < $3)
-         ORDER BY "execute_at", "dedupe_key" LIMIT $4
+         ORDER BY "execute_at", "dedupe_key" COLLATE "C" LIMIT $4
          FOR UPDATE SKIP LOCKED
        )
        RETURNING ${COLUMNS}, "revision", "claim_id"`,
@@ -165,7 +162,7 @@ export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ d
     list: async ({ limit, offset = 0 } = {}) =>
       (
         await db.all(
-          `SELECT ${COLUMNS} FROM ${table} ORDER BY "execute_at", "dedupe_key" LIMIT $1 OFFSET $2`,
+          `SELECT ${COLUMNS} FROM ${table} ORDER BY "execute_at", "dedupe_key" COLLATE "C" LIMIT $1 OFFSET $2`,
           [limit ?? null, offset],
         )
       ).map(toScheduled),

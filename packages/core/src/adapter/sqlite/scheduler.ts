@@ -2,7 +2,7 @@ import { ScheduledClaimLostError } from "../../contracts/errors.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
 import type { ClaimedCommand, ScheduledClaim, ScheduledCommand, Scheduler } from "../index.ts";
 import type { SqlDatabase } from "../sql/database.ts";
-import { earliestDue } from "../sql/index.ts";
+import { byExecuteAt, earliestDue } from "../sql/index.ts";
 
 export interface CreateSqliteSchedulerArgs {
   readonly db: SqlDatabase;
@@ -33,9 +33,6 @@ const toClaimed = (row: Record<string, unknown>): ClaimedCommand => ({
   revision: Number(row.revision),
   claimId: String(row.claim_id),
 });
-
-const byExecuteAt = (a: ScheduledCommand, b: ScheduledCommand): number =>
-  a.executeAt.localeCompare(b.executeAt) || a.dedupeKey.localeCompare(b.dedupeKey);
 
 /**
  * Scheduler on one table. `claimDue` is a single `UPDATE ... WHERE dedupe_key IN (SELECT ...)

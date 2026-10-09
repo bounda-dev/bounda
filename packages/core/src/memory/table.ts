@@ -1,4 +1,8 @@
 import type { FindManyArgs, ReadClient, Table } from "../adapter/ports/table.ts";
+import { sqliteDialect } from "../adapter/sql/dialect.ts";
+import { codePointOrder } from "../adapter/sql/order.ts";
+import { assertPage, columnFor } from "../adapter/sql/query-builder.ts";
+import { type ColumnDefinition, columnsOf } from "../adapter/sql/read-model-schema.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
 import type { FieldsRecord } from "../modules/view.ts";
 
@@ -18,77 +22,137 @@ export interface CreateMemoryTableFunction {
   <Row extends object>(args: CreateMemoryTableArgs): MemoryTable<Row>;
 }
 
-const primaryKeyOf = (name: string, fields: FieldsRecord): string => {
-  const key = Object.entries(fields).find(([, field]) => field.isPrimaryKey)?.[0];
-  if (key === undefined) {
-    throw new ConfigurationError(`Read model "${name}" declares no primary key field`);
-  }
-  return key;
-};
+type Stored = Readonly<Record<string, unknown>>;
 
-const matches = <Row>(row: Row, where: Partial<Row> | undefined): boolean =>
-  where === undefined ||
-  Object.entries(where).every(([field, value]) =>
-    Object.is(Reflect.get(row as object, field), value),
-  );
-
+// SQLite's order: no value first, text by code point.
 const compare = (a: unknown, b: unknown): number => {
   if (a === b) return 0;
-  if (a === undefined) return 1;
-  if (b === undefined) return -1;
+  if (a === null) return -1;
+  if (b === null) return 1;
+  if (typeof a === "string" && typeof b === "string") return codePointOrder(a, b);
   return (a as number) < (b as number) ? -1 : 1;
 };
 
-const withoutUndefined = <Row extends object>(row: Row): Row =>
-  Object.fromEntries(
-    Object.entries(row as Record<string, unknown>).filter(([, value]) => value !== undefined),
-  ) as Row;
-
 /**
- * A read-model table held in memory. Rows are keyed by the field marked `primaryKey()`.
+ * A read-model table held in memory that behaves as the SQLite one: `where` compares dates and
+ * JSON by value, `null` means no value, every read returns fresh copies, and the view, `unique()`,
+ * required fields and limits are checked as SQLite checks them.
  */
 export const createMemoryTable: CreateMemoryTableFunction = <Row extends object>({
   name,
   fields,
 }: CreateMemoryTableArgs): MemoryTable<Row> => {
-  const primaryKey = primaryKeyOf(name, fields);
-  const rows = new Map<unknown, Row>();
-  const keyOf = (row: Partial<Row>): unknown => Reflect.get(row, primaryKey);
+  const columns = columnsOf({ readModel: name, fields, dialect: sqliteDialect });
+  const primaryKey = columns.find((column) => column.primaryKey) as ColumnDefinition;
+  const rows = new Map<unknown, Stored>();
+
+  const encode = (row: object): Stored =>
+    Object.fromEntries(
+      columns.map((column) => [
+        column.field,
+        sqliteDialect.encode(column.type, Reflect.get(row, column.field)),
+      ]),
+    );
+  const decode = (stored: Stored): Row => {
+    const row: Record<string, unknown> = {};
+    for (const column of columns) {
+      const value = sqliteDialect.decode(column.type, stored[column.field]);
+      if (value !== undefined) row[column.field] = value;
+    }
+    return row as Row;
+  };
+  // Encoded once, and checked even when no row is there to compare, as SQL checks the statement.
+  const matcher = (where: Partial<Row> | undefined): ((stored: Stored) => boolean) => {
+    const expected = Object.entries(where ?? {}).map(([field, value]) => {
+      const column = columnFor({ field, columns });
+      return [column.field, sqliteDialect.encode(column.type, value)] as const;
+    });
+    return (stored) => expected.every(([field, value]) => stored[field] === value);
+  };
+  const violated = (kind: "NOT NULL" | "UNIQUE", column: ColumnDefinition): Error =>
+    new Error(`${kind} constraint failed: ${name}.${column.field}`);
+  const checkRequired = (stored: Stored): void => {
+    const missing = columns.find((column) => !column.nullable && stored[column.field] === null);
+    if (missing !== undefined) throw violated("NOT NULL", missing);
+  };
+  // The primary key is unique by the map's own keys; `update` checks it when a row is re-keyed.
+  const checkUnique = (key: unknown, stored: Stored, table: ReadonlyMap<unknown, Stored>): void => {
+    for (const column of columns) {
+      const value = stored[column.field];
+      if (!column.unique || column.primaryKey || value === null) continue;
+      for (const [other, row] of table) {
+        if (other !== key && row[column.field] === value) throw violated("UNIQUE", column);
+      }
+    }
+  };
+  const write = (stored: Stored): void => {
+    const key = stored[primaryKey.field];
+    checkRequired(stored);
+    checkUnique(key, stored, rows);
+    rows.set(key, stored);
+  };
 
   const select = (args: FindManyArgs<Row> = {}): Row[] => {
-    const selected = [...rows.values()].filter((row) => matches(row, args.where));
+    assertPage(args);
+    const selected = [...rows.values()].filter(matcher(args.where));
     if (args.orderBy !== undefined) {
       const { field, direction } = args.orderBy;
+      const column = columnFor({ field, columns });
       selected.sort(
-        (a, b) =>
-          compare(Reflect.get(a, field), Reflect.get(b, field)) * (direction === "asc" ? 1 : -1),
+        (a, b) => compare(a[column.field], b[column.field]) * (direction === "asc" ? 1 : -1),
       );
     }
     const offset = args.offset ?? 0;
-    return selected.slice(offset, args.limit === undefined ? undefined : offset + args.limit);
+    return selected
+      .slice(offset, args.limit === undefined ? undefined : offset + args.limit)
+      .map(decode);
   };
 
   return {
-    upsert: async (row) => {
-      rows.set(keyOf(row), withoutUndefined(row));
-    },
+    upsert: async (row) => write(encode(row)),
     insert: async (row) => {
-      const key = keyOf(row);
-      if (!rows.has(key)) rows.set(key, withoutUndefined(row));
+      const stored = encode(row);
+      if (!rows.has(stored[primaryKey.field])) write(stored);
+      else checkRequired(stored);
     },
     update: async (where, patch) => {
-      for (const [key, row] of rows) {
-        if (matches(row, where)) rows.set(key, withoutUndefined({ ...row, ...patch }));
+      const changes = Object.entries(patch).filter(([, value]) => value !== undefined);
+      if (changes.length === 0) return;
+      const encoded = Object.fromEntries(
+        changes.map(([field, value]) => {
+          const column = columnFor({ field, columns });
+          return [column.field, sqliteDialect.encode(column.type, value)];
+        }),
+      );
+      const matches = matcher(where);
+      // Built aside and checked whole, so a refused update changes nothing, as one statement; a
+      // row keeps its place, as it keeps its rowid.
+      const next = new Map<unknown, Stored>();
+      const changed: Stored[] = [];
+      for (const row of rows.values()) {
+        const updated = matches(row) ? { ...row, ...encoded } : row;
+        if (updated !== row) {
+          checkRequired(updated);
+          changed.push(updated);
+        }
+        const key = updated[primaryKey.field];
+        if (next.has(key)) throw violated("UNIQUE", primaryKey);
+        next.set(key, updated);
       }
+      if (changed.length === 0) return;
+      for (const updated of changed) checkUnique(updated[primaryKey.field], updated, next);
+      rows.clear();
+      for (const [key, row] of next) rows.set(key, row);
     },
     delete: async (where) => {
+      const matches = matcher(where);
       for (const [key, row] of rows) {
-        if (matches(row, where)) rows.delete(key);
+        if (matches(row)) rows.delete(key);
       }
     },
     findOne: async (where) => select({ where, limit: 1 })[0] ?? null,
     findMany: async (args) => select(args),
-    count: async (where) => select({ ...(where === undefined ? {} : { where }) }).length,
+    count: async (where) => [...rows.values()].filter(matcher(where)).length,
     snapshot: () => {
       const saved = new Map(rows);
       return () => {

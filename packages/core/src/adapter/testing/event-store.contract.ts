@@ -100,6 +100,41 @@ export const eventStoreContract: EventStoreContractFunction = ({ create }) => {
       expect(events.map((event) => event.payload)).toEqual(payloads);
     });
 
+    it("hands out events that changing does not change the store, their payload as JSON", async () => {
+      const at = new Date("2026-01-01T00:00:00.000Z");
+      const appended = await store.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events: [
+          pendingEvent({
+            aggregateId: "1",
+            version: 1,
+            payload: { at, lines: ["a"] },
+          }),
+        ],
+      });
+      expect(appended.events[0]?.payload).toEqual({ at, lines: ["a"] });
+      const [first] = (await store.load({ aggregateType: "order", aggregateId: "1" })).events;
+      if (first === undefined) throw new Error("the event was not stored");
+      expect(first.payload).toEqual({ at: "2026-01-01T00:00:00.000Z", lines: ["a"] });
+      (first.payload as { lines: string[] }).lines.push("b");
+      const [again] = await store.readAll({ afterPosition: 0, limit: 10 });
+      expect(again?.payload).toEqual({ at: "2026-01-01T00:00:00.000Z", lines: ["a"] });
+    });
+
+    it("refuses a payload with no JSON, and appends nothing", async () => {
+      await expect(
+        store.append({
+          aggregateType: "order",
+          aggregateId: "1",
+          expectedVersion: 0,
+          events: [{ ...pendingEvent({ aggregateId: "1", version: 1 }), payload: undefined }],
+        }),
+      ).rejects.toThrow();
+      expect(await store.lastPosition()).toBe(0);
+    });
+
     it("reports only the version when loading from past any head, however far", async () => {
       await store.append({
         aggregateType: "order",

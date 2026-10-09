@@ -105,6 +105,24 @@ const assertCount = (value: number, subject: string): number => {
   return value;
 };
 
+export interface AssertPageArgs {
+  readonly limit?: number;
+  readonly offset?: number;
+}
+
+export interface AssertPageFunction {
+  (args: AssertPageArgs): void;
+}
+
+/**
+ * A `ConfigurationError` unless `limit` and `offset` are absent or non-negative integers, as
+ * `buildLimit` requires.
+ */
+export const assertPage: AssertPageFunction = ({ limit, offset }) => {
+  if (limit !== undefined) assertCount(limit, "limit");
+  if (offset !== undefined) assertCount(offset, "offset");
+};
+
 /**
  * ` LIMIT $1 OFFSET $2` as parameters. SQLite needs a `LIMIT` before an `OFFSET`, so an offset
  * alone gets `LIMIT -1` there.

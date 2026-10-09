@@ -31,6 +31,21 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
       scheduler = await create();
     });
 
+    it("orders commands due at one moment by key, by code point, in claims and listings", async () => {
+      for (const dedupeKey of ["b", "\u{1F600}", "a", "！", "B", "a-2"]) {
+        await scheduler.schedule({
+          dedupeKey,
+          command: testCommand("1"),
+          executeAt: at(1_000),
+          context: testContext,
+        });
+      }
+      const order = ["B", "a", "a-2", "b", "！", "\u{1F600}"];
+      expect((await scheduler.list()).map((entry) => entry.dedupeKey)).toEqual(order);
+      const due = await scheduler.claimDue({ now: at(5_000), limit: 10, leaseMs: 60_000 });
+      expect(due.map((entry) => entry.dedupeKey)).toEqual(order);
+    });
+
     it("hands out only commands that are due, oldest first, up to the limit", async () => {
       await scheduler.schedule({
         dedupeKey: "later",
@@ -217,6 +232,36 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
         attempts: 0,
         executeAt: at(3_000).toISOString(),
       });
+    });
+
+    it("hands out payloads as JSON keeps them, which changing does not change the store", async () => {
+      await scheduler.schedule({
+        dedupeKey: "dated",
+        command: {
+          ...testCommand("1"),
+          payload: { at: new Date("2026-01-01T00:00:00.000Z"), lines: ["a"] },
+        },
+        executeAt: at(0),
+        context: testContext,
+      });
+      const [listed] = await scheduler.list();
+      if (listed === undefined) throw new Error("the command was not scheduled");
+      expect(listed.command.payload).toEqual({ at: "2026-01-01T00:00:00.000Z", lines: ["a"] });
+      (listed.command.payload as { lines: string[] }).lines.push("b");
+      const [claimed] = await scheduler.claimDue({ now: at(1), limit: 10, leaseMs: 60_000 });
+      expect(claimed?.command.payload).toEqual({ at: "2026-01-01T00:00:00.000Z", lines: ["a"] });
+    });
+
+    it("refuses a payload with no JSON", async () => {
+      await expect(
+        scheduler.schedule({
+          dedupeKey: "empty",
+          command: { ...testCommand("1"), payload: undefined },
+          executeAt: at(0),
+          context: testContext,
+        }),
+      ).rejects.toThrow();
+      expect(await scheduler.list()).toEqual([]);
     });
 
     it("keeps any JSON payload, a top-level boolean included", async () => {

@@ -64,9 +64,34 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       expect((await store.list({ kind: "scheduled" }))[0]?.payload).toEqual(payload);
     });
 
+    it("hands out payloads as JSON keeps them, which changing does not change the store", async () => {
+      await store.add(
+        letter("cmd", {
+          kind: "scheduled",
+          payload: { at: new Date("2026-01-01T00:00:00.000Z"), lines: ["a"] },
+        }),
+      );
+      const fetched = await store.get("cmd");
+      if (fetched === null) throw new Error("the letter was not added");
+      expect(fetched.payload).toEqual({ at: "2026-01-01T00:00:00.000Z", lines: ["a"] });
+      (fetched.payload as { lines: string[] }).lines.push("b");
+      const [listed] = await store.list();
+      expect(listed?.payload).toEqual({ at: "2026-01-01T00:00:00.000Z", lines: ["a"] });
+    });
+
     it("keeps a payload that is a bare boolean", async () => {
       await store.add(letter("bool", { kind: "scheduled", payload: true }));
       expect((await store.get("bool"))?.payload).toBe(true);
+    });
+
+    it("lists the oldest failure first, then by id, whatever the order they were added in", async () => {
+      await store.add(letter("b", { firstFailedAt: "2026-01-02T00:00:00.000Z" }));
+      await store.add(letter("\u{1F600}", { firstFailedAt: "2026-01-02T00:00:00.000Z" }));
+      await store.add(letter("c", { firstFailedAt: "2026-01-01T00:00:00.000Z" }));
+      await store.add(letter("！", { firstFailedAt: "2026-01-02T00:00:00.000Z" }));
+      await store.add(letter("a", { firstFailedAt: "2026-01-02T00:00:00.000Z" }));
+      expect((await store.list()).map(({ id }) => id)).toEqual(["c", "a", "b", "！", "\u{1F600}"]);
+      expect((await store.list({ limit: 1 })).map(({ id }) => id)).toEqual(["c"]);
     });
 
     it("is idempotent on id", async () => {

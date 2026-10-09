@@ -1,3 +1,6 @@
+import type { ScheduledCommand } from "../ports/scheduler.ts";
+import { codePointOrder } from "./order.ts";
+
 export interface EarliestDueArgs {
   /**
    * The soonest `execute_at` among commands nobody holds, as the engine returns it.
@@ -28,3 +31,14 @@ export const earliestDue: EarliestDueFunction = ({ unclaimed, claimed, leaseMs }
   );
   return candidates.length === 0 ? null : new Date(Math.min(...candidates));
 };
+
+export interface ByExecuteAtFunction {
+  (a: ScheduledCommand, b: ScheduledCommand): number;
+}
+
+/**
+ * The order of `Scheduler.list` and `Scheduler.claimDue`: `executeAt`, then `dedupeKey` by code
+ * point. For a scheduler whose engine hands rows back unordered, as `RETURNING` does.
+ */
+export const byExecuteAt: ByExecuteAtFunction = (a, b) =>
+  codePointOrder(a.executeAt, b.executeAt) || codePointOrder(a.dedupeKey, b.dedupeKey);

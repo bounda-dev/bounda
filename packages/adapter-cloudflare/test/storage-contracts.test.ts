@@ -9,12 +9,12 @@ import {
   deadLetterStoreContract,
   eventStoreContract,
   inboxLedgerContract,
-  jsonValuesContract,
   readModelRebuildContract,
   readModelTransactionContract,
   schedulerContract,
   storageTransactionContract,
   tableContract,
+  viewContract,
 } from "@bounda-dev/core/adapter/testing";
 import { describe } from "vitest";
 import { durableObjectAdapter } from "../src/adapter.ts";
@@ -49,7 +49,7 @@ describe("the Durable Object adapter", () => {
         })
       ).table,
   });
-  jsonValuesContract({ create: freshAdapter });
+  viewContract({ create: freshAdapter });
   readModelRebuildContract({ create: freshAdapter, concurrent: false });
   readModelTransactionContract({
     create: freshAdapter,

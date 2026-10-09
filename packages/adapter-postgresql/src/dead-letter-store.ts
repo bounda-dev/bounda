@@ -96,7 +96,7 @@ export const createPostgresqlDeadLetterStore: CreatePostgresqlDeadLetterStoreFun
     list: async (args = {}) => {
       const where = filters(args);
       const rows = await db.all(
-        `SELECT ${COLUMNS} FROM ${table}${where.sql} ORDER BY "first_failed_at", "id" LIMIT $${where.params.length + 1} OFFSET $${where.params.length + 2}`,
+        `SELECT ${COLUMNS} FROM ${table}${where.sql} ORDER BY "first_failed_at", "id" COLLATE "C" LIMIT $${where.params.length + 1} OFFSET $${where.params.length + 2}`,
         [...where.params, args.limit ?? null, args.offset ?? 0],
       );
       return rows.map(toLetter);
