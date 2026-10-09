@@ -18,6 +18,9 @@ import {
   deadLetterStoreContract,
   eventStoreContract,
   inboxLedgerContract,
+  type JsonRow,
+  jsonFields,
+  jsonValuesContract,
   pendingEvent,
   readModelRebuildContract,
   readModelTransactionContract,
@@ -145,6 +148,12 @@ describe.skipIf(container === null)("postgresql adapter", () => {
           readonly paidAt?: Date;
         }>(fresh(), "orderSummary", contractFields)
       ).table;
+    },
+  });
+  jsonValuesContract({
+    create: async () => {
+      await closeOpened();
+      return (await openReadModel<JsonRow>(fresh(), "documents", jsonFields)).table;
     },
   });
   readModelRebuildContract({

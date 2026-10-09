@@ -9,6 +9,9 @@ import {
   deadLetterStoreContract,
   eventStoreContract,
   inboxLedgerContract,
+  type JsonRow,
+  jsonFields,
+  jsonValuesContract,
   readModelRebuildContract,
   readModelTransactionContract,
   schedulerContract,
@@ -44,6 +47,18 @@ describe("the Durable Object adapter", () => {
         ).createReadModel<ContractRow>({
           name: "orderSummary",
           fields: contractFields,
+          logger: silentLogger,
+        })
+      ).table,
+  });
+  jsonValuesContract({
+    create: async () =>
+      (
+        await (
+          await freshAdapter()
+        ).createReadModel<JsonRow>({
+          name: "documents",
+          fields: jsonFields,
           logger: silentLogger,
         })
       ).table,

@@ -118,3 +118,61 @@ export const tableContract: TableContractFunction = ({ create }) => {
     });
   });
 };
+
+/**
+ * A row holding one JSON value under its id.
+ */
+export interface JsonRow {
+  readonly id: string;
+  readonly value: unknown;
+}
+
+/**
+ * Field definitions matching `JsonRow`.
+ */
+export const jsonFields: FieldsRecord = {
+  id: f.string().primaryKey(),
+  value: f.json(),
+};
+
+export interface JsonValuesContractArgs {
+  /**
+   * A fresh table over `jsonFields`.
+   */
+  readonly create: () => Promise<Table<JsonRow>>;
+}
+
+export interface JsonValuesContractFunction {
+  (args: JsonValuesContractArgs): void;
+}
+
+/**
+ * Every JSON value a `json` field can hold comes back as it was stored, whatever its shape.
+ */
+export const jsonValuesContract: JsonValuesContractFunction = ({ create }) => {
+  describe("json values contract", () => {
+    it("round-trips any JSON value, top-level strings and booleans included", async () => {
+      const table = await create();
+      const values: readonly unknown[] = [
+        "pending",
+        "42",
+        "true",
+        "",
+        true,
+        false,
+        0,
+        12.5,
+        [true, false],
+        [],
+        ["a", 1, { b: null }],
+        { nested: { list: [1, "two", false] } },
+      ];
+      for (const [index, value] of values.entries()) {
+        await table.upsert({ id: String(index), value });
+      }
+      for (const [index, value] of values.entries()) {
+        expect(await table.findOne({ id: String(index) })).toEqual({ id: String(index), value });
+      }
+    });
+  });
+};

@@ -13,6 +13,9 @@ import {
   deadLetterStoreContract,
   eventStoreContract,
   inboxLedgerContract,
+  type JsonRow,
+  jsonFields,
+  jsonValuesContract,
   pendingEvent,
   readModelRebuildContract,
   readModelTransactionContract,
@@ -104,6 +107,16 @@ describe("the SQLite stores on node:sqlite", () => {
         await nodeSqlite().adapter.createReadModel<ContractRow>({
           name: "orderSummary",
           fields: contractFields,
+          logger: silentLogger,
+        })
+      ).table,
+  });
+  jsonValuesContract({
+    create: async () =>
+      (
+        await nodeSqlite().adapter.createReadModel<JsonRow>({
+          name: "documents",
+          fields: jsonFields,
           logger: silentLogger,
         })
       ).table,

@@ -57,20 +57,21 @@ describe("postgresqlDialect", () => {
     ]);
   });
 
-  it("keeps booleans, dates and json native for the driver to serialise", () => {
+  it("keeps booleans and dates native, and hands json over in a shape the driver cannot mistype", () => {
     expect(postgresqlDialect.encode("boolean", true)).toBe(true);
     expect(postgresqlDialect.encode("date", when)).toBe(when);
     expect(postgresqlDialect.encode("date", "2026-01-02T03:04:05.000Z")).toEqual(when);
-    const tags = [1, 2];
-    expect(postgresqlDialect.encode("json", tags)).toBe(tags);
+    const tags = [true, 2];
+    expect(JSON.stringify(postgresqlDialect.encode("json", tags))).toBe("[true,2]");
+    expect(JSON.stringify(postgresqlDialect.encode("json", "pending"))).toBe('"pending"');
     expect(postgresqlDialect.encode("number", undefined)).toBeNull();
   });
 
-  it("decodes driver values, including json already parsed and numerics as strings", () => {
+  it("decodes driver values, json as the driver parsed it and numerics given as strings", () => {
     expect(postgresqlDialect.decode("boolean", false)).toBe(false);
     expect(postgresqlDialect.decode("date", when)).toBe(when);
     expect(postgresqlDialect.decode("json", { a: 1 })).toEqual({ a: 1 });
-    expect(postgresqlDialect.decode("json", '{"a":1}')).toEqual({ a: 1 });
+    expect(postgresqlDialect.decode("json", '{"a":1}')).toBe('{"a":1}');
     expect(postgresqlDialect.decode("number", "12.5")).toBe(12.5);
     expect(postgresqlDialect.decode("string", null)).toBeUndefined();
   });
