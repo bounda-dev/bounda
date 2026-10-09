@@ -3,19 +3,7 @@ import { defineConfig, fontProviders } from "astro/config";
 import starlightLlmsTxt from "starlight-llms-txt";
 import starlightPageActions from "starlight-page-actions";
 import { basalt, bone } from "./src/code-themes.ts";
-
-const socialImageAlt =
-  "The Bounda symbol as a machined monolith whose foot becomes the global stream, beside the headline: Event sourcing without the ceremony.";
-
-// The card shown when a docs page is shared; Starlight already sets the title, description and card type.
-const socialImage = (url) => [
-  { tag: "meta", attrs: { property: "og:image", content: url } },
-  { tag: "meta", attrs: { property: "og:image:width", content: "1200" } },
-  { tag: "meta", attrs: { property: "og:image:height", content: "630" } },
-  { tag: "meta", attrs: { property: "og:image:alt", content: socialImageAlt } },
-  { tag: "meta", attrs: { name: "twitter:image", content: url } },
-  { tag: "meta", attrs: { name: "twitter:image:alt", content: socialImageAlt } },
-];
+import { DESCRIPTION, socialImage } from "./src/site.ts";
 
 // The fonts of bounda.dev, self-hosted at build time with metric-matched fallbacks. Science Gothic
 // is only ever set at 600, so it is requested at that one weight across the width axis it uses.
@@ -23,8 +11,6 @@ export default defineConfig({
   site: "https://docs.bounda.dev",
   // Pages that moved keep their old address working, since links to them live outside the docs.
   redirects: {
-    // The landing at bounda.dev says what Bounda is; the docs start where the work does.
-    "/": "/getting-started/",
     "/guides/how-it-runs/": "/concepts/how-it-runs/",
     "/guides/storefront-example/": "/examples/storefront/",
     "/guides/onboarding-example/": "/examples/onboarding/",
@@ -65,9 +51,10 @@ export default defineConfig({
         dark: "./public/wordmark-dark.svg",
         replacesTitle: true,
       },
-      description: "Event sourcing and CQRS for TypeScript without the ceremony.",
+      description: DESCRIPTION,
       customCss: ["./src/styles/bounda.css"],
       head: socialImage("https://docs.bounda.dev/og.jpg"),
+      routeMiddleware: "./src/route-data.ts",
       components: {
         Head: "./src/components/Head.astro",
         PageTitle: "./src/components/PageTitle.astro",

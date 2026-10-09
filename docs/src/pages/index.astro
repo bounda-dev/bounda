@@ -1,0 +1,30 @@
+---
+import { DESCRIPTION, START, socialImage } from "../site.ts";
+
+// GitHub Pages cannot answer with a redirect, so `/` is a page that forwards to the start. It
+// carries the card a redirect page would not, for a link to the bare domain shared somewhere, and
+// no `noindex`: the sitemap lists it, and the canonical already points search at the start.
+const title = "Bounda docs";
+const start = new URL(START, Astro.site).href;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>{title}</title>
+    <meta name="description" content={DESCRIPTION} />
+    <link rel="canonical" href={start} />
+    <meta http-equiv="refresh" content={`0;url=${START}`} />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Bounda" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={DESCRIPTION} />
+    <meta property="og:url" content={start} />
+    <meta name="twitter:card" content="summary_large_image" />
+    {socialImage(new URL("/og.jpg", Astro.site).href).map(({ attrs }) => <meta {...attrs} />)}
+  </head>
+  <body>
+    <a href={START}>{title}</a>
+  </body>
+</html>
