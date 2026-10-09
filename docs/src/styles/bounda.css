@@ -181,8 +181,16 @@ pre {
 /* Square corners, structure by hairlines. */
 .sl-markdown-content :is(.card, .sl-link-card, img, figure),
 .sl-link-button,
-site-search :is(button[data-open-modal], kbd, dialog) {
+site-search :is(button[data-open-modal], kbd, dialog),
+mobile-starlight-toc .toggle {
   border-radius: 2px;
+}
+
+/* Room in the header for the menu button, which is a word rather than an icon. */
+@media (max-width: 49.99rem) {
+  :root[data-has-sidebar] header.header {
+    padding-inline-end: calc(var(--sl-nav-gap) + var(--sl-nav-pad-x) + 4.5rem);
+  }
 }
 
 /* The lockup at the size bounda.dev sets it. */

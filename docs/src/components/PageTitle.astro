@@ -2,9 +2,8 @@
 import Default from "@astrojs/starlight/components/PageTitle.astro";
 import { positionsOf } from "../positions.ts";
 
-const position = positionsOf(Astro.locals.starlightRoute.sidebar).find(
-  ({ isCurrent }) => isCurrent,
-);
+const { entry, sidebar } = Astro.locals.starlightRoute;
+const position = positionsOf(sidebar).find(({ isCurrent }) => isCurrent);
 ---
 
 {
@@ -16,6 +15,7 @@ const position = positionsOf(Astro.locals.starlightRoute.sidebar).find(
   )
 }
 <Default />
+{entry.data.description && <p class="lead">{entry.data.description}</p>}
 
 <style>
   .bounda-position {
@@ -28,5 +28,13 @@ const position = positionsOf(Astro.locals.starlightRoute.sidebar).find(
 
   .bounda-position + :global(h1) {
     margin-top: 0.5rem;
+  }
+
+  .lead {
+    max-width: 40rem;
+    margin-top: 0.75rem;
+    font-size: var(--sl-text-lg);
+    line-height: 1.5;
+    color: var(--sl-color-gray-3);
   }
 </style>

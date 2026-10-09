@@ -1,0 +1,27 @@
+---
+// The header's links as labels, not icons.
+const links = [
+  { label: "bounda.dev", href: "https://bounda.dev" },
+  { label: "GitHub", href: "https://github.com/bounda-dev/bounda" },
+];
+---
+
+{
+  links.map(({ label, href }) => (
+    <a href={href} class="bounda-label">
+      {label}
+    </a>
+  ))
+}
+
+<style>
+  a {
+    color: var(--sl-color-gray-3);
+    text-decoration: none;
+  }
+
+  a:hover,
+  a:focus-visible {
+    color: var(--sl-color-white);
+  }
+</style>

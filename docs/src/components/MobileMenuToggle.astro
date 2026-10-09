@@ -1,0 +1,49 @@
+---
+// The menu button as a label in a hairline box, saying what it does next.
+---
+
+<button
+  popovertarget="starlight__sidebar"
+  class="bounda-label sl-flex md:sl-hidden print:hidden"
+  aria-label={Astro.locals.t("menuButton.accessibleLabel")}
+>
+  <span class="open-menu" aria-hidden="true">Menu</span>
+  <span class="close-menu" aria-hidden="true">Close</span>
+</button>
+
+<style>
+  button {
+    position: fixed;
+    top: calc((var(--sl-nav-height) - var(--sl-menu-button-size)) / 2);
+    inset-inline-end: var(--sl-nav-pad-x);
+    z-index: var(--sl-z-index-navbar);
+    align-items: center;
+    height: var(--sl-menu-button-size);
+    padding: 0 0.75rem;
+    border: 1px solid var(--sl-color-hairline);
+    background: var(--sl-color-black);
+    color: var(--sl-color-white);
+    cursor: pointer;
+  }
+
+  button:has(~ :popover-open) {
+    background: var(--sl-color-gray-6);
+  }
+
+  button:has(~ :popover-open) .open-menu,
+  button:not(:has(~ :popover-open)) .close-menu {
+    display: none;
+  }
+</style>
+
+<style is:global>
+  body:has(#starlight__sidebar:popover-open) {
+    overflow: hidden;
+  }
+
+  @media (min-width: 50rem) {
+    body:has(#starlight__sidebar:popover-open) {
+      overflow: auto;
+    }
+  }
+</style>

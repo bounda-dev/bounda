@@ -1,0 +1,88 @@
+---
+import MobileMenuFooter from "@astrojs/starlight/components/MobileMenuFooter.astro";
+import SidebarPersister from "@astrojs/starlight/components/SidebarPersister.astro";
+import { positionsOf } from "../positions.ts";
+
+// The sidebar as an index of the docs, set like a ledger: every group open, every page with its
+// position, the page being read marked as the head.
+const { sidebar } = Astro.locals.starlightRoute;
+const groups = [...Map.groupBy(positionsOf(sidebar), ({ group }) => group)];
+---
+
+<SidebarPersister>
+  <div class="bounda-index">
+    {
+      groups.map(([group, pages]) => (
+        <section>
+          <h2 class="bounda-label">{group}</h2>
+          <ol>
+            {pages.map(({ href, label, isCurrent, number }) => (
+              <li>
+                <a href={href} aria-current={isCurrent ? "page" : undefined}>
+                  <span class="bounda-number">{number}</span>
+                  <span>{label}</span>
+                </a>
+              </li>
+            ))}
+          </ol>
+        </section>
+      ))
+    }
+  </div>
+</SidebarPersister>
+
+<div class="md:sl-hidden">
+  <MobileMenuFooter />
+</div>
+
+<style>
+  .bounda-index {
+    display: flex;
+    flex-direction: column;
+    gap: 1.75rem;
+    padding-block: 0.5rem 1rem;
+  }
+
+  h2 {
+    margin: 0 0 0.5rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--sl-color-hairline);
+    color: var(--sl-color-gray-3);
+  }
+
+  ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  a {
+    display: grid;
+    grid-template-columns: 1.75rem 1fr;
+    align-items: baseline;
+    padding: 0.3125rem 0.5rem 0.3125rem 0.625rem;
+    font-size: var(--sl-text-sm);
+    line-height: 1.4;
+    color: var(--sl-color-gray-2);
+    text-decoration: none;
+    overflow-wrap: anywhere;
+    transition: background-color 160ms cubic-bezier(0.22, 0.8, 0.16, 1);
+  }
+
+  a:hover,
+  a:focus-visible {
+    background: var(--sl-color-gray-6);
+    color: var(--sl-color-white);
+  }
+
+  a[aria-current="page"] {
+    background: var(--sl-color-accent-low);
+    box-shadow: inset 2px 0 0 var(--sl-color-accent);
+    color: var(--sl-color-white);
+    font-weight: 600;
+  }
+
+  a[aria-current="page"] .bounda-number {
+    color: var(--sl-color-accent);
+  }
+</style>

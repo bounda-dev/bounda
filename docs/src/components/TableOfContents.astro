@@ -1,0 +1,129 @@
+---
+// The sections of the page as a column of positions: each section numbered, its subsections
+// under it, and a rule down the side whose ochre stretch is the section being read.
+const { toc } = Astro.locals.starlightRoute;
+const sections = (toc?.items ?? []).flatMap((item) =>
+  item.slug === "_top" ? item.children : [item],
+);
+---
+
+{
+  sections.length > 0 && (
+    <bounda-toc>
+      <nav aria-labelledby="bounda-toc-title">
+        <h2 id="bounda-toc-title" class="bounda-label">
+          {Astro.locals.t("tableOfContents.onThisPage")}
+        </h2>
+        <ol>
+          {sections.map((section, index) => (
+            <li>
+              <a href={`#${section.slug}`}>
+                <span class="bounda-number">{String(index + 1).padStart(2, "0")}</span>
+                <span>{section.text}</span>
+              </a>
+              {section.children.length > 0 && (
+                <ol>
+                  {section.children.map((child) => (
+                    <li>
+                      <a href={`#${child.slug}`} class="sub">
+                        <span>{child.text}</span>
+                      </a>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </li>
+          ))}
+        </ol>
+      </nav>
+    </bounda-toc>
+  )
+}
+
+<script>
+  // Marks the last heading above the reading line, so the rule follows the reader; at the end of
+  // the page, the last one, whose heading may never reach the line.
+  class BoundaToc extends HTMLElement {
+    connectedCallback() {
+      const links = [...this.querySelectorAll<HTMLAnchorElement>("a")];
+      const headings = links.flatMap((link) => {
+        const heading = document.getElementById(decodeURIComponent(link.hash.slice(1)));
+        return heading ? [{ link, heading }] : [];
+      });
+      let frame = 0;
+      const update = () => {
+        frame = 0;
+        const line = innerHeight / 4;
+        const atEnd = innerHeight + scrollY >= document.documentElement.scrollHeight - 2;
+        const current = atEnd
+          ? headings.at(-1)
+          : headings.findLast(({ heading }) => heading.getBoundingClientRect().top < line);
+        for (const { link } of headings) {
+          if (link === current?.link) link.setAttribute("aria-current", "true");
+          else link.removeAttribute("aria-current");
+        }
+      };
+      addEventListener("scroll", () => {
+        frame ||= requestAnimationFrame(update);
+      }, { passive: true });
+      update();
+    }
+  }
+  customElements.define("bounda-toc", BoundaToc);
+</script>
+
+<style>
+  nav {
+    padding-block: 1rem;
+  }
+
+  h2 {
+    margin: 0 0 0.75rem;
+    color: var(--sl-color-gray-3);
+  }
+
+  ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  nav > ol {
+    border-inline-start: 1px solid var(--sl-color-hairline);
+  }
+
+  a {
+    display: grid;
+    grid-template-columns: 1.75rem 1fr;
+    align-items: baseline;
+    margin-inline-start: -1px;
+    padding: 0.25rem 0 0.25rem 0.75rem;
+    border-inline-start: 2px solid transparent;
+    font-size: var(--sl-text-xs);
+    line-height: 1.4;
+    color: var(--sl-color-gray-3);
+    text-decoration: none;
+    transition: color 160ms cubic-bezier(0.22, 0.8, 0.16, 1);
+  }
+
+  a.sub {
+    display: block;
+    padding-inline-start: calc(0.75rem + 1.75rem);
+  }
+
+  a:hover,
+  a:focus-visible {
+    color: var(--sl-color-white);
+  }
+
+  a[aria-current="true"] {
+    border-inline-start-color: var(--sl-color-accent);
+    color: var(--sl-color-white);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    a {
+      transition: none;
+    }
+  }
+</style>

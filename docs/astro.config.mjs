@@ -59,6 +59,12 @@ export default defineConfig({
         Head: "./src/components/Head.astro",
         PageTitle: "./src/components/PageTitle.astro",
         Pagination: "./src/components/Pagination.astro",
+        Sidebar: "./src/components/Sidebar.astro",
+        TableOfContents: "./src/components/TableOfContents.astro",
+        Footer: "./src/components/Footer.astro",
+        ThemeSelect: "./src/components/ThemeSelect.astro",
+        SocialIcons: "./src/components/SocialIcons.astro",
+        MobileMenuToggle: "./src/components/MobileMenuToggle.astro",
       },
       expressiveCode: {
         themes: [basalt, bone],
@@ -69,7 +75,6 @@ export default defineConfig({
           frames: { shadowColor: "transparent" },
         },
       },
-      social: [{ icon: "github", label: "GitHub", href: "https://github.com/bounda-dev/bounda" }],
       // No `baseUrl` for the page actions: with one they write their own llms.txt over
       // starlight-llms-txt's.
       plugins: [
@@ -89,7 +94,6 @@ export default defineConfig({
         }),
       ],
       sidebar: [
-        { label: "bounda.dev", link: "https://bounda.dev" },
         { label: "Getting started", items: [{ autogenerate: { directory: "getting-started" } }] },
         { label: "Guides", items: [{ autogenerate: { directory: "guides" } }] },
         { label: "Examples", items: [{ autogenerate: { directory: "examples" } }] },
