@@ -33,7 +33,8 @@ export interface CreateSqliteAdapterArgs<Name extends string, Options, Raw> {
    */
   readonly acquire: () => SqliteConnection<Raw>;
   /**
-   * Called once for every `acquire` when what it opened is closed.
+   * Called once for every `acquire`: when what it opened is closed, or as soon as opening it
+   * fails.
    */
   readonly release: () => Promise<void>;
 }
@@ -49,74 +50,93 @@ export interface CreateSqliteAdapterFunction {
  * rebuilds. A host brings only the connection: libSQL for `@bounda-dev/adapter-sqlite`, a Durable
  * Object's storage for Cloudflare.
  */
-export const createSqliteAdapter: CreateSqliteAdapterFunction = ({
+export const createSqliteAdapter: CreateSqliteAdapterFunction = <
+  Name extends string,
+  Options,
+  Raw = unknown,
+>({
   name,
   options,
   tablePrefix,
   acquire,
   release,
-}) => ({
-  kind: "bounda-adapter",
-  name,
-  options,
-  createStorage: async () => {
-    const { db } = acquire();
-    const tables = storageTablesFor(tablePrefix);
-    await ensureStorageSchema({ db, tables });
-    const storesOver = (database: SqlDatabase): StorageTransaction => ({
-      eventStore: createSqliteEventStore({ db: database, table: tables.events }),
-      inboxLedger: createSqliteInboxLedger({ db: database, table: tables.inbox }),
-      deadLetterStore: createSqliteDeadLetterStore({ db: database, table: tables.deadLetters }),
-      scheduler: createSqliteScheduler({ db: database, table: tables.scheduledCommands }),
-    });
-    // The stores over an open transaction: their statements join it, and a `write` of their own
-    // runs inside it instead of opening another, which SQLite would refuse.
-    const boundTo = (tx: SqlTransaction): SqlDatabase => ({
-      run: tx.run,
-      all: tx.all,
-      write: (work) => work(tx),
-    });
-    return {
-      ...storesOver(db),
-      checkpointStore: createSqliteCheckpointStore({ db, table: tables.checkpoints }),
-      transact: (work) => db.write((tx) => work(storesOver(boundTo(tx)))),
-      close: release,
-    };
-  },
-  createReadModel: <Row extends object>({
-    name: readModel,
-    fields,
-    logger,
-  }: CreateReadModelArgs) => {
-    const { db, raw } = acquire();
-    return openSqliteReadModel<Row>({
-      db,
-      raw,
-      tablePrefix,
-      checkpoints: storageTablesFor(tablePrefix).checkpoints,
+}: CreateSqliteAdapterArgs<Name, Options, Raw>): Adapter<Name, Options> => {
+  /**
+   * Opens what `work` builds on an acquired connection, and releases it when `work` throws: the
+   * ports whose `close` would release it never reach the caller.
+   */
+  const using = async <T>(work: (connection: SqliteConnection<Raw>) => Promise<T>): Promise<T> => {
+    const connection = acquire();
+    try {
+      return await work(connection);
+    } catch (error) {
+      await release().catch(() => undefined);
+      throw error;
+    }
+  };
+  return {
+    kind: "bounda-adapter",
+    name,
+    options,
+    createStorage: () =>
+      using(async ({ db }) => {
+        const tables = storageTablesFor(tablePrefix);
+        await ensureStorageSchema({ db, tables });
+        const storesOver = (database: SqlDatabase): StorageTransaction => ({
+          eventStore: createSqliteEventStore({ db: database, table: tables.events }),
+          inboxLedger: createSqliteInboxLedger({ db: database, table: tables.inbox }),
+          deadLetterStore: createSqliteDeadLetterStore({ db: database, table: tables.deadLetters }),
+          scheduler: createSqliteScheduler({ db: database, table: tables.scheduledCommands }),
+        });
+        // The stores over an open transaction: their statements join it, and a `write` of their own
+        // runs inside it instead of opening another, which SQLite would refuse.
+        const boundTo = (tx: SqlTransaction): SqlDatabase => ({
+          run: tx.run,
+          all: tx.all,
+          write: (work) => work(tx),
+        });
+        return {
+          ...storesOver(db),
+          checkpointStore: createSqliteCheckpointStore({ db, table: tables.checkpoints }),
+          transact: (work) => db.write((tx) => work(storesOver(boundTo(tx)))),
+          close: release,
+        };
+      }),
+    createReadModel: <Row extends object>({
       name: readModel,
       fields,
       logger,
-      close: release,
-    });
-  },
-  rebuildReadModel: <Row extends object>({
-    name: readModel,
-    fields,
-    logger,
-    progress,
-  }: CreateReadModelRebuildArgs) => {
-    const { db, raw } = acquire();
-    return rebuildSqliteReadModel<Row>({
-      db,
-      raw,
-      tablePrefix,
-      checkpoints: storageTablesFor(tablePrefix).checkpoints,
+    }: CreateReadModelArgs) =>
+      using(({ db, raw }) =>
+        openSqliteReadModel<Row, Raw>({
+          db,
+          raw,
+          tablePrefix,
+          checkpoints: storageTablesFor(tablePrefix).checkpoints,
+          name: readModel,
+          fields,
+          logger,
+          close: release,
+        }),
+      ),
+    rebuildReadModel: <Row extends object>({
       name: readModel,
       fields,
       logger,
-      close: release,
       progress,
-    });
-  },
-});
+    }: CreateReadModelRebuildArgs) =>
+      using(({ db, raw }) =>
+        rebuildSqliteReadModel<Row, Raw>({
+          db,
+          raw,
+          tablePrefix,
+          checkpoints: storageTablesFor(tablePrefix).checkpoints,
+          name: readModel,
+          fields,
+          logger,
+          close: release,
+          progress,
+        }),
+      ),
+  };
+};

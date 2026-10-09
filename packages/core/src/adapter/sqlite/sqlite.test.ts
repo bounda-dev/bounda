@@ -146,6 +146,29 @@ describe("createSqliteAdapter", () => {
     expect(uses()).toBe(0);
   });
 
+  it("releases the connection of a storage, read model or rebuild that fails to open", async () => {
+    const { adapter, db, uses } = nodeSqlite();
+    const orders = { id: f.string().primaryKey(), total: f.number() };
+    await (
+      await adapter.createReadModel({ name: "orders", fields: orders, logger: silentLogger })
+    ).close();
+    const narrower = { id: f.string().primaryKey() };
+    await expect(
+      adapter.createReadModel({ name: "orders", fields: narrower, logger: silentLogger }),
+    ).rejects.toBeInstanceOf(ConfigurationError);
+    await expect(
+      adapter.rebuildReadModel({
+        name: "orders",
+        fields: { id: f.string().primaryKey(), "not an identifier": f.string() },
+        logger: silentLogger,
+        progress: "rebuild:orders:1",
+      }),
+    ).rejects.toBeInstanceOf(ConfigurationError);
+    db.close();
+    await expect(adapter.createStorage({ logger: silentLogger })).rejects.toThrow(/not open/);
+    expect(uses()).toBe(0);
+  });
+
   it("releases a rebuild's connection when it commits or pauses too", async () => {
     const { adapter, uses } = nodeSqlite();
     const rebuild = (progress: string) =>

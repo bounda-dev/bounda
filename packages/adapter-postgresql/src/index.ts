@@ -67,83 +67,97 @@ export const postgresql: PostgresqlFunction = (options) => {
     await sql.end({ timeout: 5 });
   };
 
+  /**
+   * Opens what `work` builds on a use of the pool, and hands the use back when `work` throws: the
+   * ports whose `close` would release it never reach the caller.
+   */
+  const using = async <T>(work: (connection: Connection) => Promise<T>): Promise<T> => {
+    const connection = open();
+    try {
+      return await work(connection);
+    } catch (error) {
+      await release().catch(() => undefined);
+      throw error;
+    }
+  };
+
   return {
     kind: "bounda-adapter",
     name: "postgresql",
     options,
-    createStorage: async () => {
-      const { db, sql } = open();
-      const tables = storageTablesFor(tablePrefix);
-      await ensureStorageSchema({ db, schema, tables });
-      const storesOver = (database: PostgresqlDatabase): StorageTransaction => ({
-        eventStore: createPostgresqlEventStore({
-          db: database,
-          table: tables.events,
-          lockKey: tables.appendLockKey,
-          channel: tables.channel,
-        }),
-        inboxLedger: createPostgresqlInboxLedger({ db: database, table: tables.inbox }),
-        deadLetterStore: createPostgresqlDeadLetterStore({
-          db: database,
-          table: tables.deadLetters,
-        }),
-        scheduler: createPostgresqlScheduler({ db: database, table: tables.scheduledCommands }),
-      });
-      const boundTo = (tx: SqlTransaction): PostgresqlDatabase => ({
-        run: tx.run,
-        all: tx.all,
-        write: (work) => work(tx),
-      });
-      return {
-        ...storesOver(db),
-        notifier: createPostgresqlEventNotifier({ sql, channel: tables.channel }),
-        checkpointStore: createPostgresqlCheckpointStore({ db, table: tables.checkpoints }),
-        // The append lock comes first, before any row the work may lock: two transactions that
-        // took the lock and a row in opposite orders would deadlock.
-        transact: (work) =>
-          db.write(async (tx) => {
-            await tx.run("SELECT pg_advisory_xact_lock(hashtext($1))", [tables.appendLockKey]);
-            return work(storesOver(boundTo(tx)));
+    createStorage: () =>
+      using(async ({ db, sql }) => {
+        const tables = storageTablesFor(tablePrefix);
+        await ensureStorageSchema({ db, schema, tables });
+        const storesOver = (database: PostgresqlDatabase): StorageTransaction => ({
+          eventStore: createPostgresqlEventStore({
+            db: database,
+            table: tables.events,
+            lockKey: tables.appendLockKey,
+            channel: tables.channel,
           }),
-        close: release,
-      };
-    },
-    createReadModel: async <Row extends object>({ name, fields, logger }: CreateReadModelArgs) => {
-      const { db, sql } = open();
-      await db.run(`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(schema)}`, []);
-      return openPostgresqlReadModel<Row>({
-        db,
-        sql,
-        schema,
-        tablePrefix,
-        checkpoints: storageTablesFor(tablePrefix).checkpoints,
-        name,
-        fields,
-        logger,
-        close: release,
-      });
-    },
-    rebuildReadModel: async <Row extends object>({
+          inboxLedger: createPostgresqlInboxLedger({ db: database, table: tables.inbox }),
+          deadLetterStore: createPostgresqlDeadLetterStore({
+            db: database,
+            table: tables.deadLetters,
+          }),
+          scheduler: createPostgresqlScheduler({ db: database, table: tables.scheduledCommands }),
+        });
+        const boundTo = (tx: SqlTransaction): PostgresqlDatabase => ({
+          run: tx.run,
+          all: tx.all,
+          write: (work) => work(tx),
+        });
+        return {
+          ...storesOver(db),
+          notifier: createPostgresqlEventNotifier({ sql, channel: tables.channel }),
+          checkpointStore: createPostgresqlCheckpointStore({ db, table: tables.checkpoints }),
+          // The append lock comes first, before any row the work may lock: two transactions that
+          // took the lock and a row in opposite orders would deadlock.
+          transact: (work) =>
+            db.write(async (tx) => {
+              await tx.run("SELECT pg_advisory_xact_lock(hashtext($1))", [tables.appendLockKey]);
+              return work(storesOver(boundTo(tx)));
+            }),
+          close: release,
+        };
+      }),
+    createReadModel: <Row extends object>({ name, fields, logger }: CreateReadModelArgs) =>
+      using(async ({ db, sql }) => {
+        await db.run(`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(schema)}`, []);
+        return openPostgresqlReadModel<Row>({
+          db,
+          sql,
+          schema,
+          tablePrefix,
+          checkpoints: storageTablesFor(tablePrefix).checkpoints,
+          name,
+          fields,
+          logger,
+          close: release,
+        });
+      }),
+    rebuildReadModel: <Row extends object>({
       name,
       fields,
       logger,
       progress,
-    }: CreateReadModelRebuildArgs) => {
-      const { db, sql } = open();
-      await db.run(`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(schema)}`, []);
-      return rebuildPostgresqlReadModel<Row>({
-        db,
-        sql,
-        schema,
-        tablePrefix,
-        checkpoints: storageTablesFor(tablePrefix).checkpoints,
-        name,
-        fields,
-        logger,
-        close: release,
-        progress,
-      });
-    },
+    }: CreateReadModelRebuildArgs) =>
+      using(async ({ db, sql }) => {
+        await db.run(`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(schema)}`, []);
+        return rebuildPostgresqlReadModel<Row>({
+          db,
+          sql,
+          schema,
+          tablePrefix,
+          checkpoints: storageTablesFor(tablePrefix).checkpoints,
+          name,
+          fields,
+          logger,
+          close: release,
+          progress,
+        });
+      }),
   };
 };
 

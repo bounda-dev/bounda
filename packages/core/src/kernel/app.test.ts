@@ -585,6 +585,28 @@ describe("implementations built by create", () => {
     expect(log).toEqual(["notifier closed"]);
   });
 
+  it("closes the storage and the read models already open when a read model fails to open", async () => {
+    const log: string[] = [];
+    const { app: lifecycleRegistry } = lifecycle(log);
+    const counting = countingAdapter();
+    const adapter: Adapter = {
+      ...counting.adapter,
+      createReadModel: async <Row extends object>(args: CreateReadModelArgs) => {
+        if (args.name === "broken") throw new Error("read model database is down");
+        return counting.adapter.createReadModel<Row>(args);
+      },
+    };
+    const twoReadModels = {
+      ...lifecycleRegistry,
+      readModels: { ...lifecycleRegistry.readModels, broken: registry.readModels.orderSummary },
+    } as const satisfies Registry;
+    await expect(
+      createApp({ registry: twoReadModels, config: { storage: adapter } }),
+    ).rejects.toThrow("read model database is down");
+    expect(counting.closes()).toEqual({ storage: 1, readModels: 1 });
+    expect(log).toEqual(["notifier closed"]);
+  });
+
   it("builds a fresh port for every app on the same registry", async () => {
     const log: string[] = [];
     const { create, app: lifecycleRegistry } = lifecycle(log);

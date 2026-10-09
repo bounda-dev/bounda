@@ -238,14 +238,18 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     clock,
     ...(test === undefined ? { config: config.ports } : { test }),
   });
+  // What a start that fails has to close, in the order `stop` closes it.
+  const opened: (() => Promise<void>)[] = [];
   try {
-    const opened = await config.storage.createStorage({ logger });
+    const written = await config.storage.createStorage({ logger });
+    opened.unshift(() => written.close());
     const aggregates = buildAggregates({ registry, ports: ports.byAggregate });
     const storage = {
-      ...opened,
-      eventStore: withUpcasting({ eventStore: opened.eventStore, aggregates }),
+      ...written,
+      eventStore: withUpcasting({ eventStore: written.eventStore, aggregates }),
     };
     const readModels = await buildReadModels({ registry, config, logger });
+    opened.unshift(() => readModels.close());
     // One list per `runUntilIdle` under way.
     const observers = new Set<CommandRejection[]>();
     const pipeline = createCommandPipeline({
@@ -456,6 +460,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       }),
     };
   } catch (error) {
+    for (const close of opened) await close().catch(() => undefined);
     await ports.dispose();
     throw error;
   }
