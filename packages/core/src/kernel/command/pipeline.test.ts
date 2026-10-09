@@ -1,5 +1,6 @@
 import { describe, expect, it, onTestFinished } from "vitest";
 import {
+  BoundaError,
   ChainDepthExceededError,
   ConcurrencyError,
   ConfigurationError,
@@ -11,6 +12,7 @@ import {
 } from "../../contracts/errors.ts";
 import type { RejectFunction } from "../../modules/command.ts";
 import type { Registry } from "../../modules/registry.ts";
+import { classifyFailure } from "../shared/retry.ts";
 import { HandlerTimeoutError } from "../shared/timeout.ts";
 import { ATTRIBUTES } from "../telemetry.ts";
 import { installFakeTelemetry } from "../telemetry-fake.ts";
@@ -199,16 +201,25 @@ describe("command pipeline", () => {
       },
     });
 
-    await expect(
-      pipeline.dispatch({ type: "NoteOrder", payload: { orderId: "o-1" } }),
-    ).rejects.toBe(foreign);
+    const failed = (command: string) => ({
+      code: "FOREIGN_REJECTION",
+      message: `Command ${command} failed on rejection Elsewhere, which its handler did not make with reject: Another app said no`,
+      cause: foreign,
+    });
+    const thrown = await pipeline
+      .dispatch({ type: "NoteOrder", payload: { orderId: "o-1" } })
+      .catch((error: unknown) => error);
+    expect(thrown).not.toBeInstanceOf(DomainError);
+    expect(thrown).toBeInstanceOf(BoundaError);
+    expect(thrown).toMatchObject(failed("NoteOrder"));
+    expect(classifyFailure(thrown)).toBe("terminal");
     await expect(
       pipeline.dispatchUnattended({
         type: "TagOrder",
         payload: { orderId: "o-1" },
         within: createUnitOfWork({ storage }),
       }),
-    ).rejects.toBe(foreign);
+    ).rejects.toMatchObject(failed("TagOrder"));
   });
 
   it("gives reject only to a command that declares rejections, and takes the message it is passed", async () => {
