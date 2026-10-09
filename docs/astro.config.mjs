@@ -23,6 +23,8 @@ export default defineConfig({
   site: "https://docs.bounda.dev",
   // Pages that moved keep their old address working, since links to them live outside the docs.
   redirects: {
+    // The landing at bounda.dev says what Bounda is; the docs start where the work does.
+    "/": "/getting-started/",
     "/guides/how-it-runs/": "/concepts/how-it-runs/",
     "/guides/storefront-example/": "/examples/storefront/",
     "/guides/onboarding-example/": "/examples/onboarding/",
@@ -66,7 +68,11 @@ export default defineConfig({
       description: "Event sourcing and CQRS for TypeScript without the ceremony.",
       customCss: ["./src/styles/bounda.css"],
       head: socialImage("https://docs.bounda.dev/og.jpg"),
-      components: { Head: "./src/components/Head.astro" },
+      components: {
+        Head: "./src/components/Head.astro",
+        PageTitle: "./src/components/PageTitle.astro",
+        Pagination: "./src/components/Pagination.astro",
+      },
       expressiveCode: {
         themes: [basalt, bone],
         styleOverrides: {

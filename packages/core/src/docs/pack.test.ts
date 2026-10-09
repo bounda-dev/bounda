@@ -31,7 +31,6 @@ afterEach(async () => {
 
 describe("packDocs", () => {
   it("writes every page as Markdown with relative links, and an index in sidebar order", async () => {
-    await write("index.mdx", "---\ntitle: Bounda\ndescription: Splash.\n---\n<Card />");
     await write(
       "getting-started/index.md",
       page("Getting started", 0, "Then [test](/guides/testing/)."),

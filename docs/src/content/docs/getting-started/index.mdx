@@ -7,6 +7,17 @@ sidebar:
 
 import { FileTree, Steps, TabItem, Tabs } from "@astrojs/starlight/components";
 
+Bounda is event sourcing and CQRS for TypeScript: commands, events and projections are small
+files, every type is inferred, and the app runs on one database. This page takes a new project
+from nothing to a tested command; [Core concepts](/getting-started/core-concepts/) defines the
+words it uses.
+
+:::caution[Before 1.0]
+Until 1.0 the API can still change between minor versions (0.1 to 0.2), and every change that
+breaks something is called out in the changelogs. [What is not there yet](/reference/limitations/)
+is one honest list.
+:::
+
 ## Create a project
 
 `npm create bounda@latest my-shop` asks how the app runs and, for Node and React Router, which
@@ -227,7 +238,7 @@ See [adapters](/adapters/).
 A new project carries an `AGENTS.md`, which Claude Code, Codex, Cursor and other coding agents
 read, telling the agent to read the docs before it writes a module. The docs it points at ship inside `@bounda-dev/core`, as
 plain Markdown in `node_modules/@bounda-dev/core/docs/`, so the agent reads the ones for the
-version you installed, not whatever it remembers. Every page here, past the front page, also has
+version you installed, not whatever it remembers. Every page here also has
 **Copy Markdown** and **Open** in ChatGPT or Claude, and
 [llms.txt](https://docs.bounda.dev/llms.txt) lists the whole site for an agent that is still
 deciding.

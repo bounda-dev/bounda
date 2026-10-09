@@ -112,7 +112,9 @@ h1#_top,
 /* Labels: the same face at its widest, in capitals. */
 .sidebar-content .group-label .large,
 .right-sidebar-panel h2,
-.sl-markdown-content th {
+.sl-markdown-content th,
+.bounda-label,
+.starlight-aside__title {
   font-family: var(--bounda-display);
   font-weight: 600;
   font-stretch: 125%;
@@ -135,6 +137,26 @@ h1#_top,
   font-weight: 600;
 }
 
+/* A position, as the ledger writes one: mono, muted, tabular. */
+.bounda-number {
+  font-family: var(--sl-font-mono);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--sl-color-gray-3);
+}
+
+/* Asides: a rule and a label, not a box of colour. The label carries the meaning, so the icon
+   goes. */
+.starlight-aside {
+  padding: 0.125rem 0 0.125rem 1.25rem;
+  border-inline-start-width: 2px;
+  background: transparent;
+}
+
+.starlight-aside__icon {
+  display: none;
+}
+
 /* Code and figures: tabular, without ligatures. */
 code,
 kbd,
@@ -151,8 +173,9 @@ pre {
 }
 
 /* Square corners, structure by hairlines. */
-.sl-markdown-content :is(.starlight-aside, .card, .sl-link-card, img, figure),
-.sl-link-button {
+.sl-markdown-content :is(.card, .sl-link-card, img, figure),
+.sl-link-button,
+site-search :is(button[data-open-modal], kbd, dialog) {
   border-radius: 2px;
 }
 
