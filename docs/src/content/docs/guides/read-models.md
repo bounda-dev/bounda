@@ -90,8 +90,8 @@ export const handler = async ({ repositoryData, rates }: Query.HandlerArgs) =>
 
 A query only reads, so it needs no `idempotencyKey`, and a port that fails fails the query. The
 config chooses its implementation in the same `ports` section, `ports: { orderSummary: { rates:
-"ecb" } }`, and a read model's port cannot be named after what a query's arguments already hold
-(`query`, `repositoryData`, `table`, `queries`) nor `view`.
+"ecb" } }`, and a read model's port cannot take one of the
+[reserved names](/reference/conventions/#what-the-generator-refuses).
 
 `repository` reads the storage and gets no ports, and neither do the projections: a projection
 commits exactly once per batch with its checkpoint, replays its whole history on a rebuild and

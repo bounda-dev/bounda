@@ -49,33 +49,11 @@ every event it takes is assigned to an instance by the id of that aggregate: its
 their `aggregateId`, another aggregate's by the id field they carry or by `correlate`. That id
 never changes, so the instance is a stable sequence, and parking can follow it.
 
-When a step fails for good, `ProcessFailed` is written to the instance's stream, naming its dead
-letter, in the same transaction as the letter and the claim of what failed. From then on, each event
-that would do something in the instance (it has a handler, or completes the process) is recorded
-as `ProcessEventParked` in the same stream, in the order it arrived, and nothing of the process
-runs for that instance, deadlines included. The event's delivery is done; the process runner moves
-on, and every other instance carries on.
-
-```
-019a0c51-8d2f-7c4e-a1b2-3c4d5e6f7a80  failed  process  order.orderPayment
-    OrderPaid on order:o-2, 3 attempts, last 2026-09-22T14:05:40.118Z (retriable_exhausted)
-    payment provider timed out
-    2 events are parked behind it; retrying it handles them in order
-```
-
-Retrying the letter, with `bounda dead-letters retry` or `app.deadLetters.retry`, runs the failed
-handler again, then drains the parked events one by one, in order, each with the `idempotencyKey`
-it would have had. A deadline that came due before a parked event runs before it, as it would have
-if nothing had failed, and an event that arrives during the retry is parked too, so nothing
-overtakes an older one. Once none is left, `ProcessResumed` puts the instance back to `started` and
-its deadlines are scheduled again. Each step is one transaction, so a retry cut short goes on from
-the last step written when the letter is retried again. A parked event that fails becomes the new
-failure at once, without retries of its own, and the events after it stay parked behind its
-letter.
-
-Discarding the letter gives the instance up: it stays failed, its parked events never run, though
-they stay in its history, and the events that reach it afterwards are dropped, as for an instance
-that has ended.
+So when a step fails for good, the instance parks every later event in its own stream, in the
+order it arrived, and the process runner moves on to the other instances. Retrying the dead letter
+runs the failed handler again and drains what is parked, in order, before the instance resumes;
+discarding it gives the instance up. [A failed process](/guides/dead-letters/#a-failed-process) has
+the rules: what is parked, how deadlines interleave, and what a retry cut short does.
 
 ## Why not park them as dead letters
 
@@ -113,12 +91,16 @@ There is no cap like Axon's either: a parked event is one more event in one inst
 - [Deadlines are state](/concepts/deadlines-are-state/), for the deadlines a failed instance holds.
 - [Your event store is your outbox](/concepts/event-store-as-outbox/), for why the failure and its
   letter commit together.
-- Error queues: NServiceBus [recoverability](https://docs.particular.net/nservicebus/recoverability/)
-  and [You don't need ordered delivery](https://particular.net/blog/you-dont-need-ordered-delivery),
+- Error queues: NServiceBus
+  [recoverability](https://docs.particular.net/nservicebus/recoverability/) and
+  [You don't need ordered delivery](https://particular.net/blog/you-dont-need-ordered-delivery),
   MassTransit's [exceptions](https://masstransit.massient.com/documentation/concepts/exceptions),
   Wolverine's [error handling](https://wolverinefx.net/guide/handlers/error-handling.html),
-  Kurrent's [persistent subscriptions](https://docs.kurrent.io/server/v25.0/features/persistent-subscriptions.html).
+  Kurrent's
+  [persistent subscriptions](https://docs.kurrent.io/server/v25.0/features/persistent-subscriptions.html).
 - Blocking: Commanded's [process managers](https://commanded.hexdocs.pm/process-managers.html),
-  Axon's [event processor error handling](https://docs.axoniq.io/axon-framework-reference/4.11/events/event-processors/),
+  Axon's
+  [event processor error handling](https://docs.axoniq.io/axon-framework-reference/4.11/events/event-processors/),
   Temporal's [failures](https://docs.temporal.io/references/failures).
-- Parking: Axon's [sequenced dead-letter queue](https://docs.axoniq.io/axon-framework-reference/4.11/events/event-processors/dead-letter-queue/).
+- Parking: Axon's
+  [sequenced dead-letter queue](https://docs.axoniq.io/axon-framework-reference/4.11/events/event-processors/dead-letter-queue/).

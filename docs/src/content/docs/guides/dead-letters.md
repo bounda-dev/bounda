@@ -21,8 +21,8 @@ bounda dead-letters retry 019a0c4e-…
 bounda dead-letters discard 019a0c4e-…
 ```
 
-`list` prints the failed letters, with `--kind policy|process|scheduled`, `--handler`, `--status`,
-`--limit` and `--json` to narrow or script it. `retry` runs the failed handler once more and marks
+`list` prints the failed letters, and its [options](/reference/cli/#bounda-dead-letters) narrow
+it or print JSON for a script. `retry` runs the failed handler once more and marks
 the letter `retried` if it succeeds; when it fails again the error is printed and the letter stays
 `failed`. `discard` marks it `discarded` without running anything. Letters are never deleted by
 these commands; they are the record of what happened.
@@ -52,13 +52,14 @@ The same operations are on the app as `app.deadLetters` — `list`, `count`, `ge
 ## A failed process
 
 A process fails when one of its handlers fails for good: the instance records `ProcessFailed`, the
-run is dead-lettered, and the instance stops. Events keep arriving for it, and dropping them
-would lose them: the `OrderPaid` that comes while the process is failed on a reminder is exactly
-the one it must not miss. So the instance parks them. Each event that would do something in it
-(it has a handler, or completes the process) is recorded in the instance's stream as
-`ProcessEventParked`, in the order it arrived, and nothing of the process runs meanwhile,
-deadlines included. A follow-up of a timed-out process is the exception: the process has ended,
-so its failure is only dead-lettered, and retrying the letter runs the handler again.
+run is dead-lettered, and the instance stops. Events keep arriving for it, and dropping them would
+lose them: the `OrderPaid` that comes while the process is failed on a reminder is exactly the one
+it must not miss. So the instance parks them. Each event that would do something in it (it has a
+handler, or completes the process) is recorded in the instance's stream as `ProcessEventParked`, in
+the order it arrived, and nothing of the process runs for that instance meanwhile, deadlines
+included; every other instance of the process carries on. A follow-up of a timed-out process is the
+exception: the process has ended, so its failure is only dead-lettered, and retrying the letter runs
+the handler again.
 
 Retrying the dead letter of the failure is what brings the instance back:
 
@@ -93,6 +94,7 @@ same holds for each step of a retry: the retried handler, each parked event or d
 and the final `ProcessResumed` are one transaction each, so a retry cut short goes on from the
 last step written on the next retry.
 
-This is Axon's sequenced dead-letter queue, which parks the events of one sequence behind the one
-that failed, with the process instance as the sequence.
+Parking starts when the failure is final. While a step is still waiting for a retry, the process is
+handed none of its later events, whatever their instance, so a long back-off holds every instance
+of the process for as long.
 

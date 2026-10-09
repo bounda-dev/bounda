@@ -27,8 +27,8 @@ Bounda has two kinds of module that react to events, and neither is called a sag
 
 A **saga** is a pattern built with them: a business transaction of several steps where each step
 that can be undone has a compensation. **Choreography** builds it from policies that answer each
-other's events, with no coordinator. **Orchestration** builds it from a process that holds the
-steps in one place. Chris Richardson's [saga pattern](https://microservices.io/patterns/data/saga.html)
+other's events, with no coordinator. **Orchestration** builds it from a process that holds the steps
+in one place. Chris Richardson's [saga pattern](https://microservices.io/patterns/data/saga.html)
 draws the same line. And the converse holds: not every policy or process is a saga. A policy that
 sends a confirmation email has nothing to compensate.
 
@@ -72,22 +72,23 @@ command the process sent: the provider reports it through a webhook, `declinePay
 event. When to make a "no" a rejection and when an event is the subject of
 [Not every no is a fact](/concepts/rejection-or-event/).
 
-What is left is a step that throws: a provider that cannot be reached, a bug. That is not an
-answer of the domain, and compensating it would be wrong. The runtime
-[retries it](/guides/reacting-to-events/#retries-and-timeouts) under the same `idempotencyKey`,
-and dead-letters it when it cannot succeed. This is the order Azure's
+What is left is a step that throws: a provider that cannot be reached, a bug. That is not an answer
+of the domain, and compensating it would be wrong. The runtime
+[retries it](/guides/reacting-to-events/#retries-and-timeouts) under the same `idempotencyKey`, and
+dead-letters it when it cannot succeed. This is the order Azure's
 [Compensating Transaction pattern](https://learn.microsoft.com/en-us/azure/architecture/patterns/compensating-transaction)
 recommends too: retry what may be transient, compensate only when going forward is impossible.
 
 So **compensation is just another command**. It is not registered ahead of time, run in reverse
-order, or called by the runtime. It is a command the handler sends because of what it was told,
-and like any command it decides from the state of its own aggregate
+order, or called by the runtime. It is a command the handler sends because of what it was told, and
+like any command it decides from the state of its own aggregate
 ([a compensation is a command that decides from state](/guides/sagas/#a-compensation-is-a-command-that-decides-from-state)).
 
 ## Event sourcing is the version file
 
-A saga has no isolation: another saga, a customer or the outside world can act between two of
-its steps. Richardson's [QCon San Francisco 2017 slides](https://archive.qconsf.com/system/files/presentation-slides/dataconsistencyinmicroserviceusingsagasqconsf2017-1711151847291.pdf)
+A saga has no isolation: another saga, a customer or the outside world can act between two of its
+steps. Richardson's
+[QCon San Francisco 2017 slides](https://archive.qconsf.com/system/files/presentation-slides/dataconsistencyinmicroserviceusingsagasqconsf2017-1711151847291.pdf)
 list countermeasures for it. One is the *version file*: record the operations that arrived, a
 cancellation included, so that create then cancel ends where cancel then create does. He adds that
 it "sounds suspiciously like event sourcing".
@@ -102,18 +103,20 @@ with it.
 
 ## How other frameworks draw the lines
 
-- **Axon** calls a [saga](https://docs.axoniq.io/axon-framework-reference/4.11/sagas/implementation/)
-  an event listener that manages one business transaction: an instance with state, started and
-  ended by events, found through an association property, which may take compensating actions. In
-  Bounda's terms that is a process.
+- **Axon** calls a
+  [saga](https://docs.axoniq.io/axon-framework-reference/4.11/sagas/implementation/) an event
+  listener that manages one business transaction: an instance with state, started and ended by
+  events, found through an association property, which may take compensating actions. In Bounda's
+  terms that is a process.
 - **NServiceBus** describes a [saga](https://docs.particular.net/nservicebus/sagas/) as a
   message-driven state machine with persisted state, whose instance a message finds through a
   mapped property, and which can request timeouts. Again, a process.
-- **Temporal** has no saga construct: the [saga pattern](https://docs.temporal.io/design-patterns/saga-pattern)
-  is workflow code that registers a compensation before each step and runs them in reverse order
-  when one fails. It shares Bounda's view that compensation is ordinary code. It differs in the
-  model: a stack of undo actions kept by the workflow, where Bounda has each compensation decide
-  from its aggregate's state, so the order matters only when one compensation depends on another.
+- **Temporal** has no saga construct: the
+  [saga pattern](https://docs.temporal.io/design-patterns/saga-pattern) is workflow code that
+  registers a compensation before each step and runs them in reverse order when one fails. It shares
+  Bounda's view that compensation is ordinary code. It differs in the model: a stack of undo actions
+  kept by the workflow, where Bounda has each compensation decide from its aggregate's state, so the
+  order matters only when one compensation depends on another.
 
 ## What stays outside
 
@@ -136,11 +139,15 @@ with it.
 - [What a command answers](/guides/reacting-to-events/#what-a-command-answers), the result a
   policy or process gets from `await commands.x()`.
 - [Not every no is a fact](/concepts/rejection-or-event/), for when a "no" is an event.
-- Hector Garcia-Molina and Kenneth Salem, [Sagas](https://www.cs.princeton.edu/research/techreps/598), 1987.
+- Hector Garcia-Molina and Kenneth Salem,
+  [Sagas](https://www.cs.princeton.edu/research/techreps/598), 1987.
 - Chris Richardson, [Pattern: Saga](https://microservices.io/patterns/data/saga.html), his talk
   [Using sagas to maintain data consistency in a microservice architecture](https://www.youtube.com/watch?v=YPbGW3Fnmbc)
-  and his [QCon San Francisco 2017 slides](https://archive.qconsf.com/system/files/presentation-slides/dataconsistencyinmicroserviceusingsagasqconsf2017-1711151847291.pdf).
-- Azure Architecture Center, [Compensating Transaction pattern](https://learn.microsoft.com/en-us/azure/architecture/patterns/compensating-transaction).
-- Axon's [saga implementation](https://docs.axoniq.io/axon-framework-reference/4.11/sagas/implementation/),
+  and his
+  [QCon San Francisco 2017 slides](https://archive.qconsf.com/system/files/presentation-slides/dataconsistencyinmicroserviceusingsagasqconsf2017-1711151847291.pdf).
+- Azure Architecture Center,
+  [Compensating Transaction pattern](https://learn.microsoft.com/en-us/azure/architecture/patterns/compensating-transaction).
+- Axon's
+  [saga implementation](https://docs.axoniq.io/axon-framework-reference/4.11/sagas/implementation/),
   NServiceBus's [sagas](https://docs.particular.net/nservicebus/sagas/) and Temporal's
   [saga pattern](https://docs.temporal.io/design-patterns/saga-pattern).

@@ -133,10 +133,14 @@ like it no longer counts as a deadline, and boot says so when its `at-` file is 
 
 How deadlines behave:
 
+- **The state is the only record.** Each instance has one scheduler entry, at its earliest pending
+  deadline, written with the state it comes from. When it comes due the runtime loads the instance
+  and works out from its state what is due, so an entry the state no longer backs runs nothing.
 - **`after()` counts from what triggered the handler**: the event's time in an `on-<event>.ts`,
   the moment that came due in an `at-<field>.ts`. A retry, or a handler that runs late, sets the
   same moment, and a daily reminder does not drift. After an outage a chain catches up: every
-  missed reminder runs in turn, soonest first.
+  missed reminder runs in turn, soonest first. A deploy that changes `"72h"` changes the instances
+  that set the deadline afterwards, not the moments already stored.
 - **Each deadline comes due once at each moment.** When several are due, the earliest runs first
   and the field name breaks a tie; a moment already past runs at once. The handler returns the
   field as `null` or another moment: one that leaves it out does not compile, and one that sets it
@@ -158,9 +162,9 @@ How deadlines behave:
 
 The time a process may stay open is a deadline too, `timeout`, set from `config.timeout` when the
 process starts. Its handler is `at-timeout.ts`, which receives the same arguments, and reaching it
-ends the process as timed out, with what the handler returns merged into the final state. Boot
-refuses a `deadline()` without its `at-` file, an `at-` file without its `deadline()`, and a
-`deadline()` named `timeout`.
+ends the process as timed out, with what the handler returns merged into the final state. A
+`deadline()` and its `at-` file come in pairs, and none is named `timeout`
+([what boot refuses](/reference/conventions/#what-boot-refuses)).
 
 The events the commands of `at-timeout.ts` cause still reach the process's own handlers: an
 `OrderCancelled` it causes runs `on-order-cancelled.ts` as any other would, once the process has
@@ -188,19 +192,14 @@ its claim and runs again, and the runtime cannot know whether its side effect ha
 why a handler that talks to the outside world should be written so that running it twice is
 harmless.
 
-**An attempt writes everything or nothing.** The commands a policy or process handler dispatches are
-decided on the spot but stored only when the attempt ends, together, in one transaction of the
-store: the events of its immediate commands, its scheduled commands, the claim that marks the event
-done and, when the runtime gives up, the dead letter. A process step adds its own lifecycle events
-(`ProcessStarted`, `ProcessHandled`, `ProcessCompleted`, `ProcessDeadlineReached`,
-`ProcessTimedOut`, `ProcessFailed`) and its next deadline's entry to the same transaction, so a
-deadline can never disagree with the state it was computed from. A handler that throws, runs out of
-time or dies before that leaves no command behind, immediate or scheduled, and the next attempt
-decides afresh; a step whose instance another write moved meanwhile runs again on it, without
-spending an attempt. What `await commands.x()` returns is the aggregate's decision, not something
-stored yet: call the outside world before dispatching, not after, and pass `idempotencyKey`, because
-the attempt may run again. How the claim and its lease work, and what stays outside the promise, is
-in [Your event store is your outbox](/concepts/event-store-as-outbox/).
+**An attempt writes everything or nothing.** The commands a handler dispatches are decided on the
+spot but stored only when the attempt ends, in one transaction with the mark that says the event is
+done, and for a process step with its lifecycle events and its next deadline. A handler that throws,
+runs out of time or dies before that leaves no command behind, and the next attempt decides afresh.
+What `await commands.x()` returns is the aggregate's decision, not something stored yet: call the
+outside world before dispatching, not after, and pass `idempotencyKey`, because the attempt may run
+again. [Your event store is your outbox](/concepts/event-store-as-outbox/#what-one-attempt-is) lists
+what the transaction holds, how the claim and its lease work, and what stays outside.
 
 **Every reaction gets an idempotency key.** Policy and process handlers receive `idempotencyKey`, a
 UUID that is the same on every automatic retry of the handler for one event (for an `at-` handler,
@@ -266,8 +265,9 @@ span; a test asserts the ones it expects from what
 [`runUntilIdle()`](/guides/testing/#rejections-inside-reactions) returns. A scheduled command that
 is rejected when it runs changes nothing in the same way. While the run lasts, only a failure
 rejects the `await`: a payload that does not validate, a concurrency conflict that outlasts its
-retries, an error the handler throws. The run fails with it, and the runtime retries it or
-dead-letters it (see [Retries and timeouts](#retries-and-timeouts)).
+retries, an error the handler throws, or a `DomainError` the command did not make with its own
+`reject`, such as one rethrown from another command. The run fails with it, and the runtime retries
+it or dead-letters it (see [Retries and timeouts](#retries-and-timeouts)).
 
 ## Retries and timeouts
 
@@ -277,11 +277,11 @@ and its default.
 
 Three different things are called a timeout, and it is worth keeping them apart:
 
-| What it bounds | Setting, and default | When it runs out |
+| What it bounds | Setting | When it runs out |
 | --- | --- | --- |
-| One run of a command handler | `runtime.commands.timeout`, 30 s | The dispatch rejects with `HANDLER_TIMEOUT`, the handler's `signal` aborts and nothing it returns is stored |
-| One run of a policy or process handler | `runtime.policies.timeout`, 30 s, for processes too | The run fails; its commands still running stop, later ones are refused with `REACTION_ABANDONED` and logged at `warn`, and its `signal` aborts |
-| How long a process stays open | the process's `config.timeout`, else `runtime.processes.timeout`, 7 d | `at-timeout.ts` runs and the process ends as timed out |
+| One run of a command handler | `runtime.commands.timeout` | The dispatch rejects with `HANDLER_TIMEOUT`, the handler's `signal` aborts and nothing it returns is stored |
+| One run of a policy or process handler | `runtime.policies.timeout`, for processes too | The run fails; its commands still running stop, later ones are refused with `REACTION_ABANDONED` and logged at `warn`, and its `signal` aborts |
+| How long a process stays open | the process's `config.timeout`, else `runtime.processes.timeout` | `at-timeout.ts` runs and the process ends as timed out |
 
 For a command, each retry after a concurrency conflict gets a time limit of its own, and loading
 the aggregate and storing its events do not count. A command dispatched from a policy or process
@@ -292,30 +292,10 @@ own, `commands.x(payload, { signal })`, until its events start being stored.
 JavaScript cannot stop a handler itself, so a reaction that runs out of time keeps running until
 it returns: pass `signal` to what it calls outside (`fetch(url, { signal })`) and that stops too.
 
-Change them per app, or per aggregate:
-
-```ts
-import { defineConfig } from "@bounda-dev/core/config";
-
-export default defineConfig({
-  storage: postgresql({ url: process.env.DATABASE_URL! }),
-  runtime: {
-    commands: { timeout: "10s" },
-    policies: { retry: { strategy: "exponential", maxAttempts: 5, maxDelay: "2m" } },
-    processes: { timeout: "30d" },
-    overrides: {
-      order: { commands: { timeout: "1m" }, policies: { retry: { strategy: "none" } } },
-    },
-  },
-});
-```
-
-`strategy: "none"` dead-letters on the first failure, which is what you want for a policy whose
-command can never succeed on a second try.
-
-`maxChainDepth`, 25 by default, bounds how far a chain of policies reacting to the events of other
-policies may go before the runtime refuses to continue. Hitting it means two policies are
-answering each other.
+Each can be set per app under `runtime`, or for one aggregate under `runtime.overrides`; a policy
+whose command can never succeed on a second try takes `retry: { strategy: "none" }`.
+[Configuration](/reference/configuration/#runtime) has every key and default, `maxChainDepth`
+included, which stops two policies that answer each other.
 
 ## Delaying a command
 
@@ -343,15 +323,11 @@ so what would fail when it runs fails at once: a `z.date()` field rejects the st
 date into, so declare it as `z.coerce.date()`. The handler receives the payload validated when the
 command runs, so a schema's transforms apply once.
 
-A scheduled command is claimed by one instance at a time, however many are running the worker role.
-Its run and the release of its claim are one transaction: what the command wrote lands together with
-the claim's completion, so a worker that dies between the two does not store its writes twice, and a
-command the worker gives up on is dead-lettered in the same transaction that drops it. The claim's
-lease starts again before every retry after a conflict, and a command the worker reaches too late in
-a batch goes back unrun, without counting an attempt. A run that stalls past its lease anyway can
-lose the command to another instance, which then decides it; the stalled run writes nothing, and
-stops before running the handler again. The same holds for a delayed policy's run and for a process
-deadline.
+A scheduled command is claimed by one instance at a time, however many are running the worker
+role, and its run commits with the release of its claim, as a reaction's attempt does
+([what that means](/concepts/event-store-as-outbox/#what-one-attempt-is)). A command the worker
+reaches too late in a batch goes back unrun, without counting an attempt. The same holds for a
+delayed policy's run and for a process deadline.
 
 ## Delaying a policy
 
@@ -387,5 +363,5 @@ effect happened.
 
 `app.getLag()` reports how far behind the head of the global stream each subscriber is. Zero means
 every consequence of every stored event has happened; a number that keeps growing means a subscriber
-is failing and retrying. In tests, [asserting it is zero](/guides/testing/) proves nothing was left
-pending.
+is failing and retrying. In tests, [asserting it is zero](/guides/testing/#nothing-left-behind)
+proves nothing was left pending.

@@ -99,9 +99,8 @@ rebuilt there is also `bounda_rm_order_summary__rebuild`, and for an instant dur
 
 Adding a field to a view adds a nullable column the next time the app starts; existing rows keep
 working. Removing a field or changing its type is refused with an error that names the read model
-and the command that rebuilds it: `bounda rebuild <read-model>` projects the whole global stream
-into a fresh table with the current fields and swaps it in, with the live table serving queries
-until then. See [Deployment](/guides/deployment/#rebuilding-a-read-model).
+and the command that rebuilds it, `bounda rebuild <read-model>`, which does so without taking the
+read model offline ([rebuilding a read model](/guides/deployment/#rebuilding-a-read-model)).
 
 ## Hand-written SQL
 

@@ -30,8 +30,8 @@ of the store:
   the version the handler saw;
 - the scheduler rows of its scheduled commands;
 - for a process step, the instance's lifecycle events (`ProcessStarted`, `ProcessHandled`,
-  `ProcessCompleted`, `ProcessDeadlineReached`, `ProcessTimedOut`) and the entry of its next deadline, computed from
-  the state it just wrote;
+  `ProcessCompleted`, `ProcessDeadlineReached`, `ProcessTimedOut`) and the entry of its next
+  deadline, computed from the state it just wrote;
 - the mark in the inbox that says the event is done;
 - and, when the runtime gives up on the event, `ProcessFailed` and the dead letter (only the
   letter for a follow-up of a timed-out process, which has ended).
@@ -106,9 +106,12 @@ The promise is about what reaches the store. Three things are, on purpose, outsi
   guarantees in the terms of the handler's code.
 - [A broker goes behind the event store](/concepts/where-a-broker-goes/), for the publisher that
   takes events out of the app.
-- The precedents: Axon's [unit of work](https://docs.axoniq.io/axon-framework-reference/4.11/messaging-concepts/unit-of-work/),
+- The precedents: Axon's
+  [unit of work](https://docs.axoniq.io/axon-framework-reference/4.11/messaging-concepts/unit-of-work/),
   NServiceBus's [Outbox](https://docs.particular.net/nservicebus/outbox/) and
   [batched dispatch](https://docs.particular.net/nservicebus/messaging/batched-dispatch),
-  MassTransit's [transactional outbox](https://masstransit.massient.com/documentation/patterns/transactional-outbox)
+  MassTransit's
+  [transactional outbox](https://masstransit.massient.com/documentation/patterns/transactional-outbox)
   and [in-memory outbox](https://masstransit.massient.com/documentation/patterns/in-memory-outbox),
-  Wolverine's [Marten integration](https://wolverinefx.net/guide/durability/marten/event-sourcing.html).
+  Wolverine's
+  [Marten integration](https://wolverinefx.net/guide/durability/marten/event-sourcing.html).

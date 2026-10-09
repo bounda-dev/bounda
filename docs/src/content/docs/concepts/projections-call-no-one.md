@@ -55,13 +55,14 @@ transaction as the handler's writes, and its at-least-once mode, which stores th
 the handler has run, asks for an idempotent handler. Bounda gives projections only the first
 kind, so it can say "exactly once per batch" without a footnote.
 
-**A rebuild is a second run of the whole history.** [`bounda rebuild`](/guides/deployment/#rebuilding-a-read-model)
-projects every event again into a fresh table and swaps it in. A projection that calls out would
-call once per event again, millions of times for a large read model, and get today's answers: the
-rate of today applied to an order of last year, a geocode that the service has since refined. The
-rebuilt table would differ from the one it replaces for reasons that have nothing to do with the
-code being rebuilt. The point of a rebuild is that the history has not changed, so the same code
-gives the same rows; a projection that reads the world breaks that.
+**A rebuild is a second run of the whole history.**
+[`bounda rebuild`](/guides/deployment/#rebuilding-a-read-model) projects every event again into a
+fresh table and swaps it in. A projection that calls out would call once per event again, millions
+of times for a large read model, and get today's answers: the rate of today applied to an order of
+last year, a geocode that the service has since refined. The rebuilt table would differ from the one
+it replaces for reasons that have nothing to do with the code being rebuilt. The point of a rebuild
+is that the history has not changed, so the same code gives the same rows; a projection that reads
+the world breaks that.
 
 **On some hosts a projection runs inside the command's request.** On Cloudflare the Durable
 Object brings the read models a command changed up to date before the command answers. A React
@@ -124,16 +125,22 @@ ignored.
 ## Where to read more
 
 - [Ports of a read model](/guides/read-models/#ports) and
-  [keeping an external index](/guides/calling-the-outside-world/#keeping-an-external-index), the how.
+  [keeping an external index](/guides/calling-the-outside-world/#keeping-an-external-index), the
+  how.
 - [What more instances do](/concepts/how-it-runs/#what-more-instances-do),
   for the lock and the transaction per batch, and
   [At least once, and exactly once per batch](/concepts/delivery-guarantees/).
 - [The host decides read-your-writes](/concepts/read-your-writes/) and the
   [Cloudflare adapter](/adapters/cloudflare/#how-it-runs), for where projections run.
-- Akka Projections, [exactly-once](https://doc.akka.io/docs/akka-projection/current/r2dbc.html#exactly-once)
-  and [at-least-once](https://doc.akka.io/docs/akka-projection/current/r2dbc.html#at-least-once)
-  with R2DBC.
-- Oskar Dudycz, [projecting from Marten to Elasticsearch](https://event-driven.io/en/projecting_from_marten_to_elasticsearch)
-  and [idempotency in the Elasticsearch read model](https://event-driven.io/en/simple_trick_for_idempotency_handling_in_elastic_search_readm_model).
-- Redis [transactions](https://redis.io/docs/latest/develop/using-commands/transactions/#what-about-rollbacks)
-  and Elasticsearch's guide on [bulk requests](https://www.elastic.co/guide/en/elasticsearch/guide/master/bulk.html).
+- Akka Projections,
+  [exactly-once](https://doc.akka.io/docs/akka-projection/current/r2dbc.html#exactly-once) and
+  [at-least-once](https://doc.akka.io/docs/akka-projection/current/r2dbc.html#at-least-once) with
+  R2DBC.
+- Oskar Dudycz,
+  [projecting from Marten to Elasticsearch](https://event-driven.io/en/projecting_from_marten_to_elasticsearch)
+  and
+  [idempotency in the Elasticsearch read model](https://event-driven.io/en/simple_trick_for_idempotency_handling_in_elastic_search_readm_model).
+- Redis
+  [transactions](https://redis.io/docs/latest/develop/using-commands/transactions/#what-about-rollbacks)
+  and Elasticsearch's guide on
+  [bulk requests](https://www.elastic.co/guide/en/elasticsearch/guide/master/bulk.html).

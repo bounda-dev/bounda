@@ -96,19 +96,14 @@ changing how you write modules.
 
 ## What more instances do
 
-Run several worker instances on PostgreSQL and they share the work in two different ways:
-
-- **Reactions** run on one instance per event: the inbox claims `(handler, event)` atomically, so
-  instances share policy and process work and add throughput. Delivery is at least once, with the
-  inbox, and an attempt writes everything it decided in one transaction or nothing.
-- **Projections** run one instance at a time per read model, under a lock named after it, and are
-  applied exactly once per batch. Instances spread different read models among themselves, but
-  they do not make one read model faster, because its events have to be applied in order. If one
-  falls behind, the lag gauge tells you, and the fix is a faster projection or a lighter read
-  model.
-
-[At least once, and exactly once per batch](/concepts/delivery-guarantees/) says what each
-promise covers and where it stops.
+Several worker instances on PostgreSQL share reactions, one instance per run, and spread read
+models, one instance per read model at a time
+([what each instance does](/guides/deployment/#more-than-one-instance)). They add throughput for
+reactions and availability for projections, but they do not make one read model faster, because its
+events have to be applied in order: that is the ceiling of a single projection, as the single writer
+is the ceiling of the store.
+[At least once, and exactly once per batch](/concepts/delivery-guarantees/) says what each promise
+covers and where it stops.
 
 ## No broker inside the app
 

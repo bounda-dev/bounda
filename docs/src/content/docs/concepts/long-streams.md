@@ -150,12 +150,16 @@ There is no date and no API for snapshots yet.
   runs.
 - [State](/guides/project-layout/#state) and [policies](/guides/project-layout/#policies-policies),
   for the modules used above.
-- Oskar Dudycz, [Keep your streams short](https://event-driven.io/en/keep-your-streams-short-temporal-modelling-for-fast-reads-and-optimal-data-retention/),
+- Oskar Dudycz,
+  [Keep your streams short](https://event-driven.io/en/keep-your-streams-short-temporal-modelling-for-fast-reads-and-optimal-data-retention/),
   [Implementing Closing the Books](https://event-driven.io/en/closing_the_books_in_practice/),
   [Should you always keep streams short?](https://event-driven.io/en/should_you_always_keep_streams_short/)
   and [Snapshots in Event Sourcing](https://www.kurrent.io/blog/snapshots-in-event-sourcing/) on
   Kurrent's blog.
-- Greg Young on [snapshots and versioning](https://discuss.eventstore.com/t/streams-snapshots-denormalization/1392).
-- Axon's [snapshotting](https://docs.axoniq.io/axon-framework-reference/4.11/tuning/event-snapshots/),
-  Marten's [single stream projections and snapshots](https://martendb.io/events/projections/single-stream-projections)
+- Greg Young on
+  [snapshots and versioning](https://discuss.eventstore.com/t/streams-snapshots-denormalization/1392).
+- Axon's
+  [snapshotting](https://docs.axoniq.io/axon-framework-reference/4.11/tuning/event-snapshots/),
+  Marten's
+  [single stream projections and snapshots](https://martendb.io/events/projections/single-stream-projections)
   and [stream compacting](https://martendb.io/events/compacting).

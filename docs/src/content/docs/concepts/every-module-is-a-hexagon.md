@@ -51,9 +51,8 @@ ports: { order: { notifier: process.env.NOTIFIER === "memory" ? "memory" : "cons
 ports: { order: { notifier: async (confirmation) => void sent.push(confirmation) } },
 ```
 
-Both are typed from what the generator found, so a misspelt port or implementation name does not
-compile. A port with one implementation may be left out of the configuration; one with several
-must be named, since none is the default. A test gets only the ports it passes.
+Both are typed from what the generator found and checked again at boot
+([the rules](/guides/project-layout/#ports-portts)), and a test gets only the ports it passes.
 
 ## Implementations depend on their port
 
@@ -114,11 +113,12 @@ differently the second time; the reasons are in
 - **DDD's infrastructure layer**, on which the domain never depends
   ([Microsoft's DDD guide](https://learn.microsoft.com/en-us/dotnet/architecture/microservices/microservice-ddd-cqrs-patterns/ddd-oriented-microservice)).
   Here that layer is one directory per module, with the dependency pointing the same way.
-- **Elixir's behaviour and adapter.** The closest mechanics. [Swoosh](https://github.com/swoosh/swoosh)
-  defines the `Swoosh.Adapter` behaviour, and each mailer names its adapter in config, a different
-  one per environment and `Swoosh.Adapters.Test` in tests. [Ecto](https://ecto.hexdocs.pm/Ecto.Repo.html)
-  names a repo's adapter in the module and keeps its settings in config. The difference is who
-  writes the contract: there the library owns the behaviour; here each aggregate writes its own.
+- **Elixir's behaviour and adapter.** The closest mechanics.
+  [Swoosh](https://github.com/swoosh/swoosh) defines the `Swoosh.Adapter` behaviour, and each mailer
+  names its adapter in config, a different one per environment and `Swoosh.Adapters.Test` in tests.
+  [Ecto](https://ecto.hexdocs.pm/Ecto.Repo.html) names a repo's adapter in the module and keeps its
+  settings in config. The difference is who writes the contract: there the library owns the
+  behaviour; here each aggregate writes its own.
 - **Laravel's [manager](https://laracasts.com/blog/the-manager-pattern-in-laravel)** offers one
   API over drivers chosen by a config value, as Storage, Cache and Queue do: one per capability,
   for the whole app.

@@ -6,10 +6,11 @@ sidebar:
 ---
 
 Sooner or later someone asks where Kafka goes. The answer has two halves. Inside an app, nowhere:
-**a broker goes behind the event store, never between an app's writes and its read models.**
-Between services, it is the right tool, and Bounda will connect to one as one more subscriber, not
-as a change to how modules are written. [No broker inside the app](/concepts/how-it-runs/#no-broker-inside-the-app)
-gives the short version; this page gives the reasons and the pieces.
+**a broker goes behind the event store, never between an app's writes and its read models.** Between
+services, it is the right tool, and Bounda will connect to one as one more subscriber, not as a
+change to how modules are written.
+[No broker inside the app](/concepts/how-it-runs/#no-broker-inside-the-app) gives the short version;
+this page gives the reasons and the pieces.
 
 ## The event store is already the queue
 
@@ -32,11 +33,13 @@ Put a broker between the writes and the read models and three things get worse a
 - **It forces an outbox.** The command's events must reach the database and the broker. Two writes
   without a shared transaction can disagree, so the known fix is an outbox table in the database and
   a relay that forwards it: one more table, one more process, one more delivery path. Without a
-  broker in the middle the event store already is that outbox ([why](/concepts/event-store-as-outbox/)).
+  broker in the middle the event store already is that outbox
+  ([why](/concepts/event-store-as-outbox/)).
 - **It loses order outside a partition.** Kafka guarantees order within a partition, and routes
   events with the same key to the same one. A read model of orders per customer needs
   `CustomerRegistered` before `OrderPlaced`, from two aggregates and so from two keys; across
-  partitions nothing orders them. The global stream does ([why a single order](/concepts/how-it-runs/#why-a-single-order)).
+  partitions nothing orders them. The global stream does
+  ([why a single order](/concepts/how-it-runs/#why-a-single-order)).
 - **It limits replay to its retention.** Kafka keeps events for a per-topic period, after which old
   ones are discarded, and its own introduction contrasts that with traditional messaging systems,
   which delete a message once it is consumed.
@@ -146,10 +149,13 @@ subscriber, not a new way to deliver events inside the app.
 - [Your event store is your outbox](/concepts/event-store-as-outbox/) and
   [at least once, and exactly once per batch](/concepts/delivery-guarantees/).
 - Mathias Verraes, [DDD and Messaging Architectures](https://verraes.net/2019/05/ddd-msg-arch/), in
-  particular [Explicit Public Events](https://verraes.net/2019/05/patterns-for-decoupling-distsys-explicit-public-events/)
-  and [Segregated Event Layers](https://verraes.net/2019/05/patterns-for-decoupling-distsys-segregated-event-layers/).
+  particular
+  [Explicit Public Events](https://verraes.net/2019/05/patterns-for-decoupling-distsys-explicit-public-events/)
+  and
+  [Segregated Event Layers](https://verraes.net/2019/05/patterns-for-decoupling-distsys-segregated-event-layers/).
 - CodeOpinion, [RPC vs Messaging: When to use which?](https://www.youtube.com/watch?v=LMKVzguhFw4).
-- Neha Narkhede (Confluent), [Event sourcing, CQRS, stream processing and Apache Kafka: What's the connection?](https://www.confluent.io/blog/event-sourcing-cqrs-stream-processing-apache-kafka-whats-connection/);
+- Neha Narkhede (Confluent),
+  [Event sourcing, CQRS, stream processing and Apache Kafka: What's the connection?](https://www.confluent.io/blog/event-sourcing-cqrs-stream-processing-apache-kafka-whats-connection/);
   Apache Kafka, [introduction](https://kafka.apache.org/intro), for retention and partitions.
 - Axon, [Kafka extension](https://docs.axoniq.io/kafka-extension-reference/4.12/); Marten,
   [subscriptions](https://martendb.io/events/subscriptions); Kurrent,

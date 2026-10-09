@@ -63,10 +63,11 @@ outside (see [Observability](/reference/observability/)).
 
 ## Ids a reaction creates
 
-A reaction runs at least once ([what the runtime promises](/guides/reacting-to-events/#what-the-runtime-promises)),
-so whatever it creates has to come out the same on every run. Its `idempotencyKey` already does:
-a UUID v5 of the handler's kind, its name and what it runs for, the event or the deadline. An
-aggregate the run starts takes its id from that key, as `orderLifecycle` does with its payment:
+A reaction runs at least once
+([what the runtime promises](/guides/reacting-to-events/#what-the-runtime-promises)), so whatever it
+creates has to come out the same on every run. Its `idempotencyKey` already does: a UUID v5 of the
+handler's kind, its name and what it runs for, the event or the deadline. An aggregate the run
+starts takes its id from that key, as `orderLifecycle` does with its payment:
 
 ```ts
 // app/domain/order/processes/order-lifecycle/on-order-placed.ts
@@ -129,9 +130,10 @@ reaction's commands, so it threads the context through as an argument, without a
 
 The thing that starts a chain has a name in every school. Redux calls it an **action**, and
 [describes it](https://redux.js.org/tutorials/fundamentals/part-2-concepts-data-flow) as an event
-that happened. Clean Architecture's [**use case**](https://blog.cleancoder.com/uncle-bob/2012/08/13/the-clean-architecture.html)
-holds the application-specific rules and directs the entities. DDD's **application service** is
-Evans's application layer: thin, coordinating domain objects
+that happened. Clean Architecture's
+[**use case**](https://blog.cleancoder.com/uncle-bob/2012/08/13/the-clean-architecture.html) holds
+the application-specific rules and directs the entities. DDD's **application service** is Evans's
+application layer: thin, coordinating domain objects
 ([as Fowler quotes it](https://martinfowler.com/bliki/AnemicDomainModel.html)). CQRS calls it a
 [**command**](https://martinfowler.com/bliki/CQRS.html), the update side's request.
 
@@ -162,7 +164,8 @@ Router sense, is the host's: the place where a request dispatches a command.
 - [Calling the outside world](/guides/calling-the-outside-world/), for keys and
   derived ids in a handler, and [Every step is idempotent](/guides/sagas/#every-step-is-idempotent).
 - [Observability](/reference/observability/), for the spans and their attributes.
-- The other frameworks: Axon's [message correlation](https://docs.axoniq.io/axon-framework-reference/4.11/messaging-concepts/message-correlation/),
+- The other frameworks: Axon's
+  [message correlation](https://docs.axoniq.io/axon-framework-reference/4.11/messaging-concepts/message-correlation/),
   Marten's [event metadata](https://martendb.io/events/metadata.html), Kurrent's
   [system projections](https://docs.kurrent.io/server/v24.10/features/projections/system.html) and
   [its blog on causation](https://kurrentdb.kurrent.io/blog/eventstoredb-visualise-tab/),

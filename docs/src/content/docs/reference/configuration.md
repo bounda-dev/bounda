@@ -82,8 +82,8 @@ types refuse; wrap it with `asDuration(process.env.X ?? "1m")`, which checks it.
   honour it.
 - **`dispatcher.backoff.baseDelay`, `.maxDelay`**, default `"1s"`, `"30s"`. How long background
   passes leave a subscriber alone after a failed batch: `baseDelay` after the first failure,
-  doubling up to `maxDelay`. A batch that goes through resets it. See [a projection that keeps
-  failing](/guides/deployment/#a-projection-that-keeps-failing).
+  doubling up to `maxDelay`. A batch that goes through resets it. See
+  [a projection that keeps failing](/guides/deployment/#a-projection-that-keeps-failing).
 - **`dispatcher.catchUp.timeout`, `.pollInterval`**, default `"2s"`, `"15ms"`. How long
   `catchUpReadModels({ through })`, and read-your-writes with it, waits for the read models a
   command changed, and how often it looks while another process holds them. Past `timeout` it logs a
@@ -95,8 +95,9 @@ types refuse; wrap it with `asDuration(process.env.X ?? "1m")`, which checks it.
   and `policies` and `processes` with the keys above. What an override leaves out comes from the
   app's settings.
 
-A process can set its own lifetime in its `config`, `({ events }) => ({ startedBy: [...],
-timeout: "48h" })`, which wins over `processes.timeout` and over an override.
+A process can set its own lifetime in its `config`,
+`({ events }) => ({ startedBy: [...], timeout: "48h" })`, which wins over `processes.timeout` and
+over an override.
 
 ## `retry`
 

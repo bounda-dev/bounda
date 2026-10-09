@@ -28,9 +28,8 @@ due scheduled commands. `boot()` installs `SIGINT` and `SIGTERM` handlers by def
 container stop drains passes in flight and closes connections; pass `signals: false` to handle
 that yourself, as a script would.
 
-An implementation's `create` receives `process.env` as its `env`, with `.env` already loaded, so a
-secret such as an API key reaches the implementation that needs it without being read at the top
-of a module. See [Ports](/guides/project-layout/#ports-portts).
+A secret such as an API key reaches the implementation that needs it through its `create`, whose
+`env` is `process.env` with `.env` already loaded ([Ports](/guides/project-layout/#ports-portts)).
 
 ## Roles
 
@@ -78,35 +77,24 @@ const next = idle ? await app.nextDueAt() : new Date();
 
 ## More than one instance
 
-Use PostgreSQL. SQLite is a single writer and fine for one process; PostgreSQL is what the
-adapter's concurrency work is for. Handler claims are single `INSERT … ON CONFLICT` statements and
-due scheduled commands are taken `FOR UPDATE SKIP LOCKED`, so any number of instances can run the
-worker role and each policy or process handler and each due command is claimed by one of them at a
-time. Only the instance holding the claim commits: one that stalls past its lease loses the claim
-to another instance, which runs the work again, and the stalled run writes nothing when it ends.
-What a handler does outside the store, such as calling an API, can therefore happen twice.
+Use PostgreSQL. SQLite is a single writer and fine for one process; PostgreSQL is what lets any
+number of instances run the `worker` role. Nothing needs to be told about the others: instances
+coordinate through the database.
 
-Projections go further: they are applied exactly once per batch. Each batch runs in one transaction that
-holds an advisory lock named after its read model, writes the rows and advances the checkpoint, so
-one instance at a time applies a read model and a batch is never applied twice or over a newer one.
-An instance that finds a read model locked skips it, which spreads different read models over the
-workers; a single read model is not made faster by more of them, since its events apply in order.
-[How Bounda runs](/concepts/how-it-runs/) explains why, and what the ceiling of one store is.
+- Each policy or process run and each due scheduled command is claimed by one instance at a time,
+  and only the instance holding the claim commits. A run that stalls past its lease loses it to
+  another instance, which runs the work again, so what a handler does outside the store, such as
+  calling an API, can happen twice.
+- Each read model is projected by one instance at a time, exactly once per batch, so different
+  read models spread over the instances but one read model is not made faster by more of them.
+  If one falls behind, the lag gauge tells you, and the fix is a faster projection or a lighter
+  read model.
+- Appends take one lock per store, which bounds writes to what one connection can commit
+  ([the ceiling](/concepts/how-it-runs/#the-ceiling-with-numbers)).
 
-Appends take a transaction-scoped advisory lock, so positions in the global stream are handed out
-in commit order and a reader never sees a gap that a later commit would fill. That bounds write
-throughput to what one connection can commit — thousands of events per second.
-
-Checkpoints advance with a compare-and-set from the position a pass read, inside the batch's
-transaction for projections. A pass that finds its subscriber's checkpoint moved by someone else,
-an operator repositioning it or a rebuild, leaves that position alone and continues from there on
-the next pass; for a projection the batch it had applied is rolled back with it, so nothing
-written from outside is ever overwritten by work that was already in flight.
-
-A read model configured on a database of its own, under `readModels` in the config, keeps its
-checkpoint in that database, next to its rows, because a transaction cannot span two databases.
-
-Nothing needs to be told about the others: instances coordinate through the database.
+[At least once, and exactly once per batch](/concepts/delivery-guarantees/) says what each
+promise covers, and [How Bounda runs](/concepts/how-it-runs/) why, and what the ceiling of one
+store is.
 
 ## Reading your own writes
 
@@ -128,7 +116,8 @@ that project one of those types are waited for, and only until their checkpoint 
 position; the others do not change because of the command, so waiting for them would buy nothing.
 A read model already there costs one checkpoint read. One behind is projected by the request when
 no other process holds it; when the worker is busy with it, the request reads its checkpoint again
-every 15 ms instead of queueing on the lock, so it keeps no database connection waiting. A
+every `catchUp.pollInterval` instead of queueing on the lock, so it keeps no database connection
+waiting. A
 scheduled command resolves immediately, since there is nothing to catch up to yet, and commands
 dispatched from inside the runtime — by a policy or a process — are not affected.
 
@@ -140,13 +129,7 @@ makes a page stale; a read model that is backing off after failures
 all. The timeout is checked between batches, so a projection that itself waits on something that
 never answers holds the request past it: keep projections to their own database. This is
 read-your-writes in the usual sense: you see your own writes, not necessarily everyone else's from
-the same instant.
-
-```ts
-runtime: {
-  dispatcher: { catchUp: { timeout: "2s", pollInterval: "15ms" } },
-}
-```
+the same instant. Both settings are in [Configuration](/reference/configuration/#dispatcher).
 
 `app.catchUpReadModels({ through: result })` is the primitive underneath. Without `through`, it
 runs every projection until every read model reflects what is stored. Both leave policies,
@@ -192,12 +175,10 @@ runner is behind, and each deadline runs anyway after ten rounds.
 
 ## Schema
 
-The adapter creates what it needs on start: the event store, the ledgers and a table per read
-model. Adding a field to a view adds a nullable column the next time the app starts and existing
-rows keep working. Removing a field or changing its type is refused with an error naming the read
-model — that is what `bounda rebuild` is for, below.
-
-There are no migration files to run, and no migration step in your deploy.
+There are no migration files to run, and no migration step in your deploy. The adapter creates what
+it needs on start, and a view that gains a field gains a column; one that loses a field or changes
+its type needs the rebuild below ([what an adapter creates](/adapters/#what-an-adapter-creates) and
+[evolving a read model](/adapters/#evolving-a-read-model)).
 
 ## Rebuilding a read model
 
@@ -221,8 +202,8 @@ field's type, the answer is to project the global stream again. To change one in
 `bounda rebuild <read-model>` does it without taking the read model offline:
 
 1. It creates a fresh table with the view's current fields, next to the live one.
-2. It runs the projections over the whole global stream into that table. Queries keep reading the live
-   table meanwhile, and the worker keeps projecting new events into it.
+2. It runs the projections over the whole global stream into that table. Queries keep reading the
+   live table meanwhile, and the worker keeps projecting new events into it.
 3. When the fresh table has caught up, it takes the live table's place and the read model's
    checkpoint is set to where the rebuild stopped, in one transaction that waits for the
    projection lock, so no batch is halfway through when it happens.
@@ -231,9 +212,10 @@ Whatever the worker had applied to the old table goes with it, and the worker ca
 rebuilt position, whether it was ahead of it or behind: every event reaches the new table exactly
 once. A projection that throws aborts the rebuild and leaves the live table as it was.
 
-The rebuild goes before the deploy because the app refuses to start against a table whose
-columns no longer match the view. Between the swap and the deploy, the old worker's projection for that read model may fail against the new
-columns; its checkpoint holds, and it catches up as soon as the new code runs. Nothing is lost.
+The rebuild goes before the deploy because the app refuses to start against a table whose columns no
+longer match the view. Between the swap and the deploy, the old worker's projection for that read
+model may fail against the new columns; its checkpoint holds, and it catches up as soon as the new
+code runs. Nothing is lost.
 
 A rebuild that stops halfway, because the machine died or the connection dropped, resumes exactly
 where it was the next time you run it: every batch commits together with the position it
@@ -264,9 +246,9 @@ read model whose history does not fit in one request.
 
 ## Tuning
 
-The dispatcher runs passes on a timer: `pollInterval` is 100 ms and `batchSize` is 100 events
-per pass. [Configuration](/reference/configuration/#runtime) lists every `runtime.dispatcher` key
-with its default.
+The dispatcher runs passes on a timer, every `pollInterval`, each reading up to `batchSize` events
+per subscriber. [Configuration](/reference/configuration/#dispatcher) lists every
+`runtime.dispatcher` key with its default.
 
 ```ts
 runtime: {
@@ -280,14 +262,13 @@ runtime: {
 }
 ```
 
-With PostgreSQL the timer is a safety net, not the mechanism. Every append ends its transaction
-with `NOTIFY` on the events table's channel, delivered at commit, and every worker `LISTEN`s on
-a dedicated connection: a pass runs the moment events land, and once passes stop finding events
-the dispatcher waits `idleInterval`, 30 seconds by default, between polls. An idle worker on
-PostgreSQL therefore costs a handful of queries a minute instead of ten passes a second per
-subscriber, and a policy reacts in milliseconds. A notification lost to a dropped connection is
-caught by the next idle poll, which is why the poll stays. The scheduled-command worker still
-polls at `pollInterval`: due commands are a matter of time, not of new events.
+With PostgreSQL the timer is a safety net, not the mechanism. Every append notifies the workers at
+commit ([how](/adapters/postgresql/#how-it-stores-things)), so a pass runs the moment events land,
+and once passes stop finding events the dispatcher waits `idleInterval` between polls. An idle
+worker on PostgreSQL therefore costs a handful of queries a minute instead of ten passes a second
+per subscriber, and a policy reacts in milliseconds. A notification lost to a dropped connection is
+caught by the next idle poll, which is why the poll stays. The scheduled-command worker still polls
+at `pollInterval`: due commands are a matter of time, not of new events.
 
 SQLite and the in-memory adapter have no channel to listen on. SQLite polls at `pollInterval` as
 before; the in-memory adapter notifies within the process, so a started app reacts to its own
@@ -296,10 +277,10 @@ appends without waiting for the timer.
 A shorter `pollInterval` cuts the delay before a policy reacts where polling is the mechanism and
 costs queries; a larger batch moves more events per pass and holds a claim for longer.
 
-A projection batch keeps its transaction open for at most `projectionBatchTime`, 250 ms by
-default: past it, the batch commits the events it got through and the rest are delivered next.
-On SQLite that transaction holds the database's single writer, so commands wait for it; the limit
-keeps that wait short however many events a batch carries. Rebuilds honour it too.
+A projection batch keeps its transaction open for at most `projectionBatchTime`: past it, the batch
+commits the events it got through and the rest are delivered next. On SQLite that transaction holds
+the database's single writer, so commands wait for it; the limit keeps that wait short however many
+events a batch carries. Rebuilds honour it too.
 
 `backoff` sets how long a subscriber whose batches fail is left alone before the next try: see
 [A projection that keeps failing](#a-projection-that-keeps-failing).

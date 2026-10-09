@@ -6,8 +6,8 @@ sidebar:
 ---
 
 `bounda generate` reads `app/domain` and `app/read` by file and directory names; it imports no
-module. This page is the contract in one place. [Project layout](/guides/project-layout/) and [Read
-models](/guides/read-models/) explain each kind of module with an example, and
+module. This page is the contract in one place. [Project layout](/guides/project-layout/) and
+[Read models](/guides/read-models/) explain each kind of module with an example, and
 [Names](/guides/project-layout/#names) how a file name becomes the key and the type your code sees.
 
 ## Files and what they export

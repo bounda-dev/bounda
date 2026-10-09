@@ -18,9 +18,9 @@ Or deploy the same project to your account without cloning anything:
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/bounda-dev/bounda-cloudflare-template)
 
-The button forks [bounda-cloudflare-template](https://github.com/bounda-dev/bounda-cloudflare-template)
-into your GitHub account, creates the Durable Object and deploys it; every push to the fork
-deploys again.
+The button forks
+[bounda-cloudflare-template](https://github.com/bounda-dev/bounda-cloudflare-template) into your
+GitHub account, creates the Durable Object and deploys it; every push to the fork deploys again.
 
 That gives you the order app of [Getting started](/getting-started/) with three extra files:
 
@@ -62,10 +62,10 @@ deploys to your account.
 
 ## How it runs
 
-One Durable Object is one store: the same event store and global stream, subscribers and
-checkpoints as on SQLite or PostgreSQL, in the object's SQLite. The SQL is literally the same code as the
-[SQLite adapter](/adapters/sqlite/). What changes is who does the background work, because a
-Durable Object has no loop running between requests:
+One Durable Object is one store: the same event store and global stream, subscribers and checkpoints
+as on SQLite or PostgreSQL, in the object's SQLite. The SQL is literally the same code as the
+[SQLite adapter](/adapters/sqlite/). What changes is who does the background work, because a Durable
+Object has no loop running between requests:
 
 - **A command** stores its events and brings the read models that project them up to date before
   it answers, so
@@ -134,11 +134,9 @@ stores, not a split global stream.
 | `POST /commands/<name>` with the payload as the body | The dispatch result, once the read models reflect it. `?delay=10m` schedules it |
 | `POST /queries/<name>` with the payload as the body | The query's result |
 
-Refusals come back as `{ "error": { "code", "message" } }`: 400 for `VALIDATION_FAILED`
-(with the `issues`) and `INVALID_JSON`, 404 for `NOT_FOUND`, 409 for `DOMAIN_ERROR` (a command's
-rejection, its code in `rejected`), `CONCURRENCY_CONFLICT` and `CHAIN_DEPTH_EXCEEDED`, 504 for
-`HANDLER_TIMEOUT`. Anything else is
-a 500 whose message goes to the logs, not to the caller.
+Refusals come back as `{ "error": { "code", "message" } }` with the statuses in
+[errors over HTTP](/reference/errors/#over-http); anything else is a 500 whose message goes to the
+logs, not to the caller.
 
 It has **no authentication** and no operator endpoint, on purpose: it is a starting point. An
 app with users writes its own `fetch` and talks to a store with `connect`:
@@ -170,9 +168,9 @@ carry it into the object, where the command runs to the end, bounded by
 The tests run inside `workerd` through
 [`@cloudflare/vitest-plugin`](https://developers.cloudflare.com/workers/testing/vitest-integration/),
 which needs Vitest 4.1, so a Cloudflare project pins that version. `tests/orders.test.ts` runs the
-domain on the in-memory adapter with `createTestApp`, as in any Bounda project;
-`tests/api.test.ts` sends requests to the Worker with `SELF.fetch` and reaches the real Durable
-Object and its SQLite. The adapter's own suite runs every storage contract inside `workerd` too.
+domain on the in-memory adapter with `createTestApp`, as in any Bounda project; `tests/api.test.ts`
+sends requests to the Worker with `SELF.fetch` and reaches the real Durable Object and its SQLite.
+The adapter's own suite runs every storage contract inside `workerd` too.
 
 Types for the bindings come from `wrangler types`, which writes `worker-configuration.d.ts` from
 `wrangler.jsonc`; `dev`, `typecheck` and `check` run it, and `tsconfig.json` lists that file
@@ -201,5 +199,3 @@ instead of `@cloudflare/workers-types`. There is no `prepare` script: every scri
   Each policy or process reaction adds its own writes, and the alarm that runs it is one more
   request. On the paid plan the first fifty million row writes a month are included, and a
   million commands beyond that cost around eight dollars.
-- **It is 0.x**, like the rest of Bounda: until 1.0 the API can still change between minor
-  versions, with every change that breaks something called out in the changelog.

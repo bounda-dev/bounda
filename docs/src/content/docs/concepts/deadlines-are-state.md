@@ -39,29 +39,21 @@ export const handler = async ({ aggregateId, commands }: Process.DeadlineArgs) =
 };
 ```
 
-There is no id to keep and nothing to cancel by. Each instance has **one** scheduler entry, set to
-its earliest pending deadline and written in the same transaction as the lifecycle event that
-records the new state, so the two cannot disagree. When the entry comes due, the runtime does not
-trust it: it loads the instance and works out from its state which deadline is due, if any. An
-entry the state no longer backs runs nothing. When a deadline runs, `ProcessDeadlineReached`
-records it in the instance's stream, and its handler has to move the field or clear it: the
-compiler checks that it returns the field, and the runtime fails a handler that leaves it at the
-moment that came due.
-
-`after()` counts from what triggered the handler, the event's time or the moment that came due,
-not from the clock. A retry, or a handler that runs late, sets the same moment, and a deploy that
-changes `"72h"` changes the instances that set it afterwards, not the moments already stored.
+There is no id to keep and nothing to cancel by. Each instance has **one** scheduler entry, at
+its earliest pending deadline and written with the state it comes from, and when it comes due the
+runtime does not trust it: it works out from the state what is due, so an entry the state no
+longer backs runs nothing. `ProcessDeadlineReached` records in the instance's stream that a
+deadline came due. How `after()` counts and what a deadline handler must return are in
+[Deadlines](/guides/reacting-to-events/#deadlines).
 
 ## The timeout is a deadline too
 
-The time a process may stay open is the reserved deadline `timeout`, set from `config.timeout` when
-the process starts and handled by `at-timeout.ts`; boot refuses a `deadline()` field of that name.
-Reaching it writes `ProcessTimedOut` and ends the process at once, with what the handler returned
-merged into the final state. What its commands cause is not lost: `ProcessTimedOut` lists, as
-`followUps`, the events they decided that a handler of the process takes, and only those still
-reach the ended instance. The storefront's `at-timeout.ts` cancels the order, and the
-`OrderCancelled` it causes runs `on-order-cancelled.ts`, which cancels the payment, exactly as for
-a cancellation from anywhere else. The compensation is written once.
+The time a process may stay open is the reserved deadline `timeout`, handled by `at-timeout.ts`, and
+reaching it ends the process at once. What its commands cause is not lost: those events still reach
+the ended instance's handlers, as follow-ups ([the rules](/guides/reacting-to-events/#deadlines)).
+The storefront's `at-timeout.ts` cancels the order, and the `OrderCancelled` it causes runs
+`on-order-cancelled.ts`, which cancels the payment, exactly as for a cancellation from anywhere
+else. The compensation is written once.
 
 ## What it buys
 
@@ -116,19 +108,14 @@ deadline is the same shape, and on Cloudflare the store arms its alarm at the ne
 
 ## What stays outside
 
-- **Punctuality.** A deadline runs when the worker reaches it after its moment, never before. It
-  waits for the events stored before it to be handled first, so an `OrderPaid` stored a second
-  before the payment deadline clears it; when the process runner is stuck, it runs anyway after a
-  bounded number of worker rounds. That ordering is best effort, which is why `cancelOrder`
-  refuses an order already paid: the aggregate has the last word.
+- **Punctuality.** A deadline runs when the worker reaches it after its moment, never before, and
+  waiting for the events stored before it is best effort, which is why `cancelOrder` refuses an
+  order already paid: the aggregate has the last word.
 - **Time in aggregates.** Only processes have deadlines. An aggregate that must expire is a
   process's job, or a policy's delayed command.
 - **A failed process.** While an instance is failed its deadlines wait with its events, and run in
   their place when the failure is retried ([When a process fails](/concepts/when-a-process-fails/)).
 - **Follow-ups beyond one hop.** What the follow-ups of a timeout cause finds the process ended.
-  Compensate in the handler of the event `at-timeout.ts` causes, not further down a chain.
-- **A wrapped `deadline()`.** Behind `.describe()`, `.optional()` or the like it is no longer a
-  deadline; boot refuses it when its `at-` file is there.
 
 ## Where to read more
 
@@ -138,19 +125,25 @@ deadline is the same shape, and on Cloudflare the store arms its alarm at the ne
   window and timeout as a saga.
 - [Your event store is your outbox](/concepts/event-store-as-outbox/), for why a deadline's entry
   commits with the state it was computed from.
-- Timer APIs: Axon's [deadline managers](https://docs.axoniq.io/axon-framework-reference/4.11/deadlines/deadline-managers/)
-  and [`SimpleDeadlineManager`](https://apidocs.axoniq.io/4.13/org/axonframework/deadline/SimpleDeadlineManager.html),
+- Timer APIs: Axon's
+  [deadline managers](https://docs.axoniq.io/axon-framework-reference/4.11/deadlines/deadline-managers/)
+  and
+  [`SimpleDeadlineManager`](https://apidocs.axoniq.io/4.13/org/axonframework/deadline/SimpleDeadlineManager.html),
   NServiceBus [saga timeouts](https://docs.particular.net/nservicebus/sagas/timeouts) and the
   [forum answer on extending one](https://discuss.particular.net/t/increase-timeout-of-saga-or-cancel-timeout-and-create-a-new-timeout/2884),
-  Akka's [`TimerScheduler`](https://doc.akka.io/api/akka-core/current//akka/actor/TimerScheduler.html)
-  and [timers after a restart](https://github.com/akka/akka/issues/30062),
+  Akka's
+  [`TimerScheduler`](https://doc.akka.io/api/akka-core/current//akka/actor/TimerScheduler.html) and
+  [timers after a restart](https://github.com/akka/akka/issues/30062),
   [a lost cancel in MassTransit](https://github.com/MassTransit/MassTransit/discussions/3347),
   Wolverine's [saga timeouts](https://wolverinefx.net/guide/durability/sagas.html), Temporal's
   [timers](https://docs.temporal.io/develop/typescript/timers) and
   [changing a duration](https://community.temporal.io/t/versioning-for-workflow-sleep-and-awaitwithtimeout-with-duration-change/6517).
-- Time as a message: Jérémie Chassaing's [Decider](https://thinkbeforecoding.com/post/2021/12/17/functional-event-sourcing-decider),
-  the CQRS Journey's [registration process](https://github.com/mspnp/cqrs-journey/blob/master/source/Conference/Registration/RegistrationProcessManager.cs),
-  Mathias Verraes' [Passage of Time event](https://verraes.net/2019/05/patterns-for-decoupling-distsys-passage-of-time-event/),
-  the Durable Object [alarm](https://developers.cloudflare.com/durable-objects/api/alarms/), and
-  the [Process Manager](https://www.enterpriseintegrationpatterns.com/patterns/messaging/ProcessManager.html)
+- Time as a message: Jérémie Chassaing's
+  [Decider](https://thinkbeforecoding.com/post/2021/12/17/functional-event-sourcing-decider), the
+  CQRS Journey's
+  [registration process](https://github.com/mspnp/cqrs-journey/blob/master/source/Conference/Registration/RegistrationProcessManager.cs),
+  Mathias Verraes'
+  [Passage of Time event](https://verraes.net/2019/05/patterns-for-decoupling-distsys-passage-of-time-event/),
+  the Durable Object [alarm](https://developers.cloudflare.com/durable-objects/api/alarms/), and the
+  [Process Manager](https://www.enterpriseintegrationpatterns.com/patterns/messaging/ProcessManager.html)
   in Enterprise Integration Patterns.

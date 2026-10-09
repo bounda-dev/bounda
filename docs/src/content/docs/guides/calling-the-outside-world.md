@@ -12,14 +12,19 @@ from happening twice when its handler runs again.
 ## Deciding, then acting
 
 A command handler decides; it does not act on the world. It can run more than once for one
-command, when its append loses a concurrency race, and what it decided is not stored until the
-append succeeds. So a command handler only makes calls that are safe to repeat and harmless if the
-decision never lands: reading a price, checking stock, creating a payment intent with its
-`idempotencyKey` so the page can show the payment form. What it learned from outside goes into the
-event, so the history says what the decision was based on. Those calls take the handler's
-`signal` (`fetch(url, { signal })`), which aborts when the handler runs out of time, so a provider
-that hangs fails the command instead of holding the request (see
-[Retries and timeouts](/guides/reacting-to-events/#retries-and-timeouts)).
+command: when its append loses a concurrency race, the runtime reloads the aggregate and runs the
+handler again, ports included, up to `runtime.commands.concurrencyRetries` times, and what it
+decided is not stored until the append succeeds. So a command handler only makes calls that are
+safe to repeat and harmless if the decision never lands: reading a price, checking stock, creating
+a payment intent so the page can show the payment form. What it learned from outside goes into the
+event, so the history says what the decision was based on.
+
+The handler receives `idempotencyKey`, the command's id, which stays the same across those runs (a
+scheduled command keeps the id it was scheduled with): pass it to a call the provider deduplicates,
+such as creating that payment intent, so a second run does not create another. It also receives
+`signal`, which aborts when the run passes `runtime.commands.timeout`; pass it to what it calls
+outside (`fetch(url, { signal })`), so a provider that hangs fails the command instead of holding
+the request (see [Retries and timeouts](/guides/reacting-to-events/#retries-and-timeouts)).
 
 The effect itself (charging the card, sending the email, telling the warehouse) goes in a policy
 or process that reacts to the stored event, through one of the aggregate's ports. It runs
@@ -98,11 +103,8 @@ A few rules keep it correct:
   the command's own `idempotencyKey` does not change, but one that already ran runs again: its
   handler decides from state and returns no events the second time, as `recordConfirmationSent`
   does in the [storefront example](/examples/storefront/).
-- **A run that fails leaves no command behind**, immediate or scheduled, whether a policy's or a
-  process step's: they are stored only when the attempt commits (see [what the runtime
-  promises](/guides/reacting-to-events/#what-the-runtime-promises)), so a retry that decides
-  differently starts from nothing. A crash mid-run leaves nothing either, only the claim, which
-  expires with its lease.
+- **A run that fails leaves no command behind**, so a retry that decides differently starts from
+  nothing ([what the runtime promises](/guides/reacting-to-events/#what-the-runtime-promises)).
 
 ## Keeping an external index
 

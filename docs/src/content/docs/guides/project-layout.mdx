@@ -291,21 +291,9 @@ export const handler = async ({ command, state, events, inventory, reject }: Com
 The handler receives the aggregate's ports next to `command`, `state` and `events`. In a
 command they are what the handler reads from outside to decide: stock, prices, a feature flag.
 Effects on the world (a charge, an email) belong in the policy or process that reacts to the
-event, after it is stored; see
-[calling the outside world](/guides/calling-the-outside-world/).
-
-A handler can run more than once for one command. When the append loses a concurrency race, the
-runtime reloads the aggregate and runs the handler again, ports included, up to
-`runtime.commands.concurrencyRetries` times. So a port call must be safe to repeat, and
-harmless if the second run decides differently: reading a price or a stock level is; charging a
-card is not. The handler receives `idempotencyKey`, the command's id, which stays the same across
-those runs: pass it to a call the provider deduplicates, such as creating a payment intent, so a
-second run does not create another. A scheduled command keeps the id it was scheduled with.
-
-Each run has a time limit, `runtime.commands.timeout` (30 seconds by default): past it the
-dispatch rejects with `HANDLER_TIMEOUT` and nothing the handler returns is stored. The handler
-receives `signal`, which aborts then; pass it to what it calls outside (`fetch(url, { signal })`)
-so a provider that hangs does not hold the request.
+event, after it is stored. A handler can run more than once for one command and has a time
+limit, so it also receives `idempotencyKey` and `signal` for those calls; see
+[calling the outside world](/guides/calling-the-outside-world/#deciding-then-acting).
 
 #### Rejections
 
@@ -348,13 +336,10 @@ export const handler = async ({ event, commands }: Policy.HandlerArgs) => {
 A policy that reacts to another aggregate's event sits in a folder named after that aggregate:
 `app/domain/order/policies/payment/cancel-order-on-payment-failed.ts` is an `order` policy that
 reacts to `payment`'s `PaymentFailed`. Its key carries the aggregate, `paymentCancelOrderOnPaymentFailed`,
-so it never collides with an `order` policy of the same name. A policy cannot be named after an
-aggregate, and one whose trigger is not an event of the aggregate it listens to fails at boot.
-
-The policies and processes of an aggregate need distinct keys, since the key is what the runtime
-records a handled event under: `bounda generate` refuses `policies/checkout.ts` next to
-`processes/checkout/`, and `policies/payment-refund-on-payment-failed.ts` next to
-`policies/payment/refund-on-payment-failed.ts`. Boot refuses a policy and a process that share one.
+so it never collides with an `order` policy of the same name. The policies and processes of an
+aggregate need distinct keys, since the key is what the runtime records a handled event under,
+and a policy cannot be named after an aggregate
+([what the generator refuses](/reference/conventions/#what-the-generator-refuses)).
 
 Policies dispatch through `commands`, the typed facade of every command in the app. A command can
 be delayed: `commands.sendReminder({ orderId }, { delay: "24h" })`. The call's type follows: one
@@ -409,19 +394,12 @@ export const state = ({ z, deadline, instant }: Process.StateArgs) =>
   z.object({ reminders: z.int().default(0), nextReminder: deadline(), paidAt: instant() });
 ```
 
-A deadline is a field of the state declared with `deadline()`: a moment, or `null` while nothing is
-due. A handler schedules it by giving it a value with `after()`, moves it by changing the value and
-cancels it with `null`; there is nothing else to call. Each deadline has its handler, named after
-the field: `nextReminder` runs `at-next-reminder.ts`. `instant()` declares a moment the process only
-records, such as `paidAt`, and runs nothing. Boot refuses a `deadline()` without its `at-` file and
-an `at-` file without its `deadline()`, and the name `timeout` is kept for `config.timeout`.
-
-```ts
-// app/domain/order/processes/order-payment/on-order-placed.ts
-import type { Process } from "./+types/on-order-placed";
-
-export const handler = ({ after }: Process.HandlerArgs) => ({ nextReminder: after("24h") });
-```
+A field of the state declared with `deadline()` is a deadline, and `at-<field>.ts` is its handler:
+`nextReminder` runs `at-next-reminder.ts`, which receives `Process.DeadlineArgs`. `instant()`
+declares a moment the process only records, and runs nothing. The name `timeout` is kept for
+`config.timeout`, whose handler is `at-timeout.ts`, and the two must come in pairs
+([what boot refuses](/reference/conventions/#what-boot-refuses)). How a handler sets, moves and cancels a
+deadline, and when each runs, is in [deadlines](/guides/reacting-to-events/#deadlines).
 
 ```ts
 // app/domain/order/processes/order-payment/at-next-reminder.ts
@@ -435,9 +413,6 @@ export const handler = async ({ state, aggregateId, commands, after }: Process.D
   };
 };
 ```
-
-`at-timeout.ts` receives the same arguments and ends the process as timed out, with what it returns
-merged into the final state; the events its commands cause still reach the process's handlers. See [deadlines](/guides/reacting-to-events/#deadlines) for when they run.
 
 A handler for another aggregate's event sits in a folder named after that aggregate,
 `processes/order-payment/payment/on-payment-failed.ts`. Such an event carries that aggregate's id,

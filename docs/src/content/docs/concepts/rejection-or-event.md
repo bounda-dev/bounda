@@ -78,17 +78,11 @@ export const handler = ({ state, events, reject }: Command.HandlerArgs) => {
 };
 ```
 
-`reject(code)` is the only way to reject. A `DomainError` the handler did not make with its own
-`reject`, such as one rethrown from another app's command, is traced and counted as a failure,
-and in a reaction it fails the run instead of answering it. Where the answer goes depends on who
-asked. `app.commands` throws the rejection to its caller, with the code in `rejected`. A policy or
-a process gets it as a value: `commands.markOrderPaid()` resolves with `rejected` set to
-`"NotOpen"`, typed by the declared codes, so a typo does not compile
-([what a command answers](/guides/reacting-to-events/#what-a-command-answers)).
-
-A rejection a reaction does not look at changes nothing: the attempt goes on, and the rejection is
-logged and traced. Errors stay `throw`. A payload that does not validate or a bug fails the attempt,
-which the runtime retries or dead-letters; it never turns into an answer the handler might ignore.
+`reject(code)` is the only way to reject, and the answer goes to whoever asked: `app.commands`
+throws it, a policy or a process gets it as a value typed by the declared codes
+([what a command answers](/guides/reacting-to-events/#what-a-command-answers)). Errors stay
+`throw`: a payload that does not validate or a bug fails the attempt, which the runtime retries or
+dead-letters, and never turns into an answer the handler might ignore.
 
 ## Why not the other ways
 
@@ -126,8 +120,10 @@ which the runtime retries or dead-letters; it never turns into an answer the han
 - [Two ways to fail, no hook for either](/guides/sagas/#two-ways-to-fail-no-hook-for-either) in the
   saga guide, and [Sagas, policies and processes](/concepts/sagas-policies-and-processes/) for why
   compensation needs nothing more.
-- Greg Young, [CQRS Documents](https://cqrs.wordpress.com/wp-content/uploads/2010/11/cqrs_documents.pdf).
-- Jérémie Chassaing, [Functional Event Sourcing Decider](https://thinkbeforecoding.com/post/2021/12/17/functional-event-sourcing-decider).
+- Greg Young,
+  [CQRS Documents](https://cqrs.wordpress.com/wp-content/uploads/2010/11/cqrs_documents.pdf).
+- Jérémie Chassaing,
+  [Functional Event Sourcing Decider](https://thinkbeforecoding.com/post/2021/12/17/functional-event-sourcing-decider).
 - Oskar Dudycz, [Throw, Result or neither](https://event-driven.io/en/throw-result-or-neither/) and
   [Passive-aggressive events](https://event-driven.io/en/passive_aggressive_events/).
 - Chris Richardson, [Pattern: Saga](https://microservices.io/patterns/data/saga.html).

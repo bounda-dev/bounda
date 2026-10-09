@@ -5,13 +5,13 @@ sidebar:
   order: 10
 ---
 
-Bounda makes two different promises about delivery, and the difference is deliberate. Policies
-and processes, the **reactions**, run **at least once, with an inbox**. Projections are applied
+Bounda makes two different promises about delivery, and the difference is deliberate. Policies and
+processes, the **reactions**, run **at least once, with an inbox**. Projections are applied
 **exactly once per batch**. The two are not a strong and a weak version of the same thing: a
-projection writes only to a database Bounda holds a transaction on, and a reaction exists to
-call something it does not. This page explains why that difference decides everything, what
-each promise covers, and where it stops. [How Bounda runs](/concepts/how-it-runs/#what-more-instances-do)
-says what it means across instances; this page says why.
+projection writes only to a database Bounda holds a transaction on, and a reaction exists to call
+something it does not. This page explains why that difference decides everything, what each promise
+covers, and where it stops. [How Bounda runs](/concepts/how-it-runs/#what-more-instances-do) says
+what it means across instances; this page says why.
 
 ## Why a reaction cannot be exactly once
 
@@ -51,17 +51,17 @@ The mark that says "succeeded" is not written on its own. It is staged in the at
 one transaction with the events of the commands the handler dispatched and its scheduled commands,
 and it settles the claim by the id it was given. An attempt that stalled past its lease and whose
 claim another instance took over finds that id gone, and its whole transaction rolls back: what it
-decided is stored by whoever holds the claim, never by both. [Your event store is your outbox](/concepts/event-store-as-outbox/#what-one-attempt-is)
-describes the attempt in full. For everything the store holds, an event delivered twice is handled
-once.
+decided is stored by whoever holds the claim, never by both.
+[Your event store is your outbox](/concepts/event-store-as-outbox/#what-one-attempt-is) describes
+the attempt in full. For everything the store holds, an event delivered twice is handled once.
 
 ## The `idempotencyKey`: carrying it to the provider
 
 The store's side is settled; the provider's is not, and only the provider can settle it. Every
-policy and process handler receives an `idempotencyKey`, a UUID derived from the handler and the
-event (for a deadline, from the instance and the moment). It is the same on every automatic retry
-of that handler for that event, and new when an operator retries a dead letter, so a provider that
-stored the failed attempt's answer sees a new request. From `examples/storefront`:
+policy and process handler receives an `idempotencyKey` derived from the handler and the event,
+the same on every automatic retry
+([when it changes](/guides/reacting-to-events/#what-the-runtime-promises)). From
+`examples/storefront`:
 
 ```ts
 // app/domain/payment/policies/refund-on-refund-requested.ts
@@ -107,7 +107,8 @@ keeps its checkpoint in that database, next to its rows, because a transaction c
 - **A rebuild.** [`bounda rebuild`](/guides/deployment/#rebuilding-a-read-model) replays history
   into a fresh table on purpose. Exactly once holds per table, not across rebuilds.
 - **The provider's side of a reaction.** Without a key the provider honours, at least once means
-  what it says. Bounda never promises a reaction exactly once, and neither should the code around it.
+  what it says. Bounda never promises a reaction exactly once, and neither should the code around
+  it.
 
 ## Why not the other ways
 
@@ -131,13 +132,16 @@ framework that is precise about it lands on the same line. Bounda draws it at th
 ## Where to read more
 
 - [What the runtime promises](/guides/reacting-to-events/#what-the-runtime-promises), the same
-  guarantees in the terms of a handler's code, and [retries and timeouts](/guides/reacting-to-events/#retries-and-timeouts).
+  guarantees in the terms of a handler's code, and
+  [retries and timeouts](/guides/reacting-to-events/#retries-and-timeouts).
 - [What more instances do](/concepts/how-it-runs/#what-more-instances-do)
   and [a projection that keeps failing](/guides/deployment/#a-projection-that-keeps-failing).
 - [Your event store is your outbox](/concepts/event-store-as-outbox/) and
   [where a broker goes](/concepts/where-a-broker-goes/).
-- Tyler Treat, [You Cannot Have Exactly-Once Delivery](https://bravenewgeek.com/you-cannot-have-exactly-once-delivery/).
-- Confluent, [Exactly-once semantics are possible: here's how Apache Kafka does it](https://www.confluent.io/blog/exactly-once-semantics-are-possible-heres-how-apache-kafka-does-it/).
+- Tyler Treat,
+  [You Cannot Have Exactly-Once Delivery](https://bravenewgeek.com/you-cannot-have-exactly-once-delivery/).
+- Confluent,
+  [Exactly-once semantics are possible: here's how Apache Kafka does it](https://www.confluent.io/blog/exactly-once-semantics-are-possible-heres-how-apache-kafka-does-it/).
 - Akka, [R2DBC projections](https://doc.akka.io/docs/akka-projection/current/r2dbc.html);
   NServiceBus, [Outbox](https://docs.particular.net/nservicebus/outbox/);
   Marten, [subscriptions](https://martendb.io/events/subscriptions);

@@ -5,10 +5,10 @@ sidebar:
   order: 4
 ---
 
-The runtime is instrumented with the [OpenTelemetry API](https://opentelemetry.io/docs/languages/js/).
-Without an SDK registered that costs nothing: the API hands out no-op spans and meters. Register
-one and Bounda's spans and metrics show up next to your HTTP server's and your database
-driver's, with no adapter to write:
+The runtime is instrumented with the
+[OpenTelemetry API](https://opentelemetry.io/docs/languages/js/). Without an SDK registered that
+costs nothing: the API hands out no-op spans and meters. Register one and Bounda's spans and metrics
+show up next to your HTTP server's and your database driver's, with no adapter to write:
 
 ```ts
 import { NodeSDK } from "@opentelemetry/sdk-node";
@@ -47,6 +47,7 @@ Metrics:
 | `bounda.commands` | counter | `bounda.command.type`, `bounda.outcome` (`stored`, `scheduled`, `rejected`, `failed`) |
 | `bounda.dead_letters` | counter | `bounda.handler.kind`, `bounda.handler`, `bounda.outcome` (`terminal`, `retriable_exhausted`) |
 
-The lag gauge is what to alert on: a subscriber whose lag grows is a projection or a policy that
-is failing or stuck, and `app.getLag()` returns the same numbers for a health endpoint, with what
-a failing subscriber is stuck on (see [A projection that keeps failing](/guides/deployment/#a-projection-that-keeps-failing)).
+The lag gauge is what to alert on: a subscriber whose lag grows is a projection or a policy that is
+failing or stuck, and `app.getLag()` returns the same numbers for a health endpoint, with what a
+failing subscriber is stuck on (see
+[A projection that keeps failing](/guides/deployment/#a-projection-that-keeps-failing)).
