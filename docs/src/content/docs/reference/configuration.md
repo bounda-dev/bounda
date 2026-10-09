@@ -57,7 +57,7 @@ types refuse; wrap it with `asDuration(process.env.X ?? "1m")`, which checks it.
   the run is abandoned: its commands still running stop, later ones are refused with
   `REACTION_ABANDONED`, and its `signal` aborts.
 - **`policies.retry`**, default exponential, 3 attempts, 1 s to 30 s. How a policy run that failed
-  is retried; also used by scheduled commands. See [retry](#retry).
+  is retried; the one in `runtime` is also used by scheduled commands. See [retry](#retry).
 - **`policies.maxChainDepth`**, default `25`. How many hops a chain of reactions may take from the
   command that started it before a command is refused with `CHAIN_DEPTH_EXCEEDED`. Reaching it
   usually means two policies answer each other.

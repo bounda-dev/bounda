@@ -19,7 +19,7 @@ Breaking:
   `projection:<read model>`). The policy, process or scheduled command a dead letter or an inbox
   claim belongs to is its `handler`: `DeadLetter.subscriber` and the `subscriber` filter of
   `deadLetters.list` and `count` are `handler`, `bounda dead-letters list --subscriber` is
-  `--handler`, `ClaimLostError.subscriber` is `handler`, and the `InboxLedger` port keys claims by
+  `--handler`, `ClaimLostError.subscriber` is `handler`, and the `InboxLedger` store keys claims by
   `handler`. The `subscriber` column of the inbox and dead-letter tables is `handler`, and the
   `bounda.dead_letters` counter carries `bounda.handler` and `bounda.handler.kind` instead of
   `bounda.subscriber` and `bounda.subscriber.kind`, which stay on the dispatch span and the lag

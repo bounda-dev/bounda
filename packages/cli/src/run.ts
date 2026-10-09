@@ -9,7 +9,7 @@ import {
 import { boot, loadProject } from "@bounda-dev/core/node";
 import { Command, CommanderError, InvalidArgumentError, Option } from "commander";
 import { formatLetter, formatRetried } from "./dead-letter-output.ts";
-import { generate } from "./generate/generate.ts";
+import { generateProject } from "./generate/generate.ts";
 import { ConventionError } from "./generate/problems.ts";
 import { watchFromFirstRun } from "./generate/watch.ts";
 import { formatConventionError, formatReport, formatWarnings } from "./reporter.ts";
@@ -68,7 +68,7 @@ const runGenerate = async (
 ): Promise<number> => {
   const root = resolve(cwd, options.root ?? ".");
   try {
-    const report = await generate({
+    const report = await generateProject({
       root,
       appDir: options.appDir,
       inferState: options.infer,

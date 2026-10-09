@@ -17,6 +17,6 @@ own, so a retry cut short goes on from the last step written.
 `ProcessFailed` now names its dead letter by `letterId` instead of carrying it: the letter is
 written with the event, so nothing has to file it later.
 
-For adapter authors: `FailClaimArgs.gaveUp` and `ClaimRecord.gaveUp` leave the `InboxLedger` port,
+For adapter authors: `FailClaimArgs.gaveUp` and `ClaimRecord.gaveUp` leave the `InboxLedger` store,
 along with the `gave_up` column of the SQLite and PostgreSQL inbox tables, since a give-up commits
 with its dead letter.

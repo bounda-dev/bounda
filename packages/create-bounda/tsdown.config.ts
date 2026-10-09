@@ -4,9 +4,8 @@ export default defineConfig({
   entry: ["src/cli.ts"],
   tsconfig: "tsconfig.build.json",
   unbundle: true,
-  dts: true,
+  dts: false,
   platform: "node",
   fixedExtension: false,
   publint: true,
-  attw: true,
 });

@@ -27,11 +27,10 @@ compiles.
 Breaking: the time-out handler is `at-timeout.ts`, typed `Process.DeadlineArgs`, instead of
 `on-timeout.ts` and `Process.TimeoutArgs`; `bounda generate` says so for a file left behind. The
 time-out now counts from the starting event's time. For code that does not come from
-`bounda generate`, `ProcessEntry.timeout` is `ProcessEntry.deadlines.timeout`,
-`ProcessTimeoutArgs` is gone in favour of `ProcessDeadlineArgs`, and `ProcessStateArgs` gains
+`bounda generate`, `ProcessTimeoutArgs` is gone in favour of `ProcessDeadlineArgs`, and `ProcessStateArgs` gains
 `deadline` and `instant`. The process runner keeps one scheduler entry per instance,
 `bounda.ProcessDeadline`, in place of `bounda.ProcessTimeout`, and records
-`ProcessDeadlineReached` when a deadline comes due. For adapter authors, the `Scheduler` port gains
+`ProcessDeadlineReached` when a deadline comes due. For adapter authors, the `Scheduler` store gains
 `defer`, which hands a claimed command back without counting an attempt, and `schedule` takes
 `keepTimingOfSameCommand`, which leaves an entry that already holds the same command and context
 as it is, a pending retry included. The Cloudflare client's

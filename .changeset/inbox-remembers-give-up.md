@@ -11,7 +11,7 @@ before the failure is recorded anywhere else; whoever finds it again records the
 running the handler, and without claiming it again, so a second failure to record it neither
 holds the event for a lease nor inflates the attempts the dead letter reports.
 
-For adapter authors, the `InboxLedger` port changes: `fail` takes an optional `gaveUp`
+For adapter authors, the `InboxLedger` store changes: `fail` takes an optional `gaveUp`
 (`DeadLetterErrorType`), and `get` returns it as `ClaimRecord.gaveUp`, kept across `tryClaim` and
 cleared by a `fail` without it. The SQLite and PostgreSQL inbox tables gain a `gave_up` column,
 added on start to databases created by an earlier version.

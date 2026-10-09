@@ -25,9 +25,11 @@ export interface GenerateArgs {
   readonly inferState?: boolean;
 }
 
+/**
+ * What a run of the generator did: absolute paths written, left unchanged and removed, and the
+ * warnings about the layout and state inference.
+ */
 export interface GenerateReport {
-  readonly model: ProjectModel;
-  readonly files: readonly GeneratedFile[];
   readonly written: readonly string[];
   readonly unchanged: readonly string[];
   readonly removed: readonly string[];
@@ -38,13 +40,16 @@ export interface GenerateFunction {
   (args: GenerateArgs): Promise<GenerateReport>;
 }
 
-/**
- * Runs the generator: writes `.bounda/` and every `+types` file, with the state of aggregates
- * without `state.ts` inferred, and removes `+types` files whose module is gone. A file whose
- * content is unchanged is not rewritten. Throws `ConventionError` when the layout breaks a
- * convention; a layout that is probably wrong and inference problems come back as warnings.
- */
-export const generate: GenerateFunction = async ({
+export interface GeneratedProject extends GenerateReport {
+  readonly model: ProjectModel;
+  readonly files: readonly GeneratedFile[];
+}
+
+export interface GenerateProjectFunction {
+  (args: GenerateArgs): Promise<GeneratedProject>;
+}
+
+export const generateProject: GenerateProjectFunction = async ({
   root,
   appDir = "app",
   tsconfigPath = join(root, "tsconfig.json"),
@@ -102,3 +107,11 @@ export const generate: GenerateFunction = async ({
     ],
   };
 };
+
+/**
+ * Runs the generator: writes `.bounda/` and every `+types` file, with the state of aggregates
+ * without `state.ts` inferred, and removes `+types` files whose module is gone. A file whose
+ * content is unchanged is not rewritten. Throws `ConventionError` when the layout breaks a
+ * convention; a layout that is probably wrong and inference problems come back as warnings.
+ */
+export const generate: GenerateFunction = generateProject;

@@ -17,16 +17,18 @@ export interface RetryConfig {
  */
 export interface PoliciesConfig {
   /**
-   * Also the retry of scheduled commands.
+   * In `runtime`, also the retry of scheduled commands; an override does not change theirs.
    */
   readonly retry?: RetryConfig;
   /**
-   * How long one run of a policy handler may take before it is abandoned. Defaults to 30 seconds.
+   * How long one run of a policy handler may take before it is abandoned. Defaults to 30 seconds,
+   * and in `overrides` to `runtime.policies.timeout`.
    */
   readonly timeout?: DurationInput;
   /**
    * How many commands deep a chain of reactions may go before a command is refused with
-   * `ChainDepthExceededError`, counted for every command dispatched. Defaults to 25.
+   * `ChainDepthExceededError`, counted for every command dispatched. Defaults to 25, and in
+   * `overrides` to `runtime.policies.maxChainDepth`.
    */
   readonly maxChainDepth?: number;
 }
@@ -38,7 +40,7 @@ export interface ProcessesConfig {
   readonly retry?: RetryConfig;
   /**
    * How long an instance lives before its `at-timeout` runs, for processes whose `config` sets no
-   * `timeout`. Defaults to 7 days.
+   * `timeout`. Defaults to 7 days, and in `overrides` to `runtime.processes.timeout`.
    */
   readonly timeout?: DurationInput;
   /**

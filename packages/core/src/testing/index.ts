@@ -22,7 +22,7 @@ export type CreateTestAppArgs<R extends Registry> = {
    */
   readonly config?: Omit<Config, "storage" | "ports">;
   /**
-   * What each port of each aggregate receives, `{ order: { notifier: spy } }`: a double, handed
+   * What each port of each aggregate or read model receives, `{ order: { notifier: spy } }`: a double, handed
    * to the handlers as it is and never closed, or an implementation's file name, built with this
    * app's `env`, clock and logger and closed by `app.stop()`. A port left out has no
    * implementation, even when it has only one, so a test never reaches a provider it did not ask
@@ -46,7 +46,8 @@ export type CreateTestAppArgs<R extends Registry> = {
  */
 export interface TestApp<R extends Registry> {
   /**
-   * The app, whose `runUntilIdle()` throws the `ConfigurationError` of a port the test left out.
+   * The app, whose `runUntilIdle()` throws the `ConfigurationError` of a port the test left out
+   * once a handler has read it.
    */
   readonly app: BoundaApp<R>;
   /**

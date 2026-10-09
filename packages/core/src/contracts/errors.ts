@@ -185,8 +185,8 @@ export class NotFoundError extends BoundaError {
 
 /**
  * The app and its stored data do not fit together, which no retry fixes: a malformed configuration
- * or registry at boot, a stored event or a dead letter the registry no longer knows, a port a test
- * left out, a read model that needs a rebuild, a query the adapter cannot run.
+ * or registry at boot, a stored event or a delayed policy run the registry no longer knows, a port
+ * a test left out, a read model that needs a rebuild, a query the adapter cannot run.
  */
 export class ConfigurationError extends BoundaError {
   constructor(message: string, options?: ErrorOptions) {

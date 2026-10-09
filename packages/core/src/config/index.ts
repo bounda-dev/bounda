@@ -12,6 +12,7 @@ export type {
   PortsConfig,
   PortsSection,
   ProcessesConfig,
+  ResolvedConfig,
   RetryConfig,
   RuntimeConfig,
   RuntimeRole,

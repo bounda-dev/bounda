@@ -59,7 +59,7 @@ export interface BootArgs<R extends Registry = AppRegistry> {
    */
   readonly logger?: Logger;
   /**
-   * Defaults to `uuidV7IdGenerator`.
+   * Defaults to UUID v7 ids.
    */
   readonly ids?: IdGenerator;
   /**

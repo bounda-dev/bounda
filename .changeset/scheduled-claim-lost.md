@@ -19,7 +19,7 @@ unrun, without counting an attempt, before another instance could take them over
 A store failure while renewing leaves the claim to lapse instead of counting as the command's
 failure.
 
-For adapter authors, the `Scheduler` port changes: `complete`, `fail` and `defer` reject with the
+For adapter authors, the `Scheduler` store changes: `complete`, `fail` and `defer` reject with the
 new `ScheduledClaimLostError` (code `SCHEDULED_CLAIM_LOST`) when the key no longer holds the
 claim's `claimId`, instead of doing nothing, and the new `renew({ claim, now })` restarts a claim's
 lease, rejecting the same way.

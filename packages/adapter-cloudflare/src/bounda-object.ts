@@ -43,6 +43,9 @@ export interface CreateBoundaObjectArgs<R extends Registry> {
    * Defaults to 5,000.
    */
   readonly eventsPerRebuildSlice?: number;
+  /**
+   * Defaults to one JSON line per entry on `console`, which Workers Logs parses into fields.
+   */
   readonly logger?: Logger;
   readonly ids?: IdGenerator;
   readonly clock?: Clock;

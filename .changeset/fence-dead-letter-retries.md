@@ -14,6 +14,6 @@ retry refused that way writes nothing, and one that meets a conflict checks the 
 running its handler a second time. A retry or discard of a letter that was already retried or
 discarded rejects with `DeadLetterSettledError` too, instead of `ConfigurationError`.
 
-For adapter authors, the `DeadLetterStore` port changes: `updateStatus` moves only a `failed`
+For adapter authors, the `DeadLetterStore` store changes: `updateStatus` moves only a `failed`
 letter and rejects with `DeadLetterSettledError` when the letter is missing or no longer `failed`,
 instead of doing nothing or overwriting it.

@@ -1,5 +1,5 @@
 import { relative } from "node:path";
-import type { GenerateReport } from "./generate/generate.ts";
+import type { GeneratedProject, GenerateReport } from "./generate/generate.ts";
 import type { ConventionError } from "./generate/problems.ts";
 
 const plural = (count: number, singular: string, pluralForm = `${singular}s`): string =>
@@ -8,7 +8,7 @@ const plural = (count: number, singular: string, pluralForm = `${singular}s`): s
 const display = (root: string, path: string): string => relative(root, path).split("\\").join("/");
 
 export interface FormatReportArgs {
-  readonly report: GenerateReport;
+  readonly report: GeneratedProject;
   readonly root: string;
 }
 

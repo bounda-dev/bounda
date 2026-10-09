@@ -12,6 +12,6 @@ entry while it is still the version and the claim that worker holds; otherwise t
 claim and leave the newer schedule alone. Scheduling exactly what a key already holds changes
 nothing. A late worker whose lease another one took over no longer undoes that worker's run.
 
-For adapter authors, the `Scheduler` port changes: `claimDue` returns `ClaimedCommand`s, and
+For adapter authors, the `Scheduler` store changes: `claimDue` returns `ClaimedCommand`s, and
 `complete` and `fail` take the claim (`ScheduledClaim`: `dedupeKey`, `revision`, `claimId`) instead
 of the key. The SQLite and PostgreSQL tables gain `revision` and `claim_id` columns.

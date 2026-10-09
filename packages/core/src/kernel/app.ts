@@ -164,7 +164,7 @@ export type CreateAppArgs<R extends Registry> = {
    */
   readonly logger?: Logger;
   /**
-   * Defaults to `uuidV7IdGenerator`.
+   * Defaults to UUID v7 ids.
    */
   readonly ids?: IdGenerator;
   /**

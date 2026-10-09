@@ -70,7 +70,7 @@ export const postgresql: PostgresqlFunction = (options) => {
 
   /**
    * Opens what `work` builds on a use of the pool, and hands the use back when `work` throws: the
-   * ports whose `close` would release it never reach the caller.
+   * stores whose `close` would release it never reach the caller.
    */
   const using = async <T>(work: (connection: Connection) => Promise<T>): Promise<T> => {
     const connection = open();
