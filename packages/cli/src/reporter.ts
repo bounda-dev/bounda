@@ -16,10 +16,6 @@ export interface FormatReportFunction {
   (args: FormatReportArgs): string;
 }
 
-/**
- * What `bounda generate` prints on success: one line per file written or removed, then one
- * summary line. Unchanged files are not listed.
- */
 export const formatReport: FormatReportFunction = ({ report, root }) => {
   const lines = [
     ...report.written.map((path) => `  written  ${display(root, path)}`),

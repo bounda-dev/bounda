@@ -28,10 +28,6 @@ const toStoredEvent = (row: Record<string, unknown>): StoredEvent => ({
   metadata: JSON.parse(String(row.metadata)) as EventMetadata,
 });
 
-/**
- * Event store on one SQLite table. `append` checks the stream version and inserts inside a write
- * transaction; a stale version rolls back and raises `ConcurrencyError`.
- */
 export const createSqliteEventStore: CreateSqliteEventStoreFunction = ({ db, table }) => {
   const currentVersion = async (
     executor: Pick<SqlDatabase, "all">,

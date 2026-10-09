@@ -153,10 +153,6 @@ export interface ResolveConfigFunction {
   (config: Config): ResolvedConfig;
 }
 
-/**
- * Validates `bounda.config.ts` and fills in defaults. Throws `ConfigurationError` listing every
- * problem with its path. Durations come back in milliseconds.
- */
 export const resolveConfig: ResolveConfigFunction = (config) => {
   const result = configSchema.safeParse(config);
   if (!result.success) {

@@ -15,9 +15,6 @@ export type Upcast<From, To> = (payload: From) => To;
  */
 export type Upcasts<Final> = readonly [...Upcast<never, unknown>[], Upcast<never, Final>];
 
-/**
- * The shape of `<event>.upcast.ts`.
- */
 export interface UpcastsModule {
   readonly upcasts: Upcasts<unknown>;
 }

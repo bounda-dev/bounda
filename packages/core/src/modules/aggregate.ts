@@ -6,13 +6,9 @@ export interface AggregateMeta {
   readonly version: number;
 }
 
-/**
- * The optional `state.ts` module of an aggregate. `initialState` fixes the state type; declare
- * unions explicitly (`status: "new" as "new" | "paid"`). `aggregateId` names the payload field
- * that identifies the aggregate; it defaults to `<aggregate>Id`.
- */
 export interface StateModule<State extends object = object> {
   readonly initialState: State;
+  // The payload field that identifies the aggregate.
   readonly aggregateId?: string;
 }
 

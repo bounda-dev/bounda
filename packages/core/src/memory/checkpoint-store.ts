@@ -4,9 +4,6 @@ export interface CreateMemoryCheckpointStoreFunction {
   (): CheckpointStore;
 }
 
-/**
- * A checkpoint store held in memory.
- */
 export const createMemoryCheckpointStore: CreateMemoryCheckpointStoreFunction = () => {
   const positions = new Map<string, number>();
   return {

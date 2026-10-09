@@ -2,9 +2,6 @@ import { dirname, resolve } from "node:path";
 import { createdStateTypeName, type StateTypeSource, stateTypeName } from "../emit/types.ts";
 import type { AggregateModel, EventModel, ProjectModel } from "../model.ts";
 
-/**
- * Something inference could not do for an aggregate, which still gets a usable `State`.
- */
 export interface StateWarning {
   readonly aggregate: string;
   readonly message: string;
@@ -13,19 +10,12 @@ export interface StateWarning {
 export interface InferStatesArgs {
   readonly model: ProjectModel;
   readonly tsconfigPath: string;
-  /**
-   * Absolute path of `.bounda/types.ts`, which must exist so the project includes it. TypeScript
-   * reads it from memory, never from disk, so nothing is written while states are inferred.
-   */
+  // Absolute: TypeScript's reads are matched against it. The file must exist on disk so the
+  // project includes it, though its content is served from memory.
   readonly typesPath: string;
-  /**
-   * The first-pass content of `.bounda/types.ts`: typing every state to infer as
-   * `core.UnknownState` is what makes each `evolve` return only the fields it sets.
-   */
+  // Types every state to infer as `core.UnknownState`, which is what makes each `evolve` return
+  // only the fields it sets.
   readonly typesContent: string;
-  /**
-   * Renders `.bounda/types.ts` for a set of inferred states; what it renders is type-checked.
-   */
   readonly renderTypes: (states: Readonly<Record<string, StateTypeSource>>) => string;
 }
 
@@ -299,15 +289,6 @@ const openProject = async (
   }
 };
 
-/**
- * Infers `State` for every aggregate without `state.ts` from what its events' exported `begin`
- * and `evolve` functions return, each field typed as the union of what they set. Every field is
- * optional, unless an event exports `begin`: then the state is the created one, where the
- * fields every `begin` always sets are required, or `core.NotCreated` of it. Writes nothing:
- * the caller renders `typesPath` from the states it returns. A field whose type is not visible from there (a non-exported interface, say)
- * becomes `unknown` with a warning; when TypeScript cannot run on the project, every such
- * aggregate keeps `core.UnknownState`, with a warning each.
- */
 export const inferStates: InferStatesFunction = async ({
   model,
   tsconfigPath,

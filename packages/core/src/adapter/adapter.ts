@@ -184,9 +184,6 @@ export interface IsAdapterFunction {
   (value: unknown): value is Adapter;
 }
 
-/**
- * Whether `value` is an `AdapterDefinition` that also carries the three factories.
- */
 export const isAdapter: IsAdapterFunction = (value): value is Adapter =>
   typeof value === "object" &&
   value !== null &&

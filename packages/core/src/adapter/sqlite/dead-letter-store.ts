@@ -61,9 +61,6 @@ const filters = (
   return { sql: clauses.length === 0 ? "" : ` WHERE ${clauses.join(" AND ")}`, params };
 };
 
-/**
- * Dead letters on one table. `add` ignores a duplicate id and returns the stored row.
- */
 export const createSqliteDeadLetterStore: CreateSqliteDeadLetterStoreFunction = ({ db, table }) => {
   const get = async (id: string): Promise<DeadLetter | null> => {
     const [row] = await db.all(`SELECT ${COLUMNS} FROM ${table} WHERE "id" = ?`, [id]);

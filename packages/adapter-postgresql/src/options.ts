@@ -1,6 +1,3 @@
-/**
- * How to reach the server: a connection URL or its parts.
- */
 export type PostgresqlLocation =
   | { readonly url: string }
   | {
@@ -30,9 +27,6 @@ export type PostgresqlOptions = PostgresqlLocation & {
   readonly maxConnections?: number;
 };
 
-/**
- * `PostgresqlOptions` with every default filled in.
- */
 export interface ResolvedPostgresqlOptions {
   readonly url?: string;
   readonly host?: string;
@@ -50,22 +44,10 @@ export interface ResolvePostgresqlOptionsFunction {
   (options: PostgresqlOptions): ResolvedPostgresqlOptions;
 }
 
-/**
- * The table prefix `postgresql()` uses when none is given.
- */
 export const DEFAULT_TABLE_PREFIX: string = "bounda_";
-/**
- * The schema `postgresql()` uses when none is given.
- */
 export const DEFAULT_SCHEMA: string = "public";
-/**
- * The pool size `postgresql()` uses when none is given.
- */
 export const DEFAULT_MAX_CONNECTIONS: number = 10;
 
-/**
- * Fills the defaults and drops undefined parts.
- */
 export const resolvePostgresqlOptions: ResolvePostgresqlOptionsFunction = (options) => {
   const common = {
     schema: options.schema ?? DEFAULT_SCHEMA,

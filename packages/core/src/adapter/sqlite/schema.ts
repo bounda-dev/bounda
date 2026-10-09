@@ -1,9 +1,7 @@
 import type { SqlDatabase } from "../sql/database.ts";
 import { quoteIdentifier, storageTableNameFor } from "../sql/index.ts";
 
-/**
- * The quoted names of the five storage tables for a table prefix.
- */
+// Every name is already quoted.
 export interface StorageTables {
   readonly events: string;
   readonly checkpoints: string;
@@ -44,10 +42,8 @@ export interface StorageSchemaStatementsFunction {
   (tables: StorageTables): readonly string[];
 }
 
-/**
- * DDL for the write side. `position` is `INTEGER PRIMARY KEY AUTOINCREMENT`: SQLite's single
- * writer makes the global order match commit order, so no extra lock is needed.
- */
+// SQLite's single writer makes the `AUTOINCREMENT` order of `position` match commit order, so no
+// extra lock is needed.
 export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables) => [
   `CREATE TABLE IF NOT EXISTS ${tables.events} (
     "position" INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -115,9 +111,6 @@ export interface EnsureStorageSchemaFunction {
   (args: EnsureStorageSchemaArgs): Promise<void>;
 }
 
-/**
- * Creates the storage tables that do not exist yet.
- */
 export const ensureStorageSchema: EnsureStorageSchemaFunction = async ({ db, tables }) => {
   for (const statement of storageSchemaStatements(tables)) await db.run(statement, []);
 };

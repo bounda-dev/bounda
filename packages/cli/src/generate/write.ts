@@ -30,15 +30,11 @@ export interface IsInGeneratedFunction {
 export const isInGenerated: IsInGeneratedFunction = (path) =>
   path.split(/[\\/]/).some((segment) => GENERATED_SEGMENTS.has(segment));
 
-/**
- * Writes a file only when its content differs, so watchers downstream see no spurious change.
- * Refuses any path outside `+types` and `.bounda`: user modules are never touched, whatever the
- * generator computed.
- */
 export const writeGeneratedFile: WriteGeneratedFileFunction = async (path, content) => {
   if (!isGeneratedPath(path)) {
     throw new Error(`refusing to write ${path}: only +types and .bounda files are generated`);
   }
+  // An unchanged file is not rewritten, so watchers downstream see no spurious change.
   const current = await readFile(path, "utf8").catch(() => null);
   if (current === content) return "unchanged";
   await mkdir(dirname(path), { recursive: true });
@@ -63,9 +59,6 @@ export const writeGeneratedFiles: WriteGeneratedFilesFunction = async (files) =>
 
 export interface RemoveOrphansArgs {
   readonly appDirectory: string;
-  /**
-   * Every path the generator produced this run; anything else under a `+types` directory goes.
-   */
   readonly keep: ReadonlySet<string>;
 }
 
@@ -73,9 +66,6 @@ export interface RemoveOrphansFunction {
   (args: RemoveOrphansArgs): Promise<readonly string[]>;
 }
 
-/**
- * Deletes `+types` files whose module no longer exists, and `+types` directories left empty.
- */
 export const removeOrphans: RemoveOrphansFunction = async ({ appDirectory, keep }) => {
   const removed: string[] = [];
   const walk = async (directory: string): Promise<void> => {

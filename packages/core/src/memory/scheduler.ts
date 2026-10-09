@@ -165,8 +165,5 @@ export const createKeptScheduler: CreateKeptSchedulerFunction = () => {
   return { store, entries: createStoreEntries(entries, (dedupeKey: string) => dedupeKey) };
 };
 
-/**
- * A scheduler held in memory.
- */
 export const createMemoryScheduler: CreateMemorySchedulerFunction = () =>
   createKeptScheduler().store;

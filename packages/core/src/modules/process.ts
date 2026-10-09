@@ -116,31 +116,21 @@ export interface ProcessAfterFunction {
   (delay: DurationInput): Instant;
 }
 
-/**
- * The shape of a process `index.ts`: a `config`, an optional `state` schema and, when an event of
- * another aggregate does not name its instance by itself, `correlate`.
- */
 export interface ProcessModule {
   readonly config: (args: never) => ProcessConfig;
   readonly state?: (args: ProcessStateArgs) => unknown;
   readonly correlate?: (args: never) => readonly ProcessCorrelation[];
 }
 
-/**
- * The shape of an `on-<event>.ts` or `at-<deadline>.ts` handler module.
- */
 export interface ProcessHandlerModule {
   readonly handler: (args: never) => unknown;
 }
 
-/**
- * A process in the registry. `handlers` are grouped by the event's aggregate and keyed by its
- * camelCase name (`handlers.payment.paymentFailed`); `deadlines` are keyed by field, with
- * `timeout` for `at-timeout.ts`.
- */
 export interface ProcessEntry {
   readonly module: ProcessModule;
+  // By the event's aggregate, then its camelCase name: `handlers.payment.paymentFailed`.
   readonly handlers: Readonly<Record<string, Readonly<Record<string, ProcessHandlerModule>>>>;
+  // By field, with `timeout` for `at-timeout.ts`.
   readonly deadlines?: Readonly<Record<string, ProcessHandlerModule>>;
 }
 

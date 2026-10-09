@@ -174,10 +174,6 @@ export interface ValidateRegistryFunction {
   (registry: Registry): void;
 }
 
-/**
- * Checks that every module in the registry exports what its kind requires. Throws one
- * `ConfigurationError` listing every problem with its registry path.
- */
 export const validateRegistry: ValidateRegistryFunction = (registry) => {
   const problems: Problem[] = [];
   for (const [name, aggregate] of Object.entries(registry.aggregates)) {

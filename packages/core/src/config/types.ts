@@ -185,9 +185,6 @@ export type Config = {
   readonly runtime?: RuntimeConfig;
 } & PortsSection;
 
-/**
- * Retry settings with every value present and durations in milliseconds.
- */
 export interface ResolvedRetryConfig {
   readonly strategy: "none" | "fixed" | "linear" | "exponential";
   readonly maxAttempts: number;

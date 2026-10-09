@@ -13,9 +13,6 @@ export interface PayloadArgs {
   readonly z: ZodApi;
 }
 
-/**
- * A schema function as exported from a user module.
- */
 export type PayloadFunction<Schema extends z.ZodType = z.ZodType> = (args: PayloadArgs) => Schema;
 
 /**
@@ -23,18 +20,12 @@ export type PayloadFunction<Schema extends z.ZodType = z.ZodType> = (args: Paylo
  */
 export type EmptyPayload = Record<never, never>;
 
-/**
- * The output type of a schema function.
- */
 export type InferPayload<F> = F extends (args: PayloadArgs) => infer Schema
   ? Schema extends z.ZodType
     ? z.output<Schema>
     : never
   : never;
 
-/**
- * The input type of a schema function: what a caller passes before defaults and transforms apply.
- */
 export type InferPayloadInput<F> = F extends (args: PayloadArgs) => infer Schema
   ? Schema extends z.ZodType
     ? z.input<Schema>
@@ -57,9 +48,6 @@ export type PayloadInputOf<Module> = Module extends { readonly payload: infer F 
   ? InferPayloadInput<F>
   : EmptyPayload;
 
-/**
- * Whether a module declares a payload.
- */
 export type HasPayload<Module> = Module extends { readonly payload: (args: PayloadArgs) => unknown }
   ? true
   : false;

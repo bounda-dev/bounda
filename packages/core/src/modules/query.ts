@@ -2,10 +2,6 @@ import type { ReadClient, Table } from "../adapter/storage/table.ts";
 import type { Query } from "../contracts/query.ts";
 import type { EmptyPayload, PayloadFunction } from "./payload.ts";
 
-/**
- * The shape of a query module: an optional `payload`, an optional `repository` that reads the
- * storage, and a `handler` that shapes the result.
- */
 export interface QueryModule {
   readonly payload?: PayloadFunction;
   readonly repository?: (args: never) => unknown;

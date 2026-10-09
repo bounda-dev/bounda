@@ -4,19 +4,13 @@ import type { CreateOptions } from "./options.ts";
 import type { Versions } from "./versions.ts";
 
 export interface ScaffoldProjectArgs {
-  /**
-   * The `template/` directory shipped with the package: `base/`, one overlay per database and one
-   * per framework.
-   */
   readonly templateRoot: string;
   readonly options: CreateOptions;
   readonly versions: Versions;
 }
 
 export interface ScaffoldReport {
-  /**
-   * Files written, relative to the project directory, sorted.
-   */
+  // Relative to the project directory, sorted.
   readonly files: readonly string[];
 }
 
@@ -70,9 +64,7 @@ export interface RenderTemplateFunction {
   (args: RenderTemplateArgs): string;
 }
 
-/**
- * Replaces every `{{key}}`; an unknown key is an error, so a template typo cannot ship.
- */
+// An unknown key is an error, so a template typo cannot ship.
 export const renderTemplate: RenderTemplateFunction = ({ content, values }) =>
   content.replace(/\{\{(\w+)\}\}/g, (_, key: string) => {
     const value = values[key];
@@ -89,12 +81,6 @@ const isEmptyDirectory = async (directory: string): Promise<boolean> => {
   }
 };
 
-/**
- * Copies `base/`, the database overlay and the framework overlay into the project directory, in
- * that order, rendering `*.tpl` files and renaming `_gitignore` and `_env.example`. The
- * `cloudflare` framework brings its own storage, so it is one overlay, not two. Throws when the
- * directory exists and is not empty.
- */
 export const scaffoldProject: ScaffoldProjectFunction = async ({
   templateRoot,
   options,
@@ -120,6 +106,8 @@ export const scaffoldProject: ScaffoldProjectFunction = async ({
     cloudflareVitestVersion: versions.cloudflareVitest,
     cloudflareVitestPluginVersion: versions.cloudflareVitestPlugin,
   };
+  // Later layers win. The `cloudflare` framework brings its own storage, so it is one overlay, not
+  // two.
   const layers = [
     join(templateRoot, "base"),
     ...(options.database === options.framework ? [] : [join(templateRoot, options.database)]),

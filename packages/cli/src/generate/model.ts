@@ -1,51 +1,26 @@
-/**
- * A user module found on disk. `path` is absolute; `relativePath` is relative to the project
- * root, with forward slashes, and is what generated imports are built from.
- */
 export interface ModuleRef {
   readonly path: string;
+  // Relative to the project root, with forward slashes.
   readonly relativePath: string;
 }
 
 export interface EventModel extends ModuleRef {
-  /**
-   * The registry key, camelCase from the file name: `order-placed.ts` → `orderPlaced`.
-   */
   readonly key: string;
-  /**
-   * The event type name: `OrderPlaced`.
-   */
   readonly typeName: string;
-  /**
-   * `order-placed.upcast.ts` next to the event, when its payload has changed shape.
-   */
   readonly upcasts: ModuleRef | null;
 }
 
-/**
- * An implementation of a port: `infrastructure/notifier/in-memory.ts`. `name` is the file name as
- * the configuration names it, `in-memory`.
- */
 export interface ImplementationModel extends ModuleRef {
+  // The file name as the configuration names it: `in-memory`.
   readonly name: string;
 }
 
-/**
- * A port of an aggregate or a read model, `order/notifier.ts`: it exports the interface
- * `typeName`, and every module in `order/infrastructure/notifier/` implements it.
- */
 export interface PortModel extends ModuleRef {
-  /**
-   * The registry key and the name every handler receives it as: `audit-log.ts` → `auditLog`.
-   */
+  // Also the name every handler receives the port as.
   readonly key: string;
-  /**
-   * The interface the port's module exports: `AuditLog`.
-   */
+  // The interface the port's module exports.
   readonly typeName: string;
-  /**
-   * Sorted by name; never empty.
-   */
+  // Never empty.
   readonly implementations: readonly ImplementationModel[];
 }
 
@@ -56,35 +31,22 @@ export interface CommandModel extends ModuleRef {
 
 export interface PolicyModel extends ModuleRef {
   readonly key: string;
-  /**
-   * The event of the source aggregate the file name ends with after `-on-`, or `null` when the
-   * module has to declare `on` itself.
-   */
+  // The event of the source aggregate the file name ends with after `-on-`; `null` when the module
+  // exports `on` or no event matches.
   readonly triggerKey: string | null;
-  /**
-   * The aggregate whose events the policy reacts to when it sits in `policies/<aggregate>/`;
-   * `null` for the owner's own events. Its key is then prefixed with that aggregate:
-   * `policies/payment/refund-on-payment-failed.ts` → `paymentRefundOnPaymentFailed`.
-   */
+  // The aggregate of `policies/<aggregate>/`, whose key then prefixes the policy's; `null` for the
+  // owner's own events.
   readonly source: string | null;
 }
 
 export interface ProcessHandlerModel extends ModuleRef {
-  /**
-   * The aggregate of the event: the process's own for `on-<event>.ts`, the folder's for
-   * `<aggregate>/on-<event>.ts`.
-   */
+  // The process's own aggregate for `on-<event>.ts`, the folder's for `<aggregate>/on-<event>.ts`.
   readonly aggregate: string;
-  /**
-   * The event key from `on-<event>.ts`.
-   */
   readonly eventKey: string;
 }
 
 export interface ProcessDeadlineModel extends ModuleRef {
-  /**
-   * The state field from `at-<field>.ts`: `nextReminder`, or `timeout` for `at-timeout.ts`.
-   */
+  // The state field from `at-<field>.ts`, camelCase.
   readonly field: string;
 }
 
@@ -93,9 +55,6 @@ export interface ProcessModel extends ModuleRef {
   readonly typeName: string;
   readonly directory: string;
   readonly handlers: readonly ProcessHandlerModel[];
-  /**
-   * One per `at-<field>.ts`, in file name order.
-   */
   readonly deadlines: readonly ProcessDeadlineModel[];
 }
 
@@ -104,9 +63,6 @@ export interface AggregateModel {
   readonly directory: string;
   readonly state: ModuleRef | null;
   readonly events: readonly EventModel[];
-  /**
-   * The ports of the aggregate, sorted by key.
-   */
   readonly ports: readonly PortModel[];
   readonly commands: readonly CommandModel[];
   readonly policies: readonly PolicyModel[];
@@ -114,13 +70,7 @@ export interface AggregateModel {
 }
 
 export interface ProjectionModel extends ModuleRef {
-  /**
-   * The aggregate whose event it projects, from its folder: `projections/order/...` → `order`.
-   */
   readonly aggregate: string;
-  /**
-   * The event key from the file name: `order-placed.ts` → `orderPlaced`.
-   */
   readonly eventKey: string;
 }
 
@@ -133,9 +83,7 @@ export interface ReadModelModel {
   readonly name: string;
   readonly directory: string;
   readonly view: ModuleRef;
-  /**
-   * The ports of the read model, sorted by key; only its queries' handlers receive them.
-   */
+  // Only the read model's query handlers receive them.
   readonly ports: readonly PortModel[];
   readonly projections: readonly ProjectionModel[];
   readonly queries: readonly QueryModel[];
@@ -154,10 +102,6 @@ export interface GenerateWarning {
   readonly message: string;
 }
 
-/**
- * Everything the generator knows about a project, in a stable order: aggregates, read models and
- * their modules sorted by name.
- */
 export interface ProjectModel {
   readonly root: string;
   readonly appDir: string;

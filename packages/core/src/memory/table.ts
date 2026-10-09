@@ -11,10 +11,8 @@ export interface CreateMemoryTableArgs {
   readonly fields: FieldsRecord;
 }
 
-/**
- * A table held in memory whose `snapshot` returns what puts its rows back the way they were.
- */
 export interface MemoryTable<Row> extends Table<Row> {
+  // Returns what puts the rows back the way they were.
   snapshot(): () => void;
 }
 
@@ -33,11 +31,7 @@ const compare = (a: unknown, b: unknown): number => {
   return (a as number) < (b as number) ? -1 : 1;
 };
 
-/**
- * A read-model table held in memory that behaves as the SQLite one: `where` compares dates and
- * JSON by value, `null` means no value, every read returns fresh copies, and the view, `unique()`,
- * required fields and limits are checked as SQLite checks them.
- */
+// Behaves as the SQLite table, checks included: the table contract runs against both.
 export const createMemoryTable: CreateMemoryTableFunction = <Row extends object>({
   name,
   fields,
@@ -170,10 +164,6 @@ export interface CreateMemoryReadClientFunction {
   }): ReadClient<Row, Table<Row>>;
 }
 
-/**
- * The read client of the in-memory adapter. It runs no SQL: queries against the in-memory adapter
- * use `table`. `raw` is the table itself.
- */
 export const createMemoryReadClient: CreateMemoryReadClientFunction = <Row extends object>({
   name,
   table,

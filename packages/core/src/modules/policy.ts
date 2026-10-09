@@ -12,12 +12,10 @@ export interface PolicyModule {
   readonly delay?: DurationInput;
 }
 
-/**
- * A policy in the registry: its module and the aggregate whose events it reacts to when that is
- * not the one it lives in (`policies/<aggregate>/...`).
- */
 export interface PolicyEntry {
   readonly module: PolicyModule;
+  // The aggregate whose events it reacts to, when that is not the one it lives in
+  // (`policies/<aggregate>/...`).
   readonly source?: string;
 }
 

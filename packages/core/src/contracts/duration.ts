@@ -33,10 +33,6 @@ export interface ParseDurationFunction {
   (input: LooseDurationInput): number;
 }
 
-/**
- * Converts a duration input to milliseconds. Throws `ValidationError` on malformed strings or
- * negative numbers.
- */
 export const parseDuration: ParseDurationFunction = (input) => {
   if (typeof input === "number") {
     if (!Number.isFinite(input) || input < 0) {

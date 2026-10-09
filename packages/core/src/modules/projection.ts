@@ -1,10 +1,6 @@
 import type { ReadClient, Table } from "../adapter/storage/table.ts";
 import { capitalize } from "./naming.ts";
 
-/**
- * The shape of a projection module. `on` overrides the event type derived from the file name and
- * may list several events.
- */
 export interface ProjectionModule {
   readonly project: (args: never) => unknown;
   readonly on?: string | readonly string[];

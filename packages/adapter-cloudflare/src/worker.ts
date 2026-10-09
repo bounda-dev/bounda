@@ -28,9 +28,6 @@ export interface CreateWorkerFunction {
   (args: CreateWorkerArgs): ExportedHandler<Cloudflare.Env>;
 }
 
-/**
- * The header `createWorker` reads the tenant from by default.
- */
 export const TENANT_HEADER: "x-bounda-tenant" = "x-bounda-tenant";
 
 const STATUS_BY_CODE: Readonly<Record<string, number>> = {

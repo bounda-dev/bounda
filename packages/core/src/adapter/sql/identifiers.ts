@@ -6,9 +6,6 @@ export interface ToSnakeCaseFunction {
   (name: string): string;
 }
 
-/**
- * `orderSummary` → `order_summary`, `paidAt` → `paid_at`. Kebab-case dashes become underscores.
- */
 export const toSnakeCase: ToSnakeCaseFunction = (name) =>
   name
     .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
@@ -19,9 +16,6 @@ export interface FromSnakeCaseFunction {
   (name: string): string;
 }
 
-/**
- * `paid_at` → `paidAt`. The inverse of `toSnakeCase` for column names coming back from a query.
- */
 export const fromSnakeCase: FromSnakeCaseFunction = (name) =>
   name.replace(/_+([a-z0-9])/g, (_, character: string) => character.toUpperCase());
 
@@ -34,10 +28,7 @@ export interface AssertIdentifierFunction {
   (args: AssertIdentifierArgs): string;
 }
 
-/**
- * Returns `name` when it matches `^[a-z][a-z0-9_]*$`, so a table or column name can never carry
- * SQL; throws `ConfigurationError` naming `subject` otherwise.
- */
+// So a table or column name can never carry SQL.
 export const assertIdentifier: AssertIdentifierFunction = ({ name, subject }) => {
   if (!IDENTIFIER.test(name)) {
     throw new ConfigurationError(

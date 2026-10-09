@@ -18,38 +18,21 @@ import type { QueryModule, QueryResultOf } from "./query.ts";
 import type { UpcastsModule } from "./upcast.ts";
 import type { ViewModule } from "./view.ts";
 
-/**
- * One aggregate in the registry: its optional state module and everything found under its folder.
- */
 export interface AggregateEntry {
   readonly state?: StateModule;
   readonly events: EventModules;
-  /**
-   * The `<event>.upcast.ts` modules found next to the events, keyed like `events`. Only events
-   * whose payload has changed shape have one.
-   */
+  // Keyed like `events`; only events whose payload has changed shape have one.
   readonly upcasts?: Readonly<Record<string, UpcastsModule>>;
-  /**
-   * The implementations of every port of the aggregate (`infrastructure/<port>/<name>.ts`), which every handler
-   * of its commands, policies and processes receives once the configuration has chosen one.
-   */
   readonly ports?: PortModules;
   readonly commands: Readonly<Record<string, CommandEntry>>;
   readonly policies: Readonly<Record<string, PolicyEntry>>;
   readonly processes: Readonly<Record<string, ProcessEntry>>;
 }
 
-/**
- * One read model in the registry. Projections are grouped by the aggregate whose events they
- * project, then keyed by event: `projections.order.orderPlaced`.
- */
 export interface ReadModelEntry {
   readonly view: ViewModule;
-  /**
-   * The implementations of every port of the read model (`infrastructure/<port>/<name>.ts`),
-   * which its queries' handlers receive once the configuration has chosen one.
-   */
   readonly ports?: PortModules;
+  // By the aggregate whose events they project, then by event: `projections.order.orderPlaced`.
   readonly projections: Readonly<Record<string, Readonly<Record<string, ProjectionModule>>>>;
   readonly queries: Readonly<Record<string, QueryModule>>;
 }

@@ -40,15 +40,9 @@ import { createProblemCollector, type ProblemCollector } from "./problems.ts";
 
 export interface DiscoverProjectArgs {
   readonly root: string;
-  /**
-   * The application directory under `root`. Defaults to `app`.
-   */
   readonly appDir?: string;
 }
 
-/**
- * The project model, with what the layout probably got wrong without breaking a convention.
- */
 export interface DiscoveredProject extends ProjectModel {
   readonly warnings: readonly GenerateWarning[];
 }
@@ -1039,13 +1033,9 @@ const checkProjectionEvents = async (
   }
 };
 
-/**
- * Reads the project layout under `<root>/<appDir>` and returns what the generator needs. Names
- * come from files and directories, and no module is imported: the only text read is what the
- * modules at an aggregate's or a read model's root export, whether a policy or a projection
- * exports `on`, and the interface a port declares.
- * Every convention breach is collected and thrown together as one `ConventionError`.
- */
+// No module is imported: the only text read is what the modules at an aggregate's or a read
+// model's root export, whether a policy or a projection exports `on`, and the interface a port
+// declares.
 export const discoverProject: DiscoverProjectFunction = async ({ root, appDir = "app" }) => {
   const problems = createProblemCollector();
   const app = join(root, appDir);
