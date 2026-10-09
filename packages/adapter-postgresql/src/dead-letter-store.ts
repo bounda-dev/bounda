@@ -7,6 +7,7 @@ import type {
   DeadLetterStore,
   ListDeadLettersArgs,
 } from "@bounda-dev/core/adapter";
+import { postgresqlDialect } from "@bounda-dev/core/adapter/sql";
 import type { PostgresqlDatabase } from "./database.ts";
 
 export interface CreatePostgresqlDeadLetterStoreArgs {
@@ -86,7 +87,7 @@ export const createPostgresqlDeadLetterStore: CreatePostgresqlDeadLetterStoreFun
           letter.attempts,
           letter.firstFailedAt,
           letter.lastFailedAt,
-          letter.payload === undefined ? null : letter.payload,
+          postgresqlDialect.encode("json", letter.payload),
         ],
       );
       return (await get(letter.id)) as DeadLetter;

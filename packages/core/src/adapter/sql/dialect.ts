@@ -93,7 +93,15 @@ export const sqliteDialect: SqlDialect = {
  * or `timestamptz` into a `jsonb` column. An object is left untyped, so the server types it `jsonb`
  * and the driver serialises it with `JSON.stringify`, which calls `toJSON`.
  */
-const jsonParameter = (value: unknown): { toJSON(): unknown } => ({ toJSON: () => value });
+const jsonParameter = (value: unknown): { toJSON(): unknown } => ({
+  // `JSON.stringify` calls one `toJSON` per value: this one, so the value's own, a date's
+  // included, is called here.
+  toJSON: () => {
+    const own: unknown =
+      typeof value === "object" && value !== null ? Reflect.get(value, "toJSON") : undefined;
+    return typeof own === "function" ? own.call(value, "") : value;
+  },
+});
 
 /**
  * PostgreSQL: `$n` placeholders, native booleans and timestamps, JSON as `jsonb`. The driver

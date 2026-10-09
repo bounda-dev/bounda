@@ -5,7 +5,7 @@ import type {
   ScheduledCommand,
   Scheduler,
 } from "@bounda-dev/core/adapter";
-import { earliestDue } from "@bounda-dev/core/adapter/sql";
+import { earliestDue, postgresqlDialect } from "@bounda-dev/core/adapter/sql";
 import type { PostgresqlDatabase } from "./database.ts";
 
 export interface CreatePostgresqlSchedulerArgs {
@@ -98,9 +98,9 @@ export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ d
           dedupeKey,
           command.type,
           command.aggregateId,
-          command.payload,
+          postgresqlDialect.encode("json", command.payload),
           executeAt.toISOString(),
-          context,
+          postgresqlDialect.encode("json", context),
         ],
       ),
     cancel: (dedupeKey) => db.run(`DELETE FROM ${table} WHERE "dedupe_key" = $1`, [dedupeKey]),
