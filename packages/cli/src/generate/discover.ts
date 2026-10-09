@@ -883,6 +883,25 @@ const checkUniqueNames = (
   readModels: readonly ReadModelModel[],
 ): void => {
   for (const aggregate of aggregates) checkUniqueReactions(context, aggregate);
+  // `app.commands` and `app.queries` are one namespace each, across aggregates and read models.
+  const claimed = new Map<string, string>();
+  const claim = (key: string, path: string, what: "command" | "query"): void => {
+    const first = claimed.get(`${what}:${key}`);
+    if (first === undefined) {
+      claimed.set(`${what}:${key}`, moduleRef(context, path).relativePath);
+      return;
+    }
+    context.problems.add(
+      path,
+      `the ${what} "${key}" is also ${first}; ${what === "command" ? "commands" : "queries"} share one namespace across the app, so give one of them another name`,
+    );
+  };
+  for (const aggregate of aggregates) {
+    for (const command of aggregate.commands) claim(command.key, command.path, "command");
+  }
+  for (const readModel of readModels) {
+    for (const query of readModel.queries) claim(query.key, query.path, "query");
+  }
   const names = new Set(aggregates.map((aggregate) => aggregate.name));
   for (const readModel of readModels) {
     if (names.has(readModel.name)) {
@@ -894,13 +913,6 @@ const checkUniqueNames = (
   }
 };
 
-/**
- * Reads the project layout under `<root>/<appDir>` and returns what the generator needs. Names
- * come from files and directories, and no module is imported: the only text read is, at an
- * aggregate's root, what each module exports, and at an aggregate's or a read model's, the
- * interface a port declares.
- * Every convention breach is collected and thrown together as one `ConventionError`.
- */
 const resolvePolicyTriggers = (
   context: Context,
   aggregates: readonly AggregateModel[],
@@ -955,6 +967,13 @@ const checkProjectionEvents = async (
   }
 };
 
+/**
+ * Reads the project layout under `<root>/<appDir>` and returns what the generator needs. Names
+ * come from files and directories, and no module is imported: the only text read is, at an
+ * aggregate's root, what each module exports, and at an aggregate's or a read model's, the
+ * interface a port declares.
+ * Every convention breach is collected and thrown together as one `ConventionError`.
+ */
 export const discoverProject: DiscoverProjectFunction = async ({ root, appDir = "app" }) => {
   const problems = createProblemCollector();
   const app = join(root, appDir);

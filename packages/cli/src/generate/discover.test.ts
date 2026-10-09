@@ -929,6 +929,23 @@ describe("discoverProject convention problems", () => {
     ]);
   });
 
+  it("rejects a command or a query whose key another aggregate or read model already has", async () => {
+    const root = await project([
+      "app/domain/order/order-placed.ts",
+      "app/domain/order/commands/create.ts",
+      "app/domain/customer/customer-registered.ts",
+      "app/domain/customer/commands/create.ts",
+      "app/read/orders/view.ts",
+      "app/read/orders/queries/count.ts",
+      "app/read/customers/view.ts",
+      "app/read/customers/queries/count.ts",
+    ]);
+    expect(await problemsOf(root)).toEqual([
+      'app/domain/order/commands/create.ts: the command "create" is also app/domain/customer/commands/create.ts; commands share one namespace across the app, so give one of them another name',
+      'app/read/orders/queries/count.ts: the query "count" is also app/read/customers/queries/count.ts; queries share one namespace across the app, so give one of them another name',
+    ]);
+  });
+
   it("rejects an aggregate's own folder and aggregate folders inside another's", async () => {
     const root = await project([
       "app/domain/order/order-placed.ts",
