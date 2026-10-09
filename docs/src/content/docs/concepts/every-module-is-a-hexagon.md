@@ -97,7 +97,7 @@ receives them: a query that completes its rows with an exchange rate or a profil
 Projections and `repository` get none. A projection commits exactly once per batch and replays its
 whole history on a rebuild, so an outside call there would be repeated and could answer
 differently the second time; the reasons are in
-[Ports of a read model](/guides/project-layout/#ports-of-a-read-model).
+[Ports of a read model](/guides/read-models/#ports).
 
 ## Where it comes from, and the closest mechanics
 
@@ -159,14 +159,14 @@ it is for. *Implementation* is the plain word TypeScript already uses for fulfil
 - **Repeating a call.** A port is a seam, not a guarantee. A command handler may run again on a
   concurrency retry, and a reaction runs at least once, so a call through a port must be safe to
   repeat: pass the `idempotencyKey` the handler receives
-  ([calling the outside world](/guides/reacting-to-events/#calling-the-outside-world)).
+  ([calling the outside world](/guides/calling-the-outside-world/)).
 - **The calling side.** These are the ports the domain calls out through. What calls in, a route
   or a webhook, is the host's code, which dispatches commands and runs queries on the app.
 
 ## Where to read more
 
 - [Ports](/guides/project-layout/#ports-portts) and
-  [ports of a read model](/guides/project-layout/#ports-of-a-read-model), for how to declare,
+  [ports of a read model](/guides/read-models/#ports), for how to declare,
   implement and choose them.
 - [Doubles](/guides/testing/#doubles), for what a test passes instead.
 - [How Bounda runs](/concepts/how-it-runs/#the-way-out-one-store-per-tenant), for the store per

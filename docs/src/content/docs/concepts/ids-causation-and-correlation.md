@@ -159,7 +159,7 @@ Router sense, is the host's: the place where a request dispatches a command.
 
 ## Where to read more
 
-- [Calling the outside world](/guides/reacting-to-events/#calling-the-outside-world), for keys and
+- [Calling the outside world](/guides/calling-the-outside-world/), for keys and
   derived ids in a handler, and [Every step is idempotent](/guides/sagas/#every-step-is-idempotent).
 - [Observability](/reference/observability/), for the spans and their attributes.
 - The other frameworks: Axon's [message correlation](https://docs.axoniq.io/axon-framework-reference/4.11/messaging-concepts/message-correlation/),

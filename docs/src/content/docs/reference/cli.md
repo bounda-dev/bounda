@@ -175,7 +175,7 @@ scheduled command its aggregate now rejects is `retried` too: the rejection is t
 answer, and it is logged as `command rejected`. A letter the app can no longer retry, or that
 another retry or discard settled first, even while this one ran, is refused the same way. For a
 process letter it also handles the events parked behind it, and says so when one of them failed
-the process again. See [Reacting to events](/guides/reacting-to-events/#dead-letters) for what a
+the process again. See [Reacting to events](/guides/dead-letters/) for what a
 retry does per kind.
 
 ## Programmatic use

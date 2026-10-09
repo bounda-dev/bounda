@@ -42,7 +42,7 @@ model (see [below](#an-external-index-is-another-kind-of-read-model)).
 
 ## Why a projection gets no ports
 
-The [project layout](/guides/project-layout/#ports-of-a-read-model) lists the three reasons in
+The [project layout](/guides/read-models/#ports) lists the three reasons in
 three lines. Each one is enough on its own; here is why.
 
 **Exactly once ends at the edge of the transaction.** What a projection writes to its tables is
@@ -84,12 +84,12 @@ decision, or the one from the moment someone reads?
   the stock, a price) and puts what it learned into the event it returns. The history then says
   what the decision was based on, every rebuild sees the same value, and the projection copies it
   like any other field. A call made there is safe to repeat and harmless if the decision never
-  lands ([calling the outside world](/guides/reacting-to-events/#calling-the-outside-world)).
+  lands ([calling the outside world](/guides/calling-the-outside-world/)).
 - **In the query, at read.** A read model has ports too, and they go to the `handler` of its
   queries only, not to `repository` and not to projections. A query that completes its rows with
   something fresh, a profile picture or today's rate for a display, calls it there; a query only
   reads, so a port that fails fails that query and nothing else
-  ([ports of a read model](/guides/project-layout/#ports-of-a-read-model)).
+  ([ports of a read model](/guides/read-models/#ports)).
 
 The rate applied to an order belongs in `OrderPlaced`; the rate shown next to a dashboard total
 belongs in the query.
@@ -102,7 +102,7 @@ to make a second delivery harmless. Today that is a policy of the aggregate whos
 indexes, with a port to the index: each write is an upsert by the aggregate's id carrying
 `event.version`, and the index keeps a document only when that version is newer than the one it
 holds. Elasticsearch compares the version itself with external versioning
-([keeping an external index](/guides/reacting-to-events/#keeping-an-external-index)).
+([keeping an external index](/guides/calling-the-outside-world/#keeping-an-external-index)).
 
 This is the design Oskar Dudycz describes for Marten. His Elasticsearch projection runs only in
 Marten's asynchronous daemon, and its inline path throws, so that indexing is never part of the
@@ -123,8 +123,8 @@ ignored.
 
 ## Where to read more
 
-- [Ports of a read model](/guides/project-layout/#ports-of-a-read-model) and
-  [keeping an external index](/guides/reacting-to-events/#keeping-an-external-index), the how.
+- [Ports of a read model](/guides/read-models/#ports) and
+  [keeping an external index](/guides/calling-the-outside-world/#keeping-an-external-index), the how.
 - [What more instances do](/concepts/how-it-runs/#what-more-instances-do),
   for the lock and the transaction per batch, and
   [At least once, and exactly once per batch](/concepts/delivery-guarantees/).

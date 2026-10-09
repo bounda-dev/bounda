@@ -79,7 +79,7 @@ derives a key for each with `idempotencyKeyFor(idempotencyKey, "refund")`, and t
 reaction dispatches get ids derived from its key, so an attempt that runs again and schedules the
 same command stores it once. A provider that accepts no key needs the same care by other means: an
 upsert by id, or a check of the event's `version`, as in
-[keeping an external index](/guides/reacting-to-events/#keeping-an-external-index).
+[keeping an external index](/guides/calling-the-outside-world/#keeping-an-external-index).
 
 ## Exactly once per batch, for projections
 
@@ -103,7 +103,7 @@ keeps its checkpoint in that database, next to its rows, because a transaction c
 - **Anything a projection does outside `table` and `client`.** `client.raw` is inside, since in a
   batch it is the driver's transaction handle. An HTTP call or a write to another database is not:
   a batch that rolls back makes it again. That is why projections get no ports
-  ([why](/guides/project-layout/#ports-of-a-read-model)) and an external index is fed by a policy.
+  ([why](/guides/read-models/#ports)) and an external index is fed by a policy.
 - **A rebuild.** [`bounda rebuild`](/guides/deployment/#rebuilding-a-read-model) replays history
   into a fresh table on purpose. Exactly once holds per table, not across rebuilds.
 - **The provider's side of a reaction.** Without a key the provider honours, at least once means

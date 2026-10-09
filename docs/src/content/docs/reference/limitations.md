@@ -25,6 +25,6 @@ get today. Each item says why, so nobody discovers it the hard way:
   `pollInterval`; only the event dispatcher is woken by `NOTIFY`. See [Tuning](/guides/deployment/#tuning).
 
 What a production app does get, and where it is explained: [rebuilding a read model](/guides/deployment/#rebuilding-a-read-model)
-without taking it offline, [dead letters with a way out](/guides/reacting-to-events/#dead-letters),
+without taking it offline, [dead letters with a way out](/guides/dead-letters/),
 [upcasters](/guides/changing-events/) for events whose payload changed, [observability](/reference/observability/)
 through OpenTelemetry, and a dispatcher that reacts in milliseconds on PostgreSQL.

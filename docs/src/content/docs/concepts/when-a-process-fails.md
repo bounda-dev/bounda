@@ -107,8 +107,8 @@ There is no cap like Axon's either: a parked event is one more event in one inst
 
 ## Where to read more
 
-- [A failed process](/guides/reacting-to-events/#a-failed-process) and
-  [Dead letters](/guides/reacting-to-events/#dead-letters), the rules in the terms of the
+- [A failed process](/guides/dead-letters/#a-failed-process) and
+  [Dead letters](/guides/dead-letters/), the rules in the terms of the
   handler's code, and [`bounda dead-letters`](/reference/cli/#bounda-dead-letters).
 - [Deadlines are state](/concepts/deadlines-are-state/), for the deadlines a failed instance holds.
 - [Your event store is your outbox](/concepts/event-store-as-outbox/), for why the failure and its

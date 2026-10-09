@@ -2,7 +2,7 @@
 title: Bounda with React Router
 description: Boot the app once from a middleware, dispatch commands from actions and read queries from loaders.
 sidebar:
-  order: 5
+  order: 8
 ---
 
 `@bounda-dev/react-router` puts a running Bounda app in the router context of every request. It

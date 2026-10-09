@@ -226,10 +226,16 @@ See [adapters](/adapters/).
 
 - [Core concepts](/getting-started/core-concepts/): every word the docs use, one line each.
 - [Project layout](/guides/project-layout/): every kind of module, with a template each.
-- [Reacting to events](/guides/reacting-to-events/): policies, processes, retries, and what to do
-  with a dead letter.
+- [Read models](/guides/read-models/): the view, the projections that fill it and the queries
+  that read it.
+- [Reacting to events](/guides/reacting-to-events/): when a policy is enough, when the work needs
+  a process, deadlines and retries.
+- [Calling the outside world](/guides/calling-the-outside-world/): where an effect goes, and how
+  the idempotency key keeps it from happening twice.
 - [Sagas and compensation](/guides/sagas/): a business transaction of several steps, and how each
   one is undone when a later one fails.
+- [Dead letters and failed processes](/guides/dead-letters/): retrying or discarding a run that
+  failed for good.
 - [Testing](/guides/testing/): an app in memory, a clock you move by hand, and assertions that
   do not flake.
 - [Changing an event's shape](/guides/changing-events/): an upcaster next to the event, applied as

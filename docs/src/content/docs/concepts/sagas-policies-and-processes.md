@@ -121,7 +121,7 @@ with it.
   model, such as an order in `paying` that `cancelOrder` refuses, and it narrows a race rather than
   closing it ([the semantic lock is state](/guides/sagas/#the-semantic-lock-is-state)).
 - **A compensation that fails for good.** It is not compensated in turn. It becomes a
-  [dead letter](/guides/reacting-to-events/#dead-letters), for an operator to fix and retry; what
+  [dead letter](/guides/dead-letters/), for an operator to fix and retry; what
   happens to the instance meanwhile is [When a process fails](/concepts/when-a-process-fails/).
 - **Effects outside the store.** A compensation decides inside the store; giving money back happens
   in a policy that reacts to the event it stored, with its `idempotencyKey`, at least once.

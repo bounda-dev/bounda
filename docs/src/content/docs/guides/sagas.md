@@ -2,7 +2,7 @@
 title: Sagas and compensation
 description: A business transaction of several steps, each with a way back, built from a process and plain commands.
 sidebar:
-  order: 2
+  order: 4
 ---
 
 A saga is a business transaction made of several steps, each committed on its own, where a step
@@ -132,7 +132,7 @@ export const handler = ({ command, state, events }: Command.HandlerArgs) => {
 
 The effect of the compensation, giving the money back, is not in the command. `RefundRequested`
 is stored first, and a policy carries it out with its `idempotencyKey`, as any
-[effect after the commit](/guides/reacting-to-events/#calling-the-outside-world):
+[effect after the commit](/guides/calling-the-outside-world/):
 
 ```ts
 // payment/policies/refund-on-refund-requested.ts
@@ -180,7 +180,7 @@ failure, so every step tolerates being repeated:
   expects with [`runUntilIdle()`](/guides/testing/#rejections-inside-reactions).
 - **Ids that leave the app are deterministic.** The process derives the payment's id from its key,
   `idempotencyKeyFor(idempotencyKey, "payment")`, as any reaction does for an id it creates (see
-  [Calling the outside world](/guides/reacting-to-events/#calling-the-outside-world)). A retry
+  [Calling the outside world](/guides/calling-the-outside-world/)). A retry
   dispatches `requestPayment` with the same id, and that command's `idempotencyKey` is what it
   hands the provider, so the retry asks for the same intent with the same parameters.
 
@@ -266,7 +266,7 @@ under the same `idempotencyKey`; a refusal is an answer, rejection or event, and
 compensated.
 
 A compensation that fails for good is not compensated in turn. It becomes a
-[dead letter](/guides/reacting-to-events/#dead-letters): an operator looks at it, fixes the
+[dead letter](/guides/dead-letters/): an operator looks at it, fixes the
 cause and retries it.
 
 The storefront cancels the order at the first declined payment, for simplicity. In Stripe a

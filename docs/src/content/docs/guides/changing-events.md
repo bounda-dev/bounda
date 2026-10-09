@@ -2,7 +2,7 @@
 title: Changing an event's shape
 description: Events are forever; their payloads are not. An upcaster module next to the event brings old ones up to date as they are read, one version at a time.
 sidebar:
-  order: 4
+  order: 7
 ---
 
 A stored event never changes. Its payload was written by the code of its day, and a year later

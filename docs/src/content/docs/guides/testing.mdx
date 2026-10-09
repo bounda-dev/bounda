@@ -2,7 +2,7 @@
 title: Testing
 description: An app in memory, a clock that only moves when told to, and assertions that do not flake.
 sidebar:
-  order: 3
+  order: 6
 ---
 
 import { TabItem, Tabs } from "@astrojs/starlight/components";
@@ -128,7 +128,7 @@ for every day the clock skipped, in order, before it resolves.
 Retries are the one wait you never advance for. A policy, a process handler or a scheduled command
 that fails with an error worth retrying waits for its back-off, and `runUntilIdle()` moves the
 clock to it itself: by the time it resolves, every such failure has been retried until it went
-through or gave up as a [dead letter](/guides/reacting-to-events/#dead-letters). A test of a
+through or gave up as a [dead letter](/guides/dead-letters/). A test of a
 provider that fails once dispatches, runs until idle and asserts the second call; `clock.now()`
 says how far the retries took it. It never moves the clock past the last retry: what is
 scheduled before it runs on the way, in order, and what is scheduled after it waits for your
