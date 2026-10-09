@@ -76,6 +76,32 @@ describe("a Bounda Durable Object", () => {
     expect(await alarmOf(stub)).toBeNull();
   });
 
+  it("answers an eventual command once its events are stored and projects them in its alarm", async () => {
+    const stub = env.QUIET_STORE.get(env.QUIET_STORE.newUniqueId());
+    const before = Date.now();
+    // In one event of the object, its alarm cannot run between the command and the query.
+    const seen = await runInDurableObject(stub, async (instance, state) => ({
+      placed: await instance.command(
+        "placeOrder",
+        { orderId: "o-1", total: 42, customer: "ada" },
+        undefined,
+        "eventual",
+      ),
+      found: await instance.query("getOrder", { orderId: "o-1" }),
+      alarm: await state.storage.getAlarm(),
+    }));
+    expect(seen.placed).toMatchObject({ ok: true, value: { scheduled: false, version: 1 } });
+    expect(seen.found).toEqual({ ok: true, value: null });
+    expect(seen.alarm).toBeGreaterThanOrEqual(before);
+    expect(seen.alarm).toBeLessThanOrEqual(Date.now());
+
+    await runDurableObjectAlarm(stub);
+    const store = connect<typeof quietRegistry>(stub);
+    expect(await store.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "placed" });
+    expect((await store.getLag()).maxLag).toBe(0);
+    expect(await alarmOf(stub)).toBeNull();
+  });
+
   it("arms its alarm for a scheduled command and runs it once the clock gets there", async () => {
     const { stub, store } = open();
     await store.commands.placeOrder({ orderId: "o-2", total: 7, customer: "ada" });

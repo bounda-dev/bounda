@@ -6,6 +6,7 @@ import type {
   CommandHandlerArgs,
   CommandInvoker,
   CommandsFacade,
+  Consistency,
   CreateArgs,
   CreateImplementation,
   DecidedDispatch,
@@ -555,6 +556,7 @@ describe("facades", () => {
       .parameter(0)
       .toEqualTypeOf<CatchUpReadModelsArgs | undefined>();
     expectTypeOf<CatchUpReadModelsArgs["through"]>().toEqualTypeOf<DispatchResult | undefined>();
+    expectTypeOf<Consistency>().toEqualTypeOf<"read-your-writes" | "eventual">();
   });
 
   it("type a command's result by whether it has a delay", async () => {

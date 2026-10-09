@@ -1,14 +1,16 @@
-import type {
-  AppLag,
-  AppRegistry,
-  CommandsFacade,
-  DeadLetter,
-  DispatchOptions,
-  DispatchResult,
-  ListDeadLettersArgs,
-  QueriesFacade,
-  RebuildReadModelResult,
-  Registry,
+import {
+  type AppLag,
+  type AppRegistry,
+  type CommandsFacade,
+  ConfigurationError,
+  type Consistency,
+  type DeadLetter,
+  type DispatchOptions,
+  type DispatchResult,
+  type ListDeadLettersArgs,
+  type QueriesFacade,
+  type RebuildReadModelResult,
+  type Registry,
 } from "@bounda-dev/core";
 import { unwrap } from "./outcome.ts";
 
@@ -18,7 +20,12 @@ import { unwrap } from "./outcome.ts";
  * outcome, which `connect` unwraps.
  */
 export interface BoundaStub {
-  command(name: string, payload?: unknown, options?: DispatchOptions): PromiseLike<unknown>;
+  command(
+    name: string,
+    payload?: unknown,
+    options?: DispatchOptions,
+    consistency?: Consistency,
+  ): PromiseLike<unknown>;
   query(name: string, payload?: unknown): PromiseLike<unknown>;
   lag(): PromiseLike<unknown>;
   listDeadLetters(args?: ListDeadLettersArgs): PromiseLike<unknown>;
@@ -48,9 +55,31 @@ export interface BoundaClient<R extends Registry> {
   rebuildReadModel(name: string): Promise<RebuildReadModelResult>;
 }
 
-export interface ConnectFunction {
-  <R extends Registry = AppRegistry>(stub: BoundaStub): BoundaClient<R>;
+export interface ConnectOptions {
+  /**
+   * Whether a command resolves once the read models reflect it, `"read-your-writes"` by default,
+   * or as soon as its events are stored, `"eventual"`, with the object's alarm projecting them
+   * right after.
+   */
+  readonly consistency?: Consistency;
 }
+
+export interface ConnectFunction {
+  <R extends Registry = AppRegistry>(stub: BoundaStub, options?: ConnectOptions): BoundaClient<R>;
+}
+
+export interface CheckConsistencyFunction {
+  (consistency: Consistency): void;
+}
+
+// A Worker's code is not always type-checked.
+export const checkConsistency: CheckConsistencyFunction = (consistency) => {
+  if (consistency !== "read-your-writes" && consistency !== "eventual") {
+    throw new ConfigurationError(
+      `consistency must be "read-your-writes" or "eventual", got ${JSON.stringify(consistency)}`,
+    );
+  }
+};
 
 const sendable = (options: DispatchOptions | undefined): DispatchOptions | undefined => {
   if (options === undefined) return undefined;
@@ -76,21 +105,27 @@ const byName = <T extends object>(call: (name: string, ...args: unknown[]) => un
  * const store = connect(env.STORE.get(env.STORE.idFromName(tenant)));
  * await store.commands.placeOrder({ orderId, customerId, total });
  * ```
+ *
+ * Throws `ConfigurationError` for a `consistency` it does not know.
  */
 export const connect: ConnectFunction = <R extends Registry = AppRegistry>(
   stub: BoundaStub,
-): BoundaClient<R> => ({
-  commands: byName<CommandsFacade<R>>(async (name, payload, options) =>
-    unwrap<DispatchResult>(
-      stub.command(name, payload, sendable(options as DispatchOptions | undefined)),
+  { consistency = "read-your-writes" }: ConnectOptions = {},
+): BoundaClient<R> => {
+  checkConsistency(consistency);
+  return {
+    commands: byName<CommandsFacade<R>>(async (name, payload, options) =>
+      unwrap<DispatchResult>(
+        stub.command(name, payload, sendable(options as DispatchOptions | undefined), consistency),
+      ),
     ),
-  ),
-  queries: byName<QueriesFacade<R>>((name, payload) => unwrap(stub.query(name, payload))),
-  getLag: () => unwrap<AppLag>(stub.lag()),
-  deadLetters: {
-    list: (args) => unwrap<readonly DeadLetter[]>(stub.listDeadLetters(args)),
-    retry: (id) => unwrap<DeadLetter>(stub.retryDeadLetter(id)),
-    discard: (id) => unwrap<DeadLetter>(stub.discardDeadLetter(id)),
-  },
-  rebuildReadModel: (name) => unwrap<RebuildReadModelResult>(stub.rebuildReadModel(name)),
-});
+    queries: byName<QueriesFacade<R>>((name, payload) => unwrap(stub.query(name, payload))),
+    getLag: () => unwrap<AppLag>(stub.lag()),
+    deadLetters: {
+      list: (args) => unwrap<readonly DeadLetter[]>(stub.listDeadLetters(args)),
+      retry: (id) => unwrap<DeadLetter>(stub.retryDeadLetter(id)),
+      discard: (id) => unwrap<DeadLetter>(stub.discardDeadLetter(id)),
+    },
+    rebuildReadModel: (name) => unwrap<RebuildReadModelResult>(stub.rebuildReadModel(name)),
+  };
+};

@@ -4,6 +4,7 @@ import {
   type BoundaApp,
   type Clock,
   ConfigurationError,
+  type Consistency,
   createApp,
   type DeadLetter,
   type DispatchOptions,
@@ -59,14 +60,16 @@ export interface CreateBoundaObjectArgs<R extends Registry> {
  */
 export interface BoundaObjectMethods {
   /**
-   * Dispatches a command. When it resolves its events are stored and every read model reflects
-   * them, so a query issued next sees them. Policies and processes run right after, in the
-   * object's alarm.
+   * Dispatches a command. When it resolves its events are stored and, under
+   * `"read-your-writes"`, the default, every read model reflects them, so a query issued next
+   * sees them; under `"eventual"` the object's alarm brings the read models up to date. Policies
+   * and processes run right after, in the object's alarm.
    */
   command(
     name: string,
     payload?: unknown,
     options?: DispatchOptions,
+    consistency?: Consistency,
   ): Promise<RpcOutcome<DispatchResult>>;
   query(name: string, payload?: unknown): Promise<RpcOutcome<unknown>>;
   lag(): Promise<RpcOutcome<AppLag>>;
@@ -135,10 +138,10 @@ const errorMessage = (error: unknown): string =>
 /**
  * Builds the Durable Object class that runs one Bounda store: the app's events, ledgers and read
  * models in the object's SQLite, with no background loop. A command updates the read models
- * before it resolves; policies, processes, scheduled commands and retries run in the object's
- * alarm, which it arms itself for whatever comes next. One object is one store: give each tenant
- * its own with `idFromName(tenant)`. The object's `env` is what port implementations
- * receive in `create`, once per object.
+ * before it resolves unless the caller asks for `"eventual"` consistency; policies, processes,
+ * scheduled commands and retries run in the object's alarm, which it arms itself for whatever
+ * comes next. One object is one store: give each tenant its own with `idFromName(tenant)`. The
+ * object's `env` is what port implementations receive in `create`, once per object.
  */
 export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registry>({
   registry,
@@ -227,6 +230,7 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
       name: string,
       payload?: unknown,
       options?: DispatchOptions,
+      consistency: Consistency = "read-your-writes",
     ): Promise<RpcOutcome<DispatchResult>> {
       return settle(async () => {
         const app = this.#ready();
@@ -235,7 +239,8 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
           | undefined;
         if (typeof dispatch !== "function") throw new NotFoundError(`Unknown command "${name}"`);
         const result = await dispatch(payload, options);
-        await app.catchUpReadModels({ through: result });
+        // Under "eventual" the read models are behind, so the rearm arms the alarm for now.
+        if (consistency !== "eventual") await app.catchUpReadModels({ through: result });
         await this.#rearm(false, true);
         return result;
       });

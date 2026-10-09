@@ -36,10 +36,12 @@ their settings.
   plugin, defaults to `"read-your-writes"`: the app it puts in every request's context is wrapped
   in `readYourWrites`. `"eventual"` serves the app as booted, for pages that tolerate the delay
   ([Reading what you just wrote](/guides/react-router/#reading-what-you-just-wrote)).
-- **Cloudflare.** The Durable Object's command call runs `catchUpReadModels({ through })` after
-  the dispatch and before it answers, so the projections run inside the command's request and a
-  command is read-your-writes by construction. Policies, processes and scheduled commands run in
-  the object's alarm afterwards ([how it runs](/adapters/cloudflare/#how-it-runs)).
+- **Cloudflare.** `connect(stub, { consistency })` and `createWorker({ consistency })` default to
+  `"read-your-writes"`: the Durable Object's command call runs `catchUpReadModels({ through })`
+  after the dispatch and before it answers, so the projections run inside the command's request.
+  `"eventual"` answers once the events are stored, and the object's alarm projects them right
+  after. Policies, processes and scheduled commands run in the alarm either way
+  ([how it runs](/adapters/cloudflare/#how-it-runs)).
 - **Anything else.** A script, a test or another framework picks: `readYourWrites(app)`, one
   `catchUpReadModels` where it matters, or nothing. The storefront's script dispatches and then
   calls `runUntilIdle()`, which is right for a script that wants every consequence before it
@@ -58,7 +60,7 @@ their settings.
   import script with ten thousand commands, a webhook that answers 200. A default in the core
   would make all of them pay for a read they never do, or make each turn it off. Where a read
   follows is a fact about the request, which the core never sees; the host does, which is why
-  React Router and Cloudflare each settle it their own way.
+  React Router and Cloudflare each take it as a setting of their own.
 
 ## What other frameworks do
 
@@ -100,7 +102,7 @@ of the event store reaches.
 - [Reading your own writes](/guides/deployment/#reading-your-own-writes), for the API and the
   settings, and [Bounda with React Router](/guides/react-router/#reading-what-you-just-wrote).
 - [The Cloudflare adapter](/adapters/cloudflare/#how-it-runs), for read models in the command's
-  request and reactions in the alarm.
+  request or in the alarm, and reactions in the alarm.
 - The other frameworks: Marten's [projections](https://martendb.io/events/projections/) and
   [inline projections](https://martendb.io/events/projections/inline.html), Kurrent's
   [appending events](https://docs.kurrent.io/clients/python/v1.1/appending-events), Axon's

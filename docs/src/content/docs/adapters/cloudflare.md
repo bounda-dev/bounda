@@ -68,8 +68,10 @@ as on SQLite or PostgreSQL, in the object's SQLite. The SQL is literally the sam
 Object has no loop running between requests:
 
 - **A command** stores its events and brings the read models that project them up to date before
-  it answers, so
-  the query that follows already sees it. A command is read-your-writes by construction.
+  it answers, so the query that follows already sees it. That is the default; with
+  `consistency: "eventual"` in `connect` or `createWorker`, a command answers once its events are
+  stored and the alarm projects them right after
+  ([the host decides read-your-writes](/concepts/read-your-writes/)).
 - **Policies, processes, scheduled commands and retries** run in the object's **alarm**, right
   after the command answers, in their own event. A policy that calls a slow service never slows
   the command down.
@@ -131,7 +133,7 @@ stores, not a split global stream.
 
 | Request | Answer |
 | --- | --- |
-| `POST /commands/<name>` with the payload as the body | The dispatch result, once the read models reflect it. `?delay=10m` schedules it |
+| `POST /commands/<name>` with the payload as the body | The dispatch result, once the read models reflect it, or once its events are stored with `createWorker({ binding, consistency: "eventual" })`. `?delay=10m` schedules it |
 | `POST /queries/<name>` with the payload as the body | The query's result |
 
 Refusals come back as `{ "error": { "code", "message" } }` with the statuses in
@@ -155,7 +157,9 @@ export default {
 ```
 
 `connect(stub)` gives the same `commands` and `queries` as `app.commands` and `app.queries`,
-typed from your modules, plus `getLag()`, `deadLetters` and `rebuildReadModel`. A refusal comes
+typed from your modules, plus `getLag()`, `deadLetters` and `rebuildReadModel`. Its commands
+resolve once the read models reflect them; `connect(stub, { consistency: "eventual" })` resolves
+them once their events are stored, for a request that reads nothing after it. A refusal comes
 back as an `Error` with the same `name`, `message`, `code` and, for validation, `issues`, whatever
 the Worker's compatibility date: the object answers refusals as data and `connect` throws them
 again, because RPC drops an error's own properties on older dates. Check `error.code`, not
@@ -197,5 +201,9 @@ instead of `@cloudflare/workers-types`. There is no `prepare` script: every scri
   checkpoint. On the free plan's 100,000 row writes a day that is about fourteen thousand
   commands, when the app has no policies or processes and so no alarm to run after each one.
   Each policy or process reaction adds its own writes, and the alarm that runs it is one more
-  request. On the paid plan the first fifty million row writes a month are included, and a
-  million commands beyond that cost around eight dollars.
+  request. `"eventual"` consistency saves nothing: in an app without policies or processes each
+  command then arms the alarm, which Cloudflare bills as one more row written, and the alarm that
+  projects is one more request; with them, the alarm runs after each command anyway and projects
+  in the same request. What it buys is a command that answers sooner. On the paid plan the first
+  fifty million row writes a month are included, and a million commands beyond that cost around
+  eight dollars.

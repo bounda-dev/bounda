@@ -1,8 +1,7 @@
 import { join, resolve, sep } from "node:path";
-import type { Clock } from "@bounda-dev/core";
+import type { Clock, Consistency } from "@bounda-dev/core";
 import type { Logger, Plugin } from "vite";
 import { APP_MODULE_ID } from "./app-module.ts";
-import type { Consistency } from "./create-bounda.ts";
 import type { BoundaVitePluginOptions } from "./vite.ts";
 
 export interface CreateBoundaPluginArgs extends BoundaVitePluginOptions {
