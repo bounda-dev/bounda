@@ -3,6 +3,14 @@ import type { CommandsFacade, Registry } from "../modules/registry.ts";
 import type { BoundaApp } from "./app.ts";
 import type { CommandsFacadeRuntime } from "./command/facade.ts";
 
+/**
+ * What a query issued right after a command sees, which the host serving the request decides.
+ * `"read-your-writes"` brings the read models the command's events reach up to date before the
+ * command resolves. `"eventual"` resolves once the events are stored and leaves the read models to
+ * the background, so the query may not see them yet.
+ */
+export type Consistency = "read-your-writes" | "eventual";
+
 export interface ReadYourWritesFunction {
   <R extends Registry>(app: BoundaApp<R>): BoundaApp<R>;
 }

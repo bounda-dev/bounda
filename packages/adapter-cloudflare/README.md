@@ -37,7 +37,8 @@ export default createWorker({ binding: "STORE" });
 
 `wrangler.jsonc` binds `STORE` to the `Store` class with a `new_sqlite_classes` migration.
 
-- A command resolves once its events are stored and every read model reflects them.
+- A command resolves once its events are stored and every read model reflects them, or, with
+  `consistency: "eventual"` in `connect` or `createWorker`, once they are stored.
 - Policies, processes, scheduled commands and retries run in the object's alarm, which it arms
   itself.
 - `createWorker` serves `POST /commands/<name>` and `POST /queries/<name>` as JSON, one store per

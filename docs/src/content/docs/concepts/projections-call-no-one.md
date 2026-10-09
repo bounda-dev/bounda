@@ -65,9 +65,10 @@ is that the history has not changed, so the same code gives the same rows; a pro
 the world breaks that.
 
 **On some hosts a projection runs inside the command's request.** On Cloudflare the Durable
-Object brings the read models a command changed up to date before the command answers. A React
-Router app does the same through `createBounda`, whose `consistency` is `"read-your-writes"` by
-default, and so does any Node app that wraps itself in `readYourWrites`. Only an app that leaves
+Object brings the read models a command changed up to date before the command answers, unless the
+caller asks for `"eventual"`. A React Router app does the same through `createBounda`, whose
+`consistency` is `"read-your-writes"` by default, and so does any Node app that wraps itself in
+`readYourWrites`. Only an app that leaves
 projections to a background worker keeps them out of the request. The catch-up timeout bounds the
 wait, but it is checked between batches, not inside one: a call that hangs holds the request for
 as long as it hangs. When the read model lives in the store's own database, the default, and that

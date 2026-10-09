@@ -2,6 +2,7 @@ import {
   type AppRegistry,
   type BoundaApp,
   ConfigurationError,
+  type Consistency,
   type Registry,
   readYourWrites,
 } from "@bounda-dev/core";
@@ -16,13 +17,6 @@ export interface BootBoundaFunction<R extends Registry> {
   (): Promise<BoundaApp<R>>;
 }
 
-/**
- * What a loader sees right after an action dispatched a command. `read-your-writes` (the default)
- * brings the read models up to date before the command resolves, so the page a redirect lands on
- * already reflects it. `eventual` leaves projections to the background and reads may lag behind.
- */
-export type Consistency = "read-your-writes" | "eventual";
-
 export interface CreateBoundaArgs<R extends Registry = AppRegistry> {
   /**
    * How to boot the app. Defaults to `boot()` from `@bounda-dev/core/node`, which reads
@@ -36,6 +30,10 @@ export interface CreateBoundaArgs<R extends Registry = AppRegistry> {
    * `"bounda.app"`; one app per key.
    */
   readonly key?: string;
+  /**
+   * What a loader sees right after an action dispatched a command. Defaults to
+   * `"read-your-writes"`, so the page a redirect lands on already reflects it.
+   */
   readonly consistency?: Consistency;
 }
 
@@ -129,7 +127,7 @@ const load = <R extends Registry>(
  * Wires Bounda into a React Router app: a context for the running app and the middleware that
  * boots it once and provides it to every loader and action. Declare it once in a server module
  * and mount the middleware in `root.tsx`. By default a command resolves once the read models
- * reflect it (see `Consistency`). When the server module is re-evaluated in development, the next
+ * reflect it (see `consistency`). When the server module is re-evaluated in development, the next
  * request boots from the new modules only once the previous app has stopped, so the two never
  * hold the storage at once. Throws `ConfigurationError` for a `consistency` it does not know.
  *

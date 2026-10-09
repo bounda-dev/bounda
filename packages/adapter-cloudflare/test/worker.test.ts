@@ -1,6 +1,9 @@
-import { runDurableObjectAlarm } from "cloudflare:test";
+import { createExecutionContext, runDurableObjectAlarm } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
+import { ConfigurationError, type Consistency } from "@bounda-dev/core";
 import { describe, expect, it } from "vitest";
+import { createWorker } from "../src/worker.ts";
+import { recordingStub } from "./recording-stub.ts";
 
 const post = (path: string, body?: unknown, tenant?: string) =>
   exports.default.fetch(
@@ -33,6 +36,39 @@ describe("createWorker", () => {
     expect(await elsewhere.json()).toBeNull();
     const byDefault = await post("/queries/getOrder", { orderId: "o-1" });
     expect(await byDefault.json()).toBeNull();
+  });
+
+  it("sends commands to the object with its consistency, read-your-writes unless told otherwise", async () => {
+    const sent = async (worker: ReturnType<typeof createWorker>) => {
+      const { stub, commands } = recordingStub();
+      const spy = { idFromName: (name: string) => name, get: () => stub };
+      const response = await worker.fetch?.(
+        new Request("https://bounda.test/commands/payOrder", {
+          method: "POST",
+          body: JSON.stringify({ orderId: "o-1" }),
+        }) as Request<unknown, IncomingRequestCfProperties>,
+        { SPY: spy } as unknown as Cloudflare.Env,
+        createExecutionContext(),
+      );
+      expect(response?.status).toBe(200);
+      return commands;
+    };
+    expect(await sent(createWorker({ binding: "SPY", consistency: "eventual" }))).toEqual([
+      ["payOrder", { orderId: "o-1" }, {}, "eventual"],
+    ]);
+    expect(await sent(createWorker({ binding: "SPY" }))).toEqual([
+      ["payOrder", { orderId: "o-1" }, {}, "read-your-writes"],
+    ]);
+  });
+
+  it("refuses a consistency it does not know", () => {
+    expect(() =>
+      createWorker({ binding: "STORE", consistency: "eventually" as Consistency }),
+    ).toThrow(
+      new ConfigurationError(
+        'consistency must be "read-your-writes" or "eventual", got "eventually"',
+      ),
+    );
   });
 
   it("schedules a command with ?delay", async () => {

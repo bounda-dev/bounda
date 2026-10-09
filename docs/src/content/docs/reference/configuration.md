@@ -139,6 +139,6 @@ runtime: {
 
 - **React Router**: the `bounda()` Vite plugin takes `consistency` and `debounceMs`; see
   [its options](/guides/react-router/#options).
-- **Cloudflare**: `createBoundaObject` takes `passesPerAlarm`; see
-  [the Cloudflare adapter](/adapters/cloudflare/#how-it-runs).
+- **Cloudflare**: `createBoundaObject` takes `passesPerAlarm`, and `connect` and `createWorker`
+  take `consistency`; see [the Cloudflare adapter](/adapters/cloudflare/#how-it-runs).
 - **Tests**: `createTestApp` takes its own `ports` and `config`; see [testing](/guides/testing/).

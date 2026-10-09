@@ -1,5 +1,5 @@
-import type { DispatchOptions, Logger } from "@bounda-dev/core";
-import type { BoundaStub } from "./client.ts";
+import type { Consistency, DispatchOptions, Logger } from "@bounda-dev/core";
+import { type BoundaStub, checkConsistency } from "./client.ts";
 import { workersLogger } from "./logger.ts";
 import { unwrap } from "./outcome.ts";
 
@@ -18,6 +18,11 @@ export interface CreateWorkerArgs {
    * own events and read models.
    */
   readonly tenantOf?: TenantOfFunction;
+  /**
+   * Whether a command answers once the read models reflect it, `"read-your-writes"` by default,
+   * or as soon as its events are stored, `"eventual"`.
+   */
+  readonly consistency?: Consistency;
   /**
    * Defaults to one JSON line per entry on `console`, which Workers Logs parses into fields.
    */
@@ -75,64 +80,69 @@ const route = (pathname: string): { readonly kind: string; readonly name: string
  * A Worker that exposes one Bounda app as JSON over HTTP, a store per tenant:
  *
  * - `POST /commands/<name>` with the payload as the body, `?delay=10m` to schedule it, answers
- *   the dispatch result once the read models reflect it;
+ *   the dispatch result, once the read models reflect it unless `consistency` is `"eventual"`;
  * - `POST /queries/<name>` with the payload as the body answers the query's result.
  *
  * Refusals come back as `{ error: { code, message } }`: 400 for a payload that fails validation,
  * with `issues`, 404 for an unknown command, query or row, 409 for a command's rejection, with its
  * code in `rejected`, or a conflict. Anything else is a 500 without its message, which is logged
  * instead. There is no authentication and no operator endpoint: it is a starting point, and an
- * app with users writes its own `fetch` over `connect`.
+ * app with users writes its own `fetch` over `connect`. Throws `ConfigurationError` for a
+ * `consistency` it does not know.
  */
 export const createWorker: CreateWorkerFunction = ({
   binding,
   tenantOf = defaultTenant,
+  consistency = "read-your-writes",
   logger = workersLogger,
-}) => ({
-  fetch: async (request, env) => {
-    const url = new URL(request.url);
-    const target = route(url.pathname);
-    if (target === null) return failure("NOT_FOUND", `No route for ${url.pathname}`, 404);
-    if (request.method !== "POST") {
-      return new Response(null, { status: 405, headers: { allow: "POST" } });
-    }
-    let payload: unknown;
-    try {
-      payload = await readPayload(request);
-    } catch {
-      return failure("INVALID_JSON", "The body is not JSON", 400);
-    }
-    const namespace = Reflect.get(env, binding) as DurableObjectNamespace | undefined;
-    if (namespace === undefined) {
-      logger.error("bounda worker has no such binding", { binding });
-      return failure("INTERNAL", "Internal error", 500);
-    }
-    const stub = namespace.get(
-      namespace.idFromName(await tenantOf(request)),
-    ) as unknown as BoundaStub;
-    try {
-      const result = await unwrap(
-        target.kind === "commands"
-          ? stub.command(target.name, payload, optionsOf(url))
-          : stub.query(target.name, payload),
-      );
-      return json(result ?? null);
-    } catch (error) {
-      const code = error instanceof Error ? Reflect.get(error, "code") : undefined;
-      const status = typeof code === "string" ? STATUS_BY_CODE[code] : undefined;
-      if (typeof code === "string" && status !== undefined && error instanceof Error) {
-        const issues = Reflect.get(error, "issues");
-        const rejected = Reflect.get(error, "rejected");
-        return failure(code, error.message, status, {
-          ...(issues === undefined ? {} : { issues }),
-          ...(typeof rejected === "string" ? { rejected } : {}),
-        });
+}) => {
+  checkConsistency(consistency);
+  return {
+    fetch: async (request, env) => {
+      const url = new URL(request.url);
+      const target = route(url.pathname);
+      if (target === null) return failure("NOT_FOUND", `No route for ${url.pathname}`, 404);
+      if (request.method !== "POST") {
+        return new Response(null, { status: 405, headers: { allow: "POST" } });
       }
-      logger.error("bounda worker request failed", {
-        path: url.pathname,
-        message: error instanceof Error ? error.message : String(error),
-      });
-      return failure("INTERNAL", "Internal error", 500);
-    }
-  },
-});
+      let payload: unknown;
+      try {
+        payload = await readPayload(request);
+      } catch {
+        return failure("INVALID_JSON", "The body is not JSON", 400);
+      }
+      const namespace = Reflect.get(env, binding) as DurableObjectNamespace | undefined;
+      if (namespace === undefined) {
+        logger.error("bounda worker has no such binding", { binding });
+        return failure("INTERNAL", "Internal error", 500);
+      }
+      const stub = namespace.get(
+        namespace.idFromName(await tenantOf(request)),
+      ) as unknown as BoundaStub;
+      try {
+        const result = await unwrap(
+          target.kind === "commands"
+            ? stub.command(target.name, payload, optionsOf(url), consistency)
+            : stub.query(target.name, payload),
+        );
+        return json(result ?? null);
+      } catch (error) {
+        const code = error instanceof Error ? Reflect.get(error, "code") : undefined;
+        const status = typeof code === "string" ? STATUS_BY_CODE[code] : undefined;
+        if (typeof code === "string" && status !== undefined && error instanceof Error) {
+          const issues = Reflect.get(error, "issues");
+          const rejected = Reflect.get(error, "rejected");
+          return failure(code, error.message, status, {
+            ...(issues === undefined ? {} : { issues }),
+            ...(typeof rejected === "string" ? { rejected } : {}),
+          });
+        }
+        logger.error("bounda worker request failed", {
+          path: url.pathname,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return failure("INTERNAL", "Internal error", 500);
+      }
+    },
+  };
+};

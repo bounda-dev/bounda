@@ -38,6 +38,8 @@ describe("connect", () => {
       ).resolves.toEqualTypeOf<ScheduledDispatch>();
       // @ts-expect-error total must be a number
       void store.commands.placeOrder({ orderId: "o-1", total: "42", customer: "ada" });
+      // @ts-expect-error not a consistency
+      void connect(env.STORE.get(env.STORE.newUniqueId()), { consistency: "eventually" });
     };
     void calls;
   });

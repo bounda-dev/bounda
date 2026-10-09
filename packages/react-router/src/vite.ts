@@ -1,6 +1,5 @@
-import { systemClock } from "@bounda-dev/core";
+import { type Consistency, systemClock } from "@bounda-dev/core";
 import type { Plugin } from "vite";
-import type { Consistency } from "./create-bounda.ts";
 import { createBoundaPlugin } from "./vite-plugin.ts";
 
 export interface BoundaVitePluginOptions {
