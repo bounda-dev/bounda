@@ -19,5 +19,6 @@ describe("codePointOrder", () => {
     expect(codePointOrder("ab", "abc")).toBeLessThan(0);
     expect(codePointOrder("abc", "ab")).toBeGreaterThan(0);
     expect(codePointOrder("ab", "ab")).toBe(0);
+    expect(codePointOrder("\u{10000}", "\uE000")).toBeGreaterThan(0);
   });
 });

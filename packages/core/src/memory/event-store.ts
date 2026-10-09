@@ -2,6 +2,7 @@ import type { AppendArgs, AppendResult, EventStore } from "../adapter/ports/even
 import { ConcurrencyError } from "../contracts/errors.ts";
 import type { StoredEvent } from "../contracts/event.ts";
 import { streamId } from "../contracts/event.ts";
+import { toJson } from "./json-copy.ts";
 
 export interface CreateMemoryEventStoreArgs {
   /**
@@ -26,19 +27,19 @@ export interface CreateMemoryEventStoreFunction {
 // An event as a SQL store keeps it: payload and metadata as JSON text, so each read is a fresh
 // copy and holds what JSON holds, as the SQL stores hand them out.
 interface Kept extends Omit<StoredEvent, "payload" | "metadata"> {
-  readonly payload: string | undefined;
+  readonly payload: string;
   readonly metadata: string;
 }
 
 const keep = ({ payload, metadata, ...rest }: StoredEvent): Kept => ({
   ...rest,
-  payload: payload === undefined ? undefined : JSON.stringify(payload),
-  metadata: JSON.stringify(metadata),
+  payload: toJson(payload),
+  metadata: toJson(metadata),
 });
 
 const restore = ({ payload, metadata, ...rest }: Kept): StoredEvent => ({
   ...rest,
-  payload: payload === undefined ? undefined : JSON.parse(payload),
+  payload: JSON.parse(payload),
   metadata: JSON.parse(metadata),
 });
 
@@ -62,20 +63,22 @@ export const createMemoryEventStore: CreateMemoryEventStoreFunction = ({ onAppen
     }
     // Every batch is kept before any is written, so one that JSON refuses appends nothing.
     let position = global.length;
-    const appended = batches.map(({ events }) =>
-      events.map((event) => {
+    const prepared = batches.map(({ aggregateType, aggregateId, expectedVersion, events }) => {
+      const stored = events.map((event) => {
         position += 1;
-        return { event: { ...event, position }, kept: keep({ ...event, position }) };
-      }),
-    );
-    const results = batches.map(({ aggregateType, aggregateId, expectedVersion }, index) => {
-      const key = streamId({ aggregateType, aggregateId });
-      const batch = appended[index] ?? [];
-      const kept = batch.map((entry) => entry.kept);
+        return { ...event, position };
+      });
+      return {
+        key: streamId({ aggregateType, aggregateId }),
+        kept: stored.map(keep),
+        result: { version: expectedVersion + stored.length, events: stored },
+      };
+    });
+    for (const { key, kept } of prepared) {
       streams.set(key, [...(streams.get(key) ?? []), ...kept]);
       global.push(...kept);
-      return { version: expectedVersion + batch.length, events: batch.map((entry) => entry.event) };
-    });
+    }
+    const results = prepared.map(({ result }) => result);
     if (results.some((result) => result.events.length > 0)) onAppend?.(global.length);
     return results;
   };

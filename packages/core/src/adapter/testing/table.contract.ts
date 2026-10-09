@@ -173,13 +173,13 @@ const jsonFields: FieldsRecord = {
 interface PersonRow {
   readonly id: string;
   readonly email: string;
-  readonly name?: string;
+  readonly handle?: string;
 }
 
 const personFields: FieldsRecord = {
   id: f.string().primaryKey(),
   email: f.string().unique(),
-  name: f.string().optional(),
+  handle: f.string().optional().unique(),
 };
 
 export interface ViewContractArgs {
@@ -195,8 +195,9 @@ export interface ViewContractFunction {
 
 /**
  * What a view's fields promise on every adapter: any JSON value comes back as it was stored, a
- * `unique()` field or the primary key refuses a value another row has, even through an update, a
- * required field refuses none, and a view with more than one primary key is refused.
+ * `unique()` field or the primary key refuses a value another row has, even through an update,
+ * though rows may share having none, a required field refuses none, and a view with more than one
+ * primary key is refused.
  */
 export const viewContract: ViewContractFunction = ({ create }) => {
   describe("view contract", () => {
@@ -235,11 +236,14 @@ export const viewContract: ViewContractFunction = ({ create }) => {
         logger: silentLogger,
       });
       await table.insert({ id: "1", email: "ada@example.com" });
+      await table.upsert({ id: "1", email: "ada@example.com" });
       await expect(table.insert({ id: "2", email: "ada@example.com" })).rejects.toThrow();
       await table.insert({ id: "2", email: "grace@example.com" });
       await expect(table.update({ id: "2" }, { email: "ada@example.com" })).rejects.toThrow();
+      await expect(table.update({ id: "2" }, { email: null } as never)).rejects.toThrow();
       await expect(table.upsert({ id: "3" } as PersonRow)).rejects.toThrow();
       expect(await table.count()).toBe(2);
+      expect(await table.count({ handle: null } as never)).toBe(2);
     });
 
     it("refuses a whole update that would give two rows one key or one unique value", async () => {

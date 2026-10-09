@@ -252,6 +252,18 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
       expect(claimed?.command.payload).toEqual({ at: "2026-01-01T00:00:00.000Z", lines: ["a"] });
     });
 
+    it("refuses a payload with no JSON", async () => {
+      await expect(
+        scheduler.schedule({
+          dedupeKey: "empty",
+          command: { ...testCommand("1"), payload: undefined },
+          executeAt: at(0),
+          context: testContext,
+        }),
+      ).rejects.toThrow();
+      expect(await scheduler.list()).toEqual([]);
+    });
+
     it("keeps any JSON payload, a top-level boolean included", async () => {
       for (const [key, payload] of [
         ["bool", true],

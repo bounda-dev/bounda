@@ -306,4 +306,43 @@ describe("memory adapter", () => {
     expect(await names("asc")).toEqual(["3", "4", "2", "1"]);
     expect(await names("desc")).toEqual(["1", "2", "4", "3"]);
   });
+
+  it("names the constraint a write breaks, as SQLite does", async () => {
+    const { table } = await memory().createReadModel<{ id: string; email: string }>({
+      name: "people",
+      fields: { id: f.string().primaryKey(), email: f.string().unique() },
+      logger: silentLogger,
+    });
+    await table.insert({ id: "1", email: "ada@example.com" });
+    await table.insert({ id: "2", email: "grace@example.com" });
+    await expect(table.insert({ id: "3", email: "ada@example.com" })).rejects.toThrow(
+      "UNIQUE constraint failed: people.email",
+    );
+    await expect(table.insert({ id: "3" } as never)).rejects.toThrow(
+      "NOT NULL constraint failed: people.email",
+    );
+    await expect(table.update({ id: "1" }, { id: "2" })).rejects.toThrow(
+      "UNIQUE constraint failed: people.id",
+    );
+  });
+
+  it("orders numbers by value, below none when descending", async () => {
+    const { table } = await memory().createReadModel<{ id: string; total?: number }>({
+      name: "totals",
+      fields: { id: f.string().primaryKey(), total: f.number().optional() },
+      logger: silentLogger,
+    });
+    for (const [id, total] of [
+      ["1", 5],
+      ["2", -3],
+      ["3", undefined],
+      ["4", 0],
+    ] as const) {
+      await table.insert(total === undefined ? { id } : { id, total });
+    }
+    const ids = async (direction: "asc" | "desc") =>
+      (await table.findMany({ orderBy: { field: "total", direction } })).map(({ id }) => id);
+    expect(await ids("asc")).toEqual(["3", "2", "4", "1"]);
+    expect(await ids("desc")).toEqual(["1", "4", "2", "3"]);
+  });
 });
