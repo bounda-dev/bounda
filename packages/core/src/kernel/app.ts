@@ -303,7 +303,6 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       eventStore: storage.eventStore,
       checkpointStore: storage.checkpointStore,
       following: following.map((subscriber) => subscriber.name),
-      idle: reactive.filter((entry) => !entry.following).map((entry) => entry.subscriber.name),
     });
     const dispatcher = createDispatcher({
       eventStore: storage.eventStore,
