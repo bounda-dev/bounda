@@ -1,0 +1,41 @@
+---
+import { sectionsOf } from "../sections.ts";
+import TocList from "./TocList.astro";
+
+const sections = sectionsOf(Astro.locals.starlightRoute.toc);
+---
+
+{
+  sections.length > 0 && (
+    <bounda-toc>
+      <nav aria-labelledby="bounda-toc-title">
+        <h2 id="bounda-toc-title" class="bounda-label">
+          {Astro.locals.t("tableOfContents.onThisPage")}
+        </h2>
+        <TocList sections={sections} />
+      </nav>
+    </bounda-toc>
+  )
+}
+
+<script>
+  import { followReading } from "../reading.ts";
+
+  class BoundaToc extends HTMLElement {
+    connectedCallback() {
+      followReading([...this.querySelectorAll("a")], () => {});
+    }
+  }
+  customElements.define("bounda-toc", BoundaToc);
+</script>
+
+<style>
+  nav {
+    padding-block: 1rem;
+  }
+
+  h2 {
+    margin: 0 0 0.75rem;
+    color: var(--sl-color-gray-3);
+  }
+</style>

@@ -1,0 +1,22 @@
+---
+import { Icon } from "@astrojs/starlight/components";
+import { REPOSITORY } from "../site.ts";
+---
+
+<a href={REPOSITORY} aria-label="GitHub">
+  <Icon name="github" size="1.25rem" />
+</a>
+
+<style>
+  a {
+    display: flex;
+    padding: 0.5em;
+    margin: -0.5em;
+    color: var(--sl-color-gray-3);
+  }
+
+  a:hover,
+  a:focus-visible {
+    color: var(--sl-color-white);
+  }
+</style>

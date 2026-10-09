@@ -2,25 +2,15 @@ import starlight from "@astrojs/starlight";
 import { defineConfig, fontProviders } from "astro/config";
 import starlightLlmsTxt from "starlight-llms-txt";
 import starlightPageActions from "starlight-page-actions";
+import { codeHeader } from "./src/code-header.ts";
 import { basalt, bone } from "./src/code-themes.ts";
-
-const socialImageAlt =
-  "The Bounda symbol as a machined monolith whose foot becomes the global stream, beside the headline: Event sourcing without the ceremony.";
-
-// The card shown when a docs page is shared; Starlight already sets the title, description and card type.
-const socialImage = (url) => [
-  { tag: "meta", attrs: { property: "og:image", content: url } },
-  { tag: "meta", attrs: { property: "og:image:width", content: "1200" } },
-  { tag: "meta", attrs: { property: "og:image:height", content: "630" } },
-  { tag: "meta", attrs: { property: "og:image:alt", content: socialImageAlt } },
-  { tag: "meta", attrs: { name: "twitter:image", content: url } },
-  { tag: "meta", attrs: { name: "twitter:image:alt", content: socialImageAlt } },
-];
+import { SIDEBAR } from "./src/sidebar.ts";
+import { DESCRIPTION, PROMPT, SITE, socialImage } from "./src/site.ts";
 
 // The fonts of bounda.dev, self-hosted at build time with metric-matched fallbacks. Science Gothic
 // is only ever set at 600, so it is requested at that one weight across the width axis it uses.
 export default defineConfig({
-  site: "https://docs.bounda.dev",
+  site: SITE,
   // Pages that moved keep their old address working, since links to them live outside the docs.
   redirects: {
     "/guides/how-it-runs/": "/concepts/how-it-runs/",
@@ -63,26 +53,78 @@ export default defineConfig({
         dark: "./public/wordmark-dark.svg",
         replacesTitle: true,
       },
-      description: "Event sourcing and CQRS for TypeScript without the ceremony.",
+      description: DESCRIPTION,
       customCss: ["./src/styles/bounda.css"],
-      head: socialImage("https://docs.bounda.dev/og.jpg"),
-      components: { Head: "./src/components/Head.astro" },
+      head: socialImage(`${SITE}/og.jpg`),
+      routeMiddleware: "./src/route-data.ts",
+      // src/pages/404.astro keeps the sidebar and offers the search.
+      disable404Route: true,
+      components: {
+        Head: "./src/components/Head.astro",
+        PageTitle: "./src/components/PageTitle.astro",
+        Pagination: "./src/components/Pagination.astro",
+        Sidebar: "./src/components/Sidebar.astro",
+        TableOfContents: "./src/components/TableOfContents.astro",
+        MobileTableOfContents: "./src/components/MobileTableOfContents.astro",
+        Footer: "./src/components/Footer.astro",
+        ThemeSelect: "./src/components/ThemeSelect.astro",
+        SocialIcons: "./src/components/SocialIcons.astro",
+        MobileMenuToggle: "./src/components/MobileMenuToggle.astro",
+        Search: "./src/components/Search.astro",
+      },
       expressiveCode: {
         themes: [basalt, bone],
+        plugins: [codeHeader()],
         styleOverrides: {
           borderRadius: "2px",
+          borderColor: "var(--sl-color-hairline)",
           codeFontFamily: "var(--sl-font-mono)",
-          uiFontFamily: "var(--sl-font)",
-          frames: { shadowColor: "transparent" },
+          codeFontSize: "0.8125rem",
+          uiFontFamily: "var(--sl-font-mono)",
+          uiFontSize: "0.75rem",
+          // One header for every frame, the editor's and the terminal's alike: no tab, no window
+          // dots, a hairline under it.
+          frames: {
+            shadowColor: "transparent",
+            frameBoxShadowCssValue: "none",
+            editorTabBarBackground: "var(--sl-color-gray-6)",
+            editorTabBarBorderBottomColor: "var(--sl-color-hairline)",
+            editorActiveTabBackground: "transparent",
+            editorActiveTabForeground: "var(--sl-color-gray-3)",
+            editorActiveTabBorderColor: "transparent",
+            editorActiveTabIndicatorTopColor: "transparent",
+            editorActiveTabIndicatorBottomColor: "transparent",
+            editorTabBorderRadius: "0",
+            editorTabsMarginInlineStart: "0",
+            editorTabsMarginBlockStart: "0",
+            terminalTitlebarBackground: "var(--sl-color-gray-6)",
+            terminalTitlebarForeground: "var(--sl-color-gray-3)",
+            terminalTitlebarBorderBottomColor: "var(--sl-color-hairline)",
+            terminalTitlebarDotsOpacity: "0",
+            inlineButtonBorderOpacity: "0",
+          },
+          // Marked lines in the brand's tint; inserted and deleted ones in the success and error
+          // colours, the only meaning DESIGN.md gives green and red.
+          textMarkers: {
+            markBackground: "var(--sl-color-accent-low)",
+            markBorderColor: "var(--sl-color-accent)",
+            insBackground: "var(--sl-color-green-low)",
+            insBorderColor: "var(--sl-color-green)",
+            insDiffIndicatorColor: "var(--sl-color-green)",
+            delBackground: "var(--sl-color-red-low)",
+            delBorderColor: "var(--sl-color-red)",
+            delDiffIndicatorColor: "var(--sl-color-red)",
+            inlineMarkerBorderRadius: "2px",
+          },
         },
       },
-      social: [{ icon: "github", label: "GitHub", href: "https://github.com/bounda-dev/bounda" }],
-      // No `baseUrl` for the page actions: with one they write their own llms.txt over
+      // starlight-page-actions writes each page's `.md`; its interface is replaced by
+      // src/components/PageActions.astro. No `baseUrl`: with one it writes its own llms.txt over
       // starlight-llms-txt's.
       plugins: [
         starlightLlmsTxt(),
         starlightPageActions({
-          prompt: "Read {url}, a page of the Bounda docs, so I can ask about it.",
+          prompt: PROMPT,
           actions: {
             chatgpt: true,
             claude: true,
@@ -95,15 +137,7 @@ export default defineConfig({
           },
         }),
       ],
-      sidebar: [
-        { label: "bounda.dev", link: "https://bounda.dev" },
-        { label: "Getting started", items: [{ autogenerate: { directory: "getting-started" } }] },
-        { label: "Guides", items: [{ autogenerate: { directory: "guides" } }] },
-        { label: "Examples", items: [{ autogenerate: { directory: "examples" } }] },
-        { label: "Concepts", items: [{ autogenerate: { directory: "concepts" } }] },
-        { label: "Adapters", items: [{ autogenerate: { directory: "adapters" } }] },
-        { label: "Reference", items: [{ autogenerate: { directory: "reference" } }] },
-      ],
+      sidebar: SIDEBAR,
     }),
   ],
 });

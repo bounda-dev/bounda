@@ -1,0 +1,98 @@
+---
+import { Icon } from "@astrojs/starlight/components";
+import { positionsOf } from "../positions.ts";
+
+const { dir, pagination, sidebar } = Astro.locals.starlightRoute;
+const positions = positionsOf(sidebar);
+const links = [
+  {
+    rel: "prev",
+    icon: "left-arrow" as const,
+    label: Astro.locals.t("page.previousLink"),
+    link: pagination.prev,
+  },
+  {
+    rel: "next",
+    icon: "right-arrow" as const,
+    label: Astro.locals.t("page.nextLink"),
+    link: pagination.next,
+  },
+].flatMap(({ link, ...rest }) =>
+  link
+    ? [{ ...rest, link, position: positions.find((position) => position.link.href === link.href) }]
+    : [],
+);
+---
+
+{
+  links.length > 0 && (
+    <div class="pagination-links print:hidden" dir={dir}>
+      {links.map(({ rel, icon, label, link, position }) => (
+        <a href={link.href} rel={rel}>
+          <span class="bounda-position">
+            <Icon name={icon} size="0.875rem" class="arrow" />
+            <span class="bounda-label">{label}</span>
+            {position && (
+              <span class="bounda-number">
+                {position.group} {position.number}
+              </span>
+            )}
+          </span>
+          <span class="title">{link.label}</span>
+        </a>
+      ))}
+    </div>
+  )
+}
+
+<style>
+  .pagination-links {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr));
+    gap: 1.5rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--sl-color-hairline);
+  }
+
+  a {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    text-decoration: none;
+    overflow-wrap: anywhere;
+  }
+
+  [rel="next"] {
+    align-items: end;
+    text-align: end;
+  }
+
+  [rel="next"] .bounda-position {
+    flex-direction: row-reverse;
+  }
+
+  .bounda-position :global(.arrow) {
+    align-self: center;
+    color: var(--sl-color-gray-3);
+  }
+
+  .bounda-label {
+    color: var(--sl-color-gray-3);
+  }
+
+  .title {
+    font-family: var(--bounda-display);
+    font-weight: 600;
+    font-stretch: 106%;
+    font-size: var(--sl-text-xl);
+    line-height: var(--sl-line-height-headings);
+    color: var(--sl-color-white);
+  }
+
+  a:hover .title,
+  a:focus-visible .title {
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.2em;
+  }
+</style>

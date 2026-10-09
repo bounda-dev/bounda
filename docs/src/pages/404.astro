@@ -1,0 +1,84 @@
+---
+import StarlightPage from "@astrojs/starlight/components/StarlightPage.astro";
+import { START } from "../site.ts";
+
+// Starlight's own 404 is a splash with one line; this one keeps the sidebar, says which address
+// failed and offers the search, since a page that moved is usually still here.
+---
+
+<StarlightPage
+  frontmatter={{
+    title: "Page not found",
+    description: "Nothing in the docs is recorded at this address.",
+    pagefind: false,
+    tableOfContents: false,
+  }}
+>
+  <p class="missing">
+    <code data-path>this address</code>
+    <span class="status">(not found)</span>
+  </p>
+  <p>
+    Pages move as the docs grow. The search usually finds where this one went, and getting started
+    is where every path through the docs begins.
+  </p>
+  <div class="choices not-content">
+    <button type="button" class="choice" data-search>Search the docs</button>
+    <a class="choice" href={START}>Getting started</a>
+  </div>
+</StarlightPage>
+
+<script>
+  const path = document.querySelector("[data-path]");
+  if (path) path.textContent = location.pathname;
+  document.querySelector("[data-search]")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    document.querySelector<HTMLButtonElement>("bounda-search button.open")?.click();
+  });
+</script>
+
+<style>
+  .missing {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: baseline;
+    font-family: var(--sl-font-mono);
+  }
+
+  .status {
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-red);
+  }
+
+  .choices {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-top: 2rem;
+  }
+
+  .choice {
+    display: inline-flex;
+    align-items: center;
+    height: 2.25rem;
+    padding: 0 1rem;
+    border: 1px solid var(--sl-color-hairline);
+    border-radius: 2px;
+    background: transparent;
+    color: var(--sl-color-gray-2);
+    font: inherit;
+    font-size: var(--sl-text-sm);
+    text-decoration: none;
+    cursor: pointer;
+    transition:
+      color 160ms cubic-bezier(0.22, 0.8, 0.16, 1),
+      border-color 160ms cubic-bezier(0.22, 0.8, 0.16, 1);
+  }
+
+  .choice:hover,
+  .choice:focus-visible {
+    border-color: var(--sl-color-gray-3);
+    color: var(--sl-color-white);
+  }
+</style>

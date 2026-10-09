@@ -1,0 +1,56 @@
+---
+import { Icon } from "@astrojs/starlight/components";
+
+// Starlight's button is a filled circle with a shadow; this one is a hairline square.
+---
+
+<button
+  popovertarget="starlight__sidebar"
+  class="sl-flex md:sl-hidden print:hidden"
+  aria-label={Astro.locals.t("menuButton.accessibleLabel")}
+>
+  <Icon name="bars" class="open-menu" />
+  <Icon name="close" class="close-menu" />
+</button>
+
+<style>
+  button {
+    position: fixed;
+    top: calc((var(--sl-nav-height) - var(--sl-menu-button-size)) / 2);
+    inset-inline-end: var(--sl-nav-pad-x);
+    z-index: var(--sl-z-index-navbar);
+    align-items: center;
+    justify-content: center;
+    width: var(--sl-menu-button-size);
+    height: var(--sl-menu-button-size);
+    padding: 0;
+    border: 1px solid var(--sl-color-hairline);
+    border-radius: 2px;
+    background: var(--sl-color-black);
+    color: var(--sl-color-gray-3);
+    cursor: pointer;
+  }
+
+  button:hover,
+  button:has(~ :popover-open) {
+    border-color: var(--sl-color-gray-3);
+    color: var(--sl-color-white);
+  }
+
+  button:has(~ :popover-open) :global(.open-menu),
+  button:not(:has(~ :popover-open)) :global(.close-menu) {
+    display: none;
+  }
+</style>
+
+<style is:global>
+  body:has(#starlight__sidebar:popover-open) {
+    overflow: hidden;
+  }
+
+  @media (min-width: 50rem) {
+    body:has(#starlight__sidebar:popover-open) {
+      overflow: auto;
+    }
+  }
+</style>

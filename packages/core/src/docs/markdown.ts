@@ -69,7 +69,7 @@ export interface PagePathOfFunction {
   (args: PagePathOfArgs): string | undefined;
 }
 
-// The site's front page has no Markdown of its own; the index the pack writes takes its place.
+// The site's `/` has no page of its own; in the pack, the index it writes takes its place.
 export const INDEX = "README.md";
 
 export const pagePathOf: PagePathOfFunction = ({ url, pages }) => {

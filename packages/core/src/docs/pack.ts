@@ -2,7 +2,7 @@ import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, posix, relative, sep } from "node:path";
 import { INDEX, type Page, parsePage, renderComponents, renderPage } from "./markdown.ts";
 
-// The sidebar's groups, in its order (`docs/astro.config.mjs`). A directory missing here fails the
+// The sidebar's groups, in its order (`docs/src/sidebar.ts`). A directory missing here fails the
 // pack, so a new group cannot ship without a place in the index.
 export const GROUPS: readonly { readonly directory: string; readonly label: string }[] = [
   { directory: "getting-started", label: "Getting started" },
@@ -62,14 +62,10 @@ const walk = async (directory: string): Promise<readonly string[]> => {
     .toSorted();
 };
 
-// The site's front page (`index.mdx`) is a splash of components; the generated README takes its
-// place.
-const isFrontPage = (path: string): boolean => path === "index.mdx";
-
 const outputOf = (path: string): string => path.replace(/\.mdx$/, ".md");
 
 export const packDocs: PackDocsFunction = async ({ source, target, version, site }) => {
-  const files = (await walk(source)).filter((path) => !isFrontPage(path));
+  const files = await walk(source);
   const unknown = files.filter(
     (path) =>
       !/\.mdx?$/.test(path) || !GROUPS.some(({ directory }) => path.startsWith(`${directory}/`)),

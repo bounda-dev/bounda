@@ -1,0 +1,96 @@
+---
+// The theme toggle of bounda.dev: one button that switches between Basalt and Bone, following the
+// system until it is pressed. It keeps Starlight's storage key, which ThemeProvider reads before
+// the page paints.
+---
+
+<bounda-theme-toggle>
+  <button type="button">
+    <span class="disc" aria-hidden="true"></span>
+    <span class="sr-only" data-label></span>
+  </button>
+</bounda-theme-toggle>
+
+<script>
+  type Theme = "dark" | "light";
+
+  const storageKey = "starlight-theme";
+  const systemLight = matchMedia("(prefers-color-scheme: light)");
+
+  const current = (): Theme =>
+    document.documentElement.dataset.theme === "light" ? "light" : "dark";
+
+  const label = (theme: Theme): string =>
+    theme === "dark" ? "Dark mode. Switch to light" : "Light mode. Switch to dark";
+
+  const sync = () => {
+    for (const text of document.querySelectorAll("bounda-theme-toggle [data-label]")) {
+      text.textContent = label(current());
+    }
+  };
+
+  const chosen = (): string | null => {
+    try {
+      return localStorage.getItem(storageKey);
+    } catch {
+      return null;
+    }
+  };
+
+  systemLight.addEventListener("change", () => {
+    if (chosen()) return;
+    document.documentElement.dataset.theme = systemLight.matches ? "light" : "dark";
+    sync();
+  });
+
+  class BoundaThemeToggle extends HTMLElement {
+    connectedCallback() {
+      sync();
+      this.querySelector("button")?.addEventListener("click", () => {
+        const next: Theme = current() === "dark" ? "light" : "dark";
+        document.documentElement.dataset.theme = next;
+        try {
+          localStorage.setItem(storageKey, next);
+        } catch {}
+        sync();
+      });
+    }
+  }
+  customElements.define("bounda-theme-toggle", BoundaThemeToggle);
+</script>
+
+<style>
+  bounda-theme-toggle {
+    display: flex;
+  }
+
+  button {
+    display: inline-grid;
+    place-items: center;
+    width: 30px;
+    height: 26px;
+    padding: 0;
+    border: 1px solid var(--sl-color-hairline);
+    border-radius: 2px;
+    background: transparent;
+    color: var(--sl-color-gray-3);
+    cursor: pointer;
+    transition:
+      color 160ms cubic-bezier(0.22, 0.8, 0.16, 1),
+      border-color 160ms cubic-bezier(0.22, 0.8, 0.16, 1);
+  }
+
+  button:hover,
+  button:focus-visible {
+    border-color: var(--sl-color-gray-3);
+    color: var(--sl-color-white);
+  }
+
+  .disc {
+    width: 10px;
+    height: 10px;
+    border: 1px solid currentColor;
+    border-radius: 50%;
+    background: linear-gradient(90deg, currentColor 50%, transparent 50%);
+  }
+</style>

@@ -1,0 +1,57 @@
+---
+import Default from "@astrojs/starlight/components/PageTitle.astro";
+import { positionsOf } from "../positions.ts";
+import PageActions from "./PageActions.astro";
+
+const { entry, sidebar } = Astro.locals.starlightRoute;
+const position = positionsOf(sidebar).find(({ link }) => link.isCurrent);
+---
+
+{
+  /* A page of the sidebar: its position and its actions. Interface, so out of the search index. */
+  position && (
+    <div class="bounda-masthead" data-pagefind-ignore="all">
+      <p class="bounda-position">
+        <span class="bounda-label">{position.group}</span>
+        <span class="bounda-number">{position.number}</span>
+      </p>
+      <PageActions />
+    </div>
+  )
+}
+<Default />
+{entry.data.description && <p class="lead">{entry.data.description}</p>}
+
+<style>
+  .bounda-masthead {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-top: 1rem;
+  }
+
+  .bounda-position {
+    margin: 0;
+  }
+
+  .bounda-masthead > :global(.actions) {
+    margin-inline-start: auto;
+  }
+
+  .bounda-label {
+    color: var(--sl-color-accent);
+  }
+
+  .bounda-masthead + :global(h1) {
+    margin-top: 0.25rem;
+  }
+
+  .lead {
+    max-width: 40rem;
+    margin-top: 0.75rem;
+    font-size: var(--sl-text-lg);
+    line-height: 1.5;
+    color: var(--sl-color-gray-3);
+  }
+</style>
