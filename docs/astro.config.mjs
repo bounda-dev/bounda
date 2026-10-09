@@ -4,7 +4,7 @@ import starlightLlmsTxt from "starlight-llms-txt";
 import starlightPageActions from "starlight-page-actions";
 import { codeHeader } from "./src/code-header.ts";
 import { basalt, bone } from "./src/code-themes.ts";
-import { DESCRIPTION, SITE, socialImage } from "./src/site.ts";
+import { DESCRIPTION, PROMPT, SITE, socialImage } from "./src/site.ts";
 
 // The fonts of bounda.dev, self-hosted at build time with metric-matched fallbacks. Science Gothic
 // is only ever set at 600, so it is requested at that one weight across the width axis it uses.
@@ -101,12 +101,13 @@ export default defineConfig({
           },
         },
       },
-      // No `baseUrl` for the page actions: with one they write their own llms.txt over
+      // starlight-page-actions writes each page's `.md`; its interface is replaced by
+      // src/components/PageActions.astro. No `baseUrl`: with one it writes its own llms.txt over
       // starlight-llms-txt's.
       plugins: [
         starlightLlmsTxt(),
         starlightPageActions({
-          prompt: "Read {url}, a page of the Bounda docs, so I can ask about it.",
+          prompt: PROMPT,
           actions: {
             chatgpt: true,
             claude: true,

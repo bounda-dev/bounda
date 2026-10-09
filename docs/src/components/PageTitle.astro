@@ -1,65 +1,57 @@
 ---
-// starlight-page-actions brings Copy Markdown and Open in… through its own PageTitle, so this
-// one wraps that rather than Starlight's.
-import WithActions from "starlight-page-actions/overrides/PageTitle.astro";
+import Default from "@astrojs/starlight/components/PageTitle.astro";
 import { positionsOf } from "../positions.ts";
+import PageActions from "./PageActions.astro";
 
 const { entry, sidebar } = Astro.locals.starlightRoute;
 const position = positionsOf(sidebar).find(({ link }) => link.isCurrent);
 ---
 
-<div class="bounda-title" data-pagefind-meta={`title:${entry.data.title}`}>
+{/* Interface, not content: kept out of the search index. */}
+<div class="bounda-masthead" data-pagefind-ignore="all">
   {
     position && (
-      <p class="bounda-position" data-pagefind-ignore>
+      <p class="bounda-position">
         <span class="bounda-label">{position.group}</span>
         <span class="bounda-number">{position.number}</span>
       </p>
     )
   }
-  {/* Out of the search index: the page actions are interface, and the title is the meta above. */}
-  <div class="with-actions" data-pagefind-ignore="all"><WithActions /></div>
-  {entry.data.description && <p class="lead">{entry.data.description}</p>}
+  <PageActions />
 </div>
+<Default />
+{entry.data.description && <p class="lead">{entry.data.description}</p>}
 
 <style>
-  /* The title, its lead, then the page actions, whatever order the plugin renders them in. */
-  .bounda-title {
+  .bounda-masthead {
     display: flex;
-    flex-direction: column;
-  }
-
-  .with-actions {
-    display: contents;
-  }
-
-  .with-actions > :global(*) {
-    order: 3;
-  }
-
-  .bounda-position {
-    order: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
     margin-top: 1rem;
   }
 
-  .with-actions > :global(h1) {
-    order: 1;
+  .bounda-position {
+    margin: 0;
   }
 
-  .bounda-position + .with-actions > :global(h1) {
-    margin-top: 0.5rem;
+  .bounda-masthead > :global(.actions) {
+    margin-inline-start: auto;
+  }
+
+  .bounda-label {
+    color: var(--sl-color-accent);
+  }
+
+  .bounda-masthead + :global(h1) {
+    margin-top: 0.25rem;
   }
 
   .lead {
-    order: 2;
     max-width: 40rem;
     margin-top: 0.75rem;
     font-size: var(--sl-text-lg);
     line-height: 1.5;
     color: var(--sl-color-gray-3);
-  }
-
-  .bounda-label {
-    color: var(--sl-color-accent);
   }
 </style>

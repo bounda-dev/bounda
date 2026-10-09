@@ -4,6 +4,9 @@ export const REPOSITORY = "https://github.com/bounda-dev/bounda";
 
 export const DESCRIPTION = "Event sourcing and CQRS for TypeScript without the ceremony.";
 
+// What a page hands to a chat; `{url}` becomes the page's address.
+export const PROMPT = "Read {url}, a page of the Bounda docs, so I can ask about it.";
+
 // Where the docs start. `/` has no page of its own (bounda.dev says what Bounda is), so it
 // forwards here and the wordmark links here.
 export const START = "/getting-started/";

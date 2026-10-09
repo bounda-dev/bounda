@@ -3,26 +3,20 @@ import { Icon } from "@astrojs/starlight/components";
 import { REPOSITORY } from "../site.ts";
 ---
 
-<a href="https://bounda.dev" class="bounda-label">bounda.dev</a>
-<a href={REPOSITORY} class="icon" aria-label="GitHub">
+<a href={REPOSITORY} aria-label="GitHub">
   <Icon name="github" size="1.25rem" />
 </a>
 
 <style>
   a {
     display: flex;
-    align-items: center;
+    padding: 0.5em;
+    margin: -0.5em;
     color: var(--sl-color-gray-3);
-    text-decoration: none;
   }
 
   a:hover,
   a:focus-visible {
     color: var(--sl-color-white);
-  }
-
-  .icon {
-    padding: 0.5em;
-    margin: -0.5em;
   }
 </style>
