@@ -111,6 +111,9 @@ describe("policyTrigger", () => {
     expect(trigger("onboarding")).toBeNull();
     expect(trigger("OnOrderPaid")).toBeNull();
     expect(trigger("sendOnOrderShipped")).toBeNull();
+    expect(
+      policyTrigger({ key: "notifyOnAddOnRemoved", events: ["Removed", "AddOnRemoved"] }),
+    ).toBe("AddOnRemoved");
   });
 
   it("accepts an explicit on as a string or a list", () => {
