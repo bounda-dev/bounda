@@ -7,13 +7,13 @@ import {
   deadLetterStoreContract,
   eventStoreContract,
   inboxLedgerContract,
-  jsonValuesContract,
   pendingEvent,
   readModelRebuildContract,
   readModelTransactionContract,
   schedulerContract,
   storageTransactionContract,
   tableContract,
+  viewContract,
 } from "../adapter/testing/index.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
 import { silentLogger } from "../contracts/logger.ts";
@@ -39,7 +39,7 @@ describe("memory adapter", () => {
       return ports.table;
     },
   });
-  jsonValuesContract({ create: async () => memory() });
+  viewContract({ create: async () => memory() });
   it("appends several batches in order, a stream's later batch on its earlier one, and notifies once", async () => {
     const positions: number[] = [];
     const store = createMemoryEventStore({ onAppend: (position) => positions.push(position) });

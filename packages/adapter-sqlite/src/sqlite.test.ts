@@ -18,13 +18,13 @@ import {
   deadLetterStoreContract,
   eventStoreContract,
   inboxLedgerContract,
-  jsonValuesContract,
   pendingEvent,
   readModelRebuildContract,
   readModelTransactionContract,
   schedulerContract,
   storageTransactionContract,
   tableContract,
+  viewContract,
 } from "@bounda-dev/core/adapter/testing";
 import { createTestApp } from "@bounda-dev/core/testing";
 import type { Client } from "@libsql/client";
@@ -53,7 +53,7 @@ describe("sqlite adapter in memory", () => {
         }>({ name: "orderSummary", fields: contractFields, logger: silentLogger })
       ).table,
   });
-  jsonValuesContract({ create: async () => sqlite({ memory: true }) });
+  viewContract({ create: async () => sqlite({ memory: true }) });
 });
 
 describe("sqlite adapter in memory, under concurrent use", () => {

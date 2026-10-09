@@ -1,4 +1,7 @@
 import type { FindManyArgs, ReadClient, Table } from "../adapter/ports/table.ts";
+import { sqliteDialect } from "../adapter/sql/dialect.ts";
+import { buildLimit, columnFor } from "../adapter/sql/query-builder.ts";
+import { type ColumnDefinition, columnsOf } from "../adapter/sql/read-model-schema.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
 import type { FieldsRecord } from "../modules/view.ts";
 
@@ -18,77 +21,125 @@ export interface CreateMemoryTableFunction {
   <Row extends object>(args: CreateMemoryTableArgs): MemoryTable<Row>;
 }
 
-const primaryKeyOf = (name: string, fields: FieldsRecord): string => {
-  const key = Object.entries(fields).find(([, field]) => field.isPrimaryKey)?.[0];
-  if (key === undefined) {
-    throw new ConfigurationError(`Read model "${name}" declares no primary key field`);
-  }
-  return key;
-};
+type Stored = Readonly<Record<string, unknown>>;
 
-const matches = <Row>(row: Row, where: Partial<Row> | undefined): boolean =>
-  where === undefined ||
-  Object.entries(where).every(([field, value]) =>
-    Object.is(Reflect.get(row as object, field), value),
-  );
-
+// Code-unit order with SQLite's: a value before none, numbers by value, text by code unit.
 const compare = (a: unknown, b: unknown): number => {
   if (a === b) return 0;
-  if (a === undefined) return 1;
-  if (b === undefined) return -1;
-  return (a as number) < (b as number) ? -1 : 1;
+  if (a === null) return -1;
+  if (b === null) return 1;
+  return (a as number | string) < (b as number | string) ? -1 : 1;
 };
 
-const withoutUndefined = <Row extends object>(row: Row): Row =>
-  Object.fromEntries(
-    Object.entries(row as Record<string, unknown>).filter(([, value]) => value !== undefined),
-  ) as Row;
-
 /**
- * A read-model table held in memory. Rows are keyed by the field marked `primaryKey()`.
+ * A read-model table held in memory that behaves as the SQLite one: rows are kept as SQLite
+ * stores them, through its dialect, so `where` compares dates and JSON by value, `null` means no
+ * value, every read returns fresh copies, and the view, `unique()`, required fields and limits
+ * are checked as SQL checks them.
  */
 export const createMemoryTable: CreateMemoryTableFunction = <Row extends object>({
   name,
   fields,
 }: CreateMemoryTableArgs): MemoryTable<Row> => {
-  const primaryKey = primaryKeyOf(name, fields);
-  const rows = new Map<unknown, Row>();
-  const keyOf = (row: Partial<Row>): unknown => Reflect.get(row, primaryKey);
+  const columns = columnsOf({ readModel: name, fields, dialect: sqliteDialect });
+  const primaryKey = columns.find((column) => column.primaryKey) as ColumnDefinition;
+  const rows = new Map<unknown, Stored>();
+
+  const encode = (row: object): Stored =>
+    Object.fromEntries(
+      columns.map((column) => [
+        column.field,
+        sqliteDialect.encode(column.type, Reflect.get(row, column.field)),
+      ]),
+    );
+  const decode = (stored: Stored): Row => {
+    const row: Record<string, unknown> = {};
+    for (const column of columns) {
+      const value = sqliteDialect.decode(column.type, stored[column.field]);
+      if (value !== undefined) row[column.field] = value;
+    }
+    return row as Row;
+  };
+  // Encoded once, and checked even when no row is there to compare, as SQL checks the statement.
+  const matcher = (where: Partial<Row> | undefined): ((stored: Stored) => boolean) => {
+    const expected = Object.entries(where ?? {}).map(([field, value]) => {
+      const column = columnFor({ field, columns });
+      return [
+        column.field,
+        value === undefined || value === null ? null : sqliteDialect.encode(column.type, value),
+      ] as const;
+    });
+    return (stored) => expected.every(([field, value]) => stored[field] === value);
+  };
+  const check = (key: unknown, stored: Stored): void => {
+    for (const column of columns) {
+      const value = stored[column.field];
+      if (value === null && !column.nullable) {
+        throw new Error(`NOT NULL constraint failed: ${name}.${column.field}`);
+      }
+      if (!column.unique || column.primaryKey || value === null) continue;
+      for (const [other, row] of rows) {
+        if (other !== key && row[column.field] === value) {
+          throw new Error(`UNIQUE constraint failed: ${name}.${column.field}`);
+        }
+      }
+    }
+  };
+  const write = (stored: Stored): void => {
+    const key = stored[primaryKey.field];
+    check(key, stored);
+    rows.set(key, stored);
+  };
 
   const select = (args: FindManyArgs<Row> = {}): Row[] => {
-    const selected = [...rows.values()].filter((row) => matches(row, args.where));
+    buildLimit({ limit: args.limit, offset: args.offset, dialect: sqliteDialect, paramOffset: 0 });
+    const selected = [...rows.values()].filter(matcher(args.where));
     if (args.orderBy !== undefined) {
       const { field, direction } = args.orderBy;
+      const column = columnFor({ field, columns });
       selected.sort(
-        (a, b) =>
-          compare(Reflect.get(a, field), Reflect.get(b, field)) * (direction === "asc" ? 1 : -1),
+        (a, b) => compare(a[column.field], b[column.field]) * (direction === "asc" ? 1 : -1),
       );
     }
     const offset = args.offset ?? 0;
-    return selected.slice(offset, args.limit === undefined ? undefined : offset + args.limit);
+    return selected
+      .slice(offset, args.limit === undefined ? undefined : offset + args.limit)
+      .map(decode);
   };
 
   return {
-    upsert: async (row) => {
-      rows.set(keyOf(row), withoutUndefined(row));
-    },
+    upsert: async (row) => write(encode(row)),
     insert: async (row) => {
-      const key = keyOf(row);
-      if (!rows.has(key)) rows.set(key, withoutUndefined(row));
+      const stored = encode(row);
+      if (!rows.has(stored[primaryKey.field])) write(stored);
     },
     update: async (where, patch) => {
-      for (const [key, row] of rows) {
-        if (matches(row, where)) rows.set(key, withoutUndefined({ ...row, ...patch }));
+      const changes = Object.entries(patch).filter(([, value]) => value !== undefined);
+      if (changes.length === 0) return;
+      const encoded = Object.fromEntries(
+        changes.map(([field, value]) => {
+          const column = columnFor({ field, columns });
+          return [column.field, sqliteDialect.encode(column.type, value)];
+        }),
+      );
+      const matches = matcher(where);
+      for (const [key, row] of [...rows]) {
+        if (!matches(row)) continue;
+        const updated = { ...row, ...encoded };
+        check(key, updated);
+        rows.delete(key);
+        rows.set(updated[primaryKey.field], updated);
       }
     },
     delete: async (where) => {
-      for (const [key, row] of rows) {
-        if (matches(row, where)) rows.delete(key);
+      const matches = matcher(where);
+      for (const [key, row] of [...rows]) {
+        if (matches(row)) rows.delete(key);
       }
     },
     findOne: async (where) => select({ where, limit: 1 })[0] ?? null,
     findMany: async (args) => select(args),
-    count: async (where) => select({ ...(where === undefined ? {} : { where }) }).length,
+    count: async (where) => [...rows.values()].filter(matcher(where)).length,
     snapshot: () => {
       const saved = new Map(rows);
       return () => {

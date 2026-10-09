@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { ConfigurationError } from "../../contracts/errors.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import type { FieldsRecord } from "../../modules/view.ts";
 import { fieldBuilder as f } from "../../modules/view.ts";
@@ -118,6 +119,44 @@ export const tableContract: TableContractFunction = ({ create }) => {
       expect(found).not.toBeNull();
       expect(Object.hasOwn(found as object, "paidAt")).toBe(false);
     });
+
+    it("matches a date by its instant and a missing value by null or undefined", async () => {
+      await table.insert(row("1", { paidAt: new Date("2026-01-01T00:00:00.000Z") }));
+      await table.insert(row("2"));
+      await table.upsert({ ...row("3"), paidAt: null as never });
+      const ids = async (where: Partial<ContractRow>) =>
+        (await table.findMany({ where, orderBy: { field: "orderId", direction: "asc" } })).map(
+          (found) => found.orderId,
+        );
+      expect(await ids({ paidAt: new Date("2026-01-01T00:00:00.000Z") })).toEqual(["1"]);
+      expect(await ids({ paidAt: undefined } as never)).toEqual(["2", "3"]);
+      expect(await ids({ paidAt: null as never })).toEqual(["2", "3"]);
+      expect(Object.hasOwn((await table.findOne({ orderId: "3" })) as object, "paidAt")).toBe(
+        false,
+      );
+    });
+
+    it("leaves a field out of an update whose patch is undefined", async () => {
+      const paidAt = new Date("2026-01-01T00:00:00.000Z");
+      await table.insert(row("1", { paidAt }));
+      await table.update({ orderId: "1" }, { status: "paid", paidAt: undefined } as never);
+      expect(await table.findOne({ orderId: "1" })).toEqual(row("1", { status: "paid", paidAt }));
+    });
+
+    it("hands out rows that changing does not change the table", async () => {
+      await table.insert(row("1"));
+      const found = (await table.findOne({ orderId: "1" })) as { status: string };
+      found.status = "changed";
+      expect(await table.findOne({ orderId: "1" })).toEqual(row("1"));
+    });
+
+    it("refuses a negative limit or offset and a field the view does not have", async () => {
+      await expect(table.findMany({ limit: -1 })).rejects.toBeInstanceOf(ConfigurationError);
+      await expect(table.findMany({ offset: -1 })).rejects.toBeInstanceOf(ConfigurationError);
+      await expect(
+        table.findMany({ where: { missing: "x" } as Partial<ContractRow> }),
+      ).rejects.toBeInstanceOf(ConfigurationError);
+    });
   });
 };
 
@@ -131,22 +170,36 @@ const jsonFields: FieldsRecord = {
   value: f.json(),
 };
 
-export interface JsonValuesContractArgs {
+interface PersonRow {
+  readonly id: string;
+  readonly email: string;
+  readonly name?: string;
+}
+
+const personFields: FieldsRecord = {
+  id: f.string().primaryKey(),
+  email: f.string().unique(),
+  name: f.string().optional(),
+};
+
+export interface ViewContractArgs {
   /**
-   * A fresh adapter, whose read model the contract opens.
+   * A fresh adapter, whose read models the contract opens.
    */
   readonly create: () => Promise<Adapter>;
 }
 
-export interface JsonValuesContractFunction {
-  (args: JsonValuesContractArgs): void;
+export interface ViewContractFunction {
+  (args: ViewContractArgs): void;
 }
 
 /**
- * Every JSON value a `json` field can hold comes back as it was stored, whatever its shape.
+ * What a view's fields promise on every adapter: any JSON value comes back as it was stored, a
+ * `unique()` field refuses a value another row has, a required field refuses none, and a view
+ * with more than one primary key is refused.
  */
-export const jsonValuesContract: JsonValuesContractFunction = ({ create }) => {
-  describe("json values contract", () => {
+export const viewContract: ViewContractFunction = ({ create }) => {
+  describe("view contract", () => {
     it("round-trips any JSON value, top-level strings and booleans included", async () => {
       const { table } = await (await create()).createReadModel<JsonRow>({
         name: "documents",
@@ -173,6 +226,30 @@ export const jsonValuesContract: JsonValuesContractFunction = ({ create }) => {
       for (const [index, value] of values.entries()) {
         expect(await table.findOne({ id: String(index) })).toEqual({ id: String(index), value });
       }
+    });
+
+    it("refuses a value a unique field already has, and a required field left out", async () => {
+      const { table } = await (await create()).createReadModel<PersonRow>({
+        name: "people",
+        fields: personFields,
+        logger: silentLogger,
+      });
+      await table.insert({ id: "1", email: "ada@example.com" });
+      await expect(table.insert({ id: "2", email: "ada@example.com" })).rejects.toThrow();
+      await table.insert({ id: "2", email: "grace@example.com" });
+      await expect(table.update({ id: "2" }, { email: "ada@example.com" })).rejects.toThrow();
+      await expect(table.upsert({ id: "3" } as PersonRow)).rejects.toThrow();
+      expect(await table.count()).toBe(2);
+    });
+
+    it("refuses a view with more than one primary key", async () => {
+      await expect(
+        (await create()).createReadModel({
+          name: "pairs",
+          fields: { left: f.string().primaryKey(), right: f.string().primaryKey() },
+          logger: silentLogger,
+        }),
+      ).rejects.toBeInstanceOf(ConfigurationError);
     });
   });
 };
