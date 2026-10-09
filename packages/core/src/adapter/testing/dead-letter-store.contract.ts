@@ -64,6 +64,11 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       expect((await store.list({ kind: "scheduled" }))[0]?.payload).toEqual(payload);
     });
 
+    it("keeps a payload that is a bare boolean", async () => {
+      await store.add(letter("bool", { kind: "scheduled", payload: true }));
+      expect((await store.get("bool"))?.payload).toBe(true);
+    });
+
     it("is idempotent on id", async () => {
       await store.add(letter("a"));
       await store.add(letter("a", { attempts: 99 }));

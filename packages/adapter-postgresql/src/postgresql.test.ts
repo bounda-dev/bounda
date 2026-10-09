@@ -226,7 +226,64 @@ describe.skipIf(container === null)("postgresql adapter", () => {
   });
 
   it("refuses a schema and prefix whose notification channel PostgreSQL cannot hold", () => {
-    expect(() => postgresql({ url, schema: "s".repeat(50) })).toThrow(ConfigurationError);
+    // `<schema>.bounda_events` is 63 bytes, PostgreSQL's limit, with a schema of 49.
+    expect(() => postgresql({ url, schema: "s".repeat(49) })).not.toThrow();
+    expect(() => postgresql({ url, schema: "s".repeat(50) })).toThrow(
+      new ConfigurationError(
+        `schema "${"s".repeat(50)}" and tablePrefix "bounda_" make the notification channel "${"s".repeat(50)}.bounda_events", longer than PostgreSQL's 63 bytes; shorten one of them`,
+      ),
+    );
+  });
+
+  it("indexes a field newly indexed, and reopens it without changing it", async () => {
+    const adapter = fresh();
+    const evolved: string[] = [];
+    const logger = {
+      ...silentLogger,
+      info: (message: string) => {
+        evolved.push(message);
+      },
+    };
+    const plain = { id: f.string().primaryKey(), city: f.string(), code: f.string().unique() };
+    await openReadModel(adapter, "places", plain, logger);
+    expect(evolved).toEqual([]);
+    const indexed = { ...plain, city: f.string().index() };
+    const first = await openReadModel(adapter, "places", indexed, logger);
+    await openReadModel(adapter, "places", indexed, logger);
+    expect(evolved).toEqual(["read model table evolved"]);
+    const raw = first.client.raw as Sql;
+    const indexes =
+      await raw`SELECT indexname FROM pg_indexes WHERE indexname = ${`t${run}_${prefixes}_rm_places_city_idx`}`;
+    expect(indexes).toHaveLength(1);
+  });
+
+  it("creates the checkpoints table again when a read model's table is there but it is not", async () => {
+    const adapter = fresh();
+    const fields = { id: f.string().primaryKey() };
+    const first = await openReadModel(adapter, "places", fields);
+    const raw = first.client.raw as Sql;
+    await raw.unsafe(`DROP TABLE "t${run}_${prefixes}_checkpoints"`);
+    const again = await openReadModel(adapter, "places", fields);
+    expect(await again.checkpointStore.get("projection:places")).toBe(0);
+  });
+
+  it("makes a boot that changes the schema wait for the schema's lock", async () => {
+    const schema = `wait_${run}`;
+    const holder = postgres(url, { max: 1, onnotice: () => undefined });
+    try {
+      await holder`SELECT pg_advisory_lock(hashtext(${`bounda:${schema}:schema`}))`;
+      let opened = false;
+      const opening = openStorage(fresh({ schema })).then(() => {
+        opened = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(opened).toBe(false);
+      await holder`SELECT pg_advisory_unlock(hashtext(${`bounda:${schema}:schema`}))`;
+      await opening;
+      expect(opened).toBe(true);
+    } finally {
+      await holder.end({ timeout: 5 });
+    }
   });
 
   it("notifies listeners of every committed append with the last position", async () => {
