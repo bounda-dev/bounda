@@ -4,12 +4,12 @@ import starlightLlmsTxt from "starlight-llms-txt";
 import starlightPageActions from "starlight-page-actions";
 import { codeHeader } from "./src/code-header.ts";
 import { basalt, bone } from "./src/code-themes.ts";
-import { DESCRIPTION, socialImage } from "./src/site.ts";
+import { DESCRIPTION, SITE, socialImage } from "./src/site.ts";
 
 // The fonts of bounda.dev, self-hosted at build time with metric-matched fallbacks. Science Gothic
 // is only ever set at 600, so it is requested at that one weight across the width axis it uses.
 export default defineConfig({
-  site: "https://docs.bounda.dev",
+  site: SITE,
   // Pages that moved keep their old address working, since links to them live outside the docs.
   redirects: {
     "/guides/how-it-runs/": "/concepts/how-it-runs/",
@@ -54,7 +54,7 @@ export default defineConfig({
       },
       description: DESCRIPTION,
       customCss: ["./src/styles/bounda.css"],
-      head: socialImage("https://docs.bounda.dev/og.jpg"),
+      head: socialImage(`${SITE}/og.jpg`),
       routeMiddleware: "./src/route-data.ts",
       components: {
         Head: "./src/components/Head.astro",

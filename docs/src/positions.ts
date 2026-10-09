@@ -1,11 +1,10 @@
 import type { StarlightRouteData } from "@astrojs/starlight/route-data";
 
 type SidebarEntry = StarlightRouteData["sidebar"][number];
+type SidebarLink = Extract<SidebarEntry, { type: "link" }>;
 
 export interface Position {
-  readonly href: string;
-  readonly label: string;
-  readonly isCurrent: boolean;
+  readonly link: SidebarLink;
   readonly group: string;
   readonly number: string;
 }
@@ -26,9 +25,7 @@ export const positionsOf: PositionsOfFunction = (sidebar) =>
           link.type === "link"
             ? [
                 {
-                  href: link.href,
-                  label: link.label,
-                  isCurrent: link.isCurrent,
+                  link,
                   group: group.label,
                   number: String(index + 1).padStart(2, "0"),
                 },

@@ -1,9 +1,10 @@
 ---
 import { Icon } from "@astrojs/starlight/components";
+import { REPOSITORY } from "../site.ts";
 ---
 
 <a href="https://bounda.dev" class="bounda-label">bounda.dev</a>
-<a href="https://github.com/bounda-dev/bounda" class="icon" aria-label="GitHub">
+<a href={REPOSITORY} class="icon" aria-label="GitHub">
   <Icon name="github" size="1.25rem" />
 </a>
 

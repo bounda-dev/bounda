@@ -1,6 +1,6 @@
 ---
 // The sections of the page as a column of positions: each section numbered, its subsections
-// under it, and a rule down the side whose ochre stretch is the section being read.
+// under it, and a rule down the side whose bright stretch is the section being read.
 const { toc } = Astro.locals.starlightRoute;
 const sections = (toc?.items ?? []).flatMap((item) =>
   item.slug === "_top" ? item.children : [item],
@@ -117,7 +117,7 @@ const sections = (toc?.items ?? []).flatMap((item) =>
   }
 
   a[aria-current="true"] {
-    border-inline-start-color: var(--sl-color-accent);
+    border-inline-start-color: var(--sl-color-white);
     color: var(--sl-color-white);
   }
 

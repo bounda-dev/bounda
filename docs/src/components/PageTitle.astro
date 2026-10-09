@@ -5,7 +5,7 @@ import WithActions from "starlight-page-actions/overrides/PageTitle.astro";
 import { positionsOf } from "../positions.ts";
 
 const { entry, sidebar } = Astro.locals.starlightRoute;
-const position = positionsOf(sidebar).find(({ isCurrent }) => isCurrent);
+const position = positionsOf(sidebar).find(({ link }) => link.isCurrent);
 ---
 
 <div class="bounda-title" data-pagefind-meta={`title:${entry.data.title}`}>

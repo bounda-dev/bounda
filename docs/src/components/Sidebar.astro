@@ -1,32 +1,53 @@
 ---
+import { Badge } from "@astrojs/starlight/components";
 import MobileMenuFooter from "@astrojs/starlight/components/MobileMenuFooter.astro";
 import SidebarPersister from "@astrojs/starlight/components/SidebarPersister.astro";
 import { positionsOf } from "../positions.ts";
 
 // The sidebar as an index of the docs, set like a ledger: every group open, every page with its
-// position, the page being read marked as the head.
+// position, the page being read marked as the head. A link outside a group has no position.
 const { sidebar } = Astro.locals.starlightRoute;
-const groups = [...Map.groupBy(positionsOf(sidebar), ({ group }) => group)];
 ---
 
 <SidebarPersister>
   <div class="bounda-index">
     {
-      groups.map(([group, pages]) => (
-        <section>
-          <h2 class="bounda-label">{group}</h2>
-          <ol>
-            {pages.map(({ href, label, isCurrent, number }) => (
-              <li>
-                <a href={href} aria-current={isCurrent ? "page" : undefined}>
-                  <span class="bounda-number">{number}</span>
-                  <span>{label}</span>
-                </a>
-              </li>
-            ))}
-          </ol>
-        </section>
-      ))
+      sidebar.map((entry, index) =>
+        entry.type === "link" ? (
+          <a
+            href={entry.href}
+            aria-current={entry.isCurrent ? "page" : undefined}
+            {...entry.attrs}
+            class:list={["loose", entry.attrs.class]}
+          >
+            <span>{entry.label}</span>
+            {entry.badge && <Badge {...entry.badge} />}
+          </a>
+        ) : (
+          <section aria-labelledby={`bounda-index-${index}`}>
+            <p id={`bounda-index-${index}`} class="bounda-label">
+              {entry.label}
+            </p>
+            <ol>
+              {positionsOf([entry]).map(({ link, number }) => (
+                <li>
+                  <a
+                    href={link.href}
+                    aria-current={link.isCurrent ? "page" : undefined}
+                    {...link.attrs}
+                  >
+                    <span class="bounda-number">{number}</span>
+                    <span>
+                      {link.label}
+                      {link.badge && <Badge {...link.badge} />}
+                    </span>
+                  </a>
+                </li>
+              ))}
+            </ol>
+          </section>
+        ),
+      )
     }
   </div>
 </SidebarPersister>
@@ -43,7 +64,7 @@ const groups = [...Map.groupBy(positionsOf(sidebar), ({ group }) => group)];
     padding-block: 0.5rem 1rem;
   }
 
-  h2 {
+  .bounda-label {
     margin: 0 0 0.5rem;
     padding-bottom: 0.5rem;
     border-bottom: 1px solid var(--sl-color-hairline);
@@ -67,6 +88,11 @@ const groups = [...Map.groupBy(positionsOf(sidebar), ({ group }) => group)];
     text-decoration: none;
     overflow-wrap: anywhere;
     transition: background-color 160ms cubic-bezier(0.22, 0.8, 0.16, 1);
+  }
+
+  a.loose {
+    display: block;
+    padding-inline-start: 0.625rem;
   }
 
   a:hover,

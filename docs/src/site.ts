@@ -1,3 +1,7 @@
+export const SITE = "https://docs.bounda.dev";
+
+export const REPOSITORY = "https://github.com/bounda-dev/bounda";
+
 export const DESCRIPTION = "Event sourcing and CQRS for TypeScript without the ceremony.";
 
 // Where the docs start. `/` has no page of its own (bounda.dev says what Bounda is), so it

@@ -18,7 +18,9 @@ const links = [
     link: pagination.next,
   },
 ].flatMap(({ link, ...rest }) =>
-  link ? [{ ...rest, link, position: positions.find(({ href }) => href === link.href) }] : [],
+  link
+    ? [{ ...rest, link, position: positions.find((position) => position.link.href === link.href) }]
+    : [],
 );
 ---
 

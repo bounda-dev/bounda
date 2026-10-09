@@ -5,8 +5,8 @@ import { positionsOf } from "../positions.ts";
 // Search over Pagefind's index, Starlight's own, with results set like the sidebar: each page at
 // its position, its title, the passage that matched, and the sections that matched under it.
 const positions = Object.fromEntries(
-  positionsOf(Astro.locals.starlightRoute.sidebar).map(({ href, group, number }) => [
-    href,
+  positionsOf(Astro.locals.starlightRoute.sidebar).map(({ link, group, number }) => [
+    link.href,
     { group, number },
   ]),
 );
@@ -15,7 +15,9 @@ const label = Astro.locals.t("search.label");
 
 <bounda-search
   data-positions={JSON.stringify(positions)}
-  data-unavailable={Astro.locals.t("search.devWarning")}
+  data-unavailable={import.meta.env.DEV
+    ? Astro.locals.t("search.devWarning")
+    : "Search could not load. Try again in a moment."}
 >
   <button type="button" class="open" aria-label={label} aria-keyshortcuts="Control+K" disabled>
     <Icon name="magnifier" />
@@ -27,11 +29,20 @@ const label = Astro.locals.t("search.label");
     <div class="frame">
       <div class="field">
         <Icon name="magnifier" />
-        <input type="search" placeholder={label} autocomplete="off" spellcheck="false" />
+        <input
+          type="search"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded="false"
+          aria-controls="bounda-search-results"
+          placeholder={label}
+          autocomplete="off"
+          spellcheck="false"
+        />
         <button type="button" class="close bounda-label">Esc</button>
       </div>
       <p class="status" aria-live="polite"></p>
-      <ol class="results" role="listbox" aria-label={label}></ol>
+      <ol id="bounda-search-results" class="results" role="listbox" aria-label={label}></ol>
     </div>
   </dialog>
 </bounda-search>
@@ -113,7 +124,11 @@ const label = Astro.locals.t("search.label");
       const select = (index: number) => {
         const all = links();
         all.forEach((link, i) => link.setAttribute("aria-selected", String(i === index)));
-        all[index]?.scrollIntoView({ block: "nearest" });
+        const current = all[index];
+        if (current) input.setAttribute("aria-activedescendant", current.id);
+        else input.removeAttribute("aria-activedescendant");
+        input.setAttribute("aria-expanded", String(all.length > 0));
+        current?.scrollIntoView({ block: "nearest" });
       };
       const selected = () => links().findIndex((link) => link.ariaSelected === "true");
 
@@ -121,6 +136,7 @@ const label = Astro.locals.t("search.label");
         list.replaceChildren(
           ...results.map((result) => {
             const item = element("li", "result");
+            item.setAttribute("role", "presentation");
             const page = element("a", "page") as HTMLAnchorElement;
             page.href = result.url;
             page.setAttribute("role", "option");
@@ -141,12 +157,14 @@ const label = Astro.locals.t("search.label");
               .slice(0, SECTIONS);
             if (sections.length > 0) {
               const sublist = element("ol", "sections");
+              sublist.setAttribute("role", "presentation");
               for (const sub of sections) {
                 const link = element("a", "section") as HTMLAnchorElement;
                 link.href = sub.url;
                 link.setAttribute("role", "option");
                 link.append(element("span", "title", sub.title), excerpt(sub.excerpt));
                 const subitem = document.createElement("li");
+                subitem.setAttribute("role", "presentation");
                 subitem.append(link);
                 sublist.append(subitem);
               }
@@ -155,21 +173,29 @@ const label = Astro.locals.t("search.label");
             return item;
           }),
         );
+        links().forEach((link, i) => {
+          link.id = `bounda-search-option-${i}`;
+        });
         status.textContent =
           query === "" ? "" : results.length === 0 ? `No results for “${query}”` : "";
         select(0);
       };
 
+      // Each keystroke starts a search; only the latest one may render, whichever ends first.
+      let latest = 0;
       const search = async () => {
+        const id = ++latest;
         const query = input.value.trim();
         if (query === "") return render("", []);
         try {
           const found = await (await loadPagefind()).debouncedSearch(query, {}, 120);
-          if (!found) return;
-          render(query, await Promise.all(found.results.slice(0, LIMIT).map((r) => r.data())));
+          if (!found || id !== latest) return;
+          const results = await Promise.all(found.results.slice(0, LIMIT).map((r) => r.data()));
+          if (id === latest) render(query, results);
         } catch {
-          // The index exists only in a build; `astro dev` has none.
-          list.replaceChildren();
+          // `astro dev` has no index; in a build, the bundle failed to load.
+          if (id !== latest) return;
+          render("", []);
           status.textContent = this.dataset.unavailable ?? "";
         }
       };
