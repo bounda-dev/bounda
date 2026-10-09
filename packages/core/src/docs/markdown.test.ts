@@ -304,7 +304,7 @@ describe("renderComponents", () => {
         "  - main.ts",
         "</FileTree>",
       ]),
-    ).toBe("\n\n1. Run it.\n\n- app/\n  - main.ts");
+    ).toBe("\n1. Run it.\n\n- app/\n  - main.ts");
   });
 
   it("turns each tab into its label in bold over its content, unindented", () => {
@@ -360,6 +360,21 @@ describe("renderComponents", () => {
   it("leaves tags and imports inside code blocks as written", () => {
     const lines = ["```mdx", 'import { Card } from "./card";', "<Card />", "```"];
     expect(render(lines)).toBe(lines.join("\n"));
+  });
+
+  it("keeps a code block's blank lines as written", () => {
+    const lines = ["```ts", "const a = 1;", "", "", "const b = 2;", "```"];
+    expect(render(lines)).toBe(lines.join("\n"));
+  });
+
+  it("refuses a component inside a sentence or a tag split over lines, but not inline code", () => {
+    expect(() => render(['See <Badge text="new" /> here.'])).toThrow(
+      'guides/testing.mdx: a component must take a line of its own: See <Badge text="new" /> here.',
+    );
+    expect(() => render(["<TabItem", '  label="A">', "</TabItem>"])).toThrow(
+      "a component must take a line of its own: <TabItem",
+    );
+    expect(render(["Write `<Tabs>` around them."])).toBe("Write `<Tabs>` around them.");
   });
 
   it("refuses any other component and any other import", () => {

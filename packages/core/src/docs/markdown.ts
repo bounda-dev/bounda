@@ -186,6 +186,9 @@ export interface RenderComponentsFunction {
 
 const STARLIGHT_IMPORT = /^import \{[^}]*\} from "@astrojs\/starlight\/components";$/;
 const COMPONENT = /^<(\/?)([A-Z]\w*)([^>]*?)\/?>$/;
+// Any other capitalised tag outside inline code: a component inside a sentence, or one whose tag
+// spans lines, which a Markdown reader would get as raw JSX.
+const STRAY_COMPONENT = /<\/?[A-Z]/;
 const LABEL = /\blabel="([^"]*)"/;
 // Components with a plain Markdown form: their tags go, and what they wrap stays. A tab becomes its
 // label in bold over its content.
@@ -195,6 +198,10 @@ const UNWRAPPED: ReadonlySet<string> = new Set(["Tabs", "Steps", "FileTree"]);
 // and throws, so a page that needs one is a decision, not a silent loss.
 export const renderComponents: RenderComponentsFunction = ({ path, body }) => {
   const lines: string[] = [];
+  // Outside code, a blank line where a dropped tag leaves two in a row is not repeated.
+  const prose = (line: string): void => {
+    if (line !== "" || lines.at(-1) !== "") lines.push(line);
+  };
   let fence: string | undefined;
   let indent: number | undefined;
   let inTab = false;
@@ -222,7 +229,10 @@ export const renderComponents: RenderComponentsFunction = ({ path, body }) => {
     }
     const tag = COMPONENT.exec(trimmed);
     if (tag === null) {
-      lines.push(line);
+      if (STRAY_COMPONENT.test(line.replace(/`[^`]*`/g, ""))) {
+        throw new Error(`${path}: a component must take a line of its own: ${trimmed}`);
+      }
+      prose(line);
       continue;
     }
     const [, closing = "", name = "", attributes = ""] = tag;
@@ -233,21 +243,20 @@ export const renderComponents: RenderComponentsFunction = ({ path, body }) => {
     if (closing === "/") {
       inTab = false;
       indent = undefined;
-      lines.push("");
+      prose("");
     } else {
       const label = LABEL.exec(attributes)?.[1];
       if (label === undefined) throw new Error(`${path}: a <TabItem> needs a label`);
       inTab = true;
-      lines.push(`**${label}**`, "");
+      prose(`**${label}**`);
+      prose("");
     }
   }
-  return lines.join("\n").replace(/\n{3,}/g, "\n\n");
+  return lines.join("\n");
 };
 
-export interface RenderPageArgs extends RewriteLinksArgs {}
-
 export interface RenderPageFunction {
-  (args: RenderPageArgs): string;
+  (args: RewriteLinksArgs): string;
 }
 
 export const renderPage: RenderPageFunction = (args) =>
