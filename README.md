@@ -87,6 +87,9 @@ that breaks something is called out in the changelog of the package it touches.
 | [`@bounda-dev/react-router`](packages/react-router) | React Router integration and its Vite plugin |
 | [`create-bounda`](packages/create-bounda) | Project scaffolder |
 
+Each package README carries its own mutation score; the badge above is the whole repository.
+`adapter-cloudflare` has none: its tests run inside workerd, where Stryker cannot mutate.
+
 Two runnable examples live here: [`examples/storefront`](examples/storefront), on Node and SQLite,
 and [`examples/onboarding`](examples/onboarding), on React Router.
 
