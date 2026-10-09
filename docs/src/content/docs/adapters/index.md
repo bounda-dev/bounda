@@ -53,7 +53,7 @@ On first use the adapter creates its tables, prefixed with `bounda_` by default:
 | `bounda_events` | Every event, with its stream version and a global position |
 | `bounda_checkpoints` | How far each projection, the policy runner and the process runner have read, and where a paused rebuild stands |
 | `bounda_inbox` | Which handler already completed for which event, so a retry does not run it again |
-| `bounda_scheduled_commands` | Scheduled commands and process time-outs |
+| `bounda_scheduled_commands` | Scheduled commands, process deadlines and timeouts, and delayed policy runs |
 | `bounda_dead_letters` | Handler runs that gave up, with the error and the attempt count |
 
 Read models get one table each, named after the read model in snake_case behind `rm_`, so no
@@ -66,7 +66,7 @@ rebuilt there is also `bounda_rm_order_summary__rebuild`, and for an instant dur
 
 Adding a field to a view adds a nullable column the next time the app starts; existing rows keep
 working. Removing a field or changing its type is refused with an error that names the read
-model and the command that rebuilds it: `bounda rebuild <read-model>` projects the whole stream
+model and the command that rebuilds it: `bounda rebuild <read-model>` projects the whole global stream
 into a fresh table with the current fields and swaps it in, with the live table serving queries
 until then. See [Deployment](/guides/deployment/#rebuilding-a-read-model).
 
@@ -91,6 +91,12 @@ Projections receive `client` too. There it belongs to the batch's transaction, a
 `client.raw`: the Postgres.js `TransactionSql`, the libSQL `Transaction`, or the Durable Object's
 `sql`. SQL written through it commits and rolls back with the rest of the batch. A connection the
 projection opens by other means does not, and can even wait forever on a row the batch has locked.
+
+:::caution
+SQL that names the read model's table by hand keeps writing to the live table during a
+[rebuild](/guides/deployment/#rebuilding-a-read-model), not to the fresh one. Write projections
+through `table`, and keep `client` for what `table` cannot say.
+:::
 
 ## Which one to deploy
 

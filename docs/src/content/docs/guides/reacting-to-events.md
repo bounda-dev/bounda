@@ -2,7 +2,7 @@
 title: Reacting to events
 description: When a policy is enough, when the work needs a process, and what the runtime promises either way.
 sidebar:
-  order: 5
+  order: 1
 ---
 
 Two things react to events. A **policy** answers one event with commands and remembers nothing. A
@@ -117,7 +117,7 @@ How deadlines behave:
   deadline runs anyway after ten rounds of the worker, and `app.getLag()` counts it in
   `waitingDeadlines` meanwhile. This is best effort: the aggregate that receives the command still
   decides, so `cancelOrder` refuses an order that is already paid.
-- **Nothing runs once the process has ended**, whether it completed or timed out, but for the
+- **Nothing runs once the process has ended**, whether it completed or timed out, except the
   events its `at-timeout.ts` caused (below), nor while it is failed: its deadlines wait, like its
   events, for the failure to be retried.
 - **A failure is handled like an event handler's**: it is retried with the process's back-off, and
@@ -150,10 +150,10 @@ it, `ProcessDeadlineReached` records that it came due.
 
 ## What the runtime promises
 
-**Every reaction runs at least once.** Before running a handler the runtime claims
-`(policy, eventId)` — or the process equivalent — in an inbox ledger. A claim that already
-completed is not run again, so a retry after a crash mid-handler does not send the email twice.
-What it cannot know is whether the side effect of a partially finished handler happened, which is
+**Every reaction runs at least once, with an inbox.** Before running a handler the runtime
+claims `(handler, event)` in an inbox ledger. A claim that already completed is not run again, so
+an event that was handled is not handled twice. A handler that crashes midway has not completed
+its claim and runs again, and the runtime cannot know whether its side effect happened, which is
 why a handler that talks to the outside world should be written so that running it twice is
 harmless.
 
@@ -234,7 +234,7 @@ if (paid.rejected === "NotOpen") {
 
 A rejection nobody looks at is logged (`command rejected`, at `info`) and recorded on the
 command's span; a test asserts the ones it expects from what
-[`runUntilIdle()`](/guides/testing/#rejections) returns. A scheduled command that is rejected when it
+[`runUntilIdle()`](/guides/testing/#rejections-inside-reactions) returns. A scheduled command that is rejected when it
 runs changes nothing in the same way. While the run lasts, only a failure rejects the `await`: a
 payload that does not validate, a concurrency conflict that outlasts its retries, an error the handler throws. The run
 fails with it, and the runtime retries it or dead-letters it (see [Retries and timeouts](#retries-and-timeouts)).
@@ -320,12 +320,12 @@ A few rules keep it correct:
   key with the same parameters again. A random id would send it that key with other parameters,
   which a provider such as Stripe refuses.
 - **Without a key on the provider's side**, look the operation up by your own reference before
-  calling again, and give a process a time-out for a provider that may never answer.
+  calling again, and give a process a timeout for a provider that may never answer.
 - **The command a reaction dispatches can arrive twice**, when the reaction is retried after
   dispatching it. The retry gives it the same id, so a scheduled command stays scheduled once and
   the command's own `idempotencyKey` does not change, but one that already ran runs again: its
   handler decides from state and returns no events the second time, as `recordConfirmationSent`
-  does in the [storefront example](/guides/storefront-example/).
+  does in the [storefront example](/examples/storefront/).
 - **A run that fails leaves no command behind**, immediate or scheduled, whether a policy's or a
   process step's: they are stored only when the attempt commits (see
   [what the runtime promises](#what-the-runtime-promises)), so a retry that decides differently
@@ -420,7 +420,7 @@ answering each other.
 ## Dead letters
 
 A dead letter is a handler run the runtime gave up on: a policy or process handler that failed
-for good, or a scheduled command that was dropped. The stream moved on without it, so it is up to
+for good, or a scheduled command that was dropped. The subscriber's checkpoint moved on without it, so it is up to
 an operator to decide what happens to it. `bounda dead-letters` is that operator's tool:
 
 ```bash
@@ -538,7 +538,7 @@ await commands.sendReminder(
 
 A scheduled command is claimed by one instance at a time, however many are running the worker
 role. Its run and the release of its claim are one transaction: what the command wrote lands
-together with the claim's completion, so a worker that dies between the two does not run it twice,
+together with the claim's completion, so a worker that dies between the two does not store its writes twice,
 and a command the worker gives up on is dead-lettered in the same transaction that drops it. The
 claim's lease starts again before every retry after a conflict, and a command the worker reaches
 too late in a batch goes back unrun, without counting an attempt. A run that stalls past its lease

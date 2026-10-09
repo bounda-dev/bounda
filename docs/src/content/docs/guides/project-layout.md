@@ -32,7 +32,7 @@ app/
           on-order-placed.ts        handler for OrderPlaced
           on-order-paid.ts          handler for OrderPaid
           at-next-reminder.ts       handler for the deadline nextReminder
-          at-timeout.ts             handler for the time-out
+          at-timeout.ts             handler for the timeout
       infrastructure/
         inventory/                  the implementations of the port inventory.ts
           http.ts                   an implementation
@@ -387,7 +387,7 @@ A policy that exports `delay` (`export const delay = "1m"`, or `asDuration(...)`
 from the environment) runs that long after the event instead of as soon as it is read; see
 [delaying a policy](/guides/reacting-to-events/#delaying-a-policy).
 
-A policy runs after the events it reacts to are stored, and at least once
+A policy runs after the events it reacts to are stored, and at least once, with an inbox
 ([what the runtime promises](/guides/reacting-to-events/#what-the-runtime-promises)): a call it
 makes must be safe to repeat.
 
@@ -463,7 +463,7 @@ export const correlate = ({ from }: Process.CorrelateArgs) => [
 ```
 
 An event that does not start the process and finds no open instance is skipped, and so is any
-event for an instance that has completed or timed out, but for what its `at-timeout.ts` caused: a
+event for an instance that has completed or timed out, except what its `at-timeout.ts` caused: a
 starting event never reopens one. An
 event for an instance that has failed is parked instead, and handled in order once the failure is
 retried; see [a failed process](/guides/reacting-to-events/#a-failed-process).
@@ -563,14 +563,15 @@ config chooses its implementation in the same `ports` section, `ports: { orderSu
 `repository` reads the storage and gets no ports, and neither do the projections, for three
 reasons, each enough on its own:
 
-- **Exactly once.** A batch of projected events commits in one transaction with its checkpoint. A
+- **Exactly once per batch.** A batch of projected events commits in one transaction with its checkpoint. A
   call to the outside is not part of it, so a batch that fails after the call makes it again.
 - **Rebuilds.** Rebuilding a read model replays its whole history, so the call would be made once
   per event again, and an answer that has changed since (a rate, a geocode) gives other rows than
   the first time.
-- **The command's request.** Projections run inside the request of the command whose events they
-  project, so a slow provider slows every command, and one that is down blocks the read model,
-  since a projection that fails is never skipped.
+- **The command's request.** Under read-your-writes (the default in React Router, and every
+  command on Cloudflare) projections run inside the request of the command whose events they
+  project, so a slow provider slows every command; and anywhere, one that is down blocks the read
+  model, since a projection that fails is never skipped.
 
 Data from outside belongs in the event, fetched when the command or the policy decides, or in the
 query, fetched when it is read. An index kept in another store, such as Typesense or

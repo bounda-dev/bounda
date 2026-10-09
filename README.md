@@ -64,7 +64,7 @@ export const begin = ({ event }: Event.BeginArgs) => ({
 ```
 
 ```ts
-// app/read/orders/projections/order-placed.ts
+// app/read/orders/projections/order/order-placed.ts
 import type { Projection } from "./+types/order-placed";
 
 export const project = async ({ event, table }: Projection.Args) => {
@@ -87,7 +87,7 @@ the schema above it, `state` from the aggregate, `events` only offers this aggre
 Every event a store holds gets a position in one global stream. Read models, policies and
 processes follow it from a checkpoint each, so a read model can be rebuilt and a failed policy
 retried without touching the events. The
-[how it runs](https://docs.bounda.dev/guides/how-it-runs/) guide has the numbers and the ceiling.
+[how it runs](https://docs.bounda.dev/concepts/how-it-runs/) guide has the numbers and the ceiling.
 
 <p align="center">
   <picture>

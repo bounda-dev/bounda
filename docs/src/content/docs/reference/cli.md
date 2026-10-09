@@ -101,7 +101,7 @@ warning says so.
 
 ## `bounda rebuild`
 
-Rebuilds one read model from the whole stream without taking it offline. It loads
+Rebuilds one read model from the whole global stream without taking it offline. It loads
 `bounda.config.ts` and the generated registry the way `boot()` does, so it runs from the project
 root with the same environment as the app.
 
@@ -117,7 +117,7 @@ bounda rebuild orderSummary --root ./apps/shop --config bounda.config.ts --regis
 | `--registry <file>` | `.bounda/registry.ts` | The generated registry module under the root |
 
 The projections run into a fresh table with the view's current fields while queries keep reading
-the live one. When the fresh table has caught up with the stream it takes the live table's place
+the live one. When the fresh table has caught up with the global stream it takes the live table's place
 and the read model's checkpoint is set to where the rebuild stopped, in one transaction that waits
 for any projection batch in flight; the worker carries on from there, so every event reaches the
 new table once. A projection that throws aborts the rebuild and leaves the live table as it was. A

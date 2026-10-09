@@ -1,0 +1,129 @@
+---
+title: How Bounda runs, and how far it scales
+description: One event store and one global stream per store, one writer at a time, subscribers with checkpoints. What that buys, what it costs, and what to do when you hit the ceiling.
+sidebar:
+  order: 0
+---
+
+This page is for the moment before you adopt Bounda, or the moment someone asks "does this
+scale?". It says how the runtime moves events around, why it was built that way, where the
+ceiling is with numbers, and what the way out is. The pages after it in Concepts take each
+decision further.
+
+## One global stream per store
+
+A **store** is the unit Bounda runs on: one database, one PostgreSQL schema or one Durable
+Object, holding an event store and everything that hangs off it. Each aggregate instance has its
+own **stream** of events, and every event the store holds also has a `position` in a single
+**global stream**, whatever aggregate it belongs to. Commands append to an aggregate's stream and
+the store gives each event the next global position at commit.
+
+Everything on the read side, projections, the policy runner and the process runner, is a
+**subscriber** of the global stream: it keeps one checkpoint, asks the store for the events after
+it, and moves the checkpoint past what it has finished. That is the whole delivery mechanism. The
+policy runner and the process runner exist only when the app has a policy or a process.
+
+Handlers are declared per aggregate: a policy lives under `app/domain/order/policies/`, and its
+types come from that aggregate's events. But it is **fed from the global stream**, not from the
+aggregate. The distinction matters for everything below.
+
+<figure>
+  <img
+    src="/flow-light.svg"
+    alt="The app sends commands to command handlers in the domain, which decide from the state evolve folds from the aggregate's own stream and return events for the event store, in one global stream. After commit, and asynchronously, policies and processes in the domain follow the global stream and send new commands, and projections turn events into rows in tables, in the same database or their own. Query handlers read those rows to answer the app's queries"
+    class="dark:sl-hidden"
+  />
+  <img
+    src="/flow-dark.svg"
+    alt="The app sends commands to command handlers in the domain, which decide from the state evolve folds from the aggregate's own stream and return events for the event store, in one global stream. After commit, and asynchronously, policies and processes in the domain follow the global stream and send new commands, and projections turn events into rows in tables, in the same database or their own. Query handlers read those rows to answer the app's queries"
+    class="light:sl-hidden"
+  />
+</figure>
+
+## Why a single order
+
+- **Read models cross aggregates.** A table of orders per customer needs `CustomerRegistered`
+  from `customer` and `OrderPlaced` from `order`. With one global stream the projection always
+  sees the customer before the order. Without it, the order can arrive first and the row is half
+  built until something repairs it. Most event-sourcing systems make the same choice for the same
+  reason: EventStoreDB's `$all`, Marten's global sequence, Axon's token store.
+- **One checkpoint per read model**, not one per aggregate instance. With a hundred thousand
+  orders, a reader per stream would be a hundred thousand checkpoints per read model.
+- **Operations hang off it.** `app.getLag()` is "head of the global stream minus checkpoint".
+  [`bounda rebuild`](/guides/deployment/#rebuilding-a-read-model) is "project the global stream
+  again into a fresh table". `runUntilIdle()` is "pass until nobody moves". The checkpoint is
+  advanced with a compare-and-set, so nothing written from outside is ever overwritten.
+
+## The ceiling, with numbers
+
+A single order means **one writer at a time per store**. In PostgreSQL every append takes a
+transaction-scoped advisory lock; in SQLite the engine is a single writer anyway. Throughput is
+bounded by what one connection can commit: **thousands of events per second** on ordinary
+hardware.
+
+To put that against a business: a shop that takes a thousand orders a day and emits five events
+per order produces five thousand events a day, one every seventeen seconds. The ceiling is three
+to four orders of magnitude away. An app that fills it is an app with a very good problem.
+
+Reads are not bounded the same way. Queries hit read-model tables like any other tables, and the
+dispatcher reads the global stream in batches of `batchSize` events per pass, so a store with many
+read models costs one indexed range scan per read model per pass, not one per event.
+
+## The way out: one store per tenant
+
+When one store is not enough, do not split the global stream. **Split the store.** A store per
+tenant, per region or per bounded context, each with its own event store and global stream:
+
+```ts
+// bounda.config.ts
+const tenant = process.env.TENANT!;
+
+export default defineConfig({
+  storage: postgresql({ url: process.env.DATABASE_URL!, schema: `tenant_${tenant}` }),
+});
+```
+
+Each tenant's process boots against its own schema and gets its own ceiling; on Cloudflare each
+tenant is its own Durable Object. The cost is the one every partitioned system pays: a read model
+that spans tenants has to merge, and that is analytics, not operation.
+
+If a single tenant ever fills a store on its own, the known evolution is several event stores per
+app, partitioned by aggregate, with a position per partition. Akka works that way, ordering events
+per entity with no global order. The price falls on the read side: a checkpoint per event store,
+projections that tolerate events out of order across partitions, and rebuilds that may not match
+what was seen live. It is not built, because nobody needs it yet, and it fits the model without
+changing how you write modules.
+
+## What more instances do
+
+Run several worker instances on PostgreSQL and they share the work in two different ways:
+
+- **Reactions** run on one instance per event: the inbox claims `(handler, event)` atomically, so
+  instances share policy and process work and add throughput. Delivery is at least once, with the
+  inbox, and an attempt writes everything it decided in one transaction or nothing.
+- **Projections** run one instance at a time per read model, under a lock named after it, and are
+  applied exactly once per batch. Instances spread different read models among themselves, but
+  they do not make one read model faster, because its events have to be applied in order. If one
+  falls behind, the lag gauge tells you, and the fix is a faster projection or a lighter read
+  model.
+
+[At least once, and exactly once per batch](/concepts/delivery-guarantees/) says what each
+promise covers and where it stops.
+
+## No broker inside the app
+
+Bounda's promise is that one database is all your infrastructure. The event store is already
+ordered, replayable and readable by aggregate, so a broker between the writes and the read models
+would add a component to operate, redelivery and ordering only within a partition, and buy nothing
+a lock per read model does not already give. A broker belongs behind the event store, for events
+that leave the app, as one more subscriber: see
+[A broker goes behind the event store](/concepts/where-a-broker-goes/).
+
+## In one paragraph
+
+A store is one event store with one global stream, one writer at a time and subscribers that keep
+checkpoints. That buys cross-aggregate order for read models and makes lag, rebuild and replay
+trivial. It costs a ceiling of thousands of events per second per store, which you raise by
+running one store per tenant. Instances share reactions, which run at least once with the inbox,
+and spread read models, whose batches are applied exactly once. Brokers stay outside, as
+publishers.

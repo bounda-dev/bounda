@@ -2,13 +2,13 @@
 title: Sagas and compensation
 description: A business transaction of several steps, each with a way back, built from a process and plain commands.
 sidebar:
-  order: 6
+  order: 2
 ---
 
 A saga is a business transaction made of several steps, each committed on its own, where a step
 that fails undoes the ones before it with a **compensation**: another step that cancels the
 effect of the first. Nothing is rolled back; the history keeps both. This page builds one with
-the checkout of the [storefront example](/guides/storefront-example/), where the customer pays
+the checkout of the [storefront example](/examples/storefront/), where the customer pays
 through a payment link and the provider reports back through webhooks.
 
 ## A saga is a pattern, not a module
@@ -177,7 +177,7 @@ failure, so every step tolerates being repeated:
 - **A rejection nobody looks at changes nothing.** `lockOrderForPayment` and
   `recordPaymentFailure` reject an order that moved on since the event, and the process does not
   look: the step goes on, and the rejection is logged and traced. A test asserts the ones it
-  expects with [`runUntilIdle()`](/guides/testing/#rejections).
+  expects with [`runUntilIdle()`](/guides/testing/#rejections-inside-reactions).
 - **Ids that leave the app are deterministic.** The process derives the payment's id from its key,
   `idempotencyKeyFor(idempotencyKey, "payment")`, as any reaction does for an id it creates (see
   [Calling the outside world](/guides/reacting-to-events/#calling-the-outside-world)). A retry

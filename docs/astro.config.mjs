@@ -20,6 +20,12 @@ const socialImage = (url) => [
 // is only ever set at 600, so it is requested at that one weight across the width axis it uses.
 export default defineConfig({
   site: "https://docs.bounda.dev",
+  // Pages that moved keep their old address working, since links to them live outside the docs.
+  redirects: {
+    "/guides/how-it-runs/": "/concepts/how-it-runs/",
+    "/guides/storefront-example/": "/examples/storefront/",
+    "/guides/onboarding-example/": "/examples/onboarding/",
+  },
   fonts: [
     {
       provider: fontProviders.google(),
@@ -75,6 +81,7 @@ export default defineConfig({
         { label: "bounda.dev", link: "https://bounda.dev" },
         { label: "Getting started", items: [{ autogenerate: { directory: "getting-started" } }] },
         { label: "Guides", items: [{ autogenerate: { directory: "guides" } }] },
+        { label: "Examples", items: [{ autogenerate: { directory: "examples" } }] },
         { label: "Concepts", items: [{ autogenerate: { directory: "concepts" } }] },
         { label: "Adapters", items: [{ autogenerate: { directory: "adapters" } }] },
         { label: "Reference", items: [{ autogenerate: { directory: "reference" } }] },

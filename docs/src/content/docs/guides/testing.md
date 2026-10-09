@@ -2,7 +2,7 @@
 title: Testing
 description: An app in memory, a clock that only moves when told to, and assertions that do not flake.
 sidebar:
-  order: 4
+  order: 3
 ---
 
 `createTestApp` builds an app for tests: in-memory storage, a clock that only moves when you move
@@ -50,7 +50,7 @@ earlier, which is how a test checks that a chain of reactions takes more than on
 
 Call `app.stop()` when the test ends: it waits for passes in flight and closes storage.
 
-## Rules that must be refused
+## Asserting a rejection
 
 A command its handler rejects throws a `DomainError` to `app.commands`, with the code in
 `rejected`. Assert on the code, not on the message, so the wording stays free to change:
@@ -61,7 +61,7 @@ await expect(
 ).rejects.toMatchObject({ rejected: "AlreadyPlaced" });
 ```
 
-### Rejections
+### Rejections inside reactions
 
 The commands a policy, a process or the scheduler dispatches have no caller to throw to: a
 rejection there is an answer the handler may ignore, and the run goes on (see
@@ -85,7 +85,16 @@ The clock starts at `2026-01-01T00:00:00Z` and stays there until you advance it.
 command becomes due, a delayed policy runs and a process deadline comes due because the clock
 moved — never because the test waited.
 
+The examples from here on come from the storefront's
+[test](https://github.com/bounda-dev/bounda/blob/main/examples/storefront/tests/storefront.test.ts),
+where an order carries items:
+
 ```ts
+const ORDER = "018f6a5e-4c3c-7c1e-9d4b-0b2c4a1d8e01";
+const items = [
+  { productId: "keyboard", quantity: 1, price: 120 },
+  { productId: "cable", quantity: 2, price: 9.5 },
+];
 const HOUR = 3_600_000;
 
 it("reminds the customer a day later only while the order is still placed", async () => {
@@ -131,7 +140,7 @@ a date or an ISO 8601 string in UTC, `nextReminder: asInstant("2026-01-02T00:00:
 
 Pass `now` to start somewhere else: `createTestApp({ registry, now: new Date("2026-06-01") })`.
 
-The clock also owns every wait the runtime makes. A handler time-out fires when the clock passes
+The clock also owns every wait the runtime makes. A handler timeout fires when the clock passes
 it, not after real milliseconds: a command handler that never finishes holds
 `await app.commands.x()` until you advance the clock past `runtime.commands.timeout`, and a policy
 or process handler holds `runUntilIdle()` until it passes `runtime.policies.timeout`. The
@@ -175,7 +184,9 @@ A policy runs after the command, so let it run, then assert on what the double r
 ```ts
 await app.commands.placeOrder({ orderId: ORDER, customerId: "ada", items });
 await app.runUntilIdle();
-expect(sent).toEqual([{ orderId: ORDER, customerId: "ada", total: 139 }]);
+expect(sent).toEqual([
+  { orderId: ORDER, customerId: "ada", total: 139, idempotencyKey: expect.any(String) },
+]);
 ```
 
 The same way, a provider that rejects or hangs is a double that throws or never resolves, with no

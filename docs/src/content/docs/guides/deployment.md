@@ -2,10 +2,10 @@
 title: Deployment
 description: Roles, one database, many instances, rebuilds, observability, and an honest list of what is not there yet.
 sidebar:
-  order: 7
+  order: 6
 ---
 
-A Bounda app is a Node process with a database. There is no broker, no scheduler and no separate
+On Node, a Bounda app is a process with a database. There is no broker, no scheduler and no separate
 projector to deploy: the runtime does that work inside the process, and which part of it a process
 does is a matter of configuration.
 
@@ -26,9 +26,9 @@ due scheduled commands. `boot()` installs `SIGINT` and `SIGTERM` handlers by def
 container stop drains passes in flight and closes connections; pass `signals: false` to handle
 that yourself, as a script would.
 
-The environment implementations' `create` receives is `process.env`, with `.env` already loaded, so
-a secret such as an API key reaches the implementation that needs it without being read at the
-top of a module. See [Ports](/guides/project-layout/#ports-portts).
+An implementation's `create` receives `process.env` as its `env`, with `.env` already loaded, so a
+secret such as an API key reaches the implementation that needs it without being read at the top
+of a module. See [Ports](/guides/project-layout/#ports-portts).
 
 ## Roles
 
@@ -84,12 +84,12 @@ time. Only the instance holding the claim commits: one that stalls past its leas
 to another instance, which runs the work again, and the stalled run writes nothing when it ends.
 What a handler does outside the store, such as calling an API, can therefore happen twice.
 
-Projections go further: they are applied exactly once. Each batch runs in one transaction that
+Projections go further: they are applied exactly once per batch. Each batch runs in one transaction that
 holds an advisory lock named after its read model, writes the rows and advances the checkpoint, so
 one instance at a time applies a read model and a batch is never applied twice or over a newer one.
 An instance that finds a read model locked skips it, which spreads different read models over the
 workers; a single read model is not made faster by more of them, since its events apply in order.
-[How Bounda runs](/guides/how-it-runs/) explains why, and what the ceiling of one store is.
+[How Bounda runs](/concepts/how-it-runs/) explains why, and what the ceiling of one store is.
 
 Appends take a transaction-scoped advisory lock, so positions in the global stream are handed out
 in commit order and a reader never sees a gap that a later commit would fill. That bounds write
@@ -197,11 +197,11 @@ There are no migration files to run, and no migration step in your deploy.
 ## Rebuilding a read model
 
 A read model is derived data: when its projection had a bug, or its view lost a field or changed a
-field's type, the answer is to project the stream again. `bounda rebuild <read-model>` does that
+field's type, the answer is to project the global stream again. `bounda rebuild <read-model>` does that
 without taking the read model offline:
 
 1. It creates a fresh table with the view's current fields, next to the live one.
-2. It runs the projections over the whole stream into that table. Queries keep reading the live
+2. It runs the projections over the whole global stream into that table. Queries keep reading the live
    table meanwhile, and the worker keeps projecting new events into it.
 3. When the fresh table has caught up, it takes the live table's place and the read model's
    checkpoint is set to where the rebuild stopped, in one transaction that waits for the
@@ -245,7 +245,7 @@ config, name })` from `@bounda-dev/core` on a project loaded with `loadProject()
 `@bounda-dev/core/node`. Both take `maxEvents` to run one slice and pause: the result says
 `done: false`, the next call resumes, and `app.pendingRebuilds()` lists the read models waiting
 for one. That is how a host without a long-running process, such as a Durable Object, rebuilds a
-stream that does not fit in one request.
+read model whose history does not fit in one request.
 
 ## Tuning
 

@@ -5,11 +5,6 @@ sidebar:
   order: 0
 ---
 
-:::caution[0.x]
-Until 1.0 the API can still change between minor versions (0.1 to 0.2), and every change that
-breaks something is called out in the changelog of the package it touches.
-:::
-
 ## Create a project
 
 ```bash
@@ -24,8 +19,9 @@ The command asks how the app runs: a Node script, a [React Router](/guides/react
 with a page that dispatches from an action and reads from a loader, or a
 [Cloudflare](/adapters/cloudflare/) Worker with a Durable Object per tenant. For Node and React
 Router it then asks for a database, SQLite or PostgreSQL; on Cloudflare the store is the
-object's own SQLite. Pass `--framework` and `--database` to skip the questions. With the defaults
-you get a project with one aggregate, one read model and a test, on SQLite:
+object's own SQLite. Pass `--framework` and `--database` after `--` to skip the questions
+(`npm create bounda@latest my-shop -- --framework react-router --database postgresql`). With the
+defaults you get a project with one aggregate, one read model and a test, on SQLite:
 
 ```
 app/domain/order/           the order aggregate
@@ -160,22 +156,22 @@ it("removes a cancelled order from the list", async () => {
 npm test
 ```
 
-[Testing](/guides/testing/) goes further: advancing the clock for reminders and time-outs, running
+[Testing](/guides/testing/) goes further: advancing the clock for reminders and timeouts, running
 against a real database, and choosing which implementation of a dependency a test gets.
 
 ## Run it for real
 
 `src/main.ts` shows the production path: `boot()` reads `bounda.config.ts` and the generated
-registry, opens the database and returns the app. It is typed for your project: the generator's
-`.bounda/register.d.ts` registers the registry type with `@bounda-dev/core/register`, so `app.commands`
-knows your commands without a type argument.
+registry, opens the database and returns the app, typed for your project. A script handles its
+own exit, so it passes `signals: false` and stops the app when it is done:
 
 ```ts
 import { boot } from "@bounda-dev/core/node";
 
-const app = await boot();
+const app = await boot({ signals: false });
 await app.commands.placeOrder({ orderId: crypto.randomUUID(), customerId: "ada", total: 42 });
 await app.runUntilIdle();
+await app.stop();
 ```
 
 Point `bounda.config.ts` at PostgreSQL when one process is not enough; the app does not change.
@@ -183,21 +179,22 @@ See [adapters](/adapters/).
 
 ## Where next
 
+- [Core concepts](/getting-started/core-concepts/): every word the docs use, one line each.
 - [Project layout](/guides/project-layout/): every kind of module, with a template each.
-- [The storefront example](/guides/storefront-example/): policies, a checkout that compensates
-  when the payment fails, an effect after the commit and hand-written SQL in one small app.
-- [Bounda with React Router](/guides/react-router/): actions that dispatch, loaders that query,
-  and the [onboarding example](/guides/onboarding-example/) that puts it together.
-- [Testing](/guides/testing/): an app in memory, a clock you move by hand, and assertions that
-  do not flake.
 - [Reacting to events](/guides/reacting-to-events/): policies, processes, retries, and what to do
   with a dead letter.
 - [Sagas and compensation](/guides/sagas/): a business transaction of several steps, and how each
   one is undone when a later one fails.
+- [Testing](/guides/testing/): an app in memory, a clock you move by hand, and assertions that
+  do not flake.
 - [Changing an event's shape](/guides/changing-events/): an upcaster next to the event, applied as
   old events are read.
+- [Bounda with React Router](/guides/react-router/): actions that dispatch, loaders that query,
+  and the [onboarding example](/examples/onboarding/) that puts it together.
 - [Deployment](/guides/deployment/): roles, several instances, rebuilding a read model,
   observability, and the honest list of what is not there yet.
-- [How Bounda runs](/guides/how-it-runs/): one global stream per store, the ceiling with numbers,
+- [The storefront example](/examples/storefront/): policies, a checkout that compensates
+  when the payment fails, an effect after the commit and hand-written SQL in one small app.
+- [How Bounda runs](/concepts/how-it-runs/): one global stream per store, the ceiling with numbers,
   and the way out when you reach it.
 - [CLI](/reference/cli/): `bounda generate`, `bounda rebuild` and `bounda dead-letters`.

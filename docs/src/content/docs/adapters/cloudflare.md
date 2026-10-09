@@ -67,14 +67,15 @@ checkpoints as on SQLite or PostgreSQL, in the object's SQLite. The SQL is liter
 [SQLite adapter](/adapters/sqlite/). What changes is who does the background work, because a
 Durable Object has no loop running between requests:
 
-- **A command** stores its events and brings every read model up to date before it answers, so
+- **A command** stores its events and brings the read models that project them up to date before
+  it answers, so
   the query that follows already sees it. A command is read-your-writes by construction.
 - **Policies, processes, scheduled commands and retries** run in the object's **alarm**, right
   after the command answers, in their own event. A policy that calls a slow service never slows
   the command down.
 - **The object arms its own alarm**: at once when work is left or new events arrived, after a
   retry interval when a retry back-off is holding events, at the due time of the next scheduled
-  command or process time-out, whichever comes first. Nothing is armed when nothing is pending.
+  command or process timeout, whichever comes first. Nothing is armed when nothing is pending.
 - **The alarm never throws.** Cloudflare retries a failing alarm six times and then drops it;
   the object catches every failure, logs it and arms itself again.
 
@@ -121,7 +122,7 @@ runs under `createTestApp` or an app you stop yourself.
 `createWorker` addresses the object by the `x-bounda-tenant` header, `default` without it. Each
 tenant is its own object, with its own events and read models, and nothing is shared between
 them. That is also how a Cloudflare app scales: one object handles in the order of a thousand
-requests a second, and [How Bounda runs](/guides/how-it-runs/) explains why the way out is more
+requests a second, and [How Bounda runs](/concepts/how-it-runs/) explains why the way out is more
 stores, not a split global stream.
 
 ## The HTTP API
@@ -189,7 +190,7 @@ instead of `@cloudflare/workers-types`. There is no `prepare` script: every scri
   hit this; anything else belongs in a policy, on every adapter.
 - **A rebuild runs in slices.** `rebuildReadModel` projects the first
   `eventsPerRebuildSlice` events (5,000 by default, an option of `createBoundaObject`) and
-  answers `done: false` when the stream is longer; the object's alarm runs one slice after
+  answers `done: false` when the global stream is longer; the object's alarm runs one slice after
   another until the rebuilt table takes the live one's place. Queries read the live table all the
   while. Each slice is one more request to the object, and a slice that fails is retried after
   the dispatcher's poll interval.

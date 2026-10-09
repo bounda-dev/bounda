@@ -2,7 +2,7 @@
 title: The storefront example
 description: A small shop that uses every kind of module, in the repository under examples/storefront.
 sidebar:
-  order: 1
+  order: 0
 ---
 
 `examples/storefront` in the repository is a complete app on Node and SQLite. It is small enough
