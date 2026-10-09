@@ -101,14 +101,30 @@ export const openSqliteReadModel: OpenSqliteReadModelFunction = async <
 }: OpenSqliteReadModelArgs<Raw>): Promise<ReadModelPorts<Row, Raw>> => {
   const table = tableNameFor({ prefix: tablePrefix, readModel: name });
   const columns = columnsOf({ readModel: name, fields, dialect: sqliteDialect });
-  const existing = await existingColumns(db, table);
-  const statements =
-    existing.length === 0
-      ? createTableStatements({ table, columns })
-      : evolveTableStatements({ readModel: name, table, columns, existing });
-  for (const statement of statements) await db.run(statement, []);
-  if (existing.length > 0 && statements.length > 0) {
-    logger.info("read model table evolved", { readModel: name, table, added: statements.length });
+  const plan = async (executor: SqlExecutor) => {
+    const existing = await existingColumns(executor, table);
+    return {
+      existing,
+      statements:
+        existing.length === 0
+          ? createTableStatements({ table, columns })
+          : evolveTableStatements({ readModel: name, table, columns, existing }),
+    };
+  };
+  // A change runs in a write transaction that reads the table again, so another process changing
+  // it at the same time is waited for, not undone or repeated.
+  if ((await plan(db)).statements.length > 0) {
+    await db.write(async (tx) => {
+      const { existing, statements } = await plan(tx);
+      for (const statement of statements) await tx.run(statement, []);
+      if (existing.length > 0 && statements.length > 0) {
+        logger.info("read model table evolved", {
+          readModel: name,
+          table,
+          added: statements.length,
+        });
+      }
+    });
   }
   await db.run(checkpointTableStatement(checkpoints), []);
   return {
