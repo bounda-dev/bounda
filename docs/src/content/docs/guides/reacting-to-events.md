@@ -266,8 +266,9 @@ span; a test asserts the ones it expects from what
 is rejected when it runs changes nothing in the same way. While the run lasts, only a failure
 rejects the `await`: a payload that does not validate, a concurrency conflict that outlasts its
 retries, an error the handler throws, or a `DomainError` the command did not make with its own
-`reject`, such as one rethrown from another command. The run fails with it, and the runtime retries
-it or dead-letters it (see [Retries and timeouts](#retries-and-timeouts)).
+`reject`, such as one rethrown from another command, which fails it with `FOREIGN_REJECTION`. The
+run fails with it, and the runtime retries it or dead-letters it (see
+[Retries and timeouts](#retries-and-timeouts)).
 
 ## Retries and timeouts
 

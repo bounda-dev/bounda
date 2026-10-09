@@ -1,6 +1,7 @@
 /// <reference lib="esnext.disposable" />
 import {
   type CreateArgs,
+  DomainError,
   type FieldsArgs,
   type Instant,
   type PayloadArgs,
@@ -8,6 +9,7 @@ import {
   type ProcessStateArgs,
   type Registry,
   type RejectFunction,
+  type Rejection,
   type Table,
   ValidationError,
 } from "@bounda-dev/core";
@@ -25,8 +27,9 @@ interface OrderRow {
 type Events = Record<string, (payload?: unknown) => unknown>;
 
 /**
- * A small order app: place, pay and archive, a policy that archives paid orders and fails for an
- * order whose id starts with "fail", and a read model with one query.
+ * A small order app: place, pay and archive, a note whose handler lets another app's rejection
+ * through, a policy that archives paid orders and fails for an order whose id starts with "fail",
+ * and a read model with one query.
  */
 export const registry = {
   aggregates: {
@@ -93,6 +96,17 @@ export const registry = {
           module: {
             payload: ({ z }: PayloadArgs) => z.object({ orderId: z.string() }),
             handler: ({ events }: { events: Events }) => [events.orderArchived?.()],
+          },
+        },
+        noteOrder: {
+          module: {
+            payload: ({ z }: PayloadArgs) => z.object({ orderId: z.string() }),
+            handler: () => {
+              throw new DomainError({
+                code: "Elsewhere",
+                message: "Another app said no",
+              } as Rejection);
+            },
           },
         },
       },

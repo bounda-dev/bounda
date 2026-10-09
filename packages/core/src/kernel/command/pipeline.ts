@@ -12,6 +12,7 @@ import type {
 } from "../../contracts/command.ts";
 import { parseDuration } from "../../contracts/duration.ts";
 import {
+  BoundaError,
   ChainDepthExceededError,
   ConcurrencyError,
   ConfigurationError,
@@ -223,6 +224,18 @@ const declaredMessage = (
   return code;
 };
 
+// A DomainError the handler did not make with `reject` is wrapped, so a caller of `app.commands`
+// never takes another command's rejection for this one's. Terminal, as the DomainError it wraps.
+class ForeignRejectionError extends BoundaError {
+  constructor(command: Command, rejection: DomainError) {
+    super(
+      "FOREIGN_REJECTION",
+      `Command ${command.type} failed on rejection ${rejection.rejected}, which its handler did not make with reject: ${rejection.message}`,
+      { cause: rejection },
+    );
+  }
+}
+
 // Only a command that declares `rejections` gets `reject`, as its handler's arguments say. What it
 // makes goes in `issued`: a DomainError from anywhere else, such as another app's command, is a
 // failure of this one, not a rejection it declared.
@@ -307,12 +320,12 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         clock,
         signals,
       }).catch((error: unknown) => {
-        if (error instanceof DomainError && issued.has(error)) return error;
+        if (error instanceof DomainError) return error;
         throw error;
       })) as readonly NewEvent[] | DomainError | undefined;
       for (const signal of signals) signal.throwIfAborted();
       if (produced instanceof DomainError) {
-        if (!issued.has(produced)) throw produced;
+        if (!issued.has(produced)) throw new ForeignRejectionError(command, produced);
         return produced;
       }
       const events = toPendingEvents(

@@ -5,6 +5,7 @@ export type FailureKind = "terminal" | "retriable";
 
 const TERMINAL_CODES: ReadonlySet<string> = new Set([
   "DOMAIN_ERROR",
+  "FOREIGN_REJECTION",
   "VALIDATION_FAILED",
   "INVALID_CONFIGURATION",
   "NOT_FOUND",

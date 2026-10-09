@@ -66,6 +66,12 @@ describe("createWorker", () => {
       error: { code: "NOT_FOUND", message: 'Unknown command "shipOrder"' },
     });
 
+    const foreign = await post("/commands/noteOrder", { orderId: "o-3" }, "errors");
+    expect(foreign.status).toBe(500);
+    expect(await foreign.json()).toEqual({
+      error: { code: "INTERNAL", message: "Internal error" },
+    });
+
     const badJson = await post("/commands/placeOrder", "{not json", "errors");
     expect(badJson.status).toBe(400);
     expect(await badJson.json()).toEqual({

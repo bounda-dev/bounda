@@ -30,8 +30,11 @@ retried by the [retry settings](/reference/configuration/#retry) and, when they 
 dead letter with `errorType: "retriable_exhausted"`.
 
 - **`DOMAIN_ERROR`** (`DomainError`; terminal). A command handler rejected with `reject(code)`.
-  `rejected` holds the code. `app.commands` throws it; a reaction gets it as a value instead, and
-  only a `DomainError` the handler did not make with its own `reject` fails a reaction.
+  `rejected` holds the code. `app.commands` throws it; a reaction gets it as a value instead.
+- **`FOREIGN_REJECTION`** (no exported class; terminal). A command handler let through a
+  `DomainError` it did not make with its own `reject`, such as one rethrown from another app's
+  command. The command fails rather than rejects, so `app.commands` and a reaction both get this
+  error, never the other command's code. `cause` is that `DomainError`.
 - **`VALIDATION_FAILED`** (`ValidationError`; terminal). A payload, a duration or a returned process
   state did not validate. `issues` lists each problem with its `path`.
 - **`CONCURRENCY_CONFLICT`** (`ConcurrencyError`; retried). An append found the stream at another
@@ -81,6 +84,7 @@ The hosts map the codes a client can cause to a status:
 | `DOMAIN_ERROR` | 409, with `rejected` | 409, with `rejected` |
 | `CONCURRENCY_CONFLICT` | 409 | rethrown |
 | `CHAIN_DEPTH_EXCEEDED` | 409 | rethrown |
+| `FOREIGN_REJECTION` | 500, code `INTERNAL`, logged | rethrown |
 | `NOT_FOUND` | 404 | rethrown |
 | `HANDLER_TIMEOUT` | 504 | rethrown |
 | anything else | 500, code `INTERNAL`, logged | rethrown, for the route's `ErrorBoundary` |
