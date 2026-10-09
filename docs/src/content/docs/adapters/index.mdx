@@ -5,19 +5,53 @@ sidebar:
   order: 0
 ---
 
+import { TabItem, Tabs } from "@astrojs/starlight/components";
+
 Bounda runs on a single database. Events, the checkpoints of every subscriber, scheduled
 commands, dead letters and the tables of your read models all live there, so there is no broker
 or queue to operate. An adapter is the piece that knows how to talk to one engine.
 
+<Tabs syncKey="database">
+<TabItem label="SQLite">
+
 ```ts
 // bounda.config.ts
-import { defineConfig } from "@bounda-dev/core/config";
 import { sqlite } from "@bounda-dev/adapter-sqlite";
+import { defineConfig } from "@bounda-dev/core/config";
 
 export default defineConfig({
   storage: sqlite({ path: "./data/app.db" }),
 });
 ```
+
+</TabItem>
+<TabItem label="PostgreSQL">
+
+```ts
+// bounda.config.ts
+import { postgresql } from "@bounda-dev/adapter-postgresql";
+import { defineConfig } from "@bounda-dev/core/config";
+
+export default defineConfig({
+  storage: postgresql({ url: process.env.DATABASE_URL! }),
+});
+```
+
+</TabItem>
+<TabItem label="Cloudflare">
+
+```ts
+// bounda.config.ts
+import { cloudflare } from "@bounda-dev/adapter-cloudflare";
+import { defineConfig } from "@bounda-dev/core/config";
+
+export default defineConfig({
+  storage: cloudflare(),
+});
+```
+
+</TabItem>
+</Tabs>
 
 `storage` is where the write side lives. Read models use the same adapter unless you point one
 of them elsewhere:

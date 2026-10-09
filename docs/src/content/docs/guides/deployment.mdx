@@ -5,6 +5,8 @@ sidebar:
   order: 6
 ---
 
+import { Steps } from "@astrojs/starlight/components";
+
 On Node, a Bounda app is a process with a database. There is no broker, no scheduler and no separate
 projector to deploy: the runtime does that work inside the process, and which part of it a process
 does is a matter of configuration.
@@ -200,8 +202,23 @@ There are no migration files to run, and no migration step in your deploy.
 ## Rebuilding a read model
 
 A read model is derived data: when its projection had a bug, or its view lost a field or changed a
-field's type, the answer is to project the global stream again. `bounda rebuild <read-model>` does that
-without taking the read model offline:
+field's type, the answer is to project the global stream again. To change one in production:
+
+<Steps>
+
+1. Change the view or the projection, and run `bounda generate`.
+
+2. From a machine with the new code and access to the database, rebuild it:
+
+   ```bash
+   bounda rebuild orderSummary
+   ```
+
+3. Deploy the new code once the rebuild has finished.
+
+</Steps>
+
+`bounda rebuild <read-model>` does it without taking the read model offline:
 
 1. It creates a fresh table with the view's current fields, next to the live one.
 2. It runs the projections over the whole global stream into that table. Queries keep reading the live
@@ -214,13 +231,8 @@ Whatever the worker had applied to the old table goes with it, and the worker ca
 rebuilt position, whether it was ahead of it or behind: every event reaches the new table exactly
 once. A projection that throws aborts the rebuild and leaves the live table as it was.
 
-```bash
-bounda rebuild orderSummary
-```
-
-Run it from a machine with the new code and access to the database, before deploying that code:
-the app refuses to start against a table whose columns no longer match the view. Between the
-swap and the deploy, the old worker's projection for that read model may fail against the new
+The rebuild goes before the deploy because the app refuses to start against a table whose
+columns no longer match the view. Between the swap and the deploy, the old worker's projection for that read model may fail against the new
 columns; its checkpoint holds, and it catches up as soon as the new code runs. Nothing is lost.
 
 A rebuild that stops halfway, because the machine died or the connection dropped, resumes exactly
