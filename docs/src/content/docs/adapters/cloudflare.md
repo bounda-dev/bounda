@@ -62,8 +62,8 @@ deploys to your account.
 
 ## How it runs
 
-One Durable Object is one store: the same single ordered log, subscribers and checkpoints as on
-SQLite or PostgreSQL, in the object's SQLite. The SQL is literally the same code as the
+One Durable Object is one store: the same event store and global stream, subscribers and
+checkpoints as on SQLite or PostgreSQL, in the object's SQLite. The SQL is literally the same code as the
 [SQLite adapter](/adapters/sqlite/). What changes is who does the background work, because a
 Durable Object has no loop running between requests:
 
@@ -122,7 +122,7 @@ runs under `createTestApp` or an app you stop yourself.
 tenant is its own object, with its own events and read models, and nothing is shared between
 them. That is also how a Cloudflare app scales: one object handles in the order of a thousand
 requests a second, and [How Bounda runs](/guides/how-it-runs/) explains why the way out is more
-stores, not a split log.
+stores, not a split global stream.
 
 ## The HTTP API
 

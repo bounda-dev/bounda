@@ -209,8 +209,9 @@ at once, as `({ notifier, ...rest })` does, reads that one too.
 
 ## Nothing left behind
 
-`app.getLag()` reports how far each subscriber is behind the stream. Asserting it is zero proves a
-test left no work pending, which catches a policy that quietly stopped reacting:
+`app.getLag()` reports how far each subscriber is behind the head of the global stream.
+Asserting it is zero proves a test left no work pending, which catches a policy that quietly
+stopped reacting:
 
 ```ts
 expect((await app.getLag()).maxLag).toBe(0);
@@ -224,5 +225,9 @@ expect((await app.getLag()).maxLag).toBe(0);
   projection fills from more than one event.
 - **Time**, by advancing the clock: reminders that go out, reminders that no longer apply, and
   processes that run out of time.
-- **Not the internals.** Events, projections and process state are how the app gets there;
-  asserting on them turns a refactor into a test rewrite. Commands in, queries out.
+- **Commands in, queries out.** An app test drives the app as a caller does and checks what a
+  caller can see. Projections and process state are how the app gets there; asserting on them
+  turns a refactor into a test rewrite. Events are not in that list: they are the aggregate's
+  contract and stay in the event store for good. An app test reaches them through what they
+  produce, a row in a query or a rule a later command meets, and a change to their shape is an
+  [upcaster](/guides/changing-events/), not a test rewrite.

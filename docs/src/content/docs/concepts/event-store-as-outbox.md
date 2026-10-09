@@ -105,7 +105,7 @@ The promise is about what reaches the store. Three things are, on purpose, outsi
 - [What the runtime promises](/guides/reacting-to-events/#what-the-runtime-promises), the
   guarantees in the terms of the handler's code.
 - [Why there is no broker](/guides/how-it-runs/#why-there-is-no-broker), for the publisher that
-  takes the log out of the app.
+  takes events out of the app.
 - The precedents: Axon's [unit of work](https://docs.axoniq.io/axon-framework-reference/4.11/messaging-concepts/unit-of-work/),
   NServiceBus's [Outbox](https://docs.particular.net/nservicebus/outbox/) and
   [batched dispatch](https://docs.particular.net/nservicebus/messaging/batched-dispatch),

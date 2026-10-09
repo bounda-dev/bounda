@@ -56,7 +56,7 @@ import type { Event } from "./+types/order-placed";
 export const payload = ({ z }: Event.PayloadArgs) =>
   z.object({ customerId: z.string(), total: z.number().positive() });
 
-export const create = ({ event }: Event.CreateArgs) => ({
+export const begin = ({ event }: Event.BeginArgs) => ({
   status: "placed" as const,
   customerId: event.payload.customerId,
   total: event.payload.total,
@@ -84,15 +84,15 @@ the schema above it, `state` from the aggregate, `events` only offers this aggre
 
 ## How it runs
 
-Every event a store holds gets a position in one global order. Read models, policies and
-processes are subscribers of that log, with a checkpoint each, so a read model can be rebuilt and
-a policy can be retried without touching the events. The
+Every event a store holds gets a position in one global stream. Read models, policies and
+processes follow it from a checkpoint each, so a read model can be rebuilt and a failed policy
+retried without touching the events. The
 [how it runs](https://docs.bounda.dev/guides/how-it-runs/) guide has the numbers and the ceiling.
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/public/flow-dark.svg" />
-    <img src="docs/public/flow-light.svg" alt="The app sends commands to command handlers in the domain, which decide from the state apply folds from the aggregate's own stream and return events for the event store, one ordered log. After commit, and asynchronously, policies and processes in the domain follow the log and send new commands, and projections turn events into rows in tables, in the same database or their own. Query handlers read those rows to answer the app's queries" width="900" />
+    <img src="docs/public/flow-light.svg" alt="The app sends commands to command handlers in the domain, which decide from the state evolve folds from the aggregate's own stream and return events for the event store, in one global stream. After commit, and asynchronously, policies and processes in the domain follow the global stream and send new commands, and projections turn events into rows in tables, in the same database or their own. Query handlers read those rows to answer the app's queries" width="900" />
   </picture>
 </p>
 
@@ -117,11 +117,12 @@ is not there yet, and why, is one list in the
 | [`@bounda-dev/cli`](packages/cli) | `bounda` CLI: reads the layout, writes the registry and the types |
 | [`@bounda-dev/adapter-sqlite`](packages/adapter-sqlite) | SQLite and libSQL storage |
 | [`@bounda-dev/adapter-postgresql`](packages/adapter-postgresql) | PostgreSQL storage |
-| [`@bounda-dev/adapter-cloudflare`](packages/adapter-cloudflare) | A Durable Object per tenant on Cloudflare | none: its tests run inside workerd, where Stryker cannot mutate |
+| [`@bounda-dev/adapter-cloudflare`](packages/adapter-cloudflare) | A Durable Object per tenant on Cloudflare |
 | [`@bounda-dev/react-router`](packages/react-router) | React Router integration and its Vite plugin |
 | [`create-bounda`](packages/create-bounda) | Project scaffolder |
 
 Each package README carries its own mutation score; the badge above is the whole repository.
+`adapter-cloudflare` has none: its tests run inside workerd, where Stryker cannot mutate.
 
 Two examples live in this repository: [`examples/storefront`](examples/storefront) on Node and
 SQLite, and [`examples/onboarding`](examples/onboarding) on React Router and PostgreSQL or SQLite.

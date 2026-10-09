@@ -197,7 +197,7 @@ after the code that declares it starts, never to the history before it. Adding t
 to an app that has been running for months does not replay months of events into it; adding one
 more next to others behaves the same way, because they share the policy runner's checkpoint. An
 app with no policies has no policy runner at all, and one with no processes no process runner:
-nothing reads the log for them, nothing checkpoints and nothing wakes up. A deploy that removes
+nothing reads the global stream for them, nothing checkpoints and nothing wakes up. A deploy that removes
 the last policy, or the last process, leaves their checkpoint where it was: an instance still
 running the previous code goes on from there, and policies brought back later resume from that
 point too, so they also react to what happened while they were gone.
@@ -578,6 +578,6 @@ effect happened.
 
 ## Watching it work
 
-`app.getLag()` reports how far behind the stream each subscriber is. Zero means every consequence
-of every stored event has happened; a number that keeps growing means a subscriber is failing and
-retrying. In tests, [asserting it is zero](/guides/testing/) proves nothing was left pending.
+`app.getLag()` reports how far behind the head of the global stream each subscriber is. Zero
+means every consequence of every stored event has happened; a number that keeps growing means a
+subscriber is failing and retrying. In tests, [asserting it is zero](/guides/testing/) proves nothing was left pending.
