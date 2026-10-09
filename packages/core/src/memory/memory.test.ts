@@ -95,6 +95,17 @@ describe("memory adapter", () => {
     expect(positions).toEqual([]);
   });
 
+  it("says which payload has no JSON", async () => {
+    await expect(
+      createMemoryEventStore().append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events: [{ ...pendingEvent({ aggregateId: "1", version: 1 }), payload: undefined }],
+      }),
+    ).rejects.toMatchObject({ message: "undefined has no JSON to store" });
+  });
+
   it("puts every store back when a write fails while a transaction is being applied", async () => {
     const storage = await memory().createStorage({ logger: silentLogger });
     const key = { handler: "order.p", eventId: "e1" };
@@ -315,15 +326,15 @@ describe("memory adapter", () => {
     });
     await table.insert({ id: "1", email: "ada@example.com" });
     await table.insert({ id: "2", email: "grace@example.com" });
-    await expect(table.insert({ id: "3", email: "ada@example.com" })).rejects.toThrow(
-      "UNIQUE constraint failed: people.email",
-    );
-    await expect(table.insert({ id: "3" } as never)).rejects.toThrow(
-      "NOT NULL constraint failed: people.email",
-    );
-    await expect(table.update({ id: "1" }, { id: "2" })).rejects.toThrow(
-      "UNIQUE constraint failed: people.id",
-    );
+    await expect(table.insert({ id: "3", email: "ada@example.com" })).rejects.toMatchObject({
+      message: "UNIQUE constraint failed: people.email",
+    });
+    await expect(table.insert({ id: "3" } as never)).rejects.toMatchObject({
+      message: "NOT NULL constraint failed: people.email",
+    });
+    await expect(table.update({ id: "1" }, { id: "2" })).rejects.toMatchObject({
+      message: "UNIQUE constraint failed: people.id",
+    });
   });
 
   it("orders numbers by value, below none when descending", async () => {
