@@ -22,7 +22,7 @@ import {
 import type { Sql } from "postgres";
 import { createPostgresqlCheckpointStore } from "./checkpoint-store.ts";
 import type { PostgresqlDatabase } from "./database.ts";
-import { checkpointTableStatement } from "./schema.ts";
+import { checkpointTableStatement, inSchema } from "./schema.ts";
 
 /**
  * The table's columns with what its indexes say of them; none when the table does not exist.
@@ -106,16 +106,26 @@ export const openPostgresqlReadModel: OpenPostgresqlReadModelFunction = async <R
 }: OpenPostgresqlReadModelArgs): Promise<ReadModelPorts<Row, Sql>> => {
   const table = tableNameFor({ prefix: tablePrefix, readModel: name });
   const columns = columnsOf({ readModel: name, fields, dialect: postgresqlDialect });
-  const existing = await existingColumns(db, schema, table);
-  const statements =
-    existing.length === 0
-      ? createTableStatements({ table, columns })
-      : evolveTableStatements({ readModel: name, table, columns, existing });
-  for (const statement of statements) await db.run(statement, []);
-  if (existing.length > 0 && statements.length > 0) {
-    logger.info("read model table evolved", { readModel: name, table, added: statements.length });
-  }
-  await db.run(checkpointTableStatement(checkpoints), []);
+  await inSchema({
+    db,
+    schema,
+    work: async (tx) => {
+      const existing = await existingColumns(tx, schema, table);
+      const statements =
+        existing.length === 0
+          ? createTableStatements({ table, columns })
+          : evolveTableStatements({ readModel: name, table, columns, existing });
+      for (const statement of statements) await tx.run(statement, []);
+      if (existing.length > 0 && statements.length > 0) {
+        logger.info("read model table evolved", {
+          readModel: name,
+          table,
+          added: statements.length,
+        });
+      }
+      await tx.run(checkpointTableStatement(checkpoints), []);
+    },
+  });
   return {
     table: createSqlTable<Row>({
       readModel: name,
@@ -221,7 +231,11 @@ export const rebuildPostgresqlReadModel: RebuildPostgresqlReadModelFunction = as
       checkpointsLockKey,
       key,
     ]);
-  await db.run(checkpointTableStatement(checkpoints), []);
+  await inSchema({
+    db,
+    schema,
+    work: (tx) => tx.run(checkpointTableStatement(checkpoints), []),
+  });
   const opened = await db.write(async (tx) => {
     await lock(tx, fencing.lock);
     const store = checkpointsIn(tx);

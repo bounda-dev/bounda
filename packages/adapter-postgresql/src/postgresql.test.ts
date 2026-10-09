@@ -509,6 +509,16 @@ describe.skipIf(container === null)("postgresql adapter", () => {
     );
   });
 
+  it("lets instances that start together create and evolve the same tables one after the other", async () => {
+    const schema = `boot_${run}`;
+    const instance = () => fresh({ schema, tablePrefix: "bounda_" });
+    await Promise.all(Array.from({ length: 4 }, () => openStorage(instance())));
+    const v1 = { id: f.string().primaryKey() };
+    await Promise.all(Array.from({ length: 4 }, () => openReadModel(instance(), "people", v1)));
+    const v2 = { ...v1, note: f.string().optional(), city: f.string().optional().index() };
+    await Promise.all(Array.from({ length: 4 }, () => openReadModel(instance(), "people", v2)));
+  });
+
   it("shares one pool between storage and read models until the last close", async () => {
     const adapter = fresh();
     const storage = await adapter.createStorage({ logger: silentLogger });

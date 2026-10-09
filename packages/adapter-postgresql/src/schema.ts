@@ -1,5 +1,9 @@
 import { ConfigurationError } from "@bounda-dev/core";
-import { quoteIdentifier, storageTableNameFor } from "@bounda-dev/core/adapter/sql";
+import {
+  quoteIdentifier,
+  type SqlTransaction,
+  storageTableNameFor,
+} from "@bounda-dev/core/adapter/sql";
 import type { PostgresqlDatabase } from "./database.ts";
 
 /**
@@ -152,7 +156,34 @@ export interface EnsureStorageSchemaFunction {
   (args: EnsureStorageSchemaArgs): Promise<void>;
 }
 
-export const ensureStorageSchema: EnsureStorageSchemaFunction = async ({ db, schema, tables }) => {
-  await db.run(`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(schema)}`, []);
-  for (const statement of storageSchemaStatements(tables)) await db.run(statement, []);
-};
+export const ensureStorageSchema: EnsureStorageSchemaFunction = ({ db, schema, tables }) =>
+  inSchema({
+    db,
+    schema,
+    work: async (tx) => {
+      for (const statement of storageSchemaStatements(tables)) await tx.run(statement, []);
+    },
+  });
+
+export interface InSchemaArgs<T> {
+  readonly db: PostgresqlDatabase;
+  readonly schema: string;
+  readonly work: (tx: SqlTransaction) => Promise<T>;
+}
+
+export interface InSchemaFunction {
+  <T>(args: InSchemaArgs<T>): Promise<T>;
+}
+
+/**
+ * Runs `work` in one transaction that holds the schema's lock and has created the schema. Every
+ * table Bounda creates or evolves goes through it, so instances starting together change the
+ * schema one after the other, each reading what the one before wrote: two of them never add the
+ * same column.
+ */
+export const inSchema: InSchemaFunction = ({ db, schema, work }) =>
+  db.write(async (tx) => {
+    await tx.run("SELECT pg_advisory_xact_lock(hashtext($1))", [`bounda:${schema}:schema`]);
+    await tx.run(`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(schema)}`, []);
+    return work(tx);
+  });
