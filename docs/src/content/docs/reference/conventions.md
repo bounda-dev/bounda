@@ -58,7 +58,11 @@ does files that start with `_` or `.`, tests (`*.test.ts`, `*.test-d.ts`), decla
 - a policy and a process of one aggregate with the same key (`policies/checkout.ts` next to
   `processes/checkout/`, or `policies/payment-refund-on-payment-failed.ts` next to
   `policies/payment/refund-on-payment-failed.ts`), a policy named after an aggregate, a policy
-  folder named after the aggregate it is in, and a read model named like an aggregate.
+  folder named after the aggregate it is in, and a read model named like an aggregate;
+- two commands, or two queries, with the same key anywhere in the app: `app.commands` and
+  `app.queries` are one namespace each;
+- an aggregate or a read model whose generated types would meet others in `.bounda/types.ts`: one
+  named `test` (`TestPorts` is Bounda's own), or `order-created` next to `order`.
 
 ## What boot refuses
 
@@ -71,6 +75,7 @@ Some rules need the modules themselves, so the app checks them when it is create
 - an event of another aggregate that a process listens to and cannot assign to an instance, by an
   id field in its payload or by `correlate`;
 - a policy and a process that share a key;
+- a `payload`, `repository`, process `state` or `correlate` export that is not a function;
 - a configuration that names a port, an implementation, an aggregate or a read model that does
   not exist, or leaves out a port that has several implementations.
 
@@ -86,7 +91,9 @@ and not failed on:
   named `command`, `policy`, `process` or `infra`;
 - in a read model, a directory one letter away from `projections`, `queries` or
   `infrastructure`, or named `projection`, `query` or `infra`, and a module at its root that
-  exports `project`, `repository` or `handler`.
+  exports `project`, `repository` or `handler`;
+- a policy or a projection that exports no `on` and whose name gives no event of its aggregate,
+  which boot refuses: most likely a misspelt event.
 
 ## Generated files
 

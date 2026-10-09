@@ -1,6 +1,7 @@
 import { ConfigurationError } from "../contracts/errors.ts";
 import { capitalize } from "./naming.ts";
 import type { PortModules } from "./port.ts";
+import { projectionTriggers } from "./projection.ts";
 import type { Registry } from "./registry.ts";
 
 interface Problem {
@@ -151,9 +152,9 @@ const validateReadModel = (
       const path = `${base}.projections.${aggregate}.${key}`;
       requireFunction(problems, projection, path, "project");
       if (!(aggregate in aggregates)) continue;
-      const { on } = projection;
-      const triggers = on === undefined ? [capitalize(key)] : typeof on === "string" ? [on] : on;
-      for (const trigger of triggers.filter((type) => !events.has(type))) {
+      for (const trigger of projectionTriggers(key, projection).filter(
+        (type) => !events.has(type),
+      )) {
         problems.push({
           path,
           message: `"${trigger}" is not an event of the aggregate "${aggregate}"; name the file after one or export "on"`,

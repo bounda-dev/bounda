@@ -30,12 +30,14 @@ export type {
 export { createEventBuilders } from "./event.ts";
 export type {
   CapitalizeFunction,
+  PolicyTriggerArgs,
+  PolicyTriggerFunction,
   Simplify,
   ToCamelCaseFunction,
   TypeNameOf,
   UnionToIntersection,
 } from "./naming.ts";
-export { capitalize, toCamelCase } from "./naming.ts";
+export { capitalize, policyTrigger, toCamelCase } from "./naming.ts";
 export type {
   EmptyPayload,
   HasPayload,

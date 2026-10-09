@@ -4,7 +4,6 @@ import {
   isKebabCase,
   joinKeys,
   keyOf,
-  policyTriggerOf,
   processDeadlineOf,
   processHandlerEventOf,
   typeNameOf,
@@ -32,20 +31,6 @@ describe("keyOf / typeNameOf / joinKeys", () => {
     expect(joinKeys("orderSummary", "on", "orderPlaced")).toBe("orderSummaryOnOrderPlaced");
     expect(joinKeys("auditLog", "memory")).toBe("auditLogMemory");
     expect(joinKeys("order")).toBe("order");
-  });
-});
-
-describe("policyTriggerOf", () => {
-  it("takes the longest event the name ends with after -on-", () => {
-    const events = ["orderPaid", "customerRegistered", "paymentFailed", "addOnRemoved", "removed"];
-    const trigger = (fileName: string) => policyTriggerOf({ fileName, events });
-    expect(trigger("send-receipt-on-order-paid")).toBe("orderPaid");
-    expect(trigger("notify-on-customer-registered")).toBe("customerRegistered");
-    expect(trigger("put-on-hold-on-payment-failed")).toBe("paymentFailed");
-    expect(trigger("notify-on-add-on-removed")).toBe("addOnRemoved");
-    expect(trigger("cleanup")).toBeNull();
-    expect(trigger("on-order-paid")).toBeNull();
-    expect(trigger("send-on-order-shipped")).toBeNull();
   });
 });
 
@@ -99,6 +84,7 @@ describe("uniqueAliases", () => {
         entries: [
           { alias: "delete", owner: "order" },
           { alias: "default", owner: "order" },
+          { alias: "registry", owner: "order" },
           { alias: "checkout", owner: "order" },
           { alias: "checkout", owner: "order" },
           { alias: "created", owner: "order" },
@@ -109,6 +95,7 @@ describe("uniqueAliases", () => {
     ).toEqual([
       "orderDelete",
       "orderDefault",
+      "orderRegistry",
       "orderCheckout",
       "orderCheckout2",
       "orderCreated",

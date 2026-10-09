@@ -30,34 +30,6 @@ export interface JoinKeysFunction {
 export const joinKeys: JoinKeysFunction = (...parts) =>
   parts.map((part, index) => (index === 0 ? part : capitalize(part))).join("");
 
-export interface PolicyTriggerOfArgs {
-  readonly fileName: string;
-  /**
-   * The event keys of the aggregate the policy reacts to.
-   */
-  readonly events: readonly string[];
-}
-
-export interface PolicyTriggerOfFunction {
-  (args: PolicyTriggerOfArgs): string | null;
-}
-
-/**
- * The longest event the file name ends with after an `-on-`: `send-receipt-on-order-paid` →
- * `orderPaid`, `put-on-hold-on-payment-failed` → `paymentFailed`. Core derives the trigger by the
- * same rule, so the handler is typed with the event it receives.
- */
-export const policyTriggerOf: PolicyTriggerOfFunction = ({ fileName, events }) => {
-  const key = toCamelCase(fileName);
-  return events
-    .map((event) => [event, `On${capitalize(event)}`] as const)
-    .filter(([, suffix]) => key.length > suffix.length && key.endsWith(suffix))
-    .reduce<string | null>(
-      (longest, [event]) => (longest === null || event.length > longest.length ? event : longest),
-      null,
-    );
-};
-
 const PROCESS_HANDLER = /^on-([a-z0-9]+(?:-[a-z0-9]+)*)$/;
 
 export interface ProcessHandlerEventOfFunction {
@@ -98,13 +70,14 @@ export interface UniqueAliasesFunction {
   (args: UniqueAliasesArgs): readonly string[];
 }
 
-// Words an ES module cannot bind: reserved words, strict-mode ones, `eval` and `arguments`.
+// Names an alias cannot take: the words an ES module cannot bind (reserved, strict-mode, `eval`
+// and `arguments`), and `registry`, which the registry module exports.
 const RESERVED = new Set(
   [
     "await break case catch class const continue debugger default delete do else enum export",
     "extends false finally for function if implements import in instanceof interface let new",
     "null package private protected public return static super switch this throw true try",
-    "typeof var void while with yield eval arguments",
+    "typeof var void while with yield eval arguments registry",
   ]
     .join(" ")
     .split(" "),
@@ -119,7 +92,7 @@ const countsOf = (names: readonly string[]): Map<string, number> => {
 /**
  * An alias two entries share is prefixed with the owner in every one of them, not only the
  * second: `created` in two aggregates gives `orderCreated` and `customerCreated`. So is one that
- * is a reserved word: `delete` gives `orderDelete`. A name that still repeats, two entries of one
+ * is a reserved word or `registry`: `delete` gives `orderDelete`. A name that still repeats, two entries of one
  * owner, or one that meets an alias left as it was, takes a number: `orderCheckout2`.
  */
 export const uniqueAliases: UniqueAliasesFunction = ({ entries }) => {
@@ -127,11 +100,10 @@ export const uniqueAliases: UniqueAliasesFunction = ({ entries }) => {
   const wanted = entries.map(({ alias, owner }) =>
     (counts.get(alias) ?? 0) > 1 || RESERVED.has(alias) ? joinKeys(owner, alias) : alias,
   );
-  const repeated = countsOf(wanted);
   const taken = new Set(wanted);
   const given = new Set<string>();
   return wanted.map((name) => {
-    if ((repeated.get(name) ?? 0) === 1 || !given.has(name)) {
+    if (!given.has(name)) {
       given.add(name);
       return name;
     }

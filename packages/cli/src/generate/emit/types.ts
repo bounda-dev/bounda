@@ -69,7 +69,25 @@ export const portsTypeName: PortsTypeNameFunction = (moduleName) =>
 
 export const PORTS_CONFIG_TYPE_NAME = "PortsConfig";
 
+const EVENTS_TYPE_NAME = "Events";
+const COMMANDS_TYPE_NAME = "Commands";
+const REACTION_COMMANDS_TYPE_NAME = "ReactionCommands";
+const QUERIES_TYPE_NAME = "Queries";
+
 export const TEST_PORTS_TYPE_NAME = "TestPorts";
+
+/**
+ * The types `.bounda/types.ts` declares once for the whole app, next to those of each aggregate
+ * and read model.
+ */
+export const APP_TYPE_NAMES: readonly string[] = [
+  EVENTS_TYPE_NAME,
+  COMMANDS_TYPE_NAME,
+  REACTION_COMMANDS_TYPE_NAME,
+  QUERIES_TYPE_NAME,
+  PORTS_CONFIG_TYPE_NAME,
+  TEST_PORTS_TYPE_NAME,
+];
 
 const typeofImport = (from: string, to: string): string =>
   `typeof import("${importPath({ from, to })}")`;
@@ -212,9 +230,9 @@ export const emitTypes: EmitTypesFunction = ({ model, path, inferredStates = {} 
   }
   sections.push(
     model.aggregates.length === 0
-      ? "export type Events = Record<never, never>;"
+      ? `export type ${EVENTS_TYPE_NAME} = Record<never, never>;`
       : [
-          "export type Events = {",
+          `export type ${EVENTS_TYPE_NAME} = {`,
           ...model.aggregates.map(
             (aggregate) => `  readonly ${aggregate.name}: ${eventsTypeName(aggregate.name)};`,
           ),
@@ -226,8 +244,8 @@ export const emitTypes: EmitTypesFunction = ({ model, path, inferredStates = {} 
   const commandModules = model.aggregates.flatMap((aggregate) =>
     aggregate.commands.map((command) => [command.key, typeofImport(path, command.path)] as const),
   );
-  sections.push(emitMap("Commands", "CommandsFacadeOf", commandModules));
-  sections.push(emitMap("ReactionCommands", "ReactionCommandsFacadeOf", commandModules));
+  sections.push(emitMap(COMMANDS_TYPE_NAME, "CommandsFacadeOf", commandModules));
+  sections.push(emitMap(REACTION_COMMANDS_TYPE_NAME, "ReactionCommandsFacadeOf", commandModules));
   for (const readModel of model.readModels) {
     sections.push(
       [
@@ -238,7 +256,7 @@ export const emitTypes: EmitTypesFunction = ({ model, path, inferredStates = {} 
   }
   sections.push(
     emitMap(
-      "Queries",
+      QUERIES_TYPE_NAME,
       "QueriesFacadeOf",
       model.readModels.flatMap((readModel) =>
         readModel.queries.map((query) => [query.key, typeofImport(path, query.path)] as const),

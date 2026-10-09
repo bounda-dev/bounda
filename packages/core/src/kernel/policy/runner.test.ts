@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { resolveConfig } from "../../config/schema.ts";
 import { ValidationError } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
+import { policyTrigger } from "../../modules/naming.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { createReactiveHarness, type ReactiveHarness } from "../reactive-harness.ts";
@@ -14,7 +15,7 @@ import {
   orderAggregateEntry,
   slowJob,
 } from "../test-support.ts";
-import { buildPolicies, policyTriggerFromKey } from "./build-policies.ts";
+import { buildPolicies } from "./build-policies.ts";
 
 interface PolicyArgs {
   readonly event: { aggregateId: string; metadata: { correlationId: string; depth: number } };
@@ -97,10 +98,10 @@ const policiesOf = (registry: Registry) =>
     }),
   });
 
-describe("policyTriggerFromKey", () => {
+describe("policyTrigger", () => {
   it("derives the longest event the name ends with after On", () => {
     const events = ["OrderPaid", "CustomerRegistered", "PaymentFailed", "AddOnRemoved", "Removed"];
-    const trigger = (key: string) => policyTriggerFromKey({ key, events });
+    const trigger = (key: string) => policyTrigger({ key, events });
     expect(trigger("sendReceiptOnOrderPaid")).toBe("OrderPaid");
     expect(trigger("notifyOnCustomerRegistered")).toBe("CustomerRegistered");
     expect(trigger("putOnHoldOnPaymentFailed")).toBe("PaymentFailed");

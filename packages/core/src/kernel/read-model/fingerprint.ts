@@ -34,7 +34,7 @@ export const readModelSource: ReadModelSourceFunction = (entry) =>
           ([key, projection]) => [`${aggregate}.${key}`, projection] as const,
         ),
       )
-      // By code unit: a locale-aware order would change the fingerprint from one machine to another.
+      // By code unit: a locale-aware order would change the fingerprint from machine to machine.
       .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
       .map(
         ([name, projection]) =>

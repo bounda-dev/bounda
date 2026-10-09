@@ -52,9 +52,10 @@ const isGenerated = (fileName: string | Buffer | null): boolean =>
 
 /**
  * Watches the application directory and calls `onChange` after each burst of changes to user
- * modules, ignoring `+types` and `.bounda`. The operating system may start listening late and miss earlier
- * changes (FSEvents on macOS does), so the watch writes a cookie file into the directory until it
- * hears it back, then removes it and calls `onListening`, or `onUnconfirmed` once it gives up.
+ * modules, ignoring `+types` and `.bounda`. The operating system may start listening late and
+ * miss earlier changes (FSEvents on macOS does), so the watch writes a cookie file into the
+ * directory until it hears it back, then removes it and calls `onListening`, or `onUnconfirmed`
+ * once it gives up.
  * Resolves when the signal aborts; rejects when the watcher, or writing the cookie, fails.
  */
 export const watchProject: WatchProjectFunction = async ({

@@ -75,7 +75,8 @@ const renderState = ({ fields, required }: AggregateFields): string => {
   return `{\n${lines.join("\n")}\n}`;
 };
 
-// The name a top-level `const` or `function` declares, exported or not.
+// The node naming a top-level `const` or `function` called `name`; only an exported one when
+// `exported` is set.
 const declaredName = (
   ts: typeof import("typescript/unstable/ast"),
   file: import("typescript/unstable/ast").SourceFile,

@@ -884,12 +884,19 @@ describe("discoverProject convention problems", () => {
     ]);
   });
 
-  it("types a policy with the longest event its name ends with, and warns when it names none", async () => {
+  it("types a policy with the event core derives from its key, and warns when boot would refuse it", async () => {
     const root = await project([
       "app/domain/order/payment-failed.ts",
+      "app/domain/order/order-placed.ts",
       "app/domain/order/policies/put-on-hold-on-payment-failed.ts",
       "app/domain/order/policies/archive-on-paymnet-failed.ts",
+      [
+        "app/domain/order/policies/notify-on-order-placed.ts",
+        'export const on = ["OrderPlaced", "PaymentFailed"];\nexport const handler = () => {};\n',
+      ],
+      ["app/domain/order/policies/hold.ts", 'export const on = "PaymentFailed";\n'],
       "app/domain/order/policies/add-on/notify-on-add-on-removed.ts",
+      "app/domain/order/policies/add-on/on-removed.ts",
       "app/domain/add-on/add-on-removed.ts",
       "app/domain/add-on/removed.ts",
     ]);
@@ -897,14 +904,17 @@ describe("discoverProject convention problems", () => {
     const order = model.aggregates.find((aggregate) => aggregate.name === "order");
     expect(order?.policies.map((policy) => [policy.key, policy.triggerKey])).toEqual([
       ["addOnNotifyOnAddOnRemoved", "addOnRemoved"],
+      ["addOnOnRemoved", "removed"],
       ["archiveOnPaymnetFailed", null],
+      ["hold", null],
+      ["notifyOnOrderPlaced", null],
       ["putOnHoldOnPaymentFailed", "paymentFailed"],
     ]);
     expect(model.warnings).toEqual([
       {
         module: "order",
         message:
-          'app/domain/order/policies/archive-on-paymnet-failed.ts: its name ends with no event of "order" after "-on-", so it must export "on"; is the event misspelled?',
+          'app/domain/order/policies/archive-on-paymnet-failed.ts: its name ends with no event of "order" after "-on-" and it exports no "on", so boot refuses it; is the event misspelled?',
       },
     ]);
   });

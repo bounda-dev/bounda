@@ -1,6 +1,6 @@
 import { parseDuration } from "../../contracts/duration.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
-import { capitalize } from "../../modules/naming.ts";
+import { capitalize, policyTrigger } from "../../modules/naming.ts";
 import type { PolicyModule } from "../../modules/policy.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
@@ -34,33 +34,6 @@ export interface PoliciesRuntime {
   readonly byEvent: Readonly<Record<string, readonly PolicyRuntime[]>>;
 }
 
-export interface PolicyTriggerFromKeyArgs {
-  readonly key: string;
-  /**
-   * The event types of the aggregate the policy reacts to.
-   */
-  readonly events: readonly string[];
-}
-
-export interface PolicyTriggerFromKeyFunction {
-  (args: PolicyTriggerFromKeyArgs): string | null;
-}
-
-/**
- * The event a policy's file name ends with, after an `-on-`: `send-receipt-on-order-paid`
- * (registry key `sendReceiptOnOrderPaid`) reacts to `OrderPaid`. Of the events that fit, the
- * longest: `put-on-hold-on-payment-failed` reacts to `PaymentFailed`, and
- * `notify-on-add-on-removed` to `AddOnRemoved` rather than `Removed`. The generator types the
- * handler by the same rule.
- */
-export const policyTriggerFromKey: PolicyTriggerFromKeyFunction = ({ key, events }) =>
-  events
-    .filter((event) => key.length > `On${event}`.length && key.endsWith(`On${event}`))
-    .reduce<string | null>(
-      (longest, event) => (longest === null || event.length > longest.length ? event : longest),
-      null,
-    );
-
 const declaredTriggers = (
   path: string,
   key: string,
@@ -69,7 +42,7 @@ const declaredTriggers = (
   events: readonly string[],
 ): readonly string[] => {
   if (module.on !== undefined) return typeof module.on === "string" ? [module.on] : module.on;
-  const derived = policyTriggerFromKey({ key, events });
+  const derived = policyTrigger({ key, events });
   if (derived === null) {
     throw new ConfigurationError(
       `${path}: its name ends with no event of the aggregate "${source}"; name the file "<action>-on-<event>.ts" or export "on"`,

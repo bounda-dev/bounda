@@ -154,6 +154,7 @@ describe("resolveConfig", () => {
 
   it("rejects unknown keys anywhere", () => {
     expect(message({ storage: sqlite, storag: sqlite })).toMatch(/Unrecognized key/);
+    expect(message({ storage: sqlite, rootDir: "src" })).toMatch(/Unrecognized key.*rootDir/);
     expect(message({ storage: sqlite, runtime: { rol: "web" } })).toMatch(/runtime: .*rol/);
     expect(
       message({
