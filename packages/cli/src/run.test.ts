@@ -189,10 +189,11 @@ describe("bounda generate", () => {
     temporary.push(root);
     const controller = new AbortController();
     const stderr = capture();
+    const stdout = capture();
     const running = runCli({
       argv: ["generate", "--no-infer", "--watch"],
       cwd: root,
-      stdout: capture(),
+      stdout,
       stderr,
       signal: controller.signal,
     });
@@ -202,6 +203,29 @@ describe("bounda generate", () => {
     );
     controller.abort();
     expect(await running).not.toBe(EXIT_OK);
+    expect(stdout.text()).not.toContain("watching");
+  }, 15_000);
+
+  it("listens for SIGINT and SIGTERM only while a watch runs, and stops it on one", async () => {
+    const root = await project();
+    const before = [process.listenerCount("SIGINT"), process.listenerCount("SIGTERM")];
+    expect((await cli(["generate", "--no-infer"], root)).code).toBe(EXIT_OK);
+    expect([process.listenerCount("SIGINT"), process.listenerCount("SIGTERM")]).toEqual(before);
+
+    const stdout = capture();
+    const running = runCli({
+      argv: ["generate", "--no-infer", "--watch"],
+      cwd: root,
+      stdout,
+      stderr: capture(),
+    });
+    await vi.waitFor(() => expect(stdout.text()).toContain("watching app/ for changes"), {
+      timeout: 5_000,
+    });
+    expect(process.listenerCount("SIGINT")).toBe((before[0] ?? 0) + 1);
+    process.emit("SIGINT", "SIGINT");
+    expect(await running).toBe(EXIT_OK);
+    expect([process.listenerCount("SIGINT"), process.listenerCount("SIGTERM")]).toEqual(before);
   }, 15_000);
 
   it("reports a failure of a later generation while watching and goes on", async () => {
@@ -367,6 +391,14 @@ describe("bounda dead-letters", () => {
     const none = await cli(["dead-letters", "list", "--status", "retried"], fixture);
     expect(none.code).toBe(EXIT_OK);
     expect(none.stdout).toBe("no dead letters\n");
+  });
+
+  it("takes only a whole number of letters, 0 or more, as the limit", async () => {
+    for (const limit of ["abc", "-1", "2.5", ""]) {
+      const refused = await cli(["dead-letters", "list", "--limit", limit], fixture);
+      expect(refused.code).toBe(EXIT_CONVENTION);
+      expect(refused.stderr).toContain("expected a whole number of letters, 0 or more");
+    }
   });
 
   it("applies every filter and counts what it prints", async () => {

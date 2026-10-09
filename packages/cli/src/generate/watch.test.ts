@@ -587,5 +587,6 @@ describe("watchFromFirstRun", () => {
     watcher.end(new Error("disk gone"));
     await expect(run.done).rejects.toThrow("disk gone");
     expect(run.firstRuns()).toBe(1);
+    expect(run.announced()).toBe(0);
   });
 });

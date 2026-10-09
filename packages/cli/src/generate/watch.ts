@@ -177,9 +177,14 @@ export const watchFromFirstRun: WatchFromFirstRunFunction = async ({
       if (!watchSignal.aborted) await onChange();
     },
   });
+  let ended = false;
   const watchEnded = watching.then(
-    () => undefined,
-    () => undefined,
+    () => {
+      ended = true;
+    },
+    () => {
+      ended = true;
+    },
   );
   await Promise.race([listening.promise, watchEnded]);
   if (signal.aborted) {
@@ -193,6 +198,7 @@ export const watchFromFirstRun: WatchFromFirstRunFunction = async ({
     if (!goesOn) stopWatching.abort();
     firstRunDone.resolve();
   }
-  if (goesOn) onWatching();
+  // A watch that has already failed is not watching: `await watching` rethrows its error.
+  if (goesOn && !ended) onWatching();
   await watching;
 };
