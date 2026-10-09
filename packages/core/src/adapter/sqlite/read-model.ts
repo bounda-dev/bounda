@@ -1,9 +1,10 @@
 import { RebuildSupersededError } from "../../contracts/errors.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { FieldsRecord } from "../../modules/view.ts";
-import type { ReadModelPorts, ReadModelRebuild } from "../index.ts";
+import type { ReadModelRebuild, ReadModelStorage } from "../index.ts";
 import { rebuildFencing } from "../rebuild-fencing.ts";
 import type { SqlDatabase } from "../sql/database.ts";
+import { sqliteDialect } from "../sql/dialect.ts";
 import {
   columnsOf,
   createSqlReadClient,
@@ -15,7 +16,6 @@ import {
   quoteIdentifier,
   rebuildTablesFor,
   shadowTableStatements,
-  sqliteDialect,
   swapTableStatements,
   tableNameFor,
 } from "../sql/index.ts";
@@ -77,7 +77,7 @@ export interface OpenSqliteReadModelArgs<Raw = unknown> {
 export interface OpenSqliteReadModelFunction {
   <Row extends object, Raw = unknown>(
     args: OpenSqliteReadModelArgs<Raw>,
-  ): Promise<ReadModelPorts<Row, Raw>>;
+  ): Promise<ReadModelStorage<Row, Raw>>;
 }
 
 /**
@@ -98,7 +98,7 @@ export const openSqliteReadModel: OpenSqliteReadModelFunction = async <
   fields,
   logger,
   close,
-}: OpenSqliteReadModelArgs<Raw>): Promise<ReadModelPorts<Row, Raw>> => {
+}: OpenSqliteReadModelArgs<Raw>): Promise<ReadModelStorage<Row, Raw>> => {
   const table = tableNameFor({ prefix: tablePrefix, readModel: name });
   const columns = columnsOf({ readModel: name, fields, dialect: sqliteDialect });
   const plan = async (executor: SqlExecutor) => {

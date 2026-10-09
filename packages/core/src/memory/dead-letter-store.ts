@@ -1,9 +1,9 @@
+import { codePointOrder } from "../adapter/sql/order.ts";
 import type {
   DeadLetter,
   DeadLetterStore,
   ListDeadLettersArgs,
-} from "../adapter/ports/dead-letter-store.ts";
-import { codePointOrder } from "../adapter/sql/order.ts";
+} from "../adapter/storage/dead-letter-store.ts";
 import { DeadLetterSettledError } from "../contracts/errors.ts";
 import { createStoreEntries, type WithEntries } from "./entries.ts";
 import { jsonCopy } from "./json-copy.ts";

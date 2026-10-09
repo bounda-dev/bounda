@@ -1,4 +1,4 @@
-import type { StoragePorts } from "../../adapter/adapter.ts";
+import type { Storage } from "../../adapter/adapter.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
@@ -27,7 +27,7 @@ export interface CreateProcessRunnerArgs {
   readonly processes: ProcessesRuntime;
   readonly aggregates: AggregatesRuntime;
   readonly pipeline: CommandPipeline;
-  readonly storage: StoragePorts;
+  readonly storage: Storage;
   readonly config: ResolvedConfig;
   readonly ids: IdGenerator;
   readonly clock: Clock;

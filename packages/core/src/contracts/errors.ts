@@ -184,8 +184,9 @@ export class NotFoundError extends BoundaError {
 }
 
 /**
- * Thrown at boot when the configuration or the registry is malformed: a module missing a required
- * export, a port without an implementation, an unknown storage type.
+ * The app and its stored data do not fit together, which no retry fixes: a malformed configuration
+ * or registry at boot, a stored event or a delayed policy run the registry no longer knows, a port
+ * a test left out, a read model that needs a rebuild, a query the adapter cannot run.
  */
 export class ConfigurationError extends BoundaError {
   constructor(message: string, options?: ErrorOptions) {

@@ -70,7 +70,7 @@ export const postgresql: PostgresqlFunction = (options) => {
 
   /**
    * Opens what `work` builds on a use of the pool, and hands the use back when `work` throws: the
-   * ports whose `close` would release it never reach the caller.
+   * stores whose `close` would release it never reach the caller.
    */
   const using = async <T>(work: (connection: Connection) => Promise<T>): Promise<T> => {
     const connection = open();
@@ -161,17 +161,4 @@ export const postgresql: PostgresqlFunction = (options) => {
   };
 };
 
-export type { PostgresqlDatabase } from "./database.ts";
-export type {
-  PostgresqlLocation,
-  PostgresqlOptions,
-  ResolvedPostgresqlOptions,
-} from "./options.ts";
-export {
-  DEFAULT_MAX_CONNECTIONS,
-  DEFAULT_SCHEMA,
-  DEFAULT_TABLE_PREFIX,
-  resolvePostgresqlOptions,
-} from "./options.ts";
-export type { StorageTables, StorageTablesForArgs } from "./schema.ts";
-export { storageSchemaStatements, storageTablesFor } from "./schema.ts";
+export type { PostgresqlOptions } from "./options.ts";

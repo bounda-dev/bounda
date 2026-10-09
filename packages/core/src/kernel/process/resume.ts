@@ -1,4 +1,4 @@
-import type { NewDeadLetter } from "../../adapter/ports/dead-letter-store.ts";
+import type { NewDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { UnitOfWork } from "../unit-of-work/unit-of-work.ts";

@@ -1,5 +1,5 @@
-import type { EventStore, PendingEvent } from "../../adapter/ports/event-store.ts";
-import type { Scheduler } from "../../adapter/ports/scheduler.ts";
+import type { EventStore, PendingEvent } from "../../adapter/storage/event-store.ts";
+import type { Scheduler } from "../../adapter/storage/scheduler.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type {

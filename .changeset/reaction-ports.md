@@ -25,10 +25,8 @@ next to a command, policy or process are gone, and so are the `commands`, `polic
 `bounda generate` points at the aggregate root for each. In the registry, the `collaborators`
 of the command, policy and process entries become the aggregate entry's `ports`, typed as
 `PortModules`; `CollaboratorImplementations`, `InferCollaborators`,
-`CollaboratorSelection` and `ReactionsConfig` are gone, `ImplementationModule`, `PortsConfig`
-and `PortsSection` are new, and `selectCollaborators` becomes `selectImplementations`, with
-`SelectImplementationsArgs` and `SelectImplementationsFunction`, and takes the `owner` whose
-ports it chooses (`PortOwner`: an aggregate or a read model, by name). `bounda generate`
+`CollaboratorSelection`, `ReactionsConfig` and `selectCollaborators` are gone, and
+`ImplementationModule`, `PortsConfig` and `PortsSection` are new. `bounda generate`
 rejects a port named after a handler argument (`command`, `state`, `events`, `event`, `commands`,
 `idempotencyKey`, `signal`, `aggregateId`, `after`, `reject`) or after an event of its aggregate.
 Run `bounda generate` to update generated files.

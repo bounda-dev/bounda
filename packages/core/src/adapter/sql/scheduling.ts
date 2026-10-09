@@ -1,4 +1,4 @@
-import type { ScheduledCommand } from "../ports/scheduler.ts";
+import type { ScheduledCommand } from "../storage/scheduler.ts";
 import { codePointOrder } from "./order.ts";
 
 export interface EarliestDueArgs {

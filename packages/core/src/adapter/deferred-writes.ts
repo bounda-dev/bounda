@@ -21,14 +21,14 @@ export interface DeferredWriteTarget {
 }
 
 /**
- * The stores with their writes held back: `ports` answer reads from `live` at once and record
+ * The stores with their writes held back: `stores` answer reads from `live` at once and record
  * every write in order, and `flush` runs the writes recorded so far against another set of the
  * same stores, a transaction's or the live ones. `add` answers the letter as filed, whatever the
  * store holds under that id already. `tryClaim`, `claimDue` and both `renew` act at once, on
  * `live`, since their answer decides what happens next.
  */
 export interface DeferredWrites {
-  readonly ports: DeferredStores;
+  readonly stores: DeferredStores;
   flush(target: DeferredWriteTarget): Promise<void>;
   /**
    * Whether any write is recorded and not flushed yet.
@@ -52,7 +52,7 @@ export const deferWrites: DeferWritesFunction = ({ inboxLedger, deadLetterStore,
       recorded.push((target) => write(target, ...args));
     };
   return {
-    ports: {
+    stores: {
       inboxLedger: {
         tryClaim: inboxLedger.tryClaim,
         get: inboxLedger.get,

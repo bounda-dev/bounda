@@ -1,4 +1,4 @@
-import type { NewDeadLetter } from "../../adapter/ports/dead-letter-store.ts";
+import type { NewDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
 import type { ProcessRuntime } from "./build-processes.ts";

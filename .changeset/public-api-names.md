@@ -19,7 +19,7 @@ Breaking:
   `projection:<read model>`). The policy, process or scheduled command a dead letter or an inbox
   claim belongs to is its `handler`: `DeadLetter.subscriber` and the `subscriber` filter of
   `deadLetters.list` and `count` are `handler`, `bounda dead-letters list --subscriber` is
-  `--handler`, `ClaimLostError.subscriber` is `handler`, and the `InboxLedger` port keys claims by
+  `--handler`, `ClaimLostError.subscriber` is `handler`, and the `InboxLedger` store keys claims by
   `handler`. The `subscriber` column of the inbox and dead-letter tables is `handler`, and the
   `bounda.dead_letters` counter carries `bounda.handler` and `bounda.handler.kind` instead of
   `bounda.subscriber` and `bounda.subscriber.kind`, which stay on the dispatch span and the lag
@@ -27,8 +27,7 @@ Breaking:
 - A command dispatched with `delay` is a scheduled command everywhere: its dead letters have kind
   `scheduled` instead of `command` (`--kind scheduled` in the CLI and on the counter) and the
   command type as their `handler` instead of `scheduled:<CommandType>`, the event written when one
-  fails for good is `ScheduledCommandFailed` instead of `CommandFailed`
-  (`SCHEDULED_COMMAND_FAILED_EVENT` and `ScheduledCommandFailedPayload`), and an invalid payload
+  fails for good is `ScheduledCommandFailed` instead of `CommandFailed`, and an invalid payload
   is reported for a "scheduled command".
 - `DeadLetterKind` no longer has `projection`: a projection never files a dead letter.
 - A dead letter that cannot be retried in the app as it now is (its policy, process or scheduled

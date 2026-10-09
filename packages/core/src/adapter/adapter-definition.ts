@@ -1,6 +1,6 @@
 /**
  * What `bounda.config.ts` holds under `storage` and `readModels`: an adapter's name and options.
- * An adapter factory such as `sqlite({ path })` returns the full `Adapter`, which adds the port
+ * An adapter factory such as `sqlite({ path })` returns the full `Adapter`, which adds the store
  * factories.
  */
 export interface AdapterDefinition<Name extends string = string, Options = unknown> {

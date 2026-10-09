@@ -14,10 +14,13 @@ export interface CreateWorkerArgs {
   readonly binding: string;
   /**
    * Which store a request belongs to: the name the object is addressed by. Defaults to the
-   * `TENANT_HEADER` header, or `default` without one. Every tenant is its own object, with its
+   * `x-bounda-tenant` header, or `default` without one. Every tenant is its own object, with its
    * own events and read models.
    */
   readonly tenantOf?: TenantOfFunction;
+  /**
+   * Defaults to one JSON line per entry on `console`, which Workers Logs parses into fields.
+   */
   readonly logger?: Logger;
 }
 

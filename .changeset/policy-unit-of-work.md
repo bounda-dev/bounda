@@ -18,7 +18,7 @@ What `await commands.x()` resolves with inside a policy or process handler is no
 until the attempt commits. `bounda generate` emits it as `ReactionCommands`; run it to update
 generated files.
 
-For adapter authors, the `InboxLedger` port changes: `tryClaim` returns the claim's id (or
+For adapter authors, the `InboxLedger` store changes: `tryClaim` returns the claim's id (or
 `null`), `ClaimRecord` carries `claimId`, and `complete` and `fail` accept a `claimId` to settle
 only while the claim is still that one, rejecting with `ClaimLostError` otherwise. The SQLite and
 PostgreSQL inbox tables gain a `claim_id` column.

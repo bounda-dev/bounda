@@ -1,7 +1,7 @@
 import { type FieldsRecord, type Logger, RebuildSupersededError } from "@bounda-dev/core";
 import {
-  type ReadModelPorts,
   type ReadModelRebuild,
+  type ReadModelStorage,
   rebuildFencing,
 } from "@bounda-dev/core/adapter";
 import {
@@ -81,7 +81,7 @@ export interface OpenPostgresqlReadModelArgs {
 }
 
 export interface OpenPostgresqlReadModelFunction {
-  <Row extends object>(args: OpenPostgresqlReadModelArgs): Promise<ReadModelPorts<Row, Sql>>;
+  <Row extends object>(args: OpenPostgresqlReadModelArgs): Promise<ReadModelStorage<Row, Sql>>;
 }
 
 /**
@@ -103,7 +103,7 @@ export const openPostgresqlReadModel: OpenPostgresqlReadModelFunction = async <R
   fields,
   logger,
   close,
-}: OpenPostgresqlReadModelArgs): Promise<ReadModelPorts<Row, Sql>> => {
+}: OpenPostgresqlReadModelArgs): Promise<ReadModelStorage<Row, Sql>> => {
   const table = tableNameFor({ prefix: tablePrefix, readModel: name });
   const columns = columnsOf({ readModel: name, fields, dialect: postgresqlDialect });
   const plan = async (executor: SqlExecutor) => {

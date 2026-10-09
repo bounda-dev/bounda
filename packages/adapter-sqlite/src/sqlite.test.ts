@@ -11,7 +11,7 @@ import {
   silentLogger,
   type Table,
 } from "@bounda-dev/core";
-import type { StoragePorts } from "@bounda-dev/core/adapter";
+import type { Storage } from "@bounda-dev/core/adapter";
 import {
   checkpointStoreContract,
   contractFields,
@@ -29,9 +29,10 @@ import {
 import { createTestApp } from "@bounda-dev/core/testing";
 import type { Client } from "@libsql/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { resolveSqliteOptions, sqlite } from "./index.ts";
+import { sqlite } from "./index.ts";
+import { resolveSqliteOptions } from "./options.ts";
 
-const openStorage = (adapter = sqlite({ memory: true })): Promise<StoragePorts> =>
+const openStorage = (adapter = sqlite({ memory: true })): Promise<Storage> =>
   adapter.createStorage({ logger: silentLogger });
 
 describe("sqlite adapter in memory", () => {

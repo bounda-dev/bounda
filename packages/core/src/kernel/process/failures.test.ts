@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import type { NewDeadLetter } from "../../adapter/ports/dead-letter-store.ts";
+import type { NewDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { ValidationError } from "../../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";

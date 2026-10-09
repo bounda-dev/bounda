@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { silentLogger } from "../../contracts/logger.ts";
-import type { Adapter, ReadModelPorts } from "../adapter.ts";
+import type { Adapter, ReadModelStorage } from "../adapter.ts";
 import { type ContractRow, contractFields } from "./table.contract.ts";
 
 /**
@@ -63,7 +63,7 @@ const gate = (): Gate => {
 };
 
 /**
- * The behaviour every adapter's `ReadModelPorts.transact` must exhibit.
+ * The behaviour every adapter's `ReadModelStorage.transact` must exhibit.
  */
 export const readModelTransactionContract: ReadModelTransactionContractFunction = ({
   create,
@@ -71,11 +71,11 @@ export const readModelTransactionContract: ReadModelTransactionContractFunction 
   concurrent = true,
 }) => {
   describe("read model transaction contract", () => {
-    let ports: ReadModelPorts<ContractRow>;
+    let model: ReadModelStorage<ContractRow>;
 
     beforeEach(async () => {
       const adapter = await create();
-      ports = await adapter.createReadModel<ContractRow>({
+      model = await adapter.createReadModel<ContractRow>({
         name: NAME,
         fields: contractFields,
         logger: silentLogger,
@@ -83,11 +83,11 @@ export const readModelTransactionContract: ReadModelTransactionContractFunction 
     });
 
     afterEach(async () => {
-      await ports.close();
+      await model.close();
     });
 
     it("commits the rows and the checkpoint together and reads its own writes", async () => {
-      const outcome = await ports.transact({
+      const outcome = await model.transact({
         subscriber: SUBSCRIBER,
         wait: true,
         work: async ({ table, checkpointStore }) => {
@@ -100,15 +100,15 @@ export const readModelTransactionContract: ReadModelTransactionContractFunction 
         },
       });
       expect(outcome).toEqual({ acquired: true, value: "done" });
-      expect(await ports.table.findMany()).toEqual([{ ...order("1"), status: "paid" }]);
-      expect(await ports.checkpointStore.get(SUBSCRIBER)).toBe(7);
+      expect(await model.table.findMany()).toEqual([{ ...order("1"), status: "paid" }]);
+      expect(await model.checkpointStore.get(SUBSCRIBER)).toBe(7);
     });
 
     it("rolls the rows and the checkpoint back together when the work throws", async () => {
-      await ports.table.upsert(order("1"));
-      await ports.checkpointStore.set(SUBSCRIBER, 3);
+      await model.table.upsert(order("1"));
+      await model.checkpointStore.set(SUBSCRIBER, 3);
       await expect(
-        ports.transact({
+        model.transact({
           subscriber: SUBSCRIBER,
           wait: true,
           work: async ({ table, checkpointStore }) => {
@@ -120,15 +120,15 @@ export const readModelTransactionContract: ReadModelTransactionContractFunction 
           },
         }),
       ).rejects.toThrow("projection failed");
-      expect(await ports.table.findMany()).toEqual([order("1")]);
-      expect(await ports.checkpointStore.get(SUBSCRIBER)).toBe(3);
+      expect(await model.table.findMany()).toEqual([order("1")]);
+      expect(await model.checkpointStore.get(SUBSCRIBER)).toBe(3);
     });
 
     it.skipIf(!concurrent)("never runs two transactions of one subscriber at once", async () => {
       const held = gate();
       const entered = gate();
       const steps: string[] = [];
-      const first = ports.transact({
+      const first = model.transact({
         subscriber: SUBSCRIBER,
         wait: true,
         work: async ({ table }) => {
@@ -140,7 +140,7 @@ export const readModelTransactionContract: ReadModelTransactionContractFunction 
         },
       });
       await entered.opened;
-      const second = ports.transact({
+      const second = model.transact({
         subscriber: SUBSCRIBER,
         wait: true,
         work: async ({ table }) => {
@@ -158,7 +158,7 @@ export const readModelTransactionContract: ReadModelTransactionContractFunction 
       it("gives up at once without waiting, and lets other subscribers through", async () => {
         const held = gate();
         const entered = gate();
-        const first = ports.transact({
+        const first = model.transact({
           subscriber: SUBSCRIBER,
           wait: true,
           work: async () => {
@@ -168,10 +168,10 @@ export const readModelTransactionContract: ReadModelTransactionContractFunction 
         });
         await entered.opened;
         expect(
-          await ports.transact({ subscriber: SUBSCRIBER, wait: false, work: async () => "late" }),
+          await model.transact({ subscriber: SUBSCRIBER, wait: false, work: async () => "late" }),
         ).toEqual({ acquired: false });
         expect(
-          await ports.transact({
+          await model.transact({
             subscriber: "projection:other",
             wait: false,
             work: async () => 1,
@@ -180,7 +180,7 @@ export const readModelTransactionContract: ReadModelTransactionContractFunction 
         held.open();
         await first;
         expect(
-          await ports.transact({ subscriber: SUBSCRIBER, wait: false, work: async () => "free" }),
+          await model.transact({ subscriber: SUBSCRIBER, wait: false, work: async () => "free" }),
         ).toEqual({ acquired: true, value: "free" });
       });
     }

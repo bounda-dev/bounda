@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { PendingEvent } from "../../adapter/ports/event-store.ts";
+import type { PendingEvent } from "../../adapter/storage/event-store.ts";
 import { resolveConfig } from "../../config/schema.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import { silentLogger } from "../../contracts/logger.ts";

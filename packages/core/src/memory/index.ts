@@ -2,13 +2,13 @@ import type {
   Adapter,
   CreateReadModelArgs,
   CreateReadModelRebuildArgs,
-  ReadModelPorts,
   ReadModelRebuild,
-  StoragePorts,
+  ReadModelStorage,
+  Storage,
 } from "../adapter/adapter.ts";
-import type { CheckpointStore } from "../adapter/ports/checkpoint-store.ts";
-import type { Table } from "../adapter/ports/table.ts";
 import { rebuildFencing } from "../adapter/rebuild-fencing.ts";
+import type { CheckpointStore } from "../adapter/storage/checkpoint-store.ts";
+import type { Table } from "../adapter/storage/table.ts";
 import { RebuildSupersededError } from "../contracts/errors.ts";
 import type { FieldsRecord } from "../modules/view.ts";
 import { createMemoryCheckpointStore } from "./checkpoint-store.ts";
@@ -29,6 +29,9 @@ import {
  */
 export type MemoryOptions = Record<never, never>;
 
+/**
+ * The adapter `memory()` returns: what `bounda.config.ts` holds under `storage` or `readModels`.
+ */
 export type MemoryAdapter = Adapter<"memory", MemoryOptions>;
 
 export interface MemoryFunction {
@@ -53,13 +56,13 @@ const through = <Row extends object>(live: LiveTable): Table<Row> => {
 };
 
 /**
- * The in-memory storage adapter: every port backed by maps, gone when the process ends. For
+ * The in-memory storage adapter: every store backed by maps, gone when the process ends. For
  * tests and for trying Bounda without a database. Each call returns an adapter with its own
  * isolated storage, shared by everything opened from that adapter, as a database would be. It
  * notifies the dispatcher of appends, so a started app reacts without waiting for a poll.
  */
 export const memory: MemoryFunction = (options = {}) => {
-  let storage: StoragePorts | null = null;
+  let storage: Storage | null = null;
   const checkpointStore = createMemoryCheckpointStore();
   const locks = createMemoryLocks();
   const tables = new Map<string, LiveTable>();
@@ -122,7 +125,7 @@ export const memory: MemoryFunction = (options = {}) => {
     createReadModel: async <Row extends object>({
       name,
       fields,
-    }: CreateReadModelArgs): Promise<ReadModelPorts<Row>> => {
+    }: CreateReadModelArgs): Promise<ReadModelStorage<Row>> => {
       const target = live(name, fields);
       const table = through<Row>(target);
       const client = createMemoryReadClient({ name, table });
@@ -214,14 +217,3 @@ export const memory: MemoryFunction = (options = {}) => {
     },
   };
 };
-
-export { createMemoryCheckpointStore } from "./checkpoint-store.ts";
-export { createMemoryDeadLetterStore } from "./dead-letter-store.ts";
-export type { CreateMemoryEventNotifierFunction, MemoryEventNotifier } from "./event-notifier.ts";
-export { createMemoryEventNotifier } from "./event-notifier.ts";
-export type { CreateMemoryEventStoreArgs, MemoryEventStore } from "./event-store.ts";
-export { createMemoryEventStore } from "./event-store.ts";
-export { createMemoryInboxLedger } from "./inbox-ledger.ts";
-export { createMemoryScheduler } from "./scheduler.ts";
-export type { CreateMemoryTableArgs, MemoryTable } from "./table.ts";
-export { createMemoryReadClient, createMemoryTable } from "./table.ts";

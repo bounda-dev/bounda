@@ -1,5 +1,5 @@
-import type { CheckpointStore } from "../../adapter/ports/checkpoint-store.ts";
-import type { EventStore } from "../../adapter/ports/event-store.ts";
+import type { CheckpointStore } from "../../adapter/storage/checkpoint-store.ts";
+import type { EventStore } from "../../adapter/storage/event-store.ts";
 
 export interface AlignReactiveCheckpointsArgs {
   readonly eventStore: EventStore;

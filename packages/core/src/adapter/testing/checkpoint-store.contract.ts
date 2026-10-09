@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import type { CheckpointStore } from "../ports/checkpoint-store.ts";
+import type { CheckpointStore } from "../storage/checkpoint-store.ts";
 
 export interface CheckpointStoreContractArgs {
   readonly create: () => Promise<CheckpointStore>;

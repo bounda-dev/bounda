@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Table } from "../adapter/ports/table.ts";
+import type { Table } from "../adapter/storage/table.ts";
 import type { Registry } from "../modules/registry.ts";
 import type { FieldsArgs } from "../modules/view.ts";
 import { createTestApp } from "../testing/index.ts";

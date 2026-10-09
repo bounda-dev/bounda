@@ -1,10 +1,10 @@
-import type { StoragePorts } from "../adapter/adapter.ts";
+import type { Storage } from "../adapter/adapter.ts";
 import { type DeferredWriteTarget, deferWrites } from "../adapter/deferred-writes.ts";
-import type { CheckpointStore } from "../adapter/ports/checkpoint-store.ts";
-import type { DeadLetterStore } from "../adapter/ports/dead-letter-store.ts";
-import type { ClaimKey, InboxLedger } from "../adapter/ports/inbox-ledger.ts";
-import type { Scheduler } from "../adapter/ports/scheduler.ts";
 import { createStagedEventStore } from "../adapter/staged-event-store.ts";
+import type { CheckpointStore } from "../adapter/storage/checkpoint-store.ts";
+import type { DeadLetterStore } from "../adapter/storage/dead-letter-store.ts";
+import type { ClaimKey, InboxLedger } from "../adapter/storage/inbox-ledger.ts";
+import type { Scheduler } from "../adapter/storage/scheduler.ts";
 import type { StoreEntries } from "./entries.ts";
 import type { MemoryEventStore } from "./event-store.ts";
 
@@ -21,7 +21,7 @@ export interface CreateMemoryStorageTransactionArgs {
 }
 
 export interface CreateMemoryStorageTransactionFunction {
-  (args: CreateMemoryStorageTransactionArgs): StoragePorts["transact"];
+  (args: CreateMemoryStorageTransactionArgs): Storage["transact"];
 }
 
 type CreateUndoLogArgs = Omit<CreateMemoryStorageTransactionArgs, "eventStore">;
@@ -84,7 +84,7 @@ const createUndoLog = ({
 };
 
 /**
- * `StoragePorts.transact` for the memory stores. The work's writes are held back; transactions
+ * `Storage.transact` for the memory stores. The work's writes are held back; transactions
  * then commit one at a time, every stream appended in one synchronous run, so no reader sees one
  * stream appended without the others. A failed commit appends nothing and puts back each entry it
  * changed, unless someone changed it since. `tryClaim`, `claimDue`, both `renew` and writes made on
@@ -97,8 +97,8 @@ export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunct
   const commits = createMemoryLocks();
   return async (work) => {
     const staged = createStagedEventStore(eventStore);
-    const { ports, flush } = deferWrites(live);
-    const result = await work({ eventStore: staged, ...ports });
+    const { stores, flush } = deferWrites(live);
+    const result = await work({ eventStore: staged, ...stores });
     // A transaction committed from inside this commit, as from a store write, waits forever.
     const release = await commits.acquire("commit", true);
     const log = createUndoLog(live);

@@ -1,4 +1,7 @@
-import type { DeadLetterErrorType, NewDeadLetter } from "../../adapter/ports/dead-letter-store.ts";
+import type {
+  DeadLetterErrorType,
+  NewDeadLetter,
+} from "../../adapter/storage/dead-letter-store.ts";
 import type { ResolvedConfig, ResolvedRetryConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { Logger } from "../../contracts/logger.ts";

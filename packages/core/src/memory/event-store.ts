@@ -1,4 +1,4 @@
-import type { AppendArgs, AppendResult, EventStore } from "../adapter/ports/event-store.ts";
+import type { AppendArgs, AppendResult, EventStore } from "../adapter/storage/event-store.ts";
 import { ConcurrencyError } from "../contracts/errors.ts";
 import type { StoredEvent } from "../contracts/event.ts";
 import { streamId } from "../contracts/event.ts";

@@ -4,8 +4,8 @@ export type {
   DeadLetterKind,
   DeadLetterStatus,
   ListDeadLettersArgs,
-} from "./adapter/ports/dead-letter-store.ts";
-export type { FindManyArgs, ReadClient, Table, TableOrder } from "./adapter/ports/table.ts";
+} from "./adapter/storage/dead-letter-store.ts";
+export type { FindManyArgs, ReadClient, Table, TableOrder } from "./adapter/storage/table.ts";
 export * from "./contracts/index.ts";
 export type { Query } from "./contracts/query.ts";
 export type {
@@ -27,7 +27,6 @@ export type {
   SubscriberLag,
 } from "./kernel/dispatch/dispatcher.ts";
 export type { ProcessStatus } from "./kernel/process/lifecycle.ts";
-export { PROCESS_EVENTS } from "./kernel/process/lifecycle.ts";
 export type {
   RebuildReadModelArgs,
   RebuildReadModelFunction,
@@ -38,7 +37,5 @@ export type { ReadYourWritesFunction } from "./kernel/read-your-writes.ts";
 export { readYourWrites } from "./kernel/read-your-writes.ts";
 export type { IdempotencyKeyForFunction } from "./kernel/shared/idempotency-key.ts";
 export { idempotencyKeyFor } from "./kernel/shared/idempotency-key.ts";
-export type { ScheduledCommandFailedPayload } from "./kernel/system-events.ts";
-export { SCHEDULED_COMMAND_FAILED_EVENT } from "./kernel/system-events.ts";
 export * from "./modules/index.ts";
 export type { AppEnv, AppRegistry, EnvSection, Register } from "./register/index.ts";

@@ -171,7 +171,7 @@ the parked events failed the process again. What a retry runs for each kind is i
 
 ## Programmatic use
 
-Everything the command does is exported from `@bounda-dev/cli`:
+`bounda generate` is exported from `@bounda-dev/cli` as `generate`:
 
 ```ts
 import { generate } from "@bounda-dev/cli";
@@ -181,8 +181,8 @@ report.written; // absolute paths written this run
 report.warnings; // layout and inference warnings, per aggregate or read model
 ```
 
-`discoverProject`, `emitProject`, `inferStates`, `watchProject` and `runCli` are the pieces
-`generate` and the binary are made of. `bounda rebuild` is `rebuildReadModel` from
+It throws `ConventionError` when the layout breaks a convention; `formatConventionError` and
+`formatWarnings` format the error and the warnings as the command prints them. `bounda rebuild` is `rebuildReadModel` from
 `@bounda-dev/core` over a project loaded with `loadProject` from `@bounda-dev/core/node`; an app
 exposes the same as `app.rebuildReadModel(name)`. `bounda dead-letters` is `app.deadLetters` on
 a booted app.

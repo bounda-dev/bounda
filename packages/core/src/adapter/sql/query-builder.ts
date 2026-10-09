@@ -1,5 +1,5 @@
 import { ConfigurationError } from "../../contracts/errors.ts";
-import type { TableOrder } from "../ports/table.ts";
+import type { TableOrder } from "../storage/table.ts";
 import type { SqlDialect } from "./dialect.ts";
 import { quoteIdentifier } from "./identifiers.ts";
 import type { ColumnDefinition } from "./read-model-schema.ts";

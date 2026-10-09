@@ -1,4 +1,4 @@
-import type { CheckpointStore } from "../adapter/ports/checkpoint-store.ts";
+import type { CheckpointStore } from "../adapter/storage/checkpoint-store.ts";
 
 export interface CreateMemoryCheckpointStoreFunction {
   (): CheckpointStore;

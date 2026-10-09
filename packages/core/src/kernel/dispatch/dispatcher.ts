@@ -1,6 +1,6 @@
-import type { CheckpointStore } from "../../adapter/ports/checkpoint-store.ts";
-import type { EventNotifier, Unsubscribe } from "../../adapter/ports/event-notifier.ts";
-import type { EventStore } from "../../adapter/ports/event-store.ts";
+import type { CheckpointStore } from "../../adapter/storage/checkpoint-store.ts";
+import type { EventNotifier, Unsubscribe } from "../../adapter/storage/event-notifier.ts";
+import type { EventStore } from "../../adapter/storage/event-store.ts";
 import {
   DEFAULT_BACKOFF_BASE_DELAY_MS,
   DEFAULT_BACKOFF_MAX_DELAY_MS,

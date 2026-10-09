@@ -1,5 +1,5 @@
 import { v4 as randomUUID } from "uuid";
-import type { ClaimKey, ClaimRecord, InboxLedger } from "../adapter/ports/inbox-ledger.ts";
+import type { ClaimKey, ClaimRecord, InboxLedger } from "../adapter/storage/inbox-ledger.ts";
 import { ClaimLostError } from "../contracts/errors.ts";
 import { createStoreEntries, type WithEntries } from "./entries.ts";
 

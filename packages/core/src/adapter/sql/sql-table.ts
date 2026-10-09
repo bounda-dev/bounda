@@ -1,5 +1,5 @@
 import type { FieldsRecord } from "../../modules/view.ts";
-import type { ReadClient, Table } from "../ports/table.ts";
+import type { ReadClient, Table } from "../storage/table.ts";
 import type { SqlDialect } from "./dialect.ts";
 import { fromSnakeCase, quoteIdentifier } from "./identifiers.ts";
 import { buildLimit, buildOrderBy, buildWhere, columnFor } from "./query-builder.ts";

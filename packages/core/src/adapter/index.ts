@@ -4,19 +4,18 @@ export type {
   CreateReadModelArgs,
   CreateReadModelRebuildArgs,
   CreateStorageArgs,
-  IsAdapterFunction,
-  ReadModelPorts,
   ReadModelRebuild,
+  ReadModelStorage,
   ReadModelTransactArgs,
   ReadModelTransacted,
   ReadModelTransaction,
-  StoragePorts,
+  Storage,
   StorageTransaction,
 } from "./adapter.ts";
-export { isAdapter } from "./adapter.ts";
-export type { AdapterDefinition, IsAdapterDefinitionFunction } from "./adapter-definition.ts";
-export { isAdapterDefinition } from "./adapter-definition.ts";
-export type { Checkpoint, CheckpointStore } from "./ports/checkpoint-store.ts";
+export type { AdapterDefinition } from "./adapter-definition.ts";
+export type { RebuildFencing, RebuildFencingFunction } from "./rebuild-fencing.ts";
+export { rebuildFencing } from "./rebuild-fencing.ts";
+export type { Checkpoint, CheckpointStore } from "./storage/checkpoint-store.ts";
 export type {
   DeadLetter,
   DeadLetterErrorType,
@@ -25,8 +24,8 @@ export type {
   DeadLetterStore,
   ListDeadLettersArgs,
   NewDeadLetter,
-} from "./ports/dead-letter-store.ts";
-export type { EventListener, EventNotifier, Unsubscribe } from "./ports/event-notifier.ts";
+} from "./storage/dead-letter-store.ts";
+export type { EventListener, EventNotifier, Unsubscribe } from "./storage/event-notifier.ts";
 export type {
   AppendArgs,
   AppendResult,
@@ -35,7 +34,7 @@ export type {
   LoadResult,
   PendingEvent,
   ReadAllArgs,
-} from "./ports/event-store.ts";
+} from "./storage/event-store.ts";
 export type {
   ClaimArgs,
   ClaimKey,
@@ -45,7 +44,7 @@ export type {
   InboxLedger,
   RenewClaimArgs,
   SettleClaimArgs,
-} from "./ports/inbox-ledger.ts";
+} from "./storage/inbox-ledger.ts";
 export type {
   ClaimDueArgs,
   ClaimedCommand,
@@ -58,7 +57,5 @@ export type {
   ScheduledClaim,
   ScheduledCommand,
   Scheduler,
-} from "./ports/scheduler.ts";
-export type { FindManyArgs, ReadClient, Table, TableOrder } from "./ports/table.ts";
-export type { RebuildFencing, RebuildFencingFunction } from "./rebuild-fencing.ts";
-export { rebuildFencing } from "./rebuild-fencing.ts";
+} from "./storage/scheduler.ts";
+export type { FindManyArgs, ReadClient, Table, TableOrder } from "./storage/table.ts";

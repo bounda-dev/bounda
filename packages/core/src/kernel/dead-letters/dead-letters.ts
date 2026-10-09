@@ -1,5 +1,5 @@
-import type { StoragePorts } from "../../adapter/adapter.ts";
-import type { DeadLetter, ListDeadLettersArgs } from "../../adapter/ports/dead-letter-store.ts";
+import type { Storage } from "../../adapter/adapter.ts";
+import type { DeadLetter, ListDeadLettersArgs } from "../../adapter/storage/dead-letter-store.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import {
@@ -57,7 +57,7 @@ export interface DeadLetters {
 }
 
 export interface CreateDeadLettersArgs {
-  readonly storage: StoragePorts;
+  readonly storage: Storage;
   readonly pipeline: CommandPipeline;
   readonly aggregates: AggregatesRuntime;
   readonly policies: PoliciesRuntime;

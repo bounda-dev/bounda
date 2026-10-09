@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Table } from "../../adapter/ports/table.ts";
+import type { Table } from "../../adapter/storage/table.ts";
 import { resolveConfig } from "../../config/schema.ts";
 import { ConfigurationError, NotFoundError, ValidationError } from "../../contracts/errors.ts";
 import { silentLogger } from "../../contracts/logger.ts";

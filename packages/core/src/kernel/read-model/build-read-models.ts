@@ -1,4 +1,4 @@
-import type { Adapter, ReadModelPorts } from "../../adapter/adapter.ts";
+import type { Adapter, ReadModelStorage } from "../../adapter/adapter.ts";
 import { isAdapter } from "../../adapter/adapter.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
@@ -19,7 +19,7 @@ export interface ProjectionRuntime {
 export interface ReadModelRuntime {
   readonly name: string;
   readonly fields: FieldsRecord;
-  readonly storage: ReadModelPorts;
+  readonly storage: ReadModelStorage;
   /**
    * Keyed by qualified event type, `order.OrderPlaced`.
    */
@@ -95,7 +95,7 @@ export const compileProjections: CompileProjectionsFunction = ({ name, entry }) 
 export interface CompileReadModelArgs {
   readonly name: string;
   readonly entry: ReadModelEntry;
-  readonly storage: ReadModelPorts;
+  readonly storage: ReadModelStorage;
 }
 
 export interface CompileReadModelFunction {

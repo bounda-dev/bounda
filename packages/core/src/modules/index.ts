@@ -2,54 +2,40 @@ export type {
   AggregateMeta,
   HandlerState,
   NotCreated,
-  StateModule,
   StateOf,
   UnknownState,
 } from "./aggregate.ts";
 export type {
-  CommandEntry,
   CommandHandlerArgs,
-  CommandModule,
   CommandRejectionsArgs,
   RejectFunction,
   RejectionCodeOf,
 } from "./command.ts";
 export type {
-  CreateEventBuildersFunction,
   EventBeginArgs,
   EventBuilders,
   EventEvolveArgs,
-  EventModule,
-  EventModules,
   EventOf,
   EventTypeNames,
   EventUnion,
   StoredEventOf,
   StoredEventUnion,
 } from "./event.ts";
-export { createEventBuilders } from "./event.ts";
 export type {
   CapitalizeFunction,
   PolicyTriggerArgs,
   PolicyTriggerFunction,
-  Simplify,
   ToCamelCaseFunction,
-  TypeNameOf,
-  UnionToIntersection,
 } from "./naming.ts";
 export { capitalize, policyTrigger, toCamelCase } from "./naming.ts";
 export type {
   EmptyPayload,
-  HasPayload,
-  InferPayload,
-  InferPayloadInput,
   PayloadArgs,
-  PayloadFunction,
   PayloadInputOf,
   PayloadOf,
   ZodApi,
 } from "./payload.ts";
-export type { PolicyEntry, PolicyHandlerArgs, PolicyModule } from "./policy.ts";
+export type { PolicyHandlerArgs, PolicyModule } from "./policy.ts";
 export type {
   CreateArgs,
   CreateImplementation,
@@ -69,26 +55,21 @@ export type {
   ProcessDeadlineField,
   ProcessDeadlineFields,
   ProcessDeadlineResult,
-  ProcessEntry,
   ProcessHandlerArgs,
-  ProcessHandlerModule,
   ProcessHandlerResult,
   ProcessHandlerReturnCheck,
-  ProcessModule,
   ProcessStateArgs,
   ProcessStateOf,
   QualifiedEventName,
 } from "./process.ts";
-export type { ProjectionArgs, ProjectionModule } from "./projection.ts";
+export type { ProjectionArgs } from "./projection.ts";
 export type {
   QueryHandlerArgs,
-  QueryModule,
   QueryRepositoryArgs,
   QueryResultOf,
   RepositoryDataOf,
 } from "./query.ts";
 export type {
-  AggregateEntry,
   CommandInvoker,
   CommandsFacade,
   CommandsFacadeOf,
@@ -97,12 +78,9 @@ export type {
   QueryInvoker,
   ReactionCommandInvoker,
   ReactionCommandsFacadeOf,
-  ReadModelEntry,
   Registry,
 } from "./registry.ts";
-export type { Upcast, Upcasts, UpcastsModule } from "./upcast.ts";
-export type { ValidateRegistryFunction } from "./validate.ts";
-export { validateRegistry } from "./validate.ts";
+export type { Upcast, Upcasts } from "./upcast.ts";
 export type {
   Field,
   FieldBuilder,
@@ -112,6 +90,5 @@ export type {
   FieldType,
   InferRow,
   RowOf,
-  ViewModule,
 } from "./view.ts";
 export { fieldBuilder } from "./view.ts";

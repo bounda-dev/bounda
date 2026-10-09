@@ -17,15 +17,15 @@ export type PostgresqlLocation =
  */
 export type PostgresqlOptions = PostgresqlLocation & {
   /**
-   * Holds every Bounda table, and is created when missing. Defaults to `DEFAULT_SCHEMA`.
+   * Holds every Bounda table, and is created when missing. Defaults to `public`.
    */
   readonly schema?: string;
   /**
-   * Put in front of every table name. Defaults to `DEFAULT_TABLE_PREFIX`.
+   * Put in front of every table name. Defaults to `bounda_`.
    */
   readonly tablePrefix?: string;
   /**
-   * The size of the pool. Defaults to `DEFAULT_MAX_CONNECTIONS`.
+   * The size of the pool. Defaults to 10.
    */
   readonly maxConnections?: number;
 };

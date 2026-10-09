@@ -3,7 +3,7 @@ import type { DurationInput } from "../contracts/duration.ts";
 import type { AppPortsConfig } from "../register/index.ts";
 
 /**
- * How failed policy and process handlers are retried.
+ * How failed policy and process handlers and scheduled commands are retried.
  */
 export interface RetryConfig {
   readonly strategy: "none" | "fixed" | "linear" | "exponential";
@@ -16,16 +16,32 @@ export interface RetryConfig {
  * Runtime settings for policies.
  */
 export interface PoliciesConfig {
+  /**
+   * In `runtime`, also the retry of scheduled commands; an override does not change theirs.
+   */
   readonly retry?: RetryConfig;
+  /**
+   * How long one run of a policy handler may take before it is abandoned. Defaults to 30 seconds,
+   * and in `overrides` to `runtime.policies.timeout`.
+   */
   readonly timeout?: DurationInput;
+  /**
+   * How many commands deep a chain of reactions may go before a command is refused with
+   * `ChainDepthExceededError`, counted for every command dispatched. Defaults to 25, and in
+   * `overrides` to `runtime.policies.maxChainDepth`.
+   */
   readonly maxChainDepth?: number;
 }
 
 /**
- * Runtime settings for processes. `timeout` is the default for processes that do not declare one.
+ * Runtime settings for processes.
  */
 export interface ProcessesConfig {
   readonly retry?: RetryConfig;
+  /**
+   * How long an instance lives before its `at-timeout` runs, for processes whose `config` sets no
+   * `timeout`. Defaults to 7 days, and in `overrides` to `runtime.processes.timeout`.
+   */
   readonly timeout?: DurationInput;
   /**
    * How long one run of a process handler, for an event or a deadline, may take. Past it the run

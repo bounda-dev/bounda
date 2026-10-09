@@ -13,6 +13,10 @@ import type { Registry } from "../modules/registry.ts";
 import type { AppRegistry } from "../register/index.ts";
 import { createConsoleLogger } from "./console-logger.ts";
 
+/**
+ * What `boot` loads and how. Every field is optional: by default it reads the project in the
+ * current directory as `bounda generate` lays it out.
+ */
 export interface BootArgs<R extends Registry = AppRegistry> {
   /**
    * The directory the other paths and `.env` are resolved against. Defaults to the current
@@ -45,7 +49,7 @@ export interface BootArgs<R extends Registry = AppRegistry> {
    * Whether to load `.env` from `root` into `process.env` before the configuration is imported.
    * Defaults to `true`; variables already set are never overwritten.
    */
-  readonly env?: boolean;
+  readonly loadEnv?: boolean;
   /**
    * Whether `SIGINT` and `SIGTERM` stop the app. Defaults to `true`.
    */
@@ -55,7 +59,7 @@ export interface BootArgs<R extends Registry = AppRegistry> {
    */
   readonly logger?: Logger;
   /**
-   * Defaults to `uuidV7IdGenerator`.
+   * Defaults to UUID v7 ids.
    */
   readonly ids?: IdGenerator;
   /**
@@ -77,7 +81,14 @@ export interface BootFunction {
 
 export type LoadProjectArgs<R extends Registry = AppRegistry> = Pick<
   BootArgs<R>,
-  "root" | "configPath" | "registryPath" | "config" | "importConfig" | "registry" | "env" | "logger"
+  | "root"
+  | "configPath"
+  | "registryPath"
+  | "config"
+  | "importConfig"
+  | "registry"
+  | "loadEnv"
+  | "logger"
 >;
 
 export interface LoadedProject<R extends Registry = AppRegistry> {
@@ -123,7 +134,7 @@ const importExport = async <T>(
 const CONFIG = "the configuration (default export)";
 const REGISTRY = 'the registry (export "registry")';
 
-const loadEnv = (root: string, logger: Logger): void => {
+const loadEnvFile = (root: string, logger: Logger): void => {
   const path = resolve(root, ".env");
   try {
     process.loadEnvFile(path);
@@ -145,10 +156,10 @@ export const loadProject: LoadProjectFunction = async <R extends Registry = AppR
   config,
   importConfig,
   registry,
-  env = true,
+  loadEnv = true,
   logger = createConsoleLogger(),
 }: LoadProjectArgs<R> = {}): Promise<LoadedProject<R>> => {
-  if (env) loadEnv(root, guardedLogger(logger));
+  if (loadEnv) loadEnvFile(root, guardedLogger(logger));
   const configFile = resolve(root, configPath);
   const registryFile = resolve(root, registryPath);
   return {
@@ -184,7 +195,7 @@ export const boot: BootFunction = async <R extends Registry = AppRegistry>({
   config,
   importConfig,
   registry,
-  env = true,
+  loadEnv = true,
   signals = true,
   logger: rawLogger = createConsoleLogger(),
   ids,
@@ -198,7 +209,7 @@ export const boot: BootFunction = async <R extends Registry = AppRegistry>({
     ...(config === undefined ? {} : { config }),
     ...(importConfig === undefined ? {} : { importConfig }),
     ...(registry === undefined ? {} : { registry }),
-    env,
+    loadEnv,
     logger,
   });
 

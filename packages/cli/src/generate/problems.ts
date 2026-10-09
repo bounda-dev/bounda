@@ -7,7 +7,7 @@ export interface Problem {
 }
 
 /**
- * Thrown by discovery when the project layout breaks a convention. Every problem is collected
+ * Thrown by `generate` when the project layout breaks a convention. Every problem is collected
  * before throwing, so one run reports them all.
  */
 export class ConventionError extends Error {

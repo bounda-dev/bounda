@@ -10,7 +10,7 @@ import {
   type Table,
   ValidationError,
 } from "@bounda-dev/core";
-import type { StoragePorts } from "@bounda-dev/core/adapter";
+import type { Storage } from "@bounda-dev/core/adapter";
 import type { SqlExecutor } from "@bounda-dev/core/adapter/sql";
 import {
   checkpointStoreContract,
@@ -30,12 +30,8 @@ import { createTestApp } from "@bounda-dev/core/testing";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import postgres, { type Sql } from "postgres";
 import { afterAll, describe, expect, it, vi } from "vitest";
-import {
-  type PostgresqlAdapter,
-  type PostgresqlOptions,
-  postgresql,
-  resolvePostgresqlOptions,
-} from "./index.ts";
+import { type PostgresqlAdapter, type PostgresqlOptions, postgresql } from "./index.ts";
+import { resolvePostgresqlOptions } from "./options.ts";
 
 const reuseContainer = process.env.BOUNDA_PG_REUSE === "1";
 
@@ -68,7 +64,7 @@ const closeOpened = async (): Promise<void> => {
   await Promise.all(closers.splice(0).map((close) => close()));
 };
 
-const openStorage = async (adapter?: PostgresqlAdapter): Promise<StoragePorts> => {
+const openStorage = async (adapter?: PostgresqlAdapter): Promise<Storage> => {
   if (adapter === undefined) await closeOpened();
   const storage = await (adapter ?? fresh()).createStorage({ logger: silentLogger });
   closers.push(storage.close);
@@ -174,7 +170,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
     );
     const one = await openStorage(first as PostgresqlAdapter);
     const other = await openStorage(second as PostgresqlAdapter);
-    const append = (storage: StoragePorts) =>
+    const append = (storage: Storage) =>
       storage.eventStore.append({
         aggregateType: "order",
         aggregateId: "1",

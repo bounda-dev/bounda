@@ -8,7 +8,6 @@
   "mutate": [
     "src/**/*.ts",
     "!src/**/*.test.ts",
-    "!src/index.ts",
     "!src/cli.ts",
     "!src/distribution/cli.ts",
     "!src/distribution/sync.ts"

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { GenerateReport } from "./generate/generate.ts";
+import type { GeneratedProject } from "./generate/generate.ts";
 import { ConventionError } from "./generate/problems.ts";
 import { formatConventionError, formatReport, formatWarnings } from "./reporter.ts";
 
-const report = (overrides: Partial<GenerateReport>): GenerateReport => ({
+const report = (overrides: Partial<GeneratedProject>): GeneratedProject => ({
   model: { root: "/p", appDir: "app", aggregates: [], readModels: [] },
   files: [],
   written: [],

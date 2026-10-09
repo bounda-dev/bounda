@@ -1,5 +1,5 @@
-import type { StoragePorts } from "../../adapter/adapter.ts";
-import type { DeadLetterErrorType } from "../../adapter/ports/dead-letter-store.ts";
+import type { Storage } from "../../adapter/adapter.ts";
+import type { DeadLetterErrorType } from "../../adapter/storage/dead-letter-store.ts";
 import type { ResolvedConfig, ResolvedPoliciesConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
@@ -21,7 +21,7 @@ export const POLICIES_SUBSCRIBER: "policies" = "policies";
 export interface CreatePolicySubscriberArgs {
   readonly policies: PoliciesRuntime;
   readonly executor: PolicyExecutor;
-  readonly storage: StoragePorts;
+  readonly storage: Storage;
   readonly config: ResolvedConfig;
   readonly clock: Clock;
   readonly pendingRetries: PendingRetries;

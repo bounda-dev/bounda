@@ -4,7 +4,7 @@ import { silentLogger } from "../../contracts/logger.ts";
 import type { FieldsRecord } from "../../modules/view.ts";
 import { fieldBuilder as f } from "../../modules/view.ts";
 import type { Adapter } from "../adapter.ts";
-import type { Table } from "../ports/table.ts";
+import type { Table } from "../storage/table.ts";
 
 /**
  * The read model every table contract test uses.

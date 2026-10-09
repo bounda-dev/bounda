@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ClaimedCommand } from "../../adapter/ports/scheduler.ts";
+import type { ClaimedCommand } from "../../adapter/storage/scheduler.ts";
 import type { RuntimeConfig } from "../../config/types.ts";
 import { ConcurrencyError, ValidationError } from "../../contracts/errors.ts";
 import type { RejectFunction } from "../../modules/command.ts";

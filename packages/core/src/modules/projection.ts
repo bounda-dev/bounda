@@ -1,4 +1,4 @@
-import type { Table } from "../adapter/ports/table.ts";
+import type { ReadClient, Table } from "../adapter/storage/table.ts";
 import { capitalize } from "./naming.ts";
 
 /**
@@ -11,13 +11,13 @@ export interface ProjectionModule {
 }
 
 /**
- * Arguments of `project`: the event, the typed table of the read model and the raw client of its
- * storage adapter.
+ * Arguments of `project`: the event, the typed table of the read model and its client, whose
+ * `raw` is the storage adapter's handle on the projection's transaction.
  */
-export interface ProjectionArgs<Event, Row, Client = unknown> {
+export interface ProjectionArgs<Event, Row, Raw = unknown> {
   readonly event: Event;
   readonly table: Table<Row>;
-  readonly client: Client;
+  readonly client: ReadClient<Row, Raw>;
 }
 
 export interface ProjectionTriggersFunction {

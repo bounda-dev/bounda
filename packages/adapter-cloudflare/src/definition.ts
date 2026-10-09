@@ -6,7 +6,7 @@ import type { AdapterDefinition } from "@bounda-dev/core/adapter";
 export interface CloudflareOptions {
   /**
    * Put in front of every table Bounda creates in the Durable Object's SQLite. Defaults to
-   * `DEFAULT_TABLE_PREFIX`.
+   * `bounda_`.
    */
   readonly tablePrefix?: string;
 }

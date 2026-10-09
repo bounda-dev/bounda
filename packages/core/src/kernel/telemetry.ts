@@ -6,7 +6,7 @@ import {
   type Tracer,
   trace,
 } from "@opentelemetry/api";
-import type { DeadLetterErrorType, DeadLetterKind } from "../adapter/ports/dead-letter-store.ts";
+import type { DeadLetterErrorType, DeadLetterKind } from "../adapter/storage/dead-letter-store.ts";
 import { errorDetails } from "./shared/retry.ts";
 
 /**

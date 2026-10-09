@@ -4,7 +4,7 @@ import type {
   CreateReadModelRebuildArgs,
   CreateStorageArgs,
 } from "../../adapter/adapter.ts";
-import type { Table } from "../../adapter/ports/table.ts";
+import type { Table } from "../../adapter/storage/table.ts";
 import { RebuildSupersededError } from "../../contracts/errors.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { createMemoryCheckpointStore } from "../../memory/checkpoint-store.ts";

@@ -1,5 +1,5 @@
 import { isAdapter } from "../../adapter/adapter.ts";
-import type { CheckpointStore } from "../../adapter/ports/checkpoint-store.ts";
+import type { CheckpointStore } from "../../adapter/storage/checkpoint-store.ts";
 import { checkConfigNames } from "../../config/names.ts";
 import { resolveConfig } from "../../config/schema.ts";
 import type { Config } from "../../config/types.ts";

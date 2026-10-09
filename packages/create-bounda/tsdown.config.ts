@@ -1,12 +1,11 @@
 import { defineConfig } from "tsdown";
 
 export default defineConfig({
-  entry: ["src/index.ts", "src/cli.ts"],
+  entry: ["src/cli.ts"],
   tsconfig: "tsconfig.build.json",
   unbundle: true,
-  dts: true,
+  dts: false,
   platform: "node",
   fixedExtension: false,
   publint: true,
-  attw: true,
 });

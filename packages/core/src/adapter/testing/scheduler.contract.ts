@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { ScheduledClaimLostError } from "../../contracts/errors.ts";
-import type { ClaimedCommand, ScheduleArgs, Scheduler } from "../ports/scheduler.ts";
+import type { ClaimedCommand, ScheduleArgs, Scheduler } from "../storage/scheduler.ts";
 import { testCommand, testContext } from "./fixtures.ts";
 
 export interface SchedulerContractArgs {
