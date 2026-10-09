@@ -606,6 +606,32 @@ describe("implementations built by create", () => {
     expect(log).toEqual(["notifier closed"]);
   });
 
+  it("closes the read models and the storage when a step after opening them fails", async () => {
+    const counting = countingAdapter();
+    const adapter: Adapter = {
+      ...counting.adapter,
+      createStorage: async (args: CreateStorageArgs) => {
+        const ports = await counting.adapter.createStorage(args);
+        return {
+          ...ports,
+          checkpointStore: {
+            ...ports.checkpointStore,
+            list: async () => {
+              throw new Error("checkpoints unreadable");
+            },
+          },
+        };
+      },
+    };
+    await expect(
+      createApp({
+        registry,
+        config: { storage: adapter, ports: { order: { notifier: "memory" } } },
+      }),
+    ).rejects.toThrow("checkpoints unreadable");
+    expect(counting.closes()).toEqual({ storage: 1, readModels: 1 });
+  });
+
   it("still closes the storage when closing a read model fails on stop", async () => {
     const counting = countingAdapter();
     const adapter: Adapter = {

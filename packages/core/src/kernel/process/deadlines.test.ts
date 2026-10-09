@@ -969,7 +969,7 @@ describe("process deadlines", () => {
       harness.storage.checkpointStore.get = get;
       throw new Error("checkpoint unreadable");
     };
-    await expect(harness.worker.runOnce()).rejects.toThrow("checkpoint unreadable");
+    await expect(harness.worker.runOnce()).rejects.toEqual(new Error("checkpoint unreadable"));
     const order = await harness.storage.eventStore.load({
       aggregateType: "order",
       aggregateId: "o-1",
