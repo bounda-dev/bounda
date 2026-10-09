@@ -66,8 +66,7 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
   pendingRetries,
   logger,
 }) => {
-  const leaseMs = (process: ProcessRuntime): number =>
-    config.forAggregate(process.aggregate).policies.timeoutMs * 2;
+  const leaseMs = (process: ProcessRuntime): number => process.handlerTimeoutMs * 2;
 
   // Whether `event` waits behind the instance's failure: not the event that failed, delivered
   // again, and nothing once the failure's letter was discarded, since the instance is given up.
@@ -98,7 +97,7 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
     entries: LifecycleEntry[],
   ): ProcessInstance => {
     if (instance.exists || !startsOn(process, event)) return instance;
-    const timeoutAt = new Date(Date.parse(event.timestamp) + process.timeoutMs).toISOString();
+    const timeoutAt = new Date(Date.parse(event.timestamp) + process.lifetimeMs).toISOString();
     entries.push(lifecycleEntries.started(event, process.initialState, timeoutAt));
     return { ...instance, exists: true, timeoutAt, correlationId: event.metadata.correlationId };
   };

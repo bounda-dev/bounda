@@ -63,6 +63,7 @@ const policies = z.strictObject({
 const processes = z.strictObject({
   retry: retry.optional(),
   timeout: duration.optional(),
+  handlerTimeout: timeout.optional(),
 });
 
 const overrides = z.strictObject({
@@ -142,6 +143,7 @@ const resolveProcesses = (
 ): ResolvedProcessesConfig => ({
   retry: resolveRetry(parsed?.retry, base.retry),
   timeoutMs: parsed?.timeout ?? base.timeoutMs,
+  handlerTimeoutMs: parsed?.handlerTimeout ?? base.handlerTimeoutMs,
 });
 
 const formatIssues = (issues: readonly z.core.$ZodIssue[]): string =>

@@ -276,12 +276,13 @@ A policy or process run that fails runs again, waiting longer each time, up to t
 before it becomes a dead letter; [Configuration](/reference/configuration/#retry) has every setting
 and its default.
 
-Three different things are called a timeout, and it is worth keeping them apart:
+Four different things are called a timeout, and it is worth keeping them apart:
 
 | What it bounds | Setting | When it runs out |
 | --- | --- | --- |
 | One run of a command handler | `runtime.commands.timeout` | The dispatch rejects with `HANDLER_TIMEOUT`, the handler's `signal` aborts and nothing it returns is stored |
-| One run of a policy or process handler | `runtime.policies.timeout`, for processes too | The run fails; its commands still running stop, later ones are refused with `REACTION_ABANDONED` and logged at `warn`, and its `signal` aborts |
+| One run of a policy handler | `runtime.policies.timeout` | The run fails; its commands still running stop, later ones are refused with `REACTION_ABANDONED` and logged at `warn`, and its `signal` aborts |
+| One run of a process handler, for an event or a deadline | `runtime.processes.handlerTimeout` | As for a policy |
 | How long a process stays open | the process's `config.timeout`, else `runtime.processes.timeout` | `at-timeout.ts` runs and the process ends as timed out |
 
 For a command, each retry after a concurrency conflict gets a time limit of its own, and loading

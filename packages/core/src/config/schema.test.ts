@@ -42,6 +42,7 @@ describe("resolveConfig", () => {
       processes: {
         retry: { strategy: "exponential", maxAttempts: 3, baseDelayMs: 1_000, maxDelayMs: 30_000 },
         timeoutMs: 604_800_000,
+        handlerTimeoutMs: 30_000,
       },
       dispatcher: {
         pollIntervalMs: 100,
@@ -63,7 +64,7 @@ describe("resolveConfig", () => {
         role: "worker",
         commands: { concurrencyRetries: 0, timeout: "5s" },
         policies: { retry: { strategy: "fixed", maxAttempts: 5, baseDelay: "2s" }, timeout: "1m" },
-        processes: { timeout: "48h" },
+        processes: { timeout: "48h", handlerTimeout: "2m" },
         dispatcher: {
           pollInterval: 250,
           idleInterval: "1m",
@@ -85,6 +86,7 @@ describe("resolveConfig", () => {
     });
     expect(resolved.runtime.policies.timeoutMs).toBe(60_000);
     expect(resolved.runtime.processes.timeoutMs).toBe(172_800_000);
+    expect(resolved.runtime.processes.handlerTimeoutMs).toBe(120_000);
     expect(resolved.runtime.dispatcher).toEqual({
       pollIntervalMs: 250,
       idleIntervalMs: 60_000,
@@ -105,7 +107,7 @@ describe("resolveConfig", () => {
         policies: { maxChainDepth: 10, timeout: "20s" },
         overrides: {
           order: { policies: { maxChainDepth: 3 } },
-          payment: { commands: { timeout: "1m" } },
+          payment: { commands: { timeout: "1m" }, processes: { handlerTimeout: "5m" } },
         },
       },
     });
@@ -119,6 +121,10 @@ describe("resolveConfig", () => {
       processes: resolved.runtime.processes,
     });
     expect(resolved.forAggregate("payment").commands).toEqual({ timeoutMs: 60_000 });
+    expect(resolved.forAggregate("payment").processes).toEqual({
+      ...resolved.runtime.processes,
+      handlerTimeoutMs: 300_000,
+    });
     expect(resolved.forAggregate("customer")).toEqual({
       commands: { timeoutMs: 10_000 },
       policies: resolved.runtime.policies,
@@ -150,6 +156,9 @@ describe("resolveConfig", () => {
         runtime: { overrides: { order: { policies: { timeout: "0s" } } } },
       }),
     ).toContain("runtime.overrides.order.policies.timeout: Expected a duration longer than 0");
+    expect(
+      message({ storage: sqlite, runtime: { processes: { handlerTimeout: "0s" } } }),
+    ).toContain("runtime.processes.handlerTimeout: Expected a duration longer than 0");
   });
 
   it("rejects unknown keys anywhere", () => {

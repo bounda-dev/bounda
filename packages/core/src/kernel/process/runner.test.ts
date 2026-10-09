@@ -110,7 +110,8 @@ describe("buildProcesses", () => {
     expect(all).toHaveLength(1);
     expect(all[0]).toMatchObject({
       name: "order.orderPayment",
-      timeoutMs: 172_800_000,
+      lifetimeMs: 172_800_000,
+      handlerTimeoutMs: 30_000,
       initialState: { reminders: 0, method: null },
     });
     expect([...(all[0]?.startedBy ?? [])]).toEqual(["order.OrderPlaced"]);
@@ -142,10 +143,14 @@ describe("buildProcesses", () => {
       resolveConfig({
         storage: memory(),
         ports: { order: { notifier: "memory" } },
-        runtime: { processes: { timeout: "1h" } },
+        runtime: {
+          processes: { timeout: "1h" },
+          overrides: { order: { processes: { handlerTimeout: "2m" } } },
+        },
       }),
     );
-    expect(built.all[0]?.timeoutMs).toBe(3_600_000);
+    expect(built.all[0]?.lifetimeMs).toBe(3_600_000);
+    expect(built.all[0]?.handlerTimeoutMs).toBe(120_000);
     expect(built.all[0]).toMatchObject({
       initialState: {},
       stateSchema: null,
@@ -624,11 +629,11 @@ describe("process runner", () => {
     expect((await harness.dispatcher.getLag()).maxLag).toBe(0);
   });
 
-  it("claims each handler run with a lease of twice the handler timeout", async () => {
+  it("claims each handler run with a lease of twice the process handler timeout", async () => {
     reset("ok");
     const harness = await createReactiveHarness({
       registry,
-      config: { runtime: { policies: { timeout: "10s" } } },
+      config: { runtime: { policies: { timeout: "1h" }, processes: { handlerTimeout: "10s" } } },
     });
     const leases: number[] = [];
     const original = harness.storage.inboxLedger.tryClaim.bind(harness.storage.inboxLedger);

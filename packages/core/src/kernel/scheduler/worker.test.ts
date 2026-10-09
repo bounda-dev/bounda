@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ClaimedCommand } from "../../adapter/ports/scheduler.ts";
+import type { RuntimeConfig } from "../../config/types.ts";
 import { ConcurrencyError, ValidationError } from "../../contracts/errors.ts";
 import type { RejectFunction } from "../../modules/command.ts";
 import type { PayloadArgs } from "../../modules/payload.ts";
@@ -370,7 +371,13 @@ describe("scheduled command worker", () => {
   it("claims due commands with a lease of twice the handler timeout", async () => {
     const harness = await createReactiveHarness({
       registry: orderRegistry,
-      config: { runtime: { commands: { timeout: "5s" }, policies: { timeout: "10s" } } },
+      config: {
+        runtime: {
+          commands: { timeout: "5s" },
+          policies: { timeout: "10s" },
+          processes: { handlerTimeout: "5s" },
+        },
+      },
     });
     const leases: number[] = [];
     const original = harness.storage.scheduler.claimDue.bind(harness.storage.scheduler);
@@ -382,18 +389,38 @@ describe("scheduled command worker", () => {
     expect(leases).toEqual([20_000]);
   });
 
-  it("holds its claims long enough for the slowest aggregate's handlers", async () => {
+  it.each<[string, RuntimeConfig, number]>([
+    ["commands", { commands: { timeout: "40s" } }, 80_000],
+    ["policies", { policies: { timeout: "40s" } }, 80_000],
+    ["processes, whose deadlines it runs", { processes: { handlerTimeout: "40s" } }, 80_000],
+    [
+      "one aggregate's commands",
+      { overrides: { order: { commands: { timeout: "1m" } } } },
+      120_000,
+    ],
+    [
+      "one aggregate's policies",
+      { overrides: { order: { policies: { timeout: "1m" } }, other: { policies: {} } } },
+      120_000,
+    ],
+    [
+      "one aggregate's processes",
+      { overrides: { order: { processes: { handlerTimeout: "1m" } } } },
+      120_000,
+    ],
+  ])("holds its claims long enough for the slowest handler: %s", async (_, slowest, leaseMs) => {
     const harness = await createReactiveHarness({
       registry: orderRegistry,
       config: {
         runtime: {
           commands: { timeout: "10s" },
           policies: { timeout: "10s" },
-          overrides: { order: { policies: { timeout: "1m" } }, other: { policies: {} } },
+          processes: { handlerTimeout: "10s" },
+          ...slowest,
         },
       },
     });
-    expect(harness.worker.leaseMs).toBe(120_000);
+    expect(harness.worker.leaseMs).toBe(leaseMs);
   });
 
   it.each([
@@ -635,25 +662,6 @@ describe("scheduled command worker", () => {
         },
       ]);
     });
-  });
-
-  it("holds its claims long enough for the slowest command handler", async () => {
-    const commandsLonger = await createReactiveHarness({
-      registry: orderRegistry,
-      config: { runtime: { commands: { timeout: "40s" }, policies: { timeout: "10s" } } },
-    });
-    expect(commandsLonger.worker.leaseMs).toBe(80_000);
-    const overridden = await createReactiveHarness({
-      registry: orderRegistry,
-      config: {
-        runtime: {
-          commands: { timeout: "10s" },
-          policies: { timeout: "10s" },
-          overrides: { order: { commands: { timeout: "1m" } } },
-        },
-      },
-    });
-    expect(overridden.worker.leaseMs).toBe(120_000);
   });
 
   it("arms one timer per interval, re-arms after each run and leaves nothing behind on stop", async () => {

@@ -53,9 +53,9 @@ types refuse; wrap it with `asDuration(process.env.X ?? "1m")`, which checks it.
 
 ### Policies
 
-- **`policies.timeout`**, default `"30s"`. How long one run of a policy handler, or of a process
-  handler, may take. Past it the run is abandoned: its commands still running stop, later ones are
-  refused with `REACTION_ABANDONED`, and its `signal` aborts.
+- **`policies.timeout`**, default `"30s"`. How long one run of a policy handler may take. Past it
+  the run is abandoned: its commands still running stop, later ones are refused with
+  `REACTION_ABANDONED`, and its `signal` aborts.
 - **`policies.retry`**, default exponential, 3 attempts, 1 s to 30 s. How a policy run that failed
   is retried; also used by scheduled commands. See [retry](#retry).
 - **`policies.maxChainDepth`**, default `25`. How many hops a chain of reactions may take from the
@@ -66,8 +66,13 @@ types refuse; wrap it with `asDuration(process.env.X ?? "1m")`, which checks it.
 
 - **`processes.timeout`**, default `"7d"`. How long a process stays open before `at-timeout.ts`
   runs, for a process whose `config` declares no `timeout`.
-- **`processes.retry`**, default as `policies.retry`. How a failed process step or deadline is
-  retried.
+- **`processes.handlerTimeout`**, default `"30s"`. How long one run of a process handler, for an
+  event or a deadline, may take. Past it the run is abandoned, as a policy's is.
+- **`processes.retry`**, default the same as `policies.retry`'s, not what `policies.retry` is set
+  to. How a failed process step or deadline is retried.
+
+Each time limit also decides how long a claim lasts, so how soon another instance runs again what
+a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the-inbox-handled-once-by-the-store).
 
 ### Dispatcher
 

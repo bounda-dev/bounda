@@ -42,8 +42,10 @@ describe("defineConfig", () => {
       runtime: {
         commands: { timeout: "10s" },
         policies: { timeout: "30s" },
-        processes: { timeout: "7d" },
-        overrides: { order: { commands: { timeout: 5_000 } } },
+        processes: { timeout: "7d", handlerTimeout: "1m" },
+        overrides: {
+          order: { commands: { timeout: 5_000 }, processes: { handlerTimeout: 90_000 } },
+        },
       },
     });
     defineConfig({
@@ -119,6 +121,16 @@ describe("defineConfig", () => {
     });
     // @ts-expect-error "48x" uses an unknown unit
     defineConfig({ storage: sqlite, ports, runtime: { processes: { timeout: "48x" } } });
+    defineConfig({
+      storage: sqlite,
+      ports,
+      runtime: {
+        processes: {
+          // @ts-expect-error "a minute" is not a duration string
+          handlerTimeout: "a minute",
+        },
+      },
+    });
   });
 
   it("rejects unknown keys and wrong roles", () => {

@@ -226,7 +226,10 @@ describe("a process handler run that fails", () => {
       );
       return undefined;
     };
-    const harness = await setUp({ policies: { timeout: "1m" } });
+    const harness = await setUp({
+      policies: { timeout: "1h" },
+      processes: { retry: { strategy: "none" }, handlerTimeout: "1m" },
+    });
 
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
     const processing = harness.dispatcher.runUntilIdle();
