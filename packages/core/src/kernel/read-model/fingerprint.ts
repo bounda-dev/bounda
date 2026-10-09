@@ -48,7 +48,9 @@ export interface FingerprintReadModelFunction {
 /**
  * A rebuild paused under one fingerprint resumes only under the same one, so a deploy in the
  * middle of a rebuild starts it again instead of mixing rows projected by two versions of the
- * code. A change of formatting alone changes it too, which only costs a restarted rebuild.
+ * code. Only the text of the view's and projections' own functions counts, not what they import:
+ * a change to an imported helper alone resumes the rebuild. A change of formatting alone changes
+ * it, which only costs a restarted rebuild.
  */
 export const fingerprintReadModel: FingerprintReadModelFunction = (entry) =>
   digest(readModelSource(entry));

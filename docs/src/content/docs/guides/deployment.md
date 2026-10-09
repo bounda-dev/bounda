@@ -225,7 +225,9 @@ where it was the next time you run it: every batch commits together with the pos
 reached, kept in the read model's database as a checkpoint named
 `rebuild:<read model>:<fingerprint>`. The fingerprint is a digest of the view's fields and the
 projections' code, so a rebuild left behind by different code starts again from a fresh table
-instead of mixing rows projected by two versions.
+instead of mixing rows projected by two versions. It reads the text of each projection's own
+functions, not of the modules they import: finish a paused rebuild before deploying a change that
+only touches such a helper.
 
 Two rebuilds of the same read model never write at the same time. The one started last takes
 over: it waits for a batch the other has in flight, resumes from where that one got when the code
