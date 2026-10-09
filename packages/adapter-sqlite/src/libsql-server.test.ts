@@ -14,7 +14,9 @@ const startServer = async (): Promise<StartedTestContainer | null> => {
       .withExposedPorts(8080)
       .withWaitStrategy(Wait.forHttp("/health", 8080))
       .start();
-  } catch {
+  } catch (error) {
+    // Skipping is for a machine without Docker; in CI it would pass the job without these tests.
+    if (process.env.CI) throw error;
     return null;
   }
 };

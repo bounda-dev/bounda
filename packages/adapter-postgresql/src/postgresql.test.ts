@@ -39,7 +39,9 @@ const startContainer = async (): Promise<StartedPostgreSqlContainer | null> => {
   try {
     const definition = new PostgreSqlContainer("postgres:17");
     return await (reuseContainer ? definition.withReuse() : definition).start();
-  } catch {
+  } catch (error) {
+    // Skipping is for a machine without Docker; in CI it would pass the job without these tests.
+    if (process.env.CI) throw error;
     return null;
   }
 };
