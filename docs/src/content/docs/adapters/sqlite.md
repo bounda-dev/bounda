@@ -38,8 +38,12 @@ sqlite({ url: "libsql://my-app-me.turso.io", authToken: process.env.TURSO_AUTH_T
 - Booleans are stored as `0`/`1`, dates as ISO-8601 text, JSON fields as text. You never see
   that: rows come back typed from your `fields`.
 
-Within one process the adapter serialises write transactions itself. Several processes on the
-same file rely on SQLite's own locking; for that setup, or for more than one machine, use
+Within one process, on a file or in memory, the adapter runs its statements, and those a query
+sends through `client.raw`, one after another around its write transactions, so they never wait
+on a lock of their own. A file is opened in WAL mode, so other processes keep reading while one
+writes, and a statement waits up to five seconds for another process's write instead of failing
+at once. That is enough for a web process, a worker
+and `bounda rebuild` on one file; for heavier contention, or for more than one machine, use
 [PostgreSQL](/adapters/postgresql/).
 
 The SQL itself is not specific to libSQL. The stores, the schema and the read models live in

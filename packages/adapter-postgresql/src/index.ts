@@ -4,7 +4,7 @@ import type {
   CreateReadModelRebuildArgs,
   StorageTransaction,
 } from "@bounda-dev/core/adapter";
-import { quoteIdentifier, type SqlTransaction } from "@bounda-dev/core/adapter/sql";
+import type { SqlTransaction } from "@bounda-dev/core/adapter/sql";
 import postgres, { type Sql } from "postgres";
 import { createPostgresqlCheckpointStore } from "./checkpoint-store.ts";
 import { createPostgresqlDatabase, type PostgresqlDatabase } from "./database.ts";
@@ -41,6 +41,7 @@ interface Connection {
 export const postgresql: PostgresqlFunction = (options) => {
   const { url, schema, tablePrefix, maxConnections, ...connection } =
     resolvePostgresqlOptions(options);
+  const tables = storageTablesFor({ prefix: tablePrefix, schema });
   let shared: Connection | null = null;
 
   const open = (): Connection => {
@@ -87,7 +88,6 @@ export const postgresql: PostgresqlFunction = (options) => {
     options,
     createStorage: () =>
       using(async ({ db, sql }) => {
-        const tables = storageTablesFor(tablePrefix);
         await ensureStorageSchema({ db, schema, tables });
         const storesOver = (database: PostgresqlDatabase): StorageTransaction => ({
           eventStore: createPostgresqlEventStore({
@@ -124,13 +124,13 @@ export const postgresql: PostgresqlFunction = (options) => {
       }),
     createReadModel: <Row extends object>({ name, fields, logger }: CreateReadModelArgs) =>
       using(async ({ db, sql }) => {
-        await db.run(`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(schema)}`, []);
         return openPostgresqlReadModel<Row>({
           db,
           sql,
           schema,
           tablePrefix,
-          checkpoints: storageTablesFor(tablePrefix).checkpoints,
+          checkpoints: tables.checkpoints,
+          checkpointsLockKey: tables.checkpointsLockKey,
           name,
           fields,
           logger,
@@ -144,13 +144,13 @@ export const postgresql: PostgresqlFunction = (options) => {
       progress,
     }: CreateReadModelRebuildArgs) =>
       using(async ({ db, sql }) => {
-        await db.run(`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(schema)}`, []);
         return rebuildPostgresqlReadModel<Row>({
           db,
           sql,
           schema,
           tablePrefix,
-          checkpoints: storageTablesFor(tablePrefix).checkpoints,
+          checkpoints: tables.checkpoints,
+          checkpointsLockKey: tables.checkpointsLockKey,
           name,
           fields,
           logger,
@@ -173,5 +173,5 @@ export {
   DEFAULT_TABLE_PREFIX,
   resolvePostgresqlOptions,
 } from "./options.ts";
-export type { StorageTables } from "./schema.ts";
+export type { StorageTables, StorageTablesForArgs } from "./schema.ts";
 export { storageSchemaStatements, storageTablesFor } from "./schema.ts";

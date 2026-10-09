@@ -28,8 +28,9 @@ const executorOf = (target: Sql | TransactionSql): SqlExecutor => ({
 });
 
 /**
- * Parameters go through the driver's own type inference, so JSON columns take plain values and
- * `timestamptz` columns take `Date`s.
+ * Parameters go through the driver's own type inference: `timestamptz` columns take `Date`s, and
+ * JSON goes through `postgresqlDialect.encode`, which keeps the driver from typing it as anything
+ * but `jsonb`.
  */
 export const createPostgresqlDatabase: CreatePostgresqlDatabaseFunction = (sql) => ({
   ...executorOf(sql),

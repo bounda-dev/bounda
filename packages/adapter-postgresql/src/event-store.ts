@@ -1,5 +1,6 @@
 import { ConcurrencyError, type EventMetadata, type StoredEvent } from "@bounda-dev/core";
 import type { EventStore } from "@bounda-dev/core/adapter";
+import { postgresqlDialect } from "@bounda-dev/core/adapter/sql";
 import type { PostgresqlDatabase } from "./database.ts";
 
 export interface CreatePostgresqlEventStoreArgs {
@@ -80,9 +81,9 @@ export const createPostgresqlEventStore: CreatePostgresqlEventStoreFunction = ({
               event.aggregateId,
               event.version,
               event.type,
-              event.payload,
+              postgresqlDialect.encode("json", event.payload),
               event.timestamp,
-              event.metadata,
+              postgresqlDialect.encode("json", event.metadata),
             ],
           );
           stored.push({ ...event, position: Number(row?.position) });

@@ -1,9 +1,16 @@
-import { quoteIdentifier, storageTableNameFor } from "@bounda-dev/core/adapter/sql";
+import { ConfigurationError } from "@bounda-dev/core";
+import {
+  quoteIdentifier,
+  type SqlExecutor,
+  type SqlTransaction,
+  storageTableNameFor,
+} from "@bounda-dev/core/adapter/sql";
 import type { PostgresqlDatabase } from "./database.ts";
 
 /**
- * The quoted names of the storage tables for a table prefix, plus the advisory-lock key that
- * serialises appends to the event store.
+ * The quoted names of the storage tables for a table prefix, plus what serialises appends and
+ * announces them. Advisory locks and channels belong to the whole database, so each is qualified
+ * by the schema: stores in two schemas of one database never wait on each other.
  */
 export interface StorageTables {
   readonly events: string;
@@ -13,28 +20,51 @@ export interface StorageTables {
   readonly scheduledCommands: string;
   readonly appendLockKey: string;
   /**
-   * The `NOTIFY` channel appends publish on: the events table name, which is unique per prefix.
+   * The first key of the advisory locks read models take on the checkpoints table.
+   */
+  readonly checkpointsLockKey: string;
+  /**
+   * The `NOTIFY` channel appends publish on: `<schema>.<events table>`.
    */
   readonly channel: string;
 }
 
+export interface StorageTablesForArgs {
+  readonly prefix: string;
+  readonly schema: string;
+}
+
 export interface StorageTablesForFunction {
-  (prefix: string): StorageTables;
+  (args: StorageTablesForArgs): StorageTables;
 }
 
 /**
- * The tables, lock key and channel `postgresql()` uses for a table prefix.
+ * PostgreSQL's limit on an identifier, which a channel name is.
  */
-export const storageTablesFor: StorageTablesForFunction = (prefix) => {
+const MAX_CHANNEL_BYTES = 63;
+
+/**
+ * The tables, lock keys and channel `postgresql()` uses for a table prefix in a schema. Throws
+ * `ConfigurationError` when the schema and prefix make a channel name PostgreSQL cannot hold.
+ */
+export const storageTablesFor: StorageTablesForFunction = ({ prefix, schema }) => {
   const events = storageTableNameFor({ prefix, table: "events" });
+  const checkpoints = storageTableNameFor({ prefix, table: "checkpoints" });
+  const channel = `${schema}.${events}`;
+  if (Buffer.byteLength(channel) > MAX_CHANNEL_BYTES) {
+    throw new ConfigurationError(
+      `schema "${schema}" and tablePrefix "${prefix}" make the notification channel "${channel}", longer than PostgreSQL's ${MAX_CHANNEL_BYTES} bytes; shorten one of them`,
+    );
+  }
   return {
     events: quoteIdentifier(events),
-    checkpoints: quoteIdentifier(storageTableNameFor({ prefix, table: "checkpoints" })),
+    checkpoints: quoteIdentifier(checkpoints),
     inbox: quoteIdentifier(storageTableNameFor({ prefix, table: "inbox" })),
     deadLetters: quoteIdentifier(storageTableNameFor({ prefix, table: "deadLetters" })),
     scheduledCommands: quoteIdentifier(storageTableNameFor({ prefix, table: "scheduledCommands" })),
-    appendLockKey: `bounda:${events}`,
-    channel: events,
+    appendLockKey: `bounda:${schema}.${events}`,
+    checkpointsLockKey: `bounda:${schema}.${checkpoints}`,
+    channel,
   };
 };
 
@@ -127,7 +157,72 @@ export interface EnsureStorageSchemaFunction {
   (args: EnsureStorageSchemaArgs): Promise<void>;
 }
 
+const unquoted = (identifier: string): string => identifier.slice(1, -1);
+
+/**
+ * Creates the storage tables that are missing. A database that has them all, as every boot after
+ * the first finds it, takes no lock: running instances never wait on a starting one.
+ */
 export const ensureStorageSchema: EnsureStorageSchemaFunction = async ({ db, schema, tables }) => {
-  await db.run(`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(schema)}`, []);
-  for (const statement of storageSchemaStatements(tables)) await db.run(statement, []);
+  const names = [
+    tables.events,
+    tables.checkpoints,
+    tables.inbox,
+    tables.deadLetters,
+    tables.scheduledCommands,
+    indexName(tables.deadLetters, "status"),
+    indexName(tables.scheduledCommands, "execute_at"),
+  ].map(unquoted);
+  if (await relationsExist({ db, schema, names })) return;
+  await inSchema({
+    db,
+    schema,
+    work: async (tx) => {
+      for (const statement of storageSchemaStatements(tables)) await tx.run(statement, []);
+    },
+  });
 };
+
+export interface RelationsExistArgs {
+  readonly db: SqlExecutor;
+  readonly schema: string;
+  readonly names: readonly string[];
+}
+
+export interface RelationsExistFunction {
+  (args: RelationsExistArgs): Promise<boolean>;
+}
+
+/**
+ * Whether every table or index named exists in the schema.
+ */
+export const relationsExist: RelationsExistFunction = async ({ db, schema, names }) => {
+  const [row] = await db.all(
+    `SELECT count(*)::int AS "found" FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 AND c.relname = ANY($2::text[])`,
+    [schema, names],
+  );
+  return Number(row?.found ?? 0) === new Set(names).size;
+};
+
+export interface InSchemaArgs<T> {
+  readonly db: PostgresqlDatabase;
+  readonly schema: string;
+  readonly work: (tx: SqlTransaction) => Promise<T>;
+}
+
+export interface InSchemaFunction {
+  <T>(args: InSchemaArgs<T>): Promise<T>;
+}
+
+/**
+ * Runs `work` in one transaction that holds the schema's lock and has created the schema. The
+ * tables and read models a boot creates or evolves go through it, so instances starting together
+ * change the schema one after the other, each reading what the one before wrote: two of them never
+ * add the same column. Only a change takes it: `work` reads again what it found missing.
+ */
+export const inSchema: InSchemaFunction = ({ db, schema, work }) =>
+  db.write(async (tx) => {
+    await tx.run("SELECT pg_advisory_xact_lock(hashtext($1))", [`bounda:${schema}:schema`]);
+    await tx.run(`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(schema)}`, []);
+    return work(tx);
+  });

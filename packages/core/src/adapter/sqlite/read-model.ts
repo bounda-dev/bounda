@@ -10,6 +10,7 @@ import {
   createSqlTable,
   createTableStatements,
   dropShadowTableStatements,
+  type ExistingColumn,
   evolveTableStatements,
   quoteIdentifier,
   rebuildTablesFor,
@@ -21,6 +22,40 @@ import {
 import type { SqlExecutor } from "../sql/sql-table.ts";
 import { createSqliteCheckpointStore } from "./checkpoint-store.ts";
 import { checkpointTableStatement } from "./schema.ts";
+
+const quoteName = (name: string): string => `"${name.replaceAll('"', '""')}"`;
+
+/**
+ * The table's columns with what its indexes say of them; none when the table does not exist.
+ */
+const existingColumns = async (
+  db: SqlExecutor,
+  table: string,
+): Promise<readonly ExistingColumn[]> => {
+  const quoted = quoteIdentifier(table);
+  const columns = await db.all(`PRAGMA table_info(${quoted})`, []);
+  if (columns.length === 0) return [];
+  const unique = new Set<string>();
+  const indexed = new Set<string>();
+  for (const index of await db.all(`PRAGMA index_list(${quoted})`, [])) {
+    const parts = await db.all(`PRAGMA index_info(${quoteName(String(index.name))})`, []);
+    const first = parts.find((part) => Number(part.seqno) === 0);
+    if (first === undefined) continue;
+    indexed.add(String(first.name));
+    if (parts.length === 1 && Number(index.unique) === 1) unique.add(String(first.name));
+  }
+  return columns.map((column) => {
+    const name = String(column.name);
+    const primaryKey = Number(column.pk) > 0;
+    return {
+      name,
+      sqlType: String(column.type),
+      primaryKey,
+      unique: unique.has(name) && !primaryKey,
+      indexed: indexed.has(name),
+    };
+  });
+};
 
 export interface OpenSqliteReadModelArgs<Raw = unknown> {
   readonly db: SqlDatabase;
@@ -66,16 +101,30 @@ export const openSqliteReadModel: OpenSqliteReadModelFunction = async <
 }: OpenSqliteReadModelArgs<Raw>): Promise<ReadModelPorts<Row, Raw>> => {
   const table = tableNameFor({ prefix: tablePrefix, readModel: name });
   const columns = columnsOf({ readModel: name, fields, dialect: sqliteDialect });
-  const existing = (await db.all(`PRAGMA table_info(${quoteIdentifier(table)})`, [])).map(
-    (column) => ({ name: String(column.name), sqlType: String(column.type) }),
-  );
-  const statements =
-    existing.length === 0
-      ? createTableStatements({ table, columns })
-      : evolveTableStatements({ readModel: name, table, columns, existing });
-  for (const statement of statements) await db.run(statement, []);
-  if (existing.length > 0 && statements.length > 0) {
-    logger.info("read model table evolved", { readModel: name, table, added: statements.length });
+  const plan = async (executor: SqlExecutor) => {
+    const existing = await existingColumns(executor, table);
+    return {
+      existing,
+      statements:
+        existing.length === 0
+          ? createTableStatements({ table, columns })
+          : evolveTableStatements({ readModel: name, table, columns, existing }),
+    };
+  };
+  // A change runs in a write transaction that reads the table again, so another process changing
+  // it at the same time is waited for, not undone or repeated.
+  if ((await plan(db)).statements.length > 0) {
+    await db.write(async (tx) => {
+      const { existing, statements } = await plan(tx);
+      for (const statement of statements) await tx.run(statement, []);
+      if (existing.length > 0 && statements.length > 0) {
+        logger.info("read model table evolved", {
+          readModel: name,
+          table,
+          added: statements.length,
+        });
+      }
+    });
   }
   await db.run(checkpointTableStatement(checkpoints), []);
   return {

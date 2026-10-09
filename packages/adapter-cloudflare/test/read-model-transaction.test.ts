@@ -1,6 +1,6 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { silentLogger } from "@bounda-dev/core";
+import { fieldBuilder as f, silentLogger } from "@bounda-dev/core";
 import { contractFields } from "@bounda-dev/core/adapter/testing";
 import { describe, expect, it } from "vitest";
 import { durableObjectAdapter } from "../src/adapter.ts";
@@ -27,6 +27,33 @@ const openPorts = (storage: DurableObjectState["storage"]) =>
     fields: contractFields,
     logger: silentLogger,
   });
+
+describe("read model tables in a Durable Object", () => {
+  it("reopens a table unchanged, and indexes a field newly unique", async () => {
+    await runInDurableObject(fresh(), async (_instance, state) => {
+      const adapter = durableObjectAdapter({ storage: state.storage, options: {} });
+      const evolved: string[] = [];
+      const logger = {
+        ...silentLogger,
+        info: (message: string) => {
+          evolved.push(message);
+        },
+      };
+      const open = (fields: typeof contractFields) =>
+        adapter.createReadModel<Row>({ name: "orderSummary", fields, logger });
+      const { table } = await open(contractFields);
+      await table.upsert(order("1"));
+      await table.upsert(order("2"));
+      await open(contractFields);
+      expect(evolved).toEqual([]);
+      const unique = { ...contractFields, status: f.string().unique() };
+      await expect(open(unique)).rejects.toThrow(/UNIQUE/);
+      await table.update({ orderId: "1" }, { status: "one" });
+      await open(unique);
+      expect(evolved).toEqual(["read model table evolved"]);
+    });
+  });
+});
 
 describe("read model transactions in a Durable Object", () => {
   it("commits the rows and the checkpoint together and rolls both back on a throw", async () => {

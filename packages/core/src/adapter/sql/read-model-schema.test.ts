@@ -88,7 +88,20 @@ describe("createTableStatements", () => {
 
 describe("evolveTableStatements", () => {
   const columns = columnsOf({ readModel: "orderSummary", fields, dialect: sqliteDialect });
-  const existing = columns.map((column) => ({ name: column.name, sqlType: column.sqlType }));
+  const existing = columns.map((column) => ({
+    name: column.name,
+    sqlType: column.sqlType,
+    primaryKey: column.primaryKey,
+    unique: column.unique,
+    indexed: column.indexed || column.unique || column.primaryKey,
+  }));
+  const fresh = (name: string, sqlType: string) => ({
+    name,
+    sqlType,
+    primaryKey: false,
+    unique: false,
+    indexed: false,
+  });
 
   it("returns nothing when the table already matches, whatever the type's case", () => {
     expect(
@@ -122,7 +135,7 @@ describe("evolveTableStatements", () => {
         readModel: "orderSummary",
         table: "t",
         columns,
-        existing: [...existing, { name: "legacy", sqlType: "TEXT" }],
+        existing: [...existing, fresh("legacy", "TEXT")],
       }),
     ).toThrow(
       'Read model "orderSummary": table "t" has columns that are no longer in fields (legacy). Removing a field needs a rebuild: run `bounda rebuild orderSummary`',
@@ -139,6 +152,82 @@ describe("evolveTableStatements", () => {
     ).toThrow(
       'Read model "orderSummary": column "total" is TEXT in table "t" but fields now declare REAL. Changing a field\'s type needs a rebuild: run `bounda rebuild orderSummary`',
     );
+  });
+});
+
+describe("evolveTableStatements with keys and indexes", () => {
+  const evolve = (
+    next: Parameters<typeof columnsOf>[0]["fields"],
+    existing: Parameters<typeof evolveTableStatements>[0]["existing"],
+  ) =>
+    evolveTableStatements({
+      readModel: "people",
+      table: "t",
+      columns: columnsOf({ readModel: "people", fields: next, dialect: sqliteDialect }),
+      existing,
+    });
+  const column = (name: string, facts: { primaryKey?: boolean; unique?: boolean } = {}) => ({
+    name,
+    sqlType: "TEXT",
+    primaryKey: facts.primaryKey ?? false,
+    unique: facts.unique ?? false,
+    indexed: (facts.primaryKey ?? false) || (facts.unique ?? false),
+  });
+
+  it("refuses a primary key that moved to another column", () => {
+    expect(() =>
+      evolve({ id: f.string(), email: f.string().primaryKey() }, [
+        column("id", { primaryKey: true }),
+        column("email"),
+      ]),
+    ).toThrow(
+      'Read model "people": the primary key of table "t" is "id" but fields now declare "email". Moving the primary key needs a rebuild: run `bounda rebuild people`',
+    );
+  });
+
+  it("lets a table whose primary key the engine did not report evolve", () => {
+    expect(
+      evolve({ id: f.string().primaryKey(), email: f.string() }, [column("id"), column("email")]),
+    ).toEqual([]);
+  });
+
+  it("refuses a column that is no longer unique", () => {
+    expect(() =>
+      evolve({ id: f.string().primaryKey(), email: f.string() }, [
+        column("id", { primaryKey: true }),
+        column("email", { unique: true }),
+      ]),
+    ).toThrow(
+      'Read model "people": column "email" is unique in table "t" but fields no longer say so. Dropping `unique()` needs a rebuild: run `bounda rebuild people`',
+    );
+  });
+
+  it("indexes a column newly unique or indexed, and a new unique column, once", () => {
+    const next = {
+      id: f.string().primaryKey(),
+      email: f.string().unique(),
+      city: f.string().index(),
+      code: f.string().optional().unique(),
+    };
+    const statements = evolve(next, [
+      column("id", { primaryKey: true }),
+      column("email"),
+      column("city"),
+    ]);
+    expect(statements).toEqual([
+      'CREATE UNIQUE INDEX IF NOT EXISTS "t_email_key" ON "t" ("email")',
+      'CREATE INDEX IF NOT EXISTS "t_city_idx" ON "t" ("city")',
+      'ALTER TABLE "t" ADD COLUMN "code" TEXT',
+      'CREATE UNIQUE INDEX IF NOT EXISTS "t_code_key" ON "t" ("code")',
+    ]);
+    expect(
+      evolve(next, [
+        column("id", { primaryKey: true }),
+        column("email", { unique: true }),
+        { ...column("city"), indexed: true },
+        column("code", { unique: true }),
+      ]),
+    ).toEqual([]);
   });
 });
 

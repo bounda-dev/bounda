@@ -9,6 +9,7 @@ import {
   deadLetterStoreContract,
   eventStoreContract,
   inboxLedgerContract,
+  jsonValuesContract,
   readModelRebuildContract,
   readModelTransactionContract,
   schedulerContract,
@@ -48,6 +49,7 @@ describe("the Durable Object adapter", () => {
         })
       ).table,
   });
+  jsonValuesContract({ create: freshAdapter });
   readModelRebuildContract({ create: freshAdapter, concurrent: false });
   readModelTransactionContract({
     create: freshAdapter,

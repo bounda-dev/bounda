@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { silentLogger } from "../../contracts/logger.ts";
 import type { FieldsRecord } from "../../modules/view.ts";
 import { fieldBuilder as f } from "../../modules/view.ts";
+import type { Adapter } from "../adapter.ts";
 import type { Table } from "../ports/table.ts";
 
 /**
@@ -115,6 +117,62 @@ export const tableContract: TableContractFunction = ({ create }) => {
       const found = await table.findOne({ orderId: "1" });
       expect(found).not.toBeNull();
       expect(Object.hasOwn(found as object, "paidAt")).toBe(false);
+    });
+  });
+};
+
+interface JsonRow {
+  readonly id: string;
+  readonly value: unknown;
+}
+
+const jsonFields: FieldsRecord = {
+  id: f.string().primaryKey(),
+  value: f.json(),
+};
+
+export interface JsonValuesContractArgs {
+  /**
+   * A fresh adapter, whose read model the contract opens.
+   */
+  readonly create: () => Promise<Adapter>;
+}
+
+export interface JsonValuesContractFunction {
+  (args: JsonValuesContractArgs): void;
+}
+
+/**
+ * Every JSON value a `json` field can hold comes back as it was stored, whatever its shape.
+ */
+export const jsonValuesContract: JsonValuesContractFunction = ({ create }) => {
+  describe("json values contract", () => {
+    it("round-trips any JSON value, top-level strings and booleans included", async () => {
+      const { table } = await (await create()).createReadModel<JsonRow>({
+        name: "documents",
+        fields: jsonFields,
+        logger: silentLogger,
+      });
+      const values: readonly unknown[] = [
+        "pending",
+        "42",
+        "true",
+        "",
+        true,
+        false,
+        0,
+        12.5,
+        [true, false],
+        [],
+        ["a", 1, { b: null }],
+        { nested: { list: [1, "two", false] } },
+      ];
+      for (const [index, value] of values.entries()) {
+        await table.upsert({ id: String(index), value });
+      }
+      for (const [index, value] of values.entries()) {
+        expect(await table.findOne({ id: String(index) })).toEqual({ id: String(index), value });
+      }
     });
   });
 };

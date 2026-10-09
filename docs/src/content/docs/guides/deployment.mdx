@@ -77,9 +77,10 @@ const next = idle ? await app.nextDueAt() : new Date();
 
 ## More than one instance
 
-Use PostgreSQL. SQLite is a single writer and fine for one process; PostgreSQL is what lets any
-number of instances run the `worker` role. Nothing needs to be told about the others: instances
-coordinate through the database.
+Use PostgreSQL. SQLite has a single writer: a few processes on one file, such as a web process, a
+worker and `bounda rebuild`, take turns at it, and that is as far as it goes. PostgreSQL is what
+lets any number of instances run the `worker` role. Nothing needs to be told about the others:
+instances coordinate through the database.
 
 - Each policy or process run and each due scheduled command is claimed by one instance at a time,
   and only the instance holding the claim commits. A run that stalls past its lease loses it to
@@ -176,9 +177,10 @@ runner is behind, and each deadline runs anyway after ten rounds.
 ## Schema
 
 There are no migration files to run, and no migration step in your deploy. The adapter creates what
-it needs on start, and a view that gains a field gains a column; one that loses a field or changes
-its type needs the rebuild below ([what an adapter creates](/adapters/#what-an-adapter-creates) and
-[evolving a read model](/adapters/#evolving-a-read-model)).
+it needs on start, and a view that gains a field gains a column, or an index for a field newly
+`unique()` or `index()`; one that loses a field, changes its type, moves its primary key or drops
+`unique()` needs the rebuild below ([what an adapter creates](/adapters/#what-an-adapter-creates)
+and [evolving a read model](/adapters/#evolving-a-read-model)).
 
 ## Rebuilding a read model
 

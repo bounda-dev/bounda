@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,6 +18,7 @@ import {
   deadLetterStoreContract,
   eventStoreContract,
   inboxLedgerContract,
+  jsonValuesContract,
   pendingEvent,
   readModelRebuildContract,
   readModelTransactionContract,
@@ -51,6 +53,51 @@ describe("sqlite adapter in memory", () => {
         }>({ name: "orderSummary", fields: contractFields, logger: silentLogger })
       ).table,
   });
+  jsonValuesContract({ create: async () => sqlite({ memory: true }) });
+});
+
+describe("sqlite adapter in memory, under concurrent use", () => {
+  readModelTransactionContract({
+    create: async () => sqlite({ memory: true }),
+    locking: "single-writer",
+  });
+
+  it("lets a read, its own or a query's on client.raw, wait for a write transaction in flight", async () => {
+    const adapter = sqlite({ memory: true });
+    const storage = await openStorage(adapter);
+    const readModel = await adapter.createReadModel({
+      name: "orderSummary",
+      fields: contractFields,
+      logger: silentLogger,
+    });
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered: () => void = () => undefined;
+    const inside = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const writing = storage.transact(async (tx) => {
+      await tx.eventStore.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events: [pendingEvent({ aggregateId: "1", version: 1 })],
+      });
+      entered();
+      await held;
+    });
+    await inside;
+    const reading = storage.eventStore.lastPosition();
+    const raw = readModel.client.raw as Client;
+    expect(raw.closed).toBe(false);
+    const querying = raw.execute("SELECT 1 AS one");
+    release();
+    await writing;
+    expect(await reading).toBe(1);
+    expect((await querying).rows[0]?.one).toBe(1);
+  });
 });
 
 describe("sqlite adapter on a file", () => {
@@ -79,6 +126,71 @@ describe("sqlite adapter on a file", () => {
   readModelTransactionContract({
     create: async () => sqlite({ path: freshPath() }),
     locking: "single-writer",
+  });
+
+  it("lets its own statements wait for its own write transaction, without blocking the process", async () => {
+    const storage = await openStorage(sqlite({ path: freshPath() }));
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered: () => void = () => undefined;
+    const inside = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const writing = storage.transact(async (tx) => {
+      await tx.eventStore.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events: [pendingEvent({ aggregateId: "1", version: 1 })],
+      });
+      entered();
+      await held;
+    });
+    await inside;
+    const started = Date.now();
+    const claiming = storage.checkpointStore.set("projection:x", 1);
+    setTimeout(release, 20);
+    await Promise.all([writing, claiming]);
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(await storage.checkpointStore.get("projection:x")).toBe(1);
+  });
+
+  it("waits for another process's write on the file, in WAL mode, instead of failing", async () => {
+    const path = freshPath();
+    const storage = await openStorage(sqlite({ path }));
+    const holder = spawn(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `import { createClient } from "@libsql/client";
+        const client = createClient({ url: ${JSON.stringify(`file:${path}`)} });
+        const tx = await client.transaction("write");
+        await tx.execute("CREATE TABLE IF NOT EXISTS held (id INTEGER)");
+        process.stdout.write("held\\n");
+        setTimeout(async () => { await tx.commit(); client.close(); }, 300);`,
+      ],
+      { cwd: import.meta.dirname, stdio: ["ignore", "pipe", "inherit"] },
+    );
+    await new Promise<void>((resolve) => holder.stdout.once("data", () => resolve()));
+    await storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "1",
+      expectedVersion: 0,
+      events: [pendingEvent({ aggregateId: "1", version: 1 })],
+    });
+    expect(await storage.eventStore.lastPosition()).toBe(1);
+    await new Promise((resolve) => holder.once("exit", resolve));
+    const readModel = await sqlite({ path }).createReadModel({
+      name: "orderSummary",
+      fields: contractFields,
+      logger: silentLogger,
+    });
+    const [mode] = (await (readModel.client.raw as Client).execute("PRAGMA journal_mode")).rows;
+    expect(mode?.[0]).toBe("wal");
+    await readModel.close();
   });
 
   it("creates the directory of a file that does not exist yet", async () => {
@@ -284,15 +396,23 @@ describe("resolveSqliteOptions", () => {
     expect(resolveSqliteOptions({ memory: true })).toEqual({
       url: ":memory:",
       tablePrefix: "bounda_",
+      location: "memory",
     });
     expect(resolveSqliteOptions({ path: "./data/app.db", tablePrefix: "x_" })).toEqual({
       url: "file:./data/app.db",
       tablePrefix: "x_",
+      location: "file",
     });
     expect(resolveSqliteOptions({ url: "libsql://db.turso.io", authToken: "t" })).toEqual({
       url: "libsql://db.turso.io",
       authToken: "t",
       tablePrefix: "bounda_",
+      location: "remote",
+    });
+    expect(resolveSqliteOptions({ url: "file:./app.db" })).toMatchObject({ location: "file" });
+    expect(resolveSqliteOptions({ url: ":memory:" })).toMatchObject({ location: "memory" });
+    expect(resolveSqliteOptions({ url: "file::memory:?cache=shared" })).toMatchObject({
+      location: "memory",
     });
     expect(resolveSqliteOptions({ url: "libsql://db.turso.io" })).not.toHaveProperty("authToken");
   });

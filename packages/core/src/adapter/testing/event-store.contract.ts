@@ -85,6 +85,20 @@ export const eventStoreContract: EventStoreContractFunction = ({ create }) => {
       expect(loaded.version).toBe(3);
     });
 
+    it("stores any JSON payload, a top-level boolean or array of booleans included", async () => {
+      const payloads: readonly unknown[] = [true, [true, false], "plain", 0];
+      await store.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events: payloads.map((payload, index) =>
+          pendingEvent({ aggregateId: "1", version: index + 1, payload }),
+        ),
+      });
+      const { events } = await store.load({ aggregateType: "order", aggregateId: "1" });
+      expect(events.map((event) => event.payload)).toEqual(payloads);
+    });
+
     it("reports only the version when loading from past any head, however far", async () => {
       await store.append({
         aggregateType: "order",

@@ -23,6 +23,10 @@ export interface ResolvedSqliteOptions {
   readonly url: string;
   readonly authToken?: string;
   readonly tablePrefix: string;
+  /**
+   * A file on this machine, a database in this process's memory, or a server.
+   */
+  readonly location: "file" | "memory" | "remote";
 }
 
 export interface ResolveSqliteOptionsFunction {
@@ -34,16 +38,25 @@ export interface ResolveSqliteOptionsFunction {
  */
 export const DEFAULT_TABLE_PREFIX: string = "bounda_";
 
+// libSQL keeps these in the process's memory, with a single connection.
+const IN_MEMORY = /^(?:file:)?:memory:(?:\?|$)/;
+
+const locationOf = (url: string): ResolvedSqliteOptions["location"] => {
+  if (IN_MEMORY.test(url)) return "memory";
+  return url.startsWith("file:") ? "file" : "remote";
+};
+
 /**
  * Turns the user's options into the libSQL client configuration.
  */
 export const resolveSqliteOptions: ResolveSqliteOptionsFunction = (options) => {
   const tablePrefix = options.tablePrefix ?? DEFAULT_TABLE_PREFIX;
-  if ("memory" in options) return { url: ":memory:", tablePrefix };
-  if ("path" in options) return { url: `file:${options.path}`, tablePrefix };
+  if ("memory" in options) return { url: ":memory:", tablePrefix, location: "memory" };
+  if ("path" in options) return { url: `file:${options.path}`, tablePrefix, location: "file" };
   return {
     url: options.url,
     ...(options.authToken === undefined ? {} : { authToken: options.authToken }),
     tablePrefix,
+    location: locationOf(options.url),
   };
 };

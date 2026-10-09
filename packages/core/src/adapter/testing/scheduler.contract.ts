@@ -219,6 +219,24 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
       });
     });
 
+    it("keeps any JSON payload, a top-level boolean included", async () => {
+      for (const [key, payload] of [
+        ["bool", true],
+        ["bools", [true, false]],
+      ] as const) {
+        await scheduler.schedule({
+          dedupeKey: key,
+          command: { ...testCommand("1"), payload },
+          executeAt: at(0),
+          context: testContext,
+        });
+      }
+      const claimed = await scheduler.claimDue({ now: at(1), limit: 10, leaseMs: 60_000 });
+      expect(
+        Object.fromEntries(claimed.map((entry) => [entry.dedupeKey, entry.command.payload])),
+      ).toEqual({ bool: true, bools: [true, false] });
+    });
+
     it("keeps what a command was rescheduled to, or who took it over, when a defer comes late", async () => {
       const entry: ScheduleArgs = {
         dedupeKey: "a",

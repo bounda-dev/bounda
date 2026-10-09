@@ -88,9 +88,24 @@ export const sqliteDialect: SqlDialect = {
 };
 
 /**
- * PostgreSQL: `$n` placeholders, native booleans and timestamps, JSON as `jsonb`. JSON values are
- * handed to the driver as they are: Postgres.js infers `jsonb` from the statement and serialises
- * them itself, so a pre-serialised string would arrive double-encoded.
+ * A JSON value as Postgres.js should bind it. The driver types a parameter from the value before
+ * it asks the server: `true`, a `Date`, or an array that starts with one would be sent as `bool`
+ * or `timestamptz` into a `jsonb` column. An object is left untyped, so the server types it `jsonb`
+ * and the driver serialises it with `JSON.stringify`, which calls `toJSON`.
+ */
+const jsonParameter = (value: unknown): { toJSON(): unknown } => ({
+  // `JSON.stringify` calls one `toJSON` per value: this one, so the value's own, a date's
+  // included, is called here.
+  toJSON: () => {
+    const own: unknown =
+      typeof value === "object" && value !== null ? Reflect.get(value, "toJSON") : undefined;
+    return typeof own === "function" ? own.call(value, "") : value;
+  },
+});
+
+/**
+ * PostgreSQL: `$n` placeholders, native booleans and timestamps, JSON as `jsonb`. The driver
+ * parses `jsonb` as it reads it, so JSON comes back as it is.
  */
 export const postgresqlDialect: SqlDialect = {
   name: "postgresql",
@@ -98,8 +113,11 @@ export const postgresqlDialect: SqlDialect = {
   columnType: (type) => POSTGRESQL_TYPES[type],
   encode: (type, value) => {
     if (value === undefined || value === null) return null;
-    return type === "date" ? toDate(value) : value;
+    if (type === "date") return toDate(value);
+    return type === "json" ? jsonParameter(value) : value;
   },
-  decode: (type, value) =>
-    value === null || value === undefined ? undefined : decodeCommon(type, value),
+  decode: (type, value) => {
+    if (value === null || value === undefined) return undefined;
+    return type === "json" ? value : decodeCommon(type, value);
+  },
 };

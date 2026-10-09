@@ -101,7 +101,13 @@ describe("createSqlTable on SQLite", () => {
 
     const existing = (
       db.prepare('PRAGMA table_info("orders")').all() as { name: string; type: string }[]
-    ).map((column) => ({ name: column.name, sqlType: column.type }));
+    ).map((column) => ({
+      name: column.name,
+      sqlType: column.type,
+      primaryKey: column.name === "id",
+      unique: false,
+      indexed: column.name === "id",
+    }));
     const statements = evolveTableStatements({
       readModel: "orders",
       table: "orders",

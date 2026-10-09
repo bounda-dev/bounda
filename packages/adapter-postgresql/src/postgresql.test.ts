@@ -18,6 +18,7 @@ import {
   deadLetterStoreContract,
   eventStoreContract,
   inboxLedgerContract,
+  jsonValuesContract,
   pendingEvent,
   readModelRebuildContract,
   readModelTransactionContract,
@@ -147,6 +148,12 @@ describe.skipIf(container === null)("postgresql adapter", () => {
       ).table;
     },
   });
+  jsonValuesContract({
+    create: async () => {
+      await closeOpened();
+      return fresh();
+    },
+  });
   readModelRebuildContract({
     create: async () => {
       await closeOpened();
@@ -159,6 +166,124 @@ describe.skipIf(container === null)("postgresql adapter", () => {
       return fresh();
     },
     locking: "per-subscriber",
+  });
+
+  it("keeps the stores of two schemas apart: neither waits on the other's append or projection lock", async () => {
+    const [first, second] = [`a_${run}`, `b_${run}`].map((schema) =>
+      fresh({ schema, tablePrefix: "bounda_" }),
+    );
+    const one = await openStorage(first as PostgresqlAdapter);
+    const other = await openStorage(second as PostgresqlAdapter);
+    const append = (storage: StoragePorts) =>
+      storage.eventStore.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events: [pendingEvent({ aggregateId: "1", version: 1 })],
+      });
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered: () => void = () => undefined;
+    const holding = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const transaction = one.transact(async (tx) => {
+      entered();
+      await held;
+      await tx.eventStore.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events: [pendingEvent({ aggregateId: "1", version: 1 })],
+      });
+    });
+    await holding;
+    await append(other);
+    expect(await other.eventStore.lastPosition()).toBe(1);
+
+    const readModels = await Promise.all(
+      [first, second].map((adapter) =>
+        openReadModel(adapter as PostgresqlAdapter, "orderSummary", contractFields),
+      ),
+    );
+    const projecting = readModels[0]?.transact({
+      subscriber: "projection:orderSummary",
+      wait: true,
+      work: async () => {
+        await held;
+      },
+    });
+    const elsewhere = await readModels[1]?.transact({
+      subscriber: "projection:orderSummary",
+      wait: false,
+      work: async () => "done",
+    });
+    expect(elsewhere).toEqual({ acquired: true, value: "done" });
+    release();
+    await Promise.all([transaction, projecting]);
+  });
+
+  it("refuses a schema and prefix whose notification channel PostgreSQL cannot hold", () => {
+    // `<schema>.bounda_events` is 63 bytes, PostgreSQL's limit, with a schema of 49.
+    expect(() => postgresql({ url, schema: "s".repeat(49) })).not.toThrow();
+    expect(() => postgresql({ url, schema: "s".repeat(50) })).toThrow(
+      new ConfigurationError(
+        `schema "${"s".repeat(50)}" and tablePrefix "bounda_" make the notification channel "${"s".repeat(50)}.bounda_events", longer than PostgreSQL's 63 bytes; shorten one of them`,
+      ),
+    );
+  });
+
+  it("indexes a field newly indexed, and reopens it without changing it", async () => {
+    const adapter = fresh();
+    const evolved: string[] = [];
+    const logger = {
+      ...silentLogger,
+      info: (message: string) => {
+        evolved.push(message);
+      },
+    };
+    const plain = { id: f.string().primaryKey(), city: f.string(), code: f.string().unique() };
+    await openReadModel(adapter, "places", plain, logger);
+    expect(evolved).toEqual([]);
+    const indexed = { ...plain, city: f.string().index() };
+    const first = await openReadModel(adapter, "places", indexed, logger);
+    await openReadModel(adapter, "places", indexed, logger);
+    expect(evolved).toEqual(["read model table evolved"]);
+    const raw = first.client.raw as Sql;
+    const indexes =
+      await raw`SELECT indexname FROM pg_indexes WHERE indexname = ${`t${run}_${prefixes}_rm_places_city_idx`}`;
+    expect(indexes).toHaveLength(1);
+  });
+
+  it("creates the checkpoints table again when a read model's table is there but it is not", async () => {
+    const adapter = fresh();
+    const fields = { id: f.string().primaryKey() };
+    const first = await openReadModel(adapter, "places", fields);
+    const raw = first.client.raw as Sql;
+    await raw.unsafe(`DROP TABLE "t${run}_${prefixes}_checkpoints"`);
+    const again = await openReadModel(adapter, "places", fields);
+    expect(await again.checkpointStore.get("projection:places")).toBe(0);
+  });
+
+  it("makes a boot that changes the schema wait for the schema's lock", async () => {
+    const schema = `wait_${run}`;
+    const holder = postgres(url, { max: 1, onnotice: () => undefined });
+    try {
+      await holder`SELECT pg_advisory_lock(hashtext(${`bounda:${schema}:schema`}))`;
+      let opened = false;
+      const opening = openStorage(fresh({ schema })).then(() => {
+        opened = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(opened).toBe(false);
+      await holder`SELECT pg_advisory_unlock(hashtext(${`bounda:${schema}:schema`}))`;
+      await opening;
+      expect(opened).toBe(true);
+    } finally {
+      await holder.end({ timeout: 5 });
+    }
   });
 
   it("notifies listeners of every committed append with the last position", async () => {
@@ -412,6 +537,58 @@ describe.skipIf(container === null)("postgresql adapter", () => {
       }),
     ).rejects.toThrow(/Changing a field's type needs a rebuild: run `bounda rebuild orders`/);
   });
+
+  it("refuses a moved primary key, and indexes a field newly unique once", async () => {
+    const adapter = fresh();
+    const evolved: string[] = [];
+    const logger = {
+      ...silentLogger,
+      info: (message: string) => {
+        evolved.push(message);
+      },
+    };
+    const open = (fields: Parameters<PostgresqlAdapter["createReadModel"]>[0]["fields"]) =>
+      openReadModel<{ id: string; email: string }>(adapter, "people", fields, logger);
+    const first = await open({ id: f.string().primaryKey(), email: f.string() });
+    await first.table.insert({ id: "1", email: "a@example.com" });
+    await expect(open({ id: f.string(), email: f.string().primaryKey() })).rejects.toThrow(
+      /Moving the primary key needs a rebuild/,
+    );
+    const unique = { id: f.string().primaryKey(), email: f.string().unique() };
+    const second = await open(unique);
+    await expect(second.table.insert({ id: "2", email: "a@example.com" })).rejects.toThrow();
+    await open(unique);
+    expect(evolved.filter((message) => message === "read model table evolved")).toHaveLength(1);
+    await expect(open({ id: f.string().primaryKey(), email: f.string() })).rejects.toThrow(
+      /Dropping `unique\(\)` needs a rebuild/,
+    );
+  });
+
+  it("lets instances that start together create and evolve the same tables one after the other", async () => {
+    const schema = `boot_${run}`;
+    const instance = () => fresh({ schema, tablePrefix: "bounda_" });
+    await Promise.all(Array.from({ length: 4 }, () => openStorage(instance())));
+    const v1 = { id: f.string().primaryKey() };
+    await Promise.all(Array.from({ length: 4 }, () => openReadModel(instance(), "people", v1)));
+    const v2 = { ...v1, note: f.string().optional(), city: f.string().optional().index() };
+    await Promise.all(Array.from({ length: 4 }, () => openReadModel(instance(), "people", v2)));
+  });
+
+  it("opens a store whose tables already exist without waiting for the schema's lock", async () => {
+    const schema = `held_${run}`;
+    const fields = { id: f.string().primaryKey() };
+    await openStorage(fresh({ schema, tablePrefix: "bounda_" }));
+    const adapter = fresh({ schema, tablePrefix: "bounda_" });
+    await openReadModel(adapter, "people", fields);
+    const holder = postgres(url, { max: 1, onnotice: () => undefined });
+    try {
+      await holder`SELECT pg_advisory_lock(hashtext(${`bounda:${schema}:schema`}))`;
+      await openStorage(adapter);
+      await openReadModel(adapter, "people", fields);
+    } finally {
+      await holder.end({ timeout: 5 });
+    }
+  }, 10_000);
 
   it("shares one pool between storage and read models until the last close", async () => {
     const adapter = fresh();

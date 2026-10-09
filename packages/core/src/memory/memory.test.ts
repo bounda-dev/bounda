@@ -7,6 +7,7 @@ import {
   deadLetterStoreContract,
   eventStoreContract,
   inboxLedgerContract,
+  jsonValuesContract,
   pendingEvent,
   readModelRebuildContract,
   readModelTransactionContract,
@@ -38,6 +39,7 @@ describe("memory adapter", () => {
       return ports.table;
     },
   });
+  jsonValuesContract({ create: async () => memory() });
   it("appends several batches in order, a stream's later batch on its earlier one, and notifies once", async () => {
     const positions: number[] = [];
     const store = createMemoryEventStore({ onAppend: (position) => positions.push(position) });
