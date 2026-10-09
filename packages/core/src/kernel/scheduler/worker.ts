@@ -340,10 +340,22 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     due: readonly ClaimedCommand[],
   ): Promise<(entry: ClaimedCommand) => boolean> => {
     if (!due.some(isDeadline)) return () => true;
-    const [head, position] = await Promise.all([
-      storage.eventStore.lastPosition(),
-      storage.checkpointStore.get(PROCESSES_SUBSCRIBER),
-    ]);
+    let head: number;
+    let position: number;
+    try {
+      [head, position] = await Promise.all([
+        storage.eventStore.lastPosition(),
+        storage.checkpointStore.get(PROCESSES_SUBSCRIBER),
+      ]);
+    } catch (error) {
+      // The batch is claimed already: escaping here would leave every entry to lapse, and each
+      // would be charged an attempt it never made.
+      logger.error(
+        "process deadlines could not be checked; they wait for the next round",
+        errorDetails(error),
+      );
+      return (entry) => !isDeadline(entry);
+    }
     return (entry) => {
       if (!isDeadline(entry)) return true;
       const wait = waits.get(entry.dedupeKey) ?? { head, rounds: 0 };
