@@ -1,4 +1,4 @@
-import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -98,13 +98,17 @@ describe("generate with state inference (golden on order-app-inferred)", () => {
 export type OrderState = core.NotCreated<OrderCreatedState> | OrderCreatedState;`);
   });
 
-  it("writes nothing on a second run", async () => {
+  it("writes nothing on a second run, not even the uninferred types for a moment", async () => {
     const root = await freshProject();
     await generate({ root });
+    const typesPath = join(root, ".bounda/types.ts");
+    const before = (await stat(typesPath)).mtimeMs;
+    await new Promise((resolve) => setTimeout(resolve, 20));
     const report = await generate({ root });
     expect(report.written).toEqual([]);
     expect(report.removed).toEqual([]);
     expect(report.unchanged.length).toBeGreaterThan(0);
+    expect((await stat(typesPath)).mtimeMs).toBe(before);
   });
 
   it("falls back to UnknownState with a warning when TypeScript cannot open the project", async () => {

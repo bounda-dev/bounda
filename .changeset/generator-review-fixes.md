@@ -13,3 +13,4 @@ Fixes from a review of the generator, the registry checks and the CLI:
 - `rootDir` is gone from the configuration: nothing read it.
 - `bounda generate --watch` ignores `.bounda` as well as `+types`, and no longer prints that it is watching after the watch failed. Ctrl+C stops every other command at once. `dead-letters list --limit` takes only a whole number, 0 or more.
 - Generated files and read-model fingerprints are ordered by code unit, the same on every machine.
+- With state to infer, `bounda generate` no longer writes `.bounda/types.ts` with every state unknown and then again inferred: TypeScript reads the first pass from memory, so the file is written once, or not at all when nothing changed, and editors and `tsc --watch` never see the intermediate one. `inferStates` takes `typesContent` instead of `write`.
