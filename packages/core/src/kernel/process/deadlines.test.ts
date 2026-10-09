@@ -25,6 +25,7 @@ import {
 import { buildProcesses } from "./build-processes.ts";
 import {
   afterFrom,
+  deadlineAt,
   deadlineFieldsOf,
   nextDeadline,
   processStateArgs,
@@ -56,6 +57,7 @@ let failuresLeft = 0;
 let conflictOn = "process:order.reminders:o-1";
 let paidFails = false;
 let paidKeeps = false;
+let paidMoves = false;
 let reminderLimit = 3;
 let duringReminder: (() => Promise<unknown>) | undefined;
 
@@ -68,6 +70,7 @@ const reset = (): void => {
   conflictOn = "process:order.reminders:o-1";
   paidFails = false;
   paidKeeps = false;
+  paidMoves = false;
   reminderLimit = 3;
   duringReminder = undefined;
 };
@@ -104,9 +107,10 @@ const registry: Registry = {
                 }),
               },
               orderPaid: {
-                handler: ({ event }: Args) => {
+                handler: ({ event, after }: Args) => {
                   if (paidFails) throw new Error("ledger is down");
                   if (paidKeeps) return undefined;
+                  if (paidMoves) return { paymentDeadline: after("24h") };
                   return {
                     paidAt: asInstant(event.timestamp),
                     nextReminder: null,
@@ -207,6 +211,12 @@ describe("deadline helpers", () => {
     expect(() =>
       z.object({ due: deadline() }).parse({ due: "2026-01-01T00:00:00+02:00" }),
     ).toThrow();
+  });
+
+  it("reads a deadline as set only when its field holds a moment", () => {
+    expect(deadlineAt({ a: at(DAY) }, "a")).toBe(at(DAY));
+    expect(deadlineAt({ a: null }, "a")).toBeNull();
+    expect(deadlineAt({}, "a")).toBeNull();
   });
 
   it("counts after() from its base, in any unit", () => {
@@ -333,17 +343,17 @@ describe("process deadlines", () => {
     const harness = await setUp();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
     await settle(harness);
+    const [, placedStep] = await lifecycle(harness);
     expect(await harness.storage.scheduler.list()).toMatchObject([
       {
         dedupeKey: "process-deadline:order.reminders:o-1",
         executeAt: at(DAY),
         command: { payload: { field: "nextReminder", at: at(DAY) } },
-        context: { causationId: "process:order.reminders:o-1", depth: 0 },
+        context: { causationId: placedStep?.id, depth: 0 },
       },
     ]);
     await harness.processes.handleDeadline({
       payload: { process: "order.reminders", aggregateId: "o-1" },
-      context: { correlationId: "c", causationId: "c", depth: 0 },
     });
     expect(calls).toEqual([]);
 
@@ -380,6 +390,96 @@ describe("process deadlines", () => {
     await settle(harness);
     expect(calls).toEqual([`reminder:${at(DAY)}`]);
     expect((await lifecycle(harness)).at(-1)?.type).toBe(PROCESS_EVENTS.completed);
+  });
+
+  it("are caused by the lifecycle event whose step set them, not by a later one that kept them", async () => {
+    reset();
+    paidKeeps = true;
+    const harness = await setUp();
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await settle(harness);
+    const [, placedStep] = await lifecycle(harness);
+
+    harness.clock.advance(DAY);
+    await settle(harness);
+    const first = (await lifecycle(harness)).at(-1);
+    expect(first).toMatchObject({
+      type: PROCESS_EVENTS.deadlineReached,
+      metadata: { causationId: placedStep?.id },
+    });
+
+    await harness.pipeline.dispatch({
+      type: "PayOrder",
+      payload: { orderId: "o-1", method: "card" },
+    });
+    await settle(harness);
+    expect((await lifecycle(harness)).at(-1)?.type).toBe(PROCESS_EVENTS.handled);
+    expect(await harness.storage.scheduler.list()).toMatchObject([
+      { context: { causationId: first?.id } },
+    ]);
+
+    harness.clock.advance(2 * DAY);
+    await settle(harness);
+    const reached = (await lifecycle(harness)).filter(
+      (event) => event.type === PROCESS_EVENTS.deadlineReached,
+    );
+    expect(reached.map((event) => [event.payload, event.metadata.causationId])).toEqual([
+      [expect.objectContaining({ field: "nextReminder", at: at(DAY) }), placedStep?.id],
+      [expect.objectContaining({ field: "nextReminder", at: at(2 * DAY) }), first?.id],
+      [expect.objectContaining({ field: "nextReminder", at: at(3 * DAY) }), reached[1]?.id],
+      [expect.objectContaining({ field: "paymentDeadline", at: at(3 * DAY) }), placedStep?.id],
+    ]);
+    const order = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    expect(order.events.at(-1)).toMatchObject({
+      type: "OrderArchived",
+      metadata: { causationId: reached[3]?.id },
+    });
+  });
+
+  it("run under the correlation of the request whose step set them", async () => {
+    reset();
+    paidMoves = true;
+    const harness = await setUp();
+    await harness.pipeline.dispatch({
+      type: "PlaceOrder",
+      payload: { orderId: "o-1", total: 10 },
+      options: { correlationId: "placing" },
+    });
+    await harness.pipeline.dispatch({
+      type: "PayOrder",
+      payload: { orderId: "o-1", method: "card" },
+      options: { correlationId: "paying" },
+    });
+    await settle(harness);
+    const [, placedStep, paidStep] = await lifecycle(harness);
+    expect(paidStep?.metadata.correlationId).toBe("paying");
+
+    harness.clock.advance(DAY);
+    await settle(harness);
+    const reached = (await lifecycle(harness)).filter(
+      (event) => event.type === PROCESS_EVENTS.deadlineReached,
+    );
+    expect(
+      reached.map((event) => [
+        (event.payload as { field: string }).field,
+        event.metadata.correlationId,
+        event.metadata.causationId,
+      ]),
+    ).toEqual([
+      ["nextReminder", "placing", placedStep?.id],
+      ["paymentDeadline", "paying", paidStep?.id],
+    ]);
+    const order = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    expect(order.events.at(-1)).toMatchObject({
+      type: "OrderArchived",
+      metadata: { correlationId: "paying", causationId: reached[1]?.id },
+    });
   });
 
   it("reach each deadline once per moment, earliest first, the field name breaking a tie", async () => {
@@ -869,6 +969,7 @@ describe("process deadlines", () => {
       payload: {
         state: { reminders: -1, nextReminder: null, paymentDeadline: null, paidAt: null },
       },
+      metadata: { causationId: events[0]?.id },
     });
     expect(await harness.storage.scheduler.list()).toEqual([]);
   });

@@ -8,6 +8,7 @@ import { type Deadline, reachedKey } from "./deadlines.ts";
 import { blockedOn, deadlineSubject, drainFailureType, type ProcessFailures } from "./failures.ts";
 import type { ProcessHandlers } from "./handlers.ts";
 import {
+  deadlineContext,
   eventContext,
   instanceContext,
   type LifecycleEntry,
@@ -181,7 +182,7 @@ export const createResumeParked: CreateResumeParkedFunction = ({
             instanceId,
             instance,
             due,
-            context: instanceContext(process, instanceId, instance),
+            context: deadlineContext(process, instanceId, instance, due),
           });
         } catch (error) {
           throw new StepFailed(error);

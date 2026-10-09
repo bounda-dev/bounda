@@ -60,7 +60,11 @@ export const createProcessInstances: CreateProcessInstancesFunction = ({
     const stream = { aggregateType: processAggregateType(process.name), aggregateId: instanceId };
     const { events } = await eventStore.load(stream);
     loaded.add(streamId(stream));
-    return foldProcess({ initialState: process.initialState, events });
+    return foldProcess({
+      initialState: process.initialState,
+      deadlineFields: process.deadlineFields,
+      events,
+    });
   };
 
   const append = async (

@@ -778,16 +778,13 @@ describe("process runner", () => {
   it("ignores deadlines for unknown processes and for instances that are not running", async () => {
     reset("ok");
     const harness = await createReactiveHarness({ registry });
-    const context = { correlationId: "c", causationId: "c", depth: 0 };
     await expect(
       harness.processes.handleDeadline({
         payload: { process: "order.nope", aggregateId: "o-1" },
-        context,
       }),
     ).resolves.toBeUndefined();
     await harness.processes.handleDeadline({
       payload: { process: "order.orderPayment", aggregateId: "never" },
-      context,
     });
     expect((await processStream(harness, "never")).events).toEqual([]);
 
@@ -800,7 +797,6 @@ describe("process runner", () => {
     harness.clock.advance(172_800_000);
     await harness.processes.handleDeadline({
       payload: { process: "order.orderPayment", aggregateId: "o-1" },
-      context,
     });
     expect((await processStream(harness)).events.map((event) => event.type)).toEqual([
       PROCESS_EVENTS.started,

@@ -58,6 +58,7 @@ const instance = (overrides: Partial<ProcessInstance> = {}): ProcessInstance => 
   handledEventIds: new Set(),
   timeoutAt: "2026-01-02T00:00:00.000Z",
   reached: new Set(),
+  deadlineCauses: new Map(),
   correlationId: "c",
   parked: [],
   followUps: new Set(),

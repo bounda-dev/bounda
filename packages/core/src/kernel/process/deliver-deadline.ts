@@ -2,7 +2,6 @@ import type { DeadLetterErrorType, NewDeadLetter } from "../../adapter/ports/dea
 import type { ResolvedConfig, ResolvedRetryConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { Logger } from "../../contracts/logger.ts";
-import type { CausationContext } from "../../contracts/metadata.ts";
 import { errorDetails } from "../shared/retry.ts";
 import type { UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import type { ProcessesRuntime, ProcessRuntime } from "./build-processes.ts";
@@ -10,6 +9,7 @@ import type { DeadlineStep } from "./deadline-step.ts";
 import { type Deadline, type ProcessDeadlinePayload, reachedKey } from "./deadlines.ts";
 import { deadlineSubject, type ProcessFailures } from "./failures.ts";
 import {
+  deadlineContext,
   instanceContext,
   lifecycleEntries,
   type ProcessInstance,
@@ -22,7 +22,6 @@ export type DeadlineTarget = Pick<ProcessDeadlinePayload, "process" | "aggregate
 
 export interface HandleDeadlineArgs {
   readonly payload: DeadlineTarget;
-  readonly context: CausationContext;
   /**
    * The unit of work to stage the step on, when the caller commits it, with what it settles of
    * the entry's claim. Without one the step commits on its own.
@@ -103,11 +102,7 @@ export const createDeadlineDelivery: CreateDeadlineDeliveryFunction = ({
     return due !== null && Date.parse(due.at) <= clock.now().getTime() ? due : undefined;
   };
 
-  const handleDeadline = async ({
-    payload,
-    context,
-    within,
-  }: HandleDeadlineArgs): Promise<void> => {
+  const handleDeadline = async ({ payload, within }: HandleDeadlineArgs): Promise<void> => {
     const process = processes.byName[payload.process];
     if (process === undefined) {
       await schedule.cancel(payload.process, payload.aggregateId, within);
@@ -123,7 +118,7 @@ export const createDeadlineDelivery: CreateDeadlineDeliveryFunction = ({
           instanceId: payload.aggregateId,
           instance,
           due,
-          context,
+          context: deadlineContext(process, payload.aggregateId, instance, due),
         });
       }
       await schedule.stage(unit, process, payload.aggregateId);
