@@ -172,9 +172,11 @@ describe("policy subscriber", () => {
     expect(loaded.events.map((event) => event.type)).toEqual(["OrderPlaced", "OrderPaid"]);
     expect(loaded.events[1]?.metadata).toMatchObject({
       correlationId: "req-1",
-      causationId: expect.any(String),
+      causationId: loaded.events[0]?.id,
+      commandId: expect.any(String),
       depth: 1,
     });
+    expect(loaded.events[1]?.metadata.commandId).not.toBe(loaded.events[0]?.metadata.commandId);
     expect(await harness.storage.deadLetterStore.count()).toBe(0);
     expect((await harness.dispatcher.getLag()).maxLag).toBe(0);
   });

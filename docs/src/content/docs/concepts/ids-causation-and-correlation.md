@@ -19,7 +19,10 @@ v7 by default), its aggregate's type and id, its `version` in the aggregate's st
 `position` in the global stream, a `timestamp`, and `metadata`:
 
 - `correlationId`: the same for everything one request caused, however many hops away.
-- `causationId`: the command that produced the event.
+- `causationId`: what caused the command that wrote the event. For a reaction's command it is
+  the event the reaction ran for, so an event leads to the one before it; for a command from
+  outside it is the command itself.
+- `commandId`: the command that wrote the event. The events the runtime writes itself have none.
 - `depth`: how many reactive hops separate the event from the request. A command dispatched past
   `runtime.policies.maxChainDepth` is refused with `CHAIN_DEPTH_EXCEEDED`, so a policy that
   feeds itself cannot loop for ever.
@@ -27,18 +30,21 @@ v7 by default), its aggregate's type and id, its `version` in the aggregate's st
   read from.
 - `system`: `true` for the events the runtime writes itself, such as a process's lifecycle events.
 
-A command carries the same causal fields plus its own `commandId`, and a command handler sees
-them on `command.metadata`; a policy or process handler sees them on `event.metadata`.
+A command carries the correlation, the causation and the depth plus its own `commandId`, and a
+command handler sees them on `command.metadata`; a policy or process handler sees an event's on
+`event.metadata`.
 
 ## How the ids are set
 
 A command dispatched from outside the runtime, by a request, a script or a webhook, gets a new
 `commandId` and is its own cause. Its correlation is its own id too, unless the caller passes
 one: `commands.x(payload, { correlationId })` joins it to a request id the host already has. Its
-events copy the correlation and the depth, and point their causation at the command.
+events copy its correlation, causation and depth, and name it as their `commandId`.
 
 A reaction carries the event it reacts to: the commands a policy or a process step dispatches
-keep the event's correlation, take its id as their causation, and go one hop deeper. A process's
+keep the event's correlation, take its id as their causation, and go one hop deeper; the events
+they write keep that causation, so they point at the event, not at a command the store never
+held. A process's
 own lifecycle events (`ProcessStarted`, `ProcessHandled`, `ProcessCompleted`) point straight at
 the event they handled. A deadline has no event to react to, so its commands are caused by the
 lifecycle event that records it (`ProcessDeadlineReached` or `ProcessTimedOut`), under the
@@ -48,15 +54,16 @@ and causation it was scheduled with, whenever it runs.
 In the [storefront example](/examples/storefront/) one `placeOrder` gives this chain, every
 event under the command's id as correlation:
 
-| Event | Caused by | Depth |
-| --- | --- | --- |
-| `OrderPlaced` | the `placeOrder` command | 0 |
-| `PaymentRequested` | `requestPayment`, which `orderLifecycle` dispatched on `OrderPlaced` | 1 |
-| `ConfirmationSent` | `recordConfirmationSent`, from `sendConfirmationOnOrderPlaced` | 1 |
-| `ReminderSent`, a day later | `sendReminder`, scheduled by `scheduleReminderOnOrderPlaced` | 1 |
+| Event | `causationId` | `commandId` | Depth |
+| --- | --- | --- | --- |
+| `OrderPlaced` | the `placeOrder` command | `placeOrder` | 0 |
+| `PaymentRequested` | `OrderPlaced` | `requestPayment`, which `orderLifecycle` dispatched | 1 |
+| `ConfirmationSent` | `OrderPlaced` | `recordConfirmationSent`, from `sendConfirmationOnOrderPlaced` | 1 |
+| `ReminderSent`, a day later | `OrderPlaced` | `sendReminder`, scheduled by `scheduleReminderOnOrderPlaced` | 1 |
 
-Reading it back is a filter on `metadata.correlationId`, ordered by `position`; the metadata is
-stored as JSON, `jsonb` on PostgreSQL. In traces, every `bounda.command`, `bounda.policy` and
+Reading it back is a filter on `metadata.correlationId`, ordered by `position`, and walking from
+an event to its cause is a lookup of the event whose `id` is its `causationId`, up to the event
+whose `causationId` is its own `commandId`, which a request's command wrote; the metadata is stored as JSON, `jsonb` on PostgreSQL. In traces, every `bounda.command`, `bounda.policy` and
 `bounda.process` span carries `bounda.correlation_id`, and a command's span adds
 `bounda.causation_id`: the event the command reacted to, or the command itself when it came from
 outside (see [Observability](/reference/observability/)).
@@ -112,19 +119,28 @@ correlation and causation, in his talks as a way to follow cascading flows
 [Arkency](https://blog.arkency.com/correlation-id-and-causation-id-in-evented-systems/) credits
 him too).
 
-- **Axon** fills message metadata through correlation data providers. The default one sets
-  `correlationId` to the parent message's id and `traceId` to the root's, so Axon's
-  "correlation" is what this page calls causation.
+- **Axon** fills message metadata through correlation data providers. Since Axon 5 the default
+  one sets `causationId` to the parent message's id and `correlationId` to the root's (Axon 4
+  called them `correlationId` and `traceId`). An event's parent is the command that wrote it, and
+  commands are not in Axon's event store.
+- **Rails Event Store** publishes a handler's events with the handled event's id as their
+  `causation_id`, so events point at events, and a handler can link each one into
+  `causation-<id>` and `correlation-<id>` streams.
+- **Eventide** writes commands to streams like any other message, and its causation fields name
+  the stream and position of the message that caused this one, which can always be read back.
 - **Marten** stores both on events only when `CorrelationIdEnabled` and `CausationIdEnabled` are
   switched on, and takes them from the session or from the active OpenTelemetry span.
 - **EventStoreDB/Kurrent** leaves them to the client as `$correlationId` and `$causationId` in
   event metadata; the `$by_correlation_id` system projection, stopped by default, links events
-  into a `$bc-<id>` stream per correlation.
+  into a `$bc-<id>` stream per correlation, and its causation graph expects `$causationId` to be
+  another event's id.
 - **NServiceBus** copies `CorrelationId` and `ConversationId` from the incoming message and sets
   `RelatedTo` to the id of the message that caused the send.
 
 Bounda's difference is that nothing is optional: the runtime is the only one that dispatches a
-reaction's commands, so it threads the context through as an argument, without ambient state.
+reaction's commands, so it threads the context through as an argument, without ambient state. Its
+store holds events only, like Axon's, so it follows Rails Event Store and Kurrent in pointing an
+event at the event before it, and keeps the command apart as `commandId`.
 
 ## What starts a change, in each school
 
@@ -137,18 +153,20 @@ application layer: thin, coordinating domain objects
 ([as Fowler quotes it](https://martinfowler.com/bliki/AnemicDomainModel.html)). CQRS calls it a
 [**command**](https://martinfowler.com/bliki/CQRS.html), the update side's request.
 
-Bounda takes the CQRS word. A command is the root of a correlation and the cause of its events, and
+Bounda takes the CQRS word. A command is the root of a correlation and writes its events, and
 its module is also what the other schools split in two: the runtime loads the state, the handler
 calls its ports and decides, and there is no application service around it. An action, in the React
 Router sense, is the host's: the place where a request dispatches a command.
 
 ## What stays outside
 
-- **The event store keeps the command id, not its cause.** An event's causation is a command
-  id, and commands are not in the event store. The hop from a command back to the event it
-  reacted to is on the command's span, and implied by the shared correlation and the depth; only
-  a process's lifecycle events name the event they handled.
-- **No query by correlation.** There is no API for it, and no index on the metadata column.
+- **Commands are not stored.** An event names its command by `commandId`; what else is known
+  about the command is on its span.
+- **Not every cause is an event.** What a process writes with no event to react to, a deadline
+  reached, a timeout, a resume or a deadline that fails, points at the instance's stream
+  (`process:<name>:<id>`), and a retry from a dead letter at the letter.
+- **No query by correlation or causation.** There is no API for either, and no index on the
+  metadata column.
 - **One request is not one trace.** A policy runs in a later pass, so its span starts a new
   trace; the correlation id is what joins them
   ([what is not there yet](/reference/limitations/)).
@@ -165,8 +183,10 @@ Router sense, is the host's: the place where a request dispatches a command.
   derived ids in a handler, and [Every step is idempotent](/guides/sagas/#every-step-is-idempotent).
 - [Observability](/reference/observability/), for the spans and their attributes.
 - The other frameworks: Axon's
-  [message correlation](https://docs.axoniq.io/axon-framework-reference/4.11/messaging-concepts/message-correlation/),
-  Marten's [event metadata](https://martendb.io/events/metadata.html), Kurrent's
+  [message correlation](https://docs.axoniq.io/axon-framework-reference/5.3/messaging-concepts/message-correlation/),
+  Marten's [event metadata](https://martendb.io/events/metadata.html), Rails Event Store's
+  [correlation and causation](https://blog.arkency.com/correlation-id-and-causation-id-in-evented-systems/),
+  Kurrent's
   [system projections](https://docs.kurrent.io/server/v24.10/features/projections/system.html) and
   [its blog on causation](https://kurrentdb.kurrent.io/blog/eventstoredb-visualise-tab/),
   NServiceBus's [message headers](https://docs.particular.net/nservicebus/messaging/headers).

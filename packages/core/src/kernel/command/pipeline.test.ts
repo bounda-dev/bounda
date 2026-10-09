@@ -86,6 +86,7 @@ describe("command pipeline", () => {
       metadata: {
         correlationId: "id-1",
         causationId: "id-1",
+        commandId: "id-1",
         depth: 0,
         schemaVersion: 1,
         system: false,
@@ -545,7 +546,12 @@ describe("command pipeline", () => {
       context: { correlationId: "req-9", causationId: "evt-3", depth: 2 },
     });
     const loaded = await storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" });
-    expect(loaded.events[0]?.metadata).toMatchObject({ correlationId: "req-9", depth: 2 });
+    expect(loaded.events[0]?.metadata).toMatchObject({
+      correlationId: "req-9",
+      causationId: "evt-3",
+      commandId: "id-1",
+      depth: 2,
+    });
     await expect(
       pipeline.dispatch({
         type: "TouchOrder",

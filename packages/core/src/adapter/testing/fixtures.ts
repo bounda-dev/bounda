@@ -8,7 +8,8 @@ import type { PendingEvent } from "../ports/event-store.ts";
  */
 export const testMetadata: EventMetadata = {
   correlationId: "corr-1",
-  causationId: "cmd-1",
+  causationId: "evt-0",
+  commandId: "cmd-1",
   depth: 0,
   schemaVersion: 1,
   system: false,

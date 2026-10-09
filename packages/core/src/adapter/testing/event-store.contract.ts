@@ -60,7 +60,8 @@ export const eventStoreContract: EventStoreContractFunction = ({ create }) => {
         timestamp: "2026-01-01T00:00:00.000Z",
         metadata: {
           correlationId: "corr-1",
-          causationId: "cmd-1",
+          causationId: "evt-0",
+          commandId: "cmd-1",
           depth: 0,
           schemaVersion: 1,
           system: false,

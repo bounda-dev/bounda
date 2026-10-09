@@ -161,7 +161,8 @@ const toPendingEvents = (
       timestamp,
       metadata: {
         correlationId: command.metadata.correlationId,
-        causationId: command.metadata.commandId,
+        causationId: command.metadata.causationId,
+        commandId: command.metadata.commandId,
         depth: command.metadata.depth,
         schemaVersion: runtime.schemaVersion,
         system: false,
