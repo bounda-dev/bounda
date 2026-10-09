@@ -54,8 +54,9 @@ const clackPrompts: Prompts = {
 };
 
 interface Flags {
-  readonly database?: string;
+  readonly runtime?: string;
   readonly framework?: string;
+  readonly database?: string;
   readonly pm?: string;
   readonly install: boolean;
   readonly git: boolean;
@@ -68,7 +69,10 @@ const nextSteps = (options: CreateOptions, cwd: string): string => {
   if (!options.install) lines.push(runCommand(options.packageManager, "install"));
   lines.push(
     runCommand(options.packageManager, "test"),
-    runCommand(options.packageManager, options.framework === "node" ? "start" : "dev"),
+    runCommand(
+      options.packageManager,
+      options.runtime === "node" && options.framework === "none" ? "start" : "dev",
+    ),
   );
   return lines.map((line) => `  ${line}`).join("\n");
 };
@@ -109,8 +113,9 @@ const create = async (
   const resolved = await resolveOptions({
     raw: {
       ...(directory === undefined ? {} : { directory }),
-      ...(flags.database === undefined ? {} : { database: flags.database }),
+      ...(flags.runtime === undefined ? {} : { runtime: flags.runtime }),
       ...(flags.framework === undefined ? {} : { framework: flags.framework }),
+      ...(flags.database === undefined ? {} : { database: flags.database }),
       ...(flags.pm === undefined ? {} : { packageManager: flags.pm }),
       install: flags.install,
       git: flags.git,
@@ -129,8 +134,13 @@ const create = async (
     options: resolved,
     versions: currentVersions(),
   });
+  const stack = [
+    resolved.runtime,
+    ...(resolved.framework === "none" ? [] : [resolved.framework]),
+    resolved.database,
+  ];
   stdout.write(
-    `created ${resolved.name} in ${relative(cwd, resolved.directory) || "."} (${report.files.length} files, ${resolved.database}, ${resolved.framework})\n`,
+    `created ${resolved.name} in ${relative(cwd, resolved.directory) || "."} (${report.files.length} files, ${stack.join(", ")})\n`,
   );
   if (resolved.git) {
     try {
@@ -147,7 +157,7 @@ const create = async (
     stdout.write(`installing dependencies with ${resolved.packageManager}\n`);
     try {
       await exec(command, args, resolved.directory);
-      if (resolved.framework === "cloudflare") await generate(resolved, exec, stderr);
+      if (resolved.runtime === "cloudflare") await generate(resolved, exec, stderr);
     } catch (error) {
       stderr.write(
         `warning: install failed (${error instanceof Error ? error.message : String(error)}); run ${runCommand(resolved.packageManager, "install")} yourself\n`,
@@ -172,8 +182,9 @@ export const runCreate: RunCreateFunction = async ({
   const program = new Command("create-bounda")
     .description("Create a Bounda project")
     .argument("[directory]", "where to create it (default: bounda-app, or asked)")
-    .option("--database <name>", "sqlite or postgresql (default: sqlite, or asked)")
-    .option("--framework <name>", "node, react-router or cloudflare (default: node, or asked)")
+    .option("--runtime <name>", "node or cloudflare (default: node, or asked)")
+    .option("--framework <name>", "none or react-router (default: none, or asked)")
+    .option("--database <name>", "sqlite or postgresql, on node (default: sqlite, or asked)")
     .option(
       "--pm <name>",
       "package manager: pnpm, npm, yarn or bun (default: the one running this)",

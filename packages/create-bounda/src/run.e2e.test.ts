@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, describe, expect, it } from "vitest";
+import type { Framework, Runtime } from "./options.ts";
 import { runCreate } from "./run.ts";
 
 const repoRoot = resolve(import.meta.dirname, "../../..");
@@ -69,46 +70,48 @@ const install = async (project: string, names: readonly string[]): Promise<void>
   }
 };
 
+interface Stack {
+  readonly runtime: Runtime;
+  readonly framework: Framework;
+}
+
+const REACT_ROUTER_TOOLS = [
+  "react",
+  "react-dom",
+  "react-router",
+  "vite",
+  "isbot",
+  "@react-router/dev",
+  "@react-router/node",
+  "@react-router/serve",
+  "@types/react",
+  "@types/react-dom",
+];
+
 /**
  * The tools the template declares, taken from this package's own dev dependencies: the same
- * versions it writes into the generated manifest.
+ * versions it writes into the generated manifest. On Cloudflare, Vitest and its plugin come from
+ * `@bounda-dev/cloudflare`, which has the Vitest the plugin runs on.
  */
-type Framework = "node" | "react-router" | "cloudflare";
-
-const linkTools = async (project: string, framework: Framework): Promise<void> => {
+const linkTools = async (project: string, { runtime, framework }: Stack): Promise<void> => {
   const modules = join(project, "node_modules");
   const own = join(repoRoot, "packages/create-bounda/node_modules");
-  if (framework === "cloudflare") {
-    const adapter = join(repoRoot, "packages/cloudflare/node_modules");
-    for (const name of ["typescript", "@types/node", "wrangler"]) {
-      await link(join(own, name), join(modules, name));
-    }
-    for (const name of ["vitest", "@cloudflare/vitest-plugin"]) {
-      await link(join(adapter, name), join(modules, name));
-    }
-    return;
-  }
-  for (const name of ["vitest", "typescript", "@types/node"]) {
-    await link(join(own, name), join(modules, name));
-  }
-  if (framework !== "react-router") return;
-  for (const name of [
-    "react",
-    "react-dom",
-    "react-router",
-    "vite",
-    "isbot",
-    "@react-router/dev",
-    "@react-router/node",
-    "@react-router/serve",
-    "@types/react",
-    "@types/react-dom",
-  ]) {
-    await link(join(own, name), join(modules, name));
-  }
+  const adapter = join(repoRoot, "packages/cloudflare/node_modules");
+  const fromAdapter = runtime === "cloudflare" ? ["vitest", "@cloudflare/vitest-plugin"] : [];
+  const fromOwn = [
+    "typescript",
+    "@types/node",
+    ...(runtime === "cloudflare" ? ["wrangler"] : ["vitest"]),
+    ...(framework === "react-router" ? REACT_ROUTER_TOOLS : []),
+    ...(runtime === "cloudflare" && framework === "react-router"
+      ? ["@cloudflare/vite-plugin"]
+      : []),
+  ];
+  for (const name of fromAdapter) await link(join(adapter, name), join(modules, name));
+  for (const name of fromOwn) await link(join(own, name), join(modules, name));
 };
 
-const scaffold = async (argv: readonly string[], framework: Framework): Promise<string> => {
+const scaffold = async (argv: readonly string[], stack: Stack): Promise<string> => {
   const cwd = await mkdtemp(join(tmpdir(), "create-bounda-e2e-"));
   temporary.push(cwd);
   const code = await runCreate({
@@ -124,10 +127,10 @@ const scaffold = async (argv: readonly string[], framework: Framework): Promise<
   await install(project, [
     "core",
     "cli",
-    framework === "cloudflare" ? "cloudflare" : "sqlite",
-    ...(framework === "react-router" ? ["react-router"] : []),
+    stack.runtime === "cloudflare" ? "cloudflare" : "sqlite",
+    ...(stack.framework === "react-router" ? ["react-router"] : []),
   ]);
-  await linkTools(project, framework);
+  await linkTools(project, stack);
   return project;
 };
 
@@ -277,7 +280,10 @@ afterAll(async () => {
 
 describe("a project created by create-bounda", () => {
   it("generates, type-checks and passes its own test", async () => {
-    const project = await scaffold(["shop", "--yes", "--no-git", "--no-install"], "node");
+    const project = await scaffold(["shop", "--yes", "--no-git", "--no-install"], {
+      runtime: "node",
+      framework: "none",
+    });
 
     const generated = await run(
       process.execPath,
@@ -301,7 +307,7 @@ describe("a project created by create-bounda", () => {
   it("scaffolds a React Router app that generates, type-checks, tests, builds and serves", async () => {
     const project = await scaffold(
       ["web", "--framework", "react-router", "--yes", "--no-git", "--no-install"],
-      "react-router",
+      { runtime: "node", framework: "react-router" },
     );
     const reactRouter = join(project, "node_modules/@react-router/dev/bin.cjs");
 
@@ -389,8 +395,8 @@ describe("a project created by create-bounda", () => {
 
   it("scaffolds a Cloudflare app that generates, type-checks, tests and serves its store", async () => {
     const project = await scaffold(
-      ["edge", "--framework", "cloudflare", "--yes", "--no-git", "--no-install"],
-      "cloudflare",
+      ["edge", "--runtime", "cloudflare", "--yes", "--no-git", "--no-install"],
+      { runtime: "cloudflare", framework: "none" },
     );
     expect(await readFile(join(project, "bounda.config.ts"), "utf8")).toContain("cloudflare()");
     expect(await readFile(join(project, "wrangler.jsonc"), "utf8")).toContain('"name": "edge"');
@@ -445,5 +451,86 @@ describe("a project created by create-bounda", () => {
       await server.stop();
     }
     expect(await portTaken(server.port)).toBe(false);
+  }, 300_000);
+
+  it("scaffolds a React Router app on Cloudflare that generates, type-checks, tests, builds and serves", async () => {
+    const project = await scaffold(
+      [
+        "web-edge",
+        "--runtime",
+        "cloudflare",
+        "--framework",
+        "react-router",
+        "--yes",
+        "--no-git",
+        "--no-install",
+      ],
+      { runtime: "cloudflare", framework: "react-router" },
+    );
+    expect(await readFile(join(project, "app/tenant.ts"), "utf8")).toContain('() => "default"');
+    const reactRouter = join(project, "node_modules/@react-router/dev/bin.cjs");
+    const wrangler = join(project, "node_modules/wrangler/bin/wrangler.js");
+
+    await run(
+      process.execPath,
+      [join(project, "node_modules/@bounda-dev/cli/dist/cli.js"), "generate"],
+      { cwd: project },
+    );
+    await run(process.execPath, [wrangler, "types"], { cwd: project });
+    await run(process.execPath, [reactRouter, "typegen"], { cwd: project });
+    await run(join(repoRoot, "node_modules/.bin/tsc"), ["--noEmit", "-p", "tsconfig.json"], {
+      cwd: project,
+    });
+    const tested = await run(
+      process.execPath,
+      [join(project, "node_modules/vitest/vitest.mjs"), "run", "--root", project],
+      { cwd: project, env: { ...process.env, CI: "1" } },
+    );
+    expect(`${tested.stdout}${tested.stderr}`).toMatch(/3 passed/);
+    const built = await run(process.execPath, [reactRouter, "build"], { cwd: project });
+    expect(`${built.stdout}${built.stderr}`).toMatch(/built in/);
+
+    const placeAndList = async (url: string, customerId: string): Promise<void> => {
+      const home = await fetch(`${url}/?customer=${customerId}`);
+      expect(home.status).toBe(200);
+      expect(await rendered(home)).toContain(`${customerId}: 0 order(s), 0 in total`);
+      const placed = await fetch(`${url}/?index`, {
+        method: "POST",
+        body: new URLSearchParams({ customerId, total: "99" }),
+        redirect: "manual",
+      });
+      expect(placed.status).toBe(302);
+      expect(placed.headers.get("location")).toContain(`/?customer=${customerId}`);
+      const listed = await fetch(`${url}/?customer=${customerId}`);
+      expect(await rendered(listed)).toContain(`${customerId}: 1 order(s), 99 in total`);
+    };
+
+    const server = await startServer(project, {
+      args: (port) => [
+        reactRouter,
+        "dev",
+        "--port",
+        String(port),
+        "--host",
+        "127.0.0.1",
+        "--strictPort",
+      ],
+    });
+    try {
+      await placeAndList(server.url, "grace");
+    } finally {
+      await server.stop();
+    }
+    expect(await portTaken(server.port)).toBe(false);
+
+    // What `wrangler deploy` would upload: the Worker the build wrote, with its own wrangler.json.
+    const production = await startServer(project, {
+      args: (port) => [wrangler, "dev", "--port", String(port), "--ip", "127.0.0.1"],
+    });
+    try {
+      await placeAndList(production.url, "lin");
+    } finally {
+      await production.stop();
+    }
   }, 300_000);
 });

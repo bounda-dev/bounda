@@ -177,7 +177,8 @@ When `bounda.config.ts` sets `storage: cloudflare()`, the app runs in a Durable 
 tenant, and React Router runs in the Worker in front of it, through
 [`@cloudflare/vite-plugin`](https://developers.cloudflare.com/workers/vite-plugin/). Each loader
 and action then reaches the tenant's object over RPC. The `bounda()` plugin, the routes and
-`app/root.tsx` stay as above; the Worker needs four more things.
+`app/root.tsx` stay as above; the Worker needs four more things, which a new project gets from
+`npm create bounda@latest my-app -- --runtime cloudflare --framework react-router`.
 
 ```bash
 npm install @bounda-dev/core @bounda-dev/react-router @bounda-dev/cloudflare

@@ -20,16 +20,16 @@ is one honest list.
 
 ## Create a project
 
-`npm create bounda@latest my-shop` asks how the app runs and, for Node and React Router, which
-database it uses. Pass the answers after `--` to skip the questions:
+`npm create bounda@latest my-shop` asks where the app runs, which framework it uses and, on
+Node, which database. Pass the answers after `--` to skip the questions:
 
-<Tabs syncKey="framework">
+<Tabs syncKey="stack">
 <TabItem label="Node">
 
 A Node script, on SQLite or PostgreSQL.
 
 ```bash
-npm create bounda@latest my-shop -- --framework node --database sqlite
+npm create bounda@latest my-shop -- --runtime node --framework none --database sqlite
 cd my-shop
 ```
 
@@ -40,18 +40,29 @@ A [React Router](/guides/react-router/) app with a page that dispatches from an 
 reads from a loader, on SQLite or PostgreSQL.
 
 ```bash
-npm create bounda@latest my-shop -- --framework react-router --database sqlite
+npm create bounda@latest my-shop -- --runtime node --framework react-router --database sqlite
 cd my-shop
 ```
 
 </TabItem>
 <TabItem label="Cloudflare">
 
-A [Cloudflare](/adapters/cloudflare/) Worker with a Durable Object per tenant, whose store is
-the object's own SQLite, so it takes no database.
+A [Cloudflare](/adapters/cloudflare/) Worker with a JSON API and a Durable Object per tenant,
+whose store is the object's own SQLite, so it takes no database.
 
 ```bash
-npm create bounda@latest my-shop -- --framework cloudflare
+npm create bounda@latest my-shop -- --runtime cloudflare --framework none
+cd my-shop
+```
+
+</TabItem>
+<TabItem label="React Router on Cloudflare">
+
+The same React Router app, [on Cloudflare](/guides/react-router/#on-cloudflare): React Router
+in the Worker, and the store in a Durable Object per tenant.
+
+```bash
+npm create bounda@latest my-shop -- --runtime cloudflare --framework react-router
 cd my-shop
 ```
 

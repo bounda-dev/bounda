@@ -11,7 +11,7 @@ its events, its read models and its scheduled work in its own SQLite. There is n
 deploy or to keep running.
 
 ```bash
-npm create bounda@latest my-app -- --framework cloudflare
+npm create bounda@latest my-app -- --runtime cloudflare
 ```
 
 Or deploy the same project to your account without cloning anything:
@@ -62,7 +62,9 @@ export default createWorker({
 `public/index.html` is a page that places orders and lists them through the API, served as a
 static asset. `npm run dev` starts `wrangler dev` on http://localhost:8787; `npm run deploy`
 deploys to your account. A React Router app runs on Cloudflare the same way, with the object
-behind its loaders and actions: see [Bounda with React Router](/guides/react-router/#on-cloudflare).
+behind its loaders and actions: see [Bounda with React Router](/guides/react-router/#on-cloudflare),
+or start one with
+`npm create bounda@latest my-app -- --runtime cloudflare --framework react-router`.
 
 ## How it runs
 

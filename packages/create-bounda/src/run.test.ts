@@ -58,7 +58,7 @@ describe("create-bounda", () => {
     const { calls, exec } = recorder();
     const result = await cli(["shop"], cwd, { exec });
     expect(result.code).toBe(EXIT_OK);
-    expect(result.stdout).toContain("created shop in shop (14 files, sqlite, node)");
+    expect(result.stdout).toContain("created shop in shop (14 files, node, sqlite)");
     expect(result.stdout).toContain("initialised a git repository");
     expect(result.stdout).toContain("installing dependencies with pnpm");
     expect(result.stdout).toContain("next:\n  cd shop\n  pnpm test\n  pnpm start\n");
@@ -78,7 +78,7 @@ describe("create-bounda", () => {
       { exec },
     );
     expect(result.code).toBe(EXIT_OK);
-    expect(result.stdout).toContain("(15 files, postgresql, node)");
+    expect(result.stdout).toContain("(15 files, node, postgresql)");
     expect(result.stdout).toContain("next:\n  cd shop\n  npm install\n  npm test\n  npm start\n");
     expect(calls).toEqual([]);
   });
@@ -87,31 +87,32 @@ describe("create-bounda", () => {
     const cwd = await workspace();
     const { calls, exec } = recorder();
     const result = await cli(
-      ["edge", "--no-git", "--no-install", "--pm", "npm", "--framework", "cloudflare"],
+      ["edge", "--no-git", "--no-install", "--pm", "npm", "--runtime", "cloudflare"],
       cwd,
       { exec },
     );
     expect(result.code).toBe(EXIT_OK);
-    expect(result.stdout).toContain("(17 files, cloudflare, cloudflare)");
+    expect(result.stdout).toContain("(17 files, cloudflare, durable-object)");
     expect(result.stdout).toContain("next:\n  cd edge\n  npm install\n  npm test\n  npm run dev\n");
     expect(calls).toEqual([]);
   });
 
   it("generates a Cloudflare project's types after its install, which has no prepare to do it", async () => {
     const cwd = await workspace();
-    const { calls, exec } = recorder();
-    const result = await cli(
-      ["edge", "--no-git", "--pm", "npm", "--framework", "cloudflare"],
-      cwd,
-      {
-        exec,
-      },
-    );
-    expect(result.code).toBe(EXIT_OK);
-    expect(calls).toEqual([
-      `npm install @ ${join(cwd, "edge")}`,
-      `npm run generate @ ${join(cwd, "edge")}`,
-    ]);
+    for (const framework of ["none", "react-router"]) {
+      const { calls, exec } = recorder();
+      const name = `edge-${framework}`;
+      const result = await cli(
+        [name, "--no-git", "--pm", "npm", "--runtime", "cloudflare", "--framework", framework],
+        cwd,
+        { exec },
+      );
+      expect(result.code).toBe(EXIT_OK);
+      expect(calls).toEqual([
+        `npm install @ ${join(cwd, name)}`,
+        `npm run generate @ ${join(cwd, name)}`,
+      ]);
+    }
   });
 
   it("warns when a Cloudflare project's types cannot be generated, and skips them after a failed install", async () => {
@@ -120,7 +121,7 @@ describe("create-bounda", () => {
       if (args[0] === "run") throw new Error("wrangler exploded");
     };
     const generated = await cli(
-      ["edge", "--no-git", "--pm", "bun", "--framework", "cloudflare"],
+      ["edge", "--no-git", "--pm", "bun", "--runtime", "cloudflare"],
       cwd,
       {
         exec: generating,
@@ -137,13 +138,9 @@ describe("create-bounda", () => {
       calls.push(`${command} ${args.join(" ")}`);
       if (args[0] === "install") throw new Error("npm exploded");
     };
-    const failed = await cli(
-      ["other", "--no-git", "--pm", "npm", "--framework", "cloudflare"],
-      cwd,
-      {
-        exec: installing,
-      },
-    );
+    const failed = await cli(["other", "--no-git", "--pm", "npm", "--runtime", "cloudflare"], cwd, {
+      exec: installing,
+    });
     expect(failed.stderr).toContain("warning: install failed (npm exploded)");
     expect(calls).toEqual(["npm install"]);
   });
@@ -161,9 +158,14 @@ describe("create-bounda", () => {
 
   it("asks through the prompts and honours a cancel", async () => {
     const cwd = await workspace();
+    const choices: Readonly<Record<string, string>> = {
+      "Where will the app run?": "node",
+      "Which framework?": "none",
+      "Which database?": "sqlite",
+    };
     const prompts: Prompts = {
       text: async () => "asked-shop",
-      select: async (message) => (message.startsWith("How") ? "node" : "sqlite") as never,
+      select: async (message) => choices[message] as never,
     };
     const result = await cli(["--no-git", "--no-install"], cwd, { prompts });
     expect(result.code).toBe(EXIT_OK);
@@ -180,7 +182,7 @@ describe("create-bounda", () => {
     const cwd = await workspace();
     const first = await cli(["--yes", "--no-git", "--no-install"], cwd);
     expect(first.code).toBe(EXIT_OK);
-    expect(first.stdout).toContain("created bounda-app in bounda-app (14 files, sqlite, node)");
+    expect(first.stdout).toContain("created bounda-app in bounda-app (14 files, node, sqlite)");
     const again = await cli(["bounda-app", "--yes", "--no-git", "--no-install"], cwd);
     expect(again.code).toBe(EXIT_FAILURE);
     expect(again.stderr).toMatch(/^error: .*bounda-app exists and is not empty\n$/);
@@ -216,9 +218,22 @@ describe("create-bounda", () => {
       cwd,
     );
     expect(result.code).toBe(EXIT_OK);
-    expect(result.stdout).toContain("created web in web (21 files, sqlite, react-router)");
+    expect(result.stdout).toContain("created web in web (21 files, node, react-router, sqlite)");
     expect(result.stdout).toContain("next:\n  cd web\n  pnpm install\n  pnpm test\n  pnpm dev\n");
     expect(await readdir(join(cwd, "web", "app", "routes"))).toEqual(["home.tsx"]);
+  });
+
+  it("scaffolds a React Router app on Cloudflare and points at the dev server", async () => {
+    const cwd = await workspace();
+    const result = await cli(
+      ["web", "--runtime", "cloudflare", "--framework", "react-router", "--no-git", "--no-install"],
+      cwd,
+    );
+    expect(result.code).toBe(EXIT_OK);
+    expect(result.stdout).toContain(
+      "created web in web (25 files, cloudflare, react-router, durable-object)",
+    );
+    expect(result.stdout).toContain("next:\n  cd web\n  pnpm install\n  pnpm test\n  pnpm dev\n");
   });
 
   it("rejects bad flag values and prints help", async () => {
@@ -228,10 +243,17 @@ describe("create-bounda", () => {
     expect(bad.stderr).toContain("--database must be one of sqlite, postgresql");
     const help = await cli(["--help"], cwd);
     expect(help.code).toBe(EXIT_OK);
-    expect(help.stdout).toContain("--database <name>");
+    expect(help.stdout).toContain("--runtime <name>");
     expect(help.stdout).toContain("--framework <name>");
+    expect(help.stdout).toContain("--database <name>");
     const framework = await cli(["shop", "--framework", "next", "--no-git", "--no-install"], cwd);
     expect(framework.code).toBe(EXIT_FAILURE);
-    expect(framework.stderr).toContain("--framework must be one of node, react-router");
+    expect(framework.stderr).toContain("--framework must be one of none, react-router");
+    const runtime = await cli(
+      ["shop", "--runtime", "cloudflare", "--database", "sqlite", "--no-git", "--no-install"],
+      cwd,
+    );
+    expect(runtime.code).toBe(EXIT_FAILURE);
+    expect(runtime.stderr).toContain("--database does not apply to --runtime cloudflare");
   });
 });

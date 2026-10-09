@@ -39,6 +39,7 @@
     "commander": "catalog:"
   },
   "devDependencies": {
+    "@cloudflare/vite-plugin": "catalog:",
     "@cloudflare/vitest-plugin": "catalog:",
     "@react-router/dev": "catalog:",
     "@react-router/node": "catalog:",

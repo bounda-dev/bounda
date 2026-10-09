@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, posix } from "node:path";
 import type { CreateOptions } from "./options.ts";
+import { runCommand } from "./steps.ts";
 import type { Versions } from "./versions.ts";
 
 export interface ScaffoldProjectArgs {
@@ -10,7 +11,7 @@ export interface ScaffoldProjectArgs {
 }
 
 export interface ScaffoldReport {
-  // Relative to the project directory, sorted.
+  // Relative to the project directory, with `/` on every platform, sorted.
   readonly files: readonly string[];
 }
 
@@ -21,8 +22,12 @@ export interface ScaffoldProjectFunction {
 const ADAPTER_PACKAGES = {
   sqlite: "@bounda-dev/sqlite",
   postgresql: "@bounda-dev/postgresql",
-  cloudflare: "@bounda-dev/cloudflare",
+  "durable-object": "@bounda-dev/cloudflare",
 } as const;
+
+// Each becomes `{{<script>Command}}`, spelled for the package manager, so a README never tells bun
+// users to run `bun test`, which is bun's own test runner.
+const SCRIPTS = ["install", "test", "start", "dev", "build", "deploy", "generate"] as const;
 
 const TEMPLATE_SUFFIX = ".tpl";
 /**
@@ -34,25 +39,24 @@ const RENAMES: Readonly<Record<string, string>> = {
   "_env.example": ".env.example",
 };
 
-const listFiles = async (root: string): Promise<readonly string[]> => {
+// Paths inside the template are built with `/` and handled with `posix`, never with the platform's
+// separator, so they come out the same on Windows; `join` only meets them at the file system.
+const listFiles = async (root: string, prefix = ""): Promise<readonly string[]> => {
   const found: string[] = [];
-  const walk = async (directory: string): Promise<void> => {
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
-      const path = join(directory, entry.name);
-      if (entry.isDirectory()) await walk(path);
-      else found.push(relative(root, path));
-    }
-  };
-  await walk(root);
+  for (const entry of await readdir(join(root, prefix), { withFileTypes: true })) {
+    const path = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
+    if (entry.isDirectory()) found.push(...(await listFiles(root, path)));
+    else found.push(path);
+  }
   return found;
 };
 
 const targetNameOf = (source: string): string => {
-  const base = source.split("/").pop() ?? source;
+  const base = posix.basename(source);
   const withoutSuffix = base.endsWith(TEMPLATE_SUFFIX)
     ? base.slice(0, -TEMPLATE_SUFFIX.length)
     : base;
-  return join(dirname(source), RENAMES[withoutSuffix] ?? withoutSuffix);
+  return posix.join(posix.dirname(source), RENAMES[withoutSuffix] ?? withoutSuffix);
 };
 
 export interface RenderTemplateArgs {
@@ -91,7 +95,6 @@ export const scaffoldProject: ScaffoldProjectFunction = async ({
   }
   const values: Readonly<Record<string, string>> = {
     name: options.name,
-    pm: options.packageManager,
     adapterPackage: ADAPTER_PACKAGES[options.database],
     boundaVersion: versions.bounda,
     typescriptVersion: versions.typescript,
@@ -105,14 +108,20 @@ export const scaffoldProject: ScaffoldProjectFunction = async ({
     wranglerVersion: versions.wrangler,
     cloudflareVitestVersion: versions.cloudflareVitest,
     cloudflareVitestPluginVersion: versions.cloudflareVitestPlugin,
+    cloudflareVitePluginVersion: versions.cloudflareVitePlugin,
+    ...Object.fromEntries(
+      SCRIPTS.map((script) => [`${script}Command`, runCommand(options.packageManager, script)]),
+    ),
   };
-  // Later layers win. The `cloudflare` framework brings its own storage, so it is one overlay, not
-  // two.
+  // Later layers win. A framework's files are the same on every runtime, except those that tie it
+  // to one, which live in `<runtime>-<framework>`.
   const layers = [
-    join(templateRoot, "base"),
-    ...(options.database === options.framework ? [] : [join(templateRoot, options.database)]),
-    join(templateRoot, options.framework),
-  ];
+    "base",
+    options.database,
+    ...(options.framework === "none"
+      ? [options.runtime]
+      : [options.framework, `${options.runtime}-${options.framework}`]),
+  ].map((layer) => join(templateRoot, layer));
   const sources = new Map<string, string>();
   for (const layer of layers) {
     for (const file of await listFiles(layer)) sources.set(targetNameOf(file), join(layer, file));

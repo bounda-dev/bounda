@@ -17,6 +17,7 @@ export interface Versions {
   // package cannot depend on two versions of `vitest`.
   readonly cloudflareVitest: string;
   readonly cloudflareVitestPlugin: string;
+  readonly cloudflareVitePlugin: string;
 }
 
 export interface Manifest {
@@ -64,6 +65,7 @@ export const versionsFrom: VersionsFromFunction = ({ manifest, catalog }) => {
     wrangler: versionOf("wrangler"),
     cloudflareVitest: versionOf("@vitest/runner"),
     cloudflareVitestPlugin: versionOf("@cloudflare/vitest-plugin"),
+    cloudflareVitePlugin: versionOf("@cloudflare/vite-plugin"),
   };
 };
 

@@ -5,6 +5,7 @@ import {
   OFFER_CLOUDFLARE,
   type Prompts,
   projectNameOf,
+  type RawOptions,
   resolveOptions,
 } from "./options.ts";
 
@@ -14,24 +15,39 @@ interface Offered {
   readonly hint?: string;
 }
 
+interface Answers {
+  readonly directory?: string | null;
+  readonly runtime?: string | null;
+  readonly framework?: string | null;
+  readonly database?: string | null;
+}
+
+const QUESTIONS: Readonly<Record<string, keyof Answers>> = {
+  "Where should the project go?": "directory",
+  "Where will the app run?": "runtime",
+  "Which framework?": "framework",
+  "Which database?": "database",
+};
+
+// Answers each question by its message; a question it has no answer for is a test failure.
 const answers = (
-  text: string | null,
-  select: string | null,
-  framework: string | null = "node",
+  given: Answers,
 ): Prompts & { asked: string[]; offered: Record<string, readonly Offered[]> } => {
   const asked: string[] = [];
   const offered: Record<string, readonly Offered[]> = {};
+  const answer = (message: string): string | null => {
+    asked.push(message);
+    const key = QUESTIONS[message];
+    if (key === undefined || !(key in given)) throw new Error(`unexpected question: ${message}`);
+    return given[key] ?? null;
+  };
   return {
     asked,
     offered,
-    text: async (message) => {
-      asked.push(message);
-      return text;
-    },
+    text: async (message) => answer(message),
     select: async (message, options) => {
-      asked.push(message);
       offered[message] = options;
-      return (message.startsWith("How") ? framework : select) as never;
+      return answer(message) as never;
     },
   };
 };
@@ -58,14 +74,22 @@ describe("projectNameOf", () => {
 
 describe("resolveOptions", () => {
   const cwd = "/work";
+  const resolveWith = (raw: Partial<RawOptions>, prompts: Prompts | null = null) =>
+    resolveOptions({
+      raw: { install: true, git: true, yes: false, ...raw },
+      cwd,
+      userAgent: undefined,
+      prompts,
+    });
 
   it("takes everything from the flags when given", async () => {
-    const prompts = answers("ignored", "ignored");
+    const prompts = answers({});
     const options = await resolveOptions({
       raw: {
         directory: "shop",
-        database: "postgresql",
+        runtime: "node",
         framework: "react-router",
+        database: "postgresql",
         packageManager: "bun",
         install: false,
         git: true,
@@ -78,8 +102,9 @@ describe("resolveOptions", () => {
     expect(options).toEqual({
       directory: resolve(cwd, "shop"),
       name: "shop",
-      database: "postgresql",
+      runtime: "node",
       framework: "react-router",
+      database: "postgresql",
       packageManager: "bun",
       install: false,
       git: true,
@@ -87,8 +112,13 @@ describe("resolveOptions", () => {
     expect(prompts.asked).toEqual([]);
   });
 
-  it("asks for what is missing and trims the answer", async () => {
-    const prompts = answers("  my shop  ", "postgresql", "react-router");
+  it("asks for what is missing, runtime first, and trims the answer", async () => {
+    const prompts = answers({
+      directory: "  my shop  ",
+      runtime: "node",
+      framework: "react-router",
+      database: "postgresql",
+    });
     const options = await resolveOptions({
       raw: { install: true, git: true, yes: false },
       cwd,
@@ -98,35 +128,40 @@ describe("resolveOptions", () => {
     expect(options).toMatchObject({
       directory: resolve(cwd, "my shop"),
       name: "my-shop",
-      database: "postgresql",
+      runtime: "node",
       framework: "react-router",
+      database: "postgresql",
       packageManager: "yarn",
     });
     expect(prompts.asked).toEqual([
       "Where should the project go?",
-      "How will the app run?",
+      "Where will the app run?",
+      "Which framework?",
       "Which database?",
     ]);
   });
 
-  it("offers each framework and database with what it is for", async () => {
-    const prompts = answers("shop", "sqlite");
-    await resolveOptions({
-      raw: { install: true, git: true, yes: false },
-      cwd,
-      userAgent: undefined,
-      prompts,
+  it("offers each runtime, framework and database with what it is for", async () => {
+    const prompts = answers({
+      directory: "shop",
+      runtime: "node",
+      framework: "none",
+      database: "sqlite",
     });
+    await resolveWith({}, prompts);
     expect(OFFER_CLOUDFLARE).toBe(true);
     expect(prompts.offered).toEqual({
-      "How will the app run?": [
-        { value: "node", label: "Node", hint: "a script, a worker or your own server" },
-        { value: "react-router", label: "React Router", hint: "framework mode, Vite" },
+      "Where will the app run?": [
+        { value: "node", label: "Node", hint: "your own server, a container or a script" },
         {
           value: "cloudflare",
           label: "Cloudflare",
-          hint: "a Worker and a Durable Object, no server",
+          hint: "a Worker and a Durable Object per tenant, no server",
         },
+      ],
+      "Which framework?": [
+        { value: "none", label: "None", hint: "a script that boots the app" },
+        { value: "react-router", label: "React Router", hint: "framework mode, Vite" },
       ],
       "Which database?": [
         { value: "sqlite", label: "SQLite", hint: "a file, no server; also Turso" },
@@ -135,41 +170,46 @@ describe("resolveOptions", () => {
     });
   });
 
-  it("does not ask for a database for Cloudflare, and refuses one given with it", async () => {
-    const prompts = answers("edge", "postgresql", "cloudflare");
+  it("gives Cloudflare its Durable Object for a database, without asking for one", async () => {
+    const prompts = answers({ directory: "edge", runtime: "cloudflare", framework: "none" });
+    expect(await resolveWith({}, prompts)).toMatchObject({
+      runtime: "cloudflare",
+      framework: "none",
+      database: "durable-object",
+    });
+    expect(prompts.asked).toEqual([
+      "Where should the project go?",
+      "Where will the app run?",
+      "Which framework?",
+    ]);
+    expect(prompts.offered["Which framework?"]?.[0]).toEqual({
+      value: "none",
+      label: "None",
+      hint: "a JSON API in the Worker",
+    });
     expect(
-      await resolveOptions({
-        raw: { install: true, git: true, yes: false },
-        cwd,
-        userAgent: undefined,
-        prompts,
-      }),
-    ).toMatchObject({ framework: "cloudflare", database: "cloudflare" });
-    expect(prompts.asked).toEqual(["Where should the project go?", "How will the app run?"]);
-    expect(
-      await resolveOptions({
-        raw: { framework: "cloudflare", install: true, git: true, yes: true },
-        cwd,
-        userAgent: undefined,
-        prompts: null,
-      }),
-    ).toMatchObject({ framework: "cloudflare", database: "cloudflare" });
+      await resolveWith({ runtime: "cloudflare", framework: "react-router", yes: true }),
+    ).toMatchObject({
+      runtime: "cloudflare",
+      framework: "react-router",
+      database: "durable-object",
+    });
+  });
+
+  it("refuses a database with Cloudflare", async () => {
     await expect(
-      resolveOptions({
-        raw: {
-          framework: "cloudflare",
-          database: "sqlite",
-          install: true,
-          git: true,
-          yes: true,
-        },
-        cwd,
-        userAgent: undefined,
-        prompts: null,
-      }),
+      resolveWith({ runtime: "cloudflare", database: "sqlite", yes: true }),
     ).rejects.toThrow(
-      "--database does not apply to --framework cloudflare: the app keeps everything in its Durable Object's SQLite",
+      "--database does not apply to --runtime cloudflare: the app keeps everything in its Durable Object's SQLite",
     );
+  });
+
+  it("runs on Node when given a database, without asking where", async () => {
+    const prompts = answers({ framework: "none" });
+    expect(await resolveWith({ directory: "shop", database: "postgresql" }, prompts)).toMatchObject(
+      { runtime: "node", framework: "none", database: "postgresql" },
+    );
+    expect(prompts.asked).toEqual(["Which framework?"]);
   });
 
   it("uses the defaults with --yes or without a terminal, including an empty answer", async () => {
@@ -177,92 +217,57 @@ describe("resolveOptions", () => {
       raw: { install: true, git: true, yes: true },
       cwd,
       userAgent: undefined,
-      prompts: answers("nope", "postgresql"),
+      prompts: answers({}),
     });
     expect(yes).toMatchObject({
       name: "bounda-app",
+      runtime: "node",
+      framework: "none",
       database: "sqlite",
-      framework: "node",
       packageManager: "npm",
     });
-    const quiet = await resolveOptions({
-      raw: { install: true, git: true, yes: false },
-      cwd,
-      userAgent: undefined,
-      prompts: null,
+    expect(await resolveWith({})).toMatchObject({
+      name: "bounda-app",
+      runtime: "node",
+      framework: "none",
+      database: "sqlite",
     });
-    expect(quiet).toMatchObject({ name: "bounda-app", database: "sqlite", framework: "node" });
-    const empty = await resolveOptions({
-      raw: { install: true, git: true, yes: false },
-      cwd,
-      userAgent: undefined,
-      prompts: answers("   ", "sqlite"),
-    });
+    const empty = await resolveWith(
+      {},
+      answers({ directory: "   ", runtime: "node", framework: "none", database: "sqlite" }),
+    );
     expect(empty).toMatchObject({ name: "bounda-app" });
   });
 
   it("reports a cancelled prompt", async () => {
+    expect(await resolveWith({}, answers({ directory: null }))).toBe("cancelled");
+    expect(await resolveWith({ directory: "x" }, answers({ runtime: null }))).toBe("cancelled");
     expect(
-      await resolveOptions({
-        raw: { install: true, git: true, yes: false },
-        cwd,
-        userAgent: undefined,
-        prompts: answers(null, "sqlite"),
-      }),
+      await resolveWith({ directory: "x", runtime: "node" }, answers({ framework: null })),
     ).toBe("cancelled");
     expect(
-      await resolveOptions({
-        raw: { directory: "x", install: true, git: true, yes: false },
-        cwd,
-        userAgent: undefined,
-        prompts: answers("x", null),
-      }),
-    ).toBe("cancelled");
-    expect(
-      await resolveOptions({
-        raw: { directory: "x", database: "sqlite", install: true, git: true, yes: false },
-        cwd,
-        userAgent: undefined,
-        prompts: answers("x", "sqlite", null),
-      }),
-    ).toBe("cancelled");
-    expect(
-      await resolveOptions({
-        raw: { directory: "x", framework: "node", install: true, git: true, yes: false },
-        cwd,
-        userAgent: undefined,
-        prompts: answers("x", null),
-      }),
+      await resolveWith(
+        { directory: "x", runtime: "node", framework: "none" },
+        answers({ database: null }),
+      ),
     ).toBe("cancelled");
   });
 
-  it("rejects unknown frameworks", async () => {
-    await expect(
-      resolveOptions({
-        raw: { framework: "next", install: true, git: true, yes: true },
-        cwd,
-        userAgent: undefined,
-        prompts: null,
-      }),
-    ).rejects.toThrow('--framework must be one of node, react-router, cloudflare; got "next"');
-  });
-
-  it("rejects unknown databases and package managers", async () => {
-    await expect(
-      resolveOptions({
-        raw: { database: "mongo", install: true, git: true, yes: true },
-        cwd,
-        userAgent: undefined,
-        prompts: null,
-      }),
-    ).rejects.toThrow('--database must be one of sqlite, postgresql; got "mongo"');
-    await expect(
-      resolveOptions({
-        raw: { packageManager: "cargo", install: true, git: true, yes: true },
-        cwd,
-        userAgent: undefined,
-        prompts: null,
-      }),
-    ).rejects.toThrow('--pm must be one of pnpm, npm, yarn, bun; got "cargo"');
+  it("rejects unknown runtimes, frameworks, databases and package managers", async () => {
+    await expect(resolveWith({ runtime: "deno", yes: true })).rejects.toThrow(
+      '--runtime must be one of node, cloudflare; got "deno"',
+    );
+    await expect(resolveWith({ framework: "next", yes: true })).rejects.toThrow(
+      '--framework must be one of none, react-router; got "next"',
+    );
+    await expect(resolveWith({ database: "mongo", yes: true })).rejects.toThrow(
+      '--database must be one of sqlite, postgresql; got "mongo"',
+    );
+    await expect(resolveWith({ database: "durable-object", yes: true })).rejects.toThrow(
+      '--database must be one of sqlite, postgresql; got "durable-object"',
+    );
+    await expect(resolveWith({ packageManager: "cargo", yes: true })).rejects.toThrow(
+      '--pm must be one of pnpm, npm, yarn, bun; got "cargo"',
+    );
   });
 });

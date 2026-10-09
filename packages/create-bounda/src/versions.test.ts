@@ -25,6 +25,7 @@ const TOOLS = [
   "wrangler",
   "@vitest/runner",
   "@cloudflare/vitest-plugin",
+  "@cloudflare/vite-plugin",
 ];
 
 const manifestOf = (
@@ -95,6 +96,9 @@ describe("versions", () => {
     expect(versions.cloudflareVitest).toBe(`^${await catalogVersion("@vitest/runner")}`);
     expect(versions.cloudflareVitestPlugin).toBe(
       `^${await catalogVersion("@cloudflare/vitest-plugin")}`,
+    );
+    expect(versions.cloudflareVitePlugin).toBe(
+      `^${await catalogVersion("@cloudflare/vite-plugin")}`,
     );
   });
 

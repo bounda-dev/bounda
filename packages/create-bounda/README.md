@@ -16,25 +16,29 @@ the generator wired up.
 npm create bounda@latest my-app
 ```
 
-It asks for a database and how the app runs, or takes both as flags:
+It asks where the app runs, which framework it uses and, on Node, which database, or takes the
+answers as flags:
 
 ```bash
-npm create bounda@latest my-app -- --database postgresql --framework react-router
+npm create bounda@latest my-app -- --runtime node --framework react-router --database postgresql
 ```
 
 | Flag | Values | Default |
 | --- | --- | --- |
-| `--database` | `sqlite`, `postgresql` | `sqlite`, or asked |
-| `--framework` | `node`, `react-router` | `node`, or asked |
+| `--runtime` | `node`, `cloudflare` | `node`, or asked |
+| `--framework` | `none`, `react-router` | `none`, or asked |
+| `--database` | `sqlite`, `postgresql`, on `node` only | `sqlite`, or asked |
 | `--pm` | `pnpm`, `npm`, `yarn`, `bun` | whichever ran the command |
 | `--no-install`, `--no-git`, `--yes` | | |
 
-`node` gives a script that boots the app and places an order. `react-router` gives a React Router
-8 app in framework mode with a page that dispatches a command from an action and reads a query
-from a loader.
+On `node`, `none` gives a script that boots the app and places an order, and `react-router` a
+React Router 8 app in framework mode with a page that dispatches a command from an action and
+reads a query from a loader. On `cloudflare` the store is a Durable Object per tenant, so there
+is no database to pick: `none` gives a Worker with a JSON API, and `react-router` the same React
+Router app, served from the Worker.
 
-Installing runs the generator (it is the `prepare` script), so the project type-checks and its
-test passes straight away.
+Installing runs the generator (the `prepare` script on Node; on Cloudflare, `create-bounda` runs
+`generate` itself), so the project type-checks and its test passes straight away.
 
 ## Status
 
