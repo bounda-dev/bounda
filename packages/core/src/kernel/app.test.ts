@@ -12,6 +12,7 @@ import type { Registry } from "../modules/registry.ts";
 import type { FieldsArgs } from "../modules/view.ts";
 import { createTestApp } from "../testing/index.ts";
 import { createApp } from "./app.ts";
+import { PARKED_POSITION } from "./dispatch/reactive-checkpoints.ts";
 import { PROCESS_EVENTS } from "./process/lifecycle.ts";
 import { readYourWrites } from "./read-your-writes.ts";
 import {
@@ -673,7 +674,7 @@ describe("policies and processes follow the stream from when they are deployed",
     await app.stop();
   });
 
-  it("forgets the checkpoints of the policies and processes an app no longer has", async () => {
+  it("parks the checkpoints of the policies and processes an app no longer has", async () => {
     const storage = memory();
     const { checkpointStore } = await storage.createStorage({ logger: silentLogger });
     await checkpointStore.set("policies", 3);
@@ -682,9 +683,32 @@ describe("policies and processes follow the stream from when they are deployed",
 
     const app = await open(quiet, storage);
     expect(await checkpointStore.list()).toEqual([
+      { subscriber: "policies", position: PARKED_POSITION },
+      { subscriber: "processes", position: PARKED_POSITION },
       { subscriber: "projection:orderSummary", position: 3 },
     ]);
     await app.stop();
+  });
+
+  it("stops an instance still running policies when a deploy drops them, and restarts them at the head", async () => {
+    const storage = memory();
+    const before = await open(quiet, storage);
+    await before.commands.placeOrder({ orderId: "o-1", total: 42 });
+    await before.commands.payOrder({ orderId: "o-1", method: "card" });
+    await before.stop();
+
+    const old = await open(registry, storage);
+    const dropped = await open(quiet, storage);
+    await old.runUntilIdle();
+    expect(await archived(storage)).toEqual([]);
+    await old.stop();
+    await dropped.stop();
+
+    const back = await open(registry, storage);
+    const { checkpointStore } = await storage.createStorage({ logger: silentLogger });
+    expect(await checkpointStore.get("policies")).toBe(2);
+    expect(await checkpointStore.get("processes")).toBe(2);
+    await back.stop();
   });
 
   it("starts a first policy and process at the head, not at the history before them", async () => {
