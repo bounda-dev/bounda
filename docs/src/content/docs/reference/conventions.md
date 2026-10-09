@@ -65,7 +65,7 @@ does files that start with `_` or `.`, tests (`*.test.ts`, `*.test-d.ts`), decla
 Some rules need the modules themselves, so the app checks them when it is created and throws a
 `ConfigurationError`:
 
-- a policy whose trigger is not an event of the aggregate it listens to;
+- a policy or a projection whose trigger is not an event of the aggregate it listens to;
 - a `deadline()` field without its `at-` file, and an `at-` file without its field; the name
   `timeout` is reserved for the process's lifetime;
 - an event of another aggregate that a process listens to and cannot assign to an instance, by an

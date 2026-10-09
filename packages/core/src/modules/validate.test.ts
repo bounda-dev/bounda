@@ -223,6 +223,34 @@ describe("validateRegistry", () => {
     );
   });
 
+  it("requires a projection's event, from its file or its on, to be one of its aggregate", () => {
+    const registry: Registry = {
+      aggregates: { order },
+      readModels: {
+        orderSummary: {
+          ...orderSummary,
+          projections: {
+            order: {
+              orderPlaced: { project: noop },
+              orderPlcaed: { project: noop },
+              byOn: { on: ["OrderPlaced", "OrderPaid"], project: noop },
+              renamed: { on: "OrderPlaced", project: noop },
+            },
+          },
+        },
+      },
+    };
+    expect(() => validateRegistry(registry)).toThrow(
+      new ConfigurationError(
+        [
+          "Invalid registry:",
+          '  readModels.orderSummary.projections.order.orderPlcaed: "OrderPlcaed" is not an event of the aggregate "order"; name the file after one or export "on"',
+          '  readModels.orderSummary.projections.order.byOn: "OrderPaid" is not an event of the aggregate "order"; name the file after one or export "on"',
+        ].join("\n"),
+      ),
+    );
+  });
+
   it("rejects a process named like a policy of its aggregate", () => {
     const registry = withOrder({
       policies: { ...order.policies, orderPayment: { module: { handler: noop } } },

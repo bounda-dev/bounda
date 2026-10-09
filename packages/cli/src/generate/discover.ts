@@ -926,6 +926,35 @@ const resolvePolicyTriggers = (
     }),
   }));
 
+/**
+ * Warns about a projection named after no event of its aggregate that does not declare `on`
+ * either: it would compile against every event and never run.
+ */
+const checkProjectionEvents = async (
+  context: Context,
+  aggregates: readonly AggregateModel[],
+  readModels: readonly ReadModelModel[],
+): Promise<void> => {
+  for (const readModel of readModels) {
+    for (const projection of readModel.projections) {
+      const events = aggregates.find(
+        (aggregate) => aggregate.name === projection.aggregate,
+      )?.events;
+      if (events === undefined || events.some((event) => event.key === projection.eventKey)) {
+        continue;
+      }
+      const source = await readFile(projection.path, "utf8");
+      if (runtimeExportsOf(source).includes("on")) continue;
+      warnAbout(
+        context,
+        readModel.name,
+        projection.path,
+        `"${projection.eventKey}" is not an event of "${projection.aggregate}" and the module exports no "on"; is the event misspelled?`,
+      );
+    }
+  }
+};
+
 export const discoverProject: DiscoverProjectFunction = async ({ root, appDir = "app" }) => {
   const problems = createProblemCollector();
   const app = join(root, appDir);
@@ -957,6 +986,7 @@ export const discoverProject: DiscoverProjectFunction = async ({ root, appDir = 
   checkForeignHandlers(context, aggregates);
   checkUniqueNames(context, aggregates, readModels);
   problems.throwIfAny();
+  await checkProjectionEvents(context, aggregates, readModels);
   return {
     root,
     appDir,

@@ -909,6 +909,26 @@ describe("discoverProject convention problems", () => {
     ]);
   });
 
+  it("warns about a projection named after no event that exports no on", async () => {
+    const root = await project([
+      "app/domain/order/order-placed.ts",
+      "app/read/orders/view.ts",
+      ["app/read/orders/projections/order/order-placed.ts", "export const project = () => {};\n"],
+      ["app/read/orders/projections/order/order-plcaed.ts", "export const project = () => {};\n"],
+      [
+        "app/read/orders/projections/order/any-order.ts",
+        'export const on = "OrderPlaced";\nexport const project = () => {};\n',
+      ],
+    ]);
+    expect((await discoverProject({ root })).warnings).toEqual([
+      {
+        module: "orders",
+        message:
+          'app/read/orders/projections/order/order-plcaed.ts: "orderPlcaed" is not an event of "order" and the module exports no "on"; is the event misspelled?',
+      },
+    ]);
+  });
+
   it("rejects an aggregate's own folder and aggregate folders inside another's", async () => {
     const root = await project([
       "app/domain/order/order-placed.ts",

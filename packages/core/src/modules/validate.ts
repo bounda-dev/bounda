@@ -1,4 +1,5 @@
 import { ConfigurationError } from "../contracts/errors.ts";
+import { capitalize } from "./naming.ts";
 import type { PortModules } from "./port.ts";
 import type { Registry } from "./registry.ts";
 
@@ -132,8 +133,21 @@ const validateReadModel = (
         message: `there is no aggregate "${aggregate}" whose events to project`,
       });
     }
+    const events = new Set<string>(
+      Object.keys(aggregates[aggregate]?.events ?? {}).map(capitalize),
+    );
     for (const [key, projection] of Object.entries(projections)) {
-      requireFunction(problems, projection, `${base}.projections.${aggregate}.${key}`, "project");
+      const path = `${base}.projections.${aggregate}.${key}`;
+      requireFunction(problems, projection, path, "project");
+      if (!(aggregate in aggregates)) continue;
+      const { on } = projection;
+      const triggers = on === undefined ? [capitalize(key)] : typeof on === "string" ? [on] : on;
+      for (const trigger of triggers.filter((type) => !events.has(type))) {
+        problems.push({
+          path,
+          message: `"${trigger}" is not an event of the aggregate "${aggregate}"; name the file after one or export "on"`,
+        });
+      }
     }
   }
   for (const [key, query] of Object.entries(readModel.queries)) {
