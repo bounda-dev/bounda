@@ -1,6 +1,5 @@
 import type { EventStore } from "../adapter/ports/event-store.ts";
 import type { Clock } from "../contracts/clock.ts";
-import { ConcurrencyError } from "../contracts/errors.ts";
 import type { StoredEvent } from "../contracts/event.ts";
 import type { IdGenerator } from "../contracts/ids.ts";
 import type { CausationContext } from "../contracts/metadata.ts";
@@ -36,11 +35,10 @@ export interface AppendSystemEventFunction {
   (args: AppendSystemEventArgs): Promise<StoredEvent>;
 }
 
-const MAX_ATTEMPTS = 5;
-
 /**
- * System events never change aggregate state, so appending one at whatever version the stream
- * has reached is safe.
+ * System events never change aggregate state, so one is appended at whatever version the stream
+ * has reached, read without loading its events. `eventStore` is a unit of work's: a stream that
+ * moves meanwhile fails the commit, which runs the unit again.
  */
 export const appendSystemEvent: AppendSystemEventFunction = async ({
   eventStore,
@@ -52,29 +50,27 @@ export const appendSystemEvent: AppendSystemEventFunction = async ({
   payload,
   context,
 }) => {
-  for (let attempt = 1; ; attempt += 1) {
-    const { version } = await eventStore.load({ aggregateType, aggregateId });
-    try {
-      const appended = await eventStore.append({
+  const { version } = await eventStore.load({
+    aggregateType,
+    aggregateId,
+    fromVersion: Number.MAX_SAFE_INTEGER,
+  });
+  const appended = await eventStore.append({
+    aggregateType,
+    aggregateId,
+    expectedVersion: version,
+    events: [
+      {
+        id: ids.next(),
         aggregateType,
         aggregateId,
-        expectedVersion: version,
-        events: [
-          {
-            id: ids.next(),
-            aggregateType,
-            aggregateId,
-            version: version + 1,
-            type,
-            payload,
-            timestamp: clock.now().toISOString(),
-            metadata: { ...context, schemaVersion: 1, system: true },
-          },
-        ],
-      });
-      return appended.events[0] as StoredEvent;
-    } catch (error) {
-      if (!(error instanceof ConcurrencyError) || attempt >= MAX_ATTEMPTS) throw error;
-    }
-  }
+        version: version + 1,
+        type,
+        payload,
+        timestamp: clock.now().toISOString(),
+        metadata: { ...context, schemaVersion: 1, system: true },
+      },
+    ],
+  });
+  return appended.events[0] as StoredEvent;
 };
