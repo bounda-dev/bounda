@@ -1,5 +1,6 @@
 import { isAdapter } from "../../adapter/adapter.ts";
 import type { CheckpointStore } from "../../adapter/ports/checkpoint-store.ts";
+import { checkConfigNames } from "../../config/names.ts";
 import { resolveConfig } from "../../config/schema.ts";
 import type { Config } from "../../config/types.ts";
 import { systemClock } from "../../contracts/clock.ts";
@@ -100,6 +101,7 @@ export const rebuildReadModel: RebuildReadModelFunction = async ({
     throw new ConfigurationError(`maxEvents must be at least 1, got ${maxEvents}`);
   }
   const config = resolveConfig(rawConfig);
+  checkConfigNames({ registry, config });
   const entry = registry.readModels[name];
   if (entry === undefined) {
     throw new ConfigurationError(
