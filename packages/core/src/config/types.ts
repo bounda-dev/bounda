@@ -17,9 +17,10 @@ export interface RetryConfig {
  */
 export interface PoliciesConfig {
   /**
-   * How a failed policy run is retried, and a command scheduled with `delay`; each takes the one
-   * of its aggregate, so an override applies to both. Defaults to exponential, 3 attempts, 1 second
-   * to 30 seconds.
+   * How a failed policy run, or a failed command scheduled with `delay`, is retried: a policy run
+   * takes the one of the aggregate the policy belongs to, a scheduled command that of the aggregate
+   * it is for. Defaults to exponential, 3 attempts, 1 second to 30 seconds, and in `overrides` to
+   * `runtime.policies.retry`.
    */
   readonly retry?: RetryConfig;
   /**

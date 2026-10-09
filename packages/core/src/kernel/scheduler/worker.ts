@@ -124,10 +124,13 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   const deadlineOf = (entry: ScheduledCommand): ProcessDeadlinePayload =>
     entry.command.payload as ProcessDeadlinePayload;
 
+  const aggregateOf = (entry: ScheduledCommand): string | undefined =>
+    aggregates.commandsByType[entry.command.type]?.aggregate.name;
+
   const retryOf = (entry: ScheduledCommand): ResolvedRetryConfig => {
     if (delayedPolicies.isDelayedPolicy(entry)) return delayedPolicies.retryOf(entry);
     if (isDeadline(entry)) return processes.retryOf(deadlineOf(entry).process);
-    const aggregate = aggregates.commandsByType[entry.command.type]?.aggregate.name;
+    const aggregate = aggregateOf(entry);
     return aggregate === undefined
       ? config.runtime.policies.retry
       : config.forAggregate(aggregate).policies.retry;
@@ -156,7 +159,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     error: unknown,
     attempts: number,
   ): Promise<void> => {
-    const aggregateType = aggregates.commandsByType[entry.command.type]?.aggregate.name;
+    const aggregateType = aggregateOf(entry);
     if (aggregateType === undefined) return;
     await appendSystemEvent({
       eventStore: unit.eventStore,
@@ -207,7 +210,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       handler: entry.command.type,
       eventId: entry.dedupeKey,
       eventType: entry.command.type,
-      aggregateType: aggregates.commandsByType[entry.command.type]?.aggregate.name ?? "",
+      aggregateType: aggregateOf(entry) ?? "",
       aggregateId: entry.command.aggregateId,
       errorType: reason,
       errorMessage: details.message,
