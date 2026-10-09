@@ -137,7 +137,13 @@ h1#_top,
   font-weight: 600;
 }
 
-/* A position, as the ledger writes one: mono, muted, tabular. */
+/* A position, as the ledger writes one: a label, then the number in mono, muted, tabular. */
+.bounda-position {
+  display: flex;
+  gap: 0.75rem;
+  align-items: baseline;
+}
+
 .bounda-number {
   font-family: var(--sl-font-mono);
   font-size: 0.75rem;

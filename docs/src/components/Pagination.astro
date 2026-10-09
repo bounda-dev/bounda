@@ -51,12 +51,6 @@ const links = [
     text-align: end;
   }
 
-  .bounda-position {
-    display: flex;
-    gap: 0.75rem;
-    align-items: baseline;
-  }
-
   .bounda-label {
     color: var(--sl-color-gray-3);
   }
@@ -72,6 +66,8 @@ const links = [
 
   a:hover .title,
   a:focus-visible .title {
-    color: var(--sl-color-accent);
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.2em;
   }
 </style>
