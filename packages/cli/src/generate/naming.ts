@@ -80,6 +80,16 @@ export const processDeadlineOf: ProcessDeadlineOfFunction = (fileName) => {
   return match?.[1] === undefined ? null : toCamelCase(match[1]);
 };
 
+export interface CompareNamesFunction {
+  (a: string, b: string): number;
+}
+
+/**
+ * Orders by UTF-16 code unit, the same on every machine: `localeCompare` follows the machine's
+ * locale, which would reorder the generated files from one developer to the next.
+ */
+export const compareNames: CompareNamesFunction = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+
 export interface UniqueAliasesArgs {
   readonly entries: readonly { readonly alias: string; readonly owner: string }[];
 }

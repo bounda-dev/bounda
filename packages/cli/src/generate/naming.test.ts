@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  compareNames,
   isKebabCase,
   joinKeys,
   keyOf,
@@ -63,6 +64,18 @@ describe("processHandlerEventOf", () => {
     expect(processHandlerEventOf("on-timeout")).toBe("timeout");
     expect(processHandlerEventOf("order-paid")).toBeNull();
     expect(processHandlerEventOf("on-")).toBeNull();
+  });
+});
+
+describe("compareNames", () => {
+  it("orders by code unit, whatever the machine's locale", () => {
+    expect(["zebra", "tz", "aaron", "Zed", "b"].sort(compareNames)).toEqual([
+      "Zed",
+      "aaron",
+      "b",
+      "tz",
+      "zebra",
+    ]);
   });
 });
 

@@ -509,6 +509,10 @@ describe("discoverProject convention problems", () => {
       },
       {
         module: "order",
+        message: `app/domain/order/Policies: ${notRead} policies if that is what it holds`,
+      },
+      {
+        module: "order",
         message: `app/domain/order/command: ${notRead} commands if that is what it holds`,
       },
       {
@@ -518,10 +522,6 @@ describe("discoverProject convention problems", () => {
       {
         module: "order",
         message: `app/domain/order/infrastucture: ${notRead} infrastructure if that is what it holds`,
-      },
-      {
-        module: "order",
-        message: `app/domain/order/Policies: ${notRead} policies if that is what it holds`,
       },
       {
         module: "order",

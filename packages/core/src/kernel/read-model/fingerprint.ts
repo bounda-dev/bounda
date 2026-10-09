@@ -34,7 +34,8 @@ export const readModelSource: ReadModelSourceFunction = (entry) =>
           ([key, projection]) => [`${aggregate}.${key}`, projection] as const,
         ),
       )
-      .sort(([left], [right]) => left.localeCompare(right))
+      // By code unit: a locale-aware order would change the fingerprint from one machine to another.
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
       .map(
         ([name, projection]) =>
           `${name}|${String(projection.on ?? "")}|${String(projection.project)}`,

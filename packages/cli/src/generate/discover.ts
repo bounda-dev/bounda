@@ -28,6 +28,7 @@ import type {
   ReadModelModel,
 } from "./model.ts";
 import {
+  compareNames,
   isKebabCase,
   joinKeys,
   keyOf,
@@ -83,7 +84,7 @@ const list = async (directory: string): Promise<Listing> => {
   const entries = (await readdir(directory, { withFileTypes: true })).filter(
     (entry) => !isIgnored(entry),
   );
-  const sorted = [...entries].sort((a, b) => a.name.localeCompare(b.name));
+  const sorted = [...entries].sort((a, b) => compareNames(a.name, b.name));
   return {
     directories: sorted.filter((entry) => entry.isDirectory()).map((entry) => entry.name),
     modules: sorted
@@ -96,7 +97,7 @@ const list = async (directory: string): Promise<Listing> => {
 };
 
 const byKey = <T extends { readonly key: string }>(a: T, b: T): number =>
-  a.key.localeCompare(b.key);
+  compareNames(a.key, b.key);
 
 interface Context {
   readonly root: string;
@@ -326,8 +327,8 @@ const discoverProcess = async (
     handlers: handlers.sort(
       (a, b) =>
         Number(a.aggregate !== aggregate) - Number(b.aggregate !== aggregate) ||
-        a.aggregate.localeCompare(b.aggregate) ||
-        a.eventKey.localeCompare(b.eventKey),
+        compareNames(a.aggregate, b.aggregate) ||
+        compareNames(a.eventKey, b.eventKey),
     ),
     deadlines,
   };
