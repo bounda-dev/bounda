@@ -134,7 +134,7 @@ describe("createSqlTable statements for PostgreSQL", () => {
     const executor = recordingExecutor();
     const table = createSqlTable<{ orderId: string; status: string; paidAt?: Date }>({
       readModel: "orders",
-      table: "bounda_orders",
+      table: "bounda_rm_orders",
       fields,
       dialect: postgresqlDialect,
       executor,
@@ -151,18 +151,18 @@ describe("createSqlTable statements for PostgreSQL", () => {
     await table.delete({ status: "placed" });
     expect(executor.statements).toEqual([
       [
-        'INSERT INTO "bounda_orders" ("order_id", "status", "paid_at") VALUES ($1, $2, $3) ON CONFLICT ("order_id") DO UPDATE SET "status" = excluded."status", "paid_at" = excluded."paid_at"',
+        'INSERT INTO "bounda_rm_orders" ("order_id", "status", "paid_at") VALUES ($1, $2, $3) ON CONFLICT ("order_id") DO UPDATE SET "status" = excluded."status", "paid_at" = excluded."paid_at"',
         ["o-1", "paid", paidAt],
       ],
       [
-        'INSERT INTO "bounda_orders" ("order_id", "status", "paid_at") VALUES ($1, $2, $3) ON CONFLICT ("order_id") DO NOTHING',
+        'INSERT INTO "bounda_rm_orders" ("order_id", "status", "paid_at") VALUES ($1, $2, $3) ON CONFLICT ("order_id") DO NOTHING',
         ["o-1", "placed", null],
       ],
       [
-        'UPDATE "bounda_orders" SET "status" = $1, "paid_at" = $2 WHERE "order_id" = $3',
+        'UPDATE "bounda_rm_orders" SET "status" = $1, "paid_at" = $2 WHERE "order_id" = $3',
         ["paid", paidAt, "o-1"],
       ],
-      ['DELETE FROM "bounda_orders" WHERE "status" = $1', ["placed"]],
+      ['DELETE FROM "bounda_rm_orders" WHERE "status" = $1', ["placed"]],
     ]);
   });
 
@@ -178,14 +178,14 @@ describe("createSqlTable statements for PostgreSQL", () => {
     await table.count();
     expect(executor.statements).toEqual([
       [
-        'SELECT "order_id", "status", "paid_at" FROM "bounda_orders" WHERE "order_id" = $1 LIMIT $2',
+        'SELECT "order_id", "status", "paid_at" FROM "bounda_rm_orders" WHERE "order_id" = $1 LIMIT $2',
         ["o-1", 1],
       ],
       [
-        'SELECT "order_id", "status", "paid_at" FROM "bounda_orders" WHERE "status" = $1 ORDER BY "paid_at" DESC LIMIT $2 OFFSET $3',
+        'SELECT "order_id", "status", "paid_at" FROM "bounda_rm_orders" WHERE "status" = $1 ORDER BY "paid_at" DESC LIMIT $2 OFFSET $3',
         ["paid", 10, 20],
       ],
-      ['SELECT COUNT(*) AS count FROM "bounda_orders"', []],
+      ['SELECT COUNT(*) AS count FROM "bounda_rm_orders"', []],
     ]);
   });
 

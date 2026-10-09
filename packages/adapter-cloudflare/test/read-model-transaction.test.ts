@@ -55,7 +55,7 @@ describe("read model transactions in a Durable Object", () => {
             await table.upsert(order("2"));
             await checkpointStore.compareAndSet(SUBSCRIBER, 1, 2);
             (client.raw as SqlStorage).exec(
-              `UPDATE "bounda_order_summary" SET "status" = 'paid' WHERE "order_id" = '1'`,
+              `UPDATE "bounda_rm_order_summary" SET "status" = 'paid' WHERE "order_id" = '1'`,
             );
             throw new Error("projection failed");
           },

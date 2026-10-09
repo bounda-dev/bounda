@@ -114,7 +114,7 @@ describe("sqlite adapter on a file", () => {
       "app_dead_letters",
       "app_events",
       "app_inbox",
-      "app_order_summary",
+      "app_rm_order_summary",
       "app_scheduled_commands",
     ]);
     await readModel.close();
@@ -136,7 +136,7 @@ describe("sqlite adapter on a file", () => {
     await committed.commit({ subscriber: "projection:orderSummary", position: 0 });
     const aborted = await adapter.rebuildReadModel(args);
     await aborted.abort();
-    const table = "bounda_order_summary";
+    const table = "bounda_rm_order_summary";
     const shadow = `${table}__rebuild`;
     expect(logs).toEqual([
       ["read model rebuild started", { readModel: "orderSummary", table, shadow }],
@@ -146,7 +146,7 @@ describe("sqlite adapter on a file", () => {
     ]);
     const ports = await adapter.createReadModel({ ...args, logger: silentLogger });
     const tables = await (ports.client.raw as Client).execute(
-      "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'bounda_order%' ORDER BY name",
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'bounda_rm_order%' ORDER BY name",
     );
     expect(tables.rows.map((row) => row.name)).toEqual([table]);
     await ports.close();
@@ -179,7 +179,7 @@ describe("sqlite adapter on a file", () => {
       paid: boolean;
     }>({ name: "orders", fields: v2, logger });
     expect(logs).toEqual([
-      ["read model table evolved", { readModel: "orders", table: "bounda_orders", added: 3 }],
+      ["read model table evolved", { readModel: "orders", table: "bounda_rm_orders", added: 3 }],
     ]);
     const unchanged = await sqlite({ path }).createReadModel({
       name: "orders",
@@ -411,7 +411,7 @@ const registry = {
             client: { get: (sql: string, params: unknown[]) => Promise<Row | null> };
           }) =>
             client.get(
-              "SELECT order_id, status, total FROM bounda_order_summary WHERE order_id = ?",
+              "SELECT order_id, status, total FROM bounda_rm_order_summary WHERE order_id = ?",
               [orderId],
             ),
           handler: ({ repositoryData }: { repositoryData: Row | null }) => repositoryData,

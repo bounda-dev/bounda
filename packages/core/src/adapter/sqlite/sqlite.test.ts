@@ -195,7 +195,7 @@ describe("createSqliteAdapter", () => {
       "app_dead_letters",
       "app_events",
       "app_inbox",
-      "app_order_summary",
+      "app_rm_order_summary",
       "app_scheduled_commands",
     ]);
   });
@@ -215,7 +215,7 @@ describe("createSqliteAdapter", () => {
     const newer = await adapter.rebuildReadModel(args);
     await older.abort();
     await newer.abort();
-    const table = "bounda_order_summary";
+    const table = "bounda_rm_order_summary";
     const shadow = `${table}__rebuild`;
     expect(logs).toEqual([
       ["read model rebuild started", { readModel: "orderSummary", table, shadow }],
@@ -227,7 +227,7 @@ describe("createSqliteAdapter", () => {
       ["read model rebuild superseded", { readModel: "orderSummary", table }],
       ["read model rebuild aborted", { readModel: "orderSummary", table }],
     ]);
-    expect(tableNames(db, "bounda_order")).toEqual([table]);
+    expect(tableNames(db, "bounda_rm_order")).toEqual([table]);
   });
 
   it("evolves a read model table additively and refuses destructive changes", async () => {
@@ -250,7 +250,7 @@ describe("createSqliteAdapter", () => {
       paid: boolean;
     }>({ name: "orders", fields: v2, logger });
     expect(logs).toEqual([
-      ["read model table evolved", { readModel: "orders", table: "bounda_orders", added: 3 }],
+      ["read model table evolved", { readModel: "orders", table: "bounda_rm_orders", added: 3 }],
     ]);
     await nodeSqlite(db).adapter.createReadModel({ name: "orders", fields: v2, logger });
     expect(logs).toHaveLength(1);

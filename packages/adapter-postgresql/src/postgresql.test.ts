@@ -273,7 +273,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
       "dead_letters",
       "events",
       "inbox",
-      "order_summary",
+      "rm_order_summary",
       "scheduled_commands",
     ]);
   });
@@ -305,9 +305,10 @@ describe.skipIf(container === null)("postgresql adapter", () => {
     ]);
     await table.update({ id: "b" }, { tags: [] });
     expect(await table.findOne({ id: "b" })).toEqual({ id: "b", active: false, since, tags: [] });
-    const [row] = await client.all(`SELECT id, tags, since FROM "${prefix}flags" WHERE id = $1`, [
-      "a",
-    ]);
+    const [row] = await client.all(
+      `SELECT id, tags, since FROM "${prefix}rm_flags" WHERE id = $1`,
+      ["a"],
+    );
     expect(row).toEqual({ id: "a", tags: ["x", "y"], since });
   });
 
@@ -332,7 +333,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
     const aborted = await adapter.rebuildReadModel(args);
     await superseded.abort();
     await aborted.abort();
-    const table = `${prefix}order_summary`;
+    const table = `${prefix}rm_order_summary`;
     const shadow = `${table}__rebuild`;
     expect(logs).toEqual([
       ["read model rebuild started", { readModel: "orderSummary", table, shadow }],
@@ -381,7 +382,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
       at?: Date;
     }>(adapter, "orders", v2, logger);
     expect(logs).toEqual([
-      ["read model table evolved", { readModel: "orders", table: `${prefix}orders`, added: 4 }],
+      ["read model table evolved", { readModel: "orders", table: `${prefix}rm_orders`, added: 4 }],
     ]);
     expect(await second.table.findOne({ id: "o-1" })).toEqual({ id: "o-1", total: 5 });
     const at = new Date("2026-01-01T00:00:00.000Z");
@@ -596,7 +597,7 @@ const registry = {
             client: { get: (sql: string, params: unknown[]) => Promise<Row | null> };
           }) =>
             client.get(
-              `SELECT order_id, status, total FROM "app_${run}_order_summary" WHERE order_id = $1`,
+              `SELECT order_id, status, total FROM "app_${run}_rm_order_summary" WHERE order_id = $1`,
               [orderId],
             ),
           handler: ({ repositoryData }: { repositoryData: Row | null }) => repositoryData,
@@ -888,9 +889,9 @@ describe.skipIf(container === null)("projections on postgresql", () => {
         work: async ({ client, checkpointStore }) => {
           const tx = client.raw as Sql;
           await tx.unsafe(
-            `INSERT INTO "${prefix}order_status" (order_id, status) VALUES ('r', 'x')`,
+            `INSERT INTO "${prefix}rm_order_status" (order_id, status) VALUES ('r', 'x')`,
           );
-          expect(await client.get(`SELECT * FROM "${prefix}order_status"`)).toEqual({
+          expect(await client.get(`SELECT * FROM "${prefix}rm_order_status"`)).toEqual({
             orderId: "r",
             status: "x",
           });

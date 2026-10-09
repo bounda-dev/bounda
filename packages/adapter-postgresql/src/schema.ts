@@ -1,4 +1,4 @@
-import { quoteIdentifier, tableNameFor } from "@bounda-dev/core/adapter/sql";
+import { quoteIdentifier, storageTableNameFor } from "@bounda-dev/core/adapter/sql";
 import type { PostgresqlDatabase } from "./database.ts";
 
 /**
@@ -26,13 +26,13 @@ export interface StorageTablesForFunction {
  * The tables, lock key and channel `postgresql()` uses for a table prefix.
  */
 export const storageTablesFor: StorageTablesForFunction = (prefix) => {
-  const events = tableNameFor({ prefix, readModel: "events" });
+  const events = storageTableNameFor({ prefix, table: "events" });
   return {
     events: quoteIdentifier(events),
-    checkpoints: quoteIdentifier(tableNameFor({ prefix, readModel: "checkpoints" })),
-    inbox: quoteIdentifier(tableNameFor({ prefix, readModel: "inbox" })),
-    deadLetters: quoteIdentifier(tableNameFor({ prefix, readModel: "deadLetters" })),
-    scheduledCommands: quoteIdentifier(tableNameFor({ prefix, readModel: "scheduledCommands" })),
+    checkpoints: quoteIdentifier(storageTableNameFor({ prefix, table: "checkpoints" })),
+    inbox: quoteIdentifier(storageTableNameFor({ prefix, table: "inbox" })),
+    deadLetters: quoteIdentifier(storageTableNameFor({ prefix, table: "deadLetters" })),
+    scheduledCommands: quoteIdentifier(storageTableNameFor({ prefix, table: "scheduledCommands" })),
     appendLockKey: `bounda:${events}`,
     channel: events,
   };

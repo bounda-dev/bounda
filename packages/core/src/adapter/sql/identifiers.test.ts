@@ -4,6 +4,7 @@ import {
   assertIdentifier,
   fromSnakeCase,
   quoteIdentifier,
+  storageTableNameFor,
   tableNameFor,
   toSnakeCase,
 } from "./identifiers.ts";
@@ -52,14 +53,29 @@ describe("assertIdentifier / quoteIdentifier", () => {
 });
 
 describe("tableNameFor", () => {
-  it("prefixes the snake_cased read model name", () => {
+  it("prefixes the snake_cased read model name, apart from the storage tables", () => {
     expect(tableNameFor({ prefix: "bounda_", readModel: "orderSummary" })).toBe(
-      "bounda_order_summary",
+      "bounda_rm_order_summary",
     );
-    expect(tableNameFor({ prefix: "", readModel: "orders" })).toBe("orders");
+    expect(tableNameFor({ prefix: "", readModel: "events" })).toBe("rm_events");
   });
 
   it("rejects prefixes that do not form an identifier", () => {
     expect(() => tableNameFor({ prefix: "1-", readModel: "orders" })).toThrow(ConfigurationError);
+  });
+});
+
+describe("storageTableNameFor", () => {
+  it("prefixes the snake_cased storage table name", () => {
+    expect(storageTableNameFor({ prefix: "bounda_", table: "scheduledCommands" })).toBe(
+      "bounda_scheduled_commands",
+    );
+    expect(storageTableNameFor({ prefix: "", table: "events" })).toBe("events");
+  });
+
+  it("rejects prefixes that do not form an identifier", () => {
+    expect(() => storageTableNameFor({ prefix: "1-", table: "events" })).toThrow(
+      ConfigurationError,
+    );
   });
 });

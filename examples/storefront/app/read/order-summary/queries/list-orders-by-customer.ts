@@ -4,7 +4,7 @@ export const payload = ({ z }: Query.PayloadArgs) => z.object({ customerId: z.st
 
 export const repository = ({ client, customerId }: Query.RepositoryArgs) =>
   client.all(
-    "SELECT * FROM bounda_order_summary WHERE customer_id = ? ORDER BY placed_at, order_id",
+    "SELECT * FROM bounda_rm_order_summary WHERE customer_id = ? ORDER BY placed_at, order_id",
     [customerId],
   );
 
