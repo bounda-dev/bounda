@@ -41,7 +41,8 @@ dead letter with `errorType: "retriable_exhausted"`.
   version, after `runtime.commands.concurrencyRetries` runs of the command. `streamId`,
   `expectedVersion`, `actualVersion`.
 - **`HANDLER_TIMEOUT`** (no exported class; retried). A command, policy or process handler ran out
-  of time (`runtime.commands.timeout`, `runtime.policies.timeout`).
+  of time (`runtime.commands.timeout`, `runtime.policies.timeout`,
+  `runtime.processes.handlerTimeout`).
 - **`REACTION_ABANDONED`** (no exported class; the run already failed). A command a reaction
   dispatched after its run was abandoned, or that was still running then. `cause` is why the run was
   abandoned.

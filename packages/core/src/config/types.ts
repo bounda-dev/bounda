@@ -27,6 +27,13 @@ export interface PoliciesConfig {
 export interface ProcessesConfig {
   readonly retry?: RetryConfig;
   readonly timeout?: DurationInput;
+  /**
+   * How long one run of a process handler, for an event or a deadline, may take. Past it the run
+   * is abandoned: its commands still running stop, later ones are refused with
+   * `REACTION_ABANDONED`, and its `signal` aborts. Defaults to 30 seconds, and in `overrides` to
+   * `runtime.processes.handlerTimeout`.
+   */
+  readonly handlerTimeout?: DurationInput;
 }
 
 /**
@@ -181,6 +188,7 @@ export interface ResolvedPoliciesConfig {
 export interface ResolvedProcessesConfig {
   readonly retry: ResolvedRetryConfig;
   readonly timeoutMs: number;
+  readonly handlerTimeoutMs: number;
 }
 
 export interface ResolvedCommandsConfig {

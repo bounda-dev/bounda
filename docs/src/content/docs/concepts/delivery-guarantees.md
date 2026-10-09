@@ -47,6 +47,11 @@ wins. What a second delivery finds decides what happens:
   This is the one case where the outside world sees a second call.
 - **Failed**: a retry, run again once its back-off is due.
 
+A lease lasts twice the handler's time limit: `policies.timeout` for a policy and
+`processes.handlerTimeout` for a process, each as the aggregate's `overrides` set it. A scheduled
+command, a delayed policy run or a deadline is claimed for twice the longest time limit in the app,
+commands and every override included.
+
 The mark that says "succeeded" is not written on its own. It is staged in the attempt and commits in
 one transaction with the events of the commands the handler dispatched and its scheduled commands,
 and it settles the claim by the id it was given. An attempt that stalled past its lease and whose

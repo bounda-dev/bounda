@@ -102,11 +102,10 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   let running = false;
   const defaultRetry = config.runtime.policies.retry;
   const timeoutMs = Math.max(
-    config.runtime.commands.timeoutMs,
-    config.runtime.policies.timeoutMs,
-    ...Object.values(config.runtime.overrides).flatMap((override) => [
-      override.commands.timeoutMs,
-      override.policies.timeoutMs,
+    ...[config.runtime, ...Object.values(config.runtime.overrides)].flatMap((runtime) => [
+      runtime.commands.timeoutMs,
+      runtime.policies.timeoutMs,
+      runtime.processes.handlerTimeoutMs,
     ]),
   );
   const leaseMs = timeoutMs * 2;

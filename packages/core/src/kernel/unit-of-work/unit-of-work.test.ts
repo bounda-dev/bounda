@@ -149,8 +149,10 @@ const settle = async (harness: ReactiveHarness) => {
   await harness.dispatcher.runUntilIdle();
   await harness.worker.runOnce();
 };
-const pastLease = (harness: ReactiveHarness) =>
+const pastPolicyLease = (harness: ReactiveHarness) =>
   harness.clock.advance(harness.config.runtime.policies.timeoutMs * 2 + 1);
+const pastProcessLease = (harness: ReactiveHarness) =>
+  harness.clock.advance(harness.config.runtime.processes.handlerTimeoutMs * 2 + 1);
 const processTypes = async (harness: ReactiveHarness) =>
   (
     await harness.storage.eventStore.load({
@@ -561,7 +563,7 @@ describe.each(adapters)("a reaction attempt as a unit of work on %s", (_name, ad
       attempts: 1,
     });
 
-    pastLease(harness);
+    pastPolicyLease(harness);
     await settle(harness);
     expect(await orderTypes(harness)).toEqual(["OrderPlaced", "OrderPaid"]);
     expect(await scheduledTypes(harness)).toEqual(["ArchiveOrder"]);
@@ -585,7 +587,7 @@ describe.each(adapters)("a reaction attempt as a unit of work on %s", (_name, ad
     expect(await orderTypes(harness)).toEqual(["OrderPlaced"]);
     expect(await scheduledTypes(harness)).toEqual([]);
 
-    pastLease(harness);
+    pastPolicyLease(harness);
     await settle(harness);
     expect(await orderTypes(harness)).toEqual(["OrderPlaced", "OrderPaid"]);
     expect(await scheduledTypes(harness)).toEqual(["ArchiveOrder"]);
@@ -595,7 +597,7 @@ describe.each(adapters)("a reaction attempt as a unit of work on %s", (_name, ad
   const processHarness = (retry: RetryConfig = { strategy: "none" }) =>
     createReactiveHarness({
       registry: processRegistry,
-      config: { runtime: { processes: { retry } } },
+      config: { runtime: { processes: { retry, handlerTimeout: "1m" } } },
       adapter: adapter(),
     });
 
@@ -635,7 +637,7 @@ describe.each(adapters)("a reaction attempt as a unit of work on %s", (_name, ad
       attempts: 1,
     });
 
-    pastLease(harness);
+    pastProcessLease(harness);
     await settle(harness);
     expect(await orderTypes(harness)).toEqual(["OrderPlaced"]);
     expect(await processTypes(harness)).toEqual([PROCESS_EVENTS.started, PROCESS_EVENTS.failed]);

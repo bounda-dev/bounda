@@ -1,4 +1,3 @@
-import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { ReactionDispatchResult } from "../../contracts/command.ts";
 import { ValidationError } from "../../contracts/errors.ts";
@@ -52,8 +51,8 @@ export interface RunDeadlineHandlerArgs {
 }
 
 /**
- * Handlers are bounded by the aggregate's policy timeout, as policy handlers are, and so are the
- * commands they dispatch, awaited or not. Each resolves to the state with the fields the handler
+ * Handlers are bounded by the process's `handlerTimeoutMs`, and so are the commands they dispatch,
+ * awaited or not. Each resolves to the state with the fields the handler
  * returned merged over it, validated by the process schema; a deadline's also to what its commands
  * decided. A run whose handler or one of whose commands fails, or that runs out of time, is
  * abandoned: its commands are refused from then on.
@@ -74,7 +73,6 @@ export interface DeadlineRun {
 export interface CreateProcessHandlersArgs {
   readonly aggregates: AggregatesRuntime;
   readonly pipeline: CommandPipeline;
-  readonly config: ResolvedConfig;
   readonly clock: Clock;
   readonly logger: Logger;
 }
@@ -86,7 +84,6 @@ export interface CreateProcessHandlersFunction {
 export const createProcessHandlers: CreateProcessHandlersFunction = ({
   aggregates,
   pipeline,
-  config,
   clock,
   logger,
 }) => {
@@ -136,9 +133,6 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     return { returned, decided: await reaction.decided() };
   };
 
-  const timeoutMs = (process: ProcessRuntime): number =>
-    config.forAggregate(process.aggregate).policies.timeoutMs;
-
   const runEventHandler = ({
     process,
     event,
@@ -182,7 +176,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
                   }),
                 ),
               ),
-            timeoutMs: timeoutMs(process),
+            timeoutMs: process.handlerTimeoutMs,
             subject: `process ${process.name}`,
             clock,
           }),
@@ -239,7 +233,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
                   }),
                 ),
               ),
-            timeoutMs: timeoutMs(process),
+            timeoutMs: process.handlerTimeoutMs,
             subject: `process ${process.name} at ${due.field}`,
             clock,
           }),

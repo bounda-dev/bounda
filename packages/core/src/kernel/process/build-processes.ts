@@ -15,7 +15,9 @@ export interface ProcessRuntime {
   readonly aggregate: string;
   readonly startedBy: ReadonlySet<string>;
   readonly completedBy: ReadonlySet<string>;
-  readonly timeoutMs: number;
+  // How long an instance stays open, not one run of a handler: that is `handlerTimeoutMs`.
+  readonly lifetimeMs: number;
+  readonly handlerTimeoutMs: number;
   readonly initialState: object;
   readonly stateSchema: z.ZodType | null;
   readonly handlers: Readonly<Record<string, (args: Record<string, unknown>) => unknown>>;
@@ -256,10 +258,11 @@ const buildProcess = (
     aggregate,
     startedBy,
     completedBy,
-    timeoutMs:
+    lifetimeMs:
       declared.timeout === undefined
         ? config.forAggregate(aggregate).processes.timeoutMs
         : parseDuration(declared.timeout),
+    handlerTimeoutMs: config.forAggregate(aggregate).processes.handlerTimeoutMs,
     initialState: state.initial,
     stateSchema: state.schema,
     handlers,

@@ -1178,7 +1178,7 @@ describe("events of a failed process", () => {
     await harness.dispatcher.runUntilIdle();
     expect(raced).toBe(true);
     expect((await deadLetters.list()).map((letter) => letter.eventType)).toEqual(["OrderPaid"]);
-    harness.clock.advance(harness.config.runtime.policies.timeoutMs * 2 + 1);
+    harness.clock.advance(harness.config.runtime.processes.handlerTimeoutMs * 2 + 1);
     await harness.dispatcher.runUntilIdle();
     expect(await deadLetters.list()).toHaveLength(1);
     expect(runs.filter((run) => run.startsWith("paid:"))).toHaveLength(1);
@@ -1231,7 +1231,7 @@ describe("events of a failed process", () => {
     expect(await deadLetters.list()).toEqual([]);
     expect((await types()).at(-1)).toBe(PROCESS_EVENTS.handled);
     expect(runs.filter((run) => run.startsWith("paid:"))).toHaveLength(1);
-    harness.clock.advance(harness.config.runtime.policies.timeoutMs * 2 + 1);
+    harness.clock.advance(harness.config.runtime.processes.handlerTimeoutMs * 2 + 1);
     await harness.dispatcher.runUntilIdle();
     expect(await deadLetters.list()).toMatchObject([
       { eventType: "OrderPaid", status: "failed", errorMessage: "paid refuses" },

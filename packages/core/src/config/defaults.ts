@@ -25,6 +25,7 @@ export const DEFAULT_POLICIES: ResolvedPoliciesConfig = {
 export const DEFAULT_PROCESSES: ResolvedProcessesConfig = {
   retry: DEFAULT_RETRY,
   timeoutMs: 7 * 86_400_000,
+  handlerTimeoutMs: 30_000,
 };
 
 export const DEFAULT_CONCURRENCY_RETRIES: number = 3;
