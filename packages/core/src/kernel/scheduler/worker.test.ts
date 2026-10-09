@@ -281,6 +281,39 @@ describe("scheduled command worker", () => {
     ]);
   });
 
+  it("retries a command as its aggregate's override says", async () => {
+    const harness = await createReactiveHarness({
+      registry: orderRegistry,
+      config: {
+        runtime: {
+          policies: { retry: { strategy: "fixed", maxAttempts: 3, baseDelay: "30s" } },
+          overrides: {
+            order: { policies: { retry: { strategy: "fixed", maxAttempts: 2, baseDelay: "5s" } } },
+          },
+        },
+      },
+    });
+    harness.pipeline.dispatchUnattended = async () => {
+      throw new Error("db unavailable");
+    };
+    await harness.pipeline.dispatch({
+      type: "PlaceOrder",
+      payload: { orderId: "o-1", total: 10 },
+      options: { delay: 0 },
+    });
+
+    await harness.worker.runOnce();
+    expect(await harness.storage.scheduler.list()).toMatchObject([
+      { attempts: 1, executeAt: "2026-01-01T00:00:05.000Z" },
+    ]);
+    harness.clock.advance(5_000);
+    await harness.worker.runOnce();
+    expect(await harness.storage.scheduler.list()).toEqual([]);
+    expect(await harness.storage.deadLetterStore.list()).toMatchObject([
+      { errorType: "retriable_exhausted", attempts: 2 },
+    ]);
+  });
+
   it("runs a scheduled command with the id it was scheduled with, on every retry", async () => {
     const harness = await createReactiveHarness({
       registry: orderRegistry,

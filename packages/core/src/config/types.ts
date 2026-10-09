@@ -17,7 +17,9 @@ export interface RetryConfig {
  */
 export interface PoliciesConfig {
   /**
-   * In `runtime`, also the retry of scheduled commands; an override does not change theirs.
+   * How a failed policy run is retried, and a command scheduled with `delay`; each takes the one
+   * of its aggregate, so an override applies to both. Defaults to exponential, 3 attempts, 1 second
+   * to 30 seconds.
    */
   readonly retry?: RetryConfig;
   /**
