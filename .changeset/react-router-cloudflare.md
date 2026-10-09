@@ -26,6 +26,9 @@ Breaking:
 
 Also:
 
+- `@bounda-dev/core` exports `checkConsistency`, which throws `ConfigurationError` for a
+  `consistency` other than `"read-your-writes"` or `"eventual"`: the check `createBounda`,
+  `connect` and `createWorker` make, now in one place.
 - `failure()` goes by the error's `code`, so it answers the refusals a Durable Object sends back,
   which arrive as plain errors, as it answers a `ValidationError` or a `DomainError`.
 - `createBounda` from `@bounda-dev/react-router` imports `@bounda-dev/core/node` only when it boots.

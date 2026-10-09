@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { Table } from "../adapter/storage/table.ts";
+import { ConfigurationError } from "../contracts/errors.ts";
 import type { Registry } from "../modules/registry.ts";
 import type { FieldsArgs } from "../modules/view.ts";
 import { createTestApp } from "../testing/index.ts";
-import { readYourWrites } from "./read-your-writes.ts";
+import { type Consistency, checkConsistency, readYourWrites } from "./read-your-writes.ts";
 import { orderAggregateEntry } from "./test-support.ts";
 
 interface Placed {
@@ -60,6 +61,21 @@ const registry = {
     },
   },
 } as const satisfies Registry;
+
+describe("checkConsistency", () => {
+  it("accepts the two consistencies and refuses anything else", () => {
+    expect(() => checkConsistency("read-your-writes")).not.toThrow();
+    expect(() => checkConsistency("eventual")).not.toThrow();
+    expect(() => checkConsistency("immediate" as Consistency)).toThrow(
+      new ConfigurationError(
+        'consistency must be "read-your-writes" or "eventual", got "immediate"',
+      ),
+    );
+    expect(() => checkConsistency(undefined as unknown as Consistency)).toThrow(
+      new ConfigurationError('consistency must be "read-your-writes" or "eventual", got undefined'),
+    );
+  });
+});
 
 describe("readYourWrites", () => {
   it("brings up to date the read models a command changed, up to its events, and no other", async () => {

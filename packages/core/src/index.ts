@@ -34,8 +34,12 @@ export type {
   RebuildReadModelResult,
 } from "./kernel/read-model/rebuild.ts";
 export { rebuildReadModel } from "./kernel/read-model/rebuild.ts";
-export type { Consistency, ReadYourWritesFunction } from "./kernel/read-your-writes.ts";
-export { readYourWrites } from "./kernel/read-your-writes.ts";
+export type {
+  CheckConsistencyFunction,
+  Consistency,
+  ReadYourWritesFunction,
+} from "./kernel/read-your-writes.ts";
+export { checkConsistency, readYourWrites } from "./kernel/read-your-writes.ts";
 export type { IdempotencyKeyForFunction } from "./kernel/shared/idempotency-key.ts";
 export { idempotencyKeyFor } from "./kernel/shared/idempotency-key.ts";
 export * from "./modules/index.ts";

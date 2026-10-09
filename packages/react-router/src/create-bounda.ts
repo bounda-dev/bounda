@@ -3,11 +3,11 @@ import {
   type BoundaApp,
   type BoundaClient,
   type Consistency,
+  checkConsistency,
   type Registry,
   readYourWrites,
 } from "@bounda-dev/core";
 import { createContext, type MiddlewareFunction, type RouterContext } from "react-router";
-import { checkConsistency } from "./check-consistency.ts";
 
 /**
  * Boots the app the middleware serves. Called on the first request, and again on the next one

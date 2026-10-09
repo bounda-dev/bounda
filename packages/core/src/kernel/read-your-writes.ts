@@ -1,4 +1,5 @@
 import type { DispatchOptions, DispatchResult } from "../contracts/command.ts";
+import { ConfigurationError } from "../contracts/errors.ts";
 import type { CommandsFacade, Registry } from "../modules/registry.ts";
 import type { BoundaApp } from "./app.ts";
 import type { CommandsFacadeRuntime } from "./command/facade.ts";
@@ -10,6 +11,23 @@ import type { CommandsFacadeRuntime } from "./command/facade.ts";
  * the background, so the query may not see them yet.
  */
 export type Consistency = "read-your-writes" | "eventual";
+
+export interface CheckConsistencyFunction {
+  (consistency: Consistency): void;
+}
+
+/**
+ * Throws `ConfigurationError` unless `consistency` is `"read-your-writes"` or `"eventual"`. For a
+ * host that takes it from code that is not always type-checked, such as a configuration file or a
+ * Worker.
+ */
+export const checkConsistency: CheckConsistencyFunction = (consistency) => {
+  if (consistency !== "read-your-writes" && consistency !== "eventual") {
+    throw new ConfigurationError(
+      `consistency must be "read-your-writes" or "eventual", got ${JSON.stringify(consistency)}`,
+    );
+  }
+};
 
 export interface ReadYourWritesFunction {
   <R extends Registry>(app: BoundaApp<R>): BoundaApp<R>;

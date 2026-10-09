@@ -1,6 +1,11 @@
-import type { Consistency, DispatchOptions, Logger } from "@bounda-dev/core";
+import {
+  type Consistency,
+  checkConsistency,
+  type DispatchOptions,
+  type Logger,
+} from "@bounda-dev/core";
 import type { Config } from "@bounda-dev/core/config";
-import { type BoundaStub, checkConsistency } from "./client.ts";
+import type { BoundaStub } from "./client.ts";
 import { cloudflareStorageOf } from "./definition.ts";
 import { workersLogger } from "./logger.ts";
 import { unwrap } from "./outcome.ts";

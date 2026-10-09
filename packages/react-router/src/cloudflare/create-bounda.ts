@@ -1,7 +1,11 @@
 import { env } from "cloudflare:workers";
-import type { AppRegistry, Consistency, Registry } from "@bounda-dev/core";
+import {
+  type AppRegistry,
+  type Consistency,
+  checkConsistency,
+  type Registry,
+} from "@bounda-dev/core";
 import type { Config } from "@bounda-dev/core/config";
-import { checkConsistency } from "../check-consistency.ts";
 import type { Bounda } from "../create-bounda.ts";
 import { cloudflareClients, type TenantFunction } from "./clients.ts";
 import { serve } from "./serve.ts";

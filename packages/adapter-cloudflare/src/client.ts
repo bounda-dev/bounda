@@ -3,8 +3,8 @@ import {
   type AppRegistry,
   type BoundaClient,
   type CommandsFacade,
-  ConfigurationError,
   type Consistency,
+  checkConsistency,
   type DeadLetter,
   type DispatchOptions,
   type DispatchResult,
@@ -47,19 +47,6 @@ export interface ConnectOptions {
 export interface ConnectFunction {
   <R extends Registry = AppRegistry>(stub: BoundaStub, options?: ConnectOptions): BoundaClient<R>;
 }
-
-export interface CheckConsistencyFunction {
-  (consistency: Consistency): void;
-}
-
-// A Worker's code is not always type-checked.
-export const checkConsistency: CheckConsistencyFunction = (consistency) => {
-  if (consistency !== "read-your-writes" && consistency !== "eventual") {
-    throw new ConfigurationError(
-      `consistency must be "read-your-writes" or "eventual", got ${JSON.stringify(consistency)}`,
-    );
-  }
-};
 
 const sendable = (options: DispatchOptions | undefined): DispatchOptions | undefined => {
   if (options === undefined) return undefined;
