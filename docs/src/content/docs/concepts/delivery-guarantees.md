@@ -107,7 +107,7 @@ keeps its checkpoint in that database, next to its rows, because a transaction c
 - **A rebuild.** [`bounda rebuild`](/guides/deployment/#rebuilding-a-read-model) replays history
   into a fresh table on purpose. Exactly once holds per table, not across rebuilds.
 - **The provider's side of a reaction.** Without a key the provider honours, at least once means
-  what it says. Bounda never calls a reaction exactly once, and neither should the code around it.
+  what it says. Bounda never promises a reaction exactly once, and neither should the code around it.
 
 ## Why not the other ways
 
@@ -132,7 +132,7 @@ framework that is precise about it lands on the same line. Bounda draws it at th
 
 - [What the runtime promises](/guides/reacting-to-events/#what-the-runtime-promises), the same
   guarantees in the terms of a handler's code, and [retries and timeouts](/guides/reacting-to-events/#retries-and-timeouts).
-- [What more instances do, and do not do](/concepts/how-it-runs/#what-more-instances-do)
+- [What more instances do](/concepts/how-it-runs/#what-more-instances-do)
   and [a projection that keeps failing](/guides/deployment/#a-projection-that-keeps-failing).
 - [Your event store is your outbox](/concepts/event-store-as-outbox/) and
   [where a broker goes](/concepts/where-a-broker-goes/).

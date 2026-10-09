@@ -133,9 +133,12 @@ dispatched from inside the runtime — by a policy or a process — are not affe
 The wait is bounded: after `runtime.dispatcher.catchUp.timeout`, 2 seconds by default, the command
 resolves anyway, a `read models did not catch up with the command in time` warning names the read
 models still behind, and the page reads what is there. A stuck worker or a failing projection
-makes a page stale, never a request that hangs; a read model that is backing off after failures
-(see [A projection that keeps failing](#a-projection-that-keeps-failing)) is not waited for at all. This is read-your-writes in the usual sense: you
-see your own writes, not necessarily everyone else's from the same instant.
+makes a page stale; a read model that is backing off after failures
+(see [A projection that keeps failing](#a-projection-that-keeps-failing)) is not waited for at
+all. The timeout is checked between batches, so a projection that itself waits on something that
+never answers holds the request past it: keep projections to their own database. This is
+read-your-writes in the usual sense: you see your own writes, not necessarily everyone else's from
+the same instant.
 
 ```ts
 runtime: {
@@ -352,8 +355,8 @@ get today. Each item says why, so nobody discovers it the hard way:
   the hundreds of events per instance that Bounda's kind of app produces, and it is not fine for
   hundreds of thousands. Snapshots are deliberately not built yet: the state is inferred and
   carries no version, so a snapshot written by yesterday's `evolve` would silently be wrong after
-  today's deploy. They come with a versioning story or not at all; until then, model long-lived
-  things as processes, which close, rather than as aggregates that grow forever.
+  today's deploy. They come with a versioning story or not at all; until then, close the books
+  of an aggregate that would grow forever ([Long streams](/concepts/long-streams/)).
 - **Changing the shape of a process's state.** A process keeps its state in its own lifecycle
   events, so a change to that shape has the same problem an event payload has, and no
   `state.upcast.ts` yet. See [Changing an event's shape](/guides/changing-events/#what-is-not-covered-yet).

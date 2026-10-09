@@ -3,7 +3,7 @@ title: Bounda
 description: Event sourcing and CQRS for TypeScript without the ceremony.
 template: splash
 hero:
-  tagline: Event sourcing without the ceremony. Your events, your logic, zero boilerplate.
+  tagline: Event sourcing and CQRS for TypeScript. Write commands, events and projections as small files; Bounda infers every type and runs them on one database, or one Durable Object per tenant.
   actions:
     - text: Get started
       link: /getting-started/
@@ -14,27 +14,64 @@ hero:
       variant: minimal
 ---
 
-import { Card, CardGrid } from "@astrojs/starlight/components";
+import { Aside, Card, CardGrid } from "@astrojs/starlight/components";
+
+Your tables keep the last write; an event-sourced app keeps every change, so a wrong view is
+rebuilt from history and a past state can be explained. A command decides, an event becomes the
+state, a projection writes the row a query reads:
+
+```ts
+// app/domain/order/commands/place-order.ts
+import type { Command } from "./+types/place-order";
+
+export const payload = ({ z }: Command.PayloadArgs) =>
+  z.object({ orderId: z.uuid(), customerId: z.string().min(1), total: z.number().positive() });
+
+export const rejections = ({ command }: Command.RejectionsArgs) => ({
+  AlreadyPlaced: `Order ${command.aggregateId} was already placed`,
+});
+
+export const handler = ({ command, state, events, reject }: Command.HandlerArgs) => {
+  if (state.status !== undefined) return reject("AlreadyPlaced");
+  return [events.orderPlaced({ customerId: command.payload.customerId, total: command.payload.total })];
+};
+
+// app/domain/order/order-placed.ts
+import type { Event } from "./+types/order-placed";
+
+export const payload = ({ z }: Event.PayloadArgs) =>
+  z.object({ customerId: z.string(), total: z.number().positive() });
+
+export const begin = ({ event }: Event.BeginArgs) => ({
+  status: "placed" as const,
+  customerId: event.payload.customerId,
+  total: event.payload.total,
+});
+```
 
 <CardGrid stagger>
-  <Card title="The setup is on us" icon="setting">
-    Command buses, aggregate repositories, event dispatchers and projection runners are wired for you. You write command handlers, events and projections.
+  <Card title="No registration" icon="document">
+    A file's place and name are its declaration. `bounda generate` reads the folders; there is no
+    registry, bus or container to wire.
   </Card>
   <Card title="Types inferred, never written" icon="approve-check">
-    Payloads, state and query results are typed from your code. Change a field and the compiler points at every place that breaks.
+    Payloads, state and query results are typed from your code. Change a field and the compiler
+    points at every place that breaks.
   </Card>
-  <Card title="Processes are first-class" icon="random">
-    A process follows one aggregate instance over time: it says which events open and close it, keeps state between them, deadlines included, and runs `at-<deadline>.ts` when one comes due. Retries and dead letters are the runtime's job.
+  <Card title="Workflows built in" icon="random">
+    Policies react to events; processes follow an instance over time, with deadlines as part of
+    their state. Retries, dead letters and rebuilds come with the runtime.
   </Card>
-  <Card title="One database is all your infra" icon="seti:db">
-    Events, read models, scheduling and dead letters on a single Postgres or SQLite. No brokers, no queues to operate. When a projection goes wrong, `bounda rebuild`; when a policy dies, `bounda dead-letters`; when a payload changes shape, an upcaster next to the event.
+  <Card title="One database, no broker" icon="seti:db">
+    Events, read models, scheduling and dead letters on one PostgreSQL or SQLite, or in one
+    Durable Object per tenant. Node, React Router and Cloudflare.
   </Card>
 </CardGrid>
 
-import { Aside } from "@astrojs/starlight/components";
+[How Bounda runs](/concepts/how-it-runs/) says how far one store goes and what to do past it;
+[what is not there yet](/guides/deployment/#what-is-not-there-yet) is one honest list.
 
 <Aside type="caution" title="0.x">
   Until 1.0 the API can still change between minor versions (0.1 to 0.2), and every change that
-  breaks something is called out in the changelogs. [Deployment](/guides/deployment/) lists what a
-  production app does not have yet.
+  breaks something is called out in the changelogs.
 </Aside>
