@@ -2,7 +2,7 @@
 title: The onboarding example
 description: A React Router app that registers, welcomes and activates users, in the repository under examples/onboarding.
 sidebar:
-  order: 3
+  order: 1
 ---
 
 `examples/onboarding` in the repository is a React Router 8 app on Bounda. It runs on SQLite out
@@ -25,7 +25,7 @@ pnpm dev
    port (its `console` implementation in the demo, `memory` in the tests) and
    dispatches `recordWelcomeEmailSent`, which appends `WelcomeEmailSent`.
 3. Activating the user completes the process. A registration nobody activates within a week hits
-   the process time-out, which dispatches `expireRegistration`.
+   the process timeout, which dispatches `expireRegistration`.
 4. Two read models follow along: `users-directory`, paginated by `listUsers`, and `user-details`,
    with the timestamps of every step.
 

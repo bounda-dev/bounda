@@ -264,7 +264,7 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   `correlate = ({ from }: Process.CorrelateArgs) => [from.payment.PaymentFailed((event) => …)]`,
   from the event to the id of the process's own aggregate (or `null` to ignore it); it also
   overrides the field. Events for no open instance are
-  skipped, but for those `at-timeout.ts` caused; a completed instance is never reopened. Returned state is validated against `state`.
+  skipped, except those `at-timeout.ts` caused; a completed instance is never reopened. Returned state is validated against `state`.
 - A command handler returns the events to append, built with `events.<eventKey>(payload)`. It may
   only build events of its own aggregate. To say no, the module exports `rejections`, a function
   of `{ command, state }` to `{ Code: message }`, and the handler returns `reject("Code")` (or
@@ -311,8 +311,9 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   deadline, one field at one moment) and new on a dead-letter retry. Their `signal` aborts when
   the run times out or fails, which also stops their commands still running: pass it to outside
   calls. A port cannot be named after a handler
-  argument (`event`, `commands`, `state`, `aggregateId`, `command`, `events`, `idempotencyKey`,
-  `signal`, `after`), after an event of its aggregate, or `commands`, `policies`, `processes`.
+  argument (`command`, `state`, `events`, `event`, `commands`, `idempotencyKey`, `signal`,
+  `aggregateId`, `after`, `reject`) or after an event of its aggregate; a read model's port, not
+  after `view`, `query`, `repositoryData`, `table` or `queries`.
 - Process deadlines: `after()` counts from the event's time (in `at-`, from the moment that came
   due), so retries and late runs set the same moment and a daily chain catches up after an
   outage. Each deadline comes due once per moment, earliest first; nothing runs after the process
@@ -322,7 +323,7 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
   with `asInstant`. For "do this later" without process state, keep a scheduled command or a delayed policy.
 - Projections write through `table` (`upsert`, `insert`, `update`, `delete`, `findOne`,
   `findMany`, `count`). Each batch is one transaction with the read model's
-  checkpoint, so every event is applied exactly once and reading a row to update it
+  checkpoint, so every event is applied exactly once per batch and reading a row to update it
   (`count + 1`) is safe. That holds only for the read model: a projection must not call HTTP,
   other databases or timers, and gets no ports; that work goes in a policy. An external index
   (Typesense, Elasticsearch) is fed by a policy through a port, upserting by id with
@@ -335,7 +336,7 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
 - Scheduled commands: `commands.remindCustomer(payload, { delay: "24h" })`, typed as resolving with
   `scheduled: true` and `executeAt`; a call without `delay` is typed without that case, so read
   `eventTypes` (or `rejected` in a reaction) directly. The worker commits a
-  scheduled run with the release of its claim, so a crash between the two never runs it twice. A duration from the
+  scheduled run with the release of its claim, so a crash between the two never stores its writes twice. A duration from the
   environment is a `string`; wrap it: `{ delay: asDuration(process.env.DELAY ?? "24h") }`. The
   payload is stored as JSON and validated in that form at dispatch: a date field must be
   `z.coerce.date()`, since `z.date()` rejects the string a date becomes.
@@ -399,7 +400,7 @@ export const loader = ({ context }: Route.LoaderArgs) => context.get(bounda).que
 - Tests: `createTestApp({ registry, adapter?, ports? })` from `@bounda-dev/core/testing`
   gives an app on the in-memory adapter with a fixed clock (`clock.advance(ms)`) and sequential
   ids; call `await app.runUntilIdle()` after dispatching to run policies, processes and
-  projections. The clock drives handler time-outs and background polling too: never wait real
+  projections. The clock drives handler timeouts and background polling too: never wait real
   time in a test, advance the clock. Never advance it for a retry: `runUntilIdle()` moves it to
   each retry waiting for its back-off, so a failure has been retried, or dead-lettered, when it
   resolves.
@@ -430,9 +431,9 @@ export const loader = ({ context }: Route.LoaderArgs) => context.get(bounda).que
   `createWorker` is an unauthenticated JSON starting point.
 - Storage: `sqlite({ path })`, `sqlite({ memory: true })` or `postgresql({ url })` in
   `bounda.config.ts`; read models can point at a different adapter with `readModels`.
-- A store is one ordered log with one writer at a time; projections, policies and processes read
-  it by checkpoint. A policy or process reacts only to events stored after it is deployed, never
-  to earlier history; an app without policies or processes runs no runner for them. Do not try to scale by splitting the log or adding a broker inside the app:
+- A store is one event store with one global stream and one writer at a time; projections,
+  policies and processes read it by checkpoint. A policy or process reacts only to events stored after it is deployed, never
+  to earlier history; an app without policies or processes runs no runner for them. Do not try to scale by splitting the global stream or adding a broker inside the app:
   the way out is one store per tenant (`postgresql({ schema })`). Events that must reach other
   systems go through a publisher subscriber, not built yet.
 - With PostgreSQL the dispatcher is woken by `NOTIFY` on every append and polls only every
@@ -457,7 +458,7 @@ export const loader = ({ context }: Route.LoaderArgs) => context.get(bounda).que
   deadlines are scheduled again. A letter's `parked` says how many wait behind it; discarding the
   letter gives the instance up.
 - A view may gain fields freely. Removing a field, changing its type, or fixing a projection that
-  wrote wrong rows means `bounda rebuild <read-model>`: it projects the stream into a fresh table
+  wrote wrong rows means `bounda rebuild <read-model>`: it projects the global stream into a fresh table
   and swaps it in; an interrupted rebuild resumes on the next run, and on Cloudflare the object's
   alarm runs it in slices. Never rename a read model to get a rebuild, and never write
-  projections through `client` with hand-written SQL, since a rebuild cannot redirect that.
+  projections through `client` with SQL that names the table, since a rebuild cannot redirect that.

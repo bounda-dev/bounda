@@ -2,7 +2,7 @@
 title: The storefront example
 description: A small shop that uses every kind of module, in the repository under examples/storefront.
 sidebar:
-  order: 1
+  order: 0
 ---
 
 `examples/storefront` in the repository is a complete app on Node and SQLite. It is small enough
@@ -87,15 +87,9 @@ export default defineConfig({
 });
 ```
 
-**A delay from the environment.** A duration typed by the compiler is a literal such as `"24h"`;
-one that comes from an environment variable is a string. `asDuration` checks it where it is used:
-
-```ts
-await commands.sendReminder(
-  { orderId: event.aggregateId },
-  { delay: asDuration(process.env.REMINDER_DELAY ?? "24h") },
-);
-```
+**A delay from the environment.** The reminder's delay comes from `REMINDER_DELAY`, a string
+that `asDuration` checks where it is used
+([delaying a command](/guides/reacting-to-events/#delaying-a-command)).
 
 **Time in tests.** The clock of `createTestApp` moves only when told to, so a reminder a day away
 and a payment window three days away are two lines:

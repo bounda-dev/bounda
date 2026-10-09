@@ -2,7 +2,7 @@
 title: Your event store is your outbox
 description: Why a policy or process attempt in Bounda writes everything or nothing without an outbox table or a relay, what that buys, and what stays outside the promise.
 sidebar:
-  order: 1
+  order: 12
 ---
 
 Every messaging framework meets the same problem the day a handler does two things: it changes
@@ -30,8 +30,8 @@ of the store:
   the version the handler saw;
 - the scheduler rows of its scheduled commands;
 - for a process step, the instance's lifecycle events (`ProcessStarted`, `ProcessHandled`,
-  `ProcessCompleted`, `ProcessDeadlineReached`, `ProcessTimedOut`) and the entry of its next deadline, computed from
-  the state it just wrote;
+  `ProcessCompleted`, `ProcessDeadlineReached`, `ProcessTimedOut`) and the entry of its next
+  deadline, computed from the state it just wrote;
 - the mark in the inbox that says the event is done;
 - and, when the runtime gives up on the event, `ProcessFailed` and the dead letter (only the
   letter for a follow-up of a timed-out process, which has ended).
@@ -43,8 +43,8 @@ a deadline that came due or by another instance, rolls back and runs the handler
 new state, without counting an attempt; its claim's lease starts again first, and an attempt
 whose claim another instance took over meanwhile stops instead. The scheduled-command worker
 follows the same rule: a scheduled command, a delayed policy run or a process deadline commits its
-writes together with the release of its claim, so a worker that dies between the two does not run
-it twice, and one whose claim another instance took over writes nothing.
+writes together with the release of its claim, so a worker that dies between the two does not
+store its writes twice, and one whose claim another instance took over writes nothing.
 
 ## What `await commands.x()` means inside a handler
 
@@ -104,11 +104,14 @@ The promise is about what reaches the store. Three things are, on purpose, outsi
 
 - [What the runtime promises](/guides/reacting-to-events/#what-the-runtime-promises), the
   guarantees in the terms of the handler's code.
-- [Why there is no broker](/guides/how-it-runs/#why-there-is-no-broker), for the publisher that
-  takes the log out of the app.
-- The precedents: Axon's [unit of work](https://docs.axoniq.io/axon-framework-reference/4.11/messaging-concepts/unit-of-work/),
+- [A broker goes behind the event store](/concepts/where-a-broker-goes/), for the publisher that
+  takes events out of the app.
+- The precedents: Axon's
+  [unit of work](https://docs.axoniq.io/axon-framework-reference/4.11/messaging-concepts/unit-of-work/),
   NServiceBus's [Outbox](https://docs.particular.net/nservicebus/outbox/) and
   [batched dispatch](https://docs.particular.net/nservicebus/messaging/batched-dispatch),
-  MassTransit's [transactional outbox](https://masstransit.massient.com/documentation/patterns/transactional-outbox)
+  MassTransit's
+  [transactional outbox](https://masstransit.massient.com/documentation/patterns/transactional-outbox)
   and [in-memory outbox](https://masstransit.massient.com/documentation/patterns/in-memory-outbox),
-  Wolverine's [Marten integration](https://wolverinefx.net/guide/durability/marten/event-sourcing.html).
+  Wolverine's
+  [Marten integration](https://wolverinefx.net/guide/durability/marten/event-sourcing.html).

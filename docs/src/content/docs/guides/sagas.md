@@ -2,13 +2,13 @@
 title: Sagas and compensation
 description: A business transaction of several steps, each with a way back, built from a process and plain commands.
 sidebar:
-  order: 6
+  order: 4
 ---
 
 A saga is a business transaction made of several steps, each committed on its own, where a step
 that fails undoes the ones before it with a **compensation**: another step that cancels the
 effect of the first. Nothing is rolled back; the history keeps both. This page builds one with
-the checkout of the [storefront example](/guides/storefront-example/), where the customer pays
+the checkout of the [storefront example](/examples/storefront/), where the customer pays
 through a payment link and the provider reports back through webhooks.
 
 ## A saga is a pattern, not a module
@@ -69,10 +69,9 @@ export const handler = async ({ event, aggregateId, commands }: Process.HandlerA
 };
 ```
 
-`rejected` is typed by the codes `markOrderPaid` declares, so a typo does not compile, and it is
-`false` when the order decided. A rejection is an answer, not a failure: the step goes on. A
-failure, such as a payload that does not validate or an error the handler throws, rejects the
-`await`, and the runtime retries the step.
+A rejection is an answer, not a failure: the step goes on, and `rejected` is typed by the codes
+`markOrderPaid` declares
+([what a command answers](/guides/reacting-to-events/#what-a-command-answers)).
 
 **Another aggregate says no.** A failure that happens elsewhere, later, arrives as an event of
 that aggregate. The provider declines the card, `declinePayment` appends `PaymentDeclined`, and
@@ -94,12 +93,10 @@ There is no `on-failed.ts`. A failure is either the answer to a command, which t
 holds, or a fact of another aggregate, which is an event. A hook would be a third channel for
 something the two already carry.
 
-**Rejection or event.** An event is what the domain remembers; a rejection is the answer to whoever
-asked. A "no" is an event when the business remembers it, someone else listens to it, or whoever
-asks lives in another store and cannot await the answer: the card is declined by a provider that
-calls back later, so `PaymentDeclined` is an event. Otherwise it is a rejection, which is neither
-stored nor published. Whether it changes the state is not the test, since some events change
-nothing. Rejections are named after the reason (`NotOpen`), events after what happened.
+**Rejection or event.** The card is declined by a provider that calls back later, so nobody can
+await that "no" and `PaymentDeclined` is an event; `NotOpen` answers the process that is waiting,
+so it is a rejection. Where the line falls in general is in
+[Not every no is a fact](/concepts/rejection-or-event/).
 
 ## A compensation is a command that decides from state
 
@@ -132,7 +129,7 @@ export const handler = ({ command, state, events }: Command.HandlerArgs) => {
 
 The effect of the compensation, giving the money back, is not in the command. `RefundRequested`
 is stored first, and a policy carries it out with its `idempotencyKey`, as any
-[effect after the commit](/guides/reacting-to-events/#calling-the-outside-world):
+[effect after the commit](/guides/calling-the-outside-world/):
 
 ```ts
 // payment/policies/refund-on-refund-requested.ts
@@ -177,10 +174,10 @@ failure, so every step tolerates being repeated:
 - **A rejection nobody looks at changes nothing.** `lockOrderForPayment` and
   `recordPaymentFailure` reject an order that moved on since the event, and the process does not
   look: the step goes on, and the rejection is logged and traced. A test asserts the ones it
-  expects with [`runUntilIdle()`](/guides/testing/#rejections).
+  expects with [`runUntilIdle()`](/guides/testing/#rejections-inside-reactions).
 - **Ids that leave the app are deterministic.** The process derives the payment's id from its key,
   `idempotencyKeyFor(idempotencyKey, "payment")`, as any reaction does for an id it creates (see
-  [Calling the outside world](/guides/reacting-to-events/#calling-the-outside-world)). A retry
+  [Calling the outside world](/guides/calling-the-outside-world/)). A retry
   dispatches `requestPayment` with the same id, and that command's `idempotencyKey` is what it
   hands the provider, so the retry asks for the same intent with the same parameters.
 
@@ -266,7 +263,7 @@ under the same `idempotencyKey`; a refusal is an answer, rejection or event, and
 compensated.
 
 A compensation that fails for good is not compensated in turn. It becomes a
-[dead letter](/guides/reacting-to-events/#dead-letters): an operator looks at it, fixes the
+[dead letter](/guides/dead-letters/): an operator looks at it, fixes the
 cause and retries it.
 
 The storefront cancels the order at the first declined payment, for simplicity. In Stripe a
@@ -286,11 +283,13 @@ memory of its own, such as which payment belongs to the order or a deadline that
 
 ## Further reading
 
-- Hector Garcia-Molina and Kenneth Salem, [Sagas](https://www.cs.cornell.edu/andru/cs711/2002fa/reading/sagas.pdf), 1987.
+- Hector Garcia-Molina and Kenneth Salem,
+  [Sagas](https://www.cs.cornell.edu/andru/cs711/2002fa/reading/sagas.pdf), 1987.
 - Chris Richardson, [Pattern: Saga](https://microservices.io/patterns/data/saga.html), and his
   [QCon San Francisco 2017 slides](https://archive.qconsf.com/system/files/presentation-slides/dataconsistencyinmicroserviceusingsagasqconsf2017-1711151847291.pdf)
   on compensable, pivot and retriable steps, commutative updates and semantic locks.
-- Azure Architecture Center, [Compensating Transaction pattern](https://learn.microsoft.com/en-us/azure/architecture/patterns/compensating-transaction).
+- Azure Architecture Center,
+  [Compensating Transaction pattern](https://learn.microsoft.com/en-us/azure/architecture/patterns/compensating-transaction).
 - Stripe: the [payment intent lifecycle](https://docs.stripe.com/payments/paymentintents/lifecycle),
   [webhooks](https://docs.stripe.com/webhooks) and
   [idempotent requests](https://docs.stripe.com/api/idempotent_requests).

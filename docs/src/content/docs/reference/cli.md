@@ -16,9 +16,9 @@ aggregates without `state.ts`.
 
 ## `bounda generate`
 
-Reads the project layout and writes `.bounda/registry.ts`, `.bounda/register.d.ts`, `.bounda/types.ts` and one
-`+types/<name>.ts` next to every module. Files whose content did not change are left alone;
-`+types` files whose module is gone are removed.
+Reads the project layout and writes `.bounda/registry.ts`, `.bounda/register.d.ts`,
+`.bounda/types.ts` and one `+types/<name>.ts` next to every module. Files whose content did not
+change are left alone; `+types` files whose module is gone are removed.
 
 ```bash
 bounda generate
@@ -43,8 +43,9 @@ Output lists every file written or removed, then a summary:
 ```
 
 Warnings go to stderr and do not change the exit code. They come from a layout that is most likely
-wrong without breaking a convention (see [aggregates](/guides/project-layout/#aggregates-appdomainaggregate))
-and from state inference:
+wrong without breaking a convention (see
+[what the generator warns about](/reference/conventions/#what-the-generator-warns-about)) and from
+state inference:
 
 ```
 warning: order: field "cancellation" (set by orderCancelled) has a type that is not visible
@@ -101,7 +102,7 @@ warning says so.
 
 ## `bounda rebuild`
 
-Rebuilds one read model from the whole stream without taking it offline. It loads
+Rebuilds one read model from the whole global stream without taking it offline. It loads
 `bounda.config.ts` and the generated registry the way `boot()` does, so it runs from the project
 root with the same environment as the app.
 
@@ -116,24 +117,18 @@ bounda rebuild orderSummary --root ./apps/shop --config bounda.config.ts --regis
 | `--config <file>` | `bounda.config.ts` | The configuration module under the root |
 | `--registry <file>` | `.bounda/registry.ts` | The generated registry module under the root |
 
-The projections run into a fresh table with the view's current fields while queries keep reading
-the live one. When the fresh table has caught up with the stream it takes the live table's place
-and the read model's checkpoint is set to where the rebuild stopped, in one transaction that waits
-for any projection batch in flight; the worker carries on from there, so every event reaches the
-new table once. A projection that throws aborts the rebuild and leaves the live table as it was. A
-rebuild that was interrupted resumes exactly where it stopped when you run it again, as long as
-the read model's fields and projections are the same code; otherwise it starts over. A second
-rebuild of the same read model started meanwhile takes over, and this one stops with
-`REBUILD_SUPERSEDED` without writing.
+The projections run into a fresh table that takes the live table's place once it has caught up;
+an interrupted rebuild resumes where it stopped, and a second one started meanwhile takes over.
+[Rebuilding a read model](/guides/deployment/#rebuilding-a-read-model) says how it works and when
+to run it in a deploy.
 
 ```
 rebuilt read model "orderSummary": 48213 events, checkpoint at position 48213
 ```
 
-Use it after fixing a projection, and when a view loses a field or changes a field's type, which
-the app refuses to do on start. See [Deployment](/guides/deployment/#rebuilding-a-read-model) for
-when to run it in a deploy. Exit codes: `0` rebuilt, `1` bad arguments, `2` the project could not
-be loaded, the read model is not in the registry, or a projection failed.
+Use it after fixing a projection, and when a view loses a field or changes a field's type, which the
+app refuses to do on start. Exit codes: `0` rebuilt, `1` bad arguments, `2` the project could not be
+loaded, the read model is not in the registry, or a projection failed.
 
 ## `bounda dead-letters`
 
@@ -169,14 +164,10 @@ bounda dead-letters discard <id>
 2 dead letters
 ```
 
-`retry` runs the failed handler again and marks the letter `retried` when it succeeds; if the
-handler fails again its error is printed, the exit code is `2` and the letter stays `failed`. A
-scheduled command its aggregate now rejects is `retried` too: the rejection is the aggregate's
-answer, and it is logged as `command rejected`. A letter the app can no longer retry, or that
-another retry or discard settled first, even while this one ran, is refused the same way. For a
-process letter it also handles the events parked behind it, and says so when one of them failed
-the process again. See [Reacting to events](/guides/reacting-to-events/#dead-letters) for what a
-retry does per kind.
+When `retry` fails, because the handler fails again or the letter cannot be retried or was settled
+first, the error is printed and the exit code is `2`. For a process letter it also says when one of
+the parked events failed the process again. What a retry runs for each kind is in
+[Dead letters](/guides/dead-letters/).
 
 ## Programmatic use
 

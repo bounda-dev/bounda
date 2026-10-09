@@ -5,51 +5,53 @@ sidebar:
   order: 0
 ---
 
+import { FileTree } from "@astrojs/starlight/components";
+
 A Bounda app is a tree of small modules. Each file is one concept and exports the functions that
 concept needs; the folder it sits in and its name say what it is. `bounda generate` reads the tree
 and writes the registry and the types, so there is no central file to keep in sync. Only `app/domain` and
 `app/read` are read; anything else in `app/`, such as the routes of a web framework, is ignored.
 
-```
-app/
-  domain/
-    order/                          an aggregate
-      state.ts                      optional: initialState and aggregateId
-      order-placed.ts               an event: payload, and begin or evolve
-      order-placed.upcast.ts        optional: how older payloads become today's
-      order-paid.ts
-      inventory.ts                  a port: the interface of what the handlers call outside
-      money.ts                      any other module: a value object, a domain service
-      commands/
-        pay-order.ts                a command: payload and handler
-        place-order.ts
-      policies/
-        issue-invoice-on-order-paid.ts   reacts to OrderPaid
-        notify-on-order-placed.ts
-      processes/
-        order-payment/              a process
-          index.ts                  config and state
-          on-order-placed.ts        handler for OrderPlaced
-          on-order-paid.ts          handler for OrderPaid
-          at-next-reminder.ts       handler for the deadline nextReminder
-          at-timeout.ts             handler for the time-out
-      infrastructure/
-        inventory/                  the implementations of the port inventory.ts
-          http.ts                   an implementation
-          fake.ts                   another; bounda.config.ts picks one
-  read/
-    order-summary/                  a read model
-      view.ts                       fields
-      rates.ts                      a port, for its queries
-      projections/
-        order/                      events of the order aggregate
-          order-placed.ts           reacts to order's OrderPlaced
-      queries/
-        get-order.ts                payload, repository, handler
-      infrastructure/
-        rates/                      the implementations of the port rates.ts
-          ecb.ts
-```
+<FileTree>
+- app/
+  - domain/
+    - order/ an aggregate
+      - state.ts optional: initialState and aggregateId
+      - order-placed.ts an event: payload, and begin or evolve
+      - order-placed.upcast.ts optional: how older payloads become today's
+      - order-paid.ts
+      - inventory.ts a port: the interface of what the handlers call outside
+      - money.ts any other module: a value object, a domain service
+      - commands/
+        - pay-order.ts a command: payload and handler
+        - place-order.ts
+      - policies/
+        - issue-invoice-on-order-paid.ts reacts to OrderPaid
+        - notify-on-order-placed.ts
+      - processes/
+        - order-payment/ a process
+          - index.ts config and state
+          - on-order-placed.ts handler for OrderPlaced
+          - on-order-paid.ts handler for OrderPaid
+          - at-next-reminder.ts handler for the deadline nextReminder
+          - at-timeout.ts handler for the timeout
+      - infrastructure/
+        - inventory/ the implementations of the port inventory.ts
+          - http.ts an implementation
+          - fake.ts another; bounda.config.ts picks one
+  - read/
+    - order-summary/ a read model
+      - view.ts fields
+      - rates.ts a port, for its queries
+      - projections/
+        - order/ events of the order aggregate
+          - order-placed.ts reacts to order's OrderPlaced
+      - queries/
+        - get-order.ts payload, repository, handler
+      - infrastructure/
+        - rates/ the implementations of the port rates.ts
+          - ecb.ts
+</FileTree>
 
 ## Names
 
@@ -84,11 +86,9 @@ and nothing else at run time: those names are an event's alone. It is a port whe
 alike, is yours: a value object, a domain service, a helper the handlers import, which the
 generator leaves alone. `state.ts` and `<event>.upcast.ts` are the only other names it reads.
 
-Two mistakes leave the layout valid, so the generator warns about them instead of failing: a
-module that imports its own `+types` without exporting an event's function, which was an event
-and lost the export that made it one (a leftover `apply`, a typo in `evolve`), and a directory
-whose name is one letter away from `commands`, `policies`, `processes` or `infrastructure`, or is
-`command`, `policy`, `process` or `infra`, whose modules would go unregistered.
+A mistake that leaves the layout valid, such as an event that lost its `evolve` export or a
+directory named `policy` instead of `policies`, gets a warning instead of a failure; the full list
+is in [Conventions](/reference/conventions/#what-the-generator-warns-about).
 
 ```ts
 // app/domain/order/order-placed.ts
@@ -251,8 +251,8 @@ The value has to be one of the names, so a choice made from the environment says
 as above; a plain `process.env.INVENTORY ?? "http"` is a `string` and does not compile.
 
 A port cannot be named after an event of the aggregate, nor after an argument a handler already
-receives (`command`, `state`, `events`, `event`, `commands`, `idempotencyKey`, `signal`,
-`aggregateId`, `after`, `reject`); the generator says which. Domain logic the handlers share but
+receives ([reserved names](/reference/conventions/#what-the-generator-refuses)); the generator says
+which. Domain logic the handlers share but
 that has no implementations to choose from is not a port: it is a module of the aggregate like any
 other, which the handlers import. A provider two aggregates use is two ports, one in each, with the
 contract each aggregate needs; the client they share lives outside `app/domain`, in
@@ -291,21 +291,9 @@ export const handler = async ({ command, state, events, inventory, reject }: Com
 The handler receives the aggregate's ports next to `command`, `state` and `events`. In a
 command they are what the handler reads from outside to decide: stock, prices, a feature flag.
 Effects on the world (a charge, an email) belong in the policy or process that reacts to the
-event, after it is stored; see
-[calling the outside world](/guides/reacting-to-events/#calling-the-outside-world).
-
-A handler can run more than once for one command. When the append loses a concurrency race, the
-runtime reloads the aggregate and runs the handler again, ports included, up to
-`runtime.commands.concurrencyRetries` times. So a port call must be safe to repeat, and
-harmless if the second run decides differently: reading a price or a stock level is; charging a
-card is not. The handler receives `idempotencyKey`, the command's id, which stays the same across
-those runs: pass it to a call the provider deduplicates, such as creating a payment intent, so a
-second run does not create another. A scheduled command keeps the id it was scheduled with.
-
-Each run has a time limit, `runtime.commands.timeout` (30 seconds by default): past it the
-dispatch rejects with `HANDLER_TIMEOUT` and nothing the handler returns is stored. The handler
-receives `signal`, which aborts then; pass it to what it calls outside (`fetch(url, { signal })`)
-so a provider that hangs does not hold the request.
+event, after it is stored. A handler can run more than once for one command and has a time
+limit, so it also receives `idempotencyKey` and `signal` for those calls; see
+[calling the outside world](/guides/calling-the-outside-world/#deciding-then-acting).
 
 #### Rejections
 
@@ -348,24 +336,16 @@ export const handler = async ({ event, commands }: Policy.HandlerArgs) => {
 A policy that reacts to another aggregate's event sits in a folder named after that aggregate:
 `app/domain/order/policies/payment/cancel-order-on-payment-failed.ts` is an `order` policy that
 reacts to `payment`'s `PaymentFailed`. Its key carries the aggregate, `paymentCancelOrderOnPaymentFailed`,
-so it never collides with an `order` policy of the same name. A policy cannot be named after an
-aggregate, and one whose trigger is not an event of the aggregate it listens to fails at boot.
-
-The policies and processes of an aggregate need distinct keys, since the key is what the runtime
-records a handled event under: `bounda generate` refuses `policies/checkout.ts` next to
-`processes/checkout/`, and `policies/payment-refund-on-payment-failed.ts` next to
-`policies/payment/refund-on-payment-failed.ts`. Boot refuses a policy and a process that share one.
+so it never collides with an `order` policy of the same name. The policies and processes of an
+aggregate need distinct keys, since the key is what the runtime records a handled event under,
+and a policy cannot be named after an aggregate
+([what the generator refuses](/reference/conventions/#what-the-generator-refuses)).
 
 Policies dispatch through `commands`, the typed facade of every command in the app. A command can
 be delayed: `commands.sendReminder({ orderId }, { delay: "24h" })`. The call's type follows: one
 with `delay` resolves with `scheduled: true` and `executeAt`, one without with what the command
 decided (`eventTypes`, and `position` from `app.commands`), with no scheduled case to rule out
-first. The compiler checks a literal
-duration; for one that comes from the environment, `asDuration` from `@bounda-dev/core` checks it
-at the call site and returns it typed. A scheduled command's payload is stored as JSON and validated
-in that form when it is dispatched, so what would fail when it runs fails at once: a `z.date()`
-field rejects the string JSON turns a date into, so declare it as `z.coerce.date()`. The handler
-receives the payload validated when the command runs, so a schema's transforms apply once.
+first; see [delaying a command](/guides/reacting-to-events/#delaying-a-command).
 
 A policy receives the aggregate's ports next to `event` and `commands`: an `order` policy
 gets `order`'s, also when it reacts to another aggregate's event.
@@ -387,7 +367,7 @@ A policy that exports `delay` (`export const delay = "1m"`, or `asDuration(...)`
 from the environment) runs that long after the event instead of as soon as it is read; see
 [delaying a policy](/guides/reacting-to-events/#delaying-a-policy).
 
-A policy runs after the events it reacts to are stored, and at least once
+A policy runs after the events it reacts to are stored, and at least once, with an inbox
 ([what the runtime promises](/guides/reacting-to-events/#what-the-runtime-promises)): a call it
 makes must be safe to repeat.
 
@@ -414,19 +394,12 @@ export const state = ({ z, deadline, instant }: Process.StateArgs) =>
   z.object({ reminders: z.int().default(0), nextReminder: deadline(), paidAt: instant() });
 ```
 
-A deadline is a field of the state declared with `deadline()`: a moment, or `null` while nothing is
-due. A handler schedules it by giving it a value with `after()`, moves it by changing the value and
-cancels it with `null`; there is nothing else to call. Each deadline has its handler, named after
-the field: `nextReminder` runs `at-next-reminder.ts`. `instant()` declares a moment the process only
-records, such as `paidAt`, and runs nothing. Boot refuses a `deadline()` without its `at-` file and
-an `at-` file without its `deadline()`, and the name `timeout` is kept for `config.timeout`.
-
-```ts
-// app/domain/order/processes/order-payment/on-order-placed.ts
-import type { Process } from "./+types/on-order-placed";
-
-export const handler = ({ after }: Process.HandlerArgs) => ({ nextReminder: after("24h") });
-```
+A field of the state declared with `deadline()` is a deadline, and `at-<field>.ts` is its handler:
+`nextReminder` runs `at-next-reminder.ts`, which receives `Process.DeadlineArgs`. `instant()`
+declares a moment the process only records, and runs nothing. The name `timeout` is kept for
+`config.timeout`, whose handler is `at-timeout.ts`, and the two must come in pairs
+([what boot refuses](/reference/conventions/#what-boot-refuses)). How a handler sets, moves and cancels a
+deadline, and when each runs, is in [deadlines](/guides/reacting-to-events/#deadlines).
 
 ```ts
 // app/domain/order/processes/order-payment/at-next-reminder.ts
@@ -441,9 +414,6 @@ export const handler = async ({ state, aggregateId, commands, after }: Process.D
 };
 ```
 
-`at-timeout.ts` receives the same arguments and ends the process as timed out, with what it returns
-merged into the final state; the events its commands cause still reach the process's handlers. See [deadlines](/guides/reacting-to-events/#deadlines) for when they run.
-
 A handler for another aggregate's event sits in a folder named after that aggregate,
 `processes/order-payment/payment/on-payment-failed.ts`. Such an event carries that aggregate's id,
 not the order's. When its payload declares the order's id field, `orderId` (or the `aggregateId`
@@ -453,8 +423,7 @@ of the order's `state.ts`), it belongs to the instance that field names, and to 
 `correlate`, which gets `from` and returns `from.<aggregate>.<Event>(…)` for each such event: a
 function from the event to the id of the process's own aggregate, or `null` to ignore it. It
 also overrides the id field. Boot refuses an event of another aggregate the process listens to
-with neither. A correlator that throws, or returns anything but an id or `null`, dead-letters
-that event for the process and the rest carry on.
+with neither.
 
 ```ts
 export const correlate = ({ from }: Process.CorrelateArgs) => [
@@ -462,146 +431,21 @@ export const correlate = ({ from }: Process.CorrelateArgs) => [
 ];
 ```
 
-An event that does not start the process and finds no open instance is skipped, and so is any
-event for an instance that has completed or timed out, but for what its `at-timeout.ts` caused: a
-starting event never reopens one. An
-event for an instance that has failed is parked instead, and handled in order once the failure is
-retried; see [a failed process](/guides/reacting-to-events/#a-failed-process).
-
-The state a handler returns is parsed with `state`: defaults fill what is missing, keys the
-schema does not declare are dropped, and a state it refuses fails the handler for good, like any
-other terminal error. The compiler checks it first: the `+types` of every handler asserts that what it
-returns fits the state, so a field of the wrong type, or a plain string where a deadline wants an
-`Instant`, is a type error reported in that `+types` file.
+What happens to an event no open instance takes, and how the state a handler returns is checked,
+is in [which instance an event reaches](/guides/reacting-to-events/#which-instance-an-event-reaches).
 
 Every handler of the process, the `at-` ones included, receives the aggregate's ports,
 as its commands and policies do.
 
 ## Read models: `app/read/<read-model>/`
 
-`view.ts` declares the table; projections fill it; queries read it.
-
-```ts
-// app/read/order-summary/view.ts
-import type { View } from "./+types/view";
-
-export const fields = ({ f }: View.FieldsArgs) => ({
-  orderId: f.string().primaryKey(),
-  customerId: f.string().index(),
-  status: f.string(),
-  total: f.number(),
-  paidAt: f.date().optional(),
-});
-```
-
-A projection `projections/<aggregate>/<event>.ts` reacts to that aggregate's event, or exports
-`on` for several of that aggregate's events:
-
-```ts
-// app/read/order-summary/projections/order/order-placed.ts
-import type { Projection } from "./+types/order-placed";
-
-export const project = async ({ event, table }: Projection.Args) => {
-  await table.upsert({
-    orderId: event.aggregateId,
-    customerId: event.payload.customerId,
-    status: "placed",
-    total: event.payload.total,
-  });
-};
-```
-
-A query `queries/<name>.ts` has an optional `payload`, an optional `repository` that reads
-through `table` or `client`, and a `handler` that shapes the result and may call other queries:
-
-```ts
-// app/read/order-summary/queries/get-order.ts
-import type { Query } from "./+types/get-order";
-
-export const payload = ({ z }: Query.PayloadArgs) => z.object({ orderId: z.uuid() });
-
-export const repository = ({ table, orderId }: Query.RepositoryArgs) => table.findOne({ orderId });
-
-export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData;
-```
-
-Payload fields with a `.default()` are optional for whoever calls the command or query and
-always present in the handler: callers see the schema's input type, handlers its output type.
-
-The root of a read model is read like an aggregate's, without events: `view.ts`, the ports, and
-any other module or directory the projections and queries share, which the generator leaves
-alone. It warns about a directory one letter away from `projections`, `queries` or
-`infrastructure`, or named `projection`, `query` or `infra`, and about a module there that
-exports `project`, `repository` or `handler`: a projection or a query put in the wrong place,
-which would go unregistered.
-
-### Ports of a read model
-
-A read model's port is declared and implemented as an aggregate's
-([ports](#ports-portts)), and only the `handler` of its queries receives it: a query that
-completes its rows with something from outside, an exchange rate or a profile from the identity
-provider.
-
-```ts
-// app/read/order-summary/queries/get-order-in-usd.ts
-import type { Query } from "./+types/get-order-in-usd";
-
-export const repository = ({ table, orderId }: Query.RepositoryArgs) => table.findOne({ orderId });
-
-export const handler = async ({ repositoryData, rates }: Query.HandlerArgs) =>
-  repositoryData && {
-    ...repositoryData,
-    totalUsd: repositoryData.total * (await rates({ from: "EUR", to: "USD" })),
-  };
-```
-
-A query only reads, so it needs no `idempotencyKey`, and a port that fails fails the query. The
-config chooses its implementation in the same `ports` section, `ports: { orderSummary: { rates:
-"ecb" } }`, and a read model's port cannot be named after what a query's arguments already hold
-(`query`, `repositoryData`, `table`, `queries`) nor `view`.
-
-`repository` reads the storage and gets no ports, and neither do the projections, for three
-reasons, each enough on its own:
-
-- **Exactly once.** A batch of projected events commits in one transaction with its checkpoint. A
-  call to the outside is not part of it, so a batch that fails after the call makes it again.
-- **Rebuilds.** Rebuilding a read model replays its whole history, so the call would be made once
-  per event again, and an answer that has changed since (a rate, a geocode) gives other rows than
-  the first time.
-- **The command's request.** Projections run inside the request of the command whose events they
-  project, so a slow provider slows every command, and one that is down blocks the read model,
-  since a projection that fails is never skipped.
-
-Data from outside belongs in the event, fetched when the command or the policy decides, or in the
-query, fetched when it is read. An index kept in another store, such as Typesense or
-Elasticsearch, is fed by a policy instead: see
-[keeping an external index](/guides/reacting-to-events/#keeping-an-external-index).
+A read model is `view.ts` (its table), `projections/<aggregate>/<event>.ts` (what fills it) and
+`queries/<name>.ts` (what reads it), with ports of its own for its queries.
+[Read models](/guides/read-models/) shows each one.
 
 ## Generated files
 
-`bounda generate` writes:
-
-| Path | Holds |
-| --- | --- |
-| `.bounda/registry.ts` | Every module, grouped as the runtime needs it. `boot()` imports it |
-| `.bounda/register.d.ts` | Registers the registry type and the type of the `ports` section with `@bounda-dev/core/register`, so `boot()` and `BoundaApp` are typed for the project without a type argument and `defineConfig` checks the implementation names |
-| `.bounda/types.ts` | The state, events, ports, commands, rows and queries maps the `+types` build on |
-| `**/+types/<name>.ts` | The argument types each module imports. An implementation has none: it imports its port |
-
-They are derived from your code, so they are not versioned. `tsconfig.json` must include them as
-`.bounda/**/*` (TypeScript skips a bare `.bounda` entry because the directory starts with a dot);
-`create-bounda` sets this up. Add to `.gitignore`:
-
-```
-.bounda/
-**/+types/
-```
-
-and run the generator before anything type-checks, typically as `prepare` in `package.json`:
-
-```json
-{ "scripts": { "prepare": "bounda generate", "dev": "bounda generate --watch" } }
-```
-
-If your formatter or linter picks up generated files, exclude the same two patterns; their layout
-is fixed by the generator.
+`bounda generate` writes `.bounda/` and a `+types/` directory next to each module. They are
+derived from your code: keep them out of git, include `.bounda/**/*` in `tsconfig.json` and run
+the generator before anything type-checks. [Conventions](/reference/conventions/#generated-files)
+says what each file holds and how to set it up; `create-bounda` does it for you.

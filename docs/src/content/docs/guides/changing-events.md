@@ -2,7 +2,7 @@
 title: Changing an event's shape
 description: Events are forever; their payloads are not. An upcaster module next to the event brings old ones up to date as they are read, one version at a time.
 sidebar:
-  order: 8
+  order: 7
 ---
 
 A stored event never changes. Its payload was written by the code of its day, and a year later
@@ -95,8 +95,8 @@ what keeps the chain straight.
 
 Upcasters are cheap but not free: they run on every read of an old event. An aggregate with
 thousands of old events re-runs the chain on every command, since Bounda has no snapshots yet
-([what is not there yet](/guides/deployment/#what-is-not-there-yet)), and a rebuild runs it over
-the whole stream once.
+([what is not there yet](/reference/limitations/)), and a rebuild runs it over
+the whole global stream once.
 
 ## What is not covered yet
 

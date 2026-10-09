@@ -2,7 +2,7 @@
 title: Bounda with React Router
 description: Boot the app once from a middleware, dispatch commands from actions and read queries from loaders.
 sidebar:
-  order: 2
+  order: 8
 ---
 
 `@bounda-dev/react-router` puts a running Bounda app in the router context of every request. It
@@ -128,19 +128,16 @@ sooner than the app's limit.
 Read models are updated by projections that run in the background, so a page reached right after
 a command could be rendered before the read model has the row. By default the app in the context
 reads its own writes: a command resolves once the read models that project its events have
-reached them, and the redirect lands on a page that already shows them. The wait is bounded (2
-seconds by default), so a stuck worker makes a page stale rather than a request that hangs; see
-[Reading your own writes](/guides/deployment/#reading-your-own-writes). Policies, processes and
-scheduled commands still run in the background.
+reached them, and the redirect lands on a page that already shows them. The wait is bounded, and
+what it waits for is in [reading your own writes](/guides/deployment/#reading-your-own-writes).
+Policies, processes and scheduled commands still run in the background.
 
 ```ts
 bounda({ consistency: "eventual" });
 ```
 
 `consistency: "eventual"` serves the app exactly as booted, and reads may lag behind writes. Use
-it when a separate worker owns the projections and the pages tolerate the delay. The same
-behaviour is available to any host through `readYourWrites(app)` and
-`app.catchUpReadModels({ through })` from `@bounda-dev/core`.
+it when a separate worker owns the projections and the pages tolerate the delay.
 
 ## Development and production
 
