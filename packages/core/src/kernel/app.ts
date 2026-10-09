@@ -85,8 +85,9 @@ export interface BoundaApp<R extends Registry = AppRegistry> {
    * Runs the projections until every read model reflects the events stored so far. With `through`,
    * only waits for the read models that project the events of that dispatch, until they reach its
    * position, for at most `runtime.dispatcher.catchUp.timeout`: what a request that reads its own
-   * writes needs. Policies, processes and scheduled commands are left to the background. Works in
-   * every role.
+   * writes needs, and it then never rejects: a read model it cannot read is logged and left
+   * behind. Policies, processes and scheduled commands are left to the background. Works in every
+   * role.
    */
   catchUpReadModels(args?: CatchUpReadModelsArgs): Promise<void>;
   /**
@@ -404,8 +405,11 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           try {
             lag.removeCallback(observeLag);
             await Promise.all([dispatcher.stop(), worker.stop()]);
-            await readModels.close();
-            await storage.close();
+            try {
+              await readModels.close();
+            } finally {
+              await storage.close();
+            }
           } finally {
             await ports.dispose();
           }

@@ -606,6 +606,28 @@ describe("implementations built by create", () => {
     expect(log).toEqual(["notifier closed"]);
   });
 
+  it("still closes the storage when closing a read model fails on stop", async () => {
+    const counting = countingAdapter();
+    const adapter: Adapter = {
+      ...counting.adapter,
+      createReadModel: async <Row extends object>(args: CreateReadModelArgs) => {
+        const ports = await counting.adapter.createReadModel<Row>(args);
+        return {
+          ...ports,
+          close: async () => {
+            throw new Error("read model database is gone");
+          },
+        };
+      },
+    };
+    const app = await createApp({
+      registry,
+      config: { storage: adapter, ports: { order: { notifier: "memory" } } },
+    });
+    await expect(app.stop()).rejects.toThrow("read model database is gone");
+    expect(counting.closes().storage).toBe(1);
+  });
+
   it("builds a fresh port for every app on the same registry", async () => {
     const log: string[] = [];
     const { create, app: lifecycleRegistry } = lifecycle(log);
