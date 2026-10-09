@@ -41,8 +41,7 @@ import { createProblemCollector, type ProblemCollector } from "./problems.ts";
 export interface DiscoverProjectArgs {
   readonly root: string;
   /**
-   * The application directory under `root`, which the configuration calls `rootDir`. Defaults to
-   * `app`.
+   * The application directory under `root`. Defaults to `app`.
    */
   readonly appDir?: string;
 }

@@ -28,7 +28,6 @@ const message = (config: unknown): string => {
 describe("resolveConfig", () => {
   it("fills every default from a minimal config", () => {
     const resolved = resolveConfig({ storage: sqlite });
-    expect(resolved.rootDir).toBe("app");
     expect(resolved.storage).toBe(sqlite);
     expect(resolved.readModels).toEqual({});
     expect(resolved.ports).toEqual({});
