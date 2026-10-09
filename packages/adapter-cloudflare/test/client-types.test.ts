@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import type {
+  BoundaClient,
   CreateAppArgs,
   DeadLetter,
   DispatchResult,
@@ -15,6 +16,7 @@ import type { regionRegistry, registry } from "./app.ts";
 describe("connect", () => {
   it("types commands and queries from the registry, as app.commands and app.queries are", () => {
     const store = connect<typeof registry>(env.STORE.get(env.STORE.newUniqueId()));
+    expectTypeOf(store).toEqualTypeOf<BoundaClient<typeof registry>>();
     expectTypeOf(store.commands.placeOrder).parameter(0).toEqualTypeOf<{
       orderId: string;
       total: number;

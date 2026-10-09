@@ -61,7 +61,7 @@ describe("createBounda", () => {
     expect(served).not.toBe(fake.app);
     await (served.commands as unknown as OrderCommands).placeOrder();
     expect(fake.calls).toEqual(["start", "placeOrder", "catchUp"]);
-    await served.stop();
+    await (served as BoundaApp).stop();
     expect(fake.calls).toEqual(["start", "placeOrder", "catchUp", "stop"]);
   });
 

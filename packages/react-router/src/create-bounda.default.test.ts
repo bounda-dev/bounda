@@ -29,7 +29,7 @@ describe("createBounda without arguments", () => {
     );
 
     expect(boot).toHaveBeenCalledTimes(1);
-    expect(context.get(bounda).start).toBe(app.start);
+    expect((context.get(bounda) as BoundaApp).start).toBe(app.start);
     expect(Symbol.for("bounda.app") in globalThis).toBe(true);
     await dispose();
     expect(started).toEqual(["start", "stop"]);

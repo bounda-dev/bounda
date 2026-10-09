@@ -77,8 +77,9 @@ handled again, but a handler that fails midway runs again, so calls it makes out
 - **Implementation**: one way to fulfil a port, under `infrastructure/<port>/`, chosen by name in
   `bounda.config.ts` and replaced by a double in tests
   ([Every module is a hexagon](/concepts/every-module-is-a-hexagon/)).
-- **Host**: what runs the app and talks to it: a Node script, a React Router app or a Cloudflare
-  Worker.
+- **Host**: what serves the app's requests: a Node process with the app inside it (a script, a
+  server, a React Router app), or a Cloudflare Worker with the app in a Durable Object behind it
+  (its own `fetch` or a React Router app).
 
 [How Bounda runs](/concepts/how-it-runs/) puts these together with numbers;
 [Project layout](/guides/project-layout/) says which file holds each one.

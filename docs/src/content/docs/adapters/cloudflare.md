@@ -39,7 +39,10 @@ import { registry } from "../.bounda/registry.ts";
 import config from "../bounda.config.ts";
 
 export const Store = createBoundaObject({ registry, config });
-export default createWorker({ binding: "STORE" });
+export default createWorker({
+  config,
+  tenantOf: (request) => request.headers.get("x-bounda-tenant") ?? "default",
+});
 ```
 
 ```jsonc
@@ -58,7 +61,8 @@ export default createWorker({ binding: "STORE" });
 
 `public/index.html` is a page that places orders and lists them through the API, served as a
 static asset. `npm run dev` starts `wrangler dev` on http://localhost:8787; `npm run deploy`
-deploys to your account.
+deploys to your account. A React Router app runs on Cloudflare the same way, with the object
+behind its loaders and actions: see [Bounda with React Router](/guides/react-router/#on-cloudflare).
 
 ## How it runs
 
@@ -121,19 +125,21 @@ runs under `createTestApp` or an app you stop yourself.
 
 ## One object per tenant
 
-`createWorker` addresses the object by the `x-bounda-tenant` header, `default` without it. Each
-tenant is its own object, with its own events and read models, and nothing is shared between
-them. That is also how a Cloudflare app scales: one object handles in the order of a thousand
-requests a second, and [How Bounda runs](/concepts/how-it-runs/) explains why the way out is more
-stores, not a split global stream.
+`createWorker` addresses the object by the tenant `tenantOf` names for each request: in the
+project above, the `x-bounda-tenant` header, `default` without it. Each tenant is its own object,
+with its own events and read models, and nothing is shared between them. That is also how a
+Cloudflare app scales: one object handles in the order of a thousand requests a second, and
+[How Bounda runs](/concepts/how-it-runs/) explains why the way out is more stores, not a split
+global stream.
 
 ## The HTTP API
 
-`createWorker({ binding })` serves one app as JSON:
+`createWorker({ config, tenantOf })` serves one app as JSON, through the Durable Object binding
+`cloudflare()` names: `STORE` unless `cloudflare({ binding })` says otherwise.
 
 | Request | Answer |
 | --- | --- |
-| `POST /commands/<name>` with the payload as the body | The dispatch result, once the read models reflect it, or once its events are stored with `createWorker({ binding, consistency: "eventual" })`. `?delay=10m` schedules it |
+| `POST /commands/<name>` with the payload as the body | The dispatch result, once the read models reflect it, or once its events are stored with `createWorker({ config, tenantOf, consistency: "eventual" })`. `?delay=10m` schedules it |
 | `POST /queries/<name>` with the payload as the body | The query's result |
 
 Refusals come back as `{ "error": { "code", "message" } }` with the statuses in
@@ -156,10 +162,11 @@ export default {
 } satisfies ExportedHandler<Env>;
 ```
 
-`connect(stub)` gives the same `commands` and `queries` as `app.commands` and `app.queries`,
-typed from your modules, plus `getLag()`, `deadLetters` and `rebuildReadModel`. Its commands
-resolve once the read models reflect them; `connect(stub, { consistency: "eventual" })` resolves
-them once their events are stored, for a request that reads nothing after it. A refusal comes
+`connect(stub)` gives a `BoundaClient`, the type `@bounda-dev/core` gives to what a request sees
+of an app wherever it runs: the same `commands` and `queries` as `app.commands` and
+`app.queries`, typed from your modules, plus `getLag()`, `deadLetters` and `rebuildReadModel`.
+Its commands resolve once the read models reflect them; `connect(stub, { consistency: "eventual" })`
+resolves them once their events are stored, for a request that reads nothing after it. A refusal comes
 back as an `Error` with the same `name`, `message`, `code` and, for validation, `issues`, whatever
 the Worker's compatibility date: the object answers refusals as data and `connect` throws them
 again, because RPC drops an error's own properties on older dates. Check `error.code`, not

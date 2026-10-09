@@ -1,13 +1,13 @@
 import {
   type AppRegistry,
   type BoundaApp,
-  ConfigurationError,
+  type BoundaClient,
   type Consistency,
   type Registry,
   readYourWrites,
 } from "@bounda-dev/core";
-import { boot } from "@bounda-dev/core/node";
 import { createContext, type MiddlewareFunction, type RouterContext } from "react-router";
+import { checkConsistency } from "./check-consistency.ts";
 
 /**
  * Boots the app the middleware serves. Called on the first request, and again on the next one
@@ -59,7 +59,7 @@ export interface Bounda<R extends Registry = AppRegistry> {
   /**
    * The context that holds the app in loaders and actions: `context.get(bounda)`.
    */
-  readonly bounda: RouterContext<BoundaApp<R>>;
+  readonly bounda: RouterContext<BoundaClient<R>>;
   readonly boundaMiddleware: BoundaMiddleware;
   readonly dispose: DisposeBoundaFunction;
 }
@@ -143,17 +143,13 @@ const load = <R extends Registry>(
  *   context.get(bounda).commands.activateUser({ userId: params.userId });
  */
 export const createBounda: CreateBoundaFunction = <R extends Registry = AppRegistry>({
-  boot: bootApp = () => boot<R>(),
+  // Imported on demand, so that importing this package does not load Node's modules on Cloudflare.
+  boot: bootApp = async () => (await import("@bounda-dev/core/node")).boot<R>(),
   key = DEFAULT_KEY,
   consistency = "read-your-writes",
 }: CreateBoundaArgs<R> = {}): Bounda<R> => {
-  // Config files and the Vite plugin's options are often not type-checked.
-  if (consistency !== "read-your-writes" && consistency !== "eventual") {
-    throw new ConfigurationError(
-      `consistency must be "read-your-writes" or "eventual", got ${JSON.stringify(consistency)}`,
-    );
-  }
-  const bounda = createContext<BoundaApp<R>>();
+  checkConsistency(consistency);
+  const bounda = createContext<BoundaClient<R>>();
   const slot = slotFor<R>(key);
   void retire(slot);
 

@@ -11,6 +11,7 @@ export type { Query } from "./contracts/query.ts";
 export type {
   AppLag,
   BoundaApp,
+  BoundaClient,
   CatchUpReadModelsArgs,
   CreateAppArgs,
   CreateAppFunction,

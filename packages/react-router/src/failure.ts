@@ -1,4 +1,4 @@
-import { DomainError, ValidationError, type ValidationIssue } from "@bounda-dev/core";
+import type { ValidationIssue } from "@bounda-dev/core";
 import { data } from "react-router";
 
 /**
@@ -18,7 +18,8 @@ export interface FailureFunction {
 /**
  * Turns what a command is expected to throw into an action's answer, for the form to show: a
  * `ValidationError` becomes a 400 with its issues, a `DomainError`, the command's rejection, a 409
- * with its code in `rejected`. Anything else is rethrown, for the route's `ErrorBoundary`.
+ * with its code in `rejected`. It goes by the error's `code`, so the same refusals that come back
+ * from a Durable Object count too. Anything else is rethrown, for the route's `ErrorBoundary`.
  *
  * ```ts
  * try {
@@ -29,14 +30,15 @@ export interface FailureFunction {
  * ```
  */
 export const failure: FailureFunction = (error) => {
-  if (error instanceof ValidationError) {
-    return data<Failure>({ error: error.message, issues: error.issues }, { status: 400 });
+  // By code rather than class: from a Durable Object a refusal comes back as a plain `Error`.
+  const code = error instanceof Error ? Reflect.get(error, "code") : undefined;
+  if (code === "VALIDATION_FAILED") {
+    const { message, issues } = error as Error & { readonly issues: readonly ValidationIssue[] };
+    return data<Failure>({ error: message, issues }, { status: 400 });
   }
-  if (error instanceof DomainError) {
-    return data<Failure>(
-      { error: error.message, issues: [], rejected: error.rejected },
-      { status: 409 },
-    );
+  if (code === "DOMAIN_ERROR") {
+    const { message, rejected } = error as Error & { readonly rejected: string };
+    return data<Failure>({ error: message, issues: [], rejected }, { status: 409 });
   }
   throw error;
 };

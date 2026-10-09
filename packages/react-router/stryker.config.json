@@ -5,7 +5,13 @@
   "vitest": {
     "configFile": "vitest.config.ts"
   },
-  "mutate": ["src/**/*.ts", "!src/**/*.test.ts", "!src/index.ts"],
+  "mutate": [
+    "src/**/*.ts",
+    "!src/**/*.test.ts",
+    "!src/**/test-support.ts",
+    "!src/index.ts",
+    "!src/cloudflare/index.ts"
+  ],
   "ignoreStatic": true,
   "incremental": true,
   "incrementalFile": ".stryker-tmp/incremental.json",

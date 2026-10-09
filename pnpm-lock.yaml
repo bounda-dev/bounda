@@ -677,12 +677,18 @@ importers:
 
   packages/react-router:
     devDependencies:
+      '@bounda-dev/adapter-cloudflare':
+        specifier: workspace:*
+        version: link:../adapter-cloudflare
       '@bounda-dev/cli':
         specifier: workspace:*
         version: link:../cli
       '@bounda-dev/core':
         specifier: workspace:*
         version: link:../core
+      '@cloudflare/workers-types':
+        specifier: 'catalog:'
+        version: 5.20260921.1
       '@stryker-mutator/core':
         specifier: 'catalog:'
         version: 10.0.0(@types/node@26.6.1)

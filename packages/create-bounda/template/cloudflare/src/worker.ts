@@ -15,4 +15,7 @@ export const Store = createBoundaObject({ registry, config });
  * the `x-bounda-tenant` header, over RPC. It has no authentication; an app with users writes its
  * own `fetch` and calls the object through `connect(env.STORE.get(id))`.
  */
-export default createWorker({ binding: "STORE" });
+export default createWorker({
+  config,
+  tenantOf: (request) => request.headers.get("x-bounda-tenant") ?? "default",
+});

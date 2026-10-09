@@ -59,6 +59,10 @@ own writes, so a page reached right after a command already shows it; pass
 `bounda({ consistency: "eventual" })` to leave projections to the background. `createBounda()` is
 the same thing without the plugin, for a server module of your own.
 
+On Cloudflare, with `storage: cloudflare()` and `@cloudflare/vite-plugin`, the same plugin serves
+the app from the Worker: each loader and action reaches the Durable Object of the tenant that
+`app/tenant.ts` names.
+
 ## Status
 
 0.x. Until 1.0 the API can still change between minor versions, and every change that breaks

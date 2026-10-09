@@ -1,6 +1,7 @@
 import {
   type AppLag,
   type AppRegistry,
+  type BoundaClient,
   type CommandsFacade,
   ConfigurationError,
   type Consistency,
@@ -32,27 +33,6 @@ export interface BoundaStub {
   retryDeadLetter(id: string): PromiseLike<unknown>;
   discardDeadLetter(id: string): PromiseLike<unknown>;
   rebuildReadModel(name: string): PromiseLike<unknown>;
-}
-
-/**
- * One store, seen from a Worker: the same `commands` and `queries` as `app.commands` and
- * `app.queries`, typed from the registry, plus the operations an operator needs. Every call is a
- * round trip to the object. A command's `signal` only counts before the call leaves the Worker:
- * RPC cannot carry it into the object, where the command then runs to the end.
- */
-export interface BoundaClient<R extends Registry> {
-  readonly commands: CommandsFacade<R>;
-  readonly queries: QueriesFacade<R>;
-  getLag(): Promise<AppLag>;
-  readonly deadLetters: {
-    list(args?: ListDeadLettersArgs): Promise<readonly DeadLetter[]>;
-    retry(id: string): Promise<DeadLetter>;
-    discard(id: string): Promise<DeadLetter>;
-  };
-  /**
-   * Runs the first slice of a rebuild; when it is not `done`, the object's alarm finishes it.
-   */
-  rebuildReadModel(name: string): Promise<RebuildReadModelResult>;
 }
 
 export interface ConnectOptions {
@@ -98,14 +78,17 @@ const byName = <T extends object>(call: (name: string, ...args: unknown[]) => un
   });
 
 /**
- * A typed client for a Bounda Durable Object. Without a type argument it takes the registry the
- * generator registered, like `boot()`:
+ * A typed client for a Bounda Durable Object: the same `commands` and `queries` as the app's,
+ * typed from the registry, plus the operations an operator needs. Without a type argument it
+ * takes the registry the generator registered, like `boot()`:
  *
  * ```ts
  * const store = connect(env.STORE.get(env.STORE.idFromName(tenant)));
  * await store.commands.placeOrder({ orderId, customerId, total });
  * ```
  *
+ * Every call is a round trip to the object. A command's `signal` only counts before the call
+ * leaves the Worker: RPC cannot carry it into the object, where the command then runs to the end.
  * Throws `ConfigurationError` for a `consistency` it does not know.
  */
 export const connect: ConnectFunction = <R extends Registry = AppRegistry>(

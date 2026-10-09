@@ -1,5 +1,7 @@
 import type { Consistency, DispatchOptions, Logger } from "@bounda-dev/core";
+import type { Config } from "@bounda-dev/core/config";
 import { type BoundaStub, checkConsistency } from "./client.ts";
+import { cloudflareStorageOf } from "./definition.ts";
 import { workersLogger } from "./logger.ts";
 import { unwrap } from "./outcome.ts";
 
@@ -9,15 +11,15 @@ export interface TenantOfFunction {
 
 export interface CreateWorkerArgs {
   /**
-   * The name of the Bounda Durable Object's binding in `wrangler.jsonc`.
+   * The app's configuration, with `storage: cloudflare()`, whose `binding` names the Bounda
+   * Durable Object's binding.
    */
-  readonly binding: string;
+  readonly config: Config;
   /**
-   * Which store a request belongs to: the name the object is addressed by. Defaults to the
-   * `x-bounda-tenant` header, or `default` without one. Every tenant is its own object, with its
-   * own events and read models.
+   * Which store a request belongs to: the name the object is addressed by. Every tenant is its
+   * own object, with its own events and read models.
    */
-  readonly tenantOf?: TenantOfFunction;
+  readonly tenantOf: TenantOfFunction;
   /**
    * Whether a command answers once the read models reflect it, `"read-your-writes"` by default,
    * or as soon as its events are stored, `"eventual"`.
@@ -32,8 +34,6 @@ export interface CreateWorkerArgs {
 export interface CreateWorkerFunction {
   (args: CreateWorkerArgs): ExportedHandler<Cloudflare.Env>;
 }
-
-export const TENANT_HEADER: "x-bounda-tenant" = "x-bounda-tenant";
 
 const STATUS_BY_CODE: Readonly<Record<string, number>> = {
   VALIDATION_FAILED: 400,
@@ -53,9 +53,6 @@ const json = (body: unknown, status = 200): Response =>
 
 const failure = (code: string, message: string, status: number, extra: object = {}): Response =>
   json({ error: { code, message, ...extra } }, status);
-
-const defaultTenant: TenantOfFunction = (request) =>
-  request.headers.get(TENANT_HEADER) ?? "default";
 
 const readPayload = async (request: Request): Promise<unknown> => {
   const text = await request.text();
@@ -77,7 +74,8 @@ const route = (pathname: string): { readonly kind: string; readonly name: string
 };
 
 /**
- * A Worker that exposes one Bounda app as JSON over HTTP, a store per tenant:
+ * A Worker that exposes one Bounda app as JSON over HTTP, a store per tenant, through the binding
+ * `cloudflare()` names:
  *
  * - `POST /commands/<name>` with the payload as the body, `?delay=10m` to schedule it, answers
  *   the dispatch result, once the read models reflect it unless `consistency` is `"eventual"`;
@@ -87,15 +85,16 @@ const route = (pathname: string): { readonly kind: string; readonly name: string
  * with `issues`, 404 for an unknown command, query or row, 409 for a command's rejection, with its
  * code in `rejected`, or a conflict. Anything else is a 500 without its message, which is logged
  * instead. There is no authentication and no operator endpoint: it is a starting point, and an
- * app with users writes its own `fetch` over `connect`. Throws `ConfigurationError` for a
- * `consistency` it does not know.
+ * app with users writes its own `fetch` over `connect`. Throws `ConfigurationError` when
+ * `storage` is not `cloudflare()` or for a `consistency` it does not know.
  */
 export const createWorker: CreateWorkerFunction = ({
-  binding,
-  tenantOf = defaultTenant,
+  config,
+  tenantOf,
   consistency = "read-your-writes",
   logger = workersLogger,
 }) => {
+  const { binding } = cloudflareStorageOf(config).options;
   checkConsistency(consistency);
   return {
     fetch: async (request, env) => {
@@ -116,10 +115,10 @@ export const createWorker: CreateWorkerFunction = ({
         logger.error("bounda worker has no such binding", { binding });
         return failure("INTERNAL", "Internal error", 500);
       }
-      const stub = namespace.get(
-        namespace.idFromName(await tenantOf(request)),
-      ) as unknown as BoundaStub;
       try {
+        const stub = namespace.get(
+          namespace.idFromName(await tenantOf(request)),
+        ) as unknown as BoundaStub;
         const result = await unwrap(
           target.kind === "commands"
             ? stub.command(target.name, payload, optionsOf(url), consistency)

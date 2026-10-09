@@ -48,11 +48,27 @@ export interface CatchUpReadModelsArgs {
 }
 
 /**
- * A running Bounda application.
+ * What a request sees of a running app, wherever the app runs: the `BoundaApp` itself, or a
+ * Durable Object reached through `connect` from `@bounda-dev/adapter-cloudflare`. The `bounda`
+ * context of `@bounda-dev/react-router` holds one.
  */
-export interface BoundaApp<R extends Registry = AppRegistry> {
+export interface BoundaClient<R extends Registry = AppRegistry> {
   readonly commands: CommandsFacade<R>;
   readonly queries: QueriesFacade<R>;
+  getLag(): Promise<AppLag>;
+  readonly deadLetters: Pick<DeadLetters, "list" | "retry" | "discard">;
+  /**
+   * Rebuilds one read model from the whole stream into a fresh table and swaps it in, without
+   * taking it offline. A Durable Object runs the first slice and resolves with `done: false`
+   * when more remain, which its alarm runs.
+   */
+  rebuildReadModel(name: string): Promise<RebuildReadModelResult>;
+}
+
+/**
+ * A running Bounda application.
+ */
+export interface BoundaApp<R extends Registry = AppRegistry> extends BoundaClient<R> {
   readonly config: ResolvedConfig;
   readonly role: RuntimeRole;
   /**
@@ -109,7 +125,6 @@ export interface BoundaApp<R extends Registry = AppRegistry> {
    * The handler runs that gave up, and what to do about them: list, retry or discard.
    */
   readonly deadLetters: DeadLetters;
-  getLag(): Promise<AppLag>;
 }
 
 /**

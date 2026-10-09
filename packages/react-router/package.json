@@ -27,6 +27,15 @@
       "types": "./dist/app.d.ts",
       "default": "./dist/app.js"
     },
+    "./cloudflare": {
+      "types": "./dist/cloudflare/index.d.ts",
+      "default": "./dist/cloudflare/index.js"
+    },
+    "./host": {
+      "types": "./dist/host/node.d.ts",
+      "workerd": "./dist/host/cloudflare.js",
+      "default": "./dist/host/node.js"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {
@@ -43,14 +52,17 @@
     "test:mutation": "stryker run"
   },
   "peerDependencies": {
+    "@bounda-dev/adapter-cloudflare": "workspace:*",
     "@bounda-dev/cli": "workspace:*",
     "@bounda-dev/core": "workspace:*",
     "react-router": ">=8",
     "vite": ">=7"
   },
   "devDependencies": {
+    "@bounda-dev/adapter-cloudflare": "workspace:*",
     "@bounda-dev/cli": "workspace:*",
     "@bounda-dev/core": "workspace:*",
+    "@cloudflare/workers-types": "catalog:",
     "@stryker-mutator/core": "catalog:",
     "@stryker-mutator/vitest-runner": "catalog:",
     "@types/node": "catalog:",
@@ -62,6 +74,9 @@
     "vitest": "catalog:"
   },
   "peerDependenciesMeta": {
+    "@bounda-dev/adapter-cloudflare": {
+      "optional": true
+    },
     "@bounda-dev/cli": {
       "optional": true
     },
