@@ -5,11 +5,16 @@ import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
 import { errorDetails } from "../shared/retry.ts";
 import type { UnitOfWork } from "../unit-of-work/unit-of-work.ts";
-import type { ProcessesRuntime } from "./build-processes.ts";
+import type { ProcessesRuntime, ProcessRuntime } from "./build-processes.ts";
 import type { DeadlineStep } from "./deadline-step.ts";
-import { type ProcessDeadlinePayload, reachedKey } from "./deadlines.ts";
+import { type Deadline, type ProcessDeadlinePayload, reachedKey } from "./deadlines.ts";
 import { deadlineSubject, type ProcessFailures } from "./failures.ts";
-import { instanceContext, lifecycleEntries, type ProcessStatus } from "./lifecycle.ts";
+import {
+  instanceContext,
+  lifecycleEntries,
+  type ProcessInstance,
+  type ProcessStatus,
+} from "./lifecycle.ts";
 import { type DeadlineSchedule, pendingDeadline } from "./schedule.ts";
 import type { ProcessUnits } from "./units.ts";
 
@@ -58,9 +63,9 @@ export interface ProcessDeadlines {
    */
   lostRace(payload: DeadlineTarget, error: unknown): boolean;
   /**
-   * Fails the process only when a deadline handler threw `error`, with `ProcessFailed`, the dead
-   * letter and the entry written together. Either way the entry is written again, over what
-   * `settle` left of it.
+   * Fails the process with `ProcessFailed`, the dead letter and the entry written together: for
+   * the deadline whose handler threw `error`, or else for the deadline still due. Either way the
+   * entry is written again, over what `settle` left of it.
    */
   failDeadline(args: FailDeadlineArgs): Promise<void>;
 }
@@ -126,6 +131,14 @@ export const createDeadlineDelivery: CreateDeadlineDeliveryFunction = ({
     await units.commit(step);
   };
 
+  const dueDeadline = (
+    process: ProcessRuntime,
+    instance: ProcessInstance,
+  ): Deadline | undefined => {
+    const due = pendingDeadline(process, instance);
+    return due !== null && Date.parse(due.at) <= clock.now().getTime() ? due : undefined;
+  };
+
   const failDeadline = async ({
     payload,
     error,
@@ -141,12 +154,15 @@ export const createDeadlineDelivery: CreateDeadlineDeliveryFunction = ({
       });
       return;
     }
-    const failed = deadlineStep.thrownBy(error);
+    const thrown = deadlineStep.thrownBy(error);
     let letter: NewDeadLetter | undefined;
     let status: ProcessStatus | undefined;
     await units.commit(async (unit, within) => {
       await settle(unit);
       const instance = await within.load(process, payload.aggregateId);
+      // An error from outside the handler, such as a commit the store keeps refusing, fails the
+      // deadline that is still due: written again as it was, it would run on every poll.
+      const failed = thrown ?? dueDeadline(process, instance);
       letter = undefined;
       status = instance.status;
       if (
@@ -177,7 +193,7 @@ export const createDeadlineDelivery: CreateDeadlineDeliveryFunction = ({
         process: process.name,
         aggregateId: payload.aggregateId,
         status,
-        thrownBy: failed?.field ?? null,
+        thrownBy: thrown?.field ?? null,
         error: errorDetails(error).message,
       });
       return;

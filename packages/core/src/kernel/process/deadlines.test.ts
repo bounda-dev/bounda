@@ -775,6 +775,47 @@ describe("process deadlines", () => {
     expect((await lifecycle(harness)).at(-1)?.type).toBe(PROCESS_EVENTS.failed);
   });
 
+  it("dead-letter a deadline whose step keeps failing outside its handler, and stop running it", async () => {
+    reset();
+    const harness = await setUp({
+      runtime: { processes: { retry: { strategy: "none" } } },
+    });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await settle(harness);
+    let refuse = false;
+    duringReminder = async () => {
+      refuse = true;
+    };
+    const transact = harness.storage.transact.bind(harness.storage);
+    harness.storage.transact = (work) =>
+      transact(async (tx) => {
+        const result = await work(tx);
+        if (refuse) {
+          refuse = false;
+          throw new Error("store refused the batch");
+        }
+        return result;
+      });
+    harness.clock.advance(DAY);
+    for (let round = 0; round < 5; round += 1) {
+      await harness.dispatcher.runUntilIdle();
+      await harness.worker.runOnce();
+    }
+    expect(calls).toEqual([`reminder:${at(DAY)}`]);
+    expect(await harness.storage.deadLetterStore.list()).toMatchObject([
+      {
+        eventId: "deadline:nextReminder",
+        errorType: "retriable_exhausted",
+        errorMessage: "store refused the batch",
+      },
+    ]);
+    expect((await lifecycle(harness)).at(-1)).toMatchObject({
+      type: PROCESS_EVENTS.failed,
+      payload: { deadline: "nextReminder", at: at(DAY) },
+    });
+    expect(await harness.storage.scheduler.list()).toEqual([]);
+  });
+
   it("wait for the process runner to handle the events stored before them", async () => {
     reset();
     const harness = await setUp();
