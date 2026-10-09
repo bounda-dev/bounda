@@ -112,27 +112,27 @@ export const rebuildReadModel: RebuildReadModelFunction = async ({
     );
   }
   const storage = await config.storage.createStorage({ logger });
-  const eventStore = withUpcasting({
-    eventStore: storage.eventStore,
-    // A rebuild runs no handler, so it builds no implementation.
-    aggregates: buildAggregates({ registry, ports: {} }),
-  });
   try {
+    const eventStore = withUpcasting({
+      eventStore: storage.eventStore,
+      // A rebuild runs no handler, so it builds no implementation.
+      aggregates: buildAggregates({ registry, ports: {} }),
+    });
     const progress = `${progressPrefix(name)}${fingerprintReadModel(entry)}`;
     const rebuild = await adapterForReadModel({ name, config }).rebuildReadModel<
       Record<string, unknown>
     >({ name, fields: entry.view.fields({ f: fieldBuilder }), logger, progress });
-    for (const { subscriber } of await rebuild.checkpointStore.list()) {
-      if (subscriber.startsWith(progressPrefix(name)) && subscriber !== progress) {
-        await rebuild.checkpointStore.remove(subscriber);
-      }
-    }
-    const readModel = compileProjections({ name, entry });
     const { batchSize } = config.runtime.dispatcher;
     let { position } = rebuild;
     const budget = maxEvents ?? Number.POSITIVE_INFINITY;
     let events = 0;
     try {
+      for (const { subscriber } of await rebuild.checkpointStore.list()) {
+        if (subscriber.startsWith(progressPrefix(name)) && subscriber !== progress) {
+          await rebuild.checkpointStore.remove(subscriber);
+        }
+      }
+      const readModel = compileProjections({ name, entry });
       for (;;) {
         if (events >= budget) {
           await rebuild.pause();
@@ -159,7 +159,7 @@ export const rebuildReadModel: RebuildReadModelFunction = async ({
       }
       await rebuild.commit({ subscriber: projectionSubscriberName(name), position });
     } catch (error) {
-      await rebuild.abort();
+      await rebuild.abort().catch(() => undefined);
       throw error instanceof PartialBatchError ? error.cause : error;
     }
     logger.info("read model rebuilt", { readModel: name, events, position });

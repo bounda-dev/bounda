@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { Adapter, CreateStorageArgs } from "../../adapter/adapter.ts";
+import type {
+  Adapter,
+  CreateReadModelRebuildArgs,
+  CreateStorageArgs,
+} from "../../adapter/adapter.ts";
 import type { Table } from "../../adapter/ports/table.ts";
 import { RebuildSupersededError } from "../../contracts/errors.ts";
 import { silentLogger } from "../../contracts/logger.ts";
@@ -220,6 +224,48 @@ describe("rebuildReadModel", () => {
     ).table;
     expect(await table.findMany()).toEqual([{ orderId: "o-1", total: 7 }]);
     await app.stop();
+  });
+
+  it("ends the rebuild and closes the storage when a step before the first batch fails", async () => {
+    mode = "ok";
+    const base = memory();
+    const ended: string[] = [];
+    let closes = 0;
+    const adapter: Adapter = {
+      ...base,
+      createStorage: async (args) => {
+        const storage = await base.createStorage(args);
+        return {
+          ...storage,
+          close: async () => {
+            closes += 1;
+            await storage.close();
+          },
+        };
+      },
+      rebuildReadModel: async <Row extends object>(args: CreateReadModelRebuildArgs) => {
+        const rebuild = await base.rebuildReadModel<Row>(args);
+        return {
+          ...rebuild,
+          checkpointStore: {
+            ...rebuild.checkpointStore,
+            list: async () => {
+              throw new Error("checkpoints unreadable");
+            },
+          },
+          abort: async () => {
+            ended.push("abort");
+            await rebuild.abort();
+          },
+        };
+      },
+    };
+    const config = { storage: adapter, ports: { order: { notifier: "memory" } } };
+    await expect(
+      rebuildReadModel({ registry, config, name: "orderSummary", logger: silentLogger }),
+    ).rejects.toThrow("checkpoints unreadable");
+    expect(ended).toEqual(["abort"]);
+    expect(closes).toBe(1);
   });
 
   it("rebuilds in slices, keeping the live table until the last one and resuming each time", async () => {

@@ -92,8 +92,9 @@ export type ReadModelTransacted<T> =
  * A read model being rebuilt from scratch, next to the live one. Projections write into `table`
  * while queries keep reading the live table; `commit` swaps the two and drops the old one, `abort`
  * drops what was built, `pause` keeps it for a later rebuild with the same `progress`. Each of the
- * three releases the adapter's resources. Once a newer rebuild of the read model opens, this one
- * is fenced off as `rebuildFencing` describes.
+ * three releases the adapter's resources, even when it fails, and only the first to run does: an
+ * `abort` after a failed `commit` releases nothing twice. Once a newer rebuild of the read model
+ * opens, this one is fenced off as `rebuildFencing` describes.
  */
 export interface ReadModelRebuild<Row extends object = Record<string, unknown>, Raw = unknown> {
   readonly table: Table<Row>;
@@ -160,11 +161,19 @@ export interface CreateReadModelArgs {
  */
 export interface Adapter<Name extends string = string, Options = unknown>
   extends AdapterDefinition<Name, Options> {
+  /**
+   * Opens the write side, creating its tables when missing. A factory that throws has released
+   * whatever it took: the kernel only closes the ports it was given.
+   */
   createStorage(args: CreateStorageArgs): Promise<StoragePorts>;
+  /**
+   * Opens a read model's table, creating or evolving it from `fields`; throws `ConfigurationError`
+   * on a change that needs a rebuild. Releases what it took when it throws, as `createStorage`.
+   */
   createReadModel<Row extends object>(args: CreateReadModelArgs): Promise<ReadModelPorts<Row>>;
   /**
    * Opens a shadow of the read model with the current `fields`; the live table stays untouched
-   * until `commit`.
+   * until `commit`. Releases what it took when it throws, as `createStorage`.
    */
   rebuildReadModel<Row extends object>(
     args: CreateReadModelRebuildArgs,

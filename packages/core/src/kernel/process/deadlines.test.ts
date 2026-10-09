@@ -53,7 +53,7 @@ const keys: string[] = [];
 let placed: "both" | "tie" | "reminders" = "both";
 let reminding: "ok" | "keep" | "flaky" | "conflict" | "hold" | "string" = "ok";
 let failuresLeft = 0;
-let conflictOn = "process:Reminders:o-1";
+let conflictOn = "process:order.reminders:o-1";
 let paidFails = false;
 let paidKeeps = false;
 let reminderLimit = 3;
@@ -65,7 +65,7 @@ const reset = (): void => {
   placed = "both";
   reminding = "ok";
   failuresLeft = 0;
-  conflictOn = "process:Reminders:o-1";
+  conflictOn = "process:order.reminders:o-1";
   paidFails = false;
   paidKeeps = false;
   reminderLimit = 3;
@@ -169,7 +169,7 @@ const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 const t0 = Date.parse("2026-01-01T00:00:00.000Z");
 const at = (ms: number): string => new Date(t0 + ms).toISOString();
-const stream = { aggregateType: "process:Reminders", aggregateId: "o-1" };
+const stream = { aggregateType: "process:order.reminders", aggregateId: "o-1" };
 
 type Harness = Awaited<ReturnType<typeof createReactiveHarness>>;
 
@@ -338,7 +338,7 @@ describe("process deadlines", () => {
         dedupeKey: "process-deadline:order.reminders:o-1",
         executeAt: at(DAY),
         command: { payload: { field: "nextReminder", at: at(DAY) } },
-        context: { causationId: "process:Reminders:o-1", depth: 0 },
+        context: { causationId: "process:order.reminders:o-1", depth: 0 },
       },
     ]);
     await harness.processes.handleDeadline({
@@ -775,6 +775,47 @@ describe("process deadlines", () => {
     expect((await lifecycle(harness)).at(-1)?.type).toBe(PROCESS_EVENTS.failed);
   });
 
+  it("dead-letter a deadline whose step keeps failing outside its handler, and stop running it", async () => {
+    reset();
+    const harness = await setUp({
+      runtime: { processes: { retry: { strategy: "none" } } },
+    });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await settle(harness);
+    let refuse = false;
+    duringReminder = async () => {
+      refuse = true;
+    };
+    const transact = harness.storage.transact.bind(harness.storage);
+    harness.storage.transact = (work) =>
+      transact(async (tx) => {
+        const result = await work(tx);
+        if (refuse) {
+          refuse = false;
+          throw new Error("store refused the batch");
+        }
+        return result;
+      });
+    harness.clock.advance(DAY);
+    for (let round = 0; round < 5; round += 1) {
+      await harness.dispatcher.runUntilIdle();
+      await harness.worker.runOnce();
+    }
+    expect(calls).toEqual([`reminder:${at(DAY)}`]);
+    expect(await harness.storage.deadLetterStore.list()).toMatchObject([
+      {
+        eventId: "deadline:nextReminder",
+        errorType: "retriable_exhausted",
+        errorMessage: "store refused the batch",
+      },
+    ]);
+    expect((await lifecycle(harness)).at(-1)).toMatchObject({
+      type: PROCESS_EVENTS.failed,
+      payload: { deadline: "nextReminder", at: at(DAY) },
+    });
+    expect(await harness.storage.scheduler.list()).toEqual([]);
+  });
+
   it("wait for the process runner to handle the events stored before them", async () => {
     reset();
     const harness = await setUp();
@@ -912,6 +953,34 @@ describe("process deadlines", () => {
     expect(calls).toEqual([]);
   });
 
+  it("hold deadlines a round when their readiness cannot be read, run the commands beside them, then fail the round", async () => {
+    reset();
+    const harness = await setUp();
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await settle(harness);
+    await harness.pipeline.dispatch({
+      type: "PayOrder",
+      payload: { orderId: "o-1", method: "card" },
+      options: { delay: "24h" },
+    });
+    harness.clock.advance(DAY);
+    const get = harness.storage.checkpointStore.get;
+    harness.storage.checkpointStore.get = async () => {
+      harness.storage.checkpointStore.get = get;
+      throw new Error("checkpoint unreadable");
+    };
+    await expect(harness.worker.runOnce()).rejects.toEqual(new Error("checkpoint unreadable"));
+    const order = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    expect(order.events.map((event) => event.type)).toContain("OrderPaid");
+    expect(calls).toEqual([]);
+    expect(await harness.storage.scheduler.list()).toMatchObject([
+      { command: { payload: { field: "nextReminder" } }, executeAt: at(DAY), attempts: 0 },
+    ]);
+  });
+
   it("end the process as timed out with its state when there is no at-timeout.ts", async () => {
     const quiet: Registry = {
       aggregates: {
@@ -935,7 +1004,7 @@ describe("process deadlines", () => {
     harness.clock.advance(HOUR);
     await settle(harness);
     const { events } = await harness.storage.eventStore.load({
-      aggregateType: "process:Quiet",
+      aggregateType: "process:order.quiet",
       aggregateId: "o-1",
     });
     expect(events.at(-1)).toMatchObject({
@@ -1033,7 +1102,7 @@ describe("deadline entries under races and partial failures", () => {
     },
     readModels: {},
   };
-  const stepsStream = { aggregateType: "process:Steps", aggregateId: "o-1" };
+  const stepsStream = { aggregateType: "process:order.steps", aggregateId: "o-1" };
   const setUpSteps = async () => {
     steps.length = 0;
     secondFails = false;
@@ -1186,7 +1255,7 @@ describe("deadline entries under races and partial failures", () => {
       harness.processes.lostRace(
         { process: "order.gone", aggregateId: "o-1" },
         new ConcurrencyError({
-          streamId: "process:Gone:o-1",
+          streamId: "process:order.gone:o-1",
           expectedVersion: 1,
           actualVersion: 2,
         }),
@@ -1203,7 +1272,7 @@ describe("deadline entries under races and partial failures", () => {
     harness.clock.advance(DAY);
     const load = harness.storage.eventStore.load;
     harness.storage.eventStore.load = async (args) => {
-      if (args.aggregateId === "o-1" && args.aggregateType === "process:Steps") {
+      if (args.aggregateId === "o-1" && args.aggregateType === "process:order.steps") {
         throw new Error("disk on fire");
       }
       return load(args);

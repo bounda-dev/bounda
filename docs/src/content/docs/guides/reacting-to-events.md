@@ -197,7 +197,10 @@ after the code that declares it starts, never to the history before it. Adding t
 to an app that has been running for months does not replay months of events into it; adding one
 more next to others behaves the same way, because they share the policy runner's checkpoint. An
 app with no policies has no policy runner at all, and one with no processes no process runner:
-nothing reads the log for them, nothing checkpoints and nothing wakes up.
+nothing reads the log for them, nothing checkpoints and nothing wakes up. A deploy that removes
+the last policy, or the last process, leaves their checkpoint where it was: an instance still
+running the previous code goes on from there, and policies brought back later resume from that
+point too, so they also react to what happened while they were gone.
 
 **Failures are classified.** A terminal failure is dead-lettered at once; a retriable one is
 retried on later passes with the configured back-off and dead-lettered when the attempts run out.

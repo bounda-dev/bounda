@@ -360,7 +360,14 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     mutex.run(async () => {
       const claimedAt = clock.now();
       const due = await storage.scheduler.claimDue({ now: claimedAt, limit: CLAIM_LIMIT, leaseMs });
-      const ready = await isDeadlineReady(due);
+      // The batch is claimed already: an error escaping here would leave every entry to lapse, and
+      // each would be charged an attempt it never made. Deadlines wait for the next round instead,
+      // and the error ends this one once the rest has run.
+      let unreadable: { readonly error: unknown } | undefined;
+      const ready = await isDeadlineReady(due).catch((error: unknown) => {
+        unreadable = { error };
+        return (entry: ClaimedCommand) => !isDeadline(entry);
+      });
       for (const entry of due) {
         try {
           const late = clock.now().getTime() - claimedAt.getTime() > startWithinMs;
@@ -384,6 +391,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       for (const key of waits.keys()) {
         if (!due.some((entry) => entry.dedupeKey === key)) waits.delete(key);
       }
+      if (unreadable !== undefined) throw unreadable.error;
       return due.length;
     });
 

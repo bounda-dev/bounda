@@ -158,7 +158,7 @@ describe("a process handler run that fails", () => {
         return undefined;
       }
       await commands.payOrder?.({ orderId: aggregateId, method: "card" }, { delay: "1h" });
-      const stream = { aggregateType: "process:Follow", aggregateId };
+      const stream = { aggregateType: "process:order.follow", aggregateId };
       const { events } = (await harness?.storage.eventStore.load(stream)) ?? { events: [] };
       await harness?.storage.eventStore.append({
         ...stream,
@@ -354,7 +354,7 @@ describe("what a process handler returns", () => {
   const states = async (harness: ReactiveHarness) =>
     (
       await harness.storage.eventStore.load({
-        aggregateType: "process:Checkout",
+        aggregateType: "process:order.checkout",
         aggregateId: "o-1",
       })
     ).events.map((event) => (event.payload as { readonly state?: State }).state);

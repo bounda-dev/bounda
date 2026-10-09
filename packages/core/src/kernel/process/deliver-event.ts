@@ -168,7 +168,7 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
       await within.append(process, instanceId, current, entries);
       await schedule.stage(unit, process, instanceId);
     }
-    await failures.file(unit.deadLetterStore, process, letter, error);
+    await failures.file(unit.deadLetterStore, letter, error);
   };
 
   const handle = async (
@@ -224,7 +224,7 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
     const letter = failures.letterOf(process, event, error, 1, "terminal");
     try {
       await units.commit(async (unit) => {
-        await failures.file(unit.deadLetterStore, process, letter, error);
+        await failures.file(unit.deadLetterStore, letter, error);
         await unit.inboxLedger.complete({ ...key, claimId });
       });
     } catch (failure) {

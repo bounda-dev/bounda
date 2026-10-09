@@ -1,7 +1,7 @@
 /// <reference types="node" />
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { ConfigurationError } from "../../contracts/errors.ts";
+import { ConfigurationError, RebuildSupersededError } from "../../contracts/errors.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { fieldBuilder as f } from "../../modules/view.ts";
 import type { SqlDatabase } from "../sql/database.ts";
@@ -146,6 +146,29 @@ describe("createSqliteAdapter", () => {
     expect(uses()).toBe(0);
   });
 
+  it("releases the connection of a storage, read model or rebuild that fails to open", async () => {
+    const { adapter, db, uses } = nodeSqlite();
+    const orders = { id: f.string().primaryKey(), total: f.number() };
+    await (
+      await adapter.createReadModel({ name: "orders", fields: orders, logger: silentLogger })
+    ).close();
+    const narrower = { id: f.string().primaryKey() };
+    await expect(
+      adapter.createReadModel({ name: "orders", fields: narrower, logger: silentLogger }),
+    ).rejects.toBeInstanceOf(ConfigurationError);
+    await expect(
+      adapter.rebuildReadModel({
+        name: "orders",
+        fields: { id: f.string().primaryKey(), "not an identifier": f.string() },
+        logger: silentLogger,
+        progress: "rebuild:orders:1",
+      }),
+    ).rejects.toBeInstanceOf(ConfigurationError);
+    db.close();
+    await expect(adapter.createStorage({ logger: silentLogger })).rejects.toThrow(/not open/);
+    expect(uses()).toBe(0);
+  });
+
   it("releases a rebuild's connection when it commits or pauses too", async () => {
     const { adapter, uses } = nodeSqlite();
     const rebuild = (progress: string) =>
@@ -159,6 +182,26 @@ describe("createSqliteAdapter", () => {
     await committed.commit({ subscriber: "projection:orderSummary", position: 0 });
     const paused = await rebuild("rebuild:orderSummary:2");
     await paused.pause();
+    expect(uses()).toBe(0);
+  });
+
+  it("releases a rebuild's connection when its commit fails, and once only when an abort follows", async () => {
+    const { adapter, uses } = nodeSqlite();
+    const args = {
+      name: "orderSummary",
+      fields: contractFields,
+      logger: silentLogger,
+      progress: "rebuild:orderSummary:1",
+    };
+    const older = await adapter.rebuildReadModel(args);
+    const newer = await adapter.rebuildReadModel(args);
+    await expect(
+      older.commit({ subscriber: "projection:orderSummary", position: 0 }),
+    ).rejects.toThrow(RebuildSupersededError);
+    expect(uses()).toBe(1);
+    await older.abort();
+    expect(uses()).toBe(1);
+    await newer.abort();
     expect(uses()).toBe(0);
   });
 

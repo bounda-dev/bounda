@@ -85,8 +85,9 @@ export interface BoundaApp<R extends Registry = AppRegistry> {
    * Runs the projections until every read model reflects the events stored so far. With `through`,
    * only waits for the read models that project the events of that dispatch, until they reach its
    * position, for at most `runtime.dispatcher.catchUp.timeout`: what a request that reads its own
-   * writes needs. Policies, processes and scheduled commands are left to the background. Works in
-   * every role.
+   * writes needs, and it then never rejects: a read model it cannot read is logged and left
+   * behind. Policies, processes and scheduled commands are left to the background. Works in every
+   * role.
    */
   catchUpReadModels(args?: CatchUpReadModelsArgs): Promise<void>;
   /**
@@ -238,14 +239,18 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     clock,
     ...(test === undefined ? { config: config.ports } : { test }),
   });
+  // What a start that fails has to close, in the order `stop` closes it.
+  const opened: (() => Promise<void>)[] = [];
   try {
-    const opened = await config.storage.createStorage({ logger });
+    const written = await config.storage.createStorage({ logger });
+    opened.unshift(() => written.close());
     const aggregates = buildAggregates({ registry, ports: ports.byAggregate });
     const storage = {
-      ...opened,
-      eventStore: withUpcasting({ eventStore: opened.eventStore, aggregates }),
+      ...written,
+      eventStore: withUpcasting({ eventStore: written.eventStore, aggregates }),
     };
     const readModels = await buildReadModels({ registry, config, logger });
+    opened.unshift(() => readModels.close());
     // One list per `runUntilIdle` under way.
     const observers = new Set<CommandRejection[]>();
     const pipeline = createCommandPipeline({
@@ -299,7 +304,6 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       eventStore: storage.eventStore,
       checkpointStore: storage.checkpointStore,
       following: following.map((subscriber) => subscriber.name),
-      idle: reactive.filter((entry) => !entry.following).map((entry) => entry.subscriber.name),
     });
     const dispatcher = createDispatcher({
       eventStore: storage.eventStore,
@@ -401,8 +405,11 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           try {
             lag.removeCallback(observeLag);
             await Promise.all([dispatcher.stop(), worker.stop()]);
-            await readModels.close();
-            await storage.close();
+            try {
+              await readModels.close();
+            } finally {
+              await storage.close();
+            }
           } finally {
             await ports.dispose();
           }
@@ -456,6 +463,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       }),
     };
   } catch (error) {
+    for (const close of opened) await close().catch(() => undefined);
     await ports.dispose();
     throw error;
   }

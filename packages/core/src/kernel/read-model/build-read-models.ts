@@ -129,7 +129,12 @@ const buildReadModel = async (
     fields,
     logger,
   });
-  return compileReadModel({ name, entry, storage });
+  try {
+    return compileReadModel({ name, entry, storage });
+  } catch (error) {
+    await storage.close().catch(() => undefined);
+    throw error;
+  }
 };
 
 export interface BuildReadModelsArgs {
@@ -142,12 +147,25 @@ export interface BuildReadModelsFunction {
   (args: BuildReadModelsArgs): Promise<ReadModelsRuntime>;
 }
 
+/**
+ * Opens every read model, or none: when one fails, those already open are closed again.
+ */
 export const buildReadModels: BuildReadModelsFunction = async ({ registry, config, logger }) => {
-  const entries = await Promise.all(
+  const settled = await Promise.allSettled(
     Object.entries(registry.readModels).map(
       async ([name, entry]) => [name, await buildReadModel(name, entry, config, logger)] as const,
     ),
   );
+  const entries = settled.flatMap((result) =>
+    result.status === "fulfilled" ? [result.value] : [],
+  );
+  const failed = settled.find((result) => result.status === "rejected");
+  if (failed !== undefined) {
+    await Promise.all(
+      entries.map(([, readModel]) => readModel.storage.close().catch(() => undefined)),
+    );
+    throw failed.reason;
+  }
   const byName = Object.fromEntries(entries);
   return {
     byName,

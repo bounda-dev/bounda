@@ -584,6 +584,76 @@ describe("implementations built by create", () => {
     expect(log).toEqual(["notifier closed"]);
   });
 
+  it("closes the storage and the read models already open when a read model fails to open", async () => {
+    const log: string[] = [];
+    const { app: lifecycleRegistry } = lifecycle(log);
+    const counting = countingAdapter();
+    const adapter: Adapter = {
+      ...counting.adapter,
+      createReadModel: async <Row extends object>(args: CreateReadModelArgs) => {
+        if (args.name === "broken") throw new Error("read model database is down");
+        return counting.adapter.createReadModel<Row>(args);
+      },
+    };
+    const twoReadModels = {
+      ...lifecycleRegistry,
+      readModels: { ...lifecycleRegistry.readModels, broken: registry.readModels.orderSummary },
+    } as const satisfies Registry;
+    await expect(
+      createApp({ registry: twoReadModels, config: { storage: adapter } }),
+    ).rejects.toThrow("read model database is down");
+    expect(counting.closes()).toEqual({ storage: 1, readModels: 1 });
+    expect(log).toEqual(["notifier closed"]);
+  });
+
+  it("closes the read models and the storage when a step after opening them fails", async () => {
+    const counting = countingAdapter();
+    const adapter: Adapter = {
+      ...counting.adapter,
+      createStorage: async (args: CreateStorageArgs) => {
+        const ports = await counting.adapter.createStorage(args);
+        return {
+          ...ports,
+          checkpointStore: {
+            ...ports.checkpointStore,
+            list: async () => {
+              throw new Error("checkpoints unreadable");
+            },
+          },
+        };
+      },
+    };
+    await expect(
+      createApp({
+        registry,
+        config: { storage: adapter, ports: { order: { notifier: "memory" } } },
+      }),
+    ).rejects.toThrow("checkpoints unreadable");
+    expect(counting.closes()).toEqual({ storage: 1, readModels: 1 });
+  });
+
+  it("still closes the storage when closing a read model fails on stop", async () => {
+    const counting = countingAdapter();
+    const adapter: Adapter = {
+      ...counting.adapter,
+      createReadModel: async <Row extends object>(args: CreateReadModelArgs) => {
+        const ports = await counting.adapter.createReadModel<Row>(args);
+        return {
+          ...ports,
+          close: async () => {
+            throw new Error("read model database is gone");
+          },
+        };
+      },
+    };
+    const app = await createApp({
+      registry,
+      config: { storage: adapter, ports: { order: { notifier: "memory" } } },
+    });
+    await expect(app.stop()).rejects.toThrow("read model database is gone");
+    expect(counting.closes().storage).toBe(1);
+  });
+
   it("builds a fresh port for every app on the same registry", async () => {
     const log: string[] = [];
     const { create, app: lifecycleRegistry } = lifecycle(log);
@@ -673,7 +743,7 @@ describe("policies and processes follow the stream from when they are deployed",
     await app.stop();
   });
 
-  it("forgets the checkpoints of the policies and processes an app no longer has", async () => {
+  it("leaves alone the checkpoints of the policies and processes an app no longer has", async () => {
     const storage = memory();
     const { checkpointStore } = await storage.createStorage({ logger: silentLogger });
     await checkpointStore.set("policies", 3);
@@ -682,9 +752,28 @@ describe("policies and processes follow the stream from when they are deployed",
 
     const app = await open(quiet, storage);
     expect(await checkpointStore.list()).toEqual([
+      { subscriber: "policies", position: 3 },
+      { subscriber: "processes", position: 3 },
       { subscriber: "projection:orderSummary", position: 3 },
     ]);
     await app.stop();
+  });
+
+  it("keeps an instance still running policies where it was when a deploy drops them", async () => {
+    const storage = memory();
+    const before = await open(quiet, storage);
+    await before.commands.placeOrder({ orderId: "o-1", total: 42 });
+    await before.commands.payOrder({ orderId: "o-1", method: "card" });
+    await before.stop();
+
+    const old = await open(registry, storage);
+    const dropped = await open(quiet, storage);
+    await old.commands.placeOrder({ orderId: "o-2", total: 7 });
+    await old.commands.payOrder({ orderId: "o-2", method: "card" });
+    await old.runUntilIdle();
+    expect(await archived(storage)).toEqual(["o-2"]);
+    await old.stop();
+    await dropped.stop();
   });
 
   it("starts a first policy and process at the head, not at the history before them", async () => {

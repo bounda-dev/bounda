@@ -222,6 +222,53 @@ describe("catchUpThrough", () => {
     ]);
   });
 
+  it("stops waiting for a projection whose storage throws, and resolves with the others", async () => {
+    const orders = fake("projection:orders", ["order.OrderPlaced"], async () => {
+      throw new Error("connection lost");
+    });
+    const broken = fake("projection:broken", ["order.OrderPlaced"], advancing(7));
+    broken.position = async () => {
+      throw new Error("checkpoint unreadable");
+    };
+    const caught = fake("projection:caught", ["order.OrderPlaced"], advancing(7));
+    const { dispatcher, entries } = await setUp([orders, broken, caught]);
+    expect(
+      await dispatcher.catchUpThrough({
+        position: 7,
+        aggregateType: "order",
+        eventTypes: ["OrderPlaced"],
+      }),
+    ).toBe(false);
+    expect(caught.at).toBe(7);
+    expect(entries).toEqual([
+      {
+        level: "error",
+        message: "read model catch-up failed",
+        fields: expect.objectContaining({
+          subscriber: "projection:broken",
+          message: "checkpoint unreadable",
+        }),
+      },
+      {
+        level: "error",
+        message: "read model catch-up failed",
+        fields: expect.objectContaining({
+          subscriber: "projection:orders",
+          message: "connection lost",
+        }),
+      },
+      {
+        level: "warn",
+        message: "read models did not catch up with the command in time",
+        fields: {
+          position: 7,
+          subscribers: ["projection:orders", "projection:broken"],
+          timeoutMs: 2_000,
+        },
+      },
+    ]);
+  });
+
   it("does not wait for a projection that backs off after failing, until its retry is due", async () => {
     const orders = fake("projection:orders", ["order.OrderPlaced"], failed);
     const { clock, dispatcher } = await setUp([orders]);

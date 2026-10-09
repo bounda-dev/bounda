@@ -91,7 +91,7 @@ export const createResumeParked: CreateResumeParkedFunction = ({
       if (outcome !== undefined) return;
       const letter = letterOf(current);
       await within.append(process, instanceId, current, [entryOf(current, letter)]);
-      await failures.file(unit.deadLetterStore, process, letter, error);
+      await failures.file(unit.deadLetterStore, letter, error);
       await schedule.stage(unit, process, instanceId);
       filed = letter;
     });

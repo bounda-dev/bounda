@@ -13,7 +13,8 @@ import {
 } from "./lifecycle.ts";
 
 /**
- * The streams `process:<Type>:<aggregateId>`, appended at the version the instance was folded at.
+ * The streams `process:<aggregate>.<process>:<instanceId>`, appended at the version the instance
+ * was folded at.
  */
 export interface ProcessInstances {
   load(process: ProcessRuntime, instanceId: string): Promise<ProcessInstance>;
@@ -56,7 +57,7 @@ export const createProcessInstances: CreateProcessInstancesFunction = ({
   const loaded = new Set<string>();
 
   const load = async (process: ProcessRuntime, instanceId: string): Promise<ProcessInstance> => {
-    const stream = { aggregateType: processAggregateType(process.type), aggregateId: instanceId };
+    const stream = { aggregateType: processAggregateType(process.name), aggregateId: instanceId };
     const { events } = await eventStore.load(stream);
     loaded.add(streamId(stream));
     return foldProcess({ initialState: process.initialState, events });
@@ -68,7 +69,7 @@ export const createProcessInstances: CreateProcessInstancesFunction = ({
     instance: ProcessInstance,
     entries: readonly LifecycleEntry[],
   ): Promise<void> => {
-    const aggregateType = processAggregateType(process.type);
+    const aggregateType = processAggregateType(process.name);
     if (!loaded.has(streamId({ aggregateType, aggregateId: instanceId }))) {
       throw new Error(
         `Process ${process.name} appended to ${instanceId} without loading it through the same view`,
@@ -94,7 +95,7 @@ export const createProcessInstances: CreateProcessInstancesFunction = ({
   const lostRace = (process: ProcessRuntime, instanceId: string, error: unknown): boolean =>
     error instanceof ConcurrencyError &&
     error.streamId ===
-      streamId({ aggregateType: processAggregateType(process.type), aggregateId: instanceId });
+      streamId({ aggregateType: processAggregateType(process.name), aggregateId: instanceId });
 
   const parkedEvent = async (parked: ParkedEvent): Promise<StoredEvent> => {
     const { events } = await eventStore.load({

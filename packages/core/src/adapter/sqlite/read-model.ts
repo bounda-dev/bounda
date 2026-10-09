@@ -191,6 +191,13 @@ export const rebuildSqliteReadModel: RebuildSqliteReadModelFunction = async <
       dialect: sqliteDialect,
       executor,
     });
+  // The first of commit, abort and pause to run releases the connection, even when it fails.
+  let ended = false;
+  const end = async (): Promise<void> => {
+    if (ended) return;
+    ended = true;
+    await close();
+  };
   return {
     resumed: opened.resumed,
     position: opened.position,
@@ -219,36 +226,42 @@ export const rebuildSqliteReadModel: RebuildSqliteReadModelFunction = async <
         });
       }),
     commit: async ({ subscriber, position }) => {
-      await db.write(async (tx) => {
-        await fenced(tx);
-        const live = await tableExists(tx, table);
-        for (const statement of swapTableStatements({ table, columns, live })) {
-          await tx.run(statement, []);
-        }
-        const store = checkpointsIn(tx);
-        await store.set(subscriber, position);
-        await store.remove(progress);
-      });
-      logger.info("read model rebuild committed", { readModel: name, table });
-      await close();
+      try {
+        await db.write(async (tx) => {
+          await fenced(tx);
+          const live = await tableExists(tx, table);
+          for (const statement of swapTableStatements({ table, columns, live })) {
+            await tx.run(statement, []);
+          }
+          const store = checkpointsIn(tx);
+          await store.set(subscriber, position);
+          await store.remove(progress);
+        });
+        logger.info("read model rebuild committed", { readModel: name, table });
+      } finally {
+        await end();
+      }
     },
     abort: async () => {
-      const aborted = await db.write(async (tx) => {
-        if (!(await current(tx))) return false;
-        for (const statement of dropShadowTableStatements(table)) await tx.run(statement, []);
-        const store = checkpointsIn(tx);
-        await store.remove(progress);
-        return true;
-      });
-      logger.info(aborted ? "read model rebuild aborted" : "read model rebuild superseded", {
-        readModel: name,
-        table,
-      });
-      await close();
+      try {
+        const aborted = await db.write(async (tx) => {
+          if (!(await current(tx))) return false;
+          for (const statement of dropShadowTableStatements(table)) await tx.run(statement, []);
+          const store = checkpointsIn(tx);
+          await store.remove(progress);
+          return true;
+        });
+        logger.info(aborted ? "read model rebuild aborted" : "read model rebuild superseded", {
+          readModel: name,
+          table,
+        });
+      } finally {
+        await end();
+      }
     },
     pause: async () => {
       logger.info("read model rebuild paused", { readModel: name, table });
-      await close();
+      await end();
     },
   };
 };

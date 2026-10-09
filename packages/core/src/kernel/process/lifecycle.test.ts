@@ -5,7 +5,7 @@ import { foldProcess, PROCESS_EVENTS, processAggregateType } from "./lifecycle.t
 
 const lifecycle = (type: string, payload: unknown, version: number): StoredEvent => ({
   id: `p${version}`,
-  aggregateType: "process:OrderPayment",
+  aggregateType: "process:order.orderPayment",
   aggregateId: "o-1",
   version,
   position: version,
@@ -163,7 +163,7 @@ describe("foldProcess", () => {
 
 describe("processAggregateType", () => {
   it("prefixes the process type", () => {
-    expect(processAggregateType("OrderPayment")).toBe("process:OrderPayment");
+    expect(processAggregateType("order.orderPayment")).toBe("process:order.orderPayment");
   });
 
   it("keeps a failed process failed, parking events, until it is resumed", () => {

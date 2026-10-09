@@ -90,7 +90,7 @@ const reset = (next: typeof mode, failures = 0) => {
 };
 
 const processStream = (harness: Awaited<ReturnType<typeof createReactiveHarness>>, id = "o-1") =>
-  harness.storage.eventStore.load({ aggregateType: "process:OrderPayment", aggregateId: id });
+  harness.storage.eventStore.load({ aggregateType: "process:order.orderPayment", aggregateId: id });
 
 const processesOf = (registry: Registry, config: ResolvedConfig) =>
   buildProcesses({
@@ -110,7 +110,6 @@ describe("buildProcesses", () => {
     expect(all).toHaveLength(1);
     expect(all[0]).toMatchObject({
       name: "order.orderPayment",
-      type: "OrderPayment",
       timeoutMs: 172_800_000,
       initialState: { reminders: 0, method: null },
     });
@@ -504,7 +503,10 @@ describe("process runner", () => {
     };
     const harness = await createReactiveHarness({ registry: startHandled });
     const load = () =>
-      harness.storage.eventStore.load({ aggregateType: "process:OrderTotals", aggregateId: "o-1" });
+      harness.storage.eventStore.load({
+        aggregateType: "process:order.orderTotals",
+        aggregateId: "o-1",
+      });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
     await harness.dispatcher.runUntilIdle();
     let stream = await load();
@@ -686,7 +688,7 @@ describe("process runner", () => {
     harness.storage.scheduler.schedule = async (args) => {
       if (!interfered) {
         interfered = true;
-        const stream = { aggregateType: "process:OrderPayment", aggregateId: "o-1" };
+        const stream = { aggregateType: "process:order.orderPayment", aggregateId: "o-1" };
         await harness.storage.eventStore.append({
           ...stream,
           expectedVersion: 0,
@@ -1015,7 +1017,7 @@ describe("processes that listen to other aggregates", () => {
     },
   };
   const stream = (harness: Awaited<ReturnType<typeof createReactiveHarness>>, id: string) =>
-    harness.storage.eventStore.load({ aggregateType: "process:Checkout", aggregateId: id });
+    harness.storage.eventStore.load({ aggregateType: "process:order.checkout", aggregateId: id });
 
   it.each([
     ["the payload's id field", undefined],

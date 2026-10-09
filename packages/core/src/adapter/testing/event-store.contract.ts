@@ -85,6 +85,23 @@ export const eventStoreContract: EventStoreContractFunction = ({ create }) => {
       expect(loaded.version).toBe(3);
     });
 
+    it("reports only the version when loading from past any head, however far", async () => {
+      await store.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events: [1, 2].map((version) => pendingEvent({ aggregateId: "1", version })),
+      });
+      for (const fromVersion of [3, Number.MAX_SAFE_INTEGER]) {
+        expect(await store.load({ aggregateType: "order", aggregateId: "1", fromVersion })).toEqual(
+          {
+            events: [],
+            version: 2,
+          },
+        );
+      }
+    });
+
     it("keeps streams apart even when ids repeat across aggregate types", async () => {
       await store.append({
         aggregateType: "order",

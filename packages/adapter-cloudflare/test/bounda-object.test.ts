@@ -102,7 +102,7 @@ describe("a Bounda Durable Object", () => {
       runInDurableObject(stub as unknown as DurableObjectStub, (_instance, state) =>
         state.storage.sql
           .exec(
-            `SELECT "type" FROM "bounda_events" WHERE "aggregate_type" = 'process:Settlement' ORDER BY "position"`,
+            `SELECT "type" FROM "bounda_events" WHERE "aggregate_type" = 'process:order.settlement' ORDER BY "position"`,
           )
           .toArray()
           .map((row) => row.type),

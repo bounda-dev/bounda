@@ -432,6 +432,34 @@ describe.skipIf(container === null)("postgresql adapter", () => {
     await readModel.close();
     await expect(storage.eventStore.lastPosition()).rejects.toThrow();
   });
+
+  it("hands back its use of the pool when a read model or a rebuild fails to open", async () => {
+    const adapter = fresh();
+    const orders = { id: f.string().primaryKey(), total: f.number() };
+    const open = await adapter.createReadModel({
+      name: "orders",
+      fields: orders,
+      logger: silentLogger,
+    });
+    await expect(
+      adapter.createReadModel({
+        name: "orders",
+        fields: { id: f.string().primaryKey() },
+        logger: silentLogger,
+      }),
+    ).rejects.toBeInstanceOf(ConfigurationError);
+    await expect(
+      adapter.rebuildReadModel({
+        name: "orders",
+        fields: { id: f.string().primaryKey(), "not an identifier": f.string() },
+        logger: silentLogger,
+        progress: "rebuild:orders:1",
+      }),
+    ).rejects.toBeInstanceOf(ConfigurationError);
+    const raw = open.client.raw as Sql;
+    await open.close();
+    await expect(raw`SELECT 1`).rejects.toThrow();
+  });
 });
 
 describe("resolvePostgresqlOptions", () => {

@@ -44,14 +44,16 @@ export interface ParkedEvent {
 }
 
 /**
- * The stream prefix of process instances: `process:OrderPayment` for the process `OrderPayment`.
+ * The stream prefix of process instances: `process:order.orderPayment` for the process
+ * `orderPayment` of the aggregate `order`. Qualified by the aggregate, as every other key of a
+ * process is, so two aggregates' processes of the same name never share an instance's stream.
  */
 export interface ProcessAggregateTypeFunction {
-  (processType: string): string;
+  (processName: string): string;
 }
 
-export const processAggregateType: ProcessAggregateTypeFunction = (processType) =>
-  `process:${processType}`;
+export const processAggregateType: ProcessAggregateTypeFunction = (processName) =>
+  `process:${processName}`;
 
 export interface ProcessInstance {
   readonly exists: boolean;
@@ -239,7 +241,7 @@ export interface InstanceContextFunction {
  */
 export const instanceContext: InstanceContextFunction = (process, instanceId, instance) => ({
   correlationId: instance.correlationId ?? instanceId,
-  causationId: `${processAggregateType(process.type)}:${instanceId}`,
+  causationId: `${processAggregateType(process.name)}:${instanceId}`,
   depth: 0,
 });
 
