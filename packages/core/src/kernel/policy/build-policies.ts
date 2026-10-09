@@ -1,6 +1,6 @@
 import { parseDuration } from "../../contracts/duration.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
-import { capitalize } from "../../modules/naming.ts";
+import { capitalize, policyTrigger } from "../../modules/naming.ts";
 import type { PolicyModule } from "../../modules/policy.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
@@ -34,29 +34,18 @@ export interface PoliciesRuntime {
   readonly byEvent: Readonly<Record<string, readonly PolicyRuntime[]>>;
 }
 
-const TRIGGER_SUFFIX = /On([A-Z][A-Za-z0-9]*)$/;
-
-export interface PolicyTriggerFromKeyFunction {
-  (key: string): string | null;
-}
-
-/**
- * Derives the triggering event type from a policy's file name: `send-receipt-on-order-paid`
- * (registry key `sendReceiptOnOrderPaid`) reacts to `OrderPaid`.
- */
-export const policyTriggerFromKey: PolicyTriggerFromKeyFunction = (key) =>
-  TRIGGER_SUFFIX.exec(key)?.[1] ?? null;
-
 const declaredTriggers = (
-  aggregate: string,
+  path: string,
   key: string,
   module: PolicyModule,
+  source: string,
+  events: readonly string[],
 ): readonly string[] => {
   if (module.on !== undefined) return typeof module.on === "string" ? [module.on] : module.on;
-  const derived = policyTriggerFromKey(key);
+  const derived = policyTrigger({ key, events });
   if (derived === null) {
     throw new ConfigurationError(
-      `aggregates.${aggregate}.policies.${key}: name the file "<action>-on-<event>.ts" or export "on"`,
+      `${path}: its name ends with no event of the aggregate "${source}"; name the file "<action>-on-<event>.ts" or export "on"`,
     );
   }
   return [derived];
@@ -76,8 +65,9 @@ const triggersOf = (
       `${path}: there is no aggregate "${source}" whose events to react to`,
     );
   }
-  const known = new Set<string>(Object.keys(events).map(capitalize));
-  const triggers = declaredTriggers(aggregate, key, module);
+  const types = Object.keys(events).map(capitalize);
+  const known = new Set<string>(types);
+  const triggers = declaredTriggers(path, key, module, source, types);
   for (const trigger of triggers) {
     if (!known.has(trigger)) {
       throw new ConfigurationError(

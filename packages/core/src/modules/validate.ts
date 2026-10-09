@@ -1,5 +1,7 @@
 import { ConfigurationError } from "../contracts/errors.ts";
+import { capitalize } from "./naming.ts";
 import type { PortModules } from "./port.ts";
+import { projectionTriggers } from "./projection.ts";
 import type { Registry } from "./registry.ts";
 
 interface Problem {
@@ -15,6 +17,13 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 const requireFunction = (problems: Problem[], owner: object, path: string, name: string): void => {
   if (!isFunction(Reflect.get(owner, name))) {
     problems.push({ path, message: `missing export "${name}" (expected a function)` });
+  }
+};
+
+const optionalFunction = (problems: Problem[], owner: object, path: string, name: string): void => {
+  const value: unknown = Reflect.get(owner, name);
+  if (value !== undefined && !isFunction(value)) {
+    problems.push({ path, message: `export "${name}" must be a function` });
   }
 };
 
@@ -62,6 +71,7 @@ const validateAggregate = (
   }
   for (const [key, event] of Object.entries(aggregate.events)) {
     requireFolding(problems, event, `${base}.events.${key}`);
+    optionalFunction(problems, event, `${base}.events.${key}`, "payload");
   }
   for (const [key, module] of Object.entries(aggregate.upcasts ?? {})) {
     const path = `${base}.upcasts.${key}`;
@@ -80,6 +90,7 @@ const validateAggregate = (
   for (const [key, entry] of Object.entries(aggregate.commands)) {
     const path = `${base}.commands.${key}`;
     requireFunction(problems, entry.module, path, "handler");
+    optionalFunction(problems, entry.module, path, "payload");
     const rejections: unknown = Reflect.get(entry.module, "rejections");
     if (rejections !== undefined && !isFunction(rejections)) {
       problems.push({
@@ -101,6 +112,8 @@ const validateAggregate = (
       });
     }
     requireFunction(problems, process.module, `${base}.processes.${key}`, "config");
+    optionalFunction(problems, process.module, `${base}.processes.${key}`, "state");
+    optionalFunction(problems, process.module, `${base}.processes.${key}`, "correlate");
     for (const [source, handlers] of Object.entries(process.handlers)) {
       for (const [event, handler] of Object.entries(handlers)) {
         requireFunction(
@@ -132,12 +145,27 @@ const validateReadModel = (
         message: `there is no aggregate "${aggregate}" whose events to project`,
       });
     }
+    const events = new Set<string>(
+      Object.keys(aggregates[aggregate]?.events ?? {}).map(capitalize),
+    );
     for (const [key, projection] of Object.entries(projections)) {
-      requireFunction(problems, projection, `${base}.projections.${aggregate}.${key}`, "project");
+      const path = `${base}.projections.${aggregate}.${key}`;
+      requireFunction(problems, projection, path, "project");
+      if (!(aggregate in aggregates)) continue;
+      for (const trigger of projectionTriggers(key, projection).filter(
+        (type) => !events.has(type),
+      )) {
+        problems.push({
+          path,
+          message: `"${trigger}" is not an event of the aggregate "${aggregate}"; name the file after one or export "on"`,
+        });
+      }
     }
   }
   for (const [key, query] of Object.entries(readModel.queries)) {
     requireFunction(problems, query, `${base}.queries.${key}`, "handler");
+    optionalFunction(problems, query, `${base}.queries.${key}`, "payload");
+    optionalFunction(problems, query, `${base}.queries.${key}`, "repository");
   }
   requireImplementations(problems, readModel.ports, `${base}.ports`);
 };

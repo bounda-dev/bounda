@@ -1,5 +1,5 @@
 import type { AdapterDefinition } from "@bounda-dev/core/adapter";
-import { defineConfig } from "@bounda-dev/core/config";
+import { type Config, defineConfig } from "@bounda-dev/core/config";
 import { describe, expectTypeOf, it } from "vitest";
 
 declare const sqlite: AdapterDefinition<"sqlite", { path: string }>;
@@ -124,6 +124,7 @@ describe("defineConfig", () => {
   it("rejects unknown keys and wrong roles", () => {
     // @ts-expect-error storag is not a config key
     defineConfig({ storag: sqlite, ports });
+    expectTypeOf<Config>().not.toHaveProperty("rootDir");
     defineConfig({
       storage: sqlite,
       ports,

@@ -14,17 +14,19 @@ export interface InferStatesArgs {
   readonly model: ProjectModel;
   readonly tsconfigPath: string;
   /**
-   * Absolute path of `.bounda/types.ts`. Its first-pass content must already be on disk: typing
-   * every state to infer as `core.UnknownState` is what makes each `evolve` return only the fields
-   * it sets.
+   * Absolute path of `.bounda/types.ts`, which must exist so the project includes it. TypeScript
+   * reads it from memory, never from disk, so nothing is written while states are inferred.
    */
   readonly typesPath: string;
   /**
-   * Renders `.bounda/types.ts` for a set of inferred states; what it renders is written and
-   * type-checked.
+   * The first-pass content of `.bounda/types.ts`: typing every state to infer as
+   * `core.UnknownState` is what makes each `evolve` return only the fields it sets.
+   */
+  readonly typesContent: string;
+  /**
+   * Renders `.bounda/types.ts` for a set of inferred states; what it renders is type-checked.
    */
   readonly renderTypes: (states: Readonly<Record<string, StateTypeSource>>) => string;
-  readonly write: (path: string, content: string) => Promise<void>;
 }
 
 export interface InferStatesResult {
@@ -75,25 +77,54 @@ const renderState = ({ fields, required }: AggregateFields): string => {
   return `{\n${lines.join("\n")}\n}`;
 };
 
-const exportedFunction = (
+// The node naming a top-level `const` or `function` called `name`; only an exported one when
+// `exported` is set.
+const declaredName = (
   ts: typeof import("typescript/unstable/ast"),
   file: import("typescript/unstable/ast").SourceFile,
-  exportName: "evolve" | "begin",
+  name: string,
+  exported: boolean,
 ): import("typescript/unstable/ast").Node | null => {
   for (const statement of file.statements) {
     const isExported = (statement as { modifiers?: readonly { kind: number }[] }).modifiers?.some(
       (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
     );
-    if (!isExported) continue;
+    if (exported && !isExported) continue;
     if (statement.kind === ts.SyntaxKind.VariableStatement) {
       for (const declaration of (statement as import("typescript/unstable/ast").VariableStatement)
         .declarationList.declarations) {
-        if (declaration.name.getText(file) === exportName) return declaration.name;
+        if (declaration.name.getText(file) === name) return declaration.name;
       }
     }
     if (statement.kind === ts.SyntaxKind.FunctionDeclaration) {
-      const name = (statement as import("typescript/unstable/ast").FunctionDeclaration).name;
-      if (name !== undefined && name.getText(file) === exportName) return name;
+      const declared = (statement as import("typescript/unstable/ast").FunctionDeclaration).name;
+      if (declared !== undefined && declared.getText(file) === name) return declared;
+    }
+  }
+  return null;
+};
+
+/**
+ * The declaration a module exports under `exportName`, as `export const`, `export function` or
+ * an `export { local as exportName }` list, which discovery counts as an export too.
+ */
+const exportedFunction = (
+  ts: typeof import("typescript/unstable/ast"),
+  file: import("typescript/unstable/ast").SourceFile,
+  exportName: "evolve" | "begin",
+): import("typescript/unstable/ast").Node | null => {
+  const declared = declaredName(ts, file, exportName, true);
+  if (declared !== null) return declared;
+  for (const statement of file.statements) {
+    if (statement.kind !== ts.SyntaxKind.ExportDeclaration) continue;
+    const declaration = statement as import("typescript/unstable/ast").ExportDeclaration;
+    const clause = declaration.exportClause;
+    if (declaration.moduleSpecifier !== undefined || clause?.kind !== ts.SyntaxKind.NamedExports) {
+      continue;
+    }
+    for (const element of (clause as import("typescript/unstable/ast").NamedExports).elements) {
+      if (element.name.getText(file) !== exportName) continue;
+      return declaredName(ts, file, (element.propertyName ?? element.name).getText(file), false);
     }
   }
   return null;
@@ -195,24 +226,38 @@ const fieldAtOffset = (
   const line = before.split("\n").length - 1;
   const lines = content.split("\n");
   let aggregate: string | null = null;
+  // A field's type may run over several lines: what is diagnosed on any of them is the field's.
+  let field: string | null = null;
   for (let index = 0; index <= line && index < lines.length; index += 1) {
     const current = lines[index] ?? "";
     const start = /^export type (\w+) = \{$/.exec(current);
-    if (start?.[1] !== undefined) aggregate = aggregates.get(start[1]) ?? null;
-    if (/^\}?;?$/.test(current) && current.startsWith("}"))
-      aggregate = index === line ? aggregate : null;
-    if (index === line && aggregate !== null) {
-      const field = /^ {2}readonly (\w+)\??: /.exec(current);
-      if (field?.[1] !== undefined) return { aggregate, field: field[1] };
+    if (start?.[1] !== undefined) {
+      aggregate = aggregates.get(start[1]) ?? null;
+      field = null;
+    }
+    const own = /^ {2}readonly (\w+)\??: /.exec(current);
+    if (own?.[1] !== undefined) field = own[1];
+    if (current.startsWith("}")) {
+      aggregate = null;
+      field = null;
+    }
+    if (index === line) {
+      return aggregate !== null && field !== null ? { aggregate, field } : null;
     }
   }
   return null;
 };
 
+// What TypeScript reads as `.bounda/types.ts`, in place of the file on disk.
+interface TypesInMemory {
+  content: string;
+}
+
 const openProject = async (
   root: string,
   tsconfigPath: string,
   typesPath: string,
+  types: TypesInMemory,
 ): Promise<
   | {
       readonly checkers: Checkers;
@@ -229,7 +274,10 @@ const openProject = async (
   } catch {
     return "TypeScript 7 is not installed; the generator needs it to infer state without state.ts";
   }
-  const api = new sync.API({ cwd: root });
+  const api = new sync.API({
+    cwd: root,
+    fs: { readFile: (fileName) => (resolve(fileName) === typesPath ? types.content : undefined) },
+  });
   try {
     api.parseConfigFile(tsconfigPath);
     const snapshot = api.updateSnapshot({ openProjects: [tsconfigPath] });
@@ -255,8 +303,8 @@ const openProject = async (
  * Infers `State` for every aggregate without `state.ts` from what its events' exported `begin`
  * and `evolve` functions return, each field typed as the union of what they set. Every field is
  * optional, unless an event exports `begin`: then the state is the created one, where the
- * fields every `begin` always sets are required, or `core.NotCreated` of it. Writes the result
- * to `typesPath`. A field whose type is not visible from there (a non-exported interface, say)
+ * fields every `begin` always sets are required, or `core.NotCreated` of it. Writes nothing:
+ * the caller renders `typesPath` from the states it returns. A field whose type is not visible from there (a non-exported interface, say)
  * becomes `unknown` with a warning; when TypeScript cannot run on the project, every such
  * aggregate keeps `core.UnknownState`, with a warning each.
  */
@@ -264,14 +312,15 @@ export const inferStates: InferStatesFunction = async ({
   model,
   tsconfigPath,
   typesPath,
+  typesContent,
   renderTypes,
-  write,
 }) => {
   const warnings: StateWarning[] = [];
   const pending = model.aggregates.filter((aggregate) => aggregate.state === null);
   if (pending.length === 0) return { states: {}, warnings };
 
-  const opened = await openProject(model.root, resolve(tsconfigPath), typesPath);
+  const types: TypesInMemory = { content: typesContent };
+  const opened = await openProject(model.root, resolve(tsconfigPath), typesPath, types);
   if (typeof opened === "string") {
     for (const aggregate of pending) {
       warnings.push({
@@ -307,8 +356,8 @@ export const inferStates: InferStatesFunction = async ({
       );
 
     let states = render();
-    let content = renderTypes(states);
-    await write(typesPath, content);
+    const content = renderTypes(states);
+    types.content = content;
     const validated = checkers.api.updateSnapshot({ fileChanges: { changed: [typesPath] } });
     const project =
       validated.getProject(checkers.project.configFileName) ?? validated.getProjects()[0];
@@ -330,11 +379,7 @@ export const inferStates: InferStatesFunction = async ({
       });
       aggregateFields.set(location.field, { members: new Set([UNKNOWN]), events: field.events });
     }
-    if (downgraded.size > 0) {
-      states = render();
-      content = renderTypes(states);
-      await write(typesPath, content);
-    }
+    if (downgraded.size > 0) states = render();
     return { states, warnings };
   } finally {
     checkers.api.close();

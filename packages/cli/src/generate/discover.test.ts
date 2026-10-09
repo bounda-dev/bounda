@@ -509,6 +509,10 @@ describe("discoverProject convention problems", () => {
       },
       {
         module: "order",
+        message: `app/domain/order/Policies: ${notRead} policies if that is what it holds`,
+      },
+      {
+        module: "order",
         message: `app/domain/order/command: ${notRead} commands if that is what it holds`,
       },
       {
@@ -518,10 +522,6 @@ describe("discoverProject convention problems", () => {
       {
         module: "order",
         message: `app/domain/order/infrastucture: ${notRead} infrastructure if that is what it holds`,
-      },
-      {
-        module: "order",
-        message: `app/domain/order/Policies: ${notRead} policies if that is what it holds`,
       },
       {
         module: "order",
@@ -881,6 +881,101 @@ describe("discoverProject convention problems", () => {
     );
     expect(model.readModels[0]?.projections.map((projection) => projection.aggregate)).toEqual([
       "payment",
+    ]);
+  });
+
+  it("types a policy with the event core derives from its key, and warns when boot would refuse it", async () => {
+    const root = await project([
+      "app/domain/order/payment-failed.ts",
+      "app/domain/order/order-placed.ts",
+      "app/domain/order/policies/put-on-hold-on-payment-failed.ts",
+      "app/domain/order/policies/archive-on-paymnet-failed.ts",
+      [
+        "app/domain/order/policies/notify-on-order-placed.ts",
+        'export const on = ["OrderPlaced", "PaymentFailed"];\nexport const handler = () => {};\n',
+      ],
+      ["app/domain/order/policies/hold.ts", 'export const on = "PaymentFailed";\n'],
+      "app/domain/order/policies/add-on/notify-on-add-on-removed.ts",
+      "app/domain/order/policies/add-on/on-removed.ts",
+      "app/domain/add-on/add-on-removed.ts",
+      "app/domain/add-on/removed.ts",
+    ]);
+    const model = await discoverProject({ root });
+    const order = model.aggregates.find((aggregate) => aggregate.name === "order");
+    expect(order?.policies.map((policy) => [policy.key, policy.triggerKey])).toEqual([
+      ["addOnNotifyOnAddOnRemoved", "addOnRemoved"],
+      ["addOnOnRemoved", "removed"],
+      ["archiveOnPaymnetFailed", null],
+      ["hold", null],
+      ["notifyOnOrderPlaced", null],
+      ["putOnHoldOnPaymentFailed", "paymentFailed"],
+    ]);
+    expect(model.warnings).toEqual([
+      {
+        module: "order",
+        message:
+          'app/domain/order/policies/archive-on-paymnet-failed.ts: its name ends with no event of "order" after "-on-" and it exports no "on", so boot refuses it; is the event misspelled?',
+      },
+    ]);
+  });
+
+  it("warns about a projection named after no event that exports no on", async () => {
+    const root = await project([
+      "app/domain/order/order-placed.ts",
+      "app/domain/order/order-paid.ts",
+      "app/domain/customer/customer-registered.ts",
+      "app/read/orders/view.ts",
+      ["app/read/orders/projections/order/order-placed.ts", "export const project = () => {};\n"],
+      [
+        "app/read/orders/projections/customer/customer-registered.ts",
+        "export const project = () => {};\n",
+      ],
+      ["app/read/orders/projections/order/order-plcaed.ts", "export const project = () => {};\n"],
+      [
+        "app/read/orders/projections/order/any-order.ts",
+        'export const on = "OrderPlaced";\nexport const project = () => {};\n',
+      ],
+    ]);
+    expect((await discoverProject({ root })).warnings).toEqual([
+      {
+        module: "orders",
+        message:
+          'app/read/orders/projections/order/order-plcaed.ts: "orderPlcaed" is not an event of "order" and the module exports no "on"; is the event misspelled?',
+      },
+    ]);
+  });
+
+  it("rejects a command or a query whose key another aggregate or read model already has", async () => {
+    const root = await project([
+      "app/domain/order/order-placed.ts",
+      "app/domain/order/commands/create.ts",
+      "app/domain/customer/customer-registered.ts",
+      "app/domain/customer/commands/create.ts",
+      "app/read/orders/view.ts",
+      "app/read/orders/queries/count.ts",
+      "app/read/customers/view.ts",
+      "app/read/customers/queries/count.ts",
+    ]);
+    expect(await problemsOf(root)).toEqual([
+      'app/domain/order/commands/create.ts: the command "create" is also app/domain/customer/commands/create.ts; commands share one namespace across the app, so give one of them another name',
+      'app/read/orders/queries/count.ts: the query "count" is also app/read/customers/queries/count.ts; queries share one namespace across the app, so give one of them another name',
+    ]);
+  });
+
+  it("rejects an aggregate or read model whose generated types meet others", async () => {
+    const root = await project([
+      "app/domain/order/order-placed.ts",
+      "app/domain/order-created/order-created-placed.ts",
+      "app/domain/test/test-run.ts",
+      "app/read/orders/view.ts",
+    ]);
+    expect(await problemsOf(root)).toEqual([
+      "app/domain/order-created: its generated type OrderCreatedState is also that of app/domain/order; give it another name",
+      "app/domain/test: its generated type TestPorts is also one of Bounda's own; give it another name",
+    ]);
+    const readModel = await project(["app/domain/order/order-placed.ts", "app/read/test/view.ts"]);
+    expect(await problemsOf(readModel)).toEqual([
+      "app/read/test: its generated type TestPorts is also one of Bounda's own; give it another name",
     ]);
   });
 

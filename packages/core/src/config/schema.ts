@@ -15,7 +15,6 @@ import {
   DEFAULT_POLL_INTERVAL_MS,
   DEFAULT_PROCESSES,
   DEFAULT_PROJECTION_BATCH_TIME_MS,
-  DEFAULT_ROOT_DIR,
 } from "./defaults.ts";
 import type {
   Config,
@@ -97,7 +96,6 @@ const runtime = z.strictObject({
 const ports = z.record(z.string(), z.record(z.string(), z.string().min(1)));
 
 const configSchema = z.strictObject({
-  rootDir: z.string().min(1).optional(),
   storage: adapter,
   readModels: z.record(z.string(), adapter).optional(),
   runtime: runtime.optional(),
@@ -183,7 +181,6 @@ export const resolveConfig: ResolveConfigFunction = (config) => {
   );
 
   return {
-    rootDir: parsed.rootDir ?? DEFAULT_ROOT_DIR,
     storage: parsed.storage,
     readModels: parsed.readModels ?? {},
     runtime: {

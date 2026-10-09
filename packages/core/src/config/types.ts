@@ -157,7 +157,6 @@ export type PortsSection =
  * What `bounda.config.ts` exports.
  */
 export type Config = {
-  readonly rootDir?: string;
   readonly storage: AdapterDefinition;
   readonly readModels?: Readonly<Record<string, AdapterDefinition>>;
   readonly runtime?: RuntimeConfig;
@@ -199,7 +198,6 @@ export interface ResolvedAggregateRuntime {
  * milliseconds, one resolved runtime block per aggregate through `forAggregate`.
  */
 export interface ResolvedConfig {
-  readonly rootDir: string;
   readonly storage: AdapterDefinition;
   readonly readModels: Readonly<Record<string, AdapterDefinition>>;
   readonly runtime: {

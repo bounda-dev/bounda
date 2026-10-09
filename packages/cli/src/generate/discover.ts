@@ -1,6 +1,15 @@
 import type { Dirent } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
+import { policyTrigger } from "@bounda-dev/core";
+import {
+  APP_TYPE_NAMES,
+  createdStateTypeName,
+  eventsTypeName,
+  portsTypeName,
+  rowTypeName,
+  stateTypeName,
+} from "./emit/types.ts";
 import type {
   AggregateModel,
   CommandModel,
@@ -19,10 +28,10 @@ import type {
   ReadModelModel,
 } from "./model.ts";
 import {
+  compareNames,
   isKebabCase,
   joinKeys,
   keyOf,
-  policyTriggerOf,
   processDeadlineOf,
   processHandlerEventOf,
   typeNameOf,
@@ -32,8 +41,7 @@ import { createProblemCollector, type ProblemCollector } from "./problems.ts";
 export interface DiscoverProjectArgs {
   readonly root: string;
   /**
-   * The application directory under `root`, which the configuration calls `rootDir`. Defaults to
-   * `app`.
+   * The application directory under `root`. Defaults to `app`.
    */
   readonly appDir?: string;
 }
@@ -75,7 +83,7 @@ const list = async (directory: string): Promise<Listing> => {
   const entries = (await readdir(directory, { withFileTypes: true })).filter(
     (entry) => !isIgnored(entry),
   );
-  const sorted = [...entries].sort((a, b) => a.name.localeCompare(b.name));
+  const sorted = [...entries].sort((a, b) => compareNames(a.name, b.name));
   return {
     directories: sorted.filter((entry) => entry.isDirectory()).map((entry) => entry.name),
     modules: sorted
@@ -88,7 +96,7 @@ const list = async (directory: string): Promise<Listing> => {
 };
 
 const byKey = <T extends { readonly key: string }>(a: T, b: T): number =>
-  a.key.localeCompare(b.key);
+  compareNames(a.key, b.key);
 
 interface Context {
   readonly root: string;
@@ -180,7 +188,8 @@ const discoverPolicyModules = (
     policies.push({
       ...moduleRef(context, path),
       key: foreign ? joinKeys(folder.source, keyOf(name)) : keyOf(name),
-      triggerKey: policyTriggerOf(name),
+      // Resolved once every aggregate's events are known: see `resolvePolicyTriggers`.
+      triggerKey: null,
       source: foreign ? folder.source : null,
     });
   }
@@ -317,8 +326,8 @@ const discoverProcess = async (
     handlers: handlers.sort(
       (a, b) =>
         Number(a.aggregate !== aggregate) - Number(b.aggregate !== aggregate) ||
-        a.aggregate.localeCompare(b.aggregate) ||
-        a.eventKey.localeCompare(b.eventKey),
+        compareNames(a.aggregate, b.aggregate) ||
+        compareNames(a.eventKey, b.eventKey),
     ),
     deadlines,
   };
@@ -876,12 +885,78 @@ const checkUniqueReactions = (context: Context, aggregate: AggregateModel): void
   }
 };
 
+/**
+ * `.bounda/types.ts` declares types named after each aggregate and read model next to its own:
+ * an aggregate `test` would declare `TestPorts` twice, one named `order-created` would meet the
+ * `OrderCreatedState` of `order`.
+ */
+const checkTypeNames = (
+  context: Context,
+  aggregates: readonly AggregateModel[],
+  readModels: readonly ReadModelModel[],
+): void => {
+  const app = new Set(APP_TYPE_NAMES);
+  const owners = new Map<string, string>();
+  const declare = (names: readonly string[], directory: string): void => {
+    const owner = moduleRef(context, directory).relativePath;
+    for (const name of names) {
+      const other = owners.get(name);
+      if (!app.has(name) && other === undefined) {
+        owners.set(name, owner);
+        continue;
+      }
+      context.problems.add(
+        directory,
+        `its generated type ${name} is also ${other === undefined ? "one of Bounda's own" : `that of ${other}`}; give it another name`,
+      );
+      return;
+    }
+  };
+  for (const aggregate of aggregates) {
+    declare(
+      [
+        stateTypeName(aggregate.name),
+        createdStateTypeName(aggregate.name),
+        eventsTypeName(aggregate.name),
+        portsTypeName(aggregate.name),
+      ],
+      aggregate.directory,
+    );
+  }
+  const names = new Set(aggregates.map((aggregate) => aggregate.name));
+  for (const readModel of readModels) {
+    // One named like an aggregate is reported as such.
+    if (names.has(readModel.name)) continue;
+    declare([rowTypeName(readModel.name), portsTypeName(readModel.name)], readModel.directory);
+  }
+};
+
 const checkUniqueNames = (
   context: Context,
   aggregates: readonly AggregateModel[],
   readModels: readonly ReadModelModel[],
 ): void => {
   for (const aggregate of aggregates) checkUniqueReactions(context, aggregate);
+  // `app.commands` and `app.queries` are one namespace each, across aggregates and read models.
+  const claimed = new Map<string, string>();
+  const claim = (key: string, path: string, what: "command" | "query"): void => {
+    const first = claimed.get(`${what}:${key}`);
+    if (first === undefined) {
+      claimed.set(`${what}:${key}`, moduleRef(context, path).relativePath);
+      return;
+    }
+    context.problems.add(
+      path,
+      `the ${what} "${key}" is also ${first}; ${what === "command" ? "commands" : "queries"} share one namespace across the app, so give one of them another name`,
+    );
+  };
+  for (const aggregate of aggregates) {
+    for (const command of aggregate.commands) claim(command.key, command.path, "command");
+  }
+  for (const readModel of readModels) {
+    for (const query of readModel.queries) claim(query.key, query.path, "query");
+  }
+  checkTypeNames(context, aggregates, readModels);
   const names = new Set(aggregates.map((aggregate) => aggregate.name));
   for (const readModel of readModels) {
     if (names.has(readModel.name)) {
@@ -894,10 +969,81 @@ const checkUniqueNames = (
 };
 
 /**
+ * Types each policy with the event it reacts to: the one its name gives by core's rule, or, for a
+ * module that exports `on`, any event of the aggregate, since `on` is not read. Warns about one
+ * that has neither, which boot refuses.
+ */
+const resolvePolicyTriggers = async (
+  context: Context,
+  aggregates: readonly AggregateModel[],
+): Promise<readonly AggregateModel[]> => {
+  const byName = new Map(aggregates.map((aggregate) => [aggregate.name, aggregate]));
+  return Promise.all(
+    aggregates.map(async (aggregate) => ({
+      ...aggregate,
+      policies: await Promise.all(
+        aggregate.policies.map(async (policy) => {
+          const source = policy.source ?? aggregate.name;
+          if (runtimeExportsOf(await readFile(policy.path, "utf8")).includes("on")) {
+            return { ...policy, triggerKey: null };
+          }
+          const events = byName.get(source)?.events ?? [];
+          const type = policyTrigger({
+            key: policy.key,
+            events: events.map((event) => event.typeName),
+          });
+          if (type === null) {
+            warnAbout(
+              context,
+              aggregate.name,
+              policy.path,
+              `its name ends with no event of "${source}" after "-on-" and it exports no "on", so boot refuses it; is the event misspelled?`,
+            );
+          }
+          return {
+            ...policy,
+            triggerKey: events.find((event) => event.typeName === type)?.key ?? null,
+          };
+        }),
+      ),
+    })),
+  );
+};
+
+/**
+ * Warns about a projection named after no event of its aggregate that does not declare `on`
+ * either: it would compile against every event and never run.
+ */
+const checkProjectionEvents = async (
+  context: Context,
+  aggregates: readonly AggregateModel[],
+  readModels: readonly ReadModelModel[],
+): Promise<void> => {
+  for (const readModel of readModels) {
+    for (const projection of readModel.projections) {
+      const events = aggregates.find(
+        (aggregate) => aggregate.name === projection.aggregate,
+      )?.events;
+      if (events === undefined || events.some((event) => event.key === projection.eventKey)) {
+        continue;
+      }
+      const source = await readFile(projection.path, "utf8");
+      if (runtimeExportsOf(source).includes("on")) continue;
+      warnAbout(
+        context,
+        readModel.name,
+        projection.path,
+        `"${projection.eventKey}" is not an event of "${projection.aggregate}" and the module exports no "on"; is the event misspelled?`,
+      );
+    }
+  }
+};
+
+/**
  * Reads the project layout under `<root>/<appDir>` and returns what the generator needs. Names
- * come from files and directories, and no module is imported: the only text read is, at an
- * aggregate's root, what each module exports, and at an aggregate's or a read model's, the
- * interface a port declares.
+ * come from files and directories, and no module is imported: the only text read is what the
+ * modules at an aggregate's or a read model's root export, whether a policy or a projection
+ * exports `on`, and the interface a port declares.
  * Every convention breach is collected and thrown together as one `ConventionError`.
  */
 export const discoverProject: DiscoverProjectFunction = async ({ root, appDir = "app" }) => {
@@ -931,5 +1077,12 @@ export const discoverProject: DiscoverProjectFunction = async ({ root, appDir = 
   checkForeignHandlers(context, aggregates);
   checkUniqueNames(context, aggregates, readModels);
   problems.throwIfAny();
-  return { root, appDir, aggregates, readModels, warnings: context.warnings };
+  await checkProjectionEvents(context, aggregates, readModels);
+  return {
+    root,
+    appDir,
+    aggregates: await resolvePolicyTriggers(context, aggregates),
+    readModels,
+    warnings: context.warnings,
+  };
 };

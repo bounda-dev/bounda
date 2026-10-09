@@ -22,6 +22,37 @@ export interface ToCamelCaseFunction {
 export const toCamelCase: ToCamelCaseFunction = (name) =>
   name.replace(/-+([a-zA-Z0-9])/g, (_, character: string) => character.toUpperCase());
 
+export interface PolicyTriggerArgs {
+  /**
+   * The policy's registry key: its file name in camelCase, prefixed with the aggregate whose
+   * events it reacts to when that is another one.
+   */
+  readonly key: string;
+  /**
+   * The event types of the aggregate it reacts to, `OrderPaid`.
+   */
+  readonly events: readonly string[];
+}
+
+export interface PolicyTriggerFunction {
+  (args: PolicyTriggerArgs): string | null;
+}
+
+/**
+ * The event a policy reacts to when it exports no `on`: the longest event of the aggregate it
+ * reacts to that its key ends with after `On`. `sendReceiptOnOrderPaid` reacts to `OrderPaid`,
+ * `putOnHoldOnPaymentFailed` to `PaymentFailed`, and `notifyOnAddOnRemoved` to `AddOnRemoved`
+ * rather than `Removed`. `null` when no event fits, and the policy must export `on`. The runtime
+ * and `bounda generate` both use it, so a handler is typed with the event it receives.
+ */
+export const policyTrigger: PolicyTriggerFunction = ({ key, events }) =>
+  events
+    .filter((event) => key.length > `On${event}`.length && key.endsWith(`On${event}`))
+    .reduce<string | null>(
+      (longest, event) => (longest === null || event.length > longest.length ? event : longest),
+      null,
+    );
+
 export interface ToKebabCaseFunction {
   (name: string): string;
 }

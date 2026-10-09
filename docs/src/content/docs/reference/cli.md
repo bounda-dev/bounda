@@ -64,7 +64,7 @@ or add state.ts
 ### Watch mode
 
 `--watch` regenerates after each burst of changes, 100 ms after the last one, and ignores changes
-to `+types` directories. It makes its first run only once it is listening, so a module saved while
+to `+types` and `.bounda` directories. It makes its first run only once it is listening, so a module saved while
 that run is going is regenerated right after it, and prints `watching app/ for changes` once that
 run has succeeded. To know it is listening, it writes a file named `.bounda-watch-<uuid>` into
 the application directory until it sees the change come back, then removes it: the file system can
@@ -149,7 +149,7 @@ bounda dead-letters discard <id>
 | `--kind <kind>` | `list` | `policy`, `process` or `scheduled` |
 | `--status <status>` | `list` | `failed` (default), `retried` or `discarded` |
 | `--handler <name>` | `list` | The policy or process name as the letter records it, e.g. `order.notifyOnOrderPlaced`, or the scheduled command's type, e.g. `PlaceOrder` |
-| `--limit <n>` | `list` | At most this many letters |
+| `--limit <n>` | `list` | At most this many letters: a whole number, 0 or more |
 | `--json` | `list` | Print the letters as JSON |
 | `--root`, `--config`, `--registry` | all | As for `bounda rebuild` |
 

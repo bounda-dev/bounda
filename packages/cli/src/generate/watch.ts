@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { rm, watch as watchDirectory, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type Clock, systemClock } from "@bounda-dev/core";
+import { isInGenerated } from "./write.ts";
 
 export type WatchFunction = typeof watchDirectory;
 
@@ -47,13 +48,14 @@ const COOKIE_RETRY_MS = 50;
 const COOKIE_ATTEMPTS = 20;
 
 const isGenerated = (fileName: string | Buffer | null): boolean =>
-  typeof fileName === "string" && fileName.split(/[\\/]/).includes("+types");
+  typeof fileName === "string" && isInGenerated(fileName);
 
 /**
  * Watches the application directory and calls `onChange` after each burst of changes to user
- * modules, ignoring `+types`. The operating system may start listening late and miss earlier
- * changes (FSEvents on macOS does), so the watch writes a cookie file into the directory until it
- * hears it back, then removes it and calls `onListening`, or `onUnconfirmed` once it gives up.
+ * modules, ignoring `+types` and `.bounda`. The operating system may start listening late and
+ * miss earlier changes (FSEvents on macOS does), so the watch writes a cookie file into the
+ * directory until it hears it back, then removes it and calls `onListening`, or `onUnconfirmed`
+ * once it gives up.
  * Resolves when the signal aborts; rejects when the watcher, or writing the cookie, fails.
  */
 export const watchProject: WatchProjectFunction = async ({
@@ -176,9 +178,14 @@ export const watchFromFirstRun: WatchFromFirstRunFunction = async ({
       if (!watchSignal.aborted) await onChange();
     },
   });
+  let ended = false;
   const watchEnded = watching.then(
-    () => undefined,
-    () => undefined,
+    () => {
+      ended = true;
+    },
+    () => {
+      ended = true;
+    },
   );
   await Promise.race([listening.promise, watchEnded]);
   if (signal.aborted) {
@@ -192,6 +199,7 @@ export const watchFromFirstRun: WatchFromFirstRunFunction = async ({
     if (!goesOn) stopWatching.abort();
     firstRunDone.resolve();
   }
-  if (goesOn) onWatching();
+  // A watch that has already failed is not watching: `await watching` rethrows its error.
+  if (goesOn && !ended) onWatching();
   await watching;
 };

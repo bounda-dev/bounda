@@ -321,7 +321,7 @@ describe("watchProject", () => {
     await expect(watching).resolves.toBeUndefined();
   });
 
-  it("coalesces a burst into one onChange and ignores +types", async () => {
+  it("coalesces a burst into one onChange and ignores +types and .bounda", async () => {
     const watcher = fakeWatcher();
     const { watching, runs, clock } = await harness(watcher);
     watcher.emit("domain/order/a.ts");
@@ -337,6 +337,8 @@ describe("watchProject", () => {
 
     watcher.emit("domain/order/+types/a.ts");
     watcher.emit("domain/order/commands/+types/b.ts");
+    watcher.emit(".bounda/types.ts");
+    watcher.emit(".bounda");
     await drained();
     expect(clock.pending()).toBe(0);
 
@@ -552,6 +554,7 @@ describe("watchFromFirstRun", () => {
     await drained();
     first.resolve(true);
     await expect(run.done).rejects.toThrow("disk gone");
+    expect(run.announced()).toBe(0);
   });
 
   it("makes no first run when the signal aborts before the watcher is listening", async () => {
@@ -585,5 +588,6 @@ describe("watchFromFirstRun", () => {
     watcher.end(new Error("disk gone"));
     await expect(run.done).rejects.toThrow("disk gone");
     expect(run.firstRuns()).toBe(1);
+    expect(run.announced()).toBe(0);
   });
 });

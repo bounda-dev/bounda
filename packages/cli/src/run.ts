@@ -7,7 +7,7 @@ import {
   rebuildReadModel,
 } from "@bounda-dev/core";
 import { boot, loadProject } from "@bounda-dev/core/node";
-import { Command, CommanderError, Option } from "commander";
+import { Command, CommanderError, InvalidArgumentError, Option } from "commander";
 import { formatLetter, formatRetried } from "./dead-letter-output.ts";
 import { generate } from "./generate/generate.ts";
 import { ConventionError } from "./generate/problems.ts";
@@ -27,7 +27,8 @@ export interface RunCliArgs {
   readonly stdout: Output;
   readonly stderr: Output;
   /**
-   * Aborting it ends `--watch`.
+   * Aborting it ends `--watch`. Without it, `SIGINT` and `SIGTERM` do, and only while a watch
+   * runs: every other command stops on the first one, as any process does.
    */
   readonly signal?: AbortSignal;
 }
@@ -124,7 +125,7 @@ interface ListDeadLettersOptions extends ProjectOptions {
   readonly kind?: string;
   readonly status?: string;
   readonly handler?: string;
-  readonly limit?: string;
+  readonly limit?: number;
   readonly json: boolean;
 }
 
@@ -152,11 +153,19 @@ const withApp = async <T>(
   }
 };
 
+const parseLimit = (value: string): number => {
+  const limit = Number(value);
+  if (!Number.isInteger(limit) || limit < 0 || value.trim() === "") {
+    throw new InvalidArgumentError("expected a whole number of letters, 0 or more");
+  }
+  return limit;
+};
+
 const listFilters = (options: ListDeadLettersOptions): ListDeadLettersArgs => ({
   ...(options.kind === undefined ? {} : { kind: options.kind as DeadLetterKind }),
   ...(options.status === undefined ? {} : { status: options.status as DeadLetterStatus }),
   ...(options.handler === undefined ? {} : { handler: options.handler }),
-  ...(options.limit === undefined ? {} : { limit: Number(options.limit) }),
+  ...(options.limit === undefined ? {} : { limit: options.limit }),
 });
 
 const runListDeadLetters = (
@@ -252,24 +261,35 @@ export const runCli: RunCliFunction = async ({ argv, cwd, stdout, stderr, signal
         exitCode = await runGenerate(options, cwd, stdout, stderr);
         return;
       }
-      await watchFromFirstRun({
-        root: resolve(cwd, options.root ?? "."),
-        appDir: options.appDir,
-        signal: signal ?? new AbortController().signal,
-        firstRun: async () => {
-          exitCode = await runGenerate(options, cwd, stdout, stderr);
-          return exitCode !== EXIT_FAILURE;
-        },
-        onChange: async () => {
-          exitCode = await runGenerate(options, cwd, stdout, stderr);
-        },
-        onUnconfirmed: () =>
-          line(
-            stderr,
-            `warning: the file system has not reported a change under ${options.appDir}/; watching may miss changes`,
-          ),
-        onWatching: () => line(stdout, `watching ${options.appDir}/ for changes`),
-      });
+      const stopped = new AbortController();
+      const stop = (): void => stopped.abort();
+      if (signal === undefined) {
+        process.once("SIGINT", stop);
+        process.once("SIGTERM", stop);
+      }
+      try {
+        await watchFromFirstRun({
+          root: resolve(cwd, options.root ?? "."),
+          appDir: options.appDir,
+          signal: signal ?? stopped.signal,
+          firstRun: async () => {
+            exitCode = await runGenerate(options, cwd, stdout, stderr);
+            return exitCode !== EXIT_FAILURE;
+          },
+          onChange: async () => {
+            exitCode = await runGenerate(options, cwd, stdout, stderr);
+          },
+          onUnconfirmed: () =>
+            line(
+              stderr,
+              `warning: the file system has not reported a change under ${options.appDir}/; watching may miss changes`,
+            ),
+          onWatching: () => line(stdout, `watching ${options.appDir}/ for changes`),
+        });
+      } finally {
+        process.off("SIGINT", stop);
+        process.off("SIGTERM", stop);
+      }
     });
 
   projectOptions(
@@ -297,7 +317,7 @@ export const runCli: RunCliFunction = async ({ argv, cwd, stdout, stderr, signal
           .default("failed"),
       )
       .option("--handler <name>", "the policy, process or scheduled command that failed")
-      .option("--limit <n>", "at most this many letters")
+      .option("--limit <n>", "at most this many letters", parseLimit)
       .option("--json", "print the letters as JSON", false),
   ).action(async (options: ListDeadLettersOptions) => {
     exitCode = await runListDeadLetters(options, cwd, stdout, stderr);

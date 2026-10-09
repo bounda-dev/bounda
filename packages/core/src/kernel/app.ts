@@ -1,5 +1,6 @@
 import type { ObservableResult } from "@opentelemetry/api";
 import { isAdapter } from "../adapter/adapter.ts";
+import { checkConfigNames } from "../config/names.ts";
 import { resolveConfig } from "../config/schema.ts";
 import type { Config, ResolvedConfig, RuntimeRole } from "../config/types.ts";
 import { type Clock, systemClock } from "../contracts/clock.ts";
@@ -224,6 +225,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
 }: AssembleAppArgs<R>): Promise<BoundaApp<R>> => {
   validateRegistry(registry);
   const config = resolveConfig(rawConfig);
+  checkConfigNames({ registry, config });
   const logger = guardedLogger(rawLogger);
   if (!isAdapter(config.storage)) {
     throw new ConfigurationError(

@@ -17,6 +17,7 @@ export const formatLetter: FormatLetterFunction = (letter) =>
     `    ${letter.errorMessage}`,
     ...((letter.parked ?? 0) > 0
       ? [
+          // How core names the letter of a process's timeout, pinned by core's own tests.
           letter.eventId === "deadline:timeout"
             ? `    ${parkedEvents(letter.parked ?? 0)} behind it; retrying it times the process out and drops them`
             : `    ${parkedEvents(letter.parked ?? 0)} behind it; retrying it handles them in order`,

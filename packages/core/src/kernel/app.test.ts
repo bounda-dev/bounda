@@ -632,6 +632,31 @@ describe("implementations built by create", () => {
     expect(counting.closes()).toEqual({ storage: 1, readModels: 1 });
   });
 
+  it("refuses a configuration that names a read model or an aggregate the registry lacks", async () => {
+    const counting = countingAdapter();
+    const createStorage = vi.spyOn(counting.adapter, "createStorage");
+    await expect(
+      createApp({
+        registry,
+        config: {
+          storage: counting.adapter,
+          readModels: { orderSumary: memory() },
+          runtime: { overrides: { ordr: { commands: { timeout: "1s" } } } },
+          ports: { order: { notifier: "memory" } },
+        },
+      }),
+    ).rejects.toThrow(
+      new ConfigurationError(
+        [
+          "Invalid configuration:",
+          '  readModels.orderSumary: there is no read model "orderSumary"; the registry has: orderSummary',
+          '  runtime.overrides.ordr: there is no aggregate "ordr"; the registry has: order',
+        ].join("\n"),
+      ),
+    );
+    expect(createStorage).not.toHaveBeenCalled();
+  });
+
   it("still closes the storage when closing a read model fails on stop", async () => {
     const counting = countingAdapter();
     const adapter: Adapter = {

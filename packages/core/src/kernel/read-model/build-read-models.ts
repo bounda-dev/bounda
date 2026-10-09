@@ -3,8 +3,7 @@ import { isAdapter } from "../../adapter/adapter.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import type { Logger } from "../../contracts/logger.ts";
-import { capitalize } from "../../modules/naming.ts";
-import type { ProjectionModule } from "../../modules/projection.ts";
+import { projectionTriggers } from "../../modules/projection.ts";
 import type { QueryModule } from "../../modules/query.ts";
 import type { ReadModelEntry, Registry } from "../../modules/registry.ts";
 import { type FieldsRecord, fieldBuilder } from "../../modules/view.ts";
@@ -33,13 +32,6 @@ export interface ReadModelsRuntime {
   close(): Promise<void>;
 }
 
-const triggersOf = (key: string, module: ProjectionModule): readonly string[] =>
-  module.on === undefined
-    ? [capitalize(key)]
-    : typeof module.on === "string"
-      ? [module.on]
-      : module.on;
-
 const groupByEvent = (
   projections: ReadModelEntry["projections"],
 ): Record<string, readonly ProjectionRuntime[]> => {
@@ -49,7 +41,7 @@ const groupByEvent = (
       const runtime: ProjectionRuntime = {
         key: `${aggregate}.${key}`,
         aggregate,
-        on: triggersOf(key, module),
+        on: projectionTriggers(key, module),
         project: module.project as ProjectionRuntime["project"],
       };
       for (const type of runtime.on) {

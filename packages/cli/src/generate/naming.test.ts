@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  compareNames,
   isKebabCase,
   joinKeys,
   keyOf,
-  policyTriggerOf,
   processDeadlineOf,
   processHandlerEventOf,
   typeNameOf,
@@ -34,15 +34,6 @@ describe("keyOf / typeNameOf / joinKeys", () => {
   });
 });
 
-describe("policyTriggerOf", () => {
-  it("takes the event after the last -on-", () => {
-    expect(policyTriggerOf("send-receipt-on-order-paid")).toBe("orderPaid");
-    expect(policyTriggerOf("notify-on-customer-registered")).toBe("customerRegistered");
-    expect(policyTriggerOf("cleanup")).toBeNull();
-    expect(policyTriggerOf("on-order-paid")).toBeNull();
-  });
-});
-
 describe("processDeadlineOf", () => {
   it("takes the field after at-", () => {
     expect(processDeadlineOf("at-next-reminder")).toBe("nextReminder");
@@ -61,6 +52,19 @@ describe("processHandlerEventOf", () => {
   });
 });
 
+describe("compareNames", () => {
+  it("orders by code unit, whatever the machine's locale", () => {
+    expect(compareNames("same", "same")).toBe(0);
+    expect(["zebra", "tz", "aaron", "Zed", "b"].sort(compareNames)).toEqual([
+      "Zed",
+      "aaron",
+      "b",
+      "tz",
+      "zebra",
+    ]);
+  });
+});
+
 describe("uniqueAliases", () => {
   it("keeps aliases that are unique and prefixes the ones that collide with their owner", () => {
     expect(
@@ -73,5 +77,44 @@ describe("uniqueAliases", () => {
       }),
     ).toEqual(["orderCreated", "customerCreated", "orderPlaced"]);
     expect(uniqueAliases({ entries: [] })).toEqual([]);
+  });
+
+  it("numbers past an alias already taken, however many repeat", () => {
+    expect(
+      uniqueAliases({
+        entries: [
+          { alias: "checkout", owner: "order" },
+          { alias: "checkout", owner: "order" },
+          { alias: "checkout", owner: "order" },
+          { alias: "orderCheckout2", owner: "order" },
+        ],
+      }),
+    ).toEqual(["orderCheckout", "orderCheckout3", "orderCheckout4", "orderCheckout2"]);
+  });
+
+  it("prefixes a reserved word and numbers an alias that still repeats", () => {
+    expect(
+      uniqueAliases({
+        entries: [
+          { alias: "delete", owner: "order" },
+          { alias: "default", owner: "order" },
+          { alias: "registry", owner: "order" },
+          { alias: "checkout", owner: "order" },
+          { alias: "checkout", owner: "order" },
+          { alias: "created", owner: "order" },
+          { alias: "created", owner: "customer" },
+          { alias: "orderCreated", owner: "order" },
+        ],
+      }),
+    ).toEqual([
+      "orderDelete",
+      "orderDefault",
+      "orderRegistry",
+      "orderCheckout",
+      "orderCheckout2",
+      "orderCreated",
+      "customerCreated",
+      "orderCreated2",
+    ]);
   });
 });

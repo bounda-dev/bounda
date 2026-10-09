@@ -1,4 +1,4 @@
-import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -98,13 +98,17 @@ describe("generate with state inference (golden on order-app-inferred)", () => {
 export type OrderState = core.NotCreated<OrderCreatedState> | OrderCreatedState;`);
   });
 
-  it("writes nothing on a second run", async () => {
+  it("writes nothing on a second run, not even the uninferred types for a moment", async () => {
     const root = await freshProject();
     await generate({ root });
+    const typesPath = join(root, ".bounda/types.ts");
+    const before = (await stat(typesPath)).mtimeMs;
+    await new Promise((resolve) => setTimeout(resolve, 20));
     const report = await generate({ root });
     expect(report.written).toEqual([]);
     expect(report.removed).toEqual([]);
     expect(report.unchanged.length).toBeGreaterThan(0);
+    expect((await stat(typesPath)).mtimeMs).toBe(before);
   });
 
   it("falls back to UnknownState with a warning when TypeScript cannot open the project", async () => {
@@ -198,6 +202,22 @@ describe("state inference on the edges", () => {
     expect(types).not.toContain("hidden");
   });
 
+  it("reads begin and evolve exported in a list, under their own name or another", async () => {
+    const root = await syntheticProject({
+      "app/domain/alpha/alpha-opened.ts":
+        'const begin = () => ({ status: "open" as const });\nexport { begin };\n',
+      "app/domain/alpha/alpha-closed.ts":
+        "const close = () => ({ closed: true });\nexport { close as evolve };\n",
+    });
+    const report = await generate({ root });
+    expect(report.warnings).toEqual([]);
+    const types = await readFile(join(root, ".bounda/types.ts"), "utf8");
+    expect(types).toContain(`export type AlphaCreatedState = {
+  readonly closed?: boolean;
+  readonly status: "open";
+};`);
+  });
+
   it("makes required, once created, only what every begin always sets", async () => {
     const root = await syntheticProject({
       "app/domain/cart/cart-opened.ts": [
@@ -256,6 +276,30 @@ export type PlainCreatedState = PlainState;`);
     expect(types).toContain(`export type GammaCreatedState = {
   readonly plain: string;
   readonly secret: unknown;
+};`);
+  });
+
+  it("downgrades a field whose type is not visible on a line after its first", async () => {
+    const root = await syntheticProject({
+      "app/domain/delta/delta-shipped.ts": [
+        "interface Hidden {",
+        "  readonly x: number;",
+        "}",
+        "export const evolve = (): { shipping: { address: Hidden; city: string } } => ({",
+        '  shipping: { address: { x: 1 }, city: "c" },',
+        "});",
+        "",
+      ].join("\n"),
+    });
+    const report = await generate({ root });
+    expect(report.warnings.map((warning) => warning.message)).toEqual([
+      expect.stringMatching(
+        /^field "shipping" \(set by deltaShipped\) has a type that is not visible/,
+      ),
+    ]);
+    const types = await readFile(join(root, ".bounda/types.ts"), "utf8");
+    expect(types).toContain(`export type DeltaState = {
+  readonly shipping?: unknown;
 };`);
   });
 
