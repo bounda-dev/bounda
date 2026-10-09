@@ -953,10 +953,9 @@ describe("process deadlines", () => {
     expect(calls).toEqual([]);
   });
 
-  it("hold deadlines a round when their readiness cannot be read, and run the commands beside them", async () => {
+  it("hold deadlines a round when their readiness cannot be read, run the commands beside them, then fail the round", async () => {
     reset();
-    const { logger, entries } = createRecordingLogger();
-    const harness = await createReactiveHarness({ registry, logger });
+    const harness = await setUp();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
     await settle(harness);
     await harness.pipeline.dispatch({
@@ -970,7 +969,7 @@ describe("process deadlines", () => {
       harness.storage.checkpointStore.get = get;
       throw new Error("checkpoint unreadable");
     };
-    expect(await harness.worker.runOnce()).toBe(2);
+    await expect(harness.worker.runOnce()).rejects.toThrow("checkpoint unreadable");
     const order = await harness.storage.eventStore.load({
       aggregateType: "order",
       aggregateId: "o-1",
@@ -980,11 +979,6 @@ describe("process deadlines", () => {
     expect(await harness.storage.scheduler.list()).toMatchObject([
       { command: { payload: { field: "nextReminder" } }, executeAt: at(DAY), attempts: 0 },
     ]);
-    expect(entries).toContainEqual({
-      level: "error",
-      message: "process deadlines could not be checked; they wait for the next round",
-      fields: expect.objectContaining({ message: "checkpoint unreadable" }),
-    });
   });
 
   it("end the process as timed out with its state when there is no at-timeout.ts", async () => {
