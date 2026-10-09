@@ -200,18 +200,30 @@ export const createDispatcher: CreateDispatcherFunction = ({
       clock.after(milliseconds, resolve);
     });
 
+  /**
+   * Never rejects: the command it waits for has committed, so a storage error only means the read
+   * model is not known to have caught up.
+   */
   const reach = async (
     subscriber: CheckpointedSubscriber,
     position: number,
     deadline: number,
   ): Promise<boolean> => {
-    for (;;) {
-      if ((await subscriber.position()) >= position) return true;
-      if (now() >= deadline || backingOff(subscriber.name)) return false;
-      const delivery = await subscriber.deliver({ read, wait: false });
-      record(subscriber.name, delivery);
-      if (delivery.outcome === "failed") return false;
-      if (!moving.has(delivery.outcome)) await sleep(catchUp.pollIntervalMs);
+    try {
+      for (;;) {
+        if ((await subscriber.position()) >= position) return true;
+        if (now() >= deadline || backingOff(subscriber.name)) return false;
+        const delivery = await subscriber.deliver({ read, wait: false });
+        record(subscriber.name, delivery);
+        if (delivery.outcome === "failed") return false;
+        if (!moving.has(delivery.outcome)) await sleep(catchUp.pollIntervalMs);
+      }
+    } catch (error) {
+      logger.error("read model catch-up failed", {
+        subscriber: subscriber.name,
+        ...errorDetails(error),
+      });
+      return false;
     }
   };
 
