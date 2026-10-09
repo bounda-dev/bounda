@@ -19,6 +19,13 @@ const requireFunction = (problems: Problem[], owner: object, path: string, name:
   }
 };
 
+const optionalFunction = (problems: Problem[], owner: object, path: string, name: string): void => {
+  const value: unknown = Reflect.get(owner, name);
+  if (value !== undefined && !isFunction(value)) {
+    problems.push({ path, message: `export "${name}" must be a function` });
+  }
+};
+
 const requireFolding = (problems: Problem[], event: object, path: string): void => {
   const exported = ["begin", "evolve"].filter((name) => Reflect.get(event, name) !== undefined);
   if (exported.length === 0) {
@@ -63,6 +70,7 @@ const validateAggregate = (
   }
   for (const [key, event] of Object.entries(aggregate.events)) {
     requireFolding(problems, event, `${base}.events.${key}`);
+    optionalFunction(problems, event, `${base}.events.${key}`, "payload");
   }
   for (const [key, module] of Object.entries(aggregate.upcasts ?? {})) {
     const path = `${base}.upcasts.${key}`;
@@ -81,6 +89,7 @@ const validateAggregate = (
   for (const [key, entry] of Object.entries(aggregate.commands)) {
     const path = `${base}.commands.${key}`;
     requireFunction(problems, entry.module, path, "handler");
+    optionalFunction(problems, entry.module, path, "payload");
     const rejections: unknown = Reflect.get(entry.module, "rejections");
     if (rejections !== undefined && !isFunction(rejections)) {
       problems.push({
@@ -102,6 +111,8 @@ const validateAggregate = (
       });
     }
     requireFunction(problems, process.module, `${base}.processes.${key}`, "config");
+    optionalFunction(problems, process.module, `${base}.processes.${key}`, "state");
+    optionalFunction(problems, process.module, `${base}.processes.${key}`, "correlate");
     for (const [source, handlers] of Object.entries(process.handlers)) {
       for (const [event, handler] of Object.entries(handlers)) {
         requireFunction(
@@ -152,6 +163,8 @@ const validateReadModel = (
   }
   for (const [key, query] of Object.entries(readModel.queries)) {
     requireFunction(problems, query, `${base}.queries.${key}`, "handler");
+    optionalFunction(problems, query, `${base}.queries.${key}`, "payload");
+    optionalFunction(problems, query, `${base}.queries.${key}`, "repository");
   }
   requireImplementations(problems, readModel.ports, `${base}.ports`);
 };

@@ -101,6 +101,49 @@ describe("validateRegistry", () => {
     );
   });
 
+  it("takes payload, repository, state and correlate only as functions", () => {
+    const schema = { parse: noop } as never;
+    const registry: Registry = {
+      aggregates: {
+        order: {
+          ...order,
+          events: { orderPlaced: { evolve: noop, payload: schema } },
+          commands: { placeOrder: { module: { handler: noop, payload: schema } } },
+          processes: {
+            orderPayment: {
+              ...(order.processes
+                .orderPayment as Registry["aggregates"][string]["processes"][string]),
+              module: {
+                config: () => ({ startedBy: ["order.OrderPlaced"] }),
+                state: schema,
+                correlate: schema,
+              },
+            },
+          },
+        },
+      },
+      readModels: {
+        orderSummary: {
+          ...orderSummary,
+          queries: { getOrder: { handler: noop, payload: schema, repository: schema } },
+        },
+      },
+    };
+    expect(() => validateRegistry(registry)).toThrow(
+      new ConfigurationError(
+        [
+          "Invalid registry:",
+          '  aggregates.order.events.orderPlaced: export "payload" must be a function',
+          '  aggregates.order.commands.placeOrder: export "payload" must be a function',
+          '  aggregates.order.processes.orderPayment: export "state" must be a function',
+          '  aggregates.order.processes.orderPayment: export "correlate" must be a function',
+          '  readModels.orderSummary.queries.getOrder: export "payload" must be a function',
+          '  readModels.orderSummary.queries.getOrder: export "repository" must be a function',
+        ].join("\n"),
+      ),
+    );
+  });
+
   it("accepts a well-formed registry", () => {
     expect(() => validateRegistry(validRegistry)).not.toThrow();
   });
