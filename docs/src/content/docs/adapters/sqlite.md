@@ -53,13 +53,6 @@ Cloudflare Durable Object.
 
 ## In tests
 
-```ts
-import { createTestApp } from "@bounda-dev/core/testing";
-import { sqlite } from "@bounda-dev/adapter-sqlite";
-
-const { app, clock } = await createTestApp({ registry, adapter: sqlite({ memory: true }) });
-```
-
 `createTestApp` defaults to the in-memory adapter from `@bounda-dev/core/memory`, which runs no
-SQL. Use `sqlite({ memory: true })` when a test needs the real thing, for example to exercise a
-query written in SQL.
+SQL. Pass `sqlite({ memory: true })` when a test needs the real thing, for example to exercise a
+query written in SQL: see [against a real database](/guides/testing/#against-a-real-database).

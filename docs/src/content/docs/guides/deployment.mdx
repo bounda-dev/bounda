@@ -1,0 +1,307 @@
+---
+title: Deployment
+description: Roles, one database, many instances, rebuilds and failing projections, tuning and observability.
+sidebar:
+  order: 9
+---
+
+import { Steps } from "@astrojs/starlight/components";
+
+On Node, a Bounda app is a process with a database. There is no broker, no scheduler and no separate
+projector to deploy: the runtime does that work inside the process, and which part of it a process
+does is a matter of configuration.
+
+## Booting
+
+`boot()` loads `.env`, the configuration and the generated registry, and returns the app. It does
+**not** start background work:
+
+```ts
+import { boot } from "@bounda-dev/core/node";
+
+const app = await boot();
+app.start();
+```
+
+`start()` starts the dispatcher — projections, policies and processes — and the worker that runs
+due scheduled commands. `boot()` installs `SIGINT` and `SIGTERM` handlers by default, so a
+container stop drains passes in flight and closes connections; pass `signals: false` to handle
+that yourself, as a script would.
+
+A secret such as an API key reaches the implementation that needs it through its `create`, whose
+`env` is `process.env` with `.env` already loaded ([Ports](/guides/project-layout/#ports-portts)).
+
+## Roles
+
+`runtime.role` decides what a process does. The default is `all`, which is one process doing
+everything — the right answer until it is not.
+
+| Role | What `start()` does |
+| --- | --- |
+| `all` (default) | runs the dispatcher and the scheduled command worker |
+| `web` | nothing |
+| `worker` | runs the dispatcher and the scheduled command worker |
+
+Serving HTTP is your app's business, not Bounda's: the role only decides whether this process also
+does the background work. `web` and `worker` differ in that alone, and the names are there to make
+a deployment readable.
+
+```ts
+import { postgresql } from "@bounda-dev/adapter-postgresql";
+import { defineConfig } from "@bounda-dev/core/config";
+
+export default defineConfig({
+  storage: postgresql({ url: process.env.DATABASE_URL! }),
+  runtime: { role: process.env.BOUNDA_ROLE === "worker" ? "worker" : "web" },
+});
+```
+
+Splitting them means a slow policy cannot compete with request handling for the event loop, and
+the two scale separately. Commands still work in `web`: dispatching stores events, and the worker
+picks up their consequences.
+
+`runUntilIdle()` and `catchUpReadModels()` work in every role, which is what makes a `web`
+process able to wait for its own writes without running the background loop.
+
+A host with no background loop at all, such as a serverless function or a Durable Object, drives
+the same work in slices. `runUntilIdle({ maxPasses })` stops after that many rounds and
+resolves to `{ idle }`, `false` when work is left; `app.nextDueAt()` is the earliest moment a
+scheduled command or a process deadline becomes due, or `null`. Together they say when to come
+back:
+
+```ts
+const { idle } = await app.runUntilIdle({ maxPasses: 20 });
+const next = idle ? await app.nextDueAt() : new Date();
+// arm a timer, an alarm or a cron trigger for `next`, if there is one
+```
+
+## More than one instance
+
+Use PostgreSQL. SQLite has a single writer: a few processes on one file, such as a web process, a
+worker and `bounda rebuild`, take turns at it, and that is as far as it goes. PostgreSQL is what
+lets any number of instances run the `worker` role. Nothing needs to be told about the others:
+instances coordinate through the database.
+
+- Each policy or process run and each due scheduled command is claimed by one instance at a time,
+  and only the instance holding the claim commits. A run that stalls past its lease loses it to
+  another instance, which runs the work again, so what a handler does outside the store, such as
+  calling an API, can happen twice.
+- Each read model is projected by one instance at a time, exactly once per batch, so different
+  read models spread over the instances but one read model is not made faster by more of them.
+  If one falls behind, the lag gauge tells you, and the fix is a faster projection or a lighter
+  read model.
+- Appends take one lock per store, which bounds writes to what one connection can commit
+  ([the ceiling](/concepts/how-it-runs/#the-ceiling-with-numbers)).
+
+[At least once, and exactly once per batch](/concepts/delivery-guarantees/) says what each
+promise covers, and [How Bounda runs](/concepts/how-it-runs/) why, and what the ceiling of one
+store is.
+
+## Reading your own writes
+
+After a command returns, its events are stored but the read models have not caught up. A request
+that writes and then renders needs to wait for the projections it is about to read:
+
+```ts
+import { readYourWrites } from "@bounda-dev/core";
+
+const consistent = readYourWrites(app);
+await consistent.commands.placeOrder({ orderId, customerId, total });
+// a query here already sees the order
+```
+
+`readYourWrites` returns the same app with a `commands` facade that waits, before resolving, for
+the read models the command changed. A command's result says where its events landed:
+`eventTypes` and `position`, the place of the last one in the global stream. Only the read models
+that project one of those types are waited for, and only until their checkpoint reaches that
+position; the others do not change because of the command, so waiting for them would buy nothing.
+A read model already there costs one checkpoint read. One behind is projected by the request when
+no other process holds it; when the worker is busy with it, the request reads its checkpoint again
+every `catchUp.pollInterval` instead of queueing on the lock, so it keeps no database connection
+waiting. A
+scheduled command resolves immediately, since there is nothing to catch up to yet, and commands
+dispatched from inside the runtime — by a policy or a process — are not affected.
+
+The wait is bounded: after `runtime.dispatcher.catchUp.timeout`, 2 seconds by default, the command
+resolves anyway, a `read models did not catch up with the command in time` warning names the read
+models still behind, and the page reads what is there. A stuck worker or a failing projection
+makes a page stale; a read model that is backing off after failures
+(see [A projection that keeps failing](#a-projection-that-keeps-failing)) is not waited for at
+all. The timeout is checked between batches, so a projection that itself waits on something that
+never answers holds the request past it: keep projections to their own database. This is
+read-your-writes in the usual sense: you see your own writes, not necessarily everyone else's from
+the same instant. Both settings are in [Configuration](/reference/configuration/#dispatcher).
+
+`app.catchUpReadModels({ through: result })` is the primitive underneath. Without `through`, it
+runs every projection until every read model reflects what is stored. Both leave policies,
+processes and scheduled commands to the background.
+
+In a React Router app this is a setting rather than a call — `createBounda({ consistency })`,
+`"read-your-writes"` by default. See [Bounda with React Router](/guides/react-router/).
+
+## A projection that keeps failing
+
+A projection that throws on an event rolls its batch back. The events before that one are then
+committed on their own, so the read model's checkpoint stops right before the event that fails,
+and the lag counts exactly what is waiting behind it. A read model never skips an event: that one
+is retried until the projection stops throwing, which usually means fixing it and deploying.
+
+Retries back off. After a failure, background passes leave that read model alone for a second,
+then two, four and so on up to thirty seconds, while every other read model carries on; the first
+batch that goes through resets it. When another subscriber that was failing recovers, which says
+the database is back after an outage, every failing one is retried at once instead of waiting out
+its delay. `app.catchUpReadModels()`, and read-your-writes with it, respects the backoff too, so a
+request does not stumble on the same failure over and over: it answers with the read model as far
+as it got. `app.runUntilIdle()` ignores the backoff, so a test that fixes a projection and
+processes again sees it advance at once.
+
+`app.getLag()` says what a subscriber is stuck on:
+
+```ts
+const { subscribers } = await app.getLag();
+// { subscriber: "projection:orderSummary", position: 41, lag: 12,
+//   failing: { position: 42, eventId: "…", eventType: "OrderPaid", message: "…",
+//              attempts: 5, since: "2026-09-24T09:00:00.000Z", retryAt: "…" } }
+```
+
+`failing` is what this process saw: another instance that never tried that read model reports no
+failure while its lag still grows. Alert on the lag, which every instance reads from the
+database; read `failing`, and the `subscriber failed` log line that names the event, to find out
+why.
+
+`waitingDeadlines`, next to `subscribers`, counts the process deadlines this instance's worker
+holds back until the process runner has handled the events stored before them
+([deadlines](/guides/reacting-to-events/#deadlines)). It stays above zero only while the process
+runner is behind, and each deadline runs anyway after ten rounds.
+
+## Schema
+
+There are no migration files to run, and no migration step in your deploy. The adapter creates what
+it needs on start, and a view that gains a field gains a column, or an index for a field newly
+`unique()` or `index()`; one that loses a field, changes its type, moves its primary key or drops
+`unique()` needs the rebuild below ([what an adapter creates](/adapters/#what-an-adapter-creates)
+and [evolving a read model](/adapters/#evolving-a-read-model)).
+
+## Rebuilding a read model
+
+A read model is derived data: when its projection had a bug, or its view lost a field or changed a
+field's type, the answer is to project the global stream again. To change one in production:
+
+<Steps>
+
+1. Change the view or the projection, and run `bounda generate`.
+
+2. From a machine with the new code and access to the database, rebuild it:
+
+   ```bash
+   bounda rebuild orderSummary
+   ```
+
+3. Deploy the new code once the rebuild has finished.
+
+</Steps>
+
+`bounda rebuild <read-model>` does it without taking the read model offline:
+
+1. It creates a fresh table with the view's current fields, next to the live one.
+2. It runs the projections over the whole global stream into that table. Queries keep reading the
+   live table meanwhile, and the worker keeps projecting new events into it.
+3. When the fresh table has caught up, it takes the live table's place and the read model's
+   checkpoint is set to where the rebuild stopped, in one transaction that waits for the
+   projection lock, so no batch is halfway through when it happens.
+
+Whatever the worker had applied to the old table goes with it, and the worker carries on from the
+rebuilt position, whether it was ahead of it or behind: every event reaches the new table exactly
+once. A projection that throws aborts the rebuild and leaves the live table as it was.
+
+The rebuild goes before the deploy because the app refuses to start against a table whose columns no
+longer match the view. Between the swap and the deploy, the old worker's projection for that read
+model may fail against the new columns; its checkpoint holds, and it catches up as soon as the new
+code runs. Nothing is lost.
+
+A rebuild that stops halfway, because the machine died or the connection dropped, resumes exactly
+where it was the next time you run it: every batch commits together with the position it
+reached, kept in the read model's database as a checkpoint named
+`rebuild:<read model>:<fingerprint>`. The fingerprint is a digest of the view's fields and the
+projections' code, so a rebuild left behind by different code starts again from a fresh table
+instead of mixing rows projected by two versions. It reads the text of each projection's own
+functions, not of the modules they import: finish a paused rebuild before deploying a change that
+only touches such a helper.
+
+Two rebuilds of the same read model never write at the same time. The one started last takes
+over: it waits for a batch the other has in flight, resumes from where that one got when the code
+is the same, and the older rebuild stops at its next step with `RebuildSupersededError`
+(`REBUILD_SUPERSEDED`) without writing anything or dropping the table it no longer owns. A rebuild
+whose process died needs no clean-up either: the next one simply takes over.
+
+Two things the rebuild cannot do for you. A projection that writes through `client` with SQL
+naming the table by hand keeps writing to the live table, not to the fresh one — write projections
+through `table`. And a read model with millions of events takes as long as projecting them takes;
+watch the `read model rebuild progressed` log line.
+
+Programmatically, `app.rebuildReadModel(name)` on an app, or `rebuildReadModel({ registry,
+config, name })` from `@bounda-dev/core` on a project loaded with `loadProject()` from
+`@bounda-dev/core/node`. Both take `maxEvents` to run one slice and pause: the result says
+`done: false`, the next call resumes, and `app.pendingRebuilds()` lists the read models waiting
+for one. That is how a host without a long-running process, such as a Durable Object, rebuilds a
+read model whose history does not fit in one request.
+
+## Tuning
+
+The dispatcher runs passes on a timer, every `pollInterval`, each reading up to `batchSize` events
+per subscriber. [Configuration](/reference/configuration/#dispatcher) lists every
+`runtime.dispatcher` key with its default.
+
+```ts
+runtime: {
+  dispatcher: {
+    pollInterval: "50ms",
+    idleInterval: "1m",
+    batchSize: 500,
+    projectionBatchTime: "500ms",
+    backoff: { baseDelay: "1s", maxDelay: "30s" },
+  },
+}
+```
+
+With PostgreSQL the timer is a safety net, not the mechanism. Every append notifies the workers at
+commit ([how](/adapters/postgresql/#how-it-stores-things)), so a pass runs the moment events land,
+and once passes stop finding events the dispatcher waits `idleInterval` between polls. An idle
+worker on PostgreSQL therefore costs a handful of queries a minute instead of ten passes a second
+per subscriber, and a policy reacts in milliseconds. A notification lost to a dropped connection is
+caught by the next idle poll, which is why the poll stays. The scheduled-command worker still polls
+at `pollInterval`: due commands are a matter of time, not of new events.
+
+SQLite and the in-memory adapter have no channel to listen on. SQLite polls at `pollInterval` as
+before; the in-memory adapter notifies within the process, so a started app reacts to its own
+appends without waiting for the timer.
+
+A shorter `pollInterval` cuts the delay before a policy reacts where polling is the mechanism and
+costs queries; a larger batch moves more events per pass and holds a claim for longer.
+
+A projection batch keeps its transaction open for at most `projectionBatchTime`: past it, the batch
+commits the events it got through and the rest are delivered next. On SQLite that transaction holds
+the database's single writer, so commands wait for it; the limit keeps that wait short however many
+events a batch carries. Rebuilds honour it too.
+
+`backoff` sets how long a subscriber whose batches fail is left alone before the next try: see
+[A projection that keeps failing](#a-projection-that-keeps-failing).
+
+## Observability
+
+The runtime reports OpenTelemetry spans and metrics with no adapter to write: register an SDK
+before `boot()` and they show up next to your HTTP server's. Alert on `bounda.dispatcher.lag`, the
+gauge of how far each subscriber is behind. [Observability](/reference/observability/) lists every
+span, attribute and metric.
+
+## On Cloudflare
+
+A Cloudflare app has no process to run and no role to pick: a Worker answers requests and a
+Durable Object per tenant holds the store. Commands update the read models before they answer;
+policies, processes and scheduled commands run in the object's alarm. [The Cloudflare
+adapter](/adapters/cloudflare/) covers it, limits and cost included.
+
+## What is not there yet
+
+Bounda is 0.x. [What is not there yet](/reference/limitations/) is the honest list of what a
+production app might want and does not get today, each with why.

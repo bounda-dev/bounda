@@ -1,0 +1,263 @@
+---
+title: Getting started
+description: Create a project, run it, add a command, test it. Fifteen minutes.
+sidebar:
+  order: 0
+---
+
+import { FileTree, Steps, TabItem, Tabs } from "@astrojs/starlight/components";
+
+## Create a project
+
+`npm create bounda@latest my-shop` asks how the app runs and, for Node and React Router, which
+database it uses. Pass the answers after `--` to skip the questions:
+
+<Tabs syncKey="framework">
+<TabItem label="Node">
+
+A Node script, on SQLite or PostgreSQL.
+
+```bash
+npm create bounda@latest my-shop -- --framework node --database sqlite
+cd my-shop
+```
+
+</TabItem>
+<TabItem label="React Router">
+
+A [React Router](/guides/react-router/) app with a page that dispatches from an action and
+reads from a loader, on SQLite or PostgreSQL.
+
+```bash
+npm create bounda@latest my-shop -- --framework react-router --database sqlite
+cd my-shop
+```
+
+</TabItem>
+<TabItem label="Cloudflare">
+
+A [Cloudflare](/adapters/cloudflare/) Worker with a Durable Object per tenant, whose store is
+the object's own SQLite, so it takes no database.
+
+```bash
+npm create bounda@latest my-shop -- --framework cloudflare
+cd my-shop
+```
+
+</TabItem>
+</Tabs>
+
+`@latest` on purpose: npx reuses a `create-bounda` it cached earlier, and a stale one pins the
+Bounda packages to whatever version it shipped with. With the defaults, a Node script on SQLite,
+you get a project with one aggregate, one read model and a test:
+
+<FileTree>
+- app/
+  - domain/
+    - order/ the order aggregate
+      - order-placed.ts an event: payload and begin, which opens the order
+      - commands/
+        - place-order.ts a command: payload and handler
+  - read/
+    - orders/ a read model
+      - view.ts its fields
+      - projections/
+        - order/
+          - order-placed.ts projects the order's OrderPlaced
+      - queries/
+        - list-orders.ts
+- tests/
+  - orders.test.ts the app on an in-memory adapter
+- src/
+  - main.ts boots the app and places an order
+- bounda.config.ts storage and ports
+</FileTree>
+
+Installing ran `bounda generate` for you (it is the `prepare` script), so the types are already
+there. Run the test and the demo:
+
+```bash
+npm test
+npm start
+```
+
+## What a module looks like
+
+Every file exports the functions its concept needs and gets its argument types from a generated
+`+types` module next to it:
+
+```ts
+// app/domain/order/commands/place-order.ts
+import type { Command } from "./+types/place-order";
+
+export const payload = ({ z }: Command.PayloadArgs) =>
+  z.object({ orderId: z.uuid(), customerId: z.string().min(1), total: z.number().positive() });
+
+export const rejections = ({ command }: Command.RejectionsArgs) => ({
+  AlreadyPlaced: `Order ${command.aggregateId} was already placed`,
+});
+
+export const handler = ({ command, state, events, reject }: Command.HandlerArgs) => {
+  if (state.status !== undefined) return reject("AlreadyPlaced");
+  return [events.orderPlaced({ customerId: command.payload.customerId, total: command.payload.total })];
+};
+```
+
+`command.payload` is typed from the Zod schema above it, `state` from what the order's events
+return, and `events` only offers the events of this aggregate. `rejections` declares how the
+command may say no, and `reject` only takes those codes. `order-placed.ts` opens the order
+with `begin`, so before it every field of `state` is `undefined`, and after it `status` and the
+rest are always set. Nothing here is registered anywhere: the file's place
+and name are the declaration. The [project layout](/guides/project-layout/) guide has the whole
+map.
+
+## Add a command
+
+Let customers cancel.
+
+<Steps>
+
+1. Start the generator in watch mode in one terminal:
+
+   ```bash
+   npm run dev
+   ```
+
+2. Add the event:
+
+   ```ts
+   // app/domain/order/order-cancelled.ts
+   import type { Event } from "./+types/order-cancelled";
+
+   export const payload = ({ z }: Event.PayloadArgs) => z.object({ reason: z.string() });
+
+   export const evolve = () => ({ status: "cancelled" as const });
+   ```
+
+   `evolve` returns the fields the event changes, merged over the order's state. The generator
+   adds `"cancelled"` to the type of `status` on its own.
+
+3. Add the command:
+
+   ```ts
+   // app/domain/order/commands/cancel-order.ts
+   import type { Command } from "./+types/cancel-order";
+
+   export const payload = ({ z }: Command.PayloadArgs) =>
+     z.object({ orderId: z.uuid(), reason: z.string().min(1) });
+
+   export const rejections = ({ state }: Command.RejectionsArgs) => ({
+     NotPlaced: `Only placed orders can be cancelled; this one is ${state.status ?? "new"}`,
+   });
+
+   export const handler = ({ command, state, events, reject }: Command.HandlerArgs) => {
+     if (state.status === "cancelled") return [];
+     if (state.status !== "placed") return reject("NotPlaced");
+     return [events.orderCancelled({ reason: command.payload.reason })];
+   };
+   ```
+
+   The watcher wrote `+types/order-cancelled.ts` and `+types/cancel-order.ts` as you saved, and
+   `events.orderCancelled` appeared in every handler of the aggregate.
+
+4. Reflect the cancellation in the read model with a projection named after the event, in the
+   folder of its aggregate:
+
+   ```ts
+   // app/read/orders/projections/order/order-cancelled.ts
+   import type { Projection } from "./+types/order-cancelled";
+
+   export const project = async ({ event, table }: Projection.Args) => {
+     await table.delete({ orderId: event.aggregateId });
+   };
+   ```
+
+</Steps>
+
+## Test it
+
+`createTestApp` runs the whole app on an in-memory adapter with a clock that only moves when you
+tell it to. `runUntilIdle` runs projections, policies and processes until nothing is left:
+
+```ts
+// tests/cancel.test.ts
+import { createTestApp } from "@bounda-dev/core/testing";
+import { expect, it } from "vitest";
+import { registry } from "../.bounda/registry.ts";
+
+it("removes a cancelled order from the list", async () => {
+  const { app } = await createTestApp({ registry });
+  const orderId = "018f6a5e-4c3c-7c1e-9d4b-0b2c4a1d8e01";
+  await app.commands.placeOrder({ orderId, customerId: "ada", total: 42 });
+  await app.commands.cancelOrder({ orderId, reason: "changed my mind" });
+  await app.runUntilIdle();
+
+  expect(await app.queries.listOrders({ customerId: "ada" })).toEqual({ orders: [], total: 0 });
+  await app.stop();
+});
+```
+
+```bash
+npm test
+```
+
+[Testing](/guides/testing/) goes further: advancing the clock for reminders and timeouts, running
+against a real database, and choosing which implementation of a dependency a test gets.
+
+## Run it for real
+
+`src/main.ts` shows the production path: `boot()` reads `bounda.config.ts` and the generated
+registry, opens the database and returns the app, typed for your project. A script handles its
+own exit, so it passes `signals: false` and stops the app when it is done:
+
+```ts
+import { boot } from "@bounda-dev/core/node";
+
+const app = await boot({ signals: false });
+await app.commands.placeOrder({ orderId: crypto.randomUUID(), customerId: "ada", total: 42 });
+await app.runUntilIdle();
+await app.stop();
+```
+
+Point `bounda.config.ts` at PostgreSQL when one process is not enough; the app does not change.
+See [adapters](/adapters/).
+
+## Working with an agent
+
+A new project carries an `AGENTS.md`, which Claude Code, Codex, Cursor and other coding agents
+read, telling the agent to read the docs before it writes a module. The docs it points at ship inside `@bounda-dev/core`, as
+plain Markdown in `node_modules/@bounda-dev/core/docs/`, so the agent reads the ones for the
+version you installed, not whatever it remembers. Every page here, past the front page, also has
+**Copy Markdown** and **Open** in ChatGPT or Claude, and
+[llms.txt](https://docs.bounda.dev/llms.txt) lists the whole site for an agent that is still
+deciding.
+
+## Where next
+
+- [Core concepts](/getting-started/core-concepts/): every word the docs use, one line each.
+- [Project layout](/guides/project-layout/): every kind of module, with a template each.
+- [Read models](/guides/read-models/): the view, the projections that fill it and the queries
+  that read it.
+- [Reacting to events](/guides/reacting-to-events/): when a policy is enough, when the work needs
+  a process, deadlines and retries.
+- [Calling the outside world](/guides/calling-the-outside-world/): where an effect goes, and how
+  the idempotency key keeps it from happening twice.
+- [Sagas and compensation](/guides/sagas/): a business transaction of several steps, and how each
+  one is undone when a later one fails.
+- [Dead letters and failed processes](/guides/dead-letters/): retrying or discarding a run that
+  failed for good.
+- [Testing](/guides/testing/): an app in memory, a clock you move by hand, and assertions that
+  do not flake.
+- [Changing an event's shape](/guides/changing-events/): an upcaster next to the event, applied as
+  old events are read.
+- [Bounda with React Router](/guides/react-router/): actions that dispatch, loaders that query,
+  and the [onboarding example](/examples/onboarding/) that puts it together.
+- [Deployment](/guides/deployment/): roles, several instances, rebuilding a read model and
+  observability.
+- [The storefront example](/examples/storefront/): policies, a checkout that compensates
+  when the payment fails, an effect after the commit and hand-written SQL in one small app.
+- [How Bounda runs](/concepts/how-it-runs/): one global stream per store, the ceiling with numbers,
+  and the way out when you reach it.
+- Reference: the [CLI](/reference/cli/), every [configuration](/reference/configuration/) key,
+  the [conventions](/reference/conventions/) the generator reads, [errors](/reference/errors/),
+  [observability](/reference/observability/) and [what is not there yet](/reference/limitations/).

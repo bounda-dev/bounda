@@ -1,6 +1,7 @@
 import starlight from "@astrojs/starlight";
 import { defineConfig, fontProviders } from "astro/config";
 import starlightLlmsTxt from "starlight-llms-txt";
+import starlightPageActions from "starlight-page-actions";
 import { basalt, bone } from "./src/code-themes.ts";
 
 const socialImageAlt =
@@ -20,6 +21,12 @@ const socialImage = (url) => [
 // is only ever set at 600, so it is requested at that one weight across the width axis it uses.
 export default defineConfig({
   site: "https://docs.bounda.dev",
+  // Pages that moved keep their old address working, since links to them live outside the docs.
+  redirects: {
+    "/guides/how-it-runs/": "/concepts/how-it-runs/",
+    "/guides/storefront-example/": "/examples/storefront/",
+    "/guides/onboarding-example/": "/examples/onboarding/",
+  },
   fonts: [
     {
       provider: fontProviders.google(),
@@ -70,11 +77,29 @@ export default defineConfig({
         },
       },
       social: [{ icon: "github", label: "GitHub", href: "https://github.com/bounda-dev/bounda" }],
-      plugins: [starlightLlmsTxt()],
+      // No `baseUrl` for the page actions: with one they write their own llms.txt over
+      // starlight-llms-txt's.
+      plugins: [
+        starlightLlmsTxt(),
+        starlightPageActions({
+          prompt: "Read {url}, a page of the Bounda docs, so I can ask about it.",
+          actions: {
+            chatgpt: true,
+            claude: true,
+            markdown: true,
+            t3chat: false,
+            v0: false,
+            cursor: false,
+            perplexity: false,
+            githubCopilot: false,
+          },
+        }),
+      ],
       sidebar: [
         { label: "bounda.dev", link: "https://bounda.dev" },
         { label: "Getting started", items: [{ autogenerate: { directory: "getting-started" } }] },
         { label: "Guides", items: [{ autogenerate: { directory: "guides" } }] },
+        { label: "Examples", items: [{ autogenerate: { directory: "examples" } }] },
         { label: "Concepts", items: [{ autogenerate: { directory: "concepts" } }] },
         { label: "Adapters", items: [{ autogenerate: { directory: "adapters" } }] },
         { label: "Reference", items: [{ autogenerate: { directory: "reference" } }] },

@@ -5,19 +5,53 @@ sidebar:
   order: 0
 ---
 
+import { TabItem, Tabs } from "@astrojs/starlight/components";
+
 Bounda runs on a single database. Events, the checkpoints of every subscriber, scheduled
 commands, dead letters and the tables of your read models all live there, so there is no broker
 or queue to operate. An adapter is the piece that knows how to talk to one engine.
 
+<Tabs syncKey="database">
+<TabItem label="SQLite">
+
 ```ts
 // bounda.config.ts
-import { defineConfig } from "@bounda-dev/core/config";
 import { sqlite } from "@bounda-dev/adapter-sqlite";
+import { defineConfig } from "@bounda-dev/core/config";
 
 export default defineConfig({
   storage: sqlite({ path: "./data/app.db" }),
 });
 ```
+
+</TabItem>
+<TabItem label="PostgreSQL">
+
+```ts
+// bounda.config.ts
+import { postgresql } from "@bounda-dev/adapter-postgresql";
+import { defineConfig } from "@bounda-dev/core/config";
+
+export default defineConfig({
+  storage: postgresql({ url: process.env.DATABASE_URL! }),
+});
+```
+
+</TabItem>
+<TabItem label="Cloudflare">
+
+```ts
+// bounda.config.ts
+import { cloudflare } from "@bounda-dev/adapter-cloudflare";
+import { defineConfig } from "@bounda-dev/core/config";
+
+export default defineConfig({
+  storage: cloudflare(),
+});
+```
+
+</TabItem>
+</Tabs>
 
 `storage` is where the write side lives. Read models use the same adapter unless you point one
 of them elsewhere:
@@ -41,8 +75,7 @@ export default defineConfig({
 | In-memory | `@bounda-dev/core/memory` | Nothing; for tests and for trying Bounda without a database |
 
 Every adapter passes the same contract test suites, so an app behaves the same way on each of
-them. Pick SQLite to start and move to PostgreSQL when you need several processes writing at
-once; your domain code does not change.
+them; [which one to deploy](#which-one-to-deploy) compares them.
 
 ## What an adapter creates
 
@@ -53,7 +86,7 @@ On first use the adapter creates its tables, prefixed with `bounda_` by default:
 | `bounda_events` | Every event, with its stream version and a global position |
 | `bounda_checkpoints` | How far each projection, the policy runner and the process runner have read, and where a paused rebuild stands |
 | `bounda_inbox` | Which handler already completed for which event, so a retry does not run it again |
-| `bounda_scheduled_commands` | Scheduled commands and process time-outs |
+| `bounda_scheduled_commands` | Scheduled commands, process deadlines and timeouts, and delayed policy runs |
 | `bounda_dead_letters` | Handler runs that gave up, with the error and the attempt count |
 
 Read models get one table each, named after the read model in snake_case behind `rm_`, so no
@@ -68,9 +101,8 @@ Adding a field to a view adds a nullable column the next time the app starts; ex
 working. Marking a field `unique()` or `index()` adds its index, and a `unique()` refuses to start
 while two rows share the value. Removing a field, changing its type, moving the primary key or
 dropping `unique()` is refused with an error that names the read model and the command that
-rebuilds it: `bounda rebuild <read-model>` projects the whole stream
-into a fresh table with the current fields and swaps it in, with the live table serving queries
-until then. See [Deployment](/guides/deployment/#rebuilding-a-read-model).
+rebuilds it, `bounda rebuild <read-model>`, which does so without taking the read model offline
+([rebuilding a read model](/guides/deployment/#rebuilding-a-read-model)).
 
 ## Hand-written SQL
 
@@ -94,8 +126,22 @@ Projections receive `client` too. There it belongs to the batch's transaction, a
 `sql`. SQL written through it commits and rolls back with the rest of the batch. A connection the
 projection opens by other means does not, and can even wait forever on a row the batch has locked.
 
+:::caution
+SQL that names the read model's table by hand keeps writing to the live table during a
+[rebuild](/guides/deployment/#rebuilding-a-read-model), not to the fresh one. Write projections
+through `table`, and keep `client` for what `table` cannot say.
+:::
+
 ## Which one to deploy
 
-SQLite is a single writer: right for one process, and for tests. PostgreSQL is what lets
-several instances run the background work at once. [Deployment](/guides/deployment/) covers the
-roles, what the instances share and what is not there yet.
+| | SQLite and libSQL | PostgreSQL | Cloudflare |
+| --- | --- | --- | --- |
+| Writes | SQLite's single writer | one append at a time per store, under an advisory lock | the store's Durable Object |
+| Background work runs in | one process | any number of instances, each run claimed by one | the object's alarm |
+| It wakes up | every `pollInterval` | on `NOTIFY` at each append, and every `idleInterval` | when the alarm the object armed comes due |
+| Fits | one process, a local app | several instances, `web` and `worker` roles | a store per tenant on Workers |
+
+The in-memory adapter is for tests and for trying Bounda: one process, which it notifies on each
+append. Start on SQLite and move to PostgreSQL when the background work needs more than one process;
+the domain code does not change. [Deployment](/guides/deployment/) covers the roles and what the
+instances share, and [How Bounda runs](/concepts/how-it-runs/) the ceiling of one store.

@@ -15,20 +15,24 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-b07114?style=flat" alt="License" /></a>
 </p>
 
-Bounda gives you aggregates, commands, events, policies, processes and read models through file
-conventions and inferred types. Your business logic lives in small modules that export a handful
-of functions. The runtime does the wiring and runs on a single database.
+Your tables keep the last write. An event-sourced app keeps every change, so a wrong view is
+rebuilt from history and a past state can be explained. Bounda makes that the easy path in
+TypeScript: commands, events and projections are small files, every type is inferred from them,
+and the whole thing runs on one database, or one Cloudflare Durable Object per tenant.
 
 ```bash
 npm create bounda@latest my-app
 ```
 
-Documentation: [docs.bounda.dev](https://docs.bounda.dev).
+**[Documentation](https://docs.bounda.dev)** ·
+[Getting started](https://docs.bounda.dev/getting-started/) ·
+[Core concepts](https://docs.bounda.dev/getting-started/core-concepts/) ·
+[Deploy to Cloudflare](https://deploy.workers.cloudflare.com/?url=https://github.com/bounda-dev/bounda-cloudflare-template)
 
-## What a slice looks like
+## What it looks like
 
-A command decides, an event changes the state, a projection writes the row a query will read.
-Three files, no registry to maintain:
+A command decides; the event it returns becomes the state. The file's place and name are the
+declaration, and `bounda generate` writes the types next to it:
 
 ```ts
 // app/domain/order/commands/place-order.ts
@@ -43,101 +47,56 @@ export const rejections = ({ command }: Command.RejectionsArgs) => ({
 
 export const handler = ({ command, state, events, reject }: Command.HandlerArgs) => {
   if (state.status !== undefined) return reject("AlreadyPlaced");
-  return [
-    events.orderPlaced({ customerId: command.payload.customerId, total: command.payload.total }),
-  ];
+  return [events.orderPlaced({ customerId: command.payload.customerId, total: command.payload.total })];
 };
 ```
 
-```ts
-// app/domain/order/order-placed.ts
-import type { Event } from "./+types/order-placed";
+`command.payload` is typed from the schema, `state` from the order's events, `events` only offers
+this aggregate's events and `reject` only the codes above. A projection turns `OrderPlaced` into a
+row a query reads; [the getting started guide](https://docs.bounda.dev/getting-started/) builds
+the whole slice in fifteen minutes.
 
-export const payload = ({ z }: Event.PayloadArgs) =>
-  z.object({ customerId: z.string(), total: z.number().positive() });
+## Why Bounda
 
-export const create = ({ event }: Event.CreateArgs) => ({
-  status: "placed" as const,
-  customerId: event.payload.customerId,
-  total: event.payload.total,
-});
-```
+- **No ceremony.** No command bus, repository or registry to wire: files and their names are the
+  declaration.
+- **Types inferred, never written.** Change a field and the compiler points at every place that
+  breaks.
+- **Workflows built in.** Policies react to events; processes keep state and deadlines; retries,
+  dead letters, upcasters and read-model rebuilds come with the runtime.
+- **One database, no broker.** PostgreSQL, SQLite or libSQL, or a Durable Object per tenant, with
+  React Router integration and OpenTelemetry.
 
-```ts
-// app/read/orders/projections/order-placed.ts
-import type { Projection } from "./+types/order-placed";
-
-export const project = async ({ event, table }: Projection.Args) => {
-  await table.upsert({
-    orderId: event.aggregateId,
-    customerId: event.payload.customerId,
-    total: event.payload.total,
-    placedAt: new Date(event.timestamp),
-  });
-};
-```
-
-Nothing is registered by hand: the file's place and name are the declaration. `bounda generate`
-reads the layout and writes the `+types` modules next to it, so `command.payload` is typed from
-the schema above it, `state` from the aggregate, `events` only offers this aggregate's events, and
-`table` only the fields of this read model's view.
-
-## How it runs
-
-Every event a store holds gets a position in one global order. Read models, policies and
-processes are subscribers of that log, with a checkpoint each, so a read model can be rebuilt and
-a policy can be retried without touching the events. The
-[how it runs](https://docs.bounda.dev/guides/how-it-runs/) guide has the numbers and the ceiling.
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/public/flow-dark.svg" />
-    <img src="docs/public/flow-light.svg" alt="The app sends commands to command handlers in the domain, which decide from the state apply folds from the aggregate's own stream and return events for the event store, one ordered log. After commit, and asynchronously, policies and processes in the domain follow the log and send new commands, and projections turn events into rows in tables, in the same database or their own. Query handlers read those rows to answer the app's queries" width="900" />
-  </picture>
-</p>
+[How Bounda runs](https://docs.bounda.dev/concepts/how-it-runs/) says how far one store goes, and
+[what is not there yet](https://docs.bounda.dev/reference/limitations/) is one honest list.
 
 ## Status
 
 0.x. Until 1.0 the API can still change between minor versions (0.1 to 0.2), and every change
 that breaks something is called out in the changelog of the package it touches.
 
-## In production
-
-Roles for web and worker processes, any number of instances on PostgreSQL, a dispatcher woken by
-`NOTIFY`, OpenTelemetry spans and metrics, `bounda rebuild` for a read model that went wrong,
-`bounda dead-letters` for a policy that died, and upcasters for events whose payload changed. What
-is not there yet, and why, is one list in the
-[deployment guide](https://docs.bounda.dev/guides/deployment/#what-is-not-there-yet).
-
 ## Packages
 
 | Package | Purpose |
 |---|---|
-| [`@bounda-dev/core`](packages/core) | Runtime and public API |
+| [`@bounda-dev/core`](packages/core) | Runtime and public API, with the docs as Markdown for your agent |
 | [`@bounda-dev/cli`](packages/cli) | `bounda` CLI: reads the layout, writes the registry and the types |
 | [`@bounda-dev/adapter-sqlite`](packages/adapter-sqlite) | SQLite and libSQL storage |
 | [`@bounda-dev/adapter-postgresql`](packages/adapter-postgresql) | PostgreSQL storage |
-| [`@bounda-dev/adapter-cloudflare`](packages/adapter-cloudflare) | A Durable Object per tenant on Cloudflare | none: its tests run inside workerd, where Stryker cannot mutate |
+| [`@bounda-dev/adapter-cloudflare`](packages/adapter-cloudflare) | A Durable Object per tenant on Cloudflare |
 | [`@bounda-dev/react-router`](packages/react-router) | React Router integration and its Vite plugin |
 | [`create-bounda`](packages/create-bounda) | Project scaffolder |
 
 Each package README carries its own mutation score; the badge above is the whole repository.
+`adapter-cloudflare` has none: its tests run inside workerd, where Stryker cannot mutate.
 
-Two examples live in this repository: [`examples/storefront`](examples/storefront) on Node and
-SQLite, and [`examples/onboarding`](examples/onboarding) on React Router and PostgreSQL or SQLite.
+Two runnable examples live here: [`examples/storefront`](examples/storefront), on Node and SQLite,
+and [`examples/onboarding`](examples/onboarding), on React Router.
 
-## Development
+## Contributing
 
-Requires Node 22.18 or newer and pnpm 12.
-
-```bash
-pnpm install
-pnpm check
-```
-
-`pnpm check` runs lint, build, generate, typecheck and tests across every package and example.
-`pnpm --filter <package> test:mutation` runs Stryker on one package; CI runs it for the packages a
-pull request touches.
+Issues and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) says how to set the
+repository up, what a pull request needs and how to report a security problem.
 
 ## License
 

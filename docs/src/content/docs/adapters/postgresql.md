@@ -27,14 +27,13 @@ postgresql({ host: "localhost", port: 5432, database: "shop", user: "shop", pass
 
 ## How it stores things
 
-- `position` in the events table is a `BIGSERIAL`. Every append takes a transaction-scoped
-  advisory lock (`pg_advisory_xact_lock`) before writing, so positions are handed out in commit
-  order and a reader of the global stream never sees a gap that a later commit would fill. The
-  lock bounds write throughput to what one connection can commit; that is thousands of events per
-  second, far above what the apps Bounda targets produce. When one store is not enough, run one
-  per tenant with `schema`: the lock, like the channel below and the read models' locks, is the
-  schema's own, so tenants never wait on each other; see
-  [How Bounda runs](/guides/how-it-runs/#the-way-out-one-store-per-tenant).
+- `position` in the events table is a `BIGSERIAL`. Every append takes a transaction-scoped advisory
+  lock (`pg_advisory_xact_lock`) before writing, so positions are handed out in commit order and a
+  reader of the global stream never sees a gap that a later commit would fill. The lock bounds write
+  throughput to what one connection can commit
+  ([the ceiling, and one store per tenant with `schema`](/concepts/how-it-runs/#the-ceiling-with-numbers)). The
+  lock, like the notification channel and the read models' locks below, belongs to the store's
+  `schema`, so stores in two schemas of one database never wait on each other.
 - The stream version is checked in the same transaction as the write; a stale version rolls back
   with a `ConcurrencyError` and the command is retried with fresh state.
 - The transaction ends with `pg_notify` on a channel named after the schema and the events
@@ -54,17 +53,6 @@ app stops.
 
 ## In tests
 
-The adapter's own tests start `postgres:17` with
-[Testcontainers](https://node.testcontainers.org/); the same approach works for an app:
-
-```ts
-import { PostgreSqlContainer } from "@testcontainers/postgresql";
-import { createTestApp } from "@bounda-dev/core/testing";
-import { postgresql } from "@bounda-dev/adapter-postgresql";
-
-const container = await new PostgreSqlContainer("postgres:17").start();
-const { app } = await createTestApp({
-  registry,
-  adapter: postgresql({ url: container.getConnectionUri(), schema: "test" }),
-});
-```
+The adapter's own tests start `postgres:17` with [Testcontainers](https://node.testcontainers.org/),
+and the same works for an app: see
+[against a real database](/guides/testing/#against-a-real-database).
