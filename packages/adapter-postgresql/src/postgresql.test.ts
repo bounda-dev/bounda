@@ -18,8 +18,6 @@ import {
   deadLetterStoreContract,
   eventStoreContract,
   inboxLedgerContract,
-  type JsonRow,
-  jsonFields,
   jsonValuesContract,
   pendingEvent,
   readModelRebuildContract,
@@ -153,7 +151,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
   jsonValuesContract({
     create: async () => {
       await closeOpened();
-      return (await openReadModel<JsonRow>(fresh(), "documents", jsonFields)).table;
+      return fresh();
     },
   });
   readModelRebuildContract({

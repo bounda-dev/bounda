@@ -7,8 +7,6 @@ import {
   deadLetterStoreContract,
   eventStoreContract,
   inboxLedgerContract,
-  type JsonRow,
-  jsonFields,
   jsonValuesContract,
   pendingEvent,
   readModelRebuildContract,
@@ -41,16 +39,7 @@ describe("memory adapter", () => {
       return ports.table;
     },
   });
-  jsonValuesContract({
-    create: async () =>
-      (
-        await memory().createReadModel<JsonRow>({
-          name: "documents",
-          fields: jsonFields,
-          logger: silentLogger,
-        })
-      ).table,
-  });
+  jsonValuesContract({ create: async () => memory() });
   it("appends several batches in order, a stream's later batch on its earlier one, and notifies once", async () => {
     const positions: number[] = [];
     const store = createMemoryEventStore({ onAppend: (position) => positions.push(position) });

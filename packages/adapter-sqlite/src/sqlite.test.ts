@@ -18,8 +18,6 @@ import {
   deadLetterStoreContract,
   eventStoreContract,
   inboxLedgerContract,
-  type JsonRow,
-  jsonFields,
   jsonValuesContract,
   pendingEvent,
   readModelRebuildContract,
@@ -55,16 +53,7 @@ describe("sqlite adapter in memory", () => {
         }>({ name: "orderSummary", fields: contractFields, logger: silentLogger })
       ).table,
   });
-  jsonValuesContract({
-    create: async () =>
-      (
-        await sqlite({ memory: true }).createReadModel<JsonRow>({
-          name: "documents",
-          fields: jsonFields,
-          logger: silentLogger,
-        })
-      ).table,
-  });
+  jsonValuesContract({ create: async () => sqlite({ memory: true }) });
 });
 
 describe("sqlite adapter in memory, under concurrent use", () => {

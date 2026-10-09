@@ -9,8 +9,6 @@ import {
   deadLetterStoreContract,
   eventStoreContract,
   inboxLedgerContract,
-  type JsonRow,
-  jsonFields,
   jsonValuesContract,
   readModelRebuildContract,
   readModelTransactionContract,
@@ -51,18 +49,7 @@ describe("the Durable Object adapter", () => {
         })
       ).table,
   });
-  jsonValuesContract({
-    create: async () =>
-      (
-        await (
-          await freshAdapter()
-        ).createReadModel<JsonRow>({
-          name: "documents",
-          fields: jsonFields,
-          logger: silentLogger,
-        })
-      ).table,
-  });
+  jsonValuesContract({ create: freshAdapter });
   readModelRebuildContract({ create: freshAdapter, concurrent: false });
   readModelTransactionContract({
     create: freshAdapter,

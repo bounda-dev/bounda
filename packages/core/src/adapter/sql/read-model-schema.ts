@@ -153,6 +153,13 @@ export const evolveTableStatements: EvolveTableStatementsFunction = ({
         .join(", ")}). Removing a field`,
     );
   }
+  const oldKey = existing.find((column) => column.primaryKey)?.name;
+  const newKey = columns.find((column) => column.primaryKey)?.name;
+  if (oldKey !== undefined && oldKey !== newKey) {
+    throw needsRebuild(
+      `the primary key of table "${table}" is "${oldKey}" but fields now declare "${newKey}". Moving the primary key`,
+    );
+  }
   for (const column of columns) {
     const current = byName.get(column.name);
     if (current === undefined) continue;
@@ -161,12 +168,7 @@ export const evolveTableStatements: EvolveTableStatementsFunction = ({
         `column "${column.name}" is ${current.sqlType} in table "${table}" but fields now declare ${column.sqlType}. Changing a field's type`,
       );
     }
-    if (current.primaryKey !== column.primaryKey) {
-      throw needsRebuild(
-        `the primary key of table "${table}" is not "${column.name}" as fields now declare, or the other way round. Moving the primary key`,
-      );
-    }
-    if (current.unique && !column.unique && !column.primaryKey) {
+    if (current.unique && !column.unique) {
       throw needsRebuild(
         `column "${column.name}" is unique in table "${table}" but fields no longer say so. Dropping \`unique()\``,
       );

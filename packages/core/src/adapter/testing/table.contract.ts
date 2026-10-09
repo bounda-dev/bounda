@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { silentLogger } from "../../contracts/logger.ts";
 import type { FieldsRecord } from "../../modules/view.ts";
 import { fieldBuilder as f } from "../../modules/view.ts";
+import type { Adapter } from "../adapter.ts";
 import type { Table } from "../ports/table.ts";
 
 /**
@@ -119,27 +121,21 @@ export const tableContract: TableContractFunction = ({ create }) => {
   });
 };
 
-/**
- * A row holding one JSON value under its id.
- */
-export interface JsonRow {
+interface JsonRow {
   readonly id: string;
   readonly value: unknown;
 }
 
-/**
- * Field definitions matching `JsonRow`.
- */
-export const jsonFields: FieldsRecord = {
+const jsonFields: FieldsRecord = {
   id: f.string().primaryKey(),
   value: f.json(),
 };
 
 export interface JsonValuesContractArgs {
   /**
-   * A fresh table over `jsonFields`.
+   * A fresh adapter, whose read model the contract opens.
    */
-  readonly create: () => Promise<Table<JsonRow>>;
+  readonly create: () => Promise<Adapter>;
 }
 
 export interface JsonValuesContractFunction {
@@ -152,7 +148,11 @@ export interface JsonValuesContractFunction {
 export const jsonValuesContract: JsonValuesContractFunction = ({ create }) => {
   describe("json values contract", () => {
     it("round-trips any JSON value, top-level strings and booleans included", async () => {
-      const table = await create();
+      const { table } = await (await create()).createReadModel<JsonRow>({
+        name: "documents",
+        fields: jsonFields,
+        logger: silentLogger,
+      });
       const values: readonly unknown[] = [
         "pending",
         "42",

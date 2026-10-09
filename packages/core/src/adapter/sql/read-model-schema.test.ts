@@ -181,7 +181,7 @@ describe("evolveTableStatements with keys and indexes", () => {
         column("email"),
       ]),
     ).toThrow(
-      'Read model "people": the primary key of table "t" is not "id" as fields now declare, or the other way round. Moving the primary key needs a rebuild: run `bounda rebuild people`',
+      'Read model "people": the primary key of table "t" is "id" but fields now declare "email". Moving the primary key needs a rebuild: run `bounda rebuild people`',
     );
   });
 

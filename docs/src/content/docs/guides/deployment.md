@@ -190,8 +190,9 @@ runner is behind, and each deadline runs anyway after ten rounds.
 
 The adapter creates what it needs on start: the event store, the ledgers and a table per read
 model. Adding a field to a view adds a nullable column the next time the app starts and existing
-rows keep working. Removing a field or changing its type is refused with an error naming the read
-model — that is what `bounda rebuild` is for, below.
+rows keep working, and marking a field `unique()` or `index()` adds its index. Removing a field,
+changing its type, moving the primary key or dropping `unique()` is refused with an error naming
+the read model — that is what `bounda rebuild` is for, below.
 
 There are no migration files to run, and no migration step in your deploy.
 

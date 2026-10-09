@@ -43,7 +43,6 @@ export type {
 export { storageTransactionContract } from "./storage-transaction.contract.ts";
 export type {
   ContractRow,
-  JsonRow,
   JsonValuesContractArgs,
   JsonValuesContractFunction,
   TableContractArgs,
@@ -51,7 +50,6 @@ export type {
 } from "./table.contract.ts";
 export {
   contractFields,
-  jsonFields,
   jsonValuesContract,
   tableContract,
 } from "./table.contract.ts";

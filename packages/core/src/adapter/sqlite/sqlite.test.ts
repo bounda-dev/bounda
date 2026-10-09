@@ -13,8 +13,6 @@ import {
   deadLetterStoreContract,
   eventStoreContract,
   inboxLedgerContract,
-  type JsonRow,
-  jsonFields,
   jsonValuesContract,
   pendingEvent,
   readModelRebuildContract,
@@ -111,16 +109,7 @@ describe("the SQLite stores on node:sqlite", () => {
         })
       ).table,
   });
-  jsonValuesContract({
-    create: async () =>
-      (
-        await nodeSqlite().adapter.createReadModel<JsonRow>({
-          name: "documents",
-          fields: jsonFields,
-          logger: silentLogger,
-        })
-      ).table,
-  });
+  jsonValuesContract({ create: async () => nodeSqlite().adapter });
   readModelRebuildContract({ create: async () => nodeSqlite().adapter });
   readModelTransactionContract({
     create: async () => nodeSqlite().adapter,

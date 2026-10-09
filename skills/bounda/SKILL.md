@@ -456,8 +456,10 @@ export const loader = ({ context }: Route.LoaderArgs) => context.get(bounda).que
   retrying the failure handles them, then the instance resumes (`ProcessResumed`) and its
   deadlines are scheduled again. A letter's `parked` says how many wait behind it; discarding the
   letter gives the instance up.
-- A view may gain fields freely. Removing a field, changing its type, or fixing a projection that
-  wrote wrong rows means `bounda rebuild <read-model>`: it projects the stream into a fresh table
+- A view may gain fields, and `unique()` or `index()` on a field, freely (`unique()` refuses to
+  boot while two rows share the value). Removing a field, changing its type, moving the primary
+  key, dropping `unique()`, or fixing a projection that wrote wrong rows means
+  `bounda rebuild <read-model>`: it projects the stream into a fresh table
   and swaps it in; an interrupted rebuild resumes on the next run, and on Cloudflare the object's
   alarm runs it in slices. Never rename a read model to get a rebuild, and never write
   projections through `client` with hand-written SQL, since a rebuild cannot redirect that.

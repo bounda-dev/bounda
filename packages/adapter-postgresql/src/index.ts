@@ -173,5 +173,5 @@ export {
   DEFAULT_TABLE_PREFIX,
   resolvePostgresqlOptions,
 } from "./options.ts";
-export type { StorageTables } from "./schema.ts";
+export type { StorageTables, StorageTablesForArgs } from "./schema.ts";
 export { storageSchemaStatements, storageTablesFor } from "./schema.ts";
