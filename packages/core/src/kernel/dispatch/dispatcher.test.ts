@@ -603,6 +603,55 @@ describe("createDispatcher", () => {
     await dispatcher.stop();
   });
 
+  it("runs no pass after stopping, even one a notification marked due during the last", async () => {
+    const adapter = memory();
+    const { eventStore, checkpointStore, notifier } = await adapter.createStorage({
+      logger: silentLogger,
+    });
+    let release: () => void = () => undefined;
+    const seen: number[][] = [];
+    const gated: Subscriber = {
+      name: "gated",
+      kind: "projection",
+      process: async (events) => {
+        seen.push(events.map((event) => event.position));
+        if (seen.length === 1) {
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        }
+        return events.length;
+      },
+    };
+    const clock = createFixedClock();
+    const dispatcher = createDispatcher({
+      clock,
+      eventStore,
+      checkpointStore,
+      subscribers: [gated],
+      batchSize: 10,
+      pollIntervalMs: 100,
+      ...(notifier === undefined ? {} : { notifier }),
+      logger: silentLogger,
+    });
+    dispatcher.start();
+    await appendMany(eventStore, 1);
+    await eventually(() => expect(seen).toEqual([[1]]));
+    await eventStore.append({
+      aggregateType: "order",
+      aggregateId: "2",
+      expectedVersion: 0,
+      events: [pendingEvent({ aggregateId: "2", version: 1 })],
+    });
+
+    const stopped = dispatcher.stop();
+    release();
+    await stopped;
+    await drained();
+    expect(seen).toEqual([[1]]);
+    expect(clock.pending()).toBe(0);
+  });
+
   it("falls back to polling when subscribing to notifications fails", async () => {
     const { eventStore, checkpointStore } = await storage();
     const clock = createFixedClock();

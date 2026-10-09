@@ -236,7 +236,8 @@ export const createDispatcher: CreateDispatcherFunction = ({
       logger.error("dispatcher pass failed", errorDetails(error));
     }
     idle = notifier !== undefined && !advanced;
-    if (due) {
+    // `stop()` only drains the passes queued when it was called: one started now would outlive it.
+    if (due && running) {
       await background();
       return;
     }
