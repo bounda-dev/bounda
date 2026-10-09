@@ -1,8 +1,8 @@
 ---
 "@bounda-dev/core": minor
 "@bounda-dev/cli": minor
-"@bounda-dev/adapter-postgresql": patch
-"@bounda-dev/adapter-cloudflare": patch
+"@bounda-dev/postgresql": patch
+"@bounda-dev/cloudflare": patch
 ---
 
 Processes have deadlines, and a deadline is state. A field of a process `state` declared with

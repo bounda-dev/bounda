@@ -1,9 +1,9 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { sqlite } from "@bounda-dev/adapter-sqlite";
 import { silentLogger } from "@bounda-dev/core";
 import { boot } from "@bounda-dev/core/node";
+import { sqlite } from "@bounda-dev/sqlite";
 import { afterAll, describe, expect, it } from "vitest";
 
 const root = resolve(import.meta.dirname, "..");

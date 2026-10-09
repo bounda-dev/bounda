@@ -1,6 +1,6 @@
-import { postgresql } from "@bounda-dev/adapter-postgresql";
-import { sqlite } from "@bounda-dev/adapter-sqlite";
 import { defineConfig } from "@bounda-dev/core/config";
+import { postgresql } from "@bounda-dev/postgresql";
+import { sqlite } from "@bounda-dev/sqlite";
 
 const url = process.env.DATABASE_URL;
 

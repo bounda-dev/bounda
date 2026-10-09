@@ -20,7 +20,7 @@ import type { Registry } from "../modules/registry.ts";
  * argument, and `defineConfig` and `createTestApp` check their `ports` against the
  * project's ports.
  * A host adapter may register `env`, the type of the environment implementations receive in
- * `create`: `@bounda-dev/adapter-cloudflare` registers `Cloudflare.Env`.
+ * `create`: `@bounda-dev/cloudflare` registers `Cloudflare.Env`.
  */
 export interface Register {}
 

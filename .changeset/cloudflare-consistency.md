@@ -1,6 +1,6 @@
 ---
 "@bounda-dev/core": minor
-"@bounda-dev/adapter-cloudflare": minor
+"@bounda-dev/cloudflare": minor
 "@bounda-dev/react-router": minor
 ---
 

@@ -1,6 +1,6 @@
 ---
 "@bounda-dev/core": minor
-"@bounda-dev/adapter-postgresql": patch
+"@bounda-dev/postgresql": patch
 ---
 
 Fixes from a review of the runtime:

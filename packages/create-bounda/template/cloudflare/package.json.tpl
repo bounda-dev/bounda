@@ -16,7 +16,7 @@
     "test": "bounda generate && vitest run"
   },
   "dependencies": {
-    "@bounda-dev/adapter-cloudflare": "{{boundaVersion}}",
+    "@bounda-dev/cloudflare": "{{boundaVersion}}",
     "@bounda-dev/core": "{{boundaVersion}}"
   },
   "devDependencies": {

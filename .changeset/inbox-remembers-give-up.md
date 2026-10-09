@@ -1,6 +1,6 @@
 ---
 "@bounda-dev/core": minor
-"@bounda-dev/adapter-postgresql": patch
+"@bounda-dev/postgresql": patch
 ---
 
 A policy or process handler that failed for good no longer runs again when recording that failure

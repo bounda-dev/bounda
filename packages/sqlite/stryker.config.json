@@ -24,6 +24,6 @@
   "inPlace": true,
   "timeoutMS": 60000,
   "dashboard": {
-    "module": "adapter-sqlite"
+    "module": "sqlite"
   }
 }

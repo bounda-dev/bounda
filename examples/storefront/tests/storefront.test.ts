@@ -1,6 +1,6 @@
-import { sqlite } from "@bounda-dev/adapter-sqlite";
 import { DomainError } from "@bounda-dev/core";
 import { createTestApp } from "@bounda-dev/core/testing";
+import { sqlite } from "@bounda-dev/sqlite";
 import { describe, expect, it } from "vitest";
 import { registry } from "../.bounda/registry.ts";
 import type { NotifierArgs } from "../app/domain/order/notifier.ts";

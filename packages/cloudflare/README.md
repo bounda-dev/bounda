@@ -5,7 +5,7 @@
   </picture>
 </p>
 
-# @bounda-dev/adapter-cloudflare
+# @bounda-dev/cloudflare
 
 A [Bounda](https://docs.bounda.dev) store in a Cloudflare Durable Object: the events, the read
 models and the scheduled work in the object's own SQLite, one object per tenant, and no server
@@ -19,7 +19,7 @@ Or by hand:
 
 ```ts
 // bounda.config.ts
-import { cloudflare } from "@bounda-dev/adapter-cloudflare";
+import { cloudflare } from "@bounda-dev/cloudflare";
 import { defineConfig } from "@bounda-dev/core/config";
 
 export default defineConfig({ storage: cloudflare() });
@@ -27,7 +27,7 @@ export default defineConfig({ storage: cloudflare() });
 
 ```ts
 // src/worker.ts
-import { createBoundaObject, createWorker } from "@bounda-dev/adapter-cloudflare";
+import { createBoundaObject, createWorker } from "@bounda-dev/cloudflare";
 import { registry } from "../.bounda/registry.ts";
 import config from "../bounda.config.ts";
 

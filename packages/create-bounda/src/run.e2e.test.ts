@@ -79,7 +79,7 @@ const linkTools = async (project: string, framework: Framework): Promise<void> =
   const modules = join(project, "node_modules");
   const own = join(repoRoot, "packages/create-bounda/node_modules");
   if (framework === "cloudflare") {
-    const adapter = join(repoRoot, "packages/adapter-cloudflare/node_modules");
+    const adapter = join(repoRoot, "packages/cloudflare/node_modules");
     for (const name of ["typescript", "@types/node", "wrangler"]) {
       await link(join(own, name), join(modules, name));
     }
@@ -124,7 +124,7 @@ const scaffold = async (argv: readonly string[], framework: Framework): Promise<
   await install(project, [
     "core",
     "cli",
-    framework === "cloudflare" ? "adapter-cloudflare" : "adapter-sqlite",
+    framework === "cloudflare" ? "cloudflare" : "sqlite",
     ...(framework === "react-router" ? ["react-router"] : []),
   ]);
   await linkTools(project, framework);

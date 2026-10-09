@@ -6,9 +6,9 @@
     [
       "@bounda-dev/core",
       "@bounda-dev/cli",
-      "@bounda-dev/adapter-sqlite",
-      "@bounda-dev/adapter-postgresql",
-      "@bounda-dev/adapter-cloudflare",
+      "@bounda-dev/sqlite",
+      "@bounda-dev/postgresql",
+      "@bounda-dev/cloudflare",
       "@bounda-dev/react-router",
       "create-bounda"
     ]

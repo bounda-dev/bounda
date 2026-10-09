@@ -49,7 +49,7 @@ export interface CatchUpReadModelsArgs {
 
 /**
  * What a request sees of a running app, wherever the app runs: the `BoundaApp` itself, or a
- * Durable Object reached through `connect` from `@bounda-dev/adapter-cloudflare`. The `bounda`
+ * Durable Object reached through `connect` from `@bounda-dev/cloudflare`. The `bounda`
  * context of `@bounda-dev/react-router` holds one.
  */
 export interface BoundaClient<R extends Registry = AppRegistry> {

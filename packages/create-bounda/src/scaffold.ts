@@ -19,9 +19,9 @@ export interface ScaffoldProjectFunction {
 }
 
 const ADAPTER_PACKAGES = {
-  sqlite: "@bounda-dev/adapter-sqlite",
-  postgresql: "@bounda-dev/adapter-postgresql",
-  cloudflare: "@bounda-dev/adapter-cloudflare",
+  sqlite: "@bounda-dev/sqlite",
+  postgresql: "@bounda-dev/postgresql",
+  cloudflare: "@bounda-dev/cloudflare",
 } as const;
 
 const TEMPLATE_SUFFIX = ".tpl";

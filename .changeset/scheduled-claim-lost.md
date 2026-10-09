@@ -1,6 +1,6 @@
 ---
 "@bounda-dev/core": minor
-"@bounda-dev/adapter-postgresql": patch
+"@bounda-dev/postgresql": patch
 ---
 
 A scheduled command, a delayed policy run or a process deadline whose run outlives its claim no

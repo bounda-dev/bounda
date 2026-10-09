@@ -1,6 +1,6 @@
 ---
 "@bounda-dev/core": minor
-"@bounda-dev/adapter-postgresql": patch
+"@bounda-dev/postgresql": patch
 ---
 
 A scheduled command that is scheduled again while a worker runs it is no longer lost or run twice

@@ -47,8 +47,8 @@ does the background work. `web` and `worker` differ in that alone, and the names
 a deployment readable.
 
 ```ts
-import { postgresql } from "@bounda-dev/adapter-postgresql";
 import { defineConfig } from "@bounda-dev/core/config";
+import { postgresql } from "@bounda-dev/postgresql";
 
 export default defineConfig({
   storage: postgresql({ url: process.env.DATABASE_URL! }),

@@ -1,6 +1,6 @@
 ---
 "@bounda-dev/core": minor
-"@bounda-dev/adapter-postgresql": patch
+"@bounda-dev/postgresql": patch
 ---
 
 Storage adapters expose one transaction over the write side. `Storage.transact` runs work

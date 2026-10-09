@@ -1,6 +1,6 @@
 ---
 "@bounda-dev/core": minor
-"@bounda-dev/adapter-postgresql": patch
+"@bounda-dev/postgresql": patch
 ---
 
 A read model's table is now `<prefix>rm_<read_model>` (`bounda_rm_order_summary`), apart from the

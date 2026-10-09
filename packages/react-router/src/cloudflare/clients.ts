@@ -1,4 +1,4 @@
-import { type BoundaStub, connect, isCloudflareDefinition } from "@bounda-dev/adapter-cloudflare";
+import { type BoundaStub, connect, isCloudflareDefinition } from "@bounda-dev/cloudflare";
 import {
   type BoundaClient,
   ConfigurationError,

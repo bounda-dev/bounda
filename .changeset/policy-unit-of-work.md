@@ -1,7 +1,7 @@
 ---
 "@bounda-dev/core": minor
 "@bounda-dev/cli": minor
-"@bounda-dev/adapter-postgresql": patch
+"@bounda-dev/postgresql": patch
 ---
 
 A policy attempt writes everything or nothing. The commands a policy handler dispatches are

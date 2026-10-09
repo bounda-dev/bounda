@@ -5,21 +5,21 @@
   </picture>
 </p>
 
-# @bounda-dev/adapter-sqlite
+# @bounda-dev/sqlite
 
-[![Mutation score](https://img.shields.io/endpoint?style=flat&url=https%3A%2F%2Fbadge-api.stryker-mutator.io%2Fgithub.com%2Fbounda-dev%2Fbounda%2Fmain%3Fmodule%3Dadapter-sqlite)](https://dashboard.stryker-mutator.io/reports/github.com/bounda-dev/bounda/main?module=adapter-sqlite)
+[![Mutation score](https://img.shields.io/endpoint?style=flat&url=https%3A%2F%2Fbadge-api.stryker-mutator.io%2Fgithub.com%2Fbounda-dev%2Fbounda%2Fmain%3Fmodule%3Dsqlite)](https://dashboard.stryker-mutator.io/reports/github.com/bounda-dev/bounda/main?module=sqlite)
 
 SQLite storage for [Bounda](https://docs.bounda.dev), through libSQL: a local file, memory, or a
 libSQL server such as Turso.
 
 ```bash
-npm install @bounda-dev/core @bounda-dev/adapter-sqlite
+npm install @bounda-dev/core @bounda-dev/sqlite
 ```
 
 ```ts
 // bounda.config.ts
-import { sqlite } from "@bounda-dev/adapter-sqlite";
 import { defineConfig } from "@bounda-dev/core/config";
+import { sqlite } from "@bounda-dev/sqlite";
 
 export default defineConfig({
   storage: sqlite({ path: "./data/app.db" }),

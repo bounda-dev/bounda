@@ -1,12 +1,12 @@
 {
-  "name": "@bounda-dev/adapter-postgresql",
+  "name": "@bounda-dev/sqlite",
   "version": "0.1.0",
-  "description": "PostgreSQL storage adapter for Bounda",
+  "description": "SQLite and libSQL storage adapter for Bounda",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/bounda-dev/bounda.git",
-    "directory": "packages/adapter-postgresql"
+    "directory": "packages/sqlite"
   },
   "homepage": "https://docs.bounda.dev",
   "type": "module",
@@ -35,7 +35,7 @@
     "test:mutation": "stryker run"
   },
   "dependencies": {
-    "postgres": "catalog:"
+    "@libsql/client": "catalog:"
   },
   "peerDependencies": {
     "@bounda-dev/core": "workspace:*"
@@ -44,8 +44,8 @@
     "@bounda-dev/core": "workspace:*",
     "@stryker-mutator/core": "catalog:",
     "@stryker-mutator/vitest-runner": "catalog:",
-    "@testcontainers/postgresql": "catalog:",
     "@types/node": "catalog:",
+    "testcontainers": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

@@ -1,5 +1,5 @@
 ---
-"@bounda-dev/adapter-cloudflare": patch
+"@bounda-dev/cloudflare": patch
 ---
 
 `connect()` checks a command's `signal` before calling the object and leaves it out of the call,

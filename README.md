@@ -81,14 +81,14 @@ that breaks something is called out in the changelog of the package it touches.
 |---|---|
 | [`@bounda-dev/core`](packages/core) | Runtime and public API, with the docs as Markdown for your agent |
 | [`@bounda-dev/cli`](packages/cli) | `bounda` CLI: reads the layout, writes the registry and the types |
-| [`@bounda-dev/adapter-sqlite`](packages/adapter-sqlite) | SQLite and libSQL storage |
-| [`@bounda-dev/adapter-postgresql`](packages/adapter-postgresql) | PostgreSQL storage |
-| [`@bounda-dev/adapter-cloudflare`](packages/adapter-cloudflare) | A Durable Object per tenant on Cloudflare |
+| [`@bounda-dev/sqlite`](packages/sqlite) | SQLite and libSQL storage |
+| [`@bounda-dev/postgresql`](packages/postgresql) | PostgreSQL storage |
+| [`@bounda-dev/cloudflare`](packages/cloudflare) | A Durable Object per tenant on Cloudflare |
 | [`@bounda-dev/react-router`](packages/react-router) | React Router integration and its Vite plugin |
 | [`create-bounda`](packages/create-bounda) | Project scaffolder |
 
 Each package README carries its own mutation score; the badge above is the whole repository.
-`adapter-cloudflare` has none: its tests run inside workerd, where Stryker cannot mutate.
+`@bounda-dev/cloudflare` has none: its tests run inside workerd, where Stryker cannot mutate.
 
 Two runnable examples live here: [`examples/storefront`](examples/storefront), on Node and SQLite,
 and [`examples/onboarding`](examples/onboarding), on React Router.

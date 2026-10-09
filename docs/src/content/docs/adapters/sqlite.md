@@ -5,12 +5,12 @@ sidebar:
   order: 1
 ---
 
-`@bounda-dev/adapter-sqlite` stores everything in SQLite through
+`@bounda-dev/sqlite` stores everything in SQLite through
 [libSQL](https://github.com/tursodatabase/libsql-client-ts). The same adapter opens a local
 file, an in-memory database or a remote libSQL server such as Turso.
 
 ```ts
-import { sqlite } from "@bounda-dev/adapter-sqlite";
+import { sqlite } from "@bounda-dev/sqlite";
 
 sqlite({ path: "./data/app.db" });
 sqlite({ memory: true });

@@ -19,7 +19,7 @@ npm create bounda@latest my-app -- --framework react-router
 To add Bounda to an existing React Router app:
 
 ```bash
-npm install @bounda-dev/core @bounda-dev/react-router @bounda-dev/adapter-sqlite
+npm install @bounda-dev/core @bounda-dev/react-router @bounda-dev/sqlite
 npm install -D @bounda-dev/cli
 ```
 
@@ -180,7 +180,7 @@ and action then reaches the tenant's object over RPC. The `bounda()` plugin, the
 `app/root.tsx` stay as above; the Worker needs four more things.
 
 ```bash
-npm install @bounda-dev/core @bounda-dev/react-router @bounda-dev/adapter-cloudflare
+npm install @bounda-dev/core @bounda-dev/react-router @bounda-dev/cloudflare
 npm install -D @bounda-dev/cli @cloudflare/vite-plugin wrangler
 ```
 
@@ -198,7 +198,7 @@ export default defineConfig({
 
 ```ts
 // workers/app.ts
-import { createBoundaObject } from "@bounda-dev/adapter-cloudflare";
+import { createBoundaObject } from "@bounda-dev/cloudflare";
 import { createRequestHandler } from "react-router";
 import { registry } from "../.bounda/registry.ts";
 import config from "../bounda.config.ts";

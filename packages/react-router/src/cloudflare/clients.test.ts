@@ -1,4 +1,4 @@
-import { cloudflare } from "@bounda-dev/adapter-cloudflare";
+import { cloudflare } from "@bounda-dev/cloudflare";
 import { type BoundaClient, ConfigurationError, type Registry } from "@bounda-dev/core";
 import { RouterContextProvider } from "react-router";
 import { describe, expect, expectTypeOf, it } from "vitest";

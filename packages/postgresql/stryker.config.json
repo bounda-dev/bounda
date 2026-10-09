@@ -25,6 +25,6 @@
   "timeoutMS": 120000,
   "concurrency": 2,
   "dashboard": {
-    "module": "adapter-postgresql"
+    "module": "postgresql"
   }
 }
