@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { StoragePorts } from "../../adapter/adapter.ts";
-import type { DeadLetterErrorType } from "../../adapter/ports/dead-letter-store.ts";
+import type { Storage } from "../../adapter/adapter.ts";
+import type { DeadLetterErrorType } from "../../adapter/storage/dead-letter-store.ts";
 import { pendingEvent } from "../../adapter/testing/fixtures.ts";
 import type { ResolvedRetryConfig } from "../../config/types.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
@@ -22,7 +22,7 @@ const exponential: ResolvedRetryConfig = {
 interface Options {
   readonly retry?: ResolvedRetryConfig;
   readonly concurrencyRetries?: number;
-  readonly run?: (unit: UnitOfWork, attempt: number, storage: StoragePorts) => Promise<void>;
+  readonly run?: (unit: UnitOfWork, attempt: number, storage: Storage) => Promise<void>;
 }
 
 const setUp = async () => {
@@ -213,7 +213,7 @@ describe("runAttempt", () => {
   describe("an attempt that meets a conflict", () => {
     const conflicting =
       (stage: (unit: UnitOfWork) => Promise<void>) =>
-      async (unit: UnitOfWork, _n: number, live: StoragePorts): Promise<void> => {
+      async (unit: UnitOfWork, _n: number, live: Storage): Promise<void> => {
         await stage(unit);
         const { version } = await live.eventStore.load(order);
         if (version > 0) return;
@@ -224,7 +224,7 @@ describe("runAttempt", () => {
         });
       };
 
-    const afterTheConflict = (storage: StoragePorts, then: () => Promise<unknown>): void => {
+    const afterTheConflict = (storage: Storage, then: () => Promise<unknown>): void => {
       const transact = storage.transact.bind(storage);
       storage.transact = async (work) => {
         storage.transact = transact;

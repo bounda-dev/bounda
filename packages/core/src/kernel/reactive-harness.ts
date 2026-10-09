@@ -1,4 +1,4 @@
-import type { Adapter, StoragePorts } from "../adapter/adapter.ts";
+import type { Adapter, Storage } from "../adapter/adapter.ts";
 import { resolveConfig } from "../config/schema.ts";
 import type { Config, ResolvedConfig } from "../config/types.ts";
 import { createFixedClock, type FixedClock } from "../contracts/clock.ts";
@@ -24,7 +24,7 @@ import { ignoredRetries } from "./shared/pending-retries.ts";
 import { defaultPorts } from "./test-support.ts";
 
 export interface ReactiveHarness {
-  readonly storage: StoragePorts;
+  readonly storage: Storage;
   readonly config: ResolvedConfig;
   readonly aggregates: AggregatesRuntime;
   readonly readModels: ReadModelsRuntime;

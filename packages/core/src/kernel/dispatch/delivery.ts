@@ -1,4 +1,4 @@
-import type { CheckpointStore } from "../../adapter/ports/checkpoint-store.ts";
+import type { CheckpointStore } from "../../adapter/storage/checkpoint-store.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { errorDetails } from "../shared/retry.ts";

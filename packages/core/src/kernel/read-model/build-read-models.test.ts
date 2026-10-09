@@ -34,12 +34,12 @@ const countingAdapter = (): { readonly adapter: Adapter; readonly closes: () => 
     adapter: {
       ...base,
       createReadModel: async <Row extends object>(args: CreateReadModelArgs) => {
-        const ports = await base.createReadModel<Row>(args);
+        const model = await base.createReadModel<Row>(args);
         return {
-          ...ports,
+          ...model,
           close: async () => {
             closes += 1;
-            await ports.close();
+            await model.close();
           },
         };
       },

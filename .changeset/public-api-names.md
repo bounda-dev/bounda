@@ -27,8 +27,7 @@ Breaking:
 - A command dispatched with `delay` is a scheduled command everywhere: its dead letters have kind
   `scheduled` instead of `command` (`--kind scheduled` in the CLI and on the counter) and the
   command type as their `handler` instead of `scheduled:<CommandType>`, the event written when one
-  fails for good is `ScheduledCommandFailed` instead of `CommandFailed`
-  (`SCHEDULED_COMMAND_FAILED_EVENT` and `ScheduledCommandFailedPayload`), and an invalid payload
+  fails for good is `ScheduledCommandFailed` instead of `CommandFailed`, and an invalid payload
   is reported for a "scheduled command".
 - `DeadLetterKind` no longer has `projection`: a projection never files a dead letter.
 - A dead letter that cannot be retried in the app as it now is (its policy, process or scheduled

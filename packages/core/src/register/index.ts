@@ -43,8 +43,8 @@ export type AppPortsConfig = Register extends {
   : PortsConfig;
 
 /**
- * What a test app hands each port, by aggregate and port: an implementation's file name, built as
- * the app would build it, or any other value, which the handlers receive as it is.
+ * What a test app hands each port, by aggregate or read model and port: an implementation's file
+ * name, built as the app would build it, or any other value, which the handlers receive as it is.
  */
 export type TestPortsChoice = Readonly<Record<string, Readonly<Record<string, unknown>>>>;
 

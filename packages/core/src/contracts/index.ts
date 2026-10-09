@@ -18,9 +18,8 @@ export type {
   DurationString,
   DurationUnit,
   LooseDurationInput,
-  ParseDurationFunction,
 } from "./duration.ts";
-export { asDuration, parseDuration } from "./duration.ts";
+export { asDuration } from "./duration.ts";
 export {
   BoundaError,
   ChainDepthExceededError,
@@ -44,15 +43,13 @@ export type {
   NewEvent,
   StoredEvent,
   StreamIdentity,
-  StreamIdFunction,
 } from "./event.ts";
-export { streamId } from "./event.ts";
 export type {
   CreateSequentialIdGeneratorArgs,
   CreateSequentialIdGeneratorFunction,
   IdGenerator,
 } from "./ids.ts";
-export { createSequentialIdGenerator, uuidV7IdGenerator } from "./ids.ts";
+export { createSequentialIdGenerator } from "./ids.ts";
 export type { AsInstantFunction, Instant } from "./instant.ts";
 export { asInstant } from "./instant.ts";
 export type { LogFields, Logger } from "./logger.ts";

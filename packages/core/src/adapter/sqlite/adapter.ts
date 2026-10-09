@@ -63,7 +63,7 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
 }: CreateSqliteAdapterArgs<Name, Options, Raw>): Adapter<Name, Options> => {
   /**
    * Opens what `work` builds on an acquired connection, and releases it when `work` throws: the
-   * ports whose `close` would release it never reach the caller.
+   * stores whose `close` would release it never reach the caller.
    */
   const using = async <T>(work: (connection: SqliteConnection<Raw>) => Promise<T>): Promise<T> => {
     const connection = acquire();

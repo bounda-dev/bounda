@@ -1,7 +1,7 @@
 import type { NewEvent, StoredEvent } from "../contracts/event.ts";
 import type { TypeNameOf } from "./naming.ts";
 import { capitalize } from "./naming.ts";
-import type { HasPayload, PayloadFunction, PayloadOf } from "./payload.ts";
+import type { HasPayload, PayloadFunction, PayloadInputOf, PayloadOf } from "./payload.ts";
 
 /**
  * The shape of an event module: an optional `payload` schema and `begin`, `evolve` or both. Each
@@ -72,11 +72,14 @@ export type StoredEventUnion<Events extends EventModules> = {
 
 /**
  * The `events` object a command handler receives: one builder per event of its own aggregate.
- * Events with a payload take it as argument; events without take none.
+ * Events with a payload take what their schema takes as input, which the command pipeline
+ * validates when it stores the event; events without take none.
  */
 export type EventBuilders<Events extends EventModules> = {
   readonly [Key in keyof Events]: HasPayload<Events[Key]> extends true
-    ? (payload: PayloadOf<Events[Key]>) => EventOf<Events, Key>
+    ? (
+        payload: PayloadInputOf<Events[Key]>,
+      ) => NewEvent<TypeNameOf<Key>, PayloadInputOf<Events[Key]>>
     : () => EventOf<Events, Key>;
 };
 

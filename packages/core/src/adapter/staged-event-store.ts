@@ -1,6 +1,6 @@
 import { ConcurrencyError } from "../contracts/errors.ts";
 import { type StoredEvent, streamId } from "../contracts/event.ts";
-import type { AppendArgs, EventStore } from "./ports/event-store.ts";
+import type { AppendArgs, EventStore } from "./storage/event-store.ts";
 
 /**
  * An event store that keeps what is appended to it aside: `load` answers with the base store's

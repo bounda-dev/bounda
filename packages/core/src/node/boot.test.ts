@@ -53,7 +53,7 @@ describe("loadProject", () => {
     await expect(
       loadProject({
         root,
-        env: false,
+        loadEnv: false,
         registry,
         importConfig: async () => ({ config: { storage: memory() } }),
         logger: silentLogger,
@@ -67,7 +67,13 @@ describe("loadProject", () => {
 
   it("takes what it is given instead of importing it", async () => {
     const config = { storage: memory() };
-    const project = await loadProject({ root, env: false, registry, config, logger: silentLogger });
+    const project = await loadProject({
+      root,
+      loadEnv: false,
+      registry,
+      config,
+      logger: silentLogger,
+    });
     expect(process.env.BOUNDA_TEST_MARKER).toBeUndefined();
     expect(project).toEqual({ config, registry });
   });
@@ -136,7 +142,7 @@ describe("boot", () => {
   it("accepts the configuration and the registry directly and can skip .env", async () => {
     const app = await boot({
       root,
-      env: false,
+      loadEnv: false,
       signals: false,
       logger: silentLogger,
       registry,

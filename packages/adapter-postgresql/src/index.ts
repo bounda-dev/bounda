@@ -161,17 +161,4 @@ export const postgresql: PostgresqlFunction = (options) => {
   };
 };
 
-export type { PostgresqlDatabase } from "./database.ts";
-export type {
-  PostgresqlLocation,
-  PostgresqlOptions,
-  ResolvedPostgresqlOptions,
-} from "./options.ts";
-export {
-  DEFAULT_MAX_CONNECTIONS,
-  DEFAULT_SCHEMA,
-  DEFAULT_TABLE_PREFIX,
-  resolvePostgresqlOptions,
-} from "./options.ts";
-export type { StorageTables, StorageTablesForArgs } from "./schema.ts";
-export { storageSchemaStatements, storageTablesFor } from "./schema.ts";
+export type { PostgresqlOptions } from "./options.ts";

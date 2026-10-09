@@ -2,7 +2,7 @@ import type {
   DeadLetterErrorType,
   DeadLetterStore,
   NewDeadLetter,
-} from "../../adapter/ports/dead-letter-store.ts";
+} from "../../adapter/storage/dead-letter-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";

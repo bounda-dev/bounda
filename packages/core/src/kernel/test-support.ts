@@ -1,5 +1,5 @@
 import { expect, vi } from "vitest";
-import type { StoragePorts } from "../adapter/adapter.ts";
+import type { Storage } from "../adapter/adapter.ts";
 import { selectImplementations } from "../config/ports.ts";
 import { resolveConfig } from "../config/schema.ts";
 import type { Config, PortsConfig, ResolvedConfig } from "../config/types.ts";
@@ -266,7 +266,7 @@ export const createRecordingLogger: CreateRecordingLoggerFunction = () => {
 };
 
 export interface KernelHarness {
-  readonly storage: StoragePorts;
+  readonly storage: Storage;
   readonly config: ResolvedConfig;
   readonly aggregates: AggregatesRuntime;
   readonly clock: FixedClock;
@@ -377,7 +377,7 @@ export interface BrokenCommit {
 }
 
 export interface BreakNextCommitFunction {
-  (storage: StoragePorts): BrokenCommit;
+  (storage: Storage): BrokenCommit;
 }
 
 /**

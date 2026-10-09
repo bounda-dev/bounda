@@ -1,4 +1,4 @@
-import type { StoragePorts } from "../../adapter/adapter.ts";
+import type { Storage } from "../../adapter/adapter.ts";
 import type { UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
 import {
@@ -47,7 +47,7 @@ export interface DeadlineSchedule {
 }
 
 export interface CreateDeadlineScheduleArgs {
-  readonly storage: StoragePorts;
+  readonly storage: Storage;
   readonly units: ProcessUnits;
 }
 

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { DeadLetterSettledError } from "../../contracts/errors.ts";
-import type { DeadLetterStore, NewDeadLetter } from "../ports/dead-letter-store.ts";
+import type { DeadLetterStore, NewDeadLetter } from "../storage/dead-letter-store.ts";
 
 export interface DeadLetterStoreContractArgs {
   readonly create: () => Promise<DeadLetterStore>;

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Adapter, CreateReadModelArgs, CreateStorageArgs } from "../adapter/adapter.ts";
-import type { Table } from "../adapter/ports/table.ts";
+import type { Table } from "../adapter/storage/table.ts";
 import { createFixedClock } from "../contracts/clock.ts";
 import { ConfigurationError, DomainError } from "../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../contracts/ids.ts";

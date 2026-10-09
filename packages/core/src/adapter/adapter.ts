@@ -1,16 +1,16 @@
 import type { Logger } from "../contracts/logger.ts";
 import type { FieldsRecord } from "../modules/view.ts";
 import type { AdapterDefinition } from "./adapter-definition.ts";
-import type { CheckpointStore } from "./ports/checkpoint-store.ts";
-import type { DeadLetterStore } from "./ports/dead-letter-store.ts";
-import type { EventNotifier } from "./ports/event-notifier.ts";
-import type { EventStore } from "./ports/event-store.ts";
-import type { InboxLedger } from "./ports/inbox-ledger.ts";
-import type { Scheduler } from "./ports/scheduler.ts";
-import type { ReadClient, Table } from "./ports/table.ts";
+import type { CheckpointStore } from "./storage/checkpoint-store.ts";
+import type { DeadLetterStore } from "./storage/dead-letter-store.ts";
+import type { EventNotifier } from "./storage/event-notifier.ts";
+import type { EventStore } from "./storage/event-store.ts";
+import type { InboxLedger } from "./storage/inbox-ledger.ts";
+import type { Scheduler } from "./storage/scheduler.ts";
+import type { ReadClient, Table } from "./storage/table.ts";
 
 /**
- * The write-side stores bound to one open transaction: what `StoragePorts.transact` runs its
+ * The write-side stores bound to one open transaction: what `Storage.transact` runs its
  * work with. What the work writes through them commits together when it resolves and rolls
  * back together when it throws. `eventStore.load` sees the events the work appended; what the
  * other three read back while the transaction is open is the store as committed, or the
@@ -26,7 +26,7 @@ export interface StorageTransaction {
 /**
  * Everything the write side and the reactive runners need from one storage backend.
  */
-export interface StoragePorts {
+export interface Storage {
   readonly eventStore: EventStore;
   readonly checkpointStore: CheckpointStore;
   readonly inboxLedger: InboxLedger;
@@ -38,9 +38,9 @@ export interface StoragePorts {
   readonly notifier?: EventNotifier;
   /**
    * Runs `work` in one transaction over the write-side stores: everything it writes through the
-   * transaction's ports lands together or not at all. A stale `expectedVersion` on any append
+   * transaction's stores lands together or not at all. A stale `expectedVersion` on any append
    * rejects with `ConcurrencyError` and rolls the rest back. The work goes through the
-   * transaction's ports only: the storage's own may wait on the transaction (a single-writer
+   * transaction's stores only: the storage's own may wait on the transaction (a single-writer
    * queue) or write outside it. It must not wait on anything outside the store either: on a
    * single-writer engine the transaction holds the store's only writer.
    */
@@ -51,7 +51,7 @@ export interface StoragePorts {
 /**
  * What one read model needs from its storage backend.
  */
-export interface ReadModelPorts<Row extends object = Record<string, unknown>, Raw = unknown> {
+export interface ReadModelStorage<Row extends object = Record<string, unknown>, Raw = unknown> {
   readonly table: Table<Row>;
   readonly client: ReadClient<Row, Raw>;
   /**
@@ -70,7 +70,7 @@ export interface ReadModelPorts<Row extends object = Record<string, unknown>, Ra
 }
 
 /**
- * The read model's ports bound to one transaction; `client.raw` is the driver's transaction handle.
+ * The read model's stores bound to one transaction; `client.raw` is the driver's transaction handle.
  */
 export interface ReadModelTransaction<Row extends object = Record<string, unknown>> {
   readonly table: Table<Row>;
@@ -119,7 +119,7 @@ export interface ReadModelRebuild<Row extends object = Record<string, unknown>, 
    */
   transact<T>(work: (transaction: ReadModelTransaction<Row>) => Promise<T>): Promise<T>;
   /**
-   * In one transaction, holding the lock named `subscriber` as `ReadModelPorts.transact` does:
+   * In one transaction, holding the lock named `subscriber` as `ReadModelStorage.transact` does:
    * the shadow takes the live table's place, the checkpoint `subscriber` is set to `position`,
    * so the projections carry on from there, and `progress` is forgotten.
    */
@@ -163,14 +163,14 @@ export interface Adapter<Name extends string = string, Options = unknown>
   extends AdapterDefinition<Name, Options> {
   /**
    * Opens the write side, creating its tables when missing. A factory that throws has released
-   * whatever it took: the kernel only closes the ports it was given.
+   * whatever it took: the kernel only closes the stores it was given.
    */
-  createStorage(args: CreateStorageArgs): Promise<StoragePorts>;
+  createStorage(args: CreateStorageArgs): Promise<Storage>;
   /**
    * Opens a read model's table, creating or evolving it from `fields`; throws `ConfigurationError`
    * on a change that needs a rebuild. Releases what it took when it throws, as `createStorage`.
    */
-  createReadModel<Row extends object>(args: CreateReadModelArgs): Promise<ReadModelPorts<Row>>;
+  createReadModel<Row extends object>(args: CreateReadModelArgs): Promise<ReadModelStorage<Row>>;
   /**
    * Opens a shadow of the read model with the current `fields`; the live table stays untouched
    * until `commit`. Releases what it took when it throws, as `createStorage`.

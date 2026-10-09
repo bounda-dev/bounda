@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { ConcurrencyError } from "../../contracts/errors.ts";
-import type { EventStore } from "../ports/event-store.ts";
+import type { EventStore } from "../storage/event-store.ts";
 import { pendingEvent } from "./fixtures.ts";
 
 export interface EventStoreContractArgs {

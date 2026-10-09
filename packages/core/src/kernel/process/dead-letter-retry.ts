@@ -1,4 +1,4 @@
-import type { DeadLetter } from "../../adapter/ports/dead-letter-store.ts";
+import type { DeadLetter } from "../../adapter/storage/dead-letter-store.ts";
 import {
   DeadLetterNotRetriableError,
   DeadLetterSettledError,

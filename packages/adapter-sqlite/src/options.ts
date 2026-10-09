@@ -11,7 +11,7 @@ export type SqliteLocation =
  */
 export type SqliteOptions = SqliteLocation & {
   /**
-   * Put in front of every table Bounda creates. Defaults to `DEFAULT_TABLE_PREFIX`.
+   * Put in front of every table Bounda creates. Defaults to `bounda_`.
    */
   readonly tablePrefix?: string;
 };

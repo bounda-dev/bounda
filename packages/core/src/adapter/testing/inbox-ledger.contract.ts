@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { ClaimLostError } from "../../contracts/errors.ts";
-import type { InboxLedger } from "../ports/inbox-ledger.ts";
+import type { InboxLedger } from "../storage/inbox-ledger.ts";
 
 export interface InboxLedgerContractArgs {
   readonly create: () => Promise<InboxLedger>;

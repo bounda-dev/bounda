@@ -21,7 +21,7 @@ const order = (orderId: string): Row => ({
   total: 1,
 });
 
-const openPorts = (storage: DurableObjectState["storage"]) =>
+const openModel = (storage: DurableObjectState["storage"]) =>
   durableObjectAdapter({ storage, options: {} }).createReadModel<Row>({
     name: "orderSummary",
     fields: contractFields,
@@ -58,9 +58,9 @@ describe("read model tables in a Durable Object", () => {
 describe("read model transactions in a Durable Object", () => {
   it("commits the rows and the checkpoint together and rolls both back on a throw", async () => {
     await runInDurableObject(fresh(), async (_instance, state) => {
-      const ports = await openPorts(state.storage);
+      const model = await openModel(state.storage);
       expect(
-        await ports.transact({
+        await model.transact({
           subscriber: SUBSCRIBER,
           wait: false,
           work: async ({ table, checkpointStore }) => {
@@ -75,7 +75,7 @@ describe("read model transactions in a Durable Object", () => {
         }),
       ).toEqual({ acquired: true, value: "kept" });
       await expect(
-        ports.transact({
+        model.transact({
           subscriber: SUBSCRIBER,
           wait: false,
           work: async ({ table, checkpointStore, client }) => {
@@ -88,20 +88,20 @@ describe("read model transactions in a Durable Object", () => {
           },
         }),
       ).rejects.toThrow("projection failed");
-      expect(await ports.table.findMany()).toEqual([order("1")]);
-      expect(await ports.checkpointStore.get(SUBSCRIBER)).toBe(1);
+      expect(await model.table.findMany()).toEqual([order("1")]);
+      expect(await model.checkpointStore.get(SUBSCRIBER)).toBe(1);
     });
   });
 
   it("never runs two transactions of one subscriber at once", async () => {
     await runInDurableObject(fresh(), async (_instance, state) => {
-      const ports = await openPorts(state.storage);
+      const model = await openModel(state.storage);
       const steps: string[] = [];
       let release = (): void => {};
       const held = new Promise<void>((resolve) => {
         release = resolve;
       });
-      const first = ports.transact({
+      const first = model.transact({
         subscriber: SUBSCRIBER,
         wait: true,
         work: async ({ table }) => {
@@ -111,7 +111,7 @@ describe("read model transactions in a Durable Object", () => {
           steps.push("first out");
         },
       });
-      const second = ports.transact({
+      const second = model.transact({
         subscriber: SUBSCRIBER,
         wait: true,
         work: async ({ table }) => {
@@ -129,7 +129,7 @@ describe("read model transactions in a Durable Object", () => {
   it("lets a rebuild swap only once the projection batch in flight has committed", async () => {
     await runInDurableObject(fresh(), async (_instance, state) => {
       const adapter = durableObjectAdapter({ storage: state.storage, options: {} });
-      const ports = await openPorts(state.storage);
+      const model = await openModel(state.storage);
       const rebuild = await adapter.rebuildReadModel<Row>({
         name: "orderSummary",
         fields: contractFields,
@@ -145,7 +145,7 @@ describe("read model transactions in a Durable Object", () => {
       const held = new Promise<void>((resolve) => {
         release = resolve;
       });
-      const batch = ports.transact({
+      const batch = model.transact({
         subscriber: SUBSCRIBER,
         wait: true,
         work: async ({ table }) => {
@@ -161,8 +161,8 @@ describe("read model transactions in a Durable Object", () => {
       release();
       await Promise.all([batch, committing]);
       expect(steps).toEqual(["batch done", "committed"]);
-      expect(await ports.table.findMany()).toEqual([{ ...order("1"), total: 99 }]);
-      expect(await ports.checkpointStore.get(SUBSCRIBER)).toBe(5);
+      expect(await model.table.findMany()).toEqual([{ ...order("1"), total: 99 }]);
+      expect(await model.checkpointStore.get(SUBSCRIBER)).toBe(5);
     });
   });
 
@@ -205,7 +205,7 @@ describe("read model transactions in a Durable Object", () => {
 
   it("completes a batch while a timer is pending outside it", async () => {
     await runInDurableObject(fresh(), async (_instance, state) => {
-      const ports = await openPorts(state.storage);
+      const model = await openModel(state.storage);
       const fired: string[] = [];
       const timer = new Promise<void>((resolve) =>
         setTimeout(() => {
@@ -213,7 +213,7 @@ describe("read model transactions in a Durable Object", () => {
           resolve();
         }, 1),
       );
-      await ports.transact({
+      await model.transact({
         subscriber: SUBSCRIBER,
         wait: false,
         work: async ({ table }) => {
@@ -221,7 +221,7 @@ describe("read model transactions in a Durable Object", () => {
         },
       });
       await timer;
-      expect({ fired, rows: await ports.table.count() }).toEqual({ fired: ["timer"], rows: 200 });
+      expect({ fired, rows: await model.table.count() }).toEqual({ fired: ["timer"], rows: 200 });
     });
   });
 });

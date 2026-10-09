@@ -3,6 +3,7 @@ import type {
   BoundaApp,
   CatchUpReadModelsArgs,
   Clock,
+  CommandHandlerArgs,
   CommandInvoker,
   CommandsFacade,
   CreateArgs,
@@ -12,13 +13,16 @@ import type {
   DispatchResult,
   DomainError,
   DurationInput,
+  EmptyPayload,
   EnvSection,
   ImplementationModule,
   Instant,
   Logger,
+  PayloadArgs,
   ProcessCorrelation,
   QueriesFacade,
   ReactionDispatchResult,
+  ReadClient,
   RejectedDispatch,
   RejectFunction,
   RejectionCodeOf,
@@ -120,6 +124,28 @@ describe("event builders", () => {
     expectTypeOf<
       ReturnType<PlaceOrder.HandlerArgs["events"]["orderCancelled"]>["type"]
     >().toEqualTypeOf<"OrderCancelled">();
+  });
+  it("take what the payload schema takes as input, which validation turns into its output", () => {
+    const shipped = {
+      payload: ({ z }: PayloadArgs) =>
+        z.object({ at: z.string().transform(Number), carrier: z.string().default("post") }),
+      evolve: () => ({}),
+    };
+    type Events = { readonly shipped: typeof shipped };
+    type Shipped = CommandHandlerArgs<
+      "Ship",
+      EmptyPayload,
+      object,
+      Events,
+      object
+    >["events"]["shipped"];
+    expectTypeOf<Shipped>()
+      .parameter(0)
+      .toEqualTypeOf<{ at: string; carrier?: string | undefined }>();
+    expectTypeOf<ReturnType<Shipped>["payload"]>().toEqualTypeOf<{
+      at: string;
+      carrier?: string | undefined;
+    }>();
   });
 });
 
@@ -468,6 +494,9 @@ describe("read models", () => {
   it("derive the row type from fields, with optional columns optional", () => {
     expectTypeOf<ProjectOrderPaid.Args["table"]>().toEqualTypeOf<Table<OrderSummaryRow>>();
     expectTypeOf<ProjectOrderPaid.Args["event"]["type"]>().toEqualTypeOf<"OrderPaid">();
+    expectTypeOf<ProjectOrderPaid.Args["client"]>().toEqualTypeOf<
+      ReadClient<OrderSummaryRow, unknown>
+    >();
   });
 
   it("type repositoryData from what repository returns", () => {

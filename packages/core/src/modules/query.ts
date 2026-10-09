@@ -1,4 +1,4 @@
-import type { ReadClient, Table } from "../adapter/ports/table.ts";
+import type { ReadClient, Table } from "../adapter/storage/table.ts";
 import type { Query } from "../contracts/query.ts";
 import type { EmptyPayload, PayloadFunction } from "./payload.ts";
 

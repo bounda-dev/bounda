@@ -1,6 +1,9 @@
-import type { StoragePorts } from "../../adapter/adapter.ts";
-import type { DeadLetterErrorType, NewDeadLetter } from "../../adapter/ports/dead-letter-store.ts";
-import type { ClaimedCommand, ScheduledCommand } from "../../adapter/ports/scheduler.ts";
+import type { Storage } from "../../adapter/adapter.ts";
+import type {
+  DeadLetterErrorType,
+  NewDeadLetter,
+} from "../../adapter/storage/dead-letter-store.ts";
+import type { ClaimedCommand, ScheduledCommand } from "../../adapter/storage/scheduler.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import { ScheduledClaimLostError } from "../../contracts/errors.ts";
@@ -39,7 +42,7 @@ export interface ScheduledCommandWorker {
 }
 
 export interface CreateScheduledCommandWorkerArgs {
-  readonly storage: StoragePorts;
+  readonly storage: Storage;
   readonly aggregates: AggregatesRuntime;
   readonly pipeline: CommandPipeline;
   readonly processes: ProcessDeadlines;

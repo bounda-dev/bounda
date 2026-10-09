@@ -78,11 +78,4 @@ export const sqlite: SqliteFunction = (options) => {
   });
 };
 
-export type { StorageTables } from "@bounda-dev/core/adapter/sqlite";
-export {
-  storageSchemaStatements,
-  storageTablesFor,
-} from "@bounda-dev/core/adapter/sqlite";
-export type { SqliteDatabase } from "./database.ts";
-export type { ResolvedSqliteOptions, SqliteLocation, SqliteOptions } from "./options.ts";
-export { DEFAULT_TABLE_PREFIX, resolveSqliteOptions } from "./options.ts";
+export type { SqliteOptions } from "./options.ts";

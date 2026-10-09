@@ -20,6 +20,5 @@ default export is never closed.
 
 `create` is typed as `CreateImplementation<Port>`; `CreateArgs`, `CreateImplementation`, `AppEnv`
 and `EnvSection` are new public types, and
-`ImplementationModule` accepts either export. `selectImplementations` returns the chosen module
-rather than its default export, and the registry check rejects a module that exports both or
-neither. Run `bounda generate` to update generated files.
+`ImplementationModule` accepts either export. The registry check rejects a module that exports
+both or neither. Run `bounda generate` to update generated files.

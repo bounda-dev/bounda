@@ -1,11 +1,11 @@
 import { v4 as randomUUID } from "uuid";
+import { byExecuteAt } from "../adapter/sql/scheduling.ts";
 import type {
   ClaimedCommand,
   ScheduledClaim,
   ScheduledCommand,
   Scheduler,
-} from "../adapter/ports/scheduler.ts";
-import { byExecuteAt } from "../adapter/sql/scheduling.ts";
+} from "../adapter/storage/scheduler.ts";
 import { ScheduledClaimLostError } from "../contracts/errors.ts";
 import { createStoreEntries, type WithEntries } from "./entries.ts";
 import { jsonCopy } from "./json-copy.ts";

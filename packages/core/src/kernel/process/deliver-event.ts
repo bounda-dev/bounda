@@ -1,5 +1,5 @@
-import type { StoragePorts } from "../../adapter/adapter.ts";
-import type { NewDeadLetter } from "../../adapter/ports/dead-letter-store.ts";
+import type { Storage } from "../../adapter/adapter.ts";
+import type { NewDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import { ClaimLostError, ConcurrencyError } from "../../contracts/errors.ts";
@@ -44,7 +44,7 @@ export interface CreateEventDeliveryArgs {
   readonly failures: ProcessFailures;
   readonly handlers: ProcessHandlers;
   readonly schedule: DeadlineSchedule;
-  readonly storage: StoragePorts;
+  readonly storage: Storage;
   readonly config: ResolvedConfig;
   readonly clock: Clock;
   readonly pendingRetries: PendingRetries;

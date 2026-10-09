@@ -1,4 +1,4 @@
-import type { ReadClient, Table } from "../../adapter/ports/table.ts";
+import type { ReadClient, Table } from "../../adapter/storage/table.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";

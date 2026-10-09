@@ -1,7 +1,7 @@
 import type { NewCommand } from "../../contracts/command.ts";
 import type { CausationContext, EventMetadata } from "../../contracts/metadata.ts";
-import type { NewDeadLetter } from "../ports/dead-letter-store.ts";
-import type { PendingEvent } from "../ports/event-store.ts";
+import type { NewDeadLetter } from "../storage/dead-letter-store.ts";
+import type { PendingEvent } from "../storage/event-store.ts";
 
 /**
  * Metadata for events built in contract tests.

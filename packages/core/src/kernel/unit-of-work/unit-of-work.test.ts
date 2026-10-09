@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Adapter, StoragePorts, StorageTransaction } from "../../adapter/adapter.ts";
+import type { Adapter, Storage, StorageTransaction } from "../../adapter/adapter.ts";
 import { createNodeSqliteAdapter } from "../../adapter/sqlite/node-sqlite.ts";
 import { pendingEvent } from "../../adapter/testing/fixtures.ts";
 import type { RetryConfig } from "../../config/types.ts";
@@ -162,7 +162,7 @@ const processTypes = async (harness: ReactiveHarness) =>
   ).events.map((event) => event.type);
 
 // Breaks the claim's completion inside the next transaction that completes one.
-const breakNextCompletion = (storage: StoragePorts): { readonly broke: () => boolean } => {
+const breakNextCompletion = (storage: Storage): { readonly broke: () => boolean } => {
   const transact = storage.transact.bind(storage);
   let broken = false;
   storage.transact = (work) =>

@@ -1,6 +1,6 @@
-import type { StoragePorts } from "../../adapter/adapter.ts";
-import type { DeadLetterErrorType } from "../../adapter/ports/dead-letter-store.ts";
-import type { ClaimKey } from "../../adapter/ports/inbox-ledger.ts";
+import type { Storage } from "../../adapter/adapter.ts";
+import type { DeadLetterErrorType } from "../../adapter/storage/dead-letter-store.ts";
+import type { ClaimKey } from "../../adapter/storage/inbox-ledger.ts";
 import type { ResolvedRetryConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import { ClaimLostError } from "../../contracts/errors.ts";
@@ -10,7 +10,7 @@ import type { PendingRetries } from "./pending-retries.ts";
 import { classifyFailure, errorDetails, retryDelayMs } from "./retry.ts";
 
 export interface RunAttemptArgs {
-  readonly storage: StoragePorts;
+  readonly storage: Storage;
   readonly key: ClaimKey;
   readonly retry: ResolvedRetryConfig;
   readonly leaseMs: number;

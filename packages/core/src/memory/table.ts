@@ -1,8 +1,8 @@
-import type { FindManyArgs, ReadClient, Table } from "../adapter/ports/table.ts";
 import { sqliteDialect } from "../adapter/sql/dialect.ts";
 import { codePointOrder } from "../adapter/sql/order.ts";
 import { assertPage, columnFor } from "../adapter/sql/query-builder.ts";
 import { type ColumnDefinition, columnsOf } from "../adapter/sql/read-model-schema.ts";
+import type { FindManyArgs, ReadClient, Table } from "../adapter/storage/table.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
 import type { FieldsRecord } from "../modules/view.ts";
 

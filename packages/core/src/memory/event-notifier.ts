@@ -1,4 +1,4 @@
-import type { EventListener, EventNotifier } from "../adapter/ports/event-notifier.ts";
+import type { EventListener, EventNotifier } from "../adapter/storage/event-notifier.ts";
 
 /**
  * A notifier for the in-memory adapter: `notify` fans out to every subscribed listener in the

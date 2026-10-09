@@ -41,7 +41,13 @@ export type CreateTestAppArgs<R extends Registry> = {
   readonly now?: Date;
 } & EnvSection<R>;
 
+/**
+ * A test app and what it runs on. Stop it with `app.stop()` when the test ends.
+ */
 export interface TestApp<R extends Registry> {
+  /**
+   * The app, whose `runUntilIdle()` throws the `ConfigurationError` of a port the test left out.
+   */
   readonly app: BoundaApp<R>;
   /**
    * The app's clock. Advance it to make scheduled commands and process time-outs due, then call
@@ -49,6 +55,9 @@ export interface TestApp<R extends Registry> {
    * that retry, stopping first at what falls due before it.
    */
   readonly clock: FixedClock;
+  /**
+   * The ids the app hands out, in sequence: `id-1`, `id-2` and so on.
+   */
   readonly ids: IdGenerator;
 }
 

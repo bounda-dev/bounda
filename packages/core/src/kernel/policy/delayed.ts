@@ -1,5 +1,5 @@
-import type { EventStore } from "../../adapter/ports/event-store.ts";
-import type { ScheduledCommand, Scheduler } from "../../adapter/ports/scheduler.ts";
+import type { EventStore } from "../../adapter/storage/event-store.ts";
+import type { ScheduledCommand, Scheduler } from "../../adapter/storage/scheduler.ts";
 import type { ResolvedConfig, ResolvedRetryConfig } from "../../config/types.ts";
 import { ConfigurationError, NotFoundError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";

@@ -4,11 +4,11 @@ import {
   DeadLetterSettledError,
   ScheduledClaimLostError,
 } from "../../contracts/errors.ts";
-import type { StoragePorts, StorageTransaction } from "../adapter.ts";
+import type { Storage, StorageTransaction } from "../adapter.ts";
 import { pendingEvent, testCommand, testContext, testDeadLetter } from "./fixtures.ts";
 
 export interface StorageTransactionContractArgs {
-  readonly create: () => Promise<StoragePorts>;
+  readonly create: () => Promise<Storage>;
 }
 
 export interface StorageTransactionContractFunction {
@@ -19,12 +19,12 @@ const now = new Date("2026-01-01T00:00:00.000Z");
 const key = { handler: "order.p", eventId: "e1" };
 
 /**
- * The behaviour every `StoragePorts.transact` must exhibit. Call it inside a `describe` of the
+ * The behaviour every `Storage.transact` must exhibit. Call it inside a `describe` of the
  * adapter's test file with a factory that returns fresh, empty storage.
  */
 export const storageTransactionContract: StorageTransactionContractFunction = ({ create }) => {
   describe("storage transaction contract", () => {
-    let storage: StoragePorts;
+    let storage: Storage;
 
     beforeEach(async () => {
       storage = await create();

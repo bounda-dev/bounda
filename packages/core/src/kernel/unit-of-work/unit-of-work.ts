@@ -1,4 +1,4 @@
-import type { StoragePorts, StorageTransaction } from "../../adapter/adapter.ts";
+import type { Storage, StorageTransaction } from "../../adapter/adapter.ts";
 import { deferWrites } from "../../adapter/deferred-writes.ts";
 import { createStagedEventStore } from "../../adapter/staged-event-store.ts";
 import { ConcurrencyError } from "../../contracts/errors.ts";
@@ -14,7 +14,7 @@ export type UnitStores = Pick<UnitOfWork, "eventStore" | "scheduler" | "afterCom
  * stores, kept in order. `commit` writes all of it in one storage transaction, events first, or
  * nothing: a stream that moved since the unit loaded it rejects with `ConcurrencyError`; an
  * append to a stream the unit never loaded checks its version at once instead, as the store
- * would. A unit with nothing staged commits without touching the store. Reads through the unit's ports see the
+ * would. A unit with nothing staged commits without touching the store. Reads through the unit's stores see the
  * store as it is, plus the unit's own events; `add` answers the letter as filed, whatever the
  * store holds under that id already.
  */
@@ -28,7 +28,7 @@ export interface UnitOfWork extends StorageTransaction {
 }
 
 export interface CreateUnitOfWorkArgs {
-  readonly storage: StoragePorts;
+  readonly storage: Storage;
 }
 
 export interface CreateUnitOfWorkFunction {
@@ -37,11 +37,11 @@ export interface CreateUnitOfWorkFunction {
 
 export const createUnitOfWork: CreateUnitOfWorkFunction = ({ storage }) => {
   const staged = createStagedEventStore(storage.eventStore);
-  const { ports, flush, pending } = deferWrites(storage);
+  const { stores, flush, pending } = deferWrites(storage);
   const committed: (() => void)[] = [];
   return {
     eventStore: staged,
-    ...ports,
+    ...stores,
     commit: async () => {
       const batches = staged.batches();
       if (batches.length > 0 || pending()) {
@@ -70,7 +70,7 @@ export class CommitFailed extends Error {
 }
 
 export interface CommitAttemptArgs {
-  readonly storage: StoragePorts;
+  readonly storage: Storage;
   /**
    * How many times the work runs again, on a fresh unit, when its commit finds a stream moved.
    */

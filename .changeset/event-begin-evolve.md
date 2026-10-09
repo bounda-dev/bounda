@@ -10,5 +10,5 @@ names for a factory or a domain service, so they stay free for the modules that 
 events.
 
 Breaking: rename `apply` to `evolve` in every event. `Event.ApplyArgs` becomes `Event.EvolveArgs`,
-`EventApplyArgs` becomes `EventEvolveArgs`, and `EventModule` takes `begin` and `evolve`. Run
+and `EventApplyArgs` becomes `EventEvolveArgs`. Run
 `bounda generate` to update generated files.

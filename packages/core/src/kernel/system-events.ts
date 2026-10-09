@@ -1,4 +1,4 @@
-import type { EventStore } from "../adapter/ports/event-store.ts";
+import type { EventStore } from "../adapter/storage/event-store.ts";
 import type { Clock } from "../contracts/clock.ts";
 import type { StoredEvent } from "../contracts/event.ts";
 import type { IdGenerator } from "../contracts/ids.ts";

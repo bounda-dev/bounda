@@ -1,4 +1,4 @@
-import type { EventStore } from "../../adapter/ports/event-store.ts";
+import type { EventStore } from "../../adapter/storage/event-store.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { AggregatesRuntime } from "./runtime.ts";

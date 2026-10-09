@@ -18,7 +18,8 @@ import {
 import { ConfigurationError } from "../contracts/errors.ts";
 import { silentLogger } from "../contracts/logger.ts";
 import { fieldBuilder as f } from "../modules/view.ts";
-import { createMemoryEventStore, memory } from "./index.ts";
+import { createMemoryEventStore } from "./event-store.ts";
+import { memory } from "./index.ts";
 
 const storage = async () => memory().createStorage({ logger: silentLogger });
 
@@ -31,12 +32,12 @@ describe("memory adapter", () => {
   storageTransactionContract({ create: storage });
   tableContract({
     create: async () => {
-      const ports = await memory().createReadModel<ContractRow>({
+      const model = await memory().createReadModel<ContractRow>({
         name: "order-summary",
         fields: contractFields,
         logger: silentLogger,
       });
-      return ports.table;
+      return model.table;
     },
   });
   viewContract({ create: async () => memory() });
@@ -266,14 +267,14 @@ describe("memory adapter", () => {
   });
 
   it("refuses SQL through its read client and points at table instead", async () => {
-    const ports = await memory().createReadModel({
+    const model = await memory().createReadModel({
       name: "order-summary",
       fields: contractFields,
       logger: silentLogger,
     });
-    await expect(ports.client.get("SELECT 1")).rejects.toBeInstanceOf(ConfigurationError);
-    await expect(ports.client.all("SELECT 1")).rejects.toThrow(/table\.findOne/);
-    expect(ports.client.raw).toBe(ports.table);
+    await expect(model.client.get("SELECT 1")).rejects.toBeInstanceOf(ConfigurationError);
+    await expect(model.client.all("SELECT 1")).rejects.toThrow(/table\.findOne/);
+    expect(model.client.raw).toBe(model.table);
   });
 
   it("requires a primary key in the view", async () => {
