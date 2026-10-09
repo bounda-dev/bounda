@@ -105,9 +105,9 @@ publisher of the store.
 An event that leaves the app is a contract with strangers, and it needs more than a stored event
 says. A stored event carries its `type` and `aggregateType`, which together name it inside the app
 (`order.OrderPlaced`), the aggregate's id and `version`, its `position` and `timestamp`, and
-metadata: `correlationId`,
-`causationId` (the command that produced it) and `schemaVersion` (the shape its payload was written
-in, which upcasters raise). Outside, it also needs:
+metadata: `correlationId`, `causationId` (the event that led to it, or the request's command),
+`commandId` (the command that wrote it) and `schemaVersion` (the shape its payload was written in,
+which upcasters raise). Outside, it also needs:
 
 - a **type namespaced by the bounded context** (`sales.order.OrderPlaced`), because another
   service's `order` is not this one;

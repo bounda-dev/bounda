@@ -301,6 +301,12 @@ describe("policies", () => {
     expectTypeOf<SendReceipt.HandlerArgs["commands"]>().toHaveProperty("registerCustomer");
   });
 
+  it("read the event's cause, and the command that wrote it when one did", () => {
+    type Metadata = SendReceipt.HandlerArgs["event"]["metadata"];
+    expectTypeOf<Metadata["causationId"]>().toEqualTypeOf<string>();
+    expectTypeOf<Metadata["commandId"]>().toEqualTypeOf<string | undefined>();
+  });
+
   it("get each command's decision, typed like app.commands but without a position", () => {
     const payment = { orderId: "o-1", method: "card", reference: "r-1" } as const;
     expectTypeOf<ReturnType<SendReceipt.HandlerArgs["commands"]["payOrder"]>>().toEqualTypeOf<

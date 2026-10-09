@@ -315,7 +315,7 @@ describe("scheduled command worker", () => {
       aggregateType: "order",
       aggregateId: "o-1",
     });
-    expect(order.events[0]?.metadata.causationId).toBe("id-1");
+    expect(order.events[0]?.metadata).toMatchObject({ causationId: "id-1", commandId: "id-1" });
   });
 
   it("drops a retriable failure at once when retries are off", async () => {

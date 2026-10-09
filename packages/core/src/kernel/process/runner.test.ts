@@ -244,7 +244,15 @@ describe("process runner", () => {
 
     let stream = await processStream(harness);
     expect(stream.events.map((event) => event.type)).toEqual([PROCESS_EVENTS.started]);
-    expect(stream.events[0]?.metadata.system).toBe(true);
+    const placed = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    expect(stream.events[0]?.metadata).toMatchObject({
+      system: true,
+      causationId: placed.events[0]?.id,
+    });
+    expect(stream.events[0]?.metadata).not.toHaveProperty("commandId");
     const timeoutAt = new Date(harness.clock.now().getTime() + 172_800_000).toISOString();
     expect(stream.events[0]?.payload).toMatchObject({ timeoutAt });
     expect((await harness.storage.scheduler.list()).map((entry) => entry.dedupeKey)).toEqual([
@@ -374,7 +382,10 @@ describe("process runner", () => {
       aggregateId: "o-1",
     });
     expect(order.events.map((event) => event.type)).toEqual(["OrderPlaced", "OrderArchived"]);
-    expect(order.events[1]?.metadata.depth).toBe(1);
+    expect(order.events[1]?.metadata).toMatchObject({
+      causationId: stream.events[1]?.id,
+      depth: 1,
+    });
     expect(await harness.storage.scheduler.list()).toEqual([]);
 
     await harness.dispatcher.runUntilIdle();
