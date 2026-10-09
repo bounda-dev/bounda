@@ -184,7 +184,7 @@ export const createDeadlineDelivery: CreateDeadlineDeliveryFunction = ({
             instanceContext(process, payload.aggregateId, instance),
           ),
         ]);
-        await failures.file(unit.deadLetterStore, process, letter, error);
+        await failures.file(unit.deadLetterStore, letter, error);
       }
       await schedule.stage(unit, process, payload.aggregateId);
     });

@@ -146,7 +146,7 @@ describe("file", () => {
   it("stages the letter with the error's stack, counting and logging nothing yet", async () => {
     const { failures, storage, entries, telemetry } = await setup();
     const error = new Error("boom");
-    await failures.file(storage.deadLetterStore, orderPayment, letter, error);
+    await failures.file(storage.deadLetterStore, letter, error);
     expect(await storage.deadLetterStore.get("letter-1")).toEqual({
       ...letter,
       errorStack: error.stack,
@@ -158,13 +158,8 @@ describe("file", () => {
 
   it("stores no stack when there is no error or it carries none", async () => {
     const { failures, storage } = await setup();
-    await failures.file(storage.deadLetterStore, orderPayment, letter);
-    await failures.file(
-      storage.deadLetterStore,
-      orderPayment,
-      { ...letter, id: "letter-2" },
-      "not an error",
-    );
+    await failures.file(storage.deadLetterStore, letter);
+    await failures.file(storage.deadLetterStore, { ...letter, id: "letter-2" }, "not an error");
     expect(await storage.deadLetterStore.get("letter-1")).not.toHaveProperty("errorStack");
     expect(await storage.deadLetterStore.get("letter-2")).not.toHaveProperty("errorStack");
   });
@@ -172,9 +167,9 @@ describe("file", () => {
   it("fails when the letter cannot be stored", async () => {
     const { failures, storage, failFiling } = await setup();
     failFiling();
-    await expect(
-      failures.file(storage.deadLetterStore, orderPayment, letter, new Error("boom")),
-    ).rejects.toThrow("store down");
+    await expect(failures.file(storage.deadLetterStore, letter, new Error("boom"))).rejects.toThrow(
+      "store down",
+    );
   });
 });
 

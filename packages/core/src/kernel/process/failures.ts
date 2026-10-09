@@ -30,12 +30,7 @@ export interface ProcessFailures {
   /**
    * Stages `letter` in `store`, a unit's dead letters, with the error's stack when it has one.
    */
-  file(
-    store: DeadLetterStore,
-    process: ProcessRuntime,
-    letter: NewDeadLetter,
-    error?: unknown,
-  ): Promise<void>;
+  file(store: DeadLetterStore, letter: NewDeadLetter, error?: unknown): Promise<void>;
   /**
    * Counts and logs `letter` once the unit that filed it committed.
    */
@@ -70,7 +65,7 @@ export const createProcessFailures: CreateProcessFailuresFunction = ({ ids, cloc
       lastFailedAt: now,
     };
   },
-  file: async (store, _process, letter, error) => {
+  file: async (store, letter, error) => {
     const stack = error === undefined ? undefined : errorDetails(error).stack;
     await store.add(stack === undefined ? letter : { ...letter, errorStack: stack });
   },
