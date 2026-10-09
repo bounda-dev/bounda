@@ -94,8 +94,10 @@ export const createPostgresqlEventStore: CreatePostgresqlEventStoreFunction = ({
         return { version: actualVersion + stored.length, events: stored };
       }),
     load: async ({ aggregateType, aggregateId, fromVersion = 1 }) => {
+      // `version` is an integer column, and a version past its range, such as the one that asks
+      // for the version alone, must still compare instead of failing to bind.
       const rows = await db.all(
-        `SELECT ${COLUMNS} FROM ${table} WHERE "aggregate_type" = $1 AND "aggregate_id" = $2 AND "version" >= $3 ORDER BY "version"`,
+        `SELECT ${COLUMNS} FROM ${table} WHERE "aggregate_type" = $1 AND "aggregate_id" = $2 AND "version" >= $3::bigint ORDER BY "version"`,
         [aggregateType, aggregateId, fromVersion],
       );
       const events = rows.map(toStoredEvent);
