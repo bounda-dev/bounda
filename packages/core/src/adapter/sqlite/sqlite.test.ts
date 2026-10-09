@@ -1,7 +1,7 @@
 /// <reference types="node" />
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { ConfigurationError } from "../../contracts/errors.ts";
+import { ConfigurationError, RebuildSupersededError } from "../../contracts/errors.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { fieldBuilder as f } from "../../modules/view.ts";
 import type { SqlDatabase } from "../sql/database.ts";
@@ -182,6 +182,26 @@ describe("createSqliteAdapter", () => {
     await committed.commit({ subscriber: "projection:orderSummary", position: 0 });
     const paused = await rebuild("rebuild:orderSummary:2");
     await paused.pause();
+    expect(uses()).toBe(0);
+  });
+
+  it("releases a rebuild's connection when its commit fails, and once only when an abort follows", async () => {
+    const { adapter, uses } = nodeSqlite();
+    const args = {
+      name: "orderSummary",
+      fields: contractFields,
+      logger: silentLogger,
+      progress: "rebuild:orderSummary:1",
+    };
+    const older = await adapter.rebuildReadModel(args);
+    const newer = await adapter.rebuildReadModel(args);
+    await expect(
+      older.commit({ subscriber: "projection:orderSummary", position: 0 }),
+    ).rejects.toThrow(RebuildSupersededError);
+    expect(uses()).toBe(1);
+    await older.abort();
+    expect(uses()).toBe(1);
+    await newer.abort();
     expect(uses()).toBe(0);
   });
 

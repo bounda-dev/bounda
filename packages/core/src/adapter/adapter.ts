@@ -92,8 +92,9 @@ export type ReadModelTransacted<T> =
  * A read model being rebuilt from scratch, next to the live one. Projections write into `table`
  * while queries keep reading the live table; `commit` swaps the two and drops the old one, `abort`
  * drops what was built, `pause` keeps it for a later rebuild with the same `progress`. Each of the
- * three releases the adapter's resources. Once a newer rebuild of the read model opens, this one
- * is fenced off as `rebuildFencing` describes.
+ * three releases the adapter's resources, even when it fails, and only the first to run does: an
+ * `abort` after a failed `commit` releases nothing twice. Once a newer rebuild of the read model
+ * opens, this one is fenced off as `rebuildFencing` describes.
  */
 export interface ReadModelRebuild<Row extends object = Record<string, unknown>, Raw = unknown> {
   readonly table: Table<Row>;
