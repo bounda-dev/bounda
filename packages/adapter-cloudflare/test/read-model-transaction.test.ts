@@ -1,6 +1,6 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { silentLogger } from "@bounda-dev/core";
+import { fieldBuilder as f, silentLogger } from "@bounda-dev/core";
 import { contractFields } from "@bounda-dev/core/adapter/testing";
 import { describe, expect, it } from "vitest";
 import { durableObjectAdapter } from "../src/adapter.ts";
@@ -46,7 +46,7 @@ describe("read model tables in a Durable Object", () => {
       await table.upsert(order("2"));
       await open(contractFields);
       expect(evolved).toEqual([]);
-      const unique = { ...contractFields, status: contractFields.status.unique() };
+      const unique = { ...contractFields, status: f.string().unique() };
       await expect(open(unique)).rejects.toThrow(/UNIQUE/);
       await table.update({ orderId: "1" }, { status: "one" });
       await open(unique);
