@@ -10,7 +10,6 @@ import { lifecycleEntries, PROCESS_EVENTS } from "./lifecycle.ts";
 
 const process: ProcessRuntime = {
   name: "order.settlement",
-  type: "Settlement",
   aggregate: "order",
   startedBy: new Set(["order.OrderPlaced"]),
   completedBy: new Set(),
@@ -46,9 +45,27 @@ describe("createProcessInstances", () => {
     await unit.commit();
     expect((await live.load(process, "o-1")).version).toBe(1);
     const { events } = await storage.eventStore.load({
-      aggregateType: "process:Settlement",
+      aggregateType: "process:order.settlement",
       aggregateId: "o-1",
     });
     expect(events.map((event) => event.type)).toEqual([PROCESS_EVENTS.resumed]);
+  });
+
+  it("keeps apart the instances of two aggregates' processes of the same name", async () => {
+    const storage = await memory().createStorage({ logger: silentLogger });
+    const instances = createProcessInstances({
+      eventStore: storage.eventStore,
+      ids: createSequentialIdGenerator(),
+      clock: createFixedClock(new Date(0)),
+    });
+    const shipment: ProcessRuntime = {
+      ...process,
+      name: "shipment.settlement",
+      aggregate: "shipment",
+    };
+    const order = await instances.load(process, "o-1");
+    await instances.append(process, "o-1", order, [lifecycleEntries.resumed(context)]);
+    expect((await instances.load(process, "o-1")).exists).toBe(true);
+    expect((await instances.load(shipment, "o-1")).exists).toBe(false);
   });
 });

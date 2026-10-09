@@ -249,7 +249,7 @@ const run = async (seed: number): Promise<void> => {
     const statuses = await Promise.all(
       ORDERS.map(async (order) => {
         const { events } = await harness.storage.eventStore.load({
-          aggregateType: "process:Ledger",
+          aggregateType: "process:order.ledger",
           aggregateId: order,
         });
         const instance = foldProcess({ initialState: {}, events });
@@ -279,7 +279,7 @@ const run = async (seed: number): Promise<void> => {
     const lines = await Promise.all(
       ORDERS.map(async (order) => {
         const { events } = await harness.storage.eventStore.load({
-          aggregateType: "process:Ledger",
+          aggregateType: "process:order.ledger",
           aggregateId: order,
         });
         return `${order}: ${events
@@ -306,7 +306,7 @@ const run = async (seed: number): Promise<void> => {
     const carried = new Set<string>();
     for (const order of ORDERS) {
       const { events } = await harness.storage.eventStore.load({
-        aggregateType: "process:Ledger",
+        aggregateType: "process:order.ledger",
         aggregateId: order,
       });
       for (const event of events) tally(event.type);

@@ -95,7 +95,7 @@ export interface DeadlineSubjectFunction {
 export const deadlineSubject: DeadlineSubjectFunction = (process, instanceId, field) => ({
   id: `deadline:${field}`,
   type: PROCESS_DEADLINE_COMMAND,
-  aggregateType: processAggregateType(process.type),
+  aggregateType: processAggregateType(process.name),
   aggregateId: instanceId,
 });
 

@@ -154,7 +154,7 @@ const pastLease = (harness: ReactiveHarness) =>
 const processTypes = async (harness: ReactiveHarness) =>
   (
     await harness.storage.eventStore.load({
-      aggregateType: "process:Settlement",
+      aggregateType: "process:order.settlement",
       aggregateId: "o-1",
     })
   ).events.map((event) => event.type);

@@ -12,7 +12,6 @@ import { deadlineFieldsOf, processStateArgs, TIMEOUT_DEADLINE } from "./deadline
 
 export interface ProcessRuntime {
   readonly name: string;
-  readonly type: string;
   readonly aggregate: string;
   readonly startedBy: ReadonlySet<string>;
   readonly completedBy: ReadonlySet<string>;
@@ -254,7 +253,6 @@ const buildProcess = (
   }
   return {
     name: `${aggregate}.${key}`,
-    type: capitalize(key),
     aggregate,
     startedBy,
     completedBy,

@@ -168,7 +168,7 @@ const setUp = async (
   const stream = async (id = "o-1") =>
     (
       await harness.storage.eventStore.load({
-        aggregateType: "process:OrderPayment",
+        aggregateType: "process:order.orderPayment",
         aggregateId: id,
       })
     ).events;
@@ -444,17 +444,17 @@ describe.each(adapters)("the follow-ups of a process that timed out, on %s", (_n
       beforeArchive = undefined;
       await deadLetters.discard(letter.id);
       const { version } = await harness.storage.eventStore.load({
-        aggregateType: "process:OrderPayment",
+        aggregateType: "process:order.orderPayment",
         aggregateId: "o-1",
       });
       await harness.storage.eventStore.append({
-        aggregateType: "process:OrderPayment",
+        aggregateType: "process:order.orderPayment",
         aggregateId: "o-1",
         expectedVersion: version,
         events: [
           {
             id: "moved",
-            aggregateType: "process:OrderPayment",
+            aggregateType: "process:order.orderPayment",
             aggregateId: "o-1",
             version: version + 1,
             type: PROCESS_EVENTS.resumed,
@@ -503,7 +503,7 @@ describe.each(adapters)("the follow-ups of a process that timed out, on %s", (_n
       logger: letThrough.logger,
       adapter: adapter(),
     });
-    for (const aggregateType of ["order", "process:OrderPayment"]) {
+    for (const aggregateType of ["order", "process:order.orderPayment"]) {
       const { events } = await harness.storage.eventStore.load({
         aggregateType,
         aggregateId: "o-1",
@@ -517,7 +517,7 @@ describe.each(adapters)("the follow-ups of a process that timed out, on %s", (_n
     }
     await deployed.dispatcher.runUntilIdle();
     const before = await deployed.storage.eventStore.load({
-      aggregateType: "process:OrderPayment",
+      aggregateType: "process:order.orderPayment",
       aggregateId: "o-1",
     });
     expect(before.events.map((event) => event.type)).toEqual([
@@ -534,7 +534,7 @@ describe.each(adapters)("the follow-ups of a process that timed out, on %s", (_n
       }),
     ).toBe(false);
     const { events } = await deployed.storage.eventStore.load({
-      aggregateType: "process:OrderPayment",
+      aggregateType: "process:order.orderPayment",
       aggregateId: "o-1",
     });
     expect(events.map((event) => event.type)).toEqual([

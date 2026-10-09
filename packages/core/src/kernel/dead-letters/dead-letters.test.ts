@@ -511,7 +511,7 @@ describe("deadLetters", () => {
     const [letter] = await deadLetters.list({ kind: "process" });
     expect(letter).toMatchObject({ handler: "order.orderPayment", eventType: "OrderPaid" });
     expect(await harness.storage.scheduler.list()).toEqual([]);
-    const stream = { aggregateType: "process:OrderPayment", aggregateId: "o-1" };
+    const stream = { aggregateType: "process:order.orderPayment", aggregateId: "o-1" };
     expect(
       (await harness.storage.eventStore.load(stream)).events.map((event) => event.type),
     ).toEqual([PROCESS_EVENTS.started, PROCESS_EVENTS.failed]);
@@ -687,7 +687,7 @@ describe("deadLetters", () => {
     await harness.dispatcher.runUntilIdle();
     expect(await harness.worker.runOnce()).toBe(1);
     const { events } = await harness.storage.eventStore.load({
-      aggregateType: "process:OrderPayment",
+      aggregateType: "process:order.orderPayment",
       aggregateId: "o-1",
     });
     expect(events.at(-1)?.type).toBe(PROCESS_EVENTS.timedOut);
@@ -798,7 +798,7 @@ describe("deadLetters", () => {
     await harness.dispatcher.runUntilIdle();
     harness.clock.advance(48 * 3_600_000);
     expect(await harness.worker.runOnce()).toBe(1);
-    const stream = { aggregateType: "process:OrderPayment", aggregateId: "o-9" };
+    const stream = { aggregateType: "process:order.orderPayment", aggregateId: "o-9" };
     expect(
       (await harness.storage.eventStore.load(stream)).events.map((event) => event.type),
     ).toEqual([PROCESS_EVENTS.started, PROCESS_EVENTS.failed]);
@@ -808,7 +808,7 @@ describe("deadLetters", () => {
       handler: "order.orderPayment",
       eventId: "deadline:timeout",
       eventType: PROCESS_DEADLINE_COMMAND,
-      aggregateType: "process:OrderPayment",
+      aggregateType: "process:order.orderPayment",
       aggregateId: "o-9",
       errorType: "terminal",
       errorMessage: "courier is closed",
@@ -842,7 +842,7 @@ describe("deadLetters", () => {
       handler: "order.orderPayment",
       eventId: "deadline:timeout",
       eventType: PROCESS_DEADLINE_COMMAND,
-      aggregateType: "process:OrderPayment",
+      aggregateType: "process:order.orderPayment",
       aggregateId: "o-9",
       errorType: "terminal",
       errorMessage: "x",
@@ -859,7 +859,7 @@ describe("deadLetters", () => {
       handler: "order.gone",
       eventId: "deadline:timeout",
       eventType: PROCESS_DEADLINE_COMMAND,
-      aggregateType: "process:Gone",
+      aggregateType: "process:order.gone",
       aggregateId: "o-9",
       errorType: "terminal",
       errorMessage: "x",

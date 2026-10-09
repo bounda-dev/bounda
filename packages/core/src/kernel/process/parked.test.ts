@@ -98,7 +98,7 @@ const registry: Registry = {
 };
 
 const DAY = 86_400_000;
-const stream = { aggregateType: "process:Tally", aggregateId: "o-1" };
+const stream = { aggregateType: "process:order.tally", aggregateId: "o-1" };
 
 const reset = (): void => {
   runs.length = 0;
@@ -582,7 +582,7 @@ describe("events of a failed process", () => {
     await harness.pipeline.dispatch({ type: "ArchiveOrder", payload: { orderId: "o-1" } });
     await harness.dispatcher.runUntilIdle();
     const { events } = await harness.storage.eventStore.load({
-      aggregateType: "process:Quiet",
+      aggregateType: "process:order.quiet",
       aggregateId: "o-1",
     });
     expect(events.map((event) => event.type)).toEqual([
@@ -1130,7 +1130,7 @@ describe("events of a failed process", () => {
       handler: "order.gone",
       eventId: "deadline:x",
       eventType: "bounda.ProcessDeadline",
-      aggregateType: "process:Gone",
+      aggregateType: "process:order.gone",
       aggregateId: "o-1",
       errorType: "terminal",
       errorMessage: "x",
@@ -1592,7 +1592,7 @@ describe("a parked event that is handled and completes the process", () => {
     placedFails = false;
     await harness.processes.retry({ process: "order.closer", event: placed, retryId: "r" });
     const { events } = await harness.storage.eventStore.load({
-      aggregateType: "process:Closer",
+      aggregateType: "process:order.closer",
       aggregateId: "o-1",
     });
     expect(events.map((event) => [event.type, event.version])).toEqual([

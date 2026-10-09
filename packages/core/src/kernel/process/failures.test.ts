@@ -13,7 +13,6 @@ import type { ProcessInstance } from "./lifecycle.ts";
 
 const orderPayment: ProcessRuntime = {
   name: "orderPayment",
-  type: "OrderPayment",
   aggregate: "order",
   startedBy: new Set(["OrderPlaced"]),
   completedBy: new Set(["OrderPaid"]),
@@ -209,7 +208,7 @@ describe("deadlineSubject", () => {
     expect(deadlineSubject(orderPayment, "o-1", "paymentDeadline")).toEqual({
       id: "deadline:paymentDeadline",
       type: "bounda.ProcessDeadline",
-      aggregateType: "process:OrderPayment",
+      aggregateType: "process:orderPayment",
       aggregateId: "o-1",
     });
   });
