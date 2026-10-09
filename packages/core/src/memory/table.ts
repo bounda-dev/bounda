@@ -1,6 +1,7 @@
 import type { FindManyArgs, ReadClient, Table } from "../adapter/ports/table.ts";
 import { sqliteDialect } from "../adapter/sql/dialect.ts";
-import { buildLimit, columnFor } from "../adapter/sql/query-builder.ts";
+import { codePointOrder } from "../adapter/sql/order.ts";
+import { assertPage, columnFor } from "../adapter/sql/query-builder.ts";
 import { type ColumnDefinition, columnsOf } from "../adapter/sql/read-model-schema.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
 import type { FieldsRecord } from "../modules/view.ts";
@@ -23,19 +24,19 @@ export interface CreateMemoryTableFunction {
 
 type Stored = Readonly<Record<string, unknown>>;
 
-// Code-unit order with SQLite's: a value before none, numbers by value, text by code unit.
+// SQLite's order: no value first, text by code point.
 const compare = (a: unknown, b: unknown): number => {
   if (a === b) return 0;
   if (a === null) return -1;
   if (b === null) return 1;
-  return (a as number | string) < (b as number | string) ? -1 : 1;
+  if (typeof a === "string" && typeof b === "string") return codePointOrder(a, b);
+  return (a as number) < (b as number) ? -1 : 1;
 };
 
 /**
- * A read-model table held in memory that behaves as the SQLite one: rows are kept as SQLite
- * stores them, through its dialect, so `where` compares dates and JSON by value, `null` means no
- * value, every read returns fresh copies, and the view, `unique()`, required fields and limits
- * are checked as SQL checks them.
+ * A read-model table held in memory that behaves as the SQLite one: `where` compares dates and
+ * JSON by value, `null` means no value, every read returns fresh copies, and the view, `unique()`,
+ * required fields and limits are checked as SQLite checks them.
  */
 export const createMemoryTable: CreateMemoryTableFunction = <Row extends object>({
   name,
@@ -64,35 +65,35 @@ export const createMemoryTable: CreateMemoryTableFunction = <Row extends object>
   const matcher = (where: Partial<Row> | undefined): ((stored: Stored) => boolean) => {
     const expected = Object.entries(where ?? {}).map(([field, value]) => {
       const column = columnFor({ field, columns });
-      return [
-        column.field,
-        value === undefined || value === null ? null : sqliteDialect.encode(column.type, value),
-      ] as const;
+      return [column.field, sqliteDialect.encode(column.type, value)] as const;
     });
     return (stored) => expected.every(([field, value]) => stored[field] === value);
   };
-  const check = (key: unknown, stored: Stored): void => {
+  const violated = (kind: "NOT NULL" | "UNIQUE", column: ColumnDefinition): Error =>
+    new Error(`${kind} constraint failed: ${name}.${column.field}`);
+  const checkRequired = (stored: Stored): void => {
+    const missing = columns.find((column) => !column.nullable && stored[column.field] === null);
+    if (missing !== undefined) throw violated("NOT NULL", missing);
+  };
+  // The primary key is unique by the map's own keys; `update` checks it when a row is re-keyed.
+  const checkUnique = (key: unknown, stored: Stored, table: ReadonlyMap<unknown, Stored>): void => {
     for (const column of columns) {
       const value = stored[column.field];
-      if (value === null && !column.nullable) {
-        throw new Error(`NOT NULL constraint failed: ${name}.${column.field}`);
-      }
       if (!column.unique || column.primaryKey || value === null) continue;
-      for (const [other, row] of rows) {
-        if (other !== key && row[column.field] === value) {
-          throw new Error(`UNIQUE constraint failed: ${name}.${column.field}`);
-        }
+      for (const [other, row] of table) {
+        if (other !== key && row[column.field] === value) throw violated("UNIQUE", column);
       }
     }
   };
   const write = (stored: Stored): void => {
     const key = stored[primaryKey.field];
-    check(key, stored);
+    checkRequired(stored);
+    checkUnique(key, stored, rows);
     rows.set(key, stored);
   };
 
   const select = (args: FindManyArgs<Row> = {}): Row[] => {
-    buildLimit({ limit: args.limit, offset: args.offset, dialect: sqliteDialect, paramOffset: 0 });
+    assertPage(args);
     const selected = [...rows.values()].filter(matcher(args.where));
     if (args.orderBy !== undefined) {
       const { field, direction } = args.orderBy;
@@ -112,6 +113,7 @@ export const createMemoryTable: CreateMemoryTableFunction = <Row extends object>
     insert: async (row) => {
       const stored = encode(row);
       if (!rows.has(stored[primaryKey.field])) write(stored);
+      else checkRequired(stored);
     },
     update: async (where, patch) => {
       const changes = Object.entries(patch).filter(([, value]) => value !== undefined);
@@ -123,17 +125,28 @@ export const createMemoryTable: CreateMemoryTableFunction = <Row extends object>
         }),
       );
       const matches = matcher(where);
-      for (const [key, row] of [...rows]) {
-        if (!matches(row)) continue;
-        const updated = { ...row, ...encoded };
-        check(key, updated);
-        rows.delete(key);
-        rows.set(updated[primaryKey.field], updated);
+      // Built aside and checked whole, so a refused update changes nothing, as one statement; a
+      // row keeps its place, as it keeps its rowid.
+      const next = new Map<unknown, Stored>();
+      const changed: Stored[] = [];
+      for (const row of rows.values()) {
+        const updated = matches(row) ? { ...row, ...encoded } : row;
+        if (updated !== row) {
+          checkRequired(updated);
+          changed.push(updated);
+        }
+        const key = updated[primaryKey.field];
+        if (next.has(key)) throw violated("UNIQUE", primaryKey);
+        next.set(key, updated);
       }
+      if (changed.length === 0) return;
+      for (const updated of changed) checkUnique(updated[primaryKey.field], updated, next);
+      rows.clear();
+      for (const [key, row] of next) rows.set(key, row);
     },
     delete: async (where) => {
       const matches = matcher(where);
-      for (const [key, row] of [...rows]) {
+      for (const [key, row] of rows) {
         if (matches(row)) rows.delete(key);
       }
     },

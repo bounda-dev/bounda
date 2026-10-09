@@ -19,4 +19,4 @@ Fixes from a review of the storage adapters:
   - A read model whose primary key moves, or whose field stops being `unique()`, now needs a rebuild instead of booting and failing at runtime. A field newly `unique()` or `index()` gets its index.
   - On SQLite, the change runs in a write transaction.
   - `ExistingColumn` gains `primaryKey`, `unique` and `indexed`.
-- `@bounda-dev/core/adapter/testing` adds `jsonValuesContract`.
+- `@bounda-dev/core/adapter/testing` adds `viewContract`: what a view's fields promise on every adapter (JSON values round-trip, `unique()`, the primary key and required fields refuse what they should, one primary key per view).

@@ -5,8 +5,10 @@ import type {
   ScheduledCommand,
   Scheduler,
 } from "../adapter/ports/scheduler.ts";
+import { byExecuteAt } from "../adapter/sql/scheduling.ts";
 import { ScheduledClaimLostError } from "../contracts/errors.ts";
 import { createStoreEntries, type WithEntries } from "./entries.ts";
+import { jsonCopy } from "./json-copy.ts";
 
 export interface CreateMemorySchedulerFunction {
   (): Scheduler;
@@ -23,12 +25,6 @@ interface Entry extends ScheduledCommand {
   readonly lastError?: string;
 }
 
-const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
-
-// The order of the SQL schedulers: `execute_at`, then `dedupe_key`, by code unit.
-const byExecuteAt = (a: Entry, b: Entry): number =>
-  byCodeUnit(a.executeAt, b.executeAt) || byCodeUnit(a.dedupeKey, b.dedupeKey);
-
 const toScheduled = ({
   dedupeKey,
   command,
@@ -37,9 +33,13 @@ const toScheduled = ({
   attempts,
 }: Entry): ScheduledCommand => ({
   dedupeKey,
-  command,
+  command: {
+    type: command.type,
+    aggregateId: command.aggregateId,
+    payload: jsonCopy(command.payload),
+  },
   executeAt,
-  context,
+  context: jsonCopy(context),
   attempts,
 });
 
@@ -64,9 +64,13 @@ export const createKeptScheduler: CreateKeptSchedulerFunction = () => {
     schedule: async ({ dedupeKey, command, executeAt, context, keepTimingOfSameCommand }) => {
       const scheduled: ScheduledCommand = {
         dedupeKey,
-        command,
+        command: {
+          type: command.type,
+          aggregateId: command.aggregateId,
+          payload: jsonCopy(command.payload),
+        },
         executeAt: executeAt.toISOString(),
-        context,
+        context: jsonCopy(context),
         attempts: 0,
       };
       const existing = entries.get(dedupeKey);

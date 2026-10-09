@@ -5,7 +5,7 @@ import type {
   ScheduledCommand,
   Scheduler,
 } from "@bounda-dev/core/adapter";
-import { earliestDue, postgresqlDialect } from "@bounda-dev/core/adapter/sql";
+import { byExecuteAt, earliestDue, postgresqlDialect } from "@bounda-dev/core/adapter/sql";
 import type { PostgresqlDatabase } from "./database.ts";
 
 export interface CreatePostgresqlSchedulerArgs {
@@ -37,12 +37,6 @@ const toClaimed = (row: Record<string, unknown>): ClaimedCommand => ({
   revision: Number(row.revision),
   claimId: String(row.claim_id),
 });
-
-const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
-
-// `RETURNING` keeps no order: the claimed rows are sorted again as the query sorted them.
-const byExecuteAt = (a: ScheduledCommand, b: ScheduledCommand): number =>
-  byCodeUnit(a.executeAt, b.executeAt) || byCodeUnit(a.dedupeKey, b.dedupeKey);
 
 /**
  * `claimDue` selects the due rows `FOR UPDATE SKIP LOCKED` and updates them in the same

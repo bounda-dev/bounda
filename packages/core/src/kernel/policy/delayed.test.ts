@@ -384,9 +384,9 @@ describe("delayed policies", () => {
     expect(
       letters.map((letter) => [letter.handler, letter.errorType, letter.errorMessage]),
     ).toEqual([
-      ["order.renamedAway", "terminal", 'Policy "order.renamedAway" is no longer in the registry'],
-      ["order.remindOnOrderPlaced", "terminal", "Event not-the-event of order:o-1 not found"],
       ["order.remindOnOrderPlaced", "terminal", "Event beyond-the-head of order:o-1 not found"],
+      ["order.remindOnOrderPlaced", "terminal", "Event not-the-event of order:o-1 not found"],
+      ["order.renamedAway", "terminal", 'Policy "order.renamedAway" is no longer in the registry'],
     ]);
     expect(runs).toEqual([]);
   });

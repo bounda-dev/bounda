@@ -143,7 +143,8 @@ through `table`, and keep `client` for what `table` cannot say.
 
 The in-memory adapter is for tests and for trying Bounda: one process, which it notifies on each
 append. Its tables and stores behave as SQLite's: the same refusals, the same `null` and date
-semantics, copies on every read, and the same order of listings, so a test that passes on it
-passes on SQL. Start on SQLite and move to PostgreSQL when the background work needs more than one process;
-the domain code does not change. [Deployment](/guides/deployment/) covers the roles and what the
+semantics, payloads read back as JSON, and the same order, so a test that passes on it passes on
+SQLite. PostgreSQL differs in one place: a table ordered by a text field follows the database's
+collation, and puts rows without a value last. Start on SQLite and move to PostgreSQL when the
+background work needs more than one process; the domain code does not change. [Deployment](/guides/deployment/) covers the roles and what the
 instances share, and [How Bounda runs](/concepts/how-it-runs/) the ceiling of one store.

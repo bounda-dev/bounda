@@ -60,15 +60,21 @@ export const createMemoryEventStore: CreateMemoryEventStoreFunction = ({ onAppen
       }
       versions.set(key, actualVersion + events.length);
     }
-    const results = batches.map(({ aggregateType, aggregateId, expectedVersion, events }) => {
+    // Every batch is kept before any is written, so one that JSON refuses appends nothing.
+    let position = global.length;
+    const appended = batches.map(({ events }) =>
+      events.map((event) => {
+        position += 1;
+        return { event: { ...event, position }, kept: keep({ ...event, position }) };
+      }),
+    );
+    const results = batches.map(({ aggregateType, aggregateId, expectedVersion }, index) => {
       const key = streamId({ aggregateType, aggregateId });
-      const stream = streams.get(key) ?? [];
-      const stored = events.map((event, index) =>
-        keep({ ...event, position: global.length + index + 1 }),
-      );
-      streams.set(key, [...stream, ...stored]);
-      global.push(...stored);
-      return { version: expectedVersion + stored.length, events: stored.map(restore) };
+      const batch = appended[index] ?? [];
+      const kept = batch.map((entry) => entry.kept);
+      streams.set(key, [...(streams.get(key) ?? []), ...kept]);
+      global.push(...kept);
+      return { version: expectedVersion + batch.length, events: batch.map((entry) => entry.event) };
     });
     if (results.some((result) => result.events.length > 0)) onAppend?.(global.length);
     return results;

@@ -195,8 +195,8 @@ export interface ViewContractFunction {
 
 /**
  * What a view's fields promise on every adapter: any JSON value comes back as it was stored, a
- * `unique()` field refuses a value another row has, a required field refuses none, and a view
- * with more than one primary key is refused.
+ * `unique()` field or the primary key refuses a value another row has, even through an update, a
+ * required field refuses none, and a view with more than one primary key is refused.
  */
 export const viewContract: ViewContractFunction = ({ create }) => {
   describe("view contract", () => {
@@ -240,6 +240,24 @@ export const viewContract: ViewContractFunction = ({ create }) => {
       await expect(table.update({ id: "2" }, { email: "ada@example.com" })).rejects.toThrow();
       await expect(table.upsert({ id: "3" } as PersonRow)).rejects.toThrow();
       expect(await table.count()).toBe(2);
+    });
+
+    it("refuses a whole update that would give two rows one key or one unique value", async () => {
+      const { table } = await (await create()).createReadModel<PersonRow>({
+        name: "people",
+        fields: personFields,
+        logger: silentLogger,
+      });
+      const rows = [
+        { id: "1", email: "ada@example.com" },
+        { id: "2", email: "grace@example.com" },
+      ];
+      for (const row of rows) await table.insert(row);
+      await expect(table.update({ id: "1" }, { id: "2" })).rejects.toThrow();
+      await expect(table.update({}, { id: "3" })).rejects.toThrow();
+      await expect(table.update({}, { email: "same@example.com" })).rejects.toThrow();
+      await expect(table.insert({ id: "1" } as PersonRow)).rejects.toThrow();
+      expect(await table.findMany({ orderBy: { field: "id", direction: "asc" } })).toEqual(rows);
     });
 
     it("refuses a view with more than one primary key", async () => {

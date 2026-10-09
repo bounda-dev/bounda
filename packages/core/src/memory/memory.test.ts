@@ -71,6 +71,30 @@ describe("memory adapter", () => {
     expect(positions).toEqual([2]);
   });
 
+  it("appends nothing and notifies nobody when JSON refuses a payload of a later batch", async () => {
+    const positions: number[] = [];
+    const store = createMemoryEventStore({ onAppend: (position) => positions.push(position) });
+    await expect(
+      store.appendAll([
+        {
+          aggregateType: "order",
+          aggregateId: "1",
+          expectedVersion: 0,
+          events: [pendingEvent({ aggregateId: "1", version: 1 })],
+        },
+        {
+          aggregateType: "order",
+          aggregateId: "2",
+          expectedVersion: 0,
+          events: [pendingEvent({ aggregateId: "2", version: 1, payload: { total: 1n } })],
+        },
+      ]),
+    ).rejects.toThrow(TypeError);
+    expect(await store.lastPosition()).toBe(0);
+    expect((await store.load({ aggregateType: "order", aggregateId: "1" })).version).toBe(0);
+    expect(positions).toEqual([]);
+  });
+
   it("puts every store back when a write fails while a transaction is being applied", async () => {
     const storage = await memory().createStorage({ logger: silentLogger });
     const key = { handler: "order.p", eventId: "e1" };
@@ -249,5 +273,37 @@ describe("memory adapter", () => {
         logger: silentLogger,
       }),
     ).rejects.toThrow('Read model "no-key" declares no primary key field');
+  });
+
+  it("keeps each row in its place through an update, a new key included, as SQLite keeps its rowid", async () => {
+    const { table } = await memory().createReadModel<{ id: string; name?: string }>({
+      name: "people",
+      fields: { id: f.string().primaryKey(), name: f.string().optional() },
+      logger: silentLogger,
+    });
+    for (const id of ["1", "2", "3"]) await table.insert({ id });
+    await table.update({ id: "1" }, { name: "Ada" });
+    await table.update({ id: "2" }, { id: "0" });
+    expect((await table.findMany()).map(({ id }) => id)).toEqual(["1", "0", "3"]);
+  });
+
+  it("orders by SQLite's rules: no value first, text by code point", async () => {
+    const { table } = await memory().createReadModel<{ id: string; name?: string }>({
+      name: "people",
+      fields: { id: f.string().primaryKey(), name: f.string().optional() },
+      logger: silentLogger,
+    });
+    for (const [id, name] of [
+      ["1", "\u{1F600}"],
+      ["2", "！"],
+      ["3", undefined],
+      ["4", "b"],
+    ]) {
+      await table.insert(name === undefined ? { id: String(id) } : { id: String(id), name });
+    }
+    const names = async (direction: "asc" | "desc") =>
+      (await table.findMany({ orderBy: { field: "name", direction } })).map(({ id }) => id);
+    expect(await names("asc")).toEqual(["3", "4", "2", "1"]);
+    expect(await names("desc")).toEqual(["1", "2", "4", "3"]);
   });
 });
