@@ -1,6 +1,7 @@
 import starlight from "@astrojs/starlight";
 import { defineConfig, fontProviders } from "astro/config";
 import starlightLlmsTxt from "starlight-llms-txt";
+import starlightPageActions from "starlight-page-actions";
 import { basalt, bone } from "./src/code-themes.ts";
 
 const socialImageAlt =
@@ -76,7 +77,24 @@ export default defineConfig({
         },
       },
       social: [{ icon: "github", label: "GitHub", href: "https://github.com/bounda-dev/bounda" }],
-      plugins: [starlightLlmsTxt()],
+      // No `baseUrl` for the page actions: with one they write their own llms.txt over
+      // starlight-llms-txt's.
+      plugins: [
+        starlightLlmsTxt(),
+        starlightPageActions({
+          prompt: "Read {url}, a page of the Bounda docs, so I can ask about it.",
+          actions: {
+            chatgpt: true,
+            claude: true,
+            markdown: true,
+            t3chat: false,
+            v0: false,
+            cursor: false,
+            perplexity: false,
+            githubCopilot: false,
+          },
+        }),
+      ],
       sidebar: [
         { label: "bounda.dev", link: "https://bounda.dev" },
         { label: "Getting started", items: [{ autogenerate: { directory: "getting-started" } }] },

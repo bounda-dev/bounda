@@ -12,7 +12,8 @@
   "type": "module",
   "sideEffects": false,
   "files": [
-    "dist"
+    "dist",
+    "docs"
   ],
   "exports": {
     ".": {
@@ -65,7 +66,7 @@
     "node": ">=22.18"
   },
   "scripts": {
-    "build": "tsdown",
+    "build": "tsdown && node src/docs/cli.ts",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run --passWithNoTests",
     "test:types": "vitest run --typecheck.only",

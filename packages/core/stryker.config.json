@@ -15,7 +15,8 @@
     "!src/kernel/reactive-harness.ts",
     "!src/adapter/testing/**",
     "!src/testing/**",
-    "!src/node/fixtures/**"
+    "!src/node/fixtures/**",
+    "!src/docs/cli.ts"
   ],
   "ignoreStatic": true,
   "incremental": true,
