@@ -142,6 +142,8 @@ through `table`, and keep `client` for what `table` cannot say.
 | Fits | one process, a local app | several instances, `web` and `worker` roles | a store per tenant on Workers |
 
 The in-memory adapter is for tests and for trying Bounda: one process, which it notifies on each
-append. Start on SQLite and move to PostgreSQL when the background work needs more than one process;
+append. Its tables and stores behave as SQLite's: the same refusals, the same `null` and date
+semantics, copies on every read, and the same order of listings, so a test that passes on it
+passes on SQL. Start on SQLite and move to PostgreSQL when the background work needs more than one process;
 the domain code does not change. [Deployment](/guides/deployment/) covers the roles and what the
 instances share, and [How Bounda runs](/concepts/how-it-runs/) the ceiling of one store.
