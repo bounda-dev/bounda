@@ -4,16 +4,9 @@ import type { StoredEvent } from "../contracts/event.ts";
 import type { IdGenerator } from "../contracts/ids.ts";
 import type { CausationContext } from "../contracts/metadata.ts";
 
-/**
- * Written to an aggregate's stream when a scheduled command for it finally fails. Policies may
- * react to it like to any other event; `foldState` ignores it.
- */
+// Policies may react to it as to any other event.
 export const SCHEDULED_COMMAND_FAILED_EVENT: "ScheduledCommandFailed" = "ScheduledCommandFailed";
 
-/**
- * The payload of `ScheduledCommandFailed`: the scheduled command that failed for good, its last
- * error and how many attempts it had.
- */
 export interface ScheduledCommandFailedPayload {
   readonly commandType: string;
   readonly error: string;

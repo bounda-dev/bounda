@@ -76,8 +76,5 @@ export const createKeptInboxLedger: CreateKeptInboxLedgerFunction = () => {
   };
 };
 
-/**
- * An inbox ledger held in memory.
- */
 export const createMemoryInboxLedger: CreateMemoryInboxLedgerFunction = () =>
   createKeptInboxLedger().store;

@@ -19,17 +19,11 @@ export interface Output {
 }
 
 export interface RunCliArgs {
-  /**
-   * The arguments after the program name, e.g. `["generate", "--watch"]`.
-   */
+  // The arguments after the program name: `["generate", "--watch"]`.
   readonly argv: readonly string[];
   readonly cwd: string;
   readonly stdout: Output;
   readonly stderr: Output;
-  /**
-   * Aborting it ends `--watch`. Without it, `SIGINT` and `SIGTERM` do, and only while a watch
-   * runs: every other command stops on the first one, as any process does.
-   */
   readonly signal?: AbortSignal;
 }
 
@@ -233,10 +227,6 @@ const projectOptions = <T extends Command>(command: T): T =>
     .option("--config <file>", "configuration module under the root", "bounda.config.ts")
     .option("--registry <file>", "generated registry module under the root", ".bounda/registry.ts");
 
-/**
- * The `bounda` command line, as a function: parses `argv`, runs the command and returns the exit
- * code instead of exiting, so it can be tested and embedded.
- */
 export const runCli: RunCliFunction = async ({ argv, cwd, stdout, stderr, signal }) => {
   let exitCode = EXIT_OK;
   const program = new Command("bounda")

@@ -24,11 +24,6 @@ export interface DecodeRowFunction {
   <Row extends object>(args: DecodeRowArgs): Row;
 }
 
-/**
- * Turns a driver row into a read-model row: column names back to camelCase, values decoded by
- * field type, `NULL` left out. Columns the view does not declare (aliases in hand-written SQL)
- * pass through unchanged, camelCased.
- */
 export const decodeRow: DecodeRowFunction = <Row extends object>({
   row,
   columns,

@@ -1,27 +1,15 @@
 import type { FieldType } from "../../modules/view.ts";
 
-/**
- * What differs between SQL engines when Bounda stores a read model: parameter placeholders,
- * column types, and how field values travel to and from the driver.
- */
 export interface SqlDialect {
   readonly name: "sqlite" | "postgresql";
-  /**
-   * The placeholder of the n-th parameter, counting from 1.
-   */
+  // `index` counts from 1.
   placeholder(index: number): string;
-  /**
-   * The column type for a field, as `CREATE TABLE` declares it and as the engine reports it back.
-   */
+  // As `CREATE TABLE` declares it and as the engine reports it back: evolving a table compares the
+  // two.
   columnType(type: FieldType): string;
-  /**
-   * Converts a field value into what the driver binds. `undefined` becomes `null`.
-   */
+  // `undefined` binds as `null`.
   encode(type: FieldType, value: unknown): unknown;
-  /**
-   * Converts a value the driver returned into the field's TypeScript type. `null` becomes
-   * `undefined`, which the table then leaves out of the row.
-   */
+  // `null` decodes to `undefined`, which the table then leaves out of the row.
   decode(type: FieldType, value: unknown): unknown;
 }
 
@@ -63,9 +51,6 @@ const POSTGRESQL_TYPES: Readonly<Record<FieldType, string>> = {
   json: "jsonb",
 };
 
-/**
- * SQLite: `?` placeholders, booleans as 0/1, dates as ISO-8601 text, JSON as text.
- */
 export const sqliteDialect: SqlDialect = {
   name: "sqlite",
   placeholder: () => "?",

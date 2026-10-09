@@ -7,11 +7,6 @@ import {
 } from "@bounda-dev/core/adapter/sql";
 import type { PostgresqlDatabase } from "./database.ts";
 
-/**
- * The quoted names of the storage tables for a table prefix, plus what serialises appends and
- * announces them. Advisory locks and channels belong to the whole database, so each is qualified
- * by the schema: stores in two schemas of one database never wait on each other.
- */
 export interface StorageTables {
   readonly events: string;
   readonly checkpoints: string;
@@ -19,13 +14,9 @@ export interface StorageTables {
   readonly deadLetters: string;
   readonly scheduledCommands: string;
   readonly appendLockKey: string;
-  /**
-   * The first key of the advisory locks read models take on the checkpoints table.
-   */
+  // The first key of the advisory locks read models take on the checkpoints table.
   readonly checkpointsLockKey: string;
-  /**
-   * The `NOTIFY` channel appends publish on: `<schema>.<events table>`.
-   */
+  // The `NOTIFY` channel appends publish on.
   readonly channel: string;
 }
 
@@ -43,13 +34,11 @@ export interface StorageTablesForFunction {
  */
 const MAX_CHANNEL_BYTES = 63;
 
-/**
- * The tables, lock keys and channel `postgresql()` uses for a table prefix in a schema. Throws
- * `ConfigurationError` when the schema and prefix make a channel name PostgreSQL cannot hold.
- */
 export const storageTablesFor: StorageTablesForFunction = ({ prefix, schema }) => {
   const events = storageTableNameFor({ prefix, table: "events" });
   const checkpoints = storageTableNameFor({ prefix, table: "checkpoints" });
+  // Advisory locks and channels belong to the whole database, so each is qualified by the schema:
+  // stores in two schemas of one database never wait on each other.
   const channel = `${schema}.${events}`;
   if (Buffer.byteLength(channel) > MAX_CHANNEL_BYTES) {
     throw new ConfigurationError(
@@ -85,10 +74,7 @@ export interface StorageSchemaStatementsFunction {
   (tables: StorageTables): readonly string[];
 }
 
-/**
- * DDL for the storage tables, which `postgresql()` runs on first use. Every statement can run
- * again on a database that already has them.
- */
+// Every statement must be able to run again on a database that already has the tables.
 export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables) => [
   `CREATE TABLE IF NOT EXISTS ${tables.events} (
     "position" BIGSERIAL PRIMARY KEY,

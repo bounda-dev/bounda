@@ -2,13 +2,9 @@ import type { ScheduledCommand } from "../storage/scheduler.ts";
 import { codePointOrder } from "./order.ts";
 
 export interface EarliestDueArgs {
-  /**
-   * The soonest `execute_at` among commands nobody holds, as the engine returns it.
-   */
+  // The soonest `execute_at` among commands nobody holds, as the engine returns it.
   readonly unclaimed: unknown;
-  /**
-   * The oldest `claimed_at` among held commands, as the engine returns it.
-   */
+  // The oldest `claimed_at` among held commands, as the engine returns it.
   readonly claimed: unknown;
   readonly leaseMs: number;
 }

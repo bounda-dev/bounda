@@ -4,9 +4,6 @@ import type { SqlDialect } from "./dialect.ts";
 import { quoteIdentifier } from "./identifiers.ts";
 import type { ColumnDefinition } from "./read-model-schema.ts";
 
-/**
- * A piece of SQL and the parameters it binds, in order.
- */
 export interface SqlFragment {
   readonly sql: string;
   readonly params: readonly unknown[];
@@ -21,10 +18,8 @@ export interface ColumnForFunction {
   (args: ColumnForArgs): ColumnDefinition;
 }
 
-/**
- * The column of a field, or a `ConfigurationError` when the read model has no such field. Every
- * name that reaches SQL passes through here, so `where` and `orderBy` can only name real columns.
- */
+// Every name that reaches SQL passes through here, so `where` and `orderBy` can only name real
+// columns.
 export const columnFor: ColumnForFunction = ({ field, columns }) => {
   const column = columns.find((candidate) => candidate.field === field);
   if (column === undefined) {
@@ -39,9 +34,7 @@ export interface BuildWhereArgs {
   readonly where: Readonly<Record<string, unknown>> | undefined;
   readonly columns: readonly ColumnDefinition[];
   readonly dialect: SqlDialect;
-  /**
-   * How many parameters precede this fragment in the statement, for `$n` placeholders.
-   */
+  // How many parameters precede this fragment in the statement, for `$n` placeholders.
   readonly offset?: number;
 }
 
@@ -49,10 +42,6 @@ export interface BuildWhereFunction {
   (args: BuildWhereArgs): SqlFragment;
 }
 
-/**
- * ` WHERE "a" = $1 AND "b" IS NULL` from a `Partial<Row>`; empty when there is nothing to match.
- * `undefined` and `null` both match rows without a value, as the in-memory table does.
- */
 export const buildWhere: BuildWhereFunction = ({ where, columns, dialect, offset = 0 }) => {
   const entries = Object.entries(where ?? {});
   if (entries.length === 0) return { sql: "", params: [] };
@@ -75,9 +64,6 @@ export interface BuildOrderByFunction {
   (args: BuildOrderByArgs): string;
 }
 
-/**
- * ` ORDER BY "total" DESC`, or empty.
- */
 export const buildOrderBy: BuildOrderByFunction = ({ orderBy, columns }) => {
   if (orderBy === undefined) return "";
   const column = columnFor({ field: orderBy.field, columns });
@@ -88,9 +74,7 @@ export interface BuildLimitArgs {
   readonly limit: number | undefined;
   readonly offset: number | undefined;
   readonly dialect: SqlDialect;
-  /**
-   * How many parameters precede this fragment in the statement.
-   */
+  // How many parameters precede this fragment in the statement.
   readonly paramOffset: number;
 }
 
@@ -123,14 +107,11 @@ export const assertPage: AssertPageFunction = ({ limit, offset }) => {
   if (offset !== undefined) assertCount(offset, "offset");
 };
 
-/**
- * ` LIMIT $1 OFFSET $2` as parameters. SQLite needs a `LIMIT` before an `OFFSET`, so an offset
- * alone gets `LIMIT -1` there.
- */
 export const buildLimit: BuildLimitFunction = ({ limit, offset, dialect, paramOffset }) => {
   if (limit === undefined && offset === undefined) return { sql: "", params: [] };
   const params: unknown[] = [];
   const parts: string[] = [];
+  // SQLite needs a `LIMIT` before an `OFFSET`, so an offset alone gets `LIMIT -1` there.
   const effectiveLimit = limit ?? (dialect.name === "sqlite" ? -1 : undefined);
   if (effectiveLimit !== undefined) {
     params.push(limit === undefined ? effectiveLimit : assertCount(limit, "limit"));

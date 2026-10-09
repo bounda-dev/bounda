@@ -59,14 +59,9 @@ const existingColumns = async (
 
 export interface OpenSqliteReadModelArgs<Raw = unknown> {
   readonly db: SqlDatabase;
-  /**
-   * The driver handle queries get as `client.raw`.
-   */
   readonly raw: Raw;
   readonly tablePrefix: string;
-  /**
-   * The quoted name of the checkpoints table the read model's projections advance in.
-   */
+  // Already quoted.
   readonly checkpoints: string;
   readonly name: string;
   readonly fields: FieldsRecord;
@@ -80,12 +75,6 @@ export interface OpenSqliteReadModelFunction {
   ): Promise<ReadModelStorage<Row, Raw>>;
 }
 
-/**
- * Creates the read model's table from its `fields`, or evolves an existing one additively. The
- * checkpoints table is created too when missing, so a read model in a database of its own keeps
- * its projections' checkpoints there. `transact` is one write transaction: SQLite has a single
- * writer, so holding it is the lock and `wait` changes nothing.
- */
 export const openSqliteReadModel: OpenSqliteReadModelFunction = async <
   Row extends object,
   Raw = unknown,
@@ -143,6 +132,8 @@ export const openSqliteReadModel: OpenSqliteReadModelFunction = async <
       raw,
     }),
     checkpointStore: createSqliteCheckpointStore({ db, table: checkpoints }),
+    // SQLite has a single writer, so holding the write transaction is the lock and `wait` changes
+    // nothing.
     transact: ({ work }) =>
       db.write(async (tx) => ({
         acquired: true,
@@ -184,10 +175,7 @@ export interface RebuildSqliteReadModelFunction {
 const tableExists = async (db: SqlExecutor, table: string): Promise<boolean> =>
   (await db.all(`PRAGMA table_info(${quoteIdentifier(table)})`, [])).length > 0;
 
-/**
- * `Adapter.rebuildReadModel` over SQLite, fenced by `rebuildFencing`. Opening and every later
- * step are each one write transaction; SQLite's single writer is the lock.
- */
+// Opening and every later step are each one write transaction; SQLite's single writer is the lock.
 export const rebuildSqliteReadModel: RebuildSqliteReadModelFunction = async <
   Row extends object,
   Raw = unknown,

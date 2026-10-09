@@ -17,10 +17,6 @@ export interface EmitProjectFunction {
   (args: EmitProjectArgs): readonly GeneratedFile[];
 }
 
-/**
- * Every file the generator produces for a project: `.bounda/registry.ts`, `.bounda/register.d.ts`,
- * `.bounda/types.ts` and the `+types` of each module, with absolute paths.
- */
 export const emitProject: EmitProjectFunction = ({ model, inferredStates }) => {
   const directory = join(model.root, GENERATED_DIRECTORY);
   const typesPath = join(directory, "types.ts");

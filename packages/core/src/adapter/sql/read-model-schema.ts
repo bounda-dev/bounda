@@ -3,9 +3,7 @@ import type { FieldsRecord, FieldType } from "../../modules/view.ts";
 import type { SqlDialect } from "./dialect.ts";
 import { assertIdentifier, quoteIdentifier, toSnakeCase } from "./identifiers.ts";
 
-/**
- * One read-model field as a column: the TypeScript name, the column name and the DDL facts.
- */
+// `field` is the TypeScript name, `name` the column's.
 export interface ColumnDefinition {
   readonly field: string;
   readonly name: string;
@@ -194,10 +192,7 @@ export const evolveTableStatements: EvolveTableStatementsFunction = ({
   });
 };
 
-/**
- * The tables a rebuild of `table` works with: the shadow the projections fill and the name the
- * live table takes for the instant between the swap and its drop.
- */
+// `retired` is the name the live table takes for the instant between the swap and its drop.
 export interface RebuildTables {
   readonly shadow: string;
   readonly retired: string;
@@ -240,9 +235,7 @@ export const shadowTableStatements: ShadowTableStatementsFunction = ({ table, co
 export interface SwapTableStatementsArgs {
   readonly table: string;
   readonly columns: readonly ColumnDefinition[];
-  /**
-   * Whether the live table exists. A read model rebuilt before its first boot has none to retire.
-   */
+  // A read model rebuilt before its first boot has no live table to retire.
   readonly live: boolean;
 }
 

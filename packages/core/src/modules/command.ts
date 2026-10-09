@@ -4,10 +4,6 @@ import type { HandlerState } from "./aggregate.ts";
 import type { EventBuilders, EventModules } from "./event.ts";
 import type { PayloadFunction } from "./payload.ts";
 
-/**
- * The shape of a command module: an optional `payload` schema, the optional `rejections` it may
- * answer with and a `handler`.
- */
 export interface CommandModule {
   readonly payload?: PayloadFunction;
   readonly rejections?: (args: never) => Readonly<Record<string, string>>;
@@ -40,9 +36,6 @@ export interface RejectFunction<Code extends string> {
   (code: Code, message?: string): DomainError<Code>;
 }
 
-/**
- * A command in the registry.
- */
 export interface CommandEntry {
   readonly module: CommandModule;
 }

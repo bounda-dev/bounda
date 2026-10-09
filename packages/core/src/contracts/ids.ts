@@ -7,9 +7,6 @@ export interface IdGenerator {
   next(): string;
 }
 
-/**
- * The default generator: time-ordered UUID v7.
- */
 export const uuidV7IdGenerator: IdGenerator = {
   next: () => uuidV7(),
 };

@@ -13,9 +13,6 @@ export interface IsAdapterDefinitionFunction {
   (value: unknown): value is AdapterDefinition;
 }
 
-/**
- * Whether `value` has the shape of an `AdapterDefinition`.
- */
 export const isAdapterDefinition: IsAdapterDefinitionFunction = (
   value,
 ): value is AdapterDefinition =>

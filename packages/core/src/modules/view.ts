@@ -51,9 +51,6 @@ export interface FieldsArgs {
  */
 export type FieldsRecord = Readonly<Record<string, FieldDefinition>>;
 
-/**
- * The shape of a `view.ts` module.
- */
 export interface ViewModule {
   readonly fields: (args: FieldsArgs) => FieldsRecord;
 }

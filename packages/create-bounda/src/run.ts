@@ -16,15 +16,8 @@ export interface RunCreateArgs {
   readonly cwd: string;
   readonly stdout: Output;
   readonly stderr: Output;
-  /**
-   * Prompts to use when a flag is missing; `null` means non-interactive (defaults are used).
-   * Defaults to clack when stdin is a terminal.
-   */
+  // `null` means non-interactive: the defaults are used.
   readonly prompts?: Prompts | null;
-  /**
-   * Runs `git init`, the install and a Cloudflare project's `generate`; defaults to spawning the
-   * real commands.
-   */
   readonly exec?: Exec;
   readonly userAgent?: string | undefined;
   readonly templateRoot?: string;
@@ -165,10 +158,6 @@ const create = async (
   return EXIT_OK;
 };
 
-/**
- * `create-bounda [directory]` as a function: parses the arguments, asks what is missing, copies
- * the template, optionally runs `git init` and the install, and returns the exit code.
- */
 export const runCreate: RunCreateFunction = async ({
   argv,
   cwd,

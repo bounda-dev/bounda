@@ -65,8 +65,5 @@ export const createKeptDeadLetterStore: CreateKeptDeadLetterStoreFunction = () =
   return { store, entries: createStoreEntries(letters, (id: string) => id) };
 };
 
-/**
- * A dead-letter store held in memory.
- */
 export const createMemoryDeadLetterStore: CreateMemoryDeadLetterStoreFunction = () =>
   createKeptDeadLetterStore().store;

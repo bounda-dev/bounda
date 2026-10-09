@@ -34,14 +34,9 @@ const toClaimed = (row: Record<string, unknown>): ClaimedCommand => ({
   claimId: String(row.claim_id),
 });
 
-/**
- * Scheduler on one table. `claimDue` is a single `UPDATE ... WHERE dedupe_key IN (SELECT ...)
- * RETURNING`, so concurrent workers never claim the same command. `complete`, `fail` and `defer`
- * write only while the row still has the claim's `claim_id` and `revision`, otherwise release a
- * claim that a reschedule left behind, and reject with `ScheduledClaimLostError`, as `renew` does,
- * once the row no longer has the `claim_id`.
- */
 export const createSqliteScheduler: CreateSqliteSchedulerFunction = ({ db, table }) => {
+  // A fenced write that matched nothing met either a reschedule, whose row still has the claim to
+  // release, or a row without the `claim_id`: then the claim is lost.
   const releaseUnless = async (
     fenced: readonly unknown[],
     claim: ScheduledClaim,
@@ -93,6 +88,7 @@ export const createSqliteScheduler: CreateSqliteSchedulerFunction = ({ db, table
         ],
       ),
     cancel: (dedupeKey) => db.run(`DELETE FROM ${table} WHERE "dedupe_key" = ?`, [dedupeKey]),
+    // One statement, so concurrent workers never claim the same command.
     claimDue: async ({ now, limit, leaseMs }) => {
       const nowIso = now.toISOString();
       const expiredBefore = new Date(now.getTime() - leaseMs).toISOString();

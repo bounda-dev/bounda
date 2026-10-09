@@ -1,9 +1,6 @@
 import { ConfigurationError } from "../contracts/errors.ts";
 import type { ImplementationModule, PortModules } from "../modules/port.ts";
 
-/**
- * The module whose ports are chosen: an aggregate or a read model, as the errors name it.
- */
 export interface PortOwner {
   readonly kind: "aggregate" | "read model";
   readonly name: string;
@@ -19,9 +16,7 @@ export const describeOwner: DescribeOwnerFunction = ({ kind, name }) =>
 export interface SelectImplementationsArgs {
   readonly owner: PortOwner;
   readonly implementations: PortModules;
-  /**
-   * The owner's entry of `ports` in the configuration: port to implementation name.
-   */
+  // The owner's entry of `ports` in the configuration: port to implementation name.
   readonly config: Readonly<Record<string, string>> | undefined;
 }
 
@@ -57,11 +52,6 @@ export const implementationNotFound: ImplementationNotFoundFunction = ({
     `${owner}, port "${port}": implementation "${chosen}" not found. Available: ${describeNames(options)}`,
   );
 
-/**
- * Picks one implementation module per port of an aggregate or a read model: what the
- * configuration names, or the only one there is. Anything else is a `ConfigurationError` that
- * names the owner, the port and the available options.
- */
 export const selectImplementations: SelectImplementationsFunction = ({
   owner,
   implementations,

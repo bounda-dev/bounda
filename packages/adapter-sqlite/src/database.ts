@@ -1,11 +1,6 @@
 import type { SqlDatabase, SqlExecutor } from "@bounda-dev/core/adapter/sql";
 import type { Client, InValue, ResultSet, Transaction } from "@libsql/client";
 
-/**
- * The libSQL client as the SQL helpers use it, plus write transactions. `write` runs one write
- * transaction at a time within the process, so it never waits on the engine's busy handler for
- * another transaction of its own; inside it, `raw` is the libSQL `Transaction`.
- */
 export type SqliteDatabase = SqlDatabase;
 
 export interface CreateSqliteDatabaseOptions {
@@ -95,6 +90,8 @@ export const createSqliteDatabase: CreateSqliteDatabaseFunction = (client, { loc
     db: {
       run: (sql, params) => outside(() => direct.run(sql, params)),
       all: (sql, params) => outside(() => direct.all(sql, params)),
+      // One write transaction at a time within the process, so it never waits on the engine's busy
+      // handler for another transaction of its own.
       write: (work) =>
         prepared(() =>
           serially(async () => {

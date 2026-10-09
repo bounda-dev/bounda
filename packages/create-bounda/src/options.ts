@@ -1,31 +1,20 @@
 import { basename, resolve } from "node:path";
 
-/**
- * Where the app keeps its events. `cloudflare` is not chosen: it comes with the `cloudflare`
- * framework, whose store is the Durable Object's own SQLite.
- */
 export type Database = "sqlite" | "postgresql" | "cloudflare";
-/**
- * How the app runs. `cloudflare` brings its own storage, so it takes no database.
- */
 export type Framework = "node" | "react-router" | "cloudflare";
 export type PackageManager = "pnpm" | "npm" | "yarn" | "bun";
 
+// `cloudflare` is never chosen as a database: it comes with the `cloudflare` framework, whose store
+// is the Durable Object's own SQLite.
 export const DATABASES: readonly Database[] = ["sqlite", "postgresql"];
 export const FRAMEWORKS: readonly Framework[] = ["node", "react-router", "cloudflare"];
 export const PACKAGE_MANAGERS: readonly PackageManager[] = ["pnpm", "npm", "yarn", "bun"];
 export const DEFAULT_DIRECTORY: string = "bounda-app";
 
-/**
- * Whether the prompt offers the `cloudflare` framework. It waited for
- * `@bounda-dev/adapter-cloudflare` to be on npm, so nobody would pick an option whose install
- * failed.
- */
+// Gates the `cloudflare` framework in the prompt: a framework whose package is not on npm yet stays
+// out, so nobody picks an option whose install fails.
 export const OFFER_CLOUDFLARE: boolean = true;
 
-/**
- * What the command line gave us; anything missing is asked for or defaulted.
- */
 export interface RawOptions {
   readonly directory?: string;
   readonly database?: string;
@@ -36,9 +25,6 @@ export interface RawOptions {
   readonly yes: boolean;
 }
 
-/**
- * Everything the scaffold needs, resolved.
- */
 export interface CreateOptions {
   readonly directory: string;
   readonly name: string;
@@ -53,9 +39,6 @@ export interface DetectPackageManagerFunction {
   (userAgent: string | undefined): PackageManager;
 }
 
-/**
- * The package manager that ran `create bounda`, from `npm_config_user_agent`; `npm` otherwise.
- */
 export const detectPackageManager: DetectPackageManagerFunction = (userAgent) => {
   const name = userAgent?.split("/")[0];
   return PACKAGE_MANAGERS.find((candidate) => candidate === name) ?? "npm";
@@ -67,10 +50,6 @@ export interface ProjectNameOfFunction {
   (directory: string): string;
 }
 
-/**
- * The package name for a directory: its base name, lower-cased, with anything npm rejects turned
- * into a dash. `.` gives the current directory's name.
- */
 export const projectNameOf: ProjectNameOfFunction = (directory) => {
   const candidate = basename(resolve(directory))
     .toLowerCase()
@@ -91,9 +70,7 @@ export interface ResolveOptionsArgs {
   readonly raw: RawOptions;
   readonly cwd: string;
   readonly userAgent: string | undefined;
-  /**
-   * Asks for what the flags did not say. `null` from a prompt means the user cancelled.
-   */
+  // `null` from a prompt means the user cancelled.
   readonly prompts: Prompts | null;
 }
 
@@ -110,11 +87,6 @@ const isFramework = (value: string | undefined): value is Framework =>
 const isPackageManager = (value: string | undefined): value is PackageManager =>
   PACKAGE_MANAGERS.some((candidate) => candidate === value);
 
-/**
- * Fills the options: flags first, then prompts (unless `--yes` or `prompts` is `null`), then
- * defaults. Throws on an invalid flag value, naming the accepted ones, and on a `--database`
- * given with the `cloudflare` framework.
- */
 export const resolveOptions: ResolveOptionsFunction = async ({ raw, cwd, userAgent, prompts }) => {
   if (raw.database !== undefined && !isDatabase(raw.database)) {
     throw new Error(`--database must be one of ${DATABASES.join(", ")}; got "${raw.database}"`);

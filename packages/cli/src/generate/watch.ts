@@ -8,32 +8,12 @@ export type WatchFunction = typeof watchDirectory;
 
 export interface WatchProjectArgs {
   readonly root: string;
-  /**
-   * The application directory under `root`. Defaults to `app`.
-   */
   readonly appDir?: string;
-  /**
-   * Runs once per burst of changes, after `debounceMs` of quiet. A rejection goes to `onError`
-   * and watching goes on.
-   */
   readonly onChange: () => Promise<void>;
   readonly onError?: (error: unknown) => void;
-  /**
-   * Called once the watcher is known to be listening: a change made from then on is seen.
-   */
   readonly onListening?: () => void;
-  /**
-   * Called instead of `onListening` when the watch gives up confirming it: the file system may
-   * not report changes here. Watching goes on.
-   */
   readonly onUnconfirmed?: () => void;
-  /**
-   * Quiet time after the last change before `onChange` runs. Defaults to 100 ms.
-   */
   readonly debounceMs?: number;
-  /**
-   * What the quiet time and the cookie's retries are measured on. Defaults to the wall clock.
-   */
   readonly clock?: Clock;
   readonly signal: AbortSignal;
   readonly watch?: WatchFunction;
@@ -50,14 +30,6 @@ const COOKIE_ATTEMPTS = 20;
 const isGenerated = (fileName: string | Buffer | null): boolean =>
   typeof fileName === "string" && isInGenerated(fileName);
 
-/**
- * Watches the application directory and calls `onChange` after each burst of changes to user
- * modules, ignoring `+types` and `.bounda`. The operating system may start listening late and
- * miss earlier changes (FSEvents on macOS does), so the watch writes a cookie file into the
- * directory until it hears it back, then removes it and calls `onListening`, or `onUnconfirmed`
- * once it gives up.
- * Resolves when the signal aborts; rejects when the watcher, or writing the cookie, fails.
- */
 export const watchProject: WatchProjectFunction = async ({
   root,
   appDir = "app",
@@ -85,6 +57,8 @@ export const watchProject: WatchProjectFunction = async ({
       running = running.then(onChange).catch(onError);
     });
   };
+  // The operating system may start listening late and miss earlier changes (FSEvents on macOS
+  // does), so a cookie file is written into the directory until the watch hears it back.
   const listen = async (): Promise<boolean> => {
     const path = join(directory, cookie);
     try {

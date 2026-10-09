@@ -9,10 +9,6 @@ import { type Deadline, deadlineAt, reachedKey, TIMEOUT_DEADLINE } from "./deadl
  */
 export type ProcessStatus = "started" | "completed" | "failed" | "timed_out";
 
-/**
- * The lifecycle event types a process stream holds. They are system events: replayable, visible,
- * never fed to aggregate `evolve` functions.
- */
 export const PROCESS_EVENTS: {
   readonly started: "ProcessStarted";
   readonly handled: "ProcessHandled";

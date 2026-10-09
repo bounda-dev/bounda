@@ -36,8 +36,5 @@ export interface StreamIdFunction {
   (identity: StreamIdentity): string;
 }
 
-/**
- * Builds the canonical stream id for an aggregate.
- */
 export const streamId: StreamIdFunction = ({ aggregateType, aggregateId }) =>
   `${aggregateType}:${aggregateId}`;

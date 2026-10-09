@@ -1,6 +1,3 @@
-/**
- * The event or command type name derived from a registry key: `orderPlaced` → `OrderPlaced`.
- */
 export type TypeNameOf<Key> = Key extends string ? Capitalize<Key> : never;
 
 export type CapitalizeFunction = <Name extends string>(name: Name) => Capitalize<Name>;
@@ -64,14 +61,9 @@ export interface ToKebabCaseFunction {
 export const toKebabCase: ToKebabCaseFunction = (name) =>
   name.replace(/[A-Z]/g, (character) => `-${character.toLowerCase()}`);
 
-/**
- * Flattens an intersection so hovers show one object type instead of `A & B`.
- */
+// Flattens an intersection so hovers show one object type instead of `A & B`.
 export type Simplify<T> = { [K in keyof T]: T[K] } & {};
 
-/**
- * Turns a union of object types into their intersection.
- */
 export type UnionToIntersection<U> = (U extends unknown ? (x: U) => void : never) extends (
   x: infer I,
 ) => void

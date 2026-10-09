@@ -36,9 +36,6 @@ export interface IsCloudflareDefinitionFunction {
   (value: unknown): value is CloudflareDefinition;
 }
 
-/**
- * Whether a configured adapter is `cloudflare()`.
- */
 export const isCloudflareDefinition: IsCloudflareDefinitionFunction = (
   value,
 ): value is CloudflareDefinition =>
@@ -47,7 +44,4 @@ export const isCloudflareDefinition: IsCloudflareDefinitionFunction = (
   Reflect.get(value, "kind") === "bounda-adapter" &&
   Reflect.get(value, "name") === "cloudflare";
 
-/**
- * The table prefix `cloudflare()` uses when none is given.
- */
 export const DEFAULT_TABLE_PREFIX: string = "bounda_";

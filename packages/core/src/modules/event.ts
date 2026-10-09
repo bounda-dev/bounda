@@ -3,20 +3,13 @@ import type { TypeNameOf } from "./naming.ts";
 import { capitalize } from "./naming.ts";
 import type { HasPayload, PayloadFunction, PayloadInputOf, PayloadOf } from "./payload.ts";
 
-/**
- * The shape of an event module: an optional `payload` schema and `begin`, `evolve` or both. Each
- * returns the state fields the event sets, merged shallowly over the state. `begin` opens the
- * aggregate, from the event alone; `evolve` folds a later event into the state.
- */
 export interface EventModule {
   readonly payload?: PayloadFunction;
   readonly begin?: (args: never) => object;
   readonly evolve?: (args: never) => object;
 }
 
-/**
- * The events of one aggregate, keyed by their camelCase name.
- */
+// Keyed by the event's camelCase name.
 export type EventModules = Readonly<Record<string, EventModule>>;
 
 /**
@@ -87,10 +80,6 @@ export type CreateEventBuildersFunction = <Events extends EventModules>(
   events: Events,
 ) => EventBuilders<Events>;
 
-/**
- * Builds the `events` object for an aggregate from its event modules. Payloads are validated
- * later, when the command pipeline persists the events.
- */
 export const createEventBuilders: CreateEventBuildersFunction = <Events extends EventModules>(
   events: Events,
 ) => {

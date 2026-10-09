@@ -5,17 +5,10 @@ import { streamId } from "../contracts/event.ts";
 import { toJson } from "./json-copy.ts";
 
 export interface CreateMemoryEventStoreArgs {
-  /**
-   * Called after every append with the position of the last event stored.
-   */
+  // Receives the position of the last event stored.
   readonly onAppend?: (position: number) => void;
 }
 
-/**
- * The in-memory event store, with `appendAll`: several batches appended in one synchronous run,
- * in order, every version checked before anything is written. What the memory adapter's
- * `transact` commits with.
- */
 export interface MemoryEventStore extends EventStore {
   appendAll(batches: readonly AppendArgs[]): Promise<readonly AppendResult[]>;
 }
@@ -43,14 +36,11 @@ const restore = ({ payload, metadata, ...rest }: Kept): StoredEvent => ({
   metadata: JSON.parse(metadata),
 });
 
-/**
- * An event store held in memory. Appends are atomic because nothing yields between the version
- * check and the write.
- */
 export const createMemoryEventStore: CreateMemoryEventStoreFunction = ({ onAppend } = {}) => {
   const streams = new Map<string, Kept[]>();
   const global: Kept[] = [];
 
+  // Atomic because nothing yields between the version checks and the writes.
   const appendAll = async (batches: readonly AppendArgs[]): Promise<readonly AppendResult[]> => {
     const versions = new Map<string, number>();
     for (const { aggregateType, aggregateId, expectedVersion, events } of batches) {

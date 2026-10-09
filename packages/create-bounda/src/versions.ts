@@ -1,10 +1,7 @@
 import { readFileSync } from "node:fs";
 
-/**
- * Versions written into the generated `package.json`. The Bounda packages share the version of
- * `create-bounda` itself, since they are released together.
- */
 export interface Versions {
+  // The version of `create-bounda` itself: the Bounda packages are released together.
   readonly bounda: string;
   readonly typescript: string;
   readonly vitest: string;
@@ -15,11 +12,9 @@ export interface Versions {
   readonly isbot: string;
   readonly typesReact: string;
   readonly wrangler: string;
-  /**
-   * Vitest for a Cloudflare project, which `@cloudflare/vitest-plugin` keeps on an older major.
-   * It is the version of `@vitest/runner`, released in lockstep with Vitest, taken from the
-   * `cloudflare` catalog because this package cannot depend on two versions of `vitest`.
-   */
+  // `@cloudflare/vitest-plugin` keeps Vitest on an older major. This is the version of
+  // `@vitest/runner`, released in lockstep with Vitest, from the `cloudflare` catalog, because this
+  // package cannot depend on two versions of `vitest`.
   readonly cloudflareVitest: string;
   readonly cloudflareVitestPlugin: string;
 }
@@ -87,10 +82,6 @@ export interface CurrentVersionsFunction {
   (): Versions;
 }
 
-/**
- * The versions for a project created by this build of `create-bounda`. Outside the workspace the
- * manifest already carries resolved versions, so the catalog is never read.
- */
 export const currentVersions: CurrentVersionsFunction = () =>
   versionsFrom({
     manifest: JSON.parse(read("../package.json")) as Manifest,
