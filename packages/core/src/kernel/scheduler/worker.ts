@@ -4,7 +4,7 @@ import type {
   NewDeadLetter,
 } from "../../adapter/storage/dead-letter-store.ts";
 import type { ClaimedCommand, ScheduledCommand } from "../../adapter/storage/scheduler.ts";
-import type { ResolvedConfig } from "../../config/types.ts";
+import type { ResolvedConfig, ResolvedRetryConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import { ScheduledClaimLostError } from "../../contracts/errors.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
@@ -103,7 +103,6 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   const mutex = createMutex();
   let cancelWait: (() => void) | undefined;
   let running = false;
-  const defaultRetry = config.runtime.policies.retry;
   const timeoutMs = Math.max(
     ...[config.runtime, ...Object.values(config.runtime.overrides)].flatMap((runtime) => [
       runtime.commands.timeoutMs,
@@ -124,6 +123,18 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
 
   const deadlineOf = (entry: ScheduledCommand): ProcessDeadlinePayload =>
     entry.command.payload as ProcessDeadlinePayload;
+
+  const aggregateOf = (entry: ScheduledCommand): string | undefined =>
+    aggregates.commandsByType[entry.command.type]?.aggregate.name;
+
+  const retryOf = (entry: ScheduledCommand): ResolvedRetryConfig => {
+    if (delayedPolicies.isDelayedPolicy(entry)) return delayedPolicies.retryOf(entry);
+    if (isDeadline(entry)) return processes.retryOf(deadlineOf(entry).process);
+    const aggregate = aggregateOf(entry);
+    return aggregate === undefined
+      ? config.runtime.policies.retry
+      : config.forAggregate(aggregate).policies.retry;
+  };
 
   const settled = (
     entry: ClaimedCommand,
@@ -148,7 +159,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     error: unknown,
     attempts: number,
   ): Promise<void> => {
-    const aggregateType = aggregates.commandsByType[entry.command.type]?.aggregate.name;
+    const aggregateType = aggregateOf(entry);
     if (aggregateType === undefined) return;
     await appendSystemEvent({
       eventStore: unit.eventStore,
@@ -199,7 +210,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       handler: entry.command.type,
       eventId: entry.dedupeKey,
       eventType: entry.command.type,
-      aggregateType: aggregates.commandsByType[entry.command.type]?.aggregate.name ?? "",
+      aggregateType: aggregateOf(entry) ?? "",
       aggregateId: entry.command.aggregateId,
       errorType: reason,
       errorMessage: details.message,
@@ -307,11 +318,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       }
       const attempts = entry.attempts + 1;
       const kind = classifyFailure(error);
-      const retry = delayedPolicies.isDelayedPolicy(entry)
-        ? delayedPolicies.retryOf(entry)
-        : isDeadline(entry)
-          ? processes.retryOf(deadlineOf(entry).process)
-          : defaultRetry;
+      const retry = retryOf(entry);
       if (kind === "retriable" && retry.strategy !== "none" && attempts < retry.maxAttempts) {
         const retryAt = new Date(
           clock.now().getTime() + retryDelayMs({ retry, attempt: attempts }),

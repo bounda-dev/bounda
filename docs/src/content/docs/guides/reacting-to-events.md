@@ -274,8 +274,8 @@ run fails with it, and the runtime retries it or dead-letters it (see
 ## Retries and timeouts
 
 A policy or process run that fails runs again, waiting longer each time, up to three runs in all,
-before it becomes a dead letter; [Configuration](/reference/configuration/#retry) has every setting
-and its default.
+before it becomes a dead letter, and so does a command scheduled with `delay`;
+[Configuration](/reference/configuration/#retry) has every setting and its default.
 
 Four different things are called a timeout, and it is worth keeping them apart:
 
@@ -296,7 +296,8 @@ JavaScript cannot stop a handler itself, so a reaction that runs out of time kee
 it returns: pass `signal` to what it calls outside (`fetch(url, { signal })`) and that stops too.
 
 Each can be set per app under `runtime`, or for one aggregate under `runtime.overrides`; a policy
-whose command can never succeed on a second try takes `retry: { strategy: "none" }`.
+whose command can never succeed on a second try takes `retry: { strategy: "none" }`, which stops
+retrying the commands scheduled for that aggregate too.
 [Configuration](/reference/configuration/#runtime) has every key and default, `maxChainDepth`
 included, which stops two policies that answer each other.
 

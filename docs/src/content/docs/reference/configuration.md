@@ -56,8 +56,10 @@ types refuse; wrap it with `asDuration(process.env.X ?? "1m")`, which checks it.
 - **`policies.timeout`**, default `"30s"`. How long one run of a policy handler may take. Past it
   the run is abandoned: its commands still running stop, later ones are refused with
   `REACTION_ABANDONED`, and its `signal` aborts.
-- **`policies.retry`**, default exponential, 3 attempts, 1 s to 30 s. How a policy run that failed
-  is retried; the one in `runtime` is also used by scheduled commands. See [retry](#retry).
+- **`policies.retry`**, default exponential, 3 attempts, 1 s to 30 s. How a failed policy run, or
+  a failed command scheduled with `delay`, is retried. Under `overrides`, a policy run takes the
+  setting of the aggregate the policy belongs to, and a scheduled command that of the aggregate it
+  is for. See [retry](#retry).
 - **`policies.maxChainDepth`**, default `25`. How many hops a chain of reactions may take from the
   command that started it before a command is refused with `CHAIN_DEPTH_EXCEEDED`. Reaching it
   usually means two policies answer each other.
@@ -126,7 +128,8 @@ same way again. See [errors](/reference/errors/).
 runtime: {
   policies: { retry: { strategy: "exponential", maxAttempts: 5, maxDelay: "2m" } },
   overrides: {
-    // a policy whose command can never succeed on a second try
+    // a policy whose command can never succeed on a second try; the commands scheduled for
+    // `order` are not retried either
     order: { policies: { retry: { strategy: "none" } } },
   },
 },
