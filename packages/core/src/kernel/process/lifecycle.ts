@@ -2,7 +2,7 @@ import type { NewDeadLetter } from "../../adapter/ports/dead-letter-store.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
-import { type Deadline, reachedKey } from "./deadlines.ts";
+import { type Deadline, deadlineAt, reachedKey, TIMEOUT_DEADLINE } from "./deadlines.ts";
 
 /**
  * Status of a process instance, derived from its lifecycle events.
@@ -74,9 +74,16 @@ export interface ProcessInstance {
    */
   readonly reached: ReadonlySet<string>;
   /**
-   * The correlation id of the event that started the process, which its deadlines carry on.
+   * The correlation id of the event that started the process, carried on by what the runner
+   * writes for the instance with no event to point at, such as a resume.
    */
   readonly correlationId: string | null;
+  /**
+   * What reaching each deadline is caused by, by `reachedKey`: the lifecycle event whose step set
+   * the field to that moment, `ProcessStarted` for the timeout. A step that leaves the moment as it
+   * was is not its cause.
+   */
+  readonly deadlineCauses: ReadonlyMap<string, DeadlineCause>;
   /**
    * The events parked while the instance was failed and not handled since, oldest first.
    */
@@ -102,8 +109,11 @@ export interface ProcessFailure {
   readonly letterId?: string;
 }
 
+export type DeadlineCause = Pick<CausationContext, "correlationId" | "causationId">;
+
 export interface FoldProcessArgs {
   readonly initialState: object;
+  readonly deadlineFields: readonly string[];
   readonly events: readonly StoredEvent[];
 }
 
@@ -116,11 +126,16 @@ const stateOf = (event: StoredEvent, fallback: object): object => {
   return payload.state ?? fallback;
 };
 
+const causeOf = (event: StoredEvent): DeadlineCause => ({
+  correlationId: event.metadata.correlationId,
+  causationId: event.id,
+});
+
 /**
  * A failed instance stays failed until `ProcessResumed`; a `ProcessHandled` takes its event off
  * the parked ones.
  */
-export const foldProcess: FoldProcessFunction = ({ initialState, events }) => {
+export const foldProcess: FoldProcessFunction = ({ initialState, deadlineFields, events }) => {
   const handled = new Set<string>();
   const reached = new Set<string>();
   const parked = new Map<string, ParkedEvent>();
@@ -130,16 +145,39 @@ export const foldProcess: FoldProcessFunction = ({ initialState, events }) => {
   let state = initialState;
   let timeoutAt: string | null = null;
   let correlationId: string | null = null;
+  const deadlineCauses = new Map<string, DeadlineCause>();
+  const moments = new Map<string, string>();
+  const evolve = (event: StoredEvent): void => {
+    state = stateOf(event, state);
+    for (const field of deadlineFields) {
+      const at = deadlineAt(state, field);
+      if (at === null) {
+        moments.delete(field);
+        continue;
+      }
+      const key = reachedKey({ field, at });
+      if (moments.get(field) !== key) {
+        moments.set(field, key);
+        deadlineCauses.set(key, causeOf(event));
+      }
+    }
+  };
   for (const event of events) {
     switch (event.type) {
       case PROCESS_EVENTS.started: {
-        state = stateOf(event, state);
+        evolve(event);
         timeoutAt = (event.payload as { readonly timeoutAt?: string }).timeoutAt ?? null;
+        if (timeoutAt !== null) {
+          deadlineCauses.set(
+            reachedKey({ field: TIMEOUT_DEADLINE, at: timeoutAt }),
+            causeOf(event),
+          );
+        }
         correlationId = event.metadata.correlationId;
         break;
       }
       case PROCESS_EVENTS.handled: {
-        state = stateOf(event, state);
+        evolve(event);
         const payload = event.payload as { readonly eventId?: string };
         if (payload.eventId !== undefined) {
           handled.add(payload.eventId);
@@ -149,7 +187,7 @@ export const foldProcess: FoldProcessFunction = ({ initialState, events }) => {
         break;
       }
       case PROCESS_EVENTS.deadlineReached: {
-        state = stateOf(event, state);
+        evolve(event);
         reached.add(reachedKey(event.payload as { readonly field: string; readonly at: string }));
         break;
       }
@@ -157,7 +195,7 @@ export const foldProcess: FoldProcessFunction = ({ initialState, events }) => {
         status = "completed";
         break;
       case PROCESS_EVENTS.timedOut: {
-        state = stateOf(event, state);
+        evolve(event);
         status = "timed_out";
         const payload = event.payload as { readonly followUps?: readonly string[] };
         for (const eventId of payload.followUps ?? []) followUps.add(eventId);
@@ -206,6 +244,7 @@ export const foldProcess: FoldProcessFunction = ({ initialState, events }) => {
     timeoutAt,
     reached,
     correlationId,
+    deadlineCauses,
     parked: [...parked.values()],
     followUps,
     failure,
@@ -237,13 +276,35 @@ export interface InstanceContextFunction {
 }
 
 /**
- * For what the runner writes on its own for an instance, such as a deadline or a resume.
+ * For what the runner writes on its own for an instance with no event to point at, such as a
+ * resume or a failed deadline.
  */
 export const instanceContext: InstanceContextFunction = (process, instanceId, instance) => ({
   correlationId: instance.correlationId ?? instanceId,
   causationId: `${processAggregateType(process.name)}:${instanceId}`,
   depth: 0,
 });
+
+export interface DeadlineContextFunction {
+  (
+    process: ProcessRuntime,
+    instanceId: string,
+    instance: ProcessInstance,
+    due: Deadline,
+  ): CausationContext;
+}
+
+/**
+ * For reaching a deadline: under the correlation and caused by the lifecycle event that set it, as
+ * a scheduled command is by what scheduled it. Its depth starts again, so a deadline set again at
+ * every step never reaches `maxChainDepth`.
+ */
+export const deadlineContext: DeadlineContextFunction = (process, instanceId, instance, due) => {
+  const cause = instance.deadlineCauses.get(reachedKey(due));
+  return cause === undefined
+    ? instanceContext(process, instanceId, instance)
+    : { ...cause, depth: 0 };
+};
 
 export type FailedOn =
   | { readonly eventId: string }

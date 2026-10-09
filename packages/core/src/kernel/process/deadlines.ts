@@ -75,6 +75,15 @@ export interface Deadline {
   readonly at: string;
 }
 
+export interface DeadlineAtFunction {
+  (state: object, field: string): string | null;
+}
+
+export const deadlineAt: DeadlineAtFunction = (state, field) => {
+  const at = (state as Readonly<Record<string, unknown>>)[field];
+  return typeof at === "string" ? at : null;
+};
+
 export interface ReachedKeyFunction {
   (deadline: Deadline): string;
 }
@@ -100,11 +109,10 @@ export interface NextDeadlineFunction {
  * its timeout, that it has not reached yet; the field name breaks a tie.
  */
 export const nextDeadline: NextDeadlineFunction = ({ fields, state, timeoutAt, reached }) => {
-  const values = state as Readonly<Record<string, unknown>>;
   const candidates: Deadline[] = [
     ...fields.flatMap((field) => {
-      const at = values[field];
-      return typeof at === "string" ? [{ field, at }] : [];
+      const at = deadlineAt(state, field);
+      return at === null ? [] : [{ field, at }];
     }),
     ...(timeoutAt === null ? [] : [{ field: TIMEOUT_DEADLINE, at: timeoutAt }]),
   ].filter((candidate) => !reached.has(reachedKey(candidate)));

@@ -157,8 +157,9 @@ How deadlines behave:
 - **A failure is handled like an event handler's**: it is retried with the process's back-off, and
   one that fails for good or runs out of attempts fails the process and is dead-lettered. Losing a
   race with another write to the instance does not count as an attempt.
-- **The commands a deadline sends start a new chain**, so a reminder repeated every day for months
-  never reaches `maxChainDepth`.
+- **The commands a deadline sends count their depth from 0**, so a reminder repeated every day for
+  months never reaches `maxChainDepth`. Their causation still leads back to the step that set the
+  deadline, under that step's correlation.
 
 The time a process may stay open is a deadline too, `timeout`, set from `config.timeout` when the
 process starts. Its handler is `at-timeout.ts`, which receives the same arguments, and reaching it

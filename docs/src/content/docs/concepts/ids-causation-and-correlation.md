@@ -23,7 +23,8 @@ v7 by default), its aggregate's type and id, its `version` in the aggregate's st
   the event the reaction ran for, so an event leads to the one before it; for a command from
   outside it is the command itself.
 - `commandId`: the command that wrote the event. The events the runtime writes itself have none.
-- `depth`: how many reactive hops separate the event from the request. A command dispatched past
+- `depth`: how many reactive hops separate the event from the request, counted again from 0 at a
+  process deadline. A command dispatched past
   `runtime.policies.maxChainDepth` is refused with `CHAIN_DEPTH_EXCEEDED`, so a policy that
   feeds itself cannot loop for ever.
 - `schemaVersion`: the shape the payload was written in, which [upcasters](/guides/changing-events/)
@@ -47,9 +48,14 @@ they write keep that causation, so they point at the event, not at a command the
 held. A process's
 own lifecycle events (`ProcessStarted`, `ProcessHandled`, `ProcessCompleted`) point straight at
 the event they handled. A deadline has no event to react to, so its commands are caused by the
-lifecycle event that records it (`ProcessDeadlineReached` or `ProcessTimedOut`), under the
-correlation of the event that started the instance. A scheduled command keeps the correlation
-and causation it was scheduled with, whenever it runs.
+lifecycle event that records it (`ProcessDeadlineReached` or `ProcessTimedOut`). That lifecycle
+event takes its correlation and its causation from the step that set the deadline to the moment
+it came due: the `ProcessHandled` or `ProcessDeadlineReached` whose handler returned it, or
+`ProcessStarted` for the timeout. A step that leaves the moment as it was is not its cause. So a
+deadline runs under the request that set it, and one that a later request moves runs under that
+one, as a scheduled command keeps the correlation and causation it was scheduled with, whenever
+it runs. Only its depth starts again, so a deadline set again at every step never reaches
+`maxChainDepth`.
 
 In the [storefront example](/examples/storefront/) one `placeOrder` gives this chain, every
 event under the command's id as correlation:
@@ -63,7 +69,8 @@ event under the command's id as correlation:
 
 Reading it back is a filter on `metadata.correlationId`, ordered by `position`, and walking from
 an event to its cause is a lookup of the event whose `id` is its `causationId`, up to the event
-whose `causationId` is its own `commandId`, which a request's command wrote; the metadata is stored as JSON, `jsonb` on PostgreSQL. In traces, every `bounda.command`, `bounda.policy` and
+whose `causationId` is its own `commandId`, which a request's command wrote, or to a dead letter
+for what a retry from one wrote; the metadata is stored as JSON, `jsonb` on PostgreSQL. In traces, every `bounda.command`, `bounda.policy` and
 `bounda.process` span carries `bounda.correlation_id`, and a command's span adds
 `bounda.causation_id`: the event the command reacted to, or the command itself when it came from
 outside (see [Observability](/reference/observability/)).
@@ -162,9 +169,9 @@ Router sense, is the host's: the place where a request dispatches a command.
 
 - **Commands are not stored.** An event names its command by `commandId`; what else is known
   about the command is on its span.
-- **Not every cause is an event.** What a process writes with no event to react to, a deadline
-  reached, a timeout, a resume or a deadline that fails, points at the instance's stream
-  (`process:<name>:<id>`), and a retry from a dead letter at the letter.
+- **Not every cause is an event.** What a process writes with no event to react to, a resume
+  or a deadline that fails, points at the instance's stream (`process:<name>:<id>`), and a retry
+  from a dead letter at the letter.
 - **No query by correlation or causation.** There is no API for either, and no index on the
   metadata column.
 - **One request is not one trace.** A policy runs in a later pass, so its span starts a new

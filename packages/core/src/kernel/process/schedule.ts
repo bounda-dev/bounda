@@ -7,7 +7,7 @@ import {
   PROCESS_DEADLINE_COMMAND,
   type ProcessDeadlinePayload,
 } from "./deadlines.ts";
-import { instanceContext, type ProcessInstance } from "./lifecycle.ts";
+import { deadlineContext, type ProcessInstance } from "./lifecycle.ts";
 import type { ProcessUnits } from "./units.ts";
 
 export interface PendingDeadlineFunction {
@@ -79,7 +79,7 @@ export const createDeadlineSchedule: CreateDeadlineScheduleFunction = ({ storage
         } satisfies ProcessDeadlinePayload,
       },
       executeAt: new Date(next.at),
-      context: instanceContext(process, instanceId, instance),
+      context: deadlineContext(process, instanceId, instance, next),
       keepTimingOfSameCommand: true,
     });
   },

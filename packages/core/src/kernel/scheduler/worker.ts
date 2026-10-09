@@ -268,7 +268,6 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
         } else if (isDeadline(entry)) {
           await processes.handleDeadline({
             payload: deadlineOf(entry),
-            context: entry.context,
             within: unit,
           });
         } else {

@@ -760,6 +760,10 @@ describe("events of a failed process", () => {
     await deadLetters.retry((await deadLetters.list())[0]?.id ?? "");
     expect(runs.slice(1)).toEqual([expect.stringMatching(/^paid:/), "nudge", "paid:later"]);
     expect((await types()).at(-1)).toBe(PROCESS_EVENTS.resumed);
+    const { events } = await harness.storage.eventStore.load(stream);
+    expect(
+      events.find((event) => event.type === PROCESS_EVENTS.deadlineReached)?.metadata,
+    ).toMatchObject({ causationId: events[1]?.id });
   });
 
   it("let a failure through when a deploy removed its handler, and resume", async () => {
@@ -1846,7 +1850,6 @@ describe("an event handled while a deadline writes to its instance", () => {
   const reachDeadline = (context: Context) => () =>
     context.harness.processes.handleDeadline({
       payload: { process: "order.tally", aggregateId: "o-1" },
-      context: { correlationId: "c", causationId: "c", depth: 0 },
     });
 
   it("runs again on the instance as it now is, without spending an attempt", async () => {

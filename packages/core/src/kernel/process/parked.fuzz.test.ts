@@ -7,7 +7,7 @@ import type { Registry } from "../../modules/registry.ts";
 import { createDeadLetters } from "../dead-letters/dead-letters.ts";
 import { createReactiveHarness } from "../reactive-harness.ts";
 import { type OrderProcessConfigArgs, orderAggregateEntry } from "../test-support.ts";
-import { foldProcess, PROCESS_EVENTS } from "./lifecycle.ts";
+import { type FoldProcessArgs, foldProcess, PROCESS_EVENTS } from "./lifecycle.ts";
 
 interface LedgerState {
   readonly seen: readonly string[];
@@ -96,6 +96,9 @@ const random = (seed: number): (() => number) => {
     return ((t ^ (t >>> 14)) >>> 0) / 4_294_967_296;
   };
 };
+
+const fold = (args: Omit<FoldProcessArgs, "deadlineFields">) =>
+  foldProcess({ ...args, deadlineFields: [] });
 
 const ORDERS = ["o-1", "o-2"];
 const seen = new Map<string, number>();
@@ -252,7 +255,7 @@ const run = async (seed: number): Promise<void> => {
           aggregateType: "process:order.ledger",
           aggregateId: order,
         });
-        const instance = foldProcess({ initialState: {}, events });
+        const instance = fold({ initialState: {}, events });
         const blocking = instance.failure?.letterId;
         const letter =
           blocking === undefined ? null : await harness.storage.deadLetterStore.get(blocking);
@@ -312,7 +315,7 @@ const run = async (seed: number): Promise<void> => {
       for (const event of events) tally(event.type);
       events.forEach((event, index) => {
         if (event.type === PROCESS_EVENTS.resumed) {
-          const before = foldProcess({ initialState: {}, events: events.slice(0, index) });
+          const before = fold({ initialState: {}, events: events.slice(0, index) });
           expect(before.parked, `${where}: ${order} resumed with events parked`).toEqual([]);
         }
         const { letterId } = event.payload as { letterId?: string };
@@ -322,7 +325,7 @@ const run = async (seed: number): Promise<void> => {
         .filter((event) => event.type === PROCESS_EVENTS.handled)
         .map((event) => (event.payload as { eventId?: string }).eventId)
         .filter((id) => id?.startsWith("pay-") === true || id === template.id);
-      const instance = foldProcess({ initialState: {}, events });
+      const instance = fold({ initialState: {}, events });
       const blocking = instance.failure?.letterId;
       const abandoned =
         instance.status === "failed" &&
