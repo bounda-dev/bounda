@@ -8,6 +8,7 @@ import { memory } from "../../memory/index.ts";
 import { type FakeTelemetry, installFakeTelemetry } from "../telemetry-fake.ts";
 import { createRecordingLogger } from "../test-support.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
+import { TIMEOUT_DEADLINE } from "./deadlines.ts";
 import { blockedOn, createProcessFailures, deadlineSubject, drainFailureType } from "./failures.ts";
 import type { ProcessInstance } from "./lifecycle.ts";
 
@@ -206,6 +207,10 @@ describe("deadlineSubject", () => {
       aggregateType: "process:orderPayment",
       aggregateId: "o-1",
     });
+  });
+
+  it("names the timeout's letter deadline:timeout, which bounda dead-letters list relies on", () => {
+    expect(deadlineSubject(orderPayment, "o-1", TIMEOUT_DEADLINE).id).toBe("deadline:timeout");
   });
 });
 
