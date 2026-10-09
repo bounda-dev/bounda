@@ -519,6 +519,22 @@ describe.skipIf(container === null)("postgresql adapter", () => {
     await Promise.all(Array.from({ length: 4 }, () => openReadModel(instance(), "people", v2)));
   });
 
+  it("opens a store whose tables already exist without waiting for the schema's lock", async () => {
+    const schema = `held_${run}`;
+    const fields = { id: f.string().primaryKey() };
+    await openStorage(fresh({ schema, tablePrefix: "bounda_" }));
+    const adapter = fresh({ schema, tablePrefix: "bounda_" });
+    await openReadModel(adapter, "people", fields);
+    const holder = postgres(url, { max: 1, onnotice: () => undefined });
+    try {
+      await holder`SELECT pg_advisory_lock(hashtext(${`bounda:${schema}:schema`}))`;
+      await openStorage(adapter);
+      await openReadModel(adapter, "people", fields);
+    } finally {
+      await holder.end({ timeout: 5 });
+    }
+  }, 10_000);
+
   it("shares one pool between storage and read models until the last close", async () => {
     const adapter = fresh();
     const storage = await adapter.createStorage({ logger: silentLogger });

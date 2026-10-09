@@ -22,7 +22,7 @@ import {
 import type { Sql } from "postgres";
 import { createPostgresqlCheckpointStore } from "./checkpoint-store.ts";
 import type { PostgresqlDatabase } from "./database.ts";
-import { checkpointTableStatement, inSchema } from "./schema.ts";
+import { checkpointTableStatement, inSchema, relationsExist } from "./schema.ts";
 
 /**
  * The table's columns with what its indexes say of them; none when the table does not exist.
@@ -106,26 +106,39 @@ export const openPostgresqlReadModel: OpenPostgresqlReadModelFunction = async <R
 }: OpenPostgresqlReadModelArgs): Promise<ReadModelPorts<Row, Sql>> => {
   const table = tableNameFor({ prefix: tablePrefix, readModel: name });
   const columns = columnsOf({ readModel: name, fields, dialect: postgresqlDialect });
-  await inSchema({
-    db,
-    schema,
-    work: async (tx) => {
-      const existing = await existingColumns(tx, schema, table);
-      const statements =
+  const plan = async (executor: SqlExecutor) => {
+    const existing = await existingColumns(executor, schema, table);
+    return {
+      existing,
+      statements:
         existing.length === 0
           ? createTableStatements({ table, columns })
-          : evolveTableStatements({ readModel: name, table, columns, existing });
-      for (const statement of statements) await tx.run(statement, []);
-      if (existing.length > 0 && statements.length > 0) {
-        logger.info("read model table evolved", {
-          readModel: name,
-          table,
-          added: statements.length,
-        });
-      }
-      await tx.run(checkpointTableStatement(checkpoints), []);
-    },
-  });
+          : evolveTableStatements({ readModel: name, table, columns, existing }),
+    };
+  };
+  const checkpointsTable = checkpoints.slice(1, -1);
+  const planned = await plan(db);
+  if (
+    planned.statements.length > 0 ||
+    !(await relationsExist({ db, schema, names: [checkpointsTable] }))
+  ) {
+    await inSchema({
+      db,
+      schema,
+      work: async (tx) => {
+        const { existing, statements } = await plan(tx);
+        for (const statement of statements) await tx.run(statement, []);
+        if (existing.length > 0 && statements.length > 0) {
+          logger.info("read model table evolved", {
+            readModel: name,
+            table,
+            added: statements.length,
+          });
+        }
+        await tx.run(checkpointTableStatement(checkpoints), []);
+      },
+    });
+  }
   return {
     table: createSqlTable<Row>({
       readModel: name,
