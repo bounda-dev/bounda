@@ -27,17 +27,24 @@ Handlers are declared per aggregate: a policy lives under `app/domain/order/poli
 types come from that aggregate's events. But it is **fed from the global stream**, not from the
 aggregate. The distinction matters for everything below.
 
-<figure>
-  <img
-    src="/flow-light.svg"
-    alt="The app sends commands to command handlers in the domain, which decide from the state evolve folds from the aggregate's own stream and return events for the event store, in one global stream. After commit, and asynchronously, policies and processes in the domain follow the global stream and send new commands, and projections turn events into rows in tables, in the same database or their own. Query handlers read those rows to answer the app's queries"
-    class="dark:sl-hidden"
-  />
-  <img
-    src="/flow-dark.svg"
-    alt="The app sends commands to command handlers in the domain, which decide from the state evolve folds from the aggregate's own stream and return events for the event store, in one global stream. After commit, and asynchronously, policies and processes in the domain follow the global stream and send new commands, and projections turn events into rows in tables, in the same database or their own. Query handlers read those rows to answer the app's queries"
-    class="light:sl-hidden"
-  />
+<figure class="bounda-ledger">
+  <table>
+    <thead>
+      <tr><th scope="col">Position</th><th scope="col">Stream</th><th scope="col">Event</th><th scope="col">Checkpoint</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>004 207</td><td>customer/ada</td><td>CustomerRegistered</td><td></td></tr>
+      <tr><td>004 208</td><td>order/7f3a</td><td>OrderPlaced</td><td></td></tr>
+      <tr><td>004 209</td><td>payment/91c0</td><td>PaymentRequested</td><td>policies</td></tr>
+      <tr><td>004 210</td><td>order/7f3a</td><td>OrderPaid</td><td>processes</td></tr>
+      <tr><td>004 211</td><td>order/b2e1</td><td>OrderPlaced</td><td></td></tr>
+      <tr class="head"><td>004 212</td><td>payment/91c0</td><td>PaymentSettled</td><td>projection:<wbr />orders</td></tr>
+    </tbody>
+  </table>
+  <figcaption>
+    Three aggregates' streams in one global order, as they were committed. Each subscriber has
+    read up to its checkpoint; the projection is at the head. The next event enters at the end.
+  </figcaption>
 </figure>
 
 ## Why a single order

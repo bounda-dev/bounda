@@ -1,25 +1,12 @@
 ---
 title: Core concepts
-description: Every word the rest of the docs uses, one line each, and the picture that puts them together.
+description: Every word the rest of the docs uses, one line each.
 sidebar:
   order: 1
 ---
 
 Bounda uses the vocabulary of event sourcing and CQRS, each word for one thing. This page defines
 them in the order a request meets them; every other page assumes them.
-
-<figure>
-  <img
-    src="/flow-light.svg"
-    alt="The app sends commands to command handlers in the domain, which decide from the state evolve folds from the aggregate's own stream and return events for the event store, in one global stream. After commit, and asynchronously, policies and processes in the domain follow the global stream and send new commands, and projections turn events into rows in tables, in the same database or their own. Query handlers read those rows to answer the app's queries"
-    class="dark:sl-hidden"
-  />
-  <img
-    src="/flow-dark.svg"
-    alt="The app sends commands to command handlers in the domain, which decide from the state evolve folds from the aggregate's own stream and return events for the event store, in one global stream. After commit, and asynchronously, policies and processes in the domain follow the global stream and send new commands, and projections turn events into rows in tables, in the same database or their own. Query handlers read those rows to answer the app's queries"
-    class="light:sl-hidden"
-  />
-</figure>
 
 ## The write side
 
