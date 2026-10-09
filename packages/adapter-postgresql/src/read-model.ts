@@ -10,6 +10,7 @@ import {
   createSqlTable,
   createTableStatements,
   dropShadowTableStatements,
+  type ExistingColumn,
   evolveTableStatements,
   postgresqlDialect,
   rebuildTablesFor,
@@ -22,6 +23,43 @@ import type { Sql } from "postgres";
 import { createPostgresqlCheckpointStore } from "./checkpoint-store.ts";
 import type { PostgresqlDatabase } from "./database.ts";
 import { checkpointTableStatement } from "./schema.ts";
+
+/**
+ * The table's columns with what its indexes say of them; none when the table does not exist.
+ */
+const existingColumns = async (
+  db: SqlExecutor,
+  schema: string,
+  table: string,
+): Promise<readonly ExistingColumn[]> => {
+  const columns = await db.all(
+    `SELECT "column_name", "data_type" FROM information_schema.columns WHERE "table_schema" = $1 AND "table_name" = $2 ORDER BY "ordinal_position"`,
+    [schema, table],
+  );
+  if (columns.length === 0) return [];
+  const indexes = await db.all(
+    `SELECT a.attname AS "column", i.indisprimary AS "primary", i.indisunique AND i.indnatts = 1 AS "unique"
+     FROM pg_index i
+     JOIN pg_class c ON c.oid = i.indrelid
+     JOIN pg_namespace n ON n.oid = c.relnamespace
+     JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = i.indkey[0]
+     WHERE n.nspname = $1 AND c.relname = $2`,
+    [schema, table],
+  );
+  const facts = (name: string, fact: "primary" | "unique"): boolean =>
+    indexes.some((index) => index.column === name && index[fact] === true);
+  return columns.map((column) => {
+    const name = String(column.column_name);
+    const primaryKey = facts(name, "primary");
+    return {
+      name,
+      sqlType: String(column.data_type),
+      primaryKey,
+      unique: facts(name, "unique") && !primaryKey,
+      indexed: indexes.some((index) => index.column === name),
+    };
+  });
+};
 
 export interface OpenPostgresqlReadModelArgs {
   readonly db: PostgresqlDatabase;
@@ -68,12 +106,7 @@ export const openPostgresqlReadModel: OpenPostgresqlReadModelFunction = async <R
 }: OpenPostgresqlReadModelArgs): Promise<ReadModelPorts<Row, Sql>> => {
   const table = tableNameFor({ prefix: tablePrefix, readModel: name });
   const columns = columnsOf({ readModel: name, fields, dialect: postgresqlDialect });
-  const existing = (
-    await db.all(
-      `SELECT "column_name", "data_type" FROM information_schema.columns WHERE "table_schema" = $1 AND "table_name" = $2 ORDER BY "ordinal_position"`,
-      [schema, table],
-    )
-  ).map((column) => ({ name: String(column.column_name), sqlType: String(column.data_type) }));
+  const existing = await existingColumns(db, schema, table);
   const statements =
     existing.length === 0
       ? createTableStatements({ table, columns })

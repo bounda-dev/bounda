@@ -65,8 +65,10 @@ rebuilt there is also `bounda_rm_order_summary__rebuild`, and for an instant dur
 ## Evolving a read model
 
 Adding a field to a view adds a nullable column the next time the app starts; existing rows keep
-working. Removing a field or changing its type is refused with an error that names the read
-model and the command that rebuilds it: `bounda rebuild <read-model>` projects the whole stream
+working. Marking a field `unique()` or `index()` adds its index, and a `unique()` refuses to start
+while two rows share the value. Removing a field, changing its type, moving the primary key or
+dropping `unique()` is refused with an error that names the read model and the command that
+rebuilds it: `bounda rebuild <read-model>` projects the whole stream
 into a fresh table with the current fields and swaps it in, with the live table serving queries
 until then. See [Deployment](/guides/deployment/#rebuilding-a-read-model).
 

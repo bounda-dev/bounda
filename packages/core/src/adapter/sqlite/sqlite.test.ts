@@ -3,7 +3,7 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { ConfigurationError, RebuildSupersededError } from "../../contracts/errors.ts";
 import { silentLogger } from "../../contracts/logger.ts";
-import { fieldBuilder as f } from "../../modules/view.ts";
+import { type FieldsRecord, fieldBuilder as f } from "../../modules/view.ts";
 import type { SqlDatabase } from "../sql/database.ts";
 import type { SqlExecutor } from "../sql/sql-table.ts";
 import {
@@ -333,6 +333,32 @@ describe("createSqliteAdapter", () => {
         logger: silentLogger,
       }),
     ).rejects.toThrow(/Changing a field's type needs a rebuild: run `bounda rebuild orders`/);
+  });
+
+  it("refuses a moved primary key, and indexes a field newly unique once", async () => {
+    const db = new DatabaseSync(":memory:");
+    const { logs, logger } = recordingLogger();
+    const open = (fields: FieldsRecord) =>
+      nodeSqlite(db).adapter.createReadModel<{ id: string; email: string }>({
+        name: "people",
+        fields,
+        logger,
+      });
+    const first = await open({ id: f.string().primaryKey(), email: f.string() });
+    await first.table.insert({ id: "1", email: "a@example.com" });
+    await expect(open({ id: f.string(), email: f.string().primaryKey() })).rejects.toThrow(
+      /Moving the primary key needs a rebuild/,
+    );
+    const unique = { id: f.string().primaryKey(), email: f.string().unique() };
+    const second = await open(unique);
+    await expect(second.table.insert({ id: "2", email: "a@example.com" })).rejects.toThrow();
+    await open(unique);
+    expect(logs).toEqual([
+      ["read model table evolved", { readModel: "people", table: "bounda_rm_people", added: 1 }],
+    ]);
+    await expect(open({ id: f.string().primaryKey(), email: f.string() })).rejects.toThrow(
+      /Dropping `unique\(\)` needs a rebuild/,
+    );
   });
 
   it("reports the stream version when loading past its end", async () => {

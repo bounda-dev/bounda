@@ -483,6 +483,32 @@ describe.skipIf(container === null)("postgresql adapter", () => {
     ).rejects.toThrow(/Changing a field's type needs a rebuild: run `bounda rebuild orders`/);
   });
 
+  it("refuses a moved primary key, and indexes a field newly unique once", async () => {
+    const adapter = fresh();
+    const evolved: string[] = [];
+    const logger = {
+      ...silentLogger,
+      info: (message: string) => {
+        evolved.push(message);
+      },
+    };
+    const open = (fields: Parameters<PostgresqlAdapter["createReadModel"]>[0]["fields"]) =>
+      openReadModel<{ id: string; email: string }>(adapter, "people", fields, logger);
+    const first = await open({ id: f.string().primaryKey(), email: f.string() });
+    await first.table.insert({ id: "1", email: "a@example.com" });
+    await expect(open({ id: f.string(), email: f.string().primaryKey() })).rejects.toThrow(
+      /Moving the primary key needs a rebuild/,
+    );
+    const unique = { id: f.string().primaryKey(), email: f.string().unique() };
+    const second = await open(unique);
+    await expect(second.table.insert({ id: "2", email: "a@example.com" })).rejects.toThrow();
+    await open(unique);
+    expect(evolved.filter((message) => message === "read model table evolved")).toHaveLength(1);
+    await expect(open({ id: f.string().primaryKey(), email: f.string() })).rejects.toThrow(
+      /Dropping `unique\(\)` needs a rebuild/,
+    );
+  });
+
   it("shares one pool between storage and read models until the last close", async () => {
     const adapter = fresh();
     const storage = await adapter.createStorage({ logger: silentLogger });

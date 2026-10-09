@@ -99,11 +99,15 @@ export const createTableStatements: CreateTableStatementsFunction = ({ table, co
 ];
 
 /**
- * A column as the engine reports it: its name and declared type.
+ * A column as the engine reports it: its name, its declared type, and whether it is the primary
+ * key, unique on its own, or the first column of an index.
  */
 export interface ExistingColumn {
   readonly name: string;
   readonly sqlType: string;
+  readonly primaryKey: boolean;
+  readonly unique: boolean;
+  readonly indexed: boolean;
 }
 
 export interface EvolveTableStatementsArgs {
@@ -120,11 +124,15 @@ export interface EvolveTableStatementsFunction {
 const sameType = (a: string, b: string): boolean =>
   a.trim().toLowerCase() === b.trim().toLowerCase();
 
+const uniqueIndexName = (table: string, column: ColumnDefinition): string =>
+  quoteIdentifier(`${table}_${column.name}_key`);
+
 /**
  * The statements that bring an existing table up to the current `fields`. Evolution is additive:
- * new fields become nullable columns (existing rows have no value for them) with their indexes;
- * a field that disappeared or changed type is an error naming the read model, because rebuilding
- * a table silently would drop data. `bounda rebuild` does it on purpose.
+ * new fields become nullable columns (existing rows have no value for them), and a field newly
+ * `unique` or indexed gets its index. A field that disappeared, changed type, moved the primary
+ * key or stopped being unique is an error naming the read model, because rebuilding a table
+ * silently would drop data. `bounda rebuild` does it on purpose.
  */
 export const evolveTableStatements: EvolveTableStatementsFunction = ({
   readModel,
@@ -133,31 +141,55 @@ export const evolveTableStatements: EvolveTableStatementsFunction = ({
   existing,
 }) => {
   const byName = new Map(existing.map((column) => [column.name, column]));
+  const needsRebuild = (change: string): ConfigurationError =>
+    new ConfigurationError(
+      `Read model "${readModel}": ${change} needs a rebuild: run \`bounda rebuild ${readModel}\``,
+    );
   const removed = existing.filter((column) => !columns.some((c) => c.name === column.name));
   if (removed.length > 0) {
-    throw new ConfigurationError(
-      `Read model "${readModel}": table "${table}" has columns that are no longer in fields (${removed
+    throw needsRebuild(
+      `table "${table}" has columns that are no longer in fields (${removed
         .map((column) => column.name)
-        .join(", ")}). Removing a field needs a rebuild: run \`bounda rebuild ${readModel}\``,
+        .join(", ")}). Removing a field`,
     );
   }
   for (const column of columns) {
     const current = byName.get(column.name);
-    if (current !== undefined && !sameType(current.sqlType, column.sqlType)) {
-      throw new ConfigurationError(
-        `Read model "${readModel}": column "${column.name}" is ${current.sqlType} in table "${table}" but fields now declare ${column.sqlType}. Changing a field's type needs a rebuild: run \`bounda rebuild ${readModel}\``,
+    if (current === undefined) continue;
+    if (!sameType(current.sqlType, column.sqlType)) {
+      throw needsRebuild(
+        `column "${column.name}" is ${current.sqlType} in table "${table}" but fields now declare ${column.sqlType}. Changing a field's type`,
+      );
+    }
+    if (current.primaryKey !== column.primaryKey) {
+      throw needsRebuild(
+        `the primary key of table "${table}" is not "${column.name}" as fields now declare, or the other way round. Moving the primary key`,
+      );
+    }
+    if (current.unique && !column.unique && !column.primaryKey) {
+      throw needsRebuild(
+        `column "${column.name}" is unique in table "${table}" but fields no longer say so. Dropping \`unique()\``,
       );
     }
   }
-  const added = columns.filter((column) => !byName.has(column.name));
-  return added.flatMap((column) => [
-    `ALTER TABLE ${quoteIdentifier(table)} ADD COLUMN ${quoteIdentifier(column.name)} ${column.sqlType}`,
-    ...(column.indexed && !column.unique
-      ? [
-          `CREATE INDEX IF NOT EXISTS ${indexName(table, column)} ON ${quoteIdentifier(table)} (${quoteIdentifier(column.name)})`,
-        ]
-      : []),
-  ]);
+  const quotedTable = quoteIdentifier(table);
+  return columns.flatMap((column) => {
+    const current = byName.get(column.name);
+    const quoted = quoteIdentifier(column.name);
+    return [
+      ...(current === undefined
+        ? [`ALTER TABLE ${quotedTable} ADD COLUMN ${quoted} ${column.sqlType}`]
+        : []),
+      ...(column.unique && !column.primaryKey && current?.unique !== true
+        ? [
+            `CREATE UNIQUE INDEX IF NOT EXISTS ${uniqueIndexName(table, column)} ON ${quotedTable} (${quoted})`,
+          ]
+        : []),
+      ...(column.indexed && !column.unique && !column.primaryKey && current?.indexed !== true
+        ? [`CREATE INDEX IF NOT EXISTS ${indexName(table, column)} ON ${quotedTable} (${quoted})`]
+        : []),
+    ];
+  });
 };
 
 /**
