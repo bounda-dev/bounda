@@ -14,6 +14,13 @@ causes, and [dead letters](/guides/dead-letters/) about the runs that fail for g
 
 ## Which one
 
+| What the reaction needs | Use | Example |
+| --- | --- | --- |
+| To answer one event, remembering nothing | a policy | send the confirmation for this order |
+| Memory between events, or a deadline | a process | cancel the order if it is not paid within 72 hours |
+| To decide later, against the state then | a [scheduled command](#delaying-a-command) | remind the customer a day later, unless they paid |
+| To act later, whatever happened since | a [delayed policy](#delaying-a-policy) | send the welcome email a minute after the user registers |
+
 Use a **policy** when the answer to the event does not depend on anything that happened before:
 send the confirmation for this order, schedule the reminder, tell the warehouse. Each one is a
 file whose name says what it reacts to, and the handler gets the event and the commands facade:
@@ -232,16 +239,16 @@ way out: see [Dead letters](/guides/dead-letters/).
 ## What a command answers
 
 `await commands.x()` in a policy or process resolves with what the command answered, and
-`rejected` says which answer it is:
+`rejected` says which answer it is. Every answer carries `aggregateType` and `aggregateId`:
 
-- `rejected: false` and `scheduled: false`: the aggregate decided, with its `version` and the
-  `eventIds` and `eventTypes` it decided, in order;
-- `rejected: false` and `scheduled: true`: a command with `delay`, with when it runs in
-  `executeAt`. A call with `delay` is typed with this answer alone, since a scheduled command is
-  rejected, if at all, when it runs; a call without `delay` is typed without it;
-- `rejected` set to a code: the command's handler rejected it with one of the codes its module
-  declares in [`rejections`](/guides/project-layout/#rejections), and `message` says why. Nothing
-  was decided.
+| `rejected` | `scheduled` | Also carries | What happened |
+| --- | --- | --- | --- |
+| `false` | `false` | `version`, `eventIds`, `eventTypes` | The aggregate decided these events, in order |
+| `false` | `true` | `executeAt` | A command with `delay` was scheduled to run then |
+| a code | | `message` | The handler rejected it with a code its module declares in [`rejections`](/guides/project-layout/#rejections); nothing was decided |
+
+A call with `delay` is typed with the scheduled answer alone, since a scheduled command is
+rejected, if at all, when it runs; a call without `delay` is typed without it.
 
 `rejected` is typed by the codes the command declares, and is only ever `false` for a command
 without `rejections`, so comparing it with a code it never answers does not compile. A handler
@@ -270,23 +277,20 @@ and its default.
 
 Three different things are called a timeout, and it is worth keeping them apart:
 
-- **How long one command handler run may take** is `runtime.commands.timeout`, 30 seconds by
-  default. Past it the dispatch rejects (the error's `code` is `HANDLER_TIMEOUT`), the handler's
-  `signal` aborts and nothing it returns is stored. Each retry after a concurrency conflict gets a
-  time limit of its own; loading the aggregate and storing its events do not count. A command
-  dispatched from a policy or process also stops when that run times out or fails, and a
-  scheduled command that times out is retried like any other failure. Whoever dispatches can
-  withdraw it sooner with a signal of their own, `commands.x(payload, { signal })`, until its
-  events start being stored.
-- **How long one policy or process handler run may take** is `runtime.policies.timeout`, 30
-  seconds by default; the process runner reads the policy setting. When a run runs out of time,
-  its commands still running stop and those it dispatches from then on are refused and logged at
-  `warn` (the error's `code` is `REACTION_ABANDONED`, its `cause` the timeout), and the handler's
-  `signal` aborts.
-  JavaScript cannot stop the handler itself, so pass `signal` to what it calls outside
-  (`fetch(url, { signal })`) and that stops too.
-- **How long a process may stay open** before `at-timeout.ts` runs is the process's own `timeout`
-  in its `config`, falling back to `runtime.processes.timeout`, 7 days by default.
+| What it bounds | Setting, and default | When it runs out |
+| --- | --- | --- |
+| One run of a command handler | `runtime.commands.timeout`, 30 s | The dispatch rejects with `HANDLER_TIMEOUT`, the handler's `signal` aborts and nothing it returns is stored |
+| One run of a policy or process handler | `runtime.policies.timeout`, 30 s, for processes too | The run fails; its commands still running stop, later ones are refused with `REACTION_ABANDONED` and logged at `warn`, and its `signal` aborts |
+| How long a process stays open | the process's `config.timeout`, else `runtime.processes.timeout`, 7 d | `at-timeout.ts` runs and the process ends as timed out |
+
+For a command, each retry after a concurrency conflict gets a time limit of its own, and loading
+the aggregate and storing its events do not count. A command dispatched from a policy or process
+also stops when that run times out or fails, and a scheduled command that times out is retried
+like any other failure. Whoever dispatches can withdraw a command sooner with a signal of their
+own, `commands.x(payload, { signal })`, until its events start being stored.
+
+JavaScript cannot stop a handler itself, so a reaction that runs out of time keeps running until
+it returns: pass `signal` to what it calls outside (`fetch(url, { signal })`) and that stops too.
 
 Change them per app, or per aggregate:
 

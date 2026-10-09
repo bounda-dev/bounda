@@ -75,8 +75,7 @@ export default defineConfig({
 | In-memory | `@bounda-dev/core/memory` | Nothing; for tests and for trying Bounda without a database |
 
 Every adapter passes the same contract test suites, so an app behaves the same way on each of
-them. Pick SQLite to start and move to PostgreSQL when you need several processes writing at
-once; your domain code does not change.
+them; [which one to deploy](#which-one-to-deploy) compares them.
 
 ## What an adapter creates
 
@@ -99,8 +98,8 @@ rebuilt there is also `bounda_rm_order_summary__rebuild`, and for an instant dur
 ## Evolving a read model
 
 Adding a field to a view adds a nullable column the next time the app starts; existing rows keep
-working. Removing a field or changing its type is refused with an error that names the read
-model and the command that rebuilds it: `bounda rebuild <read-model>` projects the whole global stream
+working. Removing a field or changing its type is refused with an error that names the read model
+and the command that rebuilds it: `bounda rebuild <read-model>` projects the whole global stream
 into a fresh table with the current fields and swaps it in, with the live table serving queries
 until then. See [Deployment](/guides/deployment/#rebuilding-a-read-model).
 
@@ -134,6 +133,14 @@ through `table`, and keep `client` for what `table` cannot say.
 
 ## Which one to deploy
 
-SQLite is a single writer: right for one process, and for tests. PostgreSQL is what lets
-several instances run the background work at once. [Deployment](/guides/deployment/) covers the
-roles, what the instances share and what is not there yet.
+| | SQLite and libSQL | PostgreSQL | Cloudflare |
+| --- | --- | --- | --- |
+| Writes | SQLite's single writer | one append at a time per store, under an advisory lock | the store's Durable Object |
+| Background work runs in | one process | any number of instances, each run claimed by one | the object's alarm |
+| It wakes up | every `pollInterval` | on `NOTIFY` at each append, and every `idleInterval` | when the alarm the object armed comes due |
+| Fits | one process, a local app | several instances, `web` and `worker` roles | a store per tenant on Workers |
+
+The in-memory adapter is for tests and for trying Bounda: one process, which it notifies on each
+append. Start on SQLite and move to PostgreSQL when the background work needs more than one process;
+the domain code does not change. [Deployment](/guides/deployment/) covers the roles and what the
+instances share, and [How Bounda runs](/concepts/how-it-runs/) the ceiling of one store.

@@ -21,41 +21,30 @@ bounda dead-letters retry 019a0c4e-…
 bounda dead-letters discard 019a0c4e-…
 ```
 
-`list` prints the failed letters, with `--kind policy|process|scheduled`, `--handler`,
-`--status`, `--limit` and `--json` to narrow or script it. `retry` runs the failed handler once
-more and marks the letter `retried` if it succeeds: for a policy or a scheduled command, in the
-same transaction as what the run writes, so a retry that ran but could not be marked leaves
-nothing behind, and so for a follow-up of a timed-out process; for any other process letter, once
-its instance has drained what was parked, since a retry cut short there is taken up again by
-retrying the same letter. When it fails again the error is printed and the letter stays `failed`.
-A letter the app as it now is cannot retry (its policy, process or scheduled command is gone from
-the registry, its policy or process no longer handles the event, or its instance failed on another
-step whose letter comes first) is refused with `DeadLetterNotRetriableError`
-(`DEAD_LETTER_NOT_RETRIABLE`) without running anything.
-`discard` marks it `discarded` without running anything. Two retries of one letter, or a retry and
-a discard, never both settle it, even when they run at once: whichever gets there second is
-refused with `DeadLetterSettledError` (`DEAD_LETTER_SETTLED`). A retry marked in its own
-transaction (a policy's, a scheduled command's or a follow-up's) refused that way stores nothing,
-so a double click does not store a command's decision twice, though the handler may have run in
-both; any other process's has already handled its events by then. Letters are never deleted by
+`list` prints the failed letters, with `--kind policy|process|scheduled`, `--handler`, `--status`,
+`--limit` and `--json` to narrow or script it. `retry` runs the failed handler once more and marks
+the letter `retried` if it succeeds; when it fails again the error is printed and the letter stays
+`failed`. `discard` marks it `discarded` without running anything. Letters are never deleted by
 these commands; they are the record of what happened.
 
-What a retry does depends on the kind:
+What a retry runs, and when it marks the letter, depends on the kind:
 
-- **Policy**: the handler runs again for the stored event, with the event's correlation. The
-  inbox ledger is bypassed on purpose: it already says the handler ran, and you are asking for
-  another run.
-- **Process**: the handler runs again for the stored event with the instance's current state, or,
-  for a letter of a deadline (`deadline:<field>`), the handler of the deadline the process failed
-  on, with a new `idempotencyKey`. An event that completes the process completes it. Then the
-  events parked behind the failure are handled in order, and once none is left the process is
-  back to `started`, its deadlines scheduled again at their moments (one already past runs at
-  once); see [a failed process](#a-failed-process). The letter of a follow-up of a timed-out
-  process runs its handler and nothing else: the process stays timed out, and a handler a deploy
-  removed lets the event through.
-- **Scheduled**: the dropped command is dispatched again with the payload the letter recorded. A
-  command its aggregate now rejects settles the letter as `retried`, as the scheduler would have
-  settled it: a rejection is the aggregate's answer, logged as `command rejected`, not a failure.
+| Kind | What the retry runs | Marked `retried` |
+| --- | --- | --- |
+| Policy | The handler again, for the stored event, with the event's correlation. The inbox is bypassed on purpose: it already says the handler ran, and you are asking for another run. | In the same transaction as what the run writes |
+| Process | The handler again for the stored event, with the instance's current state, or for a deadline's letter (`deadline:<field>`) the handler of that deadline, with a new `idempotencyKey`; an event that completes the process completes it. Then the events parked behind the failure, in order, and the process is `started` again, its deadlines scheduled at their moments (one already past runs at once); see [a failed process](#a-failed-process). | Once the instance has drained what was parked; a retry cut short is taken up by retrying the same letter |
+| Follow-up of a timed-out process | Its handler and nothing else: the process stays timed out, and a handler a deploy removed lets the event through. | In the same transaction as what the run writes |
+| Scheduled command | The dropped command again, with the payload the letter recorded. A rejection settles the letter too: it is the aggregate's answer, logged as `command rejected`. | In the same transaction as what the run writes |
+
+Two retries of one letter, or a retry and a discard, never both settle it, even when they run at
+once: whichever gets there second is refused with `DeadLetterSettledError`
+(`DEAD_LETTER_SETTLED`). A retry marked in the same transaction as its writes stores nothing when it
+is refused, so a double click does not store a command's decision twice, though the handler may
+have run in both; a process's retry has already handled its events by then. A letter the app as
+it now is cannot retry is refused with `DeadLetterNotRetriableError` (`DEAD_LETTER_NOT_RETRIABLE`)
+without running anything: its policy, process or scheduled command is gone from the registry, its
+policy or process no longer handles the event, or its instance failed on another step whose letter
+comes first.
 
 The same operations are on the app as `app.deadLetters` — `list`, `count`, `get`, `retry` and
 `discard` — for a script or an admin route.
