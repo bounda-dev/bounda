@@ -14,6 +14,10 @@ describe("state inferred from begin and evolve functions", () => {
     expectTypeOf<OrderCreatedState["paidWith"]>().toEqualTypeOf<"card" | "transfer" | undefined>();
   });
 
+  it("types a field an evolve computes from the state", () => {
+    expectTypeOf<OrderCreatedState["reminders"]>().toEqualTypeOf<number>();
+  });
+
   it("references exported types of the event modules and gives up on private ones", () => {
     expectTypeOf<OrderCreatedState["lines"]>().toEqualTypeOf<readonly Line[]>();
     expectTypeOf<OrderCreatedState["cancellation"]>().toEqualTypeOf<unknown>();

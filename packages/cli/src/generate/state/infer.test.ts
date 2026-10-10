@@ -93,6 +93,7 @@ describe("generate with state inference (golden on order-app-inferred)", () => {
   readonly lines: readonly import("../app/domain/order/order-placed.ts").Line[];
   readonly paidWith?: "card" | "transfer";
   readonly placedAt: Date;
+  readonly reminders: number;
   readonly status: "cancelled" | "paid" | "placed";
 };
 export type OrderState = core.NotCreated<OrderCreatedState> | OrderCreatedState;`);
@@ -340,6 +341,70 @@ export type PlainCreatedState = PlainState;`);
     expect(types).toContain(`export type BetaState = {
   readonly count?: number;
   readonly token?: unknown;
+};`);
+  });
+
+  it("types fields an evolve computes from the state, along a chain of them", async () => {
+    const root = await syntheticProject({
+      "app/domain/queue/queue-opened.ts":
+        "export const begin = () => ({ waiting: [] as string[], served: 0, counts: {} as Record<string, number> });\n",
+      "app/domain/queue/person-joined.ts": [
+        'import type { Event } from "./+types/person-joined";',
+        "export const evolve = ({ state }: Event.EvolveArgs) => ({",
+        '  waiting: [...state.waiting, "someone"],',
+        "  length: state.waiting.length + 1,",
+        "});",
+        "",
+      ].join("\n"),
+      "app/domain/queue/person-served.ts": [
+        'import type { Event } from "./+types/person-served";',
+        "export const evolve = ({ state }: Event.EvolveArgs) => ({",
+        "  served: state.served + 1,",
+        "  previous: state.served,",
+        "  counts: { ...state.counts, [String(state.served)]: 1 },",
+        "  left: (state.length ?? 0) - 1 > 0,",
+        "});",
+        "",
+      ].join("\n"),
+    });
+    const report = await generate({ root });
+    expect(report.warnings).toEqual([]);
+    const types = await readFile(join(root, ".bounda/types.ts"), "utf8");
+    expect(types).toContain(`export type QueueCreatedState = {
+  readonly counts: Record<string, number> | {
+    [x: string]: number;
+  };
+  readonly left?: boolean;
+  readonly length?: number;
+  readonly previous?: number;
+  readonly served: number;
+  readonly waiting: string[];
+};`);
+  });
+
+  it("types as unknown, with a warning, a field computed from the state that never settles", async () => {
+    const root = await syntheticProject({
+      "app/domain/tally/tally-counted.ts": [
+        'import type { Event } from "./+types/tally-counted";',
+        "export const evolve = ({ state }: Event.EvolveArgs) => ({",
+        "  count: (state.count ?? 0) + 1,",
+        "  done: true,",
+        "});",
+        "",
+      ].join("\n"),
+    });
+    const report = await generate({ root });
+    expect(report.warnings).toEqual([
+      {
+        module: "tally",
+        message:
+          'field "count" (set by tallyCounted) is computed from the state in a way its type could not be inferred from; it is typed as unknown. Give it a type where the aggregate begins, or add state.ts',
+      },
+    ]);
+    const types = await readFile(join(root, ".bounda/types.ts"), "utf8");
+    expect(types).toContain(`export type TallyState = {
+  readonly count?: unknown;
+  readonly done?: boolean;
 };`);
   });
 

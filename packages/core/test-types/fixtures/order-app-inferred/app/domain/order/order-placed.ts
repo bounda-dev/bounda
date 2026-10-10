@@ -16,4 +16,5 @@ export const begin = ({ event }: Event.BeginArgs) => ({
   customerId: event.payload.customerId,
   lines: event.payload.lines as readonly Line[],
   placedAt: new Date(event.timestamp),
+  reminders: 0,
 });
