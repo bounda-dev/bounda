@@ -251,6 +251,9 @@ const { app } = await createTestApp({
 });
 ```
 
+An implementation that reads `tenant` receives what the test passes as `tenant`, the name a
+Durable Object would have, and none without it: `createTestApp({ registry, ports, tenant: "acme" })`.
+
 On Cloudflare `env` is `Cloudflare.Env`, whose bindings an empty object does not have, so
 `createTestApp` requires it there as soon as an implementation exports `create`; inside workerd,
 pass `env` from `cloudflare:workers`.

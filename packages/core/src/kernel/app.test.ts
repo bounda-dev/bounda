@@ -575,6 +575,17 @@ describe("implementations built by create", () => {
     ]);
   });
 
+  it("gives create the tenant the app serves, and none without one", async () => {
+    const { create, app: lifecycleRegistry } = lifecycle([]);
+    const config = { storage: memory() };
+    const named = await createApp({ registry: lifecycleRegistry, config, tenant: "acme" });
+    const unnamed = await createApp({ registry: lifecycleRegistry, config });
+    expect(create.mock.calls[0]?.[0]).toMatchObject({ tenant: "acme" });
+    expect(create.mock.calls[1]?.[0]).not.toHaveProperty("tenant");
+    await named.stop();
+    await unnamed.stop();
+  });
+
   it("closes what create built when the app fails to start", async () => {
     const log: string[] = [];
     const { app: lifecycleRegistry } = lifecycle(log);

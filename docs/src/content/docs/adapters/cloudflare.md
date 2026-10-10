@@ -106,6 +106,12 @@ export const create: CreateImplementation<Notifier> = ({ env }) => (message) =>
   env.NOTIFICATIONS.send(message);
 ```
 
+`create` also receives the object's name as `tenant`, the one `idFromName` addressed it by, so an
+implementation can serve each tenant with its own account or key
+([an account per tenant](/guides/calling-the-outside-world/#an-account-per-tenant)). An object
+reached through an id without a name, from `newUniqueId` or `idFromString`, has no `tenant`; the
+Worker of `createWorker` and the React Router host always address it by name.
+
 `bounda.config.ts` can choose an implementation from the same variables, since `env` from
 `cloudflare:workers` is readable when the Worker imports it:
 

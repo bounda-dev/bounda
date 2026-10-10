@@ -224,8 +224,11 @@ export const create: CreateImplementation<Inventory> = ({ env, logger }) => {
 
 `create` receives the host's environment as `env` (`process.env` after `.env` is loaded under
 `boot()`, the Durable Object's `env` on Cloudflare, what a test passes to `createTestApp`), the
-app's `logger` and its `clock`. It runs once per app: once per process under `boot()`, once per
-Durable Object, once per `createTestApp`. When what it returns has `[Symbol.asyncDispose]`,
+name of the store the app serves as `tenant` (the Durable Object's name on Cloudflare, what a test
+passes, none under `boot()`: see
+[an account per tenant](/guides/calling-the-outside-world/#an-account-per-tenant)), the app's
+`logger` and its `clock`. It runs once per app: once per process under `boot()`, once per Durable
+Object, once per `createTestApp`. When what it returns has `[Symbol.asyncDispose]`,
 `app.stop()` calls it after closing the storage, the last one built first; one that fails to
 close is logged and the rest still close. A default export is never closed, since every app in
 the process shares the module.

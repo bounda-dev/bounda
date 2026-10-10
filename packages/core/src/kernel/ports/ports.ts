@@ -4,7 +4,7 @@ import type { PortsConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import type { Logger } from "../../contracts/logger.ts";
-import type { PortModules } from "../../modules/port.ts";
+import type { CreateArgs, PortModules } from "../../modules/port.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { AppEnv, TestPortsChoice } from "../../register/index.ts";
 import { errorDetails } from "../shared/retry.ts";
@@ -28,6 +28,7 @@ export interface TestChoice {
 export type CreatePortsArgs = {
   readonly registry: Registry;
   readonly env: AppEnv;
+  readonly tenant?: string | undefined;
   readonly logger: Logger;
   readonly clock: Clock;
 } & ({ readonly config: PortsConfig } | { readonly test: TestChoice });
@@ -71,7 +72,13 @@ const disposerOf = (port: unknown): (() => Promise<void>) | undefined => {
  * holds, and a test's double belongs to the test, so neither is ever closed.
  */
 export const createPorts: CreatePortsFunction = async (args) => {
-  const { registry, env, logger, clock } = args;
+  const { registry, env, tenant, logger, clock } = args;
+  const createArgs: CreateArgs = {
+    env,
+    ...(tenant === undefined ? {} : { tenant }),
+    logger,
+    clock,
+  };
   const test = "test" in args ? args.test : undefined;
   const config = "config" in args ? args.config : {};
   const owners: readonly (readonly [PortOwner, PortModules])[] = [
@@ -141,7 +148,7 @@ export const createPorts: CreatePortsFunction = async (args) => {
           ports[port] = module.default;
           continue;
         }
-        const created = await module.create({ env, logger, clock });
+        const created = await module.create(createArgs);
         const close = disposerOf(created);
         if (close !== undefined) disposers.push({ module: owner.name, port, close });
         ports[port] = created;

@@ -3,7 +3,8 @@ import type { Logger } from "../contracts/logger.ts";
 import type { AppEnv } from "../register/index.ts";
 
 /**
- * What `create` receives: the host's environment, the app's logger and the app's clock.
+ * What `create` receives: the host's environment, the name of the store the app serves, the app's
+ * logger and the app's clock.
  */
 export interface CreateArgs {
   /**
@@ -11,6 +12,14 @@ export interface CreateArgs {
    * Object's `env` on Cloudflare, what the test passes to `createTestApp`.
    */
   readonly env: AppEnv;
+  /**
+   * The name of the store the app serves, for an implementation that differs by tenant (an
+   * account or a key per customer): what `createApp` or `createTestApp` received as `tenant`,
+   * which on Cloudflare is the name the Durable Object was addressed by with `idFromName`.
+   * `undefined` for an app with one store, as under `boot()`, and for an object reached through an
+   * id without a name.
+   */
+  readonly tenant?: string;
   readonly logger: Logger;
   readonly clock: Clock;
 }

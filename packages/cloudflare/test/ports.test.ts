@@ -12,13 +12,21 @@ beforeEach(() => {
 });
 
 describe("an implementation built by create inside a Durable Object", () => {
-  it("receives the object's env, once, and serves every command", async () => {
+  it("receives the object's env and name, once, and serves every command", async () => {
+    const store = connect<typeof regionRegistry>(
+      env.REGION_STORE.get(env.REGION_STORE.idFromName("acme")),
+    );
+    await store.commands.placeOrder({ orderId: "o-1", total: 1, customer: "ada" });
+    await store.commands.placeOrder({ orderId: "o-2", total: 2, customer: "ada" });
+    expect(regionLog).toEqual(["eu-test:acme:o-1", "eu-test:acme:o-2"]);
+  });
+
+  it("receives no tenant in an object reached through an id without a name", async () => {
     const store = connect<typeof regionRegistry>(
       env.REGION_STORE.get(env.REGION_STORE.newUniqueId()),
     );
     await store.commands.placeOrder({ orderId: "o-1", total: 1, customer: "ada" });
-    await store.commands.placeOrder({ orderId: "o-2", total: 2, customer: "ada" });
-    expect(regionLog).toEqual(["eu-test:o-1", "eu-test:o-2"]);
+    expect(regionLog).toEqual(["eu-test:unnamed:o-1"]);
   });
 
   it("is closed through Symbol.asyncDispose when the app stops", async () => {
@@ -32,6 +40,6 @@ describe("an implementation built by create inside a Durable Object", () => {
       await app.commands.placeOrder({ orderId: "o-1", total: 1, customer: "ada" });
       await app.stop();
     });
-    expect(regionLog).toEqual(["eu-test:o-1", "closed"]);
+    expect(regionLog).toEqual(["eu-test:unnamed:o-1", "closed"]);
   });
 });
