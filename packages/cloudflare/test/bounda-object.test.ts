@@ -1,12 +1,14 @@
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { createSqliteAdapter } from "@bounda-dev/core/adapter/sqlite";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { configForObject } from "../src/bounda-object.ts";
 import { connect } from "../src/client.ts";
 import { cloudflare } from "../src/definition.ts";
-import type { processRegistry, quietRegistry, registry } from "./app.ts";
+import { outage, type processRegistry, type quietRegistry, type registry } from "./app.ts";
 import { clock } from "./clock.ts";
+import { logs } from "./logs.ts";
+import { QuietStore } from "./test-worker.ts";
 
 const fresh = () => env.STORE.get(env.STORE.newUniqueId());
 
@@ -27,6 +29,22 @@ const rejection = async (
 };
 
 const open = (stub = fresh()) => ({ stub, store: connect<typeof registry>(stub) });
+
+const sliced = () => env.SLICED_STORE.get(env.SLICED_STORE.newUniqueId());
+
+// What the object itself logs about its rebuilds and alarms, apart from the app's own entries.
+const objectLogs = (entries: readonly unknown[][]) =>
+  entries.filter(([message]) => /^bounda (rebuild|alarm)/.test(String(message)));
+
+beforeEach(() => {
+  logs.info.length = 0;
+  logs.error.length = 0;
+});
+
+afterEach(() => {
+  outage.archive = true;
+  outage.projection = false;
+});
 
 describe("a Bounda Durable Object", () => {
   it("stores a command and answers the next query with it", async () => {
@@ -207,13 +225,195 @@ describe("a Bounda Durable Object", () => {
     expect(await store.deadLetters.list({ status: "failed" })).toEqual([]);
   });
 
-  it("rebuilds a read model from the object's stream", async () => {
+  it("rebuilds a read model from the object's stream, leaving no alarm when nothing is pending", async () => {
     const { stub, store } = open();
     await store.commands.placeOrder({ orderId: "o-4", total: 5, customer: "ada" });
     await store.commands.payOrder({ orderId: "o-4" });
     await runDurableObjectAlarm(stub);
-    expect(await store.rebuildReadModel("orders")).toEqual({ events: 3, position: 3, done: true });
+    // In one event of the object, an alarm the rebuild armed cannot run before it is read.
+    const rebuilt = await runInDurableObject(stub, async (instance, state) => ({
+      outcome: await instance.rebuildReadModel("orders"),
+      alarm: await state.storage.getAlarm(),
+    }));
+    expect(rebuilt).toEqual({
+      outcome: { ok: true, value: { events: 3, position: 3, done: true } },
+      alarm: null,
+    });
     expect(await store.queries.getOrder({ orderId: "o-4" })).toMatchObject({ status: "archived" });
+  });
+
+  it("refuses a call that arrives before its app is ready, and answers once it is", async () => {
+    const stub = env.BARE.get(env.BARE.newUniqueId());
+    const answers = await runInDurableObject(stub, async (_instance, state) => {
+      const object = new QuietStore(state, env);
+      const early = await object.query("getOrder", { orderId: "o-1" });
+      let ready = await object.query("getOrder", { orderId: "o-1" });
+      for (let round = 0; round < 100 && !ready.ok; round += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        ready = await object.query("getOrder", { orderId: "o-1" });
+      }
+      return { early, ready };
+    });
+    expect(answers).toEqual({
+      early: {
+        ok: false,
+        refusal: {
+          name: "ConfigurationError",
+          code: "INVALID_CONFIGURATION",
+          message: "The Bounda app is not ready",
+        },
+      },
+      ready: { ok: true, value: null },
+    });
+  });
+
+  it("assigns the ids of the generator it is given", async () => {
+    const store = connect<typeof quietRegistry>(sliced());
+    const placed = await store.commands.placeOrder({ orderId: "o-1", total: 1, customer: "ada" });
+    expect(placed.eventIds).toEqual([expect.stringMatching(/^sliced-\d+$/)]);
+  });
+
+  it("arms its alarm at once after a request that leaves its policies behind", async () => {
+    const before = Date.now();
+    const armed = await runInDurableObject(fresh(), async (instance, state) => {
+      await instance.command("placeOrder", { orderId: "o-1", total: 1, customer: "ada" });
+      await instance.rebuildReadModel("orders");
+      return state.storage.getAlarm();
+    });
+    expect(armed).toBeGreaterThanOrEqual(before);
+    expect(armed).toBeLessThanOrEqual(Date.now());
+  });
+
+  it("arms its alarm at once after retrying a dead letter, and runs what the retry dispatched", async () => {
+    const { stub, store } = open();
+    await store.commands.placeOrder({ orderId: "fail-2", total: 3, customer: "ada" });
+    await store.commands.payOrder({ orderId: "fail-2" });
+    await runDurableObjectAlarm(stub);
+    const [letter] = await store.deadLetters.list();
+    outage.archive = false;
+    const before = Date.now();
+    const retried = await runInDurableObject(stub, async (instance, state) => ({
+      outcome: await instance.retryDeadLetter(letter?.id ?? ""),
+      alarm: await state.storage.getAlarm(),
+    }));
+    expect(retried.outcome).toMatchObject({ ok: true, value: { status: "retried" } });
+    expect(retried.alarm).toBeGreaterThanOrEqual(before);
+    expect(retried.alarm).toBeLessThanOrEqual(Date.now());
+    await runDurableObjectAlarm(stub);
+    expect(await store.queries.getOrder({ orderId: "fail-2" })).toMatchObject({
+      status: "archived",
+    });
+  });
+
+  it("waits at least a second before retrying a policy that failed in its alarm", async () => {
+    const { stub, store } = open();
+    await store.commands.placeOrder({ orderId: "flaky-1", total: 3, customer: "ada" });
+    await store.commands.payOrder({ orderId: "flaky-1" });
+    const before = Date.now();
+    const armed = await runInDurableObject(stub, async (instance, state) => {
+      await instance.alarm();
+      return state.storage.getAlarm();
+    });
+    expect(armed).toBeGreaterThanOrEqual(before + 1_000);
+    expect(armed).toBeLessThanOrEqual(Date.now() + 1_000);
+    expect((await store.getLag()).maxLag).toBeGreaterThan(0);
+  });
+
+  it("yields after its passes per alarm and wakes itself again for the rest", async () => {
+    const seen = await runInDurableObject(sliced(), async (instance, state) => {
+      for (const orderId of ["o-1", "o-2"]) {
+        await instance.command(
+          "placeOrder",
+          { orderId, total: 1, customer: "ada" },
+          undefined,
+          "eventual",
+        );
+      }
+      const before = Date.now();
+      await instance.alarm();
+      return {
+        before,
+        first: await instance.query("getOrder", { orderId: "o-1" }),
+        second: await instance.query("getOrder", { orderId: "o-2" }),
+        alarm: await state.storage.getAlarm(),
+      };
+    });
+    expect(seen.first).toMatchObject({ ok: true, value: { status: "placed" } });
+    expect(seen.second).toEqual({ ok: true, value: null });
+    expect(seen.alarm).toBeGreaterThanOrEqual(seen.before);
+    expect(seen.alarm).toBeLessThanOrEqual(Date.now());
+  });
+
+  it("runs a rebuild one slice per alarm, logging each, and waking at once for the next", async () => {
+    const seen = await runInDurableObject(sliced(), async (instance, state) => {
+      for (const orderId of ["o-1", "o-2", "o-3"]) {
+        await instance.command("placeOrder", { orderId, total: 5, customer: "ada" });
+      }
+      const before = Date.now();
+      const started = await instance.rebuildReadModel("orders");
+      const alarms = [await state.storage.getAlarm()];
+      for (let slice = 0; slice < 3; slice += 1) {
+        await instance.alarm();
+        alarms.push(await state.storage.getAlarm());
+      }
+      return { before, started, alarms };
+    });
+    expect(seen.started).toEqual({ ok: true, value: { events: 1, position: 1, done: false } });
+    const last = seen.alarms.pop();
+    for (const alarm of seen.alarms) {
+      expect(alarm).toBeGreaterThanOrEqual(seen.before);
+      expect(alarm).toBeLessThanOrEqual(Date.now());
+    }
+    expect(last).toBeNull();
+    expect(objectLogs(logs.info)).toEqual([
+      ["bounda rebuild continues", { readModel: "orders", position: 2 }],
+      ["bounda rebuild continues", { readModel: "orders", position: 3 }],
+      ["bounda rebuild finished", { readModel: "orders", position: 3 }],
+    ]);
+    expect(objectLogs(logs.error)).toEqual([]);
+  });
+
+  it("aborts a rebuild whose slice failed, keeping its live table, and holds the others a second", async () => {
+    const stub = sliced();
+    const store = connect<typeof quietRegistry>(stub);
+    for (const orderId of ["o-1", "o-2", "o-3"]) {
+      await store.commands.placeOrder({ orderId, total: 5, customer: "ada" });
+    }
+    const failed = await runInDurableObject(stub, async (instance, state) => {
+      await instance.rebuildReadModel("orders");
+      await instance.rebuildReadModel("customers");
+      outage.projection = true;
+      const before = Date.now();
+      await instance.alarm();
+      return { before, alarm: await state.storage.getAlarm() };
+    });
+    expect(failed.alarm).toBeGreaterThanOrEqual(failed.before + 1_000);
+    expect(failed.alarm).toBeLessThanOrEqual(Date.now() + 1_000);
+    expect(objectLogs(logs.error)).toEqual([
+      ["bounda rebuild slice failed", { readModel: "orders", message: "projection is down" }],
+    ]);
+    expect(objectLogs(logs.info)).toEqual([
+      ["bounda rebuild continues", { readModel: "customers", position: 2 }],
+    ]);
+    outage.projection = false;
+    expect(await store.queries.getOrder({ orderId: "o-3" })).toMatchObject({ status: "placed" });
+    expect(await store.rebuildReadModel("orders")).toEqual({ events: 1, position: 1, done: false });
+  });
+
+  it("logs every step of an alarm that cannot reach its storage, without throwing", async () => {
+    await runInDurableObject(sliced(), async (instance, state) => {
+      await instance.command("placeOrder", { orderId: "o-1", total: 5, customer: "ada" });
+      const tables = state.storage.sql
+        .exec(`SELECT "name" FROM sqlite_master WHERE "type" = 'table' AND "name" LIKE 'bounda_%'`)
+        .toArray();
+      for (const { name } of tables) state.storage.sql.exec(`DROP TABLE "${String(name)}"`);
+      await instance.alarm();
+    });
+    expect(objectLogs(logs.error)).toEqual([
+      ["bounda rebuilds could not be listed", { message: expect.any(String) }],
+      ["bounda alarm failed; it will be retried", { message: expect.any(String) }],
+      ["bounda alarm could not re-arm", { message: expect.any(String) }],
+    ]);
   });
 
   it("rebuilds in slices through its alarm, serving the live table until the last one", async () => {

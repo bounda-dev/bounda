@@ -22,6 +22,13 @@ describe("connect", () => {
     ]);
   });
 
+  it("is not taken for a promise, and has no members but named calls", async () => {
+    const store = connect<typeof registry>(recordingStub().stub);
+    expect(Reflect.get(store.commands, "then")).toBeUndefined();
+    expect(Reflect.get(store.queries, Symbol.iterator)).toBeUndefined();
+    expect(await Promise.resolve(store.queries)).toBe(store.queries);
+  });
+
   it("refuses a consistency it does not know", () => {
     const { stub } = recordingStub();
     expect(() => connect(stub, { consistency: "eventually" as Consistency })).toThrow(

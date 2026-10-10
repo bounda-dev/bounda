@@ -1,8 +1,10 @@
 import { DurableObject } from "cloudflare:workers";
+import { createSequentialIdGenerator } from "@bounda-dev/core";
 import { cloudflare } from "../src/definition.ts";
 import { createBoundaObject, createWorker } from "../src/index.ts";
-import { processRegistry, quietRegistry, regionRegistry, registry } from "./app.ts";
+import { processRegistry, quietRegistry, regionRegistry, registry, slicedRegistry } from "./app.ts";
 import { clock } from "./clock.ts";
+import { recordingLogger } from "./logs.ts";
 
 /**
  * The object under test: the order app on the Durable Object's own SQLite.
@@ -34,13 +36,18 @@ export const QuietStore = createBoundaObject({
 });
 
 /**
- * The same app without policies, rebuilding one event per slice.
+ * The same app without policies and with a second read model, in small steps: one event per
+ * batch, per rebuild slice and per alarm pass. Its ids are sequential and its logs are what the
+ * tests read.
  */
 export const SlicedStore = createBoundaObject({
-  registry: quietRegistry,
+  registry: slicedRegistry,
   config: { storage: cloudflare(), runtime: { dispatcher: { batchSize: 1 } } },
   clock,
   eventsPerRebuildSlice: 1,
+  passesPerAlarm: 1,
+  ids: createSequentialIdGenerator({ prefix: "sliced" }),
+  logger: recordingLogger,
 });
 
 /**
