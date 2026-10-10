@@ -1,8 +1,10 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/public/wordmark-dark.svg" />
-    <img src="docs/public/wordmark-light.svg" alt="Bounda" width="200" />
-  </picture>
+  <a href="https://bounda.dev">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/public/wordmark-dark.svg" />
+      <img src="docs/public/wordmark-light.svg" alt="Bounda" width="200" />
+    </picture>
+  </a>
 </p>
 
 <p align="center">Event sourcing and CQRS for TypeScript without the ceremony.</p>
@@ -15,15 +17,16 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-b07114?style=flat" alt="License" /></a>
 </p>
 
-Your tables keep the last write. An event-sourced app keeps every change, so a wrong view is
-rebuilt from history and a past state can be explained. Bounda makes that the easy path in
-TypeScript: commands, events and projections are small files, every type is inferred from them,
-and the whole thing runs on one database, or one Cloudflare Durable Object per tenant.
+Your tables keep the last write. Bounda keeps every change, so any view can be rebuilt from it
+and any past state explained. Commands, events and projections are plain TypeScript modules,
+every type is inferred from them, and it all runs on one database with no broker, or on one
+Cloudflare Durable Object per tenant.
 
 ```bash
 npm create bounda@latest my-app
 ```
 
+[bounda.dev](https://bounda.dev) ·
 **[Documentation](https://docs.bounda.dev)** ·
 [Getting started](https://docs.bounda.dev/getting-started/) ·
 [Core concepts](https://docs.bounda.dev/getting-started/core-concepts/) ·
@@ -58,15 +61,19 @@ the whole slice in fifteen minutes.
 
 ## Why Bounda
 
-- **No ceremony.** No command bus, repository or registry to wire: files and their names are the
-  declaration.
-- **Types inferred, never written.** Change a field and the compiler points at every place that
-  breaks.
-- **Workflows built in.** Policies react to events; processes keep state and deadlines; retries,
-  dead letters, upcasters and read-model rebuilds come with the runtime.
-- **One database, no broker.** PostgreSQL, SQLite or libSQL, or a Durable Object per tenant, with
-  React Router integration and OpenTelemetry.
+- **Types are inferred.** A file's place and name are its declaration, and `bounda generate`
+  infers every type from them: no command bus, repository or registry to keep in sync. Change a
+  field and the compiler points at every place that breaks.
+- **Read models rebuild.** A wrong dashboard is a fixed projection and `bounda rebuild`, not a
+  migration script. The events are never touched.
+- **Workflows have a home.** A workflow of several steps is a process next to its aggregate, with
+  its own state and deadlines, not a state machine buried in a handler. Policies react to events,
+  and retries, dead letters and upcasters come with the runtime.
+- **Nothing else to run.** Events, read models and the work still pending share one database:
+  PostgreSQL, SQLite or libSQL. Start there; when a read model outgrows it, it gets a database of
+  its own. On Cloudflare, the database is a Durable Object per tenant.
 
+React Router has its own integration, and the runtime reports OpenTelemetry spans and metrics.
 [How Bounda runs](https://docs.bounda.dev/concepts/how-it-runs/) says how far one store goes, and
 [what is not there yet](https://docs.bounda.dev/reference/limitations/) is one honest list.
 
