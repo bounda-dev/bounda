@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import { discoverProject } from "../discover.ts";
 import type { ProjectModel } from "../model.ts";
@@ -11,6 +11,8 @@ import { emitTypes } from "./types.ts";
 
 const fixtureRoot = resolve(import.meta.dirname, "../../../../core/test-types/fixtures/order-app");
 const updateGolden = process.env.UPDATE_GOLDEN === "1";
+// A path with `/` on every platform, to match it against the ones written below.
+const slashed = (path: string): string => path.split(sep).join("/");
 
 const generatedFilesOnDisk = async (root: string): Promise<readonly string[]> => {
   const found: string[] = [];
@@ -20,7 +22,7 @@ const generatedFilesOnDisk = async (root: string): Promise<readonly string[]> =>
       if (entry.isDirectory()) {
         if (entry.name === "node_modules") continue;
         await walk(path);
-      } else if (path.includes("/+types/") || path.includes("/.bounda/")) {
+      } else if (slashed(path).includes("/+types/") || slashed(path).includes("/.bounda/")) {
         found.push(path);
       }
     }
@@ -533,7 +535,7 @@ describe("emitProject with a read model's ports", () => {
       },
     });
     const contentOf = (suffix: string) =>
-      files.find((file) => file.path.endsWith(suffix))?.content ?? "";
+      files.find((file) => slashed(file.path).endsWith(suffix))?.content ?? "";
     const types = contentOf(".bounda/types.ts");
     expect(types).toContain(
       'export type ShipmentsPorts = {\n  readonly rates: import("../app/read/shipments/rates.ts").Rates;\n};',
@@ -561,12 +563,12 @@ describe("emitProject with ports", () => {
   it("gives every handler of the aggregate its ports, and implementations no +types", () => {
     const files = emitProject({ model: withPorts });
     const contentOf = (suffix: string) =>
-      files.find((file) => file.path.endsWith(suffix))?.content ?? "";
+      files.find((file) => slashed(file.path).endsWith(suffix))?.content ?? "";
     expect(contentOf("policies/+types/audit.ts")).toContain("generated.OrderPorts");
     expect(contentOf("policies/+types/notify-on-order-placed.ts")).toContain(
       "generated.OrderPorts",
     );
-    expect(files.filter((file) => file.path.includes("/infrastructure/"))).toEqual([]);
+    expect(files.filter((file) => slashed(file.path).includes("/infrastructure/"))).toEqual([]);
   });
 });
 
@@ -592,13 +594,15 @@ describe("emitProject without a file-name trigger", () => {
         ],
       },
     });
-    const ticket = files.find((file) => file.path.endsWith("projections/ticket/+types/created.ts"));
+    const ticket = files.find((file) =>
+      slashed(file.path).endsWith("projections/ticket/+types/created.ts"),
+    );
     expect(ticket?.content).toContain('core.StoredEventOf<generated.TicketEvents, "created">');
   });
 
   it("types a policy without -on- over every event of its aggregate", () => {
     const files = emitProject({ model });
-    const policy = files.find((file) => file.path.endsWith("policies/+types/audit.ts"));
+    const policy = files.find((file) => slashed(file.path).endsWith("policies/+types/audit.ts"));
     expect(policy?.content).toContain(
       "core.StoredEventOf<generated.OrderEvents, keyof generated.OrderEvents>",
     );
@@ -622,12 +626,12 @@ describe("emitProject without a file-name trigger", () => {
           ...model.aggregates.slice(1),
         ],
       },
-    }).find((file) => file.path.endsWith("policies/+types/notify-on-order-shipped.ts"));
+    }).find((file) => slashed(file.path).endsWith("policies/+types/notify-on-order-shipped.ts"));
     expect(misnamed?.content).toContain(
       "core.StoredEventOf<generated.OrderEvents, keyof generated.OrderEvents>",
     );
     const projection = files.find((file) =>
-      file.path.endsWith("projections/shipment/+types/created.ts"),
+      slashed(file.path).endsWith("projections/shipment/+types/created.ts"),
     );
     expect(projection?.content).toContain(
       'core.StoredEventOf<generated.ShipmentEvents, "created">',

@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, describe, expect, it } from "vitest";
 
@@ -15,7 +15,7 @@ const project = async (): Promise<string> => {
   temporary.push(root);
   await cp(join(fixtureRoot, "app"), join(root, "app"), {
     recursive: true,
-    filter: (source) => !source.includes("/+types"),
+    filter: (source) => basename(source) !== "+types",
   });
   await writeFile(
     join(root, "tsconfig.json"),

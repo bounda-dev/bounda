@@ -1,6 +1,6 @@
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { generate } from "../generate.ts";
 
@@ -15,7 +15,7 @@ const listFiles = async (root: string): Promise<readonly string[]> => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name);
       if (entry.isDirectory()) await walk(path);
-      else found.push(relative(root, path));
+      else found.push(relative(root, path).split(sep).join("/"));
     }
   };
   await walk(root);
@@ -34,7 +34,7 @@ const freshProject = async (): Promise<string> => {
   temporary.push(root);
   await cp(join(fixtureRoot, "app"), join(root, "app"), {
     recursive: true,
-    filter: (source) => !source.includes("/+types"),
+    filter: (source) => basename(source) !== "+types",
   });
   await writeFile(
     join(root, "tsconfig.json"),
@@ -353,7 +353,7 @@ export type PlainCreatedState = PlainState;`);
       {
         module: "solo",
         message: expect.stringMatching(
-          /^.*\.bounda\/types\.ts is not part of the TypeScript project at .*tsconfig\.json; include it so state can be inferred\. State stays core\.UnknownState; add app\/domain\/solo\/state\.ts to type it$/,
+          /^.*\.bounda[\\/]types\.ts is not part of the TypeScript project at .*tsconfig\.json; include it so state can be inferred\. State stays core\.UnknownState; add app\/domain\/solo\/state\.ts to type it$/,
         ),
       },
     ]);

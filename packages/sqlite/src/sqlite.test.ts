@@ -109,20 +109,26 @@ describe("sqlite adapter on a file", () => {
     return join(directory, `db-${counter}.sqlite`);
   };
 
+  // Windows cannot delete a database file that is still open, so the storages these tests leave
+  // open are closed before the directory goes.
+  const leftOpen: Storage[] = [];
+  const openFile = async (path = freshPath()): Promise<Storage> => {
+    const storage = await openStorage(sqlite({ path }));
+    leftOpen.push(storage);
+    return storage;
+  };
+
   beforeAll(async () => {
     directory = await mkdtemp(join(tmpdir(), "bounda-sqlite-"));
   });
 
   afterAll(async () => {
+    await Promise.all(leftOpen.map((storage) => storage.close()));
     await rm(directory, { recursive: true, force: true });
   });
 
-  eventStoreContract({
-    create: async () => (await openStorage(sqlite({ path: freshPath() }))).eventStore,
-  });
-  schedulerContract({
-    create: async () => (await openStorage(sqlite({ path: freshPath() }))).scheduler,
-  });
+  eventStoreContract({ create: async () => (await openFile()).eventStore });
+  schedulerContract({ create: async () => (await openFile()).scheduler });
   readModelRebuildContract({ create: async () => sqlite({ path: freshPath() }) });
   readModelTransactionContract({
     create: async () => sqlite({ path: freshPath() }),
@@ -130,7 +136,7 @@ describe("sqlite adapter on a file", () => {
   });
 
   it("lets its own statements wait for its own write transaction, without blocking the process", async () => {
-    const storage = await openStorage(sqlite({ path: freshPath() }));
+    const storage = await openFile();
     let release: () => void = () => undefined;
     const held = new Promise<void>((resolve) => {
       release = resolve;
@@ -160,7 +166,7 @@ describe("sqlite adapter on a file", () => {
 
   it("waits for another process's write on the file, in WAL mode, instead of failing", async () => {
     const path = freshPath();
-    const storage = await openStorage(sqlite({ path }));
+    const storage = await openFile(path);
     const holder = spawn(
       process.execPath,
       [

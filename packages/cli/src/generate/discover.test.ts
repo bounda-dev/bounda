@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { discoverProject } from "./discover.ts";
 import type { ProjectModel } from "./model.ts";
@@ -43,7 +43,7 @@ const problemsOf = async (root: string): Promise<readonly string[]> => {
   } catch (error) {
     if (error instanceof ConventionError) {
       return error.problems.map(
-        (problem) => `${problem.path.slice(root.length + 1)}: ${problem.message}`,
+        (problem) => `${relative(root, problem.path).split(sep).join("/")}: ${problem.message}`,
       );
     }
     throw error;
@@ -998,7 +998,7 @@ describe("discoverProject convention problems", () => {
   it("formats the error message with every problem", async () => {
     const root = await project(["app/domain/orders_v2/x.ts"]);
     await expect(discoverProject({ root })).rejects.toThrow(
-      /1 problem in the project layout:\n {2}.*app\/domain\/orders_v2: Aggregate names must be kebab-case/,
+      /1 problem in the project layout:\n {2}.*app[\\/]domain[\\/]orders_v2: Aggregate names must be kebab-case/,
     );
   });
 });
