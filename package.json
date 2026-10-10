@@ -19,9 +19,9 @@
     }
   },
   "scripts": {
-    "build": "pnpm -r --filter './packages/*' run build",
-    "generate": "pnpm -r --filter './examples/*' run generate",
-    "typecheck": "pnpm -r --filter './packages/*' --filter './examples/*' --filter ./docs run typecheck",
+    "build": "pnpm -r --fail-if-no-match --filter \"./packages/*\" run build",
+    "generate": "pnpm -r --fail-if-no-match --filter \"./examples/*\" run generate",
+    "typecheck": "pnpm -r --fail-if-no-match --filter \"./packages/*\" --filter \"./examples/*\" --filter ./docs run typecheck",
     "lint": "biome check .",
     "format": "biome format --write .",
     "test": "vitest run",
