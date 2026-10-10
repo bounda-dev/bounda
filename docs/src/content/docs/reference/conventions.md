@@ -50,11 +50,11 @@ does files that start with `_` or `.`, tests (`*.test.ts`, `*.test-d.ts`), decla
   aggregate does not have;
 - a module at an aggregate's root that exports an event's function (`payload`, `begin`, `evolve`)
   and something else besides, and an `<event>.upcast.ts` with no event next to it;
-- a port whose module does not export the interface named after it, a port directory with no
-  implementation or with subdirectories, an implementation with no port, and a port named after an
-  event of its aggregate or after a reserved name: `command`, `state`, `events`, `event`,
-  `commands`, `idempotencyKey`, `signal`, `aggregateId`, `after`, `reject` in an aggregate, and
-  `view`, `query`, `repositoryData`, `table`, `queries` in a read model;
+- a port whose module does not export an interface or a type alias named after it, a port
+  directory with no implementation or with subdirectories, an implementation with no port, and a
+  port named after an event of its aggregate or after a reserved name: `command`, `state`,
+  `events`, `event`, `commands`, `idempotencyKey`, `signal`, `aggregateId`, `after`, `reject` in
+  an aggregate, and `view`, `query`, `repositoryData`, `table`, `queries` in a read model;
 - a policy and a process of one aggregate with the same key (`policies/checkout.ts` next to
   `processes/checkout/`, or `policies/payment-refund-on-payment-failed.ts` next to
   `policies/payment/refund-on-payment-failed.ts`), a policy named after an aggregate, a policy

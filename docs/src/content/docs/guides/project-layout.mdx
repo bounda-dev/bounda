@@ -162,10 +162,12 @@ export const aggregateId = "orderId";
 ### Ports: `<port>.ts`
 
 A port is what the aggregate's handlers call outside the app: an inventory service, a mailer, a
-payment provider. A read model has ports too, for its queries ([read models](#read-models-appreadread-model)). It is a module at the root of the aggregate that exports its interface, named
-after the file in PascalCase, and every handler of the aggregate receives it under that name: its
-commands, its policies and every handler of its processes. Its implementations live in
-`infrastructure/<port>/`, one file each, with a default export or with a `create` function.
+payment provider. A read model has ports too, for its queries
+([read models](#read-models-appreadread-model)). It is a module at the root of the aggregate that
+exports its interface, named after the file in PascalCase (a type alias of that name works too),
+and every handler of the aggregate receives it under that name: its commands, its policies and
+every handler of its processes. Its implementations live in `infrastructure/<port>/`, one file
+each, with a default export or with a `create` function.
 
 ```ts
 // app/domain/order/inventory.ts
