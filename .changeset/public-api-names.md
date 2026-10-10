@@ -1,9 +1,9 @@
 ---
 "@bounda-dev/core": minor
 "@bounda-dev/cli": minor
-"@bounda-dev/adapter-sqlite": minor
-"@bounda-dev/adapter-postgresql": minor
-"@bounda-dev/adapter-cloudflare": minor
+"@bounda-dev/sqlite": minor
+"@bounda-dev/postgresql": minor
+"@bounda-dev/cloudflare": minor
 "@bounda-dev/react-router": minor
 ---
 
@@ -44,4 +44,4 @@ Breaking:
   used them.
 - The storage no longer adds columns to tables an earlier version created, and
   `storageSchemaAdditions` is gone from `@bounda-dev/core/adapter/sqlite` and
-  `@bounda-dev/adapter-sqlite`: a database created before this version has to be created again.
+  `@bounda-dev/sqlite`: a database created before this version has to be created again.

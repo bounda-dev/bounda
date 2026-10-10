@@ -1,6 +1,6 @@
 ---
 "@bounda-dev/core": minor
-"@bounda-dev/adapter-cloudflare": minor
+"@bounda-dev/cloudflare": minor
 "@bounda-dev/react-router": minor
 "create-bounda": minor
 ---
@@ -19,7 +19,7 @@ Breaking:
   default, and the `x-bounda-tenant` header is no longer a default tenant: the Cloudflare project
   from `create-bounda` passes it as `tenantOf`.
 - `@bounda-dev/core` exports `BoundaClient`, what a request sees of an app wherever it runs, and
-  `BoundaApp` extends it. `connect` returns one and `@bounda-dev/adapter-cloudflare` no longer
+  `BoundaApp` extends it. `connect` returns one and `@bounda-dev/cloudflare` no longer
   exports its own; the `bounda` context of `@bounda-dev/react-router` holds one too, so a loader
   reaches `commands`, `queries`, `getLag()`, `deadLetters` and `rebuildReadModel`, but not the
   rest of `BoundaApp`.

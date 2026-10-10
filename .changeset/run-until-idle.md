@@ -1,6 +1,6 @@
 ---
 "@bounda-dev/core": minor
-"@bounda-dev/adapter-cloudflare": patch
+"@bounda-dev/cloudflare": patch
 "create-bounda": patch
 ---
 

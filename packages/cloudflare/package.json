@@ -1,12 +1,12 @@
 {
-  "name": "@bounda-dev/adapter-cloudflare",
+  "name": "@bounda-dev/cloudflare",
   "version": "0.1.0",
   "description": "Cloudflare Durable Objects storage adapter for Bounda",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/bounda-dev/bounda.git",
-    "directory": "packages/adapter-cloudflare"
+    "directory": "packages/cloudflare"
   },
   "homepage": "https://docs.bounda.dev",
   "type": "module",

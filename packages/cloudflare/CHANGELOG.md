@@ -1,4 +1,4 @@
-# @bounda-dev/adapter-cloudflare
+# @bounda-dev/cloudflare
 
 ## 0.1.0
 

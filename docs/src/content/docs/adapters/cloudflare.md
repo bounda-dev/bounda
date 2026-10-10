@@ -5,7 +5,7 @@ sidebar:
   order: 3
 ---
 
-`@bounda-dev/adapter-cloudflare` runs a Bounda app on Cloudflare: a Worker in front and a
+`@bounda-dev/cloudflare` runs a Bounda app on Cloudflare: a Worker in front and a
 [Durable Object](https://developers.cloudflare.com/durable-objects/) per tenant, each holding
 its events, its read models and its scheduled work in its own SQLite. There is nothing else to
 deploy or to keep running.
@@ -26,7 +26,7 @@ That gives you the order app of [Getting started](/getting-started/) with three 
 
 ```ts
 // bounda.config.ts
-import { cloudflare } from "@bounda-dev/adapter-cloudflare";
+import { cloudflare } from "@bounda-dev/cloudflare";
 import { defineConfig } from "@bounda-dev/core/config";
 
 export default defineConfig({ storage: cloudflare() });
@@ -34,7 +34,7 @@ export default defineConfig({ storage: cloudflare() });
 
 ```ts
 // src/worker.ts
-import { createBoundaObject, createWorker } from "@bounda-dev/adapter-cloudflare";
+import { createBoundaObject, createWorker } from "@bounda-dev/cloudflare";
 import { registry } from "../.bounda/registry.ts";
 import config from "../bounda.config.ts";
 
@@ -150,7 +150,7 @@ It has **no authentication** and no operator endpoint, on purpose: it is a start
 app with users writes its own `fetch` and talks to a store with `connect`:
 
 ```ts
-import { connect } from "@bounda-dev/adapter-cloudflare";
+import { connect } from "@bounda-dev/cloudflare";
 
 export default {
   async fetch(request, env) {

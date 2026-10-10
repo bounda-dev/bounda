@@ -15,8 +15,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@bounda-dev/adapter-postgresql": "workspace:*",
-    "@bounda-dev/adapter-sqlite": "workspace:*",
+    "@bounda-dev/postgresql": "workspace:*",
+    "@bounda-dev/sqlite": "workspace:*",
     "@bounda-dev/core": "workspace:*",
     "@bounda-dev/react-router": "workspace:*",
     "@react-router/node": "catalog:",

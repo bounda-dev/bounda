@@ -160,7 +160,7 @@ creates:
 <TabItem label="SQLite">
 
 ```ts
-import { sqlite } from "@bounda-dev/adapter-sqlite";
+import { sqlite } from "@bounda-dev/sqlite";
 
 const { app } = await createTestApp({ registry, adapter: sqlite({ memory: true }) });
 ```
@@ -172,8 +172,8 @@ isolated and fast.
 <TabItem label="PostgreSQL">
 
 ```ts
+import { postgresql } from "@bounda-dev/postgresql";
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
-import { postgresql } from "@bounda-dev/adapter-postgresql";
 
 const container = await new PostgreSqlContainer("postgres:17").start();
 const { app } = await createTestApp({

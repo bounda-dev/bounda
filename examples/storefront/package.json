@@ -13,7 +13,7 @@
     "start": "node src/main.ts"
   },
   "dependencies": {
-    "@bounda-dev/adapter-sqlite": "workspace:*",
+    "@bounda-dev/sqlite": "workspace:*",
     "@bounda-dev/core": "workspace:*"
   },
   "devDependencies": {

@@ -6,7 +6,7 @@ import type { CreateHostArgs, CreateHostFunction } from "./args.ts";
 export { failure } from "../failure.ts";
 export type { CreateHostArgs, CreateHostFunction } from "./args.ts";
 
-// What Node says when `bounda.config.ts` imports `@bounda-dev/adapter-cloudflare`.
+// What Node says when `bounda.config.ts` imports `@bounda-dev/cloudflare`.
 const needsWorkers = (error: unknown): boolean =>
   error instanceof Error &&
   Reflect.get(error, "code") === "ERR_UNSUPPORTED_ESM_URL_SCHEME" &&

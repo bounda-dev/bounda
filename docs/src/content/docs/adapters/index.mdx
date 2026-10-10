@@ -16,8 +16,8 @@ or queue to operate. An adapter is the piece that knows how to talk to one engin
 
 ```ts
 // bounda.config.ts
-import { sqlite } from "@bounda-dev/adapter-sqlite";
 import { defineConfig } from "@bounda-dev/core/config";
+import { sqlite } from "@bounda-dev/sqlite";
 
 export default defineConfig({
   storage: sqlite({ path: "./data/app.db" }),
@@ -29,8 +29,8 @@ export default defineConfig({
 
 ```ts
 // bounda.config.ts
-import { postgresql } from "@bounda-dev/adapter-postgresql";
 import { defineConfig } from "@bounda-dev/core/config";
+import { postgresql } from "@bounda-dev/postgresql";
 
 export default defineConfig({
   storage: postgresql({ url: process.env.DATABASE_URL! }),
@@ -42,7 +42,7 @@ export default defineConfig({
 
 ```ts
 // bounda.config.ts
-import { cloudflare } from "@bounda-dev/adapter-cloudflare";
+import { cloudflare } from "@bounda-dev/cloudflare";
 import { defineConfig } from "@bounda-dev/core/config";
 
 export default defineConfig({
@@ -69,9 +69,9 @@ export default defineConfig({
 
 | Adapter | Package | Engine |
 | --- | --- | --- |
-| [SQLite](/adapters/sqlite/) | `@bounda-dev/adapter-sqlite` | A local file, memory, or a libSQL server such as Turso |
-| [PostgreSQL](/adapters/postgresql/) | `@bounda-dev/adapter-postgresql` | PostgreSQL 14 or newer |
-| [Cloudflare](/adapters/cloudflare/) | `@bounda-dev/adapter-cloudflare` | A Durable Object's own SQLite, one object per tenant |
+| [SQLite](/adapters/sqlite/) | `@bounda-dev/sqlite` | A local file, memory, or a libSQL server such as Turso |
+| [PostgreSQL](/adapters/postgresql/) | `@bounda-dev/postgresql` | PostgreSQL 14 or newer |
+| [Cloudflare](/adapters/cloudflare/) | `@bounda-dev/cloudflare` | A Durable Object's own SQLite, one object per tenant |
 | In-memory | `@bounda-dev/core/memory` | Nothing; for tests and for trying Bounda without a database |
 
 Every adapter passes the same contract test suites, so an app behaves the same way on each of

@@ -1,7 +1,7 @@
-import type { BoundaStub } from "@bounda-dev/adapter-cloudflare";
+import type { BoundaStub } from "@bounda-dev/cloudflare";
 
 // What the tests in Node load for `cloudflare:workers`: the Worker's bindings, which a test sets,
-// and the base class `@bounda-dev/adapter-cloudflare` extends when it is imported.
+// and the base class `@bounda-dev/cloudflare` extends when it is imported.
 export const env: Record<string, unknown> = {};
 
 export class DurableObject {}

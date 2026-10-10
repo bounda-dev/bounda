@@ -79,13 +79,13 @@ describe("scaffoldProject", () => {
       name: "shop",
       dependencies: {
         "@bounda-dev/core": "^0.1.0-alpha.0",
-        "@bounda-dev/adapter-sqlite": "^0.1.0-alpha.0",
+        "@bounda-dev/sqlite": "^0.1.0-alpha.0",
       },
       devDependencies: { "@bounda-dev/cli": "^0.1.0-alpha.0", typescript: "^7", vitest: "^5" },
       scripts: { prepare: "bounda generate" },
     });
     expect(await readFile(join(target, "bounda.config.ts"), "utf8")).toContain(
-      "@bounda-dev/adapter-sqlite",
+      "@bounda-dev/sqlite",
     );
     expect(await readFile(join(target, "README.md"), "utf8")).toContain("pnpm install");
     expect(await readFile(join(target, ".gitignore"), "utf8")).toContain(".bounda/");
@@ -113,11 +113,11 @@ describe("scaffoldProject", () => {
     expect(report.files).toContain(".env.example");
     expect(await readFile(join(target, ".env.example"), "utf8")).toContain("5432/shop");
     expect(await readFile(join(target, "bounda.config.ts"), "utf8")).toContain(
-      "@bounda-dev/adapter-postgresql",
+      "@bounda-dev/postgresql",
     );
     expect(JSON.parse(await readFile(join(target, "package.json"), "utf8")).dependencies).toEqual({
       "@bounda-dev/core": "^0.1.0-alpha.0",
-      "@bounda-dev/adapter-postgresql": "^0.1.0-alpha.0",
+      "@bounda-dev/postgresql": "^0.1.0-alpha.0",
     });
   });
 
@@ -170,7 +170,7 @@ describe("scaffoldProject", () => {
     );
     expect(manifest.dependencies).toMatchObject({
       "@bounda-dev/react-router": "^0.1.0-alpha.0",
-      "@bounda-dev/adapter-sqlite": "^0.1.0-alpha.0",
+      "@bounda-dev/sqlite": "^0.1.0-alpha.0",
       "react-router": "^8",
       react: "^19",
       isbot: "^5",
@@ -232,7 +232,7 @@ describe("scaffoldProject", () => {
     });
     expect(manifest.scripts).not.toHaveProperty("prepare");
     expect(manifest.dependencies).toEqual({
-      "@bounda-dev/adapter-cloudflare": "^0.1.0-alpha.0",
+      "@bounda-dev/cloudflare": "^0.1.0-alpha.0",
       "@bounda-dev/core": "^0.1.0-alpha.0",
     });
     expect(manifest.devDependencies).toEqual({

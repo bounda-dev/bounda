@@ -5,11 +5,11 @@ sidebar:
   order: 2
 ---
 
-`@bounda-dev/adapter-postgresql` stores everything in PostgreSQL through
+`@bounda-dev/postgresql` stores everything in PostgreSQL through
 [Postgres.js](https://github.com/porsager/postgres).
 
 ```ts
-import { postgresql } from "@bounda-dev/adapter-postgresql";
+import { postgresql } from "@bounda-dev/postgresql";
 
 postgresql({ url: process.env.DATABASE_URL! });
 postgresql({ host: "localhost", port: 5432, database: "shop", user: "shop", password: "…" });

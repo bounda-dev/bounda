@@ -16,7 +16,7 @@ Bounda is an event sourcing and CQRS framework for TypeScript. Your business log
 files that export a handful of functions; the runtime does the wiring and runs on one database.
 
 ```bash
-npm install @bounda-dev/core @bounda-dev/adapter-sqlite
+npm install @bounda-dev/core @bounda-dev/sqlite
 npm install -D @bounda-dev/cli
 ```
 

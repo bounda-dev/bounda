@@ -59,7 +59,7 @@ pnpm docs:dev                                # the docs site on localhost
 
 Branches are named `feat/`, `fix/`, `docs/`, `refactor/` or `chore/`, and commit messages follow
 [Conventional Commits](https://www.conventionalcommits.org/) with the package as scope:
-`fix(adapter-postgresql): …`.
+`fix(postgresql): …`.
 
 ## Code style
 

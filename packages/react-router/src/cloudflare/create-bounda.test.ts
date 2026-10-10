@@ -1,4 +1,4 @@
-import { cloudflare } from "@bounda-dev/adapter-cloudflare";
+import { cloudflare } from "@bounda-dev/cloudflare";
 import {
   type AppRegistry,
   type BoundaClient,

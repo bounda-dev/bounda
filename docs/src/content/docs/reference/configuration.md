@@ -11,8 +11,8 @@ checked when the app is created: an unknown key, a value of the wrong type or a 
 read throws a `ConfigurationError` that lists every problem with its path.
 
 ```ts
-import { postgresql } from "@bounda-dev/adapter-postgresql";
 import { defineConfig } from "@bounda-dev/core/config";
+import { postgresql } from "@bounda-dev/postgresql";
 
 export default defineConfig({
   storage: postgresql({ url: process.env.DATABASE_URL! }),

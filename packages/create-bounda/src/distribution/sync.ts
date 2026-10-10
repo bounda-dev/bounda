@@ -66,7 +66,7 @@ const BOUNDA_PACKAGES = [
   "create-bounda",
   "@bounda-dev/core",
   "@bounda-dev/cli",
-  "@bounda-dev/adapter-cloudflare",
+  "@bounda-dev/cloudflare",
 ];
 
 const readJson = async (path: string): Promise<JsonObject> =>

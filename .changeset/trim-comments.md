@@ -1,9 +1,9 @@
 ---
 "@bounda-dev/core": patch
 "@bounda-dev/cli": patch
-"@bounda-dev/adapter-sqlite": patch
-"@bounda-dev/adapter-postgresql": patch
-"@bounda-dev/adapter-cloudflare": patch
+"@bounda-dev/sqlite": patch
+"@bounda-dev/postgresql": patch
+"@bounda-dev/cloudflare": patch
 "@bounda-dev/react-router": patch
 "create-bounda": patch
 ---

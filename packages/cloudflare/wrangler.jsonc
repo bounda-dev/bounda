@@ -1,5 +1,5 @@
 {
-  "name": "bounda-adapter-cloudflare-test",
+  "name": "bounda-cloudflare-test",
   "main": "test/test-worker.ts",
   "compatibility_date": "2025-10-08",
   "compatibility_flags": ["nodejs_compat"],

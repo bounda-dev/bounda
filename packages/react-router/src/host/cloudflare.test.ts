@@ -1,4 +1,4 @@
-import { cloudflare } from "@bounda-dev/adapter-cloudflare";
+import { cloudflare } from "@bounda-dev/cloudflare";
 import { ConfigurationError, type Consistency, type Registry } from "@bounda-dev/core";
 import type { ImportModuleFunction } from "@bounda-dev/core/node";
 import { RouterContextProvider } from "react-router";

@@ -1,7 +1,7 @@
 ---
 "@bounda-dev/core": minor
-"@bounda-dev/adapter-postgresql": minor
-"@bounda-dev/adapter-sqlite": patch
+"@bounda-dev/postgresql": minor
+"@bounda-dev/sqlite": patch
 ---
 
 Fixes from a review of the storage adapters:

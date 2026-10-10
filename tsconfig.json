@@ -8,10 +8,10 @@
       "path": "packages/cli"
     },
     {
-      "path": "packages/adapter-sqlite"
+      "path": "packages/sqlite"
     },
     {
-      "path": "packages/adapter-postgresql"
+      "path": "packages/postgresql"
     },
     {
       "path": "packages/react-router"

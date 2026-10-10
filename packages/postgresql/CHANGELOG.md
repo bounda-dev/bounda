@@ -1,4 +1,4 @@
-# @bounda-dev/adapter-sqlite
+# @bounda-dev/postgresql
 
 ## 0.1.0
 
@@ -85,6 +85,18 @@
 
 ### Patch Changes
 
+- f660eb7: An app without policies or processes no longer runs a policy or process runner: nothing reads the
+  log for them, nothing checkpoints and nothing wakes up. On Cloudflare that removes an alarm and
+  two row writes after every command. A policy or process now always starts at the head of the log
+  when it has no checkpoint yet, so adding the first one to a running app does not replay its
+  history. `CheckpointStore` gains `remove(subscriber)`.
+- f7ce38a: A read model rebuild can run in slices and resumes where it stopped. `rebuildReadModel` and
+  `app.rebuildReadModel` take `maxEvents` and answer `done`; the position reached is saved after
+  every batch, keyed by a fingerprint of the read model's fields and projections, so an interrupted
+  `bounda rebuild` picks up where it was unless the code changed, and `app.pendingRebuilds()` lists
+  what is waiting. On Cloudflare the Durable Object runs the first slice in the request and the
+  rest in its alarm (`eventsPerRebuildSlice`, 5,000 by default). Adapters gain `resume` and
+  `pause` in their rebuild.
 - Updated dependencies [f660eb7]
 - Updated dependencies [f7ce38a]
 - Updated dependencies [9d9b670]
@@ -100,11 +112,6 @@
   which counts the lease of a claimed command, in every adapter.
 - 19dbca5: Show the Bounda wordmark at the top of each package's README, served from the documentation site so
   it renders on npm as well as on GitHub.
-- 5000433: The SQLite stores, the storage schema and the read models move from `@bounda-dev/adapter-sqlite`
-  into `@bounda-dev/core/adapter/sqlite`, behind a `SqlDatabase` interface and a
-  `createSqliteAdapter` factory that builds a complete adapter from any SQLite connection.
-  `@bounda-dev/adapter-sqlite` now only brings the libSQL connection, and keeps exporting the schema
-  helpers it did before. Nothing changes for an app.
 - Updated dependencies [176975a]
 - Updated dependencies [19dbca5]
 - Updated dependencies [5000433]
@@ -125,6 +132,13 @@
   or dispatches the dropped scheduled command again; a process that had failed is back to `started`
   with its timeout re-armed at the original deadline. Command dead letters now record the command's
   payload, in a new nullable `payload` column the adapters add to existing databases on start.
+- d8c06fa: `LISTEN`/`NOTIFY`. The PostgreSQL adapter ends every append's transaction with `pg_notify` on a
+  channel named after the events table and exposes a notifier that `LISTEN`s on it; the dispatcher
+  runs a pass the moment a notification arrives and, once passes stop finding events, polls only
+  every `runtime.dispatcher.idleInterval` (30 seconds by default) as a safety net. A policy on
+  PostgreSQL reacts in milliseconds and an idle worker barely touches the database. `StoragePorts`
+  gains an optional `notifier`; SQLite has none and polls as before; the in-memory adapter notifies
+  within the process.
 - 78f9b01: Rebuild a read model without taking it offline. `bounda rebuild <read-model>` projects the whole
   stream into a fresh table with the view's current fields while queries keep reading the live one,
   then swaps the two in a single transaction and moves the read model's checkpoint to where the

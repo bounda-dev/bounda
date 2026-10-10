@@ -143,7 +143,7 @@ differently the second time; the reasons are in
 ## Why "port" and "implementation"
 
 Cockburn's own word for what fills a port is *adapter*, but in Bounda that word names the storage
-packages, `@bounda-dev/adapter-sqlite` and its siblings, and one word for two things would make
+packages, `@bounda-dev/sqlite` and its siblings, and one word for two things would make
 every sentence ambiguous. *Driver* is what Laravel says, but in hexagonal vocabulary the driving
 side is the one that calls in, a user, a test or a script, the opposite of what these are.
 *Provider* is the word of dependency injection, where it means anything the container can inject

@@ -1,4 +1,4 @@
-import { createBoundaObject, createWorker } from "@bounda-dev/adapter-cloudflare";
+import { createBoundaObject, createWorker } from "@bounda-dev/cloudflare";
 import { registry } from "../.bounda/registry.ts";
 import config from "../bounda.config.ts";
 
