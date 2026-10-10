@@ -1,10 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
-  <style>
-    @media (prefers-color-scheme: light) { :root { color: #000; } }
-    @media (prefers-color-scheme: dark) { :root { color: #fff; } }
-</style>
-  <line x1="46" y1="4" x2="46" y2="60" stroke="currentColor" stroke-width="10"
-    stroke-linecap="round" />
-  <line x1="18" y1="46" x2="46" y2="46" stroke="currentColor" stroke-width="6"
-    stroke-linecap="round" />
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <style>path{fill:#1a1916}@media (prefers-color-scheme:dark){path{fill:#e6e0d3}}</style>
+  <path d="M19 1h5v30h-5v-4H7v-3h12z"/>
 </svg>
