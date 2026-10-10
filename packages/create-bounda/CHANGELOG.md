@@ -1,5 +1,12 @@
 # create-bounda
 
+## 0.2.2
+
+### Patch Changes
+
+- 0c806b3: A project scaffolded with React Router carries Bounda's current mark as its favicon, the one on
+  docs.bounda.dev, in the identity's ink colours for light and dark.
+
 ## 0.2.1
 
 ### Patch Changes
