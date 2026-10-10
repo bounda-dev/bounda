@@ -495,6 +495,74 @@ export type PlainCreatedState = PlainState;`);
 };`);
   });
 
+  it("lists once a member that a field's type repeats, within an event or across them", async () => {
+    const root = await syntheticProject({
+      "app/domain/payment/payment-started.ts": [
+        "export declare enum Level {",
+        "  Low,",
+        "  High,",
+        "}",
+        "export const begin = () => ({",
+        "  chargeId: null as string | null,",
+        "  captured: null as boolean | null,",
+        "  level: null as Level | null,",
+        "  onRetry: null as (() => void) | null,",
+        "  receipt: null as { id: string } | { id: string } | null,",
+        "});",
+        "",
+      ].join("\n"),
+      "app/domain/payment/payment-charged.ts": [
+        'import { Level } from "./payment-started";',
+        "export const evolve = () => ({",
+        '  chargeId: "ch_1" as string,',
+        "  captured: true as boolean,",
+        "  level: Level.High as Level,",
+        "  onRetry: () => {},",
+        "  notify: () => {},",
+        "});",
+        "",
+      ].join("\n"),
+    });
+    const report = await generate({ root });
+    expect(report.warnings).toEqual([]);
+    const types = await readFile(join(root, ".bounda/types.ts"), "utf8");
+    expect(types).toContain(`export type PaymentCreatedState = {
+  readonly captured: boolean | null;
+  readonly chargeId: string | null;
+  readonly level: import("../app/domain/payment/payment-started.ts").Level | null;
+  readonly notify?: () => void;
+  readonly onRetry: (() => void) | null;
+  readonly receipt: {
+    id: string;
+  } | null;
+};`);
+  });
+
+  it("parenthesizes a function or an intersection type next to what another event gives", async () => {
+    const root = await syntheticProject({
+      "app/domain/order/order-opened.ts":
+        "export const begin = () => ({ onDone: null, contact: null });\n",
+      "app/domain/order/order-filled.ts": [
+        "export const evolve = () => ({",
+        "  onDone: () => {},",
+        "  contact: {} as { email: string } & { phone: string },",
+        "});",
+        "",
+      ].join("\n"),
+    });
+    const report = await generate({ root });
+    expect(report.warnings).toEqual([]);
+    const types = await readFile(join(root, ".bounda/types.ts"), "utf8");
+    expect(types).toContain(`export type OrderCreatedState = {
+  readonly contact: null | ({
+    email: string;
+  } & {
+    phone: string;
+  });
+  readonly onDone: (() => void) | null;
+};`);
+  });
+
   it("types as unknown, with a warning, what does not settle within the passes", async () => {
     const root = await syntheticProject({
       "app/domain/relay/relay-opened.ts": 'export const begin = () => ({ first: "start" });\n',
