@@ -507,7 +507,7 @@ export type PlainCreatedState = PlainState;`);
         "  fourth: state.third,",
         "  fifth: state.fourth,",
         "  sixth: state.fifth,",
-        "  seventh: state.sixth,",
+        "  seventh: state.sixth.toString(),",
         "});",
         "",
       ].join("\n"),
