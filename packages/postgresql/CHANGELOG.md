@@ -1,5 +1,12 @@
 # @bounda-dev/postgresql
 
+## 0.2.2
+
+### Patch Changes
+
+- Updated dependencies [5a5d5c4]
+  - @bounda-dev/core@0.2.2
+
 ## 0.2.1
 
 ### Patch Changes
