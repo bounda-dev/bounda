@@ -11,6 +11,18 @@
       "automerge": true
     },
     {
+      "description": "Peer ranges and engines are the support contract of the published packages: widened or raised by hand, never pinned or bumped.",
+      "matchDepTypes": ["peerDependencies", "engines"],
+      "enabled": false
+    },
+    {
+      "description": "astro check accepts TypeScript up to 6, so the docs catalog stays on that major.",
+      "matchDepTypes": ["pnpm.catalog.docs"],
+      "matchPackageNames": ["typescript"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
       "groupName": "vitest",
       "matchPackageNames": ["vitest", "@vitest/**"]
     },
