@@ -39,6 +39,11 @@ export type CreateTestAppArgs<R extends Registry> = {
    * Where the fixed clock starts. Defaults to 2026-01-01T00:00:00Z.
    */
   readonly now?: Date;
+  /**
+   * The name of the store, which an implementation `ports` names receives in `create` as
+   * `tenant`, as it would in that tenant's Durable Object. Left out, it receives none.
+   */
+  readonly tenant?: string;
 } & EnvSection<R>;
 
 /**
@@ -81,6 +86,7 @@ export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
   logger = silentLogger,
   now,
   env = {},
+  tenant,
 }: CreateTestAppArgs<R>): Promise<TestApp<R>> => {
   const clock = createFixedClock(now);
   const ids = createSequentialIdGenerator();
@@ -96,6 +102,7 @@ export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
     ids,
     clock,
     env,
+    tenant,
     pendingRetries: createPendingRetries(clock),
     test: {
       ports,

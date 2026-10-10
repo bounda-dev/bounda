@@ -186,6 +186,12 @@ export type CreateAppArgs<R extends Registry> = {
    * Defaults to `systemClock`.
    */
   readonly clock?: Clock;
+  /**
+   * The name of the store this app serves, which every port implementation's `create` receives
+   * as `tenant`. `createBoundaObject` passes the Durable Object's name; leave it out for an app
+   * with one store.
+   */
+  readonly tenant?: string | undefined;
 } & EnvSection<R>;
 
 export interface CreateAppFunction {
@@ -204,8 +210,9 @@ export const createApp: CreateAppFunction = <R extends Registry>({
   ids = uuidV7IdGenerator,
   clock = systemClock,
   env = {},
+  tenant,
 }: CreateAppArgs<R>): Promise<BoundaApp<R>> =>
-  assembleApp<R>({ registry, config, logger, ids, clock, env });
+  assembleApp<R>({ registry, config, logger, ids, clock, env, tenant });
 
 export interface AssembleAppArgs<R extends Registry> {
   readonly registry: R;
@@ -214,6 +221,7 @@ export interface AssembleAppArgs<R extends Registry> {
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly env: AppEnv;
+  readonly tenant?: string | undefined;
   /**
    * Given by `createTestApp`: the ports come from the test instead of `config.ports`.
    */
@@ -235,6 +243,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
   ids,
   clock,
   env,
+  tenant,
   test,
   pendingRetries = ignoredRetries,
 }: AssembleAppArgs<R>): Promise<BoundaApp<R>> => {
@@ -252,6 +261,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
   const ports = await createPorts({
     registry,
     env,
+    tenant,
     logger,
     clock,
     ...(test === undefined ? { config: config.ports } : { test }),

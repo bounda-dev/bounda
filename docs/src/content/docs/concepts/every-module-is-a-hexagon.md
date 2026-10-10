@@ -74,8 +74,9 @@ export default (async ({ orderId, customerId, total, idempotencyKey }) => {
 That file imports nothing from Bounda. An implementation with state, a client, a pool or a
 secret, exports `create` instead, typed as `CreateImplementation<Port>`, the one type it takes from
 Bounda, and each part of it has a reason: `env`, because the host's environment is `process.env`
-in Node, the Durable Object's `env` on Cloudflare and what a test passes; the app's `logger`; the
-app's `clock`, so the time it reads is the time a test controls; and a result that may be a
+in Node, the Durable Object's `env` on Cloudflare and what a test passes; `tenant`, the name of
+the store, so an implementation can serve each tenant with its own account; the app's `logger`;
+the app's `clock`, so the time it reads is the time a test controls; and a result that may be a
 promise, for a client that must connect first. It runs once per app, so on Cloudflare once per
 Durable Object: each tenant's store builds its own client, and `app.stop()` closes it.
 

@@ -1,3 +1,4 @@
+import type { CreateAppArgs } from "@bounda-dev/core";
 import type { AppTestPorts } from "@bounda-dev/core/register";
 import type { CreateTestAppArgs } from "@bounda-dev/core/testing";
 import { describe, expectTypeOf, it } from "vitest";
@@ -46,5 +47,14 @@ describe("createTestApp ports", () => {
       ports: { order: { inventory: "fake" } },
     };
     void config;
+  });
+});
+
+describe("the tenant of an app", () => {
+  it("is an optional name for createTestApp, and for createApp one a host may not have", () => {
+    expectTypeOf<Pick<Args, "tenant">>().toEqualTypeOf<{ readonly tenant?: string }>();
+    expectTypeOf<Pick<CreateAppArgs<typeof registry>, "tenant">>().toEqualTypeOf<{
+      readonly tenant?: string | undefined;
+    }>();
   });
 });

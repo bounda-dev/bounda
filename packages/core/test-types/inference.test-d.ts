@@ -205,10 +205,11 @@ describe("ports", () => {
     expectTypeOf<RemindersFake["default"]>().toExtend<Reminders>();
   });
 
-  it("type create by the port, with the host's environment, the logger and the clock", () => {
+  it("type create by the port, with the host's environment, the tenant, the logger and the clock", () => {
     expectTypeOf<InventoryHttp["create"]>().toEqualTypeOf<CreateImplementation<Inventory>>();
     expectTypeOf<Parameters<InventoryHttp["create"]>[0]>().toEqualTypeOf<CreateArgs>();
     expectTypeOf<CreateArgs["env"]>().toEqualTypeOf<Readonly<Record<string, string | undefined>>>();
+    expectTypeOf<Pick<CreateArgs, "tenant">>().toEqualTypeOf<{ readonly tenant?: string }>();
     expectTypeOf<CreateArgs["logger"]>().toEqualTypeOf<Logger>();
     expectTypeOf<CreateArgs["clock"]>().toEqualTypeOf<Clock>();
     expectTypeOf<ReturnType<InventoryHttp["create"]>>().toEqualTypeOf<
@@ -253,7 +254,13 @@ describe("ports", () => {
         return { reserve: async () => void url };
       },
     } satisfies ImplementationModule<Inventory>;
-    void [withDefault, withCreate, withAsyncCreate];
+    const byTenant = {
+      create: ({ env, tenant = "default" }: CreateArgs) => {
+        const key = env[`INVENTORY_KEY_${tenant.toUpperCase()}`];
+        return { reserve: async () => void key };
+      },
+    } satisfies ImplementationModule<Inventory>;
+    void [withDefault, withCreate, withAsyncCreate, byTenant];
   });
 });
 

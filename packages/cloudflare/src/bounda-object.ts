@@ -135,8 +135,9 @@ const errorMessage = (error: unknown): string =>
  * models in the object's SQLite, with no background loop. A command updates the read models
  * before it resolves unless the caller asks for `"eventual"` consistency; policies, processes,
  * scheduled commands and retries run in the object's alarm, which it arms itself for whatever
- * comes next. One object is one store: give each tenant its own with `idFromName(tenant)`. The
- * object's `env` is what port implementations receive in `create`, once per object.
+ * comes next. One object is one store: give each tenant its own with `idFromName(tenant)`. Port
+ * implementations receive the object's `env` in `create`, once per object, and that name as
+ * `tenant`, which an object reached through an id without a name does not have.
  */
 export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registry>({
   registry,
@@ -157,6 +158,7 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
           registry,
           config: configForObject(config, ctx.storage),
           env,
+          tenant: ctx.id.name,
           logger,
           clock,
           ...(ids === undefined ? {} : { ids }),

@@ -158,7 +158,7 @@ describe("createTestApp ports", () => {
     expect(dispose).not.toHaveBeenCalled();
   });
 
-  it("builds a named implementation with the test app's env, clock and logger, once per app, and closes it", async () => {
+  it("builds a named implementation with the test app's env, tenant, clock and logger, once per app, and closes it", async () => {
     const closed: string[] = [];
     const received: CreateArgs[] = [];
     const registry = shop({
@@ -176,11 +176,16 @@ describe("createTestApp ports", () => {
       mailer: { smtp: { default: recording([]) } },
     });
     const ports = { order: { notifier: "memory", mailer: recording([]) } };
-    const first = await createTestApp({ registry, ports, env: { REGION: "eu" } });
+    const first = await createTestApp({ registry, ports, env: { REGION: "eu" }, tenant: "acme" });
     const second = await createTestApp({ registry, ports });
     expect(received).toHaveLength(2);
-    expect(received[0]).toMatchObject({ env: { REGION: "eu" }, clock: first.clock });
+    expect(received[0]).toMatchObject({
+      env: { REGION: "eu" },
+      tenant: "acme",
+      clock: first.clock,
+    });
     expect(received[1]?.clock).toBe(second.clock);
+    expect(received[1]).not.toHaveProperty("tenant");
     await first.app.stop();
     expect(closed).toEqual(["memory"]);
     await second.app.stop();

@@ -72,6 +72,21 @@ describe("createPorts", () => {
     });
     expect(byAggregate.order?.inventory).toBe(fake);
     expect(received).toEqual({ env: { MAILER_FROM: "shop" }, logger: silentLogger, clock });
+    expect(received).not.toHaveProperty("tenant");
+  });
+
+  it("gives create the name of the store as tenant when the app serves one", async () => {
+    const received: CreateArgs[] = [];
+    const create = (args: CreateArgs) => void received.push(args);
+    await createPorts({
+      registry: registryOf({ order: aggregate({ mailer: { smtp: { create } } }) }),
+      config: {},
+      env: {},
+      tenant: "acme",
+      logger: silentLogger,
+      clock,
+    });
+    expect(received).toEqual([{ env: {}, tenant: "acme", logger: silentLogger, clock }]);
   });
 
   it("calls create once per call, whichever handlers will use the port", async () => {

@@ -322,7 +322,7 @@ export const slicedRegistry = {
 const placeOrder = quietRegistry.aggregates.order.commands.placeOrder.module.handler;
 
 /**
- * What the `region` port saw: the orders it recorded, prefixed with the binding its
+ * What the `region` port saw: the orders it recorded, prefixed with the binding and the tenant its
  * `create` read, and when it was closed.
  */
 export const regionLog: string[] = [];
@@ -338,8 +338,9 @@ export const regionRegistry = {
       ports: {
         region: {
           binding: {
-            create: ({ env }: CreateArgs) => ({
-              record: (orderId: string) => regionLog.push(`${env.STORE_REGION}:${orderId}`),
+            create: ({ env, tenant = "unnamed" }: CreateArgs) => ({
+              record: (orderId: string) =>
+                regionLog.push(`${env.STORE_REGION}:${tenant}:${orderId}`),
               [Symbol.asyncDispose]: async () => void regionLog.push("closed"),
             }),
           },
