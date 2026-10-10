@@ -366,11 +366,35 @@ export type PlainCreatedState = PlainState;`);
         "});",
         "",
       ].join("\n"),
+      // The ways an evolve can reach the state besides `({ state })`.
+      "app/domain/queue/person-left.ts": [
+        'import type { Event } from "./+types/person-left";',
+        "export function evolve(args: Event.EvolveArgs) {",
+        "  return { waiting: args.state.waiting.slice(1) };",
+        "}",
+        "",
+      ].join("\n"),
+      "app/domain/queue/queue-checked.ts": [
+        'import type { Event } from "./+types/queue-checked";',
+        "export const evolve = ({ event, state: queue }: Event.EvolveArgs) => ({",
+        "  previous: queue.served,",
+        "  checkedBy: event.type,",
+        "});",
+        "",
+      ].join("\n"),
+      "app/domain/queue/queue-counted.ts": [
+        'import type { Event } from "./+types/queue-counted";',
+        "export const evolve = ({ ...args }: Event.EvolveArgs) => ({",
+        "  length: args.state.waiting.length,",
+        "});",
+        "",
+      ].join("\n"),
     });
     const report = await generate({ root });
     expect(report.warnings).toEqual([]);
     const types = await readFile(join(root, ".bounda/types.ts"), "utf8");
     expect(types).toContain(`export type QueueCreatedState = {
+  readonly checkedBy?: "QueueChecked";
   readonly counts: Record<string, number> | {
     [x: string]: number;
   };
