@@ -538,6 +538,31 @@ export type PlainCreatedState = PlainState;`);
 };`);
   });
 
+  it("parenthesizes a function or an intersection type next to what another event gives", async () => {
+    const root = await syntheticProject({
+      "app/domain/order/order-opened.ts":
+        "export const begin = () => ({ onDone: null, contact: null });\n",
+      "app/domain/order/order-filled.ts": [
+        "export const evolve = () => ({",
+        "  onDone: () => {},",
+        "  contact: {} as { email: string } & { phone: string },",
+        "});",
+        "",
+      ].join("\n"),
+    });
+    const report = await generate({ root });
+    expect(report.warnings).toEqual([]);
+    const types = await readFile(join(root, ".bounda/types.ts"), "utf8");
+    expect(types).toContain(`export type OrderCreatedState = {
+  readonly contact: null | ({
+    email: string;
+  } & {
+    phone: string;
+  });
+  readonly onDone: (() => void) | null;
+};`);
+  });
+
   it("types as unknown, with a warning, what does not settle within the passes", async () => {
     const root = await syntheticProject({
       "app/domain/relay/relay-opened.ts": 'export const begin = () => ({ first: "start" });\n',

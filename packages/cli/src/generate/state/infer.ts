@@ -59,11 +59,13 @@ const renderState = ({ fields, required }: AggregateFields): string => {
   const lines = names.map((name) => {
     const { types } = fields.get(name) as FieldTypes;
     const printed = [...types.keys()].sort();
-    const members = printed.flatMap((type) => types.get(type) as readonly string[]);
-    const unique = [...new Set(members)];
-    // The members stand in for the printed types only when one repeats: a lone function type
-    // prints without the parentheses it takes as a member.
-    const type = (unique.length === members.length ? printed : unique)
+    // A lone function type prints without the parentheses it takes next to others, so several
+    // types are joined by their members, each listed once.
+    const members =
+      printed.length === 1
+        ? printed
+        : [...new Set(printed.flatMap((type) => types.get(type) as readonly string[]))];
+    const type = members
       .join(" | ")
       .split("\n")
       .map((line, index) => (index === 0 || line.startsWith(" ") ? line : `  ${line}`))
