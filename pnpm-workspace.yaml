@@ -51,9 +51,6 @@ minimumReleaseAgeExclude:
   - '@astrojs/starlight@0.42.2'
 
 catalogs:
-  cloudflare:
-    "@vitest/runner": 4.1.11
-    vitest: 4.1.11
   # astro check accepts TypeScript up to 6, so the docs check their types with their own.
   docs:
     "@astrojs/check": 0.9.10

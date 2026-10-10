@@ -12,10 +12,6 @@ export interface Versions {
   readonly isbot: string;
   readonly typesReact: string;
   readonly wrangler: string;
-  // `@cloudflare/vitest-plugin` keeps Vitest on an older major. This is the version of
-  // `@vitest/runner`, released in lockstep with Vitest, from the `cloudflare` catalog, because this
-  // package cannot depend on two versions of `vitest`.
-  readonly cloudflareVitest: string;
   readonly cloudflareVitestPlugin: string;
   readonly cloudflareVitePlugin: string;
 }
@@ -63,7 +59,6 @@ export const versionsFrom: VersionsFromFunction = ({ manifest, catalog }) => {
     isbot: versionOf("isbot"),
     typesReact: versionOf("@types/react"),
     wrangler: versionOf("wrangler"),
-    cloudflareVitest: versionOf("@vitest/runner"),
     cloudflareVitestPlugin: versionOf("@cloudflare/vitest-plugin"),
     cloudflareVitePlugin: versionOf("@cloudflare/vite-plugin"),
   };

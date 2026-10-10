@@ -42,7 +42,7 @@
     "@cloudflare/workers-types": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:cloudflare",
+    "vitest": "catalog:",
     "wrangler": "catalog:"
   }
 }

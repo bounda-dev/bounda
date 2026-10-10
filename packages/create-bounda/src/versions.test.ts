@@ -23,7 +23,6 @@ const TOOLS = [
   "isbot",
   "@types/react",
   "wrangler",
-  "@vitest/runner",
   "@cloudflare/vitest-plugin",
   "@cloudflare/vite-plugin",
 ];
@@ -93,22 +92,12 @@ describe("versions", () => {
     expect(versions.isbot).toBe(`^${await catalogVersion("isbot")}`);
     expect(versions.typesReact).toBe(`^${await catalogVersion("@types/react")}`);
     expect(versions.wrangler).toBe(`^${await catalogVersion("wrangler")}`);
-    expect(versions.cloudflareVitest).toBe(`^${await catalogVersion("@vitest/runner")}`);
     expect(versions.cloudflareVitestPlugin).toBe(
       `^${await catalogVersion("@cloudflare/vitest-plugin")}`,
     );
     expect(versions.cloudflareVitePlugin).toBe(
       `^${await catalogVersion("@cloudflare/vite-plugin")}`,
     );
-  });
-
-  it("gives a Cloudflare project the Vitest the cloudflare catalog pins", async () => {
-    const workspace = await readFile(
-      resolve(import.meta.dirname, "../../../pnpm-workspace.yaml"),
-      "utf8",
-    );
-    const cloudflare = /^catalogs:\n\s+cloudflare:\n((?:\s{4}.+\n)+)/m.exec(workspace)?.[1] ?? "";
-    expect(cloudflare).toContain(`vitest: ${await catalogVersion("@vitest/runner")}`);
   });
 
   it("keeps the catalog entries a single template version covers in step", async () => {

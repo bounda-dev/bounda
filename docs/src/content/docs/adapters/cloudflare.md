@@ -180,10 +180,10 @@ carry it into the object, where the command runs to the end, bounded by
 
 The tests run inside `workerd` through
 [`@cloudflare/vitest-plugin`](https://developers.cloudflare.com/workers/testing/vitest-integration/),
-which needs Vitest 4.1, so a Cloudflare project pins that version. `tests/orders.test.ts` runs the
-domain on the in-memory adapter with `createTestApp`, as in any Bounda project; `tests/api.test.ts`
-sends requests to the Worker with `SELF.fetch` and reaches the real Durable Object and its SQLite.
-The adapter's own suite runs every storage contract inside `workerd` too.
+on the same Vitest as a Node project. `tests/orders.test.ts` runs the domain on the in-memory
+adapter with `createTestApp`, as in any Bounda project; `tests/api.test.ts` sends requests to
+the Worker with `SELF.fetch` and reaches the real Durable Object and its SQLite. The adapter's own
+suite runs every storage contract inside `workerd` too.
 
 Types for the bindings come from `wrangler types`, which writes `worker-configuration.d.ts` from
 `wrangler.jsonc`; `dev`, `typecheck` and `check` run it, and `tsconfig.json` lists that file
