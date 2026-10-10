@@ -50,8 +50,13 @@ describe("bounda binary end to end", () => {
     });
     expect(stdout).toContain("8 files (8 written");
     await run(
-      join(repoRoot, "node_modules/.bin/tsc"),
-      ["--noEmit", "-p", join(root, "tsconfig.json")],
+      process.execPath,
+      [
+        join(repoRoot, "node_modules/typescript/bin/tsc"),
+        "--noEmit",
+        "-p",
+        join(root, "tsconfig.json"),
+      ],
       {
         cwd: root,
       },

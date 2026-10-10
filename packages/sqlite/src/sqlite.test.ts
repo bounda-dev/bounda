@@ -109,8 +109,7 @@ describe("sqlite adapter on a file", () => {
     return join(directory, `db-${counter}.sqlite`);
   };
 
-  // Windows cannot delete a database file that is still open, so the storages these tests leave
-  // open are closed before the directory goes.
+  // The storages a test leaves open are closed before the directory goes, so their files can go.
   const leftOpen: Storage[] = [];
   const openFile = async (path = freshPath()): Promise<Storage> => {
     const storage = await openStorage(sqlite({ path }));
@@ -124,7 +123,12 @@ describe("sqlite adapter on a file", () => {
 
   afterAll(async () => {
     await Promise.all(leftOpen.map((storage) => storage.close()));
-    await rm(directory, { recursive: true, force: true });
+    // libSQL lets go of a file that saw a write transaction only once its statements are garbage
+    // collected, and Windows cannot delete a file still open: there, those stay behind in the
+    // temporary directory.
+    await rm(directory, { recursive: true, force: true }).catch((error: NodeJS.ErrnoException) => {
+      if (process.platform !== "win32" || error.code !== "EBUSY") throw error;
+    });
   });
 
   eventStoreContract({ create: async () => (await openFile()).eventStore });

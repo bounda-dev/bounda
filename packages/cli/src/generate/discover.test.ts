@@ -37,14 +37,15 @@ const project = async (
   return root;
 };
 
+// A path under the root with `/` on every platform, as the expectations are written.
+const fromRoot = (root: string, path: string): string => relative(root, path).split(sep).join("/");
+
 const problemsOf = async (root: string): Promise<readonly string[]> => {
   try {
     await discoverProject({ root });
   } catch (error) {
     if (error instanceof ConventionError) {
-      return error.problems.map(
-        (problem) => `${relative(root, problem.path).split(sep).join("/")}: ${problem.message}`,
-      );
+      return error.problems.map((problem) => `${fromRoot(root, problem.path)}: ${problem.message}`);
     }
     throw error;
   }
@@ -558,10 +559,10 @@ describe("discoverProject convention problems", () => {
       model.aggregates[0]?.ports.map((port) => ({
         key: port.key,
         typeName: port.typeName,
-        path: relative(root, port.path),
+        path: fromRoot(root, port.path),
         implementations: port.implementations.map((implementation) => [
           implementation.name,
-          relative(root, implementation.path),
+          fromRoot(root, implementation.path),
         ]),
       })),
     ).toEqual([
@@ -643,7 +644,7 @@ describe("discoverProject convention problems", () => {
       model.readModels[0]?.ports.map((port) => ({
         key: port.key,
         typeName: port.typeName,
-        path: relative(root, port.path),
+        path: fromRoot(root, port.path),
         implementations: port.implementations.map((implementation) => implementation.name),
       })),
     ).toEqual([
