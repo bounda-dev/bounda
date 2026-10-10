@@ -225,7 +225,7 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
       name: string,
       payload?: unknown,
       options?: DispatchOptions,
-      consistency: Consistency = "read-your-writes",
+      consistency?: Consistency,
     ): Promise<RpcOutcome<DispatchResult>> {
       return settle(async () => {
         const app = this.#ready();

@@ -72,7 +72,7 @@ jobs:
             base="HEAD~1"
           fi
           changed=$(git diff --name-only "$base" HEAD)
-          all="core sqlite postgresql cli react-router create-bounda"
+          all="core sqlite postgresql cli react-router create-bounda cloudflare"
           if echo "$changed" | grep -qE '^(pnpm-workspace\.yaml|pnpm-lock\.yaml|patches/|\.github/workflows/ci\.yml|tsconfig\.base\.json)'; then
             selected="$all"
           else

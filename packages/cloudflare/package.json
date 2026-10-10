@@ -31,7 +31,8 @@
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "test:mutation": "stryker run"
   },
   "peerDependencies": {
     "@bounda-dev/core": "workspace:*"
@@ -40,6 +41,8 @@
     "@bounda-dev/core": "workspace:*",
     "@cloudflare/vitest-plugin": "catalog:",
     "@cloudflare/workers-types": "catalog:",
+    "@stryker-mutator/core": "catalog:",
+    "@stryker-mutator/vitest-runner": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:",

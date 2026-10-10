@@ -20,6 +20,33 @@ const post = (path: string, body?: unknown, tenant?: string) =>
     }),
   );
 
+// One request through a worker whose binding is a spy that hands out a recording stub.
+const throughSpy = async (path: string, body: string, consistency?: Consistency) => {
+  const { stub, commands } = recordingStub();
+  const addressed: string[] = [];
+  const spy = {
+    idFromName: (name: string) => {
+      addressed.push(name);
+      return name;
+    },
+    get: () => stub,
+  };
+  const worker = createWorker({
+    config: { storage: cloudflare({ binding: "SPY" }) },
+    tenantOf: () => "acme",
+    ...(consistency === undefined ? {} : { consistency }),
+  });
+  const response = await worker.fetch?.(
+    new Request(`https://bounda.test${path}`, { method: "POST", body }) as Request<
+      unknown,
+      IncomingRequestCfProperties
+    >,
+    { SPY: spy } as unknown as Cloudflare.Env,
+    createExecutionContext(),
+  );
+  return { status: response?.status, addressed, commands };
+};
+
 describe("createWorker", () => {
   it("dispatches a command and answers a query over JSON, for the tenant in the header", async () => {
     const placed = await post(
@@ -40,35 +67,53 @@ describe("createWorker", () => {
   });
 
   it("sends commands through the binding the config names, with the worker's consistency, read-your-writes unless told otherwise", async () => {
-    const sent = async (consistency?: Consistency) => {
-      const { stub, commands } = recordingStub();
-      const addressed: string[] = [];
-      const spy = {
-        idFromName: (name: string) => {
-          addressed.push(name);
-          return name;
-        },
-        get: () => stub,
-      };
-      const worker = createWorker({
-        config: { storage: cloudflare({ binding: "SPY" }) },
-        tenantOf: () => "acme",
-        ...(consistency === undefined ? {} : { consistency }),
-      });
-      const response = await worker.fetch?.(
-        new Request("https://bounda.test/commands/payOrder", {
-          method: "POST",
-          body: JSON.stringify({ orderId: "o-1" }),
-        }) as Request<unknown, IncomingRequestCfProperties>,
-        { SPY: spy } as unknown as Cloudflare.Env,
-        createExecutionContext(),
-      );
-      expect(response?.status).toBe(200);
-      expect(addressed).toEqual(["acme"]);
-      return commands;
-    };
-    expect(await sent("eventual")).toEqual([["payOrder", { orderId: "o-1" }, {}, "eventual"]]);
-    expect(await sent()).toEqual([["payOrder", { orderId: "o-1" }, {}, "read-your-writes"]]);
+    const payOrder = JSON.stringify({ orderId: "o-1" });
+    expect(await throughSpy("/commands/payOrder", payOrder, "eventual")).toEqual({
+      status: 200,
+      addressed: ["acme"],
+      commands: [["payOrder", { orderId: "o-1" }, {}, "eventual"]],
+    });
+    expect(await throughSpy("/commands/payOrder", payOrder)).toEqual({
+      status: 200,
+      addressed: ["acme"],
+      commands: [["payOrder", { orderId: "o-1" }, {}, "read-your-writes"]],
+    });
+  });
+
+  it("sends a blank body as no payload, and the delay and correlation id from the query string", async () => {
+    expect((await throughSpy("/commands/payOrder", " \n")).commands).toEqual([
+      ["payOrder", undefined, {}, "read-your-writes"],
+    ]);
+    expect(
+      (await throughSpy("/commands/payOrder/?delay=10m&correlationId=c-1", "{}")).commands,
+    ).toEqual([["payOrder", {}, { delay: "10m", correlationId: "c-1" }, "read-your-writes"]]);
+  });
+
+  it("answers a 500 and logs it when the binding the config names is missing", async () => {
+    const errors: unknown[][] = [];
+    const worker = createWorker({
+      config: { storage: cloudflare({ binding: "MISSING" }) },
+      tenantOf: () => "acme",
+      logger: {
+        debug: () => undefined,
+        info: () => undefined,
+        warn: () => undefined,
+        error: (...entry) => void errors.push(entry),
+      },
+    });
+    const response = await worker.fetch?.(
+      new Request("https://bounda.test/queries/getOrder", {
+        method: "POST",
+        body: JSON.stringify({ orderId: "o-1" }),
+      }) as Request<unknown, IncomingRequestCfProperties>,
+      {} as Cloudflare.Env,
+      createExecutionContext(),
+    );
+    expect(response?.status).toBe(500);
+    expect(await response?.json()).toEqual({
+      error: { code: "INTERNAL", message: "Internal error" },
+    });
+    expect(errors).toEqual([["bounda worker has no such binding", { binding: "MISSING" }]]);
   });
 
   it("answers a 500 and logs it when tenantOf throws", async () => {
@@ -191,5 +236,12 @@ describe("createWorker", () => {
     const get = await exports.default.fetch(new Request("https://bounda.test/queries/getOrder"));
     expect(get.status).toBe(405);
     expect(get.headers.get("allow")).toBe("POST");
+    for (const path of ["/api/queries/getOrder", "/queries/getOrder/extra", "/queries/1st"]) {
+      const response = await post(path, { orderId: "o-1" });
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({
+        error: { code: "NOT_FOUND", message: `No route for ${path}` },
+      });
+    }
   });
 });

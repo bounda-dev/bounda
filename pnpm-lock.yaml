@@ -495,6 +495,12 @@ importers:
       '@cloudflare/workers-types':
         specifier: 'catalog:'
         version: 5.20261006.1
+      '@stryker-mutator/core':
+        specifier: 'catalog:'
+        version: 10.0.0(@types/node@26.6.1)
+      '@stryker-mutator/vitest-runner':
+        specifier: 'catalog:'
+        version: 10.0.0(patch_hash=890316bd6edb446e7b450b23c08fe314a14cbba08ae7adedb1ce5614d07913e0)(@stryker-mutator/core@10.0.0(@types/node@26.6.1))(vitest@5.0.1)
       tsdown:
         specifier: 'catalog:'
         version: 0.23.0(@arethetypeswrong/core@0.18.5)(@volar/typescript@2.4.28(typescript@7.0.2))(publint@0.3.24)(typescript@7.0.2)

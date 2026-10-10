@@ -24,11 +24,24 @@ interface OrderRow {
   readonly total: number;
 }
 
+interface CustomerRow {
+  readonly customer: string;
+  readonly lastOrderId: string;
+}
+
 type Events = Record<string, (payload?: unknown) => unknown>;
 
 /**
+ * Outages the tests switch on and off. While `archive` is down, the policy refuses an order whose
+ * id starts with "fail" as invalid, which dead-letters it at once; while `projection` is down, the
+ * read model fails to project a placed order.
+ */
+export const outage = { archive: true, projection: false };
+
+/**
  * A small order app: place, pay and archive, a note whose handler lets another app's rejection
- * through, a policy that archives paid orders and fails for an order whose id starts with "fail",
+ * through, a policy that archives paid orders, fails for an order whose id starts with "fail"
+ * while the archive is down and times out for one whose id starts with "flaky", which it retries,
  * and a read model with one query.
  */
 export const registry = {
@@ -120,8 +133,9 @@ export const registry = {
               event: { aggregateId: string };
               commands: { archiveOrder: (payload: { orderId: string }) => Promise<unknown> };
             }) => {
-              if (event.aggregateId.startsWith("fail"))
+              if (event.aggregateId.startsWith("fail") && outage.archive)
                 throw new ValidationError("archive is down", []);
+              if (event.aggregateId.startsWith("flaky")) throw new Error("archive timed out");
               await commands.archiveOrder({ orderId: event.aggregateId });
             },
           },
@@ -149,6 +163,7 @@ export const registry = {
               event: { aggregateId: string; payload: { total: number } };
               table: Table<OrderRow>;
             }) => {
+              if (outage.projection) throw new Error("projection is down");
               await table.upsert({
                 orderId: event.aggregateId,
                 status: "placed",
@@ -264,6 +279,44 @@ export const processRegistry = {
 export const quietRegistry = {
   ...registry,
   aggregates: { order: { ...registry.aggregates.order, policies: {}, processes: {} } },
+} satisfies Registry;
+
+/**
+ * The order app without policies or processes, with a second read model, of customers, which the
+ * projection outage leaves alone.
+ */
+export const slicedRegistry = {
+  ...quietRegistry,
+  readModels: {
+    ...quietRegistry.readModels,
+    customers: {
+      view: {
+        fields: ({ f }: FieldsArgs) => ({
+          customer: f.string().primaryKey(),
+          lastOrderId: f.string(),
+        }),
+      },
+      projections: {
+        order: {
+          orderPlaced: {
+            project: async ({
+              event,
+              table,
+            }: {
+              event: { aggregateId: string; payload: { customer: string } };
+              table: Table<CustomerRow>;
+            }) => {
+              await table.upsert({
+                customer: event.payload.customer,
+                lastOrderId: event.aggregateId,
+              });
+            },
+          },
+        },
+      },
+      queries: {},
+    },
+  },
 } satisfies Registry;
 
 const placeOrder = quietRegistry.aggregates.order.commands.placeOrder.module.handler;
