@@ -47,9 +47,6 @@ catalog:
   wrangler: 4.149.0
   zod: 4.6.5
 
-minimumReleaseAgeExclude:
-  - '@astrojs/starlight@0.42.2'
-
 catalogs:
   # astro check accepts TypeScript up to 6, so the docs check their types with their own.
   docs:

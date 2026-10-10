@@ -1,0 +1,60 @@
+name: Release age exclusions
+
+# pnpm refuses versions younger than its minimumReleaseAge, and minimumReleaseAgeExclude in
+# pnpm-workspace.yaml lets one through. Once that version is older than the guard, or no longer
+# exists, the entry does nothing but linger. This fails when an entry has gone stale: remove it.
+
+on:
+  schedule:
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: No stale entry in minimumReleaseAgeExclude
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - shell: bash
+        run: |
+          node --input-type=module <<'EOF'
+          import { readFileSync } from "node:fs";
+
+          const workspace = readFileSync("pnpm-workspace.yaml", "utf8");
+          // Minutes, as pnpm reads it; pnpm's own default when the workspace does not set it.
+          const minutes = Number(/^minimumReleaseAge:\s*(\d+)/m.exec(workspace)?.[1] ?? 1440);
+          const list = /^minimumReleaseAgeExclude:\n((?:[ \t]+-.*\n?)*)/m.exec(workspace)?.[1] ?? "";
+          const entries = [...list.matchAll(/^[ \t]+-\s*['"]?([^'"\n]+?)['"]?\s*$/gm)].map(
+            (match) => match[1],
+          );
+
+          const stale = [];
+          for (const entry of entries) {
+            const at = entry.lastIndexOf("@");
+            if (at <= 0) {
+              stale.push(`${entry} names no version, so it is exempt for good`);
+              continue;
+            }
+            const name = entry.slice(0, at);
+            const response = await fetch(`https://registry.npmjs.org/${name.replace("/", "%2F")}`);
+            if (!response.ok) throw new Error(`${name}: the registry answered ${response.status}`);
+            const { time } = await response.json();
+            for (const version of entry.slice(at + 1).split("||").map((part) => part.trim())) {
+              const published = time[version];
+              if (published === undefined) stale.push(`${name}@${version} is not on the registry`);
+              else if (Date.now() - Date.parse(published) > minutes * 60_000)
+                stale.push(`${name}@${version} was published on ${published}, older than the guard`);
+            }
+          }
+
+          for (const line of stale) console.log(`::error::${line}: remove it from minimumReleaseAgeExclude`);
+          console.log(`${entries.length} excluded, ${stale.length} stale`);
+          if (stale.length > 0) process.exit(1);
+          EOF
