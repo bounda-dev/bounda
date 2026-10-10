@@ -90,25 +90,22 @@ const REACT_ROUTER_TOOLS = [
 
 /**
  * The tools the template declares, taken from this package's own dev dependencies: the same
- * versions it writes into the generated manifest. On Cloudflare, Vitest and its plugin come from
- * `@bounda-dev/cloudflare`, which has the Vitest the plugin runs on.
+ * versions it writes into the generated manifest.
  */
 const linkTools = async (project: string, { runtime, framework }: Stack): Promise<void> => {
   const modules = join(project, "node_modules");
   const own = join(repoRoot, "packages/create-bounda/node_modules");
-  const adapter = join(repoRoot, "packages/cloudflare/node_modules");
-  const fromAdapter = runtime === "cloudflare" ? ["vitest", "@cloudflare/vitest-plugin"] : [];
-  const fromOwn = [
+  const tools = [
     "typescript",
     "@types/node",
-    ...(runtime === "cloudflare" ? ["wrangler"] : ["vitest"]),
+    "vitest",
+    ...(runtime === "cloudflare" ? ["wrangler", "@cloudflare/vitest-plugin"] : []),
     ...(framework === "react-router" ? REACT_ROUTER_TOOLS : []),
     ...(runtime === "cloudflare" && framework === "react-router"
       ? ["@cloudflare/vite-plugin"]
       : []),
   ];
-  for (const name of fromAdapter) await link(join(adapter, name), join(modules, name));
-  for (const name of fromOwn) await link(join(own, name), join(modules, name));
+  for (const name of tools) await link(join(own, name), join(modules, name));
 };
 
 const scaffold = async (argv: readonly string[], stack: Stack): Promise<string> => {

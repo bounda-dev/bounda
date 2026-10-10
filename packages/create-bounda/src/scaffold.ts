@@ -106,7 +106,6 @@ export const scaffoldProject: ScaffoldProjectFunction = async ({
     isbotVersion: versions.isbot,
     typesReactVersion: versions.typesReact,
     wranglerVersion: versions.wrangler,
-    cloudflareVitestVersion: versions.cloudflareVitest,
     cloudflareVitestPluginVersion: versions.cloudflareVitestPlugin,
     cloudflareVitePluginVersion: versions.cloudflareVitePlugin,
     ...Object.fromEntries(

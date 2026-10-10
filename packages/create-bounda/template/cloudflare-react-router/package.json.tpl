@@ -33,7 +33,7 @@
     "@types/react-dom": "{{typesReactVersion}}",
     "typescript": "{{typescriptVersion}}",
     "vite": "{{viteVersion}}",
-    "vitest": "{{cloudflareVitestVersion}}",
+    "vitest": "{{vitestVersion}}",
     "wrangler": "{{wranglerVersion}}"
   }
 }

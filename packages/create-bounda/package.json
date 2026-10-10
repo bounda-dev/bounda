@@ -49,7 +49,6 @@
     "@types/node": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
-    "@vitest/runner": "catalog:cloudflare",
     "isbot": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",

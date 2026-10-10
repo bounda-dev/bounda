@@ -17,7 +17,6 @@ const versions = {
   isbot: "^5",
   typesReact: "^19",
   wrangler: "^4",
-  cloudflareVitest: "^4.1",
   cloudflareVitestPlugin: "^1.2",
   cloudflareVitePlugin: "^1.63",
 };
@@ -244,7 +243,7 @@ describe("scaffoldProject", () => {
       "@bounda-dev/cli": "^0.1.0-alpha.0",
       "@cloudflare/vitest-plugin": "^1.2",
       typescript: "^7",
-      vitest: "^4.1",
+      vitest: "^5",
       wrangler: "^4",
     });
     expect(await readFile(join(target, "vitest.config.ts"), "utf8")).toContain("cloudflareTest");
@@ -334,7 +333,7 @@ describe("scaffoldProject", () => {
       "@types/react-dom": "^19",
       typescript: "^7",
       vite: "^8",
-      vitest: "^4.1",
+      vitest: "^5",
       wrangler: "^4",
     });
     expect(await readFile(join(target, "vite.config.ts"), "utf8")).toContain(

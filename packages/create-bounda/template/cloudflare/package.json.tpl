@@ -23,7 +23,7 @@
     "@bounda-dev/cli": "{{boundaVersion}}",
     "@cloudflare/vitest-plugin": "{{cloudflareVitestPluginVersion}}",
     "typescript": "{{typescriptVersion}}",
-    "vitest": "{{cloudflareVitestVersion}}",
+    "vitest": "{{vitestVersion}}",
     "wrangler": "{{wranglerVersion}}"
   }
 }
