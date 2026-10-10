@@ -1,6 +1,6 @@
 {
   "name": "@bounda-dev/react-router",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "React Router framework-mode integration for Bounda",
   "license": "Apache-2.0",
   "repository": {
