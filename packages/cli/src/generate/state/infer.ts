@@ -107,7 +107,7 @@ const untainted = (
     ]),
   );
 
-// The fields, by aggregate, whose types differ between two passes, sorted by name.
+// The fields, by aggregate, whose types differ between two passes.
 const changedFields = (
   before: ReadonlyMap<string, AggregateFields>,
   after: ReadonlyMap<string, AggregateFields>,
@@ -116,9 +116,9 @@ const changedFields = (
     [...(fields?.fields.get(name)?.members ?? [])].sort().join(" | ");
   const changed = new Map<string, readonly string[]>();
   for (const [aggregate, fields] of after) {
-    const names = [...fields.fields.keys()]
-      .filter((name) => typeOf(fields, name) !== typeOf(before.get(aggregate), name))
-      .sort();
+    const names = [...fields.fields.keys()].filter(
+      (name) => typeOf(fields, name) !== typeOf(before.get(aggregate), name),
+    );
     if (names.length > 0) changed.set(aggregate, names);
   }
   return changed;
@@ -203,6 +203,34 @@ const exportedFunction = (
   return null;
 };
 
+// Whether the function a declaration names can read the state: not when it takes no argument or
+// destructures its argument without `state`.
+const mayReadState = (
+  ts: typeof import("typescript/unstable/ast"),
+  file: import("typescript/unstable/ast").SourceFile,
+  name: import("typescript/unstable/ast").Node,
+): boolean => {
+  const declaration = name.parent;
+  const fn =
+    declaration.kind === ts.SyntaxKind.VariableDeclaration
+      ? (declaration as import("typescript/unstable/ast").VariableDeclaration).initializer
+      : declaration;
+  const parameters = (
+    fn as {
+      readonly parameters?: readonly import("typescript/unstable/ast").ParameterDeclaration[];
+    }
+  )?.parameters;
+  if (parameters === undefined) return true;
+  const [argument] = parameters;
+  if (argument === undefined) return false;
+  if (argument.name.kind !== ts.SyntaxKind.ObjectBindingPattern) return true;
+  return (argument.name as import("typescript/unstable/ast").ObjectBindingPattern).elements.some(
+    (element) =>
+      element.dotDotDotToken !== undefined ||
+      (element.propertyName ?? element.name)?.getText(file) === "state",
+  );
+};
+
 // What a `begin` or an `evolve` returns: each field's printed type, and whether it may be absent.
 type Returned = ReadonlyMap<string, { readonly type: string; readonly absent: boolean }>;
 
@@ -283,7 +311,11 @@ const readReturns = (
   if (previous !== undefined) return { ...previous, evolve: read("evolve") };
   const begin = read("begin");
   const evolve = read("evolve");
-  const readsState = [...(evolve?.values() ?? [])].some(({ type }) => UNTYPED.test(type));
+  const evolveName = exportedFunction(ts, file, "evolve");
+  const readsState =
+    evolveName !== null &&
+    mayReadState(ts, file, evolveName) &&
+    [...(evolve?.values() ?? [])].some(({ type }) => UNTYPED.test(type));
   return { event, begin, evolve, readsState };
 };
 
@@ -464,40 +496,35 @@ export const inferStates: InferStatesFunction = async ({
         if (unsettled.size === 0) break;
       }
       // What still reads a field with no type is as unsettled as what changed on the last pass.
-      for (const [aggregateName, events] of returns) {
-        const changed = unsettled.get(aggregateName);
-        if (changed === undefined) continue;
-        const untyped = readFromState(events, UNTYPED);
+      for (const [aggregateName, changed] of unsettled) {
+        const untyped = readFromState(returns.get(aggregateName) ?? [], UNTYPED);
         unsettled.set(aggregateName, [...new Set([...changed, ...untyped])].sort());
       }
     }
-    for (const [aggregateName, names] of unsettled) {
-      const aggregateFields = fields.get(aggregateName)?.fields;
-      const events = new Set(
-        names.flatMap((name) => [...(aggregateFields?.get(name)?.events ?? [])]),
-      );
-      warnings.push({
-        aggregate: aggregateName,
-        message: `fields ${names.map((name) => `"${name}"`).join(", ")} (set by ${[...events].join(", ")}) did not settle within ${MAX_PASSES} passes over the events that read the state; they are typed as unknown. Give them a type where the aggregate begins, or add state.ts`,
-      });
-      for (const name of names) {
-        const field = aggregateFields?.get(name);
-        if (field === undefined) continue;
-        aggregateFields?.set(name, { members: new Set([UNKNOWN]), events: field.events });
-      }
-    }
-    // Only an `evolve` that reads the state can leave `any` behind; one a module sets on purpose,
-    // `JSON.parse(...)` or a `z.any()` payload, stays.
-    for (const [aggregateName, events] of returns) {
-      const aggregateFields = fields.get(aggregateName)?.fields;
-      for (const name of new Set(readFromState(events, TAINTED))) {
-        const field = aggregateFields?.get(name);
-        if (field === undefined || unsettled.get(aggregateName)?.includes(name)) continue;
+    for (const [aggregateName, { fields: aggregateFields }] of fields) {
+      // Types `name` as unknown and says which events set it.
+      const unknownFrom = (name: string): string => {
+        const events = aggregateFields.get(name)?.events ?? new Set<string>();
+        aggregateFields.set(name, { members: new Set([UNKNOWN]), events });
+        return [...events].join(", ");
+      };
+      const notSettled = unsettled.get(aggregateName) ?? [];
+      if (notSettled.length > 0) {
+        const events = new Set(notSettled.flatMap((name) => unknownFrom(name).split(", ")));
         warnings.push({
           aggregate: aggregateName,
-          message: `field "${name}" (set by ${[...field.events].join(", ")}) is computed from the state in a way its type could not be inferred from; it is typed as unknown. Give it a type where the aggregate begins, or add state.ts`,
+          message: `fields ${notSettled.map((name) => `"${name}"`).join(", ")} (set by ${[...events].join(", ")}) did not settle within ${MAX_PASSES} passes over the events that read the state; they are typed as unknown. Give them a type where the aggregate begins, or add state.ts`,
         });
-        aggregateFields?.set(name, { members: new Set([UNKNOWN]), events: field.events });
+      }
+      // Only an `evolve` that reads the state can leave `any` behind; one a module sets on purpose,
+      // `JSON.parse(...)` or a `z.any()` payload, stays.
+      const tainted = readFromState(returns.get(aggregateName) ?? [], TAINTED);
+      for (const name of new Set(tainted)) {
+        if (notSettled.includes(name)) continue;
+        warnings.push({
+          aggregate: aggregateName,
+          message: `field "${name}" (set by ${unknownFrom(name)}) is computed from the state in a way its type could not be inferred from; it is typed as unknown. Give it a type where the aggregate begins, or add state.ts`,
+        });
       }
     }
 

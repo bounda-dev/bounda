@@ -384,6 +384,11 @@ export type PlainCreatedState = PlainState;`);
 
   it("types as unknown, with a warning, a field computed from the state that never settles", async () => {
     const root = await syntheticProject({
+      "app/domain/tally/tally-reset.ts": [
+        'import type { Event } from "./+types/tally-reset";',
+        "export const evolve = ({ state }: Event.EvolveArgs) => ({ count: state.count });",
+        "",
+      ].join("\n"),
       "app/domain/tally/tally-counted.ts": [
         'import type { Event } from "./+types/tally-counted";',
         "export const evolve = ({ state }: Event.EvolveArgs) => ({",
@@ -398,7 +403,7 @@ export type PlainCreatedState = PlainState;`);
       {
         module: "tally",
         message:
-          'field "count" (set by tallyCounted) is computed from the state in a way its type could not be inferred from; it is typed as unknown. Give it a type where the aggregate begins, or add state.ts',
+          'field "count" (set by tallyCounted, tallyReset) is computed from the state in a way its type could not be inferred from; it is typed as unknown. Give it a type where the aggregate begins, or add state.ts',
       },
     ]);
     const types = await readFile(join(root, ".bounda/types.ts"), "utf8");
@@ -412,6 +417,13 @@ export type PlainCreatedState = PlainState;`);
     const root = await syntheticProject({
       "app/domain/misc/misc-made.ts":
         'export const begin = () => ({ flags: { any: true }, extra: JSON.parse("1"), count: 0 });\n',
+      "app/domain/misc/misc-reset.ts":
+        'export const evolve = () => ({ extra: JSON.parse("2") });\n',
+      "app/domain/misc/misc-loaded.ts": [
+        'import type { Event } from "./+types/misc-loaded";',
+        "export const evolve = ({ event }: Event.EvolveArgs) => ({ extra: JSON.parse(event.type) });",
+        "",
+      ].join("\n"),
       "app/domain/misc/misc-counted.ts": [
         'import type { Event } from "./+types/misc-counted";',
         "export const evolve = ({ state }: Event.EvolveArgs) => ({ count: state.count + 1 });",
@@ -430,9 +442,34 @@ export type PlainCreatedState = PlainState;`);
 };`);
   });
 
+  it("reads again a field copied from one whose type grows on a later pass", async () => {
+    const root = await syntheticProject({
+      "app/domain/list/list-made.ts":
+        "export const begin = () => ({ items: [] as readonly string[] });\n",
+      "app/domain/list/item-added.ts": [
+        'import type { Event } from "./+types/item-added";',
+        'export const evolve = ({ state }: Event.EvolveArgs) => ({ items: [...state.items, "x"] });',
+        "",
+      ].join("\n"),
+      "app/domain/list/list-copied.ts": [
+        'import type { Event } from "./+types/list-copied";',
+        "export const evolve = ({ state }: Event.EvolveArgs) => ({ copy: state.items });",
+        "",
+      ].join("\n"),
+    });
+    const report = await generate({ root });
+    expect(report.warnings).toEqual([]);
+    const types = await readFile(join(root, ".bounda/types.ts"), "utf8");
+    expect(types).toContain(`export type ListCreatedState = {
+  readonly copy?: string[] | readonly string[];
+  readonly items: readonly string[] | string[];
+};`);
+  });
+
   it("types as unknown, with a warning, what does not settle within the passes", async () => {
     const root = await syntheticProject({
       "app/domain/relay/relay-opened.ts": 'export const begin = () => ({ first: "start" });\n',
+      "app/domain/relay/relay-reset.ts": 'export const evolve = () => ({ seventh: "" });\n',
       "app/domain/relay/relay-passed.ts": [
         'import type { Event } from "./+types/relay-passed";',
         "export const evolve = ({ state }: Event.EvolveArgs) => ({",
@@ -451,7 +488,7 @@ export type PlainCreatedState = PlainState;`);
       {
         module: "relay",
         message:
-          'fields "fifth", "seventh", "sixth" (set by relayPassed) did not settle within 5 passes over the events that read the state; they are typed as unknown. Give them a type where the aggregate begins, or add state.ts',
+          'fields "fifth", "seventh", "sixth" (set by relayPassed, relayReset) did not settle within 5 passes over the events that read the state; they are typed as unknown. Give them a type where the aggregate begins, or add state.ts',
       },
     ]);
     const types = await readFile(join(root, ".bounda/types.ts"), "utf8");
