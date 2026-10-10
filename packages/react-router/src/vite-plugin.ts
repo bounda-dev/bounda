@@ -1,6 +1,6 @@
-import { join, resolve, sep } from "node:path";
+import { join } from "node:path";
 import type { Clock, Consistency } from "@bounda-dev/core";
-import type { Logger, Plugin } from "vite";
+import { type Logger, normalizePath, type Plugin } from "vite";
 import { APP_MODULE_ID } from "./app-module.ts";
 import type { BoundaVitePluginOptions } from "./vite.ts";
 
@@ -34,17 +34,18 @@ const EVENTS = ["add", "change", "unlink", "addDir", "unlinkDir"] as const;
  * bundles both. In Node the configuration is imported once `boot` has loaded `.env`, which it may
  * read. Only the dev server pins `root`: a build runs wherever it is deployed, from the working
  * directory. The `workerd` condition picks the Cloudflare host. The glob makes `app/tenant.ts`
- * optional, and Vite serves this module again when the file appears or goes.
+ * optional, and Vite serves this module again when the file appears or goes. Paths go in with `/`,
+ * Vite's form on every platform.
  */
 const serverModule = ({ root, command }: Generation, consistency: Consistency): string =>
   [
     `import { createHost } from ${JSON.stringify(HOST_ID)};`,
-    `import { registry } from ${JSON.stringify(join(root, ".bounda/registry.ts"))};`,
+    `import { registry } from ${JSON.stringify(normalizePath(join(root, ".bounda/registry.ts")))};`,
     "",
     "export const { bounda, boundaMiddleware, dispose } = createHost({",
     ...(command === "serve" ? [`  root: ${JSON.stringify(root)},`] : []),
     "  registry,",
-    `  importConfig: () => import(${JSON.stringify(join(root, CONFIG_FILE))}),`,
+    `  importConfig: () => import(${JSON.stringify(normalizePath(join(root, CONFIG_FILE)))}),`,
     `  importTenant: Object.values(import.meta.glob(${JSON.stringify(`/${APP_DIRECTORY}/${TENANT_FILE}`)}))[0],`,
     `  consistency: ${JSON.stringify(consistency)},`,
     "});",
@@ -98,9 +99,15 @@ export const createBoundaPlugin: CreateBoundaPluginFunction = ({
   let generated: Promise<void> | undefined;
   let queue: Promise<void> = Promise.resolve();
   let cancelPending: (() => void) | undefined;
-  const isWatched = (root: string, file: string): boolean =>
-    WATCHED.some((directory) => file.startsWith(resolve(root, APP_DIRECTORY, directory) + sep)) &&
-    !file.split(sep).includes("+types");
+  // Both sides in Vite's form, so the watcher's separator, `\` on Windows, does not matter.
+  const isWatched = (root: string, file: string): boolean => {
+    const path = normalizePath(file);
+    return (
+      WATCHED.some((directory) =>
+        path.startsWith(`${normalizePath(join(root, APP_DIRECTORY, directory))}/`),
+      ) && !path.split("/").includes("+types")
+    );
+  };
 
   return {
     name: "bounda",

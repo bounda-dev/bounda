@@ -250,9 +250,12 @@ describe("bounda generate", () => {
         join(root, "app/domain/order/order-shipped.ts"),
         "export const evolve = () => ({});\n",
       );
-      await vi.waitFor(() => expect(stderr.text()).toMatch(/^error: .*\.bounda\/registry\.ts/m), {
-        timeout: 5_000,
-      });
+      await vi.waitFor(
+        () => expect(stderr.text()).toMatch(/^error: .*\.bounda[\\/]registry\.ts/m),
+        {
+          timeout: 5_000,
+        },
+      );
     } finally {
       await chmod(registry, 0o644);
     }
