@@ -85,6 +85,44 @@ jobs:
           echo "packages=$packages" >> "$GITHUB_OUTPUT"
           echo "Mutation testing for: $packages"
 
+  # People run Bounda on Windows too, so the packages a project uses there are tested there
+  # whenever one changes. Each step runs even if an earlier test step failed, so one run shows
+  # every package. Some tests stay on Linux: create-bounda's end-to-end test links tools and stops
+  # servers by process group, and libSQL's server and PostgreSQL run in Linux containers.
+  windows:
+    name: Windows
+    needs: changes
+    if: needs.changes.outputs.packages != '[]'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.4.2
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - id: build
+        run: pnpm build
+      - name: core
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: pnpm --filter @bounda-dev/core test
+      - name: sqlite
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: pnpm --filter @bounda-dev/sqlite exec vitest run --exclude src/libsql-server.test.ts
+      - name: cli
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: pnpm --filter @bounda-dev/cli test
+      - name: react-router
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: pnpm --filter @bounda-dev/react-router test
+      - name: create-bounda
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: pnpm --filter create-bounda exec vitest run --exclude src/run.e2e.test.ts
+
   mutation:
     name: Mutation (${{ matrix.package }})
     needs: [changes, check]

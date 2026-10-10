@@ -1,7 +1,7 @@
 import { writeFileSync } from "node:fs";
 import { chmod, cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { createApp, silentLogger } from "@bounda-dev/core";
 import { loadProject } from "@bounda-dev/core/node";
 import { afterAll, describe, expect, it, vi } from "vitest";
@@ -17,7 +17,7 @@ const project = async (): Promise<string> => {
   temporary.push(root);
   await cp(join(fixtureRoot, "app"), join(root, "app"), {
     recursive: true,
-    filter: (source) => !source.includes("/+types"),
+    filter: (source) => basename(source) !== "+types",
   });
   await writeFile(
     join(root, "tsconfig.json"),
@@ -250,9 +250,12 @@ describe("bounda generate", () => {
         join(root, "app/domain/order/order-shipped.ts"),
         "export const evolve = () => ({});\n",
       );
-      await vi.waitFor(() => expect(stderr.text()).toMatch(/^error: .*\.bounda\/registry\.ts/m), {
-        timeout: 5_000,
-      });
+      await vi.waitFor(
+        () => expect(stderr.text()).toMatch(/^error: .*\.bounda[\\/]registry\.ts/m),
+        {
+          timeout: 5_000,
+        },
+      );
     } finally {
       await chmod(registry, 0o644);
     }

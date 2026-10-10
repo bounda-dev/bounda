@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { discoverProject } from "./discover.ts";
 import type { ProjectModel } from "./model.ts";
@@ -37,14 +37,15 @@ const project = async (
   return root;
 };
 
+// A path under the root with `/` on every platform, as the expectations are written.
+const fromRoot = (root: string, path: string): string => relative(root, path).split(sep).join("/");
+
 const problemsOf = async (root: string): Promise<readonly string[]> => {
   try {
     await discoverProject({ root });
   } catch (error) {
     if (error instanceof ConventionError) {
-      return error.problems.map(
-        (problem) => `${problem.path.slice(root.length + 1)}: ${problem.message}`,
-      );
+      return error.problems.map((problem) => `${fromRoot(root, problem.path)}: ${problem.message}`);
     }
     throw error;
   }
@@ -558,10 +559,10 @@ describe("discoverProject convention problems", () => {
       model.aggregates[0]?.ports.map((port) => ({
         key: port.key,
         typeName: port.typeName,
-        path: relative(root, port.path),
+        path: fromRoot(root, port.path),
         implementations: port.implementations.map((implementation) => [
           implementation.name,
-          relative(root, implementation.path),
+          fromRoot(root, implementation.path),
         ]),
       })),
     ).toEqual([
@@ -643,7 +644,7 @@ describe("discoverProject convention problems", () => {
       model.readModels[0]?.ports.map((port) => ({
         key: port.key,
         typeName: port.typeName,
-        path: relative(root, port.path),
+        path: fromRoot(root, port.path),
         implementations: port.implementations.map((implementation) => implementation.name),
       })),
     ).toEqual([
@@ -998,7 +999,7 @@ describe("discoverProject convention problems", () => {
   it("formats the error message with every problem", async () => {
     const root = await project(["app/domain/orders_v2/x.ts"]);
     await expect(discoverProject({ root })).rejects.toThrow(
-      /1 problem in the project layout:\n {2}.*app\/domain\/orders_v2: Aggregate names must be kebab-case/,
+      /1 problem in the project layout:\n {2}.*app[\\/]domain[\\/]orders_v2: Aggregate names must be kebab-case/,
     );
   });
 });

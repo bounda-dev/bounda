@@ -1,15 +1,25 @@
-import { execFile } from "node:child_process";
+import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import type { PackageManager } from "./options.ts";
 
-const run = promisify(execFile);
+const run = promisify(exec);
 
 export interface Exec {
   (command: string, args: readonly string[], cwd: string): Promise<void>;
 }
 
+const PLAIN_WORD = /^[\w.-]+$/;
+
+// Through the shell on every platform: on Windows npm, pnpm and yarn are `.cmd` shims, which only a
+// shell runs, and one way everywhere is the way the tests cover. The words are joined unquoted, so
+// anything but a plain word is refused rather than split or interpreted.
 export const realExec: Exec = async (command, args, cwd) => {
-  await run(command, [...args], { cwd, env: process.env });
+  const words = [command, ...args];
+  const unsafe = words.find((word) => !PLAIN_WORD.test(word));
+  if (unsafe !== undefined) {
+    throw new Error(`refusing to pass ${JSON.stringify(unsafe)} through the shell`);
+  }
+  await run(words.join(" "), { cwd, env: process.env });
 };
 
 export interface InstallCommandFunction {
