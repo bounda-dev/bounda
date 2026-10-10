@@ -39,7 +39,7 @@ export const eventStoreContract: EventStoreContractFunction = ({ create }) => {
       expect(await store.lastPosition()).toBe(2);
     });
 
-    it("loads a stream with its version and preserves every field", async () => {
+    it("loads a stream with its version and preserves every field, in the global stream too", async () => {
       await store.append({
         aggregateType: "order",
         aggregateId: "1",
@@ -67,6 +67,7 @@ export const eventStoreContract: EventStoreContractFunction = ({ create }) => {
           system: false,
         },
       });
+      expect(await store.readAll({ afterPosition: 0, limit: 10 })).toEqual(loaded.events);
     });
 
     it("returns an empty stream at version 0 for an unknown aggregate", async () => {

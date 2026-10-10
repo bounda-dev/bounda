@@ -58,8 +58,10 @@ aggregate. The distinction matters for everything below.
   orders, a reader per stream would be a hundred thousand checkpoints per read model.
 - **Operations hang off it.** `app.getLag()` is "head of the global stream minus checkpoint".
   [`bounda rebuild`](/guides/deployment/#rebuilding-a-read-model) is "project the global stream
-  again into a fresh table". `runUntilIdle()` is "pass until nobody moves". The checkpoint is
-  advanced with a compare-and-set, so nothing written from outside is ever overwritten.
+  again into a fresh table". `runUntilIdle()` is "pass until nobody moves".
+  [`app.events.read({ after })`](/guides/reading-the-stream/) is "the next page after a
+  position". The checkpoint is advanced with a compare-and-set, so nothing written from outside is
+  ever overwritten.
 
 ## The ceiling, with numbers
 

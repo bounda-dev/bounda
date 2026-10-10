@@ -27,6 +27,7 @@ export type {
   SubscriberKind,
   SubscriberLag,
 } from "./kernel/dispatch/dispatcher.ts";
+export type { GlobalStream, ReadEventsArgs } from "./kernel/events/global-stream.ts";
 export type { ProcessStatus } from "./kernel/process/lifecycle.ts";
 export type {
   RebuildReadModelArgs,

@@ -10,8 +10,10 @@ import {
   type DispatchResult,
   type ListDeadLettersArgs,
   type QueriesFacade,
+  type ReadEventsArgs,
   type RebuildReadModelResult,
   type Registry,
+  type StoredEvent,
 } from "@bounda-dev/core";
 import { unwrap } from "./outcome.ts";
 
@@ -29,6 +31,7 @@ export interface BoundaStub {
   ): PromiseLike<unknown>;
   query(name: string, payload?: unknown): PromiseLike<unknown>;
   lag(): PromiseLike<unknown>;
+  readEvents(args?: ReadEventsArgs): PromiseLike<unknown>;
   listDeadLetters(args?: ListDeadLettersArgs): PromiseLike<unknown>;
   retryDeadLetter(id: string): PromiseLike<unknown>;
   discardDeadLetter(id: string): PromiseLike<unknown>;
@@ -91,6 +94,7 @@ export const connect: ConnectFunction = <R extends Registry = AppRegistry>(
     ),
     queries: byName<QueriesFacade<R>>((name, payload) => unwrap(stub.query(name, payload))),
     getLag: () => unwrap<AppLag>(stub.lag()),
+    events: { read: (args) => unwrap<readonly StoredEvent[]>(stub.readEvents(args)) },
     deadLetters: {
       list: (args) => unwrap<readonly DeadLetter[]>(stub.listDeadLetters(args)),
       retry: (id) => unwrap<DeadLetter>(stub.retryDeadLetter(id)),

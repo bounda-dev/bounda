@@ -45,6 +45,7 @@ const lazyStub = (stubOf: () => Promise<BoundaStub>): BoundaStub => ({
   command: async (...args) => (await stubOf()).command(...args),
   query: async (...args) => (await stubOf()).query(...args),
   lag: async () => (await stubOf()).lag(),
+  readEvents: async (args) => (await stubOf()).readEvents(args),
   listDeadLetters: async (...args) => (await stubOf()).listDeadLetters(...args),
   retryDeadLetter: async (id) => (await stubOf()).retryDeadLetter(id),
   discardDeadLetter: async (id) => (await stubOf()).discardDeadLetter(id),

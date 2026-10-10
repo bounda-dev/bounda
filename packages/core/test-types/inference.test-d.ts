@@ -17,6 +17,7 @@ import type {
   DurationInput,
   EmptyPayload,
   EnvSection,
+  EventMetadata,
   ImplementationModule,
   Instant,
   Logger,
@@ -25,6 +26,7 @@ import type {
   QueriesFacade,
   ReactionDispatchResult,
   ReadClient,
+  ReadEventsArgs,
   RejectedDispatch,
   RejectFunction,
   RejectionCodeOf,
@@ -615,6 +617,20 @@ describe("facades", () => {
 
   it("are what a request sees of the app, wherever it runs", () => {
     expectTypeOf<BoundaApp<Registry>>().toExtend<BoundaClient<Registry>>();
+  });
+
+  it("read the global stream by position, every event as it was stored", () => {
+    const client = {} as BoundaClient;
+    expectTypeOf(client.events.read).parameter(0).toEqualTypeOf<ReadEventsArgs | undefined>();
+    expectTypeOf<ReadEventsArgs>().toEqualTypeOf<{
+      readonly after?: number;
+      readonly limit?: number;
+    }>();
+    expectTypeOf(client.events.read()).resolves.toEqualTypeOf<readonly StoredEvent[]>();
+    expectTypeOf<StoredEvent["payload"]>().toBeUnknown();
+    expectTypeOf<StoredEvent["metadata"]>().toEqualTypeOf<EventMetadata>();
+    // @ts-expect-error a position is a number
+    void client.events.read({ after: "3" });
   });
 
   it("expose every query with the result type its handler returns", () => {

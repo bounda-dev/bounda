@@ -70,7 +70,9 @@ event under the command's id as correlation:
 Reading it back is a filter on `metadata.correlationId`, ordered by `position`, and walking from
 an event to its cause is a lookup of the event whose `id` is its `causationId`, up to the event
 whose `causationId` is its own `commandId`, which a request's command wrote, or to a dead letter
-for what a retry from one wrote; the metadata is stored as JSON, `jsonb` on PostgreSQL. In traces, every `bounda.command`, `bounda.policy` and
+for what a retry from one wrote. Both work on the pages of
+[the global stream](/guides/reading-the-stream/), or in SQL, where the metadata is stored as JSON,
+`jsonb` on PostgreSQL. In traces, every `bounda.command`, `bounda.policy` and
 `bounda.process` span carries `bounda.correlation_id`, and a command's span adds
 `bounda.causation_id`: the event the command reacted to, or the command itself when it came from
 outside (see [Observability](/reference/observability/)).

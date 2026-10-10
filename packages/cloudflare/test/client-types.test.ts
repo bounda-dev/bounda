@@ -7,6 +7,7 @@ import type {
   Registry,
   ScheduledDispatch,
   StoredDispatch,
+  StoredEvent,
 } from "@bounda-dev/core";
 import type { CreateTestAppArgs } from "@bounda-dev/core/testing";
 import { describe, expectTypeOf, it } from "vitest";
@@ -27,6 +28,7 @@ describe("connect", () => {
     >();
     expectTypeOf(store.queries.getOrder).parameter(0).toEqualTypeOf<{ orderId: string }>();
     expectTypeOf(store.deadLetters.list).returns.resolves.toEqualTypeOf<readonly DeadLetter[]>();
+    expectTypeOf(store.events.read).returns.resolves.toEqualTypeOf<readonly StoredEvent[]>();
     // @ts-expect-error there is no such command
     void store.commands.shipOrder;
     // Never called: each call is an RPC to the object, and one still in flight when the file ends
