@@ -12,7 +12,7 @@ models and the scheduled work in the object's own SQLite, one object per tenant,
 or background process to run.
 
 ```bash
-npm create bounda@latest my-app -- --framework cloudflare
+npm create bounda@latest my-app -- --runtime cloudflare
 ```
 
 Or by hand:
@@ -47,7 +47,8 @@ export default createWorker({
 - `createWorker` serves `POST /commands/<name>` and `POST /queries/<name>` as JSON, one store per
   tenant, which `tenantOf` names. It has no authentication: a starting point. Your own `fetch`
   talks to a store with `connect(stub)`, which types `commands` and `queries` from your modules.
-- A React Router app runs in the Worker too, through `@bounda-dev/react-router`.
+- A React Router app runs in the Worker too, through `@bounda-dev/react-router`:
+  `npm create bounda@latest my-app -- --runtime cloudflare --framework react-router`.
 
 ## Status
 

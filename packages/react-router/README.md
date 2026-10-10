@@ -61,7 +61,8 @@ the same thing without the plugin, for a server module of your own.
 
 On Cloudflare, with `storage: cloudflare()` and `@cloudflare/vite-plugin`, the same plugin serves
 the app from the Worker: each loader and action reaches the Durable Object of the tenant that
-`app/tenant.ts` names.
+`app/tenant.ts` names. A new project gets all of it from
+`npm create bounda@latest my-app -- --runtime cloudflare --framework react-router`.
 
 ## Status
 

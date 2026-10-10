@@ -5,13 +5,13 @@ Durable Object per tenant, with the events, the read models and the scheduled wo
 object's own SQLite. Nothing else to run.
 
 ```bash
-{{pm}} install
-{{pm}} test             # the app and its API, inside workerd
-{{pm}} run dev          # wrangler dev on http://localhost:8787
-{{pm}} run deploy       # wrangler deploy, to your Cloudflare account
+{{installCommand}}
+{{testCommand}}  # the app and its API, inside workerd
+{{devCommand}}  # wrangler dev on http://localhost:8787
+{{deployCommand}}  # wrangler deploy, to your Cloudflare account
 ```
 
-`{{pm}} run generate` writes the typed registry under `.bounda/`, a `+types/` folder next to each
+`{{generateCommand}}` writes the typed registry under `.bounda/`, a `+types/` folder next to each
 module and, with `wrangler types`, `worker-configuration.d.ts` from `wrangler.jsonc`. The scripts
 run it for you; run it yourself after adding a module or a binding, so your editor sees the types.
 

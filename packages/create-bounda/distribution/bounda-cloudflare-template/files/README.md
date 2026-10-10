@@ -14,7 +14,7 @@ through the JSON API.
 
 <!-- dash-content-end -->
 
-The same project comes out of `npm create bounda@latest my-app -- --framework cloudflare`; this
+The same project comes out of `npm create bounda@latest my-app -- --runtime cloudflare`; this
 repository is generated from it on every release.
 
 ```bash

@@ -19,6 +19,7 @@ const versions = {
   wrangler: "^4",
   cloudflareVitest: "^4.1",
   cloudflareVitestPlugin: "^1.2",
+  cloudflareVitePlugin: "^1.63",
 };
 
 const directory = async (): Promise<string> => {
@@ -43,15 +44,16 @@ describe("renderTemplate", () => {
 });
 
 describe("scaffoldProject", () => {
-  it("copies the base and the sqlite overlay, renders templates and renames _gitignore", async () => {
+  it("lays the base, SQLite and the Node script, renders templates and renames _gitignore", async () => {
     const target = await directory();
     const report = await scaffoldProject({
       templateRoot,
       options: {
         directory: target,
         name: "shop",
+        runtime: "node",
+        framework: "none",
         database: "sqlite",
-        framework: "node",
         packageManager: "pnpm",
         install: true,
         git: true,
@@ -95,15 +97,16 @@ describe("scaffoldProject", () => {
     await expect(readFile(join(target, "CLAUDE.md"), "utf8")).rejects.toThrow();
   });
 
-  it("uses the postgresql overlay when asked", async () => {
+  it("uses the PostgreSQL layer when asked", async () => {
     const target = await directory();
     const report = await scaffoldProject({
       templateRoot,
       options: {
         directory: target,
         name: "shop",
+        runtime: "node",
+        framework: "none",
         database: "postgresql",
-        framework: "node",
         packageManager: "npm",
         install: true,
         git: true,
@@ -121,15 +124,16 @@ describe("scaffoldProject", () => {
     });
   });
 
-  it("lays the react-router overlay over the base and the database", async () => {
+  it("lays React Router and its Node files over the base and the database", async () => {
     const target = await directory();
     const report = await scaffoldProject({
       templateRoot,
       options: {
         directory: target,
         name: "shop",
-        database: "sqlite",
+        runtime: "node",
         framework: "react-router",
+        database: "sqlite",
         packageManager: "pnpm",
         install: true,
         git: true,
@@ -181,18 +185,19 @@ describe("scaffoldProject", () => {
       vite: "^8",
     });
     expect(await readFile(join(target, ".gitignore"), "utf8")).toContain(".react-router/");
-    expect(await readFile(join(target, "README.md"), "utf8")).toContain("pnpm run dev");
+    expect(await readFile(join(target, "README.md"), "utf8")).toContain("pnpm dev");
   });
 
-  it("lays the cloudflare overlay over the base alone, with its own storage", async () => {
+  it("lays the Worker over the base and the Durable Object's storage", async () => {
     const target = await directory();
     const report = await scaffoldProject({
       templateRoot,
       options: {
         directory: target,
         name: "edge",
-        database: "cloudflare",
-        framework: "cloudflare",
+        runtime: "cloudflare",
+        framework: "none",
+        database: "durable-object",
         packageManager: "npm",
         install: true,
         git: true,
@@ -255,14 +260,132 @@ describe("scaffoldProject", () => {
     expect(await readFile(join(target, "README.md"), "utf8")).toContain("npm run deploy");
   });
 
+  it("lays React Router and its Cloudflare files over the base and the Durable Object's storage", async () => {
+    const target = await directory();
+    const report = await scaffoldProject({
+      templateRoot,
+      options: {
+        directory: target,
+        name: "web-edge",
+        runtime: "cloudflare",
+        framework: "react-router",
+        database: "durable-object",
+        packageManager: "npm",
+        install: true,
+        git: true,
+      },
+      versions,
+    });
+    expect(report.files).toEqual([
+      ".gitignore",
+      "AGENTS.md",
+      "README.md",
+      "app/app.css",
+      "app/domain/order/commands/place-order.ts",
+      "app/domain/order/order-placed.ts",
+      "app/read/orders/projections/order/order-placed.ts",
+      "app/read/orders/queries/list-orders.ts",
+      "app/read/orders/view.ts",
+      "app/root.tsx",
+      "app/routes.ts",
+      "app/routes/home.tsx",
+      "app/tenant.ts",
+      "bounda.config.ts",
+      "package.json",
+      "public/favicon.ico",
+      "public/favicon.svg",
+      "react-router.config.ts",
+      "tests/orders.test.ts",
+      "tests/store.test.ts",
+      "tsconfig.json",
+      "vite.config.ts",
+      "vitest.config.ts",
+      "workers/app.ts",
+      "wrangler.jsonc",
+    ]);
+    const manifest = JSON.parse(await readFile(join(target, "package.json"), "utf8")) as {
+      scripts: Record<string, string>;
+      dependencies: Record<string, string>;
+      devDependencies: Record<string, string>;
+    };
+    expect(manifest.scripts).toMatchObject({
+      generate: "bounda generate && wrangler types && react-router typegen",
+      dev: "react-router dev",
+      build: "react-router build",
+      deploy: "react-router build && wrangler deploy",
+      test: "bounda generate && vitest run",
+    });
+    expect(manifest.scripts).not.toHaveProperty("prepare");
+    expect(manifest.dependencies).toEqual({
+      "@bounda-dev/cloudflare": "^0.1.0-alpha.0",
+      "@bounda-dev/core": "^0.1.0-alpha.0",
+      "@bounda-dev/react-router": "^0.1.0-alpha.0",
+      isbot: "^5",
+      react: "^19",
+      "react-dom": "^19",
+      "react-router": "^8",
+    });
+    expect(manifest.devDependencies).toEqual({
+      "@bounda-dev/cli": "^0.1.0-alpha.0",
+      "@cloudflare/vite-plugin": "^1.63",
+      "@cloudflare/vitest-plugin": "^1.2",
+      "@react-router/dev": "^8",
+      "@types/react": "^19",
+      "@types/react-dom": "^19",
+      typescript: "^7",
+      vite: "^8",
+      vitest: "^4.1",
+      wrangler: "^4",
+    });
+    expect(await readFile(join(target, "vite.config.ts"), "utf8")).toContain(
+      'cloudflare({ viteEnvironment: { name: "ssr" } })',
+    );
+    expect(await readFile(join(target, "vitest.config.ts"), "utf8")).toContain("cloudflareTest");
+    expect(await readFile(join(target, "bounda.config.ts"), "utf8")).toContain("cloudflare()");
+    const wrangler = await readFile(join(target, "wrangler.jsonc"), "utf8");
+    expect(wrangler).toContain('"name": "web-edge"');
+    expect(wrangler).toContain('"main": "./workers/app.ts"');
+    expect(await readFile(join(target, "app/tenant.ts"), "utf8")).toContain('() => "default"');
+    const gitignore = await readFile(join(target, ".gitignore"), "utf8");
+    expect(gitignore).toContain(".react-router/");
+    expect(gitignore).toContain(".wrangler/");
+    expect(await readFile(join(target, "README.md"), "utf8")).toContain("npm run deploy");
+  });
+
+  it("spells every command in the README for the package manager", async () => {
+    const target = await directory();
+    await scaffoldProject({
+      templateRoot,
+      options: {
+        directory: target,
+        name: "shop",
+        runtime: "node",
+        framework: "none",
+        database: "sqlite",
+        packageManager: "bun",
+        install: true,
+        git: true,
+      },
+      versions,
+    });
+    const readme = await readFile(join(target, "README.md"), "utf8");
+    expect(readme).toContain("bun install");
+    expect(readme).toContain("bun run test");
+    expect(readme).toContain("bun run start");
+    expect(readme).toContain("bun run dev");
+    expect(readme).toContain("bun run generate");
+    expect(readme).not.toMatch(/bun test/);
+  });
+
   it("accepts an empty directory and refuses a non-empty one", async () => {
     const target = await directory();
     await mkdir(target, { recursive: true });
     const options = {
       directory: target,
       name: "shop",
+      runtime: "node" as const,
+      framework: "none" as const,
       database: "sqlite" as const,
-      framework: "node" as const,
       packageManager: "pnpm" as const,
       install: true,
       git: true,

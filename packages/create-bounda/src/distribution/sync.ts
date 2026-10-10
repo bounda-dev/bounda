@@ -124,7 +124,7 @@ interface ScaffoldArgs {
 }
 
 const scaffold = async ({ scaffolder, name, cwd }: ScaffoldArgs): Promise<void> => {
-  const flags = [name, "--framework", "cloudflare", "--pm", "npm", "--no-install", "--no-git"];
+  const flags = [name, "--runtime", "cloudflare", "--pm", "npm", "--no-install", "--no-git"];
   if (scaffolder === "workspace") {
     await run(process.execPath, [join(packageRoot, "dist/cli.js"), ...flags, "--yes"], { cwd });
     return;

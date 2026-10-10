@@ -21,7 +21,7 @@ Outside of this repo, you can start a new project with this template using [C3](
 npm create cloudflare@latest -- --template=cloudflare/templates/bounda-event-sourcing-template
 ```
 
-The same project also comes out of `npm create bounda@latest my-app -- --framework cloudflare`.
+The same project also comes out of `npm create bounda@latest my-app -- --runtime cloudflare`.
 
 A live public deployment of this template is available at [https://bounda-event-sourcing-template.templates.workers.dev](https://bounda-event-sourcing-template.templates.workers.dev)
 

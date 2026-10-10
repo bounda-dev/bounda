@@ -1,24 +1,27 @@
 import { basename, resolve } from "node:path";
 
-export type Database = "sqlite" | "postgresql" | "cloudflare";
-export type Framework = "node" | "react-router" | "cloudflare";
+export type Runtime = "node" | "cloudflare";
+export type Framework = "none" | "react-router";
+export type Database = "sqlite" | "postgresql" | "durable-object";
 export type PackageManager = "pnpm" | "npm" | "yarn" | "bun";
 
-// `cloudflare` is never chosen as a database: it comes with the `cloudflare` framework, whose store
-// is the Durable Object's own SQLite.
+export const RUNTIMES: readonly Runtime[] = ["node", "cloudflare"];
+export const FRAMEWORKS: readonly Framework[] = ["none", "react-router"];
+// `durable-object` is never chosen: it comes with the `cloudflare` runtime, whose store is the
+// Durable Object's own SQLite.
 export const DATABASES: readonly Database[] = ["sqlite", "postgresql"];
-export const FRAMEWORKS: readonly Framework[] = ["node", "react-router", "cloudflare"];
 export const PACKAGE_MANAGERS: readonly PackageManager[] = ["pnpm", "npm", "yarn", "bun"];
 export const DEFAULT_DIRECTORY: string = "bounda-app";
 
-// Gates the `cloudflare` framework in the prompt: a framework whose package is not on npm yet stays
+// Gates the `cloudflare` runtime in the prompt: a runtime whose package is not on npm yet stays
 // out, so nobody picks an option whose install fails.
 export const OFFER_CLOUDFLARE: boolean = true;
 
 export interface RawOptions {
   readonly directory?: string;
-  readonly database?: string;
+  readonly runtime?: string;
   readonly framework?: string;
+  readonly database?: string;
   readonly packageManager?: string;
   readonly install: boolean;
   readonly git: boolean;
@@ -28,8 +31,9 @@ export interface RawOptions {
 export interface CreateOptions {
   readonly directory: string;
   readonly name: string;
-  readonly database: Database;
+  readonly runtime: Runtime;
   readonly framework: Framework;
+  readonly database: Database;
   readonly packageManager: PackageManager;
   readonly install: boolean;
   readonly git: boolean;
@@ -78,25 +82,34 @@ export interface ResolveOptionsFunction {
   (args: ResolveOptionsArgs): Promise<CreateOptions | "cancelled">;
 }
 
-const isDatabase = (value: string | undefined): value is Database =>
-  DATABASES.some((candidate) => candidate === value);
+const oneOf =
+  <Value extends string>(values: readonly Value[]) =>
+  (value: string | undefined): value is Value =>
+    values.some((candidate) => candidate === value);
 
-const isFramework = (value: string | undefined): value is Framework =>
-  FRAMEWORKS.some((candidate) => candidate === value);
-
-const isPackageManager = (value: string | undefined): value is PackageManager =>
-  PACKAGE_MANAGERS.some((candidate) => candidate === value);
+const isRuntime = oneOf(RUNTIMES);
+const isFramework = oneOf(FRAMEWORKS);
+const isDatabase = oneOf(DATABASES);
+const isPackageManager = oneOf(PACKAGE_MANAGERS);
 
 export const resolveOptions: ResolveOptionsFunction = async ({ raw, cwd, userAgent, prompts }) => {
-  if (raw.database !== undefined && !isDatabase(raw.database)) {
-    throw new Error(`--database must be one of ${DATABASES.join(", ")}; got "${raw.database}"`);
+  if (raw.runtime !== undefined && !isRuntime(raw.runtime)) {
+    throw new Error(`--runtime must be one of ${RUNTIMES.join(", ")}; got "${raw.runtime}"`);
   }
   if (raw.framework !== undefined && !isFramework(raw.framework)) {
     throw new Error(`--framework must be one of ${FRAMEWORKS.join(", ")}; got "${raw.framework}"`);
   }
+  if (raw.database !== undefined && !isDatabase(raw.database)) {
+    throw new Error(`--database must be one of ${DATABASES.join(", ")}; got "${raw.database}"`);
+  }
   if (raw.packageManager !== undefined && !isPackageManager(raw.packageManager)) {
     throw new Error(
       `--pm must be one of ${PACKAGE_MANAGERS.join(", ")}; got "${raw.packageManager}"`,
+    );
+  }
+  if (raw.runtime === "cloudflare" && raw.database !== undefined) {
+    throw new Error(
+      "--database does not apply to --runtime cloudflare: the app keeps everything in its Durable Object's SQLite",
     );
   }
   const ask = raw.yes ? null : prompts;
@@ -111,35 +124,47 @@ export const resolveOptions: ResolveOptionsFunction = async ({ raw, cwd, userAge
     }
   }
 
-  let framework: Framework | undefined = raw.framework;
-  if (framework === undefined) {
-    if (ask === null) framework = "node";
+  // Only Node takes a database, so naming one answers where the app runs.
+  let runtime: Runtime | undefined =
+    raw.runtime ?? (raw.database === undefined ? undefined : "node");
+  if (runtime === undefined) {
+    if (ask === null) runtime = "node";
     else {
-      const answer = await ask.select("How will the app run?", [
-        { value: "node" as const, label: "Node", hint: "a script, a worker or your own server" },
-        { value: "react-router" as const, label: "React Router", hint: "framework mode, Vite" },
+      const answer = await ask.select("Where will the app run?", [
+        { value: "node" as const, label: "Node", hint: "your own server, a container or a script" },
         ...(OFFER_CLOUDFLARE
           ? [
               {
                 value: "cloudflare" as const,
                 label: "Cloudflare",
-                hint: "a Worker and a Durable Object, no server",
+                hint: "a Worker and a Durable Object per tenant, no server",
               },
             ]
           : []),
+      ]);
+      if (answer === null) return "cancelled";
+      runtime = answer;
+    }
+  }
+
+  let framework: Framework | undefined = raw.framework;
+  if (framework === undefined) {
+    if (ask === null) framework = "none";
+    else {
+      const answer = await ask.select("Which framework?", [
+        {
+          value: "none" as const,
+          label: "None",
+          hint: runtime === "node" ? "a script that boots the app" : "a JSON API in the Worker",
+        },
+        { value: "react-router" as const, label: "React Router", hint: "framework mode, Vite" },
       ]);
       if (answer === null) return "cancelled";
       framework = answer;
     }
   }
 
-  if (framework === "cloudflare" && raw.database !== undefined) {
-    throw new Error(
-      "--database does not apply to --framework cloudflare: the app keeps everything in its Durable Object's SQLite",
-    );
-  }
-
-  let database: Database | undefined = framework === "cloudflare" ? "cloudflare" : raw.database;
+  let database: Database | undefined = runtime === "cloudflare" ? "durable-object" : raw.database;
   if (database === undefined) {
     if (ask === null) database = "sqlite";
     else {
@@ -155,8 +180,9 @@ export const resolveOptions: ResolveOptionsFunction = async ({ raw, cwd, userAge
   return {
     directory: resolve(cwd, directory),
     name: projectNameOf(resolve(cwd, directory)),
-    database,
+    runtime,
     framework,
+    database,
     packageManager: raw.packageManager ?? detectPackageManager(userAgent),
     install: raw.install,
     git: raw.git,

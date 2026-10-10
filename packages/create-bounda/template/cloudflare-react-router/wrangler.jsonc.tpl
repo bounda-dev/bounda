@@ -1,0 +1,18 @@
+/**
+ * For more details on how to configure Wrangler, refer to:
+ * https://developers.cloudflare.com/workers/wrangler/configuration/
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "{{name}}",
+  "main": "./workers/app.ts",
+  "compatibility_date": "2026-09-21",
+  // One Durable Object class; every tenant gets its own instance, with its own SQLite.
+  "durable_objects": {
+    "bindings": [{ "name": "STORE", "class_name": "Store" }]
+  },
+  // The object keeps its events and read models in SQLite, so the class is created as a SQLite class.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Store"] }],
+  "observability": { "enabled": true },
+  "upload_source_maps": true
+}
