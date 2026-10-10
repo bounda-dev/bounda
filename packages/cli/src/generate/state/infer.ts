@@ -87,26 +87,6 @@ const MAX_PASSES = 5;
 const UNTYPED = /(?<![\w"'`.])(?:any|unknown)(?![\w"'`]|\??:)/;
 const TAINTED = /(?<![\w"'`.])any(?![\w"'`]|\??:)/;
 
-// The states to read the next pass against: each field without its `any` members, or `unknown`
-// when nothing else is left.
-const untainted = (
-  fields: ReadonlyMap<string, AggregateFields>,
-): ReadonlyMap<string, AggregateFields> =>
-  new Map(
-    [...fields].map(([name, { fields: aggregateFields, required }]) => [
-      name,
-      {
-        required,
-        fields: new Map(
-          [...aggregateFields].map(([field, { members, events }]) => {
-            const clean = [...members].filter((member) => !TAINTED.test(member));
-            return [field, { members: new Set(clean.length > 0 ? clean : [UNKNOWN]), events }];
-          }),
-        ),
-      },
-    ]),
-  );
-
 // The fields, by aggregate, whose types differ between two passes.
 const changedFields = (
   before: ReadonlyMap<string, AggregateFields>,
@@ -344,6 +324,25 @@ const fieldsOf = (returns: readonly EventReturns[]): AggregateFields => {
   return { fields, required };
 };
 
+// What the next pass reads the state as: every field without what an `evolve` that reads the state
+// left untyped, or `unknown` when nothing else gives it a type.
+const seedOf = (returns: readonly EventReturns[]): AggregateFields => {
+  const typed = fieldsOf(
+    returns.map((read) =>
+      read.readsState && read.evolve !== null
+        ? {
+            ...read,
+            evolve: new Map([...read.evolve].filter(([, { type }]) => !UNTYPED.test(type))),
+          }
+        : read,
+    ),
+  );
+  for (const [name, { events }] of fieldsOf(returns).fields) {
+    if (!typed.fields.has(name)) typed.fields.set(name, { members: new Set([UNKNOWN]), events });
+  }
+  return typed;
+};
+
 interface FieldLocation {
   readonly aggregate: string;
   readonly field: string;
@@ -480,19 +479,21 @@ export const inferStates: InferStatesFunction = async ({
       );
     const fieldsOfAll = (returns: Returns): Map<string, AggregateFields> =>
       new Map([...returns].map(([name, events]) => [name, fieldsOf(events)]));
+    const seedsOf = (returns: Returns): Map<string, AggregateFields> =>
+      new Map([...returns].map(([name, events]) => [name, seedOf(events)]));
     // The first pass reads every `evolve` against `core.UnknownState`, so a field it computes from
     // the state comes out as `any` or `unknown`. Each later pass reads those again against what
-    // the one before inferred, without its `any`, until a pass learns nothing new.
+    // the one before inferred, until a pass learns nothing new.
     let returns = readAll(null);
     let fields = fieldsOfAll(returns);
     let unsettled = new Map<string, readonly string[]>();
     if ([...returns.values()].some((events) => events.some(({ readsState }) => readsState))) {
       for (let pass = 1; pass < MAX_PASSES; pass += 1) {
-        const seed = untainted(fields);
+        const seed = seedsOf(returns);
         checkers = serveTypes(checkers, typesPath, types, renderTypes(statesOf(seed)));
         returns = readAll(returns);
         fields = fieldsOfAll(returns);
-        unsettled = changedFields(seed, untainted(fields));
+        unsettled = changedFields(seed, seedsOf(returns));
         if (unsettled.size === 0) break;
       }
       // What still reads a field with no type is as unsettled as what changed on the last pass.

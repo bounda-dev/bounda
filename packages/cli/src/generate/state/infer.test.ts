@@ -382,6 +382,11 @@ export type PlainCreatedState = PlainState;`);
         "});",
         "",
       ].join("\n"),
+      "app/domain/queue/queue-paused.ts": [
+        'import type { Event } from "./+types/queue-paused";',
+        "export const evolve = ((args: Event.EvolveArgs) => ({ served: args.state.served }));",
+        "",
+      ].join("\n"),
       "app/domain/queue/queue-counted.ts": [
         'import type { Event } from "./+types/queue-counted";',
         "export const evolve = ({ ...args }: Event.EvolveArgs) => ({",
@@ -442,7 +447,7 @@ export type PlainCreatedState = PlainState;`);
       "app/domain/misc/misc-made.ts":
         'export const begin = () => ({ flags: { any: true }, extra: JSON.parse("1"), count: 0 });\n',
       "app/domain/misc/misc-reset.ts":
-        'export const evolve = () => ({ extra: JSON.parse("2") });\n',
+        'export function evolve() {\n  return { extra: JSON.parse("2") };\n}\n',
       "app/domain/misc/misc-loaded.ts": [
         'import type { Event } from "./+types/misc-loaded";',
         "export const evolve = ({ event }: Event.EvolveArgs) => ({ extra: JSON.parse(event.type) });",
