@@ -1,5 +1,12 @@
 # @bounda-dev/cli
 
+## 0.2.3
+
+### Patch Changes
+
+- Updated dependencies [1162dcd]
+  - @bounda-dev/core@0.2.3
+
 ## 0.2.2
 
 ### Patch Changes
