@@ -85,6 +85,27 @@ jobs:
           echo "packages=$packages" >> "$GITHUB_OUTPUT"
           echo "Mutation testing for: $packages"
 
+  # People scaffold on Windows too: create-bounda's tests run there whenever it changes. Its
+  # end-to-end test stays on Linux, since it links tools and stops servers by process group.
+  windows:
+    name: create-bounda on Windows
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.packages), 'create-bounda')
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.4.2
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter create-bounda build
+      - run: pnpm --filter create-bounda exec vitest run --exclude src/run.e2e.test.ts
+
   mutation:
     name: Mutation (${{ matrix.package }})
     needs: [changes, check]
