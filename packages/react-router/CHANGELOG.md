@@ -1,5 +1,19 @@
 # @bounda-dev/react-router
 
+## 0.2.1
+
+### Patch Changes
+
+- f405d5d: The `bounda()` plugin writes the paths of the registry and the configuration into the server
+  module with `/`, as Vite expects them on every platform, and recognises a change under
+  `app/domain` or `app/read` whatever separator the watcher reports, so it behaves the same on
+  Windows.
+- Updated dependencies [743a291]
+- Updated dependencies [efeb59a]
+  - @bounda-dev/cloudflare@0.2.1
+  - @bounda-dev/cli@0.2.1
+  - @bounda-dev/core@0.2.1
+
 ## 0.2.0
 
 ### Minor Changes

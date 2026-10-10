@@ -1,5 +1,13 @@
 # @bounda-dev/cloudflare
 
+## 0.2.1
+
+### Patch Changes
+
+- 743a291: A Bounda object's `command` reads a missing `consistency` as `"read-your-writes"` without
+  spelling the default out: no change in behaviour.
+- @bounda-dev/core@0.2.1
+
 ## 0.2.0
 
 ### Minor Changes

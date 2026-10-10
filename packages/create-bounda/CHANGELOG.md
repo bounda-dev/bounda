@@ -1,5 +1,13 @@
 # create-bounda
 
+## 0.2.1
+
+### Patch Changes
+
+- f405d5d: On Windows, `create-bounda` installs the dependencies and generates the types instead of warning
+  that the install failed: npm, pnpm and yarn are `.cmd` shims there, which it now runs through the
+  shell.
+
 ## 0.2.0
 
 ### Minor Changes
