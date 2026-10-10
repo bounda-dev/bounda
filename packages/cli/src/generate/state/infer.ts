@@ -29,7 +29,8 @@ export interface InferStatesFunction {
 }
 
 interface FieldTypes {
-  readonly members: Set<string>;
+  // Each type an event gives the field, printed, with the members it has in a union.
+  readonly types: Map<string, readonly string[]>;
   readonly events: Set<string>;
 }
 
@@ -56,8 +57,13 @@ const renderState = ({ fields, required }: AggregateFields): string => {
   const names = [...fields.keys()].sort();
   if (names.length === 0) return "Record<never, never>";
   const lines = names.map((name) => {
-    const members = [...(fields.get(name) as FieldTypes).members].sort();
-    const type = members
+    const { types } = fields.get(name) as FieldTypes;
+    const printed = [...types.keys()].sort();
+    const members = printed.flatMap((type) => types.get(type) as readonly string[]);
+    const unique = [...new Set(members)];
+    // The members stand in for the printed types only when one repeats: a lone function type
+    // prints without the parentheses it takes as a member.
+    const type = (unique.length === members.length ? printed : unique)
       .join(" | ")
       .split("\n")
       .map((line, index) => (index === 0 || line.startsWith(" ") ? line : `  ${line}`))
@@ -87,8 +93,8 @@ const MAX_PASSES = 5;
 const UNTYPED = /(?<![\w"'`.])(?:any|unknown)(?![\w"'`]|\??:)/;
 const TAINTED = /(?<![\w"'`.])any(?![\w"'`]|\??:)/;
 
-// What the next pass reads the state as: each field without the untyped members that reading the
-// state leaves behind, and without the field when nothing else is left.
+// What the next pass reads the state as: each field without the types that reading the state
+// leaves untyped, and without the field when nothing else is left.
 const seedOf = (
   fields: ReadonlyMap<string, AggregateFields>,
 ): ReadonlyMap<string, AggregateFields> =>
@@ -98,9 +104,9 @@ const seedOf = (
       {
         required,
         fields: new Map(
-          [...aggregateFields].flatMap(([field, { members, events }]) => {
-            const typed = [...members].filter((member) => !UNTYPED.test(member));
-            return typed.length > 0 ? [[field, { members: new Set(typed), events }] as const] : [];
+          [...aggregateFields].flatMap(([field, { types, events }]) => {
+            const typed = [...types].filter(([type]) => !UNTYPED.test(type));
+            return typed.length > 0 ? [[field, { types: new Map(typed), events }] as const] : [];
           }),
         ),
       },
@@ -113,7 +119,7 @@ const changedFields = (
   after: ReadonlyMap<string, AggregateFields>,
 ): Map<string, readonly string[]> => {
   const typeOf = (fields: AggregateFields | undefined, name: string): string =>
-    [...(fields?.fields.get(name)?.members ?? [])].sort().join(" | ");
+    [...(fields?.fields.get(name)?.types.keys() ?? [])].sort().join(" | ");
   const changed = new Map<string, readonly string[]>();
   for (const [aggregate, fields] of after) {
     const names = [...fields.fields.keys()].filter(
@@ -231,8 +237,20 @@ const mayReadState = (
   );
 };
 
-// What a `begin` or an `evolve` returns: each field's printed type, and whether it may be absent.
-type Returned = ReadonlyMap<string, { readonly type: string; readonly absent: boolean }>;
+interface PrintedType {
+  readonly type: string;
+  // As each prints next to others in a union.
+  readonly members: readonly string[];
+}
+
+const UNKNOWN_TYPE: PrintedType = { type: UNKNOWN, members: [UNKNOWN] };
+
+interface ReturnedField extends PrintedType {
+  readonly absent: boolean;
+}
+
+// What a `begin` or an `evolve` returns, by field.
+type Returned = ReadonlyMap<string, ReturnedField>;
 
 interface EventReturns {
   readonly event: EventModel;
@@ -248,6 +266,7 @@ interface EventReturns {
 const readReturns = (
   sync: typeof import("typescript/unstable/sync"),
   ts: typeof import("typescript/unstable/ast"),
+  factory: typeof import("typescript/unstable/ast/factory"),
   checkers: Checkers,
   event: EventModel,
   previous: EventReturns | undefined,
@@ -265,16 +284,23 @@ const readReturns = (
   const flags = sync.NodeBuilderFlags.NoTruncation | sync.NodeBuilderFlags.UseFullyQualifiedType;
   const maybeAbsent =
     sync.TypeFlags.Any | sync.TypeFlags.Unknown | sync.TypeFlags.Undefined | sync.TypeFlags.Void;
-  const print = (type: import("typescript/unstable/sync").Type): string => {
+  // Each member is printed inside a union of its own, so it takes the parentheses the printer gives
+  // it next to others, and `boolean` or an enum stays whole.
+  const print = (type: import("typescript/unstable/sync").Type): PrintedType => {
     const node = checker.typeToTypeNode(type, checkers.enclosing, flags);
-    return node === undefined ? UNKNOWN : emitter.printNode(node);
-  };
-  // Spreading a state field whose type is a union, `{ ...state.prices, [zone]: price }`, gives a
-  // union of objects that print the same; kept apart, they would grow the type on every pass.
-  const printUnique = (type: import("typescript/unstable/sync").Type): string => {
-    const members = type.isUnionType() ? (type.getTypes() ?? []) : [];
-    const unique = [...new Set(members.map(print))];
-    return unique.length === members.length ? print(type) : unique.join(" | ");
+    if (node === undefined) return UNKNOWN_TYPE;
+    const members = (
+      node.kind === ts.SyntaxKind.UnionType
+        ? (node as import("typescript/unstable/ast").UnionTypeNode).types
+        : [node]
+    ).map((member) => emitter.printNode(factory.createUnionTypeNode([member])));
+    const unique = [...new Set(members)];
+    // Spreading a state field whose type is a union, `{ ...state.prices, [zone]: price }`, gives a
+    // union of objects that print the same; kept apart, they would grow the type on every pass.
+    return {
+      type: unique.length === members.length ? emitter.printNode(node) : unique.join(" | "),
+      members: unique,
+    };
   };
   const read = (exportName: "evolve" | "begin"): Returned | null => {
     const name = exportedFunction(ts, file, exportName);
@@ -303,7 +329,7 @@ const readReturns = (
           ].some((member) => (member.flags & maybeAbsent) !== 0);
         return [
           property.name,
-          { type: propertyType === undefined ? UNKNOWN : printUnique(propertyType), absent },
+          { ...(propertyType === undefined ? UNKNOWN_TYPE : print(propertyType)), absent },
         ];
       }),
     );
@@ -325,9 +351,12 @@ const fieldsOf = (returns: readonly EventReturns[]): AggregateFields => {
   const opening: ReadonlySet<string>[] = [];
   for (const { event, begin, evolve } of returns) {
     for (const returned of [begin, evolve]) {
-      for (const [name, { type }] of returned ?? []) {
-        const field = fields.get(name) ?? { members: new Set<string>(), events: new Set<string>() };
-        field.members.add(type);
+      for (const [name, { type, members }] of returned ?? []) {
+        const field = fields.get(name) ?? {
+          types: new Map<string, readonly string[]>(),
+          events: new Set<string>(),
+        };
+        field.types.set(type, members);
         field.events.add(event.key);
         fields.set(name, field);
       }
@@ -397,14 +426,17 @@ const openProject = async (
       readonly checkers: Checkers;
       readonly sync: typeof import("typescript/unstable/sync");
       readonly ts: typeof import("typescript/unstable/ast");
+      readonly factory: typeof import("typescript/unstable/ast/factory");
     }
   | string
 > => {
   let sync: typeof import("typescript/unstable/sync");
   let ts: typeof import("typescript/unstable/ast");
+  let factory: typeof import("typescript/unstable/ast/factory");
   try {
     sync = await import("typescript/unstable/sync");
     ts = await import("typescript/unstable/ast");
+    factory = await import("typescript/unstable/ast/factory");
   } catch {
     return "TypeScript 7 is not installed; the generator needs it to infer state without state.ts";
   }
@@ -426,7 +458,7 @@ const openProject = async (
       return `${typesPath} is not part of the TypeScript project at ${tsconfigPath}; include it so state can be inferred`;
     }
     const enclosing = typesFile.statements[typesFile.statements.length - 1] ?? typesFile;
-    return { checkers: { api, project, enclosing }, sync, ts };
+    return { checkers: { api, project, enclosing }, sync, ts, factory };
   } catch (error) {
     api.close();
     return `TypeScript could not open ${tsconfigPath}: ${error instanceof Error ? error.message : String(error)}`;
@@ -455,7 +487,7 @@ export const inferStates: InferStatesFunction = async ({
     }
     return { states: {}, warnings };
   }
-  const { sync, ts } = opened;
+  const { sync, ts, factory } = opened;
   let checkers = opened.checkers;
   const aliases = new Map(
     pending.flatMap((aggregate) => [
@@ -471,7 +503,7 @@ export const inferStates: InferStatesFunction = async ({
           aggregate.name,
           aggregate.events.flatMap((event) => {
             const before = previous?.get(aggregate.name)?.find((read) => read.event === event);
-            const returns = readReturns(sync, ts, checkers, event, before, (message) =>
+            const returns = readReturns(sync, ts, factory, checkers, event, before, (message) =>
               warnings.push({ aggregate: aggregate.name, message }),
             );
             return returns === null ? [] : [returns];
@@ -505,7 +537,7 @@ export const inferStates: InferStatesFunction = async ({
       // Types `name` as unknown and says which events set it.
       const unknownFrom = (name: string): string => {
         const events = aggregateFields.get(name)?.events ?? new Set<string>();
-        aggregateFields.set(name, { members: new Set([UNKNOWN]), events });
+        aggregateFields.set(name, { types: new Map([[UNKNOWN, [UNKNOWN]]]), events });
         return [...events].join(", ");
       };
       const notSettled = unsettled.get(aggregateName) ?? [];
@@ -547,7 +579,10 @@ export const inferStates: InferStatesFunction = async ({
         aggregate: aggregateName,
         message: `field "${location.field}" (set by ${[...field.events].join(", ")}) has a type that is not visible from .bounda/types.ts (${diagnostic.text}); it is typed as unknown. Export the type or add state.ts`,
       });
-      aggregateFields.set(location.field, { members: new Set([UNKNOWN]), events: field.events });
+      aggregateFields.set(location.field, {
+        types: new Map([[UNKNOWN, [UNKNOWN]]]),
+        events: field.events,
+      });
     }
     if (downgraded.size > 0) states = statesOf(fields);
     return { states, warnings };

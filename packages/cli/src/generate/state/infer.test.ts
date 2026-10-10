@@ -495,6 +495,45 @@ export type PlainCreatedState = PlainState;`);
 };`);
   });
 
+  it("lists once a member that more than one event gives a field", async () => {
+    const root = await syntheticProject({
+      "app/domain/payment/payment-started.ts": [
+        "export declare enum Level {",
+        "  Low,",
+        "  High,",
+        "}",
+        "export const begin = () => ({",
+        "  chargeId: null as string | null,",
+        "  captured: null as boolean | null,",
+        "  level: null as Level | null,",
+        "  onRetry: null as (() => void) | null,",
+        "});",
+        "",
+      ].join("\n"),
+      "app/domain/payment/payment-charged.ts": [
+        'import { Level } from "./payment-started";',
+        "export const evolve = () => ({",
+        '  chargeId: "ch_1" as string,',
+        "  captured: true as boolean,",
+        "  level: Level.High as Level,",
+        "  onRetry: () => {},",
+        "  notify: () => {},",
+        "});",
+        "",
+      ].join("\n"),
+    });
+    const report = await generate({ root });
+    expect(report.warnings).toEqual([]);
+    const types = await readFile(join(root, ".bounda/types.ts"), "utf8");
+    expect(types).toContain(`export type PaymentCreatedState = {
+  readonly captured: boolean | null;
+  readonly chargeId: string | null;
+  readonly level: import("../app/domain/payment/payment-started.ts").Level | null;
+  readonly notify?: () => void;
+  readonly onRetry: (() => void) | null;
+};`);
+  });
+
   it("types as unknown, with a warning, what does not settle within the passes", async () => {
     const root = await syntheticProject({
       "app/domain/relay/relay-opened.ts": 'export const begin = () => ({ first: "start" });\n',
