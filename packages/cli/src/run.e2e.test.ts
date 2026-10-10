@@ -48,7 +48,7 @@ describe("bounda binary end to end", () => {
       cwd: root,
       env: { ...process.env, NODE_NO_WARNINGS: "1" },
     });
-    expect(stdout).toContain("8 files (8 written");
+    expect(stdout).toContain("9 files (9 written");
     await run(
       process.execPath,
       [

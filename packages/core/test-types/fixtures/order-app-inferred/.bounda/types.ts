@@ -6,6 +6,7 @@ export type OrderCreatedState = {
   readonly lines: readonly import("../app/domain/order/order-placed.ts").Line[];
   readonly paidWith?: "card" | "transfer";
   readonly placedAt: Date;
+  readonly reminders: number;
   readonly status: "cancelled" | "paid" | "placed";
 };
 export type OrderState = core.NotCreated<OrderCreatedState> | OrderCreatedState;
@@ -13,6 +14,7 @@ export type OrderEvents = {
   readonly orderCancelled: typeof import("../app/domain/order/order-cancelled.ts");
   readonly orderPaid: typeof import("../app/domain/order/order-paid.ts");
   readonly orderPlaced: typeof import("../app/domain/order/order-placed.ts");
+  readonly reminderSent: typeof import("../app/domain/order/reminder-sent.ts");
 };
 export type OrderPorts = core.EmptyPayload;
 

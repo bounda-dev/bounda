@@ -4,11 +4,12 @@ import * as placeOrder from "../app/domain/order/commands/place-order.ts";
 import * as orderCancelled from "../app/domain/order/order-cancelled.ts";
 import * as orderPaid from "../app/domain/order/order-paid.ts";
 import * as orderPlaced from "../app/domain/order/order-placed.ts";
+import * as reminderSent from "../app/domain/order/reminder-sent.ts";
 
 export const registry = {
   aggregates: {
     order: {
-      events: { orderCancelled, orderPaid, orderPlaced },
+      events: { orderCancelled, orderPaid, orderPlaced, reminderSent },
       commands: { payOrder: { module: payOrder }, placeOrder: { module: placeOrder } },
       policies: {},
       processes: {},
