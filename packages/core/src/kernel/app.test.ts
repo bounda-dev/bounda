@@ -205,6 +205,41 @@ describe("createApp", () => {
     await app.stop();
   });
 
+  it("reads its global stream by position, the lifecycle events of its processes included", async () => {
+    const { app } = await start();
+    await app.commands.placeOrder({ orderId: "o-1", total: 42 });
+    await app.commands.payOrder({ orderId: "o-1", method: "card" });
+    await app.runUntilIdle();
+
+    const events = await app.events.read();
+    expect(events.map((event) => [event.position, event.aggregateType, event.type])).toEqual([
+      [1, "order", "OrderPlaced"],
+      [2, "order", "OrderPaid"],
+      [3, "order", "OrderArchived"],
+      [4, "process:order.orderPayment", "ProcessStarted"],
+      [5, "process:order.orderPayment", "ProcessCompleted"],
+    ]);
+    const [placed, , , started] = events;
+    expect(placed).toMatchObject({
+      aggregateId: "o-1",
+      version: 1,
+      payload: { total: 42 },
+      metadata: { schemaVersion: 1, system: false },
+    });
+    expect(placed?.metadata.commandId).toEqual(expect.any(String));
+    expect(started).toMatchObject({
+      aggregateId: "o-1",
+      metadata: {
+        correlationId: placed?.metadata.correlationId,
+        causationId: placed?.id,
+        system: true,
+      },
+    });
+    expect(started?.metadata.commandId).toBeUndefined();
+    expect(await app.events.read({ after: 2, limit: 2 })).toEqual(events.slice(2, 4));
+    await app.stop();
+  });
+
   it("reports the rejections of the commands its reactions dispatched from runUntilIdle", async () => {
     const app = await createApp({
       registry: {

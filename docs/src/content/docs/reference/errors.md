@@ -35,8 +35,9 @@ dead letter with `errorType: "retriable_exhausted"`.
   `DomainError` it did not make with its own `reject`, such as one rethrown from another app's
   command. The command fails rather than rejects, so `app.commands` and a reaction both get this
   error, never the other command's code. `cause` is that `DomainError`.
-- **`VALIDATION_FAILED`** (`ValidationError`; terminal). A payload, a duration or a returned process
-  state did not validate. `issues` lists each problem with its `path`.
+- **`VALIDATION_FAILED`** (`ValidationError`; terminal). A payload, a duration, a returned process
+  state or the `after` and `limit` of a [read of the global stream](/guides/reading-the-stream/)
+  did not validate. `issues` lists each problem with its `path`.
 - **`CONCURRENCY_CONFLICT`** (`ConcurrencyError`; retried). An append found the stream at another
   version, after `runtime.commands.concurrencyRetries` runs of the command. `streamId`,
   `expectedVersion`, `actualVersion`.

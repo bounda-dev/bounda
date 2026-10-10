@@ -179,6 +179,32 @@ describe("a Bounda Durable Object", () => {
     expect(await alarmOf(stub)).toBeNull();
   });
 
+  it("reads its global stream by position, process lifecycle events included", async () => {
+    const stub = env.PROCESS_STORE.get(env.PROCESS_STORE.newUniqueId());
+    const store = connect<typeof processRegistry>(stub);
+    await store.commands.placeOrder({ orderId: "o-1", total: 42, customer: "ada" });
+    await runAlarm(stub);
+
+    const events = await store.events.read();
+    expect(events.map((event) => [event.position, event.aggregateType, event.type])).toEqual([
+      [1, "order", "OrderPlaced"],
+      [2, "process:order.settlement", "ProcessStarted"],
+      [3, "process:order.settlement", "ProcessHandled"],
+    ]);
+    expect(events[0]).toMatchObject({
+      aggregateId: "o-1",
+      payload: { total: 42, customer: "ada" },
+      metadata: { schemaVersion: 1, system: false },
+    });
+    expect(events[2]?.metadata.causationId).toBe(events[0]?.id);
+    expect(await store.events.read({ after: 1, limit: 1 })).toEqual(events.slice(1, 2));
+    const refused = await rejection(store.events.read({ limit: 1_001 }));
+    expect(refused).toMatchObject({ name: "ValidationError", code: "VALIDATION_FAILED" });
+    expect(Reflect.get(refused, "issues")).toEqual([
+      { path: ["limit"], message: "Expected a whole number from 1 to 1000" },
+    ]);
+  });
+
   it("returns the domain's refusals and names what it does not know", async () => {
     const { stub, store } = open();
     await store.commands.placeOrder({ orderId: "o-3", total: 1, customer: "ada" });

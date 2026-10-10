@@ -265,4 +265,41 @@ describe("an app over events stored with an older shape", () => {
       }),
     ).toMatchObject({ events: 3 });
   });
+
+  it("reads them from its global stream as they were stored, even one from newer code", async () => {
+    const adapter = memory();
+    const raw = await adapter.createStorage({ logger: silentLogger });
+    await raw.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "o-1",
+      expectedVersion: 0,
+      events: [stored({ id: "old", payload: { total: 42 }, schemaVersion: 1 })],
+    });
+    await raw.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "o-3",
+      expectedVersion: 0,
+      events: [
+        stored({ id: "newer", aggregateId: "o-3", payload: { cents: 1 }, schemaVersion: 4 }),
+      ],
+    });
+    const app = await createApp({
+      registry,
+      config: { storage: adapter, ports: defaultPorts(registry) },
+    });
+    await app.commands.placeOrder({ orderId: "o-2", amount: 5 });
+
+    expect(
+      (await app.events.read()).map((event) => [
+        event.aggregateId,
+        event.payload,
+        event.metadata.schemaVersion,
+      ]),
+    ).toEqual([
+      ["o-1", { total: 42 }, 1],
+      ["o-3", { cents: 1 }, 4],
+      ["o-2", { money: { amount: 5, currency: "EUR" } }, 3],
+    ]);
+    await app.stop();
+  });
 });

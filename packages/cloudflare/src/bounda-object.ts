@@ -13,9 +13,11 @@ import {
   type ListDeadLettersArgs,
   type Logger,
   NotFoundError,
+  type ReadEventsArgs,
   type RebuildReadModelResult,
   RebuildSupersededError,
   type Registry,
+  type StoredEvent,
   systemClock,
 } from "@bounda-dev/core";
 import type { Config } from "@bounda-dev/core/config";
@@ -73,6 +75,7 @@ export interface BoundaObjectMethods {
   ): Promise<RpcOutcome<DispatchResult>>;
   query(name: string, payload?: unknown): Promise<RpcOutcome<unknown>>;
   lag(): Promise<RpcOutcome<AppLag>>;
+  readEvents(args?: ReadEventsArgs): Promise<RpcOutcome<readonly StoredEvent[]>>;
   listDeadLetters(args?: ListDeadLettersArgs): Promise<RpcOutcome<readonly DeadLetter[]>>;
   retryDeadLetter(id: string): Promise<RpcOutcome<DeadLetter>>;
   discardDeadLetter(id: string): Promise<RpcOutcome<DeadLetter>>;
@@ -255,6 +258,10 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
 
     lag(): Promise<RpcOutcome<AppLag>> {
       return settle(() => this.#ready().getLag());
+    }
+
+    readEvents(args?: ReadEventsArgs): Promise<RpcOutcome<readonly StoredEvent[]>> {
+      return settle(() => this.#ready().events.read(args));
     }
 
     listDeadLetters(args?: ListDeadLettersArgs): Promise<RpcOutcome<readonly DeadLetter[]>> {

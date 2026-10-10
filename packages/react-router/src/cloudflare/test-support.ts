@@ -34,6 +34,7 @@ export const storeNamespace = (): FakeStoreNamespace => {
       command: record("command"),
       query: record("query"),
       lag: record("lag"),
+      readEvents: record("readEvents"),
       listDeadLetters: record("listDeadLetters"),
       retryDeadLetter: record("retryDeadLetter"),
       discardDeadLetter: record("discardDeadLetter"),

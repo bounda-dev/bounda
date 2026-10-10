@@ -92,8 +92,9 @@ export const loader = async ({ params, context }: Route.LoaderArgs) => {
 
 `commands` and `queries` are typed from the generated registry: payloads, options and results
 are checked in the route module, and `loaderData` in the component carries the query's result
-type. What the context holds is a `BoundaClient`: besides them, `getLag()`, `deadLetters` and
-`rebuildReadModel`, the same on Node and on Cloudflare.
+type. What the context holds is a `BoundaClient`: besides them, `getLag()`,
+[`events`](/guides/reading-the-stream/), `deadLetters` and `rebuildReadModel`, the same on Node
+and on Cloudflare.
 
 ## Errors from the domain
 

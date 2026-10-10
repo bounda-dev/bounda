@@ -58,12 +58,14 @@ describe("cloudflareClients", () => {
     })(requestArgs());
 
     await client.getLag();
+    await client.events.read({ after: 3, limit: 10 });
     await client.deadLetters.list({ limit: 5 });
     await client.deadLetters.retry("d-1");
     await client.deadLetters.discard("d-2");
     await client.rebuildReadModel("orders");
     expect(store.calls).toEqual([
       ["acme", "lag"],
+      ["acme", "readEvents", { after: 3, limit: 10 }],
       ["acme", "listDeadLetters", { limit: 5 }],
       ["acme", "retryDeadLetter", "d-1"],
       ["acme", "discardDeadLetter", "d-2"],

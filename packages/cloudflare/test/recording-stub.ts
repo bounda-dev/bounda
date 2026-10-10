@@ -16,6 +16,7 @@ export const recordingStub = (): { readonly stub: BoundaStub; readonly commands:
       },
       query: answer,
       lag: answer,
+      readEvents: answer,
       listDeadLetters: answer,
       retryDeadLetter: answer,
       discardDeadLetter: answer,

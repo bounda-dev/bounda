@@ -18,6 +18,7 @@ import { createCommandPipeline } from "./command/pipeline.ts";
 import { createDeadLetters, type DeadLetters } from "./dead-letters/dead-letters.ts";
 import { createDispatcher, type DispatcherLag } from "./dispatch/dispatcher.ts";
 import { alignReactiveCheckpoints } from "./dispatch/reactive-checkpoints.ts";
+import { createGlobalStream, type GlobalStream } from "./events/global-stream.ts";
 import { buildPolicies } from "./policy/build-policies.ts";
 import { createDelayedPolicies } from "./policy/delayed.ts";
 import { createPolicyExecutor } from "./policy/executor.ts";
@@ -56,6 +57,7 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
   readonly commands: CommandsFacade<R>;
   readonly queries: QueriesFacade<R>;
   getLag(): Promise<AppLag>;
+  readonly events: GlobalStream;
   readonly deadLetters: Pick<DeadLetters, "list" | "retry" | "discard">;
   /**
    * Rebuilds one read model from the whole stream into a fresh table and swaps it in, without
@@ -483,6 +485,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         );
         return paused.flat();
       },
+      events: createGlobalStream({ eventStore: written.eventStore }),
       deadLetters,
       getLag: async () => ({
         ...(await dispatcher.getLag()),

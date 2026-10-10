@@ -169,7 +169,8 @@ const { subscribers } = await app.getLag();
 `failing` is what this process saw: another instance that never tried that read model reports no
 failure while its lag still grows. Alert on the lag, which every instance reads from the
 database; read `failing`, and the `subscriber failed` log line that names the event, to find out
-why.
+why. The event itself, payload included, is one read of the global stream away:
+`app.events.read({ after: 41, limit: 1 })` ([Reading the global stream](/guides/reading-the-stream/)).
 
 `waitingDeadlines`, next to `subscribers`, counts the process deadlines this instance's worker
 holds back until the process runner has handled the events stored before them
