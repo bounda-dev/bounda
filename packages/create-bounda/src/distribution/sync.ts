@@ -269,10 +269,56 @@ const sha1 = async (path: string): Promise<string> =>
     .update(await readFile(path))
     .digest("hex");
 
+export interface Command {
+  readonly command: string;
+  readonly args: readonly string[];
+}
+
+export interface RepositoryFixesArgs {
+  readonly name: string;
+  /**
+   * The repository's root `devDependencies`, which pin its syncpack and Prettier.
+   */
+  readonly devDependencies: JsonObject;
+  /**
+   * Files laid next to the template, relative to the repository's root.
+   */
+  readonly rootFiles: readonly string[];
+}
+
+export interface RepositoryFixesFunction {
+  (args: RepositoryFixesArgs): readonly Command[];
+}
+
+/**
+ * What a repository of templates runs at its root after the template is laid, in order. The
+ * install adds the template to the workspace lockfile, and builds the `templates` CLI that
+ * `fix:templates` runs. That linter rewrites `wrangler.jsonc` in a layout of its own, so Prettier
+ * comes after it, as in the repository's `fix` script that its pre-push hook runs.
+ */
+export const repositoryFixes: RepositoryFixesFunction = ({ name, devDependencies, rootFiles }) => [
+  { command: "pnpm", args: ["install", "--no-frozen-lockfile"] },
+  { command: "pnpm", args: ["run", "fix:templates"] },
+  {
+    command: "npx",
+    args: [
+      "--yes",
+      `syncpack@${String(devDependencies.syncpack)}`,
+      "format",
+      "--source",
+      `${name}/package.json`,
+    ],
+  },
+  {
+    command: "npx",
+    args: ["--yes", `prettier@${String(devDependencies.prettier)}`, "--write", name, ...rootFiles],
+  },
+];
+
 /**
  * Writes a freshly generated copy into a clone of its repository. For `cloudflare-templates` it
- * also formats the manifest with the repository's syncpack and every file with its Prettier, and
- * records the new `package.json` hash in `templates.json`, as its own `fix` scripts would.
+ * also runs the repository's {@link repositoryFixes} and records the new `package.json` hash in
+ * `templates.json`, as its own `fix` scripts would.
  */
 export const sync: SyncFunction = async ({ target, scaffolder, into }) => {
   const { root, project, layer } = await generate({ target, scaffolder, repository: into });
@@ -289,28 +335,13 @@ export const sync: SyncFunction = async ({ target, scaffolder, into }) => {
     }
     const devDependencies = (await readJson(join(into, "package.json")))
       .devDependencies as JsonObject;
-    await run(
-      "npx",
-      [
-        "--yes",
-        `syncpack@${String(devDependencies.syncpack)}`,
-        "format",
-        "--source",
-        `${layer.name}/package.json`,
-      ],
-      { cwd: into },
-    );
-    await run(
-      "npx",
-      [
-        "--yes",
-        `prettier@${String(devDependencies.prettier)}`,
-        "--write",
-        layer.name,
-        ...tree.keys(),
-      ],
-      { cwd: into },
-    );
+    for (const { command, args } of repositoryFixes({
+      name: layer.name,
+      devDependencies,
+      rootFiles: [...tree.keys()],
+    })) {
+      await run(command, args, { cwd: into });
+    }
     const registry = join(into, "templates.json");
     const templates = await readJson(registry);
     const entries = templates.templates as JsonObject;

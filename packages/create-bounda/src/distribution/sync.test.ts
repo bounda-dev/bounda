@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { generate, loadLayer } from "./sync.ts";
+import { generate, loadLayer, repositoryFixes } from "./sync.ts";
 
 const temporary: string[] = [];
 
@@ -125,5 +125,23 @@ describe("loadLayer", () => {
       layout: "monorepo",
       pin: "aligned",
     });
+  });
+});
+
+describe("repositoryFixes", () => {
+  const fixes = repositoryFixes({
+    name: "bounda-event-sourcing-template",
+    devDependencies: { syncpack: "13.0.4", prettier: "3.7.4" },
+    rootFiles: ["playwright-tests/bounda-event-sourcing-template.spec.ts"],
+  });
+  const line = ({ command, args }: (typeof fixes)[number]) => [command, ...args].join(" ");
+
+  it("installs to add the template to the lockfile, and lints before Prettier formats", () => {
+    expect(fixes.map(line)).toEqual([
+      "pnpm install --no-frozen-lockfile",
+      "pnpm run fix:templates",
+      "npx --yes syncpack@13.0.4 format --source bounda-event-sourcing-template/package.json",
+      "npx --yes prettier@3.7.4 --write bounda-event-sourcing-template playwright-tests/bounda-event-sourcing-template.spec.ts",
+    ]);
   });
 });
