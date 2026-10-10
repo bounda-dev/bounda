@@ -537,7 +537,7 @@ export const inferStates: InferStatesFunction = async ({
       // Types `name` as unknown and says which events set it.
       const unknownFrom = (name: string): string => {
         const events = aggregateFields.get(name)?.events ?? new Set<string>();
-        aggregateFields.set(name, { types: new Map([[UNKNOWN, [UNKNOWN]]]), events });
+        aggregateFields.set(name, { types: new Map([[UNKNOWN, UNKNOWN_TYPE.members]]), events });
         return [...events].join(", ");
       };
       const notSettled = unsettled.get(aggregateName) ?? [];
@@ -580,7 +580,7 @@ export const inferStates: InferStatesFunction = async ({
         message: `field "${location.field}" (set by ${[...field.events].join(", ")}) has a type that is not visible from .bounda/types.ts (${diagnostic.text}); it is typed as unknown. Export the type or add state.ts`,
       });
       aggregateFields.set(location.field, {
-        types: new Map([[UNKNOWN, [UNKNOWN]]]),
+        types: new Map([[UNKNOWN, UNKNOWN_TYPE.members]]),
         events: field.events,
       });
     }

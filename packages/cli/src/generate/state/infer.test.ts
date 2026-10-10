@@ -495,7 +495,7 @@ export type PlainCreatedState = PlainState;`);
 };`);
   });
 
-  it("lists once a member that more than one event gives a field", async () => {
+  it("lists once a member that a field's type repeats, within an event or across them", async () => {
     const root = await syntheticProject({
       "app/domain/payment/payment-started.ts": [
         "export declare enum Level {",
@@ -507,6 +507,7 @@ export type PlainCreatedState = PlainState;`);
         "  captured: null as boolean | null,",
         "  level: null as Level | null,",
         "  onRetry: null as (() => void) | null,",
+        "  receipt: null as { id: string } | { id: string } | null,",
         "});",
         "",
       ].join("\n"),
@@ -531,6 +532,9 @@ export type PlainCreatedState = PlainState;`);
   readonly level: import("../app/domain/payment/payment-started.ts").Level | null;
   readonly notify?: () => void;
   readonly onRetry: (() => void) | null;
+  readonly receipt: {
+    id: string;
+  } | null;
 };`);
   });
 
