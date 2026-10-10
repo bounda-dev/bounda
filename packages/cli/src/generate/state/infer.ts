@@ -81,10 +81,11 @@ const statesOf = (
 // types one more link of the chain.
 const MAX_PASSES = 5;
 
-// What reading a field off a state with no type yet leaves in a printed type, outside a string
-// literal: `any` once it is computed with, `unknown` when it is taken as it is.
-const UNTYPED = /(?<![\w"'`])(?:any|unknown)(?![\w"'`])/;
-const TAINTED = /(?<![\w"'`])any(?![\w"'`])/;
+// What reading a field off a state with no type yet leaves in a printed type: `any` once it is
+// computed with, `unknown` when it is taken as it is. Not inside a string literal, nor as the name
+// of a property.
+const UNTYPED = /(?<![\w"'`.])(?:any|unknown)(?![\w"'`]|\??:)/;
+const TAINTED = /(?<![\w"'`.])any(?![\w"'`]|\??:)/;
 
 // The states to read the next pass against: each field without its `any` members, or `unknown`
 // when nothing else is left.
@@ -105,6 +106,31 @@ const untainted = (
       },
     ]),
   );
+
+// The fields, by aggregate, whose types differ between two passes, sorted by name.
+const changedFields = (
+  before: ReadonlyMap<string, AggregateFields>,
+  after: ReadonlyMap<string, AggregateFields>,
+): Map<string, readonly string[]> => {
+  const typeOf = (fields: AggregateFields | undefined, name: string): string =>
+    [...(fields?.fields.get(name)?.members ?? [])].sort().join(" | ");
+  const changed = new Map<string, readonly string[]>();
+  for (const [aggregate, fields] of after) {
+    const names = [...fields.fields.keys()]
+      .filter((name) => typeOf(fields, name) !== typeOf(before.get(aggregate), name))
+      .sort();
+    if (names.length > 0) changed.set(aggregate, names);
+  }
+  return changed;
+};
+
+// The fields an `evolve` that reads the state returns with a type that `pattern` matches.
+const readFromState = (events: readonly EventReturns[], pattern: RegExp): string[] =>
+  events
+    .filter(({ readsState }) => readsState)
+    .flatMap(({ evolve }) => [...(evolve ?? [])])
+    .filter(([, { type }]) => pattern.test(type))
+    .map(([name]) => name);
 
 // Serves `content` as `.bounda/types.ts` and returns the checkers of the project that reads it.
 const serveTypes = (
@@ -427,23 +453,51 @@ export const inferStates: InferStatesFunction = async ({
     // the one before inferred, without its `any`, until a pass learns nothing new.
     let returns = readAll(null);
     let fields = fieldsOfAll(returns);
+    let unsettled = new Map<string, readonly string[]>();
     if ([...returns.values()].some((events) => events.some(({ readsState }) => readsState))) {
       for (let pass = 1; pass < MAX_PASSES; pass += 1) {
-        const seed = renderTypes(statesOf(untainted(fields)));
-        checkers = serveTypes(checkers, typesPath, types, seed);
+        const seed = untainted(fields);
+        checkers = serveTypes(checkers, typesPath, types, renderTypes(statesOf(seed)));
         returns = readAll(returns);
         fields = fieldsOfAll(returns);
-        if (renderTypes(statesOf(untainted(fields))) === seed) break;
+        unsettled = changedFields(seed, untainted(fields));
+        if (unsettled.size === 0) break;
+      }
+      // What still reads a field with no type is as unsettled as what changed on the last pass.
+      for (const [aggregateName, events] of returns) {
+        const changed = unsettled.get(aggregateName);
+        if (changed === undefined) continue;
+        const untyped = readFromState(events, UNTYPED);
+        unsettled.set(aggregateName, [...new Set([...changed, ...untyped])].sort());
       }
     }
-    for (const [aggregateName, { fields: aggregateFields }] of fields) {
-      for (const [name, field] of aggregateFields) {
-        if (![...field.members].some((member) => TAINTED.test(member))) continue;
+    for (const [aggregateName, names] of unsettled) {
+      const aggregateFields = fields.get(aggregateName)?.fields;
+      const events = new Set(
+        names.flatMap((name) => [...(aggregateFields?.get(name)?.events ?? [])]),
+      );
+      warnings.push({
+        aggregate: aggregateName,
+        message: `fields ${names.map((name) => `"${name}"`).join(", ")} (set by ${[...events].join(", ")}) did not settle within ${MAX_PASSES} passes over the events that read the state; they are typed as unknown. Give them a type where the aggregate begins, or add state.ts`,
+      });
+      for (const name of names) {
+        const field = aggregateFields?.get(name);
+        if (field === undefined) continue;
+        aggregateFields?.set(name, { members: new Set([UNKNOWN]), events: field.events });
+      }
+    }
+    // Only an `evolve` that reads the state can leave `any` behind; one a module sets on purpose,
+    // `JSON.parse(...)` or a `z.any()` payload, stays.
+    for (const [aggregateName, events] of returns) {
+      const aggregateFields = fields.get(aggregateName)?.fields;
+      for (const name of new Set(readFromState(events, TAINTED))) {
+        const field = aggregateFields?.get(name);
+        if (field === undefined || unsettled.get(aggregateName)?.includes(name)) continue;
         warnings.push({
           aggregate: aggregateName,
           message: `field "${name}" (set by ${[...field.events].join(", ")}) is computed from the state in a way its type could not be inferred from; it is typed as unknown. Give it a type where the aggregate begins, or add state.ts`,
         });
-        aggregateFields.set(name, { members: new Set([UNKNOWN]), events: field.events });
+        aggregateFields?.set(name, { members: new Set([UNKNOWN]), events: field.events });
       }
     }
 

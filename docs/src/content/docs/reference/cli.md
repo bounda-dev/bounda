@@ -98,7 +98,9 @@ A field an `evolve` computes from the state, such as `reminders: state.reminders
 in that first pass. The generator reads every `evolve` again against the state it has inferred so
 far, until nothing changes, so the field takes the type the other events give it. One that only
 ever comes from itself, with no `begin` or other event to give it a type, becomes `unknown`, and a
-warning names it: set it in a `begin`, or add `state.ts`.
+warning names it: set it in a `begin`, or add `state.ts`. So does a chain of fields computed one
+from another that has not settled after a few passes. A field that is `any` on purpose, set from
+`JSON.parse` or a `z.any()` payload, stays as it is.
 
 Types exported from your modules are referenced through `import(...)`. A type that is not
 exported cannot be named from `.bounda/types.ts`; that field becomes `unknown` and a warning says

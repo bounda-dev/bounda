@@ -408,6 +408,64 @@ export type PlainCreatedState = PlainState;`);
 };`);
   });
 
+  it("keeps a field that is any on purpose, and a property named any, as they are", async () => {
+    const root = await syntheticProject({
+      "app/domain/misc/misc-made.ts":
+        'export const begin = () => ({ flags: { any: true }, extra: JSON.parse("1"), count: 0 });\n',
+      "app/domain/misc/misc-counted.ts": [
+        'import type { Event } from "./+types/misc-counted";',
+        "export const evolve = ({ state }: Event.EvolveArgs) => ({ count: state.count + 1 });",
+        "",
+      ].join("\n"),
+    });
+    const report = await generate({ root });
+    expect(report.warnings).toEqual([]);
+    const types = await readFile(join(root, ".bounda/types.ts"), "utf8");
+    expect(types).toContain(`export type MiscCreatedState = {
+  readonly count: number;
+  readonly extra?: any;
+  readonly flags: {
+    any: boolean;
+  };
+};`);
+  });
+
+  it("types as unknown, with a warning, what does not settle within the passes", async () => {
+    const root = await syntheticProject({
+      "app/domain/relay/relay-opened.ts": 'export const begin = () => ({ first: "start" });\n',
+      "app/domain/relay/relay-passed.ts": [
+        'import type { Event } from "./+types/relay-passed";',
+        "export const evolve = ({ state }: Event.EvolveArgs) => ({",
+        "  second: state.first,",
+        "  third: state.second,",
+        "  fourth: state.third,",
+        "  fifth: state.fourth,",
+        "  sixth: state.fifth,",
+        "  seventh: state.sixth,",
+        "});",
+        "",
+      ].join("\n"),
+    });
+    const report = await generate({ root });
+    expect(report.warnings).toEqual([
+      {
+        module: "relay",
+        message:
+          'fields "fifth", "seventh", "sixth" (set by relayPassed) did not settle within 5 passes over the events that read the state; they are typed as unknown. Give them a type where the aggregate begins, or add state.ts',
+      },
+    ]);
+    const types = await readFile(join(root, ".bounda/types.ts"), "utf8");
+    expect(types).toContain(`export type RelayCreatedState = {
+  readonly fifth?: unknown;
+  readonly first: string;
+  readonly fourth?: string | undefined;
+  readonly second?: string;
+  readonly seventh?: unknown;
+  readonly sixth?: unknown;
+  readonly third?: string | undefined;
+};`);
+  });
+
   it("explains when the generated types are not part of the TypeScript project", async () => {
     const root = await syntheticProject(
       { "app/domain/solo/solo-made.ts": "export const evolve = () => ({ done: true });\n" },
