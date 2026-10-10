@@ -1,4 +1,4 @@
-import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { createSqliteAdapter } from "@bounda-dev/core/adapter/sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -16,6 +16,13 @@ const alarmOf = (stub: ReturnType<typeof fresh>) =>
   runInDurableObject(stub as unknown as DurableObjectStub, (_instance, state) =>
     state.storage.getAlarm(),
   );
+
+// The object arms its alarm for now after a request, so the runtime may fire it on its own before
+// `runDurableObjectAlarm` looks, which then runs nothing and returns while that alarm is still
+// under way. The handler called inside the object returns once the work is done, whichever ran it.
+const runAlarm = <O extends Rpc.DurableObjectBranded & { alarm(): Promise<void> }>(
+  stub: DurableObjectStub<O>,
+) => runInDurableObject(stub, (instance) => instance.alarm());
 
 const rejection = async (
   pending: Promise<unknown>,
@@ -79,7 +86,7 @@ describe("a Bounda Durable Object", () => {
     await store.commands.placeOrder({ orderId: "o-1", total: 42, customer: "ada" });
     const paid = await store.commands.payOrder({ orderId: "o-1" });
     expect(paid).toMatchObject({ scheduled: false, version: 2 });
-    await runDurableObjectAlarm(stub);
+    await runAlarm(stub);
     expect(await store.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "archived" });
     expect((await store.getLag()).maxLag).toBe(0);
     expect(await alarmOf(stub)).toBeNull();
@@ -113,7 +120,7 @@ describe("a Bounda Durable Object", () => {
     expect(seen.alarm).toBeGreaterThanOrEqual(before);
     expect(seen.alarm).toBeLessThanOrEqual(Date.now());
 
-    await runDurableObjectAlarm(stub);
+    await runAlarm(stub);
     const store = connect<typeof quietRegistry>(stub);
     expect(await store.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "placed" });
     expect((await store.getLag()).maxLag).toBe(0);
@@ -123,7 +130,7 @@ describe("a Bounda Durable Object", () => {
   it("arms its alarm for a scheduled command and runs it once the clock gets there", async () => {
     const { stub, store } = open();
     await store.commands.placeOrder({ orderId: "o-2", total: 7, customer: "ada" });
-    await runDurableObjectAlarm(stub);
+    await runAlarm(stub);
     const before = Date.now();
     const scheduled = await store.commands.archiveOrder({ orderId: "o-2" }, { delay: "10m" });
     expect(scheduled).toMatchObject({ scheduled: true });
@@ -131,10 +138,10 @@ describe("a Bounda Durable Object", () => {
     expect(armed).toBeGreaterThanOrEqual(before + 600_000 - 1_000);
     expect(armed).toBeLessThanOrEqual(Date.now() + 600_000 + 1_000);
 
-    await runDurableObjectAlarm(stub);
+    await runAlarm(stub);
     expect(await store.queries.getOrder({ orderId: "o-2" })).toMatchObject({ status: "placed" });
     clock.advance(600_000);
-    await runDurableObjectAlarm(stub);
+    await runAlarm(stub);
     expect(await store.queries.getOrder({ orderId: "o-2" })).toMatchObject({ status: "archived" });
     expect(await alarmOf(stub)).toBeNull();
   });
@@ -151,24 +158,16 @@ describe("a Bounda Durable Object", () => {
           .toArray()
           .map((row) => row.type),
       );
-    // The object arms its alarm for now after a command, so the runtime may fire it on its own
-    // beside the ones run here: run alarms until the object has caught up, not a fixed count.
-    const caughtUp = async (steps: number) => {
-      for (let round = 0; round < 10; round += 1) {
-        if ((await lifecycle()).length >= steps && (await store.getLag()).maxLag === 0) return;
-        await runDurableObjectAlarm(stub);
-      }
-    };
     const before = Date.now();
     await store.commands.placeOrder({ orderId: "o-1", total: 42, customer: "ada" });
-    await caughtUp(2);
+    await runAlarm(stub);
     expect(await lifecycle()).toEqual(["ProcessStarted", "ProcessHandled"]);
     const armed = await alarmOf(stub);
     expect(armed).toBeGreaterThanOrEqual(before + 3_600_000 - 1_000);
     expect(armed).toBeLessThanOrEqual(Date.now() + 3_600_000 + 1_000);
 
     clock.advance(3_600_000);
-    await caughtUp(4);
+    await runAlarm(stub);
     expect(await store.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "archived" });
     expect(await lifecycle()).toEqual([
       "ProcessStarted",
@@ -213,7 +212,7 @@ describe("a Bounda Durable Object", () => {
     const { stub, store } = open();
     await store.commands.placeOrder({ orderId: "fail-1", total: 3, customer: "ada" });
     await store.commands.payOrder({ orderId: "fail-1" });
-    await runDurableObjectAlarm(stub);
+    await runAlarm(stub);
     const [letter] = await store.deadLetters.list();
     expect(letter).toMatchObject({ kind: "policy", handler: "order.archiveOnOrderPaid" });
     expect(await rejection(store.deadLetters.retry(letter?.id ?? ""))).toMatchObject({
@@ -229,7 +228,7 @@ describe("a Bounda Durable Object", () => {
     const { stub, store } = open();
     await store.commands.placeOrder({ orderId: "o-4", total: 5, customer: "ada" });
     await store.commands.payOrder({ orderId: "o-4" });
-    await runDurableObjectAlarm(stub);
+    await runAlarm(stub);
     // In one event of the object, an alarm the rebuild armed cannot run before it is read.
     const rebuilt = await runInDurableObject(stub, async (instance, state) => ({
       outcome: await instance.rebuildReadModel("orders"),
@@ -288,7 +287,7 @@ describe("a Bounda Durable Object", () => {
     const { stub, store } = open();
     await store.commands.placeOrder({ orderId: "fail-2", total: 3, customer: "ada" });
     await store.commands.payOrder({ orderId: "fail-2" });
-    await runDurableObjectAlarm(stub);
+    await runAlarm(stub);
     const [letter] = await store.deadLetters.list();
     outage.archive = false;
     const before = Date.now();
@@ -299,7 +298,7 @@ describe("a Bounda Durable Object", () => {
     expect(retried.outcome).toMatchObject({ ok: true, value: { status: "retried" } });
     expect(retried.alarm).toBeGreaterThanOrEqual(before);
     expect(retried.alarm).toBeLessThanOrEqual(Date.now());
-    await runDurableObjectAlarm(stub);
+    await runAlarm(stub);
     expect(await store.queries.getOrder({ orderId: "fail-2" })).toMatchObject({
       status: "archived",
     });
@@ -432,7 +431,7 @@ describe("a Bounda Durable Object", () => {
     expect(await store.rebuildReadModel("orders")).toEqual({ events: 1, position: 1, done: false });
     expect(await store.queries.getOrder({ orderId: "o-3" })).toMatchObject({ status: "placed" });
     for (let round = 0; round < 50 && (await progress()).length > 0; round += 1) {
-      await runDurableObjectAlarm(stub);
+      await runAlarm(stub);
     }
     expect(await progress()).toEqual([]);
     expect(await alarmOf(stub)).toBeNull();
