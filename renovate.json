@@ -2,13 +2,14 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:best-practices"],
   "semanticCommits": "enabled",
-  "schedule": ["before 6am on monday"],
+  "schedule": ["on monday"],
   "timezone": "Europe/Madrid",
   "rangeStrategy": "pin",
   "automergeStrategy": "squash",
   "lockFileMaintenance": {
     "enabled": true,
-    "automerge": true
+    "automerge": true,
+    "schedule": ["on monday"]
   },
   "packageRules": [
     {
