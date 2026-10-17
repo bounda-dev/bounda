@@ -26,7 +26,7 @@ const socialImageAlt =
 
 export interface HeadTag {
   readonly tag: "meta" | "script";
-  readonly attrs: Readonly<Record<string, string>>;
+  readonly attrs: Readonly<Record<string, string | undefined>>;
 }
 
 export interface SocialImageFunction {
