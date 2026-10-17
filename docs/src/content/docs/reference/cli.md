@@ -18,7 +18,9 @@ aggregates without `state.ts`.
 
 Reads the project layout and writes `.bounda/registry.ts`, `.bounda/register.d.ts`,
 `.bounda/types.ts` and one `+types/<name>.ts` next to every module. Files whose content did not
-change are left alone; `+types` files whose module is gone are removed.
+change are left alone; `+types` files whose module is gone are removed, and so are the folders
+their removal empties; a folder holding nothing but `+types` (and Finder's `.DS_Store`) is not
+taken for a module.
 
 ```bash
 bounda generate

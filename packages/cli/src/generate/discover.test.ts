@@ -275,6 +275,39 @@ describe("discoverProject on the order-app fixture", () => {
     expect(model.readModels[0]?.projections).toEqual([]);
   });
 
+  it("ignores folders that hold nothing but +types and Finder's .DS_Store, at any depth", async () => {
+    const root = await project([
+      "app/domain/order/order-placed.ts",
+      "app/domain/payment/+types/payment-made.ts",
+      "app/domain/payment/commands/+types/pay.ts",
+      "app/read/summary/view.ts",
+      "app/read/summary/projections/payment/+types/payment-made.ts",
+      "app/read/old-summary/+types/view.ts",
+      ["app/read/old-summary/.DS_Store", ""],
+      "app/read/old-summary/queries/+types/get.ts",
+      "app/read/old-summary/projections/order/+types/order-placed.ts",
+      ["app/read/old-summary/projections/order/.DS_Store", ""],
+    ]);
+    const model = await discoverProject({ root });
+    expect(model.aggregates.map((aggregate) => aggregate.name)).toEqual(["order"]);
+    expect(model.readModels.map((readModel) => readModel.name)).toEqual(["summary"]);
+    expect(model.readModels[0]?.projections).toEqual([]);
+  });
+
+  it("still takes an empty folder, or one with anything next to +types, for a module", async () => {
+    const root = await project([
+      "app/read/draft/",
+      ["app/read/finder/.DS_Store", ""],
+      "app/read/half/+types/view.ts",
+      "app/read/half/queries/get.ts",
+    ]);
+    expect(await problemsOf(root)).toEqual([
+      "app/read/draft: a read model needs a view.ts with its fields",
+      "app/read/finder: a read model needs a view.ts with its fields",
+      "app/read/half: a read model needs a view.ts with its fields",
+    ]);
+  });
+
   it("ignores what is not domain/ or read/ at the application root", async () => {
     const root = await project([
       "app/domain/order/order-placed.ts",

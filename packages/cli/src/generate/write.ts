@@ -30,6 +30,13 @@ export interface IsInGeneratedFunction {
 export const isInGenerated: IsInGeneratedFunction = (path) =>
   path.split(/[\\/]/).some((segment) => GENERATED_SEGMENTS.has(segment));
 
+export interface IsFolderMetadataFunction {
+  (name: string): boolean;
+}
+
+// What the file manager drops into a folder that is only browsed: it says nothing about modules.
+export const isFolderMetadata: IsFolderMetadataFunction = (name) => name === ".DS_Store";
+
 export const writeGeneratedFile: WriteGeneratedFileFunction = async (path, content) => {
   if (!isGeneratedPath(path)) {
     throw new Error(`refusing to write ${path}: only +types and .bounda files are generated`);
@@ -66,15 +73,24 @@ export interface RemoveOrphansFunction {
   (args: RemoveOrphansArgs): Promise<readonly string[]>;
 }
 
+const isEmpty = async (directory: string): Promise<boolean> =>
+  (await readdir(directory)).every(isFolderMetadata);
+
+// A directory emptied by the removal goes too, so the folder of a deleted module does not outlive
+// it; one that was already empty is the user's and stays.
 export const removeOrphans: RemoveOrphansFunction = async ({ appDirectory, keep }) => {
   const removed: string[] = [];
-  const walk = async (directory: string): Promise<void> => {
+  const walk = async (directory: string): Promise<boolean> => {
     const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
+    let emptied = false;
     for (const entry of entries) {
       const path = join(directory, entry.name);
       if (!entry.isDirectory()) continue;
       if (entry.name !== "+types") {
-        await walk(path);
+        if ((await walk(path)) && (await isEmpty(path))) {
+          await rm(path, { recursive: true });
+          emptied = true;
+        }
         continue;
       }
       for (const generated of await readdir(path)) {
@@ -84,8 +100,12 @@ export const removeOrphans: RemoveOrphansFunction = async ({ appDirectory, keep 
           removed.push(file);
         }
       }
-      if ((await readdir(path)).length === 0) await rm(path, { recursive: true });
+      if (await isEmpty(path)) {
+        await rm(path, { recursive: true });
+        emptied = true;
+      }
     }
+    return emptied;
   };
   await walk(appDirectory);
   return removed.sort();
