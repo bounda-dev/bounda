@@ -1,5 +1,14 @@
 # @bounda-dev/react-router
 
+## 0.2.4
+
+### Patch Changes
+
+- Updated dependencies [a52ee3e]
+  - @bounda-dev/cli@0.2.4
+  - @bounda-dev/cloudflare@0.2.4
+  - @bounda-dev/core@0.2.4
+
 ## 0.2.3
 
 ### Patch Changes
