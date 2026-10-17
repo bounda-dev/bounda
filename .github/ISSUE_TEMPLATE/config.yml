@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Ask a question
+    url: https://github.com/bounda-dev/bounda/discussions/categories/q-a
+    about: How to use Bounda, whether it fits your case, or why something behaves as it does.
+  - name: Propose an idea
+    url: https://github.com/bounda-dev/bounda/discussions/categories/ideas
+    about: A feature or a change you would like to talk through before it becomes an issue.
