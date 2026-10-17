@@ -2,6 +2,16 @@ export const SITE = "https://docs.bounda.dev";
 
 export const REPOSITORY = "https://github.com/bounda-dev/bounda";
 
+// Cloudflare Web Analytics, without cookies; the site is bounda.dev's, which counts this subdomain too.
+export const analytics: HeadTag = {
+  tag: "script",
+  attrs: {
+    type: "module",
+    src: "https://static.cloudflareinsights.com/beacon.min.js",
+    "data-cf-beacon": '{"token": "26093f976db946eeba633b04b7def982"}',
+  },
+};
+
 export const DESCRIPTION = "Event sourcing and CQRS for TypeScript without the ceremony.";
 
 // What a page hands to a chat; `{url}` becomes the page's address.
@@ -15,8 +25,8 @@ const socialImageAlt =
   "The Bounda symbol as a machined monolith whose foot becomes the global stream, beside the headline: Event sourcing without the ceremony.";
 
 export interface HeadTag {
-  readonly tag: "meta";
-  readonly attrs: { readonly property?: string; readonly name?: string; readonly content: string };
+  readonly tag: "meta" | "script";
+  readonly attrs: Readonly<Record<string, string>>;
 }
 
 export interface SocialImageFunction {

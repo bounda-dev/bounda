@@ -5,7 +5,7 @@ import starlightPageActions from "starlight-page-actions";
 import { codeHeader } from "./src/code-header.ts";
 import { basalt, bone } from "./src/code-themes.ts";
 import { SIDEBAR } from "./src/sidebar.ts";
-import { DESCRIPTION, PROMPT, SITE, socialImage } from "./src/site.ts";
+import { analytics, DESCRIPTION, PROMPT, SITE, socialImage } from "./src/site.ts";
 
 // The fonts of bounda.dev, self-hosted at build time with metric-matched fallbacks. Science Gothic
 // is only ever set at 600, so it is requested at that one weight across the width axis it uses.
@@ -55,7 +55,7 @@ export default defineConfig({
       },
       description: DESCRIPTION,
       customCss: ["./src/styles/bounda.css"],
-      head: socialImage(`${SITE}/og.jpg`),
+      head: [...socialImage(`${SITE}/og.jpg`), analytics],
       routeMiddleware: "./src/route-data.ts",
       // src/pages/404.astro keeps the sidebar and offers the search.
       disable404Route: true,
