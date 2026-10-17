@@ -30,6 +30,13 @@ export interface IsInGeneratedFunction {
 export const isInGenerated: IsInGeneratedFunction = (path) =>
   path.split(/[\\/]/).some((segment) => GENERATED_SEGMENTS.has(segment));
 
+export interface IsFolderMetadataFunction {
+  (name: string): boolean;
+}
+
+// What the file manager drops into a folder that is only browsed: it says nothing about modules.
+export const isFolderMetadata: IsFolderMetadataFunction = (name) => name === ".DS_Store";
+
 export const writeGeneratedFile: WriteGeneratedFileFunction = async (path, content) => {
   if (!isGeneratedPath(path)) {
     throw new Error(`refusing to write ${path}: only +types and .bounda files are generated`);
@@ -67,7 +74,7 @@ export interface RemoveOrphansFunction {
 }
 
 const isEmpty = async (directory: string): Promise<boolean> =>
-  (await readdir(directory)).length === 0;
+  (await readdir(directory)).every(isFolderMetadata);
 
 // A directory emptied by the removal goes too, so the folder of a deleted module does not outlive
 // it; one that was already empty is the user's and stays.

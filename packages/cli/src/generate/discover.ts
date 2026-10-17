@@ -37,6 +37,7 @@ import {
   typeNameOf,
 } from "./naming.ts";
 import { createProblemCollector, type ProblemCollector } from "./problems.ts";
+import { isFolderMetadata } from "./write.ts";
 
 export interface DiscoverProjectArgs {
   readonly root: string;
@@ -74,17 +75,23 @@ const isIgnored = (entry: Dirent): boolean =>
   (entry.isDirectory() && IGNORED_DIRECTORIES.has(entry.name)) ||
   (entry.isFile() && IGNORED_SUFFIXES.some((suffix) => entry.name.endsWith(suffix)));
 
-// What the generator left behind for modules that are gone: `+types` directories and nothing else,
-// at any depth. Such a directory is no aggregate or read model; the run removes it.
+// What the generator left behind for modules that are gone: `+types` directories and nothing else
+// but folder metadata, at any depth. Such a directory is no aggregate or read model; the run
+// removes it.
 const holdsOnlyGenerated = async (directory: string): Promise<boolean> => {
-  const entries = await readdir(directory, { withFileTypes: true });
-  if (entries.length === 0) return false;
-  for (const entry of entries) {
+  let generated = false;
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    if (isFolderMetadata(entry.name)) continue;
     if (!entry.isDirectory()) return false;
-    if (entry.name === TYPES_DIRECTORY) continue;
-    if (!(await holdsOnlyGenerated(join(directory, entry.name)))) return false;
+    if (
+      entry.name !== TYPES_DIRECTORY &&
+      !(await holdsOnlyGenerated(join(directory, entry.name)))
+    ) {
+      return false;
+    }
+    generated = true;
   }
-  return true;
+  return generated;
 };
 
 const list = async (directory: string): Promise<Listing> => {

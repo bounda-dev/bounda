@@ -81,7 +81,7 @@ describe("removeOrphans", () => {
     expect(await exists(join(app, "read/orders/queries/get.ts"))).toBe(true);
   });
 
-  it("removes the folders it empties and keeps those that were empty already", async () => {
+  it("removes the folders it empties, Finder's .DS_Store aside, and keeps those that were empty already", async () => {
     const root = await mkdtemp(join(tmpdir(), "bounda-orphans-"));
     temporary.push(root);
     const app = join(root, "app");
@@ -89,7 +89,10 @@ describe("removeOrphans", () => {
     await mkdir(join(app, "read/old-summary/projections/order/+types"), { recursive: true });
     await mkdir(join(app, "read/summary/queries/+types"), { recursive: true });
     await mkdir(join(app, "read/draft"), { recursive: true });
+    await mkdir(join(app, "read/browsed"), { recursive: true });
     await writeFile(join(app, "read/old-summary/+types/view.ts"), "");
+    await writeFile(join(app, "read/old-summary/.DS_Store"), "");
+    await writeFile(join(app, "read/browsed/.DS_Store"), "");
     await writeFile(join(app, "read/old-summary/projections/order/+types/order-placed.ts"), "");
     await writeFile(join(app, "read/summary/view.ts"), "");
     await writeFile(join(app, "read/summary/queries/+types/gone.ts"), "");
@@ -103,6 +106,7 @@ describe("removeOrphans", () => {
     expect(await exists(join(app, "read/summary/queries"))).toBe(false);
     expect(await exists(join(app, "read/summary/view.ts"))).toBe(true);
     expect(await exists(join(app, "read/draft"))).toBe(true);
+    expect(await exists(join(app, "read/browsed/.DS_Store"))).toBe(true);
     expect(await exists(app)).toBe(true);
   });
 
