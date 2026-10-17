@@ -51,7 +51,8 @@ export interface DiscoverProjectFunction {
   (args: DiscoverProjectArgs): Promise<DiscoveredProject>;
 }
 
-const IGNORED_DIRECTORIES: ReadonlySet<string> = new Set(["+types", "node_modules"]);
+const TYPES_DIRECTORY = "+types";
+const IGNORED_DIRECTORIES: ReadonlySet<string> = new Set([TYPES_DIRECTORY, "node_modules"]);
 const IGNORED_SUFFIXES: readonly string[] = [".test.ts", ".test-d.ts", ".d.ts"];
 const DOMAIN = "domain";
 const READ = "read";
@@ -73,13 +74,30 @@ const isIgnored = (entry: Dirent): boolean =>
   (entry.isDirectory() && IGNORED_DIRECTORIES.has(entry.name)) ||
   (entry.isFile() && IGNORED_SUFFIXES.some((suffix) => entry.name.endsWith(suffix)));
 
+// What the generator left behind for modules that are gone: `+types` directories and nothing else,
+// at any depth. Such a directory is no aggregate or read model; the run removes it.
+const holdsOnlyGenerated = async (directory: string): Promise<boolean> => {
+  const entries = await readdir(directory, { withFileTypes: true });
+  if (entries.length === 0) return false;
+  for (const entry of entries) {
+    if (!entry.isDirectory()) return false;
+    if (entry.name === TYPES_DIRECTORY) continue;
+    if (!(await holdsOnlyGenerated(join(directory, entry.name)))) return false;
+  }
+  return true;
+};
+
 const list = async (directory: string): Promise<Listing> => {
   const entries = (await readdir(directory, { withFileTypes: true })).filter(
     (entry) => !isIgnored(entry),
   );
   const sorted = [...entries].sort((a, b) => compareNames(a.name, b.name));
+  const directories = sorted.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+  const leftovers = await Promise.all(
+    directories.map((name) => holdsOnlyGenerated(join(directory, name))),
+  );
   return {
-    directories: sorted.filter((entry) => entry.isDirectory()).map((entry) => entry.name),
+    directories: directories.filter((_, index) => !leftovers[index]),
     modules: sorted
       .filter((entry) => entry.isFile() && entry.name.endsWith(".ts"))
       .map((entry) => entry.name.slice(0, -".ts".length)),
