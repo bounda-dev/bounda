@@ -2,6 +2,10 @@ export const SITE = "https://docs.bounda.dev";
 
 export const REPOSITORY = "https://github.com/bounda-dev/bounda";
 
+export const HOME = "https://bounda.dev";
+
+export const DEMO = "https://demo.bounda.dev";
+
 // Cloudflare Web Analytics, without cookies; the site is bounda.dev's, which counts this subdomain too.
 export const analytics: HeadTag = {
   tag: "script",
