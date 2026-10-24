@@ -123,12 +123,15 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: pnpm --filter create-bounda exec vitest run --exclude src/run.e2e.test.ts
 
+  # The timeout fits a full run, not just an incremental one: GitHub evicts a cache nobody has
+  # read for a week, so the first run after a quiet week mutates the whole package, and core
+  # alone then takes about three quarters of an hour.
   mutation:
     name: Mutation (${{ matrix.package }})
     needs: [changes, check]
     if: needs.changes.outputs.packages != '[]'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
