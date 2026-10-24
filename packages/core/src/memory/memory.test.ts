@@ -6,6 +6,7 @@ import {
   contractFields,
   deadLetterStoreContract,
   eventStoreContract,
+  idempotencyStoreContract,
   inboxLedgerContract,
   pendingEvent,
   readModelRebuildContract,
@@ -29,6 +30,7 @@ describe("memory adapter", () => {
   inboxLedgerContract({ create: async () => (await storage()).inboxLedger });
   deadLetterStoreContract({ create: async () => (await storage()).deadLetterStore });
   schedulerContract({ create: async () => (await storage()).scheduler });
+  idempotencyStoreContract({ create: async () => (await storage()).idempotencyStore });
   storageTransactionContract({ create: storage });
   tableContract({
     create: async () => {
@@ -107,6 +109,152 @@ describe("memory adapter", () => {
     ).rejects.toMatchObject({ message: "undefined has no JSON to store" });
   });
 
+  it("answers, inside a transaction, the positions its events commit with", async () => {
+    const storage = await memory().createStorage({ logger: silentLogger });
+    await storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "1",
+      expectedVersion: 0,
+      events: [pendingEvent({ aggregateId: "1", version: 1 })],
+    });
+    const inside = await storage.transact(async (tx) => {
+      const order = await tx.eventStore.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 1,
+        events: [2, 3].map((version) =>
+          pendingEvent({ aggregateId: "1", version, type: "OrderPaid" }),
+        ),
+      });
+      const payment = await tx.eventStore.append({
+        aggregateType: "payment",
+        aggregateId: "9",
+        expectedVersion: 0,
+        events: [pendingEvent({ aggregateType: "payment", aggregateId: "9", version: 1 })],
+      });
+      expect(await tx.eventStore.lastPosition()).toBe(1);
+      return [...order.events, ...payment.events].map((event) => event.position);
+    });
+    expect(inside).toEqual([2, 3, 4]);
+    expect(
+      (await storage.eventStore.readAll({ afterPosition: 0, limit: 10 })).map(
+        (event) => event.position,
+      ),
+    ).toEqual([1, 2, 3, 4]);
+  });
+
+  it("shows an event appended beside a transaction only once the transaction settles, in position order", async () => {
+    const storage = await memory().createStorage({ logger: silentLogger });
+    const heard: (number | undefined)[] = [];
+    await (storage.notifier as NonNullable<typeof storage.notifier>).subscribe((position) => {
+      heard.push(position);
+    });
+    const beside = (version: number) =>
+      storage.eventStore.append({
+        aggregateType: "order",
+        aggregateId: "2",
+        expectedVersion: version - 1,
+        events: [pendingEvent({ aggregateId: "2", version })],
+      });
+    const committing = Promise.withResolvers<void>();
+    const transaction = storage.transact(async (tx) => {
+      await tx.eventStore.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events: [pendingEvent({ aggregateId: "1", version: 1 })],
+      });
+      await committing.promise;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect((await beside(1)).events.map((event) => event.position)).toEqual([2]);
+    expect(await storage.eventStore.lastPosition()).toBe(0);
+    expect(await storage.eventStore.readAll({ afterPosition: 0, limit: 10 })).toEqual([]);
+    expect(heard).toEqual([]);
+    committing.resolve();
+    await transaction;
+    expect(await storage.eventStore.lastPosition()).toBe(2);
+    expect(
+      (await storage.eventStore.readAll({ afterPosition: 0, limit: 10 })).map((event) => [
+        event.position,
+        event.aggregateId,
+      ]),
+    ).toEqual([
+      [1, "1"],
+      [2, "2"],
+    ]);
+    expect(heard).toEqual([2]);
+    expect((await beside(2)).events.map((event) => event.position)).toEqual([3]);
+    expect(heard).toEqual([2, 3]);
+  });
+
+  it("gives back the positions of a transaction that fails: the tail when nothing came after, a gap readers skip otherwise", async () => {
+    const storage = await memory().createStorage({ logger: silentLogger });
+    const heard: (number | undefined)[] = [];
+    await (storage.notifier as NonNullable<typeof storage.notifier>).subscribe((position) => {
+      heard.push(position);
+    });
+    const failing = (beside?: () => Promise<unknown>) =>
+      storage
+        .transact(async (tx) => {
+          await tx.eventStore.append({
+            aggregateType: "order",
+            aggregateId: "1",
+            expectedVersion: 0,
+            events: [pendingEvent({ aggregateId: "1", version: 1 })],
+          });
+          await beside?.();
+          throw new Error("boom");
+        })
+        .catch(() => undefined);
+    await failing();
+    expect(
+      (
+        await storage.eventStore.append({
+          aggregateType: "order",
+          aggregateId: "2",
+          expectedVersion: 0,
+          events: [pendingEvent({ aggregateId: "2", version: 1 })],
+        })
+      ).events.map((event) => event.position),
+    ).toEqual([1]);
+    expect(heard).toEqual([1]);
+
+    await failing(async () => {
+      await storage.eventStore.append({
+        aggregateType: "order",
+        aggregateId: "3",
+        expectedVersion: 0,
+        events: [pendingEvent({ aggregateId: "3", version: 1 })],
+      });
+      expect(await storage.eventStore.lastPosition()).toBe(1);
+    });
+    expect(await storage.eventStore.lastPosition()).toBe(3);
+    expect(heard).toEqual([1, 3]);
+    expect(
+      (await storage.eventStore.readAll({ afterPosition: 0, limit: 10 })).map((event) => [
+        event.position,
+        event.aggregateId,
+      ]),
+    ).toEqual([
+      [1, "2"],
+      [3, "3"],
+    ]);
+    expect(await storage.eventStore.readAll({ afterPosition: 1, limit: 1 })).toMatchObject([
+      { position: 3 },
+    ]);
+    expect(
+      (
+        await storage.eventStore.append({
+          aggregateType: "order",
+          aggregateId: "4",
+          expectedVersion: 0,
+          events: [pendingEvent({ aggregateId: "4", version: 1 })],
+        })
+      ).events.map((event) => event.position),
+    ).toEqual([4]);
+  });
+
   it("puts every store back when a write fails while a transaction is being applied", async () => {
     const storage = await memory().createStorage({ logger: silentLogger });
     const key = { handler: "order.p", eventId: "e1" };
@@ -172,10 +320,18 @@ describe("memory adapter", () => {
           context,
         });
         await tx.deadLetterStore.add(letter("lost"));
+        await tx.idempotencyStore.put({
+          key: "lost",
+          fingerprint: "fp",
+          outcome: { rejected: "Nope", message: "no", aggregateType: "order", aggregateId: "1" },
+          expiresAt: "2026-01-02T00:00:00.000Z",
+          now,
+        });
         await tx.inboxLedger.fail({ ...key, error: "boom" });
         await tx.inboxLedger.complete(key);
       }),
     ).rejects.toThrow("connection lost");
+    expect(await storage.idempotencyStore.get({ key: "lost", now })).toBeNull();
     expect(await storage.eventStore.lastPosition()).toBe(1);
     expect(
       (await storage.eventStore.load({ aggregateType: "order", aggregateId: "1" })).events.map(

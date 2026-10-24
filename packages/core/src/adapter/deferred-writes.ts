@@ -1,11 +1,12 @@
 import type { StorageTransaction } from "./adapter.ts";
+import type { IdempotencyRecord } from "./storage/idempotency-store.ts";
 
 /**
  * The write-side stores besides the event store.
  */
 export type DeferredStores = Pick<
   StorageTransaction,
-  "inboxLedger" | "deadLetterStore" | "scheduler"
+  "inboxLedger" | "deadLetterStore" | "scheduler" | "idempotencyStore"
 >;
 
 export interface DeferredWriteTarget {
@@ -18,14 +19,16 @@ export interface DeferredWriteTarget {
     DeferredStores["scheduler"],
     "schedule" | "cancel" | "complete" | "fail" | "defer"
   >;
+  readonly idempotencyStore: Pick<DeferredStores["idempotencyStore"], "put">;
 }
 
 /**
  * The stores with their writes held back: `stores` answer reads from `live` at once and record
  * every write in order, and `flush` runs the writes recorded so far against another set of the
  * same stores, a transaction's or the live ones. `add` answers the letter as filed, whatever the
- * store holds under that id already. `tryClaim`, `claimDue` and both `renew` act at once, on
- * `live`, since their answer decides what happens next.
+ * store holds under that id already; `get` on the idempotency store answers a record `put`
+ * recorded before anything `live` holds. `tryClaim`, `claimDue`, both `renew` and `purge` act at
+ * once, on `live`, since their answer decides what happens next.
  */
 export interface DeferredWrites {
   readonly stores: DeferredStores;
@@ -42,8 +45,14 @@ export interface DeferWritesFunction {
 
 type Recorded = (target: DeferredWriteTarget) => Promise<unknown>;
 
-export const deferWrites: DeferWritesFunction = ({ inboxLedger, deadLetterStore, scheduler }) => {
+export const deferWrites: DeferWritesFunction = ({
+  inboxLedger,
+  deadLetterStore,
+  scheduler,
+  idempotencyStore,
+}) => {
   const recorded: Recorded[] = [];
+  const records = new Map<string, IdempotencyRecord>();
   const later =
     <Args extends unknown[]>(
       write: (target: DeferredWriteTarget, ...args: Args) => Promise<unknown>,
@@ -83,6 +92,15 @@ export const deferWrites: DeferWritesFunction = ({ inboxLedger, deadLetterStore,
         fail: later((target, args) => target.scheduler.fail(args)),
         defer: later((target, args) => target.scheduler.defer(args)),
         renew: scheduler.renew,
+      },
+      idempotencyStore: {
+        get: async (args) => records.get(args.key) ?? idempotencyStore.get(args),
+        put: async (args) => {
+          const { now: _now, ...record } = args;
+          records.set(record.key, record);
+          recorded.push((target) => target.idempotencyStore.put(args));
+        },
+        purge: idempotencyStore.purge,
       },
     },
     flush: async (target) => {

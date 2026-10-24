@@ -51,6 +51,10 @@ types refuse; wrap it with `asDuration(process.env.X ?? "1m")`, which checks it.
 - **`commands.concurrencyRetries`**, default `3`. How many times a command runs again when its
   append finds the stream moved, before a `ConcurrencyError` reaches the caller. Each run gets its
   own `timeout`.
+- **`commands.idempotencyKeyLifetime`**, default `"24h"`. How long a command dispatched with an
+  `idempotencyKey` is remembered, so a dispatch with the same key answers the same. Past it the
+  key is free again, and the scheduled-command worker purges the record. See
+  [idempotent commands](/guides/idempotent-commands/).
 
 ### Policies
 

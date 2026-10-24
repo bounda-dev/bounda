@@ -5,12 +5,32 @@ import { streamId } from "../contracts/event.ts";
 import { toJson } from "./json-copy.ts";
 
 export interface CreateMemoryEventStoreArgs {
-  // Receives the position of the last event stored.
+  // Receives the last position readers can see.
   readonly onAppend?: (position: number) => void;
 }
 
+/**
+ * A batch to append whose events may already hold their positions, reserved while they were
+ * staged; an event at 0, or a batch without `positions`, takes the next one when written.
+ */
+export interface PositionedAppendArgs extends AppendArgs {
+  readonly positions?: readonly number[];
+}
+
 export interface MemoryEventStore extends EventStore {
-  appendAll(batches: readonly AppendArgs[]): Promise<readonly AppendResult[]>;
+  appendAll(batches: readonly PositionedAppendArgs[]): Promise<readonly AppendResult[]>;
+  /**
+   * Takes the next position for an event a transaction stages. Readers stop short of it until
+   * the transaction writes it with `appendAll` or gives it back with `release`, so an event
+   * written meanwhile at a later position never overtakes it.
+   */
+  reserve(): number;
+  /**
+   * Gives back positions a transaction reserved and will not write: the log's tail moves back
+   * before them, and whatever is left among written events becomes a gap readers skip, as a
+   * rolled-back sequence leaves on PostgreSQL.
+   */
+  release(positions: readonly number[]): void;
 }
 
 export interface CreateMemoryEventStoreFunction {
@@ -38,10 +58,27 @@ const restore = ({ payload, metadata, ...rest }: Kept): StoredEvent => ({
 
 export const createMemoryEventStore: CreateMemoryEventStoreFunction = ({ onAppend } = {}) => {
   const streams = new Map<string, Kept[]>();
-  const global: Kept[] = [];
+  const log = new Map<number, Kept>();
+  const gaps = new Set<number>();
+  let reserved = 0;
+  // Every position up to here is written or a gap: what readers see.
+  let watermark = 0;
+
+  const advance = (): void => {
+    const before = watermark;
+    while (log.has(watermark + 1) || gaps.delete(watermark + 1)) watermark += 1;
+    if (watermark > before) onAppend?.(watermark);
+  };
+
+  const reserve = (): number => {
+    reserved += 1;
+    return reserved;
+  };
 
   // Atomic because nothing yields between the version checks and the writes.
-  const appendAll = async (batches: readonly AppendArgs[]): Promise<readonly AppendResult[]> => {
+  const appendAll = async (
+    batches: readonly PositionedAppendArgs[],
+  ): Promise<readonly AppendResult[]> => {
     const versions = new Map<string, number>();
     for (const { aggregateType, aggregateId, expectedVersion, events } of batches) {
       const key = streamId({ aggregateType, aggregateId });
@@ -52,30 +89,45 @@ export const createMemoryEventStore: CreateMemoryEventStoreFunction = ({ onAppen
       versions.set(key, actualVersion + events.length);
     }
     // Every batch is kept before any is written, so one that JSON refuses appends nothing.
-    let position = global.length;
-    const prepared = batches.map(({ aggregateType, aggregateId, expectedVersion, events }) => {
-      const stored = events.map((event) => {
-        position += 1;
-        return { ...event, position };
-      });
-      return {
+    const prepared = batches.map(
+      ({ aggregateType, aggregateId, expectedVersion, events, positions }) => ({
         key: streamId({ aggregateType, aggregateId }),
-        kept: stored.map(keep),
-        result: { version: expectedVersion + stored.length, events: stored },
+        expectedVersion,
+        events,
+        positions,
+        kept: events.map((event) => keep({ ...event, position: 0 })),
+      }),
+    );
+    const results = prepared.map(({ key, expectedVersion, events, positions, kept }) => {
+      const written = kept.map((event, index) => ({
+        ...event,
+        position: positions?.[index] || reserve(),
+      }));
+      streams.set(key, [...(streams.get(key) ?? []), ...written]);
+      for (const event of written) log.set(event.position, event);
+      return {
+        version: expectedVersion + written.length,
+        events: events.map((event, index) => ({
+          ...event,
+          position: written[index]?.position ?? 0,
+        })),
       };
     });
-    for (const { key, kept } of prepared) {
-      streams.set(key, [...(streams.get(key) ?? []), ...kept]);
-      global.push(...kept);
-    }
-    const results = prepared.map(({ result }) => result);
-    if (results.some((result) => result.events.length > 0)) onAppend?.(global.length);
+    advance();
     return results;
   };
 
   return {
     appendAll,
     append: async (args) => (await appendAll([args]))[0] as AppendResult,
+    reserve,
+    release: (positions) => {
+      for (const position of [...positions].sort((a, b) => b - a)) {
+        if (position === reserved) reserved -= 1;
+        else gaps.add(position);
+      }
+      advance();
+    },
     load: async ({ aggregateType, aggregateId, fromVersion = 1 }) => {
       const stream = streams.get(streamId({ aggregateType, aggregateId })) ?? [];
       return {
@@ -83,8 +135,14 @@ export const createMemoryEventStore: CreateMemoryEventStoreFunction = ({ onAppen
         version: stream.length,
       };
     },
-    readAll: async ({ afterPosition, limit }) =>
-      global.slice(afterPosition, afterPosition + limit).map(restore),
-    lastPosition: async () => global.length,
+    readAll: async ({ afterPosition, limit }) => {
+      const events: StoredEvent[] = [];
+      for (let at = afterPosition + 1; at <= watermark && events.length < limit; at += 1) {
+        const kept = log.get(at);
+        if (kept !== undefined) events.push(restore(kept));
+      }
+      return events;
+    },
+    lastPosition: async () => watermark,
   };
 };

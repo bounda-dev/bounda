@@ -52,6 +52,10 @@ dead letter with `errorType: "retriable_exhausted"`.
   the handler runs.
 - **`CHAIN_DEPTH_EXCEEDED`** (`ChainDepthExceededError`; terminal). A chain of reactions went deeper
   than `runtime.policies.maxChainDepth`. `depth`, `maxDepth`.
+- **`IDEMPOTENCY_KEY_CONFLICT`** (`IdempotencyKeyConflictError`; terminal). A dispatch's
+  `idempotencyKey` was already used, within `runtime.commands.idempotencyKeyLifetime`, for
+  another command or for the same command with another payload. Nothing runs. `idempotencyKey`.
+  See [idempotent commands](/guides/idempotent-commands/).
 - **`CREATION_ORDER`** (`CreationOrderError`; terminal). A command returned events that do not fit
   whether its aggregate exists: the first event is not one that exports `begin`, or an event that
   only exports `begin` goes on an aggregate that exists. Nothing is stored.
@@ -65,6 +69,9 @@ dead letter with `errorType: "retriable_exhausted"`.
   that counts.
 - **`SCHEDULED_CLAIM_LOST`** (`ScheduledClaimLostError`; handled by the runtime). The same for a
   scheduled command, a delayed policy run or a deadline, or the command was cancelled.
+- **`IDEMPOTENCY_KEY_TAKEN`** (`IdempotencyKeyTakenError`; handled by the runtime). Of two
+  dispatches racing for one `idempotencyKey`, the one that lost: what it stored rolls back, and it
+  answers what the key holds.
 - **`DEAD_LETTER_SETTLED`** (`DeadLetterSettledError`; an operator's answer). A dead letter was
   retried or discarded after another retry or discard had settled it.
 - **`DEAD_LETTER_NOT_RETRIABLE`** (`DeadLetterNotRetriableError`; an operator's answer). A dead
@@ -84,6 +91,7 @@ The hosts map the codes a client can cause to a status:
 | --- | --- | --- |
 | `VALIDATION_FAILED` | 400, with `issues` | 400, with `issues` |
 | `DOMAIN_ERROR` | 409, with `rejected` | 409, with `rejected` |
+| `IDEMPOTENCY_KEY_CONFLICT` | 500, code `INTERNAL`, logged | 422 |
 | `CONCURRENCY_CONFLICT` | 409 | rethrown |
 | `CHAIN_DEPTH_EXCEEDED` | 409 | rethrown |
 | `FOREIGN_REJECTION` | 500, code `INTERNAL`, logged | rethrown |

@@ -12,6 +12,7 @@ import {
   contractFields,
   deadLetterStoreContract,
   eventStoreContract,
+  idempotencyStoreContract,
   inboxLedgerContract,
   pendingEvent,
   readModelRebuildContract,
@@ -98,6 +99,7 @@ describe("the SQLite stores on node:sqlite", () => {
   inboxLedgerContract({ create: async () => (await storage()).inboxLedger });
   deadLetterStoreContract({ create: async () => (await storage()).deadLetterStore });
   schedulerContract({ create: async () => (await storage()).scheduler });
+  idempotencyStoreContract({ create: async () => (await storage()).idempotencyStore });
   storageTransactionContract({ create: storage });
   tableContract({
     create: async () =>
@@ -239,6 +241,7 @@ describe("createSqliteAdapter", () => {
       "app_checkpoints",
       "app_dead_letters",
       "app_events",
+      "app_idempotency_keys",
       "app_inbox",
       "app_rm_order_summary",
       "app_scheduled_commands",

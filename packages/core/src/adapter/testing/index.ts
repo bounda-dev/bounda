@@ -14,8 +14,14 @@ export type {
   PendingEventArgs,
   PendingEventFunction,
   TestCommandFunction,
+  TestOutcomeFunction,
 } from "./fixtures.ts";
-export { pendingEvent, testCommand, testContext, testMetadata } from "./fixtures.ts";
+export { pendingEvent, testCommand, testContext, testMetadata, testOutcome } from "./fixtures.ts";
+export type {
+  IdempotencyStoreContractArgs,
+  IdempotencyStoreContractFunction,
+} from "./idempotency-store.contract.ts";
+export { idempotencyStoreContract } from "./idempotency-store.contract.ts";
 export type {
   InboxLedgerContractArgs,
   InboxLedgerContractFunction,

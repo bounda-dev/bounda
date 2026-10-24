@@ -11,6 +11,7 @@ const TERMINAL_CODES: ReadonlySet<string> = new Set([
   "NOT_FOUND",
   "CHAIN_DEPTH_EXCEEDED",
   "CREATION_ORDER",
+  "IDEMPOTENCY_KEY_CONFLICT",
 ]);
 
 export interface ClassifyFailureFunction {

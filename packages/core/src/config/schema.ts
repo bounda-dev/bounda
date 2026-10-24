@@ -10,6 +10,7 @@ import {
   DEFAULT_CATCH_UP_TIMEOUT_MS,
   DEFAULT_COMMANDS,
   DEFAULT_CONCURRENCY_RETRIES,
+  DEFAULT_IDEMPOTENCY_KEY_LIFETIME_MS,
   DEFAULT_IDLE_INTERVAL_MS,
   DEFAULT_POLICIES,
   DEFAULT_POLL_INTERVAL_MS,
@@ -74,7 +75,12 @@ const overrides = z.strictObject({
 
 const runtime = z.strictObject({
   role: z.enum(["web", "worker", "all"]).optional(),
-  commands: commands.extend({ concurrencyRetries: z.int().min(0).optional() }).optional(),
+  commands: commands
+    .extend({
+      concurrencyRetries: z.int().min(0).optional(),
+      idempotencyKeyLifetime: timeout.optional(),
+    })
+    .optional(),
   policies: policies.optional(),
   processes: processes.optional(),
   dispatcher: z
@@ -187,6 +193,8 @@ export const resolveConfig: ResolveConfigFunction = (config) => {
         ...baseCommands,
         concurrencyRetries:
           parsed.runtime?.commands?.concurrencyRetries ?? DEFAULT_CONCURRENCY_RETRIES,
+        idempotencyKeyLifetimeMs:
+          parsed.runtime?.commands?.idempotencyKeyLifetime ?? DEFAULT_IDEMPOTENCY_KEY_LIFETIME_MS,
       },
       policies: basePolicies,
       processes: baseProcesses,

@@ -12,6 +12,7 @@ export type {
   ScheduledDispatch,
   StoredDispatch,
 } from "./command.ts";
+export { MAX_IDEMPOTENCY_KEY_LENGTH } from "./command.ts";
 export type {
   AsDurationFunction,
   DurationInput,
@@ -32,6 +33,9 @@ export {
   DeadLetterSettledError,
   type DeadLetterSettledErrorArgs,
   DomainError,
+  IdempotencyKeyConflictError,
+  type IdempotencyKeyConflictErrorArgs,
+  IdempotencyKeyTakenError,
   NotFoundError,
   RebuildSupersededError,
   type Rejection,

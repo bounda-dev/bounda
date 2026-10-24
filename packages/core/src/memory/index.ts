@@ -15,6 +15,7 @@ import { createMemoryCheckpointStore } from "./checkpoint-store.ts";
 import { createKeptDeadLetterStore } from "./dead-letter-store.ts";
 import { createMemoryEventNotifier } from "./event-notifier.ts";
 import { createMemoryEventStore } from "./event-store.ts";
+import { createKeptIdempotencyStore } from "./idempotency-store.ts";
 import { createKeptInboxLedger } from "./inbox-ledger.ts";
 import { createKeptScheduler } from "./scheduler.ts";
 import { createMemoryReadClient, createMemoryTable, type MemoryTable } from "./table.ts";
@@ -100,11 +101,13 @@ export const memory: MemoryFunction = (options = {}) => {
       const inboxLedger = createKeptInboxLedger();
       const deadLetterStore = createKeptDeadLetterStore();
       const scheduler = createKeptScheduler();
+      const idempotencyStore = createKeptIdempotencyStore();
       const stores = {
         eventStore: createMemoryEventStore({ onAppend: notifier.notify }),
         inboxLedger: inboxLedger.store,
         deadLetterStore: deadLetterStore.store,
         scheduler: scheduler.store,
+        idempotencyStore: idempotencyStore.store,
       };
       storage ??= {
         ...stores,
@@ -116,6 +119,7 @@ export const memory: MemoryFunction = (options = {}) => {
             inboxLedger: inboxLedger.entries,
             deadLetterStore: deadLetterStore.entries,
             scheduler: scheduler.entries,
+            idempotencyStore: idempotencyStore.entries,
           },
         }),
         close: async () => {},

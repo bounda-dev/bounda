@@ -21,7 +21,9 @@ event, so the history says what the decision was based on.
 
 The handler receives `idempotencyKey`, the command's id, which stays the same across those runs (a
 scheduled command keeps the id it was scheduled with): pass it to a call the provider deduplicates,
-such as creating that payment intent, so a second run does not create another. It also receives
+such as creating that payment intent, so a second run does not create another. It is not the
+`idempotencyKey` option of a dispatch, which keeps a command a client sends twice from running
+twice ([idempotent commands](/guides/idempotent-commands/)). It also receives
 `signal`, which aborts when the run passes `runtime.commands.timeout`; pass it to what it calls
 outside (`fetch(url, { signal })`), so a provider that hangs fails the command instead of holding
 the request (see [Retries and timeouts](/guides/reacting-to-events/#retries-and-timeouts)).

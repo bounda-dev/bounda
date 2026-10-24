@@ -106,9 +106,11 @@ when its handler rejects it, with the code in `rejected`. Return `failure(error)
 |---|---|---|
 | `ValidationError` | 400 | `{ error, issues }`, each issue with the `path` of the field and its `message` |
 | `DomainError` | 409 | `{ error, issues: [], rejected }`, the code the command declares |
+| `IdempotencyKeyConflictError` | 422 | `{ error, issues: [] }`, the request's `Idempotency-Key` was used for another command |
 
-`failure` goes by the error's `code`, `VALIDATION_FAILED` or `DOMAIN_ERROR`, so it answers the
-same for the refusals a Durable Object sends back on Cloudflare, which arrive as plain errors.
+`failure` goes by the error's `code`, `VALIDATION_FAILED`, `DOMAIN_ERROR` or
+`IDEMPOTENCY_KEY_CONFLICT`, so it answers the same for the refusals a Durable Object sends back on
+Cloudflare, which arrive as plain errors.
 Anything else is rethrown and reaches the route's `ErrorBoundary`. `Failure`, the shape of that
 data, is exported from `@bounda-dev/react-router`.
 
@@ -128,6 +130,16 @@ await context.get(bounda).commands.registerUser(payload, { signal: request.signa
 The option takes any signal, such as `AbortSignal.timeout(2_000)` for one action that must answer
 sooner than the app's limit. On Cloudflare it only counts before the call leaves the Worker: RPC
 cannot carry it into the Durable Object, where the command runs to the end.
+
+## Retrying a request safely
+
+A request that times out on the way back, or a form submitted twice, dispatches its command
+twice. When the client sends an `Idempotency-Key` header, the middleware passes it as
+`idempotencyKey` to every command the request dispatches, and the second arrival answers what the
+first did, its rejection included, without running the command again. The host never makes a key
+up: a request without the header dispatches as before. What the key means, its lifetime, and an
+action that dispatches two commands under one header are in
+[idempotent commands](/guides/idempotent-commands/).
 
 ## Reading what you just wrote
 

@@ -319,8 +319,7 @@ export const createKernelHarness: CreateKernelHarnessFunction = async ({
   const rejections: CommandRejection[] = [];
   const pipeline = createCommandPipeline({
     aggregates,
-    eventStore: storage.eventStore,
-    scheduler: storage.scheduler,
+    storage,
     config,
     ids: createSequentialIdGenerator(),
     clock,

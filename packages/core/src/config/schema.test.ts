@@ -33,7 +33,7 @@ describe("resolveConfig", () => {
     expect(resolved.ports).toEqual({});
     expect(resolved.runtime).toEqual({
       role: "all",
-      commands: { concurrencyRetries: 3, timeoutMs: 30_000 },
+      commands: { concurrencyRetries: 3, timeoutMs: 30_000, idempotencyKeyLifetimeMs: 86_400_000 },
       policies: {
         retry: { strategy: "exponential", maxAttempts: 3, baseDelayMs: 1_000, maxDelayMs: 30_000 },
         timeoutMs: 30_000,
@@ -62,7 +62,7 @@ describe("resolveConfig", () => {
       readModels: { "users-directory": sqlite },
       runtime: {
         role: "worker",
-        commands: { concurrencyRetries: 0, timeout: "5s" },
+        commands: { concurrencyRetries: 0, timeout: "5s", idempotencyKeyLifetime: "1h" },
         policies: { retry: { strategy: "fixed", maxAttempts: 5, baseDelay: "2s" }, timeout: "1m" },
         processes: { timeout: "48h", handlerTimeout: "2m" },
         dispatcher: {
@@ -77,7 +77,11 @@ describe("resolveConfig", () => {
       ports: { order: { inventory: "http" } },
     });
     expect(resolved.runtime.role).toBe("worker");
-    expect(resolved.runtime.commands).toEqual({ concurrencyRetries: 0, timeoutMs: 5_000 });
+    expect(resolved.runtime.commands).toEqual({
+      concurrencyRetries: 0,
+      timeoutMs: 5_000,
+      idempotencyKeyLifetimeMs: 3_600_000,
+    });
     expect(resolved.runtime.policies.retry).toEqual({
       strategy: "fixed",
       maxAttempts: 5,

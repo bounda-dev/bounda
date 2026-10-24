@@ -21,6 +21,7 @@ import {
   sentMessages,
   slowJob,
 } from "../test-support.ts";
+import { IDEMPOTENCY_PURGE_INTERVAL_MS } from "./worker.ts";
 
 const LOST_CLAIM = "scheduled command no longer holds its claim; this run wrote nothing";
 
@@ -52,6 +53,54 @@ const failingRegistry: Registry = {
 };
 
 describe("scheduled command worker", () => {
+  it("purges the expired idempotency keys once per interval, and goes on when it cannot", async () => {
+    const { logger, entries } = createRecordingLogger();
+    const harness = await createReactiveHarness({ registry: orderRegistry, logger });
+    const { idempotencyStore } = harness.storage;
+    const { purge } = idempotencyStore;
+    const record = (key: string, expiresInMs: number) => ({
+      key,
+      fingerprint: "fp",
+      outcome: { rejected: "Nope", message: "no", aggregateType: "order", aggregateId: "1" },
+      expiresAt: new Date(harness.clock.now().getTime() + expiresInMs).toISOString(),
+      now: harness.clock.now(),
+    });
+    await idempotencyStore.put(record("gone", -1));
+    await idempotencyStore.put(record("kept", 30_000));
+    expect(await harness.worker.runOnce()).toBe(0);
+    expect(await idempotencyStore.get({ key: "gone", now: harness.clock.now() })).toBeNull();
+    expect(entries).toContainEqual({
+      level: "debug",
+      message: "expired idempotency keys purged",
+      fields: { purged: 1 },
+    });
+
+    harness.clock.advance(IDEMPOTENCY_PURGE_INTERVAL_MS - 1);
+    await harness.worker.runOnce();
+    expect(
+      await harness.storage.idempotencyStore.get({ key: "kept", now: new Date(0) }),
+    ).not.toBeNull();
+    harness.clock.advance(1);
+    harness.storage.idempotencyStore.purge = async () => {
+      throw new Error("down");
+    };
+    expect(await harness.worker.runOnce()).toBe(0);
+    expect(entries).toContainEqual({
+      level: "error",
+      message: "expired idempotency keys could not be purged",
+      fields: expect.objectContaining({ message: "down" }),
+    });
+    harness.storage.idempotencyStore.purge = purge;
+    harness.clock.advance(IDEMPOTENCY_PURGE_INTERVAL_MS);
+    await harness.worker.runOnce();
+    expect(
+      await harness.storage.idempotencyStore.get({ key: "kept", now: new Date(0) }),
+    ).toBeNull();
+    expect(
+      entries.filter((entry) => entry.message === "expired idempotency keys purged"),
+    ).toHaveLength(2);
+  });
+
   it("runs due commands with their stored context and completes them", async () => {
     const harness = await createReactiveHarness({ registry: orderRegistry });
     sentMessages.length = 0;

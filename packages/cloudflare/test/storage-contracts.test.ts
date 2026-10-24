@@ -8,6 +8,7 @@ import {
   contractFields,
   deadLetterStoreContract,
   eventStoreContract,
+  idempotencyStoreContract,
   inboxLedgerContract,
   readModelRebuildContract,
   readModelTransactionContract,
@@ -36,6 +37,7 @@ describe("the Durable Object adapter", () => {
   inboxLedgerContract({ create: async () => (await freshStorage()).inboxLedger });
   deadLetterStoreContract({ create: async () => (await freshStorage()).deadLetterStore });
   schedulerContract({ create: async () => (await freshStorage()).scheduler });
+  idempotencyStoreContract({ create: async () => (await freshStorage()).idempotencyStore });
   storageTransactionContract({ create: freshStorage });
   tableContract({
     create: async () =>

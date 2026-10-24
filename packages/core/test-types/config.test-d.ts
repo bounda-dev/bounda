@@ -51,6 +51,21 @@ describe("defineConfig", () => {
     defineConfig({
       storage: sqlite,
       ports,
+      runtime: { commands: { idempotencyKeyLifetime: "48h" } },
+    });
+    defineConfig({
+      storage: sqlite,
+      ports,
+      runtime: {
+        commands: {
+          // @ts-expect-error "two days" is not a duration string
+          idempotencyKeyLifetime: "two days",
+        },
+      },
+    });
+    defineConfig({
+      storage: sqlite,
+      ports,
       runtime: { dispatcher: { pollInterval: 250 } },
     });
     defineConfig({
@@ -142,6 +157,12 @@ describe("defineConfig", () => {
       ports,
       // @ts-expect-error concurrencyRetries is not overridden per aggregate
       runtime: { overrides: { order: { commands: { concurrencyRetries: 1 } } } },
+    });
+    defineConfig({
+      storage: sqlite,
+      ports,
+      // @ts-expect-error idempotencyKeyLifetime is not overridden per aggregate
+      runtime: { overrides: { order: { commands: { idempotencyKeyLifetime: "1h" } } } },
     });
     // @ts-expect-error batch is not a role
     defineConfig({ storage: sqlite, ports, runtime: { role: "batch" } });

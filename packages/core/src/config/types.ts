@@ -78,6 +78,12 @@ export interface CommandsRuntimeConfig {
    */
   readonly timeout?: DurationInput;
   readonly concurrencyRetries?: number;
+  /**
+   * How long a command dispatched with an `idempotencyKey` is remembered, so a dispatch with the
+   * same key answers the same. Past it the key is free again, and the scheduled-command worker
+   * purges the record. Defaults to 24 hours.
+   */
+  readonly idempotencyKeyLifetime?: DurationInput;
 }
 
 /**
@@ -226,7 +232,10 @@ export interface ResolvedConfig {
   readonly readModels: Readonly<Record<string, AdapterDefinition>>;
   readonly runtime: {
     readonly role: RuntimeRole;
-    readonly commands: ResolvedCommandsConfig & { readonly concurrencyRetries: number };
+    readonly commands: ResolvedCommandsConfig & {
+      readonly concurrencyRetries: number;
+      readonly idempotencyKeyLifetimeMs: number;
+    };
     readonly policies: ResolvedPoliciesConfig;
     readonly processes: ResolvedProcessesConfig;
     readonly dispatcher: {

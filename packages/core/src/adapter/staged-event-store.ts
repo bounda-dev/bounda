@@ -6,15 +6,31 @@ import type { AppendArgs, EventStore } from "./storage/event-store.ts";
  * An event store that keeps what is appended to it aside: `load` answers with the base store's
  * events plus the ones staged for that stream, `append` stages with the version the stream has
  * in that view, and `readAll` and `lastPosition` read the base store alone, since staged events
- * have no position yet. `batches` hands out what to append at commit, one batch per stream, each
+ * are not written yet. `batches` hands out what to append at commit, one batch per stream, each
  * expecting the version the stream had in the base store when the view first met it.
  */
 export interface StagedEventStore extends EventStore {
-  batches(): readonly AppendArgs[];
+  batches(): readonly StagedBatch[];
+}
+
+/**
+ * A batch to append at commit, with the position each of its events was staged with: what
+ * `nextPosition` gave, or 0.
+ */
+export interface StagedBatch extends AppendArgs {
+  readonly positions: readonly number[];
+}
+
+export interface CreateStagedEventStoreArgs {
+  /**
+   * Reserves the position a staged event will have once committed, for a base store that can
+   * hold one; without it, staged events answer with position 0.
+   */
+  readonly nextPosition?: () => number;
 }
 
 export interface CreateStagedEventStoreFunction {
-  (base: EventStore): StagedEventStore;
+  (base: EventStore, args?: CreateStagedEventStoreArgs): StagedEventStore;
 }
 
 interface StagedStream {
@@ -24,7 +40,10 @@ interface StagedStream {
   readonly events: StoredEvent[];
 }
 
-export const createStagedEventStore: CreateStagedEventStoreFunction = (base) => {
+export const createStagedEventStore: CreateStagedEventStoreFunction = (
+  base,
+  { nextPosition = () => 0 } = {},
+) => {
   const streams = new Map<string, StagedStream>();
 
   const stagedFor = async (aggregateType: string, aggregateId: string): Promise<StagedStream> => {
@@ -72,7 +91,7 @@ export const createStagedEventStore: CreateStagedEventStoreFunction = (base) => 
           actualVersion,
         });
       }
-      const stored = events.map((event) => ({ ...event, position: 0 }));
+      const stored = events.map((event) => ({ ...event, position: nextPosition() }));
       staged.events.push(...stored);
       return { version: actualVersion + stored.length, events: stored };
     },
@@ -86,6 +105,7 @@ export const createStagedEventStore: CreateStagedEventStoreFunction = (base) => 
           aggregateId,
           expectedVersion,
           events: events.map(({ position: _position, ...event }) => event),
+          positions: events.map((event) => event.position),
         })),
   };
 };

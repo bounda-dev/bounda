@@ -5,6 +5,7 @@ import type { CheckpointStore } from "./storage/checkpoint-store.ts";
 import type { DeadLetterStore } from "./storage/dead-letter-store.ts";
 import type { EventNotifier } from "./storage/event-notifier.ts";
 import type { EventStore } from "./storage/event-store.ts";
+import type { IdempotencyStore } from "./storage/idempotency-store.ts";
 import type { InboxLedger } from "./storage/inbox-ledger.ts";
 import type { Scheduler } from "./storage/scheduler.ts";
 import type { ReadClient, Table } from "./storage/table.ts";
@@ -13,7 +14,7 @@ import type { ReadClient, Table } from "./storage/table.ts";
  * The write-side stores bound to one open transaction: what `Storage.transact` runs its
  * work with. What the work writes through them commits together when it resolves and rolls
  * back together when it throws. `eventStore.load` sees the events the work appended; what the
- * other three read back while the transaction is open is the store as committed, or the
+ * other four read back while the transaction is open is the store as committed, or the
  * transaction's own writes, depending on the adapter, so the work must not depend on it.
  */
 export interface StorageTransaction {
@@ -21,6 +22,7 @@ export interface StorageTransaction {
   readonly inboxLedger: InboxLedger;
   readonly deadLetterStore: DeadLetterStore;
   readonly scheduler: Scheduler;
+  readonly idempotencyStore: IdempotencyStore;
 }
 
 /**
@@ -32,6 +34,7 @@ export interface Storage {
   readonly inboxLedger: InboxLedger;
   readonly deadLetterStore: DeadLetterStore;
   readonly scheduler: Scheduler;
+  readonly idempotencyStore: IdempotencyStore;
   /**
    * Only for a backend that can push new events; without it the dispatcher only polls.
    */

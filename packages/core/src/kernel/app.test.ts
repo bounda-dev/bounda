@@ -431,6 +431,22 @@ describe("createApp", () => {
     await fresh.stop();
   });
 
+  it("answers a command dispatched again under its idempotency key as the first time, read models included", async () => {
+    const { app } = await start("web");
+    const fresh = readYourWrites(app);
+    const payload = { orderId: "o-1", total: 10 };
+    const placed = await fresh.commands.placeOrder(payload, { idempotencyKey: "req-1" });
+    expect(placed).toMatchObject({ version: 1, position: 1 });
+    expect(await fresh.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "placed" });
+    expect(await fresh.commands.placeOrder(payload, { idempotencyKey: "req-1" })).toEqual(placed);
+    await expect(
+      fresh.commands.placeOrder({ orderId: "o-1", total: 11 }, { idempotencyKey: "req-1" }),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_KEY_CONFLICT" });
+    expect(sentMessages).toEqual(["placed o-1 v0"]);
+    expect((await app.events.read()).map((event) => event.position)).toEqual([1]);
+    await fresh.stop();
+  });
+
   it("does not start background work in the web role but still serves commands and queries", async () => {
     const { app, clock } = await start("web");
     expect(app.role).toBe("web");

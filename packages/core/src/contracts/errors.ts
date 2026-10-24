@@ -95,6 +95,46 @@ export class ValidationError extends BoundaError {
   }
 }
 
+export interface IdempotencyKeyConflictErrorArgs {
+  readonly idempotencyKey: string;
+  readonly commandType: string;
+}
+
+/**
+ * Thrown by a dispatch whose `idempotencyKey` was already used for another command, or for the
+ * same command with another payload, within `runtime.commands.idempotencyKeyLifetime`. Nothing
+ * runs and nothing is stored: a key names one command with one payload, so a second one under it
+ * is a bug of the caller, not a retry.
+ */
+export class IdempotencyKeyConflictError extends BoundaError {
+  readonly idempotencyKey: string;
+
+  constructor({ idempotencyKey, commandType }: IdempotencyKeyConflictErrorArgs) {
+    super(
+      "IDEMPOTENCY_KEY_CONFLICT",
+      `Idempotency key "${idempotencyKey}" was already used for a command other than ${commandType} with this payload`,
+    );
+    this.idempotencyKey = idempotencyKey;
+  }
+}
+
+/**
+ * Thrown by an idempotency store asked to record a dispatch under a key that already holds one:
+ * a duplicate that ran beside the first lost the race. Whatever the recording was part of rolls
+ * back, and the dispatch answers what the key holds instead.
+ */
+export class IdempotencyKeyTakenError extends BoundaError {
+  readonly idempotencyKey: string;
+
+  constructor(idempotencyKey: string) {
+    super(
+      "IDEMPOTENCY_KEY_TAKEN",
+      `Idempotency key "${idempotencyKey}" already holds the outcome of a dispatch`,
+    );
+    this.idempotencyKey = idempotencyKey;
+  }
+}
+
 export interface ClaimLostErrorArgs {
   readonly handler: string;
   readonly eventId: string;

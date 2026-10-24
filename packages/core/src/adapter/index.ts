@@ -36,6 +36,14 @@ export type {
   ReadAllArgs,
 } from "./storage/event-store.ts";
 export type {
+  DispatchOutcome,
+  GetIdempotencyRecordArgs,
+  IdempotencyRecord,
+  IdempotencyStore,
+  PurgeIdempotencyRecordsArgs,
+  PutIdempotencyRecordArgs,
+} from "./storage/idempotency-store.ts";
+export type {
   ClaimArgs,
   ClaimKey,
   ClaimRecord,

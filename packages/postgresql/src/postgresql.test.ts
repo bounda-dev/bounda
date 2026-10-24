@@ -17,6 +17,7 @@ import {
   contractFields,
   deadLetterStoreContract,
   eventStoreContract,
+  idempotencyStoreContract,
   inboxLedgerContract,
   pendingEvent,
   readModelRebuildContract,
@@ -93,6 +94,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
   inboxLedgerContract({ create: async () => (await openStorage()).inboxLedger });
   deadLetterStoreContract({ create: async () => (await openStorage()).deadLetterStore });
   schedulerContract({ create: async () => (await openStorage()).scheduler });
+  idempotencyStoreContract({ create: async () => (await openStorage()).idempotencyStore });
   storageTransactionContract({ create: () => openStorage() });
 
   it("takes the append lock as a transaction starts, before anything it writes, and lets go of it with the transaction", async () => {
@@ -393,6 +395,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
       "checkpoints",
       "dead_letters",
       "events",
+      "idempotency_keys",
       "inbox",
       "rm_order_summary",
       "scheduled_commands",

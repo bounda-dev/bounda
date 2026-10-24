@@ -8,6 +8,7 @@ import type { SqlDatabase, SqlTransaction } from "../sql/database.ts";
 import { createSqliteCheckpointStore } from "./checkpoint-store.ts";
 import { createSqliteDeadLetterStore } from "./dead-letter-store.ts";
 import { createSqliteEventStore } from "./event-store.ts";
+import { createSqliteIdempotencyStore } from "./idempotency-store.ts";
 import { createSqliteInboxLedger } from "./inbox-ledger.ts";
 import { openSqliteReadModel, rebuildSqliteReadModel } from "./read-model.ts";
 import { createSqliteScheduler } from "./scheduler.ts";
@@ -87,6 +88,10 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
           inboxLedger: createSqliteInboxLedger({ db: database, table: tables.inbox }),
           deadLetterStore: createSqliteDeadLetterStore({ db: database, table: tables.deadLetters }),
           scheduler: createSqliteScheduler({ db: database, table: tables.scheduledCommands }),
+          idempotencyStore: createSqliteIdempotencyStore({
+            db: database,
+            table: tables.idempotencyKeys,
+          }),
         });
         // The stores over an open transaction: their statements join it, and a `write` of their own
         // runs inside it instead of opening another, which SQLite would refuse.

@@ -60,6 +60,11 @@ export interface CreateScheduledCommandWorkerFunction {
 const CLAIM_LIMIT = 50;
 
 /**
+ * How often a worker that runs a pass purges the expired idempotency keys.
+ */
+export const IDEMPOTENCY_PURGE_INTERVAL_MS = 60_000;
+
+/**
  * A renewal before a rerun that failed in the store: the store's failure, not the run's, so it is
  * neither retried nor dead-lettered as one.
  */
@@ -87,7 +92,8 @@ interface DeadlineWait {
  * claim's failure. A deadline first waits for the process runner, so an event that cancels it is
  * seen first; this is best effort, since the aggregates still check what it sends. Deadline
  * entries are never removed here: the process runner writes what comes next, so a crash in between
- * leaves the entry to its lease instead of losing it.
+ * leaves the entry to its lease instead of losing it. Every `IDEMPOTENCY_PURGE_INTERVAL_MS` a pass
+ * also purges the idempotency keys that expired.
  */
 export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction = ({
   storage,
@@ -117,6 +123,18 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   const startWithinMs = timeoutMs / 2;
 
   const waits = new Map<string, DeadlineWait>();
+  let purgedAt = Number.NEGATIVE_INFINITY;
+
+  const purgeExpiredKeys = async (now: Date): Promise<void> => {
+    if (now.getTime() - purgedAt < IDEMPOTENCY_PURGE_INTERVAL_MS) return;
+    purgedAt = now.getTime();
+    try {
+      const purged = await storage.idempotencyStore.purge({ now });
+      if (purged > 0) logger.debug("expired idempotency keys purged", { purged });
+    } catch (error) {
+      logger.error("expired idempotency keys could not be purged", errorDetails(error));
+    }
+  };
 
   const isDeadline = (entry: ScheduledCommand): boolean =>
     entry.command.type === PROCESS_DEADLINE_COMMAND;
@@ -399,6 +417,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       for (const key of waits.keys()) {
         if (!due.some((entry) => entry.dedupeKey === key)) waits.delete(key);
       }
+      await purgeExpiredKeys(claimedAt);
       if (unreadable !== undefined) throw unreadable.error;
       return due.length;
     });

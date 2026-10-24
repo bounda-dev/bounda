@@ -1,4 +1,4 @@
-import type { NewCommand } from "../../contracts/command.ts";
+import type { NewCommand, StoredDispatch } from "../../contracts/command.ts";
 import type { CausationContext, EventMetadata } from "../../contracts/metadata.ts";
 import type { NewDeadLetter } from "../storage/dead-letter-store.ts";
 import type { PendingEvent } from "../storage/event-store.ts";
@@ -88,4 +88,21 @@ export const testDeadLetter: TestDeadLetterFunction = (id) => ({
   attempts: 1,
   firstFailedAt: "2026-01-01T00:00:00.000Z",
   lastFailedAt: "2026-01-01T00:00:00.000Z",
+});
+
+export interface TestOutcomeFunction {
+  (aggregateId: string): StoredDispatch;
+}
+
+/**
+ * What a stored command answered, for idempotency store contract tests.
+ */
+export const testOutcome: TestOutcomeFunction = (aggregateId) => ({
+  scheduled: false,
+  aggregateType: "order",
+  aggregateId,
+  version: 1,
+  eventIds: [`order-${aggregateId}-1`],
+  eventTypes: ["OrderPlaced"],
+  position: 1,
 });

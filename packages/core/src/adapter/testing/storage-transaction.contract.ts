@@ -2,10 +2,11 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   ConcurrencyError,
   DeadLetterSettledError,
+  IdempotencyKeyTakenError,
   ScheduledClaimLostError,
 } from "../../contracts/errors.ts";
 import type { Storage, StorageTransaction } from "../adapter.ts";
-import { pendingEvent, testCommand, testContext, testDeadLetter } from "./fixtures.ts";
+import { pendingEvent, testCommand, testContext, testDeadLetter, testOutcome } from "./fixtures.ts";
 
 export interface StorageTransactionContractArgs {
   readonly create: () => Promise<Storage>;
@@ -17,6 +18,13 @@ export interface StorageTransactionContractFunction {
 
 const now = new Date("2026-01-01T00:00:00.000Z");
 const key = { handler: "order.p", eventId: "e1" };
+const record = {
+  key: "idem-1",
+  fingerprint: "fp",
+  outcome: testOutcome("1"),
+  expiresAt: new Date(now.getTime() + 60_000).toISOString(),
+  now,
+};
 
 /**
  * The behaviour every `Storage.transact` must exhibit. Call it inside a `describe` of the
@@ -65,6 +73,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
           status: "failed",
         });
         await tx.inboxLedger.complete(key);
+        await tx.idempotencyStore.put(record);
         if (fail) throw new Error("boom");
       });
 
@@ -73,9 +82,10 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       expect(await storage.scheduler.list()).toEqual([]);
       expect(await storage.deadLetterStore.count()).toBe(0);
       expect((await storage.inboxLedger.get(key))?.status).toBe("pending");
+      expect(await storage.idempotencyStore.get({ key: record.key, now })).toBeNull();
     };
 
-    it("writes the events of several streams, the claim, the scheduler entry and the dead letter together", async () => {
+    it("writes the events of several streams, the claim, the scheduler entry, the dead letter and the idempotency record together", async () => {
       await everything(false);
       const all = await storage.eventStore.readAll({ afterPosition: 0, limit: 10 });
       expect(all.map((event) => event.aggregateType)).toEqual(["order", "payment"]);
@@ -85,6 +95,30 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       ]);
       expect(await storage.deadLetterStore.count()).toBe(1);
       expect((await storage.inboxLedger.get(key))?.status).toBe("succeeded");
+      expect(await storage.idempotencyStore.get({ key: record.key, now })).toMatchObject({
+        fingerprint: "fp",
+      });
+    });
+
+    it("writes nothing when the idempotency key it records is already taken", async () => {
+      await storage.idempotencyStore.put({ ...record, fingerprint: "first" });
+      await expect(
+        storage.transact(async (tx) => {
+          await tx.eventStore.append({
+            aggregateType: "order",
+            aggregateId: "1",
+            expectedVersion: 0,
+            events: [pendingEvent({ aggregateId: "1", version: 1 })],
+          });
+          await tx.inboxLedger.complete(key);
+          await tx.idempotencyStore.put(record);
+        }),
+      ).rejects.toBeInstanceOf(IdempotencyKeyTakenError);
+      expect(await storage.eventStore.lastPosition()).toBe(0);
+      expect((await storage.inboxLedger.get(key))?.status).toBe("pending");
+      expect(await storage.idempotencyStore.get({ key: record.key, now })).toMatchObject({
+        fingerprint: "first",
+      });
     });
 
     it("writes nothing when the work throws", async () => {
