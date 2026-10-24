@@ -1,5 +1,11 @@
 # @bounda-dev/sqlite
 
+## 0.2.4
+
+### Patch Changes
+
+- @bounda-dev/core@0.2.4
+
 ## 0.2.3
 
 ### Patch Changes
