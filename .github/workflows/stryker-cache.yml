@@ -1,0 +1,33 @@
+name: Stryker caches
+
+# GitHub evicts a cache nobody has read for 7 days, and a pull request can only read the
+# incremental Stryker files saved on main. A push to main refreshes only the packages it changed,
+# so after a quiet week a pull request would run every mutant of the others cold.
+# Restoring each one counts as a read; daily leaves room for a skipped or late scheduled run.
+# Fails when main has no file for a package: the next mutation run of it on main writes one.
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  touch:
+    name: Read (${{ matrix.package }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        # The packages the mutation job in ci.yml can run.
+        package: [core, sqlite, postgresql, cli, react-router, create-bounda, cloudflare]
+    steps:
+      - uses: actions/cache/restore@v4
+        with:
+          path: packages/${{ matrix.package }}/.stryker-tmp/incremental.json
+          key: stryker-${{ matrix.package }}-${{ github.sha }}
+          restore-keys: stryker-${{ matrix.package }}-
+          fail-on-cache-miss: true
