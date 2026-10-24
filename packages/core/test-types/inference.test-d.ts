@@ -227,6 +227,14 @@ describe("ports", () => {
     expectTypeOf<PlaceOrder.HandlerArgs>().not.toHaveProperty("rates");
   });
 
+  it("carries the state fingerprint the generator computed for every aggregate", () => {
+    expectTypeOf<Registry["aggregates"]["order"]["stateFingerprint"]>().toBeString();
+    expectTypeOf<Registry["aggregates"]["customer"]["stateFingerprint"]>().toBeString();
+    expectTypeOf<Registry["aggregates"]["order"]["stateFingerprint"]>().not.toEqualTypeOf<
+      string | undefined
+    >();
+  });
+
   it("leave the aggregate's other modules out of the registry and the events", () => {
     expectTypeOf<Registry["aggregates"]["order"]["events"]>().not.toHaveProperty("money");
     expectTypeOf<PlaceOrder.HandlerArgs["events"]>().not.toHaveProperty("money");

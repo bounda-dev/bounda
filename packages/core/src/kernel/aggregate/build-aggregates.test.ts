@@ -4,7 +4,7 @@ import { ConfigurationError } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
 import type { PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
-import { choosePorts, orderRegistry } from "../test-support.ts";
+import { choosePorts, orderAggregate, orderRegistry } from "../test-support.ts";
 import { buildAggregates } from "./build-aggregates.ts";
 import { foldState } from "./fold-state.ts";
 
@@ -65,6 +65,39 @@ describe("buildAggregates", () => {
     const { byName } = buildAggregates({ registry, ports: {} });
     expect(byName.customer?.aggregateIdField).toBe("customerId");
     expect(byName.customer?.initialState).toEqual({});
+  });
+
+  it("takes the snapshot settings of the configuration, valid for the registry's fingerprint and the version", () => {
+    const registry: Registry = {
+      aggregates: { order: { ...orderAggregate, stateFingerprint: "abc" } },
+      readModels: {},
+    };
+    const config = resolveConfig({
+      storage: memory(),
+      ports: { order: { notifier: "silent" } },
+      runtime: { overrides: { order: { snapshot: { every: 50, verify: 0.5, version: 3 } } } },
+    });
+    expect(buildAggregates({ registry, ports, config }).byName.order?.snapshot).toEqual({
+      every: 50,
+      verify: 0.5,
+      fingerprint: "abc:3",
+    });
+    expect(buildAggregates({ registry, ports }).byName.order?.snapshot).toBeNull();
+    const without = resolveConfig({ storage: memory(), ports: { order: { notifier: "silent" } } });
+    expect(buildAggregates({ registry, ports, config: without }).byName.order?.snapshot).toBeNull();
+  });
+
+  it("refuses snapshots for an aggregate whose registry has no state fingerprint", () => {
+    const config = resolveConfig({
+      storage: memory(),
+      ports: { order: { notifier: "silent" } },
+      runtime: { overrides: { order: { snapshot: { every: 50 } } } },
+    });
+    expect(() => buildAggregates({ registry: orderRegistry, ports, config })).toThrow(
+      new ConfigurationError(
+        'runtime.overrides.order.snapshot: the registry has no state fingerprint for "order"; run bounda generate',
+      ),
+    );
   });
 
   it("rejects payload functions that do not return a schema", () => {

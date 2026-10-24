@@ -71,18 +71,27 @@ export const createSqliteEventStore: CreateSqliteEventStoreFunction = ({ db, tab
         }
         return { version: actualVersion + stored.length, events: stored };
       }),
+    // A load from the first event reads one statement, whose last row is the head. From later
+    // on, the head is read first and the events bounded by it: outside a transaction, an append
+    // landing between the two reads would otherwise report a head past the events returned.
     load: async ({ aggregateType, aggregateId, fromVersion = 1 }) => {
-      const rows = await db.all(
-        `SELECT ${COLUMNS} FROM ${table} WHERE "aggregate_type" = ? AND "aggregate_id" = ? AND "version" >= ? ORDER BY "version"`,
-        [aggregateType, aggregateId, fromVersion],
-      );
-      const events = rows.map(toStoredEvent);
-      const last = events.at(-1);
-      const version =
-        fromVersion <= 1
-          ? (last?.version ?? 0)
-          : await currentVersion(db, aggregateType, aggregateId);
-      return { events, version };
+      if (fromVersion <= 1) {
+        const rows = await db.all(
+          `SELECT ${COLUMNS} FROM ${table} WHERE "aggregate_type" = ? AND "aggregate_id" = ? ORDER BY "version"`,
+          [aggregateType, aggregateId],
+        );
+        const events = rows.map(toStoredEvent);
+        return { events, version: events.at(-1)?.version ?? 0 };
+      }
+      const version = await currentVersion(db, aggregateType, aggregateId);
+      const rows =
+        version < fromVersion
+          ? []
+          : await db.all(
+              `SELECT ${COLUMNS} FROM ${table} WHERE "aggregate_type" = ? AND "aggregate_id" = ? AND "version" >= ? AND "version" <= ? ORDER BY "version"`,
+              [aggregateType, aggregateId, fromVersion, version],
+            );
+      return { events: rows.map(toStoredEvent), version };
     },
     readAll: async ({ afterPosition, limit }) =>
       (

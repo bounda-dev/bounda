@@ -14,6 +14,7 @@ export interface StorageTables {
   readonly deadLetters: string;
   readonly scheduledCommands: string;
   readonly idempotencyKeys: string;
+  readonly snapshots: string;
   readonly appendLockKey: string;
   // The first key of the advisory locks read models take on the checkpoints table.
   readonly checkpointsLockKey: string;
@@ -53,6 +54,7 @@ export const storageTablesFor: StorageTablesForFunction = ({ prefix, schema }) =
     deadLetters: quoteIdentifier(storageTableNameFor({ prefix, table: "deadLetters" })),
     scheduledCommands: quoteIdentifier(storageTableNameFor({ prefix, table: "scheduledCommands" })),
     idempotencyKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "idempotencyKeys" })),
+    snapshots: quoteIdentifier(storageTableNameFor({ prefix, table: "snapshots" })),
     appendLockKey: `bounda:${schema}.${events}`,
     checkpointsLockKey: `bounda:${schema}.${checkpoints}`,
     channel,
@@ -140,6 +142,14 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "expires_at" text NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.idempotencyKeys, "expires_at")} ON ${tables.idempotencyKeys} ("expires_at")`,
+  `CREATE TABLE IF NOT EXISTS ${tables.snapshots} (
+    "aggregate_type" text NOT NULL,
+    "aggregate_id" text NOT NULL,
+    "version" integer NOT NULL,
+    "fingerprint" text NOT NULL,
+    "state" text NOT NULL,
+    PRIMARY KEY ("aggregate_type", "aggregate_id")
+  )`,
 ];
 
 export interface EnsureStorageSchemaArgs {
@@ -166,6 +176,7 @@ export const ensureStorageSchema: EnsureStorageSchemaFunction = async ({ db, sch
     tables.deadLetters,
     tables.scheduledCommands,
     tables.idempotencyKeys,
+    tables.snapshots,
     indexName(tables.deadLetters, "status"),
     indexName(tables.scheduledCommands, "execute_at"),
     indexName(tables.idempotencyKeys, "expires_at"),

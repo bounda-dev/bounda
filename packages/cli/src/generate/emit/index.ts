@@ -11,17 +11,22 @@ export const GENERATED_DIRECTORY: string = ".bounda";
 export interface EmitProjectArgs {
   readonly model: ProjectModel;
   readonly inferredStates?: Readonly<Record<string, StateTypeSource>>;
+  /**
+   * By aggregate name, from `fingerprintStates`; an aggregate without one gets no
+   * `stateFingerprint`, so it cannot take snapshots.
+   */
+  readonly fingerprints?: Readonly<Record<string, string>>;
 }
 
 export interface EmitProjectFunction {
   (args: EmitProjectArgs): readonly GeneratedFile[];
 }
 
-export const emitProject: EmitProjectFunction = ({ model, inferredStates }) => {
+export const emitProject: EmitProjectFunction = ({ model, inferredStates, fingerprints = {} }) => {
   const directory = join(model.root, GENERATED_DIRECTORY);
   const typesPath = join(directory, "types.ts");
   return [
-    emitRegistry({ model, path: join(directory, "registry.ts") }),
+    emitRegistry({ model, path: join(directory, "registry.ts"), fingerprints }),
     emitRegister({ path: join(directory, "register.d.ts") }),
     emitTypes({
       model,

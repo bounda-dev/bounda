@@ -23,6 +23,7 @@ import {
   readModelRebuildContract,
   readModelTransactionContract,
   schedulerContract,
+  snapshotStoreContract,
   storageTransactionContract,
   tableContract,
   viewContract,
@@ -31,6 +32,8 @@ import { createTestApp } from "@bounda-dev/core/testing";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import postgres, { type Sql } from "postgres";
 import { afterAll, describe, expect, it, vi } from "vitest";
+import { createPostgresqlDatabase } from "./database.ts";
+import { createPostgresqlEventStore } from "./event-store.ts";
 import { type PostgresqlAdapter, type PostgresqlOptions, postgresql } from "./index.ts";
 import { resolvePostgresqlOptions } from "./options.ts";
 
@@ -95,6 +98,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
   deadLetterStoreContract({ create: async () => (await openStorage()).deadLetterStore });
   schedulerContract({ create: async () => (await openStorage()).scheduler });
   idempotencyStoreContract({ create: async () => (await openStorage()).idempotencyStore });
+  snapshotStoreContract({ create: async () => (await openStorage()).snapshotStore });
   storageTransactionContract({ create: () => openStorage() });
 
   it("takes the append lock as a transaction starts, before anything it writes, and lets go of it with the transaction", async () => {
@@ -381,6 +385,51 @@ describe.skipIf(container === null)("postgresql adapter", () => {
     expect(await eventStore.lastPosition()).toBe(100);
   });
 
+  it("never reports a version past the events a load from a later version returns", async () => {
+    const adapter = fresh();
+    const storage = await openStorage(adapter);
+    const stream = { aggregateType: "order", aggregateId: "1" };
+    await storage.eventStore.append({
+      ...stream,
+      expectedVersion: 0,
+      events: [1, 2].map((version) => pendingEvent({ aggregateId: "1", version })),
+    });
+    const { tablePrefix } = resolvePostgresqlOptions(adapter.options);
+    const sql = postgres(url, { max: 1, onnotice: () => undefined });
+    closers.push(() => sql.end({ timeout: 5 }));
+    const db = createPostgresqlDatabase(sql);
+    // An append lands between the first and the second statement of the load.
+    let statements = 0;
+    const store = createPostgresqlEventStore({
+      db: {
+        ...db,
+        all: async (statement, params) => {
+          statements += 1;
+          if (statements === 2) {
+            await storage.eventStore.append({
+              ...stream,
+              expectedVersion: 2,
+              events: [pendingEvent({ aggregateId: "1", version: 3 })],
+            });
+          }
+          return db.all(statement, params);
+        },
+      },
+      table: `"${tablePrefix}events"`,
+      lockKey: "unused",
+      channel: "unused",
+    });
+    const loaded = await store.load({ ...stream, fromVersion: 2 });
+    expect(loaded.events.map((event) => event.version)).toEqual([2]);
+    expect(loaded.version).toBe(2);
+    expect(statements).toBe(2);
+    // From the first event, or from past the head, one statement is enough.
+    expect(await store.load(stream)).toMatchObject({ version: 3 });
+    expect(statements).toBe(3);
+    expect(await store.load({ ...stream, fromVersion: 4 })).toEqual({ events: [], version: 3 });
+    expect(statements).toBe(4);
+  });
+
   it("keeps every table in the configured schema", async () => {
     const schema = `s_${run}`;
     const adapter = fresh({ schema });
@@ -399,6 +448,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
       "inbox",
       "rm_order_summary",
       "scheduled_commands",
+      "snapshots",
     ]);
   });
 

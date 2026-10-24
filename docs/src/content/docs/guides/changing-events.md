@@ -94,9 +94,10 @@ what keeps the chain straight.
   new event type and keep handling the old one; upcasters transform, they do not invent.
 
 Upcasters are cheap but not free: they run on every read of an old event. An aggregate with
-thousands of old events re-runs the chain on every command, since Bounda has no snapshots yet
-([what is not there yet](/reference/limitations/)), and a rebuild runs it over
-the whole global stream once.
+thousands of old events re-runs the chain on every command, unless it takes
+[snapshots](/concepts/long-streams/#snapshots), which fold the old events once, and a rebuild runs
+it over the whole global stream once. Adding an upcaster retires the aggregate's snapshots, as any
+change to how its state is folded does.
 
 ## What is not covered yet
 

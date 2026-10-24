@@ -35,7 +35,7 @@ import type { NewEvent } from "../../contracts/event.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
-import { foldState } from "../aggregate/fold-state.ts";
+import type { AggregateLoader } from "../aggregate/load-aggregate.ts";
 import type { AggregateRuntime, AggregatesRuntime, CommandRuntime } from "../aggregate/runtime.ts";
 import { errorDetails } from "../shared/retry.ts";
 import { withTimeout } from "../shared/timeout.ts";
@@ -88,6 +88,7 @@ export interface CommandPipeline {
 
 export interface CreateCommandPipelineArgs {
   readonly aggregates: AggregatesRuntime;
+  readonly loader: AggregateLoader;
   readonly storage: Storage;
   readonly config: ResolvedConfig;
   readonly ids: IdGenerator;
@@ -310,6 +311,7 @@ const rejectOf = (
  */
 export const createCommandPipeline: CreateCommandPipelineFunction = ({
   aggregates,
+  loader,
   storage,
   config,
   ids,
@@ -329,11 +331,11 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     const attempts = config.runtime.commands.concurrencyRetries + 1;
     const { timeoutMs } = config.forAggregate(aggregate.name).commands;
     for (let attempt = 1; ; attempt += 1) {
-      const loaded = await store.load({
-        aggregateType: aggregate.name,
+      const { folded, version } = await loader.load({
+        aggregate,
         aggregateId: command.aggregateId,
+        eventStore: store,
       });
-      const folded = foldState({ aggregate, events: loaded.events });
       const stream = `${aggregate.name}:${command.aggregateId}`;
       if (folded.openedWithout !== null && !warnedOpenings.has(stream)) {
         warnedOpenings.add(stream);
@@ -343,7 +345,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
           eventType: folded.openedWithout,
         });
       }
-      const state = { ...folded.state, id: command.aggregateId, version: loaded.version };
+      const state = { ...folded.state, id: command.aggregateId, version };
       const issued = new WeakSet<DomainError>();
       const produced = (await withTimeout({
         run: (signal) =>
@@ -374,22 +376,19 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         aggregate,
         command,
         produced ?? [],
-        loaded.version,
+        version,
         ids,
         clock.now().toISOString(),
       );
       checkCreationOrder(aggregate, command, folded.created, events);
       if (events.length === 0) {
-        return storedDispatch(aggregate, command.aggregateId, {
-          version: loaded.version,
-          events: [],
-        });
+        return storedDispatch(aggregate, command.aggregateId, { version, events: [] });
       }
       try {
         const appended = await store.append({
           aggregateType: aggregate.name,
           aggregateId: command.aggregateId,
-          expectedVersion: loaded.version,
+          expectedVersion: version,
           events,
         });
         return storedDispatch(aggregate, command.aggregateId, appended);

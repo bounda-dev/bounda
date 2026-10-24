@@ -18,11 +18,14 @@ import {
   readModelRebuildContract,
   readModelTransactionContract,
   schedulerContract,
+  snapshotStoreContract,
   storageTransactionContract,
   tableContract,
   viewContract,
 } from "../testing/index.ts";
+import { createSqliteEventStore } from "./event-store.ts";
 import { createSqliteAdapter } from "./index.ts";
+import { storageTablesFor } from "./schema.ts";
 
 const bind = (params: readonly unknown[]): SQLInputValue[] =>
   params.map((value) => (typeof value === "boolean" ? Number(value) : value)) as SQLInputValue[];
@@ -100,6 +103,7 @@ describe("the SQLite stores on node:sqlite", () => {
   deadLetterStoreContract({ create: async () => (await storage()).deadLetterStore });
   schedulerContract({ create: async () => (await storage()).scheduler });
   idempotencyStoreContract({ create: async () => (await storage()).idempotencyStore });
+  snapshotStoreContract({ create: async () => (await storage()).snapshotStore });
   storageTransactionContract({ create: storage });
   tableContract({
     create: async () =>
@@ -116,6 +120,73 @@ describe("the SQLite stores on node:sqlite", () => {
   readModelTransactionContract({
     create: async () => nodeSqlite().adapter,
     locking: "single-writer",
+  });
+});
+
+describe("the SQLite event store", () => {
+  it("never reports a version past the events a load from a later version returns", async () => {
+    const { adapter, db } = nodeSqlite();
+    const storage = await adapter.createStorage({ logger: silentLogger });
+    const stream = { aggregateType: "order", aggregateId: "1" };
+    await storage.eventStore.append({
+      ...stream,
+      expectedVersion: 0,
+      events: [1, 2].map((version) => pendingEvent({ aggregateId: "1", version })),
+    });
+    // An append lands between the first and the second statement of the load.
+    let statements = 0;
+    const racing: SqlDatabase = {
+      run: async (sql, params) => {
+        db.prepare(sql).run(...bind(params));
+      },
+      all: async (sql, params) => {
+        statements += 1;
+        if (statements === 2) {
+          await storage.eventStore.append({
+            ...stream,
+            expectedVersion: 2,
+            events: [pendingEvent({ aggregateId: "1", version: 3 })],
+          });
+        }
+        return db.prepare(sql).all(...bind(params)) as Record<string, unknown>[];
+      },
+      write: () => Promise.reject(new Error("not written here")),
+    };
+    const store = createSqliteEventStore({ db: racing, table: storageTablesFor("bounda_").events });
+    const loaded = await store.load({ ...stream, fromVersion: 2 });
+    expect(loaded.events.map((event) => event.version)).toEqual([2]);
+    expect(loaded.version).toBe(2);
+    expect(statements).toBe(2);
+  });
+
+  it("reads a load from the first event, or from past the head, in one statement", async () => {
+    const { adapter, db } = nodeSqlite();
+    const storage = await adapter.createStorage({ logger: silentLogger });
+    const stream = { aggregateType: "order", aggregateId: "1" };
+    await storage.eventStore.append({
+      ...stream,
+      expectedVersion: 0,
+      events: [1, 2].map((version) => pendingEvent({ aggregateId: "1", version })),
+    });
+    let statements = 0;
+    const counting: SqlDatabase = {
+      run: async () => {},
+      all: async (sql, params) => {
+        statements += 1;
+        return db.prepare(sql).all(...bind(params)) as Record<string, unknown>[];
+      },
+      write: () => Promise.reject(new Error("not written here")),
+    };
+    const store = createSqliteEventStore({
+      db: counting,
+      table: storageTablesFor("bounda_").events,
+    });
+    expect(await store.load(stream)).toMatchObject({ version: 2 });
+    expect(statements).toBe(1);
+    expect(await store.load({ ...stream, fromVersion: 1 })).toMatchObject({ version: 2 });
+    expect(statements).toBe(2);
+    expect(await store.load({ ...stream, fromVersion: 3 })).toEqual({ events: [], version: 2 });
+    expect(statements).toBe(3);
   });
 });
 
@@ -245,6 +316,7 @@ describe("createSqliteAdapter", () => {
       "app_inbox",
       "app_rm_order_summary",
       "app_scheduled_commands",
+      "app_snapshots",
     ]);
   });
 

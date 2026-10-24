@@ -13,6 +13,7 @@ import { createSqliteInboxLedger } from "./inbox-ledger.ts";
 import { openSqliteReadModel, rebuildSqliteReadModel } from "./read-model.ts";
 import { createSqliteScheduler } from "./scheduler.ts";
 import { ensureStorageSchema, storageTablesFor } from "./schema.ts";
+import { createSqliteSnapshotStore } from "./snapshot-store.ts";
 
 /**
  * One handle on a SQLite database: what the stores write through, and what queries receive as
@@ -103,6 +104,7 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
         return {
           ...storesOver(db),
           checkpointStore: createSqliteCheckpointStore({ db, table: tables.checkpoints }),
+          snapshotStore: createSqliteSnapshotStore({ db, table: tables.snapshots }),
           transact: (work) => db.write((tx) => work(storesOver(boundTo(tx)))),
           close: release,
         };

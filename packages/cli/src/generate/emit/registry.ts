@@ -180,11 +180,18 @@ const emitUpcasts = (aggregate: AggregateModel, aliases: Aliases, indent: string
   ];
 };
 
-const emitAggregate = (aggregate: AggregateModel, aliases: Aliases): string => {
+const emitAggregate = (
+  aggregate: AggregateModel,
+  aliases: Aliases,
+  fingerprint: string | undefined,
+): string => {
   const indent = "      ";
   return [
     `    ${aggregate.name}: {`,
     ...(aggregate.state === null ? [] : [`${indent}state: ${aliases.of(aggregate.state.path)},`]),
+    ...(fingerprint === undefined
+      ? []
+      : [`${indent}stateFingerprint: ${JSON.stringify(fingerprint)},`]),
     `${indent}events: ${record(aggregate.events.map((event) => [event.key, aliases.of(event.path)]))},`,
     ...emitUpcasts(aggregate, aliases, indent),
     ...emitPorts(aggregate, aliases, indent),
@@ -226,6 +233,10 @@ export interface EmitRegistryArgs {
    * Absolute path the registry will be written to; imports are relative to it.
    */
   readonly path: string;
+  /**
+   * By aggregate name; left out for an aggregate without one.
+   */
+  readonly fingerprints?: Readonly<Record<string, string>>;
 }
 
 export interface EmitRegistryFunction {
@@ -236,7 +247,7 @@ export interface EmitRegistryFunction {
  * `.bounda/registry.ts`: one namespace import per module, a type import per port, and the
  * structured registry `createApp` consumes.
  */
-export const emitRegistry: EmitRegistryFunction = ({ model, path }) => {
+export const emitRegistry: EmitRegistryFunction = ({ model, path, fingerprints = {} }) => {
   const aliases = resolveAliases(model, path);
   const hasPorts = [...model.aggregates, ...model.readModels].some(
     (owner) => owner.ports.length > 0,
@@ -250,7 +261,9 @@ export const emitRegistry: EmitRegistryFunction = ({ model, path }) => {
     "export const registry = {",
     ...group(
       "aggregates",
-      model.aggregates.map((aggregate) => emitAggregate(aggregate, aliases)),
+      model.aggregates.map((aggregate) =>
+        emitAggregate(aggregate, aliases, fingerprints[aggregate.name]),
+      ),
     ),
     ...group(
       "readModels",

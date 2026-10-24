@@ -79,6 +79,11 @@ dead letter with `errorType: "retriable_exhausted"`.
   event, or its process failed on another step first. The letter stays `failed`.
 - **`REBUILD_SUPERSEDED`** (`RebuildSupersededError`; an operator's answer). Another rebuild of the
   same read model took over; this one stopped without writing. `readModel`.
+- **`SNAPSHOT_FAILED`** (`SnapshotError`; only in an app from `createTestApp`). A
+  [snapshot](/concepts/long-streams/#snapshots) did not stand for its stream: the state folded from
+  it differs from the one folded from the first event, or the state cannot be serialized. Thrown by
+  the command that loaded it or by `runUntilIdle()`. Any other app logs it, drops the snapshot and
+  folds the stream from the start.
 
 The last three are answers to an operator, from `app.deadLetters`, `bounda dead-letters` and
 `bounda rebuild`, not failures of a handler.

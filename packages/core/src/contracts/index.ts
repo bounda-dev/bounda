@@ -40,6 +40,7 @@ export {
   RebuildSupersededError,
   type Rejection,
   ScheduledClaimLostError,
+  SnapshotError,
   ValidationError,
   type ValidationIssue,
 } from "./errors.ts";

@@ -144,6 +144,21 @@ describe("validateRegistry", () => {
     );
   });
 
+  it("takes a state fingerprint only with something in it", () => {
+    expect(() =>
+      validateRegistry({
+        ...validRegistry,
+        aggregates: { order: { ...order, stateFingerprint: "" } },
+      }),
+    ).toThrow("aggregates.order.stateFingerprint: must not be empty");
+    expect(() =>
+      validateRegistry({
+        ...validRegistry,
+        aggregates: { order: { ...order, stateFingerprint: "abc" } },
+      }),
+    ).not.toThrow();
+  });
+
   it("accepts a well-formed registry", () => {
     expect(() => validateRegistry(validRegistry)).not.toThrow();
   });

@@ -20,6 +20,12 @@ import type { ViewModule } from "./view.ts";
 
 export interface AggregateEntry {
   readonly state?: StateModule;
+  /**
+   * Written by the generator: a digest of the modules that shape the state and of the type it
+   * inferred, which a snapshot of the state is valid for. An aggregate configured with
+   * `snapshot` needs it.
+   */
+  readonly stateFingerprint?: string;
   readonly events: EventModules;
   // Keyed like `events`; only events whose payload has changed shape have one.
   readonly upcasts?: Readonly<Record<string, UpcastsModule>>;

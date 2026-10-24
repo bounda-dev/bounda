@@ -123,6 +123,7 @@ describe("resolveConfig", () => {
         maxChainDepth: 3,
       },
       processes: resolved.runtime.processes,
+      snapshot: null,
     });
     expect(resolved.forAggregate("payment").commands).toEqual({ timeoutMs: 60_000 });
     expect(resolved.forAggregate("payment").processes).toEqual({
@@ -133,8 +134,60 @@ describe("resolveConfig", () => {
       commands: { timeoutMs: 10_000 },
       policies: resolved.runtime.policies,
       processes: resolved.runtime.processes,
+      snapshot: null,
     });
     expect(resolved.forAggregate("customer").policies.maxChainDepth).toBe(10);
+  });
+
+  it("resolves the snapshot settings of an aggregate that opts in, and none for the rest", () => {
+    const resolved = resolveConfig({
+      storage: sqlite,
+      runtime: {
+        overrides: {
+          order: { snapshot: { every: 200 } },
+          payment: { snapshot: { every: 50, verify: 0, version: 2 }, commands: { timeout: 1 } },
+          customer: {},
+        },
+      },
+    });
+    expect(resolved.forAggregate("order").snapshot).toEqual({
+      every: 200,
+      verify: 0.01,
+      version: 1,
+    });
+    expect(resolved.forAggregate("payment").snapshot).toEqual({
+      every: 50,
+      verify: 0,
+      version: 2,
+    });
+    expect(resolved.forAggregate("customer").snapshot).toBeNull();
+    expect(resolved.forAggregate("ledger").snapshot).toBeNull();
+  });
+
+  it("rejects malformed snapshot settings with their path", () => {
+    const snapshot = (value: unknown) =>
+      message({ storage: sqlite, runtime: { overrides: { order: { snapshot: value } } } });
+    expect(snapshot({})).toContain("runtime.overrides.order.snapshot.every:");
+    expect(snapshot({ every: 0 })).toContain("runtime.overrides.order.snapshot.every:");
+    expect(snapshot({ every: 1.5 })).toContain("runtime.overrides.order.snapshot.every:");
+    expect(snapshot({ every: 10, verify: 2 })).toContain(
+      "runtime.overrides.order.snapshot.verify:",
+    );
+    expect(snapshot({ every: 10, verify: -1 })).toContain(
+      "runtime.overrides.order.snapshot.verify:",
+    );
+    expect(snapshot({ every: 10, version: 0 })).toContain(
+      "runtime.overrides.order.snapshot.version:",
+    );
+    expect(snapshot({ every: 10, sample: 1 })).toMatch(
+      /runtime\.overrides\.order\.snapshot: .*sample/,
+    );
+    expect(() =>
+      resolveConfig({
+        storage: sqlite,
+        runtime: { overrides: { order: { snapshot: { every: 10, verify: 1, version: 1 } } } },
+      }),
+    ).not.toThrow();
   });
 
   it("rejects a storage that is not an adapter definition", () => {

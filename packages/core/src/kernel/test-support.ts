@@ -12,6 +12,7 @@ import type { RejectFunction } from "../modules/command.ts";
 import type { PayloadArgs } from "../modules/payload.ts";
 import type { Registry } from "../modules/registry.ts";
 import { buildAggregates } from "./aggregate/build-aggregates.ts";
+import { createAggregateLoader } from "./aggregate/load-aggregate.ts";
 import type { AggregatesRuntime } from "./aggregate/runtime.ts";
 import { createCommandPipeline } from "./command/pipeline.ts";
 import { createPorts, type ModulePorts } from "./ports/ports.ts";
@@ -315,10 +316,16 @@ export const createKernelHarness: CreateKernelHarnessFunction = async ({
     logger: silentLogger,
     clock,
   });
-  const aggregates = buildAggregates({ registry, ports: byAggregate });
+  const aggregates = buildAggregates({ registry, ports: byAggregate, config });
+  const loader = createAggregateLoader({
+    snapshotStore: storage.snapshotStore,
+    logger,
+    strict: true,
+  });
   const rejections: CommandRejection[] = [];
   const pipeline = createCommandPipeline({
     aggregates,
+    loader,
     storage,
     config,
     ids: createSequentialIdGenerator(),

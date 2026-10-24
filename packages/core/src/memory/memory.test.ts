@@ -12,6 +12,7 @@ import {
   readModelRebuildContract,
   readModelTransactionContract,
   schedulerContract,
+  snapshotStoreContract,
   storageTransactionContract,
   tableContract,
   viewContract,
@@ -31,6 +32,7 @@ describe("memory adapter", () => {
   deadLetterStoreContract({ create: async () => (await storage()).deadLetterStore });
   schedulerContract({ create: async () => (await storage()).scheduler });
   idempotencyStoreContract({ create: async () => (await storage()).idempotencyStore });
+  snapshotStoreContract({ create: async () => (await storage()).snapshotStore });
   storageTransactionContract({ create: storage });
   tableContract({
     create: async () => {

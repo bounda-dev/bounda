@@ -290,6 +290,11 @@ events a batch carries. Rebuilds honour it too.
 `backoff` sets how long a subscriber whose batches fail is left alone before the next try: see
 [A projection that keeps failing](#a-projection-that-keeps-failing).
 
+An aggregate whose streams grow without a period to close takes
+[snapshots](/concepts/long-streams/#snapshots) with `runtime.overrides.<aggregate>.snapshot`; a
+subscriber named `snapshot:<aggregate>` writes them in the background, and shows in the lag like
+any other.
+
 ## Observability
 
 The runtime reports OpenTelemetry spans and metrics with no adapter to write: register an SDK

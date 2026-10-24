@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import { discoverProject } from "../discover.ts";
+import { fingerprintStates, readStateSources } from "../fingerprint.ts";
 import type { ProjectModel } from "../model.ts";
 import { emitProject } from "./index.ts";
 import { importPath } from "./paths.ts";
@@ -34,7 +35,10 @@ const generatedFilesOnDisk = async (root: string): Promise<readonly string[]> =>
 describe("emitProject on the order-app fixture (golden)", () => {
   it("reproduces every generated file of the fixture byte for byte", async () => {
     const model = await discoverProject({ root: fixtureRoot });
-    const files = emitProject({ model });
+    const files = emitProject({
+      model,
+      fingerprints: fingerprintStates({ sources: await readStateSources(model) }),
+    });
     if (updateGolden) {
       for (const file of files) {
         await mkdir(dirname(file.path), { recursive: true });

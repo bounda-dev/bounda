@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ResolvedConfig } from "../../config/types.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import { createEventBuilders } from "../../modules/event.ts";
 import { capitalize } from "../../modules/naming.ts";
@@ -7,6 +8,7 @@ import type { AggregateEntry, Registry } from "../../modules/registry.ts";
 import type { ModulePorts } from "../ports/ports.ts";
 import type {
   AggregateRuntime,
+  AggregateSnapshotRuntime,
   AggregatesRuntime,
   CommandRuntime,
   EventRuntime,
@@ -54,10 +56,30 @@ const buildCommands = (name: string, entry: AggregateEntry): Record<string, Comm
     ]),
   );
 
+const buildSnapshot = (
+  name: string,
+  entry: AggregateEntry,
+  config: ResolvedConfig | undefined,
+): AggregateSnapshotRuntime | null => {
+  const settings = config?.forAggregate(name).snapshot ?? null;
+  if (settings === null) return null;
+  if (entry.stateFingerprint === undefined) {
+    throw new ConfigurationError(
+      `runtime.overrides.${name}.snapshot: the registry has no state fingerprint for "${name}"; run bounda generate`,
+    );
+  }
+  return {
+    every: settings.every,
+    verify: settings.verify,
+    fingerprint: `${entry.stateFingerprint}:${settings.version}`,
+  };
+};
+
 const buildAggregate = (
   name: string,
   entry: AggregateEntry,
   ports: Readonly<Record<string, unknown>>,
+  config: ResolvedConfig | undefined,
 ): AggregateRuntime => {
   const events = buildEvents(name, entry);
   return {
@@ -65,6 +87,7 @@ const buildAggregate = (
     aggregateIdField: entry.state?.aggregateId ?? `${name}Id`,
     initialState: entry.state?.initialState ?? {},
     opensWithBegin: Object.values(events).some((event) => event.begin !== null),
+    snapshot: buildSnapshot(name, entry, config),
     events,
     eventsByType: Object.fromEntries(Object.values(events).map((event) => [event.type, event])),
     eventBuilders: createEventBuilders(entry.events) as AggregateRuntime["eventBuilders"],
@@ -79,6 +102,10 @@ export interface BuildAggregatesArgs {
    * What `createPorts` built; an aggregate missing here gets no ports.
    */
   readonly ports: ModulePorts;
+  /**
+   * Where the snapshot settings come from; left out, no aggregate takes snapshots.
+   */
+  readonly config?: ResolvedConfig;
 }
 
 export interface BuildAggregatesFunction {
@@ -88,11 +115,11 @@ export interface BuildAggregatesFunction {
 /**
  * Command type names must be unique across aggregates, since `app.commands` is one flat namespace.
  */
-export const buildAggregates: BuildAggregatesFunction = ({ registry, ports }) => {
+export const buildAggregates: BuildAggregatesFunction = ({ registry, ports, config }) => {
   const byName = Object.fromEntries(
     Object.entries(registry.aggregates).map(([name, entry]) => [
       name,
-      buildAggregate(name, entry, ports[name] ?? {}),
+      buildAggregate(name, entry, ports[name] ?? {}, config),
     ]),
   );
   const commandsByType: Record<string, AggregatesRuntime["commandsByType"][string]> = {};

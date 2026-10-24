@@ -17,8 +17,10 @@ aggregates without `state.ts`.
 ## `bounda generate`
 
 Reads the project layout and writes `.bounda/registry.ts`, `.bounda/register.d.ts`,
-`.bounda/types.ts` and one `+types/<name>.ts` next to every module. Files whose content did not
-change are left alone; `+types` files whose module is gone are removed, and so are the folders
+`.bounda/types.ts` and one `+types/<name>.ts` next to every module. The registry carries, for every
+aggregate, a `stateFingerprint` of the modules that shape its state and of the type inferred for
+it, which its [snapshots](/concepts/long-streams/#what-a-snapshot-is-valid-for) are valid for.
+Files whose content did not change are left alone; `+types` files whose module is gone are removed, and so are the folders
 their removal empties; a folder holding nothing but `+types` (and Finder's `.DS_Store`) is not
 taken for a module.
 

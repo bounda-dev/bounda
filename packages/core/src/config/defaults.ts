@@ -38,3 +38,12 @@ export const DEFAULT_BACKOFF_BASE_DELAY_MS: number = 1_000;
 export const DEFAULT_BACKOFF_MAX_DELAY_MS: number = 30_000;
 export const DEFAULT_CATCH_UP_TIMEOUT_MS: number = 2_000;
 export const DEFAULT_CATCH_UP_POLL_MS: number = 15;
+/**
+ * The share of the loads from a snapshot checked against the whole stream when `snapshot.verify`
+ * is left out.
+ */
+export const DEFAULT_SNAPSHOT_VERIFY: number = 0.01;
+/**
+ * The `snapshot.version` of an aggregate whose configuration sets none.
+ */
+export const DEFAULT_SNAPSHOT_VERSION: number = 1;
