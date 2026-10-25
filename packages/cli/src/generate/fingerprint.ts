@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
-import { dirname, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import type { StateTypeSource } from "./emit/types.ts";
 import type { AggregateModel, ProjectModel } from "./model.ts";
 import { compareNames } from "./naming.ts";
@@ -49,7 +49,7 @@ const resolveRelative = async (from: string, specifier: string): Promise<string 
     ),
     `${base}.ts`,
     `${base}.tsx`,
-    `${base}/index.ts`,
+    join(base, "index.ts"),
   ].filter((candidate) => /\.(ts|tsx|mts)$/.test(candidate));
   for (const candidate of candidates) {
     if (await isFile(candidate)) return candidate;
