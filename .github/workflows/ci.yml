@@ -170,7 +170,7 @@ jobs:
             echo "## Mutation testing: ${{ matrix.package }}"
             echo
             echo '```text'
-            sed -n '/^-*|/,/^-*|$/p' mutation.log | head -60
+            awk '/^-*\|/,/^-*\|$/ { if (n++ < 60) print }' mutation.log
             grep -E "Final mutation score" mutation.log | sed 's/.*INFO MutationTestReportHelper//' || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
