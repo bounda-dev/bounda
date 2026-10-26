@@ -1,8 +1,10 @@
 ---
 import { Icon } from "@astrojs/starlight/components";
-import { REPOSITORY } from "../site.ts";
+import { DEMO, HOME, REPOSITORY } from "../site.ts";
 ---
 
+<a class="text" href={HOME}>bounda.dev</a>
+<a class="text" href={DEMO}>Demo</a>
 <a href={REPOSITORY} aria-label="GitHub">
   <Icon name="github" size="1.25rem" />
 </a>
@@ -10,13 +12,31 @@ import { REPOSITORY } from "../site.ts";
 <style>
   a {
     display: flex;
+    align-items: center;
     padding: 0.5em;
     margin: -0.5em;
     color: var(--sl-color-gray-3);
+    text-decoration: none;
+  }
+
+  /* Set like bounda.dev's nav links. */
+  .text {
+    font-family: var(--bounda-display);
+    font-weight: 600;
+    font-stretch: 125%;
+    font-size: 0.6875rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
   }
 
   a:hover,
   a:focus-visible {
     color: var(--sl-color-white);
+  }
+
+  @media (max-width: 50rem) {
+    .text {
+      display: none;
+    }
   }
 </style>

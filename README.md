@@ -27,6 +27,7 @@ npm create bounda@latest my-app
 ```
 
 [bounda.dev](https://bounda.dev) ·
+[Live demo](https://demo.bounda.dev) ·
 **[Documentation](https://docs.bounda.dev)** ·
 [Getting started](https://docs.bounda.dev/getting-started/) ·
 [Core concepts](https://docs.bounda.dev/getting-started/core-concepts/) ·
