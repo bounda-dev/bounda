@@ -104,8 +104,20 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
 ### Per aggregate
 
 - **`overrides`**, default `{}`. Settings for one aggregate, by aggregate name: `commands.timeout`,
-  and `policies` and `processes` with the keys above. What an override leaves out comes from the
-  app's settings.
+  `policies` and `processes` with the keys above, and `snapshot`. What an override leaves out comes
+  from the app's settings.
+- **`overrides.<aggregate>.snapshot`**, none by default. Opts the aggregate into
+  [snapshots](/concepts/long-streams/#snapshots) of its state, written in the background and loaded
+  from instead of the stream's first event:
+  - **`every`**, required. How many events a stream gathers past its last snapshot before the next
+    one is written.
+  - **`verify`**, default `0.01`. The share of the loads from a snapshot, 0 to 1, checked against a
+    fold of the whole stream. A snapshot that folds to another state is logged, dropped and not
+    used. An app from `createTestApp` checks every load and throws `SnapshotError` instead.
+  - **`version`**, default `1`. Part of what a snapshot is valid for, next to the
+    `stateFingerprint` the generator computes from the modules that shape the state. Raise it to
+    retire every snapshot of the aggregate when the fold changed through something the fingerprint
+    cannot see, such as a package or a module behind a path alias.
 
 A process can set its own lifetime in its `config`,
 `({ events }) => ({ startedBy: [...], timeout: "48h" })`, which wins over `processes.timeout` and

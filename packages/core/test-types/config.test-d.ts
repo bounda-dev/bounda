@@ -66,6 +66,16 @@ describe("defineConfig", () => {
     defineConfig({
       storage: sqlite,
       ports,
+      runtime: {
+        overrides: {
+          order: { snapshot: { every: 200 } },
+          customer: { snapshot: { every: 50, verify: 0.1, version: 2 } },
+        },
+      },
+    });
+    defineConfig({
+      storage: sqlite,
+      ports,
       runtime: { dispatcher: { pollInterval: 250 } },
     });
     defineConfig({
@@ -166,6 +176,18 @@ describe("defineConfig", () => {
     });
     // @ts-expect-error batch is not a role
     defineConfig({ storage: sqlite, ports, runtime: { role: "batch" } });
+    defineConfig({
+      storage: sqlite,
+      ports,
+      // @ts-expect-error every is a number of events
+      runtime: { overrides: { order: { snapshot: { every: "200" } } } },
+    });
+    defineConfig({
+      storage: sqlite,
+      ports,
+      // @ts-expect-error snapshots are opted into per aggregate, not app-wide
+      runtime: { snapshot: { every: 200 } },
+    });
   });
 
   it("requires storage to be an adapter definition", () => {

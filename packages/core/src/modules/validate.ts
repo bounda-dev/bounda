@@ -69,6 +69,9 @@ const validateAggregate = (
   if (aggregate.state !== undefined && !isRecord(aggregate.state.initialState)) {
     problems.push({ path: `${base}.state`, message: 'export "initialState" must be an object' });
   }
+  if (aggregate.stateFingerprint !== undefined && aggregate.stateFingerprint === "") {
+    problems.push({ path: `${base}.stateFingerprint`, message: "must not be empty" });
+  }
   for (const [key, event] of Object.entries(aggregate.events)) {
     requireFolding(problems, event, `${base}.events.${key}`);
     optionalFunction(problems, event, `${base}.events.${key}`, "payload");

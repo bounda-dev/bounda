@@ -30,11 +30,22 @@ export interface CommandRuntime {
     | null;
 }
 
+/**
+ * The snapshot settings of an aggregate that takes them, with the fingerprint its snapshots are
+ * valid for: the registry's state fingerprint and the configured version.
+ */
+export interface AggregateSnapshotRuntime {
+  readonly every: number;
+  readonly verify: number;
+  readonly fingerprint: string;
+}
+
 export interface AggregateRuntime {
   readonly name: string;
   readonly aggregateIdField: string;
   readonly initialState: object;
   readonly opensWithBegin: boolean;
+  readonly snapshot: AggregateSnapshotRuntime | null;
   /**
    * The chosen implementation of every port, spread into the arguments of every handler of the
    * aggregate: its commands, policies and processes.

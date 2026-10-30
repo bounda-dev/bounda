@@ -18,6 +18,7 @@ import { createMemoryEventStore } from "./event-store.ts";
 import { createKeptIdempotencyStore } from "./idempotency-store.ts";
 import { createKeptInboxLedger } from "./inbox-ledger.ts";
 import { createKeptScheduler } from "./scheduler.ts";
+import { createMemorySnapshotStore } from "./snapshot-store.ts";
 import { createMemoryReadClient, createMemoryTable, type MemoryTable } from "./table.ts";
 import {
   createCheckpointJournal,
@@ -113,6 +114,7 @@ export const memory: MemoryFunction = (options = {}) => {
         ...stores,
         notifier,
         checkpointStore,
+        snapshotStore: createMemorySnapshotStore(),
         transact: createMemoryStorageTransaction({
           ...stores,
           entries: {

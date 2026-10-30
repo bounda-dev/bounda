@@ -13,6 +13,7 @@ import {
   readModelRebuildContract,
   readModelTransactionContract,
   schedulerContract,
+  snapshotStoreContract,
   storageTransactionContract,
   tableContract,
   viewContract,
@@ -38,6 +39,7 @@ describe("the Durable Object adapter", () => {
   deadLetterStoreContract({ create: async () => (await freshStorage()).deadLetterStore });
   schedulerContract({ create: async () => (await freshStorage()).scheduler });
   idempotencyStoreContract({ create: async () => (await freshStorage()).idempotencyStore });
+  snapshotStoreContract({ create: async () => (await freshStorage()).snapshotStore });
   storageTransactionContract({ create: freshStorage });
   tableContract({
     create: async () =>

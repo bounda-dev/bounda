@@ -1,3 +1,4 @@
+export { DEFAULT_SNAPSHOT_VERIFY, DEFAULT_SNAPSHOT_VERSION } from "./defaults.ts";
 export type { DefineConfigFunction, WithExactPorts } from "./define-config.ts";
 export { defineConfig } from "./define-config.ts";
 export type {
@@ -13,7 +14,9 @@ export type {
   PortsSection,
   ProcessesConfig,
   ResolvedConfig,
+  ResolvedSnapshotConfig,
   RetryConfig,
   RuntimeConfig,
   RuntimeRole,
+  SnapshotConfig,
 } from "./types.ts";

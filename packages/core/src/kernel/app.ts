@@ -12,6 +12,7 @@ import type { CommandsFacade, QueriesFacade, Registry } from "../modules/registr
 import { validateRegistry } from "../modules/validate.ts";
 import type { AppEnv, AppRegistry, EnvSection } from "../register/index.ts";
 import { buildAggregates } from "./aggregate/build-aggregates.ts";
+import { createAggregateLoader } from "./aggregate/load-aggregate.ts";
 import { withUpcasting } from "./aggregate/upcasting.ts";
 import { createCommandsFacade } from "./command/facade.ts";
 import { createCommandPipeline } from "./command/pipeline.ts";
@@ -38,6 +39,7 @@ import {
 import { createScheduledCommandWorker } from "./scheduler/worker.ts";
 import { guardedLogger } from "./shared/guarded-logger.ts";
 import { ignoredRetries, type PendingRetries } from "./shared/pending-retries.ts";
+import { createSnapshotSubscriber, takesSnapshots } from "./snapshot/subscriber.ts";
 import { ATTRIBUTES, METRICS, meter } from "./telemetry.ts";
 
 /**
@@ -273,17 +275,23 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
   try {
     const written = await config.storage.createStorage({ logger });
     opened.unshift(() => written.close());
-    const aggregates = buildAggregates({ registry, ports: ports.byAggregate });
+    const aggregates = buildAggregates({ registry, ports: ports.byAggregate, config });
     const storage = {
       ...written,
       eventStore: withUpcasting({ eventStore: written.eventStore, aggregates }),
     };
+    const loader = createAggregateLoader({
+      snapshotStore: storage.snapshotStore,
+      logger,
+      strict: test !== undefined,
+    });
     const readModels = await buildReadModels({ registry, config, logger });
     opened.unshift(() => readModels.close());
     // One list per `runUntilIdle` under way.
     const observers = new Set<CommandRejection[]>();
     const pipeline = createCommandPipeline({
       aggregates,
+      loader,
       storage,
       config,
       ids,
@@ -345,6 +353,18 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           }),
         ),
         ...following,
+        ...Object.values(aggregates.byName)
+          .filter(takesSnapshots)
+          .map((aggregate) =>
+            createSnapshotSubscriber({
+              aggregate,
+              eventStore: storage.eventStore,
+              snapshotStore: storage.snapshotStore,
+              loader,
+              logger,
+              ...(test === undefined ? {} : { strict: { onError: test.onSnapshotError } }),
+            }),
+          ),
       ],
       batchSize: config.runtime.dispatcher.batchSize,
       pollIntervalMs: config.runtime.dispatcher.pollIntervalMs,

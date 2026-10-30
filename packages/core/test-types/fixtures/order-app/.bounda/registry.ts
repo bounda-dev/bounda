@@ -41,6 +41,7 @@ export const registry = {
   aggregates: {
     customer: {
       state: customerState,
+      stateFingerprint: "c452b414dc30e1d1",
       events: { customerRegistered },
       commands: { registerCustomer: { module: registerCustomer } },
       policies: {},
@@ -48,6 +49,7 @@ export const registry = {
     },
     order: {
       state: orderState,
+      stateFingerprint: "844a21009adced43",
       events: { orderCancelled, orderPaid, orderPlaced },
       upcasts: { orderPlaced: orderPlacedUpcasts },
       ports: {

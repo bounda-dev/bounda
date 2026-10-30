@@ -25,7 +25,7 @@ Everything is reported under the scope `@bounda-dev/core`. Spans:
 | Span | When | Attributes |
 | --- | --- | --- |
 | `bounda.command <Type>` | a command is dispatched | `bounda.command.type`, `bounda.aggregate.type`, `bounda.aggregate.id`, `bounda.correlation_id`, `bounda.causation_id`, `bounda.outcome` (`stored`, `scheduled`, `rejected`, or `replayed` for a dispatch answered from its `idempotencyKey`), `bounda.event.count`; a rejection adds the event `bounda.command.rejected`, its code in `bounda.rejected`, replayed or not |
-| `bounda.subscriber <name>` | the dispatcher hands a batch to a projection, the policy runner or the process runner; idle passes produce none | `bounda.subscriber`, `bounda.subscriber.kind`, `bounda.position.after`, `bounda.event.count`, `bounda.outcome` (`advanced`, `held`, `failed`, `moved`) |
+| `bounda.subscriber <name>` | the dispatcher hands a batch to a projection, the policy runner, the process runner or a snapshot subscriber; idle passes produce none | `bounda.subscriber`, `bounda.subscriber.kind` (`projection`, `policy`, `process`, `snapshot`), `bounda.position.after`, `bounda.event.count`, `bounda.outcome` (`advanced`, `held`, `failed`, `moved`) |
 | `bounda.projection <readModel>.<projection>` | a projection handles one event | `bounda.read_model`, `bounda.projection`, the event's id, type and aggregate, `bounda.correlation_id` |
 | `bounda.policy <aggregate>.<policy>` | a policy handler runs | `bounda.policy`, the event's id, type and aggregate, `bounda.correlation_id`, `bounda.attempt` |
 | `bounda.process <aggregate>.<process>` | a process handler runs; `… at <field>` for an `at-<field>.ts`, `… at timeout` for `at-timeout.ts` | `bounda.process`, the event's id, type and aggregate, `bounda.correlation_id`, `bounda.attempt`; for a deadline, `bounda.process`, the process's aggregate type and id and `bounda.correlation_id` |
@@ -46,8 +46,11 @@ Metrics:
 | `bounda.dispatcher.lag` | observable gauge, events each subscriber is behind the head | `bounda.subscriber` |
 | `bounda.commands` | counter | `bounda.command.type`, `bounda.outcome` (`stored`, `scheduled`, `rejected`, `replayed`, `failed`) |
 | `bounda.dead_letters` | counter | `bounda.handler.kind`, `bounda.handler`, `bounda.outcome` (`terminal`, `retriable_exhausted`) |
+| `bounda.snapshots` | counter, loads of an aggregate with [snapshots](/concepts/long-streams/#snapshots) | `bounda.aggregate.type`, `bounda.outcome` (`used`, `verified`, `mismatch`, `missing`, `stale`, `unreadable`, `ahead`) |
 
 The lag gauge is what to alert on: a subscriber whose lag grows is a projection or a policy that is
 failing or stuck, and `app.getLag()` returns the same numbers for a health endpoint, with what a
 failing subscriber is stuck on (see
-[A projection that keeps failing](/guides/deployment/#a-projection-that-keeps-failing)).
+[A projection that keeps failing](/guides/deployment/#a-projection-that-keeps-failing)). A
+`mismatch` on `bounda.snapshots` is worth one too: a snapshot folded to a state the stream does not
+give, so an `evolve` of that aggregate depends on something other than the events.

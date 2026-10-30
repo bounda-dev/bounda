@@ -1,6 +1,6 @@
 ---
 title: Long streams close their books
-description: What to do in Bounda with a stream that keeps growing, an account or the stock of a SKU, why closing the books comes before snapshots, and why snapshots will only come with a validity the runtime checks itself.
+description: What to do in Bounda with a stream that keeps growing, an account or the stock of a SKU, why closing the books comes before snapshots, and how snapshots work when a stream has nothing to close, with a validity the runtime checks itself.
 sidebar:
   order: 51
 ---
@@ -74,7 +74,7 @@ command folds that month alone, while the closed ones stay in the event store fo
 that shows the account across years. The same shape fits a SKU's stock with a stock-take per
 period, or a cashier's shift.
 
-## Why there are no snapshots yet
+## Snapshots
 
 A snapshot stores the folded state so that the next load starts from it instead of from the first
 event. It is a cache, and a cache can be stale. The question is what a stale one breaks.
@@ -94,15 +94,76 @@ reference says to adjust on every deployment that changes the aggregate's state.
 inferred by the generator and carries no version a person maintains, and a version someone has to
 remember to bump is the bug waiting for the one deploy where they forget.
 
-So the stance is: **snapshots only with a validity the runtime checks itself**. They are planned as
-a cache of the fold and never the source of truth: one that is missing, unreadable or doubtful is
-ignored, and the stream is folded from the start, with the same result. A snapshot will be valid
-only for a fingerprint of the modules that shape the state, so that a change to any of them makes
-the old ones unusable without anyone deciding so. `bounda rebuild` already works that way: a paused
-rebuild resumes only under a digest of the same view and projections, and starts again otherwise.
-There is no date and no API for snapshots yet.
+So Bounda's snapshots are **a cache of the fold, never the source of truth, with a validity the
+runtime checks itself**. One that is missing, written by other code, unreadable or doubtful is
+ignored, and the stream is folded from the start, with the same result. They are opt-in per
+aggregate, for the stream that has nothing to close.
 
-## What snapshots would not do
+### Opting in
+
+```ts
+// bounda.config.ts
+runtime: {
+  overrides: {
+    account: { snapshot: { every: 200 } },
+  },
+},
+```
+
+`every` is how many events a stream gathers past its last snapshot before the next one is written.
+A subscriber named `snapshot:account` follows the global stream like a projection does and writes
+the snapshots in the background, in the `worker` role or an app from `createTestApp` after
+`runUntilIdle()`, so no command ever waits for one: a command loads the snapshot, folds the events
+after it and appends as before. The first deploy with snapshots walks the whole history and writes
+one for every stream long enough, so the streams that hurt today are covered without a migration.
+`app.getLag()` reports the subscriber like any other. A command dispatched again with the same
+[`idempotencyKey`](/guides/idempotent-commands/) is answered from what the first one recorded,
+without loading the aggregate, so it reads no snapshot and writes none.
+
+### What a snapshot is valid for
+
+The generator computes a fingerprint of every aggregate's state and writes it to the registry as
+`stateFingerprint`: a digest of `state.ts`, of every event module with its upcasts, of every module
+those reach through relative imports, and of the state type it inferred. A snapshot is written
+under that fingerprint and used only under the same one, so a change to any of those files, a
+reformat or a comment included, retires every snapshot of the aggregate at the next deploy: each
+stream is folded from its first event once, and the subscriber writes a fresh snapshot at its next
+event. Nobody decides when; the cost is one slow load per stream, and a wrong state is never
+decided from.
+
+What the fingerprint cannot see is a module reached through a package or a path alias such as
+`~/lib/money`, since the generator follows relative paths only. When one of those changes what the
+state folds to, raise `snapshot.version`, which is part of what the snapshot is valid for too:
+
+```ts
+account: { snapshot: { every: 200, version: 2 } },
+```
+
+### What the runtime checks
+
+A snapshot is used only when its fingerprint is the aggregate's, it reads back, and the stream
+reaches its version; one that reads badly or is past the stream's head is dropped. On top of that,
+`snapshot.verify`, `0.01` by default, is the share of loads from a snapshot that are checked
+against a fold of the whole stream: a snapshot that folds to another state is logged, dropped and
+not used, and the command goes on with the state of the stream. Such a difference means the fold is
+not a function of the events alone, an `evolve` reading the clock or a module variable, which is
+worth knowing however the state is loaded. The `bounda.snapshots` counter says what every load
+found: `used`, `verified`, `mismatch`, `missing`, `stale`, `unreadable` or `ahead`
+([observability](/reference/observability/)).
+
+An app from `createTestApp` checks every load and throws `SnapshotError` instead of dropping the
+snapshot, from the command that loaded it or from `runUntilIdle()` when the subscriber met it. A
+test suite that runs its aggregates with `snapshot` configured therefore proves their folds
+deterministic ([testing](/guides/testing/#snapshots-are-checked)).
+
+### What a snapshot holds
+
+The state is kept with its types: `Date`, `Map`, `Set`, `bigint`, `undefined`, `RegExp` and
+nested plain objects and arrays come back as they were. A class instance or a function in the
+state cannot be kept: the subscriber logs it and writes no snapshot for that stream, and a test app
+throws `SnapshotError` from `runUntilIdle()`. Keep the state to data.
+
+## What snapshots do not do
 
 - **Speed up a rebuild.** A rebuild runs projections over the global stream; it never folds an
   aggregate, so an aggregate's snapshot saves it nothing. What would make a large rebuild faster
@@ -111,6 +172,9 @@ There is no date and no API for snapshots yet.
   Object, with everything that hangs off it) has one writer at a time, and a snapshot saves a
   read, not a commit. More throughput comes from
   [one store per tenant](/concepts/how-it-runs/#the-way-out-one-store-per-tenant).
+- **Replace closing the books.** A stream with a period has a natural end and a state the next
+  period starts from; a snapshot keeps a stream without one loadable, while the stream itself
+  keeps growing and every projection of it still reads it whole.
 
 ## How others do it
 
@@ -134,8 +198,9 @@ There is no date and no API for snapshots yet.
 
 ## What stays outside
 
-- **A stream with no period and many events.** If the business has nothing to close, the fold is
-  paid on every command until snapshots exist.
+- **A stream with no period and many events.** If the business has nothing to close, a snapshot
+  keeps each command's fold to the events since the last one; a projection or a read of the stream
+  still goes through all of it.
 - **The moment between periods.** A command writes one stream, so the next ledger opens when the
   policy runs, after the closing commits, not in the same transaction. An entry posted in between
   is rejected and retried by its caller.
@@ -145,9 +210,8 @@ There is no date and no API for snapshots yet.
 
 ## Where to read more
 
-- [What is not there yet](/reference/limitations/), the short version of this
-  page, and [Changing an event's shape](/guides/changing-events/) for the upcasters every fold
-  runs.
+- [`snapshot`](/reference/configuration/#per-aggregate) in the configuration reference, and
+  [Changing an event's shape](/guides/changing-events/) for the upcasters every fold runs.
 - [State](/guides/project-layout/#state) and [policies](/guides/project-layout/#policies-policies),
   for the modules used above.
 - Oskar Dudycz,

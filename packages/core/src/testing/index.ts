@@ -1,7 +1,7 @@
 import type { Adapter } from "../adapter/adapter.ts";
 import type { Config } from "../config/types.ts";
 import { createFixedClock, type FixedClock } from "../contracts/clock.ts";
-import type { ConfigurationError } from "../contracts/errors.ts";
+import type { ConfigurationError, SnapshotError } from "../contracts/errors.ts";
 import { createSequentialIdGenerator, type IdGenerator } from "../contracts/ids.ts";
 import { type Logger, silentLogger } from "../contracts/logger.ts";
 import { assembleApp, type BoundaApp } from "../kernel/app.ts";
@@ -52,7 +52,8 @@ export type CreateTestAppArgs<R extends Registry> = {
 export interface TestApp<R extends Registry> {
   /**
    * The app, whose `runUntilIdle()` throws the `ConfigurationError` of a port the test left out
-   * once a handler has read it.
+   * once a handler has read it, and the `SnapshotError` of a snapshot that did not stand for its
+   * stream.
    */
   readonly app: BoundaApp<R>;
   /**
@@ -92,7 +93,7 @@ export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
   const ids = createSequentialIdGenerator();
   // A reaction's failure stays in its dead letter, so the first port read without a value is
   // kept here for `runUntilIdle` to throw: the test fails saying what to pass.
-  let missing: ConfigurationError | undefined;
+  let missing: ConfigurationError | SnapshotError | undefined;
   const app = await assembleApp<R>({
     registry,
     // Required by the `Config` of a project whose ports need a choice, and never read here:
@@ -107,6 +108,9 @@ export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
     test: {
       ports,
       onMissing: (error) => {
+        missing ??= error;
+      },
+      onSnapshotError: (error) => {
         missing ??= error;
       },
     },

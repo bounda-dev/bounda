@@ -50,8 +50,10 @@ swaps it in without taking the read model offline; `bounda dead-letters` lists, 
 discards the handler runs that gave up; an `<event>.upcast.ts` next to an event brings stored
 payloads of an older shape up to date as they are read. Every command, batch and handler run is
 an OpenTelemetry span with `bounda.correlation_id`, the lag of every subscriber is a gauge, and on
-PostgreSQL the dispatcher is woken by `NOTIFY` instead of polling. Snapshots are not there yet, on
-purpose; the [deployment guide](https://docs.bounda.dev/guides/deployment/) says why.
+PostgreSQL the dispatcher is woken by `NOTIFY` instead of polling. An aggregate whose streams never
+end takes snapshots, opt-in and valid only for a fingerprint of the code that folds the state, so
+a deploy that changes the fold retires them on its own;
+[Long streams](https://docs.bounda.dev/concepts/long-streams/) says how.
 
 ## Exports
 

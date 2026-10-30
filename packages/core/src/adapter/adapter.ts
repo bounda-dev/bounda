@@ -8,6 +8,7 @@ import type { EventStore } from "./storage/event-store.ts";
 import type { IdempotencyStore } from "./storage/idempotency-store.ts";
 import type { InboxLedger } from "./storage/inbox-ledger.ts";
 import type { Scheduler } from "./storage/scheduler.ts";
+import type { SnapshotStore } from "./storage/snapshot-store.ts";
 import type { ReadClient, Table } from "./storage/table.ts";
 
 /**
@@ -35,6 +36,11 @@ export interface Storage {
   readonly deadLetterStore: DeadLetterStore;
   readonly scheduler: Scheduler;
   readonly idempotencyStore: IdempotencyStore;
+  /**
+   * Written by the snapshot subscriber, outside any command's transaction, and read by every
+   * command of an aggregate with snapshots.
+   */
+  readonly snapshotStore: SnapshotStore;
   /**
    * Only for a backend that can push new events; without it the dispatcher only polls.
    */

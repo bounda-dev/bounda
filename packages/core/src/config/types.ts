@@ -141,12 +141,41 @@ export interface CatchUpConfig {
 }
 
 /**
+ * Snapshots of one aggregate's state: a cache of the fold a subscriber writes in the background,
+ * which a command's load starts from instead of the stream's first event. Never the source of
+ * truth: one that is missing, from other code or doubtful is ignored.
+ */
+export interface SnapshotConfig {
+  /**
+   * How many events a stream gathers past its last snapshot before the next one is written.
+   */
+  readonly every: number;
+  /**
+   * The share of the loads from a snapshot, 0 to 1, checked against a fold of the whole stream.
+   * A snapshot that folds to a different state is logged, dropped and not used. Defaults to
+   * `DEFAULT_SNAPSHOT_VERIFY`; an app from `createTestApp` checks every load and throws instead.
+   */
+  readonly verify?: number;
+  /**
+   * Part of what a snapshot is valid for, next to the fingerprint the generator computes from the
+   * modules that shape the state. Raise it to retire every snapshot of the aggregate when the
+   * fold changed through something the fingerprint cannot see, such as a dependency. Defaults to
+   * `DEFAULT_SNAPSHOT_VERSION`.
+   */
+  readonly version?: number;
+}
+
+/**
  * Settings one aggregate may override.
  */
 export interface AggregateOverrides {
   readonly commands?: AggregateCommandsConfig;
   readonly policies?: PoliciesConfig;
   readonly processes?: ProcessesConfig;
+  /**
+   * Opts the aggregate into snapshots; without it none are taken.
+   */
+  readonly snapshot?: SnapshotConfig;
 }
 
 /**
@@ -217,10 +246,20 @@ export interface ResolvedCommandsConfig {
   readonly timeoutMs: number;
 }
 
+export interface ResolvedSnapshotConfig {
+  readonly every: number;
+  readonly verify: number;
+  readonly version: number;
+}
+
 export interface ResolvedAggregateRuntime {
   readonly commands: ResolvedCommandsConfig;
   readonly policies: ResolvedPoliciesConfig;
   readonly processes: ResolvedProcessesConfig;
+  /**
+   * `null` for an aggregate that takes no snapshots.
+   */
+  readonly snapshot: ResolvedSnapshotConfig | null;
 }
 
 /**

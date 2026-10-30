@@ -230,6 +230,9 @@ catalogs:
     commander:
       specifier: 15.0.0
       version: 15.0.0
+    devalue:
+      specifier: 6.0.3
+      version: 6.0.3
     isbot:
       specifier: 5.2.2
       version: 5.2.2
@@ -519,6 +522,9 @@ importers:
       '@opentelemetry/api':
         specifier: 'catalog:'
         version: 1.10.0
+      devalue:
+        specifier: 'catalog:'
+        version: 6.0.3
       uuid:
         specifier: 'catalog:'
         version: 14.0.3

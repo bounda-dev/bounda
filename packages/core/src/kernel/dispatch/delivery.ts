@@ -5,10 +5,10 @@ import { errorDetails } from "../shared/retry.ts";
 import { ATTRIBUTES, traced } from "../telemetry.ts";
 
 /**
- * What a subscriber does with the events it receives: keep a read model up to date, run policies
- * or drive processes.
+ * What a subscriber does with the events it receives: keep a read model up to date, run policies,
+ * drive processes or snapshot an aggregate's state.
  */
-export type SubscriberKind = "projection" | "policy" | "process";
+export type SubscriberKind = "projection" | "policy" | "process" | "snapshot";
 
 /**
  * `process` resolves to how many leading events of the batch are done; the rest is delivered

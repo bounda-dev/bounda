@@ -9,6 +9,7 @@ import * as reminderSent from "../app/domain/order/reminder-sent.ts";
 export const registry = {
   aggregates: {
     order: {
+      stateFingerprint: "aff0623b5e0c832f",
       events: { orderCancelled, orderPaid, orderPlaced, reminderSent },
       commands: { payOrder: { module: payOrder }, placeOrder: { module: placeOrder } },
       policies: {},

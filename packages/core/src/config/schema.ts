@@ -16,6 +16,8 @@ import {
   DEFAULT_POLL_INTERVAL_MS,
   DEFAULT_PROCESSES,
   DEFAULT_PROJECTION_BATCH_TIME_MS,
+  DEFAULT_SNAPSHOT_VERIFY,
+  DEFAULT_SNAPSHOT_VERSION,
 } from "./defaults.ts";
 import type {
   Config,
@@ -25,6 +27,7 @@ import type {
   ResolvedPoliciesConfig,
   ResolvedProcessesConfig,
   ResolvedRetryConfig,
+  ResolvedSnapshotConfig,
 } from "./types.ts";
 
 const duration = z.union([z.number(), z.string()]).transform((value, context) => {
@@ -67,10 +70,17 @@ const processes = z.strictObject({
   handlerTimeout: timeout.optional(),
 });
 
+const snapshot = z.strictObject({
+  every: z.int().min(1),
+  verify: z.number().min(0).max(1).optional(),
+  version: z.int().min(1).optional(),
+});
+
 const overrides = z.strictObject({
   commands: commands.optional(),
   policies: policies.optional(),
   processes: processes.optional(),
+  snapshot: snapshot.optional(),
 });
 
 const runtime = z.strictObject({
@@ -113,6 +123,7 @@ type ParsedRetry = z.output<typeof retry>;
 type ParsedCommands = z.output<typeof commands>;
 type ParsedPolicies = z.output<typeof policies>;
 type ParsedProcesses = z.output<typeof processes>;
+type ParsedSnapshot = z.output<typeof snapshot>;
 
 const resolveRetry = (
   parsed: ParsedRetry | undefined,
@@ -152,6 +163,15 @@ const resolveProcesses = (
   handlerTimeoutMs: parsed?.handlerTimeout ?? base.handlerTimeoutMs,
 });
 
+const resolveSnapshot = (parsed: ParsedSnapshot | undefined): ResolvedSnapshotConfig | null =>
+  parsed === undefined
+    ? null
+    : {
+        every: parsed.every,
+        verify: parsed.verify ?? DEFAULT_SNAPSHOT_VERIFY,
+        version: parsed.version ?? DEFAULT_SNAPSHOT_VERSION,
+      };
+
 const formatIssues = (issues: readonly z.core.$ZodIssue[]): string =>
   issues.map((issue) => `  ${issue.path.join(".") || "(root)"}: ${issue.message}`).join("\n");
 
@@ -172,6 +192,7 @@ export const resolveConfig: ResolveConfigFunction = (config) => {
     commands: baseCommands,
     policies: basePolicies,
     processes: baseProcesses,
+    snapshot: null,
   };
   const resolvedOverrides = Object.fromEntries(
     Object.entries(parsed.runtime?.overrides ?? {}).map(([aggregate, override]) => [
@@ -180,6 +201,7 @@ export const resolveConfig: ResolveConfigFunction = (config) => {
         commands: resolveCommands(override.commands, baseCommands),
         policies: resolvePolicies(override.policies, basePolicies),
         processes: resolveProcesses(override.processes, baseProcesses),
+        snapshot: resolveSnapshot(override.snapshot),
       } satisfies ResolvedAggregateRuntime,
     ]),
   );

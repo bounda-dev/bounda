@@ -8,12 +8,6 @@ sidebar:
 Bounda is 0.x, and this is the honest list of what a production app might want and does not
 get today. Each item says why, so nobody discovers it the hard way:
 
-- **Snapshots.** An aggregate is folded from its whole stream on every command. That is fine for
-  the hundreds of events per instance that Bounda's kind of app produces, and it is not fine for
-  hundreds of thousands. Snapshots are deliberately not built yet: the state is inferred and
-  carries no version, so a snapshot written by yesterday's `evolve` would silently be wrong after
-  today's deploy. They come with a versioning story or not at all; until then, close the books
-  of an aggregate that would grow forever ([Long streams](/concepts/long-streams/)).
 - **Changing the shape of a process's state.** A process keeps its state in its own lifecycle
   events, so a change to that shape has the same problem an event payload has, and no
   `state.upcast.ts` yet. See
@@ -31,5 +25,6 @@ get today. Each item says why, so nobody discovers it the hard way:
 What a production app does get, and where it is explained:
 [rebuilding a read model](/guides/deployment/#rebuilding-a-read-model) without taking it offline,
 [dead letters with a way out](/guides/dead-letters/), [upcasters](/guides/changing-events/) for
-events whose payload changed, [observability](/reference/observability/) through OpenTelemetry, and
-a dispatcher that reacts in milliseconds on PostgreSQL.
+events whose payload changed, [snapshots](/concepts/long-streams/#snapshots) whose validity the
+runtime checks itself, [observability](/reference/observability/) through OpenTelemetry, and a
+dispatcher that reacts in milliseconds on PostgreSQL.

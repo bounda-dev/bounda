@@ -89,6 +89,7 @@ On first use the adapter creates its tables, prefixed with `bounda_` by default:
 | `bounda_scheduled_commands` | Scheduled commands, process deadlines and timeouts, and delayed policy runs |
 | `bounda_dead_letters` | Handler runs that gave up, with the error and the attempt count |
 | `bounda_idempotency_keys` | What a command dispatched with an `idempotencyKey` answered, until the key expires |
+| `bounda_snapshots` | The last snapshot of every stream of an aggregate that takes them, with the fingerprint it is valid for |
 
 Read models get one table each, named after the read model in snake_case behind `rm_`, so no
 read model can take one of the names above: `orderSummary` becomes `bounda_rm_order_summary`.

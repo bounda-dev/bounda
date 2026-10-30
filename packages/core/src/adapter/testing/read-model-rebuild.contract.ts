@@ -376,7 +376,14 @@ export const readModelRebuildContract: ReadModelRebuildContractFunction = ({
         expectedVersion: 0,
         events: [pendingEvent({ aggregateId: "1", version: 1 })],
       });
-      for (const name of ["events", "checkpoints", "inbox", "deadLetters", "scheduledCommands"]) {
+      for (const name of [
+        "events",
+        "checkpoints",
+        "inbox",
+        "deadLetters",
+        "scheduledCommands",
+        "snapshots",
+      ]) {
         const model = await adapter.createReadModel<ContractRow>({
           name,
           fields: contractFields,

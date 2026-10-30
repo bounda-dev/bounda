@@ -2,7 +2,7 @@
 import { type PortOwner, selectImplementations } from "../../config/ports.ts";
 import type { PortsConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
-import { ConfigurationError } from "../../contracts/errors.ts";
+import { ConfigurationError, type SnapshotError } from "../../contracts/errors.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { CreateArgs, PortModules } from "../../modules/port.ts";
 import type { Registry } from "../../modules/registry.ts";
@@ -23,6 +23,11 @@ export type ModulePorts = Readonly<Record<string, Readonly<Record<string, unknow
 export interface TestChoice {
   readonly ports: TestPortsChoice;
   onMissing(error: ConfigurationError): void;
+  /**
+   * Told of a snapshot that did not stand for its stream in a subscriber's batch, which the
+   * dispatcher only logs.
+   */
+  onSnapshotError(error: SnapshotError): void;
 }
 
 export type CreatePortsArgs = {

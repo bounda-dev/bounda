@@ -22,6 +22,7 @@ import {
   readModelRebuildContract,
   readModelTransactionContract,
   schedulerContract,
+  snapshotStoreContract,
   storageTransactionContract,
   tableContract,
   viewContract,
@@ -41,6 +42,7 @@ describe("sqlite adapter in memory", () => {
   inboxLedgerContract({ create: async () => (await openStorage()).inboxLedger });
   deadLetterStoreContract({ create: async () => (await openStorage()).deadLetterStore });
   schedulerContract({ create: async () => (await openStorage()).scheduler });
+  snapshotStoreContract({ create: async () => (await openStorage()).snapshotStore });
   storageTransactionContract({ create: () => openStorage() });
   tableContract({
     create: async () =>
@@ -240,6 +242,7 @@ describe("sqlite adapter on a file", () => {
       "app_inbox",
       "app_rm_order_summary",
       "app_scheduled_commands",
+      "app_snapshots",
     ]);
     await readModel.close();
     await second.close();

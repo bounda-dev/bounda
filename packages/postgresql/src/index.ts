@@ -17,6 +17,7 @@ import { type PostgresqlOptions, resolvePostgresqlOptions } from "./options.ts";
 import { openPostgresqlReadModel, rebuildPostgresqlReadModel } from "./read-model.ts";
 import { createPostgresqlScheduler } from "./scheduler.ts";
 import { ensureStorageSchema, storageTablesFor } from "./schema.ts";
+import { createPostgresqlSnapshotStore } from "./snapshot-store.ts";
 
 /**
  * The adapter `postgresql(...)` returns: what `bounda.config.ts` holds under `storage` or
@@ -117,6 +118,7 @@ export const postgresql: PostgresqlFunction = (options) => {
           ...storesOver(db),
           notifier: createPostgresqlEventNotifier({ sql, channel: tables.channel }),
           checkpointStore: createPostgresqlCheckpointStore({ db, table: tables.checkpoints }),
+          snapshotStore: createPostgresqlSnapshotStore({ db, table: tables.snapshots }),
           // The append lock comes first, before any row the work may lock: two transactions that
           // took the lock and a row in opposite orders would deadlock.
           transact: (work) =>

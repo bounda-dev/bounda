@@ -94,20 +94,27 @@ export const createPostgresqlEventStore: CreatePostgresqlEventStoreFunction = ({
         }
         return { version: actualVersion + stored.length, events: stored };
       }),
+    // A load from the first event reads one statement, whose last row is the head. From later
+    // on, the head is read first and the events bounded by it: outside a transaction, an append
+    // landing between the two reads would otherwise report a head past the events returned.
     load: async ({ aggregateType, aggregateId, fromVersion = 1 }) => {
-      // `version` is an integer column, and a version past its range, such as the one that asks
-      // for the version alone, must still compare instead of failing to bind.
-      const rows = await db.all(
-        `SELECT ${COLUMNS} FROM ${table} WHERE "aggregate_type" = $1 AND "aggregate_id" = $2 AND "version" >= $3::bigint ORDER BY "version"`,
-        [aggregateType, aggregateId, fromVersion],
-      );
-      const events = rows.map(toStoredEvent);
-      const last = events.at(-1);
-      const version =
-        fromVersion <= 1
-          ? (last?.version ?? 0)
-          : await currentVersion(db, aggregateType, aggregateId);
-      return { events, version };
+      if (fromVersion <= 1) {
+        const rows = await db.all(
+          `SELECT ${COLUMNS} FROM ${table} WHERE "aggregate_type" = $1 AND "aggregate_id" = $2 ORDER BY "version"`,
+          [aggregateType, aggregateId],
+        );
+        const events = rows.map(toStoredEvent);
+        return { events, version: events.at(-1)?.version ?? 0 };
+      }
+      const version = await currentVersion(db, aggregateType, aggregateId);
+      const rows =
+        version < fromVersion
+          ? []
+          : await db.all(
+              `SELECT ${COLUMNS} FROM ${table} WHERE "aggregate_type" = $1 AND "aggregate_id" = $2 AND "version" >= $3 AND "version" <= $4 ORDER BY "version"`,
+              [aggregateType, aggregateId, fromVersion, version],
+            );
+      return { events: rows.map(toStoredEvent), version };
     },
     readAll: async ({ afterPosition, limit }) =>
       (

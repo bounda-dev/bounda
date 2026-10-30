@@ -261,6 +261,17 @@ export class ChainDepthExceededError extends BoundaError {
 }
 
 /**
+ * Thrown in an app from `createTestApp` when a snapshot does not stand for its stream: the state
+ * folded from it differs from the one folded from the first event, or the state cannot be
+ * serialized. Any other app logs it, drops the snapshot and folds the stream from the start.
+ */
+export class SnapshotError extends BoundaError {
+  constructor(message: string, options?: ErrorOptions) {
+    super("SNAPSHOT_FAILED", message, options);
+  }
+}
+
+/**
  * Thrown by a rebuild that another rebuild of the same read model has taken over. Only the most
  * recent rebuild writes: the older one stops at its next step and leaves its work to the newer.
  */

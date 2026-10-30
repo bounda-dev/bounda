@@ -276,6 +276,16 @@ stopped reacting:
 expect((await app.getLag()).maxLag).toBe(0);
 ```
 
+## Snapshots are checked
+
+An aggregate configured with [`snapshot`](/concepts/long-streams/#snapshots) gets them in a test
+app too: `runUntilIdle()` writes them, and every later command loads from one. A test app checks
+every such load against a fold of the whole stream, where a production app checks a sample, and
+throws `SnapshotError` instead of dropping the snapshot: from the command whose state differs, or
+from `runUntilIdle()` when the subscriber met the difference or a state it cannot keep. A suite
+that passes with `snapshot` configured has proved the aggregate's fold a function of its events
+alone, and its state made of data.
+
 ## What is worth testing
 
 - **The rules**, through commands: what is accepted, what is rejected and with which code, and

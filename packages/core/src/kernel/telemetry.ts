@@ -129,10 +129,12 @@ export const METRICS: {
   readonly lag: "bounda.dispatcher.lag";
   readonly commands: "bounda.commands";
   readonly deadLetters: "bounda.dead_letters";
+  readonly snapshots: "bounda.snapshots";
 } = {
   lag: "bounda.dispatcher.lag",
   commands: "bounda.commands",
   deadLetters: "bounda.dead_letters",
+  snapshots: "bounda.snapshots",
 };
 
 export interface DeadLetteredArgs {

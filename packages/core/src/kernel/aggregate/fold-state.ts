@@ -6,6 +6,11 @@ import type { AggregateRuntime, EventRuntime } from "./runtime.ts";
 export interface FoldStateArgs {
   readonly aggregate: AggregateRuntime;
   readonly events: readonly StoredEvent[];
+  /**
+   * Where to fold from, a snapshot's state: `events` are then the ones after it. Left out, the
+   * fold starts from the aggregate's initial state.
+   */
+  readonly from?: FoldedState;
 }
 
 export interface FoldedState {
@@ -51,10 +56,10 @@ const merged = (
  * `evolve` after) gets the one it has, since the pipeline only stores such a stream if it predates
  * the event's `begin`.
  */
-export const foldState: FoldStateFunction = ({ aggregate, events }) => {
-  let state = aggregate.initialState;
-  let created = false;
-  let openedWithout: string | null = null;
+export const foldState: FoldStateFunction = ({ aggregate, events, from }) => {
+  let state = from?.state ?? aggregate.initialState;
+  let created = from?.created ?? false;
+  let openedWithout: string | null = from?.openedWithout ?? null;
   for (const event of events) {
     if (event.metadata.system) continue;
     const runtime = runtimeOf(aggregate, event);

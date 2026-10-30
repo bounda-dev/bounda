@@ -43,6 +43,11 @@ export { readModelTransactionContract } from "./read-model-transaction.contract.
 export type { SchedulerContractArgs, SchedulerContractFunction } from "./scheduler.contract.ts";
 export { schedulerContract } from "./scheduler.contract.ts";
 export type {
+  SnapshotStoreContractArgs,
+  SnapshotStoreContractFunction,
+} from "./snapshot-store.contract.ts";
+export { snapshotStoreContract } from "./snapshot-store.contract.ts";
+export type {
   StorageTransactionContractArgs,
   StorageTransactionContractFunction,
 } from "./storage-transaction.contract.ts";
