@@ -321,6 +321,8 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
 }) => {
   // Only streams written before `begin` existed land here, so the set stays small.
   const warnedOpenings = new Set<string>();
+  // Whose personal data a rejection's state held, which its message may quote.
+  const rejectedPersons = new WeakMap<DomainError, readonly string[]>();
   const execute = async (
     aggregate: AggregateRuntime,
     runtime: CommandRuntime,
@@ -331,7 +333,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     const attempts = config.runtime.commands.concurrencyRetries + 1;
     const { timeoutMs } = config.forAggregate(aggregate.name).commands;
     for (let attempt = 1; ; attempt += 1) {
-      const { folded, version } = await loader.load({
+      const { folded, version, persons } = await loader.load({
         aggregate,
         aggregateId: command.aggregateId,
         eventStore: store,
@@ -370,6 +372,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
       for (const signal of signals) signal.throwIfAborted();
       if (produced instanceof DomainError) {
         if (!issued.has(produced)) throw new ForeignRejectionError(command, produced);
+        rejectedPersons.set(produced, persons);
         return produced;
       }
       const events = toPendingEvents(
@@ -490,18 +493,23 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     const recordOf = (
       { key, fingerprint }: Idempotency,
       outcome: DispatchOutcome,
+      persons: readonly string[] = [],
     ): PutIdempotencyRecordArgs => {
       const now = clock.now();
       return {
         key,
         fingerprint,
         outcome,
+        persons,
         expiresAt: new Date(
           now.getTime() + config.runtime.commands.idempotencyKeyLifetimeMs,
         ).toISOString(),
         now,
       };
     };
+
+    const personsOf = (answer: DispatchResult | DomainError): readonly string[] =>
+      answer instanceof DomainError ? (rejectedPersons.get(answer) ?? []) : [];
 
     const outcomeOf = (answer: DispatchResult | DomainError): DispatchOutcome =>
       answer instanceof DomainError
@@ -533,7 +541,9 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
       }
       if (within !== undefined) {
         const answer = await execute(aggregate, runtime, command, within.eventStore, signals);
-        await within.idempotencyStore.put(recordOf(idempotency, outcomeOf(answer)));
+        await within.idempotencyStore.put(
+          recordOf(idempotency, outcomeOf(answer), personsOf(answer)),
+        );
         return answer;
       }
       let recorded = false;
@@ -552,7 +562,10 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         },
       };
       const answer = await execute(aggregate, runtime, command, recording, signals);
-      if (!recorded) await storage.idempotencyStore.put(recordOf(idempotency, outcomeOf(answer)));
+      if (!recorded)
+        await storage.idempotencyStore.put(
+          recordOf(idempotency, outcomeOf(answer), personsOf(answer)),
+        );
       return answer;
     };
 

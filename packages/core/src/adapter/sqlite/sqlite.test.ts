@@ -103,7 +103,7 @@ describe("the SQLite stores on node:sqlite", () => {
   inboxLedgerContract({ create: async () => (await storage()).inboxLedger });
   deadLetterStoreContract({ create: async () => (await storage()).deadLetterStore });
   schedulerContract({ create: async () => (await storage()).scheduler });
-  idempotencyStoreContract({ create: async () => (await storage()).idempotencyStore });
+  idempotencyStoreContract({ create: storage });
   snapshotStoreContract({ create: storage });
   storageTransactionContract({ create: storage });
   personalKeyStoreContract({ create: async () => (await storage()).personalKeys });

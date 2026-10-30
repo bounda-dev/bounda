@@ -98,7 +98,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
   inboxLedgerContract({ create: async () => (await openStorage()).inboxLedger });
   deadLetterStoreContract({ create: async () => (await openStorage()).deadLetterStore });
   schedulerContract({ create: async () => (await openStorage()).scheduler });
-  idempotencyStoreContract({ create: async () => (await openStorage()).idempotencyStore });
+  idempotencyStoreContract({ create: () => openStorage() });
   snapshotStoreContract({ create: () => openStorage() });
   storageTransactionContract({ create: () => openStorage() });
   personalKeyStoreContract({ create: async () => (await openStorage()).personalKeys });

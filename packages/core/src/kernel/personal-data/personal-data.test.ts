@@ -5,6 +5,7 @@ import type { StoredEvent } from "../../contracts/event.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import type { PersonalDataForgottenEvent } from "../../modules/bounda-events.ts";
+import type { RejectFunction } from "../../modules/command.ts";
 import type { EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
@@ -55,6 +56,15 @@ const registry = {
               command: { payload: { email: string; name: string } };
               events: Record<string, (payload?: unknown) => unknown>;
             }) => [events.customerRegistered?.(command.payload)],
+          },
+        },
+        confirmCustomer: {
+          module: {
+            payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string() }),
+            rejections: ({ state }: { state: CustomerState }) => ({
+              NotYet: `${state.email ?? "This customer"} cannot be confirmed yet`,
+            }),
+            handler: ({ reject }: { reject: RejectFunction<"NotYet"> }) => reject("NotYet"),
           },
         },
         greetCustomer: {
@@ -256,6 +266,40 @@ describe("personal data in an app", () => {
     await app.runUntilIdle();
     expect(await storage.snapshotStore.get(stream)).toMatchObject({ version: 2, persons: [] });
     expect((await storage.snapshotStore.get(stream))?.state).not.toContain("ana@example.com");
+    await app.stop();
+  });
+
+  it("forgets the rejections it remembered for a person, so a retry decides again without their data", async () => {
+    const adapter = memory();
+    const storage = await adapter.createStorage({ logger: silentLogger });
+    const { app, clock } = await createTestApp({ registry, adapter });
+    await app.commands.registerCustomer(ana);
+    const confirm = () =>
+      app.commands
+        .confirmCustomer({ customerId: "c-1" }, { idempotencyKey: "confirm-1" })
+        .catch((error: unknown) => error);
+    const first = await confirm();
+    expect(first).toMatchObject({
+      rejected: "NotYet",
+      message: "ana@example.com cannot be confirmed yet",
+    });
+    expect(
+      await storage.idempotencyStore.get({ key: "confirm-1", now: clock.now() }),
+    ).toMatchObject({
+      persons: ["c-1"],
+    });
+    expect(await confirm()).toMatchObject({ message: "ana@example.com cannot be confirmed yet" });
+
+    await app.forget("c-1");
+    expect(await storage.idempotencyStore.get({ key: "confirm-1", now: clock.now() })).toBeNull();
+    const again = await confirm();
+    expect(again).toMatchObject({
+      rejected: "NotYet",
+      message: "This customer cannot be confirmed yet",
+    });
+    expect(
+      JSON.stringify(await storage.idempotencyStore.get({ key: "confirm-1", now: clock.now() })),
+    ).not.toContain("ana@example.com");
     await app.stop();
   });
 

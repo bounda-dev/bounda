@@ -141,7 +141,8 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "key" text PRIMARY KEY,
     "fingerprint" text NOT NULL,
     "outcome" jsonb NOT NULL,
-    "expires_at" text NOT NULL
+    "expires_at" text NOT NULL,
+    "persons" text[] NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.idempotencyKeys, "expires_at")} ON ${tables.idempotencyKeys} ("expires_at")`,
   `CREATE TABLE IF NOT EXISTS ${tables.personalKeys} (

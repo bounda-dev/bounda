@@ -103,8 +103,8 @@ export const memory: MemoryFunction = (options = {}) => {
       const inboxLedger = createKeptInboxLedger();
       const deadLetterStore = createKeptDeadLetterStore();
       const scheduler = createKeptScheduler();
-      const idempotencyStore = createKeptIdempotencyStore();
       const personalKeys = createKeptPersonalKeyStore();
+      const idempotencyStore = createKeptIdempotencyStore({ holds: personalKeys.holds });
       const snapshotStore = createMemorySnapshotStore({ holds: personalKeys.holds });
       const stores = {
         eventStore: createMemoryEventStore({ onAppend: notifier.notify }),

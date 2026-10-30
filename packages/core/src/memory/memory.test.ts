@@ -32,7 +32,7 @@ describe("memory adapter", () => {
   inboxLedgerContract({ create: async () => (await storage()).inboxLedger });
   deadLetterStoreContract({ create: async () => (await storage()).deadLetterStore });
   schedulerContract({ create: async () => (await storage()).scheduler });
-  idempotencyStoreContract({ create: async () => (await storage()).idempotencyStore });
+  idempotencyStoreContract({ create: storage });
   snapshotStoreContract({ create: storage });
   storageTransactionContract({ create: storage });
   personalKeyStoreContract({ create: async () => (await storage()).personalKeys });
@@ -329,6 +329,7 @@ describe("memory adapter", () => {
           fingerprint: "fp",
           outcome: { rejected: "Nope", message: "no", aggregateType: "order", aggregateId: "1" },
           expiresAt: "2026-01-02T00:00:00.000Z",
+          persons: [],
           now,
         });
         await tx.inboxLedger.fail({ ...key, error: "boom" });

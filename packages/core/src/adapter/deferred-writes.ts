@@ -19,7 +19,7 @@ export interface DeferredWriteTarget {
     DeferredStores["scheduler"],
     "schedule" | "cancel" | "complete" | "fail" | "defer"
   >;
-  readonly idempotencyStore: Pick<DeferredStores["idempotencyStore"], "put">;
+  readonly idempotencyStore: Pick<DeferredStores["idempotencyStore"], "put" | "forget">;
 }
 
 /**
@@ -101,6 +101,12 @@ export const deferWrites: DeferWritesFunction = ({
           recorded.push((target) => target.idempotencyStore.put(args));
         },
         purge: idempotencyStore.purge,
+        forget: async (person) => {
+          for (const [key, record] of records) {
+            if (record.persons.includes(person)) records.delete(key);
+          }
+          recorded.push((target) => target.idempotencyStore.forget(person));
+        },
       },
     },
     flush: async (target) => {

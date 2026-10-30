@@ -23,6 +23,7 @@ const record = {
   fingerprint: "fp",
   outcome: testOutcome("1"),
   expiresAt: new Date(now.getTime() + 60_000).toISOString(),
+  persons: [],
   now,
 };
 
@@ -288,7 +289,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       expect(await storage.eventStore.readAll({ afterPosition: 0, limit: 10 })).toHaveLength(1);
     });
 
-    it("forgets a person's snapshots with their key", async () => {
+    it("forgets a person's snapshots and remembered rejections with their key", async () => {
       await storage.personalKeys.add("c-1", "k-1");
       await storage.personalKeys.add("c-2", "k-2");
       const snapshot = (aggregateId: string, persons: readonly string[]) => ({
@@ -301,10 +302,26 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       });
       await storage.snapshotStore.put(snapshot("c-1", ["c-1"]));
       await storage.snapshotStore.put(snapshot("c-2", ["c-2"]));
+      const remembered = {
+        key: "req-1",
+        fingerprint: "fp",
+        outcome: {
+          rejected: "Taken",
+          message: "taken",
+          aggregateType: "customer",
+          aggregateId: "c-1",
+        },
+        expiresAt: "2026-01-02T00:00:00.000Z",
+        persons: ["c-1"],
+        now,
+      };
+      await storage.idempotencyStore.put(remembered);
       await storage.transact(async (tx) => {
         await tx.personalKeys.remove("c-1");
         await tx.snapshotStore.forget("c-1");
+        await tx.idempotencyStore.forget("c-1");
       });
+      expect(await storage.idempotencyStore.get({ key: "req-1", now })).toBeNull();
       expect(await storage.personalKeys.get("c-1")).toBeNull();
       expect(await storage.snapshotStore.get(snapshot("c-1", []))).toBeNull();
       expect(await storage.snapshotStore.get(snapshot("c-2", []))).toEqual(

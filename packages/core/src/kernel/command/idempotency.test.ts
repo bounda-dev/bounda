@@ -48,6 +48,7 @@ describe("a command dispatched with an idempotency key", () => {
     expect(await harness.storage.idempotencyStore.get({ key: "req-1", now })).toMatchObject({
       outcome: first,
       expiresAt: "2026-01-02T00:00:00.000Z",
+      persons: [],
     });
     expect(telemetry.counts.map((count) => count.attributes[ATTRIBUTES.outcome])).toEqual([
       "stored",
@@ -165,6 +166,7 @@ describe("a command dispatched with an idempotency key", () => {
         position: 7,
       },
       expiresAt: "2026-01-02T00:00:00.000Z",
+      persons: [],
       now,
     };
     // The winner records once this dispatch has looked the key up and found nothing.
@@ -223,6 +225,7 @@ describe("a command dispatched with an idempotency key", () => {
     await harness.pipeline.dispatch(touch);
     expect(await harness.storage.idempotencyStore.get({ key: "req-1", now })).toMatchObject({
       expiresAt: "2026-01-01T01:00:00.000Z",
+      persons: [],
     });
     harness.clock.advance(3_600_000);
     await harness.pipeline.dispatch({ ...placeOrder, ...withKey("req-1") });

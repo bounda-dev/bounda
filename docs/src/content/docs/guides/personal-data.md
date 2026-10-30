@@ -87,6 +87,13 @@ people it holds, and none is written for a person without a key. The next comman
 aggregate folds it from its first event, with the fields forgotten, and the snapshot after it
 holds them as `null`.
 
+A command dispatched with an [`idempotencyKey`](/guides/idempotent-commands/) remembers
+what it answered, and a rejection's message may quote the state it was decided on. Such a
+rejection names the people whose fields were in that state, and `forget` removes it too: the same
+request sent again is decided again, on the state without them. What it cannot see is personal
+data that came in the command's payload, which is never marked: keep that out of a rejection's
+message and say what went wrong with its code and the ids involved.
+
 ## Handling it in a read model
 
 A read model that projects an event with personal fields has those fields in its rows. It must

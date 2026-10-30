@@ -108,6 +108,7 @@ export const postgresql: PostgresqlFunction = (options) => {
           idempotencyStore: createPostgresqlIdempotencyStore({
             db: database,
             table: tables.idempotencyKeys,
+            personalKeys: tables.personalKeys,
           }),
           personalKeys: createPostgresqlPersonalKeyStore({
             db: database,

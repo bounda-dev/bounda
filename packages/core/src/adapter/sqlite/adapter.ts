@@ -93,6 +93,7 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
           idempotencyStore: createSqliteIdempotencyStore({
             db: database,
             table: tables.idempotencyKeys,
+            personalKeys: tables.personalKeys,
           }),
           personalKeys: createSqlitePersonalKeyStore({ db: database, table: tables.personalKeys }),
           snapshotStore: createSqliteSnapshotStore({

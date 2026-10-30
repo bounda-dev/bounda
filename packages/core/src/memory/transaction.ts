@@ -116,6 +116,8 @@ const createUndoLog = ({
       idempotencyStore: {
         put: (args) =>
           tracked(entries.idempotencyStore, args.key, () => idempotencyStore.put(args)),
+        // Not put back: a rejection forgotten is decided again, which is all it costs.
+        forget: (person) => idempotencyStore.forget(person),
       },
     },
     undo: () => undoAll(undos),

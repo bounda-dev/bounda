@@ -51,6 +51,7 @@ export const forgetPersonalData: ForgetPersonalDataFunction = async ({
       const { removed, stored } = await storage.transact(async (transaction) => {
         const hadKey = await transaction.personalKeys.remove(personId);
         await transaction.snapshotStore.forget(personId);
+        await transaction.idempotencyStore.forget(personId);
         return {
           removed: hadKey,
           stored: await appendSystemEvent({
