@@ -1,8 +1,10 @@
 import { parseDuration } from "../../contracts/duration.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
-import { capitalize, policyTrigger } from "../../modules/naming.ts";
+import { BOUNDA_AGGREGATE } from "../../modules/bounda-events.ts";
+import { policyTrigger } from "../../modules/naming.ts";
 import type { PolicyModule } from "../../modules/policy.ts";
 import type { Registry } from "../../modules/registry.ts";
+import { eventTypesOf } from "../../modules/validate.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { qualifiedEventType } from "../shared/qualified-event.ts";
 
@@ -59,13 +61,12 @@ const triggersOf = (
   source: string,
 ): readonly string[] => {
   const path = `aggregates.${aggregate}.policies.${key}`;
-  const events = registry.aggregates[source]?.events;
-  if (events === undefined) {
+  if (source !== BOUNDA_AGGREGATE && registry.aggregates[source] === undefined) {
     throw new ConfigurationError(
       `${path}: there is no aggregate "${source}" whose events to react to`,
     );
   }
-  const types = Object.keys(events).map(capitalize);
+  const types = eventTypesOf(registry.aggregates, source);
   const known = new Set<string>(types);
   const triggers = declaredTriggers(path, key, module, source, types);
   for (const trigger of triggers) {

@@ -70,6 +70,7 @@ const setUp = async ({
     get: vi.fn(storage.snapshotStore.get),
     put: vi.fn(storage.snapshotStore.put),
     remove: vi.fn(storage.snapshotStore.remove),
+    forget: vi.fn(storage.snapshotStore.forget),
   };
   const { logger, entries } = createRecordingLogger();
   const loader = createAggregateLoader({ snapshotStore, logger, strict });
@@ -88,6 +89,7 @@ const setUp = async ({
     version: 2,
     fingerprint: "fp:1",
     state: serializeFold({ state: paid, created: true, openedWithout: null }),
+    persons: [],
     ...overrides,
   });
   const load = (eventStore: EventStore = storage.eventStore) =>
@@ -105,6 +107,7 @@ describe("createAggregateLoader", () => {
     expect(await load()).toEqual({
       folded: { state: paid, created: true, openedWithout: null },
       version: 2,
+      persons: [],
     });
     expect(snapshotStore.get).not.toHaveBeenCalled();
     expect(outcomes()).toEqual([]);
@@ -133,6 +136,7 @@ describe("createAggregateLoader", () => {
     expect(await load()).toEqual({
       folded: { state: paid, created: true, openedWithout: null },
       version: 3,
+      persons: [],
     });
     expect(evolves.placed).not.toHaveBeenCalled();
     expect(evolves.paid).not.toHaveBeenCalled();
@@ -217,6 +221,7 @@ describe("createAggregateLoader", () => {
     expect(await load(moving)).toEqual({
       folded: { state: paid, created: true, openedWithout: null },
       version: 2,
+      persons: [],
     });
     expect(outcomes()).toEqual(["verified"]);
   });
@@ -234,6 +239,7 @@ describe("createAggregateLoader", () => {
     expect(await load()).toEqual({
       folded: { state: paid, created: true, openedWithout: null },
       version: 3,
+      persons: [],
     });
     expect(evolves.placed).toHaveBeenCalledTimes(1);
     expect(outcomes()).toEqual(["mismatch"]);

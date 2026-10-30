@@ -1,10 +1,10 @@
 import type { NewEvent, StoredEvent } from "../contracts/event.ts";
 import type { TypeNameOf } from "./naming.ts";
 import { capitalize } from "./naming.ts";
-import type { HasPayload, PayloadFunction, PayloadInputOf, PayloadOf } from "./payload.ts";
+import type { EventPayloadFunction, HasPayload, PayloadInputOf, PayloadOf } from "./payload.ts";
 
 export interface EventModule {
-  readonly payload?: PayloadFunction;
+  readonly payload?: EventPayloadFunction;
   readonly begin?: (args: never) => object;
   readonly evolve?: (args: never) => object;
 }

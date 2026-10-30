@@ -432,11 +432,64 @@ export type Commands = core.CommandsFacadeOf<Record<never, never>>;
 
 export type ReactionCommands = core.ReactionCommandsFacadeOf<Record<never, never>>;
 
+type Expect<Check extends true> = Check;
+
 export type ShipmentsRow = core.RowOf<typeof import("../app/read/shipments/view.ts")>;
 export type ShipmentsPorts = core.EmptyPayload;
+export type ShipmentsForgetting = Expect<
+  core.ForgetsPersonalData<
+    "shipments",
+    typeof import("../app/domain/shipment/created.ts"),
+    false
+  >
+>;
 
 export type Queries = core.QueriesFacadeOf<Record<never, never>>;
 `);
+  });
+
+  it("checks that a read model projecting personal data handles forgetting, over every module it projects", () => {
+    const shipments = model.readModels[0] as ProjectModel["readModels"][number];
+    const projection = (aggregate: string, eventKey: string) => ({
+      aggregate,
+      eventKey,
+      path: `/project/app/read/shipments/projections/${aggregate}/${eventKey}.ts`,
+      relativePath: `app/read/shipments/projections/${aggregate}/${eventKey}.ts`,
+    });
+    const typesOf = (projections: ProjectModel["readModels"][number]["projections"]): string =>
+      emitTypes({
+        model: { ...model, readModels: [{ ...shipments, projections }] },
+        path: "/project/.bounda/types.ts",
+      }).content;
+    expect(
+      typesOf([
+        projection("bounda", "personalDataForgotten"),
+        projection("shipment", "created"),
+        projection("ticket", "byOn"),
+        projection("ticket", "created"),
+        projection("nowhere", "created"),
+      ]),
+    ).toContain(`export type ShipmentsForgetting = Expect<
+  core.ForgetsPersonalData<
+    "shipments",
+    | typeof import("../app/domain/shipment/created.ts")
+    | TicketEvents[keyof TicketEvents]
+    | typeof import("../app/domain/ticket/created.ts"),
+    true
+  >
+>;`);
+    expect(
+      typesOf([projection("shipment", "created"), projection("shipment", "personalDataForgotten")]),
+    ).toContain(`    | typeof import("../app/domain/shipment/created.ts")
+    | ShipmentEvents[keyof ShipmentEvents],
+    false
+  >`);
+    const onlyForgetting = typesOf([projection("bounda", "personalDataForgotten")]);
+    expect(onlyForgetting).not.toContain("Forgetting");
+    expect(onlyForgetting).toContain(
+      "export type ShipmentsPorts = core.EmptyPayload;\n\nexport type Queries",
+    );
+    expect(typesOf([])).not.toContain("Expect");
   });
 });
 
@@ -602,6 +655,66 @@ describe("emitProject without a file-name trigger", () => {
       slashed(file.path).endsWith("projections/ticket/+types/created.ts"),
     );
     expect(ticket?.content).toContain('core.StoredEventOf<generated.TicketEvents, "created">');
+  });
+
+  it("types a projection and a policy of the runtime's events by core's own types", () => {
+    const shipments = model.readModels[0] as ProjectModel["readModels"][number];
+    const order = model.aggregates[0] as ProjectModel["aggregates"][number];
+    const files = emitProject({
+      model: {
+        ...model,
+        aggregates: [
+          {
+            ...order,
+            policies: [
+              {
+                key: "boundaAuditOnPersonalDataForgotten",
+                triggerKey: "personalDataForgotten",
+                source: "bounda",
+                path: "/project/app/domain/order/policies/bounda/audit-on-personal-data-forgotten.ts",
+                relativePath:
+                  "app/domain/order/policies/bounda/audit-on-personal-data-forgotten.ts",
+              },
+              {
+                key: "boundaAudit",
+                triggerKey: null,
+                source: "bounda",
+                path: "/project/app/domain/order/policies/bounda/audit.ts",
+                relativePath: "app/domain/order/policies/bounda/audit.ts",
+              },
+            ],
+          },
+          ...model.aggregates.slice(1),
+        ],
+        readModels: [
+          {
+            ...shipments,
+            projections: [
+              {
+                aggregate: "bounda",
+                eventKey: "personalDataForgotten",
+                path: "/project/app/read/shipments/projections/bounda/personal-data-forgotten.ts",
+                relativePath: "app/read/shipments/projections/bounda/personal-data-forgotten.ts",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const ofFile = (suffix: string) =>
+      files.find((file) => slashed(file.path).endsWith(suffix))?.content;
+    expect(ofFile("projections/bounda/+types/personal-data-forgotten.ts")).toContain(
+      "core.ProjectionArgs<\n    core.PersonalDataForgottenEvent,",
+    );
+    expect(ofFile("policies/bounda/+types/audit-on-personal-data-forgotten.ts")).toContain(
+      "core.PolicyHandlerArgs<\n    core.PersonalDataForgottenEvent,",
+    );
+    expect(ofFile("policies/bounda/+types/audit.ts")).toContain(
+      "core.PolicyHandlerArgs<\n    core.PersonalDataForgottenEvent,",
+    );
+    expect(ofFile("domain/shipment/+types/created.ts")).toContain(
+      "type PayloadArgs = core.EventPayloadArgs;",
+    );
   });
 
   it("types a policy without -on- over every event of its aggregate", () => {

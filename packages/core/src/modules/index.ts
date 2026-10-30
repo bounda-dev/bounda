@@ -6,6 +6,15 @@ export type {
   UnknownState,
 } from "./aggregate.ts";
 export type {
+  PersonalDataForgottenEvent,
+  PersonalDataForgottenPayload,
+} from "./bounda-events.ts";
+export {
+  BOUNDA_AGGREGATE,
+  BOUNDA_EVENTS,
+  PERSONAL_DATA_FORGOTTEN_EVENT,
+} from "./bounda-events.ts";
+export type {
   CommandHandlerArgs,
   CommandRejectionsArgs,
   RejectFunction,
@@ -30,11 +39,20 @@ export type {
 export { capitalize, policyTrigger, toCamelCase } from "./naming.ts";
 export type {
   EmptyPayload,
+  EventPayloadArgs,
   PayloadArgs,
   PayloadInputOf,
   PayloadOf,
   ZodApi,
 } from "./payload.ts";
+export type {
+  ForgetsPersonalData,
+  HasPersonalFields,
+  PersonalFunction,
+  PersonalSchema,
+  PersonFunction,
+  PersonSchema,
+} from "./personal.ts";
 export type { PolicyHandlerArgs, PolicyModule } from "./policy.ts";
 export type {
   CreateArgs,

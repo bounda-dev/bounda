@@ -4,7 +4,7 @@ import { checkConfigNames } from "../config/names.ts";
 import { resolveConfig } from "../config/schema.ts";
 import type { Config, ResolvedConfig, RuntimeRole } from "../config/types.ts";
 import { type Clock, systemClock } from "../contracts/clock.ts";
-import type { CommandRejection, DispatchResult } from "../contracts/command.ts";
+import type { CommandRejection, DispatchResult, StoredDispatch } from "../contracts/command.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
 import { type IdGenerator, uuidV7IdGenerator } from "../contracts/ids.ts";
 import { type Logger, silentLogger } from "../contracts/logger.ts";
@@ -13,13 +13,14 @@ import { validateRegistry } from "../modules/validate.ts";
 import type { AppEnv, AppRegistry, EnvSection } from "../register/index.ts";
 import { buildAggregates } from "./aggregate/build-aggregates.ts";
 import { createAggregateLoader } from "./aggregate/load-aggregate.ts";
-import { withUpcasting } from "./aggregate/upcasting.ts";
 import { createCommandsFacade } from "./command/facade.ts";
 import { createCommandPipeline } from "./command/pipeline.ts";
 import { createDeadLetters, type DeadLetters } from "./dead-letters/dead-letters.ts";
 import { createDispatcher, type DispatcherLag } from "./dispatch/dispatcher.ts";
 import { alignReactiveCheckpoints } from "./dispatch/reactive-checkpoints.ts";
+import { appStorage } from "./events/app-event-store.ts";
 import { createGlobalStream, type GlobalStream } from "./events/global-stream.ts";
+import { forgetPersonalData } from "./personal-data/forget.ts";
 import { buildPolicies } from "./policy/build-policies.ts";
 import { createDelayedPolicies } from "./policy/delayed.ts";
 import { createPolicyExecutor } from "./policy/executor.ts";
@@ -67,6 +68,15 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * when more remain, which its alarm runs.
    */
   rebuildReadModel(name: string): Promise<RebuildReadModelResult>;
+  /**
+   * Forgets a person: deletes the key their personal fields are encrypted with, so every event
+   * of theirs reads those fields as `null` from now on, and appends `PersonalDataForgotten` to
+   * the stream `bounda:<personId>`, which every read model that projects personal fields handles.
+   * Both happen together or not at all. Resolves like a command, so
+   * `catchUpReadModels({ through })` waits for those read models. Rejects with
+   * `ValidationError` an empty id.
+   */
+  forget(personId: string): Promise<StoredDispatch>;
 }
 
 /**
@@ -276,10 +286,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     const written = await config.storage.createStorage({ logger });
     opened.unshift(() => written.close());
     const aggregates = buildAggregates({ registry, ports: ports.byAggregate, config });
-    const storage = {
-      ...written,
-      eventStore: withUpcasting({ eventStore: written.eventStore, aggregates }),
-    };
+    const storage = appStorage({ storage: written, aggregates });
     const loader = createAggregateLoader({
       snapshotStore: storage.snapshotStore,
       logger,
@@ -506,6 +513,15 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       },
       events: createGlobalStream({ eventStore: written.eventStore }),
       deadLetters,
+      forget: (personId) =>
+        forgetPersonalData({
+          storage,
+          ids,
+          clock,
+          logger,
+          concurrencyRetries: config.runtime.commands.concurrencyRetries,
+          personId,
+        }),
       getLag: async () => ({
         ...(await dispatcher.getLag()),
         waitingDeadlines: worker.waitingDeadlines(),

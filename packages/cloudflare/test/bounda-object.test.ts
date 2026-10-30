@@ -5,7 +5,13 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { configForObject } from "../src/bounda-object.ts";
 import { connect } from "../src/client.ts";
 import { cloudflare } from "../src/definition.ts";
-import { outage, type processRegistry, type quietRegistry, type registry } from "./app.ts";
+import {
+  outage,
+  type processRegistry,
+  type quietRegistry,
+  type registry,
+  type slicedRegistry,
+} from "./app.ts";
 import { clock } from "./clock.ts";
 import { logs } from "./logs.ts";
 import { QuietStore } from "./test-worker.ts";
@@ -63,6 +69,79 @@ describe("a Bounda Durable Object", () => {
       status: "placed",
       total: 42,
     });
+  });
+
+  it("seals personal fields in its SQLite, projects them in the clear, and forgets a person", async () => {
+    const { stub, store } = open();
+    await store.commands.placeOrder({ orderId: "o-1", total: 7, customer: "ada", note: "no bell" });
+    expect(await store.queries.getOrder({ orderId: "o-1" })).toMatchObject({ note: "no bell" });
+    const [raw] = await store.events.read();
+    expect(raw?.payload).toMatchObject({ total: 7, customer: "ada" });
+    expect(JSON.stringify(raw)).not.toContain("no bell");
+    const sealed = await runInDurableObject(stub as unknown as DurableObjectStub, (_i, state) =>
+      state.storage.sql.exec(`SELECT "person" FROM bounda_personal_keys`).toArray(),
+    );
+    expect(sealed).toEqual([{ person: "ada" }]);
+
+    const forgotten = await store.forget("ada");
+    expect(forgotten).toMatchObject({
+      aggregateType: "bounda",
+      aggregateId: "ada",
+      eventTypes: ["PersonalDataForgotten"],
+      position: 2,
+    });
+    expect((await store.events.read()).map((event) => event.type)).toEqual([
+      "OrderPlaced",
+      "PersonalDataForgotten",
+    ]);
+    expect(await store.rebuildReadModel("orders")).toMatchObject({ done: true });
+    expect(await store.queries.getOrder({ orderId: "o-1" })).toEqual({
+      orderId: "o-1",
+      status: "placed",
+      total: 7,
+    });
+  });
+
+  it("forgets with the caller's consistency, and leaves its alarm clear once the read models caught up", async () => {
+    const stub = sliced();
+    const store = connect<typeof slicedRegistry>(stub);
+    await store.commands.placeOrder({ orderId: "o-1", total: 5, customer: "ada" });
+    await store.commands.placeOrder({ orderId: "o-2", total: 5, customer: "bo" });
+    // In one event of the object, its alarm cannot run between the forget and the query.
+    const seen = await runInDurableObject(stub, async (instance, state) => ({
+      forgotten: await instance.forget("ada", "eventual"),
+      found: await instance.query("getCustomer", { customer: "ada" }),
+      alarm: await state.storage.getAlarm(),
+    }));
+    expect(seen.forgotten).toMatchObject({ ok: true, value: { aggregateId: "ada", version: 1 } });
+    expect(seen.found).toEqual({ ok: true, value: { customer: "ada", lastOrderId: "o-1" } });
+    expect(seen.alarm).toBeLessThanOrEqual(Date.now());
+    await runAlarm(stub);
+    expect(await store.queries.getCustomer({ customer: "ada" })).toBeNull();
+
+    // Under read-your-writes the forget waits for the read models that handle it; the others
+    // catch up in the alarm, which is armed for them.
+    const forgotten = await runInDurableObject(stub, async (instance, state) => ({
+      outcome: await instance.forget("bo"),
+      found: await instance.query("getCustomer", { customer: "bo" }),
+      lag: await instance.lag(),
+      alarm: await state.storage.getAlarm(),
+    }));
+    expect(forgotten.outcome).toMatchObject({ ok: true, value: { aggregateId: "bo", version: 1 } });
+    expect(forgotten.found).toEqual({ ok: true, value: null });
+    expect(forgotten.lag).toMatchObject({
+      ok: true,
+      value: {
+        subscribers: expect.arrayContaining([
+          expect.objectContaining({ subscriber: "projection:customers", lag: 0 }),
+          expect.objectContaining({ subscriber: "projection:orders", lag: 1 }),
+        ]),
+      },
+    });
+    expect(forgotten.alarm).toBeLessThanOrEqual(Date.now());
+    await runAlarm(stub);
+    expect((await store.getLag()).maxLag).toBe(0);
+    expect(await alarmOf(stub)).toBeNull();
   });
 
   it("checks a command's signal before calling the object, which cannot receive it", async () => {

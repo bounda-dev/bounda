@@ -22,7 +22,7 @@ const post = (path: string, body?: unknown, tenant?: string) =>
 
 // One request through a worker whose binding is a spy that hands out a recording stub.
 const throughSpy = async (path: string, body: string, consistency?: Consistency) => {
-  const { stub, commands } = recordingStub();
+  const { stub, commands, forgets } = recordingStub();
   const addressed: string[] = [];
   const spy = {
     idFromName: (name: string) => {
@@ -44,7 +44,7 @@ const throughSpy = async (path: string, body: string, consistency?: Consistency)
     { SPY: spy } as unknown as Cloudflare.Env,
     createExecutionContext(),
   );
-  return { status: response?.status, addressed, commands };
+  return { status: response?.status, addressed, commands, forgets };
 };
 
 describe("createWorker", () => {
@@ -72,11 +72,13 @@ describe("createWorker", () => {
       status: 200,
       addressed: ["acme"],
       commands: [["payOrder", { orderId: "o-1" }, {}, "eventual"]],
+      forgets: [],
     });
     expect(await throughSpy("/commands/payOrder", payOrder)).toEqual({
       status: 200,
       addressed: ["acme"],
       commands: [["payOrder", { orderId: "o-1" }, {}, "read-your-writes"]],
+      forgets: [],
     });
   });
 
@@ -229,14 +231,32 @@ describe("createWorker", () => {
     });
   });
 
-  it("only knows POST on its two routes", async () => {
+  it("forgets a person through the binding, with the worker's consistency", async () => {
+    const byDefault = await throughSpy("/forget/ada%20b", "");
+    expect(byDefault.status).toBe(200);
+    expect(byDefault.addressed).toEqual(["acme"]);
+    expect(byDefault.forgets).toEqual([["ada b", "read-your-writes"]]);
+    const eventual = await throughSpy("/forget/ada/", "{not json", "eventual");
+    expect(eventual.status).toBe(200);
+    expect(eventual.forgets).toEqual([["ada", "eventual"]]);
+  });
+
+  it("only knows POST on its three routes", async () => {
     const root = await exports.default.fetch(new Request("https://bounda.test/"));
     expect(root.status).toBe(404);
     expect(await root.json()).toEqual({ error: { code: "NOT_FOUND", message: "No route for /" } });
     const get = await exports.default.fetch(new Request("https://bounda.test/queries/getOrder"));
     expect(get.status).toBe(405);
     expect(get.headers.get("allow")).toBe("POST");
-    for (const path of ["/api/queries/getOrder", "/queries/getOrder/extra", "/queries/1st"]) {
+    for (const path of [
+      "/api/queries/getOrder",
+      "/queries/getOrder/extra",
+      "/queries/1st",
+      "/forget",
+      "/forget/",
+      "/forget/a/b",
+      "/forget/%E0%A4%A",
+    ]) {
       const response = await post(path, { orderId: "o-1" });
       expect(response.status).toBe(404);
       expect(await response.json()).toEqual({

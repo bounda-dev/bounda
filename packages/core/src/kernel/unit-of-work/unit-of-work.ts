@@ -21,7 +21,7 @@ export type UnitStores = Pick<
  * store as it is, plus the unit's own events; `add` answers the letter as filed, whatever the
  * store holds under that id already.
  */
-export interface UnitOfWork extends StorageTransaction {
+export interface UnitOfWork extends Omit<StorageTransaction, "personalKeys" | "snapshotStore"> {
   commit(): Promise<void>;
   /**
    * Runs `callback` once the unit has committed, once however often it commits; never for a unit

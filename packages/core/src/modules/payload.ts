@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import type { PersonalFunction, PersonFunction } from "./personal.ts";
 
 /**
  * The Zod namespace, injected into every `payload`, `state` and similar schema function so user
@@ -16,17 +17,30 @@ export interface PayloadArgs {
 export type PayloadFunction<Schema extends z.ZodType = z.ZodType> = (args: PayloadArgs) => Schema;
 
 /**
+ * Arguments of an event's `payload`: `z`, and `personal` and `person` to mark the fields that
+ * hold personal data and the one that names whose it is.
+ */
+export interface EventPayloadArgs extends PayloadArgs {
+  readonly personal: PersonalFunction;
+  readonly person: PersonFunction;
+}
+
+export type EventPayloadFunction<Schema extends z.ZodType = z.ZodType> = (
+  args: EventPayloadArgs,
+) => Schema;
+
+/**
  * The payload type of a module without `payload`: an object with no keys.
  */
 export type EmptyPayload = Record<never, never>;
 
-export type InferPayload<F> = F extends (args: PayloadArgs) => infer Schema
+export type InferPayload<F> = F extends (args: never) => infer Schema
   ? Schema extends z.ZodType
     ? z.output<Schema>
     : never
   : never;
 
-export type InferPayloadInput<F> = F extends (args: PayloadArgs) => infer Schema
+export type InferPayloadInput<F> = F extends (args: never) => infer Schema
   ? Schema extends z.ZodType
     ? z.input<Schema>
     : never
@@ -48,6 +62,6 @@ export type PayloadInputOf<Module> = Module extends { readonly payload: infer F 
   ? InferPayloadInput<F>
   : EmptyPayload;
 
-export type HasPayload<Module> = Module extends { readonly payload: (args: PayloadArgs) => unknown }
+export type HasPayload<Module> = Module extends { readonly payload: (args: never) => unknown }
   ? true
   : false;

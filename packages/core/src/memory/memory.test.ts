@@ -9,6 +9,7 @@ import {
   idempotencyStoreContract,
   inboxLedgerContract,
   pendingEvent,
+  personalKeyStoreContract,
   readModelRebuildContract,
   readModelTransactionContract,
   schedulerContract,
@@ -32,8 +33,9 @@ describe("memory adapter", () => {
   deadLetterStoreContract({ create: async () => (await storage()).deadLetterStore });
   schedulerContract({ create: async () => (await storage()).scheduler });
   idempotencyStoreContract({ create: async () => (await storage()).idempotencyStore });
-  snapshotStoreContract({ create: async () => (await storage()).snapshotStore });
+  snapshotStoreContract({ create: storage });
   storageTransactionContract({ create: storage });
+  personalKeyStoreContract({ create: async () => (await storage()).personalKeys });
   tableContract({
     create: async () => {
       const model = await memory().createReadModel<ContractRow>({

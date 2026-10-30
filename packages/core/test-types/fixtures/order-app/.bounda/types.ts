@@ -64,12 +64,33 @@ export type ReactionCommands = core.ReactionCommandsFacadeOf<{
   readonly placeOrder: typeof import("../app/domain/order/commands/place-order.ts");
 }>;
 
+type Expect<Check extends true> = Check;
+
+export type CustomerDirectoryRow = core.RowOf<typeof import("../app/read/customer-directory/view.ts")>;
+export type CustomerDirectoryPorts = core.EmptyPayload;
+export type CustomerDirectoryForgetting = Expect<
+  core.ForgetsPersonalData<
+    "customerDirectory",
+    typeof import("../app/domain/customer/customer-registered.ts"),
+    true
+  >
+>;
+
 export type OrderSummaryRow = core.RowOf<typeof import("../app/read/order-summary/view.ts")>;
 export type OrderSummaryPorts = {
   readonly rates: import("../app/read/order-summary/rates.ts").Rates;
 };
+export type OrderSummaryForgetting = Expect<
+  core.ForgetsPersonalData<
+    "orderSummary",
+    | typeof import("../app/domain/order/order-paid.ts")
+    | typeof import("../app/domain/order/order-placed.ts"),
+    true
+  >
+>;
 
 export type Queries = core.QueriesFacadeOf<{
+  readonly getCustomer: typeof import("../app/read/customer-directory/queries/get-customer.ts");
   readonly customerOverview: typeof import("../app/read/order-summary/queries/customer-overview.ts");
   readonly getOrder: typeof import("../app/read/order-summary/queries/get-order.ts");
   readonly listUnpaidOrders: typeof import("../app/read/order-summary/queries/list-unpaid-orders.ts");

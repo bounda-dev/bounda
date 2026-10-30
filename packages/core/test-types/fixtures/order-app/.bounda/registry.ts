@@ -18,6 +18,7 @@ import * as orderCancelled from "../app/domain/order/order-cancelled.ts";
 import * as orderPaid from "../app/domain/order/order-paid.ts";
 import * as orderPlaced from "../app/domain/order/order-placed.ts";
 import * as orderPlacedUpcasts from "../app/domain/order/order-placed.upcast.ts";
+import * as boundaAuditOnPersonalDataForgotten from "../app/domain/order/policies/bounda/audit-on-personal-data-forgotten.ts";
 import * as customerGreetOnCustomerRegistered from "../app/domain/order/policies/customer/greet-on-customer-registered.ts";
 import * as notifyOnOrderPlaced from "../app/domain/order/policies/notify-on-order-placed.ts";
 import * as sendReceiptOnOrderPaid from "../app/domain/order/policies/send-receipt-on-order-paid.ts";
@@ -28,7 +29,12 @@ import * as orderPayment from "../app/domain/order/processes/order-payment/index
 import * as orderPaymentOnOrderPaid from "../app/domain/order/processes/order-payment/on-order-paid.ts";
 import type * as orderReminders from "../app/domain/order/reminders.ts";
 import * as orderState from "../app/domain/order/state.ts";
+import * as customerDirectoryOnBoundaPersonalDataForgotten from "../app/read/customer-directory/projections/bounda/personal-data-forgotten.ts";
+import * as customerDirectoryOnCustomerCustomerRegistered from "../app/read/customer-directory/projections/customer/customer-registered.ts";
+import * as getCustomer from "../app/read/customer-directory/queries/get-customer.ts";
+import * as customerDirectoryView from "../app/read/customer-directory/view.ts";
 import * as orderSummaryRatesFixed from "../app/read/order-summary/infrastructure/rates/fixed.ts";
+import * as orderSummaryOnBoundaPersonalDataForgotten from "../app/read/order-summary/projections/bounda/personal-data-forgotten.ts";
 import * as orderSummaryOnOrderOrderPaid from "../app/read/order-summary/projections/order/order-paid.ts";
 import * as orderSummaryOnOrderOrderPlaced from "../app/read/order-summary/projections/order/order-placed.ts";
 import * as customerOverview from "../app/read/order-summary/queries/customer-overview.ts";
@@ -41,7 +47,7 @@ export const registry = {
   aggregates: {
     customer: {
       state: customerState,
-      stateFingerprint: "c452b414dc30e1d1",
+      stateFingerprint: "a35f216828655fff",
       events: { customerRegistered },
       commands: { registerCustomer: { module: registerCustomer } },
       policies: {},
@@ -49,7 +55,7 @@ export const registry = {
     },
     order: {
       state: orderState,
-      stateFingerprint: "844a21009adced43",
+      stateFingerprint: "6c9864790b9c4e6d",
       events: { orderCancelled, orderPaid, orderPlaced },
       upcasts: { orderPlaced: orderPlacedUpcasts },
       ports: {
@@ -69,7 +75,7 @@ export const registry = {
         },
       },
       commands: { cancelOrder: { module: cancelOrder }, payOrder: { module: payOrder }, placeOrder: { module: placeOrder } },
-      policies: { customerGreetOnCustomerRegistered: { module: customerGreetOnCustomerRegistered, source: "customer" }, notifyOnOrderPlaced: { module: notifyOnOrderPlaced }, sendReceiptOnOrderPaid: { module: sendReceiptOnOrderPaid } },
+      policies: { boundaAuditOnPersonalDataForgotten: { module: boundaAuditOnPersonalDataForgotten, source: "bounda" }, customerGreetOnCustomerRegistered: { module: customerGreetOnCustomerRegistered, source: "customer" }, notifyOnOrderPlaced: { module: notifyOnOrderPlaced }, sendReceiptOnOrderPaid: { module: sendReceiptOnOrderPaid } },
       processes: {
         orderPayment: {
           module: orderPayment,
@@ -80,6 +86,11 @@ export const registry = {
     },
   },
   readModels: {
+    customerDirectory: {
+      view: customerDirectoryView,
+      projections: { bounda: { personalDataForgotten: customerDirectoryOnBoundaPersonalDataForgotten }, customer: { customerRegistered: customerDirectoryOnCustomerCustomerRegistered } },
+      queries: { getCustomer },
+    },
     orderSummary: {
       view: orderSummaryView,
       ports: {
@@ -87,7 +98,7 @@ export const registry = {
           fixed: orderSummaryRatesFixed satisfies ImplementationModule<orderSummaryRates.Rates>,
         },
       },
-      projections: { order: { orderPaid: orderSummaryOnOrderOrderPaid, orderPlaced: orderSummaryOnOrderOrderPlaced } },
+      projections: { bounda: { personalDataForgotten: orderSummaryOnBoundaPersonalDataForgotten }, order: { orderPaid: orderSummaryOnOrderOrderPaid, orderPlaced: orderSummaryOnOrderOrderPlaced } },
       queries: { customerOverview, getOrder, listUnpaidOrders },
     },
   },

@@ -3,8 +3,10 @@ import type { ResolvedConfig } from "../../config/types.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import { createEventBuilders } from "../../modules/event.ts";
 import { capitalize } from "../../modules/naming.ts";
-import type { PayloadFunction } from "../../modules/payload.ts";
+import type { EventPayloadArgs } from "../../modules/payload.ts";
+import { person, personal } from "../../modules/personal.ts";
 import type { AggregateEntry, Registry } from "../../modules/registry.ts";
+import { personalMarksOf } from "../personal-data/marks.ts";
 import type { ModulePorts } from "../ports/ports.ts";
 import type {
   AggregateRuntime,
@@ -14,9 +16,12 @@ import type {
   EventRuntime,
 } from "./runtime.ts";
 
-const compileSchema = (payload: PayloadFunction | undefined, path: string): z.ZodType | null => {
+const compileSchema = (
+  payload: ((args: EventPayloadArgs) => unknown) | undefined,
+  path: string,
+): z.ZodType | null => {
   if (payload === undefined) return null;
-  const schema = payload({ z });
+  const schema = payload({ z, personal, person });
   if (!(schema instanceof z.ZodType)) {
     throw new ConfigurationError(`${path}: payload must return a Zod schema`);
   }
@@ -27,16 +32,19 @@ const buildEvents = (name: string, entry: AggregateEntry): Record<string, EventR
   Object.fromEntries(
     Object.entries(entry.events).map(([key, module]) => {
       const upcasts = entry.upcasts?.[key]?.upcasts ?? [];
+      const path = `aggregates.${name}.events.${key}`;
+      const schema = compileSchema(module.payload, path);
       return [
         key,
         {
           key,
           type: capitalize(key),
-          schema: compileSchema(module.payload, `aggregates.${name}.events.${key}`),
+          schema,
           begin: (module.begin ?? null) as EventRuntime["begin"],
           evolve: (module.evolve ?? null) as EventRuntime["evolve"],
           upcasts,
           schemaVersion: upcasts.length + 1,
+          personal: personalMarksOf({ schema, path }),
         },
       ];
     }),

@@ -50,6 +50,7 @@ const lazyStub = (stubOf: () => Promise<BoundaStub>): BoundaStub => ({
   retryDeadLetter: async (id) => (await stubOf()).retryDeadLetter(id),
   discardDeadLetter: async (id) => (await stubOf()).discardDeadLetter(id),
   rebuildReadModel: async (name) => (await stubOf()).rebuildReadModel(name),
+  forget: async (...args) => (await stubOf()).forget(...args),
 });
 
 export const cloudflareClients: CloudflareClientsFunction = <R extends Registry>({

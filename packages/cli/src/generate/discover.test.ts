@@ -188,6 +188,11 @@ describe("discoverProject on the order-app fixture", () => {
           ],
           policies: [
             [
+              "boundaAuditOnPersonalDataForgotten",
+              "personalDataForgotten",
+              "app/domain/order/policies/bounda/audit-on-personal-data-forgotten.ts",
+            ],
+            [
               "customerGreetOnCustomerRegistered",
               "customerRegistered",
               "app/domain/order/policies/customer/greet-on-customer-registered.ts",
@@ -225,6 +230,24 @@ describe("discoverProject on the order-app fixture", () => {
       ],
       readModels: [
         {
+          name: "customerDirectory",
+          view: "app/read/customer-directory/view.ts",
+          ports: [],
+          projections: [
+            [
+              "personalDataForgotten",
+              "app/read/customer-directory/projections/bounda/personal-data-forgotten.ts",
+            ],
+            [
+              "customerRegistered",
+              "app/read/customer-directory/projections/customer/customer-registered.ts",
+            ],
+          ],
+          queries: [
+            ["getCustomer", "GetCustomer", "app/read/customer-directory/queries/get-customer.ts"],
+          ],
+        },
+        {
           name: "orderSummary",
           view: "app/read/order-summary/view.ts",
           ports: [
@@ -235,6 +258,10 @@ describe("discoverProject on the order-app fixture", () => {
             ],
           ],
           projections: [
+            [
+              "personalDataForgotten",
+              "app/read/order-summary/projections/bounda/personal-data-forgotten.ts",
+            ],
             ["orderPaid", "app/read/order-summary/projections/order/order-paid.ts"],
             ["orderPlaced", "app/read/order-summary/projections/order/order-placed.ts"],
           ],
@@ -254,6 +281,52 @@ describe("discoverProject on the order-app fixture", () => {
         },
       ],
     });
+  });
+
+  it("takes the runtime's events in projections/bounda and policies/bounda, and only those", async () => {
+    const root = await project([
+      "app/domain/order/order-placed.ts",
+      "app/domain/order/policies/bounda/audit-on-personal-data-forgotten.ts",
+      "app/domain/order/policies/bounda/audit-on-personal-data-lost.ts",
+      "app/read/summary/view.ts",
+      "app/read/summary/projections/bounda/personal-data-forgotten.ts",
+      "app/read/summary/projections/bounda/personal-data-lost.ts",
+    ]);
+    expect(await problemsOf(root)).toEqual([
+      'app/read/summary/projections/bounda/personal-data-lost.ts: "PersonalDataLost" is not an event the runtime emits; it emits PersonalDataForgotten',
+    ]);
+    const valid = await project([
+      "app/domain/order/order-placed.ts",
+      "app/domain/order/policies/bounda/audit-on-personal-data-forgotten.ts",
+      "app/domain/order/policies/bounda/audit-on-personal-data-lost.ts",
+      "app/read/summary/view.ts",
+      "app/read/summary/projections/bounda/personal-data-forgotten.ts",
+    ]);
+    const model = await discoverProject({ root: valid });
+    expect(model.aggregates[0]?.policies).toMatchObject([
+      {
+        key: "boundaAuditOnPersonalDataForgotten",
+        source: "bounda",
+        triggerKey: "personalDataForgotten",
+      },
+      { key: "boundaAuditOnPersonalDataLost", source: "bounda", triggerKey: null },
+    ]);
+    expect(model.warnings.map((warning) => warning.message)).toEqual([
+      'app/domain/order/policies/bounda/audit-on-personal-data-lost.ts: its name ends with no event of "bounda" after "-on-" and it exports no "on", so boot refuses it; is the event misspelled?',
+    ]);
+    expect(model.readModels[0]?.projections).toMatchObject([
+      { aggregate: "bounda", eventKey: "personalDataForgotten" },
+    ]);
+  });
+
+  it("refuses an aggregate named after the runtime's own", async () => {
+    const root = await project([
+      "app/domain/bounda/forgotten.ts",
+      "app/domain/order/order-placed.ts",
+    ]);
+    expect(await problemsOf(root)).toEqual([
+      'app/domain/bounda: "bounda" is the runtime\'s own aggregate; give yours another name',
+    ]);
   });
 
   it("ignores +types, tests, declarations and underscored files", async () => {

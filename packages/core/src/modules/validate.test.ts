@@ -309,6 +309,34 @@ describe("validateRegistry", () => {
     );
   });
 
+  it("takes projections of the runtime's own events, and only of those", () => {
+    const projecting = (projections: Registry["readModels"][string]["projections"]): Registry => ({
+      aggregates: { order },
+      readModels: { orderSummary: { ...orderSummary, projections } },
+    });
+    expect(() =>
+      validateRegistry(projecting({ bounda: { personalDataForgotten: { project: noop } } })),
+    ).not.toThrow();
+    expect(() =>
+      validateRegistry(
+        projecting({
+          bounda: {
+            personalDataLost: { project: noop },
+            byOn: { on: "OrderPlaced", project: noop },
+          },
+        }),
+      ),
+    ).toThrow(
+      new ConfigurationError(
+        [
+          "Invalid registry:",
+          '  readModels.orderSummary.projections.bounda.personalDataLost: "PersonalDataLost" is not an event of the aggregate "bounda"; name the file after one or export "on"',
+          '  readModels.orderSummary.projections.bounda.byOn: "OrderPlaced" is not an event of the aggregate "bounda"; name the file after one or export "on"',
+        ].join("\n"),
+      ),
+    );
+  });
+
   it("rejects a process named like a policy of its aggregate", () => {
     const registry = withOrder({
       policies: { ...order.policies, orderPayment: { module: { handler: noop } } },

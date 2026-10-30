@@ -2,6 +2,7 @@
 import {
   type CreateArgs,
   DomainError,
+  type EventPayloadArgs,
   type FieldsArgs,
   type Instant,
   type PayloadArgs,
@@ -22,6 +23,7 @@ interface OrderRow {
   readonly orderId: string;
   readonly status: string;
   readonly total: number;
+  readonly note?: string;
 }
 
 interface CustomerRow {
@@ -50,7 +52,12 @@ export const registry = {
       state: { initialState: { status: "new" } satisfies OrderState },
       events: {
         orderPlaced: {
-          payload: ({ z }: PayloadArgs) => z.object({ total: z.number(), customer: z.string() }),
+          payload: ({ z, personal, person }: EventPayloadArgs) =>
+            z.object({
+              total: z.number(),
+              customer: person(z.string()),
+              note: personal(z.string()).optional(),
+            }),
           evolve: ({ state }: { state: OrderState }) => ({ ...state, status: "placed" as const }),
         },
         orderPaid: {
@@ -64,7 +71,12 @@ export const registry = {
         placeOrder: {
           module: {
             payload: ({ z }: PayloadArgs) =>
-              z.object({ orderId: z.string(), total: z.number(), customer: z.string() }),
+              z.object({
+                orderId: z.string(),
+                total: z.number(),
+                customer: z.string(),
+                note: z.string().optional(),
+              }),
             rejections: () => ({ AlreadyPlaced: "Order already placed" }),
             handler: ({
               command,
@@ -72,17 +84,15 @@ export const registry = {
               events,
               reject,
             }: {
-              command: { payload: { total: number; customer: string } };
+              command: { payload: { total: number; customer: string; note?: string } };
               state: OrderState;
               events: Events;
               reject: RejectFunction<"AlreadyPlaced">;
             }) => {
               if (state.status !== "new") return reject("AlreadyPlaced");
+              const { total, customer, note } = command.payload;
               return [
-                events.orderPlaced?.({
-                  total: command.payload.total,
-                  customer: command.payload.customer,
-                }),
+                events.orderPlaced?.({ total, customer, ...(note === undefined ? {} : { note }) }),
               ];
             },
           },
@@ -151,6 +161,7 @@ export const registry = {
           orderId: f.string().primaryKey(),
           status: f.string(),
           total: f.number(),
+          note: f.string().optional(),
         }),
       },
       projections: {
@@ -160,14 +171,16 @@ export const registry = {
               event,
               table,
             }: {
-              event: { aggregateId: string; payload: { total: number } };
+              event: { aggregateId: string; payload: { total: number; note?: string | null } };
               table: Table<OrderRow>;
             }) => {
               if (outage.projection) throw new Error("projection is down");
+              const { total, note } = event.payload;
               await table.upsert({
                 orderId: event.aggregateId,
                 status: "placed",
-                total: event.payload.total,
+                total,
+                ...(note === undefined || note === null ? {} : { note }),
               });
             },
           },
@@ -313,8 +326,32 @@ export const slicedRegistry = {
             },
           },
         },
+        bounda: {
+          personalDataForgotten: {
+            project: async ({
+              event,
+              table,
+            }: {
+              event: { payload: { personId: string } };
+              table: Table<CustomerRow>;
+            }) => {
+              await table.delete({ customer: event.payload.personId });
+            },
+          },
+        },
       },
-      queries: {},
+      queries: {
+        getCustomer: {
+          payload: ({ z }: PayloadArgs) => z.object({ customer: z.string() }),
+          handler: ({
+            query,
+            table,
+          }: {
+            query: { payload: { customer: string } };
+            table: Table<CustomerRow>;
+          }) => table.findOne({ customer: query.payload.customer }),
+        },
+      },
     },
   },
 } satisfies Registry;

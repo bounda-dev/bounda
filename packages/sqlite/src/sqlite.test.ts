@@ -19,6 +19,7 @@ import {
   eventStoreContract,
   inboxLedgerContract,
   pendingEvent,
+  personalKeyStoreContract,
   readModelRebuildContract,
   readModelTransactionContract,
   schedulerContract,
@@ -42,8 +43,9 @@ describe("sqlite adapter in memory", () => {
   inboxLedgerContract({ create: async () => (await openStorage()).inboxLedger });
   deadLetterStoreContract({ create: async () => (await openStorage()).deadLetterStore });
   schedulerContract({ create: async () => (await openStorage()).scheduler });
-  snapshotStoreContract({ create: async () => (await openStorage()).snapshotStore });
+  snapshotStoreContract({ create: () => openStorage() });
   storageTransactionContract({ create: () => openStorage() });
+  personalKeyStoreContract({ create: async () => (await openStorage()).personalKeys });
   tableContract({
     create: async () =>
       (
@@ -240,6 +242,7 @@ describe("sqlite adapter on a file", () => {
       "app_events",
       "app_idempotency_keys",
       "app_inbox",
+      "app_personal_keys",
       "app_rm_order_summary",
       "app_scheduled_commands",
       "app_snapshots",

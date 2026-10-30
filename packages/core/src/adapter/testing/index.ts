@@ -28,6 +28,11 @@ export type {
 } from "./inbox-ledger.contract.ts";
 export { inboxLedgerContract } from "./inbox-ledger.contract.ts";
 export type {
+  PersonalKeyStoreContractArgs,
+  PersonalKeyStoreContractFunction,
+} from "./personal-key-store.contract.ts";
+export { personalKeyStoreContract } from "./personal-key-store.contract.ts";
+export type {
   ReadModelRebuildContractArgs,
   ReadModelRebuildContractFunction,
   RebuiltRow,

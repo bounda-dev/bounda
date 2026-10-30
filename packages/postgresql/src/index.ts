@@ -14,6 +14,7 @@ import { createPostgresqlEventStore } from "./event-store.ts";
 import { createPostgresqlIdempotencyStore } from "./idempotency-store.ts";
 import { createPostgresqlInboxLedger } from "./inbox-ledger.ts";
 import { type PostgresqlOptions, resolvePostgresqlOptions } from "./options.ts";
+import { createPostgresqlPersonalKeyStore } from "./personal-key-store.ts";
 import { openPostgresqlReadModel, rebuildPostgresqlReadModel } from "./read-model.ts";
 import { createPostgresqlScheduler } from "./scheduler.ts";
 import { ensureStorageSchema, storageTablesFor } from "./schema.ts";
@@ -108,6 +109,15 @@ export const postgresql: PostgresqlFunction = (options) => {
             db: database,
             table: tables.idempotencyKeys,
           }),
+          personalKeys: createPostgresqlPersonalKeyStore({
+            db: database,
+            table: tables.personalKeys,
+          }),
+          snapshotStore: createPostgresqlSnapshotStore({
+            db: database,
+            table: tables.snapshots,
+            personalKeys: tables.personalKeys,
+          }),
         });
         const boundTo = (tx: SqlTransaction): PostgresqlDatabase => ({
           run: tx.run,
@@ -118,7 +128,6 @@ export const postgresql: PostgresqlFunction = (options) => {
           ...storesOver(db),
           notifier: createPostgresqlEventNotifier({ sql, channel: tables.channel }),
           checkpointStore: createPostgresqlCheckpointStore({ db, table: tables.checkpoints }),
-          snapshotStore: createPostgresqlSnapshotStore({ db, table: tables.snapshots }),
           // The append lock comes first, before any row the work may lock: two transactions that
           // took the lock and a row in opposite orders would deadlock.
           transact: (work) =>

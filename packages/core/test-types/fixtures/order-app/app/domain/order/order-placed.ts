@@ -1,11 +1,12 @@
 import type { Event } from "./+types/order-placed";
 
-export const payload = ({ z }: Event.PayloadArgs) =>
+export const payload = ({ z, personal, person }: Event.PayloadArgs) =>
   z.object({
-    customerId: z.string(),
+    customerId: person(z.string()),
     lines: z.array(
       z.object({ sku: z.string(), quantity: z.int().positive(), unitPrice: z.number() }),
     ),
+    note: personal(z.string()).optional(),
   });
 
 export const evolve = ({ state, event }: Event.EvolveArgs) => ({

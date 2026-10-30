@@ -17,6 +17,7 @@ import { createMemoryEventNotifier } from "./event-notifier.ts";
 import { createMemoryEventStore } from "./event-store.ts";
 import { createKeptIdempotencyStore } from "./idempotency-store.ts";
 import { createKeptInboxLedger } from "./inbox-ledger.ts";
+import { createKeptPersonalKeyStore } from "./personal-key-store.ts";
 import { createKeptScheduler } from "./scheduler.ts";
 import { createMemorySnapshotStore } from "./snapshot-store.ts";
 import { createMemoryReadClient, createMemoryTable, type MemoryTable } from "./table.ts";
@@ -103,18 +104,22 @@ export const memory: MemoryFunction = (options = {}) => {
       const deadLetterStore = createKeptDeadLetterStore();
       const scheduler = createKeptScheduler();
       const idempotencyStore = createKeptIdempotencyStore();
+      const personalKeys = createKeptPersonalKeyStore();
+      const snapshotStore = createMemorySnapshotStore({ holds: personalKeys.holds });
       const stores = {
         eventStore: createMemoryEventStore({ onAppend: notifier.notify }),
         inboxLedger: inboxLedger.store,
         deadLetterStore: deadLetterStore.store,
         scheduler: scheduler.store,
         idempotencyStore: idempotencyStore.store,
+        personalKeys: personalKeys.store,
+        snapshotStore,
       };
       storage ??= {
         ...stores,
         notifier,
         checkpointStore,
-        snapshotStore: createMemorySnapshotStore(),
+        snapshotStore,
         transact: createMemoryStorageTransaction({
           ...stores,
           entries: {
@@ -122,6 +127,7 @@ export const memory: MemoryFunction = (options = {}) => {
             deadLetterStore: deadLetterStore.entries,
             scheduler: scheduler.entries,
             idempotencyStore: idempotencyStore.entries,
+            personalKeys: personalKeys.entries,
           },
         }),
         close: async () => {},
