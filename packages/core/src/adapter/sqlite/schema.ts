@@ -8,6 +8,7 @@ export interface StorageTables {
   readonly inbox: string;
   readonly deadLetters: string;
   readonly scheduledCommands: string;
+  readonly idempotencyKeys: string;
 }
 
 export interface StorageTablesForFunction {
@@ -20,6 +21,7 @@ export const storageTablesFor: StorageTablesForFunction = (prefix) => ({
   inbox: quoteIdentifier(storageTableNameFor({ prefix, table: "inbox" })),
   deadLetters: quoteIdentifier(storageTableNameFor({ prefix, table: "deadLetters" })),
   scheduledCommands: quoteIdentifier(storageTableNameFor({ prefix, table: "scheduledCommands" })),
+  idempotencyKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "idempotencyKeys" })),
 });
 
 const indexName = (table: string, suffix: string): string =>
@@ -100,6 +102,13 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "claim_id" TEXT
   )`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.scheduledCommands, "execute_at")} ON ${tables.scheduledCommands} ("execute_at")`,
+  `CREATE TABLE IF NOT EXISTS ${tables.idempotencyKeys} (
+    "key" TEXT PRIMARY KEY,
+    "fingerprint" TEXT NOT NULL,
+    "outcome" TEXT NOT NULL,
+    "expires_at" TEXT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.idempotencyKeys, "expires_at")} ON ${tables.idempotencyKeys} ("expires_at")`,
 ];
 
 export interface EnsureStorageSchemaArgs {

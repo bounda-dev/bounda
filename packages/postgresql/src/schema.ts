@@ -13,6 +13,7 @@ export interface StorageTables {
   readonly inbox: string;
   readonly deadLetters: string;
   readonly scheduledCommands: string;
+  readonly idempotencyKeys: string;
   readonly appendLockKey: string;
   // The first key of the advisory locks read models take on the checkpoints table.
   readonly checkpointsLockKey: string;
@@ -51,6 +52,7 @@ export const storageTablesFor: StorageTablesForFunction = ({ prefix, schema }) =
     inbox: quoteIdentifier(storageTableNameFor({ prefix, table: "inbox" })),
     deadLetters: quoteIdentifier(storageTableNameFor({ prefix, table: "deadLetters" })),
     scheduledCommands: quoteIdentifier(storageTableNameFor({ prefix, table: "scheduledCommands" })),
+    idempotencyKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "idempotencyKeys" })),
     appendLockKey: `bounda:${schema}.${events}`,
     checkpointsLockKey: `bounda:${schema}.${checkpoints}`,
     channel,
@@ -131,6 +133,13 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "claim_id" text
   )`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.scheduledCommands, "execute_at")} ON ${tables.scheduledCommands} ("execute_at")`,
+  `CREATE TABLE IF NOT EXISTS ${tables.idempotencyKeys} (
+    "key" text PRIMARY KEY,
+    "fingerprint" text NOT NULL,
+    "outcome" jsonb NOT NULL,
+    "expires_at" text NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.idempotencyKeys, "expires_at")} ON ${tables.idempotencyKeys} ("expires_at")`,
 ];
 
 export interface EnsureStorageSchemaArgs {
@@ -156,8 +165,10 @@ export const ensureStorageSchema: EnsureStorageSchemaFunction = async ({ db, sch
     tables.inbox,
     tables.deadLetters,
     tables.scheduledCommands,
+    tables.idempotencyKeys,
     indexName(tables.deadLetters, "status"),
     indexName(tables.scheduledCommands, "execute_at"),
+    indexName(tables.idempotencyKeys, "expires_at"),
   ].map(unquoted);
   if (await relationsExist({ db, schema, names })) return;
   await inSchema({

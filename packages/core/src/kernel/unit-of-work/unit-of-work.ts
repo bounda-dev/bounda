@@ -6,7 +6,10 @@ import { ConcurrencyError } from "../../contracts/errors.ts";
 /**
  * What a reaction's commands write through while its attempt runs.
  */
-export type UnitStores = Pick<UnitOfWork, "eventStore" | "scheduler" | "afterCommit">;
+export type UnitStores = Pick<
+  UnitOfWork,
+  "eventStore" | "scheduler" | "idempotencyStore" | "afterCommit"
+>;
 
 /**
  * What one attempt of a reaction changes in the store, held back until `commit`: the events its

@@ -3,6 +3,7 @@ import { type DeferredWriteTarget, deferWrites } from "../adapter/deferred-write
 import { createStagedEventStore } from "../adapter/staged-event-store.ts";
 import type { CheckpointStore } from "../adapter/storage/checkpoint-store.ts";
 import type { DeadLetterStore } from "../adapter/storage/dead-letter-store.ts";
+import type { IdempotencyStore } from "../adapter/storage/idempotency-store.ts";
 import type { ClaimKey, InboxLedger } from "../adapter/storage/inbox-ledger.ts";
 import type { Scheduler } from "../adapter/storage/scheduler.ts";
 import type { StoreEntries } from "./entries.ts";
@@ -13,10 +14,12 @@ export interface CreateMemoryStorageTransactionArgs {
   readonly inboxLedger: InboxLedger;
   readonly deadLetterStore: DeadLetterStore;
   readonly scheduler: Scheduler;
+  readonly idempotencyStore: IdempotencyStore;
   readonly entries: {
     readonly inboxLedger: StoreEntries<ClaimKey>;
     readonly deadLetterStore: StoreEntries<string>;
     readonly scheduler: StoreEntries<string>;
+    readonly idempotencyStore: StoreEntries<string>;
   };
 }
 
@@ -35,6 +38,7 @@ const createUndoLog = ({
   inboxLedger,
   deadLetterStore,
   scheduler,
+  idempotencyStore,
   entries,
 }: CreateUndoLogArgs): UndoLog => {
   const undos: (() => void)[] = [];
@@ -76,6 +80,10 @@ const createUndoLog = ({
         defer: (args) =>
           tracked(entries.scheduler, args.claim.dedupeKey, () => scheduler.defer(args)),
       },
+      idempotencyStore: {
+        put: (args) =>
+          tracked(entries.idempotencyStore, args.key, () => idempotencyStore.put(args)),
+      },
     },
     undo: () => {
       for (const undo of undos.splice(0).reverse()) undo();
@@ -84,11 +92,14 @@ const createUndoLog = ({
 };
 
 /**
- * `Storage.transact` for the memory stores. The work's writes are held back; transactions
- * then commit one at a time, every stream appended in one synchronous run, so no reader sees one
- * stream appended without the others. A failed commit appends nothing and puts back each entry it
- * changed, unless someone changed it since. `tryClaim`, `claimDue`, both `renew` and writes made on
- * the stores themselves do not wait for a commit, so they can see a write it may still put back.
+ * `Storage.transact` for the memory stores. The work's writes are held back, each event staged
+ * with the position it will have, reserved from the store, so the work answers the positions
+ * its appends will commit with; transactions then commit one at a time, every stream appended
+ * in one synchronous run, so no reader sees one stream appended without the others, nor an
+ * event written meanwhile past a position still reserved. A failed transaction appends nothing,
+ * gives its positions back and puts back each entry it changed, unless someone changed it since.
+ * `tryClaim`, `claimDue`, both `renew`, `purge` and writes made on the stores themselves do not
+ * wait for a commit, so they can see a write it may still put back.
  */
 export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunction = ({
   eventStore,
@@ -96,22 +107,34 @@ export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunct
 }) => {
   const commits = createMemoryLocks();
   return async (work) => {
-    const staged = createStagedEventStore(eventStore);
+    const reserved: number[] = [];
+    const staged = createStagedEventStore(eventStore, {
+      nextPosition: () => {
+        const position = eventStore.reserve();
+        reserved.push(position);
+        return position;
+      },
+    });
     const { stores, flush } = deferWrites(live);
-    const result = await work({ eventStore: staged, ...stores });
-    // A transaction committed from inside this commit, as from a store write, waits forever.
-    const release = await commits.acquire("commit", true);
-    const log = createUndoLog(live);
     try {
-      await flush(log.target);
-      await eventStore.appendAll(staged.batches());
-    } catch (error) {
-      log.undo();
-      throw error;
+      const result = await work({ eventStore: staged, ...stores });
+      // A transaction committed from inside this commit, as from a store write, waits forever.
+      const release = await commits.acquire("commit", true);
+      const log = createUndoLog(live);
+      try {
+        await flush(log.target);
+        await eventStore.appendAll(staged.batches());
+      } catch (error) {
+        log.undo();
+        throw error;
+      } finally {
+        release?.();
+      }
+      reserved.length = 0;
+      return result;
     } finally {
-      release?.();
+      eventStore.release(reserved);
     }
-    return result;
   };
 };
 

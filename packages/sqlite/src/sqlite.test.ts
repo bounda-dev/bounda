@@ -236,6 +236,7 @@ describe("sqlite adapter on a file", () => {
       "app_checkpoints",
       "app_dead_letters",
       "app_events",
+      "app_idempotency_keys",
       "app_inbox",
       "app_rm_order_summary",
       "app_scheduled_commands",

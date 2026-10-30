@@ -139,6 +139,8 @@ framework that is precise about it lands on the same line. Bounda draws it at th
 - [What the runtime promises](/guides/reacting-to-events/#what-the-runtime-promises), the same
   guarantees in the terms of a handler's code, and
   [retries and timeouts](/guides/reacting-to-events/#retries-and-timeouts).
+- [Idempotent commands](/guides/idempotent-commands/), the same question at the door: a command
+  a client sends twice is answered once, under the key it names.
 - [What more instances do](/concepts/how-it-runs/#what-more-instances-do)
   and [a projection that keeps failing](/guides/deployment/#a-projection-that-keeps-failing).
 - [Your event store is your outbox](/concepts/event-store-as-outbox/) and

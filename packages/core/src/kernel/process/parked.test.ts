@@ -377,28 +377,16 @@ describe("events of a failed process", () => {
     const [letter] = await deadLetters.list();
     const transact = harness.storage.transact;
     let arrived = false;
-    // The archive arrives once the first transaction of the retry that schedules has decided what
-    // to write, before it commits.
-    harness.storage.transact = (work) =>
-      transact(async (tx) => {
-        let schedules = false;
-        const result = await work({
-          ...tx,
-          scheduler: {
-            ...tx.scheduler,
-            schedule: (args) => {
-              schedules = true;
-              return tx.scheduler.schedule(args);
-            },
-          },
-        });
-        if (schedules && !arrived) {
-          arrived = true;
-          await harness.pipeline.dispatch({ type: "ArchiveOrder", payload: { orderId: "o-1" } });
-          await harness.dispatcher.runUntilIdle();
-        }
-        return result;
-      });
+    // The archive arrives once the retried step is committed, as the resume that follows it has
+    // decided what to write and is about to commit.
+    harness.storage.transact = async (work) => {
+      if (!arrived && (await types()).at(-1) === PROCESS_EVENTS.handled) {
+        arrived = true;
+        await harness.pipeline.dispatch({ type: "ArchiveOrder", payload: { orderId: "o-1" } });
+        await harness.dispatcher.runUntilIdle();
+      }
+      return transact(work);
+    };
     await deadLetters.retry(letter?.id ?? "");
     harness.storage.transact = transact;
     expect(arrived).toBe(true);

@@ -8,6 +8,7 @@ import {
   readYourWrites,
 } from "@bounda-dev/core";
 import { createContext, type MiddlewareFunction, type RouterContext } from "react-router";
+import { withIdempotencyKey } from "./idempotency-key.ts";
 
 /**
  * Boots the app the middleware serves. Called on the first request, and again on the next one
@@ -39,7 +40,8 @@ export interface CreateBoundaArgs<R extends Registry = AppRegistry> {
 
 /**
  * A React Router middleware that boots the app on the first request, starts it and puts it in
- * the context of every request. Mount it in `root.tsx`:
+ * the context of every request, its commands carrying the request's `Idempotency-Key` header,
+ * when it has one, as their `idempotencyKey`. Mount it in `root.tsx`:
  * `export const middleware = [boundaMiddleware]`.
  */
 export interface BoundaMiddleware {
@@ -153,8 +155,8 @@ export const createBounda: CreateBoundaFunction = <R extends Registry = AppRegis
   const slot = slotFor<R>(key);
   void retire(slot);
 
-  const boundaMiddleware: BoundaMiddleware = async ({ context }, next) => {
-    context.set(bounda, await load(slot, bootApp, consistency));
+  const boundaMiddleware: BoundaMiddleware = async ({ context, request }, next) => {
+    context.set(bounda, withIdempotencyKey(await load(slot, bootApp, consistency), request));
     return next();
   };
 

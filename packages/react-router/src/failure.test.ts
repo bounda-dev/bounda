@@ -1,6 +1,7 @@
 import {
   ConcurrencyError,
   DomainError,
+  IdempotencyKeyConflictError,
   type PayloadArgs,
   type RejectFunction,
   type Rejection,
@@ -59,6 +60,18 @@ describe("failure", () => {
       rejected: "AlreadyPlaced",
     });
     expect(answer.init).toEqual({ status: 409 });
+  });
+
+  it("answers a reused idempotency key with a 422", () => {
+    const answer = failure(
+      new IdempotencyKeyConflictError({ idempotencyKey: "req-1", commandType: "PlaceOrder" }),
+    );
+    expect(answer.data).toEqual({
+      error:
+        'Idempotency key "req-1" was already used for a command other than PlaceOrder with this payload',
+      issues: [],
+    });
+    expect(answer.init).toEqual({ status: 422 });
   });
 
   it("answers the refusals a Durable Object sends back, which arrive as plain errors with their code", () => {

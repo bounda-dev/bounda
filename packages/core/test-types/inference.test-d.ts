@@ -544,6 +544,7 @@ describe("facades", () => {
       DispatchOptions | undefined
     >();
     expectTypeOf<DispatchOptions["signal"]>().toEqualTypeOf<AbortSignal | undefined>();
+    expectTypeOf<DispatchOptions["idempotencyKey"]>().toEqualTypeOf<string | undefined>();
     expectTypeOf<ReturnType<Commands["payOrder"]>>().toEqualTypeOf<Promise<DispatchResult>>();
     expectTypeOf<DispatchResult>().toEqualTypeOf<StoredDispatch | ScheduledDispatch>();
     expectTypeOf<StoredDispatch>().toEqualTypeOf<{
@@ -577,6 +578,12 @@ describe("facades", () => {
     expectTypeOf(
       commands.payOrder(payment, { correlationId: "c-1" }),
     ).resolves.toEqualTypeOf<StoredDispatch>();
+    expectTypeOf(
+      commands.payOrder(payment, { idempotencyKey: "req-1" }),
+    ).resolves.toEqualTypeOf<StoredDispatch>();
+    expectTypeOf(
+      commands.payOrder(payment, { idempotencyKey: "req-1", delay: "1h" }),
+    ).resolves.toEqualTypeOf<ScheduledDispatch>();
     expectTypeOf(
       commands.payOrder(payment, { delay: "1h", signal }),
     ).resolves.toEqualTypeOf<ScheduledDispatch>();

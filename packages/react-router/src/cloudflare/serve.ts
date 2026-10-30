@@ -1,6 +1,7 @@
 import type { BoundaClient, Registry } from "@bounda-dev/core";
 import { createContext } from "react-router";
 import type { Bounda, BoundaMiddleware } from "../create-bounda.ts";
+import { withIdempotencyKey } from "../idempotency-key.ts";
 import type { ClientOfFunction } from "./clients.ts";
 
 export interface ServeFunction {
@@ -23,7 +24,7 @@ export const serve: ServeFunction = <R extends Registry>(
   };
 
   const boundaMiddleware: BoundaMiddleware = async (args, next) => {
-    args.context.set(bounda, (await clients())(args));
+    args.context.set(bounda, withIdempotencyKey((await clients())(args), args.request));
     return next();
   };
 

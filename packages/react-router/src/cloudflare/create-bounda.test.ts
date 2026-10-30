@@ -55,6 +55,33 @@ describe("createBounda on Cloudflare", () => {
     ]);
   });
 
+  it("sends the request's Idempotency-Key header with every command of the request", async () => {
+    const store = storeNamespace();
+    env.STORE = store.namespace;
+    const { bounda, boundaMiddleware } = createBounda({
+      config: { storage: cloudflare() },
+      tenant: () => "acme",
+      consistency: "eventual",
+    });
+    const { context, args } = middlewareArgs();
+    args.request.headers.set("Idempotency-Key", "req-1");
+    await boundaMiddleware(args, async () => undefined);
+    const commands = context.get(bounda).commands;
+    await Reflect.get(commands, "placeOrder")({ orderId: "o-1" }, { correlationId: "c-1" });
+    await Reflect.get(commands, "payOrder")({ orderId: "o-1" }, { idempotencyKey: "own" });
+    expect(store.calls).toEqual([
+      [
+        "acme",
+        "command",
+        "placeOrder",
+        { orderId: "o-1" },
+        { idempotencyKey: "req-1", correlationId: "c-1" },
+        "eventual",
+      ],
+      ["acme", "command", "payOrder", { orderId: "o-1" }, { idempotencyKey: "own" }, "eventual"],
+    ]);
+  });
+
   it("refuses at once a consistency it does not know, or a Worker it cannot serve", () => {
     env.STORE = storeNamespace().namespace;
     expect(() =>

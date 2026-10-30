@@ -11,6 +11,7 @@ import { createPostgresqlDatabase, type PostgresqlDatabase } from "./database.ts
 import { createPostgresqlDeadLetterStore } from "./dead-letter-store.ts";
 import { createPostgresqlEventNotifier } from "./event-notifier.ts";
 import { createPostgresqlEventStore } from "./event-store.ts";
+import { createPostgresqlIdempotencyStore } from "./idempotency-store.ts";
 import { createPostgresqlInboxLedger } from "./inbox-ledger.ts";
 import { type PostgresqlOptions, resolvePostgresqlOptions } from "./options.ts";
 import { openPostgresqlReadModel, rebuildPostgresqlReadModel } from "./read-model.ts";
@@ -102,6 +103,10 @@ export const postgresql: PostgresqlFunction = (options) => {
             table: tables.deadLetters,
           }),
           scheduler: createPostgresqlScheduler({ db: database, table: tables.scheduledCommands }),
+          idempotencyStore: createPostgresqlIdempotencyStore({
+            db: database,
+            table: tables.idempotencyKeys,
+          }),
         });
         const boundTo = (tx: SqlTransaction): PostgresqlDatabase => ({
           run: tx.run,

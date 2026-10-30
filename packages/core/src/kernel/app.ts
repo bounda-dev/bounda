@@ -284,8 +284,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     const observers = new Set<CommandRejection[]>();
     const pipeline = createCommandPipeline({
       aggregates,
-      eventStore: storage.eventStore,
-      scheduler: storage.scheduler,
+      storage,
       config,
       ids,
       clock,

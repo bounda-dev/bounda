@@ -24,7 +24,7 @@ Everything is reported under the scope `@bounda-dev/core`. Spans:
 
 | Span | When | Attributes |
 | --- | --- | --- |
-| `bounda.command <Type>` | a command is dispatched | `bounda.command.type`, `bounda.aggregate.type`, `bounda.aggregate.id`, `bounda.correlation_id`, `bounda.causation_id`, `bounda.outcome` (`stored`, `scheduled`, `rejected`), `bounda.event.count`; a rejection adds the event `bounda.command.rejected`, its code in `bounda.rejected` |
+| `bounda.command <Type>` | a command is dispatched | `bounda.command.type`, `bounda.aggregate.type`, `bounda.aggregate.id`, `bounda.correlation_id`, `bounda.causation_id`, `bounda.outcome` (`stored`, `scheduled`, `rejected`, or `replayed` for a dispatch answered from its `idempotencyKey`), `bounda.event.count`; a rejection adds the event `bounda.command.rejected`, its code in `bounda.rejected`, replayed or not |
 | `bounda.subscriber <name>` | the dispatcher hands a batch to a projection, the policy runner or the process runner; idle passes produce none | `bounda.subscriber`, `bounda.subscriber.kind`, `bounda.position.after`, `bounda.event.count`, `bounda.outcome` (`advanced`, `held`, `failed`, `moved`) |
 | `bounda.projection <readModel>.<projection>` | a projection handles one event | `bounda.read_model`, `bounda.projection`, the event's id, type and aggregate, `bounda.correlation_id` |
 | `bounda.policy <aggregate>.<policy>` | a policy handler runs | `bounda.policy`, the event's id, type and aggregate, `bounda.correlation_id`, `bounda.attempt` |
@@ -44,7 +44,7 @@ Metrics:
 | Metric | Kind | Attributes |
 | --- | --- | --- |
 | `bounda.dispatcher.lag` | observable gauge, events each subscriber is behind the head | `bounda.subscriber` |
-| `bounda.commands` | counter | `bounda.command.type`, `bounda.outcome` (`stored`, `scheduled`, `rejected`, `failed`) |
+| `bounda.commands` | counter | `bounda.command.type`, `bounda.outcome` (`stored`, `scheduled`, `rejected`, `replayed`, `failed`) |
 | `bounda.dead_letters` | counter | `bounda.handler.kind`, `bounda.handler`, `bounda.outcome` (`terminal`, `retriable_exhausted`) |
 
 The lag gauge is what to alert on: a subscriber whose lag grows is a projection or a policy that is

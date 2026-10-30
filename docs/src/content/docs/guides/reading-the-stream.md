@@ -2,7 +2,7 @@
 title: Reading the global stream
 description: Read a store's events by position, as they were stored, for an operator's console, an audit trail or a page that follows the stream.
 sidebar:
-  order: 10
+  order: 11
 ---
 
 Every event a store commits takes the next position in its

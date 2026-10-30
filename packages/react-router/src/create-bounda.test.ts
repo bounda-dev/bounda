@@ -121,6 +121,39 @@ describe("createBounda", () => {
     expect(second.context.get(bounda)).toBe(fake.app);
   });
 
+  it("passes the request's Idempotency-Key header to the commands it serves", async () => {
+    const options: unknown[] = [];
+    const app = {
+      commands: {
+        placeOrder: async (_payload: unknown, dispatch?: unknown) => {
+          options.push(dispatch);
+          return { scheduled: false };
+        },
+      },
+      start: () => undefined,
+      stop: async () => undefined,
+    } as unknown as BoundaApp;
+    const { bounda, boundaMiddleware } = createBounda({
+      consistency: "eventual",
+      key: uniqueKey(),
+      boot: async () => app,
+    });
+    const keyed = middlewareArgs();
+    keyed.args.request.headers.set("Idempotency-Key", "req-1");
+    await boundaMiddleware(keyed.args, async () => undefined);
+    const plain = middlewareArgs();
+    await boundaMiddleware(plain.args, async () => undefined);
+    const commandsOf = (context: RouterContextProvider) =>
+      context.get(bounda).commands as unknown as {
+        placeOrder: (payload: unknown, options?: unknown) => Promise<unknown>;
+      };
+    await commandsOf(keyed.context).placeOrder({ orderId: "o-1" });
+    await commandsOf(keyed.context).placeOrder({ orderId: "o-1" }, { idempotencyKey: "own" });
+    await commandsOf(plain.context).placeOrder({ orderId: "o-1" });
+    expect(options).toEqual([{ idempotencyKey: "req-1" }, { idempotencyKey: "own" }, undefined]);
+    expect(plain.context.get(bounda)).toBe(app);
+  });
+
   it("returns what next returns, awaiting it", async () => {
     const { boundaMiddleware } = createBounda({
       consistency: "eventual",

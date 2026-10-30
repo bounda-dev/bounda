@@ -1,16 +1,23 @@
-import type { EventStore, PendingEvent } from "../../adapter/storage/event-store.ts";
+import type { Storage, StorageTransaction } from "../../adapter/adapter.ts";
+import type { AppendResult, EventStore, PendingEvent } from "../../adapter/storage/event-store.ts";
+import type {
+  DispatchOutcome,
+  PutIdempotencyRecordArgs,
+} from "../../adapter/storage/idempotency-store.ts";
 import type { Scheduler } from "../../adapter/storage/scheduler.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
-import type {
-  Command,
-  CommandRejection,
-  DispatchOptions,
-  DispatchResult,
-  RejectedDispatch,
-  StoredDispatch,
+import {
+  type Command,
+  type CommandRejection,
+  type DispatchOptions,
+  type DispatchResult,
+  MAX_IDEMPOTENCY_KEY_LENGTH,
+  type RejectedDispatch,
+  type ScheduledDispatch,
+  type StoredDispatch,
 } from "../../contracts/command.ts";
-import { parseDuration } from "../../contracts/duration.ts";
+import { type DurationInput, parseDuration } from "../../contracts/duration.ts";
 import {
   BoundaError,
   ChainDepthExceededError,
@@ -18,6 +25,8 @@ import {
   ConfigurationError,
   CreationOrderError,
   DomainError,
+  IdempotencyKeyConflictError,
+  IdempotencyKeyTakenError,
   NotFoundError,
   rejectionOf,
   ValidationError,
@@ -33,6 +42,7 @@ import { withTimeout } from "../shared/timeout.ts";
 import { withPorts } from "../shared/with-ports.ts";
 import { ATTRIBUTES, METRICS, meter, SPAN_EVENTS, traced } from "../telemetry.ts";
 import type { UnitStores } from "../unit-of-work/unit-of-work.ts";
+import { fingerprintOf } from "./fingerprint.ts";
 import { validatePayload } from "./validate.ts";
 
 export interface DispatchArgs {
@@ -78,8 +88,7 @@ export interface CommandPipeline {
 
 export interface CreateCommandPipelineArgs {
   readonly aggregates: AggregatesRuntime;
-  readonly eventStore: EventStore;
-  readonly scheduler: Scheduler;
+  readonly storage: Storage;
   readonly config: ResolvedConfig;
   readonly ids: IdGenerator;
   readonly clock: Clock;
@@ -117,6 +126,39 @@ export const scheduledCommandId: ScheduledCommandIdFunction = (dedupeKey) =>
   dedupeKey.startsWith(SCHEDULED_COMMAND_PREFIX)
     ? dedupeKey.slice(SCHEDULED_COMMAND_PREFIX.length)
     : undefined;
+
+type DispatchStores = Pick<StorageTransaction, "eventStore" | "scheduler" | "idempotencyStore">;
+
+interface Idempotency {
+  readonly key: string;
+  readonly fingerprint: string;
+}
+
+const checkIdempotencyKey = (type: string, key: unknown): string => {
+  if (typeof key === "string" && key.length > 0 && key.length <= MAX_IDEMPOTENCY_KEY_LENGTH) {
+    return key;
+  }
+  throw new ValidationError(`Command "${type}" has an invalid idempotency key`, [
+    {
+      path: ["idempotencyKey"],
+      message: `Expected a string of 1 to ${MAX_IDEMPOTENCY_KEY_LENGTH} characters`,
+    },
+  ]);
+};
+
+const storedDispatch = (
+  aggregate: AggregateRuntime,
+  aggregateId: string,
+  appended: AppendResult,
+): StoredDispatch => ({
+  scheduled: false,
+  aggregateType: aggregate.name,
+  aggregateId,
+  version: appended.version,
+  eventIds: appended.events.map((event) => event.id),
+  eventTypes: appended.events.map((event) => event.type),
+  position: appended.events.at(-1)?.position ?? 0,
+});
 
 const resolveAggregateId = (aggregate: AggregateRuntime, payload: unknown): string => {
   const record = payload as Record<string, unknown>;
@@ -268,8 +310,7 @@ const rejectOf = (
  */
 export const createCommandPipeline: CreateCommandPipelineFunction = ({
   aggregates,
-  eventStore,
-  scheduler,
+  storage,
   config,
   ids,
   clock,
@@ -339,15 +380,10 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
       );
       checkCreationOrder(aggregate, command, folded.created, events);
       if (events.length === 0) {
-        return {
-          scheduled: false,
-          aggregateType: aggregate.name,
-          aggregateId: command.aggregateId,
+        return storedDispatch(aggregate, command.aggregateId, {
           version: loaded.version,
-          eventIds: [],
-          eventTypes: [],
-          position: 0,
-        };
+          events: [],
+        });
       }
       try {
         const appended = await store.append({
@@ -356,15 +392,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
           expectedVersion: loaded.version,
           events,
         });
-        return {
-          scheduled: false,
-          aggregateType: aggregate.name,
-          aggregateId: command.aggregateId,
-          version: appended.version,
-          eventIds: appended.events.map((event) => event.id),
-          eventTypes: appended.events.map((event) => event.type),
-          position: appended.events.at(-1)?.position ?? 0,
-        };
+        return storedDispatch(aggregate, command.aggregateId, appended);
       } catch (error) {
         if (!(error instanceof ConcurrencyError) || attempt >= attempts) throw error;
         logger.debug("command retried after concurrency conflict", { type: command.type, attempt });
@@ -377,7 +405,10 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     unit: "{command}",
   });
 
-  const count = (type: string, outcome: "stored" | "scheduled" | "rejected" | "failed"): void => {
+  const count = (
+    type: string,
+    outcome: "stored" | "scheduled" | "rejected" | "replayed" | "failed",
+  ): void => {
     commands.add(1, { [ATTRIBUTES.commandType]: type, [ATTRIBUTES.outcome]: outcome });
   };
 
@@ -394,13 +425,20 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     within: UnitStores | undefined,
     rejected: (error: DomainError, rejection: CommandRejection) => Rejected,
   ): Promise<DispatchResult | Rejected> => {
-    const stores = within ?? { eventStore, scheduler };
+    const stores: DispatchStores = within ?? storage;
     const entry = aggregates.commandsByType[type];
     if (entry === undefined) throw new NotFoundError(`Unknown command "${type}"`);
     const { aggregate, command: runtime } = entry;
     const depth = context?.depth ?? 0;
     const maxDepth = config.forAggregate(aggregate.name).policies.maxChainDepth;
     if (depth > maxDepth) throw new ChainDepthExceededError(depth, maxDepth);
+    const idempotency: Idempotency | undefined =
+      options.idempotencyKey === undefined
+        ? undefined
+        : {
+            key: checkIdempotencyKey(type, options.idempotencyKey),
+            fingerprint: await fingerprintOf({ type, payload }),
+          };
 
     const scheduled = options.delay !== undefined;
     const input = scheduled ? asStored(payload) : payload;
@@ -427,6 +465,98 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     const signals = [reactionSignal, options.signal].filter((one) => one !== undefined);
     for (const signal of signals) signal.throwIfAborted();
 
+    const schedule = async (
+      scheduler: Scheduler,
+      delay: DurationInput,
+    ): Promise<ScheduledDispatch> => {
+      const executeAt = new Date(clock.now().getTime() + parseDuration(delay));
+      await scheduler.schedule({
+        dedupeKey: scheduledCommandKey(commandId),
+        command: { type, payload: input, aggregateId },
+        executeAt,
+        context: {
+          correlationId: command.metadata.correlationId,
+          causationId: command.metadata.causationId,
+          depth,
+        },
+      });
+      return {
+        scheduled: true,
+        aggregateType: aggregate.name,
+        aggregateId,
+        executeAt: executeAt.toISOString(),
+      };
+    };
+
+    const recordOf = (
+      { key, fingerprint }: Idempotency,
+      outcome: DispatchOutcome,
+    ): PutIdempotencyRecordArgs => {
+      const now = clock.now();
+      return {
+        key,
+        fingerprint,
+        outcome,
+        expiresAt: new Date(
+          now.getTime() + config.runtime.commands.idempotencyKeyLifetimeMs,
+        ).toISOString(),
+        now,
+      };
+    };
+
+    const outcomeOf = (answer: DispatchResult | DomainError): DispatchOutcome =>
+      answer instanceof DomainError
+        ? {
+            rejected: answer.rejected,
+            message: answer.message,
+            aggregateType: aggregate.name,
+            aggregateId,
+          }
+        : answer;
+
+    // With a key, what the command answers is recorded under it where its events go: in the unit
+    // of work, or in the transaction of the append that stores them, so a duplicate running
+    // beside it loses on the key and stores nothing.
+    const perform = async (): Promise<DispatchResult | DomainError> => {
+      if (idempotency === undefined) {
+        return options.delay === undefined
+          ? execute(aggregate, runtime, command, stores.eventStore, signals)
+          : schedule(stores.scheduler, options.delay);
+      }
+      if (options.delay !== undefined) {
+        const delay = options.delay;
+        const scheduling = async (transaction: DispatchStores): Promise<ScheduledDispatch> => {
+          const answer = await schedule(transaction.scheduler, delay);
+          await transaction.idempotencyStore.put(recordOf(idempotency, answer));
+          return answer;
+        };
+        return within === undefined ? storage.transact(scheduling) : scheduling(within);
+      }
+      if (within !== undefined) {
+        const answer = await execute(aggregate, runtime, command, within.eventStore, signals);
+        await within.idempotencyStore.put(recordOf(idempotency, outcomeOf(answer)));
+        return answer;
+      }
+      let recorded = false;
+      const recording: EventStore = {
+        ...storage.eventStore,
+        append: async (args) => {
+          const appended = await storage.transact(async (transaction) => {
+            const result = await transaction.eventStore.append(args);
+            await transaction.idempotencyStore.put(
+              recordOf(idempotency, storedDispatch(aggregate, aggregateId, result)),
+            );
+            return result;
+          });
+          recorded = true;
+          return appended;
+        },
+      };
+      const answer = await execute(aggregate, runtime, command, recording, signals);
+      if (!recorded) await storage.idempotencyStore.put(recordOf(idempotency, outcomeOf(answer)));
+      return answer;
+    };
+
     return traced({
       name: `bounda.command ${type}`,
       attributes: {
@@ -437,52 +567,65 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         [ATTRIBUTES.causationId]: command.metadata.causationId,
       },
       run: async (span): Promise<DispatchResult | Rejected> => {
-        if (options.delay !== undefined) {
-          const executeAt = new Date(clock.now().getTime() + parseDuration(options.delay));
-          await stores.scheduler.schedule({
-            dedupeKey: scheduledCommandKey(commandId),
-            command: { type, payload: input, aggregateId },
-            executeAt,
-            context: {
-              correlationId: command.metadata.correlationId,
-              causationId: command.metadata.causationId,
-              depth,
-            },
+        const replay = async (): Promise<DispatchResult | Rejected | null> => {
+          if (idempotency === undefined) return null;
+          const found = await stores.idempotencyStore.get({
+            key: idempotency.key,
+            now: clock.now(),
           });
-          span.setAttribute(ATTRIBUTES.outcome, "scheduled");
-          count(type, "scheduled");
-          return {
-            scheduled: true,
-            aggregateType: aggregate.name,
-            aggregateId,
-            executeAt: executeAt.toISOString(),
-          };
-        }
-        let result: StoredDispatch | DomainError;
+          if (found === null) return null;
+          if (found.fingerprint !== idempotency.fingerprint) {
+            throw new IdempotencyKeyConflictError({
+              idempotencyKey: idempotency.key,
+              commandType: type,
+            });
+          }
+          span.setAttribute(ATTRIBUTES.outcome, "replayed");
+          count(type, "replayed");
+          const { outcome } = found;
+          if (!("rejected" in outcome)) return outcome;
+          span.addEvent(SPAN_EVENTS.commandRejected, { [ATTRIBUTES.rejected]: outcome.rejected });
+          return rejected(new DomainError(rejectionOf(outcome.rejected, outcome.message)), {
+            type,
+            ...outcome,
+          });
+        };
+        const remembered = await replay();
+        if (remembered !== null) return remembered;
+        let answer: DispatchResult | DomainError;
         try {
-          result = await execute(aggregate, runtime, command, stores.eventStore, signals);
+          answer = await perform();
         } catch (error) {
+          if (error instanceof IdempotencyKeyTakenError) {
+            const taken = await replay();
+            if (taken !== null) return taken;
+          }
           count(type, "failed");
           throw error;
         }
-        if (result instanceof DomainError) {
+        if (answer instanceof DomainError) {
           span.setAttribute(ATTRIBUTES.outcome, "rejected");
-          span.addEvent(SPAN_EVENTS.commandRejected, { [ATTRIBUTES.rejected]: result.rejected });
+          span.addEvent(SPAN_EVENTS.commandRejected, { [ATTRIBUTES.rejected]: answer.rejected });
           count(type, "rejected");
-          return rejected(result, {
+          return rejected(answer, {
             type,
-            rejected: result.rejected,
-            message: result.message,
+            rejected: answer.rejected,
+            message: answer.message,
             aggregateType: aggregate.name,
             aggregateId,
           });
         }
+        if (answer.scheduled) {
+          span.setAttribute(ATTRIBUTES.outcome, "scheduled");
+          count(type, "scheduled");
+          return answer;
+        }
         span.setAttributes({
           [ATTRIBUTES.outcome]: "stored",
-          [ATTRIBUTES.eventCount]: result.eventIds.length,
+          [ATTRIBUTES.eventCount]: answer.eventIds.length,
         });
         count(type, "stored");
-        return result;
+        return answer;
       },
     });
   };

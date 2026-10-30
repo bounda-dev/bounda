@@ -21,12 +21,27 @@ export interface NewCommand<Type extends string = string, Payload = unknown> {
 }
 
 /**
+ * The longest `idempotencyKey` a dispatch takes, as the providers that take one allow.
+ */
+export const MAX_IDEMPOTENCY_KEY_LENGTH: number = 255;
+
+/**
  * `delay` schedules the command instead of executing it now. `correlationId` overrides the
  * generated correlation id, for a command that starts a new request from outside the runtime.
  */
 export interface DispatchOptions {
   readonly delay?: DurationInput;
   readonly correlationId?: string;
+  /**
+   * Makes the dispatch safe to repeat: a key the caller chose for this one command, such as the
+   * `Idempotency-Key` header of the request that carries it. The first dispatch under a key runs
+   * the command and remembers what it answered, for `runtime.commands.idempotencyKeyLifetime`;
+   * every later one with the same key, the same command and the same payload answers the same
+   * without running it, its rejection included. The same key with another command or another
+   * payload rejects with `IdempotencyKeyConflictError`. A dispatch that fails is not remembered,
+   * so a retry runs it. Between 1 and `MAX_IDEMPOTENCY_KEY_LENGTH` characters.
+   */
+  readonly idempotencyKey?: string;
   /**
    * Withdraws the command until its events start being stored: the handler's `signal` aborts and
    * the dispatch rejects with the signal's `reason`, storing nothing. Already aborted, the handler

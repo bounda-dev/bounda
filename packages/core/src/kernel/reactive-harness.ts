@@ -86,8 +86,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
   const readModels = await buildReadModels({ registry, config, logger });
   const pipeline = createCommandPipeline({
     aggregates,
-    eventStore: storage.eventStore,
-    scheduler: storage.scheduler,
+    storage,
     config,
     ids,
     clock,

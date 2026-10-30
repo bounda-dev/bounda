@@ -29,6 +29,7 @@ export const DEFAULT_PROCESSES: ResolvedProcessesConfig = {
 };
 
 export const DEFAULT_CONCURRENCY_RETRIES: number = 3;
+export const DEFAULT_IDEMPOTENCY_KEY_LIFETIME_MS: number = 86_400_000;
 export const DEFAULT_POLL_INTERVAL_MS: number = 100;
 export const DEFAULT_IDLE_INTERVAL_MS: number = 30_000;
 export const DEFAULT_BATCH_SIZE: number = 100;
