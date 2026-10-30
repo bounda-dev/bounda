@@ -116,7 +116,9 @@ the snapshots in the background, in the `worker` role or an app from `createTest
 `runUntilIdle()`, so no command ever waits for one: a command loads the snapshot, folds the events
 after it and appends as before. The first deploy with snapshots walks the whole history and writes
 one for every stream long enough, so the streams that hurt today are covered without a migration.
-`app.getLag()` reports the subscriber like any other.
+`app.getLag()` reports the subscriber like any other. A command dispatched again with the same
+[`idempotencyKey`](/guides/idempotent-commands/) is answered from what the first one recorded,
+without loading the aggregate, so it reads no snapshot and writes none.
 
 ### What a snapshot is valid for
 
