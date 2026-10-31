@@ -1,4 +1,5 @@
 import type { IdempotencyRecord, IdempotencyStore } from "../adapter/storage/idempotency-store.ts";
+import type { KeyedPerson } from "../adapter/storage/personal-key-store.ts";
 import { IdempotencyKeyTakenError } from "../contracts/errors.ts";
 import { createStoreEntries, type WithEntries } from "./entries.ts";
 import { jsonCopy } from "./json-copy.ts";
@@ -9,9 +10,10 @@ export interface CreateMemoryIdempotencyStoreFunction {
 
 export interface CreateKeptIdempotencyStoreArgs {
   /**
-   * Whether a person has a personal key; synchronous, so `put` checks and writes in one step.
+   * Whether a person holds the key a record names; synchronous, so `put` checks and writes in one
+   * step.
    */
-  readonly holds: (person: string) => boolean;
+  readonly holds: (held: KeyedPerson) => boolean;
 }
 
 export interface CreateKeptIdempotencyStoreFunction {
@@ -52,7 +54,7 @@ export const createKeptIdempotencyStore: CreateKeptIdempotencyStoreFunction = ({
     },
     forget: async (person) => {
       for (const [key, record] of records) {
-        if (record.persons.includes(person)) records.delete(key);
+        if (record.persons.some((held) => held.person === person)) records.delete(key);
       }
     },
   };

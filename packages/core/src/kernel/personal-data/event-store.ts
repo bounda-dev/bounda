@@ -38,6 +38,7 @@ const personOf = (event: PendingEvent, payload: Record<string, unknown>, field: 
 
 // A conflict like a moved stream: the events were decided on a state that held the person's data,
 // and the person was forgotten since, so the command is decided again on the state without it.
+// Forgotten even when they hold a key again: one given to them after `forget` is another key.
 class ForgottenSinceLoadError extends ConcurrencyError {
   constructor(args: AppendArgs, person: string) {
     const { expectedVersion } = args;
@@ -71,13 +72,17 @@ export const withPersonalData: WithPersonalDataFunction = ({ eventStore, aggrega
   const marksOf = (event: Pick<StoredEvent, "aggregateType" | "type">): PersonalMarks | null =>
     aggregates.byName[event.aggregateType]?.eventsByType[event.type]?.personal ?? null;
 
-  // Only a person the state did not hold gets a new key: one it held and who has none now was
-  // forgotten after the load, and a new key would make their old data readable again.
+  // A person the state held under a key is sealed under that key alone: without it now, they were
+  // forgotten after the load, and any other key would make their old data readable again.
   const keyInForce = async (args: AppendArgs, person: string): Promise<PersonalKey> => {
     const stored = await keys.get(person);
-    if (stored !== null) return importPersonalKey(stored);
-    if (args.persons?.includes(person)) throw new ForgottenSinceLoadError(args, person);
-    return importPersonalKey(await keys.add(person, await generatePersonalKey()));
+    const readUnder = (args.persons ?? []).filter(
+      (held) => held.person === person && held.fingerprint !== null,
+    );
+    if (readUnder.some((held) => held.fingerprint !== stored?.fingerprint)) {
+      throw new ForgottenSinceLoadError(args, person);
+    }
+    return importPersonalKey(stored ?? (await keys.add(person, await generatePersonalKey())));
   };
 
   const sealed = async (
@@ -100,13 +105,17 @@ export const withPersonalData: WithPersonalDataFunction = ({ eventStore, aggrega
   const unsealed = async (
     event: StoredEvent,
     key: (person: string) => Promise<PersonalKey | null>,
+    opened: Map<string, string>,
   ): Promise<StoredEvent> => {
     if (!isRecord(event.payload)) return event;
     const entries = Object.entries(event.payload).filter(([, value]) => isSealed(value));
     if (entries.length === 0) return event;
     const payload: Record<string, unknown> = { ...event.payload };
     for (const [field, value] of entries as [string, SealedValue][]) {
-      payload[field] = await unseal({ key: await key(value.$personal.person), sealed: value });
+      const { person, key: sealedUnder } = value.$personal;
+      const personal = await key(person);
+      payload[field] = await unseal({ key: personal, sealed: value });
+      if (personal?.fingerprint === sealedUnder) opened.set(person, sealedUnder);
     }
     return { ...event, payload };
   };
@@ -138,11 +147,14 @@ export const withPersonalData: WithPersonalDataFunction = ({ eventStore, aggrega
     load: async (args) => {
       const loaded = await eventStore.load(args);
       const key = opening();
-      return { ...loaded, events: await Promise.all(loaded.events.map((e) => unsealed(e, key))) };
+      const fingerprints = new Map<string, string>();
+      const events = await Promise.all(loaded.events.map((e) => unsealed(e, key, fingerprints)));
+      return { ...loaded, events, fingerprints };
     },
     readAll: async (args) => {
       const key = opening();
-      return Promise.all((await eventStore.readAll(args)).map((e) => unsealed(e, key)));
+      const ignored = new Map<string, string>();
+      return Promise.all((await eventStore.readAll(args)).map((e) => unsealed(e, key, ignored)));
     },
     lastPosition: () => eventStore.lastPosition(),
   };

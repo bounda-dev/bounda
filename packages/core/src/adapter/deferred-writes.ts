@@ -103,7 +103,7 @@ export const deferWrites: DeferWritesFunction = ({
         purge: idempotencyStore.purge,
         forget: async (person) => {
           for (const [key, record] of records) {
-            if (record.persons.includes(person)) records.delete(key);
+            if (record.persons.some((held) => held.person === person)) records.delete(key);
           }
           recorded.push((target) => target.idempotencyStore.forget(person));
         },

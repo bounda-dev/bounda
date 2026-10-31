@@ -105,6 +105,23 @@ const registry = {
         },
       },
       policies: {
+        registerOnInvited: {
+          module: {
+            on: "Invited",
+            handler: async ({
+              event,
+              commands,
+            }: {
+              event: { payload: { customerId: string; email: string } };
+              commands: Record<string, (payload: unknown) => Promise<unknown>>;
+            }) => {
+              const { customerId, email } = event.payload;
+              await commands.registerCustomer?.({ customerId, email, name: "Invited" });
+              await commands.remindCustomer?.({ customerId });
+            },
+          },
+          source: "newsletter",
+        },
         boundaEraseOnPersonalDataForgotten: {
           module: {
             handler: async ({ event }: { event: PersonalDataForgottenEvent }) => {
@@ -114,6 +131,50 @@ const registry = {
           source: "bounda",
         },
       },
+      processes: {},
+    },
+    newsletter: {
+      events: {
+        subscribed: {
+          payload: ({ z, personal, person }: EventPayloadArgs) =>
+            z.object({ customerId: person(z.string()), email: personal(z.email()) }),
+          evolve: () => ({}),
+        },
+        invited: {
+          payload: ({ z }: EventPayloadArgs) =>
+            z.object({ customerId: z.string(), email: z.email() }),
+          evolve: () => ({}),
+        },
+      },
+      commands: {
+        subscribe: {
+          module: {
+            payload: ({ z }: PayloadArgs) =>
+              z.object({ newsletterId: z.string(), customerId: z.string(), email: z.email() }),
+            handler: ({
+              command,
+              events,
+            }: {
+              command: { payload: { customerId: string; email: string } };
+              events: Record<string, (payload?: unknown) => unknown>;
+            }) => [events.subscribed?.(command.payload)],
+          },
+        },
+        invite: {
+          module: {
+            payload: ({ z }: PayloadArgs) =>
+              z.object({ newsletterId: z.string(), customerId: z.string(), email: z.email() }),
+            handler: ({
+              command,
+              events,
+            }: {
+              command: { payload: { customerId: string; email: string } };
+              events: Record<string, (payload?: unknown) => unknown>;
+            }) => [events.invited?.(command.payload)],
+          },
+        },
+      },
+      policies: {},
       processes: {},
     },
   },
@@ -171,6 +232,17 @@ const registry = {
 } as const satisfies Registry;
 
 const ana = { customerId: "c-1", email: "ana@example.com", name: "Ana" };
+
+const snapshotted = {
+  registry: {
+    ...registry,
+    aggregates: {
+      ...registry.aggregates,
+      customer: { ...registry.aggregates.customer, stateFingerprint: "fp" },
+    },
+  },
+  config: { runtime: { overrides: { customer: { snapshot: { every: 1 } } } } },
+};
 
 describe("personal data in an app", () => {
   it("stores personal fields sealed, projects them in the clear, and forgets a person end to end", async () => {
@@ -266,20 +338,15 @@ describe("personal data in an app", () => {
   it("forgets a person's snapshots too, so their aggregate loads with the fields forgotten", async () => {
     const adapter = memory();
     const storage = await adapter.createStorage({ logger: silentLogger });
-    const { app } = await createTestApp({
-      registry: {
-        ...registry,
-        aggregates: {
-          customer: { ...registry.aggregates.customer, stateFingerprint: "fp" },
-        },
-      },
-      config: { runtime: { overrides: { customer: { snapshot: { every: 1 } } } } },
-      adapter,
-    });
+    const { app } = await createTestApp({ ...snapshotted, adapter });
     await app.commands.registerCustomer(ana);
     await app.runUntilIdle();
     const stream = { aggregateType: "customer", aggregateId: "c-1" };
-    expect(await storage.snapshotStore.get(stream)).toMatchObject({ version: 1, persons: ["c-1"] });
+    const key = await storage.personalKeys.get("c-1");
+    expect(await storage.snapshotStore.get(stream)).toMatchObject({
+      version: 1,
+      persons: [{ person: "c-1", fingerprint: key?.fingerprint }],
+    });
     expect((await storage.snapshotStore.get(stream))?.state).toContain("ana@example.com");
 
     await app.forget("c-1");
@@ -307,10 +374,11 @@ describe("personal data in an app", () => {
       rejected: "NotYet",
       message: "ana@example.com cannot be confirmed yet",
     });
+    const key = await storage.personalKeys.get("c-1");
     expect(
       await storage.idempotencyStore.get({ key: "confirm-1", now: clock.now() }),
     ).toMatchObject({
-      persons: ["c-1"],
+      persons: [{ person: "c-1", fingerprint: key?.fingerprint }],
     });
     expect(await confirm()).toMatchObject({ message: "ana@example.com cannot be confirmed yet" });
 
@@ -340,6 +408,53 @@ describe("personal data in an app", () => {
     expect(reminder?.payload).toEqual({});
     expect(await storage.personalKeys.get("c-1")).toBeNull();
     expect(JSON.stringify(await app.events.read())).not.toContain("ana@example.com");
+    await app.stop();
+  });
+
+  it.each([
+    ["its stream", {}],
+    ["a snapshot", snapshotted],
+  ])(
+    "decides a command again when its person is forgotten and keyed anew between its load from %s and its append",
+    async (_, setup) => {
+      const adapter = memory();
+      const storage = await adapter.createStorage({ logger: silentLogger });
+      const { app } = await createTestApp({ registry, ...setup, adapter });
+      await app.commands.registerCustomer(ana);
+      await app.runUntilIdle();
+      const before = await storage.personalKeys.get("c-1");
+      whileDeciding = async () => {
+        await app.forget("c-1");
+        await app.commands.subscribe({
+          newsletterId: "n-1",
+          customerId: "c-1",
+          email: "ana@again.example",
+        });
+      };
+      const reminded = await app.commands.remindCustomer({ customerId: "c-1" });
+      expect(whileDeciding).toBeNull();
+      const [reminder] = await app.events.read({ after: reminded.position - 1 });
+      expect(reminder?.type).toBe("CustomerReminded");
+      expect(reminder?.payload).toEqual({});
+      const after = await storage.personalKeys.get("c-1");
+      expect(after).not.toBeNull();
+      expect(after?.fingerprint).not.toBe(before?.fingerprint);
+      await app.stop();
+    },
+  );
+
+  it("seals what a unit of work staged for a new person, with what it decided on it", async () => {
+    const { app } = await createTestApp({ registry });
+    await app.commands.invite({ newsletterId: "n-1", customerId: "c-3", email: "cy@example.com" });
+    expect((await app.runUntilIdle()).idle).toBe(true);
+    const events = await app.events.read();
+    expect(events.map((event) => event.type)).toEqual([
+      "Invited",
+      "CustomerRegistered",
+      "CustomerReminded",
+    ]);
+    expect(isSealed((events[2]?.payload as { to?: unknown } | undefined)?.to)).toBe(true);
+    expect(await app.deadLetters.list()).toEqual([]);
     await app.stop();
   });
 

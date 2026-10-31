@@ -164,9 +164,10 @@ state cannot be kept: the subscriber logs it and writes no snapshot for that str
 throws `SnapshotError` from `runUntilIdle()`. Keep the state to data.
 
 The state is kept as it was folded, in the clear, [personal fields](/guides/personal-data/)
-included. Each snapshot names the people whose fields it holds, and forgetting one of them
-removes their snapshots in the same transaction that removes their key, so no snapshot keeps
-what the events no longer show.
+included. Each snapshot names the people whose fields it holds and the key it read each one
+under, and forgetting one of them removes their snapshots in the same transaction that removes
+their key, so no snapshot keeps what the events no longer show; one folded before that
+transaction is never written after it, even once the person has a new key.
 
 ## What snapshots do not do
 

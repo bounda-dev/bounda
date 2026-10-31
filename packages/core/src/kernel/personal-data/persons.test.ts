@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pendingEvent } from "../../adapter/testing/fixtures.ts";
+import { testKeyedPerson as held, pendingEvent } from "../../adapter/testing/fixtures.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
@@ -42,12 +42,16 @@ const event = (version: number, type: string, payload: unknown): StoredEvent => 
 });
 
 describe("personsOf", () => {
-  it("names whoever an event's readable personal fields belong to, once each, after those known", () => {
+  it("names whoever an event's readable personal fields belong to, once per key, after those known", () => {
     if (aggregate === undefined) throw new Error("no aggregate");
     expect(
       personsOf({
         aggregate,
-        from: ["c-0"],
+        from: [held("c-0", "0"), held("c-1", "old"), held("c-1", "1")],
+        fingerprints: new Map([
+          ["c-1", "f-1"],
+          ["c-9", "f-9"],
+        ]),
         events: [
           event(1, "OrderPlaced", { customerId: "c-1", note: "ring" }),
           event(2, "OrderSigned", { signature: "x" }),
@@ -56,7 +60,13 @@ describe("personsOf", () => {
           event(5, "OrderPaid", {}),
         ],
       }),
-    ).toEqual(["c-0", "c-1", "o-1", "7"]);
+    ).toEqual([
+      held("c-0", "0"),
+      held("c-1", "old"),
+      held("c-1", "1"),
+      held("o-1", null),
+      held("7", null),
+    ]);
   });
 
   it("names no one for an event whose personal fields are forgotten or absent", () => {

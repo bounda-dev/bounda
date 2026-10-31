@@ -1,11 +1,13 @@
+import type { KeyedPerson } from "../adapter/storage/personal-key-store.ts";
 import type { Snapshot, SnapshotStore } from "../adapter/storage/snapshot-store.ts";
 import { streamId } from "../contracts/event.ts";
 
 export interface CreateMemorySnapshotStoreArgs {
   /**
-   * Whether a person has a personal key; synchronous, so `put` checks and writes in one step.
+   * Whether a person holds the key a snapshot names; synchronous, so `put` checks and writes in
+   * one step.
    */
-  readonly holds: (person: string) => boolean;
+  readonly holds: (held: KeyedPerson) => boolean;
 }
 
 export interface CreateMemorySnapshotStoreFunction {
@@ -24,7 +26,7 @@ export const createMemorySnapshotStore: CreateMemorySnapshotStoreFunction = ({ h
     },
     forget: async (person) => {
       for (const [key, snapshot] of snapshots) {
-        if (snapshot.persons.includes(person)) snapshots.delete(key);
+        if (snapshot.persons.some((held) => held.person === person)) snapshots.delete(key);
       }
     },
   };

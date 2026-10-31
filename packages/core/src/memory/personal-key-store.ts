@@ -1,12 +1,17 @@
-import type { PersonalKeyStore } from "../adapter/storage/personal-key-store.ts";
+import type {
+  KeyedPerson,
+  PersonalKeyStore,
+  StoredPersonalKey,
+} from "../adapter/storage/personal-key-store.ts";
 import { createStoreEntries, type WithEntries } from "./entries.ts";
 
 export interface KeptPersonalKeyStore extends WithEntries<PersonalKeyStore, string> {
   /**
-   * Whether `person` has a key, answered at once: the memory snapshot store checks it in the
-   * same step as it writes, so no forget runs between the two.
+   * Whether the person holds the key of that fingerprint, or any key for a `null` one, answered
+   * at once: the memory snapshot store checks it in the same step as it writes, so no forget runs
+   * between the two.
    */
-  holds(person: string): boolean;
+  holds(held: KeyedPerson): boolean;
 }
 
 export interface CreateKeptPersonalKeyStoreFunction {
@@ -14,9 +19,12 @@ export interface CreateKeptPersonalKeyStoreFunction {
 }
 
 export const createKeptPersonalKeyStore: CreateKeptPersonalKeyStoreFunction = () => {
-  const keys = new Map<string, string>();
+  const keys = new Map<string, StoredPersonalKey>();
   return {
-    holds: (person) => keys.has(person),
+    holds: ({ person, fingerprint }) => {
+      const stored = keys.get(person);
+      return stored !== undefined && (fingerprint === null || stored.fingerprint === fingerprint);
+    },
     store: {
       get: async (person) => keys.get(person) ?? null,
       add: async (person, key) => {

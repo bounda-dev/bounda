@@ -4,6 +4,7 @@ import type {
   DispatchOutcome,
   PutIdempotencyRecordArgs,
 } from "../../adapter/storage/idempotency-store.ts";
+import type { KeyedPerson } from "../../adapter/storage/personal-key-store.ts";
 import type { Scheduler } from "../../adapter/storage/scheduler.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
@@ -322,7 +323,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
   // Only streams written before `begin` existed land here, so the set stays small.
   const warnedOpenings = new Set<string>();
   // Whose personal data a rejection's state held, which its message may quote.
-  const rejectedPersons = new WeakMap<DomainError, readonly string[]>();
+  const rejectedPersons = new WeakMap<DomainError, readonly KeyedPerson[]>();
   const execute = async (
     aggregate: AggregateRuntime,
     runtime: CommandRuntime,
@@ -494,7 +495,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     const recordOf = (
       { key, fingerprint }: Idempotency,
       outcome: DispatchOutcome,
-      persons: readonly string[] = [],
+      persons: readonly KeyedPerson[] = [],
     ): PutIdempotencyRecordArgs => {
       const now = clock.now();
       return {
@@ -509,7 +510,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
       };
     };
 
-    const personsOf = (answer: DispatchResult | DomainError): readonly string[] =>
+    const personsOf = (answer: DispatchResult | DomainError): readonly KeyedPerson[] =>
       answer instanceof DomainError ? (rejectedPersons.get(answer) ?? []) : [];
 
     const outcomeOf = (answer: DispatchResult | DomainError): DispatchOutcome =>

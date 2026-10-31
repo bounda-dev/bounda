@@ -142,12 +142,13 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "fingerprint" text NOT NULL,
     "outcome" jsonb NOT NULL,
     "expires_at" text NOT NULL,
-    "persons" text[] NOT NULL
+    "persons" jsonb NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.idempotencyKeys, "expires_at")} ON ${tables.idempotencyKeys} ("expires_at")`,
   `CREATE TABLE IF NOT EXISTS ${tables.personalKeys} (
     "person" text PRIMARY KEY,
-    "key" text NOT NULL
+    "key" text NOT NULL,
+    "fingerprint" text NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS ${tables.snapshots} (
     "aggregate_type" text NOT NULL,
@@ -155,7 +156,7 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "version" integer NOT NULL,
     "fingerprint" text NOT NULL,
     "state" text NOT NULL,
-    "persons" text[] NOT NULL,
+    "persons" jsonb NOT NULL,
     PRIMARY KEY ("aggregate_type", "aggregate_id")
   )`,
 ];

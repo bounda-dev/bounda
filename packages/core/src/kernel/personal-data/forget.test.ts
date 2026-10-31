@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Storage } from "../../adapter/adapter.ts";
+import { testPersonalKey } from "../../adapter/testing/fixtures.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { ConcurrencyError, ValidationError } from "../../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
@@ -26,7 +27,7 @@ const setup = async (storage?: Storage) => {
 describe("forgetPersonalData", () => {
   it("removes the person's key and appends PersonalDataForgotten to their stream, answering like a command", async () => {
     const { storage, forget, logs } = await setup();
-    await storage.personalKeys.add("c-1", "a2V5");
+    await storage.personalKeys.add("c-1", testPersonalKey("1"));
     expect(await forget("c-1")).toEqual({
       scheduled: false,
       aggregateType: "bounda",

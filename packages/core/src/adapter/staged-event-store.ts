@@ -1,6 +1,7 @@
 import { ConcurrencyError } from "../contracts/errors.ts";
 import { type StoredEvent, streamId } from "../contracts/event.ts";
 import type { AppendArgs, EventStore } from "./storage/event-store.ts";
+import { type KeyedPerson, keyedPersonId } from "./storage/personal-key-store.ts";
 
 /**
  * An event store that keeps what is appended to it aside: `load` answers with the base store's
@@ -38,7 +39,7 @@ interface StagedStream {
   readonly aggregateId: string;
   readonly base: number;
   readonly events: StoredEvent[];
-  readonly persons: Set<string>;
+  readonly persons: Map<string, KeyedPerson>;
 }
 
 export const createStagedEventStore: CreateStagedEventStoreFunction = (
@@ -63,7 +64,7 @@ export const createStagedEventStore: CreateStagedEventStoreFunction = (
       aggregateId,
       base: version,
       events: [],
-      persons: new Set<string>(),
+      persons: new Map<string, KeyedPerson>(),
     };
     streams.set(key, created);
     return created;
@@ -81,7 +82,7 @@ export const createStagedEventStore: CreateStagedEventStoreFunction = (
             aggregateId,
             base: stored.version,
             events: [],
-            persons: new Set<string>(),
+            persons: new Map<string, KeyedPerson>(),
           };
           streams.set(key, created);
           return created;
@@ -92,6 +93,7 @@ export const createStagedEventStore: CreateStagedEventStoreFunction = (
           ...staged.events.filter((event) => event.version >= fromVersion),
         ],
         version: staged.base + staged.events.length,
+        ...(stored.fingerprints === undefined ? {} : { fingerprints: stored.fingerprints }),
       };
     },
     append: async ({ aggregateType, aggregateId, expectedVersion, events, persons = [] }) => {
@@ -106,7 +108,9 @@ export const createStagedEventStore: CreateStagedEventStoreFunction = (
       }
       const stored = events.map((event) => ({ ...event, position: nextPosition() }));
       staged.events.push(...stored);
-      for (const person of persons) staged.persons.add(person);
+      for (const held of persons) {
+        staged.persons.set(keyedPersonId(held), held);
+      }
       return { version: actualVersion + stored.length, events: stored };
     },
     readAll: (args) => base.readAll(args),
@@ -119,7 +123,7 @@ export const createStagedEventStore: CreateStagedEventStoreFunction = (
           aggregateId,
           expectedVersion,
           events: events.map(({ position: _position, ...event }) => event),
-          persons: [...persons],
+          persons: [...persons.values()],
           positions: events.map((event) => event.position),
         })),
   };

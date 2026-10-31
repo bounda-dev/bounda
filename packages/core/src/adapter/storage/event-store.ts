@@ -1,4 +1,5 @@
 import type { StoredEvent } from "../../contracts/event.ts";
+import type { KeyedPerson } from "./personal-key-store.ts";
 
 /**
  * An event the kernel hands to the store: everything except the global position, which the store
@@ -15,11 +16,11 @@ export interface AppendArgs {
   readonly expectedVersion: number;
   readonly events: readonly PendingEvent[];
   /**
-   * The people whose personal data the state the events were decided on held. The kernel reads
-   * it before the store does, to refuse sealing their fields once they are forgotten; a store
-   * ignores it.
+   * The people whose personal data the state the events were decided on held, with the key each
+   * was read under. The kernel reads it before the store does, to refuse sealing their fields
+   * under any other key, as after they are forgotten; a store ignores it.
    */
-  readonly persons?: readonly string[];
+  readonly persons?: readonly KeyedPerson[];
 }
 
 export interface AppendResult {
@@ -36,6 +37,11 @@ export interface LoadArgs {
 export interface LoadResult {
   readonly events: readonly StoredEvent[];
   readonly version: number;
+  /**
+   * The fingerprint of the key that opened each person's sealed fields, set by the kernel, which
+   * opens them; a store leaves it out.
+   */
+  readonly fingerprints?: ReadonlyMap<string, string>;
 }
 
 export interface ReadAllArgs {

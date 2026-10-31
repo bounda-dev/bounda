@@ -2,6 +2,7 @@ import type { NewCommand, StoredDispatch } from "../../contracts/command.ts";
 import type { CausationContext, EventMetadata } from "../../contracts/metadata.ts";
 import type { NewDeadLetter } from "../storage/dead-letter-store.ts";
 import type { PendingEvent } from "../storage/event-store.ts";
+import type { KeyedPerson, StoredPersonalKey } from "../storage/personal-key-store.ts";
 
 /**
  * Metadata for events built in contract tests.
@@ -105,4 +106,28 @@ export const testOutcome: TestOutcomeFunction = (aggregateId) => ({
   eventIds: [`order-${aggregateId}-1`],
   eventTypes: ["OrderPlaced"],
   position: 1,
+});
+
+export interface TestPersonalKeyFunction {
+  (name: string): StoredPersonalKey;
+}
+
+/**
+ * A personal key and its fingerprint, both named after `name`, for contract tests.
+ */
+export const testPersonalKey: TestPersonalKeyFunction = (name) => ({
+  key: `k-${name}`,
+  fingerprint: `f-${name}`,
+});
+
+export interface TestKeyedPersonFunction {
+  (person: string, key: string | null): KeyedPerson;
+}
+
+/**
+ * A person read under the key `testPersonalKey(key)`, or under none for `null`.
+ */
+export const testKeyedPerson: TestKeyedPersonFunction = (person, key) => ({
+  person,
+  fingerprint: key === null ? null : testPersonalKey(key).fingerprint,
 });

@@ -1,3 +1,5 @@
+import type { StoredPersonalKey } from "../../adapter/storage/personal-key-store.ts";
+
 const ALGORITHM = "AES-GCM";
 const KEY_BITS = 256;
 const IV_BYTES = 12;
@@ -18,7 +20,7 @@ export interface PersonalEnvelope {
  * A person's key as the store uses it, with the fingerprint envelopes name it by.
  */
 export interface PersonalKey {
-  readonly id: string;
+  readonly fingerprint: string;
   readonly cryptoKey: CryptoKey;
 }
 
@@ -60,32 +62,33 @@ const fromBase64 = (text: string): Uint8Array<ArrayBuffer> =>
   Uint8Array.from(atob(text), (character) => character.charCodeAt(0));
 
 export interface GeneratePersonalKeyFunction {
-  (): Promise<string>;
+  (): Promise<StoredPersonalKey>;
 }
 
 /**
- * A fresh key, as the text the key store keeps.
+ * A fresh key, as the key store keeps it: the raw key and its SHA-256, both in base64.
  */
 export const generatePersonalKey: GeneratePersonalKeyFunction = async () => {
   const key = await crypto.subtle.generateKey({ name: ALGORITHM, length: KEY_BITS }, true, [
     "encrypt",
     "decrypt",
   ]);
-  return toBase64(new Uint8Array(await crypto.subtle.exportKey("raw", key)));
+  const raw = new Uint8Array(await crypto.subtle.exportKey("raw", key));
+  const digest = await crypto.subtle.digest("SHA-256", raw);
+  return { key: toBase64(raw), fingerprint: toBase64(new Uint8Array(digest)) };
 };
 
 export interface ImportPersonalKeyFunction {
-  (key: string): Promise<PersonalKey>;
+  (stored: StoredPersonalKey): Promise<PersonalKey>;
 }
 
-export const importPersonalKey: ImportPersonalKeyFunction = async (key) => {
-  const raw = fromBase64(key);
-  const [digest, cryptoKey] = await Promise.all([
-    crypto.subtle.digest("SHA-256", raw),
-    crypto.subtle.importKey("raw", raw, ALGORITHM, false, ["encrypt", "decrypt"]),
-  ]);
-  return { id: toBase64(new Uint8Array(digest)), cryptoKey };
-};
+export const importPersonalKey: ImportPersonalKeyFunction = async ({ key, fingerprint }) => ({
+  fingerprint,
+  cryptoKey: await crypto.subtle.importKey("raw", fromBase64(key), ALGORITHM, false, [
+    "encrypt",
+    "decrypt",
+  ]),
+});
 
 export interface SealArgs {
   readonly key: PersonalKey;
@@ -110,7 +113,7 @@ export const seal: SealFunction = async ({ key, person, value }) => {
   return {
     $personal: {
       person,
-      key: key.id,
+      key: key.fingerprint,
       iv: toBase64(iv),
       data: toBase64(new Uint8Array(encrypted)),
     },
@@ -131,7 +134,7 @@ export interface UnsealFunction {
  * and may have been given a new key since. A value the key should open and does not throws.
  */
 export const unseal: UnsealFunction = async ({ key, sealed: { $personal: envelope } }) => {
-  if (key === null || key.id !== envelope.key) return null;
+  if (key === null || key.fingerprint !== envelope.key) return null;
   const decrypted = await crypto.subtle.decrypt(
     { name: ALGORITHM, iv: fromBase64(envelope.iv) },
     key.cryptoKey,

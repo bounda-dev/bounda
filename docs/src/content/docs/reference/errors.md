@@ -40,9 +40,9 @@ dead letter with `errorType: "retriable_exhausted"`.
   did not validate. `issues` lists each problem with its `path`.
 - **`CONCURRENCY_CONFLICT`** (`ConcurrencyError`; retried). An append found the stream at another
   version, or, with both versions equal, a person whose [personal data](/guides/personal-data/)
-  the command loaded was forgotten before it appended; after
-  `runtime.commands.concurrencyRetries` runs of the command. `streamId`, `expectedVersion`,
-  `actualVersion`.
+  the command loaded was forgotten before it appended, whether or not they hold a new key by
+  then; after `runtime.commands.concurrencyRetries` runs of the command. `streamId`,
+  `expectedVersion`, `actualVersion`.
 - **`HANDLER_TIMEOUT`** (no exported class; retried). A command, policy or process handler ran out
   of time (`runtime.commands.timeout`, `runtime.policies.timeout`,
   `runtime.processes.handlerTimeout`).
