@@ -7,8 +7,15 @@ export interface CreateMemoryIdempotencyStoreFunction {
   (): IdempotencyStore;
 }
 
+export interface CreateKeptIdempotencyStoreArgs {
+  /**
+   * Whether a person has a personal key; synchronous, so `put` checks and writes in one step.
+   */
+  readonly holds: (person: string) => boolean;
+}
+
 export interface CreateKeptIdempotencyStoreFunction {
-  (): WithEntries<IdempotencyStore, string>;
+  (args: CreateKeptIdempotencyStoreArgs): WithEntries<IdempotencyStore, string>;
 }
 
 const expired = (record: IdempotencyRecord, now: Date): boolean =>
@@ -19,7 +26,7 @@ const copy = (record: IdempotencyRecord): IdempotencyRecord => ({
   outcome: jsonCopy(record.outcome),
 });
 
-export const createKeptIdempotencyStore: CreateKeptIdempotencyStoreFunction = () => {
+export const createKeptIdempotencyStore: CreateKeptIdempotencyStoreFunction = ({ holds }) => {
   const records = new Map<string, IdempotencyRecord>();
 
   const store: IdempotencyStore = {
@@ -32,7 +39,7 @@ export const createKeptIdempotencyStore: CreateKeptIdempotencyStoreFunction = ()
       if (existing !== undefined && !expired(existing, now)) {
         throw new IdempotencyKeyTakenError(record.key);
       }
-      records.set(record.key, copy(record));
+      if (record.persons.every(holds)) records.set(record.key, copy(record));
     },
     purge: async ({ now }) => {
       let purged = 0;
@@ -43,9 +50,14 @@ export const createKeptIdempotencyStore: CreateKeptIdempotencyStoreFunction = ()
       }
       return purged;
     },
+    forget: async (person) => {
+      for (const [key, record] of records) {
+        if (record.persons.includes(person)) records.delete(key);
+      }
+    },
   };
   return { store, entries: createStoreEntries(records, (key: string) => key) };
 };
 
 export const createMemoryIdempotencyStore: CreateMemoryIdempotencyStoreFunction = () =>
-  createKeptIdempotencyStore().store;
+  createKeptIdempotencyStore({ holds: () => true }).store;

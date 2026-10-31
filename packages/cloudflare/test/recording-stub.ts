@@ -4,14 +4,24 @@ import type { BoundaStub } from "../src/client.ts";
  * A stand-in for a Bounda object's stub that records the arguments of every command and answers
  * each call with an empty success.
  */
-export const recordingStub = (): { readonly stub: BoundaStub; readonly commands: unknown[][] } => {
+export const recordingStub = (): {
+  readonly stub: BoundaStub;
+  readonly commands: unknown[][];
+  readonly forgets: unknown[][];
+} => {
   const commands: unknown[][] = [];
+  const forgets: unknown[][] = [];
   const answer = async () => ({ ok: true, value: null });
   return {
     commands,
+    forgets,
     stub: {
       command: async (...args) => {
         commands.push(args);
+        return answer();
+      },
+      forget: async (...args) => {
+        forgets.push(args);
         return answer();
       },
       query: answer,

@@ -56,8 +56,10 @@ export interface ConcurrencyErrorArgs {
 }
 
 /**
- * Thrown when an append finds the stream at a version other than the one the handler decided on.
- * A command is retried `runtime.commands.concurrencyRetries` times before it surfaces.
+ * Thrown when an append finds the stream at a version other than the one the handler decided on,
+ * or, with both versions equal, when a person whose personal data the handler decided on was
+ * forgotten since. A command is retried `runtime.commands.concurrencyRetries` times before it
+ * surfaces.
  */
 export class ConcurrencyError extends BoundaError {
   readonly streamId: string;

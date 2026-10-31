@@ -135,6 +135,7 @@ describe("createSnapshotSubscriber", () => {
     expect(await stored("1")).toMatchObject({ version: 4 });
     await storage.snapshotStore.put({
       aggregateType: "order",
+      persons: [],
       aggregateId: "1",
       version: 4,
       fingerprint: "fp:2",
@@ -206,6 +207,7 @@ describe("createSnapshotSubscriber", () => {
     );
     await storage.snapshotStore.put({
       aggregateType: "order",
+      persons: [],
       aggregateId: "1",
       version: 2,
       fingerprint: "fp:1",

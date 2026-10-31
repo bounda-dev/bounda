@@ -22,6 +22,17 @@ describe("connect", () => {
     ]);
   });
 
+  it("forgets a person with the same consistency as its commands", async () => {
+    const eventual = recordingStub();
+    await connect<typeof registry>(eventual.stub, { consistency: "eventual" }).forget("c-1");
+    const byDefault = recordingStub();
+    await connect<typeof registry>(byDefault.stub).forget("c-2");
+    expect([eventual.forgets, byDefault.forgets]).toEqual([
+      [["c-1", "eventual"]],
+      [["c-2", "read-your-writes"]],
+    ]);
+  });
+
   it("is not taken for a promise, and has no members but named calls", async () => {
     const store = connect<typeof registry>(recordingStub().stub);
     expect(Reflect.get(store.commands, "then")).toBeUndefined();

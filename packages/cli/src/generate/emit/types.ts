@@ -1,3 +1,4 @@
+import { BOUNDA_AGGREGATE } from "@bounda-dev/core";
 import type { AggregateModel, ProjectModel, ReadModelModel } from "../model.ts";
 import { typeNameOf } from "../naming.ts";
 import { type GeneratedFile, importPath } from "./paths.ts";
@@ -59,6 +60,13 @@ export interface RowTypeNameFunction {
 
 export const rowTypeName: RowTypeNameFunction = (readModelName) =>
   `${typeNameOf(readModelName)}Row`;
+
+export interface ForgettingTypeNameFunction {
+  (readModelName: string): string;
+}
+
+export const forgettingTypeName: ForgettingTypeNameFunction = (readModelName) =>
+  `${typeNameOf(readModelName)}Forgetting`;
 
 export interface PortsTypeNameFunction {
   (moduleName: string): string;
@@ -198,6 +206,58 @@ const emitTestPorts = (model: ProjectModel): string => {
   ].join("\n");
 };
 
+const FORGOTTEN_EVENT_KEY = "personalDataForgotten";
+const EXPECT_TYPE_NAME = "Expect";
+
+/**
+ * The event modules a read model projects: each event its projections name, or every event of
+ * the aggregate for a projection that exports `on`. The runtime's own events carry no personal
+ * data, and no aggregate of the model is theirs.
+ */
+const projectedModules = (model: ProjectModel, readModel: ReadModelModel, path: string) => {
+  const sources = new Set<string>();
+  for (const projection of readModel.projections) {
+    const aggregate = model.aggregates.find((candidate) => candidate.name === projection.aggregate);
+    if (aggregate === undefined) continue;
+    const event = aggregate.events.find((candidate) => candidate.key === projection.eventKey);
+    const events = eventsTypeName(aggregate.name);
+    sources.add(
+      event === undefined ? `${events}[keyof ${events}]` : typeofImport(path, event.path),
+    );
+  }
+  return [...sources];
+};
+
+/**
+ * A type that fails to compile while the read model projects an event with personal fields and
+ * has no projection of `PersonalDataForgotten`; `null` for a read model that projects no module.
+ */
+const emitForgetting = (
+  model: ProjectModel,
+  readModel: ReadModelModel,
+  path: string,
+): string | null => {
+  const modules = projectedModules(model, readModel, path);
+  if (modules.length === 0) return null;
+  const handles = readModel.projections.some(
+    (projection) =>
+      projection.aggregate === BOUNDA_AGGREGATE && projection.eventKey === FORGOTTEN_EVENT_KEY,
+  );
+  return [
+    `export type ${forgettingTypeName(readModel.name)} = ${EXPECT_TYPE_NAME}<`,
+    "  core.ForgetsPersonalData<",
+    `    "${readModel.name}",`,
+    ...(modules.length === 1
+      ? [`    ${modules[0]},`]
+      : modules.map(
+          (module, index) => `    | ${module}${index === modules.length - 1 ? "," : ""}`,
+        )),
+    `    ${handles}`,
+    "  >",
+    ">;",
+  ].join("\n");
+};
+
 const emitMap = (
   name: string,
   wrapper: string,
@@ -246,11 +306,16 @@ export const emitTypes: EmitTypesFunction = ({ model, path, inferredStates = {} 
   );
   sections.push(emitMap(COMMANDS_TYPE_NAME, "CommandsFacadeOf", commandModules));
   sections.push(emitMap(REACTION_COMMANDS_TYPE_NAME, "ReactionCommandsFacadeOf", commandModules));
-  for (const readModel of model.readModels) {
+  const forgetting = model.readModels.map((readModel) => emitForgetting(model, readModel, path));
+  if (forgetting.some((check) => check !== null)) {
+    sections.push(`type ${EXPECT_TYPE_NAME}<Check extends true> = Check;`);
+  }
+  for (const [index, readModel] of model.readModels.entries()) {
     sections.push(
       [
         `export type ${rowTypeName(readModel.name)} = core.RowOf<${typeofImport(path, readModel.view.path)}>;`,
         emitPorts(readModel, path),
+        ...(forgetting[index] === null ? [] : [forgetting[index]]),
       ].join("\n"),
     );
   }

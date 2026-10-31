@@ -1,11 +1,12 @@
 import type { Dirent } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
-import { policyTrigger } from "@bounda-dev/core";
+import { BOUNDA_AGGREGATE, BOUNDA_EVENTS, policyTrigger } from "@bounda-dev/core";
 import {
   APP_TYPE_NAMES,
   createdStateTypeName,
   eventsTypeName,
+  forgettingTypeName,
   portsTypeName,
   rowTypeName,
   stateTypeName,
@@ -222,7 +223,8 @@ const discoverPolicies = async (
 ): Promise<readonly PolicyModel[]> => {
   const listing = await list(directory);
   rejectOthers(context, directory, listing);
-  const isAggregate = (name: string): boolean => context.aggregates.has(keyOf(name));
+  const isAggregate = (name: string): boolean =>
+    context.aggregates.has(keyOf(name)) || keyOf(name) === BOUNDA_AGGREGATE;
   const policies = [
     ...discoverPolicyModules(
       context,
@@ -729,7 +731,8 @@ const discoverProjections = async (
   const projections: ProjectionModel[] = [];
   for (const folder of listing.directories) {
     const folderPath = join(directory, folder);
-    if (!context.aggregates.has(keyOf(folder))) {
+    const ofBounda = keyOf(folder) === BOUNDA_AGGREGATE;
+    if (!ofBounda && !context.aggregates.has(keyOf(folder))) {
       context.problems.add(folderPath, `"${keyOf(folder)}" is not an aggregate of the app`);
       continue;
     }
@@ -744,6 +747,15 @@ const discoverProjections = async (
     for (const name of inner.modules) {
       const path = join(folderPath, `${name}.ts`);
       if (!checkName(context, path, name, "Projection")) continue;
+      if (ofBounda && !boundaEvents().some((event) => event.key === keyOf(name))) {
+        context.problems.add(
+          path,
+          `"${typeNameOf(keyOf(name))}" is not an event the runtime emits; it emits ${boundaEvents()
+            .map((event) => event.typeName)
+            .join(", ")}`,
+        );
+        continue;
+      }
       projections.push({
         ...moduleRef(context, path),
         aggregate: keyOf(folder),
@@ -946,7 +958,14 @@ const checkTypeNames = (
   for (const readModel of readModels) {
     // One named like an aggregate is reported as such.
     if (names.has(readModel.name)) continue;
-    declare([rowTypeName(readModel.name), portsTypeName(readModel.name)], readModel.directory);
+    declare(
+      [
+        rowTypeName(readModel.name),
+        portsTypeName(readModel.name),
+        forgettingTypeName(readModel.name),
+      ],
+      readModel.directory,
+    );
   }
 };
 
@@ -992,6 +1011,10 @@ const checkUniqueNames = (
  * module that exports `on`, any event of the aggregate, since `on` is not read. Warns about one
  * that has neither, which boot refuses.
  */
+// The runtime's events, shaped as an aggregate's for what resolves policies and projections.
+const boundaEvents = (): readonly Pick<EventModel, "key" | "typeName">[] =>
+  Object.entries(BOUNDA_EVENTS).map(([key, typeName]) => ({ key, typeName }));
+
 const resolvePolicyTriggers = async (
   context: Context,
   aggregates: readonly AggregateModel[],
@@ -1006,7 +1029,8 @@ const resolvePolicyTriggers = async (
           if (runtimeExportsOf(await readFile(policy.path, "utf8")).includes("on")) {
             return { ...policy, triggerKey: null };
           }
-          const events = byName.get(source)?.events ?? [];
+          const events =
+            source === BOUNDA_AGGREGATE ? boundaEvents() : (byName.get(source)?.events ?? []);
           const type = policyTrigger({
             key: policy.key,
             events: events.map((event) => event.typeName),
@@ -1080,9 +1104,16 @@ export const discoverProject: DiscoverProjectFunction = async ({ root, appDir = 
       (await exists(domain)) ? (await list(domain)).directories.map((name) => keyOf(name)) : [],
     ),
   };
-  const aggregates = await discoverGroup(context, domain, "Aggregate", (directory, name) =>
-    discoverAggregate(context, directory, name),
-  );
+  const aggregates = await discoverGroup(context, domain, "Aggregate", (directory, name) => {
+    if (name === BOUNDA_AGGREGATE) {
+      context.problems.add(
+        directory,
+        `"${BOUNDA_AGGREGATE}" is the runtime's own aggregate; give yours another name`,
+      );
+      return Promise.resolve(null);
+    }
+    return discoverAggregate(context, directory, name);
+  });
   const readModels = await discoverGroup(
     context,
     join(app, READ),

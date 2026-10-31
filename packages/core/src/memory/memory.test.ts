@@ -9,6 +9,7 @@ import {
   idempotencyStoreContract,
   inboxLedgerContract,
   pendingEvent,
+  personalKeyStoreContract,
   readModelRebuildContract,
   readModelTransactionContract,
   schedulerContract,
@@ -31,9 +32,10 @@ describe("memory adapter", () => {
   inboxLedgerContract({ create: async () => (await storage()).inboxLedger });
   deadLetterStoreContract({ create: async () => (await storage()).deadLetterStore });
   schedulerContract({ create: async () => (await storage()).scheduler });
-  idempotencyStoreContract({ create: async () => (await storage()).idempotencyStore });
-  snapshotStoreContract({ create: async () => (await storage()).snapshotStore });
+  idempotencyStoreContract({ create: storage });
+  snapshotStoreContract({ create: storage });
   storageTransactionContract({ create: storage });
+  personalKeyStoreContract({ create: async () => (await storage()).personalKeys });
   tableContract({
     create: async () => {
       const model = await memory().createReadModel<ContractRow>({
@@ -327,6 +329,7 @@ describe("memory adapter", () => {
           fingerprint: "fp",
           outcome: { rejected: "Nope", message: "no", aggregateType: "order", aggregateId: "1" },
           expiresAt: "2026-01-02T00:00:00.000Z",
+          persons: [],
           now,
         });
         await tx.inboxLedger.fail({ ...key, error: "boom" });

@@ -14,6 +14,12 @@ export interface AppendArgs {
    */
   readonly expectedVersion: number;
   readonly events: readonly PendingEvent[];
+  /**
+   * The people whose personal data the state the events were decided on held. The kernel reads
+   * it before the store does, to refuse sealing their fields once they are forgotten; a store
+   * ignores it.
+   */
+  readonly persons?: readonly string[];
 }
 
 export interface AppendResult {

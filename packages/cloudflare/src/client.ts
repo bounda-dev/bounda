@@ -13,6 +13,7 @@ import {
   type ReadEventsArgs,
   type RebuildReadModelResult,
   type Registry,
+  type StoredDispatch,
   type StoredEvent,
 } from "@bounda-dev/core";
 import { unwrap } from "./outcome.ts";
@@ -36,6 +37,7 @@ export interface BoundaStub {
   retryDeadLetter(id: string): PromiseLike<unknown>;
   discardDeadLetter(id: string): PromiseLike<unknown>;
   rebuildReadModel(name: string): PromiseLike<unknown>;
+  forget(personId: string, consistency?: Consistency): PromiseLike<unknown>;
 }
 
 export interface ConnectOptions {
@@ -101,5 +103,6 @@ export const connect: ConnectFunction = <R extends Registry = AppRegistry>(
       discard: (id) => unwrap<DeadLetter>(stub.discardDeadLetter(id)),
     },
     rebuildReadModel: (name) => unwrap<RebuildReadModelResult>(stub.rebuildReadModel(name)),
+    forget: (personId) => unwrap<StoredDispatch>(stub.forget(personId, consistency)),
   };
 };

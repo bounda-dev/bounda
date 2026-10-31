@@ -23,13 +23,14 @@ Names are kebab-case. `<x>` is a name you choose.
 | `app/domain/<aggregate>/infrastructure/<port>/<implementation>.ts` | `export default ... satisfies <Port>`, or `create`, typed as `CreateImplementation<Port>` |
 | `app/domain/<aggregate>/commands/<command>.ts` | `payload` (optional), `rejections` (optional), `handler` |
 | `app/domain/<aggregate>/policies/<action>-on-<event>.ts` | `handler`; `on` and `delay` optional |
-| `app/domain/<aggregate>/policies/<other-aggregate>/<action>-on-<event>.ts` | the same, for that aggregate's events |
+| `app/domain/<aggregate>/policies/<other-aggregate>/<action>-on-<event>.ts` | the same, for that aggregate's events; `bounda` for the runtime's own, such as `PersonalDataForgotten` |
 | `app/domain/<aggregate>/processes/<process>/index.ts` | `config` (`startedBy`, `completedBy`, `timeout`), `state` (optional), `correlate` (optional) |
 | `app/domain/<aggregate>/processes/<process>/on-<event>.ts` | `handler` |
 | `app/domain/<aggregate>/processes/<process>/at-<deadline>.ts`, `at-timeout.ts` | `handler` |
 | `app/domain/<aggregate>/processes/<process>/<other-aggregate>/on-<event>.ts` | `handler`, for that aggregate's event |
 | `app/read/<read-model>/view.ts` | `fields` |
 | `app/read/<read-model>/projections/<aggregate>/<event>.ts` | `project`; `on` optional |
+| `app/read/<read-model>/projections/bounda/personal-data-forgotten.ts` | `project`, required once a projection of the read model sees a field marked `personal` |
 | `app/read/<read-model>/queries/<query>.ts` | `payload` (optional), `repository` (optional), `handler` |
 | `app/read/<read-model>/<port>.ts`, `infrastructure/<port>/<implementation>.ts` | as in an aggregate; only the queries' `handler` receives them |
 
@@ -45,7 +46,8 @@ does files that start with `_` or `.`, tests (`*.test.ts`, `*.test-d.ts`), decla
 - a name that is not kebab-case, or a file that is not a `.ts` module where modules go;
 - a command or a policy that is a directory, a process that is a file, a process directory without
   `index.ts`, a read model without `view.ts`, a projection or a query that is a directory;
-- a projection outside a folder named after an aggregate of the app;
+- a projection outside a folder named after an aggregate of the app, or after `bounda` with a
+  name that is no event of the runtime's; an aggregate named `bounda`;
 - a process handler not named `on-<event>.ts` or `at-<deadline>.ts`, or one for an event its
   aggregate does not have;
 - a module at an aggregate's root that exports an event's function (`payload`, `begin`, `evolve`)
@@ -64,12 +66,18 @@ does files that start with `_` or `.`, tests (`*.test.ts`, `*.test-d.ts`), decla
 - an aggregate or a read model whose generated types would meet others in `.bounda/types.ts`: one
   named `test` (`TestPorts` is Bounda's own), or `order-created` next to `order`.
 
+One rule is checked by the compiler rather than the generator: a read model that projects an
+event with a field marked `personal` and has no `projections/bounda/personal-data-forgotten.ts`
+fails to compile at the `<ReadModel>Forgetting` type of `.bounda/types.ts`, which says what to
+add. See [Personal data](/guides/personal-data/#handling-it-in-a-read-model).
+
 ## What boot refuses
 
 Some rules need the modules themselves, so the app checks them when it is created and throws a
 `ConfigurationError`:
 
-- a policy or a projection whose trigger is not an event of the aggregate it listens to;
+- a policy or a projection whose trigger is not an event of the aggregate it listens to, the
+  runtime's own `bounda` included; an event that marks two fields with `person`;
 - a `deadline()` field without its `at-` file, and an `at-` file without its field; the name
   `timeout` is reserved for the process's lifetime;
 - an event of another aggregate that a process listens to and cannot assign to an instance, by an
@@ -103,7 +111,7 @@ and not failed on:
 | --- | --- |
 | `.bounda/registry.ts` | Every module, grouped as the runtime needs it. `boot()` imports it |
 | `.bounda/register.d.ts` | Registers the registry type and the type of the `ports` section with `@bounda-dev/core/register`, so `boot()` and `BoundaApp` are typed for the project without a type argument and `defineConfig` checks the implementation names |
-| `.bounda/types.ts` | The state, events, ports, commands, rows and queries maps the `+types` build on |
+| `.bounda/types.ts` | The state, events, ports, commands, rows and queries maps the `+types` build on, and one `<ReadModel>Forgetting` check per read model that projects events |
 | `**/+types/<name>.ts` | The argument types each module imports. An implementation has none: it imports its port |
 
 They are derived from your code, so they are not versioned. `tsconfig.json` must include them as

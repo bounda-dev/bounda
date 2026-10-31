@@ -7,6 +7,7 @@ import type { EventNotifier } from "./storage/event-notifier.ts";
 import type { EventStore } from "./storage/event-store.ts";
 import type { IdempotencyStore } from "./storage/idempotency-store.ts";
 import type { InboxLedger } from "./storage/inbox-ledger.ts";
+import type { PersonalKeyStore } from "./storage/personal-key-store.ts";
 import type { Scheduler } from "./storage/scheduler.ts";
 import type { SnapshotStore } from "./storage/snapshot-store.ts";
 import type { ReadClient, Table } from "./storage/table.ts";
@@ -24,6 +25,12 @@ export interface StorageTransaction {
   readonly deadLetterStore: DeadLetterStore;
   readonly scheduler: Scheduler;
   readonly idempotencyStore: IdempotencyStore;
+  readonly personalKeys: PersonalKeyStore;
+  /**
+   * So forgetting a person removes their snapshots with their key. Snapshots are a cache, so an
+   * adapter may remove them at once rather than when the transaction commits.
+   */
+  readonly snapshotStore: SnapshotStore;
 }
 
 /**
@@ -36,6 +43,7 @@ export interface Storage {
   readonly deadLetterStore: DeadLetterStore;
   readonly scheduler: Scheduler;
   readonly idempotencyStore: IdempotencyStore;
+  readonly personalKeys: PersonalKeyStore;
   /**
    * Written by the snapshot subscriber, outside any command's transaction, and read by every
    * command of an aggregate with snapshots.

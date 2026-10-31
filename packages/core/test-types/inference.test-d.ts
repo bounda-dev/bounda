@@ -18,10 +18,17 @@ import type {
   EmptyPayload,
   EnvSection,
   EventMetadata,
+  EventPayloadArgs,
+  ForgetsPersonalData,
+  HasPersonalFields,
   ImplementationModule,
   Instant,
   Logger,
   PayloadArgs,
+  PersonalDataForgottenEvent,
+  PersonalDataForgottenPayload,
+  PersonalFunction,
+  PersonFunction,
   ProcessCorrelation,
   QueriesFacade,
   ReactionDispatchResult,
@@ -38,7 +45,12 @@ import type {
 import { idempotencyKeyFor } from "@bounda-dev/core";
 import { describe, expectTypeOf, it } from "vitest";
 import type { registry } from "./fixtures/order-app/.bounda/registry.ts";
-import type { Commands, Queries } from "./fixtures/order-app/.bounda/types.ts";
+import type {
+  Commands,
+  CustomerDirectoryForgetting,
+  OrderSummaryForgetting,
+  Queries,
+} from "./fixtures/order-app/.bounda/types.ts";
 import type { Event as CustomerRegistered } from "./fixtures/order-app/app/domain/customer/+types/customer-registered.ts";
 import type { Command as RegisterCustomer } from "./fixtures/order-app/app/domain/customer/commands/+types/register-customer.ts";
 import type { Event as OrderPlaced } from "./fixtures/order-app/app/domain/order/+types/order-placed.ts";
@@ -47,12 +59,15 @@ import type { Command as PayOrder } from "./fixtures/order-app/app/domain/order/
 import type { Command as PlaceOrder } from "./fixtures/order-app/app/domain/order/commands/+types/place-order.ts";
 import type { Policy as NotifyOnOrderPlaced } from "./fixtures/order-app/app/domain/order/policies/+types/notify-on-order-placed.ts";
 import type { Policy as SendReceipt } from "./fixtures/order-app/app/domain/order/policies/+types/send-receipt-on-order-paid.ts";
+import type { Policy as AuditOnPersonalDataForgotten } from "./fixtures/order-app/app/domain/order/policies/bounda/+types/audit-on-personal-data-forgotten.ts";
 import type { Policy as GreetOnCustomerRegistered } from "./fixtures/order-app/app/domain/order/policies/customer/+types/greet-on-customer-registered.ts";
 import type { Process as AtNextReminder } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/at-next-reminder.ts";
 import type { Process as AtTimeout } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/at-timeout.ts";
 import type { Process as OrderPayment } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/index.ts";
 import type { Process as OnOrderPaid } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/on-order-paid.ts";
 import type { Process as OnCustomerRegistered } from "./fixtures/order-app/app/domain/order/processes/order-payment/customer/+types/on-customer-registered.ts";
+import type { Projection as ProjectCustomerRegistered } from "./fixtures/order-app/app/read/customer-directory/projections/customer/+types/customer-registered.ts";
+import type { Projection as ProjectForgotten } from "./fixtures/order-app/app/read/order-summary/projections/bounda/+types/personal-data-forgotten.ts";
 import type { Projection as ProjectOrderPaid } from "./fixtures/order-app/app/read/order-summary/projections/order/+types/order-paid.ts";
 import type { Query as CustomerOverview } from "./fixtures/order-app/app/read/order-summary/queries/+types/customer-overview.ts";
 import type { Query as GetOrder } from "./fixtures/order-app/app/read/order-summary/queries/+types/get-order.ts";
@@ -416,10 +431,95 @@ describe("policies", () => {
   });
 });
 
+describe("personal data", () => {
+  type CustomerRegisteredModule =
+    typeof import("./fixtures/order-app/app/domain/customer/customer-registered.ts");
+  type OrderPlacedModule = typeof import("./fixtures/order-app/app/domain/order/order-placed.ts");
+  type OrderPaidModule = typeof import("./fixtures/order-app/app/domain/order/order-paid.ts");
+
+  it("gives an event's payload the marks, and a command's or a query's none", () => {
+    expectTypeOf<CustomerRegistered.PayloadArgs>().toEqualTypeOf<EventPayloadArgs>();
+    expectTypeOf<EventPayloadArgs["personal"]>().toEqualTypeOf<PersonalFunction>();
+    expectTypeOf<EventPayloadArgs["person"]>().toEqualTypeOf<PersonFunction>();
+    expectTypeOf<RegisterCustomer.PayloadArgs>().toEqualTypeOf<PayloadArgs>();
+    expectTypeOf<GetOrder.PayloadArgs>().toEqualTypeOf<PayloadArgs>();
+    expectTypeOf<PayloadArgs>().not.toHaveProperty("personal");
+  });
+
+  it("writes a personal field as its schema takes it and reads it as that or null", () => {
+    expectTypeOf<RegisterCustomer.HandlerArgs["events"]["customerRegistered"]>()
+      .parameter(0)
+      .toEqualTypeOf<{ email: string }>();
+    expectTypeOf<CustomerRegistered.EvolveArgs["event"]["payload"]["email"]>().toEqualTypeOf<
+      string | null
+    >();
+    expectTypeOf<ProjectCustomerRegistered.Args["event"]["payload"]["email"]>().toEqualTypeOf<
+      string | null
+    >();
+    expectTypeOf<PlaceOrder.HandlerArgs["events"]["orderPlaced"]>().parameter(0).toMatchTypeOf<{
+      customerId: string;
+      note?: string | undefined;
+    }>();
+    expectTypeOf<OrderPlaced.EvolveArgs["event"]["payload"]["note"]>().toEqualTypeOf<
+      string | null | undefined
+    >();
+  });
+
+  it("leaves the person field's type as it is", () => {
+    expectTypeOf<
+      OrderPlaced.EvolveArgs["event"]["payload"]["customerId"]
+    >().toEqualTypeOf<string>();
+    expectTypeOf<PlaceOrder.HandlerArgs["events"]["orderPlaced"]>()
+      .parameter(0)
+      .toHaveProperty("customerId")
+      .toEqualTypeOf<string>();
+  });
+
+  it("tells the modules with personal fields apart, wrapped or not", () => {
+    expectTypeOf<HasPersonalFields<CustomerRegisteredModule>>().toEqualTypeOf<true>();
+    expectTypeOf<HasPersonalFields<OrderPlacedModule>>().toEqualTypeOf<true>();
+    expectTypeOf<HasPersonalFields<OrderPaidModule>>().toEqualTypeOf<false>();
+    expectTypeOf<HasPersonalFields<OrderPaidModule | OrderPlacedModule>>().toEqualTypeOf<boolean>();
+    expectTypeOf<HasPersonalFields<{ evolve: () => object }>>().toEqualTypeOf<false>();
+  });
+
+  it("requires a read model projecting personal fields to handle forgetting", () => {
+    expectTypeOf<CustomerDirectoryForgetting>().toEqualTypeOf<true>();
+    expectTypeOf<OrderSummaryForgetting>().toEqualTypeOf<true>();
+    expectTypeOf<ForgetsPersonalData<"x", OrderPaidModule, false>>().toEqualTypeOf<true>();
+    expectTypeOf<
+      ForgetsPersonalData<"x", OrderPaidModule | OrderPlacedModule, true>
+    >().toEqualTypeOf<true>();
+    expectTypeOf<
+      ForgetsPersonalData<"orderSummary", OrderPaidModule | OrderPlacedModule, false>
+    >().toEqualTypeOf<"Read model orderSummary projects personal data, so it needs projections/bounda/personal-data-forgotten.ts">();
+  });
+
+  it("types the runtime's event for the projections and policies that handle it", () => {
+    expectTypeOf<ProjectForgotten.Args["event"]>().toEqualTypeOf<PersonalDataForgottenEvent>();
+    expectTypeOf<
+      ProjectForgotten.Args["event"]["payload"]
+    >().toEqualTypeOf<PersonalDataForgottenPayload>();
+    expectTypeOf<ProjectForgotten.Args["event"]["type"]>().toEqualTypeOf<"PersonalDataForgotten">();
+    expectTypeOf<ProjectForgotten.Args["table"]>().toEqualTypeOf<Table<OrderSummaryRow>>();
+    expectTypeOf<
+      AuditOnPersonalDataForgotten.HandlerArgs["event"]
+    >().toEqualTypeOf<PersonalDataForgottenEvent>();
+    expectTypeOf<AuditOnPersonalDataForgotten.HandlerArgs["auditLog"]>().toHaveProperty("record");
+  });
+
+  it("lets every client forget a person, answering like a command", () => {
+    expectTypeOf<BoundaClient["forget"]>().toEqualTypeOf<
+      (personId: string) => Promise<StoredDispatch>
+    >();
+    expectTypeOf<BoundaApp["forget"]>().toEqualTypeOf<BoundaClient["forget"]>();
+  });
+});
+
 describe("policies for another aggregate's events", () => {
   it("receive the event of the aggregate their folder names", () => {
     expectTypeOf<GreetOnCustomerRegistered.HandlerArgs["event"]>().toEqualTypeOf<
-      StoredEvent<"CustomerRegistered", { email: string }>
+      StoredEvent<"CustomerRegistered", { email: string | null }>
     >();
     expectTypeOf<GreetOnCustomerRegistered.HandlerArgs["commands"]>().toHaveProperty("payOrder");
   });
@@ -444,7 +544,7 @@ describe("processes", () => {
     type From = OrderPayment.CorrelateArgs["from"]["customer"]["CustomerRegistered"];
     type Correlator = Parameters<From>[0];
     expectTypeOf<Parameters<Correlator>[0]>().toEqualTypeOf<
-      StoredEvent<"CustomerRegistered", { email: string }>
+      StoredEvent<"CustomerRegistered", { email: string | null }>
     >();
     expectTypeOf<ReturnType<Correlator>>().toEqualTypeOf<string | null>();
     expectTypeOf<ReturnType<From>>().toEqualTypeOf<ProcessCorrelation>();
@@ -454,7 +554,7 @@ describe("processes", () => {
   it("infer the event of a correlate entry without annotating it", () => {
     const correlate = ({ from }: OrderPayment.CorrelateArgs) => [
       from.customer.CustomerRegistered((event) => {
-        expectTypeOf(event.payload).toEqualTypeOf<{ email: string }>();
+        expectTypeOf(event.payload).toEqualTypeOf<{ email: string | null }>();
         return null;
       }),
     ];
@@ -463,7 +563,7 @@ describe("processes", () => {
 
   it("type a handler for another aggregate's event against that aggregate", () => {
     expectTypeOf<OnCustomerRegistered.HandlerArgs["event"]>().toEqualTypeOf<
-      StoredEvent<"CustomerRegistered", { email: string }>
+      StoredEvent<"CustomerRegistered", { email: string | null }>
     >();
     expectTypeOf<OnCustomerRegistered.HandlerArgs["state"]["reminders"]>().toEqualTypeOf<number>();
   });

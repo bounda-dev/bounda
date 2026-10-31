@@ -10,6 +10,7 @@ import {
   eventStoreContract,
   idempotencyStoreContract,
   inboxLedgerContract,
+  personalKeyStoreContract,
   readModelRebuildContract,
   readModelTransactionContract,
   schedulerContract,
@@ -38,9 +39,10 @@ describe("the Durable Object adapter", () => {
   inboxLedgerContract({ create: async () => (await freshStorage()).inboxLedger });
   deadLetterStoreContract({ create: async () => (await freshStorage()).deadLetterStore });
   schedulerContract({ create: async () => (await freshStorage()).scheduler });
-  idempotencyStoreContract({ create: async () => (await freshStorage()).idempotencyStore });
-  snapshotStoreContract({ create: async () => (await freshStorage()).snapshotStore });
+  idempotencyStoreContract({ create: freshStorage });
+  snapshotStoreContract({ create: freshStorage });
   storageTransactionContract({ create: freshStorage });
+  personalKeyStoreContract({ create: async () => (await freshStorage()).personalKeys });
   tableContract({
     create: async () =>
       (

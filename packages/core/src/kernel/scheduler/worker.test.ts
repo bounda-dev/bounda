@@ -63,6 +63,7 @@ describe("scheduled command worker", () => {
       fingerprint: "fp",
       outcome: { rejected: "Nope", message: "no", aggregateType: "order", aggregateId: "1" },
       expiresAt: new Date(harness.clock.now().getTime() + expiresInMs).toISOString(),
+      persons: [],
       now: harness.clock.now(),
     });
     await idempotencyStore.put(record("gone", -1));

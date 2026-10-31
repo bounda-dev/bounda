@@ -22,6 +22,7 @@ describe("connect", () => {
       orderId: string;
       total: number;
       customer: string;
+      note?: string | undefined;
     }>();
     expectTypeOf<ReturnType<typeof store.commands.payOrder>>().toEqualTypeOf<
       Promise<DispatchResult>

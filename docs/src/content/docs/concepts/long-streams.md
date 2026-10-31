@@ -163,6 +163,11 @@ nested plain objects and arrays come back as they were. A class instance or a fu
 state cannot be kept: the subscriber logs it and writes no snapshot for that stream, and a test app
 throws `SnapshotError` from `runUntilIdle()`. Keep the state to data.
 
+The state is kept as it was folded, in the clear, [personal fields](/guides/personal-data/)
+included. Each snapshot names the people whose fields it holds, and forgetting one of them
+removes their snapshots in the same transaction that removes their key, so no snapshot keeps
+what the events no longer show.
+
 ## What snapshots do not do
 
 - **Speed up a rebuild.** A rebuild runs projections over the global stream; it never folds an

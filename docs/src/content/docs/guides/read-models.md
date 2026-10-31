@@ -44,6 +44,10 @@ export const project = async ({ event, table }: Projection.Args) => {
 };
 ```
 
+A projection of an event with a field marked `personal` sees it as `T | null`, and the read model
+then projects `PersonalDataForgotten` too, from `projections/bounda/personal-data-forgotten.ts`:
+see [Personal data](/guides/personal-data/#handling-it-in-a-read-model).
+
 ## Queries
 
 A query `queries/<name>.ts` has an optional `payload`, an optional `repository` that reads
