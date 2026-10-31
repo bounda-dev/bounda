@@ -25,6 +25,8 @@ interface Row {
 }
 
 const erased: string[] = [];
+// Runs inside `remindCustomer`'s handler once, between its load and its append.
+let whileDeciding: (() => Promise<unknown>) | null = null;
 
 const registry = {
   aggregates: {
@@ -41,6 +43,11 @@ const registry = {
         },
         customerGreeted: {
           payload: ({ z }: EventPayloadArgs) => z.object({ to: z.string().nullable() }),
+          evolve: ({ state }: { state: CustomerState }) => state,
+        },
+        customerReminded: {
+          payload: ({ z, personal }: EventPayloadArgs) =>
+            z.object({ to: personal(z.email()).optional() }),
           evolve: ({ state }: { state: CustomerState }) => state,
         },
       },
@@ -77,6 +84,23 @@ const registry = {
               state: CustomerState;
               events: Record<string, (payload?: unknown) => unknown>;
             }) => [events.customerGreeted?.({ to: state.email })],
+          },
+        },
+        remindCustomer: {
+          module: {
+            payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string() }),
+            handler: async ({
+              state,
+              events,
+            }: {
+              state: CustomerState;
+              events: Record<string, (payload?: unknown) => unknown>;
+            }) => {
+              const run = whileDeciding;
+              whileDeciding = null;
+              await run?.();
+              return [events.customerReminded?.(state.email === null ? {} : { to: state.email })];
+            },
           },
         },
       },
@@ -300,6 +324,22 @@ describe("personal data in an app", () => {
     expect(
       JSON.stringify(await storage.idempotencyStore.get({ key: "confirm-1", now: clock.now() })),
     ).not.toContain("ana@example.com");
+    await app.stop();
+  });
+
+  it("decides a command again when its person is forgotten between its load and its append", async () => {
+    const adapter = memory();
+    const storage = await adapter.createStorage({ logger: silentLogger });
+    const { app } = await createTestApp({ registry, adapter });
+    await app.commands.registerCustomer(ana);
+    whileDeciding = () => app.forget("c-1");
+    const reminded = await app.commands.remindCustomer({ customerId: "c-1" });
+    expect(whileDeciding).toBeNull();
+    expect(reminded.eventTypes).toEqual(["CustomerReminded"]);
+    const [reminder] = await app.events.read({ after: reminded.position - 1 });
+    expect(reminder?.payload).toEqual({});
+    expect(await storage.personalKeys.get("c-1")).toBeNull();
+    expect(JSON.stringify(await app.events.read())).not.toContain("ana@example.com");
     await app.stop();
   });
 

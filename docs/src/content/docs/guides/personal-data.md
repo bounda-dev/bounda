@@ -79,7 +79,10 @@ model may hold what their events carried in the clear, and forgetting twice appe
 empty id is refused with `ValidationError`.
 
 From then on every personal field of theirs reads as `null`, in every event, however old. A
-person registered again gets a fresh key; their old events stay unreadable.
+person registered again gets a fresh key; their old events stay unreadable. A command that loaded
+their data before `forget` and appends after it is not the one to give them that key: its append
+fails with [`ConcurrencyError`](/reference/errors/), as on a stream that moved, and the retry
+decides on the state without their data.
 
 A [snapshot](/concepts/long-streams/#snapshots) holds the state in the clear, so the same
 transaction removes every snapshot whose state carried a field of theirs; each one names the

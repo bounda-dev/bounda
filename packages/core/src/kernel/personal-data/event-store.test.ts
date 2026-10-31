@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { PersonalKeyStore } from "../../adapter/storage/personal-key-store.ts";
 import { pendingEvent } from "../../adapter/testing/fixtures.ts";
-import { ValidationError } from "../../contracts/errors.ts";
+import { ConcurrencyError, ValidationError } from "../../contracts/errors.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import type { EventPayloadArgs } from "../../modules/payload.ts";
@@ -171,6 +171,49 @@ describe("withPersonalData", () => {
       null,
       "ana@again.example",
     ]);
+  });
+
+  it("refuses to give a new key to a person the events were decided on, forgotten since", async () => {
+    const { storage, store, calls, registered } = await setup();
+    await store.append({
+      aggregateType: "customer",
+      aggregateId: "c-1",
+      expectedVersion: 0,
+      events: [registered(1, "ana@example.com")],
+    });
+    await storage.personalKeys.remove("c-1");
+    calls.length = 0;
+    const refused = await store
+      .append({
+        aggregateType: "customer",
+        aggregateId: "c-1",
+        expectedVersion: 1,
+        events: [registered(2, "ana@example.com")],
+        persons: ["c-2", "c-1"],
+      })
+      .catch((error: unknown) => error);
+    expect(refused).toBeInstanceOf(ConcurrencyError);
+    expect(refused).toMatchObject({
+      code: "CONCURRENCY_CONFLICT",
+      streamId: "customer:c-1",
+      expectedVersion: 1,
+      actualVersion: 1,
+      message: "Person c-1 was forgotten since customer:c-1 was loaded at version 1",
+    });
+    expect(calls).toEqual(["get:c-1"]);
+    expect(await storage.personalKeys.get("c-1")).toBeNull();
+    expect(
+      (await storage.eventStore.load({ aggregateType: "customer", aggregateId: "c-1" })).version,
+    ).toBe(1);
+
+    await store.append({
+      aggregateType: "customer",
+      aggregateId: "c-1",
+      expectedVersion: 1,
+      events: [registered(2, "ana@again.example")],
+      persons: ["c-2"],
+    });
+    expect(await storage.personalKeys.get("c-1")).not.toBeNull();
   });
 
   it("reuses a person's key across events and appends, and fetches it once per call", async () => {

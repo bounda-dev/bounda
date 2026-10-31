@@ -393,6 +393,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
           aggregateId: command.aggregateId,
           expectedVersion: version,
           events,
+          persons,
         });
         return storedDispatch(aggregate, command.aggregateId, appended);
       } catch (error) {

@@ -1,7 +1,7 @@
-import type { EventStore, PendingEvent } from "../../adapter/storage/event-store.ts";
+import type { AppendArgs, EventStore, PendingEvent } from "../../adapter/storage/event-store.ts";
 import type { PersonalKeyStore } from "../../adapter/storage/personal-key-store.ts";
-import { ValidationError } from "../../contracts/errors.ts";
-import type { StoredEvent } from "../../contracts/event.ts";
+import { ConcurrencyError, ValidationError } from "../../contracts/errors.ts";
+import { type StoredEvent, streamId } from "../../contracts/event.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { isRecord } from "../shared/merge-fields.ts";
 import {
@@ -36,6 +36,16 @@ const personOf = (event: PendingEvent, payload: Record<string, unknown>, field: 
   return String(value);
 };
 
+// A conflict like a moved stream: the events were decided on a state that held the person's data,
+// and the person was forgotten since, so the command is decided again on the state without it.
+class ForgottenSinceLoadError extends ConcurrencyError {
+  constructor(args: AppendArgs, person: string) {
+    const { expectedVersion } = args;
+    super({ streamId: streamId(args), expectedVersion, actualVersion: expectedVersion });
+    this.message = `Person ${person} was forgotten since ${streamId(args)} was loaded at version ${expectedVersion}`;
+  }
+}
+
 /**
  * The keys one call needs, each fetched once: a load reads many events of one person, and an
  * append may write several. Never kept past the call, so a key removed meanwhile is never added
@@ -61,10 +71,13 @@ export const withPersonalData: WithPersonalDataFunction = ({ eventStore, aggrega
   const marksOf = (event: Pick<StoredEvent, "aggregateType" | "type">): PersonalMarks | null =>
     aggregates.byName[event.aggregateType]?.eventsByType[event.type]?.personal ?? null;
 
-  const keyInForce = async (person: string): Promise<PersonalKey> => {
-    const stored =
-      (await keys.get(person)) ?? (await keys.add(person, await generatePersonalKey()));
-    return importPersonalKey(stored);
+  // Only a person the state did not hold gets a new key: one it held and who has none now was
+  // forgotten after the load, and a new key would make their old data readable again.
+  const keyInForce = async (args: AppendArgs, person: string): Promise<PersonalKey> => {
+    const stored = await keys.get(person);
+    if (stored !== null) return importPersonalKey(stored);
+    if (args.persons?.includes(person)) throw new ForgottenSinceLoadError(args, person);
+    return importPersonalKey(await keys.add(person, await generatePersonalKey()));
   };
 
   const sealed = async (
@@ -111,7 +124,7 @@ export const withPersonalData: WithPersonalDataFunction = ({ eventStore, aggrega
     // The result carries the events as given, since the store holds them sealed.
     append: async (args) => {
       const cache = keyCache<PersonalKey>();
-      const key = (person: string) => cache(person, () => keyInForce(person));
+      const key = (person: string) => cache(person, () => keyInForce(args, person));
       const events = await Promise.all(args.events.map((event) => sealed(event, key)));
       const appended = await eventStore.append({ ...args, events });
       return {

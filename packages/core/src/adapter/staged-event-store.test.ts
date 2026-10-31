@@ -154,6 +154,29 @@ describe("createStagedEventStore", () => {
     ]);
   });
 
+  it("hands out with each batch every person its appends were decided on", async () => {
+    const { staged } = await setUp();
+    await staged.append({
+      ...order,
+      expectedVersion: 1,
+      events: [pendingEvent({ aggregateId: "1", version: 2, type: "OrderPaid" })],
+      persons: ["c-1"],
+    });
+    await staged.append({
+      ...order,
+      expectedVersion: 2,
+      events: [pendingEvent({ aggregateId: "1", version: 3, type: "OrderArchived" })],
+      persons: ["c-2", "c-1"],
+    });
+    const fresh = { aggregateType: "payment", aggregateId: "9" };
+    await staged.append({
+      ...fresh,
+      expectedVersion: 0,
+      events: [pendingEvent({ ...fresh, version: 1, type: "PaymentRequested" })],
+    });
+    expect(staged.batches().map((batch) => batch.persons)).toEqual([["c-1", "c-2"], []]);
+  });
+
   it("reads the global stream from the base store alone", async () => {
     const { staged } = await setUp();
     await staged.append({
