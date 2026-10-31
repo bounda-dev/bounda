@@ -149,6 +149,7 @@ global stream.
 | --- | --- |
 | `POST /commands/<name>` with the payload as the body | The dispatch result, once the read models reflect it, or once its events are stored with `createWorker({ config, tenantOf, consistency: "eventual" })`. `?delay=10m` schedules it |
 | `POST /queries/<name>` with the payload as the body | The query's result |
+| `POST /forget/<personId>` | [Forgets](/guides/personal-data/) the person, answering like a command |
 
 Refusals come back as `{ "error": { "code", "message" } }` with the statuses in
 [errors over HTTP](/reference/errors/#over-http); anything else is a 500 whose message goes to the
@@ -172,8 +173,8 @@ export default {
 
 `connect(stub)` gives a `BoundaClient`, the type `@bounda-dev/core` gives to what a request sees
 of an app wherever it runs: the same `commands` and `queries` as `app.commands` and
-`app.queries`, typed from your modules, plus `getLag()`, `events`, `deadLetters` and
-`rebuildReadModel`.
+`app.queries`, typed from your modules, plus `getLag()`, `events`, `deadLetters`,
+`rebuildReadModel` and `forget`.
 Its commands resolve once the read models reflect them; `connect(stub, { consistency: "eventual" })`
 resolves them once their events are stored, for a request that reads nothing after it. A refusal comes
 back as an `Error` with the same `name`, `message`, `code` and, for validation, `issues`, whatever

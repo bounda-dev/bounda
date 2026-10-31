@@ -53,6 +53,7 @@ export type {
   RenewClaimArgs,
   SettleClaimArgs,
 } from "./storage/inbox-ledger.ts";
+export type { PersonalKeyStore } from "./storage/personal-key-store.ts";
 export type {
   ClaimDueArgs,
   ClaimedCommand,

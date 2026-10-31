@@ -8,13 +8,16 @@ export type DispatchOutcome = DispatchResult | RejectedDispatch;
 
 /**
  * A dispatch remembered under its idempotency key: the fingerprint of the command it was, what it
- * answered, and when the key may be used for another command.
+ * answered, and when the key may be used for another command. `persons` names, once each, the
+ * people whose personal fields were in the state a rejection was decided on, since its message
+ * may quote them; it is empty for any other outcome.
  */
 export interface IdempotencyRecord {
   readonly key: string;
   readonly fingerprint: string;
   readonly outcome: DispatchOutcome;
   readonly expiresAt: string;
+  readonly persons: readonly string[];
 }
 
 export interface GetIdempotencyRecordArgs {
@@ -41,6 +44,10 @@ export interface PurgeIdempotencyRecordsArgs {
  * the same again. `put` must be atomic: of two dispatches racing for one key exactly one records
  * its outcome, and the other rejects with `IdempotencyKeyTakenError`, which rolls back whatever
  * the recording was part of.
+ *
+ * A record that names people lives only as long as their keys, as a snapshot does: `put` records
+ * nothing unless every person it names has a key in the storage's `personalKeys`, checked in the
+ * same statement, and `forget` removes every record that names a person.
  */
 export interface IdempotencyStore {
   /**
@@ -56,4 +63,5 @@ export interface IdempotencyStore {
    * Removes the records expired by `now`, and resolves to how many.
    */
   purge(args: PurgeIdempotencyRecordsArgs): Promise<number>;
+  forget(person: string): Promise<void>;
 }

@@ -1,4 +1,5 @@
 import { basename, dirname, join } from "node:path";
+import { BOUNDA_AGGREGATE, BOUNDA_EVENTS } from "@bounda-dev/core";
 import type { AggregateModel, ProjectModel, ReadModelModel } from "../model.ts";
 import { type GeneratedFile, importPath } from "./paths.ts";
 import {
@@ -73,7 +74,7 @@ const eventFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFile
       imports: { generated: true, module: event.path },
       namespace: "Event",
       members: [
-        ["PayloadArgs", "core.PayloadArgs"],
+        ["PayloadArgs", "core.EventPayloadArgs"],
         [
           "BeginArgs",
           generic("core.EventBeginArgs", [`"${event.typeName}"`, "core.PayloadOf<Module>"]),
@@ -130,7 +131,19 @@ const storedEvent = (aggregate: AggregateModel, eventKey: string): string =>
 const anyEvent = (aggregate: AggregateModel): string =>
   `core.StoredEventOf<generated.${eventsTypeName(aggregate.name)}, keyof generated.${eventsTypeName(aggregate.name)}>`;
 
+// Core declares each of the runtime's events as `<Type>Event`; discovery only lets known keys
+// through, so an unknown one here is a policy that names no event and gets them all.
+const boundaEventOf = (eventKey: string | null): string => {
+  const type = eventKey === null ? undefined : BOUNDA_EVENTS[eventKey];
+  return type === undefined
+    ? Object.values(BOUNDA_EVENTS)
+        .map((typeName) => `core.${typeName}Event`)
+        .join(" | ")
+    : `core.${type}Event`;
+};
+
 const eventOf = (model: ProjectModel, aggregateName: string, eventKey: string | null): string => {
+  if (aggregateName === BOUNDA_AGGREGATE) return boundaEventOf(eventKey);
   const aggregate = model.aggregates.find((candidate) => candidate.name === aggregateName);
   if (aggregate === undefined) return "core.StoredEvent";
   return eventKey !== null && aggregate.events.some((event) => event.key === eventKey)

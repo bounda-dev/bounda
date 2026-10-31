@@ -10,8 +10,8 @@ import type { Registry } from "../../modules/registry.ts";
 import { validateRegistry } from "../../modules/validate.ts";
 import { fieldBuilder } from "../../modules/view.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
-import { withUpcasting } from "../aggregate/upcasting.ts";
 import { PartialBatchError } from "../dispatch/delivery.ts";
+import { appStorage } from "../events/app-event-store.ts";
 import { projectBatch, projectionSubscriberName } from "../projection/runner.ts";
 import { guardedLogger } from "../shared/guarded-logger.ts";
 import { adapterForReadModel, compileProjections } from "./build-read-models.ts";
@@ -115,9 +115,9 @@ export const rebuildReadModel: RebuildReadModelFunction = async ({
   }
   const storage = await config.storage.createStorage({ logger });
   try {
-    const eventStore = withUpcasting({
-      eventStore: storage.eventStore,
-      // A rebuild runs no handler, so it builds no implementation.
+    // A rebuild runs no handler, so it builds no implementation.
+    const { eventStore } = appStorage({
+      storage,
       aggregates: buildAggregates({ registry, ports: {} }),
     });
     const progress = `${progressPrefix(name)}${fingerprintReadModel(entry)}`;

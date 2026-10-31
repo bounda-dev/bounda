@@ -1,4 +1,5 @@
 import { ConfigurationError } from "../contracts/errors.ts";
+import { BOUNDA_AGGREGATE, BOUNDA_EVENTS } from "./bounda-events.ts";
 import { capitalize } from "./naming.ts";
 import type { PortModules } from "./port.ts";
 import { projectionTriggers } from "./projection.ts";
@@ -66,6 +67,12 @@ const validateAggregate = (
   aggregate: Registry["aggregates"][string],
 ): void => {
   const base = `aggregates.${name}`;
+  if (name === BOUNDA_AGGREGATE) {
+    problems.push({
+      path: base,
+      message: `"${BOUNDA_AGGREGATE}" is the runtime's own aggregate; give yours another name`,
+    });
+  }
   if (aggregate.state !== undefined && !isRecord(aggregate.state.initialState)) {
     problems.push({ path: `${base}.state`, message: 'export "initialState" must be an object' });
   }
@@ -133,6 +140,18 @@ const validateAggregate = (
   }
 };
 
+export interface EventTypesOfFunction {
+  (aggregates: Registry["aggregates"], aggregate: string): readonly string[];
+}
+
+/**
+ * The event types an aggregate of the registry, or the runtime's own, emits.
+ */
+export const eventTypesOf: EventTypesOfFunction = (aggregates, aggregate) =>
+  aggregate === BOUNDA_AGGREGATE
+    ? Object.values(BOUNDA_EVENTS)
+    : Object.keys(aggregates[aggregate]?.events ?? {}).map(capitalize);
+
 const validateReadModel = (
   problems: Problem[],
   name: string,
@@ -142,19 +161,18 @@ const validateReadModel = (
   const base = `readModels.${name}`;
   requireFunction(problems, readModel.view, `${base}.view`, "fields");
   for (const [aggregate, projections] of Object.entries(readModel.projections)) {
-    if (!(aggregate in aggregates)) {
+    const known = aggregate === BOUNDA_AGGREGATE || aggregate in aggregates;
+    if (!known) {
       problems.push({
         path: `${base}.projections.${aggregate}`,
         message: `there is no aggregate "${aggregate}" whose events to project`,
       });
     }
-    const events = new Set<string>(
-      Object.keys(aggregates[aggregate]?.events ?? {}).map(capitalize),
-    );
+    const events = new Set<string>(eventTypesOf(aggregates, aggregate));
     for (const [key, projection] of Object.entries(projections)) {
       const path = `${base}.projections.${aggregate}.${key}`;
       requireFunction(problems, projection, path, "project");
-      if (!(aggregate in aggregates)) continue;
+      if (!known) continue;
       for (const trigger of projectionTriggers(key, projection).filter(
         (type) => !events.has(type),
       )) {

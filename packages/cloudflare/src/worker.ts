@@ -74,8 +74,16 @@ const optionsOf = (url: URL): DispatchOptions => {
 };
 
 const route = (pathname: string): { readonly kind: string; readonly name: string } | null => {
-  const match = /^\/(commands|queries)\/([A-Za-z][A-Za-z0-9]*)\/?$/.exec(pathname);
-  return match === null ? null : { kind: match[1] as string, name: match[2] as string };
+  const match =
+    /^\/(commands|queries)\/([A-Za-z][A-Za-z0-9]*)\/?$/.exec(pathname) ??
+    /^\/(forget)\/([^/]+)\/?$/.exec(pathname);
+  if (match === null) return null;
+  try {
+    return { kind: match[1] as string, name: decodeURIComponent(match[2] as string) };
+  } catch {
+    // A malformed escape names no one.
+    return null;
+  }
 };
 
 /**
@@ -84,7 +92,8 @@ const route = (pathname: string): { readonly kind: string; readonly name: string
  *
  * - `POST /commands/<name>` with the payload as the body, `?delay=10m` to schedule it, answers
  *   the dispatch result, once the read models reflect it unless `consistency` is `"eventual"`;
- * - `POST /queries/<name>` with the payload as the body answers the query's result.
+ * - `POST /queries/<name>` with the payload as the body answers the query's result;
+ * - `POST /forget/<personId>` forgets a person, as `forget` does, and answers like a command.
  *
  * Refusals come back as `{ error: { code, message } }`: 400 for a payload that fails validation,
  * with `issues`, 404 for an unknown command, query or row, 409 for a command's rejection, with its
@@ -111,7 +120,7 @@ export const createWorker: CreateWorkerFunction = ({
       }
       let payload: unknown;
       try {
-        payload = await readPayload(request);
+        payload = target.kind === "forget" ? undefined : await readPayload(request);
       } catch {
         return failure("INVALID_JSON", "The body is not JSON", 400);
       }
@@ -127,7 +136,9 @@ export const createWorker: CreateWorkerFunction = ({
         const result = await unwrap(
           target.kind === "commands"
             ? stub.command(target.name, payload, optionsOf(url), consistency)
-            : stub.query(target.name, payload),
+            : target.kind === "queries"
+              ? stub.query(target.name, payload)
+              : stub.forget(target.name, consistency),
         );
         return json(result ?? null);
       } catch (error) {

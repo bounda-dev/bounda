@@ -38,6 +38,7 @@ interface StagedStream {
   readonly aggregateId: string;
   readonly base: number;
   readonly events: StoredEvent[];
+  readonly persons: Set<string>;
 }
 
 export const createStagedEventStore: CreateStagedEventStoreFunction = (
@@ -57,7 +58,13 @@ export const createStagedEventStore: CreateStagedEventStoreFunction = (
       aggregateId,
       fromVersion: Number.MAX_SAFE_INTEGER,
     });
-    const created = { aggregateType, aggregateId, base: version, events: [] };
+    const created = {
+      aggregateType,
+      aggregateId,
+      base: version,
+      events: [],
+      persons: new Set<string>(),
+    };
     streams.set(key, created);
     return created;
   };
@@ -69,7 +76,13 @@ export const createStagedEventStore: CreateStagedEventStoreFunction = (
       const staged =
         streams.get(key) ??
         (() => {
-          const created = { aggregateType, aggregateId, base: stored.version, events: [] };
+          const created = {
+            aggregateType,
+            aggregateId,
+            base: stored.version,
+            events: [],
+            persons: new Set<string>(),
+          };
           streams.set(key, created);
           return created;
         })();
@@ -81,7 +94,7 @@ export const createStagedEventStore: CreateStagedEventStoreFunction = (
         version: staged.base + staged.events.length,
       };
     },
-    append: async ({ aggregateType, aggregateId, expectedVersion, events }) => {
+    append: async ({ aggregateType, aggregateId, expectedVersion, events, persons = [] }) => {
       const staged = await stagedFor(aggregateType, aggregateId);
       const actualVersion = staged.base + staged.events.length;
       if (actualVersion !== expectedVersion) {
@@ -93,6 +106,7 @@ export const createStagedEventStore: CreateStagedEventStoreFunction = (
       }
       const stored = events.map((event) => ({ ...event, position: nextPosition() }));
       staged.events.push(...stored);
+      for (const person of persons) staged.persons.add(person);
       return { version: actualVersion + stored.length, events: stored };
     },
     readAll: (args) => base.readAll(args),
@@ -100,11 +114,12 @@ export const createStagedEventStore: CreateStagedEventStoreFunction = (
     batches: () =>
       [...streams.values()]
         .filter((staged) => staged.events.length > 0)
-        .map(({ aggregateType, aggregateId, base: expectedVersion, events }) => ({
+        .map(({ aggregateType, aggregateId, base: expectedVersion, events, persons }) => ({
           aggregateType,
           aggregateId,
           expectedVersion,
           events: events.map(({ position: _position, ...event }) => event),
+          persons: [...persons],
           positions: events.map((event) => event.position),
         })),
   };

@@ -5,7 +5,9 @@ import type { CheckpointStore } from "../adapter/storage/checkpoint-store.ts";
 import type { DeadLetterStore } from "../adapter/storage/dead-letter-store.ts";
 import type { IdempotencyStore } from "../adapter/storage/idempotency-store.ts";
 import type { ClaimKey, InboxLedger } from "../adapter/storage/inbox-ledger.ts";
+import type { PersonalKeyStore } from "../adapter/storage/personal-key-store.ts";
 import type { Scheduler } from "../adapter/storage/scheduler.ts";
+import type { SnapshotStore } from "../adapter/storage/snapshot-store.ts";
 import type { StoreEntries } from "./entries.ts";
 import type { MemoryEventStore } from "./event-store.ts";
 
@@ -15,11 +17,14 @@ export interface CreateMemoryStorageTransactionArgs {
   readonly deadLetterStore: DeadLetterStore;
   readonly scheduler: Scheduler;
   readonly idempotencyStore: IdempotencyStore;
+  readonly personalKeys: PersonalKeyStore;
+  readonly snapshotStore: SnapshotStore;
   readonly entries: {
     readonly inboxLedger: StoreEntries<ClaimKey>;
     readonly deadLetterStore: StoreEntries<string>;
     readonly scheduler: StoreEntries<string>;
     readonly idempotencyStore: StoreEntries<string>;
+    readonly personalKeys: StoreEntries<string>;
   };
 }
 
@@ -27,22 +32,21 @@ export interface CreateMemoryStorageTransactionFunction {
   (args: CreateMemoryStorageTransactionArgs): Storage["transact"];
 }
 
-type CreateUndoLogArgs = Omit<CreateMemoryStorageTransactionArgs, "eventStore">;
+type CreateUndoLogArgs = Omit<
+  CreateMemoryStorageTransactionArgs,
+  "eventStore" | "personalKeys" | "snapshotStore"
+>;
 
 interface UndoLog {
   readonly target: DeferredWriteTarget;
   undo(): void;
 }
 
-const createUndoLog = ({
-  inboxLedger,
-  deadLetterStore,
-  scheduler,
-  idempotencyStore,
-  entries,
-}: CreateUndoLogArgs): UndoLog => {
-  const undos: (() => void)[] = [];
-  const tracked = <Key, Result>(
+type Undos = (() => void)[];
+
+const trackedBy =
+  (undos: Undos) =>
+  <Key, Result>(
     store: StoreEntries<Key>,
     key: NoInfer<Key>,
     write: () => Promise<Result>,
@@ -55,6 +59,35 @@ const createUndoLog = ({
     undos.push(() => store.putBack(key, before, after));
     return written;
   };
+
+const undoAll = (undos: Undos): void => {
+  for (const undo of undos.splice(0).reverse()) undo();
+};
+
+// The keys are written at once, since `add` answers with the key in force, and put back when the
+// transaction fails.
+const trackedPersonalKeys = (
+  personalKeys: PersonalKeyStore,
+  entries: StoreEntries<string>,
+  undos: Undos,
+): PersonalKeyStore => {
+  const tracked = trackedBy(undos);
+  return {
+    get: (person) => personalKeys.get(person),
+    add: (person, key) => tracked(entries, person, () => personalKeys.add(person, key)),
+    remove: (person) => tracked(entries, person, () => personalKeys.remove(person)),
+  };
+};
+
+const createUndoLog = ({
+  inboxLedger,
+  deadLetterStore,
+  scheduler,
+  idempotencyStore,
+  entries,
+}: CreateUndoLogArgs): UndoLog => {
+  const undos: Undos = [];
+  const tracked = trackedBy(undos);
   return {
     target: {
       inboxLedger: {
@@ -83,11 +116,11 @@ const createUndoLog = ({
       idempotencyStore: {
         put: (args) =>
           tracked(entries.idempotencyStore, args.key, () => idempotencyStore.put(args)),
+        // Not put back: a rejection forgotten is decided again, which is all it costs.
+        forget: (person) => idempotencyStore.forget(person),
       },
     },
-    undo: () => {
-      for (const undo of undos.splice(0).reverse()) undo();
-    },
+    undo: () => undoAll(undos),
   };
 };
 
@@ -97,12 +130,16 @@ const createUndoLog = ({
  * its appends will commit with; transactions then commit one at a time, every stream appended
  * in one synchronous run, so no reader sees one stream appended without the others, nor an
  * event written meanwhile past a position still reserved. A failed transaction appends nothing,
- * gives its positions back and puts back each entry it changed, unless someone changed it since.
+ * gives its positions back and puts back each entry it changed, unless someone changed it since;
+ * its personal keys are written at once and put back the same way, and the snapshots it forgets
+ * are gone at once, for good, as a cache can be.
  * `tryClaim`, `claimDue`, both `renew`, `purge` and writes made on the stores themselves do not
  * wait for a commit, so they can see a write it may still put back.
  */
 export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunction = ({
   eventStore,
+  personalKeys,
+  snapshotStore,
   ...live
 }) => {
   const commits = createMemoryLocks();
@@ -116,8 +153,14 @@ export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunct
       },
     });
     const { stores, flush } = deferWrites(live);
+    const keyUndos: Undos = [];
     try {
-      const result = await work({ eventStore: staged, ...stores });
+      const result = await work({
+        eventStore: staged,
+        ...stores,
+        personalKeys: trackedPersonalKeys(personalKeys, live.entries.personalKeys, keyUndos),
+        snapshotStore,
+      });
       // A transaction committed from inside this commit, as from a store write, waits forever.
       const release = await commits.acquire("commit", true);
       const log = createUndoLog(live);
@@ -131,9 +174,11 @@ export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunct
         release?.();
       }
       reserved.length = 0;
+      keyUndos.length = 0;
       return result;
     } finally {
       eventStore.release(reserved);
+      undoAll(keyUndos);
     }
   };
 };

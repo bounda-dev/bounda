@@ -10,6 +10,7 @@ import { createSqliteDeadLetterStore } from "./dead-letter-store.ts";
 import { createSqliteEventStore } from "./event-store.ts";
 import { createSqliteIdempotencyStore } from "./idempotency-store.ts";
 import { createSqliteInboxLedger } from "./inbox-ledger.ts";
+import { createSqlitePersonalKeyStore } from "./personal-key-store.ts";
 import { openSqliteReadModel, rebuildSqliteReadModel } from "./read-model.ts";
 import { createSqliteScheduler } from "./scheduler.ts";
 import { ensureStorageSchema, storageTablesFor } from "./schema.ts";
@@ -92,6 +93,13 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
           idempotencyStore: createSqliteIdempotencyStore({
             db: database,
             table: tables.idempotencyKeys,
+            personalKeys: tables.personalKeys,
+          }),
+          personalKeys: createSqlitePersonalKeyStore({ db: database, table: tables.personalKeys }),
+          snapshotStore: createSqliteSnapshotStore({
+            db: database,
+            table: tables.snapshots,
+            personalKeys: tables.personalKeys,
           }),
         });
         // The stores over an open transaction: their statements join it, and a `write` of their own
@@ -104,7 +112,6 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
         return {
           ...storesOver(db),
           checkpointStore: createSqliteCheckpointStore({ db, table: tables.checkpoints }),
-          snapshotStore: createSqliteSnapshotStore({ db, table: tables.snapshots }),
           transact: (work) => db.write((tx) => work(storesOver(boundTo(tx)))),
           close: release,
         };

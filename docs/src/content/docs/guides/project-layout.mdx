@@ -114,7 +114,9 @@ export const evolve = ({ event }: Event.EvolveArgs) => ({
 });
 ```
 
-`payload` is optional; an event without one has an empty payload. An event returns the state
+`payload` is optional; an event without one has an empty payload. Its `PayloadArgs` carry
+`personal` and `person` besides `z`, for the fields that hold
+[personal data](/guides/personal-data/). An event returns the state
 fields it sets, merged over the state one level deep: a field returned as `undefined` keeps its
 value, so clear one with `null`. `begin` opens the aggregate and gets the event alone, since
 there is no state before it; `evolve` folds a later event and gets the state too. An event that can

@@ -1,5 +1,7 @@
 import {
   DomainError,
+  type EventPayloadArgs,
+  type ForgetsPersonalData,
   type ImplementationModule,
   type Instant,
   type PolicyModule,
@@ -11,6 +13,7 @@ import type { AdapterDefinition } from "@bounda-dev/core/adapter";
 import { defineConfig } from "@bounda-dev/core/config";
 import { describe, it } from "vitest";
 import type { Commands } from "./fixtures/order-app/.bounda/types.ts";
+import type { Event as CustomerRegistered } from "./fixtures/order-app/app/domain/customer/+types/customer-registered.ts";
 import type { Command as RegisterCustomer } from "./fixtures/order-app/app/domain/customer/commands/+types/register-customer.ts";
 import type { Command as PayOrder } from "./fixtures/order-app/app/domain/order/commands/+types/pay-order.ts";
 import type { Command as PlaceOrder } from "./fixtures/order-app/app/domain/order/commands/+types/place-order.ts";
@@ -18,6 +21,7 @@ import type { Inventory } from "./fixtures/order-app/app/domain/order/inventory.
 import type { Process as AtNextReminder } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/at-next-reminder.ts";
 import type { Process as OrderPayment } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/index.ts";
 import type { Process as OnOrderPaid } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/on-order-paid.ts";
+import type { Projection as ProjectCustomerRegistered } from "./fixtures/order-app/app/read/customer-directory/projections/customer/+types/customer-registered.ts";
 
 import type { Projection as ProjectOrderPlaced } from "./fixtures/order-app/app/read/order-summary/projections/order/+types/order-placed.ts";
 
@@ -171,6 +175,50 @@ describe("what does not compile", () => {
       nextReminder: moment,
     });
     void handler;
+  });
+
+  it("marking personal data outside an event, or reading it as if it could not be forgotten", () => {
+    // @ts-expect-error a command's payload has no personal: commands are not stored
+    const command = ({ z, personal }: RegisterCustomer.PayloadArgs) =>
+      z.object({ email: personal(z.email()) });
+    void command;
+    const builder = ({ events }: RegisterCustomer.HandlerArgs) => [
+      // @ts-expect-error a personal field is written as its schema takes it, never as null
+      events.customerRegistered({ email: null }),
+    ];
+    void builder;
+    const projection = async ({ event, table }: ProjectCustomerRegistered.Args) => {
+      // @ts-expect-error a personal field reads as null once its person is forgotten
+      await table.upsert({ customerId: event.aggregateId, email: event.payload.email });
+    };
+    void projection;
+    const evolve = ({ event }: CustomerRegistered.EvolveArgs) =>
+      // @ts-expect-error the same in evolve
+      event.payload.email.toLowerCase();
+    void evolve;
+    const marks = ({ z, personal, person }: EventPayloadArgs) =>
+      z.object({ customerId: person(z.string()), email: personal(z.email()) });
+    void marks;
+  });
+
+  it("a read model that projects personal fields without handling forgetting", () => {
+    type Expect<Check extends true> = Check;
+    type Unhandled = ForgetsPersonalData<
+      "customerDirectory",
+      typeof import("./fixtures/order-app/app/domain/customer/customer-registered.ts"),
+      false
+    >;
+    // @ts-expect-error the read model needs projections/bounda/personal-data-forgotten.ts
+    type Refused = Expect<Unhandled>;
+    type Handled = Expect<
+      ForgetsPersonalData<
+        "customerDirectory",
+        typeof import("./fixtures/order-app/app/domain/customer/customer-registered.ts"),
+        true
+      >
+    >;
+    const checks: [Refused?, Handled?] = [];
+    void checks;
   });
 
   it("emitting an event of another aggregate", () => {

@@ -65,7 +65,7 @@ export const createSnapshotSubscriber: CreateSnapshotSubscriberFunction = ({
 
   const snapshot = async (aggregateId: string): Promise<void> => {
     const stream = { aggregateType: aggregate.name, aggregateId };
-    const { folded, version } = await loader.load({ aggregate, aggregateId, eventStore });
+    const { folded, version, persons } = await loader.load({ aggregate, aggregateId, eventStore });
     let state: string;
     try {
       state = serializeFold(folded);
@@ -80,7 +80,7 @@ export const createSnapshotSubscriber: CreateSnapshotSubscriberFunction = ({
       logger.error("aggregate state cannot be snapshotted", { ...stream, version, ...details });
       return;
     }
-    await snapshotStore.put({ ...stream, version, fingerprint, state });
+    await snapshotStore.put({ ...stream, version, fingerprint, state, persons });
     logger.debug("snapshot written", { ...stream, version });
   };
 

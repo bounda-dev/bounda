@@ -9,6 +9,7 @@ export interface StorageTables {
   readonly deadLetters: string;
   readonly scheduledCommands: string;
   readonly idempotencyKeys: string;
+  readonly personalKeys: string;
   readonly snapshots: string;
 }
 
@@ -23,6 +24,7 @@ export const storageTablesFor: StorageTablesForFunction = (prefix) => ({
   deadLetters: quoteIdentifier(storageTableNameFor({ prefix, table: "deadLetters" })),
   scheduledCommands: quoteIdentifier(storageTableNameFor({ prefix, table: "scheduledCommands" })),
   idempotencyKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "idempotencyKeys" })),
+  personalKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "personalKeys" })),
   snapshots: quoteIdentifier(storageTableNameFor({ prefix, table: "snapshots" })),
 });
 
@@ -108,15 +110,21 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "key" TEXT PRIMARY KEY,
     "fingerprint" TEXT NOT NULL,
     "outcome" TEXT NOT NULL,
-    "expires_at" TEXT NOT NULL
+    "expires_at" TEXT NOT NULL,
+    "persons" TEXT NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.idempotencyKeys, "expires_at")} ON ${tables.idempotencyKeys} ("expires_at")`,
+  `CREATE TABLE IF NOT EXISTS ${tables.personalKeys} (
+    "person" TEXT PRIMARY KEY,
+    "key" TEXT NOT NULL
+  )`,
   `CREATE TABLE IF NOT EXISTS ${tables.snapshots} (
     "aggregate_type" TEXT NOT NULL,
     "aggregate_id" TEXT NOT NULL,
     "version" INTEGER NOT NULL,
     "fingerprint" TEXT NOT NULL,
     "state" TEXT NOT NULL,
+    "persons" TEXT NOT NULL,
     PRIMARY KEY ("aggregate_type", "aggregate_id")
   )`,
 ];

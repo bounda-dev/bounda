@@ -1,6 +1,7 @@
 import type { z } from "zod";
 import type { NewEvent, StoredEvent } from "../../contracts/event.ts";
 import type { Upcast } from "../../modules/upcast.ts";
+import type { PersonalMarks } from "../personal-data/marks.ts";
 
 export interface EventRuntime {
   readonly key: string;
@@ -18,6 +19,10 @@ export interface EventRuntime {
    * `upcasts.length + 1`: what new events of this type are written with.
    */
   readonly schemaVersion: number;
+  /**
+   * `null` for an event without personal fields.
+   */
+  readonly personal: PersonalMarks | null;
 }
 
 export interface CommandRuntime {

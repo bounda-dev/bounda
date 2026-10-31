@@ -21,9 +21,14 @@ get today. Each item says why, so nobody discovers it the hard way:
 - **Notifications for scheduled commands.** The worker that runs due commands polls at
   `pollInterval`; only the event dispatcher is woken by `NOTIFY`. See
   [Tuning](/guides/deployment/#tuning).
+- **Personal data outside events.** A field marked `personal` is encrypted in the event store and
+  nowhere else: a command scheduled with `delay` keeps its payload in the clear until it runs,
+  and so does the dead letter of one that gave up. Keep personal data out of delayed commands.
+  See [Forgetting in an immutable log](/concepts/forgetting-in-an-immutable-log/#what-stays-outside).
 
 What a production app does get, and where it is explained:
 [rebuilding a read model](/guides/deployment/#rebuilding-a-read-model) without taking it offline,
+[forgetting a person](/guides/personal-data/) without deleting an event,
 [dead letters with a way out](/guides/dead-letters/), [upcasters](/guides/changing-events/) for
 events whose payload changed, [snapshots](/concepts/long-streams/#snapshots) whose validity the
 runtime checks itself, [observability](/reference/observability/) through OpenTelemetry, and a

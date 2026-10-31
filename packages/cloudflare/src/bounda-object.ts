@@ -17,6 +17,7 @@ import {
   type RebuildReadModelResult,
   RebuildSupersededError,
   type Registry,
+  type StoredDispatch,
   type StoredEvent,
   systemClock,
 } from "@bounda-dev/core";
@@ -85,6 +86,11 @@ export interface BoundaObjectMethods {
    * the rebuilt table takes the live one's place; queries keep reading the live table meanwhile.
    */
   rebuildReadModel(name: string): Promise<RpcOutcome<RebuildReadModelResult>>;
+  /**
+   * Forgets a person, as `BoundaClient.forget` does, and like `command` waits for the read models
+   * that handle it unless `consistency` is `"eventual"`.
+   */
+  forget(personId: string, consistency?: Consistency): Promise<RpcOutcome<StoredDispatch>>;
   /**
    * Runs the next slice of every paused rebuild, then policies, processes, due scheduled commands
    * and retries, in bounded slices, and arms the next alarm. Called by the platform.
@@ -285,6 +291,16 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
         const result = await this.#ready().rebuildReadModel(name, {
           maxEvents: eventsPerRebuildSlice,
         });
+        await this.#rearm(false, true);
+        return result;
+      });
+    }
+
+    forget(personId: string, consistency?: Consistency): Promise<RpcOutcome<StoredDispatch>> {
+      return settle(async () => {
+        const app = this.#ready();
+        const result = await app.forget(personId);
+        if (consistency !== "eventual") await app.catchUpReadModels({ through: result });
         await this.#rearm(false, true);
         return result;
       });

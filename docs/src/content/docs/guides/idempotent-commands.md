@@ -40,6 +40,9 @@ means to do once, such as a UUID made when the form is submitted and sent again 
 it. It is remembered for `runtime.commands.idempotencyKeyLifetime`, 24 hours by default; past it
 the key is free for another command, and the scheduled-command worker purges the record from
 `bounda_idempotency_keys` ([configuration](/reference/configuration/#commands)).
+A rejection decided on a state that held someone's [personal data](/guides/personal-data/) is
+remembered only until that person is forgotten: `forget` removes it, and the same key is then
+decided again.
 
 This is not the `idempotencyKey` a command handler receives: that one is the command's own id,
 for the provider the handler calls, the same across the runs a concurrency conflict causes

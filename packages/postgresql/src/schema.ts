@@ -14,6 +14,7 @@ export interface StorageTables {
   readonly deadLetters: string;
   readonly scheduledCommands: string;
   readonly idempotencyKeys: string;
+  readonly personalKeys: string;
   readonly snapshots: string;
   readonly appendLockKey: string;
   // The first key of the advisory locks read models take on the checkpoints table.
@@ -54,6 +55,7 @@ export const storageTablesFor: StorageTablesForFunction = ({ prefix, schema }) =
     deadLetters: quoteIdentifier(storageTableNameFor({ prefix, table: "deadLetters" })),
     scheduledCommands: quoteIdentifier(storageTableNameFor({ prefix, table: "scheduledCommands" })),
     idempotencyKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "idempotencyKeys" })),
+    personalKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "personalKeys" })),
     snapshots: quoteIdentifier(storageTableNameFor({ prefix, table: "snapshots" })),
     appendLockKey: `bounda:${schema}.${events}`,
     checkpointsLockKey: `bounda:${schema}.${checkpoints}`,
@@ -139,15 +141,21 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "key" text PRIMARY KEY,
     "fingerprint" text NOT NULL,
     "outcome" jsonb NOT NULL,
-    "expires_at" text NOT NULL
+    "expires_at" text NOT NULL,
+    "persons" text[] NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.idempotencyKeys, "expires_at")} ON ${tables.idempotencyKeys} ("expires_at")`,
+  `CREATE TABLE IF NOT EXISTS ${tables.personalKeys} (
+    "person" text PRIMARY KEY,
+    "key" text NOT NULL
+  )`,
   `CREATE TABLE IF NOT EXISTS ${tables.snapshots} (
     "aggregate_type" text NOT NULL,
     "aggregate_id" text NOT NULL,
     "version" integer NOT NULL,
     "fingerprint" text NOT NULL,
     "state" text NOT NULL,
+    "persons" text[] NOT NULL,
     PRIMARY KEY ("aggregate_type", "aggregate_id")
   )`,
 ];
@@ -176,6 +184,7 @@ export const ensureStorageSchema: EnsureStorageSchemaFunction = async ({ db, sch
     tables.deadLetters,
     tables.scheduledCommands,
     tables.idempotencyKeys,
+    tables.personalKeys,
     tables.snapshots,
     indexName(tables.deadLetters, "status"),
     indexName(tables.scheduledCommands, "execute_at"),

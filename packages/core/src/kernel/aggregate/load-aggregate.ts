@@ -3,6 +3,7 @@ import type { SnapshotStore } from "../../adapter/storage/snapshot-store.ts";
 import { SnapshotError } from "../../contracts/errors.ts";
 import type { StreamIdentity } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
+import { personsOf } from "../personal-data/persons.ts";
 import { errorDetails } from "../shared/retry.ts";
 import { ATTRIBUTES, METRICS, meter } from "../telemetry.ts";
 import { type FoldedState, foldState } from "./fold-state.ts";
@@ -24,6 +25,10 @@ export interface LoadedAggregate {
    * The stream's head, system events included: what an append expects.
    */
   readonly version: number;
+  /**
+   * Whose personal fields went into the state, as a snapshot of it records them.
+   */
+  readonly persons: readonly string[];
 }
 
 /**
@@ -98,6 +103,7 @@ export const createAggregateLoader: CreateAggregateLoaderFunction = ({
     return {
       folded: foldState({ aggregate, events }),
       version: Math.min(loaded.version, through),
+      persons: personsOf({ aggregate, events }),
     };
   };
   const dropped = async (
@@ -153,14 +159,15 @@ export const createAggregateLoader: CreateAggregateLoaderFunction = ({
         );
       }
       const folded = foldState({ aggregate, events: loaded.events, from });
+      const persons = personsOf({ aggregate, events: loaded.events, from: snapshot.persons });
       if (!due(aggregate, settings.verify)) {
         count(aggregate, "used");
-        return { folded, version: loaded.version };
+        return { folded, version: loaded.version, persons };
       }
       const whole = await fromStart(aggregate, stream, eventStore, loaded.version);
       if (foldsEqual(folded, whole.folded)) {
         count(aggregate, "verified");
-        return { folded, version: loaded.version };
+        return { folded, version: loaded.version, persons };
       }
       count(aggregate, "mismatch");
       const message = `Snapshot of ${aggregate.name}:${aggregateId} at version ${snapshot.version} folds to a state at version ${loaded.version} that differs from the stream's; the fold is not a function of the events alone`;

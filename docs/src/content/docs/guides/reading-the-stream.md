@@ -40,7 +40,11 @@ The lifecycle events of a process are rows like any other: `ProcessStarted`, `Pr
 **Payloads come as they were stored.** An event written before its type had an
 [upcaster](/guides/changing-events/) keeps its old shape, and `metadata.schemaVersion` says
 which; only handlers see it upcast. So a read shows what the store holds, and an event written by
-newer code, which this code cannot upcast, does not make it fail.
+newer code, which this code cannot upcast, does not make it fail. A field marked
+[`personal`](/guides/personal-data/) comes as the store holds it too: an envelope with the
+ciphertext and the person's id, never the value, so the stream can be read by an operator without
+reading anyone's data. A `PersonalDataForgotten` event is a row like any other, on the stream
+`bounda:<personId>` with `system: true`.
 
 ## Following the stream
 

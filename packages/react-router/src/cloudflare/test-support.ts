@@ -39,6 +39,7 @@ export const storeNamespace = (): FakeStoreNamespace => {
       retryDeadLetter: record("retryDeadLetter"),
       discardDeadLetter: record("discardDeadLetter"),
       rebuildReadModel: record("rebuildReadModel"),
+      forget: record("forget"),
     };
   };
   return { calls, namespace: { idFromName: (name) => name, get: stubOf } };
