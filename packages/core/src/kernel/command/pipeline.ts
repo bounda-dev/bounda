@@ -657,7 +657,9 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     },
     dispatchUnattended: ({ within, ...args }) =>
       send(args, within, (_error, rejection) => {
-        logger.info("command rejected", { ...rejection });
+        // Without its message, which may quote personal data from the state, past any forget.
+        const { message: _message, ...logged } = rejection;
+        logger.info("command rejected", logged);
         within.afterCommit(() => onRejection?.(rejection));
         const { type: _type, ...answer } = rejection;
         return answer;

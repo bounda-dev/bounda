@@ -718,7 +718,6 @@ describe("the commands of a policy run", () => {
       fields: {
         type: "PlaceOrder",
         rejected: "AlreadyPlaced",
-        message: "Order already placed",
         aggregateType: "order",
         aggregateId: "o-1",
       },

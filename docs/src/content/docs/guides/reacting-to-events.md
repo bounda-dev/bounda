@@ -261,8 +261,9 @@ if (paid.rejected === "NotOpen") {
 }
 ```
 
-A rejection nobody looks at is logged (`command rejected`, at `info`) and recorded on the command's
-span; a test asserts the ones it expects from what
+A rejection nobody looks at is logged (`command rejected`, at `info`, with its code and the
+command's type and aggregate but not its message, which may quote personal data) and recorded on
+the command's span; a test asserts the ones it expects from what
 [`runUntilIdle()`](/guides/testing/#rejections-inside-reactions) returns. A scheduled command that
 is rejected when it runs changes nothing in the same way. While the run lasts, only a failure
 rejects the `await`: a payload that does not validate, a concurrency conflict that outlasts its
