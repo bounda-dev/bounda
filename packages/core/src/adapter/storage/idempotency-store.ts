@@ -1,4 +1,5 @@
 import type { DispatchResult, RejectedDispatch } from "../../contracts/command.ts";
+import type { KeyedPerson } from "./personal-key-store.ts";
 
 /**
  * What a dispatch answered, as the idempotency store keeps it: the result of a command that was
@@ -8,16 +9,16 @@ export type DispatchOutcome = DispatchResult | RejectedDispatch;
 
 /**
  * A dispatch remembered under its idempotency key: the fingerprint of the command it was, what it
- * answered, and when the key may be used for another command. `persons` names, once each, the
- * people whose personal fields were in the state a rejection was decided on, since its message
- * may quote them; it is empty for any other outcome.
+ * answered, and when the key may be used for another command. `persons` names the people whose
+ * personal fields were in the state a rejection was decided on, since its message may quote
+ * them, each with the key they were read under; it is empty for any other outcome.
  */
 export interface IdempotencyRecord {
   readonly key: string;
   readonly fingerprint: string;
   readonly outcome: DispatchOutcome;
   readonly expiresAt: string;
-  readonly persons: readonly string[];
+  readonly persons: readonly KeyedPerson[];
 }
 
 export interface GetIdempotencyRecordArgs {
@@ -46,8 +47,9 @@ export interface PurgeIdempotencyRecordsArgs {
  * the recording was part of.
  *
  * A record that names people lives only as long as their keys, as a snapshot does: `put` records
- * nothing unless every person it names has a key in the storage's `personalKeys`, checked in the
- * same statement, and `forget` removes every record that names a person.
+ * nothing unless every person it names holds the key of the fingerprint it names them with, or
+ * any key for a `null` one, checked in the same statement, and `forget` removes every record
+ * that names a person.
  */
 export interface IdempotencyStore {
   /**

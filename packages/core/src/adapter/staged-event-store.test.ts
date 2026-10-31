@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ConcurrencyError } from "../contracts/errors.ts";
 import { createMemoryEventStore } from "../memory/event-store.ts";
 import { createStagedEventStore } from "./staged-event-store.ts";
-import { pendingEvent } from "./testing/fixtures.ts";
+import { testKeyedPerson as held, pendingEvent } from "./testing/fixtures.ts";
 
 const order = { aggregateType: "order", aggregateId: "1" };
 const customer = { aggregateType: "customer", aggregateId: "1" };
@@ -30,6 +30,17 @@ const setUp = async () => {
 };
 
 describe("createStagedEventStore", () => {
+  it("reports the keys the base store's load opened, and none it was not given", async () => {
+    const { base } = await setUp();
+    const fingerprints = new Map([["c-1", "f-1"]]);
+    const opening = createStagedEventStore({
+      ...base,
+      load: async (args) => ({ ...(await base.load(args)), fingerprints }),
+    });
+    expect((await opening.load(order)).fingerprints).toBe(fingerprints);
+    expect(await createStagedEventStore(base).load(order)).not.toHaveProperty("fingerprints");
+  });
+
   it("loads one stream: the base store's events plus what was staged for it, at the version both make", async () => {
     const { staged } = await setUp();
     const before = await staged.load(order);
@@ -160,13 +171,13 @@ describe("createStagedEventStore", () => {
       ...order,
       expectedVersion: 1,
       events: [pendingEvent({ aggregateId: "1", version: 2, type: "OrderPaid" })],
-      persons: ["c-1"],
+      persons: [held("c-1", "1"), held("c-3", null)],
     });
     await staged.append({
       ...order,
       expectedVersion: 2,
       events: [pendingEvent({ aggregateId: "1", version: 3, type: "OrderArchived" })],
-      persons: ["c-2", "c-1"],
+      persons: [held("c-2", "2"), held("c-1", "1"), held("c-1", "again"), held("c-3", null)],
     });
     const fresh = { aggregateType: "payment", aggregateId: "9" };
     await staged.append({
@@ -174,7 +185,10 @@ describe("createStagedEventStore", () => {
       expectedVersion: 0,
       events: [pendingEvent({ ...fresh, version: 1, type: "PaymentRequested" })],
     });
-    expect(staged.batches().map((batch) => batch.persons)).toEqual([["c-1", "c-2"], []]);
+    expect(staged.batches().map((batch) => batch.persons)).toEqual([
+      [held("c-1", "1"), held("c-3", null), held("c-2", "2"), held("c-1", "again")],
+      [],
+    ]);
   });
 
   it("reads the global stream from the base store alone", async () => {

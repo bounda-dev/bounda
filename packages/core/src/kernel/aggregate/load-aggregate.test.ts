@@ -1,10 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EventStore } from "../../adapter/storage/event-store.ts";
 import type { Snapshot } from "../../adapter/storage/snapshot-store.ts";
-import { pendingEvent } from "../../adapter/testing/fixtures.ts";
+import {
+  testKeyedPerson as held,
+  pendingEvent,
+  testPersonalKey,
+} from "../../adapter/testing/fixtures.ts";
 import { resolveConfig } from "../../config/schema.ts";
 import { SnapshotError } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
+import type { EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { ATTRIBUTES, METRICS } from "../telemetry.ts";
 import { type FakeTelemetry, installFakeTelemetry } from "../telemetry-fake.ts";
@@ -51,6 +56,11 @@ const setUp = async ({
           orderPlaced: { ...orderAggregate.events.orderPlaced, evolve: evolves.placed },
           orderPaid: { ...orderAggregate.events.orderPaid, evolve: evolves.paid },
           orderArchived: { evolve: evolves.archived },
+          orderSigned: {
+            payload: ({ z, personal, person }: EventPayloadArgs) =>
+              z.object({ customerId: person(z.string()), signature: personal(z.string()) }),
+            evolve: ({ state }: { state: object }) => state,
+          },
         },
       },
     },
@@ -142,6 +152,30 @@ describe("createAggregateLoader", () => {
     expect(evolves.paid).not.toHaveBeenCalled();
     expect(evolves.archived).toHaveBeenCalledTimes(1);
     expect(outcomes()).toEqual(["used"]);
+  });
+
+  it("names whose personal data the state holds, with the key its load opened it with", async () => {
+    const { storage, snapshot, append, load } = await setUp();
+    await storage.personalKeys.add("c-0", testPersonalKey("0"));
+    await storage.snapshotStore.put(snapshot({ persons: [held("c-0", "0")] }));
+    await append(
+      [3, "OrderSigned", { customerId: "c-1", signature: "Ana" }],
+      [4, "OrderSigned", { customerId: "c-2", signature: "Bo" }],
+    );
+    const opening: EventStore = {
+      ...storage.eventStore,
+      load: async (args) => ({
+        ...(await storage.eventStore.load(args)),
+        fingerprints: new Map([["c-1", testPersonalKey("1").fingerprint]]),
+      }),
+    };
+    expect((await load(opening)).persons).toEqual([
+      held("c-0", "0"),
+      held("c-1", "1"),
+      held("c-2", null),
+    ]);
+    await storage.snapshotStore.remove(stream);
+    expect((await load(opening)).persons).toEqual([held("c-1", "1"), held("c-2", null)]);
   });
 
   it("ignores, but keeps, a snapshot taken by other code", async () => {

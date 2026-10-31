@@ -1,6 +1,12 @@
 import { IdempotencyKeyTakenError } from "../../contracts/errors.ts";
-import type { DispatchOutcome, IdempotencyRecord, IdempotencyStore } from "../index.ts";
+import type {
+  DispatchOutcome,
+  IdempotencyRecord,
+  IdempotencyStore,
+  KeyedPerson,
+} from "../index.ts";
 import type { SqlDatabase } from "../sql/database.ts";
+import { heldKeys, naming } from "./held-keys.ts";
 
 export interface CreateSqliteIdempotencyStoreArgs {
   readonly db: SqlDatabase;
@@ -18,7 +24,7 @@ const toRecord = (row: Record<string, unknown>): IdempotencyRecord => ({
   fingerprint: String(row.fingerprint),
   outcome: JSON.parse(String(row.outcome)) as DispatchOutcome,
   expiresAt: String(row.expires_at),
-  persons: JSON.parse(String(row.persons)) as string[],
+  persons: JSON.parse(String(row.persons)) as KeyedPerson[],
 });
 
 export const createSqliteIdempotencyStore: CreateSqliteIdempotencyStoreFunction = ({
@@ -36,12 +42,13 @@ export const createSqliteIdempotencyStore: CreateSqliteIdempotencyStoreFunction 
   return {
     get,
     // One statement whose row comes back only when the key was free or expired and every person
-    // the record names has a key, so two dispatches racing for it can never both record, nor one
-    // record beside a forget. No row back with no live record under the key is the second case.
+    // the record names holds the key they were read under, so two dispatches racing for it can
+    // never both record, nor one record beside a forget. No row back with no live record under
+    // the key is the second case.
     put: async ({ key, fingerprint, outcome, expiresAt, now, persons }) => {
       const rows = await db.all(
         `INSERT INTO ${table} ("key", "fingerprint", "outcome", "expires_at", "persons")
-       SELECT ?, ?, ?, ?, ? WHERE (SELECT count(*) FROM ${personalKeys} WHERE "person" IN (SELECT "value" FROM json_each(?))) = ?
+       SELECT ?, ?, ?, ?, ? WHERE ${heldKeys(personalKeys)}
        ON CONFLICT ("key") DO UPDATE SET
          "fingerprint" = excluded."fingerprint",
          "outcome" = excluded."outcome",
@@ -70,10 +77,6 @@ export const createSqliteIdempotencyStore: CreateSqliteIdempotencyStoreFunction 
       ]);
       return rows.length;
     },
-    forget: (person) =>
-      db.run(
-        `DELETE FROM ${table} WHERE EXISTS (SELECT 1 FROM json_each(${table}."persons") WHERE "value" = ?)`,
-        [person],
-      ),
+    forget: (person) => db.run(`DELETE FROM ${table} WHERE ${naming(table)}`, [person]),
   };
 };

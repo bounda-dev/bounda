@@ -3,9 +3,11 @@ import type {
   DispatchOutcome,
   IdempotencyRecord,
   IdempotencyStore,
+  KeyedPerson,
 } from "@bounda-dev/core/adapter";
 import { postgresqlDialect } from "@bounda-dev/core/adapter/sql";
 import type { PostgresqlDatabase } from "./database.ts";
+import { heldKeys, naming } from "./held-keys.ts";
 
 export interface CreatePostgresqlIdempotencyStoreArgs {
   readonly db: PostgresqlDatabase;
@@ -23,14 +25,15 @@ const toRecord = (row: Record<string, unknown>): IdempotencyRecord => ({
   fingerprint: String(row.fingerprint),
   outcome: row.outcome as DispatchOutcome,
   expiresAt: String(row.expires_at),
-  persons: (row.persons as readonly string[]).map(String),
+  persons: row.persons as KeyedPerson[],
 });
 
 /**
  * `put` is a single upsert: PostgreSQL locks the conflicting row, so of two dispatches racing for
  * one key exactly one gets its row back. It locks the keys of the persons the record names too,
  * as a snapshot's `put` does, so a forget beside it waits and then removes it, or removed a key
- * first and leaves it nothing to record; no row back with no live record under the key is that.
+ * first and leaves it nothing to record, even once the person has another key; no row back with
+ * no live record under the key is that.
  */
 export const createPostgresqlIdempotencyStore: CreatePostgresqlIdempotencyStoreFunction = ({
   db,
@@ -49,7 +52,7 @@ export const createPostgresqlIdempotencyStore: CreatePostgresqlIdempotencyStoreF
     put: async ({ key, fingerprint, outcome, expiresAt, now, persons }) => {
       const rows = await db.all(
         `INSERT INTO ${table} ("key", "fingerprint", "outcome", "expires_at", "persons")
-       SELECT $1, $2, $3, $4, $6::text[] WHERE (SELECT count(*) FROM (SELECT 1 FROM ${personalKeys} WHERE "person" = ANY($6::text[]) FOR SHARE) AS "held") = cardinality($6::text[])
+       SELECT $1, $2, $3, $4, $6::jsonb WHERE ${heldKeys({ personalKeys, persons: "$6" })}
        ON CONFLICT ("key") DO UPDATE SET
          "fingerprint" = excluded."fingerprint",
          "outcome" = excluded."outcome",
@@ -63,7 +66,7 @@ export const createPostgresqlIdempotencyStore: CreatePostgresqlIdempotencyStoreF
           postgresqlDialect.encode("json", outcome),
           expiresAt,
           now.toISOString(),
-          [...persons],
+          postgresqlDialect.encode("json", persons),
         ],
       );
       if (rows.length === 0 && (await get({ key, now })) !== null) {
@@ -76,6 +79,6 @@ export const createPostgresqlIdempotencyStore: CreatePostgresqlIdempotencyStoreF
       ]);
       return rows.length;
     },
-    forget: (person) => db.run(`DELETE FROM ${table} WHERE $1 = ANY("persons")`, [person]),
+    forget: (person) => db.run(`DELETE FROM ${table} WHERE ${naming("$1")}`, [person]),
   };
 };

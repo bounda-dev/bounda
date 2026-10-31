@@ -80,20 +80,24 @@ empty id is refused with `ValidationError`.
 
 From then on every personal field of theirs reads as `null`, in every event, however old. A
 person registered again gets a fresh key; their old events stay unreadable. A command that loaded
-their data before `forget` and appends after it is not the one to give them that key: its append
-fails with [`ConcurrencyError`](/reference/errors/), as on a stream that moved, and the retry
-decides on the state without their data.
+their data before `forget` and appends after it never writes that data back, not even under the
+fresh key another command gave them meanwhile: the state it loaded remembers the key each
+person's data was read under, and an append that would seal their fields under any other fails
+with [`ConcurrencyError`](/reference/errors/), as on a stream that moved. The retry decides on the
+state without their data.
 
 A [snapshot](/concepts/long-streams/#snapshots) holds the state in the clear, so the same
 transaction removes every snapshot whose state carried a field of theirs; each one names the
-people it holds, and none is written for a person without a key. The next command on such an
+people it holds and the key it read each one under, and none is written for a person who no
+longer holds that key. The next command on such an
 aggregate folds it from its first event, with the fields forgotten, and the snapshot after it
 holds them as `null`.
 
 A command dispatched with an [`idempotencyKey`](/guides/idempotent-commands/) remembers
 what it answered, and a rejection's message may quote the state it was decided on. Such a
-rejection names the people whose fields were in that state, and `forget` removes it too: the same
-request sent again is decided again, on the state without them. What it cannot see is personal
+rejection names the people whose fields were in that state, with their keys as a snapshot does,
+and `forget` removes it too: the same request sent again is decided again, on the state without
+them. What it cannot see is personal
 data that came in the command's payload, which is never marked: keep that out of a rejection's
 message and say what went wrong with its code and the ids involved.
 
@@ -142,7 +146,7 @@ typed with `PersonalDataForgottenEvent`.
 ## Where the keys live
 
 Each adapter keeps the keys in a table next to the events, `bounda_personal_keys`, one row per
-person: the memory adapter in memory, SQLite and the Durable Object in their database, PostgreSQL
+person with the key and its fingerprint, a SHA-256 of it: the memory adapter in memory, SQLite and the Durable Object in their database, PostgreSQL
 in its schema. A key is created when the first event with a personal field of that person is
 stored, by the transaction that stores it, and deleted by `forget`. Encryption is AES-256-GCM
 through WebCrypto, with a nonce per value, on Node and in `workerd` alike; what the store holds

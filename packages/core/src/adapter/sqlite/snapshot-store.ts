@@ -1,5 +1,6 @@
-import type { Snapshot, SnapshotStore } from "../index.ts";
+import type { KeyedPerson, Snapshot, SnapshotStore } from "../index.ts";
 import type { SqlExecutor } from "../sql/sql-table.ts";
+import { heldKeys, naming } from "./held-keys.ts";
 
 export interface CreateSqliteSnapshotStoreArgs {
   readonly db: SqlExecutor;
@@ -18,7 +19,7 @@ const toSnapshot = (row: Record<string, unknown>): Snapshot => ({
   version: Number(row.version),
   fingerprint: String(row.fingerprint),
   state: String(row.state),
-  persons: JSON.parse(String(row.persons)) as string[],
+  persons: JSON.parse(String(row.persons)) as KeyedPerson[],
 });
 
 export const createSqliteSnapshotStore: CreateSqliteSnapshotStoreFunction = ({
@@ -36,7 +37,7 @@ export const createSqliteSnapshotStore: CreateSqliteSnapshotStoreFunction = ({
   // One statement, so a forget that removed a key before it runs leaves it nothing to write.
   put: ({ aggregateType, aggregateId, version, fingerprint, state, persons }) =>
     db.run(
-      `INSERT INTO ${table} ("aggregate_type", "aggregate_id", "version", "fingerprint", "state", "persons") SELECT ?, ?, ?, ?, ?, ? WHERE (SELECT count(*) FROM ${personalKeys} WHERE "person" IN (SELECT "value" FROM json_each(?))) = ? ON CONFLICT ("aggregate_type", "aggregate_id") DO UPDATE SET "version" = excluded."version", "fingerprint" = excluded."fingerprint", "state" = excluded."state", "persons" = excluded."persons"`,
+      `INSERT INTO ${table} ("aggregate_type", "aggregate_id", "version", "fingerprint", "state", "persons") SELECT ?, ?, ?, ?, ?, ? WHERE ${heldKeys(personalKeys)} ON CONFLICT ("aggregate_type", "aggregate_id") DO UPDATE SET "version" = excluded."version", "fingerprint" = excluded."fingerprint", "state" = excluded."state", "persons" = excluded."persons"`,
       [
         aggregateType,
         aggregateId,
@@ -53,9 +54,5 @@ export const createSqliteSnapshotStore: CreateSqliteSnapshotStoreFunction = ({
       aggregateType,
       aggregateId,
     ]),
-  forget: (person) =>
-    db.run(
-      `DELETE FROM ${table} WHERE EXISTS (SELECT 1 FROM json_each(${table}."persons") WHERE "value" = ?)`,
-      [person],
-    ),
+  forget: (person) => db.run(`DELETE FROM ${table} WHERE ${naming(table)}`, [person]),
 });

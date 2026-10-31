@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { IdempotencyKeyTakenError } from "../../contracts/errors.ts";
 import type { Storage } from "../adapter.ts";
 import type { IdempotencyStore } from "../storage/idempotency-store.ts";
-import type { PersonalKeyStore } from "../storage/personal-key-store.ts";
-import { testOutcome } from "./fixtures.ts";
+import type { KeyedPerson, PersonalKeyStore } from "../storage/personal-key-store.ts";
+import { testKeyedPerson as held, testPersonalKey as stored, testOutcome } from "./fixtures.ts";
 
 export interface IdempotencyStoreContractArgs {
   /**
@@ -46,11 +46,12 @@ export const idempotencyStoreContract: IdempotencyStoreContractFunction = ({ cre
     };
 
     it("records a record that names people only while each of them has a key", async () => {
-      const named = { ...record("k1"), outcome: rejection, persons: ["c-1", "c-2"], now };
-      await keys.add("c-1", "k-1");
+      const persons = [held("c-1", "1"), held("c-2", null)];
+      const named = { ...record("k1"), outcome: rejection, persons, now };
+      await keys.add("c-1", stored("1"));
       await store.put(named);
       expect(await store.get({ key: "k1", now })).toBeNull();
-      await keys.add("c-2", "k-2");
+      await keys.add("c-2", stored("2"));
       await store.put(named);
       const { now: _now, ...kept } = named;
       expect(await store.get({ key: "k1", now })).toEqual(kept);
@@ -60,12 +61,33 @@ export const idempotencyStoreContract: IdempotencyStoreContractFunction = ({ cre
       );
     });
 
+    it("records nothing for a person named with a key other than the one they hold", async () => {
+      const named = (...persons: KeyedPerson[]) => ({
+        ...record("k1"),
+        outcome: rejection,
+        persons,
+        now,
+      });
+      await keys.add("c-1", stored("new"));
+      await store.put(named(held("c-1", "old")));
+      expect(await store.get({ key: "k1", now })).toBeNull();
+      await store.put(named(held("c-1", "old"), held("c-1", "new")));
+      expect(await store.get({ key: "k1", now })).toBeNull();
+      await store.put(named(held("c-1", "new"), held("c-1", null)));
+      expect((await store.get({ key: "k1", now }))?.persons).toEqual([
+        held("c-1", "new"),
+        held("c-1", null),
+      ]);
+    });
+
     it("forgets every record that names a person, and no other", async () => {
-      await keys.add("c-1", "k-1");
-      await keys.add("c-2", "k-2");
-      await store.put({ ...record("k1"), outcome: rejection, persons: ["c-1"], now });
-      await store.put({ ...record("k2"), outcome: rejection, persons: ["c-2", "c-1"], now });
-      await store.put({ ...record("k3"), outcome: rejection, persons: ["c-2"], now });
+      await keys.add("c-1", stored("1"));
+      await keys.add("c-2", stored("2"));
+      const c1 = held("c-1", "1");
+      const c2 = held("c-2", "2");
+      await store.put({ ...record("k1"), outcome: rejection, persons: [c1], now });
+      await store.put({ ...record("k2"), outcome: rejection, persons: [c2, c1], now });
+      await store.put({ ...record("k3"), outcome: rejection, persons: [c2], now });
       await store.put({ ...record("k4"), now });
       await store.forget("c-1");
       await store.forget("nobody");

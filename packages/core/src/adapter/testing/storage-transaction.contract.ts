@@ -6,7 +6,16 @@ import {
   ScheduledClaimLostError,
 } from "../../contracts/errors.ts";
 import type { Storage, StorageTransaction } from "../adapter.ts";
-import { pendingEvent, testCommand, testContext, testDeadLetter, testOutcome } from "./fixtures.ts";
+import type { KeyedPerson } from "../storage/personal-key-store.ts";
+import {
+  testKeyedPerson as held,
+  pendingEvent,
+  testPersonalKey as stored,
+  testCommand,
+  testContext,
+  testDeadLetter,
+  testOutcome,
+} from "./fixtures.ts";
 
 export interface StorageTransactionContractArgs {
   readonly create: () => Promise<Storage>;
@@ -131,7 +140,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       await expect(
         storage.transact(async (tx) => {
           await tx.inboxLedger.complete(key);
-          await tx.personalKeys.add("c-9", "k-9");
+          await tx.personalKeys.add("c-9", stored("9"));
           await tx.scheduler.schedule({
             dedupeKey: "command:c1",
             command: testCommand("1"),
@@ -262,11 +271,11 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
     });
 
     it("adds and removes personal keys with the rest, or not at all", async () => {
-      await storage.personalKeys.add("c-1", "k-1");
+      await storage.personalKeys.add("c-1", stored("1"));
       const work = async (tx: StorageTransaction) => {
         expect(await tx.personalKeys.remove("c-1")).toBe(true);
-        expect(await tx.personalKeys.add("c-2", "k-2")).toBe("k-2");
-        expect(await tx.personalKeys.get("c-2")).toBe("k-2");
+        expect(await tx.personalKeys.add("c-2", stored("2"))).toEqual(stored("2"));
+        expect(await tx.personalKeys.get("c-2")).toEqual(stored("2"));
         await tx.eventStore.append({
           aggregateType: "order",
           aggregateId: "1",
@@ -280,19 +289,19 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
           throw new Error("boom");
         }),
       ).rejects.toThrow("boom");
-      expect(await storage.personalKeys.get("c-1")).toBe("k-1");
+      expect(await storage.personalKeys.get("c-1")).toEqual(stored("1"));
       expect(await storage.personalKeys.get("c-2")).toBeNull();
       expect(await storage.eventStore.lastPosition()).toBe(0);
       await storage.transact(work);
       expect(await storage.personalKeys.get("c-1")).toBeNull();
-      expect(await storage.personalKeys.get("c-2")).toBe("k-2");
+      expect(await storage.personalKeys.get("c-2")).toEqual(stored("2"));
       expect(await storage.eventStore.readAll({ afterPosition: 0, limit: 10 })).toHaveLength(1);
     });
 
     it("forgets a person's snapshots and remembered rejections with their key", async () => {
-      await storage.personalKeys.add("c-1", "k-1");
-      await storage.personalKeys.add("c-2", "k-2");
-      const snapshot = (aggregateId: string, persons: readonly string[]) => ({
+      await storage.personalKeys.add("c-1", stored("1"));
+      await storage.personalKeys.add("c-2", stored("2"));
+      const snapshot = (aggregateId: string, persons: readonly KeyedPerson[]) => ({
         aggregateType: "customer",
         aggregateId,
         version: 1,
@@ -300,8 +309,8 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
         state: "[]",
         persons,
       });
-      await storage.snapshotStore.put(snapshot("c-1", ["c-1"]));
-      await storage.snapshotStore.put(snapshot("c-2", ["c-2"]));
+      await storage.snapshotStore.put(snapshot("c-1", [held("c-1", "1")]));
+      await storage.snapshotStore.put(snapshot("c-2", [held("c-2", "2")]));
       const remembered = {
         key: "req-1",
         fingerprint: "fp",
@@ -312,7 +321,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
           aggregateId: "c-1",
         },
         expiresAt: "2026-01-02T00:00:00.000Z",
-        persons: ["c-1"],
+        persons: [held("c-1", "1")],
         now,
       };
       await storage.idempotencyStore.put(remembered);
@@ -325,7 +334,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       expect(await storage.personalKeys.get("c-1")).toBeNull();
       expect(await storage.snapshotStore.get(snapshot("c-1", []))).toBeNull();
       expect(await storage.snapshotStore.get(snapshot("c-2", []))).toEqual(
-        snapshot("c-2", ["c-2"]),
+        snapshot("c-2", [held("c-2", "2")]),
       );
     });
 

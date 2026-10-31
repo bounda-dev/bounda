@@ -1,4 +1,5 @@
 import type { EventStore } from "../../adapter/storage/event-store.ts";
+import type { KeyedPerson } from "../../adapter/storage/personal-key-store.ts";
 import type { SnapshotStore } from "../../adapter/storage/snapshot-store.ts";
 import { SnapshotError } from "../../contracts/errors.ts";
 import type { StreamIdentity } from "../../contracts/event.ts";
@@ -26,9 +27,10 @@ export interface LoadedAggregate {
    */
   readonly version: number;
   /**
-   * Whose personal fields went into the state, as a snapshot of it records them.
+   * Whose personal fields went into the state, and under which key, as a snapshot of it records
+   * them.
    */
-  readonly persons: readonly string[];
+  readonly persons: readonly KeyedPerson[];
 }
 
 /**
@@ -103,7 +105,7 @@ export const createAggregateLoader: CreateAggregateLoaderFunction = ({
     return {
       folded: foldState({ aggregate, events }),
       version: Math.min(loaded.version, through),
-      persons: personsOf({ aggregate, events }),
+      persons: personsOf({ aggregate, events, fingerprints: loaded.fingerprints }),
     };
   };
   const dropped = async (
@@ -159,7 +161,12 @@ export const createAggregateLoader: CreateAggregateLoaderFunction = ({
         );
       }
       const folded = foldState({ aggregate, events: loaded.events, from });
-      const persons = personsOf({ aggregate, events: loaded.events, from: snapshot.persons });
+      const persons = personsOf({
+        aggregate,
+        events: loaded.events,
+        fingerprints: loaded.fingerprints,
+        from: snapshot.persons,
+      });
       if (!due(aggregate, settings.verify)) {
         count(aggregate, "used");
         return { folded, version: loaded.version, persons };
