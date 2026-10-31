@@ -7,6 +7,9 @@
   --sl-font-mono: var(--font-red-hat-mono), ui-monospace, monospace;
   --bounda-display:
     var(--font-science-gothic), "Eurostile", "Bahnschrift", "Arial Black", sans-serif;
+  /* The brand as a fill (DESIGN.md's --accent), for the focus ring. Starlight's accent is the one
+     for text, which in Bone is the darker ochre. */
+  --bounda-accent: #d9a04a;
 
   --sl-text-body: 1.03125rem;
   --sl-line-height: 1.62;
@@ -52,6 +55,7 @@
 
 :root[data-theme="light"] {
   /* Bone */
+  --bounda-accent: #b07114;
   --sl-color-white: #1a1916;
   --sl-color-gray-1: #23211d;
   --sl-color-gray-2: #2b2925;
@@ -93,6 +97,13 @@
 ::selection {
   background: var(--sl-color-accent);
   color: var(--sl-color-black);
+}
+
+/* Focus as bounda.dev draws it: a 2px ring of the brand, 3px off the edge. Controls that sit in a
+   box keep Starlight's inside offset, so the ring stays within it. */
+:focus-visible {
+  outline: 2px solid var(--bounda-accent);
+  outline-offset: 3px;
 }
 
 /* Display: the page title and section titles in Science Gothic 600. */
