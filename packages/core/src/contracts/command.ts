@@ -36,9 +36,9 @@ export interface DispatchOptions {
    * Makes the dispatch safe to repeat: a key the caller chose for this one command, such as the
    * `Idempotency-Key` header of the request that carries it. The first dispatch under a key runs
    * the command and remembers what it answered, for `runtime.commands.idempotencyKeyLifetime`;
-   * every later one with the same key, the same command and the same payload answers the same
-   * without running it, its rejection included. The same key with another command or another
-   * payload rejects with `IdempotencyKeyConflictError`. A dispatch that fails is not remembered,
+   * every later one with the same key, the same command, the same payload and the same `delay`
+   * answers the same without running it, its rejection included. The same key with any of those
+   * changed rejects with `IdempotencyKeyConflictError`. A dispatch that fails is not remembered,
    * so a retry runs it. Between 1 and `MAX_IDEMPOTENCY_KEY_LENGTH` characters.
    */
   readonly idempotencyKey?: string;

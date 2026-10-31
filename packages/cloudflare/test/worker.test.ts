@@ -231,17 +231,7 @@ describe("createWorker", () => {
     });
   });
 
-  it("forgets a person through the binding, with the worker's consistency", async () => {
-    const byDefault = await throughSpy("/forget/ada%20b", "");
-    expect(byDefault.status).toBe(200);
-    expect(byDefault.addressed).toEqual(["acme"]);
-    expect(byDefault.forgets).toEqual([["ada b", "read-your-writes"]]);
-    const eventual = await throughSpy("/forget/ada/", "{not json", "eventual");
-    expect(eventual.status).toBe(200);
-    expect(eventual.forgets).toEqual([["ada", "eventual"]]);
-  });
-
-  it("only knows POST on its three routes", async () => {
+  it("only knows POST on its two routes", async () => {
     const root = await exports.default.fetch(new Request("https://bounda.test/"));
     expect(root.status).toBe(404);
     expect(await root.json()).toEqual({ error: { code: "NOT_FOUND", message: "No route for /" } });

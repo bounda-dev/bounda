@@ -36,7 +36,7 @@ export const createPostgresqlSnapshotStore: CreatePostgresqlSnapshotStoreFunctio
   },
   put: ({ aggregateType, aggregateId, version, fingerprint, state, persons }) =>
     db.run(
-      `INSERT INTO ${table} ("aggregate_type", "aggregate_id", "version", "fingerprint", "state", "persons") SELECT $1, $2, $3, $4, $5, $6::jsonb WHERE ${heldKeys({ personalKeys, persons: "$6" })} ON CONFLICT ("aggregate_type", "aggregate_id") DO UPDATE SET "version" = excluded."version", "fingerprint" = excluded."fingerprint", "state" = excluded."state", "persons" = excluded."persons"`,
+      `INSERT INTO ${table} ("aggregate_type", "aggregate_id", "version", "fingerprint", "state", "persons") SELECT $1, $2, $3, $4, $5, $6::jsonb WHERE ${heldKeys({ personalKeys, persons: "$6" })} ON CONFLICT ("aggregate_type", "aggregate_id") DO UPDATE SET "version" = excluded."version", "fingerprint" = excluded."fingerprint", "state" = excluded."state", "persons" = excluded."persons" WHERE excluded."version" >= ${table}."version" OR excluded."fingerprint" <> ${table}."fingerprint"`,
       [
         aggregateType,
         aggregateId,

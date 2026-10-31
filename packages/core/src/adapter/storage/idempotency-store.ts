@@ -47,9 +47,9 @@ export interface PurgeIdempotencyRecordsArgs {
  * the recording was part of.
  *
  * A record that names people lives only as long as their keys, as a snapshot does: `put` records
- * nothing unless every person it names holds the key of the fingerprint it names them with, or
- * any key for a `null` one, checked in the same statement, and `forget` removes every record
- * that names a person.
+ * nothing unless every person it names with a fingerprint holds the key of that fingerprint (one
+ * named with `null` was read in the clear and needs none), checked in the same statement, and
+ * `forget` removes every record that names a person.
  */
 export interface IdempotencyStore {
   /**

@@ -159,6 +159,9 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "persons" jsonb NOT NULL,
     PRIMARY KEY ("aggregate_type", "aggregate_id")
   )`,
+  // So forgetting a person finds the rows that name them without reading every row.
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.snapshots, "persons")} ON ${tables.snapshots} USING gin ("persons" jsonb_path_ops)`,
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.idempotencyKeys, "persons")} ON ${tables.idempotencyKeys} USING gin ("persons" jsonb_path_ops)`,
 ];
 
 export interface EnsureStorageSchemaArgs {
@@ -190,6 +193,8 @@ export const ensureStorageSchema: EnsureStorageSchemaFunction = async ({ db, sch
     indexName(tables.deadLetters, "status"),
     indexName(tables.scheduledCommands, "execute_at"),
     indexName(tables.idempotencyKeys, "expires_at"),
+    indexName(tables.snapshots, "persons"),
+    indexName(tables.idempotencyKeys, "persons"),
   ].map(unquoted);
   if (await relationsExist({ db, schema, names })) return;
   await inSchema({

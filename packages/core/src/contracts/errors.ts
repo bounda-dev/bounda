@@ -104,9 +104,9 @@ export interface IdempotencyKeyConflictErrorArgs {
 
 /**
  * Thrown by a dispatch whose `idempotencyKey` was already used for another command, or for the
- * same command with another payload, within `runtime.commands.idempotencyKeyLifetime`. Nothing
- * runs and nothing is stored: a key names one command with one payload, so a second one under it
- * is a bug of the caller, not a retry.
+ * same command with another payload or `delay`, within `runtime.commands.idempotencyKeyLifetime`.
+ * Nothing runs and nothing is stored: a key names one command with one payload, so a second one
+ * under it is a bug of the caller, not a retry.
  */
 export class IdempotencyKeyConflictError extends BoundaError {
   readonly idempotencyKey: string;

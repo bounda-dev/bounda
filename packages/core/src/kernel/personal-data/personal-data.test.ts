@@ -360,6 +360,41 @@ describe("personal data in an app", () => {
     await app.stop();
   });
 
+  it("snapshots a stream whose personal fields were stored in the clear, before they were marked", async () => {
+    const adapter = memory();
+    const storage = await adapter.createStorage({ logger: silentLogger });
+    const metadata = { correlationId: "c", causationId: "c", commandId: "c", depth: 0 };
+    await storage.eventStore.append({
+      aggregateType: "customer",
+      aggregateId: "c-9",
+      expectedVersion: 0,
+      events: [
+        {
+          id: "e-1",
+          aggregateType: "customer",
+          aggregateId: "c-9",
+          version: 1,
+          type: "CustomerRegistered",
+          payload: { email: "old@example.com", name: "Old" },
+          timestamp: "2026-01-01T00:00:00.000Z",
+          metadata: { ...metadata, schemaVersion: 1, system: false },
+        },
+      ],
+    });
+    const { app } = await createTestApp({ ...snapshotted, adapter });
+    await app.commands.greetCustomer({ customerId: "c-9" });
+    await app.runUntilIdle();
+    const stream = { aggregateType: "customer", aggregateId: "c-9" };
+    expect(await storage.personalKeys.get("c-9")).toBeNull();
+    expect(await storage.snapshotStore.get(stream)).toMatchObject({
+      version: 2,
+      persons: [{ person: "c-9", fingerprint: null }],
+    });
+    await app.forget("c-9");
+    expect(await storage.snapshotStore.get(stream)).toBeNull();
+    await app.stop();
+  });
+
   it("forgets the rejections it remembered for a person, so a retry decides again without their data", async () => {
     const adapter = memory();
     const storage = await adapter.createStorage({ logger: silentLogger });

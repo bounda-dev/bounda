@@ -1,4 +1,4 @@
-import { type BoundaApp, ConfigurationError } from "@bounda-dev/core";
+import { type BoundaApp, ConfigurationError, idempotencyKeyFor } from "@bounda-dev/core";
 import { RouterContextProvider } from "react-router";
 import { describe, expect, it } from "vitest";
 import { createBounda } from "./create-bounda.ts";
@@ -121,7 +121,7 @@ describe("createBounda", () => {
     expect(second.context.get(bounda)).toBe(fake.app);
   });
 
-  it("passes the request's Idempotency-Key header to the commands it serves", async () => {
+  it("keys the commands it serves from the request's Idempotency-Key header", async () => {
     const options: unknown[] = [];
     const app = {
       commands: {
@@ -150,7 +150,11 @@ describe("createBounda", () => {
     await commandsOf(keyed.context).placeOrder({ orderId: "o-1" });
     await commandsOf(keyed.context).placeOrder({ orderId: "o-1" }, { idempotencyKey: "own" });
     await commandsOf(plain.context).placeOrder({ orderId: "o-1" });
-    expect(options).toEqual([{ idempotencyKey: "req-1" }, { idempotencyKey: "own" }, undefined]);
+    expect(options).toEqual([
+      { idempotencyKey: idempotencyKeyFor("req-1", "placeOrder") },
+      { idempotencyKey: "own" },
+      undefined,
+    ]);
     expect(plain.context.get(bounda)).toBe(app);
   });
 

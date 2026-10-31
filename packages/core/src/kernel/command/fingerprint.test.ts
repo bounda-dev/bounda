@@ -52,4 +52,41 @@ describe("fingerprintOf", () => {
       await fingerprintOf({ type: "T", payload: {} }),
     );
   });
+
+  it("tells payloads apart by what their maps, sets and bigints hold, in any order", async () => {
+    const of = (payload: unknown) => fingerprintOf({ type: "T", payload });
+    expect(await of({ items: new Map([[1, "a"]]) })).not.toBe(
+      await of({ items: new Map([[2, "b"]]) }),
+    );
+    expect(
+      await of({
+        items: new Map<number, unknown>([
+          [1, "a"],
+          [2, { y: 1, x: 2 }],
+        ]),
+      }),
+    ).toBe(
+      await of({
+        items: new Map<number, unknown>([
+          [2, { x: 2, y: 1 }],
+          [1, "a"],
+        ]),
+      }),
+    );
+    expect(await of({ tags: new Set(["a"]) })).not.toBe(await of({ tags: new Set(["b"]) }));
+    expect(await of({ tags: new Set(["a", "b"]) })).toBe(await of({ tags: new Set(["b", "a"]) }));
+    expect(await of({ items: new Map() })).not.toBe(await of({ items: {} }));
+    expect(await of({ items: new Set() })).not.toBe(await of({ items: new Map() }));
+    expect(await of({ amount: 10n })).not.toBe(await of({ amount: 11n }));
+    expect(await of({ amount: 10n })).not.toBe(await of({ amount: "10" }));
+  });
+
+  it("tells a scheduled command from an immediate one, and delays apart", async () => {
+    const now = await fingerprintOf({ type: "T", payload: { a: 1 } });
+    const later = await fingerprintOf({ type: "T", payload: { a: 1 }, delayMs: 60_000 });
+    expect(later).not.toBe(now);
+    expect(await fingerprintOf({ type: "T", payload: { a: 1 }, delayMs: 60_000 })).toBe(later);
+    expect(await fingerprintOf({ type: "T", payload: { a: 1 }, delayMs: 0 })).not.toBe(now);
+    expect(await fingerprintOf({ type: "T", payload: { a: 1 }, delayMs: 1 })).not.toBe(later);
+  });
 });

@@ -55,7 +55,7 @@ export const snapshotStoreContract: SnapshotStoreContractFunction = ({ create })
       expect(await store.get({ aggregateType: "order", aggregateId: "43" })).toBeNull();
     });
 
-    it("replaces a stream's snapshot with the last one put", async () => {
+    it("replaces a stream's snapshot with the last one put of another fingerprint", async () => {
       await store.put(order42);
       const later: Snapshot = { ...order42, version: 400, fingerprint: "ghi", state: "[2]" };
       await store.put(later);
@@ -65,8 +65,21 @@ export const snapshotStoreContract: SnapshotStoreContractFunction = ({ create })
       expect(await store.get({ aggregateType: "order", aggregateId: "42" })).toEqual(earlier);
     });
 
+    it("keeps the newest snapshot of a fingerprint, whatever order they are put in", async () => {
+      const newer: Snapshot = { ...order42, version: 400, state: "[4]" };
+      await store.put(newer);
+      await store.put({ ...order42, version: 300, state: "[3]" });
+      expect(await store.get(order42)).toEqual(newer);
+      const again: Snapshot = { ...newer, state: "[4 again]" };
+      await store.put(again);
+      expect(await store.get(order42)).toEqual(again);
+      const newest: Snapshot = { ...order42, version: 500, state: "[5]" };
+      await store.put(newest);
+      expect(await store.get(order42)).toEqual(newest);
+    });
+
     it("writes a snapshot that names people only while each of them has a key", async () => {
-      const ada: Snapshot = { ...order42, persons: [held("c-1", "1"), held("c-2", null)] };
+      const ada: Snapshot = { ...order42, persons: [held("c-1", "1"), held("c-2", "2")] };
       await store.put(ada);
       expect(await store.get(order42)).toBeNull();
       await keys.add("c-1", stored("1"));
@@ -78,6 +91,22 @@ export const snapshotStoreContract: SnapshotStoreContractFunction = ({ create })
       await keys.remove("c-2");
       await store.put({ ...ada, version: 300 });
       expect(await store.get(order42)).toEqual(ada);
+    });
+
+    it("needs no key for a person whose fields were read in the clear", async () => {
+      const clear: Snapshot = { ...order42, persons: [held("c-1", null), held("c-2", null)] };
+      await store.put(clear);
+      expect(await store.get(order42)).toEqual(clear);
+      const mixed: Snapshot = {
+        ...order42,
+        version: 300,
+        persons: [held("c-1", null), held("c-2", "2")],
+      };
+      await store.put(mixed);
+      expect(await store.get(order42)).toEqual(clear);
+      await keys.add("c-2", stored("2"));
+      await store.put(mixed);
+      expect(await store.get(order42)).toEqual(mixed);
     });
 
     it("writes nothing for a person named with a key other than the one they hold", async () => {

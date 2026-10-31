@@ -106,7 +106,7 @@ when its handler rejects it, with the code in `rejected`. Return `failure(error)
 |---|---|---|
 | `ValidationError` | 400 | `{ error, issues }`, each issue with the `path` of the field and its `message` |
 | `DomainError` | 409 | `{ error, issues: [], rejected }`, the code the command declares |
-| `IdempotencyKeyConflictError` | 422 | `{ error, issues: [] }`, the request's `Idempotency-Key` was used for another command |
+| `IdempotencyKeyConflictError` | 422 | `{ error, issues: [] }`, the request's `Idempotency-Key` came back with another payload |
 
 `failure` goes by the error's `code`, `VALIDATION_FAILED`, `DOMAIN_ERROR` or
 `IDEMPOTENCY_KEY_CONFLICT`, so it answers the same for the refusals a Durable Object sends back on
@@ -134,9 +134,9 @@ cannot carry it into the Durable Object, where the command runs to the end.
 ## Retrying a request safely
 
 A request that times out on the way back, or a form submitted twice, dispatches its command
-twice. When the client sends an `Idempotency-Key` header, the middleware passes it as
-`idempotencyKey` to every command the request dispatches, and the second arrival answers what the
-first did, its rejection included, without running the command again. The host never makes a key
+twice. When the client sends an `Idempotency-Key` header, the middleware gives every command the
+request dispatches an `idempotencyKey` derived from it and the command's name, and the second
+arrival answers what the first did, its rejection included, without running the command again. The host never makes a key
 up: a request without the header dispatches as before. What the key means, its lifetime, and an
 action that dispatches two commands under one header are in
 [idempotent commands](/guides/idempotent-commands/).

@@ -20,11 +20,12 @@ export interface Snapshot extends StreamIdentity {
  * instead. `get` is `null` for a stream without one. `remove` forgets a stream's snapshot.
  *
  * A snapshot holds personal data in the clear, so it lives only as long as its persons' keys:
- * `put` writes nothing unless every person it names holds, in the storage's `personalKeys`, the
- * key of the fingerprint it names them with, or any key for a `null` one, checked in the same
- * statement; and `forget` removes every snapshot that names a person. A transaction that removes
- * a key and then forgets its snapshots leaves none behind, whatever `put` runs beside it, and a
- * key given to the person afterwards is never the one a snapshot was read under.
+ * `put` writes nothing unless every person it names with a fingerprint holds, in the storage's
+ * `personalKeys`, the key of that fingerprint, checked in the same statement (one named with
+ * `null` was read in the clear and needs none); and `forget` removes every snapshot that names a
+ * person. A transaction that removes a key and then forgets its snapshots leaves none behind,
+ * whatever `put` runs beside it, and a key given to the person afterwards is never the one a
+ * snapshot was read under. A `put` older than the snapshot of the same fingerprint is ignored.
  */
 export interface SnapshotStore {
   get(stream: StreamIdentity): Promise<Snapshot | null>;

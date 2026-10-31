@@ -56,7 +56,8 @@ dead letter with `errorType: "retriable_exhausted"`.
   than `runtime.policies.maxChainDepth`. `depth`, `maxDepth`.
 - **`IDEMPOTENCY_KEY_CONFLICT`** (`IdempotencyKeyConflictError`; terminal). A dispatch's
   `idempotencyKey` was already used, within `runtime.commands.idempotencyKeyLifetime`, for
-  another command or for the same command with another payload. Nothing runs. `idempotencyKey`.
+  another command or for the same command with another payload or `delay`. Nothing runs.
+  `idempotencyKey`.
   See [idempotent commands](/guides/idempotent-commands/).
 - **`CREATION_ORDER`** (`CreationOrderError`; terminal). A command returned events that do not fit
   whether its aggregate exists: the first event is not one that exports `begin`, or an event that

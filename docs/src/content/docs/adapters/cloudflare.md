@@ -149,14 +149,15 @@ global stream.
 | --- | --- |
 | `POST /commands/<name>` with the payload as the body | The dispatch result, once the read models reflect it, or once its events are stored with `createWorker({ config, tenantOf, consistency: "eventual" })`. `?delay=10m` schedules it |
 | `POST /queries/<name>` with the payload as the body | The query's result |
-| `POST /forget/<personId>` | [Forgets](/guides/personal-data/) the person, answering like a command |
 
 Refusals come back as `{ "error": { "code", "message" } }` with the statuses in
 [errors over HTTP](/reference/errors/#over-http); anything else is a 500 whose message goes to the
 logs, not to the caller.
 
-It has **no authentication** and no operator endpoint, on purpose: it is a starting point. An
-app with users writes its own `fetch` and talks to a store with `connect`:
+It has **no authentication** and no operator endpoint, on purpose: it is a starting point. For
+the same reason it never [forgets](/guides/personal-data/) anyone, which cannot be undone. An app
+with users writes its own `fetch` and talks to a store with `connect`, whose `forget` it calls
+behind its own authentication:
 
 ```ts
 import { connect } from "@bounda-dev/cloudflare";

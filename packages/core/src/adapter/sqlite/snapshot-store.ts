@@ -37,7 +37,7 @@ export const createSqliteSnapshotStore: CreateSqliteSnapshotStoreFunction = ({
   // One statement, so a forget that removed a key before it runs leaves it nothing to write.
   put: ({ aggregateType, aggregateId, version, fingerprint, state, persons }) =>
     db.run(
-      `INSERT INTO ${table} ("aggregate_type", "aggregate_id", "version", "fingerprint", "state", "persons") SELECT ?, ?, ?, ?, ?, ? WHERE ${heldKeys(personalKeys)} ON CONFLICT ("aggregate_type", "aggregate_id") DO UPDATE SET "version" = excluded."version", "fingerprint" = excluded."fingerprint", "state" = excluded."state", "persons" = excluded."persons"`,
+      `INSERT INTO ${table} ("aggregate_type", "aggregate_id", "version", "fingerprint", "state", "persons") SELECT ?, ?, ?, ?, ?, ? WHERE ${heldKeys(personalKeys)} ON CONFLICT ("aggregate_type", "aggregate_id") DO UPDATE SET "version" = excluded."version", "fingerprint" = excluded."fingerprint", "state" = excluded."state", "persons" = excluded."persons" WHERE excluded."version" >= ${table}."version" OR excluded."fingerprint" <> ${table}."fingerprint"`,
       [
         aggregateType,
         aggregateId,
@@ -46,7 +46,7 @@ export const createSqliteSnapshotStore: CreateSqliteSnapshotStoreFunction = ({
         state,
         JSON.stringify(persons),
         JSON.stringify(persons),
-        persons.length,
+        JSON.stringify(persons),
       ],
     ),
   remove: ({ aggregateType, aggregateId }) =>

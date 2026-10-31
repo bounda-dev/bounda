@@ -42,7 +42,7 @@ export const createSqliteIdempotencyStore: CreateSqliteIdempotencyStoreFunction 
   return {
     get,
     // One statement whose row comes back only when the key was free or expired and every person
-    // the record names holds the key they were read under, so two dispatches racing for it can
+    // the record names with a fingerprint holds that key, so two dispatches racing for it can
     // never both record, nor one record beside a forget. No row back with no live record under
     // the key is the second case.
     put: async ({ key, fingerprint, outcome, expiresAt, now, persons }) => {
@@ -63,7 +63,7 @@ export const createSqliteIdempotencyStore: CreateSqliteIdempotencyStoreFunction 
           expiresAt,
           JSON.stringify(persons),
           JSON.stringify(persons),
-          persons.length,
+          JSON.stringify(persons),
           now.toISOString(),
         ],
       );

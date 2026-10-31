@@ -441,7 +441,11 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         ? undefined
         : {
             key: checkIdempotencyKey(type, options.idempotencyKey),
-            fingerprint: await fingerprintOf({ type, payload }),
+            fingerprint: await fingerprintOf({
+              type,
+              payload,
+              delayMs: options.delay === undefined ? undefined : parseDuration(options.delay),
+            }),
           };
 
     const scheduled = options.delay !== undefined;
