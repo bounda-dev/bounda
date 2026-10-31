@@ -7,7 +7,7 @@ import { createStoreEntries, type WithEntries } from "./entries.ts";
 
 export interface KeptPersonalKeyStore extends WithEntries<PersonalKeyStore, string> {
   /**
-   * Whether the person holds the key of that fingerprint, or any key for a `null` one, answered
+   * Whether the person holds the key of that fingerprint, always for a `null` one, answered
    * at once: the memory snapshot store checks it in the same step as it writes, so no forget runs
    * between the two.
    */
@@ -23,7 +23,7 @@ export const createKeptPersonalKeyStore: CreateKeptPersonalKeyStoreFunction = ()
   return {
     holds: ({ person, fingerprint }) => {
       const stored = keys.get(person);
-      return stored !== undefined && (fingerprint === null || stored.fingerprint === fingerprint);
+      return fingerprint === null || stored?.fingerprint === fingerprint;
     },
     store: {
       get: async (person) => keys.get(person) ?? null,

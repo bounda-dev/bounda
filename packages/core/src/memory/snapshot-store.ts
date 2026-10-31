@@ -19,7 +19,12 @@ export const createMemorySnapshotStore: CreateMemorySnapshotStoreFunction = ({ h
   return {
     get: async (stream) => snapshots.get(streamId(stream)) ?? null,
     put: async (snapshot) => {
-      if (snapshot.persons.every(holds)) snapshots.set(streamId(snapshot), snapshot);
+      const current = snapshots.get(streamId(snapshot));
+      const older =
+        current !== undefined &&
+        current.fingerprint === snapshot.fingerprint &&
+        current.version > snapshot.version;
+      if (!older && snapshot.persons.every(holds)) snapshots.set(streamId(snapshot), snapshot);
     },
     remove: async (stream) => {
       snapshots.delete(streamId(stream));

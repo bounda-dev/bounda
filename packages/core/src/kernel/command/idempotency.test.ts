@@ -217,6 +217,21 @@ describe("a command dispatched with an idempotency key", () => {
     expect(await harness.storage.scheduler.list()).toHaveLength(1);
   });
 
+  it("refuses the key of a delayed command for the same command now, or with another delay", async () => {
+    const harness = await createKernelHarness();
+    await harness.pipeline.dispatch({ ...placeOrder, ...withKey("req-1", { delay: "5m" }) });
+    await expect(
+      harness.pipeline.dispatch({ ...placeOrder, ...withKey("req-1") }),
+    ).rejects.toBeInstanceOf(IdempotencyKeyConflictError);
+    await expect(
+      harness.pipeline.dispatch({ ...placeOrder, ...withKey("req-1", { delay: "10m" }) }),
+    ).rejects.toBeInstanceOf(IdempotencyKeyConflictError);
+    expect(
+      await harness.pipeline.dispatch({ ...placeOrder, ...withKey("req-1", { delay: 300_000 }) }),
+    ).toMatchObject({ scheduled: true });
+    expect(await storedTypes(harness)).toEqual([]);
+  });
+
   it("forgets a key once its lifetime has passed, and runs the command again", async () => {
     const harness = await createKernelHarness({
       config: { runtime: { commands: { idempotencyKeyLifetime: "1h" } } },

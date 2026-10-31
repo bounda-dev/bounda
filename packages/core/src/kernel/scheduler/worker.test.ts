@@ -963,11 +963,9 @@ describe("scheduled command payload", () => {
       aggregateId: "n-1",
     };
     expect(rejections).toEqual([rejection]);
-    expect(entries).toContainEqual({
-      level: "info",
-      message: "command rejected",
-      fields: rejection,
-    });
+    // The log leaves the message out: it may quote personal data.
+    const { message: _message, ...logged } = rejection;
+    expect(entries).toContainEqual({ level: "info", message: "command rejected", fields: logged });
     expect(await app.deadLetters.list()).toEqual([]);
     expect((await app.runUntilIdle()).rejections).toEqual([]);
     await app.stop();

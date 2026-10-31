@@ -1,4 +1,4 @@
-import type { BoundaClient, DispatchOptions } from "@bounda-dev/core";
+import { type BoundaClient, type DispatchOptions, idempotencyKeyFor } from "@bounda-dev/core";
 import { describe, expect, it } from "vitest";
 import { IDEMPOTENCY_KEY_HEADER, withIdempotencyKey } from "./idempotency-key.ts";
 
@@ -23,7 +23,7 @@ const recording = () => {
 };
 
 describe("withIdempotencyKey", () => {
-  it("hands the header to every command as its key, unless the caller passes one", async () => {
+  it("hands every command a key of its own from the header, unless the caller passes one", async () => {
     const { client, calls } = recording();
     const served = withIdempotencyKey(client, request("req-1"));
     expect(served).not.toBe(client);
@@ -40,11 +40,40 @@ describe("withIdempotencyKey", () => {
     await placeOrder({ orderId: "o-1" }, {
       idempotencyKey: undefined,
     } as unknown as DispatchOptions);
+    const placed = idempotencyKeyFor("req-1", "placeOrder");
     expect(calls).toEqual([
-      [{ orderId: "o-1" }, { idempotencyKey: "req-1" }],
-      [{ orderId: "o-1" }, { correlationId: "c-1", idempotencyKey: "req-1" }],
+      [{ orderId: "o-1" }, { idempotencyKey: placed }],
+      [{ orderId: "o-1" }, { correlationId: "c-1", idempotencyKey: placed }],
       [{ orderId: "o-1" }, { idempotencyKey: "mine" }],
-      [{ orderId: "o-1" }, { idempotencyKey: "req-1" }],
+      [{ orderId: "o-1" }, { idempotencyKey: placed }],
+    ]);
+  });
+
+  it("keys two commands of one request apart, and one command alike on every request", async () => {
+    const calls: unknown[][] = [];
+    const client = {
+      commands: {
+        reserveSeats: async (_payload?: unknown, options?: DispatchOptions) =>
+          calls.push(["reserveSeats", options?.idempotencyKey]),
+        placeOrder: async (_payload?: unknown, options?: DispatchOptions) =>
+          calls.push(["placeOrder", options?.idempotencyKey]),
+      },
+    } as unknown as BoundaClient;
+    for (const attempt of [1, 2]) {
+      const commands = withIdempotencyKey(client, request("req-3")).commands as unknown as Record<
+        string,
+        (payload: unknown) => Promise<unknown>
+      >;
+      await commands.reserveSeats?.({ attempt });
+      await commands.placeOrder?.({ attempt });
+    }
+    const [reserve, place] = calls.map(([, key]) => key);
+    expect(reserve).not.toBe(place);
+    expect(calls).toEqual([
+      ["reserveSeats", reserve],
+      ["placeOrder", place],
+      ["reserveSeats", reserve],
+      ["placeOrder", place],
     ]);
   });
 
@@ -75,7 +104,9 @@ describe("withIdempotencyKey", () => {
     await (
       served.commands as unknown as Record<string, (payload: unknown) => Promise<unknown>>
     ).anything?.({ id: "1" });
-    expect(calls).toEqual([["anything", { id: "1" }, { idempotencyKey: "req-2" }]]);
+    expect(calls).toEqual([
+      ["anything", { id: "1" }, { idempotencyKey: idempotencyKeyFor("req-2", "anything") }],
+    ]);
     expect((served.commands as unknown as { then?: unknown }).then).toBeUndefined();
   });
 });

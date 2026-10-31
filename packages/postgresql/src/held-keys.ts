@@ -9,13 +9,14 @@ export interface HeldKeysFunction {
 }
 
 /**
- * A condition true when every person in `persons` holds, in `personalKeys`, the key of the
- * fingerprint named with them, or any key for a `null` one. A person named under two keys never
- * holds both. The keys it finds stay locked until the transaction ends: a forget that removes one
- * waits for the write, and then finds the row to remove.
+ * A condition true when every person in `persons` named with a fingerprint holds, in
+ * `personalKeys`, the key of that fingerprint. A person named with `null` was read in the clear
+ * and needs no key. A person named under two keys never holds both. The keys it finds stay locked
+ * until the transaction ends: a forget that removes one waits for the write, and then finds the
+ * row to remove.
  */
 export const heldKeys: HeldKeysFunction = ({ personalKeys, persons }) =>
-  `(SELECT count(*) FROM (SELECT 1 FROM ${personalKeys} AS "k" JOIN jsonb_to_recordset(${persons}::jsonb) AS "p"("person" text, "fingerprint" text) ON "k"."person" = "p"."person" AND "k"."fingerprint" = coalesce("p"."fingerprint", "k"."fingerprint") FOR SHARE OF "k") AS "held") = jsonb_array_length(${persons}::jsonb)`;
+  `(SELECT count(*) FROM (SELECT 1 FROM ${personalKeys} AS "k" JOIN jsonb_to_recordset(${persons}::jsonb) AS "p"("person" text, "fingerprint" text) ON "k"."person" = "p"."person" AND "k"."fingerprint" = "p"."fingerprint" FOR SHARE OF "k") AS "held") = (SELECT count(*) FROM jsonb_to_recordset(${persons}::jsonb) AS "p"("person" text, "fingerprint" text) WHERE "p"."fingerprint" IS NOT NULL)`;
 
 export interface NamingFunction {
   (person: string): string;

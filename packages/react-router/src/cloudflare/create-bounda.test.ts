@@ -4,6 +4,7 @@ import {
   type BoundaClient,
   ConfigurationError,
   type Consistency,
+  idempotencyKeyFor,
 } from "@bounda-dev/core";
 import { type RouterContext, RouterContextProvider } from "react-router";
 import { afterEach, describe, expect, expectTypeOf, it } from "vitest";
@@ -55,7 +56,7 @@ describe("createBounda on Cloudflare", () => {
     ]);
   });
 
-  it("sends the request's Idempotency-Key header with every command of the request", async () => {
+  it("keys every command of the request from its Idempotency-Key header", async () => {
     const store = storeNamespace();
     env.STORE = store.namespace;
     const { bounda, boundaMiddleware } = createBounda({
@@ -75,7 +76,7 @@ describe("createBounda on Cloudflare", () => {
         "command",
         "placeOrder",
         { orderId: "o-1" },
-        { idempotencyKey: "req-1", correlationId: "c-1" },
+        { idempotencyKey: idempotencyKeyFor("req-1", "placeOrder"), correlationId: "c-1" },
         "eventual",
       ],
       ["acme", "command", "payOrder", { orderId: "o-1" }, { idempotencyKey: "own" }, "eventual"],

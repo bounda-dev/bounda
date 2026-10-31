@@ -10,7 +10,9 @@ webhook was delivered again. The aggregate rejects what it must (`placeOrder` ag
 `AlreadyPlaced`), but a rejection is the wrong answer to a retry of a command that went through,
 and a command the aggregate takes twice, such as adding a line, does its work twice. An
 **idempotency key** names one dispatch, so a second arrival under it answers what the first did
-instead of running again.
+instead of running again. What the runtime already guarantees for the events and reactions inside
+the app is in [delivery guarantees](/concepts/delivery-guarantees/); this page is about commands
+that come from outside it.
 
 ## The `idempotencyKey` option
 
@@ -19,8 +21,8 @@ const placed = await app.commands.placeOrder(payload, { idempotencyKey: key });
 ```
 
 The first dispatch under a key runs the command and remembers what it answered, in the same
-transaction as the events it stores. Every later dispatch with the same key, the same command and
-the same payload answers the same without running the handler: the same `StoredDispatch`, its
+transaction as the events it stores. Every later dispatch with the same key, the same command,
+the same payload and the same `delay` answers the same without running the handler: the same `StoredDispatch`, its
 `position` included, so [reading your own writes](/guides/deployment/#reading-your-own-writes)
 waits for the same read models; the same `ScheduledDispatch` for a command with `delay`, which is
 scheduled once; or the same rejection, thrown again as a `DomainError` with its code. A dispatch
@@ -30,10 +32,11 @@ handler's, is not remembered, so the client's retry runs it.
 Two dispatches racing for one key both run; one records its outcome and the other loses on the
 key, rolls back whatever it stored, and answers what the key holds. The events land once.
 
-The key names one command with one payload. The same key with another command, or with the same
-command and another payload, is a bug of the caller, not a retry: the dispatch rejects with
+The key names one command with one payload and one `delay`. The same key with another command,
+with another payload, or scheduled when it ran at once (or the other way round, or with another
+delay), is a bug of the caller, not a retry: the dispatch rejects with
 `IdempotencyKeyConflictError` (`IDEMPOTENCY_KEY_CONFLICT`) and runs nothing. The payload is
-compared as JSON, keys in any order.
+compared as JSON, keys in any order, with maps, sets and bigints compared by what they hold.
 
 A key is a string of 1 to 255 characters that the caller chooses, one per operation the client
 means to do once, such as a UUID made when the form is submitted and sent again on every retry of
@@ -52,9 +55,10 @@ does not: a replay never runs it.
 
 ## The `Idempotency-Key` header in React Router
 
-The `boundaMiddleware` reads the `Idempotency-Key` header of every request and passes it as
-`idempotencyKey` to every command the request dispatches, on Node and on Cloudflare alike, so an
-action has nothing to add:
+The `boundaMiddleware` reads the `Idempotency-Key` header of every request and gives every command
+the request dispatches an `idempotencyKey` of its own, `idempotencyKeyFor(header, commandName)`, on
+Node and on Cloudflare alike, so an action has nothing to add, even one that dispatches two
+commands:
 
 ```tsx
 // app/routes/register.tsx
@@ -78,15 +82,17 @@ const key = crypto.randomUUID();
 fetcher.submit(form, { method: "post", headers: { "Idempotency-Key": key } });
 ```
 
-A key names one command, so an action that dispatches two under one header gets a conflict on the
-second: derive one per command with `idempotencyKeyFor` from `@bounda-dev/core`, or pass
-`idempotencyKey` yourself, which wins over the header.
+A key names one command, so an action that dispatches the same command twice shares one key
+between them: the second answers what the first did with the same payload, and conflicts with
+another. Pass `idempotencyKey` yourself, which wins over the header, derived with
+`idempotencyKeyFor` from `@bounda-dev/core`:
 
 ```ts
 const key = request.headers.get("Idempotency-Key");
-const keyed = (effect: string) => (key === null ? {} : { idempotencyKey: idempotencyKeyFor(key, effect) });
-await commands.reserveSeats(seats, keyed("reserve"));
-await commands.placeOrder(order, keyed("place"));
+for (const [index, seat] of seats.entries()) {
+  const keyed = key === null ? {} : { idempotencyKey: idempotencyKeyFor(key, `seat-${index}`) };
+  await commands.reserveSeat(seat, keyed);
+}
 ```
 
 `failure()` answers a conflict with a 422 ([errors from the domain](/guides/react-router/#errors-from-the-domain)).

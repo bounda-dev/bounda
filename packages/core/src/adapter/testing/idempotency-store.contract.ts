@@ -46,7 +46,7 @@ export const idempotencyStoreContract: IdempotencyStoreContractFunction = ({ cre
     };
 
     it("records a record that names people only while each of them has a key", async () => {
-      const persons = [held("c-1", "1"), held("c-2", null)];
+      const persons = [held("c-1", "1"), held("c-2", "2"), held("c-3", null)];
       const named = { ...record("k1"), outcome: rejection, persons, now };
       await keys.add("c-1", stored("1"));
       await store.put(named);

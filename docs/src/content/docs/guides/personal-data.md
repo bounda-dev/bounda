@@ -101,6 +101,12 @@ them. What it cannot see is personal
 data that came in the command's payload, which is never marked: keep that out of a rejection's
 message and say what went wrong with its code and the ids involved.
 
+Command payloads are never sealed anywhere, so `forget` does not reach what holds one: a command
+scheduled with `delay` keeps its payload until it runs, a
+[dead letter](/guides/dead-letters/) of a scheduled command keeps it until it is retried or
+discarded, and your logs keep whatever you wrote to them. Pass ids in those payloads, not the
+data itself: the handler reads the email from the state, where it is sealed and forgotten.
+
 ## Handling it in a read model
 
 A read model that projects an event with personal fields has those fields in its rows. It must
