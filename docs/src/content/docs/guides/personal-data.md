@@ -45,9 +45,30 @@ export const payload = ({ z, personal, person }: Event.PayloadArgs) =>
   });
 ```
 
-An event names at most one person. Only events have the marks: a command's or a query's
-`PayloadArgs` has no `personal`, since commands are not stored and nothing of theirs has to be
-forgotten.
+An event names at most one person.
+
+## In a command's payload
+
+A command is stored too when it waits: dispatched with `delay`, retried by the scheduler after a
+failure, or dead-lettered once it gives up. A command that carries personal data marks its payload
+the same way, with `personal` and `person` from its own `PayloadArgs`:
+
+```ts
+// app/domain/customer/commands/remind-customer.ts
+import type { Command } from "./+types/remind-customer";
+
+export const payload = ({ z, personal }: Command.PayloadArgs) =>
+  z.object({ customerId: z.string(), email: personal(z.email()) });
+```
+
+Wherever the command is stored, the marked fields are encrypted with the key of the person it
+names, the aggregate's id or the field marked `person`, and [`forget`](#forgetting-a-person)
+cancels it. A command dispatched at once is never stored, so the marks change nothing for it. The
+handler reads `command.payload.email` as a `string`, never `null`: a command whose person is
+forgotten never runs. A query's `PayloadArgs` has no `personal`, since a query is never stored.
+
+A command scheduled before its fields were marked keeps its payload as it was written, in the
+clear, and runs with it; `forget` cannot find it.
 
 ## What the types say
 
@@ -69,9 +90,12 @@ await app.catchUpReadModels({ through: forgotten });
 ```
 
 `forget` is on every `BoundaClient`: the app, the Durable Object through `connect`, the `bounda`
-context of React Router. In one transaction it deletes the person's key and appends
-`PersonalDataForgotten`, with `{ personId }` as payload, to the stream `bounda:<personId>`: the
-runtime's own aggregate, `bounda`, has one stream per person it forgot. It resolves like a
+context of React Router. In one transaction it deletes the person's key, cancels the scheduled
+commands that hold their data, removes the dead letters of those that gave up, and appends
+`PersonalDataForgotten` to the stream `bounda:<personId>`: the runtime's own aggregate, `bounda`,
+has one stream per person it forgot. Its payload is `{ personId, cancelledCommands,
+removedDeadLetters }`, the ids and types of what went, the only record of commands that never
+became events. It resolves like a
 command, with the event's position, so `catchUpReadModels({ through })` waits for the read
 models that handle it, and the Durable Object's `forget` waits for them itself unless
 `consistency` is `"eventual"`. A person without a key is forgotten all the same, since a read
@@ -86,6 +110,13 @@ person's data was read under, and an append that would seal their fields under a
 with [`ConcurrencyError`](/reference/errors/), as on a stream that moved. The retry decides on the
 state without their data.
 
+A scheduled command already running when `forget` comes writes nothing: its claim is gone, so
+neither its events nor a dead letter are stored, though its handler may have run. One that a
+`forget` misses, stored in the instant between reading the key and the key going, is sealed under
+a key no one holds: it is dropped when it comes due, unrun, and the worker logs `scheduled command
+dropped: its person was forgotten`. The [dead letters](/guides/dead-letters/) list shows a
+scheduled command's payload with its fields opened.
+
 A [snapshot](/concepts/long-streams/#snapshots) holds the state in the clear, so the same
 transaction removes every snapshot whose state carried a field of theirs; each one names the
 people it holds and the key it read each one under, and none is written for a person who no
@@ -98,14 +129,14 @@ what it answered, and a rejection's message may quote the state it was decided o
 rejection names the people whose fields were in that state, with their keys as a snapshot does,
 and `forget` removes it too: the same request sent again is decided again, on the state without
 them. What it cannot see is personal
-data that came in the command's payload, which is never marked: keep that out of a rejection's
+data that came in the command's payload, marked or not: keep that out of a rejection's
 message and say what went wrong with its code and the ids involved.
 
-Command payloads are never sealed anywhere, so `forget` does not reach what holds one: a command
-scheduled with `delay` keeps its payload until it runs, a
-[dead letter](/guides/dead-letters/) of a scheduled command keeps it until it is retried or
-discarded, and your logs keep whatever you wrote to them. Pass ids in those payloads, not the
-data itself: the handler reads the email from the state, where it is sealed and forgotten.
+What `forget` does not reach is text your code writes and data left unmarked: your logs keep
+whatever you wrote to them, the message of an error a handler throws stays in its dead letter and,
+for a scheduled command, in the `ScheduledCommandFailed` event on the aggregate's stream, and a
+command's payload left unmarked is stored as it came. Log and throw with ids, not the data itself,
+and mark every field of a command's payload that holds it.
 
 ## Handling it in a read model
 

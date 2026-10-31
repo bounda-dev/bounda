@@ -3,7 +3,7 @@ import type { ResolvedConfig } from "../../config/types.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import { createEventBuilders } from "../../modules/event.ts";
 import { capitalize } from "../../modules/naming.ts";
-import type { EventPayloadArgs } from "../../modules/payload.ts";
+import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
 import { person, personal } from "../../modules/personal.ts";
 import type { AggregateEntry, Registry } from "../../modules/registry.ts";
 import { personalMarksOf } from "../personal-data/marks.ts";
@@ -16,12 +16,16 @@ import type {
   EventRuntime,
 } from "./runtime.ts";
 
+// One `personal` marks both: only its type tells an event's field, read as `null` once its person
+// is forgotten, from a command's, which never runs then.
+const schemaArgs = { z, personal, person } as EventPayloadArgs & CommandPayloadArgs;
+
 const compileSchema = (
-  payload: ((args: EventPayloadArgs) => unknown) | undefined,
+  payload: ((args: EventPayloadArgs & CommandPayloadArgs) => unknown) | undefined,
   path: string,
 ): z.ZodType | null => {
   if (payload === undefined) return null;
-  const schema = payload({ z, personal, person });
+  const schema = payload(schemaArgs);
   if (!(schema instanceof z.ZodType)) {
     throw new ConfigurationError(`${path}: payload must return a Zod schema`);
   }
@@ -52,16 +56,21 @@ const buildEvents = (name: string, entry: AggregateEntry): Record<string, EventR
 
 const buildCommands = (name: string, entry: AggregateEntry): Record<string, CommandRuntime> =>
   Object.fromEntries(
-    Object.entries(entry.commands).map(([key, command]) => [
-      key,
-      {
+    Object.entries(entry.commands).map(([key, command]) => {
+      const path = `aggregates.${name}.commands.${key}`;
+      const schema = compileSchema(command.module.payload, path);
+      return [
         key,
-        type: capitalize(key),
-        schema: compileSchema(command.module.payload, `aggregates.${name}.commands.${key}`),
-        handler: command.module.handler as CommandRuntime["handler"],
-        rejections: (command.module.rejections ?? null) as CommandRuntime["rejections"],
-      },
-    ]),
+        {
+          key,
+          type: capitalize(key),
+          schema,
+          handler: command.module.handler as CommandRuntime["handler"],
+          rejections: (command.module.rejections ?? null) as CommandRuntime["rejections"],
+          personal: personalMarksOf({ schema, path }),
+        },
+      ];
+    }),
   );
 
 const buildSnapshot = (

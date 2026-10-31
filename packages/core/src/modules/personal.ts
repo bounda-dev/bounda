@@ -22,19 +22,39 @@ export interface PersonSchema<Schema extends z.ZodType>
 }
 
 /**
+ * The schema `personal(schema)` returns in a command's payload: `schema`, marked as personal data.
+ * A command whose person is forgotten never runs, so its handler reads the field as `schema` gives
+ * it, never `null`.
+ */
+export interface CommandPersonalSchema<Schema extends z.ZodType>
+  extends z.ZodPipe<Schema, z.ZodTransform<z.output<Schema>, z.output<Schema>>> {
+  readonly [personalBrand]: true;
+}
+
+/**
  * Marks a field of an event's payload as personal data: it is stored encrypted with the key of
  * the person the event names, and reads as `null` once that person is forgotten. Any schema
- * works, an object or an array included, at the top level of the payload. A command or a query
- * payload cannot use it.
+ * works, an object or an array included, at the top level of the payload. A query payload cannot
+ * use it; a command's has its own, `CommandPersonalFunction`.
  */
 export interface PersonalFunction {
   <Schema extends z.ZodType>(schema: Schema): PersonalSchema<Schema>;
 }
 
 /**
- * Marks the field of an event's payload that identifies the person its personal fields belong
- * to, such as the customer's id in an order's event. Without it, the aggregate's id is the
- * person. An event has at most one.
+ * Marks a field of a command's payload as personal data: wherever the command is stored, scheduled
+ * with `delay` or dead-lettered, the field is encrypted with the key of the person the command
+ * names, and `forget` cancels the command or removes its dead letter. A command dispatched at
+ * once stores nothing, so the mark changes nothing for it. Same placement rules as an event's.
+ */
+export interface CommandPersonalFunction {
+  <Schema extends z.ZodType>(schema: Schema): CommandPersonalSchema<Schema>;
+}
+
+/**
+ * Marks the field of an event's or a command's payload that identifies the person its personal
+ * fields belong to, such as the customer's id in an order's event. Without it, the aggregate's id
+ * is the person. A payload has at most one.
  */
 export interface PersonFunction {
   <Schema extends z.ZodType>(schema: Schema): PersonSchema<Schema>;

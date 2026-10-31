@@ -38,6 +38,7 @@ import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
 import type { AggregateLoader } from "../aggregate/load-aggregate.ts";
 import type { AggregateRuntime, AggregatesRuntime, CommandRuntime } from "../aggregate/runtime.ts";
+import { type SealedPayload, sealCommandPayload } from "../personal-data/commands.ts";
 import { errorDetails } from "../shared/retry.ts";
 import { withTimeout } from "../shared/timeout.ts";
 import { withPorts } from "../shared/with-ports.ts";
@@ -306,9 +307,9 @@ const rejectOf = (
 
 /**
  * Commands with `delay` are scheduled with the payload as the caller passed it, in the JSON form
- * every scheduler stores. Validating that form here only rejects early what would fail when the
- * command runs, such as a date JSON turns into a string; the validation whose result the handler
- * sees happens then, so a transform does not apply twice.
+ * every scheduler stores, its personal fields sealed. Validating that form here only rejects early
+ * what would fail when the command runs, such as a date JSON turns into a string; the validation
+ * whose result the handler sees happens then, so a transform does not apply twice.
  */
 export const createCommandPipeline: CreateCommandPipelineFunction = ({
   aggregates,
@@ -476,17 +477,19 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     const schedule = async (
       scheduler: Scheduler,
       delay: DurationInput,
+      { payload: stored, persons }: SealedPayload,
     ): Promise<ScheduledDispatch> => {
       const executeAt = new Date(clock.now().getTime() + parseDuration(delay));
       await scheduler.schedule({
         dedupeKey: scheduledCommandKey(commandId),
-        command: { type, payload: input, aggregateId },
+        command: { type, payload: stored, aggregateId },
         executeAt,
         context: {
           correlationId: command.metadata.correlationId,
           causationId: command.metadata.causationId,
           depth,
         },
+        persons,
       });
       return {
         scheduled: true,
@@ -531,19 +534,26 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     // of work, or in the transaction of the append that stores them, so a duplicate running
     // beside it loses on the key and stores nothing.
     const perform = async (): Promise<DispatchResult | DomainError> => {
-      if (idempotency === undefined) {
-        return options.delay === undefined
-          ? execute(aggregate, runtime, command, stores.eventStore, signals)
-          : schedule(stores.scheduler, options.delay);
-      }
       if (options.delay !== undefined) {
         const delay = options.delay;
+        // Before any transaction opens, since the key store it may write to is the storage's own.
+        const sealed = await sealCommandPayload({
+          type,
+          aggregateId,
+          payload: input,
+          marks: runtime.personal,
+          keys: storage.personalKeys,
+        });
+        if (idempotency === undefined) return schedule(stores.scheduler, delay, sealed);
         const scheduling = async (transaction: DispatchStores): Promise<ScheduledDispatch> => {
-          const answer = await schedule(transaction.scheduler, delay);
+          const answer = await schedule(transaction.scheduler, delay, sealed);
           await transaction.idempotencyStore.put(recordOf(idempotency, answer));
           return answer;
         };
         return within === undefined ? storage.transact(scheduling) : scheduling(within);
+      }
+      if (idempotency === undefined) {
+        return execute(aggregate, runtime, command, stores.eventStore, signals);
       }
       if (within !== undefined) {
         const answer = await execute(aggregate, runtime, command, within.eventStore, signals);

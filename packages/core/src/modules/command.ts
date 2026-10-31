@@ -2,10 +2,10 @@ import type { Command } from "../contracts/command.ts";
 import type { DomainError } from "../contracts/errors.ts";
 import type { HandlerState } from "./aggregate.ts";
 import type { EventBuilders, EventModules } from "./event.ts";
-import type { PayloadFunction } from "./payload.ts";
+import type { CommandPayloadFunction } from "./payload.ts";
 
 export interface CommandModule {
-  readonly payload?: PayloadFunction;
+  readonly payload?: CommandPayloadFunction;
   readonly rejections?: (args: never) => Readonly<Record<string, string>>;
   readonly handler: (args: never) => unknown;
 }

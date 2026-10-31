@@ -33,6 +33,10 @@ export interface CommandRuntime {
   readonly rejections:
     | ((args: Record<string, unknown>) => Readonly<Record<string, string | undefined>>)
     | null;
+  /**
+   * `null` for a command without personal fields.
+   */
+  readonly personal: PersonalMarks | null;
 }
 
 /**

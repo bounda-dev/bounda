@@ -1,12 +1,14 @@
 import { type CausationContext, ScheduledClaimLostError } from "@bounda-dev/core";
 import type {
   ClaimedCommand,
+  KeyedPerson,
   ScheduledClaim,
   ScheduledCommand,
   Scheduler,
 } from "@bounda-dev/core/adapter";
 import { byExecuteAt, earliestDue, postgresqlDialect } from "@bounda-dev/core/adapter/sql";
 import type { PostgresqlDatabase } from "./database.ts";
+import { naming } from "./held-keys.ts";
 
 export interface CreatePostgresqlSchedulerArgs {
   readonly db: PostgresqlDatabase;
@@ -18,19 +20,23 @@ export interface CreatePostgresqlSchedulerFunction {
 }
 
 const COLUMNS =
-  '"dedupe_key", "command_type", "aggregate_id", "payload", "execute_at", "context", "attempts"';
+  '"dedupe_key", "command_type", "aggregate_id", "payload", "execute_at", "context", "attempts", "persons"';
 
-const toScheduled = (row: Record<string, unknown>): ScheduledCommand => ({
-  dedupeKey: String(row.dedupe_key),
-  command: {
-    type: String(row.command_type),
-    aggregateId: String(row.aggregate_id),
-    payload: row.payload,
-  },
-  executeAt: String(row.execute_at),
-  context: row.context as CausationContext,
-  attempts: Number(row.attempts),
-});
+const toScheduled = (row: Record<string, unknown>): ScheduledCommand => {
+  const persons = row.persons as KeyedPerson[];
+  return {
+    dedupeKey: String(row.dedupe_key),
+    command: {
+      type: String(row.command_type),
+      aggregateId: String(row.aggregate_id),
+      payload: row.payload,
+    },
+    executeAt: String(row.execute_at),
+    context: row.context as CausationContext,
+    attempts: Number(row.attempts),
+    ...(persons.length === 0 ? {} : { persons }),
+  };
+};
 
 const toClaimed = (row: Record<string, unknown>): ClaimedCommand => ({
   ...toScheduled(row),
@@ -72,15 +78,16 @@ export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ d
     );
 
   return {
-    schedule: ({ dedupeKey, command, executeAt, context, keepTimingOfSameCommand }) =>
+    schedule: ({ dedupeKey, command, executeAt, context, keepTimingOfSameCommand, persons = [] }) =>
       db.run(
-        `INSERT INTO ${table} (${COLUMNS}, "claimed_at", "last_error", "revision") VALUES ($1, $2, $3, $4, $5, $6, 0, NULL, NULL, 0)
+        `INSERT INTO ${table} (${COLUMNS}, "claimed_at", "last_error", "revision") VALUES ($1, $2, $3, $4, $5, $6, 0, $7, NULL, NULL, 0)
        ON CONFLICT ("dedupe_key") DO UPDATE SET
          "command_type" = excluded."command_type",
          "aggregate_id" = excluded."aggregate_id",
          "payload" = excluded."payload",
          "execute_at" = excluded."execute_at",
          "context" = excluded."context",
+         "persons" = excluded."persons",
          "attempts" = 0,
          "last_error" = NULL,
          "revision" = ${table}."revision" + 1
@@ -90,6 +97,7 @@ export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ d
          AND ${table}."payload" = excluded."payload"
          ${keepTimingOfSameCommand === true ? "" : `AND ${table}."execute_at" = excluded."execute_at"`}
          AND ${table}."context" = excluded."context"
+         AND ${table}."persons" = excluded."persons"
        )`,
         [
           dedupeKey,
@@ -98,6 +106,7 @@ export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ d
           postgresqlDialect.encode("json", command.payload),
           executeAt.toISOString(),
           postgresqlDialect.encode("json", context),
+          postgresqlDialect.encode("json", persons),
         ],
       ),
     cancel: (dedupeKey) => db.run(`DELETE FROM ${table} WHERE "dedupe_key" = $1`, [dedupeKey]),
@@ -166,5 +175,9 @@ export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ d
           [limit ?? null, offset],
         )
       ).map(toScheduled),
+    forget: async (person) =>
+      (await db.all(`DELETE FROM ${table} WHERE ${naming("$1")} RETURNING ${COLUMNS}`, [person]))
+        .map(toScheduled)
+        .sort(byExecuteAt),
   };
 };

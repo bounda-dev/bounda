@@ -130,11 +130,9 @@ have work to do when it happens.
   systems a policy wrote to. The key store is a table like the others: a backup of the whole
   database restores the keys too, so a backup kept past a person's erasure is itself a copy of
   their data.
-- **Scheduled commands and dead letters.** A command scheduled with `delay` is stored with its
-  payload, in the clear, until it runs, and a dead-lettered scheduled command keeps it. Keep
-  personal data out of delayed commands, or carry an id and resolve it when the command runs.
-  A dead letter also keeps the error a handler threw, message and stack: one that quotes a
-  decrypted field keeps it in the clear.
+- **Errors.** A dead letter keeps the error a handler threw, message and stack: one that quotes a
+  decrypted field keeps it in the clear. A command's payload marked `personal` is encrypted where
+  it is stored, scheduled or dead-lettered, and `forget` cancels it; a payload left unmarked is not.
 - **Encrypted data under the GDPR.** Whether a ciphertext without a key still counts as personal
   data is a legal question Verraes raises and this page does not answer.
 

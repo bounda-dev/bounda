@@ -1,8 +1,15 @@
 import { ScheduledClaimLostError } from "../../contracts/errors.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
-import type { ClaimedCommand, ScheduledClaim, ScheduledCommand, Scheduler } from "../index.ts";
+import type {
+  ClaimedCommand,
+  KeyedPerson,
+  ScheduledClaim,
+  ScheduledCommand,
+  Scheduler,
+} from "../index.ts";
 import type { SqlDatabase } from "../sql/database.ts";
 import { byExecuteAt, earliestDue } from "../sql/index.ts";
+import { naming } from "./held-keys.ts";
 
 export interface CreateSqliteSchedulerArgs {
   readonly db: SqlDatabase;
@@ -14,19 +21,23 @@ export interface CreateSqliteSchedulerFunction {
 }
 
 const COLUMNS =
-  '"dedupe_key", "command_type", "aggregate_id", "payload", "execute_at", "context", "attempts"';
+  '"dedupe_key", "command_type", "aggregate_id", "payload", "execute_at", "context", "attempts", "persons"';
 
-const toScheduled = (row: Record<string, unknown>): ScheduledCommand => ({
-  dedupeKey: String(row.dedupe_key),
-  command: {
-    type: String(row.command_type),
-    aggregateId: String(row.aggregate_id),
-    payload: JSON.parse(String(row.payload)) as unknown,
-  },
-  executeAt: String(row.execute_at),
-  context: JSON.parse(String(row.context)) as CausationContext,
-  attempts: Number(row.attempts),
-});
+const toScheduled = (row: Record<string, unknown>): ScheduledCommand => {
+  const persons = JSON.parse(String(row.persons)) as KeyedPerson[];
+  return {
+    dedupeKey: String(row.dedupe_key),
+    command: {
+      type: String(row.command_type),
+      aggregateId: String(row.aggregate_id),
+      payload: JSON.parse(String(row.payload)) as unknown,
+    },
+    executeAt: String(row.execute_at),
+    context: JSON.parse(String(row.context)) as CausationContext,
+    attempts: Number(row.attempts),
+    ...(persons.length === 0 ? {} : { persons }),
+  };
+};
 
 const toClaimed = (row: Record<string, unknown>): ClaimedCommand => ({
   ...toScheduled(row),
@@ -59,15 +70,16 @@ export const createSqliteScheduler: CreateSqliteSchedulerFunction = ({ db, table
     );
 
   return {
-    schedule: ({ dedupeKey, command, executeAt, context, keepTimingOfSameCommand }) =>
+    schedule: ({ dedupeKey, command, executeAt, context, keepTimingOfSameCommand, persons = [] }) =>
       db.run(
-        `INSERT INTO ${table} (${COLUMNS}, "claimed_at", "last_error", "revision") VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, 0)
+        `INSERT INTO ${table} (${COLUMNS}, "claimed_at", "last_error", "revision") VALUES (?, ?, ?, ?, ?, ?, 0, ?, NULL, NULL, 0)
        ON CONFLICT ("dedupe_key") DO UPDATE SET
          "command_type" = excluded."command_type",
          "aggregate_id" = excluded."aggregate_id",
          "payload" = excluded."payload",
          "execute_at" = excluded."execute_at",
          "context" = excluded."context",
+         "persons" = excluded."persons",
          "attempts" = 0,
          "last_error" = NULL,
          "revision" = ${table}."revision" + 1
@@ -77,6 +89,7 @@ export const createSqliteScheduler: CreateSqliteSchedulerFunction = ({ db, table
          AND ${table}."payload" = excluded."payload"
          ${keepTimingOfSameCommand === true ? "" : `AND ${table}."execute_at" = excluded."execute_at"`}
          AND ${table}."context" = excluded."context"
+         AND ${table}."persons" = excluded."persons"
        )`,
         [
           dedupeKey,
@@ -85,6 +98,7 @@ export const createSqliteScheduler: CreateSqliteSchedulerFunction = ({ db, table
           JSON.stringify(command.payload),
           executeAt.toISOString(),
           JSON.stringify(context),
+          JSON.stringify(persons),
         ],
       ),
     cancel: (dedupeKey) => db.run(`DELETE FROM ${table} WHERE "dedupe_key" = ?`, [dedupeKey]),
@@ -153,5 +167,9 @@ export const createSqliteScheduler: CreateSqliteSchedulerFunction = ({ db, table
           [limit ?? -1, offset],
         )
       ).map(toScheduled),
+    forget: async (person) =>
+      (await db.all(`DELETE FROM ${table} WHERE ${naming(table)} RETURNING ${COLUMNS}`, [person]))
+        .map(toScheduled)
+        .sort(byExecuteAt),
   };
 };

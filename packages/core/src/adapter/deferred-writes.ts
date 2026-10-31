@@ -27,8 +27,9 @@ export interface DeferredWriteTarget {
  * every write in order, and `flush` runs the writes recorded so far against another set of the
  * same stores, a transaction's or the live ones. `add` answers the letter as filed, whatever the
  * store holds under that id already; `get` on the idempotency store answers a record `put`
- * recorded before anything `live` holds. `tryClaim`, `claimDue`, both `renew` and `purge` act at
- * once, on `live`, since their answer decides what happens next.
+ * recorded before anything `live` holds. `tryClaim`, `claimDue`, both `renew`, `purge` and the
+ * `forget` of the scheduler and the dead letter store act at once, on `live`, since their answer
+ * decides what happens next.
  */
 export interface DeferredWrites {
   readonly stores: DeferredStores;
@@ -81,6 +82,7 @@ export const deferWrites: DeferWritesFunction = ({
           target.deadLetterStore.updateStatus(id, status),
         ),
         remove: later((target, id) => target.deadLetterStore.remove(id)),
+        forget: deadLetterStore.forget,
       },
       scheduler: {
         claimDue: scheduler.claimDue,
@@ -92,6 +94,7 @@ export const deferWrites: DeferWritesFunction = ({
         fail: later((target, args) => target.scheduler.fail(args)),
         defer: later((target, args) => target.scheduler.defer(args)),
         renew: scheduler.renew,
+        forget: scheduler.forget,
       },
       idempotencyStore: {
         get: async (args) => records.get(args.key) ?? idempotencyStore.get(args),

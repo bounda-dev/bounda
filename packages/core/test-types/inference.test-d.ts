@@ -2,10 +2,13 @@ import type {
   AppRegistry,
   BoundaApp,
   BoundaClient,
+  CancelledCommand,
   CatchUpReadModelsArgs,
   Clock,
   CommandHandlerArgs,
   CommandInvoker,
+  CommandPayloadArgs,
+  CommandPersonalFunction,
   CommandsFacade,
   Consistency,
   CreateArgs,
@@ -25,6 +28,7 @@ import type {
   Instant,
   Logger,
   PayloadArgs,
+  PayloadInputOf,
   PersonalDataForgottenEvent,
   PersonalDataForgottenPayload,
   PersonalFunction,
@@ -37,6 +41,7 @@ import type {
   RejectedDispatch,
   RejectFunction,
   RejectionCodeOf,
+  RemovedDeadLetter,
   ScheduledDispatch,
   StoredDispatch,
   StoredEvent,
@@ -437,13 +442,28 @@ describe("personal data", () => {
   type OrderPlacedModule = typeof import("./fixtures/order-app/app/domain/order/order-placed.ts");
   type OrderPaidModule = typeof import("./fixtures/order-app/app/domain/order/order-paid.ts");
 
-  it("gives an event's payload the marks, and a command's or a query's none", () => {
+  it("gives an event's and a command's payload the marks, and a query's none", () => {
     expectTypeOf<CustomerRegistered.PayloadArgs>().toEqualTypeOf<EventPayloadArgs>();
     expectTypeOf<EventPayloadArgs["personal"]>().toEqualTypeOf<PersonalFunction>();
     expectTypeOf<EventPayloadArgs["person"]>().toEqualTypeOf<PersonFunction>();
-    expectTypeOf<RegisterCustomer.PayloadArgs>().toEqualTypeOf<PayloadArgs>();
+    expectTypeOf<RegisterCustomer.PayloadArgs>().toEqualTypeOf<CommandPayloadArgs>();
+    expectTypeOf<CommandPayloadArgs["personal"]>().toEqualTypeOf<CommandPersonalFunction>();
+    expectTypeOf<CommandPayloadArgs["person"]>().toEqualTypeOf<PersonFunction>();
     expectTypeOf<GetOrder.PayloadArgs>().toEqualTypeOf<PayloadArgs>();
     expectTypeOf<PayloadArgs>().not.toHaveProperty("personal");
+  });
+
+  it("hands a command's handler its personal fields as its schema gives them, never null", () => {
+    type RegisterCustomerModule =
+      typeof import("./fixtures/order-app/app/domain/customer/commands/register-customer.ts");
+    expectTypeOf<RegisterCustomer.HandlerArgs["command"]["payload"]>().toEqualTypeOf<{
+      customerId: string;
+      email: string;
+    }>();
+    expectTypeOf<PayloadInputOf<RegisterCustomerModule>>().toEqualTypeOf<{
+      customerId: string;
+      email: string;
+    }>();
   });
 
   it("writes a personal field as its schema takes it and reads it as that or null", () => {
@@ -501,6 +521,19 @@ describe("personal data", () => {
       ProjectForgotten.Args["event"]["payload"]
     >().toEqualTypeOf<PersonalDataForgottenPayload>();
     expectTypeOf<ProjectForgotten.Args["event"]["type"]>().toEqualTypeOf<"PersonalDataForgotten">();
+    expectTypeOf<PersonalDataForgottenPayload>().toEqualTypeOf<{
+      readonly personId: string;
+      readonly cancelledCommands: readonly CancelledCommand[];
+      readonly removedDeadLetters: readonly RemovedDeadLetter[];
+    }>();
+    expectTypeOf<CancelledCommand>().toEqualTypeOf<{
+      readonly commandId: string;
+      readonly type: string;
+    }>();
+    expectTypeOf<RemovedDeadLetter>().toEqualTypeOf<{
+      readonly id: string;
+      readonly commandType: string;
+    }>();
     expectTypeOf<ProjectForgotten.Args["table"]>().toEqualTypeOf<Table<OrderSummaryRow>>();
     expectTypeOf<
       AuditOnPersonalDataForgotten.HandlerArgs["event"]
