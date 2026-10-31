@@ -1,5 +1,33 @@
 # @bounda-dev/react-router
 
+## 0.3.0
+
+### Minor Changes
+
+- 85b68d2: A command can be dispatched again without running twice: `commands.x(payload, { idempotencyKey })`
+  remembers what the first dispatch under a key answered, in the same transaction as the events it
+  stores, and every later dispatch with the same key, command, payload and `delay` answers the same,
+  its rejection included, without running the handler; two racing for one key store the events once.
+  The same key for another command, payload or `delay` rejects with `IdempotencyKeyConflictError`
+  (`IDEMPOTENCY_KEY_CONFLICT`). A key lives `runtime.commands.idempotencyKeyLifetime`, 24 hours by
+  default, in a new `bounda_idempotency_keys` table of every adapter, which the scheduled-command
+  worker purges. `Storage` and `StorageTransaction` gain an `idempotencyStore`, with its contract
+  test in `@bounda-dev/core/adapter/testing`. The React Router middleware gives every command of a request
+  a key derived from its `Idempotency-Key` header and the command's name, `idempotencyKeyFor(header,
+  name)`, so an action that dispatches two commands keys each apart, and `failure()` answers a
+  conflict with a 422. The in-memory adapter now answers, inside a transaction, the positions its events commit
+  with, as the SQL adapters do.
+- 699bb9f: Personal data in events, forgotten by crypto-shredding. An event's `payload` receives `personal` and `person` next to `z`: `personal(schema)` marks a field as personal data, stored encrypted (AES-256-GCM through WebCrypto, on Node and in `workerd`) with a key of the person the event names, `person(schema)` marks the field that names them, and without it the aggregate's id does. `app.forget(personId)`, on every `BoundaClient`, deletes the key and appends `PersonalDataForgotten` to the stream `bounda:<personId>`, in one transaction: from then on every personal field of theirs reads as `null`, typed `T | null` in every handler. A read model that projects an event with personal fields must handle it from `projections/bounda/personal-data-forgotten.ts`, which the generator checks in `.bounda/types.ts`; a policy may react to it from `policies/bounda/`. The adapters keep the keys, with their fingerprints, in a new `personal_keys` table, `Storage` and `StorageTransaction` gain `personalKeys`, and the storage contracts cover it. The global stream shows the fields as stored, encrypted. A command that loaded a person's data before `forget` and appends after it fails with `ConcurrencyError` and is decided again, instead of writing their data back under the new key another command may have given them meanwhile: the state remembers the key each person's data was read under, and `AppendArgs` gains `persons` (`{ person, fingerprint }`) for this, which a store ignores. Snapshots and remembered rejections name the same and are written only while that key is still the person's; in PostgreSQL a GIN index on their `persons` lets `forget` find them without reading every row.
+
+### Patch Changes
+
+- Updated dependencies [c9bff07]
+- Updated dependencies [85b68d2]
+- Updated dependencies [699bb9f]
+  - @bounda-dev/core@0.3.0
+  - @bounda-dev/cli@0.3.0
+  - @bounda-dev/cloudflare@0.3.0
+
 ## 0.2.4
 
 ### Patch Changes
