@@ -79,7 +79,8 @@ dead letter with `errorType: "retriable_exhausted"`.
   retried or discarded after another retry or discard had settled it.
 - **`DEAD_LETTER_NOT_RETRIABLE`** (`DeadLetterNotRetriableError`; an operator's answer). A dead
   letter cannot be retried in the app as it is now: its handler is gone or no longer handles the
-  event, or its process failed on another step first. The letter stays `failed`.
+  event, its process failed on another step first, or the person whose data its scheduled command
+  holds was forgotten since. The letter stays `failed`.
 - **`REBUILD_SUPERSEDED`** (`RebuildSupersededError`; an operator's answer). Another rebuild of the
   same read model took over; this one stopped without writing. `readModel`.
 - **`SNAPSHOT_FAILED`** (`SnapshotError`; only in an app from `createTestApp`). A

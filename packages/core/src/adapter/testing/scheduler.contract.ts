@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { ScheduledClaimLostError } from "../../contracts/errors.ts";
 import type { ClaimedCommand, ScheduleArgs, Scheduler } from "../storage/scheduler.ts";
-import { testCommand, testContext } from "./fixtures.ts";
+import { testKeyedPerson as held, testCommand, testContext } from "./fixtures.ts";
 
 export interface SchedulerContractArgs {
   readonly create: () => Promise<Scheduler>;
@@ -539,6 +539,62 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
         scheduler.renew({ claim: { dedupeKey: "a", revision: 0, claimId: "nobody" }, now: at(1) }),
       ).rejects.toBeInstanceOf(ScheduledClaimLostError);
       expect(await scheduler.claimDue({ now: at(1), limit: 10, leaseMs: 60_000 })).toHaveLength(1);
+    });
+
+    it("keeps whose personal data a command holds, and forgets the ones that name a person, claimed or not", async () => {
+      const schedule = (dedupeKey: string, ms: number, persons?: ScheduleArgs["persons"]) =>
+        scheduler.schedule({
+          dedupeKey,
+          command: testCommand(dedupeKey),
+          executeAt: at(ms),
+          context: testContext,
+          ...(persons === undefined ? {} : { persons }),
+        });
+      await schedule("a", 1_000, [held("c-1", "1")]);
+      await schedule("b", 1_000, [held("c-2", "2")]);
+      await schedule("c", 1_000);
+      await schedule("d", 500, [held("c-1", "1"), held("c-3", "3")]);
+      await schedule("e", 2_000, []);
+      const claimed = claimOf(
+        await scheduler.claimDue({ now: at(1_000), limit: 10, leaseMs: 60_000 }),
+        "a",
+      );
+      expect(claimed.persons).toEqual([held("c-1", "1")]);
+      const listed = await scheduler.list();
+      expect(listed.find((entry) => entry.dedupeKey === "c")).not.toHaveProperty("persons");
+      expect(listed.find((entry) => entry.dedupeKey === "e")).not.toHaveProperty("persons");
+
+      const forgotten = await scheduler.forget("c-1");
+      expect(forgotten.map((entry) => entry.dedupeKey)).toEqual(["d", "a"]);
+      expect(forgotten[0]).toEqual({
+        dedupeKey: "d",
+        command: testCommand("d"),
+        executeAt: at(500).toISOString(),
+        context: testContext,
+        attempts: 0,
+        persons: [held("c-1", "1"), held("c-3", "3")],
+      });
+      expect((await scheduler.list()).map((entry) => entry.dedupeKey)).toEqual(["b", "c", "e"]);
+      await expect(scheduler.complete(claimed)).rejects.toBeInstanceOf(ScheduledClaimLostError);
+      expect(await scheduler.forget("c-1")).toEqual([]);
+      expect(await scheduler.forget("c")).toEqual([]);
+    });
+
+    it("replaces whose personal data a command holds when its key is scheduled again", async () => {
+      const schedule = (persons?: ScheduleArgs["persons"]) =>
+        scheduler.schedule({
+          dedupeKey: "a",
+          command: testCommand("1"),
+          executeAt: at(1_000),
+          context: testContext,
+          ...(persons === undefined ? {} : { persons }),
+        });
+      await schedule([held("c-1", "1")]);
+      await schedule([held("c-1", "2")]);
+      expect((await scheduler.list())[0]?.persons).toEqual([held("c-1", "2")]);
+      await schedule();
+      expect((await scheduler.list())[0]).not.toHaveProperty("persons");
+      expect(await scheduler.forget("c-1")).toEqual([]);
     });
 
     it("lists pending commands ordered by execution time with paging", async () => {

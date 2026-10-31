@@ -53,7 +53,7 @@ describe("personalMarksOf", () => {
     });
     expect(() => personalMarksOf({ schema, path })).toThrow(
       new ConfigurationError(
-        `${path}: marks "buyerId" and "sellerId" with person; an event names at most one person`,
+        `${path}: marks "buyerId" and "sellerId" with person; a payload names at most one person`,
       ),
     );
   });

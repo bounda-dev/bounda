@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { Storage } from "../../adapter/adapter.ts";
-import { testPersonalKey } from "../../adapter/testing/fixtures.ts";
+import type { KeyedPerson } from "../../adapter/storage/personal-key-store.ts";
+import {
+  testCommand,
+  testContext,
+  testDeadLetter,
+  testKeyedPerson,
+  testPersonalKey,
+} from "../../adapter/testing/fixtures.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { ConcurrencyError, ValidationError } from "../../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
@@ -46,7 +53,7 @@ describe("forgetPersonalData", () => {
         version: 1,
         position: 1,
         type: "PersonalDataForgotten",
-        payload: { personId: "c-1" },
+        payload: { personId: "c-1", cancelledCommands: [], removedDeadLetters: [] },
         timestamp: "2026-01-01T00:00:00.000Z",
         metadata: {
           correlationId: "id-1",
@@ -60,7 +67,7 @@ describe("forgetPersonalData", () => {
     expect(logs).toContainEqual({
       level: "info",
       message: "personal data forgotten",
-      fields: { personId: "c-1", hadKey: true },
+      fields: { personId: "c-1", hadKey: true, cancelledCommands: 0, removedDeadLetters: 0 },
     });
   });
 
@@ -70,9 +77,52 @@ describe("forgetPersonalData", () => {
     expect((await forget("c-2")).version).toBe(2);
     expect(await storage.eventStore.lastPosition()).toBe(2);
     expect(logs.map((entry) => entry.fields)).toEqual([
-      { personId: "c-2", hadKey: false },
-      { personId: "c-2", hadKey: false },
+      { personId: "c-2", hadKey: false, cancelledCommands: 0, removedDeadLetters: 0 },
+      { personId: "c-2", hadKey: false, cancelledCommands: 0, removedDeadLetters: 0 },
     ]);
+  });
+
+  it("cancels the scheduled commands and removes the dead letters that name the person, naming them", async () => {
+    const { storage, forget, logs } = await setup();
+    const persons = [testKeyedPerson("c-1", "1")];
+    const schedule = (dedupeKey: string, aggregateId: string, named: readonly KeyedPerson[]) =>
+      storage.scheduler.schedule({
+        dedupeKey,
+        command: testCommand(aggregateId),
+        executeAt: new Date("2026-01-01T00:01:00.000Z"),
+        context: testContext,
+        persons: named,
+      });
+    await schedule("command:cmd-1", "c-1", persons);
+    await schedule("deadline:x", "c-1", persons);
+    await schedule("command:cmd-2", "c-2", [testKeyedPerson("c-2", "2")]);
+    await storage.deadLetterStore.add({
+      ...testDeadLetter("dl-1"),
+      kind: "scheduled",
+      handler: "RemindCustomer",
+      persons,
+    });
+    await storage.deadLetterStore.add(testDeadLetter("dl-2"));
+    await forget("c-1");
+    const [event] = await storage.eventStore.readAll({ afterPosition: 0, limit: 10 });
+    expect(event?.payload).toEqual({
+      personId: "c-1",
+      cancelledCommands: [
+        { commandId: "cmd-1", type: "RemindCustomer" },
+        { commandId: "deadline:x", type: "RemindCustomer" },
+      ],
+      removedDeadLetters: [{ id: "dl-1", commandType: "RemindCustomer" }],
+    });
+    expect((await storage.scheduler.list()).map((entry) => entry.dedupeKey)).toEqual([
+      "command:cmd-2",
+    ]);
+    expect((await storage.deadLetterStore.list()).map((letter) => letter.id)).toEqual(["dl-2"]);
+    expect(logs.at(-1)?.fields).toEqual({
+      personId: "c-1",
+      hadKey: false,
+      cancelledCommands: 2,
+      removedDeadLetters: 1,
+    });
   });
 
   it("refuses an empty id", async () => {

@@ -9,6 +9,7 @@ import {
   PERSONAL_DATA_FORGOTTEN_EVENT,
   type PersonalDataForgottenPayload,
 } from "../../modules/bounda-events.ts";
+import { scheduledCommandId } from "../command/pipeline.ts";
 import { appendSystemEvent } from "../system-events.ts";
 
 export interface ForgetPersonalDataArgs {
@@ -26,8 +27,10 @@ export interface ForgetPersonalDataFunction {
 
 /**
  * Removes the person's key and appends `PersonalDataForgotten` to their stream, in one
- * transaction: whoever reads the event finds the fields gone already. A person without a key is
- * forgotten all the same, since read models may hold what their events carried in the clear.
+ * transaction: whoever reads the event finds the fields gone already. The scheduled commands and
+ * dead letters that hold the person's data go in the same transaction, and the event names them.
+ * A person without a key is forgotten all the same, since read models may hold what their events
+ * carried in the clear.
  */
 export const forgetPersonalData: ForgetPersonalDataFunction = async ({
   storage,
@@ -43,17 +46,30 @@ export const forgetPersonalData: ForgetPersonalDataFunction = async ({
     ]);
   }
   const correlationId = ids.next();
-  const payload: PersonalDataForgottenPayload = { personId };
   for (let attempt = 0; ; attempt += 1) {
     try {
       // The key goes first: a snapshot written beside the transaction then either waits for it
-      // and is forgotten with the rest, or finds no key and is never written.
-      const { removed, stored } = await storage.transact(async (transaction) => {
+      // and is forgotten with the rest, or finds no key and is never written. The scheduled
+      // commands go before the dead letters: a worker giving one up writes its letter and settles
+      // its claim together, so either this waits for it and then finds the letter, or the claim
+      // is lost and the letter rolls back.
+      const { removed, payload, stored } = await storage.transact(async (transaction) => {
         const hadKey = await transaction.personalKeys.remove(personId);
         await transaction.snapshotStore.forget(personId);
         await transaction.idempotencyStore.forget(personId);
+        const cancelled = await transaction.scheduler.forget(personId);
+        const letters = await transaction.deadLetterStore.forget(personId);
+        const payload: PersonalDataForgottenPayload = {
+          personId,
+          cancelledCommands: cancelled.map(({ dedupeKey, command }) => ({
+            commandId: scheduledCommandId(dedupeKey) ?? dedupeKey,
+            type: command.type,
+          })),
+          removedDeadLetters: letters.map(({ id, handler }) => ({ id, commandType: handler })),
+        };
         return {
           removed: hadKey,
+          payload,
           stored: await appendSystemEvent({
             eventStore: transaction.eventStore,
             ids,
@@ -66,7 +82,12 @@ export const forgetPersonalData: ForgetPersonalDataFunction = async ({
           }),
         };
       });
-      logger.info("personal data forgotten", { personId, hadKey: removed });
+      logger.info("personal data forgotten", {
+        personId,
+        hadKey: removed,
+        cancelledCommands: payload.cancelledCommands.length,
+        removedDeadLetters: payload.removedDeadLetters.length,
+      });
       return {
         scheduled: false,
         aggregateType: BOUNDA_AGGREGATE,

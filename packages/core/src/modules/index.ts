@@ -6,8 +6,10 @@ export type {
   UnknownState,
 } from "./aggregate.ts";
 export type {
+  CancelledCommand,
   PersonalDataForgottenEvent,
   PersonalDataForgottenPayload,
+  RemovedDeadLetter,
 } from "./bounda-events.ts";
 export {
   BOUNDA_AGGREGATE,
@@ -38,6 +40,7 @@ export type {
 } from "./naming.ts";
 export { capitalize, policyTrigger, toCamelCase } from "./naming.ts";
 export type {
+  CommandPayloadArgs,
   EmptyPayload,
   EventPayloadArgs,
   PayloadArgs,
@@ -46,6 +49,8 @@ export type {
   ZodApi,
 } from "./payload.ts";
 export type {
+  CommandPersonalFunction,
+  CommandPersonalSchema,
   ForgetsPersonalData,
   HasPersonalFields,
   PersonalFunction,

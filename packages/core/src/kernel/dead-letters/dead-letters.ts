@@ -13,6 +13,7 @@ import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
+import { openCommandPayload } from "../personal-data/commands.ts";
 import type { PoliciesRuntime } from "../policy/build-policies.ts";
 import type { PolicyExecutor } from "../policy/executor.ts";
 import type { ProcessDeadLetters } from "../process/dead-letter-retry.ts";
@@ -25,12 +26,13 @@ import { commitWork, type UnitOfWork } from "../unit-of-work/unit-of-work.ts";
  */
 export interface DeadLetters {
   /**
-   * The letters of the store, process ones with how many events are `parked` behind them.
+   * The letters of the store, process ones with how many events are `parked` behind them, and a
+   * scheduled command's payload with its personal fields opened.
    */
   list(args?: ListDeadLettersArgs): Promise<readonly DeadLetter[]>;
   count(args?: ListDeadLettersArgs): Promise<number>;
   /**
-   * One letter of the store, a process one with how many events are `parked` behind it.
+   * One letter of the store, as `list` gives it.
    */
   get(id: string): Promise<DeadLetter | null>;
   /**
@@ -43,7 +45,8 @@ export interface DeadLetters {
    * counts as retried, as the scheduler would have settled it. Rejects with the handler's error
    * when it fails again, and the letter stays `failed`. Rejects without running anything with
    * `NotFoundError` when the letter, or the event or process instance it names, is missing, and
-   * with `DeadLetterNotRetriableError` when the app as it now is cannot retry it. Rejects with
+   * with `DeadLetterNotRetriableError` when the app as it now is cannot retry it, or the person
+   * whose personal fields a scheduled command holds was forgotten since. Rejects with
    * `DeadLetterSettledError` a letter that is no longer `failed`, or that another retry or a
    * discard settled while this one ran: a retry marked in its own transaction then writes
    * nothing, any other process's has already handled its events.
@@ -152,6 +155,15 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
         `Command "${letter.eventType}" is no longer in the registry`,
       );
     }
+    const { payload, forgotten } = await openCommandPayload({
+      payload: letter.payload,
+      keys: storage.personalKeys,
+    });
+    if (forgotten) {
+      throw new DeadLetterNotRetriableError(
+        `Command "${letter.eventType}" holds personal data of a person forgotten since`,
+      );
+    }
     const context: CausationContext = {
       correlationId: ids.next(),
       causationId: letter.id,
@@ -160,7 +172,7 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
     await settled(letter, async (unit) => {
       await pipeline.dispatchUnattended({
         type: letter.eventType,
-        payload: letter.payload,
+        payload,
         context,
         within: unit,
       });
@@ -202,8 +214,18 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
     }
   };
 
+  // A forgotten person's fields read as `null`, as an event's do.
+  const opened = async (letter: DeadLetter): Promise<DeadLetter> => {
+    if (letter.payload === undefined) return letter;
+    const { payload } = await openCommandPayload({
+      payload: letter.payload,
+      keys: storage.personalKeys,
+    });
+    return { ...letter, payload };
+  };
+
   const withParked = async (letter: DeadLetter): Promise<DeadLetter> => {
-    if (letter.kind !== "process") return letter;
+    if (letter.kind !== "process") return opened(letter);
     return { ...letter, parked: await processes.parkedBehind(letter) };
   };
 
@@ -223,7 +245,7 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
         handler: letter.handler,
         at: clock.now().toISOString(),
       });
-      const retried: DeadLetter = { ...letter, status: "retried" };
+      const retried: DeadLetter = { ...(await opened(letter)), status: "retried" };
       if (letter.kind !== "process") return retried;
       return { ...retried, parked: await processes.stillParked(letter) };
     },
@@ -235,7 +257,7 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
         kind: letter.kind,
         handler: letter.handler,
       });
-      return { ...letter, status: "discarded" };
+      return { ...(await opened(letter)), status: "discarded" };
     },
   };
 };

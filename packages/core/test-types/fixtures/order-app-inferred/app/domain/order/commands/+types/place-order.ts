@@ -4,7 +4,7 @@ import type * as generated from "../../../../../.bounda/types.ts";
 type Module = typeof import("../place-order.ts");
 
 export declare namespace Command {
-  type PayloadArgs = core.PayloadArgs;
+  type PayloadArgs = core.CommandPayloadArgs;
   type RejectionsArgs = core.CommandRejectionsArgs<
     "PlaceOrder",
     core.PayloadOf<Module>,

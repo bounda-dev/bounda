@@ -11,6 +11,7 @@ import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { type CommandPipeline, scheduledCommandId } from "../command/pipeline.ts";
+import { openCommandPayload } from "../personal-data/commands.ts";
 import type { DelayedPolicies } from "../policy/delayed.ts";
 import { PROCESS_DEADLINE_COMMAND, type ProcessDeadlinePayload } from "../process/deadlines.ts";
 import type { ProcessDeadlines } from "../process/deliver-deadline.ts";
@@ -237,6 +238,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       firstFailedAt: now,
       lastFailedAt: now,
       payload: entry.command.payload,
+      ...(entry.persons === undefined ? {} : { persons: entry.persons }),
     };
   };
 
@@ -303,9 +305,23 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
             within: unit,
           });
         } else {
+          const { payload, forgotten } = await openCommandPayload({
+            payload: entry.command.payload,
+            keys: storage.personalKeys,
+          });
+          // Its person was forgotten since the seal. A forget that cancelled the command leaves
+          // this claim lost, so the run writes nothing; one that missed it, stored under a key the
+          // forget removed after the seal read it, has it dropped here, never run.
+          if (forgotten) {
+            logger.warn("scheduled command dropped: its person was forgotten", {
+              command: entry.command.type,
+              dedupeKey: entry.dedupeKey,
+            });
+            return;
+          }
           await pipeline.dispatchUnattended({
             type: entry.command.type,
-            payload: entry.command.payload,
+            payload,
             context: entry.context,
             commandId: scheduledCommandId(entry.dedupeKey),
             within: unit,
