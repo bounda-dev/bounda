@@ -1,5 +1,6 @@
 import { v4 as randomUUID } from "uuid";
 import { byExecuteAt } from "../adapter/sql/scheduling.ts";
+import { namesPerson } from "../adapter/storage/personal-key-store.ts";
 import type {
   ClaimedCommand,
   ScheduledClaim,
@@ -31,6 +32,7 @@ const toScheduled = ({
   executeAt,
   context,
   attempts,
+  persons,
 }: Entry): ScheduledCommand => ({
   dedupeKey,
   command: {
@@ -41,11 +43,13 @@ const toScheduled = ({
   executeAt,
   context: jsonCopy(context),
   attempts,
+  ...(persons === undefined ? {} : { persons: jsonCopy(persons) }),
 });
 
 const sameCommand = (a: ScheduledCommand, b: ScheduledCommand): boolean =>
   JSON.stringify(a.command) === JSON.stringify(b.command) &&
-  JSON.stringify(a.context) === JSON.stringify(b.context);
+  JSON.stringify(a.context) === JSON.stringify(b.context) &&
+  JSON.stringify(a.persons ?? []) === JSON.stringify(b.persons ?? []);
 
 export const createKeptScheduler: CreateKeptSchedulerFunction = () => {
   const entries = new Map<string, Entry>();
@@ -61,7 +65,14 @@ export const createKeptScheduler: CreateKeptSchedulerFunction = () => {
   };
 
   const store: Scheduler = {
-    schedule: async ({ dedupeKey, command, executeAt, context, keepTimingOfSameCommand }) => {
+    schedule: async ({
+      dedupeKey,
+      command,
+      executeAt,
+      context,
+      keepTimingOfSameCommand,
+      persons = [],
+    }) => {
       const scheduled: ScheduledCommand = {
         dedupeKey,
         command: {
@@ -72,6 +83,7 @@ export const createKeptScheduler: CreateKeptSchedulerFunction = () => {
         executeAt: executeAt.toISOString(),
         context: jsonCopy(context),
         attempts: 0,
+        ...(persons.length === 0 ? {} : { persons: jsonCopy(persons) }),
       };
       const existing = entries.get(dedupeKey);
       if (
@@ -161,6 +173,13 @@ export const createKeptScheduler: CreateKeptSchedulerFunction = () => {
         .sort(byExecuteAt)
         .slice(offset, limit === undefined ? undefined : offset + limit)
         .map(toScheduled),
+    forget: async (person) => {
+      const named = [...entries.values()]
+        .filter((entry) => namesPerson(entry, person))
+        .sort(byExecuteAt);
+      for (const { dedupeKey } of named) entries.delete(dedupeKey);
+      return named.map(toScheduled);
+    },
   };
   return { store, entries: createStoreEntries(entries, (dedupeKey: string) => dedupeKey) };
 };

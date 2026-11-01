@@ -26,6 +26,14 @@ export interface KeyedPersonIdFunction {
 export const keyedPersonId: KeyedPersonIdFunction = ({ person, fingerprint }) =>
   JSON.stringify([person, fingerprint]);
 
+export interface NamesPersonFunction {
+  (row: { readonly persons?: readonly KeyedPerson[] }, person: string): boolean;
+}
+
+// Under any key: what `forget` removes for a store that filters its rows itself.
+export const namesPerson: NamesPersonFunction = (row, person) =>
+  row.persons?.some((held) => held.person === person) ?? false;
+
 /**
  * The keys the personal fields of events are encrypted with, one per person. `get` is `null` for
  * a person without one, as for one forgotten. `add` stores `key` for `person` unless one is in

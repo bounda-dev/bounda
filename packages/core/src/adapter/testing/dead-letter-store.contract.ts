@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { DeadLetterSettledError } from "../../contracts/errors.ts";
 import type { DeadLetterStore, NewDeadLetter } from "../storage/dead-letter-store.ts";
+import { testKeyedPerson as held } from "./fixtures.ts";
 
 export interface DeadLetterStoreContractArgs {
   readonly create: () => Promise<DeadLetterStore>;
@@ -161,6 +162,40 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
       const [rejected] = outcomes.filter((outcome) => outcome.status === "rejected");
       expect(rejected?.reason).toBeInstanceOf(DeadLetterSettledError);
+    });
+
+    it("keeps whose personal data a letter holds, and forgets the ones that name a person, whatever their status", async () => {
+      const scheduled = (id: string, at: string, persons?: NewDeadLetter["persons"]) =>
+        letter(id, {
+          kind: "scheduled",
+          handler: "PlaceOrder",
+          eventType: "PlaceOrder",
+          firstFailedAt: at,
+          payload: { orderId: id },
+          ...(persons === undefined ? {} : { persons }),
+        });
+      await store.add(scheduled("a", "2026-01-01T00:02:00.000Z", [held("c-1", "1")]));
+      await store.add(
+        scheduled("b", "2026-01-01T00:01:00.000Z", [held("c-2", "2"), held("c-1", "1")]),
+      );
+      await store.add(scheduled("c", "2026-01-01T00:00:00.000Z", [held("c-2", "2")]));
+      await store.add(scheduled("d", "2026-01-01T00:00:00.000Z"));
+      await store.add(scheduled("e", "2026-01-01T00:00:00.000Z", []));
+      await store.updateStatus("b", "discarded");
+      expect((await store.get("a"))?.persons).toEqual([held("c-1", "1")]);
+      expect(await store.get("d")).not.toHaveProperty("persons");
+      expect(await store.get("e")).not.toHaveProperty("persons");
+
+      const forgotten = await store.forget("c-1");
+      expect(forgotten).toEqual([
+        {
+          ...scheduled("b", "2026-01-01T00:01:00.000Z", [held("c-2", "2"), held("c-1", "1")]),
+          status: "discarded",
+        },
+        { ...scheduled("a", "2026-01-01T00:02:00.000Z", [held("c-1", "1")]), status: "failed" },
+      ]);
+      expect((await store.list()).map((kept) => kept.id)).toEqual(["c", "d", "e"]);
+      expect(await store.forget("c-1")).toEqual([]);
     });
 
     it("updates status and removes letters", async () => {

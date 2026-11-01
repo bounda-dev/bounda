@@ -1,11 +1,15 @@
 import type { Storage } from "../adapter/adapter.ts";
-import { type DeferredWriteTarget, deferWrites } from "../adapter/deferred-writes.ts";
+import {
+  type DeferredStores,
+  type DeferredWriteTarget,
+  deferWrites,
+} from "../adapter/deferred-writes.ts";
 import { createStagedEventStore } from "../adapter/staged-event-store.ts";
 import type { CheckpointStore } from "../adapter/storage/checkpoint-store.ts";
 import type { DeadLetterStore } from "../adapter/storage/dead-letter-store.ts";
 import type { IdempotencyStore } from "../adapter/storage/idempotency-store.ts";
 import type { ClaimKey, InboxLedger } from "../adapter/storage/inbox-ledger.ts";
-import type { PersonalKeyStore } from "../adapter/storage/personal-key-store.ts";
+import { namesPerson, type PersonalKeyStore } from "../adapter/storage/personal-key-store.ts";
 import type { Scheduler } from "../adapter/storage/scheduler.ts";
 import type { SnapshotStore } from "../adapter/storage/snapshot-store.ts";
 import type { StoreEntries } from "./entries.ts";
@@ -79,6 +83,41 @@ const trackedPersonalKeys = (
   };
 };
 
+// Removed at once, as the keys are, so a forget answers what it removed: a worker that settles
+// the claim of a command it cancelled finds it lost, and one that dead-lettered it first has its
+// letter found. Put back the same way when the transaction fails.
+const trackedForgets = (
+  deferred: DeferredStores,
+  { scheduler, deadLetterStore, entries }: CreateUndoLogArgs,
+  undos: Undos,
+): Pick<DeferredStores, "scheduler" | "deadLetterStore"> => {
+  const tracked = trackedBy(undos);
+  return {
+    scheduler: {
+      ...deferred.scheduler,
+      forget: async (person) => {
+        const named = (await scheduler.list()).filter((entry) => namesPerson(entry, person));
+        for (const { dedupeKey } of named) {
+          await tracked(entries.scheduler, dedupeKey, () => scheduler.cancel(dedupeKey));
+        }
+        return named;
+      },
+    },
+    deadLetterStore: {
+      ...deferred.deadLetterStore,
+      forget: async (person) => {
+        const named = (await deadLetterStore.list()).filter((letter) =>
+          namesPerson(letter, person),
+        );
+        for (const { id } of named) {
+          await tracked(entries.deadLetterStore, id, () => deadLetterStore.remove(id));
+        }
+        return named;
+      },
+    },
+  };
+};
+
 const createUndoLog = ({
   inboxLedger,
   deadLetterStore,
@@ -131,8 +170,9 @@ const createUndoLog = ({
  * in one synchronous run, so no reader sees one stream appended without the others, nor an
  * event written meanwhile past a position still reserved. A failed transaction appends nothing,
  * gives its positions back and puts back each entry it changed, unless someone changed it since;
- * its personal keys are written at once and put back the same way, and the snapshots it forgets
- * are gone at once, for good, as a cache can be.
+ * its personal keys, and the scheduled commands and dead letters it forgets, are written at once
+ * and put back the same way, and the snapshots it forgets are gone at once, for good, as a cache
+ * can be.
  * `tryClaim`, `claimDue`, both `renew`, `purge` and writes made on the stores themselves do not
  * wait for a commit, so they can see a write it may still put back.
  */
@@ -153,12 +193,13 @@ export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunct
       },
     });
     const { stores, flush } = deferWrites(live);
-    const keyUndos: Undos = [];
+    const atOnce: Undos = [];
     try {
       const result = await work({
         eventStore: staged,
         ...stores,
-        personalKeys: trackedPersonalKeys(personalKeys, live.entries.personalKeys, keyUndos),
+        ...trackedForgets(stores, live, atOnce),
+        personalKeys: trackedPersonalKeys(personalKeys, live.entries.personalKeys, atOnce),
         snapshotStore,
       });
       // A transaction committed from inside this commit, as from a store write, waits forever.
@@ -174,11 +215,11 @@ export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunct
         release?.();
       }
       reserved.length = 0;
-      keyUndos.length = 0;
+      atOnce.length = 0;
       return result;
     } finally {
       eventStore.release(reserved);
-      undoAll(keyUndos);
+      undoAll(atOnce);
     }
   };
 };

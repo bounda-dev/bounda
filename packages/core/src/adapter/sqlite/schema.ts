@@ -89,7 +89,8 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "first_failed_at" TEXT NOT NULL,
     "last_failed_at" TEXT NOT NULL,
     "status" TEXT NOT NULL,
-    "payload" TEXT
+    "payload" TEXT,
+    "persons" TEXT NOT NULL DEFAULT '[]'
   )`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "status")} ON ${tables.deadLetters} ("status")`,
   `CREATE TABLE IF NOT EXISTS ${tables.scheduledCommands} (
@@ -103,7 +104,8 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "claimed_at" TEXT,
     "last_error" TEXT,
     "revision" INTEGER NOT NULL DEFAULT 0,
-    "claim_id" TEXT
+    "claim_id" TEXT,
+    "persons" TEXT NOT NULL DEFAULT '[]'
   )`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.scheduledCommands, "execute_at")} ON ${tables.scheduledCommands} ("execute_at")`,
   `CREATE TABLE IF NOT EXISTS ${tables.idempotencyKeys} (

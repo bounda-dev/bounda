@@ -1,4 +1,5 @@
 export type { SqlDatabase, SqlTransaction } from "./database.ts";
+export { byFirstFailure } from "./dead-letters.ts";
 export { postgresqlDialect } from "./dialect.ts";
 export { quoteIdentifier, storageTableNameFor, tableNameFor } from "./identifiers.ts";
 export type { ExistingColumn } from "./read-model-schema.ts";

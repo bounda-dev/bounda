@@ -338,6 +338,69 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       );
     });
 
+    it("cancels a person's scheduled commands and removes their dead letters with the rest, or not at all", async () => {
+      const schedule = (dedupeKey: string, person: string) =>
+        storage.scheduler.schedule({
+          dedupeKey,
+          command: testCommand(person),
+          executeAt: new Date(now.getTime() + 60_000),
+          context: testContext,
+          persons: [held(person, "1")],
+        });
+      await schedule("command:c1", "c-1");
+      await schedule("command:c2", "c-2");
+      await storage.deadLetterStore.add({ ...testDeadLetter("d1"), persons: [held("c-1", "1")] });
+      await storage.deadLetterStore.add({ ...testDeadLetter("d2"), persons: [held("c-2", "1")] });
+      const forget = (tx: StorageTransaction) =>
+        Promise.all([tx.scheduler.forget("c-1"), tx.deadLetterStore.forget("c-1")]);
+      await expect(
+        storage.transact(async (tx) => {
+          await forget(tx);
+          throw new Error("boom");
+        }),
+      ).rejects.toThrow("boom");
+      expect(await storage.scheduler.list()).toHaveLength(2);
+      expect(await storage.deadLetterStore.count()).toBe(2);
+      const [cancelled, removed] = await storage.transact(forget);
+      expect(cancelled.map((entry) => entry.dedupeKey)).toEqual(["command:c1"]);
+      expect(removed.map((letter) => letter.id)).toEqual(["d1"]);
+      expect((await storage.scheduler.list()).map((entry) => entry.dedupeKey)).toEqual([
+        "command:c2",
+      ]);
+      expect((await storage.deadLetterStore.list()).map((letter) => letter.id)).toEqual(["d2"]);
+    });
+
+    it("leaves no dead letter of a person behind when a forget races the worker giving up their command", async () => {
+      await storage.scheduler.schedule({
+        dedupeKey: "command:c1",
+        command: testCommand("c-1"),
+        executeAt: now,
+        context: testContext,
+        persons: [held("c-1", "1")],
+      });
+      const [claim] = await storage.scheduler.claimDue({ now, limit: 1, leaseMs: 60_000 });
+      if (claim === undefined) throw new Error("nothing claimed");
+      const [givenUp, forgotten] = await Promise.allSettled([
+        storage.transact(async (tx) => {
+          await tx.deadLetterStore.add({ ...testDeadLetter("d1"), persons: [held("c-1", "1")] });
+          await tx.scheduler.fail({ claim, error: "boom" });
+        }),
+        storage.transact(async (tx) => ({
+          cancelled: await tx.scheduler.forget("c-1"),
+          removed: await tx.deadLetterStore.forget("c-1"),
+        })),
+      ]);
+      if (forgotten.status === "rejected") throw forgotten.reason;
+      if (givenUp.status === "fulfilled") {
+        expect(forgotten.value.removed.map((letter) => letter.id)).toEqual(["d1"]);
+      } else {
+        expect(givenUp.reason).toBeInstanceOf(ScheduledClaimLostError);
+        expect(forgotten.value.cancelled.map((entry) => entry.dedupeKey)).toEqual(["command:c1"]);
+      }
+      expect(await storage.deadLetterStore.count()).toBe(0);
+      expect(await storage.scheduler.list()).toEqual([]);
+    });
+
     it("changes and removes dead letters with the rest, or not at all", async () => {
       await storage.deadLetterStore.add(testDeadLetter("d1"));
       await storage.deadLetterStore.add(testDeadLetter("d2"));

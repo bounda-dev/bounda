@@ -22,6 +22,7 @@ import type { Process as AtNextReminder } from "./fixtures/order-app/app/domain/
 import type { Process as OrderPayment } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/index.ts";
 import type { Process as OnOrderPaid } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/on-order-paid.ts";
 import type { Projection as ProjectCustomerRegistered } from "./fixtures/order-app/app/read/customer-directory/projections/customer/+types/customer-registered.ts";
+import type { Query as GetCustomer } from "./fixtures/order-app/app/read/customer-directory/queries/+types/get-customer.ts";
 
 import type { Projection as ProjectOrderPlaced } from "./fixtures/order-app/app/read/order-summary/projections/order/+types/order-placed.ts";
 
@@ -177,11 +178,11 @@ describe("what does not compile", () => {
     void handler;
   });
 
-  it("marking personal data outside an event, or reading it as if it could not be forgotten", () => {
-    // @ts-expect-error a command's payload has no personal: commands are not stored
-    const command = ({ z, personal }: RegisterCustomer.PayloadArgs) =>
+  it("marking personal data in a query, or reading it as if it could not be forgotten", () => {
+    // @ts-expect-error a query's payload has no personal: queries are never stored
+    const query = ({ z, personal }: GetCustomer.PayloadArgs) =>
       z.object({ email: personal(z.email()) });
-    void command;
+    void query;
     const builder = ({ events }: RegisterCustomer.HandlerArgs) => [
       // @ts-expect-error a personal field is written as its schema takes it, never as null
       events.customerRegistered({ email: null }),

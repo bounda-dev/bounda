@@ -120,7 +120,8 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "first_failed_at" text NOT NULL,
     "last_failed_at" text NOT NULL,
     "status" text NOT NULL,
-    "payload" jsonb
+    "payload" jsonb,
+    "persons" jsonb NOT NULL DEFAULT '[]'
   )`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "status")} ON ${tables.deadLetters} ("status")`,
   `CREATE TABLE IF NOT EXISTS ${tables.scheduledCommands} (
@@ -134,7 +135,8 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "claimed_at" text,
     "last_error" text,
     "revision" integer NOT NULL DEFAULT 0,
-    "claim_id" text
+    "claim_id" text,
+    "persons" jsonb NOT NULL DEFAULT '[]'
   )`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.scheduledCommands, "execute_at")} ON ${tables.scheduledCommands} ("execute_at")`,
   `CREATE TABLE IF NOT EXISTS ${tables.idempotencyKeys} (
@@ -162,6 +164,8 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
   // So forgetting a person finds the rows that name them without reading every row.
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.snapshots, "persons")} ON ${tables.snapshots} USING gin ("persons" jsonb_path_ops)`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.idempotencyKeys, "persons")} ON ${tables.idempotencyKeys} USING gin ("persons" jsonb_path_ops)`,
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.scheduledCommands, "persons")} ON ${tables.scheduledCommands} USING gin ("persons" jsonb_path_ops)`,
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "persons")} ON ${tables.deadLetters} USING gin ("persons" jsonb_path_ops)`,
 ];
 
 export interface EnsureStorageSchemaArgs {
@@ -195,6 +199,8 @@ export const ensureStorageSchema: EnsureStorageSchemaFunction = async ({ db, sch
     indexName(tables.idempotencyKeys, "expires_at"),
     indexName(tables.snapshots, "persons"),
     indexName(tables.idempotencyKeys, "persons"),
+    indexName(tables.scheduledCommands, "persons"),
+    indexName(tables.deadLetters, "persons"),
   ].map(unquoted);
   if (await relationsExist({ db, schema, names })) return;
   await inSchema({

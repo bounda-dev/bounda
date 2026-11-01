@@ -1,9 +1,10 @@
-import { codePointOrder } from "../adapter/sql/order.ts";
+import { byFirstFailure } from "../adapter/sql/dead-letters.ts";
 import type {
   DeadLetter,
   DeadLetterStore,
   ListDeadLettersArgs,
 } from "../adapter/storage/dead-letter-store.ts";
+import { namesPerson } from "../adapter/storage/personal-key-store.ts";
 import { DeadLetterSettledError } from "../contracts/errors.ts";
 import { createStoreEntries, type WithEntries } from "./entries.ts";
 import { jsonCopy } from "./json-copy.ts";
@@ -21,11 +22,11 @@ const matches = (letter: DeadLetter, args: ListDeadLettersArgs): boolean =>
   (args.handler === undefined || letter.handler === args.handler) &&
   (args.status === undefined || letter.status === args.status);
 
-const copy = ({ payload, ...letter }: DeadLetter): DeadLetter =>
-  payload === undefined ? letter : { ...letter, payload: jsonCopy(payload) };
-
-const byFirstFailure = (a: DeadLetter, b: DeadLetter): number =>
-  codePointOrder(a.firstFailedAt, b.firstFailedAt) || codePointOrder(a.id, b.id);
+const copy = ({ payload, persons, ...letter }: DeadLetter): DeadLetter => ({
+  ...letter,
+  ...(payload === undefined ? {} : { payload: jsonCopy(payload) }),
+  ...(persons === undefined || persons.length === 0 ? {} : { persons: jsonCopy(persons) }),
+});
 
 export const createKeptDeadLetterStore: CreateKeptDeadLetterStoreFunction = () => {
   const letters = new Map<string, DeadLetter>();
@@ -60,6 +61,11 @@ export const createKeptDeadLetterStore: CreateKeptDeadLetterStoreFunction = () =
     },
     remove: async (id) => {
       letters.delete(id);
+    },
+    forget: async (person) => {
+      const named = select({}).filter((letter) => namesPerson(letter, person));
+      for (const { id } of named) letters.delete(id);
+      return named.map(copy);
     },
   };
   return { store, entries: createStoreEntries(letters, (id: string) => id) };

@@ -101,7 +101,7 @@ const commandFiles = (aggregate: AggregateModel, typesPath: string): GeneratedFi
       imports: { generated: true, module: command.path },
       namespace: "Command",
       members: [
-        ["PayloadArgs", "core.PayloadArgs"],
+        ["PayloadArgs", "core.CommandPayloadArgs"],
         [
           "RejectionsArgs",
           generic("core.CommandRejectionsArgs", [

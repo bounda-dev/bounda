@@ -1,3 +1,5 @@
+import type { KeyedPerson } from "./personal-key-store.ts";
+
 /**
  * What gave up: a policy or process handler (a delayed policy run included), or a scheduled
  * command, one dispatched with `delay`.
@@ -35,6 +37,11 @@ export interface DeadLetter {
    * Policy and process letters point at a stored event instead.
    */
   readonly payload?: unknown;
+  /**
+   * Only on `scheduled` letters whose payload holds personal fields sealed: whose they are, with
+   * the key each is sealed under, as the scheduled command named them.
+   */
+  readonly persons?: readonly KeyedPerson[];
   /**
    * Process letters only: how many steps wait on the instance. While the letter is `failed`, the
    * events parked behind it for its retry to handle; on the letter a retry returns, the steps
@@ -75,4 +82,9 @@ export interface DeadLetterStore {
    */
   updateStatus(id: string, status: DeadLetterStatus): Promise<void>;
   remove(id: string): Promise<void>;
+  /**
+   * Removes every letter whose `persons` names `person`, whatever its status, and resolves to them
+   * in the order of `list`.
+   */
+  forget(person: string): Promise<readonly DeadLetter[]>;
 }

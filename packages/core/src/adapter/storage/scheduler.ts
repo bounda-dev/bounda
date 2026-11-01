@@ -1,9 +1,11 @@
 import type { NewCommand } from "../../contracts/command.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
+import type { KeyedPerson } from "./personal-key-store.ts";
 
 /**
  * A command waiting for its time. `dedupeKey` identifies the entry: scheduling the same key
- * again replaces it.
+ * again replaces it. `persons` names the people whose personal fields the payload holds sealed,
+ * with the key each is sealed under; absent when it holds none.
  */
 export interface ScheduledCommand {
   readonly dedupeKey: string;
@@ -11,6 +13,7 @@ export interface ScheduledCommand {
   readonly executeAt: string;
   readonly context: CausationContext;
   readonly attempts: number;
+  readonly persons?: readonly KeyedPerson[];
 }
 
 /**
@@ -43,6 +46,11 @@ export interface ScheduleArgs {
    * off stays backed off.
    */
   readonly keepTimingOfSameCommand?: boolean;
+  /**
+   * The people whose personal fields the payload holds sealed, for `forget` to find the command
+   * by; none when left out.
+   */
+  readonly persons?: readonly KeyedPerson[];
 }
 
 export interface ClaimDueArgs {
@@ -140,4 +148,10 @@ export interface Scheduler {
    * Every command, earliest `executeAt` first, then by `dedupeKey`.
    */
   list(args?: ListScheduledArgs): Promise<readonly ScheduledCommand[]>;
+  /**
+   * Removes every command whose `persons` names `person`, claimed or not, and resolves to them in
+   * the order of `list`: a worker running one then finds its claim lost, so what it writes, a dead
+   * letter included, is rolled back.
+   */
+  forget(person: string): Promise<readonly ScheduledCommand[]>;
 }

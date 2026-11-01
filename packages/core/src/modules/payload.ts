@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import type { PersonalFunction, PersonFunction } from "./personal.ts";
+import type { CommandPersonalFunction, PersonalFunction, PersonFunction } from "./personal.ts";
 
 /**
  * The Zod namespace, injected into every `payload`, `state` and similar schema function so user
@@ -27,6 +27,19 @@ export interface EventPayloadArgs extends PayloadArgs {
 
 export type EventPayloadFunction<Schema extends z.ZodType = z.ZodType> = (
   args: EventPayloadArgs,
+) => Schema;
+
+/**
+ * Arguments of a command's `payload`: `z`, and `personal` and `person` to mark the fields that
+ * hold personal data and the one that names whose it is, for when the command is stored.
+ */
+export interface CommandPayloadArgs extends PayloadArgs {
+  readonly personal: CommandPersonalFunction;
+  readonly person: PersonFunction;
+}
+
+export type CommandPayloadFunction<Schema extends z.ZodType = z.ZodType> = (
+  args: CommandPayloadArgs,
 ) => Schema;
 
 /**
