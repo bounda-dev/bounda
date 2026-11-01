@@ -1,10 +1,17 @@
 import { bounda, failure } from "@bounda-dev/react-router/app";
+import { createIdempotencyKey, IdempotencyKeyField } from "@bounda-dev/react-router/form";
 import { Form, redirect, useNavigation } from "react-router";
 import type { Route } from "./+types/register";
 
+// The id is made with the page, so a registration sent again is the same registration.
+export const loader = () => ({
+  userId: crypto.randomUUID(),
+  idempotencyKey: createIdempotencyKey(),
+});
+
 export const action = async ({ request, context }: Route.ActionArgs) => {
   const form = await request.formData();
-  const userId = crypto.randomUUID();
+  const userId = String(form.get("userId") ?? "");
   try {
     await context.get(bounda).commands.registerUser({
       userId,
@@ -17,12 +24,14 @@ export const action = async ({ request, context }: Route.ActionArgs) => {
   return redirect(`/users/${userId}`);
 };
 
-export default function Register({ actionData }: Route.ComponentProps) {
+export default function Register({ loaderData, actionData }: Route.ComponentProps) {
   const navigation = useNavigation();
   return (
     <section>
       <h1>Register</h1>
       <Form method="post">
+        <input type="hidden" name="userId" value={loaderData.userId} />
+        <IdempotencyKeyField value={loaderData.idempotencyKey} />
         <label>
           Name
           <input name="name" required />

@@ -42,7 +42,12 @@ describe("onboarding", () => {
     clock.advance(MINUTE);
     await app.runUntilIdle();
     expect(sent).toEqual([
-      { to: "ada@example.com", name: "Ada", idempotencyKey: expect.any(String) },
+      {
+        template: "welcome",
+        to: "ada@example.com",
+        name: "Ada",
+        idempotencyKey: expect.any(String),
+      },
     ]);
     expect(await app.queries.getUserDetails({ userId: ADA })).toMatchObject({
       welcomeEmailSentAt: expect.any(Date),
@@ -63,7 +68,12 @@ describe("onboarding", () => {
     expect(details).toMatchObject({ status: "active", activatedAt: expect.any(Date) });
     expect(details?.expiredAt).toBeUndefined();
     expect(sent).toEqual([
-      { to: "ada@example.com", name: "Ada", idempotencyKey: expect.any(String) },
+      {
+        template: "welcome",
+        to: "ada@example.com",
+        name: "Ada",
+        idempotencyKey: expect.any(String),
+      },
     ]);
     await app.stop();
   });
@@ -88,6 +98,62 @@ describe("onboarding", () => {
     await expect(app.commands.activateUser({ userId: ADA })).rejects.toMatchObject({
       rejected: "Expired",
     });
+    await app.stop();
+  });
+
+  it("reminds a user who has not activated three days later, once", async () => {
+    const { app, clock, sent } = await start();
+    await app.commands.registerUser({ userId: ADA, email: "ada@example.com", name: "Ada" });
+    await app.commands.registerUser({ userId: GRACE, email: "grace@example.com", name: "Grace" });
+    await app.commands.activateUser({ userId: GRACE });
+    await app.runUntilIdle();
+
+    clock.advance(3 * DAY);
+    await app.runUntilIdle();
+    expect(sent.filter((email) => email.template === "activation-reminder")).toEqual([
+      {
+        template: "activation-reminder",
+        to: "ada@example.com",
+        name: "Ada",
+        idempotencyKey: expect.any(String),
+      },
+    ]);
+    await app.stop();
+  });
+
+  it("forgets a user: their rows go, their reminder is cancelled and the stream keeps nothing of them", async () => {
+    const { app, clock, sent } = await start();
+    await app.commands.registerUser({ userId: ADA, email: "ada@example.com", name: "Ada" });
+    await app.commands.registerUser({ userId: GRACE, email: "grace@example.com", name: "Grace" });
+    clock.advance(MINUTE);
+    await app.runUntilIdle();
+    await app.commands.updateProfile({ userId: ADA, name: "Ada Lovelace" });
+
+    await app.forget(ADA);
+    await app.runUntilIdle();
+    expect(await app.queries.getUserDetails({ userId: ADA })).toBeNull();
+    expect((await app.queries.listUsers({})).users.map((user) => user.name)).toEqual(["Grace"]);
+    const [forgotten] = (await app.events.read()).filter(
+      (event) => event.type === "PersonalDataForgotten",
+    );
+    expect(forgotten?.payload).toMatchObject({
+      personId: ADA,
+      cancelledCommands: [{ type: "SendActivationReminder" }],
+    });
+
+    clock.advance(3 * DAY);
+    await app.runUntilIdle();
+    expect(sent.map((email) => [email.template, email.to])).toEqual([
+      ["welcome", "ada@example.com"],
+      ["welcome", "grace@example.com"],
+      ["activation-reminder", "grace@example.com"],
+    ]);
+
+    // A rebuild replays Ada's events with her fields read as null, and leaves her out again.
+    await app.rebuildReadModel("usersDirectory");
+    await app.rebuildReadModel("userDetails");
+    expect((await app.queries.listUsers({})).users.map((user) => user.name)).toEqual(["Grace"]);
+    expect(await app.queries.getUserDetails({ userId: ADA })).toBeNull();
     await app.stop();
   });
 

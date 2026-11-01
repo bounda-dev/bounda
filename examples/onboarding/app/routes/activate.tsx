@@ -1,6 +1,9 @@
 import { bounda, failure } from "@bounda-dev/react-router/app";
+import { createIdempotencyKey, IdempotencyKeyField } from "@bounda-dev/react-router/form";
 import { Form, redirect, useNavigation, useSearchParams } from "react-router";
 import type { Route } from "./+types/activate";
+
+export const loader = () => ({ idempotencyKey: createIdempotencyKey() });
 
 export const action = async ({ request, context }: Route.ActionArgs) => {
   const form = await request.formData();
@@ -13,7 +16,7 @@ export const action = async ({ request, context }: Route.ActionArgs) => {
   return redirect(`/users/${userId}`);
 };
 
-export default function Activate({ actionData }: Route.ComponentProps) {
+export default function Activate({ loaderData, actionData }: Route.ComponentProps) {
   const navigation = useNavigation();
   const [search] = useSearchParams();
   return (
@@ -21,6 +24,7 @@ export default function Activate({ actionData }: Route.ComponentProps) {
       <h1>Activate</h1>
       <p className="muted">Paste the id of a registered user.</p>
       <Form method="post">
+        <IdempotencyKeyField value={loaderData.idempotencyKey} />
         <label>
           User id
           <input name="userId" defaultValue={search.get("userId") ?? ""} required />

@@ -41,13 +41,17 @@ webhooks.
 6. Once the order is paid the process dispatches `fulfillOrder`. When the order is cancelled,
    whoever cancelled it, the process cancels the payment, and a payment that settles after it was
    cancelled is refunded by the policy `refund-on-refund-requested`.
-7. Two read models follow along: `order-summary`, with a query written in SQL and the payment's
+7. Once the order is fulfilled, the policy `customer/policies/order/earn-points-on-order-fulfilled`
+   gives the customer a point per unit of its total, on the `customer` aggregate, where
+   `redeemPoints` spends them.
+8. Two read models follow along: `order-summary`, with a query written in SQL and the payment's
    status, and `my-orders`.
 
 [Sagas and compensation](/guides/sagas/) walks through this flow step by step: what each step
 compensates, and what happens when the webhooks arrive late, twice or out of order.
 
-Neither aggregate has a `state.ts`: their state is inferred from what their events return.
+Neither `order` nor `payment` has a `state.ts`: their state is inferred from what their events
+return.
 `order-placed.ts` and `payment-requested.ts` open their aggregates with `begin`, so a handler
 that has checked `state.status` reads `state.customerId` or `state.intentId` as a string, and
 `state.status === undefined` means the order or the payment does not exist yet.
@@ -86,6 +90,36 @@ export default defineConfig({
   },
 });
 ```
+
+**A checkout that can be sent again.** The checkout makes an
+[idempotency key](/guides/idempotent-commands/) once and sends it with every attempt. A retry
+after a response lost on the way back answers what the first attempt did, instead of the
+`AlreadyPlaced` rejection it would meet without the key, and the payment is requested once:
+
+```ts
+const checkout = { idempotencyKey: randomUUID() };
+await app.commands.placeOrder(cart, checkout);
+await app.commands.placeOrder(cart, checkout); // the same StoredDispatch, nothing placed
+```
+
+The same key with another cart is a bug of the caller, and rejects with
+`IdempotencyKeyConflictError`.
+
+**A stream that never closes, snapshotted.** An order's stream ends when the order does; a
+customer's points grow with every order for as long as they shop. `bounda.config.ts` turns on
+[snapshots](/concepts/long-streams/#snapshots) for that aggregate alone:
+
+```ts
+runtime: {
+  overrides: {
+    customer: { snapshot: { every: 100 } },
+  },
+},
+```
+
+`tests/storefront.test.ts` passes the app's `runtime` to `createTestApp`, so the snapshots are
+written there too, and earns points 250 times before redeeming them: a test app checks every state
+loaded from a snapshot against a fold of the whole stream, and fails the command when they differ.
 
 **A delay from the environment.** The reminder's delay comes from `REMINDER_DELAY`, a string
 that `asDuration` checks where it is used

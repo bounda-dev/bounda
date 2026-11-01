@@ -7,14 +7,19 @@ const paid = randomUUID();
 const declined = randomUUID();
 const cancelled = randomUUID();
 
-await app.commands.placeOrder({
+// The checkout makes its key once and sends it with every attempt: the second attempt, as after
+// a response lost on the way back, answers what the first did and places nothing.
+const checkout = { idempotencyKey: randomUUID() };
+const cart = {
   orderId: paid,
   customerId: "ada",
   items: [
     { productId: "keyboard", quantity: 1, price: 120 },
     { productId: "cable", quantity: 2, price: 9.5 },
   ],
-});
+};
+await app.commands.placeOrder(cart, checkout);
+await app.commands.placeOrder(cart, checkout);
 await app.commands.placeOrder({
   orderId: declined,
   customerId: "ada",
@@ -45,6 +50,13 @@ await app.runUntilIdle();
 
 // The customer pays the cancelled order with the link they still had: the payment goes back.
 await app.commands.settlePayment({ paymentId: await paymentOf(cancelled) });
+await app.runUntilIdle();
+
+// The paid order earned a point per unit of its total; one more than that is refused.
+await app.commands.redeemPoints({ customerId: "ada", points: 100 });
+await app.commands
+  .redeemPoints({ customerId: "ada", points: 40 })
+  .catch((error: Error) => console.log(`redeem 40: ${error.message}`));
 await app.runUntilIdle();
 
 const summary = await app.queries.listOrdersByCustomer({ customerId: "ada" });

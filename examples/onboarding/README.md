@@ -1,8 +1,11 @@
 # Onboarding
 
 User registration and activation on Bounda inside a React Router app. One `user` aggregate, a
-process that asks for a welcome email a minute after registering and expires registrations nobody
-activates within a week, a policy that sends that email, and two read models behind the pages.
+process that expires registrations nobody activates within a week, a policy that sends a welcome
+email a minute after registering, a reminder scheduled three days ahead, and two read models
+behind the pages. The user's email and name are personal data: "Delete my data" on their page
+forgets them, which also cancels the reminder. Every form carries an idempotency key, so one sent
+twice runs once.
 
 ```bash
 pnpm install

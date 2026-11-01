@@ -20,6 +20,10 @@ export default function Home() {
         <li>
           Browse the <Link to="/users">directory</Link>, a read model updated by projections.
         </li>
+        <li>
+          Delete a user's data from their page: <code>forget</code> makes their email and name
+          unreadable and cancels their reminder.
+        </li>
       </ol>
       <p className="muted">
         Storage is SQLite unless <code>DATABASE_URL</code> points at PostgreSQL. The welcome email

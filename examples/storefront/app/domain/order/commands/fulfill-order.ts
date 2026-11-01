@@ -8,5 +8,5 @@ export const rejections = ({ state }: Command.RejectionsArgs) => ({
 
 export const handler = ({ state, events, reject }: Command.HandlerArgs) => {
   if (state.status !== "paid") return reject("NotPaid");
-  return [events.orderFulfilled()];
+  return [events.orderFulfilled({ customerId: state.customerId, total: state.total })];
 };

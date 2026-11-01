@@ -1,7 +1,7 @@
 import type { Command } from "./+types/update-profile";
 
-export const payload = ({ z }: Command.PayloadArgs) =>
-  z.object({ userId: z.uuid(), name: z.string().min(1) });
+export const payload = ({ z, personal }: Command.PayloadArgs) =>
+  z.object({ userId: z.uuid(), name: personal(z.string().min(1)) });
 
 export const rejections = ({ command }: Command.RejectionsArgs) => ({
   NotUpdatable: `User ${command.aggregateId} cannot be updated`,
