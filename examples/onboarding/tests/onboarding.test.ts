@@ -121,7 +121,7 @@ describe("onboarding", () => {
     await app.stop();
   });
 
-  it("forgets a user: their rows go, their reminder is cancelled and the stream keeps nothing of them", async () => {
+  it("forgets a user: their rows go, for good, and their reminder is cancelled", async () => {
     const { app, clock, sent } = await start();
     await app.commands.registerUser({ userId: ADA, email: "ada@example.com", name: "Ada" });
     await app.commands.registerUser({ userId: GRACE, email: "grace@example.com", name: "Grace" });

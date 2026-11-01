@@ -158,11 +158,11 @@ key are in [idempotent commands](/guides/idempotent-commands/#keys-in-react-rout
 
 ## Reading what you just wrote
 
-Read models are updated by projections that run in the background, so a page reached right after
-a command could be rendered before the read model has the row. By default the app in the context
-reads its own writes: a command resolves once the read models that project its events have
-reached them, and so does `forget`, and the redirect lands on a page that already shows them. The wait is bounded, and
-what it waits for is in [reading your own writes](/guides/deployment/#reading-your-own-writes).
+Read models are updated by projections that run in the background, so a page reached right after a
+command could be rendered before the read model has the row. By default the app in the context reads
+its own writes: a command resolves once the read models that project its events have reached them,
+and so does `forget`, and the redirect lands on a page that already shows them. The wait is bounded,
+and what it waits for is in [reading your own writes](/guides/deployment/#reading-your-own-writes).
 Policies, processes and scheduled commands still run in the background.
 
 ```ts
