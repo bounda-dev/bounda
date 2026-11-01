@@ -1,15 +1,21 @@
 import { bounda, failure } from "@bounda-dev/react-router/app";
-import { data, Form, useNavigation } from "react-router";
+import { createIdempotencyKey, IdempotencyKeyField } from "@bounda-dev/react-router/form";
+import { data, Form, redirect, useNavigation } from "react-router";
 import { formatDate } from "../format.ts";
 import type { Route } from "./+types/user";
 
 export const loader = async ({ params, context }: Route.LoaderArgs) => {
   const user = await context.get(bounda).queries.getUserDetails({ userId: params.userId });
   if (user === null) throw data("User not found", { status: 404 });
-  return user;
+  return { user, idempotencyKey: createIdempotencyKey() };
 };
 
-export const action = async ({ params, context }: Route.ActionArgs) => {
+export const action = async ({ request, params, context }: Route.ActionArgs) => {
+  const form = await request.formData();
+  if (form.get("intent") === "forget") {
+    await context.get(bounda).forget(params.userId);
+    return redirect("/users");
+  }
   try {
     await context.get(bounda).commands.activateUser({ userId: params.userId });
   } catch (error) {
@@ -18,8 +24,9 @@ export const action = async ({ params, context }: Route.ActionArgs) => {
   return null;
 };
 
-export default function User({ loaderData: user, actionData }: Route.ComponentProps) {
-  const navigation = useNavigation();
+export default function User({ loaderData, actionData }: Route.ComponentProps) {
+  const { user } = loaderData;
+  const submitting = useNavigation().state === "submitting";
   return (
     <section>
       <h1>{user.name}</h1>
@@ -47,11 +54,21 @@ export default function User({ loaderData: user, actionData }: Route.ComponentPr
       </dl>
       {user.status === "registered" && (
         <Form method="post">
-          <button type="submit" disabled={navigation.state === "submitting"}>
-            {navigation.state === "submitting" ? "Activating…" : "Activate"}
+          <IdempotencyKeyField value={loaderData.idempotencyKey} />
+          <button type="submit" name="intent" value="activate" disabled={submitting}>
+            {submitting ? "Activating…" : "Activate"}
           </button>
         </Form>
       )}
+      <Form method="post">
+        <p className="muted">
+          Deleting your data makes your email and name unreadable everywhere, for good, and cancels
+          any reminder still waiting to be sent.
+        </p>
+        <button type="submit" name="intent" value="forget" disabled={submitting}>
+          Delete my data
+        </button>
+      </Form>
       {actionData && <p className="error">{actionData.error}</p>}
     </section>
   );

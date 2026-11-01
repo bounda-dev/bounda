@@ -1,6 +1,11 @@
 import { type BoundaClient, type DispatchOptions, idempotencyKeyFor } from "@bounda-dev/core";
-import { describe, expect, it } from "vitest";
-import { IDEMPOTENCY_KEY_HEADER, withIdempotencyKey } from "./idempotency-key.ts";
+import { describe, expect, it, vi } from "vitest";
+import {
+  IDEMPOTENCY_KEY_FIELD,
+  IDEMPOTENCY_KEY_HEADER,
+  idempotencyKeyOf,
+  withIdempotencyKey,
+} from "./idempotency-key.ts";
 
 const request = (idempotencyKey?: string) =>
   new Request("http://localhost/", {
@@ -22,10 +27,73 @@ const recording = () => {
   return { client, calls };
 };
 
+const posted = (body: BodyInit, headers: Record<string, string> = {}) =>
+  new Request("http://localhost/", { method: "POST", body, headers });
+
+const form = (fields: Record<string, string>) => {
+  const data = new FormData();
+  for (const [name, value] of Object.entries(fields)) data.append(name, value);
+  return data;
+};
+
+describe("idempotencyKeyOf", () => {
+  it("reads the field of a form posted urlencoded or multipart, and leaves the body to the action", async () => {
+    const urlencoded = posted(new URLSearchParams({ [IDEMPOTENCY_KEY_FIELD]: "k-1", name: "Ada" }));
+    expect(await idempotencyKeyOf(urlencoded)).toBe("k-1");
+    expect((await urlencoded.formData()).get("name")).toBe("Ada");
+
+    const multipart = posted(form({ [IDEMPOTENCY_KEY_FIELD]: "k-2", name: "Ada" }));
+    expect(multipart.headers.get("Content-Type")).toMatch(/^multipart\/form-data/);
+    expect(await idempotencyKeyOf(multipart)).toBe("k-2");
+    expect((await multipart.formData()).get("name")).toBe("Ada");
+  });
+
+  it("prefers the header to the field, and reads no body when the header is there", async () => {
+    const both = posted(new URLSearchParams({ [IDEMPOTENCY_KEY_FIELD]: "field" }), {
+      [IDEMPOTENCY_KEY_HEADER]: "header",
+    });
+    expect(await idempotencyKeyOf(both)).toBe("header");
+    expect(both.bodyUsed).toBe(false);
+  });
+
+  it("passes an empty field on as it is", async () => {
+    expect(
+      await idempotencyKeyOf(posted(new URLSearchParams({ [IDEMPOTENCY_KEY_FIELD]: "" }))),
+    ).toBe("");
+  });
+
+  it("finds no key in a GET, nor in a body without the field or that is no form, which it never copies", async () => {
+    const get = request();
+    const json = posted(JSON.stringify({ [IDEMPOTENCY_KEY_FIELD]: "k" }), {
+      "Content-Type": "application/json",
+    });
+    const clones = [vi.spyOn(get, "clone"), vi.spyOn(json, "clone")];
+    expect(await idempotencyKeyOf(get)).toBeNull();
+    expect(await idempotencyKeyOf(json)).toBeNull();
+    for (const clone of clones) expect(clone).not.toHaveBeenCalled();
+    expect(await idempotencyKeyOf(posted(new URLSearchParams({ name: "Ada" })))).toBeNull();
+    const upload = new FormData();
+    upload.append(IDEMPOTENCY_KEY_FIELD, new Blob(["k"]), "key.txt");
+    expect(await idempotencyKeyOf(posted(upload))).toBeNull();
+  });
+
+  it("finds no key in a body already read, or one that does not parse, and does not throw", async () => {
+    const read = posted(new URLSearchParams({ [IDEMPOTENCY_KEY_FIELD]: "k" }));
+    await read.text();
+    expect(await idempotencyKeyOf(read)).toBeNull();
+
+    const broken = posted("not multipart", {
+      "Content-Type": "multipart/form-data; boundary=missing",
+    });
+    expect(await idempotencyKeyOf(broken)).toBeNull();
+    await expect(broken.formData()).rejects.toThrow();
+  });
+});
+
 describe("withIdempotencyKey", () => {
   it("hands every command a key of its own from the header, unless the caller passes one", async () => {
     const { client, calls } = recording();
-    const served = withIdempotencyKey(client, request("req-1"));
+    const served = await withIdempotencyKey(client, request("req-1"));
     expect(served).not.toBe(client);
     expect(served.queries).toBe(client.queries);
     const commands = served.commands as unknown as Record<string, unknown>;
@@ -60,10 +128,8 @@ describe("withIdempotencyKey", () => {
       },
     } as unknown as BoundaClient;
     for (const attempt of [1, 2]) {
-      const commands = withIdempotencyKey(client, request("req-3")).commands as unknown as Record<
-        string,
-        (payload: unknown) => Promise<unknown>
-      >;
+      const commands = (await withIdempotencyKey(client, request("req-3")))
+        .commands as unknown as Record<string, (payload: unknown) => Promise<unknown>>;
       await commands.reserveSeats?.({ attempt });
       await commands.placeOrder?.({ attempt });
     }
@@ -79,8 +145,8 @@ describe("withIdempotencyKey", () => {
 
   it("leaves a client alone whose request has no header, and passes an empty header on", async () => {
     const { client, calls } = recording();
-    expect(withIdempotencyKey(client, request())).toBe(client);
-    const served = withIdempotencyKey(client, request(""));
+    expect(await withIdempotencyKey(client, request())).toBe(client);
+    const served = await withIdempotencyKey(client, request(""));
     await (
       served.commands as unknown as { placeOrder: (payload: unknown) => Promise<unknown> }
     ).placeOrder({});
@@ -100,7 +166,7 @@ describe("withIdempotencyKey", () => {
         },
       ),
     } as unknown as BoundaClient;
-    const served = withIdempotencyKey(client, request("req-2"));
+    const served = await withIdempotencyKey(client, request("req-2"));
     await (
       served.commands as unknown as Record<string, (payload: unknown) => Promise<unknown>>
     ).anything?.({ id: "1" });

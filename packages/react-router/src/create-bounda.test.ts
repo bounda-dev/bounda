@@ -158,6 +158,38 @@ describe("createBounda", () => {
     expect(plain.context.get(bounda)).toBe(app);
   });
 
+  it("keys the commands from the idempotencyKey field of a posted form, leaving the body to the action", async () => {
+    const options: unknown[] = [];
+    const app = {
+      commands: {
+        placeOrder: async (_payload: unknown, dispatch?: unknown) => {
+          options.push(dispatch);
+          return { scheduled: false };
+        },
+      },
+      start: () => undefined,
+      stop: async () => undefined,
+    } as unknown as BoundaApp;
+    const { bounda, boundaMiddleware } = createBounda({
+      consistency: "eventual",
+      key: uniqueKey(),
+      boot: async () => app,
+    });
+    const { context, args } = middlewareArgs();
+    const request = new Request(url, {
+      method: "POST",
+      body: new URLSearchParams({ idempotencyKey: "form-1", orderId: "o-1" }),
+    });
+    await boundaMiddleware({ ...args, request }, async () => undefined);
+    const orderId = (await request.formData()).get("orderId");
+    await (
+      context.get(bounda).commands as unknown as {
+        placeOrder: (payload: unknown) => Promise<unknown>;
+      }
+    ).placeOrder({ orderId });
+    expect(options).toEqual([{ idempotencyKey: idempotencyKeyFor("form-1", "placeOrder") }]);
+  });
+
   it("returns what next returns, awaiting it", async () => {
     const { boundaMiddleware } = createBounda({
       consistency: "eventual",

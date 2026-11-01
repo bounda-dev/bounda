@@ -27,6 +27,10 @@
       "types": "./dist/app.d.ts",
       "default": "./dist/app.js"
     },
+    "./form": {
+      "types": "./dist/form.d.ts",
+      "default": "./dist/form.js"
+    },
     "./cloudflare": {
       "types": "./dist/cloudflare/index.d.ts",
       "default": "./dist/cloudflare/index.js"
@@ -55,6 +59,7 @@
     "@bounda-dev/cloudflare": "workspace:*",
     "@bounda-dev/cli": "workspace:*",
     "@bounda-dev/core": "workspace:*",
+    "react": ">=19",
     "react-router": ">=8",
     "vite": ">=7"
   },
@@ -66,6 +71,7 @@
     "@stryker-mutator/core": "catalog:",
     "@stryker-mutator/vitest-runner": "catalog:",
     "@types/node": "catalog:",
+    "@types/react": "catalog:",
     "react": "catalog:",
     "react-router": "catalog:",
     "tsdown": "catalog:",

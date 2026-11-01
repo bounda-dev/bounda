@@ -156,7 +156,7 @@ export const createBounda: CreateBoundaFunction = <R extends Registry = AppRegis
   void retire(slot);
 
   const boundaMiddleware: BoundaMiddleware = async ({ context, request }, next) => {
-    context.set(bounda, withIdempotencyKey(await load(slot, bootApp, consistency), request));
+    context.set(bounda, await withIdempotencyKey(await load(slot, bootApp, consistency), request));
     return next();
   };
 

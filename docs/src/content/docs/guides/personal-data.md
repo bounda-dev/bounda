@@ -94,13 +94,12 @@ context of React Router. In one transaction it deletes the person's key, cancels
 commands that hold their data, removes the dead letters of those that gave up, and appends
 `PersonalDataForgotten` to the stream `bounda:<personId>`: the runtime's own aggregate, `bounda`,
 has one stream per person it forgot. Its payload is `{ personId, cancelledCommands,
-removedDeadLetters }`, the ids and types of what went, the only record of commands that never
-became events. It resolves like a
-command, with the event's position, so `catchUpReadModels({ through })` waits for the read
-models that handle it, and the Durable Object's `forget` waits for them itself unless
-`consistency` is `"eventual"`. A person without a key is forgotten all the same, since a read
-model may hold what their events carried in the clear, and forgetting twice appends twice. An
-empty id is refused with `ValidationError`.
+removedDeadLetters }`, the ids and types of what went, the only record of commands that never became
+events. It resolves like a command, with the event's position, so `catchUpReadModels({ through })`
+waits for the read models that handle it, and the Durable Object's `forget` and the one in React
+Router's `bounda` context wait for them themselves unless `consistency` is `"eventual"`. A person
+without a key is forgotten all the same, since a read model may hold what their events carried in
+the clear, and forgetting twice appends twice. An empty id is refused with `ValidationError`.
 
 From then on every personal field of theirs reads as `null`, in every event, however old. A
 person registered again gets a fresh key; their old events stay unreadable. A command that loaded

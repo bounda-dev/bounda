@@ -24,7 +24,7 @@ export const serve: ServeFunction = <R extends Registry>(
   };
 
   const boundaMiddleware: BoundaMiddleware = async (args, next) => {
-    args.context.set(bounda, withIdempotencyKey((await clients())(args), args.request));
+    args.context.set(bounda, await withIdempotencyKey((await clients())(args), args.request));
     return next();
   };
 

@@ -6,4 +6,10 @@ export default defineConfig({
   ports: {
     order: { notifier: process.env.NOTIFIER === "memory" ? "memory" : "console" },
   },
+  runtime: {
+    overrides: {
+      // A customer's points grow with every order and never close.
+      customer: { snapshot: { every: 100 } },
+    },
+  },
 });

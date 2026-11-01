@@ -1,10 +1,12 @@
-import { DomainError } from "@bounda-dev/core";
+import { randomUUID } from "node:crypto";
+import { DomainError, IdempotencyKeyConflictError } from "@bounda-dev/core";
 import { createTestApp } from "@bounda-dev/core/testing";
 import { sqlite } from "@bounda-dev/sqlite";
 import { describe, expect, it } from "vitest";
 import { registry } from "../.bounda/registry.ts";
 import type { NotifierArgs } from "../app/domain/order/notifier.ts";
 import type { CreateIntentArgs, Gateway, RefundArgs } from "../app/domain/payment/gateway.ts";
+import config from "../bounda.config.ts";
 
 const ORDER = "018f6a5e-4c3c-7c1e-9d4b-0b2c4a1d8e01";
 const OTHER = "018f6a5e-4c3c-7c1e-9d4b-0b2c4a1d8e02";
@@ -21,7 +23,8 @@ interface StartArgs {
 /**
  * Each test gets its own notifier, which records what it was asked to send, and its own gateway,
  * which records every call and honours the idempotency key as Stripe does. A gateway told to fail
- * throws on its first calls, as a provider that cannot be reached.
+ * throws on its first calls, as a provider that cannot be reached. The runtime settings are the
+ * app's, so the customer's snapshots are written and checked as in production.
  */
 const start = async ({ failingIntents = 0, failingRefunds = 0 }: StartArgs = {}) => {
   const sent: NotifierArgs[] = [];
@@ -45,6 +48,7 @@ const start = async ({ failingIntents = 0, failingRefunds = 0 }: StartArgs = {})
   };
   const test = await createTestApp({
     registry,
+    config: { runtime: config.runtime },
     adapter: sqlite({ memory: true }),
     ports: {
       order: { notifier: async (confirmation) => void sent.push(confirmation) },
@@ -316,6 +320,70 @@ describe("storefront", () => {
     expect(intentCalls.map((call) => call.paymentId)).toEqual([paymentId, paymentId]);
     expect(intentCalls[1]?.idempotencyKey).toBe(intentCalls[0]?.idempotencyKey);
     expect(intents.size).toBe(1);
+    await app.stop();
+  });
+
+  it("answers a checkout sent again under its key as it did the first time, and charges once", async () => {
+    const { app, intentCalls, summary } = await start();
+    const checkout = { idempotencyKey: randomUUID() };
+    const placed = await app.commands.placeOrder(
+      { orderId: ORDER, customerId: "ada", items },
+      checkout,
+    );
+    await app.runUntilIdle();
+
+    // The response was lost on the way back, and the customer's browser sends the checkout again.
+    expect(
+      await app.commands.placeOrder({ orderId: ORDER, customerId: "ada", items }, checkout),
+    ).toEqual(placed);
+    await app.runUntilIdle();
+    expect(intentCalls).toHaveLength(1);
+    expect(await app.queries.getMyOrders({ customerId: "ada" })).toHaveLength(1);
+    expect((await summary())?.total).toBe(139);
+
+    await expect(
+      app.commands.placeOrder({ orderId: OTHER, customerId: "ada", items }, checkout),
+    ).rejects.toBeInstanceOf(IdempotencyKeyConflictError);
+    await app.stop();
+  });
+
+  it("gives the customer a point per unit of every fulfilled order, to redeem later", async () => {
+    const { app, paymentOf } = await start();
+    await app.commands.placeOrder({ orderId: ORDER, customerId: "ada", items });
+    await app.runUntilIdle();
+    await app.commands.settlePayment({ paymentId: await paymentOf() });
+    await app.runUntilIdle();
+
+    await expect(app.commands.redeemPoints({ customerId: "ada", points: 140 })).rejects.toThrow(
+      "Only 139 points to redeem",
+    );
+    await app.commands.redeemPoints({ customerId: "ada", points: 100 });
+    await expect(app.commands.redeemPoints({ customerId: "ada", points: 40 })).rejects.toThrow(
+      "Only 39 points to redeem",
+    );
+    await app.stop();
+  });
+
+  it("decides on a long-standing customer's points from a snapshot of their account", async () => {
+    const { app } = await start();
+    for (let order = 0; order < 250; order += 1) {
+      await app.commands.earnPoints({ customerId: "ada", orderId: randomUUID(), points: 10 });
+    }
+    await app.runUntilIdle();
+    expect((await app.getLag()).subscribers).toContainEqual(
+      expect.objectContaining({ subscriber: "snapshot:customer", lag: 0 }),
+    );
+
+    // A test app checks every state loaded from a snapshot against a fold of the whole stream,
+    // and throws when they differ.
+    await expect(app.commands.redeemPoints({ customerId: "ada", points: 2_501 })).rejects.toThrow(
+      "Only 2500 points to redeem",
+    );
+    await app.commands.redeemPoints({ customerId: "ada", points: 2_500 });
+    await app.runUntilIdle();
+    await expect(app.commands.redeemPoints({ customerId: "ada", points: 1 })).rejects.toThrow(
+      "Only 0 points to redeem",
+    );
     await app.stop();
   });
 
