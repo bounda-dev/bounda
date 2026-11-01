@@ -1,4 +1,4 @@
-import type { DispatchOptions, DispatchResult } from "../contracts/command.ts";
+import type { DispatchOptions, DispatchResult, StoredDispatch } from "../contracts/command.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
 import type { CommandsFacade, Registry } from "../modules/registry.ts";
 import type { BoundaApp } from "./app.ts";
@@ -34,8 +34,9 @@ export interface ReadYourWritesFunction {
 }
 
 /**
- * The same app with `commands` that, before resolving, wait for the read models that project
- * their events to reach them, so a query issued right after a command sees its writes. The wait
+ * The same app with `commands` and `forget` that, before resolving, wait for the read models that
+ * project their events to reach them, so a query issued right after a command, or after
+ * forgetting someone, sees its writes. The wait
  * lasts at most `runtime.dispatcher.catchUp.timeout`; then the command resolves anyway and a
  * warning is logged, as it does when a read model cannot be read. Meant for request handlers that redirect to a page reading what they just
  * wrote. Policies, processes, scheduled commands and commands dispatched from inside the runtime
@@ -55,5 +56,10 @@ export const readYourWrites: ReadYourWritesFunction = <R extends Registry>(
       },
     ]),
   );
-  return { ...app, commands: caughtUp as CommandsFacade<R> };
+  const forget = async (personId: string): Promise<StoredDispatch> => {
+    const result = await app.forget(personId);
+    await app.catchUpReadModels({ through: result });
+    return result;
+  };
+  return { ...app, commands: caughtUp as CommandsFacade<R>, forget };
 };

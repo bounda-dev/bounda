@@ -100,4 +100,23 @@ describe("readYourWrites", () => {
     expect(await lagOf("projection:placedOrders")).toBe(1);
     await app.stop();
   });
+
+  it("brings the read models up to what forgetting someone appended", async () => {
+    const { app } = await createTestApp({
+      registry,
+      config: { runtime: { role: "web" } },
+      ports: { order: { notifier: "silent" } },
+    });
+    const through: unknown[] = [];
+    const consistent = readYourWrites<typeof registry>({
+      ...app,
+      catchUpReadModels: async (args) => {
+        through.push(args?.through);
+      },
+    });
+    const forgotten = await consistent.forget("p-1");
+    expect(forgotten).toMatchObject({ eventTypes: ["PersonalDataForgotten"] });
+    expect(through).toEqual([forgotten]);
+    await app.stop();
+  });
 });

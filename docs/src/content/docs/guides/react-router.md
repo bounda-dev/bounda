@@ -134,19 +134,34 @@ cannot carry it into the Durable Object, where the command runs to the end.
 ## Retrying a request safely
 
 A request that times out on the way back, or a form submitted twice, dispatches its command
-twice. When the client sends an `Idempotency-Key` header, the middleware gives every command the
-request dispatches an `idempotencyKey` derived from it and the command's name, and the second
-arrival answers what the first did, its rejection included, without running the command again. The host never makes a key
-up: a request without the header dispatches as before. What the key means, its lifetime, and an
-action that dispatches two commands under one header are in
-[idempotent commands](/guides/idempotent-commands/).
+twice. When the request carries a key, the middleware gives every command it dispatches an
+`idempotencyKey` derived from that key and the command's name, and the second arrival answers what
+the first did, its rejection included, without running the command again. The key comes from the
+`Idempotency-Key` header or, since a browser form sends no headers, from a hidden `idempotencyKey`
+field, which `@bounda-dev/react-router/form` renders from a key the loader makes:
+
+```tsx
+import { createIdempotencyKey, IdempotencyKeyField } from "@bounda-dev/react-router/form";
+
+export const loader = () => ({ idempotencyKey: createIdempotencyKey() });
+
+// in the component
+<Form method="post">
+  <IdempotencyKeyField value={loaderData.idempotencyKey} />
+  {/* the form's fields */}
+</Form>
+```
+
+The host never makes a key up: a request with neither dispatches as before. What the key means,
+its lifetime, how the field renews itself, and an action that dispatches two commands under one
+key are in [idempotent commands](/guides/idempotent-commands/#keys-in-react-router).
 
 ## Reading what you just wrote
 
 Read models are updated by projections that run in the background, so a page reached right after
 a command could be rendered before the read model has the row. By default the app in the context
 reads its own writes: a command resolves once the read models that project its events have
-reached them, and the redirect lands on a page that already shows them. The wait is bounded, and
+reached them, and so does `forget`, and the redirect lands on a page that already shows them. The wait is bounded, and
 what it waits for is in [reading your own writes](/guides/deployment/#reading-your-own-writes).
 Policies, processes and scheduled commands still run in the background.
 

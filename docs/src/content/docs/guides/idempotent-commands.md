@@ -1,6 +1,6 @@
 ---
 title: Idempotent commands
-description: Let a client send a command again without running it twice, with the idempotencyKey option and the Idempotency-Key header.
+description: Let a client send a command again without running it twice, with the idempotencyKey option, the Idempotency-Key header and a form's idempotencyKey field.
 sidebar:
   order: 9
 ---
@@ -53,55 +53,102 @@ for the provider the handler calls, the same across the runs a concurrency confl
 option is for whoever dispatches the command, and reaches the handler as `command.metadata`
 does not: a replay never runs it.
 
-## The `Idempotency-Key` header in React Router
+## Keys in React Router
 
-The `boundaMiddleware` reads the `Idempotency-Key` header of every request and gives every command
-the request dispatches an `idempotencyKey` of its own, `idempotencyKeyFor(header, commandName)`, on
-Node and on Cloudflare alike, so an action has nothing to add, even one that dispatches two
-commands:
+The `boundaMiddleware` takes a request's key from its `Idempotency-Key` header or, when there is
+none, from the `idempotencyKey` field of the form it posts, urlencoded or multipart. It gives every
+command the request dispatches an `idempotencyKey` of its own, `idempotencyKeyFor(key,
+commandName)`, on Node and on Cloudflare alike, so an action has nothing to add, even one that
+dispatches two commands. The form is read from a copy of the request, so the action still reads
+it with `request.formData()`; a multipart form is therefore parsed twice, so a route that takes
+large uploads is better keyed with the header. The host never makes keys up: a request with neither dispatches as
+before, and an empty key is refused like any other.
+
+### From a form
+
+A browser form sends no headers, so a form carries its key in a hidden field.
+`@bounda-dev/react-router/form` has both halves: `createIdempotencyKey()` makes one in the loader,
+so the page hydrates with the key it was rendered with, and `<IdempotencyKeyField>` renders it:
 
 ```tsx
-// app/routes/register.tsx
+// app/routes/activate.tsx
+import { bounda, failure } from "@bounda-dev/react-router/app";
+import { createIdempotencyKey, IdempotencyKeyField } from "@bounda-dev/react-router/form";
+import { Form, redirect } from "react-router";
+import type { Route } from "./+types/activate";
+
+export const loader = () => ({ idempotencyKey: createIdempotencyKey() });
+
 export const action = async ({ request, context }: Route.ActionArgs) => {
   const form = await request.formData();
+  const userId = String(form.get("userId"));
   try {
-    // Carries the request's Idempotency-Key, when the client sent one.
-    await context.get(bounda).commands.registerUser({ userId: String(form.get("userId")) });
+    // Keyed with the form's idempotencyKey field.
+    await context.get(bounda).commands.activateUser({ userId });
   } catch (error) {
     return failure(error);
   }
-  return redirect("/users");
+  return redirect(`/users/${userId}`);
 };
+
+export default function Activate({ loaderData }: Route.ComponentProps) {
+  return (
+    <Form method="post">
+      <IdempotencyKeyField value={loaderData.idempotencyKey} />
+      <input name="userId" required />
+      <button type="submit">Activate</button>
+    </Form>
+  );
+}
 ```
 
-The client makes the key when the user submits and sends it again when it retries, so a retry
-answers as the first attempt did. With a fetcher:
+The same form submitted again unchanged, twice in a row or after a response that never came back,
+sends the same key and answers what the first submit did. Once the user edits the form, the field
+takes a fresh key, so a form corrected after a rejection is a new request rather than a
+conflict: React Router does not run the loader again after an action that answers 4xx, which would
+otherwise leave the old key in place. A new key from the loader, after a successful submit,
+replaces it too. A payload that comes from the page rather than the user, such as the id of what
+the form creates, belongs in the loader as well, so that a retry sends the same one:
+
+```ts
+export const loader = () => ({ userId: crypto.randomUUID(), idempotencyKey: createIdempotencyKey() });
+```
+
+### From `fetch`
+
+A client that calls the action itself, a script or another service, sends the header, made once per
+operation and sent again on every retry of it:
 
 ```ts
 const key = crypto.randomUUID();
-fetcher.submit(form, { method: "post", headers: { "Idempotency-Key": key } });
+await fetch("/activate", { method: "POST", body, headers: { "Idempotency-Key": key } });
 ```
+
+The header wins over the field when a request has both.
+
+### Two dispatches of one command
 
 A key names one command, so an action that dispatches the same command twice shares one key
 between them: the second answers what the first did with the same payload, and conflicts with
-another. Pass `idempotencyKey` yourself, which wins over the header, derived with
+another. Pass `idempotencyKey` yourself, which wins over the request's key, derived with
 `idempotencyKeyFor` from `@bounda-dev/core`:
 
 ```ts
-const key = request.headers.get("Idempotency-Key");
+const form = await request.formData();
+const key = request.headers.get("Idempotency-Key") ?? form.get("idempotencyKey");
 for (const [index, seat] of seats.entries()) {
-  const keyed = key === null ? {} : { idempotencyKey: idempotencyKeyFor(key, `seat-${index}`) };
+  const keyed =
+    typeof key === "string" ? { idempotencyKey: idempotencyKeyFor(key, `seat-${index}`) } : {};
   await commands.reserveSeat(seat, keyed);
 }
 ```
 
 `failure()` answers a conflict with a 422 ([errors from the domain](/guides/react-router/#errors-from-the-domain)).
-The host never makes keys up: a request without the header dispatches as before.
 
 ## On Cloudflare
 
 `connect(stub)` sends the option to the Durable Object with the command, where it works as
-above; React Router on Cloudflare reads the header the same way. The JSON API of `createWorker`
+above; React Router on Cloudflare reads the header and the field the same way. The JSON API of `createWorker`
 takes `delay` and `correlationId` from the query string and no key.
 
 ## In a policy or a process

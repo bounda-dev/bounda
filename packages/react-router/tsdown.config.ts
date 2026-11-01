@@ -5,6 +5,7 @@ export default defineConfig({
     "src/index.ts",
     "src/vite.ts",
     "src/app.ts",
+    "src/form.ts",
     "src/cloudflare/index.ts",
     "src/host/node.ts",
     "src/host/cloudflare.ts",

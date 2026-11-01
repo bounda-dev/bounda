@@ -97,8 +97,8 @@ has one stream per person it forgot. Its payload is `{ personId, cancelledComman
 removedDeadLetters }`, the ids and types of what went, the only record of commands that never
 became events. It resolves like a
 command, with the event's position, so `catchUpReadModels({ through })` waits for the read
-models that handle it, and the Durable Object's `forget` waits for them itself unless
-`consistency` is `"eventual"`. A person without a key is forgotten all the same, since a read
+models that handle it, and the Durable Object's `forget` and the one in React Router's `bounda`
+context wait for them themselves unless `consistency` is `"eventual"`. A person without a key is forgotten all the same, since a read
 model may hold what their events carried in the clear, and forgetting twice appends twice. An
 empty id is refused with `ValidationError`.
 

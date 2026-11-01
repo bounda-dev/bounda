@@ -26,7 +26,7 @@ request knows**, so the host decides it. The core offers the means and no defaul
 Two primitives in `@bounda-dev/core`, both working in every role:
 `app.catchUpReadModels({ through })` waits for the read models a command's events reach, and only
 those, and `readYourWrites(app)` returns the app with a `commands` facade that does it after every
-dispatch. The wait is bounded, and the commands policies and processes dispatch never wait.
+dispatch, and a `forget` that does it too. The wait is bounded, and the commands policies and processes dispatch never wait.
 [Reading your own writes](/guides/deployment/#reading-your-own-writes) has how they wait and
 their settings.
 
