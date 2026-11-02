@@ -9,8 +9,16 @@ describe("personal data crypto", () => {
       expect(isSealed(sealed)).toBe(true);
       expect(sealed.$personal.person).toBe("c-1");
       expect(sealed.$personal.key).toBe(key.fingerprint);
-      expect(sealed.$personal.data).not.toContain(JSON.stringify(value));
       expect(await unseal({ key, sealed })).toEqual(value);
+    }
+  });
+
+  it("leaves no trace of the value in the sealed text", async () => {
+    const key = await importPersonalKey(await generatePersonalKey());
+    // Long enough that random base64 cannot spell them by chance, as it can `42` or `null`.
+    for (const value of ["ana@example.com", { street: "Main Street 1" }]) {
+      const sealed = await seal({ key, person: "c-1", value });
+      expect(sealed.$personal.data).not.toContain(JSON.stringify(value));
     }
   });
 
