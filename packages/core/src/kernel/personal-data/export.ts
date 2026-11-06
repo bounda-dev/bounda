@@ -79,8 +79,8 @@ export interface ExportPersonalDataFunction {
   (args: ExportPersonalDataArgs): Promise<PersonalDataExport>;
 }
 
-const markedFields = (marks: PersonalMarks | null | undefined, payload: unknown): ExportedData => {
-  if (marks === null || marks === undefined || !isRecord(payload)) return {};
+const markedFields = (marks: PersonalMarks | null, payload: unknown): ExportedData => {
+  if (marks === null || !isRecord(payload)) return {};
   return Object.fromEntries(
     marks.fields
       .filter((field) => payload[field] !== undefined)
@@ -107,10 +107,10 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
     ]);
   }
   const exportedAt = clock.now().toISOString();
-  const eventMarks = (event: StoredEvent): PersonalMarks | null | undefined =>
-    aggregates.byName[event.aggregateType]?.eventsByType[event.type]?.personal;
-  const commandMarks = (type: string): PersonalMarks | null | undefined =>
-    aggregates.commandsByType[type]?.command.personal;
+  const eventMarks = (event: StoredEvent): PersonalMarks | null =>
+    aggregates.byName[event.aggregateType]?.eventsByType[event.type]?.personal ?? null;
+  const commandMarks = (type: string): PersonalMarks | null =>
+    aggregates.commandsByType[type]?.command.personal ?? null;
   const openedData = async (type: string, payload: unknown): Promise<ExportedData> => {
     const opened = await openCommandPayload({ payload, keys: storage.personalKeys });
     return markedFields(commandMarks(type), opened.payload);

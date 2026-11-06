@@ -142,7 +142,7 @@ describe("exportPersonalData", () => {
     await place("o-3", { customerId: "c-1", note: "leave at door", total: 30 });
 
     const exported = await exportOf("c-1");
-    expect(exported).toEqual({
+    expect(exported).toStrictEqual({
       personId: "c-1",
       exportedAt: "2026-01-01T00:00:00.000Z",
       events: [
