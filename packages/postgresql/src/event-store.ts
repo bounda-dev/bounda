@@ -34,7 +34,7 @@ const toStoredEvent = (row: Record<string, unknown>): StoredEvent => ({
   payload: row.payload,
   timestamp: String(row.timestamp),
   metadata: row.metadata as EventMetadata,
-  person: row.person === null || row.person === undefined ? null : String(row.person),
+  person: row.person === null ? null : String(row.person),
 });
 
 /**

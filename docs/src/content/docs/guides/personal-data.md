@@ -166,8 +166,9 @@ person, for them to take away, as the right of access and the right to portabili
 id, in position order, the events of their own stream `bounda:<personId>` included; `data` holds
 the fields marked `personal` of that event, opened, and nothing else of its payload, so an event
 without such fields has an empty `data`. `scheduledCommands` are the commands waiting to run
-whose payload holds personal fields of theirs, with `commandId` the id the dispatch answered,
-and `deadLetters` those that gave up, each with the same `data`. After `forget`, the person's
+whose payload holds personal fields of theirs, with `commandId` the id the dispatch answered or,
+for one the runtime scheduled itself, the scheduler's key, and `deadLetters` those that gave up,
+each with the same `data`. After `forget`, the person's
 events are still theirs, and every field reads as `null`, as a handler reads it. An empty id is
 refused with `ValidationError`.
 

@@ -26,7 +26,7 @@ const toStoredEvent = (row: Record<string, unknown>): StoredEvent => ({
   payload: JSON.parse(String(row.payload)) as unknown,
   timestamp: String(row.timestamp),
   metadata: JSON.parse(String(row.metadata)) as EventMetadata,
-  person: row.person === null || row.person === undefined ? null : String(row.person),
+  person: row.person === null ? null : String(row.person),
 });
 
 export const createSqliteEventStore: CreateSqliteEventStoreFunction = ({ db, table }) => {
