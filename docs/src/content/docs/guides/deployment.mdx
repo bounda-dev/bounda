@@ -188,6 +188,33 @@ it needs on start, and a view that gains a field gains a column, or an index for
 `unique()` needs the rebuild below ([what an adapter creates](/adapters/#what-an-adapter-creates)
 and [evolving a read model](/adapters/#evolving-a-read-model)).
 
+## Deploying a change to events
+
+The store keeps a catalogue of every kind of event it holds, `bounda_event_types`: each aggregate,
+event type and schema version, recorded the first time an append writes it. On boot, and before
+`bounda rebuild`, the runtime checks it against the code. Events whose module is gone, of an
+aggregate or a process the app no longer has, or written with a schema version past the one the
+code knows ([upcasters](/guides/changing-events/)), refuse the boot with one
+`INVALID_CONFIGURATION` error that names each of them. An app never starts on a store it cannot
+read.
+
+Roll forward, never back. While a deploy rolls out over several instances, old ones run beside
+new ones, and an old instance can read an event the new code wrote: a new event type, or a new
+upcaster's version. It never moves past it. It reads up to that event and refuses it with
+`SCHEMA_AHEAD`, a transient error, until the new code runs everywhere:
+
+- A read model stops right before the event and backs off as a [failing projection](#a-projection-that-keeps-failing)
+  does; `app.getLag()` shows it under `failing`.
+- A policy or process holds the event and tries again with its back-off, however many attempts
+  that takes. It never gives up on it, so nothing reaches a dead letter.
+- A scheduled command goes back to wait `runtime.dispatcher.backoff.baseDelay`, without counting
+  an attempt.
+- A command fails to its caller, which `failure()` of React Router and the Cloudflare Worker
+  answer with a 503 ([errors](/reference/errors/#over-http)).
+
+A rollback leaves the old code facing events it cannot read, and it does not start. A short deploy
+is all the window there is; keep it short.
+
 ## Rebuilding a read model
 
 A read model is derived data: when its projection had a bug, or its view lost a field or changed a
