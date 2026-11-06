@@ -79,6 +79,7 @@ export const forgetPersonalData: ForgetPersonalDataFunction = async ({
             type: PERSONAL_DATA_FORGOTTEN_EVENT,
             payload,
             context: { correlationId, causationId: correlationId, depth: 0 },
+            person: personId,
           }),
         };
       });

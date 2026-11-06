@@ -263,6 +263,69 @@ export const eventStoreContract: EventStoreContractFunction = ({ create }) => {
       expect(await store.lastPosition()).toBe(4);
     });
 
+    it("keeps the person an event names, and reads a person's events in position order, committed only", async () => {
+      await store.append({
+        aggregateType: "customer",
+        aggregateId: "c-1",
+        expectedVersion: 0,
+        events: [
+          pendingEvent({
+            aggregateType: "customer",
+            aggregateId: "c-1",
+            version: 1,
+            type: "CustomerRegistered",
+            person: "c-1",
+          }),
+        ],
+      });
+      await store.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events: [
+          pendingEvent({ aggregateId: "1", version: 1, person: "c-2" }),
+          pendingEvent({ aggregateId: "1", version: 2, type: "OrderNoted", person: "c-1" }),
+          pendingEvent({ aggregateId: "1", version: 3, type: "OrderPaid" }),
+        ],
+      });
+      const appended = await store.append({
+        aggregateType: "customer",
+        aggregateId: "c-1",
+        expectedVersion: 1,
+        events: [
+          pendingEvent({
+            aggregateType: "customer",
+            aggregateId: "c-1",
+            version: 2,
+            type: "CustomerMoved",
+            person: "c-1",
+          }),
+        ],
+      });
+      expect(appended.events[0]?.person).toBe("c-1");
+      const loaded = await store.load({ aggregateType: "order", aggregateId: "1" });
+      expect(loaded.events.map((event) => event.person)).toEqual(["c-2", "c-1", null]);
+      expect((await store.readAll({ afterPosition: 0, limit: 10 })).map((e) => e.person)).toEqual([
+        "c-1",
+        "c-2",
+        "c-1",
+        null,
+        "c-1",
+      ]);
+
+      const theirs = await store.readByPerson({ person: "c-1", afterPosition: 0, limit: 10 });
+      expect(theirs.map((event) => [event.type, event.position])).toEqual([
+        ["CustomerRegistered", 1],
+        ["OrderNoted", 3],
+        ["CustomerMoved", 5],
+      ]);
+      expect(theirs[1]).toEqual(loaded.events[1]);
+      const page = await store.readByPerson({ person: "c-1", afterPosition: 1, limit: 1 });
+      expect(page.map((event) => event.position)).toEqual([3]);
+      expect(await store.readByPerson({ person: "c-1", afterPosition: 5, limit: 10 })).toEqual([]);
+      expect(await store.readByPerson({ person: "c-3", afterPosition: 0, limit: 10 })).toEqual([]);
+    });
+
     it("starts the global stream at position 0", async () => {
       expect(await store.lastPosition()).toBe(0);
       expect(await store.readAll({ afterPosition: 0, limit: 10 })).toEqual([]);

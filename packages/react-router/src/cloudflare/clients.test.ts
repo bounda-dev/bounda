@@ -64,6 +64,7 @@ describe("cloudflareClients", () => {
     await client.deadLetters.discard("d-2");
     await client.rebuildReadModel("orders");
     await client.forget("c-1");
+    await client.exportPersonalData("c-1");
     expect(store.calls).toEqual([
       ["acme", "lag"],
       ["acme", "readEvents", { after: 3, limit: 10 }],
@@ -72,6 +73,7 @@ describe("cloudflareClients", () => {
       ["acme", "discardDeadLetter", "d-2"],
       ["acme", "rebuildReadModel", "orders"],
       ["acme", "forget", "c-1", "read-your-writes"],
+      ["acme", "exportPersonalData", "c-1"],
     ]);
   });
 

@@ -20,6 +20,7 @@ import { createDispatcher, type DispatcherLag } from "./dispatch/dispatcher.ts";
 import { alignReactiveCheckpoints } from "./dispatch/reactive-checkpoints.ts";
 import { appStorage } from "./events/app-event-store.ts";
 import { createGlobalStream, type GlobalStream } from "./events/global-stream.ts";
+import { exportPersonalData, type PersonalDataExport } from "./personal-data/export.ts";
 import { forgetPersonalData } from "./personal-data/forget.ts";
 import { buildPolicies } from "./policy/build-policies.ts";
 import { createDelayedPolicies } from "./policy/delayed.ts";
@@ -77,6 +78,14 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * `ValidationError` an empty id.
    */
   forget(personId: string): Promise<StoredDispatch>;
+  /**
+   * Everything the store holds that names a person, for them to take away: their events, with
+   * the fields marked `personal` opened (`null` each once they are forgotten) and nothing else of
+   * the payload, and the scheduled commands and dead letters that hold such fields of theirs. A
+   * field left unmarked, a read model and whatever a policy sent out are not in it. Rejects with
+   * `ValidationError` an empty id.
+   */
+  exportPersonalData(personId: string): Promise<PersonalDataExport>;
 }
 
 /**
@@ -520,6 +529,14 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           clock,
           logger,
           concurrencyRetries: config.runtime.commands.concurrencyRetries,
+          personId,
+        }),
+      exportPersonalData: (personId) =>
+        exportPersonalData({
+          storage,
+          aggregates,
+          clock,
+          batchSize: config.runtime.dispatcher.batchSize,
           personId,
         }),
       getLag: async () => ({

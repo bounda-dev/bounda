@@ -83,7 +83,7 @@ On first use the adapter creates its tables, prefixed with `bounda_` by default:
 
 | Table | Holds |
 | --- | --- |
-| `bounda_events` | Every event, with its stream version and a global position |
+| `bounda_events` | Every event, with its stream version, a global position and the person it names, if any, which [`exportPersonalData`](/guides/personal-data/#exporting-a-persons-data) reads by |
 | `bounda_checkpoints` | How far each projection, the policy runner and the process runner have read, and where a paused rebuild stands |
 | `bounda_inbox` | Which handler already completed for which event, so a retry does not run it again |
 | `bounda_scheduled_commands` | Scheduled commands, process deadlines and timeouts, and delayed policy runs |

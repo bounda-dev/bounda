@@ -24,7 +24,8 @@ get today. Each item says why, so nobody discovers it the hard way:
 
 What a production app does get, and where it is explained:
 [rebuilding a read model](/guides/deployment/#rebuilding-a-read-model) without taking it offline,
-[forgetting a person](/guides/personal-data/) without deleting an event,
+[forgetting a person](/guides/personal-data/) without deleting an event and
+[exporting their data](/guides/personal-data/#exporting-a-persons-data),
 [dead letters with a way out](/guides/dead-letters/), [upcasters](/guides/changing-events/) for
 events whose payload changed, [snapshots](/concepts/long-streams/#snapshots) whose validity the
 runtime checks itself, [observability](/reference/observability/) through OpenTelemetry, and a

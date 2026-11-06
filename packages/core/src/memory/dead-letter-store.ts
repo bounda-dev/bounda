@@ -34,6 +34,9 @@ export const createKeptDeadLetterStore: CreateKeptDeadLetterStoreFunction = () =
   const select = (args: ListDeadLettersArgs): DeadLetter[] =>
     [...letters.values()].filter((letter) => matches(letter, args)).sort(byFirstFailure);
 
+  const naming = (person: string): DeadLetter[] =>
+    select({}).filter((letter) => namesPerson(letter, person));
+
   const store: DeadLetterStore = {
     add: async (letter) => {
       const existing = letters.get(letter.id);
@@ -62,8 +65,9 @@ export const createKeptDeadLetterStore: CreateKeptDeadLetterStoreFunction = () =
     remove: async (id) => {
       letters.delete(id);
     },
+    listByPerson: async (person) => naming(person).map(copy),
     forget: async (person) => {
-      const named = select({}).filter((letter) => namesPerson(letter, person));
+      const named = naming(person);
       for (const { id } of named) letters.delete(id);
       return named.map(copy);
     },

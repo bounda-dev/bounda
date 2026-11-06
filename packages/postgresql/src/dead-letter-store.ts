@@ -121,6 +121,13 @@ export const createPostgresqlDeadLetterStore: CreatePostgresqlDeadLetterStoreFun
       if (updated.length === 0) throw new DeadLetterSettledError({ id });
     },
     remove: (id) => db.run(`DELETE FROM ${table} WHERE "id" = $1`, [id]),
+    listByPerson: async (person) =>
+      (
+        await db.all(
+          `SELECT ${COLUMNS} FROM ${table} WHERE ${naming("$1")} ORDER BY "first_failed_at", "id" COLLATE "C"`,
+          [person],
+        )
+      ).map(toLetter),
     forget: async (person) =>
       (await db.all(`DELETE FROM ${table} WHERE ${naming("$1")} RETURNING ${COLUMNS}`, [person]))
         .map(toLetter)

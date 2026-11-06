@@ -100,6 +100,7 @@ const stored = (
     schemaVersion: overrides.schemaVersion ?? 1,
     system: overrides.system ?? false,
   },
+  person: null,
 });
 
 describe("upcastEvent", () => {

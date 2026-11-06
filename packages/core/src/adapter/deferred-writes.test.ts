@@ -6,6 +6,9 @@ import type { KeyedPerson } from "./storage/personal-key-store.ts";
 import {
   testKeyedPerson as held,
   testPersonalKey as stored,
+  testCommand,
+  testContext,
+  testDeadLetter,
   testOutcome,
 } from "./testing/fixtures.ts";
 
@@ -37,5 +40,33 @@ describe("deferWrites", () => {
     expect(await storage.idempotencyStore.get({ key: "live", now })).toBeNull();
     expect(await storage.idempotencyStore.get({ key: "held", now })).toBeNull();
     expect(await storage.idempotencyStore.get({ key: "other", now })).not.toBeNull();
+  });
+
+  it("lists what names a person from the live stores, not from the writes held back", async () => {
+    const storage = await memory().createStorage({ logger: silentLogger });
+    const persons = [held("c-1", "1")];
+    await storage.scheduler.schedule({
+      dedupeKey: "live",
+      command: testCommand("c-1"),
+      executeAt: now,
+      context: testContext,
+      persons,
+    });
+    await storage.deadLetterStore.add({ ...testDeadLetter("live"), kind: "scheduled", persons });
+    const { stores } = deferWrites(storage);
+    await stores.scheduler.schedule({
+      dedupeKey: "held",
+      command: testCommand("c-1"),
+      executeAt: now,
+      context: testContext,
+      persons,
+    });
+    await stores.deadLetterStore.add({ ...testDeadLetter("held"), kind: "scheduled", persons });
+    expect((await stores.scheduler.listByPerson("c-1")).map((entry) => entry.dedupeKey)).toEqual([
+      "live",
+    ]);
+    expect((await stores.deadLetterStore.listByPerson("c-1")).map((letter) => letter.id)).toEqual([
+      "live",
+    ]);
   });
 });

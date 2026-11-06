@@ -59,6 +59,8 @@ const restore = ({ payload, metadata, ...rest }: Kept): StoredEvent => ({
 export const createMemoryEventStore: CreateMemoryEventStoreFunction = ({ onAppend } = {}) => {
   const streams = new Map<string, Kept[]>();
   const log = new Map<number, Kept>();
+  // The positions of each person's events, in the order they were written.
+  const persons = new Map<string, number[]>();
   const gaps = new Set<number>();
   let reserved = 0;
   // Every position up to here is written or a gap: what readers see.
@@ -104,7 +106,12 @@ export const createMemoryEventStore: CreateMemoryEventStoreFunction = ({ onAppen
         position: positions?.[index] || reserve(),
       }));
       streams.set(key, [...(streams.get(key) ?? []), ...written]);
-      for (const event of written) log.set(event.position, event);
+      for (const event of written) {
+        log.set(event.position, event);
+        if (event.person !== null) {
+          persons.set(event.person, [...(persons.get(event.person) ?? []), event.position]);
+        }
+      }
       return {
         version: expectedVersion + written.length,
         events: events.map((event, index) => ({
@@ -143,6 +150,12 @@ export const createMemoryEventStore: CreateMemoryEventStoreFunction = ({ onAppen
       }
       return events;
     },
+    readByPerson: async ({ person, afterPosition, limit }) =>
+      (persons.get(person) ?? [])
+        .filter((position) => position > afterPosition && position <= watermark)
+        .sort((a, b) => a - b)
+        .slice(0, limit)
+        .map((position) => restore(log.get(position) as Kept)),
     lastPosition: async () => watermark,
   };
 };

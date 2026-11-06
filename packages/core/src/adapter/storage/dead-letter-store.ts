@@ -83,6 +83,10 @@ export interface DeadLetterStore {
   updateStatus(id: string, status: DeadLetterStatus): Promise<void>;
   remove(id: string): Promise<void>;
   /**
+   * Every letter whose `persons` names `person`, whatever its status, in the order of `list`.
+   */
+  listByPerson(person: string): Promise<readonly DeadLetter[]>;
+  /**
    * Removes every letter whose `persons` names `person`, whatever its status, and resolves to them
    * in the order of `list`.
    */

@@ -33,6 +33,12 @@ describe("connect", () => {
     ]);
   });
 
+  it("exports a person's data through the stub", async () => {
+    const { stub, exports } = recordingStub();
+    await connect<typeof registry>(stub).exportPersonalData("c-1");
+    expect(exports).toEqual([["c-1"]]);
+  });
+
   it("is not taken for a promise, and has no members but named calls", async () => {
     const store = connect<typeof registry>(recordingStub().stub);
     expect(Reflect.get(store.commands, "then")).toBeUndefined();

@@ -178,6 +178,7 @@ describe("a process handler run that fails", () => {
               schemaVersion: 1,
               system: true,
             },
+            person: null,
           },
         ],
       });

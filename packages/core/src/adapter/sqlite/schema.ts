@@ -61,8 +61,10 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "payload" TEXT NOT NULL,
     "timestamp" TEXT NOT NULL,
     "metadata" TEXT NOT NULL,
+    "person" TEXT,
     UNIQUE ("aggregate_type", "aggregate_id", "version")
   )`,
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.events, "person")} ON ${tables.events} ("person", "position")`,
   checkpointTableStatement(tables.checkpoints),
   `CREATE TABLE IF NOT EXISTS ${tables.inbox} (
     "handler" TEXT NOT NULL,

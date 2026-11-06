@@ -125,6 +125,13 @@ export const createSqliteDeadLetterStore: CreateSqliteDeadLetterStoreFunction = 
       if (updated.length === 0) throw new DeadLetterSettledError({ id });
     },
     remove: (id) => db.run(`DELETE FROM ${table} WHERE "id" = ?`, [id]),
+    listByPerson: async (person) =>
+      (
+        await db.all(
+          `SELECT ${COLUMNS} FROM ${table} WHERE ${naming(table)} ORDER BY "first_failed_at", "id"`,
+          [person],
+        )
+      ).map(toLetter),
     forget: async (person) =>
       (await db.all(`DELETE FROM ${table} WHERE ${naming(table)} RETURNING ${COLUMNS}`, [person]))
         .map(toLetter)

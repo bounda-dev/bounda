@@ -22,6 +22,10 @@ export interface AppendSystemEventArgs {
   readonly type: string;
   readonly payload: unknown;
   readonly context: CausationContext;
+  /**
+   * The person the event is about, on their own stream; none by default.
+   */
+  readonly person?: string;
 }
 
 export interface AppendSystemEventFunction {
@@ -42,6 +46,7 @@ export const appendSystemEvent: AppendSystemEventFunction = async ({
   type,
   payload,
   context,
+  person = null,
 }) => {
   const { version } = await eventStore.load({
     aggregateType,
@@ -62,6 +67,7 @@ export const appendSystemEvent: AppendSystemEventFunction = async ({
         payload,
         timestamp: clock.now().toISOString(),
         metadata: { ...context, schemaVersion: 1, system: true },
+        person,
       },
     ],
   });

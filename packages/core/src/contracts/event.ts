@@ -21,6 +21,12 @@ export interface StoredEvent<Type extends string = string, Payload = unknown>
   readonly position: number;
   readonly timestamp: string;
   readonly metadata: EventMetadata;
+  /**
+   * The person the event names: by its field marked `person` or its aggregate's id, for an event
+   * with personal fields, or whose stream `bounda:<personId>` it is on; `null` for any other.
+   * What `exportPersonalData` finds their events by.
+   */
+  readonly person: string | null;
 }
 
 /**

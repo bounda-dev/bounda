@@ -467,6 +467,7 @@ describe.each(adapters)("the follow-ups of a process that timed out, on %s", (_n
               schemaVersion: 1,
               system: true,
             },
+            person: null,
           },
         ],
       });

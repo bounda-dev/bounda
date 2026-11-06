@@ -9,6 +9,7 @@ import {
   type DispatchOptions,
   type DispatchResult,
   type ListDeadLettersArgs,
+  type PersonalDataExport,
   type QueriesFacade,
   type ReadEventsArgs,
   type RebuildReadModelResult,
@@ -38,6 +39,7 @@ export interface BoundaStub {
   discardDeadLetter(id: string): PromiseLike<unknown>;
   rebuildReadModel(name: string): PromiseLike<unknown>;
   forget(personId: string, consistency?: Consistency): PromiseLike<unknown>;
+  exportPersonalData(personId: string): PromiseLike<unknown>;
 }
 
 export interface ConnectOptions {
@@ -104,5 +106,6 @@ export const connect: ConnectFunction = <R extends Registry = AppRegistry>(
     },
     rebuildReadModel: (name) => unwrap<RebuildReadModelResult>(stub.rebuildReadModel(name)),
     forget: (personId) => unwrap<StoredDispatch>(stub.forget(personId, consistency)),
+    exportPersonalData: (personId) => unwrap<PersonalDataExport>(stub.exportPersonalData(personId)),
   };
 };

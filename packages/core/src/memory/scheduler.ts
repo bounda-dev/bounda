@@ -64,6 +64,9 @@ export const createKeptScheduler: CreateKeptSchedulerFunction = () => {
     entries.set(entry.dedupeKey, { ...entry, claimedAt: null, claimId: null });
   };
 
+  const naming = (person: string): Entry[] =>
+    [...entries.values()].filter((entry) => namesPerson(entry, person)).sort(byExecuteAt);
+
   const store: Scheduler = {
     schedule: async ({
       dedupeKey,
@@ -173,10 +176,9 @@ export const createKeptScheduler: CreateKeptSchedulerFunction = () => {
         .sort(byExecuteAt)
         .slice(offset, limit === undefined ? undefined : offset + limit)
         .map(toScheduled),
+    listByPerson: async (person) => naming(person).map(toScheduled),
     forget: async (person) => {
-      const named = [...entries.values()]
-        .filter((entry) => namesPerson(entry, person))
-        .sort(byExecuteAt);
+      const named = naming(person);
       for (const { dedupeKey } of named) entries.delete(dedupeKey);
       return named.map(toScheduled);
     },

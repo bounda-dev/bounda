@@ -378,6 +378,7 @@ describe("personal data in an app", () => {
           payload: { email: "old@example.com", name: "Old" },
           timestamp: "2026-01-01T00:00:00.000Z",
           metadata: { ...metadata, schemaVersion: 1, system: false },
+          person: null,
         },
       ],
     });
@@ -490,6 +491,48 @@ describe("personal data in an app", () => {
     ]);
     expect(isSealed((events[2]?.payload as { to?: unknown } | undefined)?.to)).toBe(true);
     expect(await app.deadLetters.list()).toEqual([]);
+    await app.stop();
+  });
+
+  it("exports a person's marked fields, before and after forgetting them", async () => {
+    const { app } = await createTestApp({ registry });
+    await app.commands.registerCustomer(ana);
+    await app.commands.registerCustomer({ customerId: "c-2", email: "bo@example.com", name: "Bo" });
+    await app.commands.subscribe({ newsletterId: "n-1", customerId: "c-1", email: ana.email });
+    const before = await app.exportPersonalData("c-1");
+    expect(before).toMatchObject({ personId: "c-1", exportedAt: "2026-01-01T00:00:00.000Z" });
+    expect(before.events).toEqual([
+      expect.objectContaining({
+        type: "CustomerRegistered",
+        aggregateType: "customer",
+        aggregateId: "c-1",
+        version: 1,
+        position: 1,
+        data: { email: "ana@example.com" },
+      }),
+      expect.objectContaining({
+        type: "Subscribed",
+        aggregateType: "newsletter",
+        aggregateId: "n-1",
+        position: 3,
+        data: { email: "ana@example.com" },
+      }),
+    ]);
+    expect(before.scheduledCommands).toEqual([]);
+    expect(before.deadLetters).toEqual([]);
+
+    await app.forget("c-1");
+    const after = await app.exportPersonalData("c-1");
+    expect(after.events.map((event) => [event.type, event.data])).toEqual([
+      ["CustomerRegistered", { email: null }],
+      ["Subscribed", { email: null }],
+      ["PersonalDataForgotten", {}],
+    ]);
+    expect(JSON.stringify(after)).not.toContain("ana@example.com");
+    expect((await app.exportPersonalData("c-2")).events.map((event) => event.data)).toEqual([
+      { email: "bo@example.com" },
+    ]);
+    await expect(app.exportPersonalData("")).rejects.toBeInstanceOf(ValidationError);
     await app.stop();
   });
 

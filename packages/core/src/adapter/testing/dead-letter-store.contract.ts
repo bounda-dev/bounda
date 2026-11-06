@@ -186,7 +186,16 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       expect(await store.get("d")).not.toHaveProperty("persons");
       expect(await store.get("e")).not.toHaveProperty("persons");
 
+      const named = await store.listByPerson("c-1");
+      expect(named.map((letter) => [letter.id, letter.status])).toEqual([
+        ["b", "discarded"],
+        ["a", "failed"],
+      ]);
+      expect(await store.listByPerson("c")).toEqual([]);
+      expect(await store.count()).toBe(5);
+
       const forgotten = await store.forget("c-1");
+      expect(forgotten).toEqual(named);
       expect(forgotten).toEqual([
         {
           ...scheduled("b", "2026-01-01T00:01:00.000Z", [held("c-2", "2"), held("c-1", "1")]),
@@ -196,6 +205,7 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       ]);
       expect((await store.list()).map((kept) => kept.id)).toEqual(["c", "d", "e"]);
       expect(await store.forget("c-1")).toEqual([]);
+      expect(await store.listByPerson("c-1")).toEqual([]);
     });
 
     it("updates status and removes letters", async () => {

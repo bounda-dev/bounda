@@ -22,7 +22,7 @@ export interface CreatePostgresqlEventStoreFunction {
 }
 
 const COLUMNS =
-  '"position", "id", "aggregate_type", "aggregate_id", "version", "type", "payload", "timestamp", "metadata"';
+  '"position", "id", "aggregate_type", "aggregate_id", "version", "type", "payload", "timestamp", "metadata", "person"';
 
 const toStoredEvent = (row: Record<string, unknown>): StoredEvent => ({
   position: Number(row.position),
@@ -34,6 +34,7 @@ const toStoredEvent = (row: Record<string, unknown>): StoredEvent => ({
   payload: row.payload,
   timestamp: String(row.timestamp),
   metadata: row.metadata as EventMetadata,
+  person: row.person === null || row.person === undefined ? null : String(row.person),
 });
 
 /**
@@ -74,7 +75,7 @@ export const createPostgresqlEventStore: CreatePostgresqlEventStoreFunction = ({
         const stored: StoredEvent[] = [];
         for (const event of events) {
           const [row] = await tx.all(
-            `INSERT INTO ${table} ("id", "aggregate_type", "aggregate_id", "version", "type", "payload", "timestamp", "metadata") VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING "position"`,
+            `INSERT INTO ${table} ("id", "aggregate_type", "aggregate_id", "version", "type", "payload", "timestamp", "metadata", "person") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING "position"`,
             [
               event.id,
               event.aggregateType,
@@ -84,6 +85,7 @@ export const createPostgresqlEventStore: CreatePostgresqlEventStoreFunction = ({
               postgresqlDialect.encode("json", event.payload),
               event.timestamp,
               postgresqlDialect.encode("json", event.metadata),
+              event.person,
             ],
           );
           stored.push({ ...event, position: Number(row?.position) });
@@ -121,6 +123,13 @@ export const createPostgresqlEventStore: CreatePostgresqlEventStoreFunction = ({
         await db.all(
           `SELECT ${COLUMNS} FROM ${table} WHERE "position" > $1 ORDER BY "position" LIMIT $2`,
           [afterPosition, limit],
+        )
+      ).map(toStoredEvent),
+    readByPerson: async ({ person, afterPosition, limit }) =>
+      (
+        await db.all(
+          `SELECT ${COLUMNS} FROM ${table} WHERE "person" = $1 AND "position" > $2 ORDER BY "position" LIMIT $3`,
+          [person, afterPosition, limit],
         )
       ).map(toStoredEvent),
     lastPosition: async () => {

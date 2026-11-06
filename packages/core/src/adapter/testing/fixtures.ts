@@ -32,6 +32,7 @@ export interface PendingEventArgs {
   readonly type?: string;
   readonly payload?: unknown;
   readonly id?: string;
+  readonly person?: string | null;
 }
 
 export interface PendingEventFunction {
@@ -48,6 +49,7 @@ export const pendingEvent: PendingEventFunction = ({
   type = "OrderPlaced",
   payload = { total: version },
   id = `${aggregateType}-${aggregateId}-${version}`,
+  person = null,
 }) => ({
   id,
   aggregateType,
@@ -57,6 +59,7 @@ export const pendingEvent: PendingEventFunction = ({
   payload,
   timestamp: "2026-01-01T00:00:00.000Z",
   metadata: testMetadata,
+  person,
 });
 
 export interface TestCommandFunction {

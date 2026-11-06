@@ -564,6 +564,19 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
       expect(listed.find((entry) => entry.dedupeKey === "c")).not.toHaveProperty("persons");
       expect(listed.find((entry) => entry.dedupeKey === "e")).not.toHaveProperty("persons");
 
+      const named = await scheduler.listByPerson("c-1");
+      expect(named.map((entry) => entry.dedupeKey)).toEqual(["d", "a"]);
+      expect(named[1]).toEqual({
+        dedupeKey: "a",
+        command: testCommand("a"),
+        executeAt: at(1_000).toISOString(),
+        context: testContext,
+        attempts: 0,
+        persons: [held("c-1", "1")],
+      });
+      expect(await scheduler.listByPerson("c")).toEqual([]);
+      expect((await scheduler.list()).map((entry) => entry.dedupeKey)).toHaveLength(5);
+
       const forgotten = await scheduler.forget("c-1");
       expect(forgotten.map((entry) => entry.dedupeKey)).toEqual(["d", "a"]);
       expect(forgotten[0]).toEqual({
@@ -578,6 +591,7 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
       await expect(scheduler.complete(claimed)).rejects.toBeInstanceOf(ScheduledClaimLostError);
       expect(await scheduler.forget("c-1")).toEqual([]);
       expect(await scheduler.forget("c")).toEqual([]);
+      expect(await scheduler.listByPerson("c-1")).toEqual([]);
     });
 
     it("replaces whose personal data a command holds when its key is scheduled again", async () => {

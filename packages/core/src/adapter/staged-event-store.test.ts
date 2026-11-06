@@ -30,6 +30,22 @@ const setUp = async () => {
 };
 
 describe("createStagedEventStore", () => {
+  it("reads a person's events from the base store alone, as it reads the global stream", async () => {
+    const { base, staged } = await setUp();
+    await base.append({
+      ...customer,
+      expectedVersion: 1,
+      events: [pendingEvent({ ...customer, version: 2, type: "CustomerMoved", person: "c-1" })],
+    });
+    await staged.append({
+      ...customer,
+      expectedVersion: 2,
+      events: [pendingEvent({ ...customer, version: 3, type: "CustomerMoved", person: "c-1" })],
+    });
+    const read = await staged.readByPerson({ person: "c-1", afterPosition: 0, limit: 10 });
+    expect(read.map((event) => [event.version, event.position])).toEqual([[2, 3]]);
+  });
+
   it("reports the keys the base store's load opened, and none it was not given", async () => {
     const { base } = await setUp();
     const fingerprints = new Map([["c-1", "f-1"]]);
