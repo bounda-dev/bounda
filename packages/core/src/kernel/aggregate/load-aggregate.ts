@@ -1,3 +1,4 @@
+import type { Attributes } from "@opentelemetry/api";
 import type { EventStore } from "../../adapter/storage/event-store.ts";
 import type { KeyedPerson } from "../../adapter/storage/personal-key-store.ts";
 import type { SnapshotStore } from "../../adapter/storage/snapshot-store.ts";
@@ -31,6 +32,22 @@ export interface LoadedAggregate {
    * them.
    */
   readonly persons: readonly KeyedPerson[];
+  /**
+   * What the aggregate's snapshot was worth to this load; `null` when it takes none.
+   */
+  readonly snapshot: LoadedSnapshot | null;
+  /**
+   * The events folded into the state: after the snapshot when one was used, all of them otherwise.
+   */
+  readonly foldedEvents: number;
+}
+
+export interface LoadedSnapshot {
+  readonly outcome: SnapshotOutcome;
+  /**
+   * The version the state was loaded from, when the snapshot was used.
+   */
+  readonly version: number | null;
 }
 
 /**
@@ -91,9 +108,19 @@ export const createAggregateLoader: CreateAggregateLoaderFunction = ({
     credits.set(aggregate.name, credit >= 1 ? credit - 1 : credit);
     return credit >= 1;
   };
+  const folds = meter().createHistogram(METRICS.foldEvents, {
+    description: "Events folded into an aggregate's state per load, by aggregate type",
+    unit: "{event}",
+  });
+  // Counted before the work the outcome leads to, so a load that then fails is still counted.
   const count = (aggregate: AggregateRuntime, outcome: SnapshotOutcome): void => {
     counter.add(1, { [ATTRIBUTES.aggregateType]: aggregate.name, [ATTRIBUTES.outcome]: outcome });
   };
+  const judged = (
+    loaded: LoadedAggregate,
+    outcome: SnapshotOutcome,
+    version: number | null = null,
+  ): LoadedAggregate => ({ ...loaded, snapshot: { outcome, version } });
   const fromStart = async (
     aggregate: AggregateRuntime,
     stream: StreamIdentity,
@@ -106,6 +133,8 @@ export const createAggregateLoader: CreateAggregateLoaderFunction = ({
       folded: foldState({ aggregate, events }),
       version: Math.min(loaded.version, through),
       persons: personsOf({ aggregate, events, fingerprints: loaded.fingerprints }),
+      snapshot: null,
+      foldedEvents: events.length,
     };
   };
   const dropped = async (
@@ -119,73 +148,106 @@ export const createAggregateLoader: CreateAggregateLoaderFunction = ({
     count(aggregate, outcome);
     logger.warn(message, { ...stream, ...fields });
     await snapshotStore.remove(stream);
-    return fromStart(aggregate, stream, eventStore);
+    return judged(await fromStart(aggregate, stream, eventStore), outcome);
+  };
+
+  const load = async ({
+    aggregate,
+    aggregateId,
+    eventStore,
+  }: LoadAggregateArgs): Promise<LoadedAggregate> => {
+    const stream = { aggregateType: aggregate.name, aggregateId };
+    const settings = aggregate.snapshot;
+    if (settings === null) return fromStart(aggregate, stream, eventStore);
+    const snapshot = await snapshotStore.get(stream);
+    if (snapshot === null) {
+      count(aggregate, "missing");
+      return judged(await fromStart(aggregate, stream, eventStore), "missing");
+    }
+    if (snapshot.fingerprint !== settings.fingerprint) {
+      count(aggregate, "stale");
+      return judged(await fromStart(aggregate, stream, eventStore), "stale");
+    }
+    let from: FoldedState;
+    try {
+      from = deserializeFold(snapshot.state);
+    } catch (error) {
+      return dropped(
+        aggregate,
+        stream,
+        eventStore,
+        "unreadable",
+        "snapshot could not be read; the stream is folded from its first event",
+        { version: snapshot.version, ...errorDetails(error) },
+      );
+    }
+    const loaded = await eventStore.load({ ...stream, fromVersion: snapshot.version + 1 });
+    if (loaded.version < snapshot.version) {
+      return dropped(
+        aggregate,
+        stream,
+        eventStore,
+        "ahead",
+        "snapshot is past the stream's head; the stream is folded from its first event",
+        { version: snapshot.version, head: loaded.version },
+      );
+    }
+    const folded = foldState({ aggregate, events: loaded.events, from });
+    const persons = personsOf({
+      aggregate,
+      events: loaded.events,
+      fingerprints: loaded.fingerprints,
+      from: snapshot.persons,
+    });
+    const used: LoadedAggregate = {
+      folded,
+      version: loaded.version,
+      persons,
+      snapshot: null,
+      foldedEvents: loaded.events.length,
+    };
+    if (!due(aggregate, settings.verify)) {
+      count(aggregate, "used");
+      return judged(used, "used", snapshot.version);
+    }
+    const whole = await fromStart(aggregate, stream, eventStore, loaded.version);
+    if (foldsEqual(folded, whole.folded)) {
+      count(aggregate, "verified");
+      return judged(used, "verified", snapshot.version);
+    }
+    count(aggregate, "mismatch");
+    const message = `Snapshot of ${aggregate.name}:${aggregateId} at version ${snapshot.version} folds to a state at version ${loaded.version} that differs from the stream's; the fold is not a function of the events alone`;
+    if (strict) throw new SnapshotError(message);
+    logger.error("snapshot folds to a state that differs from the stream; dropped", {
+      ...stream,
+      version: snapshot.version,
+      head: loaded.version,
+    });
+    await snapshotStore.remove(stream);
+    return judged(whole, "mismatch");
   };
 
   return {
-    load: async ({ aggregate, aggregateId, eventStore }) => {
-      const stream = { aggregateType: aggregate.name, aggregateId };
-      const settings = aggregate.snapshot;
-      if (settings === null) return fromStart(aggregate, stream, eventStore);
-      const snapshot = await snapshotStore.get(stream);
-      if (snapshot === null) {
-        count(aggregate, "missing");
-        return fromStart(aggregate, stream, eventStore);
-      }
-      if (snapshot.fingerprint !== settings.fingerprint) {
-        count(aggregate, "stale");
-        return fromStart(aggregate, stream, eventStore);
-      }
-      let from: FoldedState;
-      try {
-        from = deserializeFold(snapshot.state);
-      } catch (error) {
-        return dropped(
-          aggregate,
-          stream,
-          eventStore,
-          "unreadable",
-          "snapshot could not be read; the stream is folded from its first event",
-          { version: snapshot.version, ...errorDetails(error) },
-        );
-      }
-      const loaded = await eventStore.load({ ...stream, fromVersion: snapshot.version + 1 });
-      if (loaded.version < snapshot.version) {
-        return dropped(
-          aggregate,
-          stream,
-          eventStore,
-          "ahead",
-          "snapshot is past the stream's head; the stream is folded from its first event",
-          { version: snapshot.version, head: loaded.version },
-        );
-      }
-      const folded = foldState({ aggregate, events: loaded.events, from });
-      const persons = personsOf({
-        aggregate,
-        events: loaded.events,
-        fingerprints: loaded.fingerprints,
-        from: snapshot.persons,
-      });
-      if (!due(aggregate, settings.verify)) {
-        count(aggregate, "used");
-        return { folded, version: loaded.version, persons };
-      }
-      const whole = await fromStart(aggregate, stream, eventStore, loaded.version);
-      if (foldsEqual(folded, whole.folded)) {
-        count(aggregate, "verified");
-        return { folded, version: loaded.version, persons };
-      }
-      count(aggregate, "mismatch");
-      const message = `Snapshot of ${aggregate.name}:${aggregateId} at version ${snapshot.version} folds to a state at version ${loaded.version} that differs from the stream's; the fold is not a function of the events alone`;
-      if (strict) throw new SnapshotError(message);
-      logger.error("snapshot folds to a state that differs from the stream; dropped", {
-        ...stream,
-        version: snapshot.version,
-        head: loaded.version,
-      });
-      await snapshotStore.remove(stream);
-      return whole;
+    load: async (args) => {
+      const loaded = await load(args);
+      folds.record(loaded.foldedEvents, { [ATTRIBUTES.aggregateType]: args.aggregate.name });
+      return loaded;
     },
   };
 };
+
+export interface LoadAttributesFunction {
+  (loaded: LoadedAggregate): Attributes;
+}
+
+/**
+ * How a command loaded its aggregate, for its span.
+ */
+export const loadAttributes: LoadAttributesFunction = ({ version, snapshot, foldedEvents }) => ({
+  [ATTRIBUTES.aggregateVersion]: version,
+  [ATTRIBUTES.foldEvents]: foldedEvents,
+  ...(snapshot === null ? {} : { [ATTRIBUTES.snapshotOutcome]: snapshot.outcome }),
+  ...(snapshot === null || snapshot.version === null
+    ? {}
+    : { [ATTRIBUTES.snapshotVersion]: snapshot.version }),
+});

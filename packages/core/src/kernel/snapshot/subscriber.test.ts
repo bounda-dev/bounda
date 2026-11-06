@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { pendingEvent } from "../../adapter/testing/fixtures.ts";
 import { resolveConfig } from "../../config/schema.ts";
 import { SnapshotError } from "../../contracts/errors.ts";
@@ -7,6 +7,8 @@ import type { Registry } from "../../modules/registry.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { createAggregateLoader } from "../aggregate/load-aggregate.ts";
 import { deserializeFold, serializeFold } from "../aggregate/snapshot-codec.ts";
+import { ATTRIBUTES, SPAN_EVENTS, tracer } from "../telemetry.ts";
+import { installFakeTelemetry } from "../telemetry-fake.ts";
 import { choosePorts, createRecordingLogger, orderAggregate } from "../test-support.ts";
 import { createSnapshotSubscriber, takesSnapshots } from "./subscriber.ts";
 
@@ -74,7 +76,10 @@ const setUp = async ({ aggregate: name = "order", strict = false }: SetUpArgs = 
     });
   };
   const deliver = async (afterPosition = 0) =>
-    subscriber.process(await storage.eventStore.readAll({ afterPosition, limit: 100 }));
+    subscriber.process(
+      await storage.eventStore.readAll({ afterPosition, limit: 100 }),
+      tracer().startSpan("batch"),
+    );
   const stored = async (aggregateId = "1") =>
     storage.snapshotStore.get({ aggregateType: name, aggregateId });
   return { subscriber, storage, snapshotStore, entries, errors, append, deliver, stored };
@@ -108,6 +113,41 @@ describe("createSnapshotSubscriber", () => {
         level: "debug",
         message: "snapshot written",
         fields: { aggregateType: "order", aggregateId: "1", version: 3 },
+      },
+    ]);
+  });
+
+  it("notes on the batch's span each snapshot it wrote, and the highest version", async () => {
+    const telemetry = installFakeTelemetry();
+    onTestFinished(() => telemetry.restore());
+    const { append, deliver } = await setUp();
+    await append(
+      "order",
+      "1",
+      [1, "OrderPlaced", { total: 10 }],
+      [2, "OrderPaid", { method: "card" }],
+      [3, "OrderArchived", {}],
+    );
+    await append(
+      "order",
+      "2",
+      [1, "OrderPlaced", { total: 7 }],
+      [2, "OrderPaid", { method: "card" }],
+    );
+    await deliver();
+    expect(telemetry.spans).toMatchObject([
+      { name: "batch", attributes: { [ATTRIBUTES.snapshotVersion]: 3 } },
+    ]);
+    expect(telemetry.spanEvents).toEqual([
+      {
+        span: "batch",
+        name: SPAN_EVENTS.snapshotWritten,
+        attributes: { [ATTRIBUTES.aggregateId]: "1", [ATTRIBUTES.snapshotVersion]: 3 },
+      },
+      {
+        span: "batch",
+        name: SPAN_EVENTS.snapshotWritten,
+        attributes: { [ATTRIBUTES.aggregateId]: "2", [ATTRIBUTES.snapshotVersion]: 2 },
       },
     ]);
   });

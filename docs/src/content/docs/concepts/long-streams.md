@@ -12,6 +12,11 @@ day and never end, the cost grows with the stream, forever. The usual answer is 
 answer is, first, a different model: **a stream that never ends is usually a business period that
 nobody has named yet; close it, and open the next one carrying only what it needs.**
 
+Which streams those are is measured, not guessed: the `bounda.fold.events` histogram records how
+many events each load folds, per aggregate type ([observability](/reference/observability/)), and
+an aggregate whose numbers keep climbing is the one whose books to close or, with nothing to
+close, the one to give snapshots.
+
 ## Close the books
 
 Accountants do not recompute a balance from the day the account was opened. They close a period,
