@@ -131,11 +131,18 @@ them. What it cannot see is personal
 data that came in the command's payload, marked or not: keep that out of a rejection's
 message and say what went wrong with its code and the ids involved.
 
-What `forget` does not reach is text your code writes and data left unmarked: your logs keep
-whatever you wrote to them, the message of an error a handler throws stays in its dead letter and,
-for a scheduled command, in the `ScheduledCommandFailed` event on the aggregate's stream, and a
-command's payload left unmarked is stored as it came. Log and throw with ids, not the data itself,
-and mark every field of a command's payload that holds it.
+The message of an error a handler throws may quote a personal field it read, so a [dead
+letter](/guides/dead-letters/#what-a-letter-holds) keeps the message and the stack encrypted with
+the key of the person its work names, and `forget` leaves the letter in place with them reading as
+`null`; the stream's `ScheduledCommandFailed` and `ProcessFailed` name the error's class and code
+and never its text, and so does the last error the inbox and the scheduler keep of a claim.
+
+What `forget` does not reach is text your code writes elsewhere and data left unmarked: your logs
+keep whatever you wrote to them, an event's payload written in the clear, with the data in a field
+you did not mark, stays readable, a command's payload left unmarked is stored as it came, and the
+error of work that names nobody, such as a process deadline or a scheduled command whose payload
+marks nothing, stays in its dead letter in the clear. Log and throw with ids, not the data itself,
+and mark every field that holds it.
 
 ## Exporting a person's data
 
@@ -158,7 +165,10 @@ person, for them to take away, as the right of access and the right to portabili
       version: 1, position: 40, timestamp, data: { deliveryNote: "ring twice" } },
   ],
   scheduledCommands: [{ commandId, type: "RemindCustomer", executeAt, data: { email } }],
-  deadLetters: [{ id, commandType: "RemindCustomer", data: { email } }],
+  deadLetters: [
+    { id, kind: "policy", handler: "customer.welcomeOnCustomerRegistered",
+      errorMessage: "no mailbox for ana@example.com", errorStack, data: {} },
+  ],
 }
 ```
 
@@ -167,9 +177,12 @@ id, in position order, the events of their own stream `bounda:<personId>` includ
 the fields marked `personal` of that event, opened, and nothing else of its payload, so an event
 without such fields has an empty `data`. `scheduledCommands` are the commands waiting to run
 whose payload holds personal fields of theirs, with `commandId` the id the dispatch answered or,
-for one the runtime scheduled itself, the scheduler's key, and `deadLetters` those that gave up,
-each with the same `data`. After `forget`, the person's events are still theirs, and every field
-reads as `null`, as a handler reads it. An empty id is refused with `ValidationError`.
+for one the runtime scheduled itself, the scheduler's key, each with the same `data`.
+`deadLetters` are the handler runs that gave up and name the person: work about them, whose
+`errorMessage` and `errorStack` are encrypted with their key and come out opened, and the
+scheduled commands whose payload holds their fields, with its `data`. After `forget`, the
+person's events and letters are still theirs, and every field and error text reads as `null`, as
+a handler reads it. An empty id is refused with `ValidationError`.
 
 Only what is marked comes out, and that is the limit to know: a field left unmarked is not
 personal data to Bounda, so the rest of `OrderPlaced` is the order's and stays out; a read model
@@ -180,8 +193,8 @@ stored before its type marked its fields names no one, so no export finds it: it
 in the clear, where `forget` does not reach it either.
 
 Each store keeps the person an event names in a `person` column, indexed with the position, and
-the adapters read by it with `readByPerson`; a scheduled command and a dead letter are found by
-the `persons` they already carry.
+the adapters read by it with `readByPerson`; a scheduled command is found by the `persons` it
+carries, and a dead letter by its `person` or its `persons`.
 
 ## Handling it in a read model
 

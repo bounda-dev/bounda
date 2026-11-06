@@ -7,6 +7,10 @@ export interface FormatLetterFunction {
 const parkedEvents = (count: number): string =>
   `${count} event${count === 1 ? " is" : "s are"} parked`;
 
+// The error's name and code, then its message when it still opens: nothing of a forgotten person.
+const errorLine = ({ errorName, errorCode, errorMessage }: DeadLetter): string =>
+  `${errorName}${errorCode === undefined ? "" : ` (${errorCode})`}${errorMessage === null ? "" : `: ${errorMessage}`}`;
+
 /**
  * A dead letter as `bounda dead-letters list` prints it.
  */
@@ -14,7 +18,7 @@ export const formatLetter: FormatLetterFunction = (letter) =>
   [
     `${letter.id}  ${letter.status}  ${letter.kind}  ${letter.handler}`,
     `    ${letter.eventType} on ${letter.aggregateType}:${letter.aggregateId}, ${letter.attempts} attempt${letter.attempts === 1 ? "" : "s"}, last ${letter.lastFailedAt} (${letter.errorType})`,
-    `    ${letter.errorMessage}`,
+    `    ${errorLine(letter)}`,
     ...((letter.parked ?? 0) > 0
       ? [
           // How core names the letter of a process's timeout, pinned by core's own tests.

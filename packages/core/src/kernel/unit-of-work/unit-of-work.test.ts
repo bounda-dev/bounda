@@ -196,6 +196,8 @@ describe("createUnitOfWork", () => {
     aggregateType: "order",
     aggregateId: "1",
     errorType: "terminal" as const,
+    person: null,
+    errorName: "Error",
     errorMessage: "boom",
     attempts: 1,
     firstFailedAt: now.toISOString(),
@@ -542,7 +544,7 @@ describe.each(adapters)("a reaction attempt as a unit of work on %s", (_name, ad
     ]);
     expect(await claimOf(harness, "order.settleOnOrderPlaced")).toMatchObject({
       status: "succeeded",
-      lastError: "provider refused",
+      lastError: "ValidationError (VALIDATION_FAILED)",
     });
     expect(providerCalls).toHaveLength(1);
   });
@@ -647,7 +649,7 @@ describe.each(adapters)("a reaction attempt as a unit of work on %s", (_name, ad
     expect(await claimOf(harness, "order.settlement")).toMatchObject({
       status: "succeeded",
       attempts: 2,
-      lastError: "provider refused",
+      lastError: "ValidationError (VALIDATION_FAILED)",
     });
     expect(providerCalls).toHaveLength(2);
   });

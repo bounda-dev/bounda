@@ -7,7 +7,7 @@ import { ClaimLostError } from "../../contracts/errors.ts";
 import { CommitFailed, commitAttempt, type UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import type { ReactionOutcome } from "./in-order.ts";
 import type { PendingRetries } from "./pending-retries.ts";
-import { classifyFailure, errorDetails, retryDelayMs } from "./retry.ts";
+import { classifyFailure, errorIdentity, errorLabel, retryDelayMs } from "./retry.ts";
 
 export interface RunAttemptArgs {
   readonly storage: Storage;
@@ -123,10 +123,10 @@ export const runAttempt: RunAttemptFunction = async ({
     if (lost(error)) return "hold";
     if (error instanceof CommitFailed) throw error.cause;
     const gaveUp = gaveUpOn(error, attempts);
-    const message = errorDetails(error).message;
+    const label = errorLabel(errorIdentity(error));
     try {
       if (gaveUp === undefined) {
-        await storage.inboxLedger.fail({ ...claim, error: message });
+        await storage.inboxLedger.fail({ ...claim, error: label });
         pendingRetries.waiting(
           new Date(now.getTime() + retryDelayMs({ retry, attempt: attempts })),
         );
@@ -135,7 +135,7 @@ export const runAttempt: RunAttemptFunction = async ({
       }
       await committed(async (unit) => {
         await giveUp(unit, error, attempts, gaveUp);
-        await unit.inboxLedger.fail({ ...claim, error: message });
+        await unit.inboxLedger.fail({ ...claim, error: label });
         await unit.inboxLedger.complete(claim);
       });
     } catch (recording) {

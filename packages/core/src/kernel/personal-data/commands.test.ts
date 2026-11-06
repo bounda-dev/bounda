@@ -392,11 +392,16 @@ describe("personal data in delayed commands", () => {
     const key = await storage.personalKeys.get("c-1");
     expect(stored?.persons).toEqual([{ person: "c-1", fingerprint: key?.fingerprint }]);
     expect(JSON.stringify(stored)).not.toContain("ana@example.com");
-    expect(await app.deadLetters.list()).toEqual([{ ...stored, payload: ana }]);
-    expect(await app.deadLetters.get(stored?.id ?? "")).toEqual({ ...stored, payload: ana });
-    expect(await app.deadLetters.discard(stored?.id ?? "")).toEqual({
+    const opened = {
       ...stored,
       payload: ana,
+      errorMessage: "the mail server refused it",
+      errorStack: expect.stringContaining("the mail server refused it"),
+    };
+    expect(await app.deadLetters.list()).toEqual([opened]);
+    expect(await app.deadLetters.get(stored?.id ?? "")).toEqual(opened);
+    expect(await app.deadLetters.discard(stored?.id ?? "")).toEqual({
+      ...opened,
       status: "discarded",
     });
 

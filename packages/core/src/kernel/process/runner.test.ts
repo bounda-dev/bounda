@@ -407,9 +407,11 @@ describe("process runner", () => {
       PROCESS_EVENTS.started,
       PROCESS_EVENTS.failed,
     ]);
-    expect(stream.events[1]?.payload).toMatchObject({
+    expect(stream.events[1]?.payload).toEqual({
       eventId: expect.any(String),
-      error: "bad payment",
+      errorName: "ValidationError",
+      errorCode: "VALIDATION_FAILED",
+      letterId: expect.any(String),
     });
     expect(await harness.storage.deadLetterStore.list()).toMatchObject([
       {

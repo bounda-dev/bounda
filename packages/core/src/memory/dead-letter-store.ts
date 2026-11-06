@@ -1,8 +1,8 @@
 import { byFirstFailure } from "../adapter/sql/dead-letters.ts";
 import type {
-  DeadLetter,
   DeadLetterStore,
   ListDeadLettersArgs,
+  StoredDeadLetter,
 } from "../adapter/storage/dead-letter-store.ts";
 import { namesPerson } from "../adapter/storage/personal-key-store.ts";
 import { DeadLetterSettledError } from "../contracts/errors.ts";
@@ -13,25 +13,31 @@ export interface CreateKeptDeadLetterStoreFunction {
   (): WithEntries<DeadLetterStore, string>;
 }
 
-const matches = (letter: DeadLetter, args: ListDeadLettersArgs): boolean =>
+const matches = (letter: StoredDeadLetter, args: ListDeadLettersArgs): boolean =>
   (args.kind === undefined || letter.kind === args.kind) &&
   (args.handler === undefined || letter.handler === args.handler) &&
   (args.status === undefined || letter.status === args.status);
 
-const copy = ({ payload, persons, ...letter }: DeadLetter): DeadLetter => ({
+// Sealed text is an object, copied as a SQL store hands its JSON back.
+const copy = ({
+  payload,
+  persons,
+  errorMessage,
+  errorStack,
+  ...letter
+}: StoredDeadLetter): StoredDeadLetter => ({
   ...letter,
+  errorMessage: jsonCopy(errorMessage),
+  ...(errorStack === undefined ? {} : { errorStack: jsonCopy(errorStack) }),
   ...(payload === undefined ? {} : { payload: jsonCopy(payload) }),
   ...(persons === undefined || persons.length === 0 ? {} : { persons: jsonCopy(persons) }),
 });
 
 export const createKeptDeadLetterStore: CreateKeptDeadLetterStoreFunction = () => {
-  const letters = new Map<string, DeadLetter>();
+  const letters = new Map<string, StoredDeadLetter>();
 
-  const select = (args: ListDeadLettersArgs): DeadLetter[] =>
+  const select = (args: ListDeadLettersArgs): StoredDeadLetter[] =>
     [...letters.values()].filter((letter) => matches(letter, args)).sort(byFirstFailure);
-
-  const naming = (person: string): DeadLetter[] =>
-    select({}).filter((letter) => namesPerson(letter, person));
 
   const store: DeadLetterStore = {
     add: async (letter) => {
@@ -61,9 +67,12 @@ export const createKeptDeadLetterStore: CreateKeptDeadLetterStoreFunction = () =
     remove: async (id) => {
       letters.delete(id);
     },
-    listByPerson: async (person) => naming(person).map(copy),
+    listByPerson: async (person) =>
+      select({})
+        .filter((letter) => letter.person === person || namesPerson(letter, person))
+        .map(copy),
     forget: async (person) => {
-      const named = naming(person);
+      const named = select({}).filter((letter) => namesPerson(letter, person));
       for (const { id } of named) letters.delete(id);
       return named.map(copy);
     },

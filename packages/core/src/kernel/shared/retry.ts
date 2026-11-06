@@ -54,6 +54,44 @@ export const retryDelayMs: RetryDelayFunction = ({ retry, attempt }) => {
   return Math.min(raw, retry.maxDelayMs);
 };
 
+/**
+ * What a failure may be recorded as where no text of the error may be kept: the class name, and
+ * the code when it is a `BoundaError`.
+ */
+export interface ErrorIdentity {
+  readonly errorName: string;
+  readonly errorCode?: string;
+}
+
+export interface ErrorIdentityFunction {
+  (error: unknown): ErrorIdentity;
+}
+
+// A subclass that does not set `name` inherits `Error`'s: its constructor names the class.
+const classOf = (error: Error): string =>
+  error.name === "Error" && error.constructor.name !== "" ? error.constructor.name : error.name;
+
+/**
+ * `typeof` what was thrown when it is no error, since its text is all `errorDetails` can tell.
+ */
+export const errorIdentity: ErrorIdentityFunction = (error) => {
+  if (!(error instanceof Error)) return { errorName: typeof error };
+  return error instanceof BoundaError
+    ? { errorName: classOf(error), errorCode: error.code }
+    : { errorName: classOf(error) };
+};
+
+export interface ErrorLabelFunction {
+  (identity: ErrorIdentity): string;
+}
+
+/**
+ * The identity as one line, `ValidationError (VALIDATION_FAILED)`: what the inbox and the
+ * scheduler keep as the last error of a claim.
+ */
+export const errorLabel: ErrorLabelFunction = ({ errorName, errorCode }) =>
+  errorCode === undefined ? errorName : `${errorName} (${errorCode})`;
+
 export interface ErrorDetailsFunction {
   (error: unknown): { readonly message: string; readonly stack?: string };
 }

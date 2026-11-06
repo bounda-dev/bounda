@@ -71,15 +71,19 @@ export const scheduleDelayedPolicy: ScheduleDelayedPolicyFunction = ({
 export interface DelayedPolicies {
   isDelayedPolicy(entry: ScheduledCommand): boolean;
   /**
-   * Runs the policy on `within`, the worker's unit of work for the entry. A policy no longer in
-   * the registry or an event that is gone fails for good.
+   * Runs the policy for `event`, as `eventOf` read it, on `within`, the worker's unit of work for
+   * the entry. A policy no longer in the registry or an event that is gone fails for good.
    */
-  run(entry: ScheduledCommand, within: UnitOfWork): Promise<void>;
+  run(entry: ScheduledCommand, event: StoredEvent | undefined, within: UnitOfWork): Promise<void>;
   /**
    * The retry settings of the policy's aggregate, the same a live run of it gets.
    */
   retryOf(entry: ScheduledCommand): ResolvedRetryConfig;
   payloadOf(entry: ScheduledCommand): DelayedPolicyPayload;
+  /**
+   * The entry's event, read by its position; `undefined` once it is gone.
+   */
+  eventOf(entry: ScheduledCommand): Promise<StoredEvent | undefined>;
 }
 
 export interface CreateDelayedPoliciesArgs {
@@ -108,26 +112,29 @@ export const createDelayedPolicies: CreateDelayedPoliciesFunction = ({
   const payloadOf = (entry: ScheduledCommand): DelayedPolicyPayload =>
     entry.command.payload as DelayedPolicyPayload;
 
+  const eventOf = async (entry: ScheduledCommand): Promise<StoredEvent | undefined> => {
+    const payload = payloadOf(entry);
+    const [event] = await eventStore.readAll({ afterPosition: payload.position - 1, limit: 1 });
+    return event?.id === payload.eventId ? event : undefined;
+  };
+
   return {
     isDelayedPolicy: (entry) => entry.command.type === DELAYED_POLICY_COMMAND,
     payloadOf,
+    eventOf,
     retryOf: (entry) => {
       const policy = policies.byName[payloadOf(entry).policy];
       return policy === undefined
         ? config.runtime.policies.retry
         : config.forAggregate(policy.aggregate).policies.retry;
     },
-    run: async (entry, within) => {
+    run: async (entry, event, within) => {
       const payload = payloadOf(entry);
       const policy = policies.byName[payload.policy];
       if (policy === undefined) {
         throw new ConfigurationError(`Policy "${payload.policy}" is no longer in the registry`);
       }
-      const [event] = await eventStore.readAll({
-        afterPosition: payload.position - 1,
-        limit: 1,
-      });
-      if (event === undefined || event.id !== payload.eventId) {
+      if (event === undefined) {
         throw new NotFoundError(
           `Event ${payload.eventId} of ${payload.aggregateType}:${entry.command.aggregateId} not found`,
         );

@@ -1,21 +1,15 @@
-import type { StoredPersonalKey } from "../../adapter/storage/personal-key-store.ts";
+import type {
+  PersonalEnvelope,
+  SealedValue,
+  StoredPersonalKey,
+} from "../../adapter/storage/personal-key-store.ts";
 import { ValidationError } from "../../contracts/errors.ts";
+
+export type { PersonalEnvelope, SealedValue };
 
 const ALGORITHM = "AES-GCM";
 const KEY_BITS = 256;
 const IV_BYTES = 12;
-
-/**
- * A personal field as it is stored: the ciphertext, its nonce, the person whose key opens it and
- * the fingerprint of that key, so a value sealed under a key the person no longer has is told
- * from one their current key opens.
- */
-export interface PersonalEnvelope {
-  readonly person: string;
-  readonly key: string;
-  readonly iv: string;
-  readonly data: string;
-}
 
 /**
  * A person's key as the store uses it, with the fingerprint envelopes name it by.
@@ -23,14 +17,6 @@ export interface PersonalEnvelope {
 export interface PersonalKey {
   readonly fingerprint: string;
   readonly cryptoKey: CryptoKey;
-}
-
-/**
- * A stored field value that holds personal data: nothing but the envelope, under a key no schema
- * field takes.
- */
-export interface SealedValue {
-  readonly $personal: PersonalEnvelope;
 }
 
 export interface IsSealedFunction {

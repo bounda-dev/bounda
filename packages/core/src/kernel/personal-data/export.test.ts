@@ -9,6 +9,7 @@ import type { Registry } from "../../modules/registry.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { appStorage } from "../events/app-event-store.ts";
 import { sealCommandPayload } from "./commands.ts";
+import { sealError } from "./errors.ts";
 import { exportPersonalData } from "./export.ts";
 
 const registry: Registry = {
@@ -104,7 +105,13 @@ const setup = async () => {
       marks: aggregates.commandsByType.RemindCustomer?.command.personal ?? null,
       keys: storage.personalKeys,
     });
-  return { storage, written, exportOf, register, place, sealedReminder };
+  // An error whose message quotes the person, as a handler's may.
+  const failure = (person: string | null, message: string) => {
+    const error = new Error(message);
+    error.stack = `Error: ${message}\n    at handler`;
+    return sealError({ error, person, keys: storage.personalKeys });
+  };
+  return { storage, written, exportOf, register, place, sealedReminder, failure };
 };
 
 describe("exportPersonalData", () => {
@@ -223,7 +230,7 @@ describe("exportPersonalData", () => {
   });
 
   it("includes the scheduled commands and dead letters that hold the person's fields, opened", async () => {
-    const { exportOf, storage, sealedReminder } = await setup();
+    const { exportOf, storage, sealedReminder, failure } = await setup();
     const ana = await sealedReminder("c-1", "ana@example.com");
     const bo = await sealedReminder("c-2", "bo@example.com");
     await storage.scheduler.schedule({
@@ -242,22 +249,38 @@ describe("exportPersonalData", () => {
     });
     await storage.deadLetterStore.add({
       ...testDeadLetter("dl-1"),
+      ...(await failure("c-1", "no mailbox for ana@example.com")),
       kind: "scheduled",
       handler: "RemindCustomer",
       eventType: "RemindCustomer",
+      person: "c-1",
       payload: ana.payload,
       persons: ana.persons,
     });
-    await storage.deadLetterStore.add(testDeadLetter("dl-2"));
-    // A command the registry no longer has: its payload is opened, and no field is marked.
+    await storage.deadLetterStore.add({
+      ...testDeadLetter("dl-2"),
+      ...(await failure("c-2", "no mailbox for bo@example.com")),
+      person: "c-2",
+    });
+    // A command the registry no longer has: its payload is opened, and no field is marked. Its
+    // error is sealed under someone else, so it is not theirs to take away.
     await storage.deadLetterStore.add({
       ...testDeadLetter("dl-3"),
+      ...(await failure("c-2", "bo@example.com was busy")),
       kind: "scheduled",
       handler: "NudgeCustomer",
       eventType: "NudgeCustomer",
       firstFailedAt: "2026-01-01T00:01:00.000Z",
+      person: "c-2",
       payload: ana.payload,
       persons: ana.persons,
+    });
+    // A policy's run about them, whose error quotes what it read.
+    await storage.deadLetterStore.add({
+      ...testDeadLetter("dl-4"),
+      ...(await failure("c-1", "ana@example.com bounced")),
+      firstFailedAt: "2026-01-01T00:02:00.000Z",
+      person: "c-1",
     });
 
     const exported = await exportOf("c-1");
@@ -270,14 +293,29 @@ describe("exportPersonalData", () => {
       },
     ]);
     expect(exported.deadLetters).toStrictEqual([
-      { id: "dl-1", commandType: "RemindCustomer", data: { email: "ana@example.com" } },
-      { id: "dl-3", commandType: "NudgeCustomer", data: {} },
+      {
+        id: "dl-1",
+        kind: "scheduled",
+        handler: "RemindCustomer",
+        errorMessage: "no mailbox for ana@example.com",
+        errorStack: "Error: no mailbox for ana@example.com\n    at handler",
+        data: { email: "ana@example.com" },
+      },
+      { id: "dl-3", kind: "scheduled", handler: "NudgeCustomer", data: {} },
+      {
+        id: "dl-4",
+        kind: "policy",
+        handler: "order.p",
+        errorMessage: "ana@example.com bounced",
+        errorStack: "Error: ana@example.com bounced\n    at handler",
+        data: {},
+      },
     ]);
     expect(JSON.stringify(exported)).not.toContain("bo@example.com");
   });
 
-  it("reads a forgotten person's fields as null", async () => {
-    const { exportOf, register, storage, sealedReminder } = await setup();
+  it("reads a forgotten person's fields and error text as null", async () => {
+    const { exportOf, register, storage, sealedReminder, failure } = await setup();
     await register("c-1", "ana@example.com");
     const ana = await sealedReminder("c-1", "ana@example.com");
     await storage.scheduler.schedule({
@@ -287,9 +325,18 @@ describe("exportPersonalData", () => {
       context: testContext,
       persons: ana.persons,
     });
+    const { errorStack: _stack, ...withoutStack } = await failure("c-1", "ana@example.com bounced");
+    await storage.deadLetterStore.add({
+      ...testDeadLetter("dl-1"),
+      ...withoutStack,
+      person: "c-1",
+    });
     await storage.personalKeys.remove("c-1");
     const exported = await exportOf("c-1");
     expect(exported.events.map((event) => event.data)).toEqual([{ email: null }]);
+    expect(exported.deadLetters).toStrictEqual([
+      { id: "dl-1", kind: "policy", handler: "order.p", errorMessage: null, data: {} },
+    ]);
     expect(exported.scheduledCommands).toEqual([
       {
         commandId: "deadline:x",

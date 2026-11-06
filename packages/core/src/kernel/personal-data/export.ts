@@ -1,11 +1,13 @@
 import type { Storage } from "../../adapter/adapter.ts";
+import type { DeadLetterKind, StoredDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import { ValidationError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { scheduledCommandId } from "../command/pipeline.ts";
 import { isRecord } from "../shared/merge-fields.ts";
-import { openCommandPayload } from "./commands.ts";
+import { openCommandPayload, sealedKeys } from "./commands.ts";
+import { openTextWith } from "./errors.ts";
 import type { PersonalMarks } from "./marks.ts";
 
 /**
@@ -40,11 +42,26 @@ export interface ExportedScheduledCommand {
 }
 
 /**
- * The dead letter of a scheduled command that holds personal fields of the person.
+ * A handler run that gave up and names the person: the work was about them, so the error's text is
+ * sealed under their key, or it is a scheduled command whose payload holds personal fields of
+ * theirs. `data` holds that payload's marked fields, empty for a policy or process letter.
  */
 export interface ExportedDeadLetter {
   readonly id: string;
-  readonly commandType: string;
+  readonly kind: DeadLetterKind;
+  /**
+   * The policy or process name, or the scheduled command's type.
+   */
+  readonly handler: string;
+  /**
+   * The error's message, opened, when it is sealed under the person; `null` once they are
+   * forgotten.
+   */
+  readonly errorMessage?: string | null;
+  /**
+   * The error's stack, as `errorMessage` is, when it has one.
+   */
+  readonly errorStack?: string | null;
   readonly data: ExportedData;
 }
 
@@ -106,9 +123,27 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
     aggregates.byName[event.aggregateType]?.eventsByType[event.type]?.personal ?? null;
   const commandMarks = (type: string): PersonalMarks | null =>
     aggregates.commandsByType[type]?.command.personal ?? null;
+  // Each person's key read once for the whole export.
+  const keyOf = sealedKeys(storage.personalKeys);
+  const openText = openTextWith(keyOf);
   const openedData = async (type: string, payload: unknown): Promise<ExportedData> => {
-    const opened = await openCommandPayload({ payload, keys: storage.personalKeys });
+    const opened = await openCommandPayload({ payload, keys: storage.personalKeys, keyOf });
     return markedFields(commandMarks(type), opened.payload);
+  };
+  // A letter's error text is the person's only when it is sealed under them: one listed for the
+  // persons its payload names keeps whatever its own `person` holds.
+  const exportedLetter = async (letter: StoredDeadLetter): Promise<ExportedDeadLetter> => {
+    const theirs = letter.person === personId;
+    return {
+      id: letter.id,
+      kind: letter.kind,
+      handler: letter.handler,
+      ...(theirs ? { errorMessage: await openText(letter.errorMessage) } : {}),
+      ...(theirs && letter.errorStack !== undefined
+        ? { errorStack: await openText(letter.errorStack) }
+        : {}),
+      data: letter.payload === undefined ? {} : await openedData(letter.eventType, letter.payload),
+    };
   };
 
   const events: ExportedEvent[] = [];
@@ -144,11 +179,7 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
     })),
   );
   const deadLetters = await Promise.all(
-    (await storage.deadLetterStore.listByPerson(personId)).map(async (letter) => ({
-      id: letter.id,
-      commandType: letter.handler,
-      data: await openedData(letter.eventType, letter.payload),
-    })),
+    (await storage.deadLetterStore.listByPerson(personId)).map(exportedLetter),
   );
   return { personId, exportedAt, events, scheduledCommands, deadLetters };
 };

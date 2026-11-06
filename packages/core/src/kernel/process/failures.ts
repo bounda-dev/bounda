@@ -1,13 +1,16 @@
 import type {
   DeadLetterErrorType,
-  DeadLetterStore,
   NewDeadLetter,
 } from "../../adapter/storage/dead-letter-store.ts";
+import type { PersonalKeyStore } from "../../adapter/storage/personal-key-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
-import { classifyFailure, errorDetails } from "../shared/retry.ts";
+import type { AggregatesRuntime } from "../aggregate/runtime.ts";
+import { sealError } from "../personal-data/errors.ts";
+import { personOfEvent } from "../personal-data/persons.ts";
+import { classifyFailure } from "../shared/retry.ts";
 import { deadLettered } from "../telemetry.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
 import { PROCESS_DEADLINE_COMMAND } from "./deadlines.ts";
@@ -15,22 +18,29 @@ import { type ProcessInstance, processAggregateType } from "./lifecycle.ts";
 
 /**
  * What a process dead letter is about: the event whose handler failed, or a deadline standing in
- * for one.
+ * for one, with the person it names, whose key seals the letter's error text.
  */
-export type FailureSubject = Pick<StoredEvent, "id" | "type" | "aggregateType" | "aggregateId">;
+export interface FailureSubject
+  extends Pick<StoredEvent, "id" | "type" | "aggregateType" | "aggregateId"> {
+  readonly person: string | null;
+}
 
 export interface ProcessFailures {
+  /**
+   * The event as a letter's subject, naming the person it names.
+   */
+  subjectOf(event: StoredEvent): FailureSubject;
+  /**
+   * The letter of the failure, its error text sealed under the subject's person, to stage in a
+   * unit's dead letters.
+   */
   letterOf(
     process: ProcessRuntime,
     subject: FailureSubject,
     error: unknown,
     attempts: number,
     errorType: DeadLetterErrorType,
-  ): NewDeadLetter;
-  /**
-   * Stages `letter` in `store`, a unit's dead letters, with the error's stack when it has one.
-   */
-  file(store: DeadLetterStore, letter: NewDeadLetter, error?: unknown): Promise<void>;
+  ): Promise<NewDeadLetter>;
   /**
    * Counts and logs `letter` once the unit that filed it committed.
    */
@@ -38,6 +48,8 @@ export interface ProcessFailures {
 }
 
 export interface CreateProcessFailuresArgs {
+  readonly aggregates: AggregatesRuntime;
+  readonly keys: PersonalKeyStore;
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly logger: Logger;
@@ -47,8 +59,21 @@ export interface CreateProcessFailuresFunction {
   (args: CreateProcessFailuresArgs): ProcessFailures;
 }
 
-export const createProcessFailures: CreateProcessFailuresFunction = ({ ids, clock, logger }) => ({
-  letterOf: (process, subject, error, attempts, errorType) => {
+export const createProcessFailures: CreateProcessFailuresFunction = ({
+  aggregates,
+  keys,
+  ids,
+  clock,
+  logger,
+}) => ({
+  subjectOf: (event) => ({
+    id: event.id,
+    type: event.type,
+    aggregateType: event.aggregateType,
+    aggregateId: event.aggregateId,
+    person: personOfEvent({ aggregates, event }),
+  }),
+  letterOf: async (process, subject, error, attempts, errorType) => {
     const now = clock.now().toISOString();
     return {
       id: ids.next(),
@@ -58,16 +83,13 @@ export const createProcessFailures: CreateProcessFailuresFunction = ({ ids, cloc
       eventType: subject.type,
       aggregateType: subject.aggregateType,
       aggregateId: subject.aggregateId,
+      person: subject.person,
       errorType,
-      errorMessage: errorDetails(error).message,
+      ...(await sealError({ error, person: subject.person, keys })),
       attempts,
       firstFailedAt: now,
       lastFailedAt: now,
     };
-  },
-  file: async (store, letter, error) => {
-    const stack = error === undefined ? undefined : errorDetails(error).stack;
-    await store.add(stack === undefined ? letter : { ...letter, errorStack: stack });
   },
   filed: (process, letter) => {
     deadLettered(letter);
@@ -92,6 +114,7 @@ export const deadlineSubject: DeadlineSubjectFunction = (process, instanceId, fi
   type: PROCESS_DEADLINE_COMMAND,
   aggregateType: processAggregateType(process.name),
   aggregateId: instanceId,
+  person: null,
 });
 
 export interface BlockedOnFunction {

@@ -1,14 +1,19 @@
 import { DeadLetterSettledError } from "@bounda-dev/core";
 import type {
-  DeadLetter,
   DeadLetterErrorType,
   DeadLetterKind,
   DeadLetterStatus,
   DeadLetterStore,
   KeyedPerson,
   ListDeadLettersArgs,
+  StoredDeadLetter,
 } from "@bounda-dev/core/adapter";
-import { byFirstFailure, postgresqlDialect } from "@bounda-dev/core/adapter/sql";
+import {
+  byFirstFailure,
+  decodeErrorText,
+  encodeErrorText,
+  postgresqlDialect,
+} from "@bounda-dev/core/adapter/sql";
 import type { PostgresqlDatabase } from "./database.ts";
 import { naming } from "./held-keys.ts";
 
@@ -22,9 +27,9 @@ export interface CreatePostgresqlDeadLetterStoreFunction {
 }
 
 const COLUMNS =
-  '"id", "kind", "handler", "event_id", "event_type", "aggregate_type", "aggregate_id", "error_type", "error_message", "error_stack", "attempts", "first_failed_at", "last_failed_at", "status", "payload", "persons"';
+  '"id", "kind", "handler", "event_id", "event_type", "aggregate_type", "aggregate_id", "person", "error_type", "error_name", "error_code", "error_message", "error_stack", "attempts", "first_failed_at", "last_failed_at", "status", "payload", "persons"';
 
-const toLetter = (row: Record<string, unknown>): DeadLetter => ({
+const toLetter = (row: Record<string, unknown>): StoredDeadLetter => ({
   id: String(row.id),
   kind: String(row.kind) as DeadLetterKind,
   handler: String(row.handler),
@@ -32,11 +37,16 @@ const toLetter = (row: Record<string, unknown>): DeadLetter => ({
   eventType: String(row.event_type),
   aggregateType: String(row.aggregate_type),
   aggregateId: String(row.aggregate_id),
+  person: row.person === null || row.person === undefined ? null : String(row.person),
   errorType: String(row.error_type) as DeadLetterErrorType,
-  errorMessage: String(row.error_message),
+  errorName: String(row.error_name),
+  ...(row.error_code === null || row.error_code === undefined
+    ? {}
+    : { errorCode: String(row.error_code) }),
+  errorMessage: decodeErrorText(row.error_message),
   ...(row.error_stack === null || row.error_stack === undefined
     ? {}
-    : { errorStack: String(row.error_stack) }),
+    : { errorStack: decodeErrorText(row.error_stack) }),
   attempts: Number(row.attempts),
   firstFailedAt: String(row.first_failed_at),
   lastFailedAt: String(row.last_failed_at),
@@ -67,7 +77,7 @@ export const createPostgresqlDeadLetterStore: CreatePostgresqlDeadLetterStoreFun
   db,
   table,
 }) => {
-  const get = async (id: string): Promise<DeadLetter | null> => {
+  const get = async (id: string): Promise<StoredDeadLetter | null> => {
     const [row] = await db.all(`SELECT ${COLUMNS} FROM ${table} WHERE "id" = $1`, [id]);
     return row === undefined ? null : toLetter(row);
   };
@@ -75,7 +85,7 @@ export const createPostgresqlDeadLetterStore: CreatePostgresqlDeadLetterStoreFun
   return {
     add: async (letter) => {
       await db.run(
-        `INSERT INTO ${table} (${COLUMNS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'failed', $14, $15) ON CONFLICT ("id") DO NOTHING`,
+        `INSERT INTO ${table} (${COLUMNS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'failed', $17, $18) ON CONFLICT ("id") DO NOTHING`,
         [
           letter.id,
           letter.kind,
@@ -84,9 +94,12 @@ export const createPostgresqlDeadLetterStore: CreatePostgresqlDeadLetterStoreFun
           letter.eventType,
           letter.aggregateType,
           letter.aggregateId,
+          letter.person,
           letter.errorType,
-          letter.errorMessage,
-          letter.errorStack ?? null,
+          letter.errorName,
+          letter.errorCode ?? null,
+          encodeErrorText(letter.errorMessage),
+          letter.errorStack === undefined ? null : encodeErrorText(letter.errorStack),
           letter.attempts,
           letter.firstFailedAt,
           letter.lastFailedAt,
@@ -94,7 +107,7 @@ export const createPostgresqlDeadLetterStore: CreatePostgresqlDeadLetterStoreFun
           postgresqlDialect.encode("json", letter.persons ?? []),
         ],
       );
-      return (await get(letter.id)) as DeadLetter;
+      return (await get(letter.id)) as StoredDeadLetter;
     },
     get,
     list: async (args = {}) => {
@@ -124,7 +137,7 @@ export const createPostgresqlDeadLetterStore: CreatePostgresqlDeadLetterStoreFun
     listByPerson: async (person) =>
       (
         await db.all(
-          `SELECT ${COLUMNS} FROM ${table} WHERE ${naming("$1")} ORDER BY "first_failed_at", "id" COLLATE "C"`,
+          `SELECT ${COLUMNS} FROM ${table} WHERE "person" = $1 OR ${naming("$1")} ORDER BY "first_failed_at", "id" COLLATE "C"`,
           [person],
         )
       ).map(toLetter),

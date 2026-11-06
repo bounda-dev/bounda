@@ -3,13 +3,17 @@ import type { Clock } from "../contracts/clock.ts";
 import type { StoredEvent } from "../contracts/event.ts";
 import type { IdGenerator } from "../contracts/ids.ts";
 import type { CausationContext } from "../contracts/metadata.ts";
+import type { ErrorIdentity } from "./shared/retry.ts";
 
 // Policies may react to it as to any other event.
 export const SCHEDULED_COMMAND_FAILED_EVENT: "ScheduledCommandFailed" = "ScheduledCommandFailed";
 
-export interface ScheduledCommandFailedPayload {
+/**
+ * Names the error without its text, which may quote personal data: that stays with the dead
+ * letter, sealed.
+ */
+export interface ScheduledCommandFailedPayload extends ErrorIdentity {
   readonly commandType: string;
-  readonly error: string;
   readonly attempts: number;
 }
 

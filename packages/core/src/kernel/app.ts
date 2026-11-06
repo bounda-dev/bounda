@@ -81,9 +81,10 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
   /**
    * Everything the store holds that names a person, for them to take away: their events, with
    * the fields marked `personal` opened (`null` each once they are forgotten) and nothing else of
-   * the payload, and the scheduled commands and dead letters that hold such fields of theirs. A
-   * field left unmarked, a read model and whatever a policy sent out are not in it. Rejects with
-   * `ValidationError` an empty id.
+   * the payload, the scheduled commands that hold such fields of theirs, and the dead letters of
+   * work about them, with the error text sealed under their key opened. A field left unmarked, a
+   * read model and whatever a policy sent out are not in it. Rejects with `ValidationError` an
+   * empty id.
    */
   exportPersonalData(personId: string): Promise<PersonalDataExport>;
 }
@@ -340,6 +341,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       {
         subscriber: createPolicySubscriber({
           policies,
+          aggregates,
           executor: policyExecutor,
           storage,
           config,

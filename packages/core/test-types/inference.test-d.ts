@@ -13,6 +13,8 @@ import type {
   Consistency,
   CreateArgs,
   CreateImplementation,
+  DeadLetter,
+  DeadLetterKind,
   DecidedDispatch,
   DispatchOptions,
   DispatchResult,
@@ -585,10 +587,27 @@ describe("personal data", () => {
     }>();
     expectTypeOf<ExportedDeadLetter>().toEqualTypeOf<{
       readonly id: string;
-      readonly commandType: string;
+      readonly kind: DeadLetterKind;
+      readonly handler: string;
+      readonly errorMessage?: string | null;
+      readonly errorStack?: string | null;
       readonly data: ExportedData;
     }>();
     expectTypeOf<ExportedData>().toEqualTypeOf<Readonly<Record<string, unknown>>>();
+  });
+
+  it("hands dead letters out with the error named in the clear and its text opened, null once the person is forgotten", () => {
+    expectTypeOf<DeadLetter["person"]>().toEqualTypeOf<string | null>();
+    expectTypeOf<DeadLetter["errorName"]>().toEqualTypeOf<string>();
+    expectTypeOf<DeadLetter["errorCode"]>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<DeadLetter["errorMessage"]>().toEqualTypeOf<string | null>();
+    expectTypeOf<DeadLetter["errorStack"]>().toEqualTypeOf<string | null | undefined>();
+    expectTypeOf<BoundaClient["deadLetters"]["list"]>().returns.resolves.toEqualTypeOf<
+      readonly DeadLetter[]
+    >();
+    expectTypeOf<
+      BoundaClient["deadLetters"]["retry"]
+    >().returns.resolves.toEqualTypeOf<DeadLetter>();
   });
 });
 

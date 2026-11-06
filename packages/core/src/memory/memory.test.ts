@@ -306,6 +306,8 @@ describe("memory adapter", () => {
       aggregateType: "order",
       aggregateId: "1",
       errorType: "terminal" as const,
+      person: null,
+      errorName: "Error",
       errorMessage: "boom",
       attempts: 1,
       firstFailedAt: now.toISOString(),

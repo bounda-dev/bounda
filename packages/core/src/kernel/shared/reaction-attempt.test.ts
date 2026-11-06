@@ -67,7 +67,9 @@ const setUp = async () => {
           eventType: "OrderPlaced",
           aggregateType: "order",
           aggregateId: "1",
+          person: null,
           errorType,
+          errorName: "Error",
           errorMessage: error instanceof Error ? error.message : String(error),
           attempts,
           firstFailedAt: clock.now().toISOString(),
@@ -116,7 +118,7 @@ describe("runAttempt", () => {
     expect(await storage.inboxLedger.get(key)).toMatchObject({
       status: "failed",
       attempts: 1,
-      lastError: "network",
+      lastError: "Error",
     });
     clock.advance(999);
     expect(await attempt()).toBe("hold");
@@ -138,7 +140,7 @@ describe("runAttempt", () => {
     expect(await storage.deadLetterStore.count()).toBe(1);
     expect(await storage.inboxLedger.get(key)).toMatchObject({
       status: "succeeded",
-      lastError: "refused",
+      lastError: "ValidationError (VALIDATION_FAILED)",
     });
     expect(await attempt()).toBe("done");
     expect(runs).toEqual([1]);

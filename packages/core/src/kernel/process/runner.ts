@@ -55,7 +55,13 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
   logger,
 }) => {
   const units = createProcessUnits({ storage, config, ids, clock });
-  const failures = createProcessFailures({ ids, clock, logger });
+  const failures = createProcessFailures({
+    aggregates,
+    keys: storage.personalKeys,
+    ids,
+    clock,
+    logger,
+  });
   const handlers = createProcessHandlers({ aggregates, pipeline, clock, logger });
   const schedule = createDeadlineSchedule({ storage, units });
   const deadlineStep = createDeadlineStep({ units, handlers, ids });

@@ -348,7 +348,12 @@ export const lifecycleEntries: LifecycleEntries = {
   }),
   failed: (failedOn, letter, context) => ({
     type: PROCESS_EVENTS.failed,
-    payload: { ...failedOn, error: letter.errorMessage, letterId: letter.id },
+    payload: {
+      ...failedOn,
+      errorName: letter.errorName,
+      ...(letter.errorCode === undefined ? {} : { errorCode: letter.errorCode }),
+      letterId: letter.id,
+    },
     context,
   }),
   parked: (event) => ({

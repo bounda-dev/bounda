@@ -168,13 +168,18 @@ bounda dead-letters discard <id>
 ```
 019a0c4e-3c9e-7a1b-9f1e-2b3c4d5e6f70  failed  policy  order.notifyOnOrderPlaced
     OrderPlaced on order:o-1, 1 attempt, last 2026-09-22T14:03:11.402Z (terminal)
-    mail server rejects it
+    ValidationError (VALIDATION_FAILED): mail server rejects it
 019a0c51-8d2f-7c4e-a1b2-3c4d5e6f7a80  failed  process  order.orderPayment
     OrderPaid on order:o-2, 3 attempts, last 2026-09-22T14:05:40.118Z (retriable_exhausted)
-    payment provider timed out
+    Error: payment provider timed out
     2 events are parked behind it; retrying it handles them in order
 2 dead letters
 ```
+
+The third line of each letter is the error's class, its code when it is one of
+[Bounda's](/reference/errors/), and its message. The message is kept encrypted with the key of
+the person the work names, so it is left out once that person was
+[forgotten](/guides/personal-data/); see [what a letter holds](/guides/dead-letters/#what-a-letter-holds).
 
 When `retry` fails, because the handler fails again or the letter cannot be retried or was settled
 first, the error is printed and the exit code is `2`. For a process letter it also says when one of

@@ -84,7 +84,10 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "event_type" TEXT NOT NULL,
     "aggregate_type" TEXT NOT NULL,
     "aggregate_id" TEXT NOT NULL,
+    "person" TEXT,
     "error_type" TEXT NOT NULL,
+    "error_name" TEXT NOT NULL,
+    "error_code" TEXT,
     "error_message" TEXT NOT NULL,
     "error_stack" TEXT,
     "attempts" INTEGER NOT NULL,
@@ -95,6 +98,7 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "persons" TEXT NOT NULL DEFAULT '[]'
   )`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "listing")} ON ${tables.deadLetters} ("status", "first_failed_at", "id")`,
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "person")} ON ${tables.deadLetters} ("person")`,
   `CREATE TABLE IF NOT EXISTS ${tables.scheduledCommands} (
     "dedupe_key" TEXT PRIMARY KEY,
     "command_type" TEXT NOT NULL,

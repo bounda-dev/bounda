@@ -132,9 +132,11 @@ have work to do when it happens.
   systems a policy wrote to. The key store is a table like the others: a backup of the whole
   database restores the keys too, so a backup kept past a person's erasure is itself a copy of
   their data.
-- **Errors.** A dead letter keeps the error a handler threw, message and stack: one that quotes a
-  decrypted field keeps it in the clear. A command's payload marked `personal` is encrypted where
-  it is stored, scheduled or dead-lettered, and `forget` cancels it; a payload left unmarked is not.
+- **Errors.** A dead letter keeps the error a handler threw, its message and stack encrypted with
+  the key of the person the work names, so one that quotes a decrypted field is unreadable once
+  they are forgotten; what the stream and the stores keep of a failure is the error's class and
+  code. A command's payload marked `personal` is encrypted where it is stored, scheduled or
+  dead-lettered, and `forget` cancels it; a payload left unmarked is not.
 - **Encrypted data under the GDPR.** Whether a ciphertext without a key still counts as personal
   data is a legal question Verraes raises and this page does not answer.
 
