@@ -67,6 +67,3 @@ allowBuilds:
   protobufjs: false
   ssh2: false
   workerd: true
-
-patchedDependencies:
-  '@stryker-mutator/vitest-runner@10.0.0': patches/@stryker-mutator__vitest-runner@10.0.0.patch
