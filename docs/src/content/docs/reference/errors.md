@@ -105,6 +105,7 @@ The hosts map the codes a client can cause to a status:
 | `CHAIN_DEPTH_EXCEEDED` | 409 | rethrown |
 | `FOREIGN_REJECTION` | 500, code `INTERNAL`, logged | rethrown |
 | `NOT_FOUND` | 404 | rethrown |
+| `PAYLOAD_TOO_LARGE` | 413, a body over `maxPayloadBytes` | — |
 | `HANDLER_TIMEOUT` | 504 | rethrown |
 | anything else | 500, code `INTERNAL`, logged | rethrown, for the route's `ErrorBoundary` |
 

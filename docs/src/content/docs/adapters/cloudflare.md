@@ -152,7 +152,9 @@ global stream.
 
 Refusals come back as `{ "error": { "code", "message" } }` with the statuses in
 [errors over HTTP](/reference/errors/#over-http); anything else is a 500 whose message goes to the
-logs, not to the caller.
+logs, not to the caller. A body over `maxPayloadBytes`, `DEFAULT_MAX_PAYLOAD_BYTES` unless
+`createWorker({ config, tenantOf, maxPayloadBytes })` says otherwise, is refused with a 413
+before it is read.
 
 It has **no authentication** and no operator endpoint, on purpose: it is a starting point. For
 the same reason it never [forgets](/guides/personal-data/) anyone, which cannot be undone. An app

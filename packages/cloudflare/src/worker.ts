@@ -34,7 +34,17 @@ export interface CreateWorkerArgs {
    * Defaults to one JSON line per entry on `console`, which Workers Logs parses into fields.
    */
   readonly logger?: Logger;
+  /**
+   * The largest body a request may carry, in bytes; a larger one is refused with a 413 before it
+   * is read. Defaults to `DEFAULT_MAX_PAYLOAD_BYTES`.
+   */
+  readonly maxPayloadBytes?: number;
 }
+
+/**
+ * The default of `createWorker`'s `maxPayloadBytes`: one mebibyte.
+ */
+export const DEFAULT_MAX_PAYLOAD_BYTES: number = 1_048_576;
 
 export interface CreateWorkerFunction {
   (args: CreateWorkerArgs): ExportedHandler<Cloudflare.Env>;
@@ -44,6 +54,7 @@ const STATUS_BY_CODE: Readonly<Record<string, number>> = {
   VALIDATION_FAILED: 400,
   INVALID_JSON: 400,
   NOT_FOUND: 404,
+  PAYLOAD_TOO_LARGE: 413,
   DOMAIN_ERROR: 409,
   CONCURRENCY_CONFLICT: 409,
   CHAIN_DEPTH_EXCEEDED: 409,
@@ -59,8 +70,44 @@ const json = (body: unknown, status = 200): Response =>
 const failure = (code: string, message: string, status: number, extra: object = {}): Response =>
   json({ error: { code, message, ...extra } }, status);
 
-const readPayload = async (request: Request): Promise<unknown> => {
-  const text = await request.text();
+class PayloadTooLargeError extends Error {
+  readonly code = "PAYLOAD_TOO_LARGE";
+
+  constructor(maxBytes: number) {
+    super(`The body is larger than ${maxBytes} bytes`);
+    this.name = "PayloadTooLargeError";
+  }
+}
+
+// Read by chunks and given up as soon as the limit passes, so a body of any size costs the
+// Worker at most `maxBytes` of memory; a declared length over it is refused before any read.
+const readBody = async (request: Request, maxBytes: number): Promise<string> => {
+  if (Number(request.headers.get("content-length")) > maxBytes) {
+    throw new PayloadTooLargeError(maxBytes);
+  }
+  if (request.body === null) return "";
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (let read = await reader.read(); !read.done; read = await reader.read()) {
+    size += read.value.byteLength;
+    if (size > maxBytes) {
+      await reader.cancel();
+      throw new PayloadTooLargeError(maxBytes);
+    }
+    chunks.push(read.value);
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+};
+
+const readPayload = async (request: Request, maxBytes: number): Promise<unknown> => {
+  const text = await readBody(request, maxBytes);
   return text.trim() === "" ? undefined : JSON.parse(text);
 };
 
@@ -88,8 +135,8 @@ const route = (pathname: string): { readonly kind: string; readonly name: string
  *
  * Refusals come back as `{ error: { code, message } }`: 400 for a payload that fails validation,
  * with `issues`, 404 for an unknown command, query or row, 409 for a command's rejection, with its
- * code in `rejected`, or a conflict. Anything else is a 500 without its message, which is logged
- * instead. There is no authentication and no operator endpoint: it is a starting point, and an
+ * code in `rejected`, or a conflict, 413 for a body over `maxPayloadBytes`. Anything else is a
+ * 500 without its message, which is logged instead. There is no authentication and no operator endpoint: it is a starting point, and an
  * app with users writes its own `fetch` over `connect`. Throws `ConfigurationError` when
  * `storage` is not `cloudflare()` or for a `consistency` it does not know.
  */
@@ -98,6 +145,7 @@ export const createWorker: CreateWorkerFunction = ({
   tenantOf,
   consistency = "read-your-writes",
   logger = workersLogger,
+  maxPayloadBytes = DEFAULT_MAX_PAYLOAD_BYTES,
 }) => {
   const { binding } = cloudflareStorageOf(config).options;
   checkConsistency(consistency);
@@ -111,8 +159,11 @@ export const createWorker: CreateWorkerFunction = ({
       }
       let payload: unknown;
       try {
-        payload = await readPayload(request);
-      } catch {
+        payload = await readPayload(request, maxPayloadBytes);
+      } catch (error) {
+        if (error instanceof PayloadTooLargeError) {
+          return failure(error.code, error.message, STATUS_BY_CODE[error.code] as number);
+        }
         return failure("INVALID_JSON", "The body is not JSON", 400);
       }
       const namespace = Reflect.get(env, binding) as DurableObjectNamespace | undefined;
