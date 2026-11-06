@@ -117,6 +117,13 @@ export const createPostgresqlEventStore: CreatePostgresqlEventStoreFunction = ({
             );
       return { events: rows.map(toStoredEvent), version };
     },
+    readOne: async ({ aggregateType, aggregateId, eventId }) => {
+      const [row] = await db.all(
+        `SELECT ${COLUMNS} FROM ${table} WHERE "id" = $1 AND "aggregate_type" = $2 AND "aggregate_id" = $3`,
+        [eventId, aggregateType, aggregateId],
+      );
+      return row === undefined ? null : toStoredEvent(row);
+    },
     readAll: async ({ afterPosition, limit }) =>
       (
         await db.all(

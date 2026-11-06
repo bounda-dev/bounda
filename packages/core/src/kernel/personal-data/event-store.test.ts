@@ -100,6 +100,12 @@ describe("withPersonalData", () => {
       email: "ana@example.com",
       plan: "pro",
     });
+    const stream = { aggregateType: "customer", aggregateId: "c-1" };
+    expect((await store.readOne({ ...stream, eventId: stored?.id ?? "" }))?.payload).toEqual({
+      email: "ana@example.com",
+      plan: "pro",
+    });
+    expect(await store.readOne({ ...stream, eventId: "missing" })).toBeNull();
   });
 
   it("seals under the person the payload names, leaves an absent optional field out, and seals an object whole", async () => {

@@ -113,15 +113,15 @@ export const createProcessInstances: CreateProcessInstancesFunction = ({
     error.streamId ===
       streamId({ aggregateType: processAggregateType(process.name), aggregateId: instanceId });
 
-  const parkedEvent = async (parked: ParkedEvent): Promise<StoredEvent> => {
-    const { events } = await eventStore.load({
-      aggregateType: parked.aggregateType,
-      aggregateId: parked.aggregateId,
-    });
-    const event = events.find((candidate) => candidate.id === parked.eventId);
-    if (event === undefined) {
+  const parkedEvent = async ({
+    eventId,
+    aggregateType,
+    aggregateId,
+  }: ParkedEvent): Promise<StoredEvent> => {
+    const event = await eventStore.readOne({ aggregateType, aggregateId, eventId });
+    if (event === null) {
       throw new NotFoundError(
-        `Parked event ${parked.eventId} of ${parked.aggregateType}:${parked.aggregateId} not found`,
+        `Parked event ${eventId} of ${aggregateType}:${aggregateId} not found`,
       );
     }
     return event;

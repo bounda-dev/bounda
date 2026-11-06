@@ -109,6 +109,33 @@ export const eventStoreContract: EventStoreContractFunction = ({ create }) => {
       expect(loaded.version).toBe(3);
     });
 
+    it("reads one event of a stream by its id, and null for an id the stream does not hold", async () => {
+      await store.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events: [1, 2, 3].map((version) => pendingEvent({ aggregateId: "1", version })),
+      });
+      await store.append({
+        aggregateType: "customer",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events: [pendingEvent({ aggregateType: "customer", aggregateId: "1", version: 1 })],
+      });
+      const { events } = await store.load({ aggregateType: "order", aggregateId: "1" });
+      expect(
+        await store.readOne({ aggregateType: "order", aggregateId: "1", eventId: "order-1-2" }),
+      ).toEqual(events[1]);
+      for (const missing of [
+        { aggregateType: "order", aggregateId: "1", eventId: "order-1-4" },
+        { aggregateType: "order", aggregateId: "1", eventId: "customer-1-1" },
+        { aggregateType: "order", aggregateId: "2", eventId: "order-1-2" },
+        { aggregateType: "customer", aggregateId: "1", eventId: "order-1-2" },
+      ]) {
+        expect(await store.readOne(missing)).toBeNull();
+      }
+    });
+
     it("stores any JSON payload, a top-level boolean or array of booleans included", async () => {
       const payloads: readonly unknown[] = [true, [true, false], "plain", 0];
       await store.append({

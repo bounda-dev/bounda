@@ -92,6 +92,13 @@ export const createSqliteEventStore: CreateSqliteEventStoreFunction = ({ db, tab
             );
       return { events: rows.map(toStoredEvent), version };
     },
+    readOne: async ({ aggregateType, aggregateId, eventId }) => {
+      const [row] = await db.all(
+        `SELECT ${COLUMNS} FROM ${table} WHERE "id" = ? AND "aggregate_type" = ? AND "aggregate_id" = ?`,
+        [eventId, aggregateType, aggregateId],
+      );
+      return row === undefined ? null : toStoredEvent(row);
+    },
     readAll: async ({ afterPosition, limit }) =>
       (
         await db.all(
