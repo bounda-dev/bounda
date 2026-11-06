@@ -175,6 +175,10 @@ export const withPersonalData: WithPersonalDataFunction = ({ eventStore, aggrega
       const events = await settled(loaded.events.map((e) => unsealed(e, key, fingerprints)));
       return { ...loaded, events, fingerprints };
     },
+    readOne: async (args) => {
+      const event = await eventStore.readOne(args);
+      return event === null ? null : unsealed(event, opening(), new Map());
+    },
     readAll: async (args) => {
       const key = opening();
       const ignored = new Map<string, string>();

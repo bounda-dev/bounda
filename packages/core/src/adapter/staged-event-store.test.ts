@@ -191,7 +191,7 @@ describe("createStagedEventStore", () => {
     ]);
   });
 
-  it("reads the global stream from the base store alone", async () => {
+  it("reads the global stream and single events from the base store alone", async () => {
     const { staged } = await setUp();
     await staged.append({
       ...order,
@@ -202,5 +202,10 @@ describe("createStagedEventStore", () => {
     expect(
       (await staged.readAll({ afterPosition: 0, limit: 10 })).map((event) => event.position),
     ).toEqual([1, 2]);
+    expect(await staged.readOne({ ...order, eventId: "order-1-1" })).toMatchObject({
+      version: 1,
+      position: 1,
+    });
+    expect(await staged.readOne({ ...order, eventId: "order-1-2" })).toBeNull();
   });
 });
