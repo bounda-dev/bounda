@@ -193,6 +193,11 @@ describe("discoverProject on the order-app fixture", () => {
               "app/domain/order/policies/bounda/audit-on-personal-data-forgotten.ts",
             ],
             [
+              "boundaAuditOnProcessingRestrictionLifted",
+              "processingRestrictionLifted",
+              "app/domain/order/policies/bounda/audit-on-processing-restriction-lifted.ts",
+            ],
+            [
               "customerGreetOnCustomerRegistered",
               "customerRegistered",
               "app/domain/order/policies/customer/greet-on-customer-registered.ts",
@@ -262,6 +267,10 @@ describe("discoverProject on the order-app fixture", () => {
               "personalDataForgotten",
               "app/read/order-summary/projections/bounda/personal-data-forgotten.ts",
             ],
+            [
+              "processingRestricted",
+              "app/read/order-summary/projections/bounda/processing-restricted.ts",
+            ],
             ["orderPaid", "app/read/order-summary/projections/order/order-paid.ts"],
             ["orderPlaced", "app/read/order-summary/projections/order/order-placed.ts"],
           ],
@@ -293,7 +302,7 @@ describe("discoverProject on the order-app fixture", () => {
       "app/read/summary/projections/bounda/personal-data-lost.ts",
     ]);
     expect(await problemsOf(root)).toEqual([
-      'app/read/summary/projections/bounda/personal-data-lost.ts: "PersonalDataLost" is not an event the runtime emits; it emits PersonalDataForgotten',
+      'app/read/summary/projections/bounda/personal-data-lost.ts: "PersonalDataLost" is not an event the runtime emits; it emits PersonalDataForgotten, ProcessingRestricted, ProcessingRestrictionLifted',
     ]);
     const valid = await project([
       "app/domain/order/order-placed.ts",

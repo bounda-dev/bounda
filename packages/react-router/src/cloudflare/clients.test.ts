@@ -65,6 +65,8 @@ describe("cloudflareClients", () => {
     await client.rebuildReadModel("orders");
     await client.forget("c-1");
     await client.exportPersonalData("c-1");
+    await client.restrict("c-2");
+    await client.unrestrict("c-2");
     expect(store.calls).toEqual([
       ["acme", "lag"],
       ["acme", "readEvents", { after: 3, limit: 10 }],
@@ -74,6 +76,8 @@ describe("cloudflareClients", () => {
       ["acme", "rebuildReadModel", "orders"],
       ["acme", "forget", "c-1", "read-your-writes"],
       ["acme", "exportPersonalData", "c-1"],
+      ["acme", "restrict", "c-2", "read-your-writes"],
+      ["acme", "unrestrict", "c-2", "read-your-writes"],
     ]);
   });
 

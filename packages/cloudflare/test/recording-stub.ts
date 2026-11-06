@@ -38,6 +38,14 @@ export const recordingStub = (): {
         exports.push(args);
         return answer();
       },
+      restrict: async (...args) => {
+        forgets.push(["restrict", ...args]);
+        return answer();
+      },
+      unrestrict: async (...args) => {
+        forgets.push(["unrestrict", ...args]);
+        return answer();
+      },
     },
   };
 };

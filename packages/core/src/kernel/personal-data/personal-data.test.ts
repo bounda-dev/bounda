@@ -1,10 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { Table } from "../../adapter/storage/table.ts";
-import { ConfigurationError, ValidationError } from "../../contracts/errors.ts";
+import {
+  ConfigurationError,
+  ProcessingRestrictedError,
+  ValidationError,
+} from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
-import type { PersonalDataForgottenEvent } from "../../modules/bounda-events.ts";
+import type {
+  PersonalDataForgottenEvent,
+  ProcessingRestrictedEvent,
+} from "../../modules/bounda-events.ts";
 import type { RejectFunction } from "../../modules/command.ts";
 import type { EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
@@ -25,6 +32,7 @@ interface Row {
 }
 
 const erased: string[] = [];
+const restricted: string[] = [];
 // Runs inside `remindCustomer`'s handler once, between its load and its append.
 let whileDeciding: (() => Promise<unknown>) | null = null;
 
@@ -130,6 +138,14 @@ const registry = {
           },
           source: "bounda",
         },
+        boundaFlagOnProcessingRestricted: {
+          module: {
+            handler: async ({ event }: { event: ProcessingRestrictedEvent }) => {
+              restricted.push(event.payload.personId);
+            },
+          },
+          source: "bounda",
+        },
       },
       processes: {},
     },
@@ -149,8 +165,12 @@ const registry = {
       commands: {
         subscribe: {
           module: {
-            payload: ({ z }: PayloadArgs) =>
-              z.object({ newsletterId: z.string(), customerId: z.string(), email: z.email() }),
+            payload: ({ z, person }: EventPayloadArgs) =>
+              z.object({
+                newsletterId: z.string(),
+                customerId: person(z.string()),
+                email: z.email(),
+              }),
             handler: ({
               command,
               events,
@@ -533,6 +553,115 @@ describe("personal data in an app", () => {
       { email: "bo@example.com" },
     ]);
     await expect(app.exportPersonalData("")).rejects.toBeInstanceOf(ValidationError);
+    await app.stop();
+  });
+
+  it("refuses the commands that touch a restricted person, dead-letters the reactions that do, and retries them once the restriction is lifted", async () => {
+    restricted.length = 0;
+    const bo = { customerId: "c-2", email: "bo@example.com", name: "Bo" };
+    const { app } = await createTestApp({ registry });
+    await app.commands.registerCustomer(ana);
+    await app.commands.registerCustomer(bo);
+    expect(await app.restrict("c-2")).toMatchObject({
+      aggregateType: "bounda",
+      aggregateId: "c-2",
+      eventTypes: ["ProcessingRestricted"],
+      position: 3,
+    });
+    expect((await app.restrict("c-2")).eventIds).toEqual([]);
+
+    // The aggregate is the person, the payload names the person, and a command with `delay` is
+    // refused before it is scheduled.
+    const refused = await app.commands
+      .greetCustomer({ customerId: "c-2" })
+      .catch((error: unknown) => error);
+    expect(refused).toBeInstanceOf(ProcessingRestrictedError);
+    expect(refused).toMatchObject({ code: "PROCESSING_RESTRICTED", personId: "c-2" });
+    await expect(
+      app.commands.subscribe({ newsletterId: "n-1", customerId: "c-2", email: "bo@example.com" }),
+    ).rejects.toMatchObject({ code: "PROCESSING_RESTRICTED", personId: "c-2" });
+    await expect(
+      app.commands.remindCustomer({ customerId: "c-2" }, { delay: "1m" }),
+    ).rejects.toMatchObject({ code: "PROCESSING_RESTRICTED" });
+    expect((await app.commands.greetCustomer({ customerId: "c-1" })).eventTypes).toEqual([
+      "CustomerGreeted",
+    ]);
+
+    // A policy on an event that names nobody, dispatching for the person: its letter names them.
+    await app.commands.invite({ newsletterId: "n-1", customerId: "c-2", email: "bo@example.com" });
+    expect((await app.runUntilIdle()).idle).toBe(true);
+    expect(restricted).toEqual(["c-2"]);
+    const [letter] = await app.deadLetters.list();
+    expect(letter).toMatchObject({
+      kind: "policy",
+      handler: "customer.registerOnInvited",
+      aggregateType: "newsletter",
+      person: "c-2",
+      status: "failed",
+      errorType: "terminal",
+      errorName: "ProcessingRestrictedError",
+      errorCode: "PROCESSING_RESTRICTED",
+      errorMessage: "The processing of this person's data is restricted",
+    });
+    expect(await app.deadLetters.list()).toHaveLength(1);
+
+    // Forgetting stays allowed.
+    await app.restrict("c-3");
+    expect((await app.forget("c-3")).eventTypes).toEqual(["PersonalDataForgotten"]);
+
+    expect(await app.unrestrict("c-2")).toMatchObject({
+      eventTypes: ["ProcessingRestrictionLifted"],
+    });
+    expect((await app.unrestrict("c-2")).eventIds).toEqual([]);
+    expect((await app.runUntilIdle()).idle).toBe(true);
+    expect((await app.deadLetters.list()).map(({ id, status }) => [id, status])).toEqual([
+      [letter?.id, "retried"],
+    ]);
+    expect((await app.events.read()).map((event) => [event.aggregateId, event.type])).toEqual([
+      ["c-1", "CustomerRegistered"],
+      ["c-2", "CustomerRegistered"],
+      ["c-2", "ProcessingRestricted"],
+      ["c-1", "CustomerGreeted"],
+      ["n-1", "Invited"],
+      ["c-3", "ProcessingRestricted"],
+      ["c-3", "PersonalDataForgotten"],
+      ["c-2", "ProcessingRestrictionLifted"],
+      ["c-2", "CustomerRegistered"],
+      ["c-2", "CustomerReminded"],
+    ]);
+    expect((await app.commands.greetCustomer({ customerId: "c-2" })).eventTypes).toEqual([
+      "CustomerGreeted",
+    ]);
+    await app.stop();
+  });
+
+  it("dead-letters a scheduled command that comes due under a restriction, naming the person the refusal names", async () => {
+    const { app, clock } = await createTestApp({ registry });
+    await app.commands.registerCustomer(ana);
+    await app.commands.remindCustomer({ customerId: "c-1" }, { delay: "1m" });
+    await app.restrict("c-1");
+    clock.advance(60_000);
+    expect((await app.runUntilIdle()).idle).toBe(true);
+    const [letter] = await app.deadLetters.list();
+    expect(letter).toMatchObject({
+      kind: "scheduled",
+      handler: "RemindCustomer",
+      person: "c-1",
+      errorType: "terminal",
+      errorCode: "PROCESSING_RESTRICTED",
+      payload: { customerId: "c-1" },
+    });
+    expect(letter).not.toHaveProperty("persons");
+    await app.unrestrict("c-1");
+    expect((await app.runUntilIdle()).idle).toBe(true);
+    expect((await app.deadLetters.list())[0]?.status).toBe("retried");
+    expect((await app.events.read()).map((event) => event.type)).toEqual([
+      "CustomerRegistered",
+      "ProcessingRestricted",
+      "ScheduledCommandFailed",
+      "ProcessingRestrictionLifted",
+      "CustomerReminded",
+    ]);
     await app.stop();
   });
 

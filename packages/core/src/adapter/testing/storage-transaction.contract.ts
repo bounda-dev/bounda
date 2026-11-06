@@ -298,6 +298,43 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       expect(await storage.eventStore.readAll({ afterPosition: 0, limit: 10 })).toHaveLength(1);
     });
 
+    it("restricts and unrestricts a person with the rest, or not at all", async () => {
+      const work = async (tx: StorageTransaction) => {
+        expect(await tx.persons.restrict("c-1", now)).toBe(true);
+        expect(await tx.persons.get("c-1")).toEqual({
+          person: "c-1",
+          restrictedSince: now.toISOString(),
+        });
+        await tx.eventStore.append({
+          aggregateType: "bounda",
+          aggregateId: "c-1",
+          expectedVersion: 0,
+          events: [pendingEvent({ aggregateType: "bounda", aggregateId: "c-1", version: 1 })],
+        });
+      };
+      await expect(
+        storage.transact(async (tx) => {
+          await work(tx);
+          throw new Error("boom");
+        }),
+      ).rejects.toThrow("boom");
+      expect(await storage.persons.get("c-1")).toBeNull();
+      expect(await storage.eventStore.lastPosition()).toBe(0);
+      await storage.transact(work);
+      expect((await storage.persons.get("c-1"))?.restrictedSince).toBe(now.toISOString());
+      await expect(
+        storage.transact(async (tx) => {
+          expect(await tx.persons.unrestrict("c-1")).toBe(true);
+          throw new Error("boom");
+        }),
+      ).rejects.toThrow("boom");
+      expect((await storage.persons.get("c-1"))?.restrictedSince).toBe(now.toISOString());
+      await storage.transact(async (tx) => {
+        expect(await tx.persons.unrestrict("c-1")).toBe(true);
+      });
+      expect(await storage.persons.get("c-1")).toEqual({ person: "c-1", restrictedSince: null });
+    });
+
     it("forgets a person's snapshots and remembered rejections with their key", async () => {
       await storage.personalKeys.add("c-1", stored("1"));
       await storage.personalKeys.add("c-2", stored("2"));

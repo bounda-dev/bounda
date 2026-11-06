@@ -7,6 +7,7 @@ import type {
 import {
   createSqlCheckpointStore,
   createSqlPersonalKeyStore,
+  createSqlPersonStore,
   postgresqlDialect,
   type SqlTransaction,
 } from "@bounda-dev/core/adapter/sql";
@@ -117,6 +118,11 @@ export const postgresql: PostgresqlFunction = (options) => {
             dialect: postgresqlDialect,
             db: database,
             table: tables.personalKeys,
+          }),
+          persons: createSqlPersonStore({
+            dialect: postgresqlDialect,
+            db: database,
+            table: tables.persons,
           }),
           snapshotStore: createPostgresqlSnapshotStore({
             db: database,

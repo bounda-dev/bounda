@@ -16,12 +16,15 @@ import { createAggregateLoader } from "./aggregate/load-aggregate.ts";
 import { createCommandsFacade } from "./command/facade.ts";
 import { createCommandPipeline } from "./command/pipeline.ts";
 import { createDeadLetters, type DeadLetters } from "./dead-letters/dead-letters.ts";
+import { createRestrictedRetries } from "./dead-letters/restricted.ts";
+import { createDeadLetterRetry } from "./dead-letters/retry.ts";
 import { createDispatcher, type DispatcherLag } from "./dispatch/dispatcher.ts";
 import { alignReactiveCheckpoints } from "./dispatch/reactive-checkpoints.ts";
 import { appStorage } from "./events/app-event-store.ts";
 import { createGlobalStream, type GlobalStream } from "./events/global-stream.ts";
 import { exportPersonalData, type PersonalDataExport } from "./personal-data/export.ts";
 import { forgetPersonalData } from "./personal-data/forget.ts";
+import { liftProcessingRestriction, restrictProcessing } from "./personal-data/restriction.ts";
 import { buildPolicies } from "./policy/build-policies.ts";
 import { createDelayedPolicies } from "./policy/delayed.ts";
 import { createPolicyExecutor } from "./policy/executor.ts";
@@ -87,6 +90,25 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * empty id.
    */
   exportPersonalData(personId: string): Promise<PersonalDataExport>;
+  /**
+   * Restricts the processing of a person's data: from then on every command that touches them,
+   * the one their payload names with `person` or whose aggregate is the person, is refused with
+   * `ProcessingRestrictedError`, and a policy, process or scheduled command whose command is
+   * refused becomes a dead letter at once, with that code and the person. Writes their row and
+   * appends `ProcessingRestricted` to the stream `bounda:<personId>` together, and resolves like
+   * a command, so `catchUpReadModels({ through })` waits for the read models that handle it.
+   * Restricting a person restricted already appends nothing and resolves without events. Reading
+   * their data, `forget` and the export stay allowed. Rejects with `ValidationError` an empty id.
+   */
+  restrict(personId: string): Promise<StoredDispatch>;
+  /**
+   * Lifts the restriction: appends `ProcessingRestrictionLifted` the same way, and the runtime
+   * then retries, in the background, every dead letter the restriction caused, in order; one
+   * that fails again for another reason stays, as that failure's letter. Lifting for a person
+   * not restricted appends nothing and resolves without events. Rejects with `ValidationError`
+   * an empty id.
+   */
+  unrestrict(personId: string): Promise<StoredDispatch>;
 }
 
 /**
@@ -153,7 +175,8 @@ export interface BoundaApp<R extends Registry = AppRegistry> extends BoundaClien
 
 /**
  * How far behind the background work is: every subscriber's lag, and how many process deadlines
- * that came due this process holds back until the process runner catches up.
+ * and restricted retries that came due this process holds back until the reactive runners catch
+ * up.
  */
 export interface AppLag extends DispatcherLag {
   readonly waitingDeadlines: number;
@@ -354,6 +377,16 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       { subscriber: processes, following: processDefinitions.all.length > 0 },
     ];
     const following = reactive.filter((entry) => entry.following).map((entry) => entry.subscriber);
+    const retries = createDeadLetterRetry({
+      storage,
+      pipeline,
+      aggregates,
+      policies,
+      policyExecutor,
+      processes,
+      config,
+      ids,
+    });
     await alignReactiveCheckpoints({
       eventStore: storage.eventStore,
       checkpointStore: storage.checkpointStore,
@@ -404,23 +437,14 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         eventStore: storage.eventStore,
         config,
       }),
+      restrictedRetries: createRestrictedRetries({ storage, retries, clock, logger }),
+      reactive: following.map((subscriber) => subscriber.name),
       config,
       ids,
       clock,
       logger,
     });
-    const deadLetters = createDeadLetters({
-      storage,
-      pipeline,
-      aggregates,
-      policies,
-      policyExecutor,
-      processes,
-      config,
-      ids,
-      clock,
-      logger,
-    });
+    const deadLetters = createDeadLetters({ storage, retries, processes, clock, logger });
     const lag = meter().createObservableGauge(METRICS.lag, {
       description: "Events each subscriber is behind the head of the stream",
       unit: "{event}",
@@ -539,6 +563,24 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           aggregates,
           clock,
           batchSize: config.runtime.dispatcher.batchSize,
+          personId,
+        }),
+      restrict: (personId) =>
+        restrictProcessing({
+          storage,
+          ids,
+          clock,
+          logger,
+          concurrencyRetries: config.runtime.commands.concurrencyRetries,
+          personId,
+        }),
+      unrestrict: (personId) =>
+        liftProcessingRestriction({
+          storage,
+          ids,
+          clock,
+          logger,
+          concurrencyRetries: config.runtime.commands.concurrencyRetries,
           personId,
         }),
       getLag: async () => ({

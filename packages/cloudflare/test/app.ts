@@ -70,11 +70,11 @@ export const registry = {
       commands: {
         placeOrder: {
           module: {
-            payload: ({ z }: PayloadArgs) =>
+            payload: ({ z, person }: EventPayloadArgs) =>
               z.object({
                 orderId: z.string(),
                 total: z.number(),
-                customer: z.string(),
+                customer: person(z.string()),
                 note: z.string().optional(),
               }),
             rejections: () => ({ AlreadyPlaced: "Order already placed" }),

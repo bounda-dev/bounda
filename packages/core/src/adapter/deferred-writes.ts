@@ -74,6 +74,7 @@ export const deferWrites: DeferWritesFunction = ({
         get: deadLetterStore.get,
         list: deadLetterStore.list,
         count: deadLetterStore.count,
+        listFailed: deadLetterStore.listFailed,
         add: async (letter) => {
           recorded.push((target) => target.deadLetterStore.add(letter));
           return { ...letter, status: "failed" };

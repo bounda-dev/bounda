@@ -157,9 +157,9 @@ logs, not to the caller. A body over `maxPayloadBytes`, `DEFAULT_MAX_PAYLOAD_BYT
 before it is read.
 
 It has **no authentication** and no operator endpoint, on purpose: it is a starting point. For
-the same reason it never [forgets](/guides/personal-data/) anyone, which cannot be undone. An app
-with users writes its own `fetch` and talks to a store with `connect`, whose `forget` it calls
-behind its own authentication:
+the same reason it never [forgets](/guides/personal-data/) anyone, which cannot be undone, nor
+restricts anyone's processing. An app with users writes its own `fetch` and talks to a store with
+`connect`, whose `forget`, `restrict` and `unrestrict` it calls behind its own authentication:
 
 ```ts
 import { connect } from "@bounda-dev/cloudflare";
@@ -177,7 +177,7 @@ export default {
 `connect(stub)` gives a `BoundaClient`, the type `@bounda-dev/core` gives to what a request sees
 of an app wherever it runs: the same `commands` and `queries` as `app.commands` and
 `app.queries`, typed from your modules, plus `getLag()`, `events`, `deadLetters`,
-`rebuildReadModel`, `forget` and `exportPersonalData`.
+`rebuildReadModel`, `forget`, `exportPersonalData`, `restrict` and `unrestrict`.
 Its commands resolve once the read models reflect them; `connect(stub, { consistency: "eventual" })`
 resolves them once their events are stored, for a request that reads nothing after it. A refusal comes
 back as an `Error` with the same `name`, `message`, `code` and, for validation, `issues`, whatever

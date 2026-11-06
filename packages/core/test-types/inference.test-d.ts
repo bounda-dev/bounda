@@ -41,6 +41,10 @@ import type {
   PersonalFunction,
   PersonFunction,
   ProcessCorrelation,
+  ProcessingRestrictedEvent,
+  ProcessingRestrictedPayload,
+  ProcessingRestrictionLiftedEvent,
+  ProcessingRestrictionLiftedPayload,
   QueriesFacade,
   ReactionDispatchResult,
   ReadClient,
@@ -72,6 +76,7 @@ import type { Command as PlaceOrder } from "./fixtures/order-app/app/domain/orde
 import type { Policy as NotifyOnOrderPlaced } from "./fixtures/order-app/app/domain/order/policies/+types/notify-on-order-placed.ts";
 import type { Policy as SendReceipt } from "./fixtures/order-app/app/domain/order/policies/+types/send-receipt-on-order-paid.ts";
 import type { Policy as AuditOnPersonalDataForgotten } from "./fixtures/order-app/app/domain/order/policies/bounda/+types/audit-on-personal-data-forgotten.ts";
+import type { Policy as AuditOnProcessingRestrictionLifted } from "./fixtures/order-app/app/domain/order/policies/bounda/+types/audit-on-processing-restriction-lifted.ts";
 import type { Policy as GreetOnCustomerRegistered } from "./fixtures/order-app/app/domain/order/policies/customer/+types/greet-on-customer-registered.ts";
 import type { Process as AtNextReminder } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/at-next-reminder.ts";
 import type { Process as AtTimeout } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/at-timeout.ts";
@@ -80,6 +85,7 @@ import type { Process as OnOrderPaid } from "./fixtures/order-app/app/domain/ord
 import type { Process as OnCustomerRegistered } from "./fixtures/order-app/app/domain/order/processes/order-payment/customer/+types/on-customer-registered.ts";
 import type { Projection as ProjectCustomerRegistered } from "./fixtures/order-app/app/read/customer-directory/projections/customer/+types/customer-registered.ts";
 import type { Projection as ProjectForgotten } from "./fixtures/order-app/app/read/order-summary/projections/bounda/+types/personal-data-forgotten.ts";
+import type { Projection as ProjectRestricted } from "./fixtures/order-app/app/read/order-summary/projections/bounda/+types/processing-restricted.ts";
 import type { Projection as ProjectOrderPaid } from "./fixtures/order-app/app/read/order-summary/projections/order/+types/order-paid.ts";
 import type { Query as CustomerOverview } from "./fixtures/order-app/app/read/order-summary/queries/+types/customer-overview.ts";
 import type { Query as GetOrder } from "./fixtures/order-app/app/read/order-summary/queries/+types/get-order.ts";
@@ -594,6 +600,37 @@ describe("personal data", () => {
       readonly data: ExportedData;
     }>();
     expectTypeOf<ExportedData>().toEqualTypeOf<Readonly<Record<string, unknown>>>();
+  });
+
+  it("lets every client restrict a person's processing and lift it, answering like a command", () => {
+    expectTypeOf<BoundaClient["restrict"]>().toEqualTypeOf<
+      (personId: string) => Promise<StoredDispatch>
+    >();
+    expectTypeOf<BoundaClient["unrestrict"]>().toEqualTypeOf<BoundaClient["restrict"]>();
+    expectTypeOf<BoundaApp["restrict"]>().toEqualTypeOf<BoundaClient["restrict"]>();
+    expectTypeOf<BoundaApp["unrestrict"]>().toEqualTypeOf<BoundaClient["unrestrict"]>();
+  });
+
+  it("types the restriction events for the projections and policies that handle them", () => {
+    expectTypeOf<ProjectRestricted.Args["event"]>().toEqualTypeOf<ProcessingRestrictedEvent>();
+    expectTypeOf<ProjectRestricted.Args["event"]["type"]>().toEqualTypeOf<"ProcessingRestricted">();
+    expectTypeOf<
+      ProjectRestricted.Args["event"]["payload"]
+    >().toEqualTypeOf<ProcessingRestrictedPayload>();
+    expectTypeOf<ProcessingRestrictedPayload>().toEqualTypeOf<{ readonly personId: string }>();
+    expectTypeOf<ProjectRestricted.Args["table"]>().toEqualTypeOf<Table<OrderSummaryRow>>();
+    expectTypeOf<
+      AuditOnProcessingRestrictionLifted.HandlerArgs["event"]
+    >().toEqualTypeOf<ProcessingRestrictionLiftedEvent>();
+    expectTypeOf<
+      AuditOnProcessingRestrictionLifted.HandlerArgs["event"]["type"]
+    >().toEqualTypeOf<"ProcessingRestrictionLifted">();
+    expectTypeOf<ProcessingRestrictionLiftedPayload>().toEqualTypeOf<{
+      readonly personId: string;
+    }>();
+    expectTypeOf<AuditOnProcessingRestrictionLifted.HandlerArgs["auditLog"]>().toHaveProperty(
+      "record",
+    );
   });
 
   it("hands dead letters out with the error named in the clear and its text opened, null once the person is forgotten", () => {

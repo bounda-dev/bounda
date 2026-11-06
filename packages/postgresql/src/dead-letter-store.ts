@@ -126,6 +126,13 @@ export const createPostgresqlDeadLetterStore: CreatePostgresqlDeadLetterStoreFun
       );
       return Number(row?.count ?? 0);
     },
+    listFailed: async ({ person, errorCode }) =>
+      (
+        await db.all(
+          `SELECT ${COLUMNS} FROM ${table} WHERE "status" = 'failed' AND "person" = $1 AND "error_code" = $2 ORDER BY "first_failed_at", "id" COLLATE "C"`,
+          [person, errorCode],
+        )
+      ).map(toLetter),
     updateStatus: async (id, status) => {
       const updated = await db.all(
         `UPDATE ${table} SET "status" = $1 WHERE "id" = $2 AND "status" = 'failed' RETURNING "id"`,

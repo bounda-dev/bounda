@@ -63,7 +63,12 @@ export const payload = ({ z, personal }: Command.PayloadArgs) =>
 
 Wherever the command is stored, the marked fields are encrypted with the key of the person it
 names, the aggregate's id or the field marked `person`, and [`forget`](#forgetting-a-person)
-cancels it. A command dispatched at once is never stored, so the marks change nothing for it. The
+cancels it. A command dispatched at once is never stored, so the marks change nothing for what it
+stores; `person` still says whom it touches, which [restricting their
+processing](#restricting-processing) goes by, so a command may mark a `person` field alone. So
+may an event: it then names its person as one with personal fields does, for the
+[export](#exporting-a-persons-data), and is refused with `ValidationError` when that field is
+empty. The
 handler reads `command.payload.email` as a `string`, never `null`: a command whose person is
 forgotten never runs. A query's `PayloadArgs` has no `personal`, since a query is never stored.
 
@@ -238,11 +243,71 @@ export const handler = async ({ event, mailer, idempotencyKey }: Policy.HandlerA
 It runs with the aggregate's ports, retries and dead-letters as any policy, and its handler is
 typed with `PersonalDataForgottenEvent`.
 
+## Restricting processing
+
+A person may ask that their data be kept but not processed for a while, the GDPR's restriction
+of processing, while a dispute about it is settled. `restrict` is on every `BoundaClient`, next
+to `forget`:
+
+```ts
+const restricted = await app.restrict("c-42");
+await app.catchUpReadModels({ through: restricted });
+```
+
+In one transaction it writes the person's row in `bounda_persons` and appends
+`ProcessingRestricted` to the stream `bounda:<personId>`, and it resolves like a command, so
+`catchUpReadModels({ through })` waits for the read models that handle it, and the Durable Object
+and React Router wait for them themselves unless `consistency` is `"eventual"`. Restricting a
+person restricted already appends nothing and resolves without events. An empty id is refused
+with `ValidationError`.
+
+From then on every command that touches the person is refused with
+[`ProcessingRestrictedError`](/reference/errors/) (`PROCESSING_RESTRICTED`, with the id in
+`personId`) before it runs, and before it is scheduled when it has a `delay`: a command whose
+payload names them with `person`, or whose aggregate is the person, that is when the command's
+payload or any event of the aggregate marks a field without `person`. A command that names them
+nowhere Bounda cannot tell is theirs, so mark the `person` field of every command that acts for
+someone. `app.commands` throws the refusal; nothing is recorded under an `idempotencyKey`, so the
+same request sent once the restriction is lifted runs. A command already running when `restrict`
+commits has read the person as not restricted and may still store its events, as a command
+running when `forget` comes may still decide on their data.
+
+A policy, process or scheduled command whose command is refused this way becomes a dead letter at
+once, as for any terminal error, with `errorCode: "PROCESSING_RESTRICTED"` and the person in
+`person`, even when the event it handled names nobody: a policy on `Invited`, an event of the
+newsletter, dispatching `registerCustomer` for the restricted customer. A failed process parks
+what follows, as [it always does](/guides/dead-letters/#a-failed-process). Reading the person's
+data, `forget` and the export of their data stay allowed: a restriction is not an erasure.
+
+`unrestrict` lifts it:
+
+```ts
+const lifted = await app.unrestrict("c-42");
+```
+
+It clears the row, appends `ProcessingRestrictionLifted` the same way and schedules a run of the
+worker that retries, in order, every `failed` dead letter the restriction caused, each as
+[`app.deadLetters.retry`](/guides/dead-letters/#retrying-and-discarding) would, so the policies
+run, the processes resume and the scheduled commands are dispatched, without an operator. A letter
+that fails again for good stays `failed`, as that failure's letter, for the operator; one that
+fails in a way worth retrying, a timeout or a store that does not answer, stays as it was and the
+run is retried with the [retry settings](/reference/configuration/#retry) of policies; one refused
+because the person is restricted again waits for the next lift. Lifting for a person
+not restricted appends nothing and resolves without events.
+
+Handling the two events is optional. A read model may project them from
+`projections/bounda/processing-restricted.ts` and
+`projections/bounda/processing-restriction-lifted.ts`, to show the person as restricted where
+customer service looks, and a policy may react from
+`policies/bounda/<action>-on-processing-restricted.ts`, to tell the outside world. Both carry
+`{ personId }` and are typed `ProcessingRestrictedEvent` and `ProcessingRestrictionLiftedEvent`.
+
 ## Where the keys live
 
 Each adapter keeps the keys in a table next to the events, `bounda_personal_keys`, one row per
 person with the key and its fingerprint, a SHA-256 of it: the memory adapter in memory, SQLite and the Durable Object in their database, PostgreSQL
-in its schema. A key is created when the first event with a personal field of that person is
+in its schema. Whether a person's processing is restricted, and since when, lives apart, in
+`bounda_persons`, since a person without a key is restricted all the same. A key is created when the first event with a personal field of that person is
 stored, by the transaction that stores it, and deleted by `forget`. Encryption is AES-256-GCM
 through WebCrypto, with a nonce per value, on Node and in `workerd` alike; what the store holds
 for a personal field is an envelope with the ciphertext, the person's id and a fingerprint of the

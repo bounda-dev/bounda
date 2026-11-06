@@ -43,8 +43,43 @@ export type PersonalDataForgottenEvent = StoredEvent<
 >;
 
 /**
+ * Appended by `restrict(personId)` to the stream `bounda:<personId>`, once their row says so:
+ * every command that touches the person is refused with `ProcessingRestrictedError` from then on,
+ * and the reactions it refuses wait as dead letters. Handling it is optional: a read model may
+ * show the person as restricted, a policy may tell the outside world.
+ */
+export const PROCESSING_RESTRICTED_EVENT: "ProcessingRestricted" = "ProcessingRestricted";
+
+/**
+ * Appended by `unrestrict(personId)` to the stream `bounda:<personId>`, once the restriction is
+ * lifted: the dead letters it caused are retried by the runtime, in the background.
+ */
+export const PROCESSING_RESTRICTION_LIFTED_EVENT: "ProcessingRestrictionLifted" =
+  "ProcessingRestrictionLifted";
+
+export interface ProcessingRestrictedPayload {
+  readonly personId: string;
+}
+
+export type ProcessingRestrictedEvent = StoredEvent<
+  typeof PROCESSING_RESTRICTED_EVENT,
+  ProcessingRestrictedPayload
+>;
+
+export interface ProcessingRestrictionLiftedPayload {
+  readonly personId: string;
+}
+
+export type ProcessingRestrictionLiftedEvent = StoredEvent<
+  typeof PROCESSING_RESTRICTION_LIFTED_EVENT,
+  ProcessingRestrictionLiftedPayload
+>;
+
+/**
  * The runtime's events, by the key a module's file name gives them.
  */
 export const BOUNDA_EVENTS: Readonly<Record<string, string>> = {
   personalDataForgotten: PERSONAL_DATA_FORGOTTEN_EVENT,
+  processingRestricted: PROCESSING_RESTRICTED_EVENT,
+  processingRestrictionLifted: PROCESSING_RESTRICTION_LIFTED_EVENT,
 };

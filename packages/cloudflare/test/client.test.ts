@@ -22,14 +22,28 @@ describe("connect", () => {
     ]);
   });
 
-  it("forgets a person with the same consistency as its commands", async () => {
+  it("forgets a person, restricts their processing and lifts it with the same consistency as its commands", async () => {
     const eventual = recordingStub();
-    await connect<typeof registry>(eventual.stub, { consistency: "eventual" }).forget("c-1");
+    const soon = connect<typeof registry>(eventual.stub, { consistency: "eventual" });
+    await soon.forget("c-1");
+    await soon.restrict("c-1");
+    await soon.unrestrict("c-1");
     const byDefault = recordingStub();
-    await connect<typeof registry>(byDefault.stub).forget("c-2");
+    const store = connect<typeof registry>(byDefault.stub);
+    await store.forget("c-2");
+    await store.restrict("c-2");
+    await store.unrestrict("c-2");
     expect([eventual.forgets, byDefault.forgets]).toEqual([
-      [["c-1", "eventual"]],
-      [["c-2", "read-your-writes"]],
+      [
+        ["c-1", "eventual"],
+        ["restrict", "c-1", "eventual"],
+        ["unrestrict", "c-1", "eventual"],
+      ],
+      [
+        ["c-2", "read-your-writes"],
+        ["restrict", "c-2", "read-your-writes"],
+        ["unrestrict", "c-2", "read-your-writes"],
+      ],
     ]);
   });
 

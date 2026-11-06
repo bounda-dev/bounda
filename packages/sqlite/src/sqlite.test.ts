@@ -243,6 +243,7 @@ describe("sqlite adapter on a file", () => {
       "app_idempotency_keys",
       "app_inbox",
       "app_personal_keys",
+      "app_persons",
       "app_rm_order_summary",
       "app_scheduled_commands",
       "app_snapshots",

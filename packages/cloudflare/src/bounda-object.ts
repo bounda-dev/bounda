@@ -97,6 +97,16 @@ export interface BoundaObjectMethods {
    */
   exportPersonalData(personId: string): Promise<RpcOutcome<PersonalDataExport>>;
   /**
+   * Restricts the processing of a person's data, as `BoundaClient.restrict` does, waiting for the
+   * read models that handle it as `forget` does.
+   */
+  restrict(personId: string, consistency?: Consistency): Promise<RpcOutcome<StoredDispatch>>;
+  /**
+   * Lifts the restriction, as `BoundaClient.unrestrict` does, waiting the same way; the alarm
+   * then retries the dead letters it caused.
+   */
+  unrestrict(personId: string, consistency?: Consistency): Promise<RpcOutcome<StoredDispatch>>;
+  /**
    * Runs the next slice of every paused rebuild, then policies, processes, due scheduled commands
    * and retries, in bounded slices, and arms the next alarm. Called by the platform.
    */
@@ -313,10 +323,14 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
       });
     }
 
-    forget(personId: string, consistency?: Consistency): Promise<RpcOutcome<StoredDispatch>> {
+    // A change to a person answers like a command: its read models caught up, the alarm armed.
+    #onPerson(
+      act: (app: BoundaApp<R>) => Promise<StoredDispatch>,
+      consistency: Consistency | undefined,
+    ): Promise<RpcOutcome<StoredDispatch>> {
       return settle(async () => {
         const app = this.#ready();
-        const result = await app.forget(personId);
+        const result = await act(app);
         if (consistency !== "eventual") await app.catchUpReadModels({ through: result });
         await this.#rearm(false, true);
         return result;
@@ -325,6 +339,18 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
 
     exportPersonalData(personId: string): Promise<RpcOutcome<PersonalDataExport>> {
       return settle(() => this.#ready().exportPersonalData(personId));
+    }
+
+    forget(personId: string, consistency?: Consistency): Promise<RpcOutcome<StoredDispatch>> {
+      return this.#onPerson((app) => app.forget(personId), consistency);
+    }
+
+    restrict(personId: string, consistency?: Consistency): Promise<RpcOutcome<StoredDispatch>> {
+      return this.#onPerson((app) => app.restrict(personId), consistency);
+    }
+
+    unrestrict(personId: string, consistency?: Consistency): Promise<RpcOutcome<StoredDispatch>> {
+      return this.#onPerson((app) => app.unrestrict(personId), consistency);
     }
 
     override async alarm(): Promise<void> {

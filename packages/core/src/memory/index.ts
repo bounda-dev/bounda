@@ -17,6 +17,7 @@ import { createMemoryEventNotifier } from "./event-notifier.ts";
 import { createMemoryEventStore } from "./event-store.ts";
 import { createKeptIdempotencyStore } from "./idempotency-store.ts";
 import { createKeptInboxLedger } from "./inbox-ledger.ts";
+import { createKeptPersonStore } from "./person-store.ts";
 import { createKeptPersonalKeyStore } from "./personal-key-store.ts";
 import { createKeptScheduler } from "./scheduler.ts";
 import { createMemorySnapshotStore } from "./snapshot-store.ts";
@@ -104,6 +105,7 @@ export const memory: MemoryFunction = (options = {}) => {
       const deadLetterStore = createKeptDeadLetterStore();
       const scheduler = createKeptScheduler();
       const personalKeys = createKeptPersonalKeyStore();
+      const persons = createKeptPersonStore();
       const idempotencyStore = createKeptIdempotencyStore({ holds: personalKeys.holds });
       const snapshotStore = createMemorySnapshotStore({ holds: personalKeys.holds });
       const stores = {
@@ -113,6 +115,7 @@ export const memory: MemoryFunction = (options = {}) => {
         scheduler: scheduler.store,
         idempotencyStore: idempotencyStore.store,
         personalKeys: personalKeys.store,
+        persons: persons.store,
         snapshotStore,
       };
       storage ??= {
@@ -128,6 +131,7 @@ export const memory: MemoryFunction = (options = {}) => {
             scheduler: scheduler.entries,
             idempotencyStore: idempotencyStore.entries,
             personalKeys: personalKeys.entries,
+            persons: persons.entries,
           },
         }),
         close: async () => {},

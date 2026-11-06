@@ -20,7 +20,7 @@ export interface EventRuntime {
    */
   readonly schemaVersion: number;
   /**
-   * `null` for an event without personal fields.
+   * `null` for an event without personal marks.
    */
   readonly personal: PersonalMarks | null;
 }
@@ -34,7 +34,7 @@ export interface CommandRuntime {
     | ((args: Record<string, unknown>) => Readonly<Record<string, string | undefined>>)
     | null;
   /**
-   * `null` for a command without personal fields.
+   * `null` for a command without personal marks.
    */
   readonly personal: PersonalMarks | null;
 }

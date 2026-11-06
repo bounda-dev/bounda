@@ -152,13 +152,8 @@ const setUp = async () => {
   });
   const deadLetters: DeadLetters = createDeadLetters({
     storage: harness.storage,
-    pipeline: harness.pipeline,
-    aggregates: harness.aggregates,
-    policies: harness.policies,
-    policyExecutor: harness.policyExecutor,
+    retries: harness.retries,
     processes: harness.processes,
-    config: harness.config,
-    ids: harness.ids,
     clock: harness.clock,
     logger,
   });
@@ -280,13 +275,8 @@ describe("deadLetters", () => {
     });
     const deadLetters = createDeadLetters({
       storage: harness.storage,
-      pipeline: harness.pipeline,
-      aggregates: harness.aggregates,
-      policies: harness.policies,
-      policyExecutor: harness.policyExecutor,
+      retries: harness.retries,
       processes: harness.processes,
-      config: harness.config,
-      ids: harness.ids,
       clock: harness.clock,
       logger,
     });
@@ -593,13 +583,8 @@ describe("deadLetters", () => {
     });
     const deadLetters = createDeadLetters({
       storage: harness.storage,
-      pipeline: harness.pipeline,
-      aggregates: harness.aggregates,
-      policies: harness.policies,
-      policyExecutor: harness.policyExecutor,
+      retries: harness.retries,
       processes: harness.processes,
-      config: harness.config,
-      ids: harness.ids,
       clock: harness.clock,
       logger,
     });
@@ -659,13 +644,8 @@ describe("deadLetters", () => {
     });
     const deadLetters = createDeadLetters({
       storage: harness.storage,
-      pipeline: harness.pipeline,
-      aggregates: harness.aggregates,
-      policies: harness.policies,
-      policyExecutor: harness.policyExecutor,
+      retries: harness.retries,
       processes: harness.processes,
-      config: harness.config,
-      ids: harness.ids,
       clock: harness.clock,
       logger: harness.logger,
     });

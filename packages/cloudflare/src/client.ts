@@ -40,6 +40,8 @@ export interface BoundaStub {
   rebuildReadModel(name: string): PromiseLike<unknown>;
   forget(personId: string, consistency?: Consistency): PromiseLike<unknown>;
   exportPersonalData(personId: string): PromiseLike<unknown>;
+  restrict(personId: string, consistency?: Consistency): PromiseLike<unknown>;
+  unrestrict(personId: string, consistency?: Consistency): PromiseLike<unknown>;
 }
 
 export interface ConnectOptions {
@@ -107,5 +109,7 @@ export const connect: ConnectFunction = <R extends Registry = AppRegistry>(
     rebuildReadModel: (name) => unwrap<RebuildReadModelResult>(stub.rebuildReadModel(name)),
     forget: (personId) => unwrap<StoredDispatch>(stub.forget(personId, consistency)),
     exportPersonalData: (personId) => unwrap<PersonalDataExport>(stub.exportPersonalData(personId)),
+    restrict: (personId) => unwrap<StoredDispatch>(stub.restrict(personId, consistency)),
+    unrestrict: (personId) => unwrap<StoredDispatch>(stub.unrestrict(personId, consistency)),
   };
 };

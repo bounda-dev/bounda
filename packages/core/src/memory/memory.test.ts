@@ -10,6 +10,7 @@ import {
   inboxLedgerContract,
   pendingEvent,
   personalKeyStoreContract,
+  personStoreContract,
   readModelRebuildContract,
   readModelTransactionContract,
   schedulerContract,
@@ -36,6 +37,7 @@ describe("memory adapter", () => {
   snapshotStoreContract({ create: storage });
   storageTransactionContract({ create: storage });
   personalKeyStoreContract({ create: async () => (await storage()).personalKeys });
+  personStoreContract({ create: async () => (await storage()).persons });
   tableContract({
     create: async () => {
       const model = await memory().createReadModel<ContractRow>({

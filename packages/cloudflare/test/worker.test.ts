@@ -2,6 +2,7 @@ import { createExecutionContext, runDurableObjectAlarm } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { ConfigurationError, type Consistency, type Logger } from "@bounda-dev/core";
 import { describe, expect, it } from "vitest";
+import { connect } from "../src/client.ts";
 import { cloudflare } from "../src/definition.ts";
 import { type CreateWorkerArgs, createWorker } from "../src/worker.ts";
 import { recordingStub } from "./recording-stub.ts";
@@ -204,6 +205,20 @@ describe("createWorker", () => {
     expect(conflict.status).toBe(409);
     expect(await conflict.json()).toEqual({
       error: { code: "DOMAIN_ERROR", message: "Order already placed", rejected: "AlreadyPlaced" },
+    });
+
+    await connect(env.STORE.get(env.STORE.idFromName("errors"))).restrict("bo");
+    const restricted = await post(
+      "/commands/placeOrder",
+      { orderId: "o-5", total: 1, customer: "bo" },
+      "errors",
+    );
+    expect(restricted.status).toBe(409);
+    expect(await restricted.json()).toEqual({
+      error: {
+        code: "PROCESSING_RESTRICTED",
+        message: "The processing of this person's data is restricted",
+      },
     });
 
     const invalid = await post("/commands/placeOrder", { orderId: "o-4", total: "lots" }, "errors");

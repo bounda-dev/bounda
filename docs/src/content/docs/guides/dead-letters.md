@@ -49,6 +49,16 @@ comes first, or the person whose data its scheduled command holds was forgotten 
 The same operations are on the app as `app.deadLetters` — `list`, `count`, `get`, `retry` and
 `discard` — for a script or an admin route.
 
+One kind of letter the runtime retries itself: those of a person whose [processing was
+restricted](/guides/personal-data/#restricting-processing), `errorCode: "PROCESSING_RESTRICTED"`
+with the person in `person`. `unrestrict` schedules a run of the worker that retries them in the
+order of `list`, each as `retry` would, in its own transaction, so a crash leaves the rest to the
+next run. A letter that fails again for good is written again under the same id, as that
+failure's letter, with its `attempts` counted up, and stays `failed` for you; one that fails in a
+way worth retrying is left as it was and the run is retried; one refused because the person was
+restricted again waits for the next lift. A letter the app cannot retry is
+logged and left as it is.
+
 ## What a letter holds
 
 A letter records what gave up and why: its `kind` and `handler`, the event it was about (or the

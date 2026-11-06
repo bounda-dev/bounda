@@ -10,14 +10,16 @@ import { buildAggregates } from "./aggregate/build-aggregates.ts";
 import { createAggregateLoader } from "./aggregate/load-aggregate.ts";
 import type { AggregatesRuntime } from "./aggregate/runtime.ts";
 import { createCommandPipeline } from "./command/pipeline.ts";
+import { createRestrictedRetries } from "./dead-letters/restricted.ts";
+import { createDeadLetterRetry, type DeadLetterRetry } from "./dead-letters/retry.ts";
 import { createDispatcher, type Dispatcher } from "./dispatch/dispatcher.ts";
 import { buildPolicies, type PoliciesRuntime } from "./policy/build-policies.ts";
 import { createDelayedPolicies } from "./policy/delayed.ts";
 import { createPolicyExecutor, type PolicyExecutor } from "./policy/executor.ts";
-import { createPolicySubscriber } from "./policy/runner.ts";
+import { createPolicySubscriber, POLICIES_SUBSCRIBER } from "./policy/runner.ts";
 import { createPorts } from "./ports/ports.ts";
 import { buildProcesses } from "./process/build-processes.ts";
-import { createProcessRunner, type ProcessRunner } from "./process/runner.ts";
+import { createProcessRunner, PROCESSES_SUBSCRIBER, type ProcessRunner } from "./process/runner.ts";
 import { createProjectionSubscriber } from "./projection/runner.ts";
 import { buildReadModels, type ReadModelsRuntime } from "./read-model/build-read-models.ts";
 import { createScheduledCommandWorker, type ScheduledCommandWorker } from "./scheduler/worker.ts";
@@ -41,6 +43,7 @@ export interface ReactiveHarness {
   createDispatcher(): Dispatcher;
   readonly dispatcher: Dispatcher;
   readonly processes: ProcessRunner;
+  readonly retries: DeadLetterRetry;
   readonly worker: ScheduledCommandWorker;
 }
 
@@ -112,6 +115,16 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     pendingRetries: ignoredRetries,
     logger,
   });
+  const retries = createDeadLetterRetry({
+    storage,
+    pipeline,
+    aggregates,
+    policies,
+    policyExecutor,
+    processes,
+    config,
+    ids,
+  });
   const worker = createScheduledCommandWorker({
     storage,
     aggregates,
@@ -123,6 +136,8 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
       eventStore: storage.eventStore,
       config,
     }),
+    restrictedRetries: createRestrictedRetries({ storage, retries, clock, logger }),
+    reactive: [POLICIES_SUBSCRIBER, PROCESSES_SUBSCRIBER],
     config,
     ids,
     clock,
@@ -172,6 +187,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     createDispatcher: makeDispatcher,
     dispatcher: makeDispatcher(),
     processes,
+    retries,
     worker,
   };
 };

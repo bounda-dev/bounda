@@ -10,6 +10,7 @@ import type { Logger } from "../../contracts/logger.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { sealError } from "../personal-data/errors.ts";
 import { personOfEvent } from "../personal-data/persons.ts";
+import { restrictedPersonOf } from "../personal-data/refusal.ts";
 import { classifyFailure } from "../shared/retry.ts";
 import { deadLettered } from "../telemetry.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
@@ -74,6 +75,7 @@ export const createProcessFailures: CreateProcessFailuresFunction = ({
     person: personOfEvent({ aggregates, event }),
   }),
   letterOf: async (process, subject, error, attempts, errorType) => {
+    const person = restrictedPersonOf(error) ?? subject.person;
     const now = clock.now().toISOString();
     return {
       id: ids.next(),
@@ -83,9 +85,9 @@ export const createProcessFailures: CreateProcessFailuresFunction = ({
       eventType: subject.type,
       aggregateType: subject.aggregateType,
       aggregateId: subject.aggregateId,
-      person: subject.person,
+      person,
       errorType,
-      ...(await sealError({ error, person: subject.person, keys })),
+      ...(await sealError({ error, person, keys })),
       attempts,
       firstFailedAt: now,
       lastFailedAt: now,

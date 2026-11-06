@@ -59,6 +59,11 @@ dead letter with `errorType: "retriable_exhausted"`.
   another command or for the same command with another payload or `delay`. Nothing runs.
   `idempotencyKey`.
   See [idempotent commands](/guides/idempotent-commands/).
+- **`PROCESSING_RESTRICTED`** (`ProcessingRestrictedError`; terminal). A command touches a person
+  whose [processing is restricted](/guides/personal-data/#restricting-processing): the one its
+  payload names with `person`, or whose aggregate is the person. Nothing runs and nothing is
+  recorded. `personId`. A reaction's letter with this code is retried by the runtime once
+  `unrestrict` lifts the restriction.
 - **`CREATION_ORDER`** (`CreationOrderError`; terminal). A command returned events that do not fit
   whether its aggregate exists: the first event is not one that exports `begin`, or an event that
   only exports `begin` goes on an aggregate that exists. Nothing is stored.
@@ -100,6 +105,7 @@ The hosts map the codes a client can cause to a status:
 | --- | --- | --- |
 | `VALIDATION_FAILED` | 400, with `issues` | 400, with `issues` |
 | `DOMAIN_ERROR` | 409, with `rejected` | 409, with `rejected` |
+| `PROCESSING_RESTRICTED` | 409 | 409 |
 | `IDEMPOTENCY_KEY_CONFLICT` | 500, code `INTERNAL`, logged | 422 |
 | `CONCURRENCY_CONFLICT` | 409 | rethrown |
 | `CHAIN_DEPTH_EXCEEDED` | 409 | rethrown |

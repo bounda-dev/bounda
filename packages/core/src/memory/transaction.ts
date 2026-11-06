@@ -9,6 +9,7 @@ import type { CheckpointStore } from "../adapter/storage/checkpoint-store.ts";
 import type { DeadLetterStore } from "../adapter/storage/dead-letter-store.ts";
 import type { IdempotencyStore } from "../adapter/storage/idempotency-store.ts";
 import type { ClaimKey, InboxLedger } from "../adapter/storage/inbox-ledger.ts";
+import type { PersonStore } from "../adapter/storage/person-store.ts";
 import { namesPerson, type PersonalKeyStore } from "../adapter/storage/personal-key-store.ts";
 import type { Scheduler } from "../adapter/storage/scheduler.ts";
 import type { SnapshotStore } from "../adapter/storage/snapshot-store.ts";
@@ -22,6 +23,7 @@ export interface CreateMemoryStorageTransactionArgs {
   readonly scheduler: Scheduler;
   readonly idempotencyStore: IdempotencyStore;
   readonly personalKeys: PersonalKeyStore;
+  readonly persons: PersonStore;
   readonly snapshotStore: SnapshotStore;
   readonly entries: {
     readonly inboxLedger: StoreEntries<ClaimKey>;
@@ -29,6 +31,7 @@ export interface CreateMemoryStorageTransactionArgs {
     readonly scheduler: StoreEntries<string>;
     readonly idempotencyStore: StoreEntries<string>;
     readonly personalKeys: StoreEntries<string>;
+    readonly persons: StoreEntries<string>;
   };
 }
 
@@ -38,7 +41,7 @@ export interface CreateMemoryStorageTransactionFunction {
 
 type CreateUndoLogArgs = Omit<
   CreateMemoryStorageTransactionArgs,
-  "eventStore" | "personalKeys" | "snapshotStore"
+  "eventStore" | "personalKeys" | "persons" | "snapshotStore"
 >;
 
 interface UndoLog {
@@ -80,6 +83,21 @@ const trackedPersonalKeys = (
     get: (person) => personalKeys.get(person),
     add: (person, key) => tracked(entries, person, () => personalKeys.add(person, key)),
     remove: (person) => tracked(entries, person, () => personalKeys.remove(person)),
+  };
+};
+
+// Written at once, as the keys are, since each write answers whether it changed the row, and put
+// back when the transaction fails.
+const trackedPersons = (
+  persons: PersonStore,
+  entries: StoreEntries<string>,
+  undos: Undos,
+): PersonStore => {
+  const tracked = trackedBy(undos);
+  return {
+    get: (person) => persons.get(person),
+    restrict: (person, since) => tracked(entries, person, () => persons.restrict(person, since)),
+    unrestrict: (person) => tracked(entries, person, () => persons.unrestrict(person)),
   };
 };
 
@@ -179,6 +197,7 @@ const createUndoLog = ({
 export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunction = ({
   eventStore,
   personalKeys,
+  persons,
   snapshotStore,
   ...live
 }) => {
@@ -200,6 +219,7 @@ export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunct
         ...stores,
         ...trackedForgets(stores, live, atOnce),
         personalKeys: trackedPersonalKeys(personalKeys, live.entries.personalKeys, atOnce),
+        persons: trackedPersons(persons, live.entries.persons, atOnce),
         snapshotStore,
       });
       // A transaction committed from inside this commit, as from a store write, waits forever.
