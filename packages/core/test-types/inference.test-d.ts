@@ -13,6 +13,7 @@ import type {
   Consistency,
   CreateArgs,
   CreateImplementation,
+  DeadLetter,
   DecidedDispatch,
   DispatchOptions,
   DispatchResult,
@@ -546,6 +547,20 @@ describe("personal data", () => {
       (personId: string) => Promise<StoredDispatch>
     >();
     expectTypeOf<BoundaApp["forget"]>().toEqualTypeOf<BoundaClient["forget"]>();
+  });
+
+  it("hands dead letters out with the error named in the clear and its text opened, null once the person is forgotten", () => {
+    expectTypeOf<DeadLetter["person"]>().toEqualTypeOf<string | null>();
+    expectTypeOf<DeadLetter["errorName"]>().toEqualTypeOf<string>();
+    expectTypeOf<DeadLetter["errorCode"]>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<DeadLetter["errorMessage"]>().toEqualTypeOf<string | null>();
+    expectTypeOf<DeadLetter["errorStack"]>().toEqualTypeOf<string | null | undefined>();
+    expectTypeOf<BoundaClient["deadLetters"]["list"]>().returns.resolves.toEqualTypeOf<
+      readonly DeadLetter[]
+    >();
+    expectTypeOf<
+      BoundaClient["deadLetters"]["retry"]
+    >().returns.resolves.toEqualTypeOf<DeadLetter>();
   });
 });
 

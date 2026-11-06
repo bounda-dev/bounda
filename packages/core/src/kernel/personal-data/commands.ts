@@ -51,6 +51,34 @@ const keyInForce = async (keys: PersonalKeyStore, person: string): Promise<Perso
     (await keys.get(person)) ?? (await keys.add(person, await generatePersonalKey())),
   );
 
+export interface KeyOfFunction {
+  (person: string, fingerprint: string): Promise<PersonalKey | null>;
+}
+
+export interface SealedKeysFunction {
+  (keys: PersonalKeyStore): KeyOfFunction;
+}
+
+/**
+ * Reads the key a value was sealed under, `null` when the person holds none or another one:
+ * each person's key read and imported once, whatever number of values it opens.
+ */
+export const sealedKeys: SealedKeysFunction = (keys) => {
+  const imported = new Map<string, Promise<PersonalKey | null>>();
+  return (person, fingerprint) => {
+    const id = `${person}\u0000${fingerprint}`;
+    const known = imported.get(id);
+    if (known !== undefined) return known;
+    const key = keys
+      .get(person)
+      .then((stored) =>
+        stored === null || stored.fingerprint !== fingerprint ? null : importPersonalKey(stored),
+      );
+    imported.set(id, key);
+    return key;
+  };
+};
+
 /**
  * Seals the payload's personal fields with the key of the person the command names, created on
  * their first sealed field. A key removed before the payload is stored leaves it sealed under a key
@@ -73,6 +101,10 @@ export const sealCommandPayload: SealCommandPayloadFunction = async (args) => {
 export interface OpenCommandPayloadArgs {
   readonly payload: unknown;
   readonly keys: PersonalKeyStore;
+  /**
+   * Keys already read, shared with what else the caller opens; read from `keys` otherwise.
+   */
+  readonly keyOf?: KeyOfFunction;
 }
 
 /**
@@ -93,23 +125,13 @@ export interface OpenCommandPayloadFunction {
  * payload stored before its marks changed reads as it was written; one stored before they existed
  * holds nothing sealed and comes back as it is.
  */
-export const openCommandPayload: OpenCommandPayloadFunction = async ({ payload, keys }) => {
+export const openCommandPayload: OpenCommandPayloadFunction = async ({
+  payload,
+  keys,
+  keyOf = sealedKeys(keys),
+}) => {
   if (!isRecord(payload)) return { payload, forgotten: false };
   const opened: Record<string, unknown> = { ...payload };
-  // Each person's key read and imported once, whatever number of their fields the payload seals.
-  const imported = new Map<string, Promise<PersonalKey | null>>();
-  const keyOf = (person: string, fingerprint: string): Promise<PersonalKey | null> => {
-    const id = `${person}\u0000${fingerprint}`;
-    const known = imported.get(id);
-    if (known !== undefined) return known;
-    const key = keys
-      .get(person)
-      .then((stored) =>
-        stored === null || stored.fingerprint !== fingerprint ? null : importPersonalKey(stored),
-      );
-    imported.set(id, key);
-    return key;
-  };
   let forgotten = false;
   for (const [field, value] of Object.entries(payload)) {
     if (!isSealed(value)) continue;

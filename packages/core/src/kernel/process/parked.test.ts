@@ -1125,6 +1125,8 @@ describe("events of a failed process", () => {
       aggregateType: "process:order.gone",
       aggregateId: "o-1",
       errorType: "terminal",
+      person: null,
+      errorName: "Error",
       errorMessage: "x",
       attempts: 1,
       firstFailedAt: "2026-01-01T00:00:00.000Z",
@@ -1325,9 +1327,9 @@ describe("events of a failed process", () => {
     await failOnFirstPayment(context);
     await harness.pipeline.dispatch({ type: "ArchiveOrder", payload: { orderId: "o-1" } });
     await settle();
-    const [blocking] = await deadLetters.list();
+    const [blocking] = await harness.storage.deadLetterStore.list();
     if (blocking === undefined) throw new Error("no letter");
-    const { id: _id, status: _status, parked: _parked, ...rest } = blocking;
+    const { id: _id, status: _status, ...rest } = blocking;
     await harness.storage.deadLetterStore.add({ ...rest, id: "stale" });
     expect(await deadLetters.get("stale")).toMatchObject({ parked: 0 });
     expect(await deadLetters.get(blocking.id)).toMatchObject({ parked: 1 });

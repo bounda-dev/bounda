@@ -10,7 +10,10 @@ const letter: DeadLetter = {
   eventType: "OrderPaid",
   aggregateType: "order",
   aggregateId: "o-1",
+  person: null,
   errorType: "terminal",
+  errorName: "ValidationError",
+  errorCode: "VALIDATION_FAILED",
   errorMessage: "payment provider says no",
   attempts: 1,
   firstFailedAt: "2026-01-01T00:00:00.000Z",
@@ -19,19 +22,32 @@ const letter: DeadLetter = {
 };
 
 describe("dead letter output", () => {
+  it("names the error, its code when it has one, and its message when it opens", () => {
+    const { errorCode: _code, ...uncoded } = letter;
+    expect(formatLetter(letter).split("\n")[2]).toBe(
+      "    ValidationError (VALIDATION_FAILED): payment provider says no",
+    );
+    expect(formatLetter({ ...uncoded, errorName: "Error" }).split("\n")[2]).toBe(
+      "    Error: payment provider says no",
+    );
+    expect(formatLetter({ ...letter, person: "c-1", errorMessage: null }).split("\n")[2]).toBe(
+      "    ValidationError (VALIDATION_FAILED)",
+    );
+  });
+
   it("says how many events are parked behind a process failure", () => {
     expect(formatLetter(letter)).toBe(
       [
         "dl-1  failed  process  order.orderPayment",
         "    OrderPaid on order:o-1, 1 attempt, last 2026-01-01T00:00:00.000Z (terminal)",
-        "    payment provider says no",
+        "    ValidationError (VALIDATION_FAILED): payment provider says no",
       ].join("\n"),
     );
     expect(formatLetter({ ...letter, parked: 1, attempts: 2 })).toBe(
       [
         "dl-1  failed  process  order.orderPayment",
         "    OrderPaid on order:o-1, 2 attempts, last 2026-01-01T00:00:00.000Z (terminal)",
-        "    payment provider says no",
+        "    ValidationError (VALIDATION_FAILED): payment provider says no",
         "    1 event is parked behind it; retrying it handles them in order",
       ].join("\n"),
     );

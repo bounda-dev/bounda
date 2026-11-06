@@ -1,6 +1,6 @@
 import { type KeyedPerson, keyedPersonId } from "../../adapter/storage/personal-key-store.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
-import type { AggregateRuntime } from "../aggregate/runtime.ts";
+import type { AggregateRuntime, AggregatesRuntime } from "../aggregate/runtime.ts";
 import { isRecord } from "../shared/merge-fields.ts";
 
 export interface PersonsOfArgs {
@@ -46,4 +46,24 @@ export const personsOf: PersonsOfFunction = ({
     add({ person, fingerprint: fingerprints.get(person) ?? null });
   }
   return [...persons.values()];
+};
+
+export interface PersonOfEventArgs {
+  readonly aggregates: AggregatesRuntime;
+  readonly event: StoredEvent;
+}
+
+export interface PersonOfEventFunction {
+  (args: PersonOfEventArgs): string | null;
+}
+
+/**
+ * Whom the event names, as `personsOf` tells it for one event: `null` for an event without
+ * personal fields, of an aggregate the runtime does not know, or whose person was forgotten, so
+ * nothing is sealed again under a key they no longer hold.
+ */
+export const personOfEvent: PersonOfEventFunction = ({ aggregates, event }) => {
+  const aggregate = aggregates.byName[event.aggregateType];
+  if (aggregate === undefined) return null;
+  return personsOf({ aggregate, events: [event] })[0]?.person ?? null;
 };

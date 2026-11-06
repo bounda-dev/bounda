@@ -113,7 +113,10 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "event_type" text NOT NULL,
     "aggregate_type" text NOT NULL,
     "aggregate_id" text NOT NULL,
+    "person" text,
     "error_type" text NOT NULL,
+    "error_name" text NOT NULL,
+    "error_code" text,
     "error_message" text NOT NULL,
     "error_stack" text,
     "attempts" integer NOT NULL,
@@ -124,6 +127,7 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "persons" jsonb NOT NULL DEFAULT '[]'
   )`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "status")} ON ${tables.deadLetters} ("status")`,
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "person")} ON ${tables.deadLetters} ("person")`,
   `CREATE TABLE IF NOT EXISTS ${tables.scheduledCommands} (
     "dedupe_key" text PRIMARY KEY,
     "command_type" text NOT NULL,
@@ -195,6 +199,7 @@ export const ensureStorageSchema: EnsureStorageSchemaFunction = async ({ db, sch
     tables.personalKeys,
     tables.snapshots,
     indexName(tables.deadLetters, "status"),
+    indexName(tables.deadLetters, "person"),
     indexName(tables.scheduledCommands, "execute_at"),
     indexName(tables.idempotencyKeys, "expires_at"),
     indexName(tables.snapshots, "persons"),

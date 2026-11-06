@@ -24,6 +24,7 @@ export type {
   DeadLetterStore,
   ListDeadLettersArgs,
   NewDeadLetter,
+  StoredDeadLetter,
 } from "./storage/dead-letter-store.ts";
 export type { EventListener, EventNotifier, Unsubscribe } from "./storage/event-notifier.ts";
 export type {
@@ -55,7 +56,9 @@ export type {
 } from "./storage/inbox-ledger.ts";
 export type {
   KeyedPerson,
+  PersonalEnvelope,
   PersonalKeyStore,
+  SealedValue,
   StoredPersonalKey,
 } from "./storage/personal-key-store.ts";
 export type {

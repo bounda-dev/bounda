@@ -382,7 +382,9 @@ describe("bounda dead-letters", () => {
     expect(listed.stdout).toContain(`${id}  failed  policy  counter.alertOnIncremented`);
     expect(listed.stdout).toContain("Incremented on counter:c-");
     expect(listed.stdout).toContain("1 attempt, last 20");
-    expect(listed.stdout).toContain("(terminal)\n    alerts are down");
+    expect(listed.stdout).toContain(
+      "(terminal)\n    ValidationError (VALIDATION_FAILED): alerts are down",
+    );
     expect(listed.stdout).toMatch(/\d+ dead letters?\n$/);
 
     const json = await cli(["dead-letters", "list", "--json", "--kind", "policy"], fixture);

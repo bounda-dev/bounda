@@ -331,6 +331,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       {
         subscriber: createPolicySubscriber({
           policies,
+          aggregates,
           executor: policyExecutor,
           storage,
           config,

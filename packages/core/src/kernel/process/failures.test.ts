@@ -1,10 +1,15 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { NewDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
+import { pendingEvent } from "../../adapter/testing/fixtures.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { ValidationError } from "../../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
+import type { EventPayloadArgs } from "../../modules/payload.ts";
+import type { Registry } from "../../modules/registry.ts";
+import { buildAggregates } from "../aggregate/build-aggregates.ts";
+import { generatePersonalKey, isSealed } from "../personal-data/crypto.ts";
 import { type FakeTelemetry, installFakeTelemetry } from "../telemetry-fake.ts";
 import { createRecordingLogger } from "../test-support.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
@@ -28,12 +33,38 @@ const orderPayment: ProcessRuntime = {
   instanceOf: (event) => event.aggregateId,
 };
 
+const registry: Registry = {
+  aggregates: {
+    order: {
+      events: {
+        orderPlaced: {
+          payload: ({ z, personal, person }: EventPayloadArgs) =>
+            z.object({ customerId: person(z.string()), note: personal(z.string()).optional() }),
+          evolve: () => ({}),
+        },
+      },
+      commands: {},
+      policies: {},
+      processes: {},
+    },
+  },
+  readModels: {},
+};
+
+const aggregates = buildAggregates({ registry, ports: {} });
+
 const subject = {
   id: "e-1",
   type: "OrderPlaced",
   aggregateType: "order",
   aggregateId: "o-1",
+  person: null,
 };
+
+const placed = (payload: unknown) => ({
+  ...pendingEvent({ aggregateId: "o-1", version: 1, id: "e-1", payload }),
+  position: 1,
+});
 
 const letter: NewDeadLetter = {
   id: "letter-1",
@@ -44,6 +75,8 @@ const letter: NewDeadLetter = {
   aggregateType: "order",
   aggregateId: "o-1",
   errorType: "terminal",
+  person: null,
+  errorName: "Error",
   errorMessage: "boom",
   attempts: 1,
   firstFailedAt: "2026-01-01T00:00:00.000Z",
@@ -80,99 +113,113 @@ const setup = async () => {
   const { logger, entries } = createRecordingLogger();
   const clock = createFixedClock(new Date("2026-03-04T05:06:07.000Z"));
   const failures = createProcessFailures({
+    aggregates,
+    keys: storage.personalKeys,
     ids: createSequentialIdGenerator({ prefix: "letter" }),
     clock,
     logger,
   });
-  const original = storage.deadLetterStore.add.bind(storage.deadLetterStore);
-  let adds = 0;
-  let failing = false;
-  storage.deadLetterStore.add = async (added) => {
-    adds += 1;
-    if (failing) throw new Error("store down");
-    return original(added);
-  };
-  return {
-    storage,
-    entries,
-    clock,
-    failures,
-    telemetry: recording,
-    adds: () => adds,
-    failFiling: () => {
-      failing = true;
-    },
-  };
+  return { storage, entries, clock, failures, telemetry: recording };
 };
 
-describe("letterOf", () => {
-  it("describes the failure of a process on its subject at the current time", async () => {
+describe("subjectOf", () => {
+  it("names the person the event names, and nobody for an event without their data", async () => {
     const { failures } = await setup();
+    expect(failures.subjectOf(placed({ customerId: "c-1", note: "ring" }))).toEqual({
+      ...subject,
+      person: "c-1",
+    });
+    expect(failures.subjectOf(placed({ customerId: "c-1", note: null }))).toEqual(subject);
+    expect(failures.subjectOf(placed({ customerId: "c-1" }))).toEqual(subject);
     expect(
-      failures.letterOf(
-        orderPayment,
-        subject,
-        new Error("payment refused"),
-        3,
-        "retriable_exhausted",
-      ),
-    ).toEqual({
-      id: "letter-1",
-      kind: "process",
-      handler: "orderPayment",
-      eventId: "e-1",
-      eventType: "OrderPlaced",
-      aggregateType: "order",
-      aggregateId: "o-1",
-      errorType: "retriable_exhausted",
-      errorMessage: "payment refused",
-      attempts: 3,
-      firstFailedAt: "2026-03-04T05:06:07.000Z",
-      lastFailedAt: "2026-03-04T05:06:07.000Z",
-    });
-  });
-
-  it("gives every letter its own id and records what was thrown when it is no error", async () => {
-    const { failures, clock } = await setup();
-    failures.letterOf(orderPayment, subject, "first", 1, "terminal");
-    clock.advance(1_000);
-    expect(failures.letterOf(orderPayment, subject, "second", 1, "terminal")).toMatchObject({
-      id: "letter-2",
-      errorMessage: "second",
-      firstFailedAt: "2026-03-04T05:06:08.000Z",
-      lastFailedAt: "2026-03-04T05:06:08.000Z",
-    });
+      failures.subjectOf({ ...placed({ customerId: "c-1", note: "ring" }), aggregateType: "x" }),
+    ).toEqual({ ...subject, aggregateType: "x" });
   });
 });
 
-describe("file", () => {
-  it("stages the letter with the error's stack, counting and logging nothing yet", async () => {
-    const { failures, storage, entries, telemetry } = await setup();
-    const error = new Error("boom");
-    await failures.file(storage.deadLetterStore, letter, error);
-    expect(await storage.deadLetterStore.get("letter-1")).toEqual({
-      ...letter,
-      errorStack: error.stack,
-      status: "failed",
-    });
+describe("letterOf", () => {
+  it("describes the failure of a process on its subject at the current time, with the error's stack", async () => {
+    const { failures, telemetry, entries } = await setup();
+    const error = new Error("payment refused");
+    expect(await failures.letterOf(orderPayment, subject, error, 3, "retriable_exhausted")).toEqual(
+      {
+        id: "letter-1",
+        kind: "process",
+        handler: "orderPayment",
+        eventId: "e-1",
+        eventType: "OrderPlaced",
+        aggregateType: "order",
+        aggregateId: "o-1",
+        person: null,
+        errorType: "retriable_exhausted",
+        errorName: "Error",
+        errorMessage: "payment refused",
+        errorStack: error.stack,
+        attempts: 3,
+        firstFailedAt: "2026-03-04T05:06:07.000Z",
+        lastFailedAt: "2026-03-04T05:06:07.000Z",
+      },
+    );
     expect(telemetry.counts).toEqual([]);
     expect(entries).toEqual([]);
   });
 
-  it("stores no stack when there is no error or it carries none", async () => {
-    const { failures, storage } = await setup();
-    await failures.file(storage.deadLetterStore, letter);
-    await failures.file(storage.deadLetterStore, { ...letter, id: "letter-2" }, "not an error");
-    expect(await storage.deadLetterStore.get("letter-1")).not.toHaveProperty("errorStack");
-    expect(await storage.deadLetterStore.get("letter-2")).not.toHaveProperty("errorStack");
+  it("gives every letter its own id and records what was thrown when it is no error, without a stack", async () => {
+    const { failures, clock } = await setup();
+    await failures.letterOf(orderPayment, subject, "first", 1, "terminal");
+    clock.advance(1_000);
+    const second = await failures.letterOf(orderPayment, subject, "second", 1, "terminal");
+    expect(second).toMatchObject({
+      id: "letter-2",
+      errorName: "string",
+      errorMessage: "second",
+      firstFailedAt: "2026-03-04T05:06:08.000Z",
+      lastFailedAt: "2026-03-04T05:06:08.000Z",
+    });
+    expect(second).not.toHaveProperty("errorCode");
+    expect(second).not.toHaveProperty("errorStack");
   });
 
-  it("fails when the letter cannot be stored", async () => {
-    const { failures, storage, failFiling } = await setup();
-    failFiling();
-    await expect(failures.file(storage.deadLetterStore, letter, new Error("boom"))).rejects.toThrow(
-      "store down",
+  it("names a BoundaError's code", async () => {
+    const { failures } = await setup();
+    expect(
+      await failures.letterOf(orderPayment, subject, new ValidationError("no", []), 1, "terminal"),
+    ).toMatchObject({ errorName: "ValidationError", errorCode: "VALIDATION_FAILED" });
+  });
+
+  it("seals the message and the stack under the key the subject's person holds", async () => {
+    const { failures, storage } = await setup();
+    await storage.personalKeys.add("c-1", await generatePersonalKey());
+    const error = new Error("cannot mail ana@example.com");
+    const letter = await failures.letterOf(
+      orderPayment,
+      { ...subject, person: "c-1" },
+      error,
+      1,
+      "terminal",
     );
+    expect(letter).toMatchObject({ person: "c-1", errorName: "Error" });
+    expect(isSealed(letter.errorMessage)).toBe(true);
+    expect(isSealed(letter.errorStack)).toBe(true);
+    expect(JSON.stringify(letter)).not.toContain("ana@example.com");
+    const key = await storage.personalKeys.get("c-1");
+    expect(key).not.toBeNull();
+    expect(letter.errorMessage).toMatchObject({
+      $personal: { person: "c-1", key: key?.fingerprint },
+    });
+  });
+
+  it("gives no key to a person who holds none, sealing the text unreadable", async () => {
+    const { failures, storage } = await setup();
+    const letter = await failures.letterOf(
+      orderPayment,
+      { ...subject, person: "c-1" },
+      new Error("cannot mail ana@example.com"),
+      1,
+      "terminal",
+    );
+    expect(isSealed(letter.errorMessage)).toBe(true);
+    expect(await storage.personalKeys.get("c-1")).toBeNull();
   });
 });
 
@@ -208,6 +255,7 @@ describe("deadlineSubject", () => {
       type: "bounda.ProcessDeadline",
       aggregateType: "process:orderPayment",
       aggregateId: "o-1",
+      person: null,
     });
   });
 

@@ -7,17 +7,26 @@ import type { ClaimedCommand, ScheduledCommand } from "../../adapter/storage/sch
 import type { ResolvedConfig, ResolvedRetryConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import { ScheduledClaimLostError } from "../../contracts/errors.ts";
+import type { StoredEvent } from "../../contracts/event.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { type CommandPipeline, scheduledCommandId } from "../command/pipeline.ts";
 import { openCommandPayload } from "../personal-data/commands.ts";
+import { sealError } from "../personal-data/errors.ts";
+import { personOfEvent } from "../personal-data/persons.ts";
 import type { DelayedPolicies } from "../policy/delayed.ts";
 import { PROCESS_DEADLINE_COMMAND, type ProcessDeadlinePayload } from "../process/deadlines.ts";
 import type { ProcessDeadlines } from "../process/deliver-deadline.ts";
 import { PROCESSES_SUBSCRIBER } from "../process/runner.ts";
 import { createMutex } from "../shared/mutex.ts";
-import { classifyFailure, errorDetails, retryDelayMs } from "../shared/retry.ts";
+import {
+  classifyFailure,
+  errorDetails,
+  errorIdentity,
+  errorLabel,
+  retryDelayMs,
+} from "../shared/retry.ts";
 import {
   appendSystemEvent,
   SCHEDULED_COMMAND_FAILED_EVENT,
@@ -189,22 +198,30 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       type: SCHEDULED_COMMAND_FAILED_EVENT,
       payload: {
         commandType: entry.command.type,
-        error: errorDetails(error).message,
+        ...errorIdentity(error),
         attempts,
       } satisfies ScheduledCommandFailedPayload,
       context: entry.context,
     });
   };
 
-  const letterOf = (
+  // Whom the entry's work names: the person of the event a delayed policy ran on, as its handler
+  // read it, or the one the payload was sealed for.
+  const personOf = (entry: ScheduledCommand, event: StoredEvent | undefined): string | null => {
+    if (!delayedPolicies.isDelayedPolicy(entry)) return entry.persons?.[0]?.person ?? null;
+    return event === undefined ? null : personOfEvent({ aggregates, event });
+  };
+
+  const letterOf = async (
     entry: ScheduledCommand,
     error: unknown,
     attempts: number,
     reason: DeadLetterErrorType,
-  ): NewDeadLetter => {
-    const details = errorDetails(error);
+    event: StoredEvent | undefined,
+  ): Promise<NewDeadLetter> => {
+    const person = personOf(entry, event);
+    const sealed = await sealError({ error, person, keys: storage.personalKeys });
     const now = clock.now().toISOString();
-    const stack = details.stack === undefined ? {} : { errorStack: details.stack };
     if (delayedPolicies.isDelayedPolicy(entry)) {
       const payload = delayedPolicies.payloadOf(entry);
       return {
@@ -215,9 +232,9 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
         eventType: payload.eventType,
         aggregateType: payload.aggregateType,
         aggregateId: entry.command.aggregateId,
+        person,
         errorType: reason,
-        errorMessage: details.message,
-        ...stack,
+        ...sealed,
         attempts,
         firstFailedAt: now,
         lastFailedAt: now,
@@ -231,9 +248,9 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       eventType: entry.command.type,
       aggregateType: aggregateOf(entry) ?? "",
       aggregateId: entry.command.aggregateId,
+      person,
       errorType: reason,
-      errorMessage: details.message,
-      ...stack,
+      ...sealed,
       attempts,
       firstFailedAt: now,
       lastFailedAt: now,
@@ -266,6 +283,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     error: unknown,
     attempts: number,
     reason: DeadLetterErrorType,
+    event: StoredEvent | undefined,
   ): Promise<void> => {
     if (isDeadline(entry)) {
       await processes.failDeadline({
@@ -277,17 +295,21 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       });
       return;
     }
-    const letter = letterOf(entry, error, attempts, reason);
+    const letter = await letterOf(entry, error, attempts, reason, event);
     await settled(entry, async (unit) => {
       if (!delayedPolicies.isDelayedPolicy(entry))
         await recordFailure(unit, entry, error, attempts);
       await unit.deadLetterStore.add(letter);
-      await unit.scheduler.fail({ claim: entry, error: letter.errorMessage });
+      await unit.scheduler.fail({ claim: entry, error: errorLabel(letter) });
     });
     dropped(entry, letter);
   };
 
-  const run = (entry: ScheduledCommand, unit: UnitOfWork): Promise<void> =>
+  const run = (
+    entry: ScheduledCommand,
+    unit: UnitOfWork,
+    event: StoredEvent | undefined,
+  ): Promise<void> =>
     traced({
       name: `bounda.scheduled ${entry.command.type}`,
       attributes: {
@@ -298,7 +320,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       },
       run: async () => {
         if (delayedPolicies.isDelayedPolicy(entry)) {
-          await delayedPolicies.run(entry, unit);
+          await delayedPolicies.run(entry, event, unit);
         } else if (isDeadline(entry)) {
           await processes.handleDeadline({
             payload: deadlineOf(entry),
@@ -336,13 +358,16 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   ): Promise<void> => scheduler.defer({ claim: entry, executeAt: new Date(entry.executeAt) });
 
   const execute = async (entry: ClaimedCommand): Promise<void> => {
+    // Read once, so a give-up names the person the handler read, whatever a forget did since.
+    let event: StoredEvent | undefined;
     try {
+      if (delayedPolicies.isDelayedPolicy(entry)) event = await delayedPolicies.eventOf(entry);
       // Settled before the run stages anything, so a run that schedules or cancels its own key
       // does not make the claim look lost.
       await settled(entry, async (unit) => {
         if (isDeadline(entry)) await deferToItsTime(entry, unit);
         else await unit.scheduler.complete(entry);
-        await run(entry, unit);
+        await run(entry, unit, event);
       });
     } catch (error) {
       if (error instanceof ScheduledClaimLostError || error instanceof RenewFailed) throw error;
@@ -359,7 +384,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
         );
         await storage.scheduler.fail({
           claim: entry,
-          error: errorDetails(error).message,
+          error: errorLabel(errorIdentity(error)),
           retryAt,
         });
         logger.warn("scheduled command failed; rescheduled", {
@@ -374,6 +399,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
         error,
         attempts,
         kind === "terminal" ? "terminal" : "retriable_exhausted",
+        event,
       );
     }
   };

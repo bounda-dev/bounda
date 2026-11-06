@@ -131,11 +131,18 @@ them. What it cannot see is personal
 data that came in the command's payload, marked or not: keep that out of a rejection's
 message and say what went wrong with its code and the ids involved.
 
-What `forget` does not reach is text your code writes and data left unmarked: your logs keep
-whatever you wrote to them, the message of an error a handler throws stays in its dead letter and,
-for a scheduled command, in the `ScheduledCommandFailed` event on the aggregate's stream, and a
-command's payload left unmarked is stored as it came. Log and throw with ids, not the data itself,
-and mark every field of a command's payload that holds it.
+The message of an error a handler throws may quote a personal field it read, so a [dead
+letter](/guides/dead-letters/#what-a-letter-holds) keeps the message and the stack encrypted with
+the key of the person its work names, and `forget` leaves the letter in place with them reading as
+`null`; the stream's `ScheduledCommandFailed` and `ProcessFailed` name the error's class and code
+and never its text, and so does the last error the inbox and the scheduler keep of a claim.
+
+What `forget` does not reach is text your code writes elsewhere and data left unmarked: your logs
+keep whatever you wrote to them, an event's payload written in the clear, with the data in a field
+you did not mark, stays readable, a command's payload left unmarked is stored as it came, and the
+error of work that names nobody, such as a process deadline or a scheduled command whose payload
+marks nothing, stays in its dead letter in the clear. Log and throw with ids, not the data itself,
+and mark every field that holds it.
 
 ## Handling it in a read model
 

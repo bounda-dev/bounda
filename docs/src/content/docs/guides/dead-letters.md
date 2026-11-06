@@ -49,6 +49,26 @@ comes first, or the person whose data its scheduled command holds was forgotten 
 The same operations are on the app as `app.deadLetters` — `list`, `count`, `get`, `retry` and
 `discard` — for a script or an admin route.
 
+## What a letter holds
+
+A letter records what gave up and why: its `kind` and `handler`, the event it was about (or the
+dropped command, with its payload), how many `attempts` were made and when, the `errorType`, and
+the error itself as `errorName` (its class, `ValidationError`) and `errorCode` (its
+[code](/reference/errors/), when it is one of Bounda's), with its `errorMessage` and `errorStack`.
+
+The message of an error a handler throws may quote what the handler read of a person: `cannot mail
+ana@example.com`. So a letter also names the `person` its work was about, the one the event names
+for a policy or process letter and the one the command's payload names for a scheduled command,
+and stores the message and the stack encrypted with that person's key, as a
+[personal field](/guides/personal-data/) is. A letter that names nobody keeps them in the clear:
+a process deadline's, a policy's or process's for an event without personal fields, or whose
+fields were forgotten before the handler read them, and a scheduled command's whose payload holds
+no marked field. `app.deadLetters` and `bounda dead-letters list` open them for you. Once the
+person is forgotten, even while the handler was failing, the letter stays, with its name and code,
+and the message and the stack read as `null`: the process can still be retried, and the stream
+still says it failed. `ProcessFailed` and `ScheduledCommandFailed` name the error
+the same way, `errorName` and `errorCode`, and never carry its text.
+
 ## A failed process
 
 A process fails when one of its handlers fails for good: the instance records `ProcessFailed`, the

@@ -164,7 +164,7 @@ export const createDeadlineDelivery: CreateDeadlineDeliveryFunction = ({
         instance.status === "started" &&
         !instance.reached.has(reachedKey(failed))
       ) {
-        letter = failures.letterOf(
+        letter = await failures.letterOf(
           process,
           deadlineSubject(process, payload.aggregateId, failed.field),
           error,
@@ -178,7 +178,7 @@ export const createDeadlineDelivery: CreateDeadlineDeliveryFunction = ({
             instanceContext(process, payload.aggregateId, instance),
           ),
         ]);
-        await failures.file(unit.deadLetterStore, letter, error);
+        await unit.deadLetterStore.add(letter);
       }
       await schedule.stage(unit, process, payload.aggregateId);
     });
