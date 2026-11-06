@@ -119,6 +119,29 @@ describe("createWorker", () => {
     expect(errors).toEqual([["bounda worker has no such binding", { binding: "MISSING" }]]);
   });
 
+  it("answers a 503 for an event newer code wrote, which a deploy rolling out leaves behind", async () => {
+    const worker = createWorker({
+      config: { storage: cloudflare({ binding: "SPY" }) },
+      tenantOf: () => {
+        throw Object.assign(new Error("written by newer code"), { code: "SCHEMA_AHEAD" });
+      },
+    });
+    const response = await worker.fetch?.(
+      new Request("https://bounda.test/queries/getOrder", {
+        method: "POST",
+        body: JSON.stringify({ orderId: "o-1" }),
+      }) as Request<unknown, IncomingRequestCfProperties>,
+      {
+        SPY: { idFromName: () => "id", get: () => recordingStub().stub },
+      } as unknown as Cloudflare.Env,
+      createExecutionContext(),
+    );
+    expect(response?.status).toBe(503);
+    expect(await response?.json()).toEqual({
+      error: { code: "SCHEMA_AHEAD", message: "written by newer code" },
+    });
+  });
+
   it("answers a 500 and logs it when tenantOf throws", async () => {
     const errors: unknown[][] = [];
     const logger: Logger = {
