@@ -60,12 +60,25 @@ export interface ReadOneArgs {
 }
 
 /**
+ * One kind of event a store has held: what the runtime checks at boot against the code.
+ */
+export interface StoredEventType {
+  readonly aggregateType: string;
+  readonly type: string;
+  readonly schemaVersion: number;
+}
+
+/**
  * Streams are keyed by aggregate type and id; every event also gets a position in one global
  * sequence. `readAll` must return only committed events, in position order, and never an event
  * while one with a lower position is still uncommitted. `readByPerson` reads the events whose
  * `person` is the one given, under the same guarantees.
  */
 export interface EventStore {
+  /**
+   * Also records each `(aggregateType, type, schemaVersion)` of the events it appends, in the
+   * same transaction, for `types`.
+   */
   append(args: AppendArgs): Promise<AppendResult>;
   load(args: LoadArgs): Promise<LoadResult>;
   /**
@@ -76,4 +89,9 @@ export interface EventStore {
   readAll(args: ReadAllArgs): Promise<readonly StoredEvent[]>;
   readByPerson(args: ReadByPersonArgs): Promise<readonly StoredEvent[]>;
   lastPosition(): Promise<number>;
+  /**
+   * Every `(aggregateType, type, schemaVersion)` of a committed event, each once, in no
+   * particular order. An append that rolls back leaves none.
+   */
+  types(): Promise<readonly StoredEventType[]>;
 }

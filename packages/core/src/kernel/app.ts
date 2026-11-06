@@ -13,6 +13,7 @@ import { validateRegistry } from "../modules/validate.ts";
 import type { AppEnv, AppRegistry, EnvSection } from "../register/index.ts";
 import { buildAggregates } from "./aggregate/build-aggregates.ts";
 import { createAggregateLoader } from "./aggregate/load-aggregate.ts";
+import { checkStoredTypes, processNamesOf } from "./aggregate/stored-types.ts";
 import { createCommandsFacade } from "./command/facade.ts";
 import { createCommandPipeline } from "./command/pipeline.ts";
 import { createDeadLetters, type DeadLetters } from "./dead-letters/dead-letters.ts";
@@ -319,6 +320,11 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     const written = await config.storage.createStorage();
     opened.unshift(() => written.close());
     const aggregates = buildAggregates({ registry, ports: ports.byAggregate, config });
+    checkStoredTypes({
+      types: await written.eventStore.types(),
+      aggregates,
+      processNames: processNamesOf(registry),
+    });
     const storage = appStorage({ storage: written, aggregates });
     const loader = createAggregateLoader({
       snapshotStore: storage.snapshotStore,

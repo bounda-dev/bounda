@@ -36,6 +36,7 @@ export type {
   PendingEvent,
   ReadAllArgs,
   ReadOneArgs,
+  StoredEventType,
 } from "./storage/event-store.ts";
 export type {
   DispatchOutcome,

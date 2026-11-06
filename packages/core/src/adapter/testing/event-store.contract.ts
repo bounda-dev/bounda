@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { ConcurrencyError } from "../../contracts/errors.ts";
-import type { EventStore } from "../storage/event-store.ts";
+import type { EventStore, StoredEventType } from "../storage/event-store.ts";
 import { pendingEvent } from "./fixtures.ts";
 
 export interface EventStoreContractArgs {
@@ -379,6 +379,102 @@ export const eventStoreContract: EventStoreContractFunction = ({ create }) => {
       expect(page.map((event) => event.position)).toEqual([3]);
       expect(await store.readByPerson({ person: "c-1", afterPosition: 5, limit: 10 })).toEqual([]);
       expect(await store.readByPerson({ person: "c-3", afterPosition: 0, limit: 10 })).toEqual([]);
+    });
+
+    const byIdentity = (types: readonly StoredEventType[]): readonly StoredEventType[] =>
+      [...types].sort(
+        (a, b) =>
+          a.aggregateType.localeCompare(b.aggregateType) ||
+          a.type.localeCompare(b.type) ||
+          a.schemaVersion - b.schemaVersion,
+      );
+
+    it("records each type of event it holds once, with its schema version, starting from none", async () => {
+      expect(await store.types()).toEqual([]);
+      await store.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events: Array.from({ length: 30 }, (_, index) =>
+          pendingEvent({ aggregateId: "1", version: index + 1 }),
+        ),
+      });
+      await store.append({
+        aggregateType: "order",
+        aggregateId: "2",
+        expectedVersion: 0,
+        events: [
+          pendingEvent({ aggregateId: "2", version: 1 }),
+          pendingEvent({ aggregateId: "2", version: 2, schemaVersion: 2 }),
+          pendingEvent({ aggregateId: "2", version: 3, type: "OrderPaid" }),
+        ],
+      });
+      await store.append({
+        aggregateType: "customer",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events: [
+          pendingEvent({
+            aggregateType: "customer",
+            aggregateId: "1",
+            version: 1,
+            type: "OrderPlaced",
+          }),
+        ],
+      });
+      expect(byIdentity(await store.types())).toEqual([
+        { aggregateType: "customer", type: "OrderPlaced", schemaVersion: 1 },
+        { aggregateType: "order", type: "OrderPaid", schemaVersion: 1 },
+        { aggregateType: "order", type: "OrderPlaced", schemaVersion: 1 },
+        { aggregateType: "order", type: "OrderPlaced", schemaVersion: 2 },
+      ]);
+    });
+
+    it("records no type of an append it refuses", async () => {
+      await store.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events: [pendingEvent({ aggregateId: "1", version: 1 })],
+      });
+      await expect(
+        store.append({
+          aggregateType: "order",
+          aggregateId: "1",
+          expectedVersion: 0,
+          events: [pendingEvent({ aggregateId: "1", version: 1, id: "dup", type: "OrderPaid" })],
+        }),
+      ).rejects.toBeInstanceOf(ConcurrencyError);
+      expect(await store.types()).toEqual([
+        { aggregateType: "order", type: "OrderPlaced", schemaVersion: 1 },
+      ]);
+      await store.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 1,
+        events: [pendingEvent({ aggregateId: "1", version: 2, type: "OrderPaid" })],
+      });
+      expect(byIdentity(await store.types())).toEqual([
+        { aggregateType: "order", type: "OrderPaid", schemaVersion: 1 },
+        { aggregateType: "order", type: "OrderPlaced", schemaVersion: 1 },
+      ]);
+    });
+
+    it("lets two writers record the same type at once", async () => {
+      await Promise.all(
+        ["1", "2"].map((aggregateId) =>
+          store.append({
+            aggregateType: "order",
+            aggregateId,
+            expectedVersion: 0,
+            events: [pendingEvent({ aggregateId, version: 1 })],
+          }),
+        ),
+      );
+      expect(await store.types()).toEqual([
+        { aggregateType: "order", type: "OrderPlaced", schemaVersion: 1 },
+      ]);
+      expect(await store.lastPosition()).toBe(2);
     });
 
     it("starts the global stream at position 0", async () => {

@@ -245,6 +245,34 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       expect((await storage.deadLetterStore.get("d1"))?.status).toBe("discarded");
     });
 
+    it("records the types of the events it appends with them, or not at all", async () => {
+      const paid = (fail: boolean) =>
+        storage.transact(async (tx) => {
+          await tx.eventStore.append({
+            aggregateType: "order",
+            aggregateId: "1",
+            expectedVersion: 0,
+            events: [pendingEvent({ aggregateId: "1", version: 1, type: "OrderPaid" })],
+          });
+          if (fail) throw new Error("boom");
+        });
+      await expect(paid(true)).rejects.toThrow("boom");
+      expect(await storage.eventStore.types()).toEqual([]);
+      // Once rolled back, the type is recorded again by the next append that holds it, inside a
+      // transaction or not.
+      await paid(false);
+      expect(await storage.eventStore.types()).toEqual([
+        { aggregateType: "order", type: "OrderPaid", schemaVersion: 1 },
+      ]);
+      await storage.eventStore.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 1,
+        events: [pendingEvent({ aggregateId: "1", version: 2, type: "OrderPaid" })],
+      });
+      expect(await storage.eventStore.types()).toHaveLength(1);
+    });
+
     it("lets the work read the events it appended", async () => {
       await storage.transact(async (tx) => {
         await tx.eventStore.append({

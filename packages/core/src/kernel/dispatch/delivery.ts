@@ -1,5 +1,6 @@
 import type { Span } from "@opentelemetry/api";
 import type { CheckpointStore } from "../../adapter/storage/checkpoint-store.ts";
+import { SchemaAheadError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { errorDetails } from "../shared/retry.ts";
@@ -220,7 +221,29 @@ export const createCheckpointedSubscriber: CreateCheckpointedSubscriberFunction 
     position,
     deliver: async ({ read, wait }) => {
       const afterPosition = await position();
-      const events = await read(afterPosition);
+      let events: readonly StoredEvent[];
+      try {
+        events = await read(afterPosition);
+      } catch (error) {
+        // Newer code wrote the next event: the subscriber waits for it to run here, backing off as
+        // after any failure, rather than moving past an event it cannot read.
+        if (!(error instanceof SchemaAheadError)) throw error;
+        logger.warn("subscriber waits for an event newer code wrote", {
+          subscriber: name,
+          afterPosition,
+          failedPosition: error.position,
+          message: error.message,
+        });
+        return {
+          outcome: "failed",
+          failure: {
+            position: error.position,
+            eventId: error.eventId,
+            eventType: error.type,
+            message: error.message,
+          },
+        };
+      }
       const [first] = events;
       if (first === undefined) return { outcome: "idle" };
       return traced({

@@ -3,7 +3,7 @@ import type { DeadLetterErrorType } from "../../adapter/storage/dead-letter-stor
 import type { ClaimKey } from "../../adapter/storage/inbox-ledger.ts";
 import type { ResolvedRetryConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
-import { ClaimLostError } from "../../contracts/errors.ts";
+import { ClaimLostError, SchemaAheadError } from "../../contracts/errors.ts";
 import { CommitFailed, commitAttempt, type UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import type { ReactionOutcome } from "./in-order.ts";
 import type { PendingRetries } from "./pending-retries.ts";
@@ -56,9 +56,9 @@ export interface RunAttemptFunction {
  * attempt; the claim's lease starts again before each rerun, and an attempt whose claim was handed
  * out again meanwhile stops there. Once the reruns are spent the conflict is a retriable failure.
  * A failure of the reaction spends an attempt and holds the event for its back-off, until the
- * attempts run out or the failure is terminal, when the give-up is committed with the claim. A
- * commit or a renewal that fails for any other reason is thrown as it is: the claim stays pending
- * until its lease expires.
+ * attempts run out or the failure is terminal, when the give-up is committed with the claim; a
+ * `SchemaAheadError` is held the same way but never given up on. A commit or a renewal that fails
+ * for any other reason is thrown as it is: the claim stays pending until its lease expires.
  */
 export const runAttempt: RunAttemptFunction = async ({
   storage,
@@ -75,7 +75,9 @@ export const runAttempt: RunAttemptFunction = async ({
 }) => {
   const spent = (attempts: number): boolean =>
     attempts >= retry.maxAttempts || retry.strategy === "none";
+  // An event newer code wrote is no failure of the reaction: it waits for that code, however long.
   const gaveUpOn = (error: unknown, attempts: number): DeadLetterErrorType | undefined => {
+    if (error instanceof SchemaAheadError) return undefined;
     if (classifyFailure(error) === "terminal") return "terminal";
     if (spent(attempts)) return "retriable_exhausted";
     return undefined;
@@ -127,9 +129,12 @@ export const runAttempt: RunAttemptFunction = async ({
     try {
       if (gaveUp === undefined) {
         await storage.inboxLedger.fail({ ...claim, error: label });
-        pendingRetries.waiting(
-          new Date(now.getTime() + retryDelayMs({ retry, attempt: attempts })),
-        );
+        // Only newer code moves it on, so a test app's clock is not moved to its retry.
+        if (!(error instanceof SchemaAheadError)) {
+          pendingRetries.waiting(
+            new Date(now.getTime() + retryDelayMs({ retry, attempt: attempts })),
+          );
+        }
         willRetry(attempts);
         return "hold";
       }

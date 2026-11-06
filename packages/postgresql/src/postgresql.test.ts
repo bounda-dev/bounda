@@ -11,7 +11,7 @@ import {
   ValidationError,
 } from "@bounda-dev/core";
 import type { Storage } from "@bounda-dev/core/adapter";
-import type { SqlExecutor } from "@bounda-dev/core/adapter/sql";
+import { createKnownEventTypes, type SqlExecutor } from "@bounda-dev/core/adapter/sql";
 import {
   checkpointStoreContract,
   contractFields,
@@ -389,6 +389,47 @@ describe.skipIf(container === null)("postgresql adapter", () => {
     expect(await eventStore.lastPosition()).toBe(100);
   });
 
+  it("writes a type to the catalogue only when neither an append nor types() met it yet", async () => {
+    const adapter = fresh();
+    const first = await openStorage(adapter);
+    const { tablePrefix, schema } = resolvePostgresqlOptions(adapter.options);
+    const table = `"${schema}"."${tablePrefix}event_types"`;
+    const sql = postgres(url, { max: 1, onnotice: () => undefined });
+    closers.push(() => sql.end({ timeout: 5 }));
+    // Counts every row an INSERT offers, the ones ON CONFLICT then leaves out included.
+    await sql.unsafe(`
+      CREATE TABLE "${schema}"."${tablePrefix}offered" ("n" integer NOT NULL);
+      INSERT INTO "${schema}"."${tablePrefix}offered" VALUES (0);
+      CREATE FUNCTION "${schema}"."${tablePrefix}count"() RETURNS trigger AS $$
+        BEGIN UPDATE "${schema}"."${tablePrefix}offered" SET "n" = "n" + 1; RETURN NEW; END
+      $$ LANGUAGE plpgsql;
+      CREATE TRIGGER "${tablePrefix}count" BEFORE INSERT ON ${table}
+        FOR EACH ROW EXECUTE FUNCTION "${schema}"."${tablePrefix}count"();
+    `);
+    const offered = async (): Promise<number> =>
+      Number((await sql.unsafe(`SELECT "n" FROM "${schema}"."${tablePrefix}offered"`))[0]?.n);
+    const append = (storage: Storage, aggregateId: string, type = "OrderPlaced") =>
+      storage.eventStore.append({
+        aggregateType: "order",
+        aggregateId,
+        expectedVersion: 0,
+        events: [pendingEvent({ aggregateId, version: 1, type })],
+      });
+    await append(first, "1");
+    await append(first, "2");
+    expect(await offered()).toBe(1);
+    await first.transact(async (tx) => {
+      await append(tx as Storage, "3", "OrderPaid");
+    });
+    await append(first, "4", "OrderPaid");
+    expect(await offered()).toBe(2);
+    const second = await openStorage(postgresql({ ...adapter.options }));
+    await second.eventStore.types();
+    await append(second, "5");
+    await append(second, "6", "OrderPaid");
+    expect(await offered()).toBe(2);
+  });
+
   it("never reports a version past the events a load from a later version returns", async () => {
     const adapter = fresh();
     const storage = await openStorage(adapter);
@@ -420,6 +461,8 @@ describe.skipIf(container === null)("postgresql adapter", () => {
         },
       },
       table: `"${tablePrefix}events"`,
+      typesTable: `"${tablePrefix}event_types"`,
+      known: createKnownEventTypes(),
       lockKey: "unused",
       channel: "unused",
     });
@@ -447,6 +490,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
     expect(tables.map((row) => String(row.table_name).replace(/^t[a-z0-9]+_\d+_/, ""))).toEqual([
       "checkpoints",
       "dead_letters",
+      "event_types",
       "events",
       "idempotency_keys",
       "inbox",

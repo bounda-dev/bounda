@@ -5,10 +5,18 @@ import type { EventStore } from "../index.ts";
 import type { SqlDatabase } from "../sql/database.ts";
 import { sqliteDialect } from "../sql/dialect.ts";
 import { insertEventsStatements, positionsByVersion } from "../sql/event-rows.ts";
+import {
+  eventTypeOfRow,
+  insertEventTypesStatements,
+  type KnownEventTypes,
+  selectEventTypesStatement,
+} from "../sql/event-types.ts";
 
 export interface CreateSqliteEventStoreArgs {
   readonly db: SqlDatabase;
   readonly table: string;
+  readonly typesTable: string;
+  readonly known: KnownEventTypes;
 }
 
 export interface CreateSqliteEventStoreFunction {
@@ -31,7 +39,12 @@ const toStoredEvent = (row: Record<string, unknown>): StoredEvent => ({
   person: row.person === null ? null : String(row.person),
 });
 
-export const createSqliteEventStore: CreateSqliteEventStoreFunction = ({ db, table }) => {
+export const createSqliteEventStore: CreateSqliteEventStoreFunction = ({
+  db,
+  table,
+  typesTable,
+  known,
+}) => {
   const currentVersion = async (
     executor: Pick<SqlDatabase, "all">,
     aggregateType: string,
@@ -45,8 +58,9 @@ export const createSqliteEventStore: CreateSqliteEventStoreFunction = ({ db, tab
   };
 
   return {
-    append: ({ aggregateType, aggregateId, expectedVersion, events }) =>
-      db.write(async (tx) => {
+    append: async ({ aggregateType, aggregateId, expectedVersion, events }) => {
+      const unseen = known.unseen(events);
+      const appended = await db.write(async (tx) => {
         const actualVersion = await currentVersion(tx, aggregateType, aggregateId);
         if (actualVersion !== expectedVersion) {
           throw new ConcurrencyError({
@@ -69,8 +83,18 @@ export const createSqliteEventStore: CreateSqliteEventStoreFunction = ({ db, tab
           ...event,
           position: positions.get(event.version) as number,
         }));
+        for (const { sql, params } of insertEventTypesStatements({
+          dialect: sqliteDialect,
+          table: typesTable,
+          types: unseen,
+        })) {
+          await tx.run(sql, params);
+        }
         return { version: actualVersion + stored.length, events: stored };
-      }),
+      });
+      known.recorded(unseen);
+      return appended;
+    },
     // A load from the first event reads one statement, whose last row is the head. From later
     // on, the head is read first and the events bounded by it: outside a transaction, an append
     // landing between the two reads would otherwise report a head past the events returned.
@@ -120,6 +144,11 @@ export const createSqliteEventStore: CreateSqliteEventStoreFunction = ({ db, tab
         [],
       );
       return Number(row?.position ?? 0);
+    },
+    types: async () => {
+      const types = (await db.all(selectEventTypesStatement(typesTable), [])).map(eventTypeOfRow);
+      known.recorded(types);
+      return types;
     },
   };
 };

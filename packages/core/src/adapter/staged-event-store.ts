@@ -6,10 +6,10 @@ import { type KeyedPerson, keyedPersonId } from "./storage/personal-key-store.ts
 /**
  * An event store that keeps what is appended to it aside: `load` answers with the base store's
  * events plus the ones staged for that stream, `append` stages with the version the stream has
- * in that view, and `readOne`, `readAll`, `readByPerson` and `lastPosition` read the base store
- * alone, since staged events are not written yet. `batches` hands out what to append at commit, one
- * batch per stream, each expecting the version the stream had in the base store when the view
- * first met it.
+ * in that view, and `readOne`, `readAll`, `readByPerson`, `lastPosition` and `types` read the base
+ * store alone, since staged events are not written yet. `batches` hands out what to append at
+ * commit, one batch per stream, each expecting the version the stream had in the base store when
+ * the view first met it.
  */
 export interface StagedEventStore extends EventStore {
   batches(): readonly StagedBatch[];
@@ -118,6 +118,7 @@ export const createStagedEventStore: CreateStagedEventStoreFunction = (
     readAll: (args) => base.readAll(args),
     readByPerson: (args) => base.readByPerson(args),
     lastPosition: () => base.lastPosition(),
+    types: () => base.types(),
     batches: () =>
       [...streams.values()]
         .filter((staged) => staged.events.length > 0)

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Adapter, CreateReadModelArgs } from "../adapter/adapter.ts";
 import type { Table } from "../adapter/storage/table.ts";
+import { pendingEvent } from "../adapter/testing/fixtures.ts";
 import { createFixedClock } from "../contracts/clock.ts";
 import { ConfigurationError, DomainError } from "../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../contracts/ids.ts";
@@ -691,6 +692,28 @@ describe("implementations built by create", () => {
       }),
     ).rejects.toThrow("checkpoints unreadable");
     expect(counting.closes()).toEqual({ storage: 1, readModels: 1 });
+  });
+
+  it("refuses to start over a store holding events no module reads, closing the storage, and opens no read model", async () => {
+    const counting = countingAdapter();
+    const seed = await counting.adapter.createStorage();
+    await seed.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "o-1",
+      expectedVersion: 0,
+      events: [pendingEvent({ aggregateId: "o-1", version: 1, type: "OrderShipped" })],
+    });
+    await expect(
+      createApp({
+        registry,
+        config: { storage: counting.adapter, ports: { order: { notifier: "memory" } } },
+      }),
+    ).rejects.toThrow(
+      new ConfigurationError(
+        "The store holds events this code cannot read:\n- The store holds order.OrderShipped events, and no module of the aggregate is that event. Bring its module back, or rename it back",
+      ),
+    );
+    expect(counting.closes()).toEqual({ storage: 1, readModels: 0 });
   });
 
   it("refuses a configuration that names a read model or an aggregate the registry lacks", async () => {

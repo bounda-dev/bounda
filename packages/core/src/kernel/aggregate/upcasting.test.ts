@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { PendingEvent } from "../../adapter/storage/event-store.ts";
+import type { EventStore, PendingEvent } from "../../adapter/storage/event-store.ts";
 import { resolveConfig } from "../../config/schema.ts";
-import { ConfigurationError } from "../../contracts/errors.ts";
+import { ConfigurationError, SchemaAheadError } from "../../contracts/errors.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import type { PayloadArgs } from "../../modules/payload.ts";
@@ -11,6 +11,7 @@ import { createApp } from "../app.ts";
 import { rebuildReadModel } from "../read-model/rebuild.ts";
 import { choosePorts, defaultPorts, orderAggregateEntry } from "../test-support.ts";
 import { buildAggregates } from "./build-aggregates.ts";
+import type { AggregateRuntime, EventRuntime } from "./runtime.ts";
 import { upcastEvent, withUpcasting } from "./upcasting.ts";
 
 interface PlacedV1 {
@@ -121,19 +122,11 @@ describe("upcastEvent", () => {
     });
   });
 
-  it("returns current events, system events and events it does not know untouched", () => {
+  it("returns current and system events untouched", () => {
     const current = event({ payload: { money: { amount: 1, currency: "EUR" } }, schemaVersion: 3 });
     expect(upcastEvent({ event: current, aggregates })).toBe(current);
-    const system = event({ payload: { total: 1 }, system: true });
+    const system = event({ type: "ScheduledCommandFailed", payload: { total: 1 }, system: true });
     expect(upcastEvent({ event: system, aggregates })).toBe(system);
-    const foreign = event({
-      aggregateType: "customer",
-      type: "CustomerRegistered",
-      payload: { total: 1 },
-    });
-    expect(upcastEvent({ event: foreign, aggregates })).toBe(foreign);
-    const unknownType = event({ type: "OrderShipped", payload: { total: 1 } });
-    expect(upcastEvent({ event: unknownType, aggregates })).toBe(unknownType);
     const neverChanged = event({
       type: "OrderPaid",
       payload: { method: "card" },
@@ -142,12 +135,35 @@ describe("upcastEvent", () => {
     expect(upcastEvent({ event: neverChanged, aggregates })).toBe(neverChanged);
   });
 
-  it("refuses an event written by code that knows a newer version", () => {
-    expect(() => upcastEvent({ event: event({ id: "e9", schemaVersion: 4 }), aggregates })).toThrow(
-      new ConfigurationError(
-        "Event e9 (OrderPlaced of order:o-1) was written with schema version 4, but this code knows 3. Deploy the code that wrote it",
-      ),
-    );
+  it("answers null for an event whose aggregate or type no module of this code reads", () => {
+    const foreign = event({
+      aggregateType: "customer",
+      type: "CustomerRegistered",
+      payload: { total: 1 },
+    });
+    expect(upcastEvent({ event: foreign, aggregates })).toBeNull();
+    const unknownType = event({ type: "OrderShipped", payload: { total: 1 } });
+    expect(upcastEvent({ event: unknownType, aggregates })).toBeNull();
+  });
+
+  it("refuses an event written by code that knows a newer version as ahead of this code", () => {
+    let error: unknown;
+    try {
+      upcastEvent({ event: event({ id: "e9", schemaVersion: 4 }), aggregates });
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(SchemaAheadError);
+    expect(error).toMatchObject({
+      code: "SCHEMA_AHEAD",
+      eventId: "e9",
+      aggregateType: "order",
+      aggregateId: "o-1",
+      type: "OrderPlaced",
+      position: 1,
+      schemaVersion: 4,
+      known: 3,
+    });
   });
 });
 
@@ -193,6 +209,157 @@ describe("withUpcasting", () => {
       ]),
     ).toEqual([[1, { money: { amount: 10, currency: "EUR" } }]]);
     expect(await store.lastPosition()).toBe(2);
+    expect(await store.types()).toEqual(await raw.types());
+  });
+
+  const withNewer = async (newer: PendingEvent) => {
+    const raw = (await memory().createStorage()).eventStore;
+    const store = withUpcasting({ eventStore: raw, aggregates });
+    await raw.append({
+      aggregateType: "order",
+      aggregateId: "o-1",
+      expectedVersion: 0,
+      events: [stored({ id: "e1", payload: { total: 10 }, person: "c-1" }), newer],
+    });
+    await raw.append({
+      aggregateType: "order",
+      aggregateId: "o-2",
+      expectedVersion: 0,
+      events: [stored({ id: "e3", aggregateId: "o-2", payload: { total: 3 } })],
+    });
+    return { raw, store };
+  };
+
+  it("hands out the events before one newer code wrote, and refuses it when it comes first", async () => {
+    const { store } = await withNewer(
+      stored({ id: "e2", version: 2, payload: { cents: 1 }, schemaVersion: 4, person: "c-1" }),
+    );
+    expect((await store.readAll({ afterPosition: 0, limit: 10 })).map((event) => event.id)).toEqual(
+      ["e1"],
+    );
+    await expect(store.readAll({ afterPosition: 1, limit: 10 })).rejects.toMatchObject({
+      code: "SCHEMA_AHEAD",
+      eventId: "e2",
+      position: 2,
+      known: 3,
+    });
+    expect((await store.readAll({ afterPosition: 2, limit: 10 })).map((event) => event.id)).toEqual(
+      ["e3"],
+    );
+  });
+
+  it("refuses a load, a read of one event or of a person that meets an event newer code wrote", async () => {
+    const { store } = await withNewer(
+      stored({ id: "e2", version: 2, payload: { cents: 1 }, schemaVersion: 4, person: "c-1" }),
+    );
+    const stream = { aggregateType: "order", aggregateId: "o-1" };
+    await expect(store.load(stream)).rejects.toBeInstanceOf(SchemaAheadError);
+    await expect(store.readOne({ ...stream, eventId: "e2" })).rejects.toBeInstanceOf(
+      SchemaAheadError,
+    );
+    expect((await store.readOne({ ...stream, eventId: "e1" }))?.id).toBe("e1");
+    await expect(
+      store.readByPerson({ person: "c-1", afterPosition: 0, limit: 10 }),
+    ).rejects.toBeInstanceOf(SchemaAheadError);
+  });
+
+  it("takes an unknown type the catalogue holds for newer code's, and one it lacks for a misconfiguration", async () => {
+    const { raw, store } = await withNewer(
+      stored({ id: "e2", version: 2, type: "OrderShipped", payload: {} }),
+    );
+    await expect(store.readAll({ afterPosition: 1, limit: 10 })).rejects.toMatchObject({
+      code: "SCHEMA_AHEAD",
+      type: "OrderShipped",
+      known: null,
+    });
+    const unrecorded: EventStore = { ...raw, types: async () => [] };
+    await expect(
+      withUpcasting({ eventStore: unrecorded, aggregates }).load({
+        aggregateType: "order",
+        aggregateId: "o-1",
+      }),
+    ).rejects.toThrow(
+      new ConfigurationError(
+        "Event e2 (order.OrderShipped of order:o-1) has no event module in this code, and no Bounda writer recorded its type. Restore the module that wrote it",
+      ),
+    );
+  });
+
+  it("takes only the catalogue's row of the event's own aggregate, type and version for newer code's", async () => {
+    const { raw } = await withNewer(stored({ id: "e2", version: 2, type: "OrderShipped" }));
+    const rows = [
+      { aggregateType: "order", type: "OrderShipped", schemaVersion: 2 },
+      { aggregateType: "customer", type: "OrderShipped", schemaVersion: 1 },
+      { aggregateType: "order", type: "OrderPlaced", schemaVersion: 1 },
+    ];
+    const store = withUpcasting({ eventStore: { ...raw, types: async () => rows }, aggregates });
+    await expect(store.readAll({ afterPosition: 1, limit: 10 })).rejects.toBeInstanceOf(
+      ConfigurationError,
+    );
+  });
+
+  it("lets an upcaster's own error through, rather than taking the event for newer code's", async () => {
+    const throwing = {
+      ...aggregates,
+      byName: {
+        order: {
+          ...(aggregates.byName.order as AggregateRuntime),
+          eventsByType: {
+            ...aggregates.byName.order?.eventsByType,
+            OrderPlaced: {
+              ...(aggregates.byName.order?.eventsByType.OrderPlaced as EventRuntime),
+              upcasts: [
+                () => {
+                  throw new Error("upcaster broke");
+                },
+              ],
+              schemaVersion: 2,
+            },
+          },
+        },
+      },
+    };
+    const raw = (await memory().createStorage()).eventStore;
+    await raw.append({
+      aggregateType: "order",
+      aggregateId: "o-1",
+      expectedVersion: 0,
+      events: [stored({ id: "e1" })],
+    });
+    await expect(
+      withUpcasting({ eventStore: raw, aggregates: throwing }).readAll({
+        afterPosition: 0,
+        limit: 1,
+      }),
+    ).rejects.toThrow("upcaster broke");
+  });
+
+  it("refuses an event of an aggregate this code does not have, but passes system events of any", async () => {
+    const raw = (await memory().createStorage()).eventStore;
+    const store = withUpcasting({ eventStore: raw, aggregates });
+    await raw.append({
+      aggregateType: "process:order.payment",
+      aggregateId: "o-1",
+      expectedVersion: 0,
+      events: [
+        stored({ aggregateType: "process:order.payment", type: "ProcessStarted", system: true }),
+      ],
+    });
+    await raw.append({
+      aggregateType: "invoice",
+      aggregateId: "i-1",
+      expectedVersion: 0,
+      events: [
+        stored({ id: "e2", aggregateType: "invoice", aggregateId: "i-1", type: "InvoiceIssued" }),
+      ],
+    });
+    expect(
+      (await store.readAll({ afterPosition: 0, limit: 10 })).map((event) => event.type),
+    ).toEqual(["ProcessStarted"]);
+    await expect(store.readAll({ afterPosition: 1, limit: 10 })).rejects.toMatchObject({
+      code: "SCHEMA_AHEAD",
+      aggregateType: "invoice",
+    });
   });
 });
 
@@ -278,15 +445,9 @@ describe("an app over events stored with an older shape", () => {
     ).toMatchObject({ events: 3 });
   });
 
-  it("reads them from its global stream as they were stored, even one from newer code", async () => {
+  it("refuses to start over a store holding a version this code does not know", async () => {
     const adapter = memory();
     const raw = await adapter.createStorage();
-    await raw.eventStore.append({
-      aggregateType: "order",
-      aggregateId: "o-1",
-      expectedVersion: 0,
-      events: [stored({ id: "old", payload: { total: 42 }, schemaVersion: 1 })],
-    });
     await raw.eventStore.append({
       aggregateType: "order",
       aggregateId: "o-3",
@@ -295,9 +456,35 @@ describe("an app over events stored with an older shape", () => {
         stored({ id: "newer", aggregateId: "o-3", payload: { cents: 1 }, schemaVersion: 4 }),
       ],
     });
+    await expect(
+      createApp({ registry, config: { storage: adapter, ports: defaultPorts(registry) } }),
+    ).rejects.toThrow(
+      new ConfigurationError(
+        "The store holds events this code cannot read:\n- order.OrderPlaced was written with schema version 4, past the 3 this code knows: newer code wrote it. Deploy that code; roll forward, never back",
+      ),
+    );
+  });
+
+  it("reads them from its global stream as they were stored, and fails a command on one newer code wrote since", async () => {
+    const adapter = memory();
+    const raw = await adapter.createStorage();
+    await raw.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "o-1",
+      expectedVersion: 0,
+      events: [stored({ id: "old", payload: { total: 42 }, schemaVersion: 1 })],
+    });
     const app = await createApp({
       registry,
       config: { storage: adapter, ports: defaultPorts(registry) },
+    });
+    await raw.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "o-3",
+      expectedVersion: 0,
+      events: [
+        stored({ id: "newer", aggregateId: "o-3", payload: { cents: 1 }, schemaVersion: 4 }),
+      ],
     });
     await app.commands.placeOrder({ orderId: "o-2", amount: 5 });
 
@@ -312,6 +499,9 @@ describe("an app over events stored with an older shape", () => {
       ["o-3", { cents: 1 }, 4],
       ["o-2", { money: { amount: 5, currency: "EUR" } }, 3],
     ]);
+    await expect(app.commands.payOrder({ orderId: "o-3", method: "card" })).rejects.toBeInstanceOf(
+      SchemaAheadError,
+    );
     await app.stop();
   });
 });

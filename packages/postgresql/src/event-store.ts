@@ -1,15 +1,21 @@
 import { ConcurrencyError, type EventMetadata, type StoredEvent } from "@bounda-dev/core";
 import type { EventStore } from "@bounda-dev/core/adapter";
 import {
+  eventTypeOfRow,
   insertEventsStatements,
+  insertEventTypesStatements,
+  type KnownEventTypes,
   positionsByVersion,
   postgresqlDialect,
+  selectEventTypesStatement,
 } from "@bounda-dev/core/adapter/sql";
 import type { PostgresqlDatabase } from "./database.ts";
 
 export interface CreatePostgresqlEventStoreArgs {
   readonly db: PostgresqlDatabase;
   readonly table: string;
+  readonly typesTable: string;
+  readonly known: KnownEventTypes;
   /**
    * Text hashed into the advisory lock every append takes for the duration of its transaction.
    */
@@ -49,6 +55,8 @@ const toStoredEvent = (row: Record<string, unknown>): StoredEvent => ({
 export const createPostgresqlEventStore: CreatePostgresqlEventStoreFunction = ({
   db,
   table,
+  typesTable,
+  known,
   lockKey,
   channel,
 }) => {
@@ -65,8 +73,9 @@ export const createPostgresqlEventStore: CreatePostgresqlEventStoreFunction = ({
   };
 
   return {
-    append: ({ aggregateType, aggregateId, expectedVersion, events }) =>
-      db.write(async (tx) => {
+    append: async ({ aggregateType, aggregateId, expectedVersion, events }) => {
+      const unseen = known.unseen(events);
+      const appended = await db.write(async (tx) => {
         await tx.run("SELECT pg_advisory_xact_lock(hashtext($1))", [lockKey]);
         const actualVersion = await currentVersion(tx, aggregateType, aggregateId);
         if (actualVersion !== expectedVersion) {
@@ -90,12 +99,22 @@ export const createPostgresqlEventStore: CreatePostgresqlEventStoreFunction = ({
           ...event,
           position: positions.get(event.version) as number,
         }));
+        for (const { sql, params } of insertEventTypesStatements({
+          dialect: postgresqlDialect,
+          table: typesTable,
+          types: unseen,
+        })) {
+          await tx.run(sql, params);
+        }
         const last = stored.at(-1);
         if (last !== undefined) {
           await tx.run("SELECT pg_notify($1, $2)", [channel, String(last.position)]);
         }
         return { version: actualVersion + stored.length, events: stored };
-      }),
+      });
+      known.recorded(unseen);
+      return appended;
+    },
     // A load from the first event reads one statement, whose last row is the head. From later
     // on, the head is read first and the events bounded by it: outside a transaction, an append
     // landing between the two reads would otherwise report a head past the events returned.
@@ -145,6 +164,11 @@ export const createPostgresqlEventStore: CreatePostgresqlEventStoreFunction = ({
         [],
       );
       return Number(row?.position ?? 0);
+    },
+    types: async () => {
+      const types = (await db.all(selectEventTypesStatement(typesTable), [])).map(eventTypeOfRow);
+      known.recorded(types);
+      return types;
     },
   };
 };

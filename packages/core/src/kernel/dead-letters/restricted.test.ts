@@ -5,6 +5,7 @@ import {
   DeadLetterNotRetriableError,
   DeadLetterSettledError,
   ProcessingRestrictedError,
+  SchemaAheadError,
 } from "../../contracts/errors.ts";
 import { liftProcessingRestriction } from "../personal-data/restriction.ts";
 import { PROCESS_DEADLINE_COMMAND } from "../process/deadlines.ts";
@@ -153,6 +154,47 @@ describe("the retry of a restricted person's dead letters", () => {
     expect(await harness.worker.runOnce()).toBe(1);
     expect((await deadLetterStore.get("later"))?.status).toBe("retried");
     expect((await deadLetterStore.get("broken"))?.attempts).toBe(2);
+  });
+
+  it("hands the entry back for the back-off without an attempt while a letter reads an event newer code wrote, keeping every letter failed", async () => {
+    const { harness, lift } = await setup({
+      runtime: { dispatcher: { backoff: { baseDelay: "5s" } } },
+    });
+    const { deadLetterStore } = harness.storage;
+    await harness.storage.persons.restrict("c-1", harness.clock.now());
+    await deadLetterStore.add(refused("ahead", "TouchOrder", "o-1", "c-1", "2026-01-01T00:00:00Z"));
+    await deadLetterStore.add(refused("fine", "TouchOrder", "o-2", "c-1", "2026-01-01T00:01:00Z"));
+    const original = harness.pipeline.dispatchUnattended.bind(harness.pipeline);
+    harness.pipeline.dispatchUnattended = async (args) => {
+      if ((args.payload as { orderId: string }).orderId === "o-1") {
+        throw new SchemaAheadError({
+          eventId: "e9",
+          aggregateType: "order",
+          aggregateId: "o-1",
+          type: "OrderPlaced",
+          position: 9,
+          schemaVersion: 4,
+          known: 1,
+        });
+      }
+      return original(args);
+    };
+    await lift("c-1");
+    harness.clock.advance(60_000);
+    await harness.dispatcher.runUntilIdle();
+
+    expect(await harness.worker.runOnce()).toBe(1);
+    const [entry] = await harness.storage.scheduler.list();
+    expect(entry).toMatchObject({
+      attempts: 0,
+      executeAt: new Date(harness.clock.now().getTime() + 5_000).toISOString(),
+    });
+    expect(entry?.dedupeKey).toMatch(/^retry-restricted:/);
+    expect((await deadLetterStore.list()).map(({ id, status }) => [id, status])).toEqual([
+      ["ahead", "failed"],
+      ["fine", "retried"],
+    ]);
+    expect((await deadLetterStore.get("ahead"))?.errorCode).toBe("PROCESSING_RESTRICTED");
   });
 
   it("waits for every runner, where a deadline waits for the process runner alone", async () => {

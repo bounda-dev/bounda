@@ -33,6 +33,7 @@ export interface PendingEventArgs {
   readonly payload?: unknown;
   readonly id?: string;
   readonly person?: string | null;
+  readonly schemaVersion?: number;
 }
 
 export interface PendingEventFunction {
@@ -50,6 +51,7 @@ export const pendingEvent: PendingEventFunction = ({
   payload = { total: version },
   id = `${aggregateType}-${aggregateId}-${version}`,
   person = null,
+  schemaVersion = testMetadata.schemaVersion,
 }) => ({
   id,
   aggregateType,
@@ -58,7 +60,7 @@ export const pendingEvent: PendingEventFunction = ({
   type,
   payload,
   timestamp: "2026-01-01T00:00:00.000Z",
-  metadata: testMetadata,
+  metadata: { ...testMetadata, schemaVersion },
   person,
 });
 

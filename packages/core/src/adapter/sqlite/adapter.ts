@@ -7,6 +7,7 @@ import type {
 import { createSqlCheckpointStore } from "../sql/checkpoint-store.ts";
 import type { SqlDatabase, SqlTransaction } from "../sql/database.ts";
 import { sqliteDialect } from "../sql/dialect.ts";
+import { createKnownEventTypes, type KnownEventTypes } from "../sql/event-types.ts";
 import { createSqlPersonStore } from "../sql/person-store.ts";
 import { createSqlPersonalKeyStore } from "../sql/personal-key-store.ts";
 import { createSqliteDeadLetterStore } from "./dead-letter-store.ts";
@@ -87,8 +88,14 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
       using(async ({ db }) => {
         const tables = storageTablesFor(tablePrefix);
         await ensureStorageSchema({ db, tables });
-        const storesOver = (database: SqlDatabase): StorageTransaction => ({
-          eventStore: createSqliteEventStore({ db: database, table: tables.events }),
+        const known = createKnownEventTypes();
+        const storesOver = (database: SqlDatabase, types: KnownEventTypes): StorageTransaction => ({
+          eventStore: createSqliteEventStore({
+            db: database,
+            table: tables.events,
+            typesTable: tables.eventTypes,
+            known: types,
+          }),
           inboxLedger: createSqliteInboxLedger({ db: database, table: tables.inbox }),
           deadLetterStore: createSqliteDeadLetterStore({ db: database, table: tables.deadLetters }),
           scheduler: createSqliteScheduler({ db: database, table: tables.scheduledCommands }),
@@ -121,13 +128,18 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
           write: (work) => work(tx),
         });
         return {
-          ...storesOver(db),
+          ...storesOver(db, known),
           checkpointStore: createSqlCheckpointStore({
             db,
             table: tables.checkpoints,
             dialect: sqliteDialect,
           }),
-          transact: (work) => db.write((tx) => work(storesOver(boundTo(tx)))),
+          transact: async (work) => {
+            const pending = known.pending();
+            const result = await db.write((tx) => work(storesOver(boundTo(tx), pending)));
+            pending.commit();
+            return result;
+          },
           close: release,
         };
       }),
