@@ -1,4 +1,5 @@
 import type { StoredPersonalKey } from "../../adapter/storage/personal-key-store.ts";
+import { ValidationError } from "../../contracts/errors.ts";
 
 const ALGORITHM = "AES-GCM";
 const KEY_BITS = 256;
@@ -52,20 +53,44 @@ export const isSealed: IsSealedFunction = (value): value is SealedValue => {
   );
 };
 
-export interface SealedFieldOfFunction {
-  (payload: Record<string, unknown>): string | null;
-}
-
-/**
- * The first top-level field whose value is an envelope, or `null`. What the kernel reads is
- * opened by its shape, whatever the schema marks, so a handler must never write one: it would
- * read back as `null`, or not at all under the person's current key.
- */
-export const sealedFieldOf: SealedFieldOfFunction = (payload) => {
+const sealedFieldOf = (payload: Record<string, unknown>): string | null => {
   for (const field in payload) {
     if (isSealed(payload[field])) return field;
   }
   return null;
+};
+
+export interface HoldsSealedFunction {
+  (payload: Record<string, unknown>): boolean;
+}
+
+export const holdsSealed: HoldsSealedFunction = (payload) => sealedFieldOf(payload) !== null;
+
+export interface RefuseSealedArgs {
+  readonly payload: Record<string, unknown>;
+  /**
+   * What is being stored, for the message: `Event OrderPlaced of order:o-1`.
+   */
+  readonly subject: string;
+  readonly writer: "handler" | "caller";
+}
+
+export interface RefuseSealedFunction {
+  (args: RefuseSealedArgs): void;
+}
+
+/**
+ * Throws `ValidationError` when any top-level field holds an envelope. What the kernel reads is
+ * opened by its shape, whatever the schema marks, so a handler or caller must never write one:
+ * it would read back as `null`, or not at all under the person's current key.
+ */
+export const refuseSealed: RefuseSealedFunction = ({ payload, subject, writer }) => {
+  const field = sealedFieldOf(payload);
+  if (field === null) return;
+  throw new ValidationError(
+    `${subject} carries a sealed value in "${field}": personal fields are sealed by the runtime, never by a ${writer}`,
+    [{ path: [field], message: "Expected a value, not an envelope" }],
+  );
 };
 
 const toBase64 = (bytes: Uint8Array): string => {

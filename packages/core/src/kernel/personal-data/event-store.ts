@@ -6,12 +6,13 @@ import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { isRecord } from "../shared/merge-fields.ts";
 import {
   generatePersonalKey,
+  holdsSealed,
   importPersonalKey,
   isSealed,
   type PersonalKey,
+  refuseSealed,
   type SealedValue,
   seal,
-  sealedFieldOf,
   unseal,
 } from "./crypto.ts";
 import type { PersonalMarks } from "./marks.ts";
@@ -91,13 +92,11 @@ export const withPersonalData: WithPersonalDataFunction = ({ eventStore, aggrega
     key: (person: string) => Promise<PersonalKey>,
   ): Promise<PendingEvent> => {
     if (!isRecord(event.payload)) return event;
-    const written = sealedFieldOf(event.payload);
-    if (written !== null) {
-      throw new ValidationError(
-        `Event ${event.type} of ${event.aggregateType}:${event.aggregateId} carries a sealed value in "${written}": personal fields are sealed by the runtime, never by a handler`,
-        [{ path: [written], message: "Expected a value, not an envelope" }],
-      );
-    }
+    refuseSealed({
+      payload: event.payload,
+      subject: `Event ${event.type} of ${event.aggregateType}:${event.aggregateId}`,
+      writer: "handler",
+    });
     const marks = marksOf(event);
     if (marks === null) return event;
     const person =
@@ -136,7 +135,7 @@ export const withPersonalData: WithPersonalDataFunction = ({ eventStore, aggrega
     key: (person: string) => Promise<PersonalKey | null>,
     opened: Map<string, string>,
   ): StoredEvent | Promise<StoredEvent> =>
-    isRecord(event.payload) && sealedFieldOf(event.payload) !== null
+    isRecord(event.payload) && holdsSealed(event.payload)
       ? open(event, event.payload, key, opened)
       : event;
 

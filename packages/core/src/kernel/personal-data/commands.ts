@@ -6,8 +6,8 @@ import {
   importPersonalKey,
   isSealed,
   type PersonalKey,
+  refuseSealed,
   seal,
-  sealedFieldOf,
   unseal,
 } from "./crypto.ts";
 import type { PersonalMarks } from "./marks.ts";
@@ -60,13 +60,7 @@ const keyInForce = async (keys: PersonalKeyStore, person: string): Promise<Perso
 export const sealCommandPayload: SealCommandPayloadFunction = async (args) => {
   const { payload, marks, keys } = args;
   if (!isRecord(payload)) return { payload, persons: [] };
-  const written = sealedFieldOf(payload);
-  if (written !== null) {
-    throw new ValidationError(
-      `Command ${args.type} carries a sealed value in "${written}": personal fields are sealed by the runtime, never by a caller`,
-      [{ path: [written], message: "Expected a value, not an envelope" }],
-    );
-  }
+  refuseSealed({ payload, subject: `Command ${args.type}`, writer: "caller" });
   if (marks === null) return { payload, persons: [] };
   const present = marks.fields.filter((field) => payload[field] !== undefined);
   if (present.length === 0) return { payload, persons: [] };
