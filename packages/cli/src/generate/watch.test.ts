@@ -17,9 +17,17 @@ const project = async (): Promise<string> => {
 
 const drained = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
+// A write to disk can stall for seconds on a slow runner (Windows CI), so a wait that depends on
+// one gets this long, and a test, which may make many, a multiple of it.
+const DISK_MS = 10_000;
+
+const onDisk = { timeout: DISK_MS };
+
+const testOnDisk = { timeout: 3 * DISK_MS };
+
 const unheard = async (clock: ReturnType<typeof createFixedClock>, writes: number) => {
   for (let write = 0; write < writes; write += 1) {
-    await vi.waitFor(() => expect(clock.pending()).toBe(1));
+    await vi.waitFor(() => expect(clock.pending()).toBe(1), onDisk);
     clock.advance(50);
   }
 };
@@ -32,7 +40,7 @@ const cookieIn = (directory: string): Promise<string> =>
     const [cookie] = await cookies(directory);
     if (cookie === undefined) throw new Error(`no cookie in ${directory} yet`);
     return cookie;
-  });
+  }, onDisk);
 
 afterAll(async () => {
   await Promise.all(temporary.map((root) => rm(root, { recursive: true, force: true })));
@@ -151,11 +159,11 @@ const harness = async (
 ) => {
   const started = await start(watcher, overrides);
   await watcher.hearCookie();
-  await vi.waitFor(() => expect(started.listened()).toBe(1));
+  await vi.waitFor(() => expect(started.listened()).toBe(1), onDisk);
   return started;
 };
 
-describe("watchProject", () => {
+describe("watchProject", testOnDisk, () => {
   it("watches <root>/<appDir> recursively until the signal aborts, app/ by default", async () => {
     const watcher = fakeWatcher();
     const { root, watching, controller } = await start(watcher);
@@ -188,17 +196,17 @@ describe("watchProject", () => {
     const app = join(root, "app");
     const cookie = await cookieIn(app);
     expect(cookie).toMatch(/^\.bounda-watch-[0-9a-f-]{36}$/);
-    await vi.waitFor(() => expect(clock.pending()).toBe(1));
+    await vi.waitFor(() => expect(clock.pending()).toBe(1), onDisk);
     await rm(join(app, cookie));
     clock.advance(49);
     await drained();
     expect(await cookies(app)).toEqual([]);
     clock.advance(1);
-    await vi.waitFor(() => stat(join(app, cookie)));
+    await vi.waitFor(() => stat(join(app, cookie)), onDisk);
     expect(listened()).toBe(0);
 
     watcher.emit(cookie);
-    await vi.waitFor(() => expect(listened()).toBe(1));
+    await vi.waitFor(() => expect(listened()).toBe(1), onDisk);
     expect(await cookies(app)).toEqual([]);
     expect(clock.pending()).toBe(0);
     watcher.emit(cookie);
@@ -221,7 +229,7 @@ describe("watchProject", () => {
         onChange: async () => undefined,
       }),
     );
-    await vi.waitFor(async () => expect(await cookies(join(root, "app"))).toHaveLength(2));
+    await vi.waitFor(async () => expect(await cookies(join(root, "app"))).toHaveLength(2), onDisk);
     controller.abort();
     await Promise.all(watchings);
   });
@@ -244,10 +252,10 @@ describe("watchProject", () => {
     const app = join(root, "app");
     const cookie = await cookieIn(app);
     await unheard(clock, 19);
-    await vi.waitFor(() => expect(clock.pending()).toBe(1));
+    await vi.waitFor(() => expect(clock.pending()).toBe(1), onDisk);
     expect(unconfirmed()).toBe(0);
     clock.advance(50);
-    await vi.waitFor(() => expect(unconfirmed()).toBe(1));
+    await vi.waitFor(() => expect(unconfirmed()).toBe(1), onDisk);
     expect(await cookies(app)).toEqual([]);
     expect(clock.pending()).toBe(0);
     expect(listened()).toBe(0);
@@ -286,7 +294,7 @@ describe("watchProject", () => {
     const cookie = await cookieIn(app);
     await rm(join(app, cookie));
     watcher.emit(cookie);
-    await vi.waitFor(() => expect(listened()).toBe(1));
+    await vi.waitFor(() => expect(listened()).toBe(1), onDisk);
     controller.abort();
     await expect(watching).resolves.toBeUndefined();
   });
@@ -312,7 +320,7 @@ describe("watchProject", () => {
       },
     });
     await watcher.hearCookie();
-    await vi.waitFor(() => expect(errors).toEqual([new Error("boom")]));
+    await vi.waitFor(() => expect(errors).toEqual([new Error("boom")]), onDisk);
     watcher.emit("domain/order/a.ts");
     await drained();
     clock.advance(10);
@@ -439,13 +447,13 @@ describe("watchProject", () => {
     await listening.promise;
     expect(await cookies(join(root, "app"))).toEqual([]);
     await writeFile(join(root, "app/domain/order/a.ts"), "export {};\n");
-    await vi.waitFor(() => expect(runs).toBeGreaterThanOrEqual(1), { timeout: 5_000 });
+    await vi.waitFor(() => expect(runs).toBeGreaterThanOrEqual(1), onDisk);
     controller.abort();
     await expect(watching).resolves.toBeUndefined();
-  }, 15_000);
+  });
 });
 
-describe("watchFromFirstRun", () => {
+describe("watchFromFirstRun", testOnDisk, () => {
   const begin = async (watcher: FakeWatcher, firstRun: () => Promise<boolean>) => {
     const controller = new AbortController();
     const clock = createFixedClock();
@@ -486,7 +494,7 @@ describe("watchFromFirstRun", () => {
 
   const listening = async (watcher: FakeWatcher, run: { readonly firstRuns: () => number }) => {
     await watcher.hearCookie();
-    await vi.waitFor(() => expect(run.firstRuns()).toBe(1));
+    await vi.waitFor(() => expect(run.firstRuns()).toBe(1), onDisk);
   };
 
   it("makes the first run once the watcher is listening, and announces once it goes on", async () => {
@@ -571,10 +579,10 @@ describe("watchFromFirstRun", () => {
     const watcher = fakeWatcher();
     const run = await begin(watcher, async () => true);
     await unheard(run.clock, 19);
-    await vi.waitFor(() => expect(run.clock.pending()).toBe(1));
+    await vi.waitFor(() => expect(run.clock.pending()).toBe(1), onDisk);
     expect(run.firstRuns()).toBe(0);
     run.clock.advance(50);
-    await vi.waitFor(() => expect(run.announced()).toBe(1));
+    await vi.waitFor(() => expect(run.announced()).toBe(1), onDisk);
     expect(run.unconfirmed()).toBe(1);
     expect(run.firstRuns()).toBe(1);
     run.controller.abort();
