@@ -113,7 +113,7 @@ export const rebuildReadModel: RebuildReadModelFunction = async ({
       `storage "${config.storage.name}" is a definition without factories. Import the adapter package's factory.`,
     );
   }
-  const storage = await config.storage.createStorage({ logger });
+  const storage = await config.storage.createStorage();
   try {
     // A rebuild runs no handler, so it builds no implementation.
     const { eventStore } = appStorage({

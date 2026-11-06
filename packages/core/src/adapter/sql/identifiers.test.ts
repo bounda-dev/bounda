@@ -45,6 +45,14 @@ describe("assertIdentifier / quoteIdentifier", () => {
     expect(() => quoteIdentifier(name)).toThrow(/not a valid SQL identifier/);
   });
 
+  it("rejects a name PostgreSQL would cut, and takes one as long as it allows", () => {
+    expect(assertIdentifier({ name: "a".repeat(63), subject: "Column" })).toHaveLength(63);
+    expect(() => assertIdentifier({ name: "a".repeat(64), subject: "Column" })).toThrow(
+      'Column "aaaa',
+    );
+    expect(() => quoteIdentifier("a".repeat(64))).toThrow(/longer than 63 characters/);
+  });
+
   it("names the subject in the error", () => {
     expect(() => assertIdentifier({ name: "Bad", subject: "Table name" })).toThrow(
       'Table name "Bad" is not a valid SQL identifier',

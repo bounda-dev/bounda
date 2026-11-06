@@ -125,7 +125,7 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "payload" jsonb,
     "persons" jsonb NOT NULL DEFAULT '[]'
   )`,
-  `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "status")} ON ${tables.deadLetters} ("status")`,
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "listing")} ON ${tables.deadLetters} ("status", "first_failed_at", "id")`,
   `CREATE TABLE IF NOT EXISTS ${tables.scheduledCommands} (
     "dedupe_key" text PRIMARY KEY,
     "command_type" text NOT NULL,
@@ -141,6 +141,8 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "persons" jsonb NOT NULL DEFAULT '[]'
   )`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.scheduledCommands, "execute_at")} ON ${tables.scheduledCommands} ("execute_at")`,
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.scheduledCommands, "unclaimed")} ON ${tables.scheduledCommands} ("execute_at") WHERE "claimed_at" IS NULL`,
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.scheduledCommands, "claimed_at")} ON ${tables.scheduledCommands} ("claimed_at") WHERE "claimed_at" IS NOT NULL`,
   `CREATE TABLE IF NOT EXISTS ${tables.idempotencyKeys} (
     "key" text PRIMARY KEY,
     "fingerprint" text NOT NULL,
@@ -197,8 +199,10 @@ export const ensureStorageSchema: EnsureStorageSchemaFunction = async ({ db, sch
     tables.personalKeys,
     tables.snapshots,
     indexName(tables.events, "person"),
-    indexName(tables.deadLetters, "status"),
+    indexName(tables.deadLetters, "listing"),
     indexName(tables.scheduledCommands, "execute_at"),
+    indexName(tables.scheduledCommands, "unclaimed"),
+    indexName(tables.scheduledCommands, "claimed_at"),
     indexName(tables.idempotencyKeys, "expires_at"),
     indexName(tables.snapshots, "persons"),
     indexName(tables.idempotencyKeys, "persons"),

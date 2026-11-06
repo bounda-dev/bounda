@@ -36,7 +36,11 @@ import type { NewEvent } from "../../contracts/event.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
-import type { AggregateLoader } from "../aggregate/load-aggregate.ts";
+import {
+  type AggregateLoader,
+  type LoadedAggregate,
+  loadAttributes,
+} from "../aggregate/load-aggregate.ts";
 import type { AggregateRuntime, AggregatesRuntime, CommandRuntime } from "../aggregate/runtime.ts";
 import { type SealedPayload, sealCommandPayload } from "../personal-data/commands.ts";
 import { errorDetails } from "../shared/retry.ts";
@@ -332,15 +336,18 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     command: Command,
     store: EventStore,
     signals: readonly AbortSignal[],
+    onLoad: (loaded: LoadedAggregate) => void,
   ): Promise<StoredDispatch | DomainError> => {
     const attempts = config.runtime.commands.concurrencyRetries + 1;
     const { timeoutMs } = config.forAggregate(aggregate.name).commands;
     for (let attempt = 1; ; attempt += 1) {
-      const { folded, version, persons } = await loader.load({
+      const loaded = await loader.load({
         aggregate,
         aggregateId: command.aggregateId,
         eventStore: store,
       });
+      onLoad(loaded);
+      const { folded, version, persons } = loaded;
       const stream = `${aggregate.name}:${command.aggregateId}`;
       if (folded.openedWithout !== null && !warnedOpenings.has(stream)) {
         warnedOpenings.add(stream);
@@ -534,6 +541,11 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     // With a key, what the command answers is recorded under it where its events go: in the unit
     // of work, or in the transaction of the append that stores them, so a duplicate running
     // beside it loses on the key and stores nothing.
+    // The last load, retries included; set on the span only once the dispatch is not a replay.
+    let lastLoad: LoadedAggregate | undefined;
+    const onLoad = (loaded: LoadedAggregate): void => {
+      lastLoad = loaded;
+    };
     const perform = async (): Promise<DispatchResult | DomainError> => {
       if (options.delay !== undefined) {
         const delay = options.delay;
@@ -554,10 +566,17 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         return within === undefined ? storage.transact(scheduling) : scheduling(within);
       }
       if (idempotency === undefined) {
-        return execute(aggregate, runtime, command, stores.eventStore, signals);
+        return execute(aggregate, runtime, command, stores.eventStore, signals, onLoad);
       }
       if (within !== undefined) {
-        const answer = await execute(aggregate, runtime, command, within.eventStore, signals);
+        const answer = await execute(
+          aggregate,
+          runtime,
+          command,
+          within.eventStore,
+          signals,
+          onLoad,
+        );
         await within.idempotencyStore.put(
           recordOf(idempotency, outcomeOf(answer), personsOf(answer)),
         );
@@ -578,7 +597,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
           return appended;
         },
       };
-      const answer = await execute(aggregate, runtime, command, recording, signals);
+      const answer = await execute(aggregate, runtime, command, recording, signals, onLoad);
       if (!recorded)
         await storage.idempotencyStore.put(
           recordOf(idempotency, outcomeOf(answer), personsOf(answer)),
@@ -621,6 +640,9 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         };
         const remembered = await replay();
         if (remembered !== null) return remembered;
+        const describeLoad = (): void => {
+          if (lastLoad !== undefined) span.setAttributes(loadAttributes(lastLoad));
+        };
         let answer: DispatchResult | DomainError;
         try {
           answer = await perform();
@@ -629,9 +651,11 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
             const taken = await replay();
             if (taken !== null) return taken;
           }
+          describeLoad();
           count(type, "failed");
           throw error;
         }
+        describeLoad();
         if (answer instanceof DomainError) {
           span.setAttribute(ATTRIBUTES.outcome, "rejected");
           span.addEvent(SPAN_EVENTS.commandRejected, { [ATTRIBUTES.rejected]: answer.rejected });

@@ -11,10 +11,6 @@ import { ScheduledClaimLostError } from "../contracts/errors.ts";
 import { createStoreEntries, type WithEntries } from "./entries.ts";
 import { jsonCopy } from "./json-copy.ts";
 
-export interface CreateMemorySchedulerFunction {
-  (): Scheduler;
-}
-
 export interface CreateKeptSchedulerFunction {
   (): WithEntries<Scheduler, string>;
 }
@@ -185,6 +181,3 @@ export const createKeptScheduler: CreateKeptSchedulerFunction = () => {
   };
   return { store, entries: createStoreEntries(entries, (dedupeKey: string) => dedupeKey) };
 };
-
-export const createMemoryScheduler: CreateMemorySchedulerFunction = () =>
-  createKeptScheduler().store;

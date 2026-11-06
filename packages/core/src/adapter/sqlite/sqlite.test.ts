@@ -76,7 +76,7 @@ const nodeSqlite = (db = new DatabaseSync(":memory:"), tablePrefix = "bounda_") 
   return { adapter, db, uses: () => uses };
 };
 
-const storage = () => nodeSqlite().adapter.createStorage({ logger: silentLogger });
+const storage = () => nodeSqlite().adapter.createStorage();
 
 const recordingLogger = () => {
   const logs: unknown[] = [];
@@ -128,7 +128,7 @@ describe("the SQLite stores on node:sqlite", () => {
 describe("the SQLite event store", () => {
   it("never reports a version past the events a load from a later version returns", async () => {
     const { adapter, db } = nodeSqlite();
-    const storage = await adapter.createStorage({ logger: silentLogger });
+    const storage = await adapter.createStorage();
     const stream = { aggregateType: "order", aggregateId: "1" };
     await storage.eventStore.append({
       ...stream,
@@ -163,7 +163,7 @@ describe("the SQLite event store", () => {
 
   it("reads a load from the first event, or from past the head, in one statement", async () => {
     const { adapter, db } = nodeSqlite();
-    const storage = await adapter.createStorage({ logger: silentLogger });
+    const storage = await adapter.createStorage();
     const stream = { aggregateType: "order", aggregateId: "1" };
     await storage.eventStore.append({
       ...stream,
@@ -204,7 +204,7 @@ describe("createSqliteAdapter", () => {
 
   it("acquires the connection once per storage, read model and rebuild, and releases each", async () => {
     const { adapter, uses } = nodeSqlite();
-    const opened = await adapter.createStorage({ logger: silentLogger });
+    const opened = await adapter.createStorage();
     const readModel = await adapter.createReadModel({
       name: "orderSummary",
       fields: contractFields,
@@ -242,7 +242,7 @@ describe("createSqliteAdapter", () => {
       }),
     ).rejects.toBeInstanceOf(ConfigurationError);
     db.close();
-    await expect(adapter.createStorage({ logger: silentLogger })).rejects.toThrow(/not open/);
+    await expect(adapter.createStorage()).rejects.toThrow(/not open/);
     expect(uses()).toBe(0);
   });
 
@@ -294,7 +294,7 @@ describe("createSqliteAdapter", () => {
 
   it("prefixes every table and keeps data across adapters on the same database", async () => {
     const db = new DatabaseSync(":memory:");
-    const first = await nodeSqlite(db, "app_").adapter.createStorage({ logger: silentLogger });
+    const first = await nodeSqlite(db, "app_").adapter.createStorage();
     await first.eventStore.append({
       aggregateType: "order",
       aggregateId: "1",
@@ -302,9 +302,7 @@ describe("createSqliteAdapter", () => {
       events: [pendingEvent({ aggregateId: "1", version: 1 })],
     });
     const again = nodeSqlite(db, "app_").adapter;
-    expect(
-      await (await again.createStorage({ logger: silentLogger })).eventStore.lastPosition(),
-    ).toBe(1);
+    expect(await (await again.createStorage()).eventStore.lastPosition()).toBe(1);
     await again.createReadModel({
       name: "orderSummary",
       fields: contractFields,

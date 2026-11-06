@@ -6,6 +6,7 @@ import {
 } from "@bounda-dev/core/adapter";
 import {
   columnsOf,
+  createSqlCheckpointStore,
   createSqlReadClient,
   createSqlTable,
   createTableStatements,
@@ -20,7 +21,6 @@ import {
   tableNameFor,
 } from "@bounda-dev/core/adapter/sql";
 import type { Sql } from "postgres";
-import { createPostgresqlCheckpointStore } from "./checkpoint-store.ts";
 import type { PostgresqlDatabase } from "./database.ts";
 import { checkpointTableStatement, inSchema, relationsExist } from "./schema.ts";
 
@@ -154,7 +154,11 @@ export const openPostgresqlReadModel: OpenPostgresqlReadModelFunction = async <R
       executor: db,
       raw: sql,
     }),
-    checkpointStore: createPostgresqlCheckpointStore({ db, table: checkpoints }),
+    checkpointStore: createSqlCheckpointStore({
+      dialect: postgresqlDialect,
+      db,
+      table: checkpoints,
+    }),
     transact: ({ subscriber, wait, work }) =>
       db.write(async (tx) => {
         const keys = [checkpointsLockKey, subscriber];
@@ -184,7 +188,11 @@ export const openPostgresqlReadModel: OpenPostgresqlReadModelFunction = async <R
               executor: tx,
               raw: tx.raw,
             }),
-            checkpointStore: createPostgresqlCheckpointStore({ db: tx, table: checkpoints }),
+            checkpointStore: createSqlCheckpointStore({
+              dialect: postgresqlDialect,
+              db: tx,
+              table: checkpoints,
+            }),
           }),
         };
       }),
@@ -238,7 +246,7 @@ export const rebuildPostgresqlReadModel: RebuildPostgresqlReadModelFunction = as
   const columns = columnsOf({ readModel: name, fields, dialect: postgresqlDialect });
   const fencing = rebuildFencing(name);
   const checkpointsIn = (executor: SqlExecutor) =>
-    createPostgresqlCheckpointStore({ db: executor, table: checkpoints });
+    createSqlCheckpointStore({ dialect: postgresqlDialect, db: executor, table: checkpoints });
   const lock = (executor: SqlExecutor, key: string) =>
     executor.run("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", [
       checkpointsLockKey,

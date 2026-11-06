@@ -11,13 +11,12 @@ import {
 import { createFixedClock } from "../../contracts/clock.ts";
 import { ConcurrencyError, ValidationError } from "../../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
-import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import { createRecordingLogger } from "../test-support.ts";
 import { forgetPersonalData } from "./forget.ts";
 
 const setup = async (storage?: Storage) => {
-  const live = storage ?? (await memory().createStorage({ logger: silentLogger }));
+  const live = storage ?? (await memory().createStorage());
   const { logger, entries: logs } = createRecordingLogger();
   const forget = (personId: string) =>
     forgetPersonalData({
@@ -138,7 +137,7 @@ describe("forgetPersonalData", () => {
   });
 
   it("runs again when the person's stream moved under it, and gives up past the retries", async () => {
-    const base = await memory().createStorage({ logger: silentLogger });
+    const base = await memory().createStorage();
     let conflicts = 0;
     const racing: Storage = {
       ...base,

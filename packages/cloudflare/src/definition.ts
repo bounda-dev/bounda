@@ -72,5 +72,3 @@ export const cloudflareStorageOf: CloudflareStorageOfFunction = (config) => {
   }
   return storage;
 };
-
-export const DEFAULT_TABLE_PREFIX: string = "bounda_";

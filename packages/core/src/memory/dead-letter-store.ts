@@ -9,10 +9,6 @@ import { DeadLetterSettledError } from "../contracts/errors.ts";
 import { createStoreEntries, type WithEntries } from "./entries.ts";
 import { jsonCopy } from "./json-copy.ts";
 
-export interface CreateMemoryDeadLetterStoreFunction {
-  (): DeadLetterStore;
-}
-
 export interface CreateKeptDeadLetterStoreFunction {
   (): WithEntries<DeadLetterStore, string>;
 }
@@ -74,6 +70,3 @@ export const createKeptDeadLetterStore: CreateKeptDeadLetterStoreFunction = () =
   };
   return { store, entries: createStoreEntries(letters, (id: string) => id) };
 };
-
-export const createMemoryDeadLetterStore: CreateMemoryDeadLetterStoreFunction = () =>
-  createKeptDeadLetterStore().store;

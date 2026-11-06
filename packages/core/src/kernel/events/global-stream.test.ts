@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PendingEvent } from "../../adapter/storage/event-store.ts";
 import { ValidationError } from "../../contracts/errors.ts";
-import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import { createGlobalStream, type GlobalStream, type ReadEventsArgs } from "./global-stream.ts";
 
@@ -18,7 +17,7 @@ const pending = (version: number): PendingEvent => ({
 });
 
 const streamOf = async (count: number): Promise<GlobalStream> => {
-  const { eventStore } = await memory().createStorage({ logger: silentLogger });
+  const { eventStore } = await memory().createStorage();
   await eventStore.append({
     aggregateType: "order",
     aggregateId: "o-1",

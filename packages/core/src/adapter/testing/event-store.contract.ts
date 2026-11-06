@@ -39,6 +39,34 @@ export const eventStoreContract: EventStoreContractFunction = ({ create }) => {
       expect(await store.lastPosition()).toBe(2);
     });
 
+    it("appends more events than one statement carries, each at its position, in order", async () => {
+      const events = Array.from({ length: 30 }, (_, index) =>
+        pendingEvent({
+          aggregateId: "1",
+          version: index + 1,
+          payload: { index },
+          person: index % 3 === 0 ? `c-${index}` : null,
+        }),
+      );
+      const result = await store.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events,
+      });
+      expect(result.version).toBe(30);
+      expect(result.events.map((event) => event.position)).toEqual(
+        events.map((_, index) => index + 1),
+      );
+      expect(result.events.map((event) => event.payload)).toEqual(events.map((e) => e.payload));
+      const loaded = await store.load({ aggregateType: "order", aggregateId: "1" });
+      expect(loaded.version).toBe(30);
+      expect(loaded.events.map((event) => [event.version, event.position])).toEqual(
+        events.map((_, index) => [index + 1, index + 1]),
+      );
+      expect(loaded.events.map((event) => event.person)).toEqual(events.map((e) => e.person));
+    });
+
     it("loads a stream with its version and preserves every field, in the global stream too", async () => {
       await store.append({
         aggregateType: "order",
@@ -85,6 +113,33 @@ export const eventStoreContract: EventStoreContractFunction = ({ create }) => {
       const loaded = await store.load({ aggregateType: "order", aggregateId: "1", fromVersion: 3 });
       expect(loaded.events.map((event) => event.version)).toEqual([3]);
       expect(loaded.version).toBe(3);
+    });
+
+    it("reads one event of a stream by its id, and null for an id the stream does not hold", async () => {
+      await store.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events: [1, 2, 3].map((version) => pendingEvent({ aggregateId: "1", version })),
+      });
+      await store.append({
+        aggregateType: "customer",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events: [pendingEvent({ aggregateType: "customer", aggregateId: "1", version: 1 })],
+      });
+      const { events } = await store.load({ aggregateType: "order", aggregateId: "1" });
+      expect(
+        await store.readOne({ aggregateType: "order", aggregateId: "1", eventId: "order-1-2" }),
+      ).toEqual(events[1]);
+      for (const missing of [
+        { aggregateType: "order", aggregateId: "1", eventId: "order-1-4" },
+        { aggregateType: "order", aggregateId: "1", eventId: "customer-1-1" },
+        { aggregateType: "order", aggregateId: "2", eventId: "order-1-2" },
+        { aggregateType: "customer", aggregateId: "1", eventId: "order-1-2" },
+      ]) {
+        expect(await store.readOne(missing)).toBeNull();
+      }
     });
 
     it("stores any JSON payload, a top-level boolean or array of booleans included", async () => {

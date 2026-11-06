@@ -4,10 +4,6 @@ import { IdempotencyKeyTakenError } from "../contracts/errors.ts";
 import { createStoreEntries, type WithEntries } from "./entries.ts";
 import { jsonCopy } from "./json-copy.ts";
 
-export interface CreateMemoryIdempotencyStoreFunction {
-  (): IdempotencyStore;
-}
-
 export interface CreateKeptIdempotencyStoreArgs {
   /**
    * Whether a person holds the key a record names; synchronous, so `put` checks and writes in one
@@ -60,6 +56,3 @@ export const createKeptIdempotencyStore: CreateKeptIdempotencyStoreFunction = ({
   };
   return { store, entries: createStoreEntries(records, (key: string) => key) };
 };
-
-export const createMemoryIdempotencyStore: CreateMemoryIdempotencyStoreFunction = () =>
-  createKeptIdempotencyStore({ holds: () => true }).store;

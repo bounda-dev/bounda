@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import type { KeyedPerson, PersonalKeyStore } from "../../adapter/storage/personal-key-store.ts";
 import { pendingEvent } from "../../adapter/testing/fixtures.ts";
 import { ConcurrencyError, ValidationError } from "../../contracts/errors.ts";
-import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import type { EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
@@ -47,7 +46,7 @@ const registry: Registry = {
 };
 
 const setup = async () => {
-  const storage = await memory().createStorage({ logger: silentLogger });
+  const storage = await memory().createStorage();
   const calls: string[] = [];
   const keys: PersonalKeyStore = {
     get: async (person) => {
@@ -101,6 +100,12 @@ describe("withPersonalData", () => {
       email: "ana@example.com",
       plan: "pro",
     });
+    const stream = { aggregateType: "customer", aggregateId: "c-1" };
+    expect((await store.readOne({ ...stream, eventId: stored?.id ?? "" }))?.payload).toEqual({
+      email: "ana@example.com",
+      plan: "pro",
+    });
+    expect(await store.readOne({ ...stream, eventId: "missing" })).toBeNull();
   });
 
   it("seals under the person the payload names, leaves an absent optional field out, and seals an object whole", async () => {
@@ -412,6 +417,46 @@ describe("withPersonalData", () => {
         events: [placed({ customerId: { id: "c-1" }, address: { street: "x" }, total: 1 })],
       }),
     ).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it("refuses an event that carries an envelope, in a marked field or any other", async () => {
+    const { store, placed, registered } = await setup();
+    const envelope = { $personal: { person: "c-9", key: "k", iv: "iv", data: "d" } };
+    const refusal = (type: string, stream: string, field: string) =>
+      new ValidationError(
+        `Event ${type} of ${stream} carries a sealed value in "${field}": personal fields are sealed by the runtime, never by a handler`,
+        [{ path: [field], message: "Expected a value, not an envelope" }],
+      );
+    await expect(
+      store.append({
+        aggregateType: "order",
+        aggregateId: "o-1",
+        expectedVersion: 0,
+        events: [placed({ customerId: "c-1", address: envelope, total: 1 })],
+      }),
+    ).rejects.toThrow(refusal("OrderPlaced", "order:o-1", "address"));
+    await expect(
+      store.append({
+        aggregateType: "order",
+        aggregateId: "o-1",
+        expectedVersion: 0,
+        events: [placed({ customerId: "c-1", address: { street: "x" }, total: envelope })],
+      }),
+    ).rejects.toThrow(refusal("OrderPlaced", "order:o-1", "total"));
+    await expect(
+      store.append({
+        aggregateType: "customer",
+        aggregateId: "c-1",
+        expectedVersion: 0,
+        events: [
+          {
+            ...registered(1, "ana@example.com"),
+            type: "CustomerRenamed",
+            payload: { to: envelope },
+          },
+        ],
+      }),
+    ).rejects.toThrow(refusal("CustomerRenamed", "customer:c-1", "to"));
   });
 
   it("takes a number for a person's id", async () => {

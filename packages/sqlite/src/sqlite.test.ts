@@ -35,7 +35,7 @@ import { sqlite } from "./index.ts";
 import { resolveSqliteOptions } from "./options.ts";
 
 const openStorage = (adapter = sqlite({ memory: true })): Promise<Storage> =>
-  adapter.createStorage({ logger: silentLogger });
+  adapter.createStorage();
 
 describe("sqlite adapter in memory", () => {
   eventStoreContract({ create: async () => (await openStorage()).eventStore });
@@ -210,7 +210,7 @@ describe("sqlite adapter on a file", () => {
 
   it("creates the directory of a file that does not exist yet", async () => {
     const adapter = sqlite({ path: join(directory, "nested", "deeper", "app.db") });
-    const storage = await adapter.createStorage({ logger: silentLogger });
+    const storage = await adapter.createStorage();
     expect(await storage.eventStore.lastPosition()).toBe(0);
     await storage.close();
   });
@@ -398,12 +398,12 @@ describe("sqlite adapter connection sharing", () => {
     expect(Number(seen.rows[0]?.n)).toBe(1);
 
     await storage.close();
-    const stillOpen = await adapter.createStorage({ logger: silentLogger });
+    const stillOpen = await adapter.createStorage();
     expect(await stillOpen.eventStore.lastPosition()).toBe(1);
     await stillOpen.close();
     await readModel.close();
 
-    const fresh = await adapter.createStorage({ logger: silentLogger });
+    const fresh = await adapter.createStorage();
     expect(await fresh.eventStore.lastPosition()).toBe(0);
     await fresh.close();
   });

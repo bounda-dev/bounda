@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type {
-  Adapter,
-  CreateReadModelRebuildArgs,
-  CreateStorageArgs,
-} from "../../adapter/adapter.ts";
+import type { Adapter, CreateReadModelRebuildArgs } from "../../adapter/adapter.ts";
 import type { Table } from "../../adapter/storage/table.ts";
 import { RebuildSupersededError } from "../../contracts/errors.ts";
 import { silentLogger } from "../../contracts/logger.ts";
@@ -71,7 +67,7 @@ const setUp = async () => {
     runtime: { dispatcher: { batchSize: 1 } },
   };
   const app = await createApp({ registry, config, logger });
-  const storage = await adapter.createStorage({ logger });
+  const storage = await adapter.createStorage();
   const table = (
     await adapter.createReadModel<Row>({
       name: "orderSummary",
@@ -170,16 +166,14 @@ describe("rebuildReadModel", () => {
     await app.stop();
   });
 
-  it("works on its own, before the read model ever had a table, and closes what it opened, whatever its logger throws", async () => {
+  it("works on its own, before the read model ever had a table, and closes what it opened, whatever the logger throws", async () => {
     mode = "ok";
     const base = memory();
-    const opened: CreateStorageArgs[] = [];
     let closes = 0;
     const adapter: Adapter = {
       ...base,
-      createStorage: async (args) => {
-        opened.push(args);
-        const storage = await base.createStorage(args);
+      createStorage: async () => {
+        const storage = await base.createStorage();
         return {
           ...storage,
           close: async () => {
@@ -206,8 +200,7 @@ describe("rebuildReadModel", () => {
       position: 1,
       done: true,
     });
-    opened.at(-1)?.logger.warn("from the storage");
-    expect(logged).toEqual(expect.arrayContaining(["read model rebuilt", "from the storage"]));
+    expect(logged).toEqual(expect.arrayContaining(["read model rebuilt"]));
     expect(closes).toBe(1);
     const app = await createApp({ registry, config });
     expect((await app.getLag()).subscribers).toContainEqual({
@@ -233,8 +226,8 @@ describe("rebuildReadModel", () => {
     let closes = 0;
     const adapter: Adapter = {
       ...base,
-      createStorage: async (args) => {
-        const storage = await base.createStorage(args);
+      createStorage: async () => {
+        const storage = await base.createStorage();
         return {
           ...storage,
           close: async () => {
@@ -384,9 +377,8 @@ describe("rebuildReadModel", () => {
     await app.commands.placeOrder({ orderId: "o-1", total: 10 });
     await app.commands.placeOrder({ orderId: "o-2", total: 20 });
     await app.runUntilIdle();
-    const mainCheckpoints = (await main.createStorage({ logger: silentLogger })).checkpointStore;
-    const reportingCheckpoints = (await reporting.createStorage({ logger: silentLogger }))
-      .checkpointStore;
+    const mainCheckpoints = (await main.createStorage()).checkpointStore;
+    const reportingCheckpoints = (await reporting.createStorage()).checkpointStore;
     expect(await reportingCheckpoints.get(SUBSCRIBER)).toBe(2);
     expect(await mainCheckpoints.get(SUBSCRIBER)).toBe(0);
 

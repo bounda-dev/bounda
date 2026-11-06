@@ -94,7 +94,7 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "payload" TEXT,
     "persons" TEXT NOT NULL DEFAULT '[]'
   )`,
-  `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "status")} ON ${tables.deadLetters} ("status")`,
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "listing")} ON ${tables.deadLetters} ("status", "first_failed_at", "id")`,
   `CREATE TABLE IF NOT EXISTS ${tables.scheduledCommands} (
     "dedupe_key" TEXT PRIMARY KEY,
     "command_type" TEXT NOT NULL,
@@ -110,6 +110,8 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "persons" TEXT NOT NULL DEFAULT '[]'
   )`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.scheduledCommands, "execute_at")} ON ${tables.scheduledCommands} ("execute_at")`,
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.scheduledCommands, "unclaimed")} ON ${tables.scheduledCommands} ("execute_at") WHERE "claimed_at" IS NULL`,
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.scheduledCommands, "claimed_at")} ON ${tables.scheduledCommands} ("claimed_at") WHERE "claimed_at" IS NOT NULL`,
   `CREATE TABLE IF NOT EXISTS ${tables.idempotencyKeys} (
     "key" TEXT PRIMARY KEY,
     "fingerprint" TEXT NOT NULL,

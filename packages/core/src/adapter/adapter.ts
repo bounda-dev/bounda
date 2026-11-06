@@ -162,10 +162,6 @@ export interface CreateReadModelRebuildArgs extends CreateReadModelArgs {
   readonly progress: string;
 }
 
-export interface CreateStorageArgs {
-  readonly logger: Logger;
-}
-
 export interface CreateReadModelArgs {
   readonly name: string;
   readonly fields: FieldsRecord;
@@ -182,7 +178,7 @@ export interface Adapter<Name extends string = string, Options = unknown>
    * Opens the write side, creating its tables when missing. A factory that throws has released
    * whatever it took: the kernel only closes the stores it was given.
    */
-  createStorage(args: CreateStorageArgs): Promise<Storage>;
+  createStorage(): Promise<Storage>;
   /**
    * Opens a read model's table, creating or evolving it from `fields`; throws `ConfigurationError`
    * on a change that needs a rebuild. Releases what it took when it throws, as `createStorage`.

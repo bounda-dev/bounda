@@ -75,7 +75,7 @@ const setUp = async ({
   const aggregate = buildAggregates({ registry, ports: choosePorts(registry, config), config })
     .byName.order;
   if (aggregate === undefined) throw new Error("no order aggregate");
-  const storage = await adapter.createStorage({ logger: { ...createRecordingLogger().logger } });
+  const storage = await adapter.createStorage();
   const snapshotStore = {
     get: vi.fn(storage.snapshotStore.get),
     put: vi.fn(storage.snapshotStore.put),
@@ -108,26 +108,47 @@ const setUp = async ({
     (telemetry?.counts ?? [])
       .filter((count) => count.metric === METRICS.snapshots)
       .map((count) => count.attributes[ATTRIBUTES.outcome]);
-  return { storage, snapshotStore, evolves, entries, append, snapshot, load, outcomes };
+  const folds = () =>
+    (telemetry?.counts ?? [])
+      .filter((count) => count.metric === METRICS.foldEvents)
+      .map((count) => {
+        expect(count.attributes).toEqual({ [ATTRIBUTES.aggregateType]: "order" });
+        return count.value;
+      });
+  return { storage, snapshotStore, evolves, entries, append, snapshot, load, outcomes, folds };
 };
 
 describe("createAggregateLoader", () => {
   it("folds an aggregate without snapshots from its first event, asking no store", async () => {
-    const { snapshotStore, load, outcomes } = await setUp({ snapshots: false });
+    const { snapshotStore, load, outcomes, folds } = await setUp({ snapshots: false });
     expect(await load()).toEqual({
       folded: { state: paid, created: true, openedWithout: null },
       version: 2,
       persons: [],
+      snapshot: null,
+      foldedEvents: 2,
     });
     expect(snapshotStore.get).not.toHaveBeenCalled();
     expect(outcomes()).toEqual([]);
+    expect(folds()).toEqual([2]);
+    expect(telemetry?.instruments).toContainEqual({
+      metric: METRICS.foldEvents,
+      description: "Events folded into an aggregate's state per load, by aggregate type",
+      unit: "{event}",
+    });
   });
 
   it("folds from the first event while a stream has no snapshot", async () => {
-    const { load, outcomes, evolves } = await setUp();
-    expect(await load()).toMatchObject({ folded: { state: paid }, version: 2 });
+    const { load, outcomes, evolves, folds } = await setUp();
+    expect(await load()).toMatchObject({
+      folded: { state: paid },
+      version: 2,
+      snapshot: { outcome: "missing", version: null },
+      foldedEvents: 2,
+    });
     expect(evolves.placed).toHaveBeenCalledTimes(1);
     expect(outcomes()).toEqual(["missing"]);
+    expect(folds()).toEqual([2]);
     expect(telemetry?.counts[0]?.attributes).toEqual({
       [ATTRIBUTES.aggregateType]: "order",
       [ATTRIBUTES.outcome]: "missing",
@@ -140,14 +161,17 @@ describe("createAggregateLoader", () => {
   });
 
   it("loads from the snapshot only the events after it", async () => {
-    const { storage, snapshot, append, load, outcomes, evolves } = await setUp();
+    const { storage, snapshot, append, load, outcomes, evolves, folds } = await setUp();
     await storage.snapshotStore.put(snapshot());
     await append([3, "OrderArchived", {}]);
     expect(await load()).toEqual({
       folded: { state: paid, created: true, openedWithout: null },
       version: 3,
       persons: [],
+      snapshot: { outcome: "used", version: 2 },
+      foldedEvents: 1,
     });
+    expect(folds()).toEqual([1]);
     expect(evolves.placed).not.toHaveBeenCalled();
     expect(evolves.paid).not.toHaveBeenCalled();
     expect(evolves.archived).toHaveBeenCalledTimes(1);
@@ -181,7 +205,12 @@ describe("createAggregateLoader", () => {
   it("ignores, but keeps, a snapshot taken by other code", async () => {
     const { storage, snapshot, load, outcomes, evolves } = await setUp();
     await storage.snapshotStore.put(snapshot({ fingerprint: "fp:2" }));
-    expect(await load()).toMatchObject({ folded: { state: paid }, version: 2 });
+    expect(await load()).toMatchObject({
+      folded: { state: paid },
+      version: 2,
+      snapshot: { outcome: "stale", version: null },
+      foldedEvents: 2,
+    });
     expect(evolves.placed).toHaveBeenCalledTimes(1);
     expect(outcomes()).toEqual(["stale"]);
     expect(await storage.snapshotStore.get(stream)).toEqual(snapshot({ fingerprint: "fp:2" }));
@@ -190,7 +219,12 @@ describe("createAggregateLoader", () => {
   it("drops a snapshot it cannot read and folds from the first event", async () => {
     const { storage, snapshot, load, outcomes, entries } = await setUp();
     await storage.snapshotStore.put(snapshot({ state: "[1]" }));
-    expect(await load()).toMatchObject({ folded: { state: paid }, version: 2 });
+    expect(await load()).toMatchObject({
+      folded: { state: paid },
+      version: 2,
+      snapshot: { outcome: "unreadable", version: null },
+      foldedEvents: 2,
+    });
     expect(outcomes()).toEqual(["unreadable"]);
     expect(await storage.snapshotStore.get(stream)).toBeNull();
     expect(entries).toEqual([
@@ -206,10 +240,29 @@ describe("createAggregateLoader", () => {
     ]);
   });
 
+  it("counts what a snapshot was worth even when the load then fails", async () => {
+    const { storage, snapshot, load, outcomes, folds } = await setUp();
+    await storage.snapshotStore.put(snapshot({ state: "[1]" }));
+    const failing: EventStore = {
+      ...storage.eventStore,
+      load: async () => {
+        throw new Error("store down");
+      },
+    };
+    await expect(load(failing)).rejects.toThrow("store down");
+    expect(outcomes()).toEqual(["unreadable"]);
+    expect(folds()).toEqual([]);
+  });
+
   it("drops a snapshot past the stream's head and folds from the first event", async () => {
     const { storage, snapshot, load, outcomes, entries } = await setUp();
     await storage.snapshotStore.put(snapshot({ version: 5 }));
-    expect(await load()).toMatchObject({ folded: { state: paid }, version: 2 });
+    expect(await load()).toMatchObject({
+      folded: { state: paid },
+      version: 2,
+      snapshot: { outcome: "ahead", version: null },
+      foldedEvents: 2,
+    });
     expect(outcomes()).toEqual(["ahead"]);
     expect(await storage.snapshotStore.get(stream)).toBeNull();
     expect(entries).toEqual([
@@ -222,12 +275,13 @@ describe("createAggregateLoader", () => {
   });
 
   it("checks the share of loads `verify` asks for against the whole stream", async () => {
-    const { storage, snapshot, load, outcomes } = await setUp({ verify: 0.5 });
+    const { storage, snapshot, load, outcomes, folds } = await setUp({ verify: 0.5 });
     await storage.snapshotStore.put(snapshot());
     for (let turn = 0; turn < 4; turn += 1) {
-      expect(await load()).toMatchObject({ folded: { state: paid }, version: 2 });
+      expect(await load()).toMatchObject({ folded: { state: paid }, version: 2, foldedEvents: 0 });
     }
     expect(outcomes()).toEqual(["used", "verified", "used", "verified"]);
+    expect(folds()).toEqual([0, 0, 0, 0]);
   });
 
   it("checks every load in strict mode", async () => {
@@ -256,12 +310,14 @@ describe("createAggregateLoader", () => {
       folded: { state: paid, created: true, openedWithout: null },
       version: 2,
       persons: [],
+      snapshot: { outcome: "verified", version: 2 },
+      foldedEvents: 0,
     });
     expect(outcomes()).toEqual(["verified"]);
   });
 
   it("drops a snapshot that folds to another state and answers with the stream's", async () => {
-    const { storage, snapshot, append, load, outcomes, entries, evolves } = await setUp({
+    const { storage, snapshot, append, load, outcomes, entries, evolves, folds } = await setUp({
       verify: 1,
     });
     await storage.snapshotStore.put(
@@ -274,9 +330,12 @@ describe("createAggregateLoader", () => {
       folded: { state: paid, created: true, openedWithout: null },
       version: 3,
       persons: [],
+      snapshot: { outcome: "mismatch", version: null },
+      foldedEvents: 3,
     });
     expect(evolves.placed).toHaveBeenCalledTimes(1);
     expect(outcomes()).toEqual(["mismatch"]);
+    expect(folds()).toEqual([3]);
     expect(await storage.snapshotStore.get(stream)).toBeNull();
     expect(entries).toEqual([
       {

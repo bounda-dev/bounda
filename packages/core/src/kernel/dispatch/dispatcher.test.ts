@@ -14,7 +14,7 @@ import {
 } from "../test-support.ts";
 import { createDispatcher, type Subscriber } from "./dispatcher.ts";
 
-const storage = () => memory().createStorage({ logger: silentLogger });
+const storage = () => memory().createStorage();
 
 const appendMany = async (
   eventStore: Awaited<ReturnType<typeof storage>>["eventStore"],
@@ -458,9 +458,7 @@ describe("createDispatcher", () => {
 
   it("passes as soon as the storage notifies and stretches the timer while idle", async () => {
     const adapter = memory();
-    const { eventStore, checkpointStore, notifier } = await adapter.createStorage({
-      logger: silentLogger,
-    });
+    const { eventStore, checkpointStore, notifier } = await adapter.createStorage();
     const clock = createFixedClock();
     const a = recorder("a");
     const dispatcher = createDispatcher({
@@ -508,9 +506,7 @@ describe("createDispatcher", () => {
 
   it("keeps polling at the poll interval while passes find events, and idles after", async () => {
     const adapter = memory();
-    const { eventStore, checkpointStore, notifier } = await adapter.createStorage({
-      logger: silentLogger,
-    });
+    const { eventStore, checkpointStore, notifier } = await adapter.createStorage();
     await appendMany(eventStore, 3);
     const clock = createFixedClock();
     const a = recorder("a");
@@ -541,11 +537,7 @@ describe("createDispatcher", () => {
 
   it("runs one more pass after the one in flight when notifications arrive meanwhile", async () => {
     const adapter = memory();
-    const {
-      eventStore: rawStore,
-      checkpointStore,
-      notifier,
-    } = await adapter.createStorage({ logger: silentLogger });
+    const { eventStore: rawStore, checkpointStore, notifier } = await adapter.createStorage();
     let reads = 0;
     const eventStore = {
       ...rawStore,
@@ -605,9 +597,7 @@ describe("createDispatcher", () => {
 
   it("runs no pass after stopping, even one a notification marked due during the last", async () => {
     const adapter = memory();
-    const { eventStore, checkpointStore, notifier } = await adapter.createStorage({
-      logger: silentLogger,
-    });
+    const { eventStore, checkpointStore, notifier } = await adapter.createStorage();
     let release: () => void = () => undefined;
     const seen: number[][] = [];
     const gated: Subscriber = {
@@ -715,9 +705,7 @@ describe("createDispatcher", () => {
 
   it("retries at the poll interval after a failed pass, even with a notifier", async () => {
     const adapter = memory();
-    const { eventStore, checkpointStore, notifier } = await adapter.createStorage({
-      logger: silentLogger,
-    });
+    const { eventStore, checkpointStore, notifier } = await adapter.createStorage();
     const original = checkpointStore.get.bind(checkpointStore);
     let failures = 1;
     checkpointStore.get = async (subscriber) => {

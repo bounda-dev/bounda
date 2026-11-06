@@ -113,6 +113,8 @@ describe("telemetry", () => {
         [ATTRIBUTES.causationId]: expect.any(String),
         [ATTRIBUTES.outcome]: "stored",
         [ATTRIBUTES.eventCount]: 1,
+        [ATTRIBUTES.aggregateVersion]: 0,
+        [ATTRIBUTES.foldEvents]: 0,
       },
       status: { code: SpanStatusCode.UNSET },
       exceptions: [],
@@ -120,7 +122,11 @@ describe("telemetry", () => {
     });
     expect(rejected).toMatchObject({
       name: "bounda.command PlaceOrder",
-      attributes: { [ATTRIBUTES.outcome]: "rejected" },
+      attributes: {
+        [ATTRIBUTES.outcome]: "rejected",
+        [ATTRIBUTES.aggregateVersion]: 1,
+        [ATTRIBUTES.foldEvents]: 1,
+      },
       status: { code: SpanStatusCode.UNSET },
       exceptions: [],
       ended: true,
@@ -137,7 +143,17 @@ describe("telemetry", () => {
       attributes: { [ATTRIBUTES.outcome]: "scheduled" },
       ended: true,
     });
-    expect(telemetry.counts).toEqual([
+    expect(scheduled?.attributes).not.toHaveProperty([ATTRIBUTES.foldEvents]);
+    expect(telemetry.counts.filter((count) => count.metric === METRICS.foldEvents)).toEqual([
+      { metric: METRICS.foldEvents, value: 0, attributes: { [ATTRIBUTES.aggregateType]: "order" } },
+      { metric: METRICS.foldEvents, value: 1, attributes: { [ATTRIBUTES.aggregateType]: "order" } },
+    ]);
+    expect(telemetry.instruments).toContainEqual({
+      metric: METRICS.foldEvents,
+      description: "Events folded into an aggregate's state per load, by aggregate type",
+      unit: "{event}",
+    });
+    expect(telemetry.counts.filter((count) => count.metric === METRICS.commands)).toEqual([
       {
         metric: METRICS.commands,
         value: 1,
@@ -152,6 +168,55 @@ describe("telemetry", () => {
         metric: METRICS.commands,
         value: 1,
         attributes: { [ATTRIBUTES.commandType]: "PayOrder", [ATTRIBUTES.outcome]: "scheduled" },
+      },
+    ]);
+    await app.stop();
+  });
+
+  it("tells on a command's span how it loaded its aggregate, and on the snapshot batch what it wrote", async () => {
+    const telemetry = installFakeTelemetry();
+    active = telemetry;
+    const app = await createApp({
+      registry: {
+        ...registry,
+        aggregates: { order: { ...registry.aggregates.order, stateFingerprint: "fp" } },
+      },
+      config: {
+        storage: memory(),
+        ports: { order: { notifier: "memory" } },
+        runtime: {
+          policies: { retry: { strategy: "none" } },
+          overrides: { order: { snapshot: { every: 1 } } },
+        },
+      },
+      logger: silentLogger,
+    });
+    await app.commands.placeOrder({ orderId: "o-1", total: 10 });
+    await app.runUntilIdle();
+    await app.commands.payOrder({ orderId: "o-1", method: "card" });
+
+    const [placed, paid] = named(telemetry, "bounda.command");
+    expect(placed?.attributes).toMatchObject({
+      [ATTRIBUTES.snapshotOutcome]: "missing",
+      [ATTRIBUTES.aggregateVersion]: 0,
+      [ATTRIBUTES.foldEvents]: 0,
+    });
+    expect(placed?.attributes).not.toHaveProperty([ATTRIBUTES.snapshotVersion]);
+    expect(paid?.attributes).toMatchObject({
+      [ATTRIBUTES.snapshotOutcome]: "used",
+      [ATTRIBUTES.snapshotVersion]: 1,
+      [ATTRIBUTES.aggregateVersion]: 1,
+      [ATTRIBUTES.foldEvents]: 0,
+    });
+    const [batch] = named(telemetry, "bounda.subscriber snapshot:order");
+    expect(batch?.attributes[ATTRIBUTES.snapshotVersion]).toBe(1);
+    expect(
+      telemetry.spanEvents.filter((event) => event.name === SPAN_EVENTS.snapshotWritten),
+    ).toEqual([
+      {
+        span: "bounda.subscriber snapshot:order",
+        name: SPAN_EVENTS.snapshotWritten,
+        attributes: { [ATTRIBUTES.aggregateId]: "o-1", [ATTRIBUTES.snapshotVersion]: 1 },
       },
     ]);
     await app.stop();

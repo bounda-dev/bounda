@@ -60,8 +60,9 @@ none, from the `idempotencyKey` field of the form it posts, urlencoded or multip
 command the request dispatches an `idempotencyKey` of its own, `idempotencyKeyFor(key,
 commandName)`, on Node and on Cloudflare alike, so an action has nothing to add, even one that
 dispatches two commands. The form is read from a copy of the request, so the action still reads it
-with `request.formData()`; a multipart form is therefore parsed twice, so a route that takes large
-uploads is better keyed with the header. The host never makes keys up: a request with neither
+with `request.formData()`; a multipart form is therefore parsed twice, files included, so a form
+that declares a length over a mebibyte is not read for its key: a route that takes uploads keys
+its requests with the header. The host never makes keys up: a request with neither
 dispatches as before, and an empty key is refused like any other.
 
 ### From a form

@@ -71,7 +71,7 @@ const closeOpened = async (): Promise<void> => {
 
 const openStorage = async (adapter?: PostgresqlAdapter): Promise<Storage> => {
   if (adapter === undefined) await closeOpened();
-  const storage = await (adapter ?? fresh()).createStorage({ logger: silentLogger });
+  const storage = await (adapter ?? fresh()).createStorage();
   closers.push(storage.close);
   return storage;
 };
@@ -644,7 +644,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
 
   it("shares one pool between storage and read models until the last close", async () => {
     const adapter = fresh();
-    const storage = await adapter.createStorage({ logger: silentLogger });
+    const storage = await adapter.createStorage();
     const readModel = await adapter.createReadModel({
       name: "orderSummary",
       fields: contractFields,

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
-import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import { createUnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
@@ -28,7 +27,7 @@ const context = { correlationId: "c", causationId: "c", depth: 0 };
 
 describe("createProcessInstances", () => {
   it("appends after an instance loaded through the same view, and refuses one loaded elsewhere", async () => {
-    const storage = await memory().createStorage({ logger: silentLogger });
+    const storage = await memory().createStorage();
     const args = { ids: createSequentialIdGenerator(), clock: createFixedClock(new Date(0)) };
     const live = createProcessInstances({ eventStore: storage.eventStore, ...args });
     const unit = createUnitOfWork({ storage });
@@ -53,7 +52,7 @@ describe("createProcessInstances", () => {
   });
 
   it("keeps apart the instances of two aggregates' processes of the same name", async () => {
-    const storage = await memory().createStorage({ logger: silentLogger });
+    const storage = await memory().createStorage();
     const instances = createProcessInstances({
       eventStore: storage.eventStore,
       ids: createSequentialIdGenerator(),

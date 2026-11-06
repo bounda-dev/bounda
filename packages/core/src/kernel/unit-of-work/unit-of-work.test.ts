@@ -4,7 +4,6 @@ import { createNodeSqliteAdapter } from "../../adapter/sqlite/node-sqlite.ts";
 import { pendingEvent } from "../../adapter/testing/fixtures.ts";
 import type { RetryConfig } from "../../config/types.ts";
 import { ConcurrencyError, ValidationError } from "../../contracts/errors.ts";
-import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import type { ProcessAfterFunction, ProcessStateArgs } from "../../modules/process.ts";
 import type { Registry } from "../../modules/registry.ts";
@@ -210,7 +209,7 @@ describe("createUnitOfWork", () => {
   });
 
   it("reads through to the store and holds every write until commit, events first", async () => {
-    const storage = await memory().createStorage({ logger: silentLogger });
+    const storage = await memory().createStorage();
     await storage.deadLetterStore.add(letter("old"));
     await storage.scheduler.schedule(entry("command:due"));
     const claimId = await storage.inboxLedger.tryClaim({ ...key, now, leaseMs: 1_000 });
@@ -259,7 +258,7 @@ describe("createUnitOfWork", () => {
   });
 
   it("hands a claimed scheduler entry back through fail and defer", async () => {
-    const storage = await memory().createStorage({ logger: silentLogger });
+    const storage = await memory().createStorage();
     await storage.scheduler.schedule(entry("command:a"));
     await storage.scheduler.schedule(entry("command:b"));
     const [a, b] = await storage.scheduler.claimDue({ now, limit: 2, leaseMs: 1_000 });
@@ -288,7 +287,7 @@ describe("createUnitOfWork", () => {
   });
 
   it("opens no transaction when nothing was staged", async () => {
-    const storage = await memory().createStorage({ logger: silentLogger });
+    const storage = await memory().createStorage();
     const transact = storage.transact.bind(storage);
     let transactions = 0;
     storage.transact = (work) => {
@@ -306,7 +305,7 @@ describe("createUnitOfWork", () => {
   });
 
   it("commits nothing when a stream moved since the unit loaded it", async () => {
-    const storage = await memory().createStorage({ logger: silentLogger });
+    const storage = await memory().createStorage();
     const unit = createUnitOfWork({ storage });
     const loaded = await unit.eventStore.load({ aggregateType: "order", aggregateId: "1" });
     await unit.eventStore.append({
@@ -332,7 +331,7 @@ describe("createUnitOfWork", () => {
   });
 
   it("runs what waits for the commit once the unit has committed, with or without writes, and never for a commit that fails", async () => {
-    const storage = await memory().createStorage({ logger: silentLogger });
+    const storage = await memory().createStorage();
     const ran: string[] = [];
     const empty = createUnitOfWork({ storage });
     empty.afterCommit(() => ran.push("empty"));
@@ -366,7 +365,7 @@ describe("createUnitOfWork", () => {
   });
 
   it("runs the work again on a fresh unit when the commit finds a stream moved, as many times as allowed, then lets the conflict through", async () => {
-    const storage = await memory().createStorage({ logger: silentLogger });
+    const storage = await memory().createStorage();
     const moveTheStream = () =>
       storage.eventStore.append({
         aggregateType: "order",
@@ -425,7 +424,7 @@ describe("createUnitOfWork", () => {
   });
 
   it("runs beforeRerun before each rerun only, and ends the attempt with what it throws", async () => {
-    const storage = await memory().createStorage({ logger: silentLogger });
+    const storage = await memory().createStorage();
     const steps: string[] = [];
     const stale = async (unit: UnitOfWork) => {
       steps.push("work");
@@ -460,7 +459,7 @@ describe("createUnitOfWork", () => {
   });
 
   it("tells a commit that failed for another reason apart from what the work threw", async () => {
-    const storage = await memory().createStorage({ logger: silentLogger });
+    const storage = await memory().createStorage();
     breakNextCommit(storage);
     const failed = await commitAttempt({
       storage,
@@ -486,7 +485,7 @@ describe("createUnitOfWork", () => {
   });
 
   it("hands a commit failure on as the store threw it, for a caller that does not tell it apart", async () => {
-    const storage = await memory().createStorage({ logger: silentLogger });
+    const storage = await memory().createStorage();
     breakNextCommit(storage);
     const failed = await commitWork({
       storage,

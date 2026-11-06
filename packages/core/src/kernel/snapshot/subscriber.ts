@@ -7,6 +7,7 @@ import type { AggregateRuntime, AggregateSnapshotRuntime } from "../aggregate/ru
 import { serializeFold } from "../aggregate/snapshot-codec.ts";
 import type { Subscriber } from "../dispatch/delivery.ts";
 import { errorDetails } from "../shared/retry.ts";
+import { ATTRIBUTES, SPAN_EVENTS } from "../telemetry.ts";
 
 export interface SnapshottedAggregate extends AggregateRuntime {
   readonly snapshot: AggregateSnapshotRuntime;
@@ -24,8 +25,12 @@ export interface SnapshotSubscriberNameFunction {
   (aggregate: string): string;
 }
 
-export const snapshotSubscriberName: SnapshotSubscriberNameFunction = (aggregate) =>
+const snapshotSubscriberName: SnapshotSubscriberNameFunction = (aggregate) =>
   `snapshot:${aggregate}`;
+
+interface NoteWrittenFunction {
+  (aggregateId: string, version: number): void;
+}
 
 export interface CreateSnapshotSubscriberArgs {
   readonly aggregate: SnapshottedAggregate;
@@ -63,7 +68,7 @@ export const createSnapshotSubscriber: CreateSnapshotSubscriberFunction = ({
 }) => {
   const { every, fingerprint } = aggregate.snapshot;
 
-  const snapshot = async (aggregateId: string): Promise<void> => {
+  const snapshot = async (aggregateId: string, noteWritten: NoteWrittenFunction): Promise<void> => {
     const stream = { aggregateType: aggregate.name, aggregateId };
     const { folded, version, persons } = await loader.load({ aggregate, aggregateId, eventStore });
     let state: string;
@@ -81,29 +86,42 @@ export const createSnapshotSubscriber: CreateSnapshotSubscriberFunction = ({
       return;
     }
     await snapshotStore.put({ ...stream, version, fingerprint, state, persons });
+    noteWritten(aggregateId, version);
     logger.debug("snapshot written", { ...stream, version });
   };
 
-  const process = async (heads: ReadonlyMap<string, number>): Promise<void> => {
+  const process = async (
+    heads: ReadonlyMap<string, number>,
+    noteWritten: NoteWrittenFunction,
+  ): Promise<void> => {
     for (const [aggregateId, head] of heads) {
       if (head < every) continue;
       const current = await snapshotStore.get({ aggregateType: aggregate.name, aggregateId });
       const since = current !== null && current.fingerprint === fingerprint ? current.version : 0;
-      if (head - since >= every) await snapshot(aggregateId);
+      if (head - since >= every) await snapshot(aggregateId, noteWritten);
     }
   };
 
   return {
     name: snapshotSubscriberName(aggregate.name),
     kind: "snapshot",
-    process: async (events) => {
+    process: async (events, span) => {
       // Events of one stream come in version order, so the last one seen is its head.
       const heads = new Map<string, number>();
       for (const event of events) {
         if (event.aggregateType === aggregate.name) heads.set(event.aggregateId, event.version);
       }
+      let highest = 0;
+      const noteWritten: NoteWrittenFunction = (aggregateId, version) => {
+        span.addEvent(SPAN_EVENTS.snapshotWritten, {
+          [ATTRIBUTES.aggregateId]: aggregateId,
+          [ATTRIBUTES.snapshotVersion]: version,
+        });
+        highest = Math.max(highest, version);
+        span.setAttribute(ATTRIBUTES.snapshotVersion, highest);
+      };
       try {
-        await process(heads);
+        await process(heads, noteWritten);
       } catch (error) {
         if (error instanceof SnapshotError) strict?.onError(error);
         throw error;

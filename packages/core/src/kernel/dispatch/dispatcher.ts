@@ -22,6 +22,12 @@ import {
   type SubscriberKind,
 } from "./delivery.ts";
 
+const untilNothingMoves = async (pass: () => Promise<boolean>): Promise<void> => {
+  for (;;) {
+    if (!(await pass())) return;
+  }
+};
+
 export type {
   CheckpointedSubscriber,
   Delivery,
@@ -303,16 +309,8 @@ export const createDispatcher: CreateDispatcherFunction = ({
       await mutex.drain();
     },
     processOnce: () => mutex.run(() => pass(true, false)),
-    runUntilIdle: async () => {
-      while (await mutex.run(() => pass(true, false))) {
-        // keep passing until nothing moves
-      }
-    },
-    catchUp: async (kind) => {
-      while (await mutex.run(() => pass(true, true, kind))) {
-        // keep passing until nothing moves
-      }
-    },
+    runUntilIdle: () => untilNothingMoves(() => mutex.run(() => pass(true, false))),
+    catchUp: (kind) => untilNothingMoves(() => mutex.run(() => pass(true, true, kind))),
     catchUpThrough: async ({ position, aggregateType, eventTypes }) => {
       const deadline = now() + catchUp.timeoutMs;
       const reacting = delivering.filter((subscriber) =>

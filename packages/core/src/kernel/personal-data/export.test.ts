@@ -3,7 +3,6 @@ import type { Storage } from "../../adapter/adapter.ts";
 import { pendingEvent, testContext, testDeadLetter } from "../../adapter/testing/fixtures.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { ValidationError } from "../../contracts/errors.ts";
-import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
@@ -57,7 +56,7 @@ const registry: Registry = {
 
 const setup = async () => {
   const aggregates = buildAggregates({ registry, ports: {} });
-  const written = await memory().createStorage({ logger: silentLogger });
+  const written = await memory().createStorage();
   const storage: Storage = appStorage({ storage: written, aggregates });
   const exportOf = (personId: string, batchSize = 2) =>
     exportPersonalData({

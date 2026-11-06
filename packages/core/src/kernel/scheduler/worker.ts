@@ -398,10 +398,18 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     };
   };
 
+  // Claiming is a write the store runs as one statement; asked first, `nextDueAt` is a read its
+  // indexes answer, so a pass that finds nothing due, most of them, writes nothing.
+  const claimDue = async (now: Date): Promise<readonly ClaimedCommand[]> => {
+    const next = await storage.scheduler.nextDueAt({ leaseMs });
+    if (next === null || next.getTime() > now.getTime()) return [];
+    return storage.scheduler.claimDue({ now, limit: CLAIM_LIMIT, leaseMs });
+  };
+
   const runOnce = (): Promise<number> =>
     mutex.run(async () => {
       const claimedAt = clock.now();
-      const due = await storage.scheduler.claimDue({ now: claimedAt, limit: CLAIM_LIMIT, leaseMs });
+      const due = await claimDue(claimedAt);
       // The batch is claimed already: an error escaping here would leave every entry to lapse, and
       // each would be charged an attempt it never made. Deadlines wait for the next round instead,
       // and the error ends this one once the rest has run.

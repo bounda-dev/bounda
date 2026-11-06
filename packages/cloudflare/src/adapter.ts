@@ -1,6 +1,7 @@
 import type { Adapter } from "@bounda-dev/core/adapter";
+import { DEFAULT_TABLE_PREFIX } from "@bounda-dev/core/adapter/sql";
 import { createSqliteAdapter } from "@bounda-dev/core/adapter/sqlite";
-import { type CloudflareOptions, DEFAULT_TABLE_PREFIX } from "./definition.ts";
+import type { CloudflareOptions } from "./definition.ts";
 import { createDurableSqlDatabase, type DurableSqlStorage } from "./sql-database.ts";
 
 export interface DurableObjectAdapterArgs {

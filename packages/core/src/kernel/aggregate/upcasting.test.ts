@@ -152,8 +152,8 @@ describe("upcastEvent", () => {
 });
 
 describe("withUpcasting", () => {
-  it("upcasts what load, readAll and readByPerson return and leaves writes and positions alone", async () => {
-    const raw = (await memory().createStorage({ logger: silentLogger })).eventStore;
+  it("upcasts what load, readOne, readAll and readByPerson return and leaves writes and positions alone", async () => {
+    const raw = (await memory().createStorage()).eventStore;
     const store = withUpcasting({ eventStore: raw, aggregates });
     const appended = await store.append({
       aggregateType: "order",
@@ -181,6 +181,11 @@ describe("withUpcasting", () => {
     expect(
       (await store.readAll({ afterPosition: 0, limit: 10 })).map((event) => event.payload),
     ).toEqual([{ money: { amount: 10, currency: "EUR" } }, { method: "card" }]);
+    const stream = { aggregateType: "order", aggregateId: "o-1" };
+    expect((await store.readOne({ ...stream, eventId: "e1" }))?.payload).toEqual({
+      money: { amount: 10, currency: "EUR" },
+    });
+    expect(await store.readOne({ ...stream, eventId: "e3" })).toBeNull();
     expect(
       (await store.readByPerson({ person: "c-1", afterPosition: 0, limit: 10 })).map((event) => [
         event.position,
@@ -194,7 +199,7 @@ describe("withUpcasting", () => {
 describe("an app over events stored with an older shape", () => {
   it("folds them, projects them, rebuilds from them and writes new ones with the current version", async () => {
     const adapter = memory();
-    const raw = await adapter.createStorage({ logger: silentLogger });
+    const raw = await adapter.createStorage();
     await raw.eventStore.append({
       aggregateType: "order",
       aggregateId: "o-1",
@@ -275,7 +280,7 @@ describe("an app over events stored with an older shape", () => {
 
   it("reads them from its global stream as they were stored, even one from newer code", async () => {
     const adapter = memory();
-    const raw = await adapter.createStorage({ logger: silentLogger });
+    const raw = await adapter.createStorage();
     await raw.eventStore.append({
       aggregateType: "order",
       aggregateId: "o-1",

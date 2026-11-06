@@ -337,7 +337,7 @@ describe("personal data in an app", () => {
 
   it("forgets a person's snapshots too, so their aggregate loads with the fields forgotten", async () => {
     const adapter = memory();
-    const storage = await adapter.createStorage({ logger: silentLogger });
+    const storage = await adapter.createStorage();
     const { app } = await createTestApp({ ...snapshotted, adapter });
     await app.commands.registerCustomer(ana);
     await app.runUntilIdle();
@@ -362,7 +362,7 @@ describe("personal data in an app", () => {
 
   it("snapshots a stream whose personal fields were stored in the clear, before they were marked", async () => {
     const adapter = memory();
-    const storage = await adapter.createStorage({ logger: silentLogger });
+    const storage = await adapter.createStorage();
     const metadata = { correlationId: "c", causationId: "c", commandId: "c", depth: 0 };
     await storage.eventStore.append({
       aggregateType: "customer",
@@ -398,7 +398,7 @@ describe("personal data in an app", () => {
 
   it("forgets the rejections it remembered for a person, so a retry decides again without their data", async () => {
     const adapter = memory();
-    const storage = await adapter.createStorage({ logger: silentLogger });
+    const storage = await adapter.createStorage();
     const { app, clock } = await createTestApp({ registry, adapter });
     await app.commands.registerCustomer(ana);
     const confirm = () =>
@@ -433,7 +433,7 @@ describe("personal data in an app", () => {
 
   it("decides a command again when its person is forgotten between its load and its append", async () => {
     const adapter = memory();
-    const storage = await adapter.createStorage({ logger: silentLogger });
+    const storage = await adapter.createStorage();
     const { app } = await createTestApp({ registry, adapter });
     await app.commands.registerCustomer(ana);
     whileDeciding = () => app.forget("c-1");
@@ -454,7 +454,7 @@ describe("personal data in an app", () => {
     "decides a command again when its person is forgotten and keyed anew between its load from %s and its append",
     async (_, setup) => {
       const adapter = memory();
-      const storage = await adapter.createStorage({ logger: silentLogger });
+      const storage = await adapter.createStorage();
       const { app } = await createTestApp({ registry, ...setup, adapter });
       await app.commands.registerCustomer(ana);
       await app.runUntilIdle();

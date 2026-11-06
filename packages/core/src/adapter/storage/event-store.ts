@@ -53,6 +53,12 @@ export interface ReadByPersonArgs extends ReadAllArgs {
   readonly person: string;
 }
 
+export interface ReadOneArgs {
+  readonly aggregateType: string;
+  readonly aggregateId: string;
+  readonly eventId: string;
+}
+
 /**
  * Streams are keyed by aggregate type and id; every event also gets a position in one global
  * sequence. `readAll` must return only committed events, in position order, and never an event
@@ -62,6 +68,11 @@ export interface ReadByPersonArgs extends ReadAllArgs {
 export interface EventStore {
   append(args: AppendArgs): Promise<AppendResult>;
   load(args: LoadArgs): Promise<LoadResult>;
+  /**
+   * The event with id `eventId` in the stream, or `null` when the stream holds none. Reads that
+   * one event, never the rest of its stream.
+   */
+  readOne(args: ReadOneArgs): Promise<StoredEvent | null>;
   readAll(args: ReadAllArgs): Promise<readonly StoredEvent[]>;
   readByPerson(args: ReadByPersonArgs): Promise<readonly StoredEvent[]>;
   lastPosition(): Promise<number>;

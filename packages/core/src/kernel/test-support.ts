@@ -302,7 +302,7 @@ export const createKernelHarness: CreateKernelHarnessFunction = async ({
   sentMessages.length = 0;
   placeOrderKeys.length = 0;
   const adapter = memory();
-  const storage = await adapter.createStorage({ logger: silentLogger });
+  const storage = await adapter.createStorage();
   const config = resolveConfig({
     storage: adapter,
     ports: defaultPorts(registry),

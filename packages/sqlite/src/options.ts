@@ -1,3 +1,5 @@
+import { DEFAULT_TABLE_PREFIX } from "@bounda-dev/core/adapter/sql";
+
 export type SqliteLocation =
   | { readonly path: string }
   | { readonly url: string; readonly authToken?: string }
@@ -23,8 +25,6 @@ export interface ResolvedSqliteOptions {
 export interface ResolveSqliteOptionsFunction {
   (options: SqliteOptions): ResolvedSqliteOptions;
 }
-
-export const DEFAULT_TABLE_PREFIX: string = "bounda_";
 
 // libSQL keeps these in the process's memory, with a single connection.
 const IN_MEMORY = /^(?:file:)?:memory:(?:\?|$)/;

@@ -3,14 +3,13 @@ import { pendingEvent } from "../adapter/testing/fixtures.ts";
 import { createFixedClock } from "../contracts/clock.ts";
 import { ConcurrencyError } from "../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../contracts/ids.ts";
-import { silentLogger } from "../contracts/logger.ts";
 import { memory } from "../memory/index.ts";
 import { appendSystemEvent, SCHEDULED_COMMAND_FAILED_EVENT } from "./system-events.ts";
 
 const context = { correlationId: "corr", causationId: "cause", depth: 2 };
 
 const setup = async () => {
-  const storage = await memory().createStorage({ logger: silentLogger });
+  const storage = await memory().createStorage();
   const append = () =>
     appendSystemEvent({
       eventStore: storage.eventStore,
@@ -51,7 +50,7 @@ describe("appendSystemEvent", () => {
   });
 
   it("names the person it is given", async () => {
-    const storage = await memory().createStorage({ logger: silentLogger });
+    const storage = await memory().createStorage();
     const appended = await appendSystemEvent({
       eventStore: storage.eventStore,
       ids: createSequentialIdGenerator(),
