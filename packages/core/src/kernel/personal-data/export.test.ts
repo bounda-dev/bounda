@@ -140,6 +140,22 @@ describe("exportPersonalData", () => {
       ],
     });
     await place("o-3", { customerId: "c-1", note: "leave at door", total: 30 });
+    // An event of a type the aggregate no longer defines, stored while it did.
+    await storage.eventStore.append({
+      aggregateType: "customer",
+      aggregateId: "c-1",
+      expectedVersion: 2,
+      events: [
+        pendingEvent({
+          aggregateType: "customer",
+          aggregateId: "c-1",
+          version: 3,
+          type: "CustomerMoved",
+          payload: { street: "x" },
+          person: "c-1",
+        }),
+      ],
+    });
 
     const exported = await exportOf("c-1");
     expect(exported).toStrictEqual({
@@ -186,6 +202,16 @@ describe("exportPersonalData", () => {
           timestamp: "2026-01-01T00:00:00.000Z",
           data: { note: "leave at door" },
         },
+        {
+          id: "customer-c-1-3",
+          type: "CustomerMoved",
+          aggregateType: "customer",
+          aggregateId: "c-1",
+          version: 3,
+          position: 7,
+          timestamp: "2026-01-01T00:00:00.000Z",
+          data: {},
+        },
       ],
       scheduledCommands: [],
       deadLetters: [],
@@ -224,6 +250,16 @@ describe("exportPersonalData", () => {
       persons: ana.persons,
     });
     await storage.deadLetterStore.add(testDeadLetter("dl-2"));
+    // A command the registry no longer has: its payload is opened, and no field is marked.
+    await storage.deadLetterStore.add({
+      ...testDeadLetter("dl-3"),
+      kind: "scheduled",
+      handler: "NudgeCustomer",
+      eventType: "NudgeCustomer",
+      firstFailedAt: "2026-01-01T00:01:00.000Z",
+      payload: ana.payload,
+      persons: ana.persons,
+    });
 
     const exported = await exportOf("c-1");
     expect(exported.scheduledCommands).toEqual([
@@ -234,8 +270,9 @@ describe("exportPersonalData", () => {
         data: { email: "ana@example.com" },
       },
     ]);
-    expect(exported.deadLetters).toEqual([
+    expect(exported.deadLetters).toStrictEqual([
       { id: "dl-1", commandType: "RemindCustomer", data: { email: "ana@example.com" } },
+      { id: "dl-3", commandType: "NudgeCustomer", data: {} },
     ]);
     expect(JSON.stringify(exported)).not.toContain("bo@example.com");
   });

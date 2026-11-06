@@ -117,8 +117,10 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
   };
 
   const events: ExportedEvent[] = [];
-  for (let afterPosition = 0; ; ) {
-    const page = await storage.eventStore.readByPerson({
+  let afterPosition = 0;
+  let page: readonly StoredEvent[];
+  do {
+    page = await storage.eventStore.readByPerson({
       person: personId,
       afterPosition,
       limit: batchSize,
@@ -134,11 +136,9 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
         timestamp: event.timestamp,
         data: markedFields(eventMarks(event), event.payload),
       });
+      afterPosition = event.position;
     }
-    const last = page.at(-1);
-    if (last === undefined || page.length < batchSize) break;
-    afterPosition = last.position;
-  }
+  } while (page.length === batchSize);
 
   const scheduledCommands = await Promise.all(
     (await storage.scheduler.listByPerson(personId)).map(async (entry) => ({
