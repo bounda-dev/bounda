@@ -58,6 +58,10 @@ export const withUpcasting: WithUpcastingFunction = ({ eventStore, aggregates })
       const loaded = await eventStore.load(args);
       return { ...loaded, events: loaded.events.map(current) };
     },
+    readOne: async (args) => {
+      const event = await eventStore.readOne(args);
+      return event === null ? null : current(event);
+    },
     readAll: async (args) => (await eventStore.readAll(args)).map(current),
     lastPosition: () => eventStore.lastPosition(),
   };

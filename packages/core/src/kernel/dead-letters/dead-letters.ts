@@ -127,12 +127,12 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
   };
 
   const eventOf = async (letter: StoredDeadLetter): Promise<StoredEvent> => {
-    const { events } = await storage.eventStore.load({
+    const event = await storage.eventStore.readOne({
       aggregateType: letter.aggregateType,
       aggregateId: letter.aggregateId,
+      eventId: letter.eventId,
     });
-    const event = events.find((candidate) => candidate.id === letter.eventId);
-    if (event === undefined) {
+    if (event === null) {
       throw new NotFoundError(
         `Event ${letter.eventId} of ${letter.aggregateType}:${letter.aggregateId} not found`,
       );

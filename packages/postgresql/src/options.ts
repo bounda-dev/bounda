@@ -1,3 +1,5 @@
+import { DEFAULT_TABLE_PREFIX } from "@bounda-dev/core/adapter/sql";
+
 export type PostgresqlLocation =
   | { readonly url: string }
   | {
@@ -44,9 +46,8 @@ export interface ResolvePostgresqlOptionsFunction {
   (options: PostgresqlOptions): ResolvedPostgresqlOptions;
 }
 
-export const DEFAULT_TABLE_PREFIX: string = "bounda_";
-export const DEFAULT_SCHEMA: string = "public";
-export const DEFAULT_MAX_CONNECTIONS: number = 10;
+const DEFAULT_SCHEMA: string = "public";
+const DEFAULT_MAX_CONNECTIONS: number = 10;
 
 export const resolvePostgresqlOptions: ResolvePostgresqlOptionsFunction = (options) => {
   const common = {

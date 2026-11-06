@@ -127,7 +127,7 @@ const setup = async () => {
   mailerDown = true;
   whileFailing = null;
   const adapter = memory();
-  const storage = await adapter.createStorage({ logger: silentLogger });
+  const storage = await adapter.createStorage();
   const { app, clock } = await createTestApp({
     registry,
     adapter,

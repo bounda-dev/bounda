@@ -231,6 +231,69 @@ describe("createWorker", () => {
     });
   });
 
+  it("knows no command or query that is not the app's own, whatever the prototype offers", async () => {
+    for (const path of [
+      "/commands/constructor",
+      "/commands/toString",
+      "/commands/hasOwnProperty",
+    ]) {
+      const response = await post(path, { scheduled: true }, "prototype");
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({
+        error: {
+          code: "NOT_FOUND",
+          message: `Unknown command "${path.slice("/commands/".length)}"`,
+        },
+      });
+    }
+    for (const path of ["/queries/toString", "/queries/valueOf", "/queries/isPrototypeOf"]) {
+      const response = await post(path, {}, "prototype");
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({
+        error: { code: "NOT_FOUND", message: `Unknown query "${path.slice("/queries/".length)}"` },
+      });
+    }
+  });
+
+  it("refuses a body over maxPayloadBytes with a 413, by its declared length or as it reads it", async () => {
+    const { stub } = recordingStub();
+    const worker = createWorker({
+      config: { storage: cloudflare({ binding: "SPY" }) },
+      tenantOf: () => "acme",
+      maxPayloadBytes: 24,
+    });
+    const send = (body: BodyInit, headers: Record<string, string> = {}) =>
+      worker.fetch?.(
+        new Request("https://bounda.test/commands/placeOrder", {
+          method: "POST",
+          headers,
+          body,
+        }) as Request<unknown, IncomingRequestCfProperties>,
+        {
+          SPY: { idFromName: (name: string) => name, get: () => stub },
+        } as unknown as Cloudflare.Env,
+        createExecutionContext(),
+      );
+    const tooLarge = {
+      error: { code: "PAYLOAD_TOO_LARGE", message: "The body is larger than 24 bytes" },
+    };
+    const declared = await send("{}", { "content-length": "25" });
+    expect(declared?.status).toBe(413);
+    expect(await declared?.json()).toEqual(tooLarge);
+    const chunks = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"orderId":"o-1",'));
+        controller.enqueue(new TextEncoder().encode('"total":1}'));
+        controller.close();
+      },
+    });
+    const streamed = await send(chunks);
+    expect(streamed?.status).toBe(413);
+    expect(await streamed?.json()).toEqual(tooLarge);
+    const fitting = await send('{"orderId":"o-1"}');
+    expect(fitting?.status).toBe(200);
+  });
+
   it("only knows POST on its two routes", async () => {
     const root = await exports.default.fetch(new Request("https://bounda.test/"));
     expect(root.status).toBe(404);

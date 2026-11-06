@@ -36,7 +36,7 @@ const scripted = (name: string, script: Delivery[]): Scripted => {
 };
 
 const setUp = async (subscribers: readonly (Subscriber | CheckpointedSubscriber)[]) => {
-  const { eventStore, checkpointStore } = await memory().createStorage({ logger: silentLogger });
+  const { eventStore, checkpointStore } = await memory().createStorage();
   const clock = createFixedClock();
   const dispatcher = createDispatcher({
     clock,
@@ -148,7 +148,7 @@ describe("the dispatcher's backoff", () => {
       "projection:poisoned",
       Array.from({ length: 7 }, () => failed),
     );
-    const { eventStore, checkpointStore } = await memory().createStorage({ logger: silentLogger });
+    const { eventStore, checkpointStore } = await memory().createStorage();
     const clock = createFixedClock();
     const dispatcher = createDispatcher({
       clock,
@@ -186,9 +186,7 @@ describe("the dispatcher's backoff", () => {
 
   it("arms the next pass for the retry when that comes before the idle wait", async () => {
     const adapter = memory();
-    const { eventStore, checkpointStore, notifier } = await adapter.createStorage({
-      logger: silentLogger,
-    });
+    const { eventStore, checkpointStore, notifier } = await adapter.createStorage();
     const clock = createFixedClock();
     let broken = true;
     let attempts = 0;

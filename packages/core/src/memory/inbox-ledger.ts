@@ -3,10 +3,6 @@ import type { ClaimKey, ClaimRecord, InboxLedger } from "../adapter/storage/inbo
 import { ClaimLostError } from "../contracts/errors.ts";
 import { createStoreEntries, type WithEntries } from "./entries.ts";
 
-export interface CreateMemoryInboxLedgerFunction {
-  (): InboxLedger;
-}
-
 export interface CreateKeptInboxLedgerFunction {
   (): WithEntries<InboxLedger, ClaimKey>;
 }
@@ -75,6 +71,3 @@ export const createKeptInboxLedger: CreateKeptInboxLedgerFunction = () => {
     ),
   };
 };
-
-export const createMemoryInboxLedger: CreateMemoryInboxLedgerFunction = () =>
-  createKeptInboxLedger().store;

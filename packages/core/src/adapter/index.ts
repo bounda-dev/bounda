@@ -3,7 +3,6 @@ export type {
   CommitReadModelRebuildArgs,
   CreateReadModelArgs,
   CreateReadModelRebuildArgs,
-  CreateStorageArgs,
   ReadModelRebuild,
   ReadModelStorage,
   ReadModelTransactArgs,
@@ -35,6 +34,7 @@ export type {
   LoadResult,
   PendingEvent,
   ReadAllArgs,
+  ReadOneArgs,
 } from "./storage/event-store.ts";
 export type {
   DispatchOutcome,

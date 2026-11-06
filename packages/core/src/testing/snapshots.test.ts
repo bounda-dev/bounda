@@ -114,7 +114,7 @@ describe("snapshots and idempotency keys", () => {
     await app.commands.increment({ counterId: "c-1" });
     await app.commands.increment({ counterId: "c-1" });
     await app.runUntilIdle();
-    const storage = await adapter.createStorage({ logger: silentLogger });
+    const storage = await adapter.createStorage();
     const snapshot = await storage.snapshotStore.get({
       aggregateType: "counter",
       aggregateId: "c-1",

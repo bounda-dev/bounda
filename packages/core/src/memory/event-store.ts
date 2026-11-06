@@ -135,6 +135,12 @@ export const createMemoryEventStore: CreateMemoryEventStoreFunction = ({ onAppen
         version: stream.length,
       };
     },
+    readOne: async ({ aggregateType, aggregateId, eventId }) => {
+      const kept = streams
+        .get(streamId({ aggregateType, aggregateId }))
+        ?.find((event) => event.id === eventId);
+      return kept === undefined ? null : restore(kept);
+    },
     readAll: async ({ afterPosition, limit }) => {
       const events: StoredEvent[] = [];
       for (let at = afterPosition + 1; at <= watermark && events.length < limit; at += 1) {

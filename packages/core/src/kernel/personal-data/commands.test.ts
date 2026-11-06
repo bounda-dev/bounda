@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { DeadLetterNotRetriableError, ValidationError } from "../../contracts/errors.ts";
-import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import type { PersonalDataForgottenEvent } from "../../modules/bounda-events.ts";
 import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
@@ -116,7 +115,7 @@ const setup = async () => {
   whileRunning = null;
   failing = false;
   const adapter = memory();
-  const storage = await adapter.createStorage({ logger: silentLogger });
+  const storage = await adapter.createStorage();
   const { logger, entries: logs } = createRecordingLogger();
   const { app, clock } = await createTestApp({ registry, adapter, logger });
   const runDue = async () => {
@@ -136,7 +135,7 @@ describe("sealCommandPayload and openCommandPayload", () => {
     personalMarksOf({ schema: z.object(shape), path: "aggregates.customer.commands.c" });
 
   it("seals the marked fields with the key of the aggregate's person, creating it", async () => {
-    const storage = await memory().createStorage({ logger: silentLogger });
+    const storage = await memory().createStorage();
     const sealed = await sealCommandPayload({
       type: "RemindCustomer",
       aggregateId: "c-1",
@@ -156,7 +155,7 @@ describe("sealCommandPayload and openCommandPayload", () => {
   });
 
   it("seals under the person a field names, and keeps the key in force", async () => {
-    const storage = await memory().createStorage({ logger: silentLogger });
+    const storage = await memory().createStorage();
     const kept = await storage.personalKeys.add("f-1", await generatePersonalKey());
     const sealed = await sealCommandPayload({
       type: "IntroduceFriend",
@@ -170,7 +169,7 @@ describe("sealCommandPayload and openCommandPayload", () => {
   });
 
   it("leaves a payload with nothing to seal as it is, naming no one and keying no one", async () => {
-    const storage = await memory().createStorage({ logger: silentLogger });
+    const storage = await memory().createStorage();
     const shape = { friendId: person(z.string()), note: personal(z.string()).optional() };
     for (const [payload, payloadMarks] of [
       [{ friendId: "f-1" }, marks(shape)],
@@ -193,7 +192,7 @@ describe("sealCommandPayload and openCommandPayload", () => {
   it.each([undefined, "", 42n])(
     "refuses a person field that names no one: %s",
     async (friendId) => {
-      const storage = await memory().createStorage({ logger: silentLogger });
+      const storage = await memory().createStorage();
       await expect(
         sealCommandPayload({
           type: "IntroduceFriend",
@@ -210,8 +209,36 @@ describe("sealCommandPayload and openCommandPayload", () => {
     },
   );
 
+  it("refuses a payload that carries an envelope, marked or not", async () => {
+    const storage = await memory().createStorage();
+    const envelope = { $personal: { person: "c-1", key: "k", iv: "iv", data: "d" } };
+    for (const [payload, payloadMarks] of [
+      [
+        { friendId: "f-1", note: envelope },
+        marks({ friendId: person(z.string()), note: personal(z.string()) }),
+      ],
+      [{ friendId: "f-1", note: envelope }, null],
+    ] as const) {
+      await expect(
+        sealCommandPayload({
+          type: "IntroduceFriend",
+          aggregateId: "c-1",
+          payload,
+          marks: payloadMarks,
+          keys: storage.personalKeys,
+        }),
+      ).rejects.toThrow(
+        new ValidationError(
+          'Command IntroduceFriend carries a sealed value in "note": personal fields are sealed by the runtime, never by a caller',
+          [{ path: ["note"], message: "Expected a value, not an envelope" }],
+        ),
+      );
+    }
+    expect(await storage.personalKeys.get("f-1")).toBeNull();
+  });
+
   it("opens to null, telling it forgotten, a field whose key is gone or was replaced", async () => {
-    const storage = await memory().createStorage({ logger: silentLogger });
+    const storage = await memory().createStorage();
     const { payload } = await sealCommandPayload({
       type: "RemindCustomer",
       aggregateId: "c-1",
@@ -227,7 +254,7 @@ describe("sealCommandPayload and openCommandPayload", () => {
   });
 
   it("names a person by a numeric id, as text", async () => {
-    const storage = await memory().createStorage({ logger: silentLogger });
+    const storage = await memory().createStorage();
     const sealed = await sealCommandPayload({
       type: "IntroduceFriend",
       aggregateId: "c-1",
@@ -239,7 +266,7 @@ describe("sealCommandPayload and openCommandPayload", () => {
   });
 
   it("reads each person's key once, and opens each field under its own person's key", async () => {
-    const storage = await memory().createStorage({ logger: silentLogger });
+    const storage = await memory().createStorage();
     const shape = {
       friendId: person(z.string()),
       a: personal(z.string()),
@@ -277,7 +304,7 @@ describe("sealCommandPayload and openCommandPayload", () => {
   });
 
   it("opens a payload that holds nothing sealed as it is", async () => {
-    const storage = await memory().createStorage({ logger: silentLogger });
+    const storage = await memory().createStorage();
     for (const payload of [{ email: "ana@example.com" }, "text", null]) {
       expect(await openCommandPayload({ payload, keys: storage.personalKeys })).toEqual({
         payload,

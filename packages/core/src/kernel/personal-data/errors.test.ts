@@ -1,13 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { ValidationError } from "../../contracts/errors.ts";
-import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import { sealedKeys } from "./commands.ts";
 import { generatePersonalKey, isSealed } from "./crypto.ts";
 import { openTextWith, sealError } from "./errors.ts";
 
 const setup = async () => {
-  const keys = (await memory().createStorage({ logger: silentLogger })).personalKeys;
+  const keys = (await memory().createStorage()).personalKeys;
   const held = await keys.add("c-1", await generatePersonalKey());
   return { keys, held, open: () => openTextWith(sealedKeys(keys)) };
 };

@@ -4,6 +4,7 @@ import {
   IDEMPOTENCY_KEY_FIELD,
   IDEMPOTENCY_KEY_HEADER,
   idempotencyKeyOf,
+  MAX_FORM_BYTES,
   withIdempotencyKey,
 } from "./idempotency-key.ts";
 
@@ -75,6 +76,20 @@ describe("idempotencyKeyOf", () => {
     const upload = new FormData();
     upload.append(IDEMPOTENCY_KEY_FIELD, new Blob(["k"]), "key.txt");
     expect(await idempotencyKeyOf(posted(upload))).toBeNull();
+  });
+
+  it("never copies a form that declares a length over MAX_FORM_BYTES, which the header keys instead", async () => {
+    const form = () => posted(new URLSearchParams({ [IDEMPOTENCY_KEY_FIELD]: "k" }));
+    const large = form();
+    large.headers.set("Content-Length", String(MAX_FORM_BYTES + 1));
+    const clone = vi.spyOn(large, "clone");
+    expect(await idempotencyKeyOf(large)).toBeNull();
+    expect(clone).not.toHaveBeenCalled();
+    const fitting = form();
+    fitting.headers.set("Content-Length", String(MAX_FORM_BYTES));
+    expect(await idempotencyKeyOf(fitting)).toBe("k");
+    large.headers.set(IDEMPOTENCY_KEY_HEADER, "h");
+    expect(await idempotencyKeyOf(large)).toBe("h");
   });
 
   it("finds no key in a body already read, or one that does not parse, and does not throw", async () => {

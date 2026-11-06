@@ -1,6 +1,10 @@
 import { ConcurrencyError, type EventMetadata, type StoredEvent } from "@bounda-dev/core";
 import type { EventStore } from "@bounda-dev/core/adapter";
-import { postgresqlDialect } from "@bounda-dev/core/adapter/sql";
+import {
+  insertEventsStatements,
+  positionsByVersion,
+  postgresqlDialect,
+} from "@bounda-dev/core/adapter/sql";
 import type { PostgresqlDatabase } from "./database.ts";
 
 export interface CreatePostgresqlEventStoreArgs {
@@ -71,23 +75,20 @@ export const createPostgresqlEventStore: CreatePostgresqlEventStoreFunction = ({
             actualVersion,
           });
         }
-        const stored: StoredEvent[] = [];
-        for (const event of events) {
-          const [row] = await tx.all(
-            `INSERT INTO ${table} ("id", "aggregate_type", "aggregate_id", "version", "type", "payload", "timestamp", "metadata") VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING "position"`,
-            [
-              event.id,
-              event.aggregateType,
-              event.aggregateId,
-              event.version,
-              event.type,
-              postgresqlDialect.encode("json", event.payload),
-              event.timestamp,
-              postgresqlDialect.encode("json", event.metadata),
-            ],
-          );
-          stored.push({ ...event, position: Number(row?.position) });
+        const rows: Record<string, unknown>[] = [];
+        for (const { sql, params } of insertEventsStatements({
+          dialect: postgresqlDialect,
+          table,
+          events,
+          encodeJson: (value) => postgresqlDialect.encode("json", value),
+        })) {
+          rows.push(...(await tx.all(sql, params)));
         }
+        const positions = positionsByVersion(rows);
+        const stored = events.map((event) => ({
+          ...event,
+          position: positions.get(event.version) as number,
+        }));
         const last = stored.at(-1);
         if (last !== undefined) {
           await tx.run("SELECT pg_notify($1, $2)", [channel, String(last.position)]);
@@ -115,6 +116,13 @@ export const createPostgresqlEventStore: CreatePostgresqlEventStoreFunction = ({
               [aggregateType, aggregateId, fromVersion, version],
             );
       return { events: rows.map(toStoredEvent), version };
+    },
+    readOne: async ({ aggregateType, aggregateId, eventId }) => {
+      const [row] = await db.all(
+        `SELECT ${COLUMNS} FROM ${table} WHERE "id" = $1 AND "aggregate_type" = $2 AND "aggregate_id" = $3`,
+        [eventId, aggregateType, aggregateId],
+      );
+      return row === undefined ? null : toStoredEvent(row);
     },
     readAll: async ({ afterPosition, limit }) =>
       (

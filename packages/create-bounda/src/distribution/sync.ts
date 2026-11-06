@@ -92,7 +92,7 @@ const published = async (name: string): Promise<JsonObject> => {
   return (await response.json()) as JsonObject;
 };
 
-export interface PublishedVersionFunction {
+interface PublishedVersionFunction {
   (options?: { readonly timeoutMs?: number }): Promise<string>;
 }
 
@@ -100,7 +100,7 @@ export interface PublishedVersionFunction {
  * The version `create-bounda` publishes under `latest`, once every Bounda package the copy
  * installs is served at that version: right after a release the registry can take minutes.
  */
-export const publishedVersion: PublishedVersionFunction = async ({ timeoutMs = 600_000 } = {}) => {
+const publishedVersion: PublishedVersionFunction = async ({ timeoutMs = 600_000 } = {}) => {
   const latest = (await published("create-bounda"))["dist-tags"] as JsonObject;
   const version = String(latest.latest);
   const deadline = Date.now() + timeoutMs;

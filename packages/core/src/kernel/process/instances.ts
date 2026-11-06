@@ -49,22 +49,34 @@ export interface CreateProcessInstancesFunction {
   (args: CreateProcessInstancesArgs): ProcessInstances;
 }
 
+// An enumerable symbol, so a spread of the instance, as `started` makes, carries it on.
+const VIEW: unique symbol = Symbol("bounda.processInstanceView");
+
+interface Viewed extends ProcessInstance {
+  readonly [VIEW]?: object;
+}
+
 export const createProcessInstances: CreateProcessInstancesFunction = ({
   eventStore,
   ids,
   clock,
 }) => {
-  const loaded = new Set<string>();
+  // Each instance carries the view that folded it, rather than the view keeping every stream id
+  // it ever loaded: the live view lasts as long as the app, and that set would grow with it.
+  const view = {};
 
   const load = async (process: ProcessRuntime, instanceId: string): Promise<ProcessInstance> => {
     const stream = { aggregateType: processAggregateType(process.name), aggregateId: instanceId };
     const { events } = await eventStore.load(stream);
-    loaded.add(streamId(stream));
-    return foldProcess({
-      initialState: process.initialState,
-      deadlineFields: process.deadlineFields,
-      events,
-    });
+    const instance: Viewed = {
+      ...foldProcess({
+        initialState: process.initialState,
+        deadlineFields: process.deadlineFields,
+        events,
+      }),
+      [VIEW]: view,
+    };
+    return instance;
   };
 
   const append = async (
@@ -74,7 +86,7 @@ export const createProcessInstances: CreateProcessInstancesFunction = ({
     entries: readonly LifecycleEntry[],
   ): Promise<void> => {
     const aggregateType = processAggregateType(process.name);
-    if (!loaded.has(streamId({ aggregateType, aggregateId: instanceId }))) {
+    if ((instance as Viewed)[VIEW] !== view) {
       throw new Error(
         `Process ${process.name} appended to ${instanceId} without loading it through the same view`,
       );
@@ -101,15 +113,15 @@ export const createProcessInstances: CreateProcessInstancesFunction = ({
     error.streamId ===
       streamId({ aggregateType: processAggregateType(process.name), aggregateId: instanceId });
 
-  const parkedEvent = async (parked: ParkedEvent): Promise<StoredEvent> => {
-    const { events } = await eventStore.load({
-      aggregateType: parked.aggregateType,
-      aggregateId: parked.aggregateId,
-    });
-    const event = events.find((candidate) => candidate.id === parked.eventId);
-    if (event === undefined) {
+  const parkedEvent = async ({
+    eventId,
+    aggregateType,
+    aggregateId,
+  }: ParkedEvent): Promise<StoredEvent> => {
+    const event = await eventStore.readOne({ aggregateType, aggregateId, eventId });
+    if (event === null) {
       throw new NotFoundError(
-        `Parked event ${parked.eventId} of ${parked.aggregateType}:${parked.aggregateId} not found`,
+        `Parked event ${eventId} of ${aggregateType}:${aggregateId} not found`,
       );
     }
     return event;

@@ -4,7 +4,6 @@ import { pendingEvent } from "../../adapter/testing/fixtures.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { ValidationError } from "../../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
-import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import type { EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
@@ -109,7 +108,7 @@ afterEach(() => {
 const setup = async () => {
   const recording = installFakeTelemetry();
   telemetry = recording;
-  const storage = await memory().createStorage({ logger: silentLogger });
+  const storage = await memory().createStorage();
   const { logger, entries } = createRecordingLogger();
   const clock = createFixedClock(new Date("2026-03-04T05:06:07.000Z"));
   const failures = createProcessFailures({

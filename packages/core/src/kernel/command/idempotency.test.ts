@@ -7,8 +7,8 @@ import {
   ValidationError,
 } from "../../contracts/errors.ts";
 import { classifyFailure } from "../shared/retry.ts";
-import { ATTRIBUTES } from "../telemetry.ts";
-import { installFakeTelemetry } from "../telemetry-fake.ts";
+import { ATTRIBUTES, METRICS } from "../telemetry.ts";
+import { type FakeTelemetry, installFakeTelemetry } from "../telemetry-fake.ts";
 import {
   createKernelHarness,
   createRecordingLogger,
@@ -25,6 +25,10 @@ const withKey = (idempotencyKey: string, extra = {}) => ({
   options: { idempotencyKey, ...extra },
 });
 
+const commandOutcomes = (telemetry: FakeTelemetry) =>
+  telemetry.counts
+    .filter((count) => count.metric === METRICS.commands)
+    .map((count) => count.attributes[ATTRIBUTES.outcome]);
 const storedTypes = async ({ storage }: KernelHarness): Promise<string[]> =>
   (await storage.eventStore.readAll({ afterPosition: 0, limit: 100 })).map((event) => event.type);
 
@@ -50,11 +54,15 @@ describe("a command dispatched with an idempotency key", () => {
       expiresAt: "2026-01-02T00:00:00.000Z",
       persons: [],
     });
-    expect(telemetry.counts.map((count) => count.attributes[ATTRIBUTES.outcome])).toEqual([
-      "stored",
-      "replayed",
-    ]);
-    expect(telemetry.spans.at(-1)?.attributes[ATTRIBUTES.outcome]).toBe("replayed");
+    expect(commandOutcomes(telemetry)).toEqual(["stored", "replayed"]);
+    expect(telemetry.spans[0]?.attributes).toMatchObject({
+      [ATTRIBUTES.aggregateVersion]: 0,
+      [ATTRIBUTES.foldEvents]: 0,
+    });
+    const replayed = telemetry.spans.at(-1)?.attributes;
+    expect(replayed?.[ATTRIBUTES.outcome]).toBe("replayed");
+    expect(replayed).not.toHaveProperty([ATTRIBUTES.aggregateVersion]);
+    expect(replayed).not.toHaveProperty([ATTRIBUTES.foldEvents]);
   });
 
   it("remembers a rejection as well, and throws it again with its code and message", async () => {
@@ -183,16 +191,17 @@ describe("a command dispatched with an idempotency key", () => {
     );
     expect(placeOrderKeys).toHaveLength(1);
     expect(await storedTypes(harness)).toEqual([]);
-    expect(telemetry.counts.map((count) => count.attributes[ATTRIBUTES.outcome])).toEqual([
-      "replayed",
-    ]);
+    expect(commandOutcomes(telemetry)).toEqual(["replayed"]);
+    // It loaded the aggregate before it lost the race, and still answers as a replay.
+    expect(telemetry.spans.at(-1)?.attributes).not.toHaveProperty([ATTRIBUTES.foldEvents]);
+    expect(telemetry.spans.at(-1)?.attributes).not.toHaveProperty([ATTRIBUTES.aggregateVersion]);
 
     harness.storage.idempotencyStore.get = async () => null;
     const lost = await harness.pipeline
       .dispatch({ ...placeOrder, ...withKey("req-1") })
       .catch((error: unknown) => error);
     expect(lost).toBeInstanceOf(IdempotencyKeyTakenError);
-    expect(telemetry.counts.at(-1)?.attributes[ATTRIBUTES.outcome]).toBe("failed");
+    expect(commandOutcomes(telemetry).at(-1)).toBe("failed");
     expect(await storedTypes(harness)).toEqual([]);
 
     // Any other failure stays a failure, whatever the key holds by then.
@@ -205,6 +214,11 @@ describe("a command dispatched with an idempotency key", () => {
     await expect(
       harness.pipeline.dispatch({ ...broken, ...withKey("req-2") }),
     ).rejects.toBeInstanceOf(ConfigurationError);
+    // A command that fails still says how it loaded its aggregate.
+    expect(telemetry.spans.at(-1)?.attributes).toMatchObject({
+      [ATTRIBUTES.aggregateVersion]: 0,
+      [ATTRIBUTES.foldEvents]: 0,
+    });
   });
 
   it("schedules a delayed command once under its key", async () => {

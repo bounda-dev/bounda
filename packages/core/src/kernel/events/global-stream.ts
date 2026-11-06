@@ -19,8 +19,9 @@ export interface ReadEventsArgs {
 
 /**
  * The store's global stream, read by position: what an operator's console, an audit trail or a
- * page that follows the stream needs. Payloads come whole, personal data included, so it is for
- * those who operate the app, never for the public as it is.
+ * page that follows the stream needs. Payloads come as stored, a personal field as its sealed
+ * envelope, never its value; everything else whole, so it is for those who operate the app, never
+ * for the public as it is.
  */
 export interface GlobalStream {
   /**

@@ -3,6 +3,8 @@ import type { StoredEvent } from "../../contracts/event.ts";
 import type { EventMetadata } from "../../contracts/metadata.ts";
 import type { EventStore } from "../index.ts";
 import type { SqlDatabase } from "../sql/database.ts";
+import { sqliteDialect } from "../sql/dialect.ts";
+import { insertEventsStatements, positionsByVersion } from "../sql/event-rows.ts";
 
 export interface CreateSqliteEventStoreArgs {
   readonly db: SqlDatabase;
@@ -52,23 +54,20 @@ export const createSqliteEventStore: CreateSqliteEventStoreFunction = ({ db, tab
             actualVersion,
           });
         }
-        const stored: StoredEvent[] = [];
-        for (const event of events) {
-          const [row] = await tx.all(
-            `INSERT INTO ${table} ("id", "aggregate_type", "aggregate_id", "version", "type", "payload", "timestamp", "metadata") VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING "position"`,
-            [
-              event.id,
-              event.aggregateType,
-              event.aggregateId,
-              event.version,
-              event.type,
-              JSON.stringify(event.payload),
-              event.timestamp,
-              JSON.stringify(event.metadata),
-            ],
-          );
-          stored.push({ ...event, position: Number(row?.position) });
+        const rows: Record<string, unknown>[] = [];
+        for (const { sql, params } of insertEventsStatements({
+          dialect: sqliteDialect,
+          table,
+          events,
+          encodeJson: (value) => JSON.stringify(value),
+        })) {
+          rows.push(...(await tx.all(sql, params)));
         }
+        const positions = positionsByVersion(rows);
+        const stored = events.map((event) => ({
+          ...event,
+          position: positions.get(event.version) as number,
+        }));
         return { version: actualVersion + stored.length, events: stored };
       }),
     // A load from the first event reads one statement, whose last row is the head. From later
@@ -92,6 +91,13 @@ export const createSqliteEventStore: CreateSqliteEventStoreFunction = ({ db, tab
               [aggregateType, aggregateId, fromVersion, version],
             );
       return { events: rows.map(toStoredEvent), version };
+    },
+    readOne: async ({ aggregateType, aggregateId, eventId }) => {
+      const [row] = await db.all(
+        `SELECT ${COLUMNS} FROM ${table} WHERE "id" = ? AND "aggregate_type" = ? AND "aggregate_id" = ?`,
+        [eventId, aggregateType, aggregateId],
+      );
+      return row === undefined ? null : toStoredEvent(row);
     },
     readAll: async ({ afterPosition, limit }) =>
       (

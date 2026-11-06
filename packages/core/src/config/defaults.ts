@@ -5,7 +5,7 @@ import type {
   ResolvedRetryConfig,
 } from "./types.ts";
 
-export const DEFAULT_RETRY: ResolvedRetryConfig = {
+const DEFAULT_RETRY: ResolvedRetryConfig = {
   strategy: "exponential",
   maxAttempts: 3,
   baseDelayMs: 1_000,

@@ -1,9 +1,9 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Adapter } from "@bounda-dev/core/adapter";
-import { createSqliteAdapter } from "@bounda-dev/core/adapter/sqlite";
+import { createSqliteAdapter, type SqliteConnection } from "@bounda-dev/core/adapter/sqlite";
 import { type Client, createClient } from "@libsql/client";
-import { createSqliteDatabase, type SqliteDatabase } from "./database.ts";
+import { createSqliteDatabase } from "./database.ts";
 import { resolveSqliteOptions, type SqliteOptions } from "./options.ts";
 
 /**
@@ -16,10 +16,8 @@ export interface SqliteFunction {
   (options: SqliteOptions): SqliteAdapter;
 }
 
-interface Connection {
+interface Connection extends SqliteConnection<Client> {
   readonly client: Client;
-  readonly db: SqliteDatabase;
-  readonly raw: Client;
   uses: number;
 }
 

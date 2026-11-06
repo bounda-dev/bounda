@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
+import type { Adapter } from "../../adapter/adapter.ts";
 import type { RetryConfig } from "../../config/types.ts";
 import { DeadLetterNotRetriableError, ValidationError } from "../../contracts/errors.ts";
+import { streamId } from "../../contracts/event.ts";
 import type { Instant } from "../../contracts/instant.ts";
+import { memory } from "../../memory/index.ts";
 import type { ProcessAfterFunction, ProcessStateArgs } from "../../modules/process.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { createDeadLetters } from "../dead-letters/dead-letters.ts";
@@ -107,7 +110,17 @@ const reset = (): void => {
   whileHandling = undefined;
 };
 
-const setUp = async (retry: RetryConfig = { strategy: "none" }, concurrencyRetries?: number) => {
+interface SetUpArgs {
+  readonly retry?: RetryConfig;
+  readonly concurrencyRetries?: number;
+  readonly adapter?: Adapter;
+}
+
+const setUp = async ({
+  retry = { strategy: "none" },
+  concurrencyRetries,
+  adapter,
+}: SetUpArgs = {}) => {
   reset();
   const { logger, entries: logs } = createRecordingLogger();
   const harness = await createReactiveHarness({
@@ -119,6 +132,7 @@ const setUp = async (retry: RetryConfig = { strategy: "none" }, concurrencyRetri
       },
     },
     logger,
+    ...(adapter === undefined ? {} : { adapter }),
   });
   const deadLetters = createDeadLetters({
     storage: harness.storage,
@@ -203,6 +217,33 @@ describe("events of a failed process", () => {
     const [letter] = await deadLetters.list();
     expect(letter).toMatchObject({ eventType: "OrderPaid", parked: 2 });
     expect(await deadLetters.get(letter?.id ?? "")).toMatchObject({ parked: 2 });
+  });
+
+  it("are counted behind a letter by loading the instance's stream alone, never the failed event's", async () => {
+    const base = memory();
+    const loaded: string[] = [];
+    const adapter: Adapter = {
+      ...base,
+      createStorage: async () => {
+        const storage = await base.createStorage();
+        const load: typeof storage.eventStore.load = (stream) => {
+          loaded.push(streamId(stream));
+          return storage.eventStore.load(stream);
+        };
+        return { ...storage, eventStore: { ...storage.eventStore, load } };
+      },
+    };
+    const context = await setUp({ adapter });
+    const { harness, deadLetters, settle } = context;
+    await failOnFirstPayment(context);
+    await harness.pipeline.dispatch({ type: "ArchiveOrder", payload: { orderId: "o-1" } });
+    await settle();
+
+    loaded.length = 0;
+    const [letter] = await deadLetters.list();
+    expect(letter).toMatchObject({ eventType: "OrderPaid", parked: 1 });
+    expect(await deadLetters.get(letter?.id ?? "")).toMatchObject({ parked: 1 });
+    expect(loaded).toEqual(["process:order.tally:o-1", "process:order.tally:o-1"]);
   });
 
   it("run in order after the failure is retried, before the process resumes and its deadlines with it", async () => {
@@ -352,17 +393,17 @@ describe("events of a failed process", () => {
     await settle();
     const [letter] = await deadLetters.list();
 
-    const load = harness.storage.eventStore.load;
-    let orderLoads = 0;
-    harness.storage.eventStore.load = async (args) => {
+    const readOne = harness.storage.eventStore.readOne;
+    let orderReads = 0;
+    harness.storage.eventStore.readOne = async (args) => {
       if (args.aggregateType === "order") {
-        orderLoads += 1;
-        if (orderLoads === 2) throw new Error("disk hiccup");
+        orderReads += 1;
+        if (orderReads === 2) throw new Error("disk hiccup");
       }
-      return load(args);
+      return readOne(args);
     };
     await expect(deadLetters.retry(letter?.id ?? "")).rejects.toThrow("disk hiccup");
-    harness.storage.eventStore.load = load;
+    harness.storage.eventStore.readOne = readOne;
     expect(runs.filter((run) => run.startsWith("paid:"))).toHaveLength(2);
 
     await deadLetters.retry(letter?.id ?? "");
@@ -400,7 +441,9 @@ describe("events of a failed process", () => {
   });
 
   it("keep an event that was still retrying when a deadline failed the process", async () => {
-    const context = await setUp({ strategy: "fixed", maxAttempts: 5, baseDelay: 60_000 });
+    const context = await setUp({
+      retry: { strategy: "fixed", maxAttempts: 5, baseDelay: 60_000 },
+    });
     const { harness, deadLetters, types } = context;
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
     await harness.dispatcher.runUntilIdle();
@@ -1868,7 +1911,7 @@ describe("an event handled while a deadline writes to its instance", () => {
   });
 
   it("spends an attempt once the races allowed run out", async () => {
-    const context = await setUp({ strategy: "none" }, 1);
+    const context = await setUp({ concurrencyRetries: 1 });
     const { harness, settle, types } = context;
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
     await settle();

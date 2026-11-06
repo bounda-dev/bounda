@@ -31,7 +31,7 @@ const freshAdapter = async (): Promise<Adapter> => {
   return insideObject(stub, adapter);
 };
 
-const freshStorage = async () => (await freshAdapter()).createStorage({ logger: silentLogger });
+const freshStorage = async () => (await freshAdapter()).createStorage();
 
 describe("the Durable Object adapter", () => {
   eventStoreContract({ create: async () => (await freshStorage()).eventStore });

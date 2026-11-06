@@ -68,7 +68,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
   logger = silentLogger,
   adapter = memory(),
 }) => {
-  const storage = await adapter.createStorage({ logger });
+  const storage = await adapter.createStorage();
   const config = resolveConfig({
     storage: adapter,
     ports: defaultPorts(registry),

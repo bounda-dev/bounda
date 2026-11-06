@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { silentLogger } from "../contracts/logger.ts";
 import { memory } from "../memory/index.ts";
 import { deferWrites } from "./deferred-writes.ts";
 import type { KeyedPerson } from "./storage/personal-key-store.ts";
@@ -21,7 +20,7 @@ const record = (key: string, persons: readonly KeyedPerson[]) => ({
 
 describe("deferWrites", () => {
   it("forgets the idempotency records it holds back for a person, and forgets them on flush", async () => {
-    const storage = await memory().createStorage({ logger: silentLogger });
+    const storage = await memory().createStorage();
     await storage.personalKeys.add("c-1", stored("1"));
     await storage.idempotencyStore.put(record("live", [held("c-1", "1")]));
     const { stores, flush } = deferWrites(storage);

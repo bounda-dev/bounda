@@ -6,6 +6,7 @@ import {
   importPersonalKey,
   isSealed,
   type PersonalKey,
+  refuseSealed,
   seal,
   unseal,
 } from "./crypto.ts";
@@ -86,7 +87,9 @@ export const sealedKeys: SealedKeysFunction = (keys) => {
  */
 export const sealCommandPayload: SealCommandPayloadFunction = async (args) => {
   const { payload, marks, keys } = args;
-  if (marks === null || !isRecord(payload)) return { payload, persons: [] };
+  if (!isRecord(payload)) return { payload, persons: [] };
+  refuseSealed({ payload, subject: `Command ${args.type}`, writer: "caller" });
+  if (marks === null) return { payload, persons: [] };
   const present = marks.fields.filter((field) => payload[field] !== undefined);
   if (present.length === 0) return { payload, persons: [] };
   const person = personOf(args, payload, marks.person);

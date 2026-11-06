@@ -1,10 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Adapter, CreateReadModelArgs, CreateStorageArgs } from "../adapter/adapter.ts";
+import type { Adapter, CreateReadModelArgs } from "../adapter/adapter.ts";
 import type { Table } from "../adapter/storage/table.ts";
 import { createFixedClock } from "../contracts/clock.ts";
 import { ConfigurationError, DomainError } from "../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../contracts/ids.ts";
-import { silentLogger } from "../contracts/logger.ts";
 import { memory } from "../memory/index.ts";
 import type { PayloadArgs } from "../modules/payload.ts";
 import type { CreateArgs } from "../modules/port.ts";
@@ -140,8 +139,8 @@ const countingAdapter = (): CountingAdapter => {
   return {
     adapter: {
       ...base,
-      createStorage: async (args: CreateStorageArgs) => {
-        const ports = await base.createStorage(args);
+      createStorage: async () => {
+        const ports = await base.createStorage();
         return {
           ...ports,
           close: async () => {
@@ -580,9 +579,9 @@ describe("implementations built by create", () => {
     const base = memory();
     return {
       ...base,
-      createStorage: async (args: CreateStorageArgs) => {
+      createStorage: async () => {
         if (fails) throw new Error("database is down");
-        const ports = await base.createStorage(args);
+        const ports = await base.createStorage();
         return {
           ...ports,
           close: async () => {
@@ -672,8 +671,8 @@ describe("implementations built by create", () => {
     const counting = countingAdapter();
     const adapter: Adapter = {
       ...counting.adapter,
-      createStorage: async (args: CreateStorageArgs) => {
-        const ports = await counting.adapter.createStorage(args);
+      createStorage: async () => {
+        const ports = await counting.adapter.createStorage();
         return {
           ...ports,
           checkpointStore: {
@@ -806,7 +805,7 @@ const open = <R extends Registry>(app: R, storage: Adapter) =>
   });
 
 const archived = async (storage: Adapter): Promise<readonly string[]> => {
-  const { eventStore } = await storage.createStorage({ logger: silentLogger });
+  const { eventStore } = await storage.createStorage();
   const events = await eventStore.readAll({ afterPosition: 0, limit: 100 });
   return events.filter((event) => event.type === "OrderArchived").map((event) => event.aggregateId);
 };
@@ -823,7 +822,7 @@ describe("policies and processes follow the stream from when they are deployed",
       "projection:orderSummary",
     ]);
     expect(lag.maxLag).toBe(0);
-    const { checkpointStore } = await storage.createStorage({ logger: silentLogger });
+    const { checkpointStore } = await storage.createStorage();
     expect((await checkpointStore.list()).map((checkpoint) => checkpoint.subscriber)).toEqual([
       "projection:orderSummary",
     ]);
@@ -832,7 +831,7 @@ describe("policies and processes follow the stream from when they are deployed",
 
   it("leaves alone the checkpoints of the policies and processes an app no longer has", async () => {
     const storage = memory();
-    const { checkpointStore } = await storage.createStorage({ logger: silentLogger });
+    const { checkpointStore } = await storage.createStorage();
     await checkpointStore.set("policies", 3);
     await checkpointStore.set("processes", 3);
     await checkpointStore.set("projection:orderSummary", 3);
@@ -871,7 +870,7 @@ describe("policies and processes follow the stream from when they are deployed",
     await before.stop();
 
     const after = await open(registry, storage);
-    const { checkpointStore } = await storage.createStorage({ logger: silentLogger });
+    const { checkpointStore } = await storage.createStorage();
     expect(await checkpointStore.get("policies")).toBe(2);
     expect(await checkpointStore.get("processes")).toBe(2);
     await after.commands.placeOrder({ orderId: "o-2", total: 7 });
@@ -905,7 +904,7 @@ describe("policies and processes follow the stream from when they are deployed",
     await first.commands.placeOrder({ orderId: "o-2", total: 7 });
     await first.commands.payOrder({ orderId: "o-2", method: "card" });
     await first.stop();
-    const { checkpointStore, eventStore } = await storage.createStorage({ logger: silentLogger });
+    const { checkpointStore, eventStore } = await storage.createStorage();
     const halfway = await checkpointStore.get("policies");
     expect(halfway).toBeGreaterThan(0);
     expect(halfway).toBeLessThan(await eventStore.lastPosition());

@@ -18,7 +18,7 @@ import type { PoliciesRuntime, PolicyRuntime } from "./build-policies.ts";
 import { scheduleDelayedPolicy } from "./delayed.ts";
 import type { PolicyExecutor } from "./executor.ts";
 
-export const POLICIES_SUBSCRIBER: "policies" = "policies";
+const POLICIES_SUBSCRIBER: "policies" = "policies";
 
 export interface CreatePolicySubscriberArgs {
   readonly policies: PoliciesRuntime;
