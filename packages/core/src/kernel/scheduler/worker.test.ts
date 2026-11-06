@@ -463,13 +463,27 @@ describe("scheduled command worker", () => {
       },
     });
     const leases: number[] = [];
-    const original = harness.storage.scheduler.claimDue.bind(harness.storage.scheduler);
-    harness.storage.scheduler.claimDue = async (args) => {
-      leases.push(args.leaseMs);
-      return original(args);
+    const scheduler = harness.storage.scheduler;
+    const original = {
+      claimDue: scheduler.claimDue.bind(scheduler),
+      nextDueAt: scheduler.nextDueAt.bind(scheduler),
     };
+    scheduler.claimDue = async (args) => {
+      leases.push(args.leaseMs);
+      return original.claimDue(args);
+    };
+    scheduler.nextDueAt = async (args) => {
+      leases.push(args.leaseMs);
+      return original.nextDueAt(args);
+    };
+    await scheduler.schedule({
+      dedupeKey: "command:x",
+      command: { type: "TouchOrder", aggregateId: "o-1", payload: { orderId: "o-1" } },
+      executeAt: harness.clock.now(),
+      context: { correlationId: "c", causationId: "c", depth: 0 },
+    });
     await harness.worker.runOnce();
-    expect(leases).toEqual([20_000]);
+    expect(leases).toEqual([20_000, 20_000]);
   });
 
   it.each<[string, RuntimeConfig, number]>([
@@ -750,10 +764,10 @@ describe("scheduled command worker", () => {
   it("arms one timer per interval, re-arms after each run and leaves nothing behind on stop", async () => {
     const harness = await createReactiveHarness({ registry: orderRegistry });
     const scheduler = harness.storage.scheduler;
-    const original = scheduler.claimDue.bind(scheduler);
+    const original = scheduler.nextDueAt.bind(scheduler);
     let release: () => void = () => undefined;
     let claims = 0;
-    scheduler.claimDue = async (args) => {
+    scheduler.nextDueAt = async (args) => {
       claims += 1;
       if (claims === 2) {
         await new Promise<void>((resolve) => {
@@ -780,6 +794,30 @@ describe("scheduled command worker", () => {
     expect(harness.clock.pending()).toBe(0);
     harness.clock.advance(interval * 5);
     expect(claims).toBe(2);
+  });
+
+  it("claims nothing, writing nothing, while nothing is due", async () => {
+    const harness = await createReactiveHarness({ registry: orderRegistry });
+    sentMessages.length = 0;
+    const scheduler = harness.storage.scheduler;
+    const claims: Date[] = [];
+    const original = scheduler.claimDue.bind(scheduler);
+    scheduler.claimDue = async (args) => {
+      claims.push(args.now);
+      return original(args);
+    };
+    expect(await harness.worker.runOnce()).toBe(0);
+    await harness.pipeline.dispatch({
+      type: "PlaceOrder",
+      payload: { orderId: "o-1", total: 10 },
+      options: { delay: 60_000 },
+    });
+    expect(await harness.worker.runOnce()).toBe(0);
+    expect(claims).toEqual([]);
+    harness.clock.advance(60_000);
+    expect(await harness.worker.runOnce()).toBe(1);
+    expect(claims).toEqual([harness.clock.now()]);
+    expect(sentMessages).toEqual(["placed o-1 v0"]);
   });
 
   it("reports a failing run and keeps polling", async () => {
