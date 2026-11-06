@@ -535,7 +535,8 @@ describe("process deadlines", () => {
     expect((await lifecycle(harness)).at(-1)?.payload).toMatchObject({
       deadline: "nextReminder",
       at: at(DAY),
-      error: 'Process order.reminders left the deadline "nextReminder" at the moment that came due',
+      errorName: "ValidationError",
+      errorCode: "VALIDATION_FAILED",
     });
     expect(await harness.storage.scheduler.list()).toEqual([]);
     await expect(
@@ -823,8 +824,9 @@ describe("process deadlines", () => {
     await settle(harness);
     expect((await lifecycle(harness)).at(-1)).toMatchObject({
       type: PROCESS_EVENTS.failed,
-      payload: { deadline: "nextReminder", error: "mailer said no" },
+      payload: { deadline: "nextReminder", errorName: "Error" },
     });
+    expect((await lifecycle(harness)).at(-1)?.payload).not.toHaveProperty("errorCode");
     expect(await harness.storage.deadLetterStore.list()).toMatchObject([
       { eventId: "deadline:nextReminder", errorMessage: "mailer said no" },
     ]);
@@ -1273,7 +1275,7 @@ describe("deadline entries under races and partial failures", () => {
     const { events } = await harness.storage.eventStore.load(stepsStream);
     expect(events.at(-1)).toMatchObject({
       type: PROCESS_EVENTS.failed,
-      payload: { deadline: "second", error: "second refuses" },
+      payload: { deadline: "second", errorName: "ValidationError" },
     });
     expect(await harness.storage.deadLetterStore.list()).toMatchObject([
       { eventId: "deadline:second", errorType: "terminal" },

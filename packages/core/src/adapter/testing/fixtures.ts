@@ -2,7 +2,7 @@ import type { NewCommand, StoredDispatch } from "../../contracts/command.ts";
 import type { CausationContext, EventMetadata } from "../../contracts/metadata.ts";
 import type { NewDeadLetter } from "../storage/dead-letter-store.ts";
 import type { PendingEvent } from "../storage/event-store.ts";
-import type { KeyedPerson, StoredPersonalKey } from "../storage/personal-key-store.ts";
+import type { KeyedPerson, SealedValue, StoredPersonalKey } from "../storage/personal-key-store.ts";
 
 /**
  * Metadata for events built in contract tests.
@@ -84,7 +84,9 @@ export const testDeadLetter: TestDeadLetterFunction = (id) => ({
   eventType: "OrderPlaced",
   aggregateType: "order",
   aggregateId: "1",
+  person: null,
   errorType: "terminal",
+  errorName: "Error",
   errorMessage: "boom",
   attempts: 1,
   firstFailedAt: "2026-01-01T00:00:00.000Z",
@@ -118,6 +120,23 @@ export interface TestPersonalKeyFunction {
 export const testPersonalKey: TestPersonalKeyFunction = (name) => ({
   key: `k-${name}`,
   fingerprint: `f-${name}`,
+});
+
+export interface TestSealedValueFunction {
+  (person: string, key: string): SealedValue;
+}
+
+/**
+ * A value sealed under `testPersonalKey(key)` as a store sees it: an envelope it keeps without
+ * opening, naming `person` and the key's fingerprint.
+ */
+export const testSealedValue: TestSealedValueFunction = (person, key) => ({
+  $personal: {
+    person,
+    key: testPersonalKey(key).fingerprint,
+    iv: `iv-${person}`,
+    data: `data-${person}`,
+  },
 });
 
 export interface TestKeyedPersonFunction {

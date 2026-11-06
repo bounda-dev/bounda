@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { DeadLetterSettledError } from "../../contracts/errors.ts";
 import type { DeadLetterStore, NewDeadLetter } from "../storage/dead-letter-store.ts";
-import { testKeyedPerson as held } from "./fixtures.ts";
+import { testKeyedPerson as held, testSealedValue as sealed } from "./fixtures.ts";
 
 export interface DeadLetterStoreContractArgs {
   readonly create: () => Promise<DeadLetterStore>;
@@ -19,7 +19,9 @@ const letter = (id: string, overrides: Partial<NewDeadLetter> = {}): NewDeadLett
   eventType: "OrderPlaced",
   aggregateType: "order",
   aggregateId: "1",
+  person: null,
   errorType: "retriable_exhausted",
+  errorName: "Error",
   errorMessage: "timeout",
   attempts: 3,
   firstFailedAt: "2026-01-01T00:00:00.000Z",
@@ -40,13 +42,45 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
 
     it("adds letters as failed and reads them back", async () => {
       const added = await store.add(letter("a", { errorStack: "Error: timeout\n  at x" }));
-      expect(added).toMatchObject({
-        id: "a",
+      expect(added).toEqual({
+        ...letter("a"),
         status: "failed",
         errorStack: "Error: timeout\n  at x",
       });
       expect(await store.get("a")).toEqual(added);
       expect(await store.get("missing")).toBeNull();
+    });
+
+    it("keeps the error's name, its code when it has one, and the person the work names", async () => {
+      await store.add(letter("coded", { errorCode: "VALIDATION_FAILED", person: "c-1" }));
+      await store.add(letter("plain"));
+      expect(await store.get("coded")).toMatchObject({
+        errorName: "Error",
+        errorCode: "VALIDATION_FAILED",
+        person: "c-1",
+      });
+      expect(await store.get("plain")).toMatchObject({ errorName: "Error", person: null });
+      expect(await store.get("plain")).not.toHaveProperty("errorCode");
+    });
+
+    it("keeps sealed error text as it is, next to text in the clear", async () => {
+      const message = sealed("c-1", "1");
+      const stack = { $personal: { ...message.$personal, data: "stack" } };
+      await store.add(
+        letter("sealed", { person: "c-1", errorMessage: message, errorStack: stack }),
+      );
+      await store.add(
+        letter("clear", { errorMessage: '{"$personal":"looks sealed"}', errorStack: "[]" }),
+      );
+      expect(await store.get("sealed")).toMatchObject({ errorMessage: message, errorStack: stack });
+      expect(await store.get("clear")).toMatchObject({
+        errorMessage: '{"$personal":"looks sealed"}',
+        errorStack: "[]",
+      });
+      expect((await store.list()).map(({ id, errorMessage }) => [id, errorMessage])).toEqual([
+        ["clear", '{"$personal":"looks sealed"}'],
+        ["sealed", message],
+      ]);
     });
 
     it("keeps the payload of a dropped command and has none for the others", async () => {
@@ -196,6 +230,27 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       ]);
       expect((await store.list()).map((kept) => kept.id)).toEqual(["c", "d", "e"]);
       expect(await store.forget("c-1")).toEqual([]);
+    });
+
+    it("leaves the letters that name a person only as the person of their work", async () => {
+      await store.add(
+        letter("policy", {
+          person: "c-1",
+          errorMessage: sealed("c-1", "1"),
+          errorStack: sealed("c-1", "1"),
+        }),
+      );
+      await store.add(
+        letter("process", {
+          kind: "process",
+          handler: "order.orderPayment",
+          person: "c-1",
+          errorMessage: sealed("c-1", "1"),
+        }),
+      );
+      expect(await store.forget("c-1")).toEqual([]);
+      expect((await store.list()).map(({ id }) => id)).toEqual(["policy", "process"]);
+      expect((await store.get("policy"))?.errorMessage).toEqual(sealed("c-1", "1"));
     });
 
     it("updates status and removes letters", async () => {

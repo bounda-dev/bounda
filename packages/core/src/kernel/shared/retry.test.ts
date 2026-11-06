@@ -9,7 +9,7 @@ import {
   rejectionOf,
   ValidationError,
 } from "../../contracts/errors.ts";
-import { classifyFailure, errorDetails, retryDelayMs } from "./retry.ts";
+import { classifyFailure, errorDetails, errorIdentity, errorLabel, retryDelayMs } from "./retry.ts";
 
 describe("classifyFailure", () => {
   it("treats request errors as terminal and everything else as retriable", () => {
@@ -57,5 +57,34 @@ describe("errorDetails", () => {
     Reflect.deleteProperty(bare, "stack");
     expect(errorDetails(bare)).toEqual({ message: "bare" });
     expect(errorDetails(bare)).not.toHaveProperty("stack");
+  });
+});
+
+describe("errorIdentity", () => {
+  it("names the error's class, its code when it is a BoundaError, and the type of anything else", () => {
+    expect(errorIdentity(new ValidationError("no", []))).toEqual({
+      errorName: "ValidationError",
+      errorCode: "VALIDATION_FAILED",
+    });
+    expect(errorIdentity(new DomainError(rejectionOf("Refused", "no")))).toEqual({
+      errorName: "DomainError",
+      errorCode: "DOMAIN_ERROR",
+    });
+    expect(errorIdentity(new TypeError("x is not a function"))).toEqual({ errorName: "TypeError" });
+    class MailerDown extends Error {}
+    expect(errorIdentity(new MailerDown("down"))).toEqual({ errorName: "MailerDown" });
+    expect(errorIdentity(new (class extends Error {})("down"))).toEqual({ errorName: "Error" });
+    const renamed = new MailerDown("down");
+    renamed.name = "Mailer";
+    expect(errorIdentity(renamed)).toEqual({ errorName: "Mailer" });
+    expect(errorIdentity("boom")).toEqual({ errorName: "string" });
+    expect(errorIdentity(undefined)).toEqual({ errorName: "undefined" });
+    expect(errorIdentity({ message: "boom" })).toEqual({ errorName: "object" });
+  });
+
+  it("writes the identity as one line, with the code in parentheses when there is one", () => {
+    expect(errorLabel(errorIdentity(new NotFoundError("no")))).toBe("NotFoundError (NOT_FOUND)");
+    expect(errorLabel(errorIdentity(new Error("socket hang up")))).toBe("Error");
+    expect(errorLabel({ errorName: "RangeError" })).toBe("RangeError");
   });
 });

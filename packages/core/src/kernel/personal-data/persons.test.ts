@@ -4,7 +4,7 @@ import type { StoredEvent } from "../../contracts/event.ts";
 import type { EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
-import { personsOf } from "./persons.ts";
+import { personOfEvent, personsOf } from "./persons.ts";
 
 const registry: Registry = {
   aggregates: {
@@ -34,7 +34,8 @@ const registry: Registry = {
   readModels: {},
 };
 
-const aggregate = buildAggregates({ registry, ports: {} }).byName.order;
+const aggregates = buildAggregates({ registry, ports: {} });
+const aggregate = aggregates.byName.order;
 
 const event = (version: number, type: string, payload: unknown): StoredEvent => ({
   ...pendingEvent({ aggregateId: "o-1", version, type, payload }),
@@ -84,5 +85,32 @@ describe("personsOf", () => {
         ],
       }),
     ).toEqual([]);
+  });
+});
+
+describe("personOfEvent", () => {
+  it("names the person of one event, and nobody for one without their data or of an unknown aggregate", () => {
+    expect(
+      personOfEvent({
+        aggregates,
+        event: event(1, "OrderPlaced", { customerId: "c-1", note: "n" }),
+      }),
+    ).toBe("c-1");
+    expect(personOfEvent({ aggregates, event: event(2, "OrderSigned", { signature: "x" }) })).toBe(
+      "o-1",
+    );
+    expect(
+      personOfEvent({
+        aggregates,
+        event: event(3, "OrderPlaced", { customerId: "c-1", note: null }),
+      }),
+    ).toBeNull();
+    expect(personOfEvent({ aggregates, event: event(4, "OrderPaid", {}) })).toBeNull();
+    expect(
+      personOfEvent({
+        aggregates,
+        event: { ...event(5, "OrderSigned", { signature: "x" }), aggregateType: "bounda" },
+      }),
+    ).toBeNull();
   });
 });

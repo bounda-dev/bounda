@@ -18,6 +18,27 @@ export interface KeyedPerson {
   readonly fingerprint: string | null;
 }
 
+/**
+ * A personal value as it is stored: the ciphertext, its nonce, the person whose key opens it and
+ * the fingerprint of that key, so a value sealed under a key the person no longer has is told
+ * from one their current key opens.
+ */
+export interface PersonalEnvelope {
+  readonly person: string;
+  readonly key: string;
+  readonly iv: string;
+  readonly data: string;
+}
+
+/**
+ * A stored value that holds personal data: nothing but the envelope, under a key no schema field
+ * takes. What an event's or a command's marked field holds in the store, and what a dead letter
+ * holds for the text of an error.
+ */
+export interface SealedValue {
+  readonly $personal: PersonalEnvelope;
+}
+
 export interface KeyedPersonIdFunction {
   (held: KeyedPerson): string;
 }

@@ -1,5 +1,9 @@
 import type { Storage } from "../../adapter/adapter.ts";
-import type { DeadLetter, ListDeadLettersArgs } from "../../adapter/storage/dead-letter-store.ts";
+import type {
+  DeadLetter,
+  ListDeadLettersArgs,
+  StoredDeadLetter,
+} from "../../adapter/storage/dead-letter-store.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import {
@@ -13,7 +17,8 @@ import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
-import { openCommandPayload } from "../personal-data/commands.ts";
+import { type KeyOfFunction, openCommandPayload, sealedKeys } from "../personal-data/commands.ts";
+import { openTextWith } from "../personal-data/errors.ts";
 import type { PoliciesRuntime } from "../policy/build-policies.ts";
 import type { PolicyExecutor } from "../policy/executor.ts";
 import type { ProcessDeadLetters } from "../process/dead-letter-retry.ts";
@@ -26,8 +31,9 @@ import { commitWork, type UnitOfWork } from "../unit-of-work/unit-of-work.ts";
  */
 export interface DeadLetters {
   /**
-   * The letters of the store, process ones with how many events are `parked` behind them, and a
-   * scheduled command's payload with its personal fields opened.
+   * The letters of the store, process ones with how many events are `parked` behind them, with
+   * the error's message and stack opened, and a scheduled command's payload with its personal
+   * fields opened: `null` for what was sealed under a person forgotten since.
    */
   list(args?: ListDeadLettersArgs): Promise<readonly DeadLetter[]>;
   count(args?: ListDeadLettersArgs): Promise<number>;
@@ -94,7 +100,10 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
 }) => {
   // The retry's writes and the letter's new status, together or not at all. A retry that
   // another one settled first writes nothing, and does not run again after a conflict.
-  const settled = (letter: DeadLetter, run: (unit: UnitOfWork) => Promise<void>): Promise<void> =>
+  const settled = (
+    letter: StoredDeadLetter,
+    run: (unit: UnitOfWork) => Promise<void>,
+  ): Promise<void> =>
     commitWork({
       storage,
       concurrencyRetries: config.runtime.commands.concurrencyRetries,
@@ -108,7 +117,7 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
       },
     });
 
-  const failedLetter = async (id: string): Promise<DeadLetter> => {
+  const failedLetter = async (id: string): Promise<StoredDeadLetter> => {
     const letter = await storage.deadLetterStore.get(id);
     if (letter === null) throw new NotFoundError(`Dead letter "${id}" not found`);
     if (letter.status !== "failed") {
@@ -117,7 +126,7 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
     return letter;
   };
 
-  const eventOf = async (letter: DeadLetter): Promise<StoredEvent> => {
+  const eventOf = async (letter: StoredDeadLetter): Promise<StoredEvent> => {
     const event = await storage.eventStore.readOne({
       aggregateType: letter.aggregateType,
       aggregateId: letter.aggregateId,
@@ -131,7 +140,7 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
     return event;
   };
 
-  const retryPolicy = async (letter: DeadLetter, retryId: string): Promise<void> => {
+  const retryPolicy = async (letter: StoredDeadLetter, retryId: string): Promise<void> => {
     const policy = policies.byName[letter.handler];
     if (policy === undefined) {
       throw new DeadLetterNotRetriableError(
@@ -149,7 +158,7 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
     );
   };
 
-  const retryScheduled = async (letter: DeadLetter): Promise<void> => {
+  const retryScheduled = async (letter: StoredDeadLetter): Promise<void> => {
     if (aggregates.commandsByType[letter.eventType] === undefined) {
       throw new DeadLetterNotRetriableError(
         `Command "${letter.eventType}" is no longer in the registry`,
@@ -182,7 +191,7 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
   // Resolves to whether the letter still has to be marked retried: a policy, scheduled command
   // or follow-up retry marks it in its own unit; any other process retry leaves it for after the
   // drain.
-  const run = async (letter: DeadLetter, retryId: string): Promise<boolean> => {
+  const run = async (letter: StoredDeadLetter, retryId: string): Promise<boolean> => {
     switch (letter.kind) {
       case "policy":
         await retryPolicy(letter, retryId);
@@ -214,23 +223,41 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
     }
   };
 
-  // A forgotten person's fields read as `null`, as an event's do.
-  const opened = async (letter: DeadLetter): Promise<DeadLetter> => {
-    if (letter.payload === undefined) return letter;
-    const { payload } = await openCommandPayload({
-      payload: letter.payload,
-      keys: storage.personalKeys,
-    });
-    return { ...letter, payload };
+  // A forgotten person's error text and fields read as `null`, as an event's do.
+  const opened = async (
+    { errorMessage, errorStack, payload, ...letter }: StoredDeadLetter,
+    keyOf: KeyOfFunction = sealedKeys(storage.personalKeys),
+  ): Promise<DeadLetter> => {
+    const open = openTextWith(keyOf);
+    return {
+      ...letter,
+      errorMessage: await open(errorMessage),
+      ...(errorStack === undefined ? {} : { errorStack: await open(errorStack) }),
+      ...(payload === undefined
+        ? {}
+        : {
+            payload: (await openCommandPayload({ payload, keys: storage.personalKeys, keyOf }))
+              .payload,
+          }),
+    };
   };
 
-  const withParked = async (letter: DeadLetter): Promise<DeadLetter> => {
-    if (letter.kind !== "process") return opened(letter);
-    return { ...letter, parked: await processes.parkedBehind(letter) };
+  const withParked = async (
+    letter: StoredDeadLetter,
+    keyOf?: KeyOfFunction,
+  ): Promise<DeadLetter> => {
+    const result = await opened(letter, keyOf);
+    if (letter.kind !== "process") return result;
+    return { ...result, parked: await processes.parkedBehind(letter) };
   };
 
   return {
-    list: async (args) => Promise.all((await storage.deadLetterStore.list(args)).map(withParked)),
+    list: async (args) => {
+      // Each person's key read once for the whole page.
+      const keyOf = sealedKeys(storage.personalKeys);
+      const letters = await storage.deadLetterStore.list(args);
+      return Promise.all(letters.map((letter) => withParked(letter, keyOf)));
+    },
     count: (args) => storage.deadLetterStore.count(args),
     get: async (id) => {
       const letter = await storage.deadLetterStore.get(id);

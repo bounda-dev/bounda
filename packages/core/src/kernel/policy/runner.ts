@@ -4,12 +4,14 @@ import type { ResolvedConfig, ResolvedPoliciesConfig } from "../../config/types.
 import type { Clock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
+import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { Subscriber } from "../dispatch/dispatcher.ts";
+import { sealError } from "../personal-data/errors.ts";
+import { personOfEvent } from "../personal-data/persons.ts";
 import { deriveDeadLetterId } from "../shared/idempotency-key.ts";
 import { deliverInOrder, type ReactionOutcome } from "../shared/in-order.ts";
 import type { PendingRetries } from "../shared/pending-retries.ts";
 import { runAttempt } from "../shared/reaction-attempt.ts";
-import { errorDetails } from "../shared/retry.ts";
 import { deadLettered } from "../telemetry.ts";
 import type { UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import type { PoliciesRuntime, PolicyRuntime } from "./build-policies.ts";
@@ -20,6 +22,7 @@ const POLICIES_SUBSCRIBER: "policies" = "policies";
 
 export interface CreatePolicySubscriberArgs {
   readonly policies: PoliciesRuntime;
+  readonly aggregates: AggregatesRuntime;
   readonly executor: PolicyExecutor;
   readonly storage: Storage;
   readonly config: ResolvedConfig;
@@ -38,6 +41,7 @@ export interface CreatePolicySubscriberFunction {
  */
 export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
   policies,
+  aggregates,
   executor,
   storage,
   config,
@@ -54,7 +58,7 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
     errorType: DeadLetterErrorType,
   ): Promise<void> => {
     const id = deriveDeadLetterId({ kind: "policy", handler: policy.name, subject: event.id });
-    const details = errorDetails(error);
+    const person = personOfEvent({ aggregates, event });
     const now = clock.now().toISOString();
     await unit.deadLetterStore.add({
       id,
@@ -64,9 +68,9 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
       eventType: event.type,
       aggregateType: event.aggregateType,
       aggregateId: event.aggregateId,
+      person,
       errorType,
-      errorMessage: details.message,
-      ...(details.stack === undefined ? {} : { errorStack: details.stack }),
+      ...(await sealError({ error, person, keys: storage.personalKeys })),
       attempts,
       firstFailedAt: now,
       lastFailedAt: now,

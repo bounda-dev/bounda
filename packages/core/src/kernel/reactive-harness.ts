@@ -142,6 +142,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
         ),
         createPolicySubscriber({
           policies,
+          aggregates,
           executor: policyExecutor,
           storage,
           config,

@@ -80,8 +80,7 @@ export const createResumeParked: CreateResumeParkedFunction = ({
     instanceId: string,
     stepOf: (instance: ProcessInstance) => "recorded" | "moved" | undefined,
     entryOf: (instance: ProcessInstance, letter: NewDeadLetter) => LifecycleEntry,
-    letterOf: (instance: ProcessInstance) => NewDeadLetter,
-    error: unknown,
+    letterOf: (instance: ProcessInstance) => Promise<NewDeadLetter>,
   ): Promise<boolean> => {
     let outcome: "recorded" | "moved" | undefined;
     let filed: NewDeadLetter | undefined;
@@ -90,9 +89,9 @@ export const createResumeParked: CreateResumeParkedFunction = ({
       filed = undefined;
       outcome = stepOf(current);
       if (outcome !== undefined) return;
-      const letter = letterOf(current);
+      const letter = await letterOf(current);
       await within.append(process, instanceId, current, [entryOf(current, letter)]);
-      await failures.file(unit.deadLetterStore, letter, error);
+      await unit.deadLetterStore.add(letter);
       await schedule.stage(unit, process, instanceId);
       filed = letter;
     });
@@ -134,8 +133,8 @@ export const createResumeParked: CreateResumeParkedFunction = ({
         },
         (_current, filed) =>
           lifecycleEntries.failed({ eventId: event.id }, filed, eventContext(event)),
-        () => failures.letterOf(process, event, cause, 1, drainFailureType(cause)),
-        cause,
+        () =>
+          failures.letterOf(process, failures.subjectOf(event), cause, 1, drainFailureType(cause)),
       );
     }
   };
@@ -215,7 +214,6 @@ export const createResumeParked: CreateResumeParkedFunction = ({
             1,
             drainFailureType(cause),
           ),
-        cause,
       );
     }
   };

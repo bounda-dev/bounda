@@ -251,7 +251,12 @@ describe("scheduled command worker", () => {
       SCHEDULED_COMMAND_FAILED_EVENT,
     ]);
     expect(order.events[1]).toMatchObject({
-      payload: { commandType: "PlaceOrder", error: "Order already placed", attempts: 1 },
+      payload: {
+        commandType: "PlaceOrder",
+        errorName: "ValidationError",
+        errorCode: "VALIDATION_FAILED",
+        attempts: 1,
+      },
       metadata: { system: true },
     });
     expect(await harness.storage.deadLetterStore.list()).toMatchObject([

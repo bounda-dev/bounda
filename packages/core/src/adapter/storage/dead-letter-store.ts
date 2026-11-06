@@ -1,4 +1,4 @@
-import type { KeyedPerson } from "./personal-key-store.ts";
+import type { KeyedPerson, SealedValue } from "./personal-key-store.ts";
 
 /**
  * What gave up: a policy or process handler (a delayed policy run included), or a scheduled
@@ -11,9 +11,12 @@ export type DeadLetterErrorType = "terminal" | "retriable_exhausted";
 export type DeadLetterStatus = "failed" | "retried" | "discarded";
 
 /**
- * A handler run that gave up. `status` is `failed` until an operator retries or discards it.
+ * A handler run that gave up, as the store keeps it. `status` is `failed` until an operator
+ * retries or discards it. The text of the error is kept sealed under `person`, so no store holds
+ * in the clear what a handler quoted of a person; `app.deadLetters` hands the letter out opened,
+ * as `DeadLetter`.
  */
-export interface DeadLetter {
+export interface StoredDeadLetter {
   readonly id: string;
   readonly kind: DeadLetterKind;
   /**
@@ -25,9 +28,30 @@ export interface DeadLetter {
   readonly eventType: string;
   readonly aggregateType: string;
   readonly aggregateId: string;
+  /**
+   * The person the failed work names: the one the event names for a policy or process letter,
+   * the one the payload names for a scheduled command. `null` for a deadline, or for work that
+   * names nobody.
+   */
+  readonly person: string | null;
   readonly errorType: DeadLetterErrorType;
-  readonly errorMessage: string;
-  readonly errorStack?: string;
+  /**
+   * The error's class name, `ValidationError`, or the type of what was thrown when it is no error.
+   */
+  readonly errorName: string;
+  /**
+   * The error's `code` when it is a `BoundaError`.
+   */
+  readonly errorCode?: string;
+  /**
+   * The error's message, sealed under `person`'s key, and in the clear only when `person` is
+   * `null`.
+   */
+  readonly errorMessage: string | SealedValue;
+  /**
+   * The error's stack when it has one, sealed as `errorMessage` is.
+   */
+  readonly errorStack?: string | SealedValue;
   readonly attempts: number;
   readonly firstFailedAt: string;
   readonly lastFailedAt: string;
@@ -39,9 +63,22 @@ export interface DeadLetter {
   readonly payload?: unknown;
   /**
    * Only on `scheduled` letters whose payload holds personal fields sealed: whose they are, with
-   * the key each is sealed under, as the scheduled command named them.
+   * the key each is sealed under, as the scheduled command named them. What `forget` removes a
+   * letter by: a policy or process letter names nobody here, so a forget leaves it, its instance
+   * still waiting for its retry, and its error text reads as `null` from then on.
    */
   readonly persons?: readonly KeyedPerson[];
+}
+
+export type NewDeadLetter = Omit<StoredDeadLetter, "status">;
+
+/**
+ * A dead letter as `app.deadLetters` hands it out: the error's message and stack opened with
+ * `person`'s key, `null` once the person was forgotten.
+ */
+export interface DeadLetter extends Omit<StoredDeadLetter, "errorMessage" | "errorStack"> {
+  readonly errorMessage: string | null;
+  readonly errorStack?: string | null;
   /**
    * Process letters only: how many steps wait on the instance. While the letter is `failed`, the
    * events parked behind it for its retry to handle; on the letter a retry returns, the steps
@@ -51,8 +88,6 @@ export interface DeadLetter {
    */
   readonly parked?: number;
 }
-
-export type NewDeadLetter = Omit<DeadLetter, "status" | "parked">;
 
 export interface ListDeadLettersArgs {
   readonly kind?: DeadLetterKind;
@@ -64,16 +99,17 @@ export interface ListDeadLettersArgs {
 
 /**
  * `add` stores a letter as `failed` and resolves to what is stored; adding an `id` again keeps
- * the first letter.
+ * the first letter. `errorMessage` and `errorStack` are kept as they come, text or `SealedValue`,
+ * and read back as stored.
  */
 export interface DeadLetterStore {
-  add(letter: NewDeadLetter): Promise<DeadLetter>;
-  get(id: string): Promise<DeadLetter | null>;
+  add(letter: NewDeadLetter): Promise<StoredDeadLetter>;
+  get(id: string): Promise<StoredDeadLetter | null>;
   /**
    * The letters that match, oldest `firstFailedAt` first, then by `id`, so a page is the same on
    * every store.
    */
-  list(args?: ListDeadLettersArgs): Promise<readonly DeadLetter[]>;
+  list(args?: ListDeadLettersArgs): Promise<readonly StoredDeadLetter[]>;
   count(args?: ListDeadLettersArgs): Promise<number>;
   /**
    * Moves a `failed` letter to `status`. Rejects with `DeadLetterSettledError` when the letter is
@@ -84,7 +120,7 @@ export interface DeadLetterStore {
   remove(id: string): Promise<void>;
   /**
    * Removes every letter whose `persons` names `person`, whatever its status, and resolves to them
-   * in the order of `list`.
+   * in the order of `list`. A letter that names the person only in `person` stays.
    */
-  forget(person: string): Promise<readonly DeadLetter[]>;
+  forget(person: string): Promise<readonly StoredDeadLetter[]>;
 }

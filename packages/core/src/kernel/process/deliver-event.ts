@@ -157,7 +157,6 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
     event: StoredEvent,
     instanceId: string,
     letter: NewDeadLetter,
-    error: unknown,
   ): Promise<void> => {
     const within = units.over(unit);
     const entries: LifecycleEntry[] = [];
@@ -167,7 +166,7 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
       await within.append(process, instanceId, current, entries);
       await schedule.stage(unit, process, instanceId);
     }
-    await failures.file(unit.deadLetterStore, letter, error);
+    await unit.deadLetterStore.add(letter);
   };
 
   const handle = async (
@@ -188,9 +187,15 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
       run: async (unit, attempt) => {
         parked = await step(unit, process, event, instanceId, attempt);
       },
-      giveUp: (unit, error, attempts, errorType) => {
-        letter = failures.letterOf(process, event, error, attempts, errorType);
-        return failFor(unit, process, event, instanceId, letter, error);
+      giveUp: async (unit, error, attempts, errorType) => {
+        letter = await failures.letterOf(
+          process,
+          failures.subjectOf(event),
+          error,
+          attempts,
+          errorType,
+        );
+        await failFor(unit, process, event, instanceId, letter);
       },
       gaveUp: () => {
         if (letter !== undefined) failures.filed(process, letter);
@@ -220,10 +225,16 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
       leaseMs: leaseMs(process),
     });
     if (claimId === null) return "hold";
-    const letter = failures.letterOf(process, event, error, 1, "terminal");
+    const letter = await failures.letterOf(
+      process,
+      failures.subjectOf(event),
+      error,
+      1,
+      "terminal",
+    );
     try {
       await units.commit(async (unit) => {
-        await failures.file(unit.deadLetterStore, letter, error);
+        await unit.deadLetterStore.add(letter);
         await unit.inboxLedger.complete({ ...key, claimId });
       });
     } catch (failure) {

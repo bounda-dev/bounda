@@ -1,4 +1,4 @@
-import type { DeadLetter } from "../../adapter/storage/dead-letter-store.ts";
+import type { StoredDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
 import {
   DeadLetterNotRetriableError,
   DeadLetterSettledError,
@@ -65,13 +65,13 @@ export interface ProcessDeadLetters {
    * How many events wait behind a process dead letter: those parked on its instance while the
    * failure it records keeps the instance failed. `0` for any other letter.
    */
-  parkedBehind(letter: DeadLetter): Promise<number>;
+  parkedBehind(letter: StoredDeadLetter): Promise<number>;
   /**
    * After a retry of a process dead letter: how many steps of its instance still wait because
    * the process failed again, the one it failed on included, whether an event or a deadline. `0`
    * once it resumed.
    */
-  stillParked(letter: DeadLetter): Promise<number>;
+  stillParked(letter: StoredDeadLetter): Promise<number>;
 }
 
 export interface CreateProcessRetryArgs {
@@ -227,7 +227,7 @@ export const createProcessRetry: CreateProcessRetryFunction = ({
     await resume.resumeParked(process, payload.aggregateId, letter);
   };
 
-  const instanceOfLetter = async (letter: DeadLetter): Promise<ProcessInstance | null> => {
+  const instanceOfLetter = async (letter: StoredDeadLetter): Promise<ProcessInstance | null> => {
     const process = processes.byName[letter.handler];
     if (letter.kind !== "process" || process === undefined) return null;
     const instanceId =
