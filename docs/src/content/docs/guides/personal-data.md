@@ -168,15 +168,16 @@ the fields marked `personal` of that event, opened, and nothing else of its payl
 without such fields has an empty `data`. `scheduledCommands` are the commands waiting to run
 whose payload holds personal fields of theirs, with `commandId` the id the dispatch answered or,
 for one the runtime scheduled itself, the scheduler's key, and `deadLetters` those that gave up,
-each with the same `data`. After `forget`, the person's
-events are still theirs, and every field reads as `null`, as a handler reads it. An empty id is
-refused with `ValidationError`.
+each with the same `data`. After `forget`, the person's events are still theirs, and every field
+reads as `null`, as a handler reads it. An empty id is refused with `ValidationError`.
 
 Only what is marked comes out, and that is the limit to know: a field left unmarked is not
 personal data to Bounda, so the rest of `OrderPlaced` is the order's and stays out; a read model
 is a view your code builds and may hold the person in any shape, and whatever a policy sent out
 is at the mailing provider or the search index. An app that owes a person more than their marked
-fields takes this export and adds what it knows from its read models and its ports.
+fields takes this export and adds what it knows from its read models and its ports. An event
+stored before its type marked its fields names no one, so no export finds it: it holds the data
+in the clear, where `forget` does not reach it either.
 
 Each store keeps the person an event names in a `person` column, indexed with the position, and
 the adapters read by it with `readByPerson`; a scheduled command and a dead letter are found by

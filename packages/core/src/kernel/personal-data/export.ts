@@ -88,12 +88,7 @@ const markedFields = (marks: PersonalMarks | null, payload: unknown): ExportedDa
   );
 };
 
-/**
- * Gathers the person's events, read by `person` page by page, and the scheduled commands and dead
- * letters whose `persons` name them, each with only its marked fields. Nothing is locked: the
- * export is a snapshot of what each store held as it was read. Rejects with `ValidationError` an
- * empty id.
- */
+// Nothing is locked: the export holds what each store held as it was read.
 export const exportPersonalData: ExportPersonalDataFunction = async ({
   storage,
   aggregates,

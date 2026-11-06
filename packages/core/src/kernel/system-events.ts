@@ -23,7 +23,7 @@ export interface AppendSystemEventArgs {
   readonly payload: unknown;
   readonly context: CausationContext;
   /**
-   * The person the event is about, on their own stream; none by default.
+   * The person the event is about, on their own stream.
    */
   readonly person?: string;
 }
