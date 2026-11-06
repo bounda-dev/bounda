@@ -183,11 +183,14 @@ export const installFakeTelemetry: InstallFakeTelemetryFunction = () => {
   const meter = {
     createCounter: counter,
     createUpDownCounter: counter,
-    createHistogram: (metric: string) => ({
-      record: (value: number, attributes: Attributes = {}) => {
-        counts.push({ metric, value, attributes });
-      },
-    }),
+    createHistogram: (metric: string, options?: MetricOptions) => {
+      describe(metric, options);
+      return {
+        record: (value: number, attributes: Attributes = {}) => {
+          counts.push({ metric, value, attributes });
+        },
+      };
+    },
     createObservableGauge: gauge,
     createObservableCounter: gauge,
     createObservableUpDownCounter: gauge,

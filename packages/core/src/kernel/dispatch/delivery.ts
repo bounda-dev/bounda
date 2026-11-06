@@ -1,3 +1,4 @@
+import type { Span } from "@opentelemetry/api";
 import type { CheckpointStore } from "../../adapter/storage/checkpoint-store.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
@@ -17,7 +18,10 @@ export type SubscriberKind = "projection" | "policy" | "process" | "snapshot";
 export interface Subscriber {
   readonly name: string;
   readonly kind: SubscriberKind;
-  process(events: readonly StoredEvent[]): Promise<number>;
+  /**
+   * `span` is the batch's `bounda.subscriber` span.
+   */
+  process(events: readonly StoredEvent[], span: Span): Promise<number>;
 }
 
 /**
@@ -97,7 +101,7 @@ export interface CreateCheckpointedSubscriberArgs<Claim extends CheckpointClaim>
    * When the claim is a transaction, throwing out of `work` must undo everything done inside it.
    */
   readonly claim: ClaimFunction<Claim>;
-  readonly process: (events: readonly StoredEvent[], claim: Claim) => Promise<number>;
+  readonly process: (events: readonly StoredEvent[], claim: Claim, span: Span) => Promise<number>;
   readonly logger: Logger;
 }
 
@@ -129,12 +133,17 @@ export const createCheckpointedSubscriber: CreateCheckpointedSubscriberFunction 
   process,
   logger,
 }) => {
-  const commit = (afterPosition: number, events: readonly StoredEvent[], wait: boolean) =>
+  const commit = (
+    afterPosition: number,
+    events: readonly StoredEvent[],
+    wait: boolean,
+    span: Span,
+  ) =>
     claim({
       wait,
       work: async (held) => {
         if ((await held.get()) !== afterPosition) throw new DeliveryStopped("moved");
-        const done = await process(events, held);
+        const done = await process(events, held, span);
         const last = events[Math.min(done, events.length) - 1];
         if (last === undefined) throw new DeliveryStopped("held");
         if (!(await held.compareAndSet(afterPosition, last.position))) {
@@ -150,9 +159,10 @@ export const createCheckpointedSubscriber: CreateCheckpointedSubscriberFunction 
     afterPosition: number,
     events: readonly StoredEvent[],
     wait: boolean,
+    span: Span,
   ): Promise<void> => {
     try {
-      const claimed = await commit(afterPosition, events, wait);
+      const claimed = await commit(afterPosition, events, wait, span);
       if (!claimed.acquired) return;
       logger.info("subscriber applied the events before the one that failed", {
         subscriber: name,
@@ -174,9 +184,10 @@ export const createCheckpointedSubscriber: CreateCheckpointedSubscriberFunction 
     events: readonly StoredEvent[],
     first: StoredEvent,
     wait: boolean,
+    span: Span,
   ): Promise<Delivery> => {
     try {
-      const claimed = await commit(afterPosition, events, wait);
+      const claimed = await commit(afterPosition, events, wait, span);
       return { outcome: claimed.acquired ? "advanced" : "busy" };
     } catch (error) {
       if (error instanceof DeliveryStopped) return { outcome: error.outcome };
@@ -190,7 +201,7 @@ export const createCheckpointedSubscriber: CreateCheckpointedSubscriberFunction 
         failedPosition: failed.position,
         ...details,
       });
-      if (done > 0) await salvage(afterPosition, events.slice(0, done), wait);
+      if (done > 0) await salvage(afterPosition, events.slice(0, done), wait, span);
       return {
         outcome: "failed",
         failure: {
@@ -221,7 +232,7 @@ export const createCheckpointedSubscriber: CreateCheckpointedSubscriberFunction 
           [ATTRIBUTES.eventCount]: events.length,
         },
         run: async (span) => {
-          const delivery = await attempt(afterPosition, events, first, wait);
+          const delivery = await attempt(afterPosition, events, first, wait, span);
           if (delivery.outcome === "moved") {
             logger.warn("checkpoint moved by someone else; batch will be redelivered from there", {
               subscriber: name,
@@ -268,6 +279,6 @@ export const checkpointedByStore: CheckpointedByStoreFunction = ({
           checkpointStore.compareAndSet(subscriber.name, expected, position),
       }),
     }),
-    process: (events) => subscriber.process(events),
+    process: (events, _claim, span) => subscriber.process(events, span),
     logger,
   });

@@ -40,6 +40,10 @@ export const ATTRIBUTES: {
   readonly attempt: "bounda.attempt";
   readonly outcome: "bounda.outcome";
   readonly rejected: "bounda.rejected";
+  readonly aggregateVersion: "bounda.aggregate.version";
+  readonly snapshotOutcome: "bounda.snapshot.outcome";
+  readonly snapshotVersion: "bounda.snapshot.version";
+  readonly foldEvents: "bounda.fold.events";
 } = {
   correlationId: "bounda.correlation_id",
   causationId: "bounda.causation_id",
@@ -61,6 +65,10 @@ export const ATTRIBUTES: {
   attempt: "bounda.attempt",
   outcome: "bounda.outcome",
   rejected: "bounda.rejected",
+  aggregateVersion: "bounda.aggregate.version",
+  snapshotOutcome: "bounda.snapshot.outcome",
+  snapshotVersion: "bounda.snapshot.version",
+  foldEvents: "bounda.fold.events",
 };
 
 /**
@@ -68,8 +76,10 @@ export const ATTRIBUTES: {
  */
 export const SPAN_EVENTS: {
   readonly commandRejected: "bounda.command.rejected";
+  readonly snapshotWritten: "bounda.snapshot.written";
 } = {
   commandRejected: "bounda.command.rejected",
+  snapshotWritten: "bounda.snapshot.written",
 };
 
 export interface TracedArgs<T> {
@@ -130,11 +140,13 @@ export const METRICS: {
   readonly commands: "bounda.commands";
   readonly deadLetters: "bounda.dead_letters";
   readonly snapshots: "bounda.snapshots";
+  readonly foldEvents: "bounda.fold.events";
 } = {
   lag: "bounda.dispatcher.lag",
   commands: "bounda.commands",
   deadLetters: "bounda.dead_letters",
   snapshots: "bounda.snapshots",
+  foldEvents: "bounda.fold.events",
 };
 
 export interface DeadLetteredArgs {
