@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import type { StorageTransaction } from "../adapter/adapter.ts";
 import { testCommand, testContext, testDeadLetter } from "../adapter/testing/fixtures.ts";
 import { ScheduledClaimLostError } from "../contracts/errors.ts";
-import { silentLogger } from "../contracts/logger.ts";
 import { createMemoryCheckpointStore } from "./checkpoint-store.ts";
 import { memory } from "./index.ts";
 import { createCheckpointJournal, createMemoryLocks } from "./transaction.ts";
@@ -15,7 +14,7 @@ describe("createMemoryStorageTransaction", () => {
     executeAt: at(minutes),
     context: testContext,
   });
-  const storage = () => memory().createStorage({ logger: silentLogger });
+  const storage = () => memory().createStorage();
   // Refused when the transaction commits: nobody handed out this claim.
   const refused = (tx: StorageTransaction) =>
     tx.scheduler.complete({ dedupeKey: "unclaimed", revision: 0, claimId: "lost" });

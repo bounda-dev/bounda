@@ -4,9 +4,13 @@ import type {
   CreateReadModelRebuildArgs,
   StorageTransaction,
 } from "@bounda-dev/core/adapter";
-import type { SqlTransaction } from "@bounda-dev/core/adapter/sql";
+import {
+  createSqlCheckpointStore,
+  createSqlPersonalKeyStore,
+  postgresqlDialect,
+  type SqlTransaction,
+} from "@bounda-dev/core/adapter/sql";
 import postgres, { type Sql } from "postgres";
-import { createPostgresqlCheckpointStore } from "./checkpoint-store.ts";
 import { createPostgresqlDatabase, type PostgresqlDatabase } from "./database.ts";
 import { createPostgresqlDeadLetterStore } from "./dead-letter-store.ts";
 import { createPostgresqlEventNotifier } from "./event-notifier.ts";
@@ -14,7 +18,6 @@ import { createPostgresqlEventStore } from "./event-store.ts";
 import { createPostgresqlIdempotencyStore } from "./idempotency-store.ts";
 import { createPostgresqlInboxLedger } from "./inbox-ledger.ts";
 import { type PostgresqlOptions, resolvePostgresqlOptions } from "./options.ts";
-import { createPostgresqlPersonalKeyStore } from "./personal-key-store.ts";
 import { openPostgresqlReadModel, rebuildPostgresqlReadModel } from "./read-model.ts";
 import { createPostgresqlScheduler } from "./scheduler.ts";
 import { ensureStorageSchema, storageTablesFor } from "./schema.ts";
@@ -110,7 +113,8 @@ export const postgresql: PostgresqlFunction = (options) => {
             table: tables.idempotencyKeys,
             personalKeys: tables.personalKeys,
           }),
-          personalKeys: createPostgresqlPersonalKeyStore({
+          personalKeys: createSqlPersonalKeyStore({
+            dialect: postgresqlDialect,
             db: database,
             table: tables.personalKeys,
           }),
@@ -128,7 +132,11 @@ export const postgresql: PostgresqlFunction = (options) => {
         return {
           ...storesOver(db),
           notifier: createPostgresqlEventNotifier({ sql, channel: tables.channel }),
-          checkpointStore: createPostgresqlCheckpointStore({ db, table: tables.checkpoints }),
+          checkpointStore: createSqlCheckpointStore({
+            db,
+            table: tables.checkpoints,
+            dialect: postgresqlDialect,
+          }),
           // The append lock comes first, before any row the work may lock: two transactions that
           // took the lock and a row in opposite orders would deadlock.
           transact: (work) =>

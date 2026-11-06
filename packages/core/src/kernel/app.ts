@@ -283,7 +283,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
   // What a start that fails has to close, in the order `stop` closes it.
   const opened: (() => Promise<void>)[] = [];
   try {
-    const written = await config.storage.createStorage({ logger });
+    const written = await config.storage.createStorage();
     opened.unshift(() => written.close());
     const aggregates = buildAggregates({ registry, ports: ports.byAggregate, config });
     const storage = appStorage({ storage: written, aggregates });

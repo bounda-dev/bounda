@@ -3,7 +3,6 @@ import type { NewDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { ValidationError } from "../../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
-import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import { type FakeTelemetry, installFakeTelemetry } from "../telemetry-fake.ts";
 import { createRecordingLogger } from "../test-support.ts";
@@ -76,7 +75,7 @@ afterEach(() => {
 const setup = async () => {
   const recording = installFakeTelemetry();
   telemetry = recording;
-  const storage = await memory().createStorage({ logger: silentLogger });
+  const storage = await memory().createStorage();
   const { logger, entries } = createRecordingLogger();
   const clock = createFixedClock(new Date("2026-03-04T05:06:07.000Z"));
   const failures = createProcessFailures({

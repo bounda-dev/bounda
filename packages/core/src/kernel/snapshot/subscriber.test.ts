@@ -43,7 +43,7 @@ const setUp = async ({ aggregate: name = "order", strict = false }: SetUpArgs = 
   const aggregate = buildAggregates({ registry, ports: choosePorts(registry, config), config })
     .byName[name];
   if (aggregate === undefined || !takesSnapshots(aggregate)) throw new Error("no aggregate");
-  const storage = await adapter.createStorage({ logger: createRecordingLogger().logger });
+  const storage = await adapter.createStorage();
   const { logger, entries } = createRecordingLogger();
   const errors: SnapshotError[] = [];
   const snapshotStore = {

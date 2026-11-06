@@ -152,7 +152,7 @@ describe("upcastEvent", () => {
 
 describe("withUpcasting", () => {
   it("upcasts what load and readAll return and leaves writes and positions alone", async () => {
-    const raw = (await memory().createStorage({ logger: silentLogger })).eventStore;
+    const raw = (await memory().createStorage()).eventStore;
     const store = withUpcasting({ eventStore: raw, aggregates });
     const appended = await store.append({
       aggregateType: "order",
@@ -187,7 +187,7 @@ describe("withUpcasting", () => {
 describe("an app over events stored with an older shape", () => {
   it("folds them, projects them, rebuilds from them and writes new ones with the current version", async () => {
     const adapter = memory();
-    const raw = await adapter.createStorage({ logger: silentLogger });
+    const raw = await adapter.createStorage();
     await raw.eventStore.append({
       aggregateType: "order",
       aggregateId: "o-1",
@@ -268,7 +268,7 @@ describe("an app over events stored with an older shape", () => {
 
   it("reads them from its global stream as they were stored, even one from newer code", async () => {
     const adapter = memory();
-    const raw = await adapter.createStorage({ logger: silentLogger });
+    const raw = await adapter.createStorage();
     await raw.eventStore.append({
       aggregateType: "order",
       aggregateId: "o-1",

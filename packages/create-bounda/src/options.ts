@@ -5,13 +5,13 @@ export type Framework = "none" | "react-router";
 export type Database = "sqlite" | "postgresql" | "durable-object";
 export type PackageManager = "pnpm" | "npm" | "yarn" | "bun";
 
-export const RUNTIMES: readonly Runtime[] = ["node", "cloudflare"];
-export const FRAMEWORKS: readonly Framework[] = ["none", "react-router"];
+const RUNTIMES: readonly Runtime[] = ["node", "cloudflare"];
+const FRAMEWORKS: readonly Framework[] = ["none", "react-router"];
 // `durable-object` is never chosen: it comes with the `cloudflare` runtime, whose store is the
 // Durable Object's own SQLite.
-export const DATABASES: readonly Database[] = ["sqlite", "postgresql"];
-export const PACKAGE_MANAGERS: readonly PackageManager[] = ["pnpm", "npm", "yarn", "bun"];
-export const DEFAULT_DIRECTORY: string = "bounda-app";
+const DATABASES: readonly Database[] = ["sqlite", "postgresql"];
+const PACKAGE_MANAGERS: readonly PackageManager[] = ["pnpm", "npm", "yarn", "bun"];
+const DEFAULT_DIRECTORY: string = "bounda-app";
 
 // Gates the `cloudflare` runtime in the prompt: a runtime whose package is not on npm yet stays
 // out, so nobody picks an option whose install fails.

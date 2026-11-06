@@ -16,7 +16,7 @@ import {
 import { createDispatcher } from "./dispatcher.ts";
 
 const setup = async (count: number) => {
-  const { eventStore, checkpointStore } = await memory().createStorage({ logger: silentLogger });
+  const { eventStore, checkpointStore } = await memory().createStorage();
   await eventStore.append({
     aggregateType: "order",
     aggregateId: "1",

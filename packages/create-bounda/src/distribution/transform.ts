@@ -45,11 +45,11 @@ export const mergeManifest: MergeManifestFunction = (base, patch) => {
   return ordered;
 };
 
-export interface MapDependenciesFunction {
+interface MapDependenciesFunction {
   (manifest: JsonObject, map: (name: string, specifier: string) => string): JsonObject;
 }
 
-export const mapDependencies: MapDependenciesFunction = (manifest, map) => {
+const mapDependencies: MapDependenciesFunction = (manifest, map) => {
   const mapped: Record<string, Json> = { ...manifest };
   for (const field of DEPENDENCY_FIELDS) {
     const dependencies = manifest[field];
