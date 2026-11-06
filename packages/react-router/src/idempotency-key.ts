@@ -10,19 +10,24 @@ export const IDEMPOTENCY_KEY_FIELD = "idempotencyKey";
 
 const FORM = /^(application\/x-www-form-urlencoded|multipart\/form-data)\b/i;
 
+// The largest form the key is read from: a copy of the body is parsed whole, files included, so
+// past this an upload would be held twice; such a route keys its requests with the header.
+export const MAX_FORM_BYTES: number = 1_048_576;
+
 export interface IdempotencyKeyOfFunction {
   (request: Request): Promise<string | null>;
 }
 
 // The request's `Idempotency-Key` header or, without one, the `idempotencyKey` field of the form
 // it posts, since a browser form sends no headers. The form is read from a clone, so the action
-// still reads the body; any other body is never cloned, since a clone keeps a copy of it in
-// memory. A body already read, or one that does not parse, yields no key: the action meets the
-// error itself.
+// still reads the body; any other body, or a form that declares a length over `MAX_FORM_BYTES`,
+// is never cloned, since a clone keeps a copy of it in memory. A body already read, or one that
+// does not parse, yields no key: the action meets the error itself.
 export const idempotencyKeyOf: IdempotencyKeyOfFunction = async (request) => {
   const header = request.headers.get(IDEMPOTENCY_KEY_HEADER);
   if (header !== null) return header;
   if (!FORM.test(request.headers.get("Content-Type") ?? "")) return null;
+  if (Number(request.headers.get("Content-Length")) > MAX_FORM_BYTES) return null;
   try {
     const field = (await request.clone().formData()).get(IDEMPOTENCY_KEY_FIELD);
     return typeof field === "string" ? field : null;

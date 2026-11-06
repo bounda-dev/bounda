@@ -136,6 +136,17 @@ export const configForObject: ConfigForObjectFunction = (config, storage) => {
   };
 };
 
+// Only a facade's own members: a name such as `constructor` or `toString` reaches a Function of
+// `Object.prototype` through a plain lookup, and the Worker lets any identifier through.
+const ownFunction = <F extends (...args: never[]) => unknown>(
+  target: object,
+  name: string,
+): F | undefined => {
+  if (!Object.hasOwn(target, name)) return undefined;
+  const member: unknown = Reflect.get(target, name);
+  return typeof member === "function" ? (member as F) : undefined;
+};
+
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
@@ -240,10 +251,10 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
     ): Promise<RpcOutcome<DispatchResult>> {
       return settle(async () => {
         const app = this.#ready();
-        const dispatch = Reflect.get(app.commands, name) as
-          | ((payload?: unknown, options?: DispatchOptions) => Promise<DispatchResult>)
-          | undefined;
-        if (typeof dispatch !== "function") throw new NotFoundError(`Unknown command "${name}"`);
+        const dispatch = ownFunction<
+          (payload?: unknown, options?: DispatchOptions) => Promise<DispatchResult>
+        >(app.commands, name);
+        if (dispatch === undefined) throw new NotFoundError(`Unknown command "${name}"`);
         const result = await dispatch(payload, options);
         // Under "eventual" the read models are behind, so the rearm arms the alarm for now.
         if (consistency !== "eventual") await app.catchUpReadModels({ through: result });
@@ -254,10 +265,11 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
 
     query(name: string, payload?: unknown): Promise<RpcOutcome<unknown>> {
       return settle(async () => {
-        const run = Reflect.get(this.#ready().queries, name) as
-          | ((payload?: unknown) => Promise<unknown>)
-          | undefined;
-        if (typeof run !== "function") throw new NotFoundError(`Unknown query "${name}"`);
+        const run = ownFunction<(payload?: unknown) => Promise<unknown>>(
+          this.#ready().queries,
+          name,
+        );
+        if (run === undefined) throw new NotFoundError(`Unknown query "${name}"`);
         return run(payload);
       });
     }

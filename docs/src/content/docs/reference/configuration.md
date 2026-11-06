@@ -84,7 +84,8 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
 ### Dispatcher
 
 - **`dispatcher.pollInterval`**, default `"100ms"`. How long the dispatcher waits between passes
-  when it polls, and the pace of the scheduled-command worker.
+  when it polls, and the pace of the scheduled-command worker, whose pass reads when the next
+  command is due and claims only once one is.
 - **`dispatcher.idleInterval`**, default `"30s"`. With an adapter that pushes notifications
   (PostgreSQL), how long an idle dispatcher waits for one before polling anyway. Ignored without
   notifications.

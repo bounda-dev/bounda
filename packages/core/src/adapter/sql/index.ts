@@ -1,7 +1,24 @@
+export type {
+  CreateSqlCheckpointStoreArgs,
+  CreateSqlCheckpointStoreFunction,
+} from "./checkpoint-store.ts";
+export { createSqlCheckpointStore } from "./checkpoint-store.ts";
 export type { SqlDatabase, SqlTransaction } from "./database.ts";
 export { byFirstFailure } from "./dead-letters.ts";
 export { postgresqlDialect } from "./dialect.ts";
-export { quoteIdentifier, storageTableNameFor, tableNameFor } from "./identifiers.ts";
+export type { InsertEventsArgs, InsertEventsFunction, InsertStatement } from "./event-rows.ts";
+export { EVENTS_PER_INSERT, insertEventsStatements, positionsByVersion } from "./event-rows.ts";
+export {
+  DEFAULT_TABLE_PREFIX,
+  quoteIdentifier,
+  storageTableNameFor,
+  tableNameFor,
+} from "./identifiers.ts";
+export type {
+  CreateSqlPersonalKeyStoreArgs,
+  CreateSqlPersonalKeyStoreFunction,
+} from "./personal-key-store.ts";
+export { createSqlPersonalKeyStore } from "./personal-key-store.ts";
 export type { ExistingColumn } from "./read-model-schema.ts";
 export {
   columnsOf,

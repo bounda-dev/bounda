@@ -1,6 +1,8 @@
 import { ConfigurationError } from "../../contracts/errors.ts";
 
 const IDENTIFIER = /^[a-z][a-z0-9_]*$/;
+// PostgreSQL cuts a longer one to this in silence, so two long names could become one.
+const MAX_IDENTIFIER_LENGTH = 63;
 
 export interface ToSnakeCaseFunction {
   (name: string): string;
@@ -33,6 +35,11 @@ export const assertIdentifier: AssertIdentifierFunction = ({ name, subject }) =>
   if (!IDENTIFIER.test(name)) {
     throw new ConfigurationError(
       `${subject} "${name}" is not a valid SQL identifier; use lower-case letters, digits and underscores, starting with a letter`,
+    );
+  }
+  if (name.length > MAX_IDENTIFIER_LENGTH) {
+    throw new ConfigurationError(
+      `${subject} "${name}" is longer than ${MAX_IDENTIFIER_LENGTH} characters, which PostgreSQL would cut; shorten the name`,
     );
   }
   return name;
@@ -86,3 +93,8 @@ export interface StorageTableNameForFunction {
  */
 export const storageTableNameFor: StorageTableNameForFunction = ({ prefix, table }) =>
   assertIdentifier({ name: `${prefix}${toSnakeCase(table)}`, subject: "Table name" });
+
+/**
+ * What `tablePrefix` defaults to in every adapter: put in front of every table Bounda creates.
+ */
+export const DEFAULT_TABLE_PREFIX: string = "bounda_";

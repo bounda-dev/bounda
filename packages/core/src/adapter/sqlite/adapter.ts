@@ -4,13 +4,14 @@ import type {
   CreateReadModelRebuildArgs,
   StorageTransaction,
 } from "../adapter.ts";
+import { createSqlCheckpointStore } from "../sql/checkpoint-store.ts";
 import type { SqlDatabase, SqlTransaction } from "../sql/database.ts";
-import { createSqliteCheckpointStore } from "./checkpoint-store.ts";
+import { sqliteDialect } from "../sql/dialect.ts";
+import { createSqlPersonalKeyStore } from "../sql/personal-key-store.ts";
 import { createSqliteDeadLetterStore } from "./dead-letter-store.ts";
 import { createSqliteEventStore } from "./event-store.ts";
 import { createSqliteIdempotencyStore } from "./idempotency-store.ts";
 import { createSqliteInboxLedger } from "./inbox-ledger.ts";
-import { createSqlitePersonalKeyStore } from "./personal-key-store.ts";
 import { openSqliteReadModel, rebuildSqliteReadModel } from "./read-model.ts";
 import { createSqliteScheduler } from "./scheduler.ts";
 import { ensureStorageSchema, storageTablesFor } from "./schema.ts";
@@ -95,7 +96,11 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
             table: tables.idempotencyKeys,
             personalKeys: tables.personalKeys,
           }),
-          personalKeys: createSqlitePersonalKeyStore({ db: database, table: tables.personalKeys }),
+          personalKeys: createSqlPersonalKeyStore({
+            db: database,
+            table: tables.personalKeys,
+            dialect: sqliteDialect,
+          }),
           snapshotStore: createSqliteSnapshotStore({
             db: database,
             table: tables.snapshots,
@@ -111,7 +116,11 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
         });
         return {
           ...storesOver(db),
-          checkpointStore: createSqliteCheckpointStore({ db, table: tables.checkpoints }),
+          checkpointStore: createSqlCheckpointStore({
+            db,
+            table: tables.checkpoints,
+            dialect: sqliteDialect,
+          }),
           transact: (work) => db.write((tx) => work(storesOver(boundTo(tx)))),
           close: release,
         };

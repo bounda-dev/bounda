@@ -39,6 +39,28 @@ export const eventStoreContract: EventStoreContractFunction = ({ create }) => {
       expect(await store.lastPosition()).toBe(2);
     });
 
+    it("appends more events than one statement carries, each at its position, in order", async () => {
+      const events = Array.from({ length: 30 }, (_, index) =>
+        pendingEvent({ aggregateId: "1", version: index + 1, payload: { index } }),
+      );
+      const result = await store.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events,
+      });
+      expect(result.version).toBe(30);
+      expect(result.events.map((event) => event.position)).toEqual(
+        events.map((_, index) => index + 1),
+      );
+      expect(result.events.map((event) => event.payload)).toEqual(events.map((e) => e.payload));
+      const loaded = await store.load({ aggregateType: "order", aggregateId: "1" });
+      expect(loaded.version).toBe(30);
+      expect(loaded.events.map((event) => [event.version, event.position])).toEqual(
+        events.map((_, index) => [index + 1, index + 1]),
+      );
+    });
+
     it("loads a stream with its version and preserves every field, in the global stream too", async () => {
       await store.append({
         aggregateType: "order",

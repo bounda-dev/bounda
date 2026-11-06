@@ -129,9 +129,10 @@ export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ d
       );
       return rows.map(toClaimed).sort(byExecuteAt);
     },
+    // Two minimums the indexes answer without a scan: the Durable Object asks after every command.
     nextDueAt: async ({ leaseMs }) => {
       const [row] = await db.all(
-        `SELECT MIN(CASE WHEN "claimed_at" IS NULL THEN "execute_at" END) AS "unclaimed", MIN("claimed_at") AS "claimed" FROM ${table}`,
+        `SELECT (SELECT MIN("execute_at") FROM ${table} WHERE "claimed_at" IS NULL) AS "unclaimed", (SELECT MIN("claimed_at") FROM ${table} WHERE "claimed_at" IS NOT NULL) AS "claimed"`,
         [],
       );
       return earliestDue({ unclaimed: row?.unclaimed, claimed: row?.claimed, leaseMs });

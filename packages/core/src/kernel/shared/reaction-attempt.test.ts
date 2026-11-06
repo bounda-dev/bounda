@@ -5,7 +5,6 @@ import { pendingEvent } from "../../adapter/testing/fixtures.ts";
 import type { ResolvedRetryConfig } from "../../config/types.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { ValidationError } from "../../contracts/errors.ts";
-import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import type { UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import { runAttempt } from "./reaction-attempt.ts";
@@ -26,7 +25,7 @@ interface Options {
 }
 
 const setUp = async () => {
-  const storage = await memory().createStorage({ logger: silentLogger });
+  const storage = await memory().createStorage();
   const clock = createFixedClock();
   const runs: number[] = [];
   const retries: number[] = [];

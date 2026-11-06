@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { createFixedClock, type FixedClock } from "../../contracts/clock.ts";
-import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import { createRecordingLogger, eventually } from "../test-support.ts";
 import type { CheckpointedSubscriber, Delivery } from "./delivery.ts";
@@ -49,7 +48,7 @@ const setUp = async (
   subscribers: readonly (Subscriber | CheckpointedSubscriber)[],
   catchUp?: DispatcherCatchUp,
 ) => {
-  const { eventStore, checkpointStore } = await memory().createStorage({ logger: silentLogger });
+  const { eventStore, checkpointStore } = await memory().createStorage();
   const clock = createFixedClock();
   const { logger, entries } = createRecordingLogger();
   const dispatcher = createDispatcher({

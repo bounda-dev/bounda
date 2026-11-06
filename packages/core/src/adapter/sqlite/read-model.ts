@@ -3,6 +3,7 @@ import type { Logger } from "../../contracts/logger.ts";
 import type { FieldsRecord } from "../../modules/view.ts";
 import type { ReadModelRebuild, ReadModelStorage } from "../index.ts";
 import { rebuildFencing } from "../rebuild-fencing.ts";
+import { createSqlCheckpointStore } from "../sql/checkpoint-store.ts";
 import type { SqlDatabase } from "../sql/database.ts";
 import { sqliteDialect } from "../sql/dialect.ts";
 import {
@@ -20,7 +21,6 @@ import {
   tableNameFor,
 } from "../sql/index.ts";
 import type { SqlExecutor } from "../sql/sql-table.ts";
-import { createSqliteCheckpointStore } from "./checkpoint-store.ts";
 import { checkpointTableStatement } from "./schema.ts";
 
 const quoteName = (name: string): string => `"${name.replaceAll('"', '""')}"`;
@@ -131,7 +131,7 @@ export const openSqliteReadModel: OpenSqliteReadModelFunction = async <
       executor: db,
       raw,
     }),
-    checkpointStore: createSqliteCheckpointStore({ db, table: checkpoints }),
+    checkpointStore: createSqlCheckpointStore({ dialect: sqliteDialect, db, table: checkpoints }),
     // SQLite has a single writer, so holding the write transaction is the lock and `wait` changes
     // nothing.
     transact: ({ work }) =>
@@ -152,7 +152,11 @@ export const openSqliteReadModel: OpenSqliteReadModelFunction = async <
             executor: tx,
             raw: tx.raw,
           }),
-          checkpointStore: createSqliteCheckpointStore({ db: tx, table: checkpoints }),
+          checkpointStore: createSqlCheckpointStore({
+            dialect: sqliteDialect,
+            db: tx,
+            table: checkpoints,
+          }),
         }),
       })),
     close,
@@ -195,7 +199,7 @@ export const rebuildSqliteReadModel: RebuildSqliteReadModelFunction = async <
   const columns = columnsOf({ readModel: name, fields, dialect: sqliteDialect });
   const fencing = rebuildFencing(name);
   const checkpointsIn = (executor: SqlExecutor) =>
-    createSqliteCheckpointStore({ db: executor, table: checkpoints });
+    createSqlCheckpointStore({ dialect: sqliteDialect, db: executor, table: checkpoints });
   await db.run(checkpointTableStatement(checkpoints), []);
   const opened = await db.write(async (tx) => {
     const store = checkpointsIn(tx);

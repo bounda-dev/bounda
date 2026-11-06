@@ -75,7 +75,7 @@ const setUp = async ({
   const aggregate = buildAggregates({ registry, ports: choosePorts(registry, config), config })
     .byName.order;
   if (aggregate === undefined) throw new Error("no order aggregate");
-  const storage = await adapter.createStorage({ logger: { ...createRecordingLogger().logger } });
+  const storage = await adapter.createStorage();
   const snapshotStore = {
     get: vi.fn(storage.snapshotStore.get),
     put: vi.fn(storage.snapshotStore.put),

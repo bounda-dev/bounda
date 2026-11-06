@@ -65,10 +65,7 @@ export interface AdapterForReadModelFunction {
 /**
  * The adapter a read model lives on: its own entry under `readModels`, or `storage`.
  */
-export const adapterForReadModel: AdapterForReadModelFunction = ({ name, config }) =>
-  adapterFor(name, config);
-
-const adapterFor = (name: string, config: ResolvedConfig): Adapter => {
+export const adapterForReadModel: AdapterForReadModelFunction = ({ name, config }) => {
   const definition = config.readModels[name] ?? config.storage;
   if (!isAdapter(definition)) {
     throw new ConfigurationError(
@@ -92,17 +89,17 @@ export const compileProjections: CompileProjectionsFunction = ({ name, entry }) 
   projectionsByEvent: groupByEvent(entry.projections),
 });
 
-export interface CompileReadModelArgs {
+interface CompileReadModelArgs {
   readonly name: string;
   readonly entry: ReadModelEntry;
   readonly storage: ReadModelStorage;
 }
 
-export interface CompileReadModelFunction {
+interface CompileReadModelFunction {
   (args: CompileReadModelArgs): ReadModelRuntime;
 }
 
-export const compileReadModel: CompileReadModelFunction = ({ name, entry, storage }) => ({
+const compileReadModel: CompileReadModelFunction = ({ name, entry, storage }) => ({
   ...compileProjections({ name, entry }),
   fields: entry.view.fields({ f: fieldBuilder }),
   storage,
@@ -116,7 +113,9 @@ const buildReadModel = async (
   logger: Logger,
 ): Promise<ReadModelRuntime> => {
   const fields = entry.view.fields({ f: fieldBuilder });
-  const storage = await adapterFor(name, config).createReadModel<Record<string, unknown>>({
+  const storage = await adapterForReadModel({ name, config }).createReadModel<
+    Record<string, unknown>
+  >({
     name,
     fields,
     logger,

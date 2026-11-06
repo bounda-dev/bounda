@@ -3,7 +3,6 @@ export type {
   CommitReadModelRebuildArgs,
   CreateReadModelArgs,
   CreateReadModelRebuildArgs,
-  CreateStorageArgs,
   ReadModelRebuild,
   ReadModelStorage,
   ReadModelTransactArgs,

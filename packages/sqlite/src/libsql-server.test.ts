@@ -1,4 +1,3 @@
-import { silentLogger } from "@bounda-dev/core";
 import {
   eventStoreContract,
   readModelRebuildContract,
@@ -34,7 +33,7 @@ afterAll(async () => {
 
 describe.skipIf(server === null)("sqlite adapter on a libSQL server", () => {
   eventStoreContract({
-    create: async () => (await fresh().createStorage({ logger: silentLogger })).eventStore,
+    create: async () => (await fresh().createStorage()).eventStore,
   });
   readModelTransactionContract({ create: async () => fresh(), locking: "single-writer" });
   readModelRebuildContract({ create: async () => fresh() });

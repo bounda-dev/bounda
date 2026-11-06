@@ -1,7 +1,6 @@
-import type { SqlDatabase, SqlExecutor } from "@bounda-dev/core/adapter/sql";
+import type { SqlExecutor } from "@bounda-dev/core/adapter/sql";
+import type { SqliteConnection } from "@bounda-dev/core/adapter/sqlite";
 import type { Client, InValue, ResultSet, Transaction } from "@libsql/client";
-
-export type SqliteDatabase = SqlDatabase;
 
 export interface CreateSqliteDatabaseOptions {
   /**
@@ -17,16 +16,8 @@ export interface CreateSqliteDatabaseOptions {
   readonly wal: boolean;
 }
 
-/**
- * The database the stores use, and the client queries get as `client.raw`.
- */
-export interface SqliteConnection {
-  readonly db: SqliteDatabase;
-  readonly raw: Client;
-}
-
 export interface CreateSqliteDatabaseFunction {
-  (client: Client, options: CreateSqliteDatabaseOptions): SqliteConnection;
+  (client: Client, options: CreateSqliteDatabaseOptions): SqliteConnection<Client>;
 }
 
 const toRows = (result: ResultSet): readonly Record<string, unknown>[] =>

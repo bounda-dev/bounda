@@ -38,10 +38,3 @@ export const createKeptPersonalKeyStore: CreateKeptPersonalKeyStoreFunction = ()
     entries: createStoreEntries(keys, (person) => person),
   };
 };
-
-export interface CreateMemoryPersonalKeyStoreFunction {
-  (): PersonalKeyStore;
-}
-
-export const createMemoryPersonalKeyStore: CreateMemoryPersonalKeyStoreFunction = () =>
-  createKeptPersonalKeyStore().store;

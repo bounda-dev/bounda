@@ -369,7 +369,7 @@ export const readModelRebuildContract: ReadModelRebuildContractFunction = ({
     });
 
     it("keeps a read model named after a storage table apart from the storage", async () => {
-      const storage = await adapter.createStorage({ logger: silentLogger });
+      const storage = await adapter.createStorage();
       await storage.eventStore.append({
         aggregateType: "order",
         aggregateId: "1",

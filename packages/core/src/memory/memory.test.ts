@@ -24,7 +24,7 @@ import { fieldBuilder as f } from "../modules/view.ts";
 import { createMemoryEventStore } from "./event-store.ts";
 import { memory } from "./index.ts";
 
-const storage = async () => memory().createStorage({ logger: silentLogger });
+const storage = async () => memory().createStorage();
 
 describe("memory adapter", () => {
   eventStoreContract({ create: async () => (await storage()).eventStore });
@@ -114,7 +114,7 @@ describe("memory adapter", () => {
   });
 
   it("answers, inside a transaction, the positions its events commit with", async () => {
-    const storage = await memory().createStorage({ logger: silentLogger });
+    const storage = await memory().createStorage();
     await storage.eventStore.append({
       aggregateType: "order",
       aggregateId: "1",
@@ -148,7 +148,7 @@ describe("memory adapter", () => {
   });
 
   it("shows an event appended beside a transaction only once the transaction settles, in position order", async () => {
-    const storage = await memory().createStorage({ logger: silentLogger });
+    const storage = await memory().createStorage();
     const heard: (number | undefined)[] = [];
     await (storage.notifier as NonNullable<typeof storage.notifier>).subscribe((position) => {
       heard.push(position);
@@ -193,7 +193,7 @@ describe("memory adapter", () => {
   });
 
   it("gives back the positions of a transaction that fails: the tail when nothing came after, a gap readers skip otherwise", async () => {
-    const storage = await memory().createStorage({ logger: silentLogger });
+    const storage = await memory().createStorage();
     const heard: (number | undefined)[] = [];
     await (storage.notifier as NonNullable<typeof storage.notifier>).subscribe((position) => {
       heard.push(position);
@@ -260,7 +260,7 @@ describe("memory adapter", () => {
   });
 
   it("puts every store back when a write fails while a transaction is being applied", async () => {
-    const storage = await memory().createStorage({ logger: silentLogger });
+    const storage = await memory().createStorage();
     const key = { handler: "order.p", eventId: "e1" };
     const now = new Date("2026-01-01T00:00:00.000Z");
     const context = { correlationId: "c", causationId: "c", depth: 0 };
@@ -360,9 +360,9 @@ describe("memory adapter", () => {
     const adapter = memory();
     expect(isAdapter(adapter)).toBe(true);
     expect(adapter).toMatchObject({ kind: "bounda-adapter", name: "memory", options: {} });
-    const first = await adapter.createStorage({ logger: silentLogger });
-    const again = await adapter.createStorage({ logger: silentLogger });
-    const second = await memory().createStorage({ logger: silentLogger });
+    const first = await adapter.createStorage();
+    const again = await adapter.createStorage();
+    const second = await memory().createStorage();
     await first.checkpointStore.set("policies", 4);
     expect(await again.checkpointStore.get("policies")).toBe(4);
     expect(await second.checkpointStore.get("policies")).toBe(0);
@@ -370,7 +370,7 @@ describe("memory adapter", () => {
   });
 
   it("notifies every subscriber of an append with the last position, until they unsubscribe", async () => {
-    const storage = await memory().createStorage({ logger: silentLogger });
+    const storage = await memory().createStorage();
     const heard: (number | undefined)[] = [];
     const stop = await (storage.notifier as NonNullable<typeof storage.notifier>).subscribe(
       (position) => {

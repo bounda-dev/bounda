@@ -6,9 +6,11 @@ import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { isRecord } from "../shared/merge-fields.ts";
 import {
   generatePersonalKey,
+  holdsSealed,
   importPersonalKey,
   isSealed,
   type PersonalKey,
+  refuseSealed,
   type SealedValue,
   seal,
   unseal,
@@ -89,8 +91,14 @@ export const withPersonalData: WithPersonalDataFunction = ({ eventStore, aggrega
     event: PendingEvent,
     key: (person: string) => Promise<PersonalKey>,
   ): Promise<PendingEvent> => {
+    if (!isRecord(event.payload)) return event;
+    refuseSealed({
+      payload: event.payload,
+      subject: `Event ${event.type} of ${event.aggregateType}:${event.aggregateId}`,
+      writer: "handler",
+    });
     const marks = marksOf(event);
-    if (marks === null || !isRecord(event.payload)) return event;
+    if (marks === null) return event;
     const person =
       marks.person === null ? event.aggregateId : personOf(event, event.payload, marks.person);
     const payload: Record<string, unknown> = { ...event.payload };
@@ -102,23 +110,39 @@ export const withPersonalData: WithPersonalDataFunction = ({ eventStore, aggrega
     return { ...event, payload };
   };
 
-  const unsealed = async (
+  const open = async (
     event: StoredEvent,
+    payload: Record<string, unknown>,
     key: (person: string) => Promise<PersonalKey | null>,
     opened: Map<string, string>,
   ): Promise<StoredEvent> => {
-    if (!isRecord(event.payload)) return event;
-    const entries = Object.entries(event.payload).filter(([, value]) => isSealed(value));
-    if (entries.length === 0) return event;
-    const payload: Record<string, unknown> = { ...event.payload };
-    for (const [field, value] of entries as [string, SealedValue][]) {
-      const { person, key: sealedUnder } = value.$personal;
+    const unsealed: Record<string, unknown> = { ...payload };
+    for (const field in payload) {
+      const value = payload[field];
+      if (!isSealed(value)) continue;
+      const { person, key: sealedUnder } = (value as SealedValue).$personal;
       const personal = await key(person);
-      payload[field] = await unseal({ key: personal, sealed: value });
+      unsealed[field] = await unseal({ key: personal, sealed: value as SealedValue });
       if (personal?.fingerprint === sealedUnder) opened.set(person, sealedUnder);
     }
-    return { ...event, payload };
+    return { ...event, payload: unsealed };
   };
+
+  // Most events hold nothing sealed, and a batch is read once per subscriber per pass: such an
+  // event comes back as it is, with no promise and no copy.
+  const unsealed = (
+    event: StoredEvent,
+    key: (person: string) => Promise<PersonalKey | null>,
+    opened: Map<string, string>,
+  ): StoredEvent | Promise<StoredEvent> =>
+    isRecord(event.payload) && holdsSealed(event.payload)
+      ? open(event, event.payload, key, opened)
+      : event;
+
+  const settled = (events: readonly (StoredEvent | Promise<StoredEvent>)[]) =>
+    events.some((event) => event instanceof Promise)
+      ? Promise.all(events)
+      : Promise.resolve(events as StoredEvent[]);
 
   const opening = (): ((person: string) => Promise<PersonalKey | null>) => {
     const cache = keyCache<PersonalKey | null>();
@@ -148,13 +172,13 @@ export const withPersonalData: WithPersonalDataFunction = ({ eventStore, aggrega
       const loaded = await eventStore.load(args);
       const key = opening();
       const fingerprints = new Map<string, string>();
-      const events = await Promise.all(loaded.events.map((e) => unsealed(e, key, fingerprints)));
+      const events = await settled(loaded.events.map((e) => unsealed(e, key, fingerprints)));
       return { ...loaded, events, fingerprints };
     },
     readAll: async (args) => {
       const key = opening();
       const ignored = new Map<string, string>();
-      return Promise.all((await eventStore.readAll(args)).map((e) => unsealed(e, key, ignored)));
+      return settled((await eventStore.readAll(args)).map((e) => unsealed(e, key, ignored)));
     },
     lastPosition: () => eventStore.lastPosition(),
   };

@@ -24,7 +24,7 @@ export interface SnapshotSubscriberNameFunction {
   (aggregate: string): string;
 }
 
-export const snapshotSubscriberName: SnapshotSubscriberNameFunction = (aggregate) =>
+const snapshotSubscriberName: SnapshotSubscriberNameFunction = (aggregate) =>
   `snapshot:${aggregate}`;
 
 export interface CreateSnapshotSubscriberArgs {
