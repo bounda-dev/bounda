@@ -142,7 +142,7 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
       ...(theirs && letter.errorStack !== undefined
         ? { errorStack: await openText(letter.errorStack) }
         : {}),
-      data: letter.payload === undefined ? {} : await openedData(letter.eventType, letter.payload),
+      data: await openedData(letter.eventType, letter.payload),
     };
   };
 
