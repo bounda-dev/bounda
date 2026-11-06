@@ -23,6 +23,16 @@ const alarmOf = (stub: ReturnType<typeof fresh>) =>
     state.storage.getAlarm(),
   );
 
+// An alarm already due is one the runtime is running on its own, and its handler clears or re-arms
+// it when done; only a later one, or none, is the object's settled answer.
+const settledAlarm = async (stub: ReturnType<typeof fresh>) => {
+  for (;;) {
+    const at = await alarmOf(stub);
+    if (at === null || at > Date.now()) return at;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+};
+
 // The object arms its alarm for now after a request, so the runtime may fire it on its own before
 // `runDurableObjectAlarm` looks, which then runs nothing and returns while that alarm is still
 // under way. The handler called inside the object returns once the work is done, whichever ran it.
@@ -141,7 +151,7 @@ describe("a Bounda Durable Object", () => {
     expect(forgotten.alarm).toBeLessThanOrEqual(Date.now());
     await runAlarm(stub);
     expect((await store.getLag()).maxLag).toBe(0);
-    expect(await alarmOf(stub)).toBeNull();
+    expect(await settledAlarm(stub)).toBeNull();
   });
 
   it("checks a command's signal before calling the object, which cannot receive it", async () => {
@@ -168,7 +178,7 @@ describe("a Bounda Durable Object", () => {
     await runAlarm(stub);
     expect(await store.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "archived" });
     expect((await store.getLag()).maxLag).toBe(0);
-    expect(await alarmOf(stub)).toBeNull();
+    expect(await settledAlarm(stub)).toBeNull();
   });
 
   it("arms no alarm after a command when the app has no policies or processes", async () => {
@@ -177,7 +187,7 @@ describe("a Bounda Durable Object", () => {
     await store.commands.placeOrder({ orderId: "o-1", total: 42, customer: "ada" });
     expect(await store.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "placed" });
     expect((await store.getLag()).maxLag).toBe(0);
-    expect(await alarmOf(stub)).toBeNull();
+    expect(await settledAlarm(stub)).toBeNull();
   });
 
   it("answers an eventual command once its events are stored and projects them in its alarm", async () => {
@@ -203,7 +213,7 @@ describe("a Bounda Durable Object", () => {
     const store = connect<typeof quietRegistry>(stub);
     expect(await store.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "placed" });
     expect((await store.getLag()).maxLag).toBe(0);
-    expect(await alarmOf(stub)).toBeNull();
+    expect(await settledAlarm(stub)).toBeNull();
   });
 
   it("arms its alarm for a scheduled command and runs it once the clock gets there", async () => {
@@ -222,7 +232,7 @@ describe("a Bounda Durable Object", () => {
     clock.advance(600_000);
     await runAlarm(stub);
     expect(await store.queries.getOrder({ orderId: "o-2" })).toMatchObject({ status: "archived" });
-    expect(await alarmOf(stub)).toBeNull();
+    expect(await settledAlarm(stub)).toBeNull();
   });
 
   it("runs a process step, its deadline and the policy after it, each committed whole in the object", async () => {
@@ -255,7 +265,7 @@ describe("a Bounda Durable Object", () => {
       "ProcessCompleted",
     ]);
     expect((await store.getLag()).maxLag).toBe(0);
-    expect(await alarmOf(stub)).toBeNull();
+    expect(await settledAlarm(stub)).toBeNull();
   });
 
   it("reads its global stream by position, process lifecycle events included", async () => {
@@ -539,7 +549,7 @@ describe("a Bounda Durable Object", () => {
       await runAlarm(stub);
     }
     expect(await progress()).toEqual([]);
-    expect(await alarmOf(stub)).toBeNull();
+    expect(await settledAlarm(stub)).toBeNull();
     expect(await store.queries.getOrder({ orderId: "o-3" })).toMatchObject({ status: "placed" });
     expect((await store.getLag()).maxLag).toBe(0);
   });
