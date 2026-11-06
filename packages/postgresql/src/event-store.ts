@@ -26,7 +26,7 @@ export interface CreatePostgresqlEventStoreFunction {
 }
 
 const COLUMNS =
-  '"position", "id", "aggregate_type", "aggregate_id", "version", "type", "payload", "timestamp", "metadata"';
+  '"position", "id", "aggregate_type", "aggregate_id", "version", "type", "payload", "timestamp", "metadata", "person"';
 
 const toStoredEvent = (row: Record<string, unknown>): StoredEvent => ({
   position: Number(row.position),
@@ -38,6 +38,7 @@ const toStoredEvent = (row: Record<string, unknown>): StoredEvent => ({
   payload: row.payload,
   timestamp: String(row.timestamp),
   metadata: row.metadata as EventMetadata,
+  person: row.person === null ? null : String(row.person),
 });
 
 /**
@@ -129,6 +130,13 @@ export const createPostgresqlEventStore: CreatePostgresqlEventStoreFunction = ({
         await db.all(
           `SELECT ${COLUMNS} FROM ${table} WHERE "position" > $1 ORDER BY "position" LIMIT $2`,
           [afterPosition, limit],
+        )
+      ).map(toStoredEvent),
+    readByPerson: async ({ person, afterPosition, limit }) =>
+      (
+        await db.all(
+          `SELECT ${COLUMNS} FROM ${table} WHERE "person" = $1 AND "position" > $2 ORDER BY "position" LIMIT $3`,
+          [person, afterPosition, limit],
         )
       ).map(toStoredEvent),
     lastPosition: async () => {

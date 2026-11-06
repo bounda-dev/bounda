@@ -87,6 +87,8 @@ export const withPersonalData: WithPersonalDataFunction = ({ eventStore, aggrega
     return importPersonalKey(stored ?? (await keys.add(person, await generatePersonalKey())));
   };
 
+  // The event names its person even when every marked field is absent: their export finds it by
+  // `person`.
   const sealed = async (
     event: PendingEvent,
     key: (person: string) => Promise<PersonalKey>,
@@ -107,7 +109,7 @@ export const withPersonalData: WithPersonalDataFunction = ({ eventStore, aggrega
       if (value === undefined) continue;
       payload[field] = await seal({ key: await key(person), person, value });
     }
-    return { ...event, payload };
+    return { ...event, payload, person };
   };
 
   const open = async (
@@ -183,6 +185,11 @@ export const withPersonalData: WithPersonalDataFunction = ({ eventStore, aggrega
       const key = opening();
       const ignored = new Map<string, string>();
       return settled((await eventStore.readAll(args)).map((e) => unsealed(e, key, ignored)));
+    },
+    readByPerson: async (args) => {
+      const key = opening();
+      const ignored = new Map<string, string>();
+      return settled((await eventStore.readByPerson(args)).map((e) => unsealed(e, key, ignored)));
     },
     lastPosition: () => eventStore.lastPosition(),
   };

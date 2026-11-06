@@ -220,7 +220,16 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       expect(await store.get("d")).not.toHaveProperty("persons");
       expect(await store.get("e")).not.toHaveProperty("persons");
 
+      const named = await store.listByPerson("c-1");
+      expect(named.map((letter) => [letter.id, letter.status])).toEqual([
+        ["b", "discarded"],
+        ["a", "failed"],
+      ]);
+      expect(await store.listByPerson("c")).toEqual([]);
+      expect(await store.count()).toBe(5);
+
       const forgotten = await store.forget("c-1");
+      expect(forgotten).toEqual(named);
       expect(forgotten).toEqual([
         {
           ...scheduled("b", "2026-01-01T00:01:00.000Z", [held("c-2", "2"), held("c-1", "1")]),
@@ -230,6 +239,7 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       ]);
       expect((await store.list()).map((kept) => kept.id)).toEqual(["c", "d", "e"]);
       expect(await store.forget("c-1")).toEqual([]);
+      expect(await store.listByPerson("c-1")).toEqual([]);
     });
 
     it("leaves the letters that name a person only as the person of their work", async () => {
@@ -251,6 +261,40 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       expect(await store.forget("c-1")).toEqual([]);
       expect((await store.list()).map(({ id }) => id)).toEqual(["policy", "process"]);
       expect((await store.get("policy"))?.errorMessage).toEqual(sealed("c-1", "1"));
+    });
+
+    it("lists the letters that name a person in their work or in their payload, in the order of list", async () => {
+      await store.add(
+        letter("process", {
+          kind: "process",
+          handler: "order.orderPayment",
+          person: "c-1",
+          firstFailedAt: "2026-01-01T00:02:00.000Z",
+          errorMessage: sealed("c-1", "1"),
+        }),
+      );
+      await store.add(
+        letter("scheduled", {
+          kind: "scheduled",
+          handler: "PlaceOrder",
+          eventType: "PlaceOrder",
+          firstFailedAt: "2026-01-01T00:01:00.000Z",
+          payload: { orderId: "o-1" },
+          persons: [held("c-1", "1")],
+        }),
+      );
+      await store.add(letter("other", { person: "c-2", errorMessage: sealed("c-2", "2") }));
+      await store.add(letter("nobody"));
+      await store.updateStatus("process", "retried");
+
+      const named = await store.listByPerson("c-1");
+      expect(named.map(({ id, status }) => [id, status])).toEqual([
+        ["scheduled", "failed"],
+        ["process", "retried"],
+      ]);
+      expect(named[1]).toEqual(await store.get("process"));
+      expect((await store.listByPerson("c-2")).map(({ id }) => id)).toEqual(["other"]);
+      expect(await store.listByPerson("c-3")).toEqual([]);
     });
 
     it("updates status and removes letters", async () => {

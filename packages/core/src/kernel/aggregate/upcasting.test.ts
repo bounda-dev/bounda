@@ -100,6 +100,7 @@ const stored = (
     schemaVersion: overrides.schemaVersion ?? 1,
     system: overrides.system ?? false,
   },
+  person: overrides.person ?? null,
 });
 
 describe("upcastEvent", () => {
@@ -151,7 +152,7 @@ describe("upcastEvent", () => {
 });
 
 describe("withUpcasting", () => {
-  it("upcasts what load, readOne and readAll return and leaves writes and positions alone", async () => {
+  it("upcasts what load, readOne, readAll and readByPerson return and leaves writes and positions alone", async () => {
     const raw = (await memory().createStorage()).eventStore;
     const store = withUpcasting({ eventStore: raw, aggregates });
     const appended = await store.append({
@@ -159,7 +160,7 @@ describe("withUpcasting", () => {
       aggregateId: "o-1",
       expectedVersion: 0,
       events: [
-        stored({ id: "e1", version: 1, payload: { total: 10 }, schemaVersion: 1 }),
+        stored({ id: "e1", version: 1, payload: { total: 10 }, schemaVersion: 1, person: "c-1" }),
         stored({ id: "e2", version: 2, type: "OrderPaid", payload: { method: "card" } }),
       ],
     });
@@ -185,6 +186,12 @@ describe("withUpcasting", () => {
       money: { amount: 10, currency: "EUR" },
     });
     expect(await store.readOne({ ...stream, eventId: "e3" })).toBeNull();
+    expect(
+      (await store.readByPerson({ person: "c-1", afterPosition: 0, limit: 10 })).map((event) => [
+        event.position,
+        event.payload,
+      ]),
+    ).toEqual([[1, { money: { amount: 10, currency: "EUR" } }]]);
     expect(await store.lastPosition()).toBe(2);
   });
 });

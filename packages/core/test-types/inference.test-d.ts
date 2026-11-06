@@ -14,6 +14,7 @@ import type {
   CreateArgs,
   CreateImplementation,
   DeadLetter,
+  DeadLetterKind,
   DecidedDispatch,
   DispatchOptions,
   DispatchResult,
@@ -23,6 +24,10 @@ import type {
   EnvSection,
   EventMetadata,
   EventPayloadArgs,
+  ExportedData,
+  ExportedDeadLetter,
+  ExportedEvent,
+  ExportedScheduledCommand,
   ForgetsPersonalData,
   HasPersonalFields,
   ImplementationModule,
@@ -30,6 +35,7 @@ import type {
   Logger,
   PayloadArgs,
   PayloadInputOf,
+  PersonalDataExport,
   PersonalDataForgottenEvent,
   PersonalDataForgottenPayload,
   PersonalFunction,
@@ -547,6 +553,47 @@ describe("personal data", () => {
       (personId: string) => Promise<StoredDispatch>
     >();
     expectTypeOf<BoundaApp["forget"]>().toEqualTypeOf<BoundaClient["forget"]>();
+  });
+
+  it("lets every client export a person's data, their marked fields alone", () => {
+    expectTypeOf<BoundaClient["exportPersonalData"]>().toEqualTypeOf<
+      (personId: string) => Promise<PersonalDataExport>
+    >();
+    expectTypeOf<BoundaApp["exportPersonalData"]>().toEqualTypeOf<
+      BoundaClient["exportPersonalData"]
+    >();
+    expectTypeOf<PersonalDataExport>().toEqualTypeOf<{
+      readonly personId: string;
+      readonly exportedAt: string;
+      readonly events: readonly ExportedEvent[];
+      readonly scheduledCommands: readonly ExportedScheduledCommand[];
+      readonly deadLetters: readonly ExportedDeadLetter[];
+    }>();
+    expectTypeOf<ExportedEvent>().toEqualTypeOf<{
+      readonly id: string;
+      readonly type: string;
+      readonly aggregateType: string;
+      readonly aggregateId: string;
+      readonly version: number;
+      readonly position: number;
+      readonly timestamp: string;
+      readonly data: ExportedData;
+    }>();
+    expectTypeOf<ExportedScheduledCommand>().toEqualTypeOf<{
+      readonly commandId: string;
+      readonly type: string;
+      readonly executeAt: string;
+      readonly data: ExportedData;
+    }>();
+    expectTypeOf<ExportedDeadLetter>().toEqualTypeOf<{
+      readonly id: string;
+      readonly kind: DeadLetterKind;
+      readonly handler: string;
+      readonly errorMessage?: string | null;
+      readonly errorStack?: string | null;
+      readonly data: ExportedData;
+    }>();
+    expectTypeOf<ExportedData>().toEqualTypeOf<Readonly<Record<string, unknown>>>();
   });
 
   it("hands dead letters out with the error named in the clear and its text opened, null once the person is forgotten", () => {

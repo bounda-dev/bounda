@@ -40,6 +40,7 @@ export const storeNamespace = (): FakeStoreNamespace => {
       discardDeadLetter: record("discardDeadLetter"),
       rebuildReadModel: record("rebuildReadModel"),
       forget: record("forget"),
+      exportPersonalData: record("exportPersonalData"),
     };
   };
   return { calls, namespace: { idFromName: (name) => name, get: stubOf } };

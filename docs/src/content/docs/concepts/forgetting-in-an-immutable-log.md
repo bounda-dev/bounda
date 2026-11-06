@@ -70,9 +70,11 @@ export const payload = ({ z, personal }: Event.PayloadArgs) =>
 
 `personal` marks a field; the aggregate's id names the person, or a field marked with `person`
 does when the event belongs to someone else's aggregate. `app.forget("c-42")` deletes the key
-and appends `PersonalDataForgotten` to the person's own stream. The
+and appends `PersonalDataForgotten` to the person's own stream, and
+`app.exportPersonalData("c-42")` hands the person every marked field and every sealed error the
+store holds of them, for the right of access and the right to portability. The
 [guide](/guides/personal-data/) has the rest: the types a forgotten field takes, what read models
-have to do, and where the keys live.
+have to do, what an export holds and where the keys live.
 
 ## What forgetting changes for the rest of the app
 

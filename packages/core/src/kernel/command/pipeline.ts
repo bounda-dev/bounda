@@ -216,6 +216,7 @@ const toPendingEvents = (
         schemaVersion: runtime.schemaVersion,
         system: false,
       },
+      person: null,
     };
   });
 

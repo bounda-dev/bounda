@@ -67,6 +67,10 @@ export const createKeptDeadLetterStore: CreateKeptDeadLetterStoreFunction = () =
     remove: async (id) => {
       letters.delete(id);
     },
+    listByPerson: async (person) =>
+      select({})
+        .filter((letter) => letter.person === person || namesPerson(letter, person))
+        .map(copy),
     forget: async (person) => {
       const named = select({}).filter((letter) => namesPerson(letter, person));
       for (const { id } of named) letters.delete(id);

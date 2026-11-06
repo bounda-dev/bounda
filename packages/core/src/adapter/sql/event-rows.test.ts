@@ -1,11 +1,21 @@
 import { describe, expect, it } from "vitest";
 import { pendingEvent } from "../testing/fixtures.ts";
 import { postgresqlDialect, sqliteDialect } from "./dialect.ts";
-import { EVENTS_PER_INSERT, insertEventsStatements, positionsByVersion } from "./event-rows.ts";
+import {
+  EVENTS_PER_INSERT,
+  insertEventsStatements,
+  MAX_PARAMETERS_PER_STATEMENT,
+  positionsByVersion,
+} from "./event-rows.ts";
 
 const events = (count: number) =>
   Array.from({ length: count }, (_, index) =>
-    pendingEvent({ aggregateId: "1", version: index + 1, payload: { n: index } }),
+    pendingEvent({
+      aggregateId: "1",
+      version: index + 1,
+      payload: { n: index },
+      person: index === 0 ? "c-1" : null,
+    }),
   );
 
 describe("insertEventsStatements", () => {
@@ -18,18 +28,20 @@ describe("insertEventsStatements", () => {
     });
     expect(rest).toEqual([]);
     expect(statement?.sql).toBe(
-      'INSERT INTO "events" ("id", "aggregate_type", "aggregate_id", "version", "type", "payload", "timestamp", "metadata") VALUES ($1, $2, $3, $4, $5, $6, $7, $8), ($9, $10, $11, $12, $13, $14, $15, $16) RETURNING "version", "position"',
+      'INSERT INTO "events" ("id", "aggregate_type", "aggregate_id", "version", "type", "payload", "timestamp", "metadata", "person") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9), ($10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING "version", "position"',
     );
-    expect(statement?.params).toHaveLength(16);
+    expect(statement?.params).toHaveLength(18);
     expect(statement?.params.slice(3, 6)).toEqual([1, "OrderPlaced", '{"n":0}']);
-    expect(statement?.params[11]).toBe(2);
+    expect(statement?.params[8]).toBe("c-1");
+    expect(statement?.params[12]).toBe(2);
+    expect(statement?.params[17]).toBeNull();
     const [sqlite] = insertEventsStatements({
       dialect: sqliteDialect,
       table: '"events"',
       events: events(1),
       encodeJson: (value) => value,
     });
-    expect(sqlite?.sql).toContain("VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING");
+    expect(sqlite?.sql).toContain("VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING");
   });
 
   it("splits more events than one statement carries, and none when there are none", () => {
@@ -39,12 +51,16 @@ describe("insertEventsStatements", () => {
       events: events(EVENTS_PER_INSERT * 2 + 1),
       encodeJson: (value) => value,
     });
-    expect(statements.map(({ params }) => params.length / 8)).toEqual([
+    expect(statements.map(({ params }) => params.length / 9)).toEqual([
       EVENTS_PER_INSERT,
       EVENTS_PER_INSERT,
       1,
     ]);
     expect(statements[2]?.params[3]).toBe(EVENTS_PER_INSERT * 2 + 1);
+    expect(EVENTS_PER_INSERT).toBe(11);
+    for (const { params } of statements) {
+      expect(params.length).toBeLessThanOrEqual(MAX_PARAMETERS_PER_STATEMENT);
+    }
     expect(
       insertEventsStatements({
         dialect: sqliteDialect,

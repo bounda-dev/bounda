@@ -13,6 +13,7 @@ import {
   type ListDeadLettersArgs,
   type Logger,
   NotFoundError,
+  type PersonalDataExport,
   type ReadEventsArgs,
   type RebuildReadModelResult,
   RebuildSupersededError,
@@ -91,6 +92,10 @@ export interface BoundaObjectMethods {
    * that handle it unless `consistency` is `"eventual"`.
    */
   forget(personId: string, consistency?: Consistency): Promise<RpcOutcome<StoredDispatch>>;
+  /**
+   * Exports a person's data, as `BoundaClient.exportPersonalData` does.
+   */
+  exportPersonalData(personId: string): Promise<RpcOutcome<PersonalDataExport>>;
   /**
    * Runs the next slice of every paused rebuild, then policies, processes, due scheduled commands
    * and retries, in bounded slices, and arms the next alarm. Called by the platform.
@@ -316,6 +321,10 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
         await this.#rearm(false, true);
         return result;
       });
+    }
+
+    exportPersonalData(personId: string): Promise<RpcOutcome<PersonalDataExport>> {
+      return settle(() => this.#ready().exportPersonalData(personId));
     }
 
     override async alarm(): Promise<void> {

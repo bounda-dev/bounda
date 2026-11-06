@@ -168,6 +168,13 @@ export const createSqliteScheduler: CreateSqliteSchedulerFunction = ({ db, table
           [limit ?? -1, offset],
         )
       ).map(toScheduled),
+    listByPerson: async (person) =>
+      (
+        await db.all(
+          `SELECT ${COLUMNS} FROM ${table} WHERE ${naming(table)} ORDER BY "execute_at", "dedupe_key"`,
+          [person],
+        )
+      ).map(toScheduled),
     forget: async (person) =>
       (await db.all(`DELETE FROM ${table} WHERE ${naming(table)} RETURNING ${COLUMNS}`, [person]))
         .map(toScheduled)

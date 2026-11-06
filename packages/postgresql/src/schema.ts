@@ -92,8 +92,10 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "payload" jsonb NOT NULL,
     "timestamp" text NOT NULL,
     "metadata" jsonb NOT NULL,
+    "person" text,
     UNIQUE ("aggregate_type", "aggregate_id", "version")
   )`,
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.events, "person")} ON ${tables.events} ("person", "position")`,
   checkpointTableStatement(tables.checkpoints),
   `CREATE TABLE IF NOT EXISTS ${tables.inbox} (
     "handler" text NOT NULL,
@@ -200,6 +202,7 @@ export const ensureStorageSchema: EnsureStorageSchemaFunction = async ({ db, sch
     tables.idempotencyKeys,
     tables.personalKeys,
     tables.snapshots,
+    indexName(tables.events, "person"),
     indexName(tables.deadLetters, "listing"),
     indexName(tables.deadLetters, "person"),
     indexName(tables.scheduledCommands, "execute_at"),

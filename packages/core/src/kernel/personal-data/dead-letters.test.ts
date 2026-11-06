@@ -245,9 +245,19 @@ describe("dead letters of work that names a person", () => {
       "mailer refuses ana@example.com",
       "mailer refuses ana@example.com",
     ]);
+    const exported = async () =>
+      (await app.exportPersonalData("c-1")).deadLetters.map((letter) => [
+        letter.id,
+        letter.kind,
+        letter.errorMessage,
+      ]);
+    expect(await exported()).toEqual(
+      before.map((letter) => [letter.id, letter.kind, "mailer refuses ana@example.com"]),
+    );
 
     await app.forget("c-1");
     await app.runUntilIdle();
+    expect(await exported()).toEqual(before.map((letter) => [letter.id, letter.kind, null]));
     const after = await app.deadLetters.list();
     expect(
       after.map((letter) => [letter.id, letter.status, letter.errorMessage, letter.errorStack]),

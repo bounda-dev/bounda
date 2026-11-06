@@ -192,6 +192,39 @@ describe("memory adapter", () => {
     expect(heard).toEqual([2, 3]);
   });
 
+  it("reads a person's events in position order, and only once every position before them is settled", async () => {
+    const storage = await memory().createStorage();
+    const placed = (aggregateId: string, version: number, person: string | null) =>
+      pendingEvent({ aggregateId, version, person });
+    const committing = Promise.withResolvers<void>();
+    const transaction = storage.transact(async (tx) => {
+      await tx.eventStore.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events: [placed("1", 1, "c-1")],
+      });
+      await committing.promise;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    await storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "2",
+      expectedVersion: 0,
+      events: [placed("2", 1, "c-1"), placed("2", 2, null), placed("2", 3, "c-1")],
+    });
+    const read = () =>
+      storage.eventStore.readByPerson({ person: "c-1", afterPosition: 0, limit: 10 });
+    expect(await read()).toEqual([]);
+    committing.resolve();
+    await transaction;
+    expect((await read()).map((event) => [event.position, event.aggregateId])).toEqual([
+      [1, "1"],
+      [2, "2"],
+      [4, "2"],
+    ]);
+  });
+
   it("gives back the positions of a transaction that fails: the tail when nothing came after, a gap readers skip otherwise", async () => {
     const storage = await memory().createStorage();
     const heard: (number | undefined)[] = [];

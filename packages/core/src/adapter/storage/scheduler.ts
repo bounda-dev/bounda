@@ -149,6 +149,10 @@ export interface Scheduler {
    */
   list(args?: ListScheduledArgs): Promise<readonly ScheduledCommand[]>;
   /**
+   * Every command whose `persons` names `person`, claimed or not, in the order of `list`.
+   */
+  listByPerson(person: string): Promise<readonly ScheduledCommand[]>;
+  /**
    * Removes every command whose `persons` names `person`, claimed or not, and resolves to them in
    * the order of `list`: a worker running one then finds its claim lost, so what it writes, a dead
    * letter included, is rolled back.

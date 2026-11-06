@@ -82,6 +82,7 @@ export const deferWrites: DeferWritesFunction = ({
           target.deadLetterStore.updateStatus(id, status),
         ),
         remove: later((target, id) => target.deadLetterStore.remove(id)),
+        listByPerson: deadLetterStore.listByPerson,
         forget: deadLetterStore.forget,
       },
       scheduler: {
@@ -94,6 +95,7 @@ export const deferWrites: DeferWritesFunction = ({
         fail: later((target, args) => target.scheduler.fail(args)),
         defer: later((target, args) => target.scheduler.defer(args)),
         renew: scheduler.renew,
+        listByPerson: scheduler.listByPerson,
         forget: scheduler.forget,
       },
       idempotencyStore: {

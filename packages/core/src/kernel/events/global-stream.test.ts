@@ -13,6 +13,7 @@ const pending = (version: number): PendingEvent => ({
   payload: { note: version },
   timestamp: "2026-01-01T00:00:00.000Z",
   metadata: { correlationId: "c", causationId: "c", depth: 0, schemaVersion: 1, system: false },
+  person: null,
 });
 
 const streamOf = async (count: number): Promise<GlobalStream> => {

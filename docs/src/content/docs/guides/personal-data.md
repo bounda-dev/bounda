@@ -1,6 +1,6 @@
 ---
 title: Personal data
-description: Mark the fields of an event that hold personal data, say whose they are, forget a person with one call, and handle it in every read model that showed them.
+description: Mark the fields of an event that hold personal data, say whose they are, forget a person or export their data with one call, and handle forgetting in every read model that showed them.
 sidebar:
   order: 11
 ---
@@ -144,6 +144,58 @@ error of work that names nobody, such as a process deadline or a scheduled comma
 marks nothing, stays in its dead letter in the clear. Log and throw with ids, not the data itself,
 and mark every field that holds it.
 
+## Exporting a person's data
+
+```ts
+const exported = await app.exportPersonalData("c-42");
+```
+
+`exportPersonalData` is on every `BoundaClient` too: the app, the Durable Object through
+`connect`, the `bounda` context of React Router. It answers what the store holds that names the
+person, for them to take away, as the right of access and the right to portability ask:
+
+```ts
+{
+  personId: "c-42",
+  exportedAt: "2026-03-01T10:00:00.000Z",
+  events: [
+    { id, type: "CustomerRegistered", aggregateType: "customer", aggregateId: "c-42",
+      version: 1, position: 17, timestamp, data: { email: "ana@example.com" } },
+    { id, type: "OrderPlaced", aggregateType: "order", aggregateId: "o-9",
+      version: 1, position: 40, timestamp, data: { deliveryNote: "ring twice" } },
+  ],
+  scheduledCommands: [{ commandId, type: "RemindCustomer", executeAt, data: { email } }],
+  deadLetters: [
+    { id, kind: "policy", handler: "customer.welcomeOnCustomerRegistered",
+      errorMessage: "no mailbox for ana@example.com", errorStack, data: {} },
+  ],
+}
+```
+
+`events` are every event that names the person, by its field marked `person` or its aggregate's
+id, in position order, the events of their own stream `bounda:<personId>` included; `data` holds
+the fields marked `personal` of that event, opened, and nothing else of its payload, so an event
+without such fields has an empty `data`. `scheduledCommands` are the commands waiting to run
+whose payload holds personal fields of theirs, with `commandId` the id the dispatch answered or,
+for one the runtime scheduled itself, the scheduler's key, each with the same `data`.
+`deadLetters` are the handler runs that gave up and name the person: work about them, whose
+`errorMessage` and `errorStack` are encrypted with their key and come out opened, and the
+scheduled commands whose payload holds their fields, with its `data`. After `forget`, the
+person's events and letters are still theirs, and every field and error text reads as `null`, as
+a handler reads it. An empty id is refused with `ValidationError`.
+
+Only what is marked comes out, and that is the limit to know: a field left unmarked is not
+personal data to Bounda, so the rest of `OrderPlaced` is the order's and stays out; a read model
+is a view your code builds and may hold the person in any shape, and whatever a policy sent out
+is at the mailing provider or the search index. An app that owes a person more than their marked
+fields takes this export and adds what it knows from its read models and its ports. An event
+stored before its type marked its fields names no one, so no export finds it: it holds the data
+in the clear, where `forget` does not reach it either.
+
+Each store keeps the person an event names in a `person` column, indexed with the position, and
+the adapters read by it with `readByPerson`; a scheduled command is found by the `persons` it
+carries, and a dead letter by its `person` or its `persons`.
+
 ## Handling it in a read model
 
 A read model that projects an event with personal fields has those fields in its rows. It must
@@ -220,3 +272,11 @@ expect(JSON.stringify(await app.events.read())).not.toContain("ana@example.com")
 ```
 
 The second assertion is the one that matters: the stream, read raw, holds nothing of the person.
+After `forget`, an export reads the same way: the person's events, with nothing of theirs in them.
+
+```ts
+expect((await app.exportPersonalData("c-1")).events.map((event) => event.data)).toEqual([
+  { email: null },
+  {},
+]);
+```

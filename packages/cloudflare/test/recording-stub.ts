@@ -8,13 +8,16 @@ export const recordingStub = (): {
   readonly stub: BoundaStub;
   readonly commands: unknown[][];
   readonly forgets: unknown[][];
+  readonly exports: unknown[][];
 } => {
   const commands: unknown[][] = [];
   const forgets: unknown[][] = [];
+  const exports: unknown[][] = [];
   const answer = async () => ({ ok: true, value: null });
   return {
     commands,
     forgets,
+    exports,
     stub: {
       command: async (...args) => {
         commands.push(args);
@@ -31,6 +34,10 @@ export const recordingStub = (): {
       retryDeadLetter: answer,
       discardDeadLetter: answer,
       rebuildReadModel: answer,
+      exportPersonalData: async (...args) => {
+        exports.push(args);
+        return answer();
+      },
     },
   };
 };

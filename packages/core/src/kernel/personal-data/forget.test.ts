@@ -61,6 +61,7 @@ describe("forgetPersonalData", () => {
           schemaVersion: 1,
           system: true,
         },
+        person: "c-1",
       },
     ]);
     expect(logs).toContainEqual({

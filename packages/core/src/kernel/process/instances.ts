@@ -104,6 +104,7 @@ export const createProcessInstances: CreateProcessInstancesFunction = ({
         payload: entry.payload,
         timestamp: clock.now().toISOString(),
         metadata: { ...entry.context, schemaVersion: 1, system: true },
+        person: null,
       })),
     });
   };

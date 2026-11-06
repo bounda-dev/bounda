@@ -44,8 +44,28 @@ describe("appendSystemEvent", () => {
       payload: { commandType: "PayOrder", error: "boom", attempts: 3 },
       timestamp: "2026-01-01T00:00:00.000Z",
       metadata: { ...context, schemaVersion: 1, system: true },
+      person: null,
     });
     expect(SCHEDULED_COMMAND_FAILED_EVENT).toBe("ScheduledCommandFailed");
+  });
+
+  it("names the person it is given", async () => {
+    const storage = await memory().createStorage();
+    const appended = await appendSystemEvent({
+      eventStore: storage.eventStore,
+      ids: createSequentialIdGenerator(),
+      clock: createFixedClock(),
+      aggregateType: "bounda",
+      aggregateId: "c-1",
+      type: "PersonalDataForgotten",
+      payload: {},
+      context,
+      person: "c-1",
+    });
+    expect(appended.person).toBe("c-1");
+    expect(
+      await storage.eventStore.readByPerson({ person: "c-1", afterPosition: 0, limit: 10 }),
+    ).toEqual([appended]);
   });
 
   it("lets a stream that moved fail, for the unit of work to run again", async () => {

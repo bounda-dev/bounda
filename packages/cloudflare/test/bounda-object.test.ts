@@ -112,6 +112,24 @@ describe("a Bounda Durable Object", () => {
     });
   });
 
+  it("exports a person's marked fields from its SQLite, before and after forgetting them", async () => {
+    const { store } = open();
+    await store.commands.placeOrder({ orderId: "o-1", total: 7, customer: "ada", note: "no bell" });
+    const before = await store.exportPersonalData("ada");
+    expect(before).toMatchObject({ personId: "ada", scheduledCommands: [], deadLetters: [] });
+    expect(before.events).toEqual([
+      expect.objectContaining({ type: "OrderPlaced", position: 1, data: { note: "no bell" } }),
+    ]);
+    await store.forget("ada");
+    const after = await store.exportPersonalData("ada");
+    expect(after.events.map((event) => [event.type, event.data])).toEqual([
+      ["OrderPlaced", { note: null }],
+      ["PersonalDataForgotten", {}],
+    ]);
+    const refused = await rejection(store.exportPersonalData(""));
+    expect(refused).toMatchObject({ name: "ValidationError", code: "VALIDATION_FAILED" });
+  });
+
   it("forgets with the caller's consistency, and leaves its alarm clear once the read models caught up", async () => {
     const stub = sliced();
     const store = connect<typeof slicedRegistry>(stub);

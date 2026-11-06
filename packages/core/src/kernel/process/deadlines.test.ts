@@ -1005,6 +1005,7 @@ describe("process deadlines", () => {
               schemaVersion: 1,
               system: true,
             },
+            person: null,
           },
         ],
       });

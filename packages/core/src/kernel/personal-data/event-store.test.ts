@@ -341,6 +341,56 @@ describe("withPersonalData", () => {
     expect(await store.lastPosition()).toBe(2);
   });
 
+  it("names the person on the event it seals, with every marked field absent too, and reads their events by person", async () => {
+    const { storage, store, registered, placed } = await setup();
+    const appended = await store.append({
+      aggregateType: "customer",
+      aggregateId: "c-1",
+      expectedVersion: 0,
+      events: [registered(1, "ana@example.com")],
+    });
+    expect(appended.events[0]?.person).toBe("c-1");
+    await store.append({
+      aggregateType: "order",
+      aggregateId: "o-1",
+      expectedVersion: 0,
+      events: [placed({ customerId: "c-1", address: { street: "x" }, total: 1 })],
+    });
+    await store.append({
+      aggregateType: "order",
+      aggregateId: "o-2",
+      expectedVersion: 0,
+      events: [placed({ customerId: "c-2", total: 2 }, "o-2")],
+    });
+    await store.append({
+      aggregateType: "customer",
+      aggregateId: "c-1",
+      expectedVersion: 1,
+      events: [
+        pendingEvent({
+          aggregateType: "customer",
+          aggregateId: "c-1",
+          version: 2,
+          type: "CustomerRenamed",
+          payload: { name: "Ana" },
+        }),
+      ],
+    });
+    const stored = await storage.eventStore.readAll({ afterPosition: 0, limit: 10 });
+    expect(stored.map((event) => event.person)).toEqual(["c-1", "c-1", "c-2", null]);
+
+    const read = await store.readByPerson({ person: "c-1", afterPosition: 0, limit: 10 });
+    expect(read.map((event) => [event.position, event.payload])).toEqual([
+      [1, { email: "ana@example.com", plan: "pro" }],
+      [2, { customerId: "c-1", address: { street: "x" }, total: 1 }],
+    ]);
+    await storage.personalKeys.remove("c-1");
+    const after = await store.readByPerson({ person: "c-1", afterPosition: 1, limit: 10 });
+    expect(after.map((event) => event.payload)).toEqual([
+      { customerId: "c-1", address: null, total: 1 },
+    ]);
+  });
+
   it("refuses an event whose person field is empty", async () => {
     const { store, placed } = await setup();
     await expect(

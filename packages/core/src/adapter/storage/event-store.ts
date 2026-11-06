@@ -49,6 +49,10 @@ export interface ReadAllArgs {
   readonly limit: number;
 }
 
+export interface ReadByPersonArgs extends ReadAllArgs {
+  readonly person: string;
+}
+
 export interface ReadOneArgs {
   readonly aggregateType: string;
   readonly aggregateId: string;
@@ -58,7 +62,8 @@ export interface ReadOneArgs {
 /**
  * Streams are keyed by aggregate type and id; every event also gets a position in one global
  * sequence. `readAll` must return only committed events, in position order, and never an event
- * while one with a lower position is still uncommitted.
+ * while one with a lower position is still uncommitted. `readByPerson` reads the events whose
+ * `person` is the one given, under the same guarantees.
  */
 export interface EventStore {
   append(args: AppendArgs): Promise<AppendResult>;
@@ -69,5 +74,6 @@ export interface EventStore {
    */
   readOne(args: ReadOneArgs): Promise<StoredEvent | null>;
   readAll(args: ReadAllArgs): Promise<readonly StoredEvent[]>;
+  readByPerson(args: ReadByPersonArgs): Promise<readonly StoredEvent[]>;
   lastPosition(): Promise<number>;
 }

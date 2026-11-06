@@ -176,6 +176,13 @@ export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ d
           [limit ?? null, offset],
         )
       ).map(toScheduled),
+    listByPerson: async (person) =>
+      (
+        await db.all(
+          `SELECT ${COLUMNS} FROM ${table} WHERE ${naming("$1")} ORDER BY "execute_at", "dedupe_key" COLLATE "C"`,
+          [person],
+        )
+      ).map(toScheduled),
     forget: async (person) =>
       (await db.all(`DELETE FROM ${table} WHERE ${naming("$1")} RETURNING ${COLUMNS}`, [person]))
         .map(toScheduled)

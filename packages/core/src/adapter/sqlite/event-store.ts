@@ -16,7 +16,7 @@ export interface CreateSqliteEventStoreFunction {
 }
 
 const COLUMNS =
-  '"position", "id", "aggregate_type", "aggregate_id", "version", "type", "payload", "timestamp", "metadata"';
+  '"position", "id", "aggregate_type", "aggregate_id", "version", "type", "payload", "timestamp", "metadata", "person"';
 
 const toStoredEvent = (row: Record<string, unknown>): StoredEvent => ({
   position: Number(row.position),
@@ -28,6 +28,7 @@ const toStoredEvent = (row: Record<string, unknown>): StoredEvent => ({
   payload: JSON.parse(String(row.payload)) as unknown,
   timestamp: String(row.timestamp),
   metadata: JSON.parse(String(row.metadata)) as EventMetadata,
+  person: row.person === null ? null : String(row.person),
 });
 
 export const createSqliteEventStore: CreateSqliteEventStoreFunction = ({ db, table }) => {
@@ -104,6 +105,13 @@ export const createSqliteEventStore: CreateSqliteEventStoreFunction = ({ db, tab
         await db.all(
           `SELECT ${COLUMNS} FROM ${table} WHERE "position" > ? ORDER BY "position" LIMIT ?`,
           [afterPosition, limit],
+        )
+      ).map(toStoredEvent),
+    readByPerson: async ({ person, afterPosition, limit }) =>
+      (
+        await db.all(
+          `SELECT ${COLUMNS} FROM ${table} WHERE "person" = ? AND "position" > ? ORDER BY "position" LIMIT ?`,
+          [person, afterPosition, limit],
         )
       ).map(toStoredEvent),
     lastPosition: async () => {
