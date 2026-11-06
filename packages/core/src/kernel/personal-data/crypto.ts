@@ -52,6 +52,22 @@ export const isSealed: IsSealedFunction = (value): value is SealedValue => {
   );
 };
 
+export interface SealedFieldOfFunction {
+  (payload: Record<string, unknown>): string | null;
+}
+
+/**
+ * The first top-level field whose value is an envelope, or `null`. What the kernel reads is
+ * opened by its shape, whatever the schema marks, so a handler must never write one: it would
+ * read back as `null`, or not at all under the person's current key.
+ */
+export const sealedFieldOf: SealedFieldOfFunction = (payload) => {
+  for (const field in payload) {
+    if (isSealed(payload[field])) return field;
+  }
+  return null;
+};
+
 const toBase64 = (bytes: Uint8Array): string => {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);

@@ -189,7 +189,9 @@ through WebCrypto, with a nonce per value, on Node and in `workerd` alike; what 
 for a personal field is an envelope with the ciphertext, the person's id and a fingerprint of the
 key, which the [global stream](/guides/reading-the-stream/) shows as it is; a value sealed under a
 key the person no longer has, because they were forgotten and registered again, reads as `null`
-next to what their new key opens.
+next to what their new key opens. What is read is opened by that shape, whatever the schema marks,
+so an event or a delayed command whose handler or caller writes an envelope itself, in any field,
+is refused with a `ValidationError`: it could only read back as `null`, or not at all.
 
 Keeping the keys next to the data is a choice: a backup restores both, a test needs nothing
 else, and the Durable Object has no second store to reach. It also means a backup is a copy of
