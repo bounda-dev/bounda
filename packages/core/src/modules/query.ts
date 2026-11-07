@@ -9,12 +9,14 @@ export interface QueryModule {
 }
 
 /**
- * Arguments of `repository`: the payload fields spread at the top level, the typed read client
- * and the typed table.
+ * Arguments of `repository`: the payload fields spread at the top level, the typed read client,
+ * the typed table, and the `actor` of the client that asked (`as`), `undefined` for one that names
+ * nobody, so a repository can read only what that actor may see.
  */
 export type QueryRepositoryArgs<Payload, Row, Raw = unknown> = Readonly<Payload> & {
   readonly client: ReadClient<Row, Raw>;
   readonly table: Table<Row>;
+  readonly actor: string | undefined;
 };
 
 /**
@@ -28,8 +30,10 @@ export type RepositoryDataOf<Module> = Module extends {
 
 /**
  * Arguments of a query `handler`, with the read model's ports spread at the top level. `queries`
- * is the typed facade of every query in the app, so a handler can compose other queries. Two
- * queries whose results depend on each other do not compile; that is a genuine cycle.
+ * is the typed facade of every query in the app, so a handler can compose other queries, which
+ * run as the same actor. `actor` is that of the client that asked (`as`), `undefined` for one that
+ * names nobody. Two queries whose results depend on each other do not compile; that is a genuine
+ * cycle.
  */
 export type QueryHandlerArgs<
   Type extends string,
@@ -43,6 +47,7 @@ export type QueryHandlerArgs<
   readonly repositoryData: RepositoryData;
   readonly table: Table<Row>;
   readonly queries: Queries;
+  readonly actor: string | undefined;
 } & Readonly<Ports>;
 
 /**

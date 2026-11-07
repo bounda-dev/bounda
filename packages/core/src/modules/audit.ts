@@ -24,7 +24,17 @@ interface AccessRecord {
    * When, on the app's clock.
    */
   readonly at: string;
+  /**
+   * `ok` when the operation handed its result out; `failed` when it rejected after reading, with
+   * an error that may quote what it read.
+   */
+  readonly outcome: AccessOutcome;
 }
+
+/**
+ * How an operation that read personal data ended.
+ */
+export type AccessOutcome = "ok" | "failed";
 
 /**
  * A query of a read model with fields marked `.personal()`. `persons` are those the `person`
@@ -32,6 +42,11 @@ interface AccessRecord {
  */
 export interface QueryAccess extends AccessRecord {
   readonly operation: "query";
+  /**
+   * `true` when the query took `client.raw`, the driver itself: whose rows it read there is
+   * unknown, so `persons` names only those of the rows read through `table` and `client`.
+   */
+  readonly unattributed: boolean;
   readonly detail: {
     readonly query: string;
     readonly readModel: string;
@@ -39,7 +54,8 @@ export interface QueryAccess extends AccessRecord {
 }
 
 /**
- * `exportPersonalData`, with how many records of each kind it handed out.
+ * `exportPersonalData`, with how many records of each kind it handed out; `detail` is `null` when
+ * it failed, having handed nothing out.
  */
 export interface ExportAccess extends AccessRecord {
   readonly operation: "exportPersonalData";
@@ -48,12 +64,12 @@ export interface ExportAccess extends AccessRecord {
     readonly scheduledCommands: number;
     readonly deadLetters: number;
     readonly readModelRows: number;
-  };
+  } | null;
 }
 
 /**
- * `deadLetters.list`, with how many letters it handed out. `persons` are those the letters name,
- * under whose key their error text or payload is sealed.
+ * `deadLetters.list`, with how many letters it read. `persons` are those the letters name, under
+ * whose key their error text or payload is sealed.
  */
 export interface DeadLettersListAccess extends AccessRecord {
   readonly operation: "deadLetters.list";
@@ -95,10 +111,11 @@ export interface OnPersonalDataAccessArgs {
 
 /**
  * Where the access log goes, exported from `app/audit.ts`: a log pipeline, a SIEM, a table of
- * another database. Called once per operation that hands out personal data in the clear, after
- * the data is read and before it is handed out, never sampled; the operation waits for it and
- * rejects with what it throws, handing nothing out, since data handed out unrecorded defeats the
- * log. Without `app/audit.ts`, each record goes to the app's logger at `info`.
+ * another database. Called once per operation that reads personal data in the clear, after it
+ * read and before it settles, whether it hands its result out or rejects, never sampled; the
+ * operation waits for it and rejects with what it throws, handing nothing out, since data handed
+ * out unrecorded defeats the log. Without `app/audit.ts`, each record goes to the app's logger at
+ * `info`.
  */
 export interface OnPersonalDataAccess {
   (args: OnPersonalDataAccessArgs): void | Promise<void>;

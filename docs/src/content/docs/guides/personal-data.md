@@ -207,7 +207,8 @@ a handler reads it. `readModels` has an entry for every read model with a field 
 [`.person()`](#personal-data-in-read-models): the rows whose person field holds the id, each
 with its primary key as `key`, so the person can tell them apart, and its fields marked
 `.personal()` as `data`, read through the read model's own storage, which may be another
-adapter's. An empty id is refused with `ValidationError`.
+adapter's, in pages by primary key, so a projection that writes a row meanwhile cannot make
+another skip or repeat. An empty id is refused with `ValidationError`.
 
 Only what is marked comes out, and that is the limit to know: a field left unmarked is not
 personal data to Bounda, so the rest of `OrderPlaced` is the order's and stays out; a read model
@@ -282,24 +283,33 @@ person's data in the clear records it, once per call:
 
 | Operation | `persons` | `detail` |
 | --- | --- | --- |
-| `exportPersonalData` | the person | `{ events, scheduledCommands, deadLetters, readModelRows }`, how many of each |
+| `exportPersonalData` | the person | `{ events, scheduledCommands, deadLetters, readModelRows }`, how many of each; `null` when it failed |
 | `deadLetters.list` | those the letters name | `{ letters }`, how many |
 | `deadLetters.get`, `retry`, `discard` | those the letter names | `{ letter }`, its id |
 | a query of a read model with fields marked `.personal()` | those the `person` field names in the rows the query read | `{ query, readModel }` |
 
-Each record is `{ operation, actor, persons, personCount, at, detail }`: `actor` is the client's,
-from [`as`](/concepts/ids-causation-and-correlation/#who-acts), and `null` for a client that names nobody;
-`persons` names each person once, in the order read, and at most `MAX_ACCESS_PERSONS` of them,
-with `personCount` saying how many there were in all, so a query that lists every customer
-gives a bounded record; `at` is the app's clock.
+Each record is `{ operation, actor, persons, personCount, at, outcome, detail }`, and a query's
+adds `unattributed`: `actor` is the client's, from
+[`as`](/concepts/ids-causation-and-correlation/#who-acts), and `null` for a client that names
+nobody; `persons` names each person once, in the order read, and at most `MAX_ACCESS_PERSONS` of
+them, with `personCount` saying how many there were in all, so a query that lists every customer
+gives a bounded record; `at` is the app's clock; `outcome` is `ok` when the call handed its result
+out and `failed` when it rejected after reading, since its error may quote what it read, as a
+handler's `cannot reach ana@example.com` does.
 
 A query is matched to its read model by the module's place, and to its persons by the rows it
 read through its `table` or `client`, in `repository` and `handler` alike, not by its result: a
 handler that reshapes the rows into another object still handed their data out. So a query that
 reads rows and answers only a count is recorded too, with those persons, and one that only calls
-`table.count()` is recorded with none. A query that composes another records nothing of its own
-unless its read model has personal fields; the one it calls records itself, as the same actor.
-What this does not see is in [Limitations](/reference/limitations/#the-access-log).
+`table.count()` is recorded with none. A query whose `repository` or `handler` throws is
+recorded as `failed`, with the persons of the rows it read until then. A query that takes
+`client.raw`, the driver itself, reads rows Bounda cannot see: it is recorded with
+`unattributed: true`, which says that `persons` names only those of the rows read through `table`
+and `client`, and whose rows it read through the driver is unknown. A query that composes another
+records nothing of its own unless its read model has personal fields; the one it calls records
+itself, as the same actor. A query receives that actor too, in its `repository` and its `handler`,
+so it can read only what whoever asks may see: see [Queries](/guides/read-models/#queries). What
+the log does not see is in [Limitations](/reference/limitations/#the-access-log).
 
 Without anything more, each record goes to the app's logger at `info`, with the message
 `personal data accessed` and the record as its fields. Where it should go instead, a log pipeline
@@ -318,12 +328,14 @@ The generator puts it in the registry, which checks it against `AuditModule`, an
 to start when it does not export the function, so every host gets it: `boot()`, `createApp`, the
 Durable Object, React Router. It receives the record with the host's `env`, the `tenant` and the
 app's logger, as a port's `create` does. A test app never calls it: `createTestApp` sends the
-records to its `logger`, or to the `onPersonalDataAccess` the test passes. It runs after the data is read and before it is handed
-out (before a dead letter is retried or discarded), and the call waits for it. When it throws,
-the call rejects with that error and hands nothing out: data handed out without its record is
-what an access log exists to rule out, so a sink that is down stops the reads it would have
-recorded. A hook that would rather let them through catches its own failure and keeps the record
-somewhere else.
+records to its `logger`, or to the `onPersonalDataAccess` the test passes. It runs once the call
+has read and before it settles, whether it then hands its result out or rejects, and the call
+waits for it. When it throws, the call rejects with that error, handing out neither its result
+nor its own error: data handed out without its record is what an access log exists to rule out,
+so a sink that is down stops the reads it would have recorded. A retry or a discard of a dead
+letter acts first, so that its record can say how it went: with the sink down, the retry or the
+discard is done, and the call still rejects without the letter. A hook that would rather let the
+reads through catches its own failure and keeps the record somewhere else.
 
 The records are never sampled, unlike a trace, and nothing is written to the store by default:
 it would be a write on every read, and a record that names a person is personal data that

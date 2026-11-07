@@ -43,6 +43,57 @@ describe("buildWhere", () => {
     ).toEqual({ sql: ' WHERE "paid" = ? AND "paid_at" IS NULL', params: [0] });
   });
 
+  it("writes each operator, with `ne` keeping rows without a value", () => {
+    const at = new Date("2026-01-01T00:00:00.000Z");
+    expect(
+      buildWhere({
+        where: {
+          orderId: { gt: "a", lte: "z", ne: "m" },
+          customerId: { in: ["c-1", "c-2"], ne: null },
+          paidAt: { gte: at, lt: undefined },
+          paid: { in: [] },
+        },
+        columns: pg,
+        dialect: postgresqlDialect,
+        offset: 1,
+      }),
+    ).toEqual({
+      sql: ' WHERE "order_id" > $2 AND "order_id" <= $3 AND "order_id" IS DISTINCT FROM $4 AND "customer_id" IN ($5, $6) AND "customer_id" IS NOT NULL AND "paid_at" >= $7 AND 1 = 0',
+      params: ["a", "z", "m", "c-1", "c-2", at],
+    });
+    expect(
+      buildWhere({
+        where: { paid: { ne: true }, paidAt: { lt: at } },
+        columns: lite,
+        dialect: sqliteDialect,
+      }),
+    ).toEqual({ sql: ' WHERE "paid" IS NOT ? AND "paid_at" < ?', params: [1, at.toISOString()] });
+  });
+
+  it("refuses an unknown operator, a null operand and an `in` without an array", () => {
+    const where = (value: unknown) => () =>
+      buildWhere({ where: { customerId: value }, columns: pg, dialect: postgresqlDialect });
+    expect(where({ like: "c%" })).toThrow(
+      new ConfigurationError(
+        'Field "customerId": unknown operator "like"; use gt, gte, lt, lte, ne or in',
+      ),
+    );
+    expect(where({ gt: null })).toThrow(
+      new ConfigurationError('Field "customerId": "gt" needs a value, got null'),
+    );
+    expect(where({ in: [null] })).toThrow(
+      new ConfigurationError('Field "customerId": "in" needs a value, got null'),
+    );
+    expect(where({ in: "c-1" })).toThrow(
+      new ConfigurationError('Field "customerId": "in" needs an array'),
+    );
+    expect(where({ gt: undefined })).toThrow(
+      new ConfigurationError(
+        'Field "customerId": no operator has a value; leave the field out to match any row',
+      ),
+    );
+  });
+
   it("rejects fields the read model does not declare", () => {
     expect(() =>
       buildWhere({ where: { nope: 1 }, columns: pg, dialect: postgresqlDialect }),

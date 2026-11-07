@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Storage } from "../../adapter/adapter.ts";
+import type { Table as RowTable } from "../../adapter/storage/table.ts";
 import { pendingEvent, testContext, testDeadLetter } from "../../adapter/testing/fixtures.ts";
 import { resolveConfig } from "../../config/schema.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
@@ -16,6 +17,8 @@ import { sealCommandPayload } from "./commands.ts";
 import { sealError } from "./errors.ts";
 import { exportPersonalData } from "./export.ts";
 import { createPersonalKeyWrapping } from "./wrapped-keys.ts";
+
+type Table = RowTable<Record<string, unknown>>;
 
 const registry: Registry = {
   aggregates: {
@@ -303,6 +306,8 @@ describe("exportPersonalData", () => {
       readModels: { customerDirectory: [], orderNotes: [], orderCustomers: [] },
     });
     expect(await exportOf("c-1", 100)).toEqual(exported);
+    // One row a page: the person field that is the directory's key stays the person's.
+    expect(await exportOf("c-1", 1)).toEqual(exported);
     expect((await exportOf("c-2")).events.map((event) => event.data)).toEqual([
       { email: "bo@example.com" },
     ]);
@@ -437,9 +442,59 @@ describe("exportPersonalData", () => {
       ],
     });
     expect(await exportOf("c-1", 100)).toEqual(exported);
+    // One row a page: the person field that is the directory's key stays the person's.
+    expect(await exportOf("c-1", 1)).toEqual(exported);
     expect(JSON.stringify(exported)).not.toContain("bo");
     expect(JSON.stringify(exported)).not.toContain("pro");
   });
+
+  it.each([
+    ["deletes", (notes: Table) => notes.delete({ orderId: "o-2" })],
+    [
+      "inserts",
+      (notes: Table) => notes.insert({ orderId: "o-1", customerId: "c-1", total: 10, note: "o-1" }),
+    ],
+  ])(
+    "pages rows by key, so a row a projection %s between pages makes none skip or repeat",
+    async (_, write) => {
+      const { storage, aggregates, readModels, table } = await setup();
+      for (const orderId of ["o-2", "o-4", "o-6", "o-8"]) {
+        await table("orderNotes").insert({ orderId, customerId: "c-1", total: 10, note: orderId });
+      }
+      const notes = readModels.byName.orderNotes;
+      if (notes === undefined) throw new Error("no read model orderNotes");
+      let pages = 0;
+      const writing = {
+        ...notes,
+        storage: {
+          ...notes.storage,
+          table: {
+            ...notes.storage.table,
+            findMany: async (args?: Parameters<Table["findMany"]>[0]) => {
+              const page = await notes.storage.table.findMany(args);
+              if (pages++ === 0) await write(notes.storage.table);
+              return page;
+            },
+          },
+        },
+      };
+      const exported = await exportPersonalData({
+        storage,
+        aggregates,
+        readModels: { ...readModels, byName: { ...readModels.byName, orderNotes: writing } },
+        clock: createFixedClock(),
+        batchSize: 3,
+        personId: "c-1",
+      });
+      expect(exported.readModels.orderNotes?.map((row) => row.key)).toEqual([
+        "o-2",
+        "o-4",
+        "o-6",
+        "o-8",
+      ]);
+      expect(pages).toBe(2);
+    },
+  );
 
   it("rejects with the store's failure when the read models fail too, leaving none unhandled", async () => {
     const { storage, aggregates, readModels } = await setup();

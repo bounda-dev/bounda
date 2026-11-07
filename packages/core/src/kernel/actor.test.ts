@@ -202,8 +202,9 @@ interface ProcessArgs {
   readonly commands: Record<string, (payload: unknown) => Promise<unknown>>;
 }
 
-const withProcess = async () => {
-  const process = { failing: false };
+// With `archived`, the process also handles `OrderArchived`, a step that does not complete it.
+const withProcess = async ({ archived = false } = {}) => {
+  const process = { failing: false, archiveFailing: false };
   const registry = {
     aggregates: {
       order: {
@@ -227,6 +228,18 @@ const withProcess = async () => {
                     return {};
                   },
                 },
+                ...(archived
+                  ? {
+                      orderArchived: {
+                        handler: () => {
+                          if (process.archiveFailing) {
+                            throw new ValidationError("not archived", []);
+                          }
+                          return {};
+                        },
+                      },
+                    }
+                  : {}),
               },
             },
             deadlines: {
@@ -287,6 +300,28 @@ describe("the actor in a process", () => {
       ["ProcessHandled", "operator-1"],
       ["ProcessCompleted", "operator-1"],
       ["OrderArchived", "operator-1"],
+    ]);
+    await app.stop();
+  });
+
+  it.each([
+    ["whoever retries", "operator-1"],
+    ["the retried step's, without one who retries", undefined],
+  ])("resumes the instance after a retried step as %s", async (_, retrier) => {
+    const { app, process } = await withProcess({ archived: true });
+    process.archiveFailing = true;
+    await app.as("user-1").commands.placeOrder({ orderId: "o-1", total: 10 });
+    await app.as("user-1").commands.archiveOrder({ orderId: "o-1" });
+    await app.runUntilIdle();
+    const [letter] = await app.deadLetters.list();
+    process.archiveFailing = false;
+    await (retrier === undefined ? app : app.as(retrier)).deadLetters.retry(letter?.id ?? "");
+
+    const actors = (await app.events.read()).map((event) => [event.type, event.metadata.actor]);
+    expect(actors.slice(-3)).toEqual([
+      ["ProcessFailed", "user-1"],
+      ["ProcessHandled", retrier ?? "user-1"],
+      ["ProcessResumed", retrier ?? "user-1"],
     ]);
     await app.stop();
   });

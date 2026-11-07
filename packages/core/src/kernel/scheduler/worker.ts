@@ -42,7 +42,7 @@ import {
   SCHEDULED_COMMAND_FAILED_EVENT,
   type ScheduledCommandFailedPayload,
 } from "../system-events.ts";
-import { ATTRIBUTES, deadLettered, traced } from "../telemetry.ts";
+import { ATTRIBUTES, actorAttribute, deadLettered, traced } from "../telemetry.ts";
 import { commitWork, type UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 
 export interface ScheduledCommandWorker {
@@ -399,6 +399,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
         [ATTRIBUTES.aggregateId]: entry.command.aggregateId,
         [ATTRIBUTES.correlationId]: entry.context.correlationId,
         [ATTRIBUTES.attempt]: entry.attempts + 1,
+        ...actorAttribute(entry.context.actor),
       },
       run: async () => {
         if (delayedPolicies.isDelayedPolicy(entry)) {

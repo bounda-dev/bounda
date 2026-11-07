@@ -7,19 +7,20 @@ import type {
 import type { Clock } from "../../contracts/clock.ts";
 import { DeadLetterSettledError, NotFoundError } from "../../contracts/errors.ts";
 import type { Logger } from "../../contracts/logger.ts";
-import type { RecordAccess } from "../personal-data/access.ts";
+import { type RecordAccess, recorded } from "../personal-data/access.ts";
 import { type KeyOfFunction, openCommandPayload, sealedKeys } from "../personal-data/commands.ts";
 import { openTextWith } from "../personal-data/errors.ts";
 import type { ProcessDeadLetters } from "../process/dead-letter-retry.ts";
 import { actedBy } from "../shared/causation.ts";
 import { thrownValue } from "../shared/retry.ts";
+import { tracedOperation } from "../telemetry.ts";
 import type { DeadLetterRetry } from "./retry.ts";
 
 /**
  * What an operator can do with the handler runs that gave up. Retrying or discarding a letter
  * leaves its row in place as a record. `list`, `get`, `retry` and `discard` hand out the error's
- * text and the payload opened, so each call is recorded in the access log first, naming the
- * persons the letters name, and rejects with what the log's hook throws.
+ * text and the payload opened, so each call is recorded in the access log once it settles, with
+ * its outcome, naming the persons the letters name, and rejects with what the log's hook throws.
  */
 export interface DeadLetters {
   /**
@@ -127,64 +128,92 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
     return { ...result, parked: await processes.parkedBehind(letter) };
   };
 
-  const recordLetter = (
+  // Each call is recorded however it settles: a retry that fails again rejects with the handler's
+  // error, which may quote the person.
+  const recordedLetter = <Result>(
     operation: "deadLetters.get" | "deadLetters.retry" | "deadLetters.discard",
     letter: StoredDeadLetter,
-  ): Promise<void> =>
-    recordAccess({ operation, detail: { letter: letter.id }, actor, persons: personsOf(letter) });
+    run: () => Promise<Result>,
+  ): Promise<Result> =>
+    recorded(
+      (outcome) =>
+        recordAccess({
+          operation,
+          detail: { letter: letter.id },
+          actor,
+          persons: personsOf(letter),
+          outcome,
+        }),
+      run,
+    );
 
-  return {
+  const calls: DeadLetters = {
     list: async (args) => {
       // Each person's key read once for the whole page.
       const keyOf = sealedKeys(storage.personalKeys);
       const letters = await storage.deadLetterStore.list(args);
-      const listed = await Promise.all(letters.map((letter) => withParked(letter, keyOf)));
-      await recordAccess({
-        operation: "deadLetters.list",
-        detail: { letters: letters.length },
-        actor,
-        persons: letters.flatMap(personsOf),
-      });
-      return listed;
+      return recorded(
+        (outcome) =>
+          recordAccess({
+            operation: "deadLetters.list",
+            detail: { letters: letters.length },
+            actor,
+            persons: letters.flatMap(personsOf),
+            outcome,
+          }),
+        () => Promise.all(letters.map((letter) => withParked(letter, keyOf))),
+      );
     },
     count: (args) => storage.deadLetterStore.count(args),
     get: async (id) => {
       const letter = await storage.deadLetterStore.get(id);
       if (letter === null) return null;
-      const got = await withParked(letter);
-      await recordLetter("deadLetters.get", letter);
-      return got;
+      return recordedLetter("deadLetters.get", letter, () => withParked(letter));
     },
-    // Recorded before acting: a retry that fails again rejects with the handler's error, which
-    // may quote the person.
     retry: async (id) => {
       const letter = await failedLetter(id);
-      await recordLetter("deadLetters.retry", letter);
-      await retries.retry(letter, actor).catch((error: unknown) => {
-        throw thrownValue(error);
+      return recordedLetter("deadLetters.retry", letter, async () => {
+        await retries.retry(letter, actor).catch((error: unknown) => {
+          throw thrownValue(error);
+        });
+        logger.info("dead letter retried", {
+          id,
+          kind: letter.kind,
+          handler: letter.handler,
+          at: clock.now().toISOString(),
+          ...actedBy(actor),
+        });
+        const retried: DeadLetter = { ...(await opened(letter)), status: "retried" };
+        if (letter.kind !== "process") return retried;
+        return { ...retried, parked: await processes.stillParked(letter) };
       });
-      logger.info("dead letter retried", {
-        id,
-        kind: letter.kind,
-        handler: letter.handler,
-        at: clock.now().toISOString(),
-        ...actedBy(actor),
-      });
-      const retried: DeadLetter = { ...(await opened(letter)), status: "retried" };
-      if (letter.kind !== "process") return retried;
-      return { ...retried, parked: await processes.stillParked(letter) };
     },
     discard: async (id) => {
       const letter = await failedLetter(id);
-      await recordLetter("deadLetters.discard", letter);
-      await storage.deadLetterStore.updateStatus(id, "discarded");
-      logger.info("dead letter discarded", {
-        id,
-        kind: letter.kind,
-        handler: letter.handler,
-        ...actedBy(actor),
+      return recordedLetter("deadLetters.discard", letter, async () => {
+        await storage.deadLetterStore.updateStatus(id, "discarded");
+        logger.info("dead letter discarded", {
+          id,
+          kind: letter.kind,
+          handler: letter.handler,
+          ...actedBy(actor),
+        });
+        return { ...(await opened(letter)), status: "discarded" };
       });
-      return { ...(await opened(letter)), status: "discarded" };
     },
+  };
+  const withSpan =
+    <Args extends unknown[], Result>(
+      name: keyof DeadLetters,
+      call: (...args: Args) => Promise<Result>,
+    ) =>
+    (...args: Args): Promise<Result> =>
+      tracedOperation({ operation: `deadLetters.${name}`, actor, run: () => call(...args) });
+  return {
+    list: withSpan("list", calls.list),
+    count: withSpan("count", calls.count),
+    get: withSpan("get", calls.get),
+    retry: withSpan("retry", calls.retry),
+    discard: withSpan("discard", calls.discard),
   };
 };

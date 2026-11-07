@@ -24,7 +24,7 @@ import { createDispatcher, type DispatcherLag } from "./dispatch/dispatcher.ts";
 import { alignReactiveCheckpoints } from "./dispatch/reactive-checkpoints.ts";
 import { appStorage } from "./events/app-event-store.ts";
 import { createGlobalStream, type GlobalStream } from "./events/global-stream.ts";
-import { createAccessLog } from "./personal-data/access.ts";
+import { createAccessLog, recorded } from "./personal-data/access.ts";
 import { exportPersonalData, type PersonalDataExport } from "./personal-data/export.ts";
 import { forgetPersonalData, logForgotten } from "./personal-data/forget.ts";
 import { openForgetLedger } from "./personal-data/forget-ledger.ts";
@@ -61,7 +61,7 @@ import { createScheduledCommandWorker } from "./scheduler/worker.ts";
 import { guardedLogger } from "./shared/guarded-logger.ts";
 import { ignoredRetries, type PendingRetries } from "./shared/pending-retries.ts";
 import { createSnapshotSubscriber, takesSnapshots } from "./snapshot/subscriber.ts";
-import { ATTRIBUTES, METRICS, meter } from "./telemetry.ts";
+import { ATTRIBUTES, METRICS, meter, tracedOperation } from "./telemetry.ts";
 
 /**
  * What `catchUpReadModels` waits for: every read model when empty, or only what one dispatch
@@ -79,8 +79,10 @@ export interface CatchUpReadModelsArgs {
 export interface BoundaClient<R extends Registry = AppRegistry> {
   readonly commands: CommandsFacade<R>;
   /**
-   * A query of a read model with fields marked `.personal()` is recorded in the access log, as
-   * `exportPersonalData` is, naming the persons of the rows it read.
+   * Each query runs as the client's actor, which its `repository` and `handler` receive. A query
+   * of a read model with fields marked `.personal()` is recorded in the access log, as
+   * `exportPersonalData` is, naming the persons of the rows it read, whether it resolves or
+   * rejects.
    */
   readonly queries: QueriesFacade<R>;
   getLag(): Promise<AppLag>;
@@ -112,8 +114,9 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * work about them, with the error text sealed under their key opened, and the rows of every read
    * model with a field marked `.person()` that name them, with their fields marked `.personal()`.
    * A field left unmarked and whatever a policy sent out are not in it. Recorded in the access log
-   * before it resolves: `app/audit.ts`'s `onPersonalDataAccess`, or the app's logger at `info`
-   * without it; rejects with what the hook throws. Rejects with `ValidationError` an empty id.
+   * before it settles, whether it resolves or fails after it started reading: `app/audit.ts`'s
+   * `onPersonalDataAccess`, or the app's logger at `info` without it; rejects with what the hook
+   * throws. Rejects with `ValidationError` an empty id, recording nothing.
    */
   exportPersonalData(personId: string): Promise<PersonalDataExport>;
   /**
@@ -680,68 +683,123 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     ) => rebuildReadModelWith({ registry, config: rawConfig, name, logger, wrapping, ...options });
     const clientAs = (
       actor: string | undefined,
-    ): BoundaClient<R> & { readonly deadLetters: DeadLetters } => ({
-      commands: createCommandsFacade({
-        aggregates,
-        dispatch: (command) => pipeline.dispatch({ ...command, actor }),
-      }) as CommandsFacade<R>,
-      queries: queryRunner.facade(actor) as QueriesFacade<R>,
-      getLag,
-      events,
-      deadLetters: createDeadLetters({
-        storage,
-        retries,
-        processes,
-        clock,
-        logger,
-        actor,
-        recordAccess,
-      }),
-      rebuildReadModel: (name) => rebuild(name, actor === undefined ? {} : { actor }),
-      forget: (personId) =>
-        forgetPersonalData({ storage, ids, clock, logger, concurrencyRetries, personId, actor }),
-      exportPersonalData: async (personId) => {
-        const exported = await exportPersonalData({
-          storage,
-          aggregates,
-          readModels,
-          clock,
-          batchSize: config.runtime.dispatcher.batchSize,
-          personId,
-        });
-        await recordAccess({
-          operation: "exportPersonalData",
-          detail: {
-            events: exported.events.length,
-            scheduledCommands: exported.scheduledCommands.length,
-            deadLetters: exported.deadLetters.length,
-            readModelRows: Object.values(exported.readModels).reduce(
-              (sum, rows) => sum + rows.length,
-              0,
-            ),
+    ): BoundaClient<R> & { readonly deadLetters: DeadLetters } => {
+      const exportAs = async (personId: string): Promise<PersonalDataExport> => {
+        checkPersonId(personId, "exportPersonalData");
+        let exported: PersonalDataExport | undefined;
+        return recorded(
+          (outcome) =>
+            recordAccess({
+              operation: "exportPersonalData",
+              detail:
+                exported === undefined
+                  ? null
+                  : {
+                      events: exported.events.length,
+                      scheduledCommands: exported.scheduledCommands.length,
+                      deadLetters: exported.deadLetters.length,
+                      readModelRows: Object.values(exported.readModels).reduce(
+                        (sum, rows) => sum + rows.length,
+                        0,
+                      ),
+                    },
+              actor,
+              persons: [personId],
+              outcome,
+            }),
+          async () => {
+            exported = await exportPersonalData({
+              storage,
+              aggregates,
+              readModels,
+              clock,
+              batchSize: config.runtime.dispatcher.batchSize,
+              personId,
+            });
+            return exported;
           },
-          actor,
-          persons: [personId],
-        });
-        return exported;
-      },
-      restrict: (personId) =>
-        restrictProcessing({ storage, ids, clock, logger, concurrencyRetries, personId, actor }),
-      unrestrict: (personId) =>
-        liftProcessingRestriction({
+        );
+      };
+      return {
+        commands: createCommandsFacade({
+          aggregates,
+          dispatch: (command) => pipeline.dispatch({ ...command, actor }),
+        }) as CommandsFacade<R>,
+        queries: queryRunner.facade(actor) as QueriesFacade<R>,
+        getLag,
+        events,
+        deadLetters: createDeadLetters({
           storage,
-          ids,
+          retries,
+          processes,
           clock,
           logger,
-          concurrencyRetries,
-          personId,
           actor,
+          recordAccess,
         }),
-      as: (next) => {
-        checkActor(next);
-        return clientAs(next);
-      },
-    });
+        rebuildReadModel: (name) =>
+          tracedOperation({
+            operation: "rebuildReadModel",
+            actor,
+            run: () => rebuild(name, actor === undefined ? {} : { actor }),
+          }),
+        forget: (personId) =>
+          tracedOperation({
+            operation: "forget",
+            actor,
+            run: () =>
+              forgetPersonalData({
+                storage,
+                ids,
+                clock,
+                logger,
+                concurrencyRetries,
+                personId,
+                actor,
+              }),
+          }),
+        exportPersonalData: (personId) =>
+          tracedOperation({
+            operation: "exportPersonalData",
+            actor,
+            run: () => exportAs(personId),
+          }),
+        restrict: (personId) =>
+          tracedOperation({
+            operation: "restrict",
+            actor,
+            run: () =>
+              restrictProcessing({
+                storage,
+                ids,
+                clock,
+                logger,
+                concurrencyRetries,
+                personId,
+                actor,
+              }),
+          }),
+        unrestrict: (personId) =>
+          tracedOperation({
+            operation: "unrestrict",
+            actor,
+            run: () =>
+              liftProcessingRestriction({
+                storage,
+                ids,
+                clock,
+                logger,
+                concurrencyRetries,
+                personId,
+                actor,
+              }),
+          }),
+        as: (next) => {
+          checkActor(next);
+          return clientAs(next);
+        },
+      };
+    };
 
     return {
       ...clientAs(undefined),

@@ -45,6 +45,8 @@ export const ATTRIBUTES: {
   readonly snapshotOutcome: "bounda.snapshot.outcome";
   readonly snapshotVersion: "bounda.snapshot.version";
   readonly foldEvents: "bounda.fold.events";
+  readonly queryType: "bounda.query.type";
+  readonly operation: "bounda.operation";
 } = {
   correlationId: "bounda.correlation_id",
   causationId: "bounda.causation_id",
@@ -71,7 +73,17 @@ export const ATTRIBUTES: {
   snapshotOutcome: "bounda.snapshot.outcome",
   snapshotVersion: "bounda.snapshot.version",
   foldEvents: "bounda.fold.events",
+  queryType: "bounda.query.type",
+  operation: "bounda.operation",
 };
+
+export interface ActorAttributeFunction {
+  (actor: string | undefined): Attributes;
+}
+
+// No attribute rather than an empty one for work no one is named as acting in.
+export const actorAttribute: ActorAttributeFunction = (actor) =>
+  actor === undefined ? {} : { [ATTRIBUTES.actor]: actor };
 
 /**
  * Users' queries rely on these names too.
@@ -114,6 +126,27 @@ export const traced: TracedFunction = <T>({ name, attributes, run }: TracedArgs<
       }
     },
   );
+
+export interface TracedOperationArgs<T> {
+  // As the client names it: `forget`, `deadLetters.retry`.
+  readonly operation: string;
+  readonly actor: string | undefined;
+  readonly run: () => Promise<T>;
+}
+
+export interface TracedOperationFunction {
+  <T>(args: TracedOperationArgs<T>): Promise<T>;
+}
+
+/**
+ * The span of a client operation that is neither a command nor a query.
+ */
+export const tracedOperation: TracedOperationFunction = ({ operation, actor, run }) =>
+  traced({
+    name: `bounda.operation ${operation}`,
+    attributes: { [ATTRIBUTES.operation]: operation, ...actorAttribute(actor) },
+    run: () => run(),
+  });
 
 export interface TracerFunction {
   (): Tracer;

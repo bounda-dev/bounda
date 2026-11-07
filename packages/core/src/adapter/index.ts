@@ -91,4 +91,13 @@ export type {
   Scheduler,
 } from "./storage/scheduler.ts";
 export type { Snapshot, SnapshotStore } from "./storage/snapshot-store.ts";
-export type { FindManyArgs, ReadClient, Table, TableOrder } from "./storage/table.ts";
+export type {
+  FieldFilter,
+  FindManyArgs,
+  RangeFilter,
+  ReadClient,
+  SetFilter,
+  Table,
+  TableOrder,
+  Where,
+} from "./storage/table.ts";

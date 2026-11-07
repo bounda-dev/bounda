@@ -188,7 +188,9 @@ export const createProcessRetry: CreateProcessRetryFunction = ({
       }
       await schedule.stage(unit, process, instanceId);
     });
-    if (!settled) await resume.resumeParked(process, instanceId, letter);
+    if (!settled) {
+      await resume.resumeParked(process, instanceId, letter, actor ?? event.metadata.actor);
+    }
     logger.info("process handler retried", { process: process.name, eventId: event.id });
     return settled;
   };
@@ -232,7 +234,7 @@ export const createProcessRetry: CreateProcessRetryFunction = ({
       });
       await schedule.stage(unit, process, payload.aggregateId);
     });
-    await resume.resumeParked(process, payload.aggregateId, letter);
+    await resume.resumeParked(process, payload.aggregateId, letter, context.actor);
   };
 
   const instanceOfLetter = async (letter: StoredDeadLetter): Promise<ProcessInstance | null> => {

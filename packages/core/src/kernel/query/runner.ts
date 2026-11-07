@@ -1,10 +1,12 @@
 import { NotFoundError } from "../../contracts/errors.ts";
 import { validatePayload } from "../command/validate.ts";
-import type { RecordAccess } from "../personal-data/access.ts";
+import { type RecordAccess, recorded } from "../personal-data/access.ts";
 import type { ModulePorts } from "../ports/ports.ts";
 import type { ReadModelRuntime, ReadModelsRuntime } from "../read-model/build-read-models.ts";
+import { isRecord } from "../shared/merge-fields.ts";
 import { withPorts } from "../shared/with-ports.ts";
-import type { QueriesRuntime } from "./build-queries.ts";
+import { ATTRIBUTES, actorAttribute, traced } from "../telemetry.ts";
+import { checkPayloadFields, type QueriesRuntime } from "./build-queries.ts";
 import { reading } from "./reading.ts";
 
 /**
@@ -42,9 +44,9 @@ export interface CreateQueryRunnerFunction {
   (args: CreateQueryRunnerArgs): QueryRunner;
 }
 
-// A query of a read model with personal fields is recorded once its handler resolves, before its
-// result is handed out, naming the persons of the rows it read: a handler may reshape what it
-// read, so its result cannot tell whose data it holds.
+// A query of a read model with personal fields is recorded once its handler settles, before its
+// result or error is handed out, naming the persons of the rows it read: a handler may reshape
+// what it read, so its result cannot tell whose data it holds.
 const personalStores = (readModel: ReadModelRuntime) => {
   const { personalData, storage } = readModel;
   if (personalData === null || personalData.personal.length === 0) return null;
@@ -65,27 +67,60 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
     if (query === undefined) throw new NotFoundError(`Unknown query "${type}"`);
     const readModel = readModels.byName[query.readModel];
     if (readModel === undefined) throw new NotFoundError(`Unknown read model "${query.readModel}"`);
-    const parsed = validatePayload({ schema: query.schema, payload, subject: `query ${type}` });
-    const recorded = personalStores(readModel);
-    const { table, client } = recorded ?? readModel.storage;
-    const repositoryData =
-      query.repository === null
-        ? undefined
-        : await query.repository({ ...(parsed as Record<string, unknown>), client, table });
-    const args = { query: { type, payload: parsed }, repositoryData, table, queries: nested };
-    const readModelPorts = ports[query.readModel] ?? {};
-    const result = await query.handler(
-      Object.keys(readModelPorts).length === 0 ? args : withPorts(readModelPorts, args),
-    );
-    if (recorded !== null) {
-      await recordAccess({
-        operation: "query",
-        detail: { query: query.key, readModel: query.readModel },
-        actor,
-        persons: recorded.persons,
-      });
-    }
-    return result;
+    return traced({
+      name: `bounda.query ${type}`,
+      attributes: {
+        [ATTRIBUTES.queryType]: type,
+        [ATTRIBUTES.readModel]: query.readModel,
+        ...actorAttribute(actor),
+      },
+      run: async () => {
+        const parsed = validatePayload({ schema: query.schema, payload, subject: `query ${type}` });
+        const stores = personalStores(readModel);
+        const { table, client } = stores ?? readModel.storage;
+        if (query.repository !== null && isRecord(parsed)) {
+          checkPayloadFields(
+            `readModels.${query.readModel}.queries.${query.key}`,
+            Object.keys(parsed),
+          );
+        }
+        const run = async (): Promise<unknown> => {
+          const repositoryData =
+            query.repository === null
+              ? undefined
+              : await query.repository({
+                  ...(parsed as Record<string, unknown>),
+                  client,
+                  table,
+                  actor,
+                });
+          const args = {
+            query: { type, payload: parsed },
+            repositoryData,
+            table,
+            queries: nested,
+            actor,
+          };
+          const readModelPorts = ports[query.readModel] ?? {};
+          return query.handler(
+            Object.keys(readModelPorts).length === 0 ? args : withPorts(readModelPorts, args),
+          );
+        };
+        if (stores === null) return run();
+        return recorded(
+          (outcome) =>
+            recordAccess({
+              operation: "query",
+              detail: { query: query.key, readModel: query.readModel },
+              actor,
+              persons: stores.persons,
+              outcome,
+              unattributed: stores.unattributed,
+            }),
+          run,
+        );
+      },
+    });
   };
 
   const facade = (actor: string | undefined): QueriesFacadeRuntime => {
