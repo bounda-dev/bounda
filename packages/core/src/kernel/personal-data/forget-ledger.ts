@@ -1,5 +1,7 @@
 import type { Adapter } from "../../adapter/adapter.ts";
+import type { AdapterDefinition } from "../../adapter/adapter-definition.ts";
 import type { ForgetLedger } from "../../adapter/storage/forget-ledger.ts";
+import { ConfigurationError } from "../../contracts/errors.ts";
 import type { AppEnv } from "../../register/index.ts";
 
 export interface CreateForgetLedgerFromEnvArgs {
@@ -60,14 +62,36 @@ export const isForgetLedgerSource: IsForgetLedgerSourceFunction = (
 
 export interface OpenForgetLedgerArgs extends CreateForgetLedgerFromEnvArgs {
   readonly source: ForgetLedgerSource | null;
+  readonly storage: AdapterDefinition;
 }
 
 export interface OpenForgetLedgerFunction {
   (args: OpenForgetLedgerArgs): Promise<ForgetLedger | null>;
 }
 
-export const openForgetLedger: OpenForgetLedgerFunction = async ({ source, env, tenant }) => {
+// The same adapter, or one of the same kind with the same options: a database a restore rolls back
+// together with the storage. Two memory adapters are two stores whatever their options.
+const sharesStorage = (source: Adapter, storage: AdapterDefinition): boolean =>
+  source === storage ||
+  (source.name !== "memory" &&
+    source.name === storage.name &&
+    JSON.stringify(source.options) === JSON.stringify(storage.options));
+
+/**
+ * Refuses a ledger adapter that points at the storage's own database.
+ */
+export const openForgetLedger: OpenForgetLedgerFunction = async ({
+  source,
+  storage,
+  env,
+  tenant,
+}) => {
   if (source === null) return null;
+  if (source.kind === "bounda-adapter" && sharesStorage(source, storage)) {
+    throw new ConfigurationError(
+      "runtime.personalData.forgetLedger points at the storage's own database, which a restore rolls back with it: give it another database",
+    );
+  }
   return source.kind === "bounda-forget-ledger"
     ? source.create({ env, tenant })
     : source.createForgetLedger({ tenant });

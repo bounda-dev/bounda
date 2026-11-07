@@ -153,8 +153,8 @@ everyone forgotten after it. `kvForgetLedger({ binding })` keeps the record of e
 in a KV namespace instead, outside every object, and an object that starts forgets again whoever
 its restored storage brought back; restoring the storage restarts the object. Bind the namespace
 in `wrangler.jsonc` and name it in `runtime.personalData.forgetLedger`; an object whose `env`
-lacks the binding fails to start with a `ConfigurationError`. Each object keeps its entries under
-its own name, and reads the ledger once more a minute after it starts, since KV may take that long
+lacks the binding, or that was reached through an id without a name, fails to start with a
+`ConfigurationError`. Each object keeps its entries under its own name, and reads the ledger once more a minute after it starts, since KV may take that long
 to list a key. See [backups](/guides/personal-data/#backups).
 
 ## One object per tenant

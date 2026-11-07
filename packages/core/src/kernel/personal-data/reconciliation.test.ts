@@ -14,6 +14,7 @@ import {
   createForgetLedgerReconciliation,
   FORGET_LEDGER_CURSOR,
   FORGET_LEDGER_REREAD_MS,
+  type ForgetAgainEntry,
   forgetAgain,
 } from "./reconciliation.ts";
 
@@ -50,13 +51,13 @@ const recordingLedger = (entries: readonly ForgetLedgerEntry[], visibilityDelayM
 const setUp = async ({
   entries,
   persons = [],
-  batchSize = 2,
+  pageSize = 2,
   visibilityDelayMs,
   logger = silentLogger,
 }: {
   readonly entries: readonly ForgetLedgerEntry[];
   readonly persons?: readonly string[];
-  readonly batchSize?: number;
+  readonly pageSize?: number;
   readonly visibilityDelayMs?: number;
   readonly logger?: Logger;
 }) => {
@@ -70,7 +71,7 @@ const setUp = async ({
     clock: createFixedClock(NOW),
     logger,
     concurrencyRetries: 3,
-    batchSize,
+    pageSize,
   });
   return { storage, reconciliation, reads };
 };
@@ -193,7 +194,7 @@ describe("the forget ledger's reconciliation", () => {
       clock: createFixedClock(NOW),
       logger: silentLogger,
       concurrencyRetries: 3,
-      batchSize: 10,
+      pageSize: 10,
     });
     expect(await reconciliation.reconcile(NOW)).toBeNull();
     const due = reconciliation.nextDueAt() as Date;
@@ -221,5 +222,30 @@ describe("forgetAgain", () => {
     });
     await expect(refused).rejects.toBeInstanceOf(ValidationError);
     await expect(refused).rejects.toThrow("forgetting again needs the id of the person");
+  });
+
+  it("takes no transaction for a person it has nothing to forget", async () => {
+    const storage = await memory().createStorage();
+    let transactions = 0;
+    const counted: Storage = {
+      ...storage,
+      transact: (work) => {
+        transactions += 1;
+        return storage.transact(work);
+      },
+    };
+    const run = (entry: ForgetAgainEntry) =>
+      forgetAgain({
+        storage: counted,
+        ids: createSequentialIdGenerator(),
+        clock: createFixedClock(NOW),
+        concurrencyRetries: 3,
+        entry,
+      });
+    expect(await run({ personId: "c-1", eventId: "e-1" })).toBeNull();
+    expect(transactions).toBe(0);
+    await keyed(storage, ["c-1"]);
+    expect(await run({ personId: "c-1", eventId: "e-1" })).not.toBeNull();
+    expect(transactions).toBe(1);
   });
 });

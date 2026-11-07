@@ -30,6 +30,7 @@ import { createLedgerOutbox } from "./personal-data/ledger-outbox.ts";
 import { marksPersonalFields } from "./personal-data/marks.ts";
 import {
   createForgetLedgerReconciliation,
+  FORGET_LEDGER_START_TIMEOUT_MS,
   type ForgetAgainEntry,
   forgetAgain,
 } from "./personal-data/reconciliation.ts";
@@ -169,9 +170,10 @@ export interface BoundaApp<R extends Registry = AppRegistry> extends BoundaClien
   runUntilIdle(options?: RunUntilIdleOptions): Promise<RunUntilIdleResult>;
   /**
    * The earliest moment a scheduled command or a process deadline becomes due, a person becomes
-   * due for forgetting under `runtime.personalData.retention`, or a person's key waits to be
-   * rewrapped under `runtime.personalData.keyWrapper`; `null` when nothing is. A host without a
-   * polling worker arms its wake-up for it.
+   * due for forgetting under `runtime.personalData.retention`, a person's key waits to be
+   * rewrapped under `runtime.personalData.keyWrapper`, or `runtime.personalData.forgetLedger` is
+   * to be read again, after a read that failed or once a ledger that shows entries late has had
+   * the time to; `null` when nothing is. A host without a polling worker arms its wake-up for it.
    */
   nextDueAt(): Promise<Date | null>;
   /**
@@ -374,6 +376,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     opened.unshift(() => written.close());
     const ledger = await openForgetLedger({
       source: config.runtime.personalData.forgetLedger,
+      storage: config.storage,
       env,
       tenant,
     });
@@ -491,7 +494,6 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             clock,
             logger,
             concurrencyRetries,
-            batchSize: config.runtime.dispatcher.batchSize,
           });
     const rotation =
       wrapping.wrapper === null
@@ -617,9 +619,23 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         reconciliation === undefined ? null : { reconciled: reconciliation.reconciled() },
     });
     // Before the app serves anything: a backup restored brings back persons forgotten since, and
-    // the read models that show them hear of it by the time the start resolves.
-    if (((await reconciliation?.reconcile(clock.now())) ?? 0) > 0) {
-      await dispatcher.catchUp("projection");
+    // the read models that show them hear of it by the time the start resolves. A ledger that
+    // does not answer in time is left to finish behind the start, as one that fails is retried.
+    if (reconciliation !== undefined) {
+      let cancel: () => void = () => undefined;
+      const late = new Promise<"late">((resolve) => {
+        cancel = clock.after(FORGET_LEDGER_START_TIMEOUT_MS, () => resolve("late"));
+      });
+      const forgotten = await Promise.race([reconciliation.reconcile(clock.now()), late]);
+      cancel();
+      if (forgotten === "late") {
+        logger.error(
+          "forget ledger did not answer in time; the app starts and reconciles in the background",
+          { timeoutMs: FORGET_LEDGER_START_TIMEOUT_MS },
+        );
+      } else if ((forgotten ?? 0) > 0) {
+        await dispatcher.catchUp("projection");
+      }
     }
     const rebuild = (name: string, options: RebuildReadModelOptions = {}) =>
       rebuildReadModelWith({ registry, config: rawConfig, name, logger, wrapping, ...options });

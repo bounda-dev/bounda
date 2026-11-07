@@ -106,7 +106,8 @@ const isKvNamespace = (value: unknown): value is KVNamespace =>
 /**
  * A forget ledger in a Workers KV namespace, for `runtime.personalData.forgetLedger` of an app on
  * Cloudflare: outside the Durable Object, so restoring the object's storage to an earlier time
- * leaves it whole. Every object keeps its entries under its own name. KV lists a new key within
+ * leaves it whole. Every object keeps its entries under its own name, so an object reached through
+ * an id without a name fails its start. KV lists a new key within
  * about a minute, so an object that starts reads the ledger once more after `KV_LIST_DELAY_MS`:
  * a forgetting made in the last minute before a restore is applied by then. A binding missing
  * from the object's `env` fails its start with `ConfigurationError`.
@@ -119,8 +120,14 @@ export const kvForgetLedger: KvForgetLedgerFunction = ({ binding }) =>
         `runtime.personalData.forgetLedger names the KV binding ${binding}, which the Worker's env does not hold: add it under kv_namespaces in wrangler.jsonc`,
       );
     }
+    // Objects without a name would all read one another's entries under one prefix.
+    if (tenant === undefined) {
+      throw new ConfigurationError(
+        "A KV forget ledger keeps each object's entries under its name, and this object has none: reach it through idFromName",
+      );
+    }
     return createKvForgetLedger({
       namespace,
-      prefix: `bounda/forget-ledger/${encodeURIComponent(tenant ?? "")}/`,
+      prefix: `bounda/forget-ledger/${encodeURIComponent(tenant)}/`,
     });
   });

@@ -129,8 +129,10 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
   from `@bounda-dev/cloudflare` on Cloudflare; or a ledger of your own through
   `defineForgetLedger`. The runtime copies each `PersonalDataForgotten` to it in the background
   and, when the app starts, forgets again, with `reason: "restored"`, whoever a restored backup
-  brought back. A ledger that cannot be read at start does not fail it: the app logs an error and
-  the worker retries, and `getLag()` reports `forgetLedger: { reconciled: false }` meanwhile.
+  brought back. A ledger that cannot be read at start, or does not answer within ten seconds, does
+  not fail it: the app logs an error and reconciles in the background, and `getLag()` reports
+  `forgetLedger: { reconciled: false }` meanwhile. An adapter pointing at the storage's own
+  database fails the start.
   Without it, a restored backup brings back everyone forgotten after it was taken. See
   [backups](/guides/personal-data/#backups).
 

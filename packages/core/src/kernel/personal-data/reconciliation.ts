@@ -31,6 +31,13 @@ export const FORGET_LEDGER_RETRY_MS = 30_000;
 
 export const FORGET_LEDGER_MAX_RETRY_MS = 3_600_000;
 
+// How many entries a reconciliation reads at once: a store that lists from its newest entry, as
+// KV does, lists again for every page.
+export const FORGET_LEDGER_PAGE = 1_000;
+
+// How long the start waits for the reconciliation before it serves and lets it finish behind.
+export const FORGET_LEDGER_START_TIMEOUT_MS = 10_000;
+
 export interface ForgetAgainEntry {
   readonly personId: string;
   /**
@@ -41,7 +48,7 @@ export interface ForgetAgainEntry {
 }
 
 export interface ForgetAgainArgs {
-  readonly storage: Pick<Storage, "transact">;
+  readonly storage: Pick<Storage, "transact" | "eventStore" | "personalKeys">;
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly concurrencyRetries: number;
@@ -54,10 +61,10 @@ export interface ForgetAgainFunction {
 
 /**
  * Forgets the person again, with `reason: "restored"`, when the store does not hold the event the
- * entry names and the person still holds a key, deciding both in the transaction that forgets
- * them, so of two instances doing it at once, the one whose append conflicts finds the key gone on
- * its retry. Resolves `null` when it forgot nobody. `storage` is the store as written: nothing
- * here reads a personal field.
+ * entry names and the person still holds a key, deciding both again in the transaction that
+ * forgets them, so of two instances doing it at once, the one whose append conflicts finds the key
+ * gone on its retry; an entry that reads as applied takes no transaction. Resolves `null` when it
+ * forgot nobody. `storage` is the store as written: nothing here reads a personal field.
  */
 export const forgetAgain: ForgetAgainFunction = async ({
   storage,
@@ -67,20 +74,24 @@ export const forgetAgain: ForgetAgainFunction = async ({
   entry: { personId, eventId },
 }) => {
   checkPersonId(personId, "forgetting again");
+  const isDue = async (stores: Pick<Storage, "eventStore" | "personalKeys">): Promise<boolean> => {
+    if (eventId !== undefined) {
+      const applied = await stores.eventStore.readOne({
+        aggregateType: BOUNDA_AGGREGATE,
+        aggregateId: personId,
+        eventId,
+      });
+      if (applied !== null) return false;
+    }
+    return (await stores.personalKeys.get(personId)) !== null;
+  };
+  if (!(await isDue(storage))) return null;
   const correlationId = ids.next();
   return transactRetrying({
     storage,
     concurrencyRetries,
     work: async (transaction) => {
-      if (eventId !== undefined) {
-        const applied = await transaction.eventStore.readOne({
-          aggregateType: BOUNDA_AGGREGATE,
-          aggregateId: personId,
-          eventId,
-        });
-        if (applied !== null) return null;
-      }
-      if ((await transaction.personalKeys.get(personId)) === null) return null;
+      if (!(await isDue(transaction))) return null;
       return forgetWithin({
         transaction,
         ids,
@@ -121,12 +132,15 @@ export interface CreateForgetLedgerReconciliationArgs {
   /**
    * The store as written.
    */
-  readonly storage: Pick<Storage, "transact" | "checkpointStore">;
+  readonly storage: Pick<Storage, "transact" | "checkpointStore" | "eventStore" | "personalKeys">;
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly logger: Logger;
   readonly concurrencyRetries: number;
-  readonly batchSize: number;
+  /**
+   * Defaults to `FORGET_LEDGER_PAGE`.
+   */
+  readonly pageSize?: number;
 }
 
 export interface CreateForgetLedgerReconciliationFunction {
@@ -145,7 +159,7 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
   clock,
   logger,
   concurrencyRetries,
-  batchSize,
+  pageSize = FORGET_LEDGER_PAGE,
 }) => {
   const { checkpointStore } = storage;
   let done = false;
@@ -170,7 +184,7 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
     for (;;) {
       const page: readonly ForgetLedgerEntry[] = await ledger.read({
         ...(after === undefined ? {} : { after }),
-        limit: batchSize,
+        limit: pageSize,
       });
       for (const entry of page) {
         const again = await forgetAgain({ storage, ids, clock, concurrencyRetries, entry });
@@ -182,7 +196,7 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
       if (last === undefined) return forgotten;
       const time = Date.parse(last.forgottenAt);
       if (Number.isFinite(time)) await advance(time);
-      if (page.length < batchSize) return forgotten;
+      if (page.length < pageSize) return forgotten;
       after = last;
     }
   };

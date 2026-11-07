@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Adapter } from "../../adapter/adapter.ts";
 import type { ForgetLedger, ForgetLedgerEntry } from "../../adapter/storage/forget-ledger.ts";
 import type { Table } from "../../adapter/storage/table.ts";
@@ -23,6 +23,7 @@ import {
   FORGET_LEDGER_CURSOR,
   FORGET_LEDGER_REREAD_MS,
   FORGET_LEDGER_RETRY_MS,
+  FORGET_LEDGER_START_TIMEOUT_MS,
 } from "./reconciliation.ts";
 
 const START = new Date("2026-03-01T00:00:00.000Z");
@@ -355,6 +356,59 @@ describe("the forget ledger", () => {
     expect(await forgotten()).toEqual([["c-1", "restored"]]);
     expect(await app.getLag()).toMatchObject({ forgetLedger: { reconciled: true } });
     expect(await app.nextDueAt()).toBeNull();
+  });
+
+  it("starts once the ledger has not answered in time, and reconciles when it does", async () => {
+    const storage = memory();
+    const ledgerAdapter = memory();
+    const { app: first, register } = await start({ storage, forgetLedger: ledgerAdapter });
+    await register("c-1");
+    await first.stop();
+    await (await opened(ledgerAdapter)).append([entry("c-1", "lost-forget", START)]);
+    let answer: () => void = () => undefined;
+    const answered = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    const slow = defineForgetLedger(async () => {
+      const inner = await opened(ledgerAdapter);
+      return {
+        append: (entries) => inner.append(entries),
+        read: async (args) => {
+          await answered;
+          return inner.read(args);
+        },
+      };
+    });
+    const { logs, logger } = recording();
+    const clock = createFixedClock(START);
+    const starting = createApp({
+      registry,
+      config: { storage, runtime: { personalData: { forgetLedger: slow } } },
+      ids: createSequentialIdGenerator({ prefix: "slow" }),
+      clock,
+      logger,
+    });
+    let started: Awaited<typeof starting> | undefined;
+    void starting.then((app) => {
+      started = app;
+    });
+    // The start arms its timer once it reaches the ledger, which the test cannot see.
+    while (started === undefined) {
+      clock.advance(FORGET_LEDGER_START_TIMEOUT_MS);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    const app = await starting;
+    stops.push(() => app.stop());
+    expect(logs).toContainEqual([
+      "error",
+      "forget ledger did not answer in time; the app starts and reconciles in the background",
+      { timeoutMs: FORGET_LEDGER_START_TIMEOUT_MS },
+    ]);
+    expect(await app.getLag()).toMatchObject({ forgetLedger: { reconciled: false } });
+    answer();
+    await vi.waitFor(async () =>
+      expect(await app.getLag()).toMatchObject({ forgetLedger: { reconciled: true } }),
+    );
   });
 
   it("reads a ledger whose entries show late once more after its delay", async () => {

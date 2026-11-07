@@ -122,14 +122,28 @@ describe("the KV forget ledger's listing", () => {
     expect(await ledger.read({ limit: 10 })).toEqual([]);
   });
 
-  it("keeps an object without a name under the empty tenant", async () => {
+  it("refuses an object without a name, whose entries it could not keep apart", async () => {
+    const { namespace } = countingNamespace();
+    expect(() =>
+      kvForgetLedger({ binding: "LEDGER" }).create({
+        env: { ...env, LEDGER: namespace } as typeof env,
+      }),
+    ).toThrow(
+      new ConfigurationError(
+        "A KV forget ledger keeps each object's entries under its name, and this object has none: reach it through idFromName",
+      ),
+    );
+  });
+
+  it("keeps an object's entries under its name", async () => {
     const { namespace, keys } = countingNamespace();
     const ledger = await kvForgetLedger({ binding: "LEDGER" }).create({
       env: { ...env, LEDGER: namespace } as typeof env,
+      tenant: "acme/eu",
     });
     await ledger.append([{ personId: "c-1", eventId: "e-1", forgottenAt: minute(0) }]);
     expect([...keys.keys()]).toEqual([
-      `bounda/forget-ledger//${8_640_000_000_000_000 - Date.parse(minute(0))}:e-1`,
+      `bounda/forget-ledger/acme%2Feu/${8_640_000_000_000_000 - Date.parse(minute(0))}:e-1`,
     ]);
     expect([...keys.values()]).toEqual([{ personId: "c-1", forgottenAt: minute(0) }]);
   });

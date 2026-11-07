@@ -580,8 +580,10 @@ export default defineConfig({
 `bounda_forget_ledger`, with the adapter's `tablePrefix`, the first time it is used: a SQLite file
 on another disk or volume for an app on one machine, `postgresql({ url })` on another server, or a
 schema of the same server backed up apart. A plain file of the app's own making would be the same
-thing with less: the SQLite file already is one, written atomically. The table keeps each tenant's
-entries apart, so tenants can share one ledger.
+thing with less: the SQLite file already is one, written atomically. An adapter that points at the
+storage's own database, which a restore would roll back with it, fails the start with a
+`ConfigurationError`. The table keeps each tenant's entries apart, so tenants can share one
+ledger.
 
 On Cloudflare a restore of a Durable Object's storage goes back to a point in time, the ledger
 with it if it lived there, so the ledger is a KV namespace:
@@ -606,7 +608,8 @@ export default defineConfig({
 "kv_namespaces": [{ "binding": "FORGET_LEDGER", "id": "<the namespace's id>" }]
 ```
 
-Every object keeps its entries under its own name. KV may take up to a minute to list a key it
+Every object keeps its entries under its own name, so an object reached through an id without a
+name fails to start; `createWorker` names each by its tenant. KV may take up to a minute to list a key it
 just wrote, so an object that starts reads the ledger once more a minute later, and wakes for it.
 Anything else is a ledger of your own through `defineForgetLedger`, which receives the host's
 environment and the tenant when the app starts: its `read` returns entries in the order of their
@@ -642,6 +645,8 @@ Restart the app after restoring its database: it reconciles when it starts.
 
 A ledger that cannot be read when the app starts does not stop it: the app logs an error, starts,
 and its worker tries again after 30 seconds, then twice as long after each failure, up to an hour.
+One that does not answer within ten seconds is left to finish in the background, with an error
+logged, and the app starts.
 Until then `getLag()` says `forgetLedger: { reconciled: false }`, and a person the restore
 brought back can be read; alert on it. An app without a ledger reports `forgetLedger: null`.
 

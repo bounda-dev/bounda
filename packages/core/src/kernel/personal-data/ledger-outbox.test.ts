@@ -84,10 +84,15 @@ describe("a forget ledger's source", () => {
       return { append: async () => {}, read: async () => [] };
     });
     const env = { REGION: "eu" };
-    await openForgetLedger({ source: definition, env, tenant: "t-1" });
+    await openForgetLedger({ source: definition, storage: memory(), env, tenant: "t-1" });
     expect(seen).toEqual([{ env, tenant: "t-1" }]);
     const adapter = memory();
-    const ledger = await openForgetLedger({ source: adapter, env, tenant: "t-1" });
+    const ledger = await openForgetLedger({
+      source: adapter,
+      storage: memory(),
+      env,
+      tenant: "t-1",
+    });
     await ledger?.append([
       { personId: "c-1", eventId: "e-1", forgottenAt: "2026-01-01T00:00:00.000Z" },
     ]);
@@ -95,6 +100,34 @@ describe("a forget ledger's source", () => {
       await (await adapter.createForgetLedger({ tenant: "t-1" })).read({ limit: 1 }),
     ).toHaveLength(1);
     expect(await (await adapter.createForgetLedger({})).read({ limit: 1 })).toEqual([]);
-    expect(await openForgetLedger({ source: null, env })).toBeNull();
+    expect(await openForgetLedger({ source: null, storage: memory(), env })).toBeNull();
+  });
+
+  it("refuses an adapter that points at the storage's own database", async () => {
+    const storage = memory();
+    const sqliteAt = (path: string) => ({ ...memory(), name: "sqlite", options: { path } });
+    const app = sqliteAt("./data/app.db");
+    for (const source of [storage, app, sqliteAt("./data/app.db")]) {
+      await expect(
+        openForgetLedger({ source, storage: source === storage ? storage : app, env: {} }),
+      ).rejects.toThrow(
+        "runtime.personalData.forgetLedger points at the storage's own database, which a restore rolls back with it: give it another database",
+      );
+    }
+    expect(
+      await openForgetLedger({
+        source: sqliteAt("./ledger/forget-ledger.db"),
+        storage: app,
+        env: {},
+      }),
+    ).not.toBeNull();
+    expect(
+      await openForgetLedger({
+        source: { ...memory(), name: "sqlite" },
+        storage: { ...memory(), name: "postgresql" },
+        env: {},
+      }),
+    ).not.toBeNull();
+    expect(await openForgetLedger({ source: memory(), storage, env: {} })).not.toBeNull();
   });
 });
