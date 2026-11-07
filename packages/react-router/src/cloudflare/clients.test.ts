@@ -2,7 +2,8 @@ import { cloudflare } from "@bounda-dev/cloudflare";
 import { type BoundaClient, ConfigurationError, type Registry } from "@bounda-dev/core";
 import { RouterContextProvider } from "react-router";
 import { describe, expect, expectTypeOf, it } from "vitest";
-import { cloudflareClients, type RequestArgs, type TenantFunction } from "./clients.ts";
+import type { RequestArgs } from "../actor.ts";
+import { cloudflareClients, type TenantFunction } from "./clients.ts";
 import { storeNamespace } from "./test-support.ts";
 
 const requestArgs = (params: Record<string, string> = {}): RequestArgs => {
@@ -40,8 +41,16 @@ describe("cloudflareClients", () => {
     await Reflect.get(client.queries, "getOrder")({ orderId: "o-1" });
     expect(tenants).toEqual(["acme"]);
     expect(store.calls).toEqual([
-      ["acme", "command", "placeOrder", { orderId: "o-1" }, { correlationId: "c-1" }, "eventual"],
-      ["acme", "query", "getOrder", { orderId: "o-1" }],
+      [
+        "acme",
+        "command",
+        "placeOrder",
+        { orderId: "o-1" },
+        { correlationId: "c-1" },
+        "eventual",
+        undefined,
+      ],
+      ["acme", "query", "getOrder", { orderId: "o-1" }, undefined],
     ]);
 
     await Reflect.get(clientOf(requestArgs()).queries, "getOrder")({ orderId: "o-1" });
@@ -70,14 +79,14 @@ describe("cloudflareClients", () => {
     expect(store.calls).toEqual([
       ["acme", "lag"],
       ["acme", "readEvents", { after: 3, limit: 10 }],
-      ["acme", "listDeadLetters", { limit: 5 }],
-      ["acme", "retryDeadLetter", "d-1"],
-      ["acme", "discardDeadLetter", "d-2"],
+      ["acme", "listDeadLetters", { limit: 5 }, undefined],
+      ["acme", "retryDeadLetter", "d-1", undefined],
+      ["acme", "discardDeadLetter", "d-2", undefined],
       ["acme", "rebuildReadModel", "orders"],
-      ["acme", "forget", "c-1", "read-your-writes"],
-      ["acme", "exportPersonalData", "c-1"],
-      ["acme", "restrict", "c-2", "read-your-writes"],
-      ["acme", "unrestrict", "c-2", "read-your-writes"],
+      ["acme", "forget", "c-1", "read-your-writes", undefined],
+      ["acme", "exportPersonalData", "c-1", undefined],
+      ["acme", "restrict", "c-2", "read-your-writes", undefined],
+      ["acme", "unrestrict", "c-2", "read-your-writes", undefined],
     ]);
   });
 

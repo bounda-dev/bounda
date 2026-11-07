@@ -5,6 +5,7 @@ import type { Clock } from "../../contracts/clock.ts";
 import { ClaimLostError, ConcurrencyError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
+import { causedBy } from "../shared/causation.ts";
 import type { ReactionOutcome } from "../shared/in-order.ts";
 import type { PendingRetries } from "../shared/pending-retries.ts";
 import { runAttempt } from "../shared/reaction-attempt.ts";
@@ -12,12 +13,7 @@ import type { UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
 import type { ProcessFailures } from "./failures.ts";
 import type { ProcessHandlers } from "./handlers.ts";
-import {
-  eventContext,
-  type LifecycleEntry,
-  lifecycleEntries,
-  type ProcessInstance,
-} from "./lifecycle.ts";
+import { type LifecycleEntry, lifecycleEntries, type ProcessInstance } from "./lifecycle.ts";
 import { actsOn, completesOn, followsUp, handledEntries, handlerOf, startsOn } from "./routes.ts";
 import type { DeadlineSchedule } from "./schedule.ts";
 import type { ProcessUnits } from "./units.ts";
@@ -162,7 +158,7 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
     const entries: LifecycleEntry[] = [];
     const current = started(process, event, await within.load(process, instanceId), entries);
     if (current.status === "started") {
-      entries.push(lifecycleEntries.failed({ eventId: event.id }, letter, eventContext(event)));
+      entries.push(lifecycleEntries.failed({ eventId: event.id }, letter, causedBy(event)));
       await within.append(process, instanceId, current, entries);
       await schedule.stage(unit, process, instanceId);
     }

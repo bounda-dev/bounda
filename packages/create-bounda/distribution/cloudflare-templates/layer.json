@@ -10,7 +10,12 @@
       "label": "Event Sourcing with Bounda",
       "products": ["Workers", "Durable Objects"],
       "categories": ["storage"],
-      "docs_url": "https://docs.bounda.dev/adapters/cloudflare/"
+      "docs_url": "https://docs.bounda.dev/adapters/cloudflare/",
+      "bindings": {
+        "BOUNDA_MASTER_KEY": {
+          "description": "The master key every person's key is wrapped under, so a copy of the database opens none of their data without it: 32 random bytes in base64. Generate one with `openssl rand -base64 32` and keep it; a new one cannot open what the old one wrapped. [Where the keys live](https://docs.bounda.dev/guides/personal-data/#where-the-keys-live)"
+        }
+      }
     }
   }
 }

@@ -1,6 +1,7 @@
 import type { NewDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
+import { causedBy } from "../shared/causation.ts";
 import type { UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
 import type { DeadlineStep } from "./deadline-step.ts";
@@ -9,7 +10,6 @@ import { blockedOn, deadlineSubject, drainFailureType, type ProcessFailures } fr
 import type { ProcessHandlers } from "./handlers.ts";
 import {
   deadlineContext,
-  eventContext,
   instanceContext,
   type LifecycleEntry,
   lifecycleEntries,
@@ -131,8 +131,7 @@ export const createResumeParked: CreateResumeParkedFunction = ({
           }
           return undefined;
         },
-        (_current, filed) =>
-          lifecycleEntries.failed({ eventId: event.id }, filed, eventContext(event)),
+        (_current, filed) => lifecycleEntries.failed({ eventId: event.id }, filed, causedBy(event)),
         () =>
           failures.letterOf(process, failures.subjectOf(event), cause, 1, drainFailureType(cause)),
       );

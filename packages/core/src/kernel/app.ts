@@ -8,6 +8,7 @@ import type { CommandRejection, DispatchResult, StoredDispatch } from "../contra
 import { ConfigurationError } from "../contracts/errors.ts";
 import { type IdGenerator, uuidV7IdGenerator } from "../contracts/ids.ts";
 import { type Logger, silentLogger } from "../contracts/logger.ts";
+import { checkActor } from "../contracts/metadata.ts";
 import type { CommandsFacade, QueriesFacade, Registry } from "../modules/registry.ts";
 import { validateRegistry } from "../modules/validate.ts";
 import type { AppEnv, AppRegistry, EnvSection } from "../register/index.ts";
@@ -25,8 +26,11 @@ import { appStorage } from "./events/app-event-store.ts";
 import { createGlobalStream, type GlobalStream } from "./events/global-stream.ts";
 import { exportPersonalData, type PersonalDataExport } from "./personal-data/export.ts";
 import { forgetPersonalData } from "./personal-data/forget.ts";
+import { marksPersonalFields } from "./personal-data/marks.ts";
 import { liftProcessingRestriction, restrictProcessing } from "./personal-data/restriction.ts";
 import { createRetentionSubscriber, createRetentionSweep } from "./personal-data/retention.ts";
+import { createKeyRotation } from "./personal-data/rotation.ts";
+import { buildPersonalKeyWrapping } from "./personal-data/wrapped-keys.ts";
 import { buildPolicies } from "./policy/build-policies.ts";
 import { createDelayedPolicies } from "./policy/delayed.ts";
 import { createPolicyExecutor } from "./policy/executor.ts";
@@ -41,7 +45,7 @@ import { buildReadModels } from "./read-model/build-read-models.ts";
 import {
   pendingRebuilds,
   type RebuildReadModelResult,
-  rebuildReadModel,
+  rebuildReadModelWith,
 } from "./read-model/rebuild.ts";
 import { createScheduledCommandWorker } from "./scheduler/worker.ts";
 import { guardedLogger } from "./shared/guarded-logger.ts";
@@ -67,6 +71,9 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
   readonly queries: QueriesFacade<R>;
   getLag(): Promise<AppLag>;
   readonly events: GlobalStream;
+  /**
+   * Retrying and discarding a letter is acted by the client's actor, as `as` says.
+   */
   readonly deadLetters: Pick<DeadLetters, "list" | "retry" | "discard">;
   /**
    * Rebuilds one read model from the whole stream into a fresh table and swaps it in, without
@@ -111,6 +118,17 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * an empty id.
    */
   unrestrict(personId: string): Promise<StoredDispatch>;
+  /**
+   * The same client, acting as `actor`: who does what it does, for the audit trail the event
+   * store keeps. Every command it dispatches carries the actor in its metadata, and so does every
+   * event that command writes, and every command and event the policies, processes and scheduled
+   * commands that follow from it write; so do the events `forget`, `restrict` and `unrestrict`
+   * append, and what a dead letter's `retry` writes. Calling `as` on a bound client acts as the new
+   * actor; a client without `as` names nobody. `actor` is an id, such as a user's or a service's,
+   * never a name or an email: it is stored in the clear in events that are never deleted. Throws
+   * `ValidationError` for an actor that is not a string of 1 to `MAX_ACTOR_LENGTH` characters.
+   */
+  as(actor: string): BoundaClient<R>;
 }
 
 /**
@@ -143,9 +161,10 @@ export interface BoundaApp<R extends Registry = AppRegistry> extends BoundaClien
    */
   runUntilIdle(options?: RunUntilIdleOptions): Promise<RunUntilIdleResult>;
   /**
-   * The earliest moment a scheduled command or a process deadline becomes due, or a person
-   * becomes due for forgetting under `runtime.personalData.retention`; `null` when nothing is. A
-   * host without a polling worker arms its wake-up for it.
+   * The earliest moment a scheduled command or a process deadline becomes due, a person becomes
+   * due for forgetting under `runtime.personalData.retention`, or a person's key waits to be
+   * rewrapped under `runtime.personalData.keyWrapper`; `null` when nothing is. A host without a
+   * polling worker arms its wake-up for it.
    */
   nextDueAt(): Promise<Date | null>;
   /**
@@ -307,6 +326,11 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       `storage "${config.storage.name}" is a definition without factories. Import the adapter package's factory.`,
     );
   }
+  // Built first: a master key missing from the environment fails the start before anything opens.
+  const wrapping = await buildPersonalKeyWrapping({
+    definition: config.runtime.personalData.keyWrapper,
+    env,
+  });
   // Built before the storage opens and closed after it, so a `create` that fails leaves nothing
   // open; a failure further on closes them again.
   const ports = await createPorts({
@@ -328,7 +352,12 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       aggregates,
       processNames: processNamesOf(registry),
     });
-    const storage = appStorage({ storage: written, aggregates });
+    const storage = appStorage({ storage: written, aggregates, wrapping });
+    if (wrapping.wrapper === null && test === undefined && marksPersonalFields(aggregates)) {
+      logger.warn(
+        "personal keys are stored unwrapped, next to the data they open: set runtime.personalData.keyWrapper",
+      );
+    }
     const loader = createAggregateLoader({
       snapshotStore: storage.snapshotStore,
       logger,
@@ -421,6 +450,16 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             concurrencyRetries: config.runtime.commands.concurrencyRetries,
             batchSize: config.runtime.dispatcher.batchSize,
           });
+    const rotation =
+      wrapping.wrapper === null
+        ? undefined
+        : createKeyRotation({
+            keys: written.personalKeys,
+            wrapper: wrapping.wrapper,
+            wrapping,
+            clock,
+            logger,
+          });
     const dispatcher = createDispatcher({
       eventStore: storage.eventStore,
       checkpointStore: storage.checkpointStore,
@@ -471,13 +510,13 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       }),
       restrictedRetries: createRestrictedRetries({ storage, retries, clock, logger }),
       retention,
+      rotation,
       reactive: following.map((subscriber) => subscriber.name),
       config,
       ids,
       clock,
       logger,
     });
-    const deadLetters = createDeadLetters({ storage, retries, processes, clock, logger });
     const lag = meter().createObservableGauge(METRICS.lag, {
       description: "Events each subscriber is behind the head of the stream",
       unit: "{event}",
@@ -495,12 +534,16 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     // A test app's `runUntilIdle` moves its clock to what `scheduledDueAt` says, never to a
     // retention deadline: that would forget every person the test created.
     const nextDueAt = async (): Promise<Date | null> => {
-      const [scheduled, retained] = await Promise.all([
+      const due = await Promise.all([
         scheduledDueAt(),
         retention?.nextDueAt() ?? null,
+        rotation?.nextDueAt() ?? null,
       ]);
-      if (scheduled === null || retained === null) return scheduled ?? retained;
-      return scheduled.getTime() <= retained.getTime() ? scheduled : retained;
+      return due.reduce<Date | null>(
+        (earliest, at) =>
+          at === null || (earliest !== null && earliest.getTime() <= at.getTime()) ? earliest : at,
+        null,
+      );
     };
     // A scheduled command that failed waits for its retry with its attempts counted; scheduling it
     // anew counts them from zero, so a retry that no longer waits is not taken for one.
@@ -520,12 +563,56 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       readModels: Object.keys(readModels.byName),
     });
 
-    return {
+    const { concurrencyRetries } = config.runtime.commands;
+    const events = createGlobalStream({ eventStore: written.eventStore });
+    const getLag = async (): Promise<AppLag> => ({
+      ...(await dispatcher.getLag()),
+      waitingDeadlines: worker.waitingDeadlines(),
+    });
+    const rebuild = (name: string, options: RebuildReadModelOptions = {}) =>
+      rebuildReadModelWith({ registry, config: rawConfig, name, logger, wrapping, ...options });
+    const clientAs = (
+      actor: string | undefined,
+    ): BoundaClient<R> & { readonly deadLetters: DeadLetters } => ({
       commands: createCommandsFacade({
         aggregates,
-        dispatch: (command) => pipeline.dispatch(command),
+        dispatch: (command) => pipeline.dispatch({ ...command, actor }),
       }) as CommandsFacade<R>,
       queries: queryRunner.facade as QueriesFacade<R>,
+      getLag,
+      events,
+      deadLetters: createDeadLetters({ storage, retries, processes, clock, logger, actor }),
+      rebuildReadModel: rebuild,
+      forget: (personId) =>
+        forgetPersonalData({ storage, ids, clock, logger, concurrencyRetries, personId, actor }),
+      exportPersonalData: (personId) =>
+        exportPersonalData({
+          storage,
+          aggregates,
+          clock,
+          batchSize: config.runtime.dispatcher.batchSize,
+          personId,
+        }),
+      restrict: (personId) =>
+        restrictProcessing({ storage, ids, clock, logger, concurrencyRetries, personId, actor }),
+      unrestrict: (personId) =>
+        liftProcessingRestriction({
+          storage,
+          ids,
+          clock,
+          logger,
+          concurrencyRetries,
+          personId,
+          actor,
+        }),
+      as: (next) => {
+        checkActor(next);
+        return clientAs(next);
+      },
+    });
+
+    return {
+      ...clientAs(undefined),
       config,
       role,
       start: () => {
@@ -573,14 +660,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         if (through.scheduled) return;
         await dispatcher.catchUpThrough(through);
       },
-      rebuildReadModel: (name, { maxEvents } = {}) =>
-        rebuildReadModel({
-          registry,
-          config: rawConfig,
-          name,
-          logger,
-          ...(maxEvents === undefined ? {} : { maxEvents }),
-        }),
+      rebuildReadModel: rebuild,
       pendingRebuilds: async () => {
         const paused = await Promise.all(
           Object.values(readModels.byName).map(async ({ name, storage }) =>
@@ -589,47 +669,6 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         );
         return paused.flat();
       },
-      events: createGlobalStream({ eventStore: written.eventStore }),
-      deadLetters,
-      forget: (personId) =>
-        forgetPersonalData({
-          storage,
-          ids,
-          clock,
-          logger,
-          concurrencyRetries: config.runtime.commands.concurrencyRetries,
-          personId,
-        }),
-      exportPersonalData: (personId) =>
-        exportPersonalData({
-          storage,
-          aggregates,
-          clock,
-          batchSize: config.runtime.dispatcher.batchSize,
-          personId,
-        }),
-      restrict: (personId) =>
-        restrictProcessing({
-          storage,
-          ids,
-          clock,
-          logger,
-          concurrencyRetries: config.runtime.commands.concurrencyRetries,
-          personId,
-        }),
-      unrestrict: (personId) =>
-        liftProcessingRestriction({
-          storage,
-          ids,
-          clock,
-          logger,
-          concurrencyRetries: config.runtime.commands.concurrencyRetries,
-          personId,
-        }),
-      getLag: async () => ({
-        ...(await dispatcher.getLag()),
-        waitingDeadlines: worker.waitingDeadlines(),
-      }),
     };
   } catch (error) {
     for (const close of opened) await close().catch(() => undefined);

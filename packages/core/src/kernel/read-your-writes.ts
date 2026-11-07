@@ -1,7 +1,7 @@
 import type { DispatchOptions, DispatchResult, StoredDispatch } from "../contracts/command.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
 import type { CommandsFacade, Registry } from "../modules/registry.ts";
-import type { BoundaApp } from "./app.ts";
+import type { BoundaApp, BoundaClient } from "./app.ts";
 import type { CommandsFacadeRuntime } from "./command/facade.ts";
 
 /**
@@ -40,21 +40,11 @@ export interface ReadYourWritesFunction {
  * command resolves anyway and a warning is logged, as it does when a read model cannot be read.
  * Meant for request handlers that redirect to a page reading what they just wrote. Policies,
  * processes, scheduled commands and commands dispatched from inside the runtime are not waited for.
+ * A client bound with `as` waits the same way.
  */
 export const readYourWrites: ReadYourWritesFunction = <R extends Registry>(
   app: BoundaApp<R>,
 ): BoundaApp<R> => {
-  const commands = app.commands as CommandsFacadeRuntime;
-  const caughtUp: CommandsFacadeRuntime = Object.fromEntries(
-    Object.entries(commands).map(([key, dispatch]) => [
-      key,
-      async (payload?: unknown, options?: DispatchOptions): Promise<DispatchResult> => {
-        const result = await dispatch(payload, options);
-        await app.catchUpReadModels({ through: result });
-        return result;
-      },
-    ]),
-  );
   const caughtUpOn =
     (act: (personId: string) => Promise<StoredDispatch>) =>
     async (personId: string): Promise<StoredDispatch> => {
@@ -62,11 +52,30 @@ export const readYourWrites: ReadYourWritesFunction = <R extends Registry>(
       await app.catchUpReadModels({ through: result });
       return result;
     };
-  return {
-    ...app,
-    commands: caughtUp as CommandsFacade<R>,
-    forget: caughtUpOn(app.forget),
-    restrict: caughtUpOn(app.restrict),
-    unrestrict: caughtUpOn(app.unrestrict),
+  const waiting = (
+    client: BoundaClient<R>,
+  ): Pick<BoundaClient<R>, "commands" | "forget" | "restrict" | "unrestrict" | "as"> => {
+    const commands = client.commands as CommandsFacadeRuntime;
+    const caughtUp: CommandsFacadeRuntime = Object.fromEntries(
+      Object.entries(commands).map(([key, dispatch]) => [
+        key,
+        async (payload?: unknown, options?: DispatchOptions): Promise<DispatchResult> => {
+          const result = await dispatch(payload, options);
+          await app.catchUpReadModels({ through: result });
+          return result;
+        },
+      ]),
+    );
+    return {
+      commands: caughtUp as CommandsFacade<R>,
+      forget: caughtUpOn(client.forget),
+      restrict: caughtUpOn(client.restrict),
+      unrestrict: caughtUpOn(client.unrestrict),
+      as: (actor) => {
+        const bound = client.as(actor);
+        return { ...bound, ...waiting(bound) };
+      },
+    };
   };
+  return { ...app, ...waiting(app) };
 };

@@ -37,6 +37,10 @@ export interface RetryProcessArgs extends RetryArgs {
    */
   readonly process: string;
   readonly event: StoredEvent;
+  /**
+   * Who retries, who then acts in place of the event's actor.
+   */
+  readonly actor?: string | undefined;
 }
 
 export interface RetryDeadlineArgs extends RetryArgs {
@@ -120,6 +124,7 @@ export const createProcessRetry: CreateProcessRetryFunction = ({
     event,
     retryId,
     letter,
+    actor,
   }: RetryProcessArgs): Promise<boolean> => {
     const process = registered(processes, name);
     const instanceId = process.instanceOf(event);
@@ -155,7 +160,9 @@ export const createProcessRetry: CreateProcessRetryFunction = ({
       }
       if (current.handledEventIds.has(event.id)) {
         if (!completesOn(process, event)) return;
-        await within.append(process, instanceId, current, [lifecycleEntries.completed(event)]);
+        await within.append(process, instanceId, current, [
+          lifecycleEntries.completed(event, actor),
+        ]);
       } else {
         let state = current.state;
         if (handler === undefined) {
@@ -168,6 +175,7 @@ export const createProcessRetry: CreateProcessRetryFunction = ({
             instance: current,
             attempt: 1,
             retryId,
+            actor,
             within: unit,
           });
         }
@@ -175,7 +183,7 @@ export const createProcessRetry: CreateProcessRetryFunction = ({
           process,
           instanceId,
           current,
-          handledEntries(process, current, event, state),
+          handledEntries(process, current, event, state, actor),
         );
       }
       await schedule.stage(unit, process, instanceId);

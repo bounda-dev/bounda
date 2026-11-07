@@ -90,6 +90,7 @@ export const eventStoreContract: EventStoreContractFunction = ({ create }) => {
           correlationId: "corr-1",
           causationId: "evt-0",
           commandId: "cmd-1",
+          actor: "user-1",
           depth: 0,
           schemaVersion: 1,
           system: false,

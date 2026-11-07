@@ -84,6 +84,9 @@ const trackedPersonalKeys = (
     get: (person) => personalKeys.get(person),
     add: (person, key) => tracked(entries, person, () => personalKeys.add(person, key)),
     remove: (person) => tracked(entries, person, () => personalKeys.remove(person)),
+    listWrappedUnder: (args) => personalKeys.listWrappedUnder(args),
+    rewrap: (person, from, to) =>
+      tracked(entries, person, () => personalKeys.rewrap(person, from, to)),
   };
 };
 

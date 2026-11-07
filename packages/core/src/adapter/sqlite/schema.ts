@@ -137,8 +137,11 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
   `CREATE TABLE IF NOT EXISTS ${tables.personalKeys} (
     "person" TEXT PRIMARY KEY,
     "key" TEXT NOT NULL,
-    "fingerprint" TEXT NOT NULL
+    "fingerprint" TEXT NOT NULL,
+    "kid" TEXT
   )`,
+  // What the rotation of the wrapping key reads: the keys still under an old one.
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.personalKeys, "kid")} ON ${tables.personalKeys} ("kid", "person")`,
   `CREATE TABLE IF NOT EXISTS ${tables.persons} (
     "person" TEXT PRIMARY KEY,
     "restricted_since" TEXT,

@@ -62,4 +62,10 @@ export type { AsInstantFunction, Instant } from "./instant.ts";
 export { asInstant } from "./instant.ts";
 export type { LogFields, Logger } from "./logger.ts";
 export { silentLogger } from "./logger.ts";
-export type { CausationContext, CommandMetadata, EventMetadata } from "./metadata.ts";
+export type {
+  CausationContext,
+  CheckActorFunction,
+  CommandMetadata,
+  EventMetadata,
+} from "./metadata.ts";
+export { checkActor, MAX_ACTOR_LENGTH } from "./metadata.ts";

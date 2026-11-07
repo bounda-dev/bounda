@@ -173,6 +173,17 @@ describe("telemetry", () => {
     await app.stop();
   });
 
+  it("puts who acts on a command's span", async () => {
+    const { telemetry, app } = await setUp();
+    active = telemetry;
+    await app.as("user-1").commands.placeOrder({ orderId: "o-1", total: 10 });
+    await app.commands.placeOrder({ orderId: "o-2", total: 10 });
+    const [bound, anonymous] = named(telemetry, "bounda.command");
+    expect(bound?.attributes[ATTRIBUTES.actor]).toBe("user-1");
+    expect(anonymous?.attributes).not.toHaveProperty(ATTRIBUTES.actor);
+    await app.stop();
+  });
+
   it("tells on a command's span how it loaded its aggregate, and on the snapshot batch what it wrote", async () => {
     const telemetry = installFakeTelemetry();
     active = telemetry;

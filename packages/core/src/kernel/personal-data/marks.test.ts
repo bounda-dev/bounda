@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import { person, personal } from "../../modules/personal.ts";
-import { personalMarksOf } from "./marks.ts";
+import type { AggregatesRuntime } from "../aggregate/runtime.ts";
+import { marksPersonalFields, type PersonalMarks, personalMarksOf } from "./marks.ts";
 
 const path = "aggregates.order.events.orderPlaced";
 
@@ -56,5 +57,39 @@ describe("personalMarksOf", () => {
         `${path}: marks "buyerId" and "sellerId" with person; a payload names at most one person`,
       ),
     );
+  });
+});
+
+describe("marksPersonalFields", () => {
+  const aggregates = (
+    events: readonly (PersonalMarks | null)[],
+    commands: readonly (PersonalMarks | null)[],
+  ): AggregatesRuntime =>
+    ({
+      byName: {
+        customer: {
+          eventsByType: Object.fromEntries(
+            events.map((personal, index) => [`E${index}`, { personal }]),
+          ),
+          commands: Object.fromEntries(
+            commands.map((personal, index) => [`c${index}`, { personal }]),
+          ),
+        },
+        other: { eventsByType: {}, commands: {} },
+      },
+      commandsByType: {},
+    }) as unknown as AggregatesRuntime;
+  const fields = { person: null, fields: ["email"] };
+  const personOnly = { person: "customerId", fields: [] };
+
+  it("is true when an event or a command marks a field personal", () => {
+    expect(marksPersonalFields(aggregates([null, fields], []))).toBe(true);
+    expect(marksPersonalFields(aggregates([], [null, fields]))).toBe(true);
+    expect(marksPersonalFields(aggregates([fields], [null]))).toBe(true);
+  });
+
+  it("is false when nothing is marked, or only whom a payload touches", () => {
+    expect(marksPersonalFields(aggregates([], []))).toBe(false);
+    expect(marksPersonalFields(aggregates([null, personOnly], [null, personOnly]))).toBe(false);
   });
 });

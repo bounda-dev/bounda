@@ -6,6 +6,7 @@ import type { Logger } from "../../contracts/logger.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
 import { createReactionCommands } from "../command/reaction-commands.ts";
+import { actedBy, causedBy } from "../shared/causation.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { withTimeout } from "../shared/timeout.ts";
 import { withPorts } from "../shared/with-ports.ts";
@@ -24,6 +25,10 @@ export interface RunPolicyArgs {
    * Set when an operator retries a dead letter, so the handler gets a new idempotency key.
    */
   readonly retryId?: string | undefined;
+  /**
+   * Who retries the dead letter, who then acts in place of the event's actor.
+   */
+  readonly actor?: string | undefined;
   /**
    * The unit of work the run's commands write to, to commit with the attempt.
    */
@@ -59,7 +64,7 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
   clock,
   logger,
 }) => ({
-  run: async ({ policy, event, attempt, retryId, within }) => {
+  run: async ({ policy, event, attempt, retryId, actor, within }) => {
     const idempotencyKey = deriveIdempotencyKey({
       kind: "policy",
       handler: policy.name,
@@ -69,11 +74,7 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
     const reaction = createReactionCommands({
       aggregates,
       pipeline,
-      context: {
-        correlationId: event.metadata.correlationId,
-        causationId: event.id,
-        depth: event.metadata.depth,
-      },
+      context: { ...causedBy(event), ...actedBy(actor) },
       idempotencyKey,
       within,
       logger,

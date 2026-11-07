@@ -4,9 +4,12 @@ import type {
   BoundaClient,
   CancelledCommand,
   CatchUpReadModelsArgs,
+  CausationContext,
+  CheckActorFunction,
   Clock,
   CommandHandlerArgs,
   CommandInvoker,
+  CommandMetadata,
   CommandPayloadArgs,
   CommandPersonalFunction,
   CommandsFacade,
@@ -60,7 +63,7 @@ import type {
   StoredEvent,
   Table,
 } from "@bounda-dev/core";
-import { idempotencyKeyFor } from "@bounda-dev/core";
+import { checkActor, idempotencyKeyFor, MAX_ACTOR_LENGTH } from "@bounda-dev/core";
 import { describe, expectTypeOf, it } from "vitest";
 import type { registry } from "./fixtures/order-app/.bounda/registry.ts";
 import type {
@@ -123,6 +126,11 @@ describe("payload inference", () => {
   it("types the command itself", () => {
     expectTypeOf<PlaceOrder.HandlerArgs["command"]["type"]>().toEqualTypeOf<"PlaceOrder">();
     expectTypeOf<PlaceOrder.HandlerArgs["command"]["aggregateId"]>().toEqualTypeOf<string>();
+  });
+
+  it("reads who acts from the command's metadata, when anyone was named", () => {
+    expectTypeOf<PlaceOrder.HandlerArgs["command"]["metadata"]>().toEqualTypeOf<CommandMetadata>();
+    expectTypeOf<CommandMetadata["actor"]>().toEqualTypeOf<string | undefined>();
   });
 });
 
@@ -401,6 +409,12 @@ describe("policies", () => {
     type Metadata = SendReceipt.HandlerArgs["event"]["metadata"];
     expectTypeOf<Metadata["causationId"]>().toEqualTypeOf<string>();
     expectTypeOf<Metadata["commandId"]>().toEqualTypeOf<string | undefined>();
+  });
+
+  it("read who acted on the event, when anyone was named", () => {
+    type Metadata = SendReceipt.HandlerArgs["event"]["metadata"];
+    expectTypeOf<Metadata["actor"]>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<CausationContext["actor"]>().toEqualTypeOf<string | undefined>();
   });
 
   it("get each command's decision, typed like app.commands but without a position", () => {
@@ -887,6 +901,22 @@ describe("facades", () => {
 
   it("are what a request sees of the app, wherever it runs", () => {
     expectTypeOf<BoundaApp<Registry>>().toExtend<BoundaClient<Registry>>();
+  });
+
+  it("bind a client to who acts with as, which answers a client of the same registry", () => {
+    expectTypeOf<BoundaClient["as"]>().toEqualTypeOf<(actor: string) => BoundaClient>();
+    expectTypeOf<BoundaApp<Registry>["as"]>().toEqualTypeOf<
+      (actor: string) => BoundaClient<Registry>
+    >();
+    const client = {} as BoundaClient;
+    expectTypeOf(client.as("user-1").commands).toEqualTypeOf<Commands>();
+    expectTypeOf(client.as("user-1").as("user-2").queries).toEqualTypeOf<Queries>();
+    expectTypeOf(MAX_ACTOR_LENGTH).toEqualTypeOf<number>();
+    expectTypeOf(checkActor).toEqualTypeOf<CheckActorFunction>();
+    // @ts-expect-error an actor is an id, never an object with a name or an email
+    void client.as({ id: "user-1", email: "ada@example.com" });
+    // @ts-expect-error a bound client has no lifecycle: only the app starts and stops
+    void client.as("user-1").stop();
   });
 
   it("read the global stream by position, every event as it was stored", () => {

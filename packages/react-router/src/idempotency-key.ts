@@ -49,7 +49,11 @@ export const withIdempotencyKey: WithIdempotencyKeyFunction = async <R extends R
   request: Request,
 ): Promise<BoundaClient<R>> => {
   const key = await idempotencyKeyOf(request);
-  if (key === null) return client;
+  return key === null ? client : keyed(client, key);
+};
+
+// Bound again with `as`, the client keeps the key.
+const keyed = <R extends Registry>(client: BoundaClient<R>, key: string): BoundaClient<R> => {
   // A proxy rather than a copy: on Cloudflare the commands are a proxy with no keys to copy.
   const commands = new Proxy(client.commands as object, {
     get: (target, name, receiver) => {
@@ -63,5 +67,5 @@ export const withIdempotencyKey: WithIdempotencyKeyFunction = async <R extends R
         ]);
     },
   }) as BoundaClient<R>["commands"];
-  return { ...client, commands };
+  return { ...client, commands, as: (actor) => keyed(client.as(actor), key) };
 };

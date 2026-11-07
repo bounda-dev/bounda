@@ -299,6 +299,20 @@ describe("a project created by create-bounda", () => {
       { cwd: project, env: { ...process.env, CI: "1" } },
     );
     expect(`${tested.stdout}${tested.stderr}`).toMatch(/1 passed/);
+
+    // The script boots on the master key create-bounda wrote into `.env`, and refuses to without.
+    expect(await readFile(join(project, ".env"), "utf8")).toMatch(
+      /^BOUNDA_MASTER_KEY=[A-Za-z0-9+/]{43}=$/m,
+    );
+    const env = Object.fromEntries(
+      Object.entries(process.env).filter(([name]) => name !== "BOUNDA_MASTER_KEY"),
+    );
+    const started = await run(process.execPath, ["src/main.ts"], { cwd: project, env });
+    expect(started.stdout).toContain("1 order(s) for ada, 42 in total");
+    await rm(join(project, ".env"));
+    await expect(run(process.execPath, ["src/main.ts"], { cwd: project, env })).rejects.toThrow(
+      /The environment variable BOUNDA_MASTER_KEY, which runtime\.personalData\.keyWrapper names as a master key, is not set/,
+    );
   }, 180_000);
 
   it("scaffolds a React Router app that generates, type-checks, tests, builds and serves", async () => {
@@ -397,6 +411,9 @@ describe("a project created by create-bounda", () => {
     );
     expect(await readFile(join(project, "bounda.config.ts"), "utf8")).toContain("cloudflare()");
     expect(await readFile(join(project, "wrangler.jsonc"), "utf8")).toContain('"name": "edge"');
+    expect(await readFile(join(project, ".dev.vars"), "utf8")).toMatch(
+      /^BOUNDA_MASTER_KEY=[A-Za-z0-9+/]{43}=$/m,
+    );
 
     await run(
       process.execPath,

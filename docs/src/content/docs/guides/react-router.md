@@ -157,6 +157,41 @@ The host never makes a key up: a request with neither dispatches as before. What
 its lifetime, how the field renews itself, and an action that dispatches two commands under one
 key are in [idempotent commands](/guides/idempotent-commands/#keys-in-react-router).
 
+## Who makes a request
+
+Every event can say who acted: the `actor` in its metadata, an id the host names for the
+request (see [Who acts](/concepts/ids-causation-and-correlation/#who-acts)). The plugin takes it
+from an optional `app/actor.ts`, which exports `actor`, a function of what a middleware receives,
+the `request`, the route's `params` and the `context`. With React Router's sessions it reads the
+signed-in user:
+
+```ts
+// app/actor.ts
+import type { ActorFunction } from "@bounda-dev/react-router";
+import { getSession } from "./sessions.server";
+
+export const actor: ActorFunction = async ({ request }) => {
+  const session = await getSession(request.headers.get("Cookie"));
+  return session.get("userId");
+};
+```
+
+The middleware calls it once per request, before the loaders and actions run, and the client in
+`context.get(bounda)` already acts as the id it returns: every command an action dispatches
+carries it, and so does every event, the ones the policies and processes it starts write
+included. `undefined` means nobody, such as a visitor who is not signed in, and those requests
+act as nobody, as every request does without the file. When an earlier middleware authenticates
+the request and puts the user in the context, read it from there,
+`({ context }) => context.get(userContext)?.id`, and mount `boundaMiddleware` after it.
+
+Return an id, never a name or an email: events keep it in the clear and are never deleted. An
+action that acts for someone else binds the client again, as
+`context.get(bounda).as("billing-service")`, which keeps the request's idempotency key and reads
+its own writes as the context's client does. A file that does not export an `actor` function
+fails the request saying so, and so does an actor that is not a string of 1 to 255 characters.
+On Cloudflare the actor goes over RPC with every call, and the Durable Object acts as it. Adding
+or removing `app/actor.ts` is picked up on the next request.
+
 ## Reading what you just wrote
 
 Read models are updated by projections that run in the background, so a page reached right after a
@@ -277,8 +312,8 @@ processes and scheduled commands run in the object's alarm, as
 [on the adapter](/adapters/cloudflare/#how-it-runs).
 
 - `react-router dev` runs the Worker and the object in `workerd`, as in production. A change
-  under `app/domain` or `app/read` reloads both, and adding or removing `app/tenant.ts` is picked
-  up on the next request.
+  under `app/domain` or `app/read` reloads both, and adding or removing `app/tenant.ts` or
+  `app/actor.ts` is picked up on the next request.
 - `react-router build` writes the Worker and its `wrangler.json`; `wrangler deploy` deploys it.
 - Bounda loads no `.env` here: the Worker's variables and secrets come from Wrangler, locally from
   `.dev.vars`, and port implementations receive them as `env` in `create`.
@@ -314,8 +349,8 @@ Import the registry by value and the configuration through `importConfig`, as ab
 build bundles both and a change to either re-evaluates this file in development; `createBounda`
 then stops the app booted before, and the next request boots a new one once that stop has
 finished, so the two never hold the storage at the same time. Its options are `boot` (how to
-create the app, `boot()` by default), `consistency` and `key` (where the running app is kept on
-`globalThis`, one app per key). `dispose()` stops the running app and forgets it, and resolves
+create the app, `boot()` by default), `consistency`, `actor` (the function `app/actor.ts` would
+export) and `key` (where the running app is kept on `globalThis`, one app per key). `dispose()` stops the running app and forgets it, and resolves
 once every app booted under that key has stopped. Import `failure` from
 `@bounda-dev/react-router`.
 
@@ -333,6 +368,6 @@ export const { bounda, boundaMiddleware } = createBounda({
 });
 ```
 
-It takes `consistency` too, and throws `ConfigurationError` when `storage` is not `cloudflare()`,
+It takes `consistency` and `actor` too, and throws `ConfigurationError` when `storage` is not `cloudflare()`,
 when the Worker has no such binding, without a `tenant` function, or for a `consistency` it does
 not know.

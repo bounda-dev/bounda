@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import { personalMarkOf } from "../../modules/personal.ts";
+import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 
 /**
  * What an event's or a command's payload schema marks: the fields to encrypt, and the field naming
@@ -43,3 +44,21 @@ export const personalMarksOf: PersonalMarksOfFunction = ({ schema, path }) => {
   if (fields.length === 0 && persons.length === 0) return null;
   return { person: persons[0] ?? null, fields };
 };
+
+export interface MarksPersonalFieldsFunction {
+  (aggregates: AggregatesRuntime): boolean;
+}
+
+/**
+ * Whether any event or command of the registry marks a field `personal`, which then needs keys.
+ */
+export const marksPersonalFields: MarksPersonalFieldsFunction = (aggregates) =>
+  Object.values(aggregates.byName).some(
+    (aggregate) =>
+      Object.values(aggregate.eventsByType).some(
+        (event) => (event.personal?.fields.length ?? 0) > 0,
+      ) ||
+      Object.values(aggregate.commands).some(
+        (command) => (command.personal?.fields.length ?? 0) > 0,
+      ),
+  );

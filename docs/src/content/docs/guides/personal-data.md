@@ -1,6 +1,6 @@
 ---
 title: Personal data
-description: Mark the fields of an event that hold personal data, say whose they are, forget a person or export their data with one call, forget them after a retention or when a purpose ends, and handle forgetting in every read model that showed them.
+description: Mark the fields of an event that hold personal data, say whose they are, forget a person or export their data with one call, forget them after a retention or when a purpose ends, wrap their keys under a master key kept out of the database, and handle forgetting in every read model that showed them.
 sidebar:
   order: 11
 ---
@@ -95,7 +95,8 @@ await app.catchUpReadModels({ through: forgotten });
 ```
 
 `forget` is on every `BoundaClient`: the app, the Durable Object through `connect`, the `bounda`
-context of React Router. In one transaction it deletes the person's key, cancels the scheduled
+context of React Router. A client bound with `as` records who asked on `PersonalDataForgotten`, in
+`metadata.actor`, and so on `ProcessingRestricted` and `ProcessingRestrictionLifted`. In one transaction it deletes the person's key, cancels the scheduled
 commands that hold their data, removes the dead letters of those that gave up, and appends
 `PersonalDataForgotten` to the stream `bounda:<personId>`: the runtime's own aggregate, `bounda`,
 has one stream per person it forgot. Its payload is `{ personId, reason, cancelledCommands,
@@ -149,6 +150,10 @@ you did not mark, stays readable, a command's payload left unmarked is stored as
 error of work that names nobody, such as a process deadline or a scheduled command whose payload
 marks nothing, stays in its dead letter in the clear. Log and throw with ids, not the data itself,
 and mark every field that holds it.
+
+Nor does it reach the `actor` in the metadata of events, who acted on them (see
+[Who acts](/concepts/ids-causation-and-correlation/#who-acts)): it is an id, as a person's id is,
+so bind clients with the id of a user or a service, never their name or email.
 
 ## Exporting a person's data
 
@@ -399,24 +404,147 @@ fields you do not mark.
 ## Where the keys live
 
 Each adapter keeps the keys in a table next to the events, `bounda_personal_keys`, one row per
-person with the key and its fingerprint, a SHA-256 of it: the memory adapter in memory, SQLite and the Durable Object in their database, PostgreSQL
+person with the key, the id of the key it is wrapped under and its fingerprint, a SHA-256 of the
+raw key: the memory adapter in memory, SQLite and the Durable Object in their database, PostgreSQL
 in its schema. Whether a person's processing is restricted, and since when, lives apart, in
 `bounda_persons`, since a person without a key is restricted all the same, and so does, with a
 retention, when they were last active and last forgotten. A key is created when the first event
-with a personal field of that person is stored, by the transaction that stores it, and deleted by `forget`. Encryption is AES-256-GCM
-through WebCrypto, with a nonce per value, on Node and in `workerd` alike; what the store holds
-for a personal field is an envelope with the ciphertext, the person's id and a fingerprint of the
-key, which the [global stream](/guides/reading-the-stream/) shows as it is; a value sealed under a
-key the person no longer has, because they were forgotten and registered again, reads as `null`
-next to what their new key opens. What is read is opened by that shape, whatever the schema marks,
-so an event or a delayed command whose handler or caller writes an envelope itself, in any field,
-is refused with a `ValidationError`: it could only read back as `null`, or not at all.
+with a personal field of that person is stored, by the transaction that stores it, and deleted by
+`forget`. Encryption is AES-256-GCM through WebCrypto, with a nonce per value, on Node and in
+`workerd` alike; what the store holds for a personal field is an envelope with the ciphertext, the
+person's id and the key's fingerprint, which the [global stream](/guides/reading-the-stream/)
+shows as it is; a value sealed under a key the person no longer has, because they were forgotten
+and registered again, reads as `null` next to what their new key opens. What is read is opened by
+that shape, whatever the schema marks, so an event or a delayed command whose handler or caller
+writes an envelope itself, in any field, is refused with a `ValidationError`: it could only read
+back as `null`, or not at all.
 
-Keeping the keys next to the data is a choice: a backup restores both, a test needs nothing
-else, and the Durable Object has no second store to reach. It also means a backup is a copy of
-the data for as long as it is kept, and that whoever reads the database reads the keys. An
-adapter is free to keep them elsewhere: `Storage.personalKeys` and the key store's
-[contract](/adapters/) are the whole interface.
+### A master key
+
+A key kept next to the data opens it for whoever reads the database: a dump, a backup, a replica,
+a support session. So the runtime wraps every person's key before the store keeps it, under a
+master key that never enters the database: envelope encryption, what a cloud KMS does. The
+fingerprint stays that of the raw key, so `forget` is still one transaction and nothing else
+changes; a copy of the database without the master key opens nothing.
+
+```ts
+import { defineConfig, masterKey } from "@bounda-dev/core/config";
+import { sqlite } from "@bounda-dev/sqlite";
+
+export default defineConfig({
+  storage: sqlite({ path: "./data/app.db" }),
+  runtime: {
+    personalData: { keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }) },
+  },
+});
+```
+
+`from` names the environment variable, never the key, and the app reads it from the host's
+environment when it starts: `process.env` in Node, after `boot()` has loaded `.env`, and the
+Worker's secrets in a Durable Object. It holds 32 random bytes in base64:
+
+```sh
+openssl rand -base64 32
+```
+
+A variable that is missing, or holds anything else, fails the start with a `ConfigurationError`
+that names the variable, never its value. The keys are wrapped with AES-KW; each master key's id is
+derived from it, so a wrong master key is told apart from the right one: reading a key it did not
+wrap fails with a `ConfigurationError` saying under which id that key is.
+
+A project from `create-bounda` comes with one: a key generated for it in `.env` on Node, or in
+`.dev.vars` on Cloudflare, both left out of Git, and the configuration above. In production, set
+the variable the way the host keeps secrets. On Cloudflare that is a secret of the Worker:
+
+```sh
+npx wrangler secret put BOUNDA_MASTER_KEY
+```
+
+Keep the master key as you keep the database's backups, for as long as they are kept: lost, it
+takes every person's data with it, as if each had been forgotten. `bounda rebuild` reads it from
+`.env` like `boot()`; `rebuildReadModel` takes the environment as `env`.
+
+Unwrapped keys are kept in memory, by fingerprint, up to ten thousand per app, so a command does
+not pay for unwrapping on every read. The person's row is still read first every time: a person
+forgotten on another instance is forgotten here at once.
+
+Without `keyWrapper` the keys are kept as they are, next to the data, and the app logs a warning
+when it starts if the registry marks any field `personal`; an app from `createTestApp` warns
+nothing. Setting one later wraps the keys kept so far in the background, as a rotation does.
+
+### Rotating the master key
+
+Generate a new key, give it the variable the configuration reads, and move the old one to
+`previous`:
+
+```ts
+keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY", previous: ["BOUNDA_MASTER_KEY_OLD"] }),
+```
+
+A key wrapped under a previous master key still opens; the worker rewraps them under the current
+one in batches, on every pass, as the retention sweep runs, and logs once when none is left:
+
+```
+no personal key is wrapped under a previous key any more; remove them
+```
+
+Then remove the old variable and `previous`. Rewrapping changes no event and no fingerprint, so it
+runs while the app serves. A Durable Object wakes for it as for a deadline. An instance still on
+the old configuration, in a rolling deploy, may wrap a new key under the old master key; the
+worker finds it within a minute.
+
+Destroying the old master key once the backups taken before the rotation have expired is what
+makes those backups unreadable as a whole.
+
+### A KMS or a vault
+
+`masterKey` keeps the master key in the app's environment. A KMS, Vault's transit engine or an HSM
+keeps it out of the app altogether: give `keyWrapper` an implementation of `KeyWrapper` through
+`defineKeyWrapper`, which receives the host's environment when the app starts. With AWS KMS:
+
+```ts
+import { DecryptCommand, EncryptCommand, KMSClient } from "@aws-sdk/client-kms";
+import { defineConfig, defineKeyWrapper } from "@bounda-dev/core/config";
+import { sqlite } from "@bounda-dev/sqlite";
+
+const kms = defineKeyWrapper(({ env }) => {
+  const keyId = env.BOUNDA_KMS_KEY_ID;
+  if (keyId === undefined) throw new Error("Set BOUNDA_KMS_KEY_ID to the KMS key's ARN");
+  const client = new KMSClient({});
+  return {
+    kid: keyId,
+    wrap: async (key) => {
+      const { CiphertextBlob } = await client.send(
+        new EncryptCommand({ KeyId: keyId, Plaintext: key }),
+      );
+      if (CiphertextBlob === undefined) throw new Error("KMS returned no ciphertext");
+      return CiphertextBlob;
+    },
+    unwrap: async ({ kid, wrapped }) => {
+      const { Plaintext } = await client.send(
+        new DecryptCommand({ KeyId: kid, CiphertextBlob: wrapped }),
+      );
+      if (Plaintext === undefined) throw new Error("KMS returned no plaintext");
+      return Plaintext;
+    },
+  };
+});
+
+export default defineConfig({
+  storage: sqlite({ path: "./data/app.db" }),
+  runtime: { personalData: { keyWrapper: kms } },
+});
+```
+
+`kid` is stored next to every key the wrapper wraps; `unwrap` receives it back, with what `wrap`
+returned. The runtime checks what `unwrap` returns against the key's fingerprint, so a wrapper that
+answers with another key fails loudly instead of sealing data under it. KMS rotates a key's
+material itself and keeps decrypting under the old one with the same ARN, so `kid` does not
+change; moving to another KMS key is a rotation as above, with the old ARN in `previous`. Each
+instance asks KMS once per person it reads, thanks to the cache, and once per person it creates.
+
+A wrapper that fails, because KMS is unreachable, fails the command that needed the key, which
+the caller or the reaction's retry sees; the person's data is not touched.
 
 ## In tests
 

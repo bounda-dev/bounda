@@ -123,4 +123,28 @@ describe("readYourWrites", () => {
     expect(through).toEqual([forgotten, restricted, lifted]);
     await app.stop();
   });
+
+  it("waits the same way for a client bound with as, and binds it again", async () => {
+    const { app } = await createTestApp({
+      registry,
+      config: { runtime: { role: "web" } },
+      ports: { order: { notifier: "silent" } },
+    });
+    const through: unknown[] = [];
+    const consistent = readYourWrites<typeof registry>({
+      ...app,
+      catchUpReadModels: async (args) => {
+        through.push(args?.through);
+      },
+    });
+    const bound = consistent.as("user-1").as("user-2");
+    const placed = await bound.commands.placeOrder({ orderId: "o-1", total: 5 });
+    const forgotten = await bound.forget("p-1");
+    const restricted = await bound.restrict("p-2");
+    const lifted = await bound.unrestrict("p-2");
+    expect(through).toEqual([placed, forgotten, restricted, lifted]);
+    const actors = (await app.events.read()).map((event) => event.metadata.actor);
+    expect(actors).toEqual(["user-2", "user-2", "user-2", "user-2"]);
+    await app.stop();
+  });
 });

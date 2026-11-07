@@ -89,4 +89,15 @@ describe("fingerprintOf", () => {
     expect(await fingerprintOf({ type: "T", payload: { a: 1 }, delayMs: 0 })).not.toBe(now);
     expect(await fingerprintOf({ type: "T", payload: { a: 1 }, delayMs: 1 })).not.toBe(later);
   });
+
+  it("tells who acts apart, and nobody from anyone", async () => {
+    const nobody = await fingerprintOf({ type: "T", payload: { a: 1 } });
+    const ada = await fingerprintOf({ type: "T", payload: { a: 1 }, actor: "ada" });
+    expect(ada).not.toBe(nobody);
+    expect(await fingerprintOf({ type: "T", payload: { a: 1 }, actor: "ada" })).toBe(ada);
+    expect(await fingerprintOf({ type: "T", payload: { a: 1 }, actor: "grace" })).not.toBe(ada);
+    expect(
+      await fingerprintOf({ type: "T", payload: { a: 1 }, delayMs: 1, actor: "ada" }),
+    ).not.toBe(ada);
+  });
 });

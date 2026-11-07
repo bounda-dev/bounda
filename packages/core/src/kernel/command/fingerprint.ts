@@ -4,6 +4,7 @@ export interface FingerprintArgs {
   // Scheduled dispatches only: what `delay` came to, so a scheduled command and an immediate one
   // never share a key.
   readonly delayMs?: number | undefined;
+  readonly actor?: string | undefined;
 }
 
 export interface FingerprintFunction {
@@ -37,13 +38,14 @@ const canonical = (value: unknown): unknown => {
 };
 
 /**
- * What identifies a command under an idempotency key: the SHA-256 of its type, its payload and
- * its delay, if any, as JSON, in hex. `undefined` and a missing payload fingerprint alike, as JSON
- * cannot tell them apart either.
+ * What identifies a command under an idempotency key: the SHA-256 of its type, its payload, its
+ * delay and who acts, when there are, as JSON, in hex. `undefined` and a missing payload
+ * fingerprint alike, as JSON cannot tell them apart either.
  */
-export const fingerprintOf: FingerprintFunction = async ({ type, payload, delayMs }) => {
+export const fingerprintOf: FingerprintFunction = async ({ type, payload, delayMs, actor }) => {
   const identity = [type, canonical(payload) ?? null];
   if (delayMs !== undefined) identity.push({ delayMs });
+  if (actor !== undefined) identity.push({ actor });
   const bytes = new TextEncoder().encode(JSON.stringify(identity));
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");

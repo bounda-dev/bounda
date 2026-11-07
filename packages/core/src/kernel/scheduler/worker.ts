@@ -22,6 +22,7 @@ import { sealError } from "../personal-data/errors.ts";
 import { personOfEvent } from "../personal-data/persons.ts";
 import { restrictedPersonOf } from "../personal-data/refusal.ts";
 import type { RetentionSweep } from "../personal-data/retention.ts";
+import type { KeyRotation } from "../personal-data/rotation.ts";
 import type { DelayedPolicies } from "../policy/delayed.ts";
 import { PROCESS_DEADLINE_COMMAND, type ProcessDeadlinePayload } from "../process/deadlines.ts";
 import type { ProcessDeadlines } from "../process/deliver-deadline.ts";
@@ -46,8 +47,8 @@ export interface ScheduledCommandWorker {
   start(): void;
   stop(): Promise<void>;
   /**
-   * Resolves to how many entries it claimed, those it deferred included, and persons it forgot
-   * for the retention.
+   * Resolves to how many entries it claimed, those it deferred included, persons it forgot for
+   * the retention, and keys it rewrapped.
    */
   runOnce(): Promise<number>;
   /**
@@ -73,6 +74,10 @@ export interface CreateScheduledCommandWorkerArgs {
    * Swept on every pass; absent without `runtime.personalData.retention`.
    */
   readonly retention?: RetentionSweep | undefined;
+  /**
+   * Swept on every pass; absent without `runtime.personalData.keyWrapper`.
+   */
+  readonly rotation?: KeyRotation | undefined;
   /**
    * The reactive subscribers the dispatcher runs, by name: what a deadline and a restricted
    * retry wait for before they run.
@@ -131,6 +136,7 @@ interface DeadlineWait {
  * `IDEMPOTENCY_PURGE_INTERVAL_MS` a pass also purges the idempotency keys that expired. Every pass
  * sweeps the retention, unless a list it could not read holds it: its read is one an index
  * answers, as `nextDueAt` is, so a host woken for a person's deadline forgets them in that pass.
+ * The rotation of the key wrapper rewraps a batch of keys on every pass the same way.
  */
 export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction = ({
   storage,
@@ -140,6 +146,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   delayedPolicies,
   restrictedRetries,
   retention,
+  rotation,
   reactive,
   config,
   ids,
@@ -390,6 +397,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
             personId: entry.command.aggregateId,
             unit,
             beforeEach: () => renew(entry),
+            actor: entry.context.actor,
           });
         } else {
           const { payload, forgotten } = await openCommandPayload({
@@ -551,8 +559,9 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       }
       await purgeExpiredKeys(claimedAt);
       const forgotten = (await retention?.sweep(claimedAt)) ?? 0;
+      const rewrapped = (await rotation?.sweep(claimedAt)) ?? 0;
       if (unreadable !== undefined) throw unreadable.error;
-      return due.length + forgotten;
+      return due.length + forgotten + rewrapped;
     });
 
   const schedule = (): void => {

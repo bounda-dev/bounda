@@ -168,8 +168,11 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
   `CREATE TABLE IF NOT EXISTS ${tables.personalKeys} (
     "person" text PRIMARY KEY,
     "key" text NOT NULL,
-    "fingerprint" text NOT NULL
+    "fingerprint" text NOT NULL,
+    "kid" text
   )`,
+  // What the rotation of the wrapping key reads: the keys still under an old one.
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.personalKeys, "kid")} ON ${tables.personalKeys} ("kid", "person")`,
   `CREATE TABLE IF NOT EXISTS ${tables.persons} (
     "person" text PRIMARY KEY,
     "restricted_since" text,
@@ -231,6 +234,7 @@ export const ensureStorageSchema: EnsureStorageSchemaFunction = async ({ db, sch
     indexName(tables.scheduledCommands, "claimed_at"),
     indexName(tables.idempotencyKeys, "expires_at"),
     indexName(tables.persons, "idle"),
+    indexName(tables.personalKeys, "kid"),
     indexName(tables.snapshots, "persons"),
     indexName(tables.idempotencyKeys, "persons"),
     indexName(tables.scheduledCommands, "persons"),

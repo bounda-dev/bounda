@@ -1,6 +1,6 @@
 ---
 title: Ids, causation and correlation
-description: What every stored event says about where it came from, how to follow a chain from a request to its last reaction, and why ids a reaction creates are derived, never random.
+description: What every stored event says about where it came from and who acted, how to follow a chain from a request to its last reaction, and why ids a reaction creates are derived, never random.
 sidebar:
   order: 40
 ---
@@ -8,8 +8,8 @@ sidebar:
 A request places an order; a process asks for a payment; a policy sends a confirmation; a day
 later a scheduled command sends a reminder. Four writes, three of them made by the runtime, some
 in another process and one on another day. When something goes wrong in the fourth, the
-question is always the same: which request started this, and what did each step react to?
-**Bounda answers it by stamping every event with where it came from, at the moment it is
+question is always the same: which request started this, who made it, and what did each step
+react to? **Bounda answers it by stamping every event with where it came from, at the moment it is
 written**, with no setting to turn on and nothing for a handler to pass along.
 
 ## What an event carries
@@ -23,6 +23,8 @@ v7 by default), its aggregate's type and id, its `version` in the aggregate's st
   the event the reaction ran for, so an event leads to the one before it; for a command from
   outside it is the command itself.
 - `commandId`: the command that wrote the event. The events the runtime writes itself have none.
+- `actor`: who acted, the id the host named for the request; absent when it named nobody (see
+  [Who acts](#who-acts)).
 - `depth`: how many reactive hops separate the event from the request, counted again from 0 at a
   process deadline. A command dispatched past
   `runtime.policies.maxChainDepth` is refused with `CHAIN_DEPTH_EXCEEDED`, so a policy that
@@ -31,8 +33,8 @@ v7 by default), its aggregate's type and id, its `version` in the aggregate's st
   read from.
 - `system`: `true` for the events the runtime writes itself, such as a process's lifecycle events.
 
-A command carries the correlation, the causation and the depth plus its own `commandId`, and a
-command handler sees them on `command.metadata`; a policy or process handler sees an event's on
+A command carries the correlation, the causation, the actor and the depth plus its own
+`commandId`, and a command handler sees them on `command.metadata`; a policy or process handler sees an event's on
 `event.metadata`.
 
 ## How the ids are set
@@ -57,6 +59,40 @@ one, as a scheduled command keeps the correlation and causation it was scheduled
 it runs. Only its depth starts again, so a deadline set again at every step never reaches
 `maxChainDepth`.
 
+## Who acts
+
+Correlation and causation say why an event was written; `actor` says on whose behalf. The host
+names it once per request, by binding the client: `app.as(userId)` answers the same client, whose
+every call acts as that id.
+
+```ts
+const client = app.as(session.userId);
+await client.commands.placeOrder({ orderId, customerId, total });
+```
+
+The command carries the actor in `command.metadata.actor`, and every event it writes carries it
+in `metadata.actor`. From there it travels like the correlation: the commands a policy or a
+process step dispatches from an event keep that event's actor, a scheduled command keeps the one
+it was scheduled with, a deadline the one of the step that set it. `forget`, `restrict` and
+`unrestrict` record theirs on the events they append, so the stream says who asked to forget
+someone. A dead letter's `retry` is acted by whoever retries, through a bound client; retried
+without one, it acts as the failed run did. The retries that `unrestrict` starts act as whoever
+lifted the restriction. What the runtime does on its own, such as forgetting a person whose
+[retention](/guides/personal-data/#retention) ran out, names nobody.
+
+So the event store is an audit trail of who changed what, with no table beside it to keep in step:
+a read model can project it, a policy can react to it, and a query on the stream finds every
+change one user made. The [React Router guide](/guides/react-router/#who-makes-a-request) and the
+[Cloudflare adapter](/adapters/cloudflare/#who-makes-a-request) bind it from the request.
+
+**The actor is an id, never a name or an email.** It is stored in the clear in events that are
+never deleted, and [forgetting a person](/guides/personal-data/) cannot reach it, as it cannot
+reach the ids of people. `as` takes a string of 1 to `MAX_ACTOR_LENGTH` (255) characters and
+throws `ValidationError` otherwise; the id of a user, a service or an operator, whatever the host
+authenticates. A client without `as` acts as nobody, and its events have no `actor`.
+
+## The chain of one request
+
 In the [storefront example](/examples/storefront/) one `placeOrder` gives this chain, every
 event under the command's id as correlation:
 
@@ -75,7 +111,7 @@ for what a retry from one wrote. Both work on the pages of
 `jsonb` on PostgreSQL. In traces, every `bounda.command`, `bounda.policy` and
 `bounda.process` span carries `bounda.correlation_id`, and a command's span adds
 `bounda.causation_id`: the event the command reacted to, or the command itself when it came from
-outside (see [Observability](/reference/observability/)).
+outside, and `bounda.actor` when someone acts (see [Observability](/reference/observability/)).
 
 ## Ids a reaction creates
 
@@ -169,6 +205,10 @@ Router sense, is the host's: the place where a request dispatches a command.
 
 ## What stays outside
 
+- **Bounda does not authenticate.** The actor is whatever the host names with `as`; a host that
+  binds the id of a session it has not verified records that id all the same.
+- **A query records nothing yet.** A bound client's queries and exports know who acts, but nothing
+  writes it down: reads leave no event.
 - **Commands are not stored.** An event names its command by `commandId`; what else is known
   about the command is on its span.
 - **Not every cause is an event.** What a process writes with no event to react to, a resume

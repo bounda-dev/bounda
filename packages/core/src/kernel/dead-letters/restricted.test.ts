@@ -46,7 +46,7 @@ const setup = async (config?: Parameters<typeof createReactiveHarness>[0]["confi
     logger,
     ...(config === undefined ? {} : { config }),
   });
-  const lift = (personId: string) =>
+  const lift = (personId: string, actor?: string) =>
     liftProcessingRestriction({
       storage: harness.storage,
       ids: harness.ids,
@@ -54,6 +54,7 @@ const setup = async (config?: Parameters<typeof createReactiveHarness>[0]["confi
       logger,
       concurrencyRetries: 2,
       personId,
+      actor,
     });
   return { harness, entries, lift };
 };
@@ -234,6 +235,26 @@ describe("the retry of a restricted person's dead letters", () => {
     expect((await harness.storage.deadLetterStore.get("one"))?.status).toBe("failed");
     expect(await harness.worker.runOnce()).toBe(1);
     expect((await harness.storage.deadLetterStore.get("one"))?.status).toBe("retried");
+  });
+
+  it("retries them as whoever lifted the restriction", async () => {
+    const { harness, lift } = await setup();
+    await harness.storage.persons.restrict("c-1", harness.clock.now());
+    await harness.storage.deadLetterStore.add({
+      ...refused("one", "PlaceOrder", "o-1", "c-1", "2026-01-01T00:00:00Z"),
+      payload: { orderId: "o-1", total: 10 },
+    });
+    await lift("c-1", "dpo-1");
+    await harness.dispatcher.runUntilIdle();
+    expect(await harness.worker.runOnce()).toBe(1);
+
+    const { events } = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    expect(events.map((event) => [event.type, event.metadata.actor])).toEqual([
+      ["OrderPlaced", "dpo-1"],
+    ]);
   });
 
   it("drops the entry without a letter when it keeps failing, telling the operator", async () => {

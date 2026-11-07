@@ -12,6 +12,7 @@ import {
   type ProcessingRestrictionLiftedPayload,
 } from "../../modules/bounda-events.ts";
 import { RETRY_RESTRICTED_COMMAND, retryRestrictedKey } from "../command/pipeline.ts";
+import { actedBy, causedBy, startedBy } from "../shared/causation.ts";
 import { appendSystemEvent } from "../system-events.ts";
 import { checkPersonId, transactRetrying } from "./transact.ts";
 
@@ -22,6 +23,7 @@ export interface ProcessingRestrictionArgs {
   readonly logger: Logger;
   readonly concurrencyRetries: number;
   readonly personId: string;
+  readonly actor?: string | undefined;
 }
 
 export interface ProcessingRestrictionFunction {
@@ -45,7 +47,7 @@ interface Change {
 // A change that does nothing still answers with the stream's version, as a command without
 // events does, so a caller waits on nothing.
 const change = async (
-  { storage, ids, clock, logger, concurrencyRetries, personId }: ProcessingRestrictionArgs,
+  { storage, ids, clock, logger, concurrencyRetries, personId, actor }: ProcessingRestrictionArgs,
   { subject, type, logged, apply, after }: Change,
 ): Promise<StoredDispatch> => {
   checkPersonId(personId, subject);
@@ -75,13 +77,13 @@ const change = async (
         type,
         payload,
         person: personId,
-        context: { correlationId, causationId: correlationId, depth: 0 },
+        context: startedBy(correlationId, actor),
       });
       await after?.(transaction, event);
       return { changed: true, version: event.version, event };
     },
   });
-  logger.info(logged, { personId, changed });
+  logger.info(logged, { personId, changed, ...actedBy(actor) });
   return {
     scheduled: false,
     aggregateType: BOUNDA_AGGREGATE,
@@ -126,6 +128,6 @@ export const liftProcessingRestriction: ProcessingRestrictionFunction = (args) =
           payload: { personId: args.personId },
         },
         executeAt: new Date(event.timestamp),
-        context: { correlationId: event.metadata.correlationId, causationId: event.id, depth: 0 },
+        context: { ...causedBy(event), depth: 0 },
       }),
   });

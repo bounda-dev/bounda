@@ -19,6 +19,10 @@ export interface CreateHostArgs<R extends Registry = AppRegistry> {
    * Imports `app/tenant.ts`, when the project has one.
    */
   readonly importTenant?: ImportModuleFunction | undefined;
+  /**
+   * Imports `app/actor.ts`, when the project has one.
+   */
+  readonly importActor?: ImportModuleFunction | undefined;
   readonly consistency: Consistency;
 }
 

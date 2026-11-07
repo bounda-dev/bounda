@@ -26,6 +26,10 @@ export interface RetryAllArgs {
    * run.
    */
   readonly beforeEach: () => Promise<void>;
+  /**
+   * Who lifted the restriction, who acts in what each retry writes.
+   */
+  readonly actor?: string | undefined;
 }
 
 export interface RestrictedRetries {
@@ -84,7 +88,7 @@ export const createRestrictedRetries: CreateRestrictedRetriesFunction = ({
   };
 
   return {
-    retryAll: async ({ personId, unit, beforeEach }) => {
+    retryAll: async ({ personId, unit, beforeEach, actor }) => {
       const letters = await storage.deadLetterStore.listFailed({
         person: personId,
         errorCode: PROCESSING_RESTRICTED,
@@ -94,7 +98,7 @@ export const createRestrictedRetries: CreateRestrictedRetriesFunction = ({
         const fields = { id: letter.id, kind: letter.kind, handler: letter.handler, personId };
         await beforeEach();
         try {
-          await retries.retry(letter);
+          await retries.retry(letter, actor);
           logger.info("dead letter retried once the restriction was lifted", fields);
         } catch (error) {
           if (error instanceof DeadLetterSettledError) continue;

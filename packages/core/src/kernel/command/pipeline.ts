@@ -45,6 +45,7 @@ import type { AggregateRuntime, AggregatesRuntime, CommandRuntime } from "../agg
 import { type SealedPayload, sealCommandPayload } from "../personal-data/commands.ts";
 import { personOfCommand } from "../personal-data/persons.ts";
 import { refuseRestricted } from "../personal-data/refusal.ts";
+import { actedBy } from "../shared/causation.ts";
 import { errorDetails } from "../shared/retry.ts";
 import { withTimeout } from "../shared/timeout.ts";
 import { withPorts } from "../shared/with-ports.ts";
@@ -58,6 +59,10 @@ export interface DispatchArgs {
   readonly payload: unknown;
   readonly options?: DispatchOptions;
   readonly context?: CausationContext;
+  /**
+   * Who acts, for a command from outside the runtime; a reaction's actor travels in `context`.
+   */
+  readonly actor?: string | undefined;
   /**
    * Used instead of a new id: the one a scheduled command was given when scheduled, kept across the
    * worker's retries, or the one a reaction derives, so a retried reaction dispatches the same
@@ -235,6 +240,7 @@ const toPendingEvents = (
         correlationId: command.metadata.correlationId,
         causationId: command.metadata.causationId,
         commandId: command.metadata.commandId,
+        ...actedBy(command.metadata.actor),
         depth: command.metadata.depth,
         schemaVersion: runtime.schemaVersion,
         system: false,
@@ -455,6 +461,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
       payload,
       options = {},
       context,
+      actor: caller,
       commandId: scheduledId,
       signal: reactionSignal,
     }: DispatchArgs,
@@ -468,6 +475,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     const depth = context?.depth ?? 0;
     const maxDepth = config.forAggregate(aggregate.name).policies.maxChainDepth;
     if (depth > maxDepth) throw new ChainDepthExceededError(depth, maxDepth);
+    const actor = context === undefined ? caller : context.actor;
     const idempotency: Idempotency | undefined =
       options.idempotencyKey === undefined
         ? undefined
@@ -477,6 +485,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
               type,
               payload,
               delayMs: options.delay === undefined ? undefined : parseDuration(options.delay),
+              actor,
             }),
           };
 
@@ -497,6 +506,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         commandId,
         correlationId: options.correlationId ?? context?.correlationId ?? commandId,
         causationId: context?.causationId ?? commandId,
+        ...actedBy(actor),
         depth,
         timestamp: clock.now().toISOString(),
       },
@@ -518,6 +528,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         context: {
           correlationId: command.metadata.correlationId,
           causationId: command.metadata.causationId,
+          ...actedBy(actor),
           depth,
         },
         persons,
@@ -640,6 +651,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         [ATTRIBUTES.aggregateId]: aggregateId,
         [ATTRIBUTES.correlationId]: command.metadata.correlationId,
         [ATTRIBUTES.causationId]: command.metadata.causationId,
+        ...(actor === undefined ? {} : { [ATTRIBUTES.actor]: actor }),
       },
       run: async (span): Promise<DispatchResult | Rejected> => {
         const replay = async (): Promise<DispatchResult | Rejected | null> => {

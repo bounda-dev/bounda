@@ -11,6 +11,7 @@ export const testMetadata: EventMetadata = {
   correlationId: "corr-1",
   causationId: "evt-0",
   commandId: "cmd-1",
+  actor: "user-1",
   depth: 0,
   schemaVersion: 1,
   system: false,
@@ -22,6 +23,7 @@ export const testMetadata: EventMetadata = {
 export const testContext: CausationContext = {
   correlationId: "corr-1",
   causationId: "cmd-1",
+  actor: "user-1",
   depth: 0,
 };
 
@@ -125,6 +127,21 @@ export interface TestPersonalKeyFunction {
 export const testPersonalKey: TestPersonalKeyFunction = (name) => ({
   key: `k-${name}`,
   fingerprint: `f-${name}`,
+  kid: null,
+});
+
+export interface TestWrappedPersonalKeyFunction {
+  (name: string, kid: string): StoredPersonalKey;
+}
+
+/**
+ * The key `testPersonalKey(name)` as a store keeps it wrapped under `kid`: the same fingerprint,
+ * another text.
+ */
+export const testWrappedPersonalKey: TestWrappedPersonalKeyFunction = (name, kid) => ({
+  key: `w-${name}-${kid}`,
+  fingerprint: `f-${name}`,
+  kid,
 });
 
 export interface TestSealedValueFunction {

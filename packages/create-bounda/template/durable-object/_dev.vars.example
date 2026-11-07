@@ -1,0 +1,4 @@
+# The master key every person's key is wrapped under: 32 random bytes in base64, which
+# `openssl rand -base64 32` prints. Set it as a secret when you deploy:
+#   npx wrangler secret put BOUNDA_MASTER_KEY
+BOUNDA_MASTER_KEY=

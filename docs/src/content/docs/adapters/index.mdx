@@ -90,7 +90,7 @@ On first use the adapter creates its tables, prefixed with `bounda_` by default:
 | `bounda_scheduled_commands` | Scheduled commands, process deadlines and timeouts, and delayed policy runs |
 | `bounda_dead_letters` | Handler runs that gave up, with the error and the attempt count |
 | `bounda_idempotency_keys` | What a command dispatched with an `idempotencyKey` answered, until the key expires |
-| `bounda_personal_keys` | One key per person, which their [personal fields](/guides/personal-data/) are encrypted with, and its fingerprint; `forget` deletes it |
+| `bounda_personal_keys` | One key per person, which their [personal fields](/guides/personal-data/) are encrypted with, wrapped under the [master key](/guides/personal-data/#a-master-key) whose id it keeps, and the fingerprint of the raw key; `forget` deletes it |
 | `bounda_persons` | One row per person the runtime knows something about: since when their [processing is restricted](/guides/personal-data/#restricting-processing), `NULL` while it is not, and, with a [retention](/guides/personal-data/#retention), when they were last active and last forgotten, and the position of the last event recorded for them |
 | `bounda_snapshots` | The last snapshot of every stream of an aggregate that takes them, with the fingerprint it is valid for |
 

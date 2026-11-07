@@ -32,7 +32,7 @@ Each event comes whole, as the `StoredEvent` type of `@bounda-dev/core` describe
 | `type`, `payload` | What happened, with its data |
 | `timestamp` | When it was stored, on the app's clock |
 | `person` | The person the event names, when its type has [personal fields](/guides/personal-data/) or it is on their stream `bounda:<personId>`; `null` otherwise |
-| `metadata` | `correlationId`, `causationId`, `commandId`, `depth`, `schemaVersion` and `system`: where it came from, as [Ids, causation and correlation](/concepts/ids-causation-and-correlation/) explains |
+| `metadata` | `correlationId`, `causationId`, `commandId`, `depth`, `schemaVersion` and `system`: where it came from, as [Ids, causation and correlation](/concepts/ids-causation-and-correlation/) explains; and `actor`, the id of [who acted](/concepts/ids-causation-and-correlation/#who-acts), when the call that caused it named someone |
 
 The lifecycle events of a process are rows like any other: `ProcessStarted`, `ProcessHandled`,
 `ProcessCompleted` and the rest, with the instance's id as `aggregateId`, `system: true`, and

@@ -1,4 +1,9 @@
-import { ConfigurationError, type Consistency } from "@bounda-dev/core";
+import {
+  ConfigurationError,
+  type Consistency,
+  MAX_ACTOR_LENGTH,
+  ValidationError,
+} from "@bounda-dev/core";
 import { describe, expect, it } from "vitest";
 import { connect } from "../src/client.ts";
 import type { registry } from "./app.ts";
@@ -12,13 +17,13 @@ describe("connect", () => {
       { correlationId: "c-1" },
     );
     expect(eventual.commands).toEqual([
-      ["payOrder", { orderId: "o-1" }, { correlationId: "c-1" }, "eventual"],
+      ["payOrder", { orderId: "o-1" }, { correlationId: "c-1" }, "eventual", undefined],
     ]);
 
     const byDefault = recordingStub();
     await connect<typeof registry>(byDefault.stub).commands.payOrder({ orderId: "o-1" });
     expect(byDefault.commands).toEqual([
-      ["payOrder", { orderId: "o-1" }, undefined, "read-your-writes"],
+      ["payOrder", { orderId: "o-1" }, undefined, "read-your-writes", undefined],
     ]);
   });
 
@@ -35,14 +40,14 @@ describe("connect", () => {
     await store.unrestrict("c-2");
     expect([eventual.forgets, byDefault.forgets]).toEqual([
       [
-        ["c-1", "eventual"],
-        ["restrict", "c-1", "eventual"],
-        ["unrestrict", "c-1", "eventual"],
+        ["c-1", "eventual", undefined],
+        ["restrict", "c-1", "eventual", undefined],
+        ["unrestrict", "c-1", "eventual", undefined],
       ],
       [
-        ["c-2", "read-your-writes"],
-        ["restrict", "c-2", "read-your-writes"],
-        ["unrestrict", "c-2", "read-your-writes"],
+        ["c-2", "read-your-writes", undefined],
+        ["restrict", "c-2", "read-your-writes", undefined],
+        ["unrestrict", "c-2", "read-your-writes", undefined],
       ],
     ]);
   });
@@ -50,7 +55,47 @@ describe("connect", () => {
   it("exports a person's data through the stub", async () => {
     const { stub, exports } = recordingStub();
     await connect<typeof registry>(stub).exportPersonalData("c-1");
-    expect(exports).toEqual([["c-1"]]);
+    expect(exports).toEqual([["c-1", undefined]]);
+  });
+
+  it("sends the actor of as with every call that acts, and none before it", async () => {
+    const recorded = recordingStub();
+    const store = connect<typeof registry>(recorded.stub, { consistency: "eventual" });
+    const user = store.as("user-1");
+    await user.commands.payOrder({ orderId: "o-1" });
+    await user.queries.getOrder({ orderId: "o-1" });
+    await user.forget("c-1");
+    await user.restrict("c-1");
+    await user.unrestrict("c-1");
+    await user.exportPersonalData("c-1");
+    await user.deadLetters.list({ status: "failed" });
+    await user.deadLetters.retry("l-1");
+    await user.as("operator-1").deadLetters.discard("l-1");
+    await store.queries.getOrder({ orderId: "o-1" });
+    expect(recorded).toMatchObject({
+      commands: [["payOrder", { orderId: "o-1" }, undefined, "eventual", "user-1"]],
+      queries: [
+        ["getOrder", { orderId: "o-1" }, "user-1"],
+        ["getOrder", { orderId: "o-1" }, undefined],
+      ],
+      forgets: [
+        ["c-1", "eventual", "user-1"],
+        ["restrict", "c-1", "eventual", "user-1"],
+        ["unrestrict", "c-1", "eventual", "user-1"],
+      ],
+      exports: [["c-1", "user-1"]],
+      deadLetters: [
+        ["list", { status: "failed" }, "user-1"],
+        ["retry", "l-1", "user-1"],
+        ["discard", "l-1", "operator-1"],
+      ],
+    });
+  });
+
+  it("refuses in as an actor that is not a string of 1 to MAX_ACTOR_LENGTH characters", () => {
+    const store = connect(recordingStub().stub);
+    expect(() => store.as("")).toThrow(ValidationError);
+    expect(() => store.as("x".repeat(MAX_ACTOR_LENGTH + 1))).toThrow(ValidationError);
   });
 
   it("is not taken for a promise, and has no members but named calls", async () => {
