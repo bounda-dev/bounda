@@ -4,6 +4,7 @@ import type {
   ForgetLedgerEntry,
   ForgetLedgerPosition,
 } from "../../adapter/storage/forget-ledger.ts";
+import type { Hold } from "../../adapter/storage/hold.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
@@ -11,6 +12,7 @@ import { BOUNDA_AGGREGATE } from "../../modules/bounda-events.ts";
 import { startedBy } from "../shared/causation.ts";
 import { errorDetails } from "../shared/retry.ts";
 import { type Forgotten, forgetWithin, logForgotten } from "./forget.ts";
+import { holdAfter } from "./hold.ts";
 import { checkPersonId, transactRetrying } from "./transact.ts";
 
 /**
@@ -25,11 +27,14 @@ export const FORGET_LEDGER_CURSOR = "forget-ledger:applied";
 // holds already changes nothing.
 export const FORGET_LEDGER_REREAD_MS: number = 15 * 60_000;
 
-// How long a reconciliation that failed waits, twice as long after each failure up to
-// `FORGET_LEDGER_MAX_RETRY_MS`.
-export const FORGET_LEDGER_RETRY_MS = 30_000;
+/**
+ * The checkpoint rows that keep the hold of a reconciliation that failed, beside its cursor: when
+ * it ends, in milliseconds, and how many reconciliations failed in a row. Every instance waits for
+ * it, and a restart backs off from where it was.
+ */
+export const FORGET_LEDGER_HELD_UNTIL = "forget-ledger:held-until";
 
-export const FORGET_LEDGER_MAX_RETRY_MS = 3_600_000;
+export const FORGET_LEDGER_ATTEMPTS = "forget-ledger:attempts";
 
 // How many entries a reconciliation reads at once: a store that lists from its newest entry, as
 // KV does, lists again for every page.
@@ -114,8 +119,9 @@ export interface ForgetLedgerReconciliation {
    */
   reconcile(now: Date): Promise<number | null>;
   /**
-   * Reconciles when a reconciliation is due, after a failure or once the ledger's
-   * `visibilityDelayMs` has passed since the first, and resolves to how many persons it forgot.
+   * Reconciles when a reconciliation is due, after a failure, unless another instance's failure
+   * holds it longer, or once the ledger's `visibilityDelayMs` has passed since the first, and
+   * resolves to how many persons it forgot.
    */
   sweep(now: Date): Promise<number>;
   /**
@@ -152,7 +158,9 @@ export interface CreateForgetLedgerReconciliationFunction {
 /**
  * After a normal start the ledger holds little past the cursor; after a restore, the cursor went
  * back with the copy, and the read returns the forgettings made since, which the copy does not
- * hold. The cursor only moves forward, so two instances reconciling at once never move it back.
+ * hold. The cursor only moves forward, so two instances reconciling at once never move it back. A
+ * failure holds the next reconciliation beside the cursor, longer after each failure in a row of
+ * any instance, and the first that succeeds clears it; a start reconciles whatever the hold says.
  */
 export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationFunction = ({
   ledger,
@@ -165,8 +173,9 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
 }) => {
   const { checkpointStore } = storage;
   let done = false;
-  let failures = 0;
   let dueAt: number | null = null;
+  // The last hold this instance set, for when the store cannot say.
+  let local: Hold | null = null;
   let settled = ledger.visibilityDelayMs === undefined || ledger.visibilityDelayMs <= 0;
 
   const advance = async (to: number): Promise<void> => {
@@ -203,34 +212,71 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
     }
   };
 
+  const storedHold = async (): Promise<Hold | null> => {
+    const until = await checkpointStore.get(FORGET_LEDGER_HELD_UNTIL);
+    const attempts = await checkpointStore.get(FORGET_LEDGER_ATTEMPTS);
+    return until === 0 && attempts === 0
+      ? null
+      : { until: new Date(until).toISOString(), attempts };
+  };
+
+  // The attempts go first: a hold half written, or half cleared, only ever counts one failure
+  // more than there was.
+  const hold = async (at: number): Promise<void> => {
+    const held = await storedHold().catch(() => local);
+    local = holdAfter({ held, at, failed: true });
+    dueAt = Date.parse(local.until);
+    await checkpointStore.set(FORGET_LEDGER_ATTEMPTS, local.attempts);
+    await checkpointStore.set(FORGET_LEDGER_HELD_UNTIL, dueAt);
+  };
+
+  const release = async (): Promise<void> => {
+    local = null;
+    if ((await storedHold()) === null) return;
+    await checkpointStore.remove(FORGET_LEDGER_HELD_UNTIL);
+    await checkpointStore.remove(FORGET_LEDGER_ATTEMPTS);
+  };
+
   const reconcile = async (now: Date): Promise<number | null> => {
     const at = now.getTime();
+    let forgotten: number;
     try {
-      const forgotten = await run();
-      if (forgotten > 0)
-        logger.warn("forgot again persons a restored backup brought back", { forgotten });
-      done = true;
-      failures = 0;
-      dueAt = settled ? null : at + (ledger.visibilityDelayMs ?? 0);
-      settled = true;
-      return forgotten;
+      forgotten = await run();
     } catch (error) {
       done = false;
-      failures += 1;
-      dueAt =
-        at + Math.min(FORGET_LEDGER_RETRY_MS * 2 ** (failures - 1), FORGET_LEDGER_MAX_RETRY_MS);
       logger.error(
         "forget ledger could not be reconciled; persons a restored backup brought back are not forgotten yet",
         errorDetails(error),
       );
+      await hold(at).catch((holdError: unknown) =>
+        logger.error("forget ledger's reconciliation could not be held", errorDetails(holdError)),
+      );
       return null;
     }
+    if (forgotten > 0)
+      logger.warn("forgot again persons a restored backup brought back", { forgotten });
+    done = true;
+    dueAt = settled ? null : at + (ledger.visibilityDelayMs ?? 0);
+    settled = true;
+    await release().catch((error: unknown) =>
+      logger.error("forget ledger's reconciliation hold could not be cleared", errorDetails(error)),
+    );
+    return forgotten;
   };
 
   return {
     reconcile,
     sweep: async (now) => {
-      if (dueAt === null || now.getTime() < dueAt) return 0;
+      const at = now.getTime();
+      if (dueAt === null || at < dueAt) return 0;
+      if (!done) {
+        const held = await storedHold().catch(() => null);
+        const until = held === null ? at : Date.parse(held.until);
+        if (until > at) {
+          dueAt = until;
+          return 0;
+        }
+      }
       return (await reconcile(now)) ?? 0;
     },
     nextDueAt: () => (dueAt === null ? null : new Date(dueAt)),

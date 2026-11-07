@@ -65,19 +65,19 @@ export const personalKeyStoreContract: PersonalKeyStoreContractFunction = ({ cre
       await store.add("c-4", stored("4"));
       await store.add("c-5", wrapped("5", "kid-3"));
       expect(await store.listWrappedUnder({ kids: ["kid-1"], limit: 10 })).toEqual([
-        { person: "c-1", key: wrapped("1", "kid-1") },
-        { person: "c-3", key: wrapped("3", "kid-1") },
+        { person: "c-1", key: wrapped("1", "kid-1"), hold: null },
+        { person: "c-3", key: wrapped("3", "kid-1"), hold: null },
       ]);
       expect(await store.listWrappedUnder({ kids: ["kid-2", null], limit: 10 })).toEqual([
-        { person: "c-2", key: wrapped("2", "kid-2") },
-        { person: "c-4", key: stored("4") },
+        { person: "c-2", key: wrapped("2", "kid-2"), hold: null },
+        { person: "c-4", key: stored("4"), hold: null },
       ]);
       expect(await store.listWrappedUnder({ kids: ["kid-1", "kid-2"], limit: 2 })).toEqual([
-        { person: "c-1", key: wrapped("1", "kid-1") },
-        { person: "c-2", key: wrapped("2", "kid-2") },
+        { person: "c-1", key: wrapped("1", "kid-1"), hold: null },
+        { person: "c-2", key: wrapped("2", "kid-2"), hold: null },
       ]);
       expect(await store.listWrappedUnder({ kids: [null], limit: 10 })).toEqual([
-        { person: "c-4", key: stored("4") },
+        { person: "c-4", key: stored("4"), hold: null },
       ]);
       expect(await store.listWrappedUnder({ kids: [], limit: 10 })).toEqual([]);
       expect(await store.listWrappedUnder({ kids: ["kid-9"], limit: 10 })).toEqual([]);
@@ -99,7 +99,68 @@ export const personalKeyStoreContract: PersonalKeyStoreContractFunction = ({ cre
       expect(await store.get("c-1")).toEqual(wrapped("first", "kid-2"));
       expect(await store.listWrappedUnder({ kids: ["kid-1"], limit: 10 })).toEqual([]);
       expect(await store.listWrappedUnder({ kids: ["kid-2"], limit: 10 })).toEqual([
-        { person: "c-1", key: wrapped("first", "kid-2") },
+        { person: "c-1", key: wrapped("first", "kid-2"), hold: null },
+      ]);
+    });
+
+    it("holds a key the person still holds, lists it again once the hold ends, and clears it with a rewrap", async () => {
+      const first = wrapped("1", "kid-1");
+      await store.add("c-1", first);
+      await store.add("c-2", wrapped("2", "kid-1"));
+      await store.add("c-3", stored("3"));
+      const hold = { until: "2026-02-01T00:00:30.000Z", attempts: 2 };
+      await store.hold("c-1", first, hold);
+      await store.hold("c-3", stored("3"), { until: "2026-02-01T00:01:00.000Z", attempts: 1 });
+      const before = new Date("2026-02-01T00:00:29.999Z");
+      const end = new Date(hold.until);
+      expect(
+        await store.listWrappedUnder({ kids: ["kid-1"], releasedBy: before, limit: 10 }),
+      ).toEqual([{ person: "c-2", key: wrapped("2", "kid-1"), hold: null }]);
+      expect(await store.listWrappedUnder({ kids: ["kid-1"], releasedBy: end, limit: 10 })).toEqual(
+        [
+          { person: "c-1", key: first, hold },
+          { person: "c-2", key: wrapped("2", "kid-1"), hold: null },
+        ],
+      );
+      expect(await store.listWrappedUnder({ kids: ["kid-1"], limit: 1 })).toEqual([
+        { person: "c-1", key: first, hold },
+      ]);
+      expect(await store.get("c-1")).toEqual(first);
+      expect(await store.nextHoldEnd({ kids: ["kid-1"], after: before })).toEqual(end);
+      expect(await store.nextHoldEnd({ kids: ["kid-1", null], after: end })).toEqual(
+        new Date("2026-02-01T00:01:00.000Z"),
+      );
+      expect(await store.nextHoldEnd({ kids: ["kid-1"], after: end })).toBeNull();
+      expect(await store.nextHoldEnd({ kids: ["kid-2"], after: before })).toBeNull();
+      expect(await store.nextHoldEnd({ kids: [], after: before })).toBeNull();
+      await store.hold("c-1", first, { ...hold, attempts: 3 });
+      expect((await store.listWrappedUnder({ kids: ["kid-1"], limit: 1 }))[0]?.hold).toEqual({
+        ...hold,
+        attempts: 3,
+      });
+      expect(await store.rewrap("c-1", first, { key: "w-1-kid-2", kid: "kid-2" })).toBe(true);
+      expect(await store.listWrappedUnder({ kids: ["kid-2"], limit: 10 })).toEqual([
+        { person: "c-1", key: wrapped("1", "kid-2"), hold: null },
+      ]);
+      expect(await store.nextHoldEnd({ kids: ["kid-1", "kid-2"], after: before })).toBeNull();
+    });
+
+    it("never holds a key forgotten or replaced since it was read, and forgets a hold with its key", async () => {
+      const read = wrapped("first", "kid-1");
+      const hold = { until: "2026-02-01T00:00:30.000Z", attempts: 1 };
+      await store.hold("c-1", read, hold);
+      expect(await store.get("c-1")).toBeNull();
+      await store.add("c-1", wrapped("again", "kid-1"));
+      await store.hold("c-1", read, hold);
+      await store.hold("c-1", { ...wrapped("again", "kid-1"), fingerprint: "f-other" }, hold);
+      expect(await store.listWrappedUnder({ kids: ["kid-1"], limit: 10 })).toEqual([
+        { person: "c-1", key: wrapped("again", "kid-1"), hold: null },
+      ]);
+      await store.hold("c-1", wrapped("again", "kid-1"), hold);
+      await store.remove("c-1");
+      await store.add("c-1", wrapped("again", "kid-1"));
+      expect(await store.listWrappedUnder({ kids: ["kid-1"], limit: 10 })).toEqual([
+        { person: "c-1", key: wrapped("again", "kid-1"), hold: null },
       ]);
     });
 

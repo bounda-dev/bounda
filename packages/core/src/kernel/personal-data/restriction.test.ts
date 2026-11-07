@@ -230,6 +230,8 @@ describe("refuseRestricted", () => {
       unrestrict: vi.fn(),
       record: vi.fn(),
       listIdle: vi.fn(),
+      hold: vi.fn(),
+      nextHoldEnd: vi.fn(),
     };
     await refuseRestricted({ persons, person: null });
     expect(persons.get).not.toHaveBeenCalled();

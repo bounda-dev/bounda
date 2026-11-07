@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PersonalKeyStore } from "../../adapter/storage/personal-key-store.ts";
+import { createFixedClock } from "../../contracts/clock.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
 import { generatePersonalKey } from "./crypto.ts";
@@ -7,6 +8,7 @@ import { defineKeyWrapper, isKeyWrapperDefinition, type KeyWrapper } from "./key
 import {
   buildPersonalKeyWrapping,
   createPersonalKeyWrapping,
+  UNWRAPPED_KEY_TTL_MS,
   UNWRAPPED_KEYS_KEPT,
 } from "./wrapped-keys.ts";
 
@@ -30,13 +32,15 @@ const fakeWrapper = (kid: string, previous: readonly string[] = []): FakeWrapper
   };
 };
 
+const clock = createFixedClock();
+
 const keyStore = async (): Promise<PersonalKeyStore> =>
   (await memory().createStorage()).personalKeys;
 
 describe("createPersonalKeyWrapping", () => {
   it("stores a key wrapped under the wrapper's kid, with the fingerprint of the raw key", async () => {
     const store = await keyStore();
-    const keys = createPersonalKeyWrapping({ wrapper: fakeWrapper("kid-1") }).over(store);
+    const keys = createPersonalKeyWrapping({ clock, wrapper: fakeWrapper("kid-1") }).over(store);
     const key = await generatePersonalKey();
     expect(await keys.add("c-1", key)).toEqual(key);
     const stored = await store.get("c-1");
@@ -47,7 +51,7 @@ describe("createPersonalKeyWrapping", () => {
 
   it("answers an add with the key another writer stored first, unwrapped", async () => {
     const store = await keyStore();
-    const wrapping = createPersonalKeyWrapping({ wrapper: fakeWrapper("kid-1") });
+    const wrapping = createPersonalKeyWrapping({ clock, wrapper: fakeWrapper("kid-1") });
     const first = await generatePersonalKey();
     await wrapping.over(store).add("c-1", first);
     expect(await wrapping.over(store).add("c-1", await generatePersonalKey())).toEqual(first);
@@ -56,7 +60,7 @@ describe("createPersonalKeyWrapping", () => {
   it("unwraps a key once, whatever number of reads, and never answers from it once the row is gone", async () => {
     const store = await keyStore();
     const wrapper = fakeWrapper("kid-1");
-    const keys = createPersonalKeyWrapping({ wrapper }).over(store);
+    const keys = createPersonalKeyWrapping({ clock, wrapper }).over(store);
     const key = await generatePersonalKey();
     await keys.add("c-1", key);
     expect(wrapper.unwrapped).toEqual(["kid-1"]);
@@ -71,7 +75,7 @@ describe("createPersonalKeyWrapping", () => {
   it("drops the unwrapped key of a person it forgets", async () => {
     const store = await keyStore();
     const wrapper = fakeWrapper("kid-1");
-    const keys = createPersonalKeyWrapping({ wrapper }).over(store);
+    const keys = createPersonalKeyWrapping({ clock, wrapper }).over(store);
     const key = await generatePersonalKey();
     await keys.add("c-1", key);
     const stored = await store.get("c-1");
@@ -93,8 +97,8 @@ describe("createPersonalKeyWrapping", () => {
     const store = await keyStore();
     const wrapper = fakeWrapper("kid-1");
     const key = await generatePersonalKey();
-    await createPersonalKeyWrapping({ wrapper }).over(store).add("c-1", key);
-    const keys = createPersonalKeyWrapping({ wrapper }).over(store);
+    await createPersonalKeyWrapping({ clock, wrapper }).over(store).add("c-1", key);
+    const keys = createPersonalKeyWrapping({ clock, wrapper }).over(store);
     wrapper.unwrapped.length = 0;
     expect(await Promise.all([keys.get("c-1"), keys.get("c-1")])).toEqual([key, key]);
     expect(wrapper.unwrapped).toEqual(["kid-1"]);
@@ -103,7 +107,7 @@ describe("createPersonalKeyWrapping", () => {
   it("unwraps again a key whose unwrapping failed", async () => {
     const store = await keyStore();
     const key = await generatePersonalKey();
-    await createPersonalKeyWrapping({ wrapper: fakeWrapper("kid-1") })
+    await createPersonalKeyWrapping({ clock, wrapper: fakeWrapper("kid-1") })
       .over(store)
       .add("c-1", key);
     let fail = true;
@@ -114,7 +118,7 @@ describe("createPersonalKeyWrapping", () => {
         return fakeWrapper("kid-1").unwrap(args);
       },
     };
-    const keys = createPersonalKeyWrapping({ wrapper: flaky }).over(store);
+    const keys = createPersonalKeyWrapping({ clock, wrapper: flaky }).over(store);
     await expect(keys.get("c-1")).rejects.toThrow("KMS unavailable");
     fail = false;
     expect(await keys.get("c-1")).toEqual(key);
@@ -127,7 +131,7 @@ describe("createPersonalKeyWrapping", () => {
   it("keeps at most as many keys as it is told, the least recently read out first", async () => {
     const store = await keyStore();
     const wrapper = fakeWrapper("kid-1");
-    const keys = createPersonalKeyWrapping({ wrapper, keep: 3 }).over(store);
+    const keys = createPersonalKeyWrapping({ clock, wrapper, keep: 3 }).over(store);
     const persons = Array.from({ length: 4 }, (_, index) => `c-${index}`);
     for (const person of persons) await keys.add(person, await generatePersonalKey());
     const reads = () => wrapper.unwrapped.length;
@@ -147,23 +151,80 @@ describe("createPersonalKeyWrapping", () => {
     expect(reads()).toBe(before + 1);
   });
 
+  it("keeps an unwrapped key UNWRAPPED_KEY_TTL_MS, five minutes, by default", () => {
+    expect(UNWRAPPED_KEY_TTL_MS).toBe(300_000);
+  });
+
+  it("drops an unwrapped key its time after it was unwrapped, however often it is read, with nothing read meanwhile", async () => {
+    const store = await keyStore();
+    const timed = createFixedClock();
+    const wrapper = fakeWrapper("kid-1");
+    const keys = createPersonalKeyWrapping({ clock: timed, wrapper, ttlMs: 1_000 }).over(store);
+    const first = await generatePersonalKey();
+    await keys.add("c-1", first);
+    timed.advance(600);
+    await keys.add("c-2", await generatePersonalKey());
+    expect(timed.pending()).toBe(1);
+    timed.advance(399);
+    expect(await keys.get("c-1")).toEqual(first);
+    expect(wrapper.unwrapped).toHaveLength(2);
+    // Nothing reads: the timer drops the first key when its time is up, then the second.
+    timed.advance(1);
+    expect(timed.pending()).toBe(1);
+    timed.advance(600);
+    expect(timed.pending()).toBe(0);
+    expect(await keys.get("c-1")).toEqual(first);
+    expect(wrapper.unwrapped).toHaveLength(3);
+    expect(await keys.remove("c-1")).toBe(true);
+    timed.advance(1_000);
+    expect(timed.pending()).toBe(0);
+  });
+
+  it("unwraps again a key read past its time before the timer dropped it", async () => {
+    const store = await keyStore();
+    const wrapper = fakeWrapper("kid-1");
+    const late: typeof clock = { ...createFixedClock(), after: () => () => undefined };
+    const keys = createPersonalKeyWrapping({ clock: late, wrapper, ttlMs: 1_000 }).over(store);
+    const key = await generatePersonalKey();
+    await keys.add("c-1", key);
+    late.advance(999);
+    await keys.get("c-1");
+    expect(wrapper.unwrapped).toHaveLength(1);
+    late.advance(1);
+    expect(await keys.get("c-1")).toEqual(key);
+    expect(wrapper.unwrapped).toHaveLength(2);
+  });
+
+  it("drops every unwrapped key and its timer when closed", async () => {
+    const store = await keyStore();
+    const timed = createFixedClock();
+    const wrapper = fakeWrapper("kid-1");
+    const wrapping = createPersonalKeyWrapping({ clock: timed, wrapper });
+    await wrapping.over(store).add("c-1", await generatePersonalKey());
+    expect(timed.pending()).toBe(1);
+    wrapping.close();
+    expect(timed.pending()).toBe(0);
+    await wrapping.over(store).get("c-1");
+    expect(wrapper.unwrapped).toHaveLength(2);
+  });
+
   it("opens keys kept unwrapped, from before a wrapper was set, as they are", async () => {
     const store = await keyStore();
     const key = await generatePersonalKey();
     await store.add("c-1", key);
     const wrapper = fakeWrapper("kid-1");
-    expect(await createPersonalKeyWrapping({ wrapper }).over(store).get("c-1")).toEqual(key);
+    expect(await createPersonalKeyWrapping({ clock, wrapper }).over(store).get("c-1")).toEqual(key);
     expect(wrapper.unwrapped).toEqual([]);
   });
 
   it("unwraps a key under a previous kid, and rewraps it under the current one", async () => {
     const store = await keyStore();
     const key = await generatePersonalKey();
-    await createPersonalKeyWrapping({ wrapper: fakeWrapper("old") })
+    await createPersonalKeyWrapping({ clock, wrapper: fakeWrapper("old") })
       .over(store)
       .add("c-1", key);
     const stored = await store.get("c-1");
-    const wrapping = createPersonalKeyWrapping({ wrapper: fakeWrapper("current", ["old"]) });
+    const wrapping = createPersonalKeyWrapping({ clock, wrapper: fakeWrapper("current", ["old"]) });
     expect(await wrapping.over(store).get("c-1")).toEqual(key);
     const rewrapped = await wrapping.wrapped(stored ?? key);
     expect(rewrapped.kid).toBe("current");
@@ -173,7 +234,7 @@ describe("createPersonalKeyWrapping", () => {
 
   it("keeps keys as they are without a wrapper", async () => {
     const store = await keyStore();
-    const wrapping = createPersonalKeyWrapping({ wrapper: null });
+    const wrapping = createPersonalKeyWrapping({ clock, wrapper: null });
     const key = await generatePersonalKey();
     await wrapping.over(store).add("c-1", key);
     expect(await store.get("c-1")).toEqual(key);
@@ -183,18 +244,18 @@ describe("createPersonalKeyWrapping", () => {
   it("refuses a wrapped key without a wrapper, under an unknown kid, or unwrapping to another key", async () => {
     const store = await keyStore();
     const key = await generatePersonalKey();
-    await createPersonalKeyWrapping({ wrapper: fakeWrapper("kid-1") })
+    await createPersonalKeyWrapping({ clock, wrapper: fakeWrapper("kid-1") })
       .over(store)
       .add("c-1", key);
     await expect(
-      createPersonalKeyWrapping({ wrapper: null }).over(store).get("c-1"),
+      createPersonalKeyWrapping({ clock, wrapper: null }).over(store).get("c-1"),
     ).rejects.toThrow(
       new ConfigurationError(
         "A personal key is wrapped under kid-1, and runtime.personalData.keyWrapper is not set",
       ),
     );
     await expect(
-      createPersonalKeyWrapping({ wrapper: fakeWrapper("kid-2", ["kid-3"]) })
+      createPersonalKeyWrapping({ clock, wrapper: fakeWrapper("kid-2", ["kid-3"]) })
         .over(store)
         .get("c-1"),
     ).rejects.toThrow(
@@ -204,7 +265,7 @@ describe("createPersonalKeyWrapping", () => {
     );
     const liar: KeyWrapper = { ...fakeWrapper("kid-1"), unwrap: async () => new Uint8Array(32) };
     await expect(
-      createPersonalKeyWrapping({ wrapper: liar }).over(store).get("c-1"),
+      createPersonalKeyWrapping({ clock, wrapper: liar }).over(store).get("c-1"),
     ).rejects.toThrow(
       new ConfigurationError(
         "A personal key unwrapped under kid-1 does not match its fingerprint: the key wrapper returned another key",
@@ -214,7 +275,7 @@ describe("createPersonalKeyWrapping", () => {
 
   it("passes forgetting, listing and rewrapping through to the store", async () => {
     const store = await keyStore();
-    const keys = createPersonalKeyWrapping({ wrapper: fakeWrapper("kid-1") }).over(store);
+    const keys = createPersonalKeyWrapping({ clock, wrapper: fakeWrapper("kid-1") }).over(store);
     const key = await generatePersonalKey();
     await keys.add("c-1", key);
     const [row] = await keys.listWrappedUnder({ kids: ["kid-1"], limit: 10 });
@@ -235,6 +296,7 @@ describe("buildPersonalKeyWrapping", () => {
     const seen: unknown[] = [];
     const wrapper = fakeWrapper("kid-1");
     const built = await buildPersonalKeyWrapping({
+      clock,
       definition: {
         kind: "bounda-key-wrapper",
         create: ({ env }) => {
@@ -246,7 +308,9 @@ describe("buildPersonalKeyWrapping", () => {
     });
     expect(built.wrapper).toBe(wrapper);
     expect(seen).toEqual([{ NAME: "value" }]);
-    expect((await buildPersonalKeyWrapping({ definition: null, env: {} })).wrapper).toBeNull();
+    expect(
+      (await buildPersonalKeyWrapping({ definition: null, env: {}, clock })).wrapper,
+    ).toBeNull();
   });
 });
 

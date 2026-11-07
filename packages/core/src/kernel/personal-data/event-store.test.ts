@@ -68,6 +68,8 @@ const setup = async () => {
     remove: (person) => storage.personalKeys.remove(person),
     listWrappedUnder: (args) => storage.personalKeys.listWrappedUnder(args),
     rewrap: (person, from, to) => storage.personalKeys.rewrap(person, from, to),
+    hold: (person, from, hold) => storage.personalKeys.hold(person, from, hold),
+    nextHoldEnd: (args) => storage.personalKeys.nextHoldEnd(args),
   };
   const store = withPersonalData({
     eventStore: storage.eventStore,
@@ -463,6 +465,8 @@ describe("withPersonalData", () => {
       remove: (person) => storage.personalKeys.remove(person),
       listWrappedUnder: (args) => storage.personalKeys.listWrappedUnder(args),
       rewrap: (person, from, to) => storage.personalKeys.rewrap(person, from, to),
+      hold: (person, from, hold) => storage.personalKeys.hold(person, from, hold),
+      nextHoldEnd: (args) => storage.personalKeys.nextHoldEnd(args),
     };
     await expect(
       withPersonalData({

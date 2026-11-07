@@ -1,38 +1,37 @@
-import type { PersonalKeyStore } from "../../adapter/storage/personal-key-store.ts";
+import type { CheckpointStore } from "../../adapter/storage/checkpoint-store.ts";
+import type { PersonalKeyRow, PersonalKeyStore } from "../../adapter/storage/personal-key-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { errorDetails } from "../shared/retry.ts";
+import { HOLD_MS, holdAfter } from "./hold.ts";
 import type { KeyWrapper } from "./key-wrapper.ts";
 import type { PersonalKeyWrapping } from "./wrapped-keys.ts";
 
 // How many keys a pass of the worker rewraps at most.
 export const ROTATION_BATCH = 50;
 
-// How long the rotation rests after finding nothing to rewrap: a key an instance still on the old
-// wrapping key writes meanwhile, as in a rolling deploy, waits this long.
+// How long a rotation found complete stands before a pass reads the key table again, across every
+// instance: a key an instance still on an older configuration wraps meanwhile, as in a rolling
+// deploy, waits this long.
 export const ROTATION_CHECK_INTERVAL_MS = 60_000;
 
-// How long a key that failed to rewrap waits, twice as long after each failure up to
-// `ROTATION_MAX_RETRY_MS`; and how long a list that could not be read holds the rotation.
-export const ROTATION_RETRY_MS = 30_000;
-
-export const ROTATION_MAX_RETRY_MS = 3_600_000;
-
-interface Hold {
-  readonly until: number;
-  readonly failures: number;
-}
+/**
+ * The checkpoint rows that say the rotation is complete, one per set of wrapping keys, named
+ * after the set's digest: each keeps, in milliseconds, when the key table was last found with
+ * nothing left to rewrap under that set, so another set of keys reads the table again.
+ */
+export const ROTATED_PREFIX = "personal-keys:rotated:";
 
 export interface KeyRotation {
   /**
    * Rewraps under the wrapper's key up to `ROTATION_BATCH` keys wrapped under a previous one or
-   * kept unwrapped, and resolves to how many it rewrapped. Never rejects: what fails is logged and
-   * tried again later, a key on its own.
+   * kept unwrapped, and not held, and resolves to how many it rewrapped. Never rejects: a key that
+   * failed is logged and held on its row, longer after each failure.
    */
   sweep(now: Date): Promise<number>;
   /**
    * When the next pass has a key to rewrap, a held one not before its hold ends; `null` when there
-   * is none.
+   * is none, and without reading the key table once the rotation is complete.
    */
   nextDueAt(): Promise<Date | null>;
 }
@@ -42,6 +41,7 @@ export interface CreateKeyRotationArgs {
    * The store as written, whose keys are read and written wrapped.
    */
   readonly keys: PersonalKeyStore;
+  readonly checkpoints: CheckpointStore;
   readonly wrapper: KeyWrapper;
   readonly wrapping: PersonalKeyWrapping;
   readonly clock: Clock;
@@ -52,14 +52,26 @@ export interface CreateKeyRotationFunction {
   (args: CreateKeyRotationArgs): KeyRotation;
 }
 
+const hex = (bytes: ArrayBuffer): string =>
+  [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+
+const markerOf = async (kid: string, previous: readonly string[]): Promise<string> => {
+  const set = JSON.stringify([kid, ...[...new Set(previous)].sort()]);
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(set));
+  return `${ROTATED_PREFIX}${hex(digest).slice(0, 32)}`;
+};
+
 /**
  * Keys wrapped under a previous key, and keys from before a wrapper was configured, are
  * rewrapped under the current one; a key forgotten or replaced while it was being rewrapped is
- * left as the store holds it. Once none is left the rotation logs it, once until it rewraps again,
- * so an operator knows the previous keys can go.
+ * left as the store holds it. Once none is left the rotation marks it complete for this set of
+ * wrapping keys and logs it, once until it rewraps again, so an operator knows the previous keys
+ * can go. While the mark stands nothing reads the key table, but a pass once every
+ * `ROTATION_CHECK_INTERVAL_MS`, which drops the mark when it finds a key again.
  */
 export const createKeyRotation: CreateKeyRotationFunction = ({
   keys,
+  checkpoints,
   wrapper,
   wrapping,
   clock,
@@ -68,16 +80,13 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
   // A wrapper that names its own key among the previous ones would rewrap it on every pass.
   const previous = (wrapper.previous ?? []).filter((kid) => kid !== wrapper.kid);
   const kids = [...previous, null];
-  const holds = new Map<string, Hold>();
-  let restUntil = Number.NEGATIVE_INFINITY;
-  let reported = false;
+  const marker = markerOf(wrapper.kid, previous);
+  // Until when this instance takes the rotation for complete without reading anything.
+  let completeUntil = Number.NEGATIVE_INFINITY;
+  // A list that could not be read, or a hold that could not be written, holds the whole rotation
+  // here, as nothing else can.
+  let pausedUntil = Number.NEGATIVE_INFINITY;
   let rewrappedAny = false;
-
-  const hold = (person: string, now: number): void => {
-    const failures = (holds.get(person)?.failures ?? 0) + 1;
-    const delay = Math.min(ROTATION_RETRY_MS * 2 ** (failures - 1), ROTATION_MAX_RETRY_MS);
-    holds.set(person, { until: now + delay, failures });
-  };
 
   const report = (): void => {
     if (previous.length > 0) {
@@ -90,64 +99,94 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
     }
   };
 
-  const sweep = async (at: number): Promise<number> => {
-    const rows = await keys.listWrappedUnder({ kids, limit: ROTATION_BATCH + holds.size });
-    // A key no longer listed was rewrapped or forgotten: its hold goes with it.
-    const listed = new Set(rows.map(({ person }) => person));
-    for (const person of holds.keys()) if (!listed.has(person)) holds.delete(person);
-    if (rows.length === 0) {
-      restUntil = at + ROTATION_CHECK_INTERVAL_MS;
-      if (!reported) report();
-      reported = true;
-      return 0;
-    }
-    const due = rows
-      .filter(({ person }) => (holds.get(person)?.until ?? at) <= at)
-      .slice(0, ROTATION_BATCH);
-    let rewrapped = 0;
-    for (const { person, key } of due) {
-      try {
-        if (await keys.rewrap(person, key, await wrapping.wrapped(key))) rewrapped += 1;
-      } catch (error) {
-        hold(person, at);
-        logger.error("personal key could not be rewrapped", {
-          personId: person,
-          kid: key.kid,
-          ...errorDetails(error),
-        });
+  // Of several instances finding it complete at once, the one that marks it first logs it; the
+  // marks of other sets of keys go, since none stands for the keys as they are now.
+  const complete = async (name: string, markedAt: number, at: number): Promise<void> => {
+    completeUntil = at + ROTATION_CHECK_INTERVAL_MS;
+    if (!(await checkpoints.compareAndSet(name, markedAt, at)) || markedAt > 0) return;
+    report();
+    for (const { subscriber } of await checkpoints.list()) {
+      if (subscriber.startsWith(ROTATED_PREFIX) && subscriber !== name) {
+        await checkpoints.remove(subscriber);
       }
     }
-    if (rewrapped > 0) {
-      reported = false;
-      rewrappedAny = true;
+  };
+
+  const hold = async ({ person, key, hold }: PersonalKeyRow, at: number): Promise<void> => {
+    try {
+      await keys.hold(person, key, holdAfter({ held: hold, at, failed: true }));
+    } catch (error) {
+      pausedUntil = at + HOLD_MS;
+      logger.error("personal key could not be held", {
+        personId: person,
+        kid: key.kid,
+        ...errorDetails(error),
+      });
     }
+  };
+
+  const sweep = async (now: Date): Promise<number> => {
+    const at = now.getTime();
+    const name = await marker;
+    const markedAt = await checkpoints.get(name);
+    if (markedAt > 0 && at - markedAt < ROTATION_CHECK_INTERVAL_MS) {
+      completeUntil = markedAt + ROTATION_CHECK_INTERVAL_MS;
+      return 0;
+    }
+    const due = await keys.listWrappedUnder({ kids, releasedBy: now, limit: ROTATION_BATCH });
+    if (due.length === 0) {
+      if ((await keys.nextHoldEnd({ kids, after: now })) === null) {
+        await complete(name, markedAt, at);
+      } else if (markedAt > 0) {
+        await checkpoints.remove(name);
+      }
+      return 0;
+    }
+    if (markedAt > 0) await checkpoints.remove(name);
+    let rewrapped = 0;
+    for (const row of due) {
+      try {
+        if (await keys.rewrap(row.person, row.key, await wrapping.wrapped(row.key))) rewrapped += 1;
+      } catch (error) {
+        logger.error("personal key could not be rewrapped", {
+          personId: row.person,
+          kid: row.key.kid,
+          ...errorDetails(error),
+        });
+        await hold(row, at);
+      }
+    }
+    if (rewrapped > 0) rewrappedAny = true;
     return rewrapped;
   };
 
   return {
     sweep: async (now) => {
       const at = now.getTime();
-      if (at < restUntil) return 0;
+      if (at < pausedUntil || at < completeUntil) return 0;
       try {
-        return await sweep(at);
+        return await sweep(now);
       } catch (error) {
-        restUntil = at + ROTATION_RETRY_MS;
+        pausedUntil = at + HOLD_MS;
         logger.error("personal keys to rewrap could not be listed", errorDetails(error));
         return 0;
       }
     },
     nextDueAt: async () => {
-      const rows = await keys.listWrappedUnder({ kids, limit: 1 + holds.size });
-      let next = Number.POSITIVE_INFINITY;
-      for (const { person } of rows) {
-        const held = holds.get(person)?.until;
-        if (held === undefined) {
-          next = clock.now().getTime();
-          break;
-        }
-        next = Math.min(next, held);
+      const now = clock.now();
+      const at = now.getTime();
+      if (at < completeUntil) return null;
+      // A mark that stands, however old, wakes nothing: the passes check it again as they run.
+      if ((await checkpoints.get(await marker)) > 0) {
+        completeUntil = at + ROTATION_CHECK_INTERVAL_MS;
+        return null;
       }
-      return next === Number.POSITIVE_INFINITY ? null : new Date(Math.max(next, restUntil));
+      const [due] = await keys.listWrappedUnder({ kids, releasedBy: now, limit: 1 });
+      const next =
+        due === undefined
+          ? ((await keys.nextHoldEnd({ kids, after: now }))?.getTime() ?? null)
+          : at;
+      return next === null ? null : new Date(Math.max(next, pausedUntil));
     },
   };
 };

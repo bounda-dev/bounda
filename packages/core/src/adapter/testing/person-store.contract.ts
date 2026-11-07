@@ -39,6 +39,7 @@ export const personStoreContract: PersonStoreContractFunction = ({ create }) => 
         restrictedSince: "2026-01-01T00:00:00.000Z",
         lastActiveAt: null,
         forgottenAt: null,
+        hold: null,
       });
       expect(await store.get("c-2")).toBeNull();
     });
@@ -62,6 +63,7 @@ export const personStoreContract: PersonStoreContractFunction = ({ create }) => 
         restrictedSince: null,
         lastActiveAt: at(1),
         forgottenAt: null,
+        hold: null,
       });
       await store.record({ person: "c-1", position: 5, forgottenAt: at(2) });
       expect(await store.get("c-1")).toMatchObject({ lastActiveAt: at(1), forgottenAt: at(2) });
@@ -73,6 +75,7 @@ export const personStoreContract: PersonStoreContractFunction = ({ create }) => 
         restrictedSince: null,
         lastActiveAt: null,
         forgottenAt: at(4),
+        hold: null,
       });
     });
 
@@ -120,7 +123,13 @@ export const personStoreContract: PersonStoreContractFunction = ({ create }) => 
       ).toEqual(["c-1", "c-2", "c-4"]);
       expect(await store.listIdle({ activeBefore: new Date(at(0)), limit: 10 })).toEqual([]);
       expect(await store.listIdle({ limit: 1 })).toEqual([
-        { person: "c-1", restrictedSince: null, lastActiveAt: at(1), forgottenAt: null },
+        {
+          person: "c-1",
+          restrictedSince: null,
+          lastActiveAt: at(1),
+          forgottenAt: null,
+          hold: null,
+        },
       ]);
     });
 
@@ -142,6 +151,45 @@ export const personStoreContract: PersonStoreContractFunction = ({ create }) => 
         "c-3",
         "c-2",
       ]);
+    });
+
+    it("holds a person, lists them again once the hold ends, and clears the hold with a record", async () => {
+      await store.record({ person: "c-1", position: 1, lastActiveAt: at(1), forgottenAt: null });
+      await store.record({ person: "c-2", position: 2, lastActiveAt: at(2), forgottenAt: null });
+      const hold = { until: at(5), attempts: 2 };
+      await store.hold("c-1", hold);
+      await store.hold("c-9", hold);
+      expect(await store.get("c-1")).toMatchObject({ lastActiveAt: at(1), hold });
+      expect(await store.get("c-9")).toBeNull();
+      const names = async (args: { readonly releasedBy?: Date; readonly activeBefore?: Date }) =>
+        (await store.listIdle({ ...args, limit: 10 })).map(({ person }) => person);
+      expect(await names({ releasedBy: new Date(Date.parse(at(5)) - 1) })).toEqual(["c-2"]);
+      expect(await names({ releasedBy: new Date(at(5)) })).toEqual(["c-1", "c-2"]);
+      expect(await names({})).toEqual(["c-1", "c-2"]);
+      expect(await names({ activeBefore: new Date(at(1)), releasedBy: new Date(at(4)) })).toEqual(
+        [],
+      );
+      expect(await store.nextHoldEnd(new Date(at(4)))).toEqual(new Date(at(5)));
+      expect(await store.nextHoldEnd(new Date(at(5)))).toBeNull();
+      await store.hold("c-1", { until: at(6), attempts: 3 });
+      expect(await store.get("c-1")).toMatchObject({ hold: { until: at(6), attempts: 3 } });
+      await store.record({ person: "c-1", position: 1, lastActiveAt: at(3), forgottenAt: null });
+      expect(await store.get("c-1")).toMatchObject({ hold: { until: at(6), attempts: 3 } });
+      await store.record({ person: "c-1", position: 3, lastActiveAt: at(3), forgottenAt: null });
+      expect(await store.get("c-1")).toMatchObject({ lastActiveAt: at(3), hold: null });
+      expect(await store.nextHoldEnd(new Date(at(0)))).toBeNull();
+    });
+
+    it("keeps a hold through a restriction, and names no hold of a person a sweep would not list", async () => {
+      await store.record({ person: "c-1", position: 1, lastActiveAt: at(1), forgottenAt: null });
+      await store.record({ person: "c-2", position: 2, lastActiveAt: at(1), forgottenAt: null });
+      await store.hold("c-1", { until: at(5), attempts: 1 });
+      await store.hold("c-2", { until: at(6), attempts: 1 });
+      await store.restrict("c-1", since);
+      expect(await store.get("c-1")).toMatchObject({ hold: { until: at(5), attempts: 1 } });
+      expect(await store.nextHoldEnd(new Date(at(0)))).toEqual(new Date(at(6)));
+      await store.unrestrict("c-1");
+      expect(await store.nextHoldEnd(new Date(at(0)))).toEqual(new Date(at(5)));
     });
 
     it("lets one of several writers restricting a person at once through", async () => {

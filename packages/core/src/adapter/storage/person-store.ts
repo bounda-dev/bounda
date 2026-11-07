@@ -1,3 +1,5 @@
+import type { Hold } from "./hold.ts";
+
 /**
  * What the runtime keeps of a person apart from their key: whether the processing of their data
  * is restricted, and since when, and, while a retention is configured, when they were last active
@@ -21,6 +23,11 @@ export interface StoredPerson {
    * an event of theirs came after it, or none was recorded.
    */
   readonly forgottenAt: string | null;
+  /**
+   * The wait a retention sweep set after it could not forget them; `null` when none is set, and
+   * cleared by every record.
+   */
+  readonly hold: Hold | null;
 }
 
 /**
@@ -43,6 +50,10 @@ export interface ListIdleArgs {
    * Only the persons last active at or before it; every one when omitted.
    */
   readonly activeBefore?: Date;
+  /**
+   * Leaves out the persons held past it; holds are not looked at when omitted.
+   */
+  readonly releasedBy?: Date;
   readonly limit: number;
 }
 
@@ -67,7 +78,8 @@ export interface PersonStore {
   /**
    * Records what events said about the person, creating the row when the person is new, unless
    * the row already records an event at `position` or later: a run recorded again, or late, by a
-   * subscriber that lost its checkpoint to another, changes nothing.
+   * subscriber that lost its checkpoint to another, changes nothing. A record that changes the row
+   * clears its hold.
    */
   record(activity: PersonActivity): Promise<void>;
   /**
@@ -75,4 +87,13 @@ export interface PersonStore {
    * since, and not restricted.
    */
   listIdle(args: ListIdleArgs): Promise<readonly StoredPerson[]>;
+  /**
+   * Sets the person's hold, replacing the one they had; a person without a row is left without.
+   */
+  hold(person: string, hold: Hold): Promise<void>;
+  /**
+   * The earliest end of a hold past `after` among the persons `listIdle` lists; `null` when none
+   * is held past it.
+   */
+  nextHoldEnd(after: Date): Promise<Date | null>;
 }

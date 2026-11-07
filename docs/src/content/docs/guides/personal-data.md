@@ -465,8 +465,10 @@ activity the row does not show yet, nor twice when two workers sweep at once; an
 a transaction running beside it may still be forgotten with them, as one a command stores while
 `forget` runs may be. A person the sweep could not forget, because their forget failed or their
 row is behind, waits on their own, half a minute at first and twice as long after each failure up
-to an hour, while the pass goes on with the next ones; `nextDueAt()` names the end of that wait,
-so a host never wakes for them again at once.
+to an hour, while the pass goes on with the next ones. The wait is kept on their row in
+`bounda_persons`, written only when an attempt fails, so every instance skips them until it ends
+and a restart backs off from where it was; their next activity, or their forgetting, clears it.
+`nextDueAt()` names the end of that wait, so a host never wakes for them again at once.
 
 A host without a polling worker learns of it from `app.nextDueAt()`, which names the earliest
 retention deadline with the scheduled commands, so a [Durable Object](/adapters/cloudflare/)
@@ -576,9 +578,11 @@ Keep the master key as you keep the database's backups, for as long as they are 
 takes every person's data with it, as if each had been forgotten. `bounda rebuild` reads it from
 `.env` like `boot()`; `rebuildReadModel` takes the environment as `env`.
 
-Unwrapped keys are kept in memory, by fingerprint, up to ten thousand per app, so a command does
-not pay for unwrapping on every read. The person's row is still read first every time: a person
-forgotten on another instance is forgotten here at once.
+Unwrapped keys are kept in memory, by fingerprint, up to ten thousand per app and for five
+minutes from the moment each was unwrapped, so a command does not pay for unwrapping on every
+read, and the raw key of someone no longer active does not stay in the process: a timer drops it
+when its time is up, whether the app reads anything or not. The person's row is still read first
+every time: a person forgotten on another instance is forgotten here at once.
 
 Without `keyWrapper` the keys are kept as they are, next to the data, and the app logs a warning
 when it starts if the registry marks any field `personal`; an app from `createTestApp` warns
@@ -594,16 +598,21 @@ keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY", previous: ["BOUNDA_MASTER_KEY
 ```
 
 A key wrapped under a previous master key still opens; the worker rewraps them under the current
-one in batches, on every pass, as the retention sweep runs, and logs once when none is left:
+one in batches, on every pass, as the retention sweep runs. A key that fails to rewrap waits on its
+row, as a person the retention could not forget does, while the others go on. Once none is left
+the worker marks the rotation complete for this set of master keys, in `bounda_checkpoints`, and
+logs it once:
 
 ```
 no personal key is wrapped under a previous key any more; remove them
 ```
 
 Then remove the old variable and `previous`. Rewrapping changes no event and no fingerprint, so it
-runs while the app serves. A Durable Object wakes for it as for a deadline. An instance still on
-the old configuration, in a rolling deploy, may wrap a new key under the old master key; the
-worker finds it within a minute.
+runs while the app serves. A Durable Object wakes for it as for a deadline. While the mark stands,
+neither the passes nor `nextDueAt()` read the key table, except one pass a minute across every
+instance, which drops the mark if it finds a key to rewrap: an instance still on the old
+configuration, in a rolling deploy, may wrap a new key under the old master key, and the worker
+finds it within a minute. Changing the master keys, `previous` included, reads the table again.
 
 Destroying the old master key once the backups taken before the rotation have expired is what
 makes those backups unreadable as a whole.
@@ -756,6 +765,9 @@ Restart the app after restoring its database: it reconciles when it starts.
 
 A ledger that cannot be read when the app starts does not stop it: the app logs an error, starts,
 and its worker tries again after 30 seconds, then twice as long after each failure, up to an hour.
+The wait is kept in `bounda_checkpoints`, beside the cursor, so every instance waits for the
+longest and a restart backs off from where it was, though a start always tries once; the first
+reconciliation that succeeds clears it.
 One that does not answer within ten seconds is left to finish in the background, with an error
 logged, and the app starts.
 Until then `getLag()` says `forgetLedger: { reconciled: false }`, and a person the restore

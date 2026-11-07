@@ -1,0 +1,6 @@
+---
+"@bounda-dev/core": minor
+"@bounda-dev/postgresql": minor
+---
+
+Keep the waits of the background personal-data work in the database, with the row they concern: a person the retention could not forget waits on their row in `bounda_persons`, a key the rotation could not rewrap on its row in `bounda_personal_keys`, and a failed forget-ledger reconciliation beside its cursor in `bounda_checkpoints`, each with when it ends and how many attempts failed in a row. Every instance skips what another holds, a restart backs off from where it was, and `nextDueAt()` names the end of the earliest wait. The waits of all three come from one module, 30 seconds at first and twice as long after each failure up to an hour. The rotation marks itself complete for the configured set of master keys, so neither the worker nor `nextDueAt()` reads the key table while nothing is left to rewrap, but one pass a minute across instances; changing the master keys reads it again. Unwrapped keys are kept five minutes at most from the moment they were unwrapped, dropped by a timer even in an idle process. The `PersonStore` and `PersonalKeyStore` contracts gain `hold` and `nextHoldEnd`, a `hold` on each row, and `releasedBy` on their lists; both schemas gain `held_until` and `attempts` columns with an index for held rows.

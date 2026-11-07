@@ -1,16 +1,17 @@
 import { describe, expect, it } from "vitest";
+import type { CheckpointStore } from "../../adapter/storage/checkpoint-store.ts";
 import type { PersonalKeyStore } from "../../adapter/storage/personal-key-store.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import { generatePersonalKey } from "./crypto.ts";
+import { HOLD_MAX_MS, HOLD_MS } from "./hold.ts";
 import type { KeyWrapper } from "./key-wrapper.ts";
 import {
   createKeyRotation,
+  ROTATED_PREFIX,
   ROTATION_BATCH,
   ROTATION_CHECK_INTERVAL_MS,
-  ROTATION_MAX_RETRY_MS,
-  ROTATION_RETRY_MS,
 } from "./rotation.ts";
 import { createPersonalKeyWrapping } from "./wrapped-keys.ts";
 
@@ -46,25 +47,70 @@ const recordingLogger = (): Logger & { readonly logged: Logged[] } => {
   };
 };
 
+const clock = createFixedClock(new Date("2026-01-01T00:00:00Z"));
+
+interface RotationOverArgs {
+  readonly keys: PersonalKeyStore;
+  readonly checkpoints: CheckpointStore;
+  readonly wrapper: KeyWrapper;
+  readonly logger?: Logger;
+}
+
+// Another instance, or this one after a restart: a rotation and its unwrapped keys of its own.
+const rotationOver = ({
+  keys,
+  checkpoints,
+  wrapper,
+  logger = recordingLogger(),
+}: RotationOverArgs) =>
+  createKeyRotation({
+    keys,
+    checkpoints,
+    wrapper,
+    wrapping: createPersonalKeyWrapping({ wrapper, clock }),
+    clock,
+    logger,
+  });
+
 const setUp = async (wrapper: KeyWrapper = fakeWrapper("new", ["old"])) => {
-  const store = (await memory().createStorage()).personalKeys;
-  const clock = createFixedClock(new Date("2026-01-01T00:00:00Z"));
+  const storage = await memory().createStorage();
+  const store = storage.personalKeys;
+  const checkpoints = storage.checkpointStore;
+  clock.set(new Date(clock.now().getTime() + 1_000 * ROTATION_CHECK_INTERVAL_MS));
   const logger = recordingLogger();
-  const wrapping = createPersonalKeyWrapping({ wrapper });
+  const wrapping = createPersonalKeyWrapping({ wrapper, clock });
   const rotation = createKeyRotation({
     keys: store,
+    checkpoints,
     wrapper,
     wrapping,
     clock,
     logger,
   });
-  return { store, clock, logger, wrapping, rotation };
+  return { store, checkpoints, clock, logger, wrapping, rotation };
+};
+
+// Counts what reaches the key table.
+const counted = (store: PersonalKeyStore) => {
+  const reads = { count: 0 };
+  const keys: PersonalKeyStore = {
+    ...store,
+    listWrappedUnder: (args) => {
+      reads.count += 1;
+      return store.listWrappedUnder(args);
+    },
+    nextHoldEnd: (args) => {
+      reads.count += 1;
+      return store.nextHoldEnd(args);
+    },
+  };
+  return { keys, reads };
 };
 
 const addUnder = async (store: PersonalKeyStore, kid: string | null, person: string) => {
   const key = await generatePersonalKey();
   const wrapper = kid === null ? null : fakeWrapper(kid);
-  await createPersonalKeyWrapping({ wrapper }).over(store).add(person, key);
+  await createPersonalKeyWrapping({ wrapper, clock }).over(store).add(person, key);
   return key;
 };
 
@@ -142,9 +188,7 @@ describe("createKeyRotation", () => {
     const { store, clock, rotation } = await setUp();
     expect(await rotation.sweep(clock.now())).toBe(0);
     await addUnder(store, "old", "c-1");
-    expect(await rotation.nextDueAt()).toEqual(
-      new Date(clock.now().getTime() + ROTATION_CHECK_INTERVAL_MS),
-    );
+    expect(await rotation.nextDueAt()).toBeNull();
     clock.advance(ROTATION_CHECK_INTERVAL_MS - 1);
     expect(await rotation.sweep(clock.now())).toBe(0);
     clock.advance(1);
@@ -192,27 +236,23 @@ describe("createKeyRotation", () => {
       },
     ]);
     const start = clock.now().getTime();
-    expect(await rotation.nextDueAt()).toEqual(new Date(start + ROTATION_RETRY_MS));
+    expect(await rotation.nextDueAt()).toEqual(new Date(start + HOLD_MS));
     expect(await rotation.sweep(clock.now())).toBe(0);
-    clock.advance(ROTATION_RETRY_MS);
+    clock.advance(HOLD_MS);
     expect(await rotation.sweep(clock.now())).toBe(0);
-    expect(await rotation.nextDueAt()).toEqual(
-      new Date(clock.now().getTime() + 2 * ROTATION_RETRY_MS),
-    );
+    expect(await rotation.nextDueAt()).toEqual(new Date(clock.now().getTime() + 2 * HOLD_MS));
     for (let failures = 2; failures < 12; failures += 1) {
-      clock.advance(ROTATION_MAX_RETRY_MS);
+      clock.advance(HOLD_MAX_MS);
       await rotation.sweep(clock.now());
     }
-    expect(await rotation.nextDueAt()).toEqual(
-      new Date(clock.now().getTime() + ROTATION_MAX_RETRY_MS),
-    );
+    expect(await rotation.nextDueAt()).toEqual(new Date(clock.now().getTime() + HOLD_MAX_MS));
     failing = false;
-    clock.advance(ROTATION_MAX_RETRY_MS);
+    clock.advance(HOLD_MAX_MS);
     expect(await rotation.sweep(clock.now())).toBe(1);
     expect(await rotation.nextDueAt()).toBeNull();
   });
 
-  it("holds the rotation ROTATION_RETRY_MS when the keys cannot be listed", async () => {
+  it("holds the rotation HOLD_MS when the keys cannot be listed", async () => {
     const { store, clock, logger, wrapping } = await setUp();
     let broken = true;
     const keys: PersonalKeyStore = {
@@ -224,6 +264,7 @@ describe("createKeyRotation", () => {
     };
     const rotation = createKeyRotation({
       keys,
+      checkpoints: (await memory().createStorage()).checkpointStore,
       wrapper: fakeWrapper("new", ["old"]),
       wrapping,
       clock,
@@ -239,8 +280,8 @@ describe("createKeyRotation", () => {
       },
     ]);
     broken = false;
-    expect(await rotation.nextDueAt()).toEqual(new Date(clock.now().getTime() + ROTATION_RETRY_MS));
-    clock.advance(ROTATION_RETRY_MS - 1);
+    expect(await rotation.nextDueAt()).toEqual(new Date(clock.now().getTime() + HOLD_MS));
+    clock.advance(HOLD_MS - 1);
     expect(await rotation.sweep(clock.now())).toBe(0);
     clock.advance(1);
     expect(await rotation.sweep(clock.now())).toBe(1);
@@ -279,6 +320,152 @@ describe("createKeyRotation", () => {
     expect(await rotation.sweep(clock.now())).toBe(0);
     expect(await rotation.nextDueAt()).toBeNull();
     expect(logger.logged).toEqual([]);
+  });
+
+  it("marks the rotation complete, and reads the key table no more, in a pass or in nextDueAt, nor after a restart", async () => {
+    const { store, checkpoints, clock } = await setUp();
+    const { keys, reads } = counted(store);
+    const wrapper = fakeWrapper("new", ["old"]);
+    const rotation = rotationOver({ keys, checkpoints, wrapper });
+    await addUnder(store, "old", "c-1");
+    expect(await rotation.sweep(clock.now())).toBe(1);
+    expect(await rotation.sweep(clock.now())).toBe(0);
+    const marks = (await checkpoints.list()).filter(({ subscriber }) =>
+      subscriber.startsWith(ROTATED_PREFIX),
+    );
+    expect(marks).toEqual([{ subscriber: expect.any(String), position: clock.now().getTime() }]);
+    const before = reads.count;
+    for (let pass = 0; pass < 5; pass += 1) {
+      expect(await rotation.nextDueAt()).toBeNull();
+      expect(await rotation.sweep(clock.now())).toBe(0);
+      clock.advance(ROTATION_CHECK_INTERVAL_MS / 10);
+    }
+    const restarted = rotationOver({ keys, checkpoints, wrapper });
+    expect(await restarted.nextDueAt()).toBeNull();
+    expect(await restarted.sweep(clock.now())).toBe(0);
+    expect(reads.count).toBe(before);
+  });
+
+  it("checks a mark once an interval across instances, and drops it for a key found again", async () => {
+    const { store, checkpoints, clock } = await setUp();
+    const { keys, reads } = counted(store);
+    const wrapper = fakeWrapper("new", ["old"]);
+    const first = rotationOver({ keys, checkpoints, wrapper });
+    const second = rotationOver({ keys, checkpoints, wrapper });
+    expect(await first.sweep(clock.now())).toBe(0);
+    const afterMark = reads.count;
+    expect(await second.sweep(clock.now())).toBe(0);
+    expect(reads.count).toBe(afterMark);
+    clock.advance(ROTATION_CHECK_INTERVAL_MS);
+    expect(await second.sweep(clock.now())).toBe(0);
+    const afterCheck = reads.count;
+    expect(afterCheck).toBeGreaterThan(afterMark);
+    expect(await first.sweep(clock.now())).toBe(0);
+    expect(reads.count).toBe(afterCheck);
+    await addUnder(store, "old", "c-1");
+    clock.advance(ROTATION_CHECK_INTERVAL_MS);
+    expect(await first.sweep(clock.now())).toBe(1);
+    expect(await second.nextDueAt()).toBeNull();
+    const fresh = rotationOver({ keys, checkpoints, wrapper });
+    await addUnder(store, "old", "c-2");
+    expect(await fresh.nextDueAt()).toEqual(clock.now());
+  });
+
+  it("reads the key table again once another set of keys is configured, and keeps only its mark", async () => {
+    const { store, checkpoints, clock, rotation } = await setUp();
+    await addUnder(store, "old", "c-1");
+    expect(await rotation.sweep(clock.now())).toBe(1);
+    expect(await rotation.sweep(clock.now())).toBe(0);
+    const rotated = async () =>
+      (await checkpoints.list())
+        .map(({ subscriber }) => subscriber)
+        .filter((subscriber) => subscriber.startsWith(ROTATED_PREFIX));
+    const [first] = await rotated();
+    const logger = recordingLogger();
+    const next = rotationOver({
+      keys: store,
+      checkpoints,
+      wrapper: fakeWrapper("newer", ["new", "old"]),
+      logger,
+    });
+    expect(await next.nextDueAt()).toEqual(clock.now());
+    expect(await next.sweep(clock.now())).toBe(1);
+    expect(await kidsOf(store, ["c-1"])).toEqual(["newer"]);
+    expect(await next.sweep(clock.now())).toBe(0);
+    const marks = await rotated();
+    expect(marks).toHaveLength(1);
+    expect(marks).not.toContain(first);
+    expect(logger.logged.map(({ message }) => message)).toEqual([
+      "no personal key is wrapped under a previous key any more; remove them",
+    ]);
+    const same = rotationOver({
+      keys: store,
+      checkpoints,
+      wrapper: fakeWrapper("newer", ["old", "new", "old"]),
+    });
+    expect(await same.nextDueAt()).toBeNull();
+  });
+
+  it("holds a failed key on its row, so another instance skips it until the hold ends and a restart backs off from it", async () => {
+    const { store, checkpoints, clock } = await setUp();
+    const wrapper = fakeWrapper("new", ["old"]);
+    const failing: KeyWrapper = {
+      ...wrapper,
+      unwrap: async () => {
+        throw new Error("unwrap failed");
+      },
+    };
+    await addUnder(store, "old", "c-1");
+    const failedAt = clock.now().getTime();
+    expect(
+      await rotationOver({ keys: store, checkpoints, wrapper: failing }).sweep(clock.now()),
+    ).toBe(0);
+    const [row] = await store.listWrappedUnder({ kids: ["old"], limit: 1 });
+    expect(row?.hold).toEqual({ until: new Date(failedAt + HOLD_MS).toISOString(), attempts: 1 });
+    const healthy = rotationOver({ keys: store, checkpoints, wrapper });
+    expect(await healthy.sweep(clock.now())).toBe(0);
+    expect(await healthy.nextDueAt()).toEqual(new Date(failedAt + HOLD_MS));
+    clock.advance(HOLD_MS);
+    const restarted = rotationOver({ keys: store, checkpoints, wrapper: failing });
+    expect(await restarted.sweep(clock.now())).toBe(0);
+    expect(await restarted.nextDueAt()).toEqual(new Date(clock.now().getTime() + 2 * HOLD_MS));
+    clock.advance(2 * HOLD_MS);
+    expect(await healthy.sweep(clock.now())).toBe(1);
+    expect(await store.listWrappedUnder({ kids: ["new"], limit: 1 })).toEqual([
+      expect.objectContaining({ person: "c-1", hold: null }),
+    ]);
+  });
+
+  it("holds the whole rotation when a hold cannot be written", async () => {
+    const { store, checkpoints, clock } = await setUp();
+    const logger = recordingLogger();
+    const wrapper = fakeWrapper("new", ["old"]);
+    const rotation = rotationOver({
+      keys: {
+        ...store,
+        hold: async () => {
+          throw new Error("read-only");
+        },
+      },
+      checkpoints,
+      wrapper: {
+        ...wrapper,
+        unwrap: async () => {
+          throw new Error("unwrap failed");
+        },
+      },
+      logger,
+    });
+    await addUnder(store, "old", "c-1");
+    expect(await rotation.sweep(clock.now())).toBe(0);
+    expect(logger.logged.map(({ message }) => message)).toEqual([
+      "personal key could not be rewrapped",
+      "personal key could not be held",
+    ]);
+    expect(await rotation.nextDueAt()).toEqual(new Date(clock.now().getTime() + HOLD_MS));
+    clock.advance(HOLD_MS - 1);
+    expect(await rotation.sweep(clock.now())).toBe(0);
+    expect(logger.logged).toHaveLength(2);
   });
 
   it("is due now while a key waits, and never otherwise", async () => {

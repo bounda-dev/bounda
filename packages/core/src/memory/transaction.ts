@@ -111,6 +111,9 @@ const trackedPersonalKeys = (
     listWrappedUnder: (args) => personalKeys.listWrappedUnder(args),
     rewrap: (person, from, to) =>
       tracked(entries, person, () => personalKeys.rewrap(person, from, to)),
+    hold: (person, from, hold) =>
+      tracked(entries, person, () => personalKeys.hold(person, from, hold)),
+    nextHoldEnd: (args) => personalKeys.nextHoldEnd(args),
   };
 };
 
@@ -132,6 +135,8 @@ const trackedPersons = (
     unrestrict: (person) => tracked(entries, person, () => persons.unrestrict(person)),
     record: (activity) => tracked(entries, activity.person, () => persons.record(activity)),
     listIdle: (args) => persons.listIdle(args),
+    hold: (person, hold) => tracked(entries, person, () => persons.hold(person, hold)),
+    nextHoldEnd: (after) => persons.nextHoldEnd(after),
   };
 };
 

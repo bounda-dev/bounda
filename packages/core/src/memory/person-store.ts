@@ -24,14 +24,12 @@ const compare = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 const isIdle = (
   kept: KeptPerson,
-  activeBefore: string | undefined,
 ): kept is KeptPerson & {
   readonly lastActiveAt: string;
-} =>
-  kept.lastActiveAt !== null &&
-  kept.forgottenAt === null &&
-  kept.restrictedSince === null &&
-  (activeBefore === undefined || kept.lastActiveAt <= activeBefore);
+} => kept.lastActiveAt !== null && kept.forgottenAt === null && kept.restrictedSince === null;
+
+const isReleasedBy = (kept: KeptPerson, at: string | undefined): boolean =>
+  at === undefined || kept.hold === null || kept.hold.until <= at;
 
 export const createKeptPersonStore: CreateKeptPersonStoreFunction = () => {
   const persons = new Map<string, KeptPerson>();
@@ -41,6 +39,7 @@ export const createKeptPersonStore: CreateKeptPersonStoreFunction = () => {
       restrictedSince: null,
       lastActiveAt: null,
       forgottenAt: null,
+      hold: null,
       position: 0,
     };
   return {
@@ -70,15 +69,31 @@ export const createKeptPersonStore: CreateKeptPersonStoreFunction = () => {
           position,
           lastActiveAt: lastActiveAt ?? kept.lastActiveAt,
           forgottenAt,
+          hold: null,
         });
       },
-      listIdle: async ({ activeBefore, limit }) => {
+      listIdle: async ({ activeBefore, releasedBy, limit }) => {
         const before = activeBefore?.toISOString();
+        const released = releasedBy?.toISOString();
         return [...persons.values()]
-          .filter((kept) => isIdle(kept, before))
+          .filter(isIdle)
+          .filter((kept) => before === undefined || kept.lastActiveAt <= before)
+          .filter((kept) => isReleasedBy(kept, released))
           .sort((a, b) => compare(a.lastActiveAt, b.lastActiveAt) || compare(a.person, b.person))
           .slice(0, limit)
           .map(stored);
+      },
+      hold: async (person, hold) => {
+        const kept = persons.get(person);
+        if (kept !== undefined) persons.set(person, { ...kept, hold });
+      },
+      nextHoldEnd: async (after) => {
+        const from = after.toISOString();
+        const ends = [...persons.values()]
+          .filter(isIdle)
+          .flatMap(({ hold }) => (hold !== null && hold.until > from ? [hold.until] : []))
+          .sort(compare);
+        return ends[0] === undefined ? null : new Date(ends[0]);
       },
     },
     entries: createStoreEntries(persons, (person) => person),
