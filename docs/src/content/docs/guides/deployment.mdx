@@ -325,6 +325,15 @@ An aggregate whose streams grow without a period to close takes
 subscriber named `snapshot:<aggregate>` writes them in the background, and shows in the lag like
 any other.
 
+## Backups
+
+Back up the database as the engine recommends: a copy of the SQLite file taken online, with
+`VACUUM INTO` or the `.backup` command, or PostgreSQL's own tools. A backup holds every person's
+key, wrapped under the [master key](/guides/personal-data/#a-master-key): keep the master key for
+as long as the backups. Restoring one taken before someone was forgotten brings them back, unless
+the app has a [forget ledger](/guides/personal-data/#backups) in another database, which forgets
+them again when the app starts on the restored copy; restart the app after restoring.
+
 ## Observability
 
 The runtime reports OpenTelemetry spans and metrics with no adapter to write: register an SDK

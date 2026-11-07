@@ -20,6 +20,7 @@ import type { RestrictedRetries } from "../dead-letters/restricted.ts";
 import { openCommandPayload } from "../personal-data/commands.ts";
 import { sealError } from "../personal-data/errors.ts";
 import { personOfEvent } from "../personal-data/persons.ts";
+import type { ForgetLedgerReconciliation } from "../personal-data/reconciliation.ts";
 import { restrictedPersonOf } from "../personal-data/refusal.ts";
 import type { RetentionSweep } from "../personal-data/retention.ts";
 import type { KeyRotation } from "../personal-data/rotation.ts";
@@ -48,7 +49,7 @@ export interface ScheduledCommandWorker {
   stop(): Promise<void>;
   /**
    * Resolves to how many entries it claimed, those it deferred included, persons it forgot for
-   * the retention, and keys it rewrapped.
+   * the retention or again from the forget ledger, and keys it rewrapped.
    */
   runOnce(): Promise<number>;
   /**
@@ -78,6 +79,11 @@ export interface CreateScheduledCommandWorkerArgs {
    * Swept on every pass; absent without `runtime.personalData.keyWrapper`.
    */
   readonly rotation?: KeyRotation | undefined;
+  /**
+   * Swept on every pass, which reconciles only when one is due; absent without
+   * `runtime.personalData.forgetLedger`.
+   */
+  readonly reconciliation?: ForgetLedgerReconciliation | undefined;
   /**
    * The reactive subscribers the dispatcher runs, by name: what a deadline and a restricted
    * retry wait for before they run.
@@ -136,7 +142,8 @@ interface DeadlineWait {
  * `IDEMPOTENCY_PURGE_INTERVAL_MS` a pass also purges the idempotency keys that expired. Every pass
  * sweeps the retention, unless a list it could not read holds it: its read is one an index
  * answers, as `nextDueAt` is, so a host woken for a person's deadline forgets them in that pass.
- * The rotation of the key wrapper rewraps a batch of keys on every pass the same way.
+ * The rotation of the key wrapper rewraps a batch of keys on every pass the same way, and the forget
+ * ledger is reconciled again when the one the start ran failed, or its entries may show late.
  */
 export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction = ({
   storage,
@@ -147,6 +154,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   restrictedRetries,
   retention,
   rotation,
+  reconciliation,
   reactive,
   config,
   ids,
@@ -560,8 +568,9 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       await purgeExpiredKeys(claimedAt);
       const forgotten = (await retention?.sweep(claimedAt)) ?? 0;
       const rewrapped = (await rotation?.sweep(claimedAt)) ?? 0;
+      const forgottenAgain = (await reconciliation?.sweep(claimedAt)) ?? 0;
       if (unreadable !== undefined) throw unreadable.error;
-      return due.length + forgotten + rewrapped;
+      return due.length + forgotten + rewrapped + forgottenAgain;
     });
 
   const schedule = (): void => {

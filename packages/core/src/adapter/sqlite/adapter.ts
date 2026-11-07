@@ -8,6 +8,8 @@ import { createSqlCheckpointStore } from "../sql/checkpoint-store.ts";
 import type { SqlDatabase, SqlTransaction } from "../sql/database.ts";
 import { sqliteDialect } from "../sql/dialect.ts";
 import { createKnownEventTypes, type KnownEventTypes } from "../sql/event-types.ts";
+import { createSqlForgetLedger, forgetLedgerStatements } from "../sql/forget-ledger.ts";
+import { quoteIdentifier, storageTableNameFor } from "../sql/identifiers.ts";
 import { createSqlPersonStore } from "../sql/person-store.ts";
 import { createSqlPersonalKeyStore } from "../sql/personal-key-store.ts";
 import { createSqliteDeadLetterStore } from "./dead-letter-store.ts";
@@ -179,5 +181,23 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
           progress,
         }),
       ),
+    createForgetLedger: async ({ tenant }) => {
+      const table = quoteIdentifier(
+        storageTableNameFor({ prefix: tablePrefix, table: "forgetLedger" }),
+      );
+      const { db } = acquire();
+      return createSqlForgetLedger({
+        db,
+        table,
+        dialect: sqliteDialect,
+        tenant,
+        ensureSchema: async () => {
+          for (const statement of forgetLedgerStatements(table, sqliteDialect)) {
+            await db.run(statement, []);
+          }
+        },
+        close: release,
+      });
+    },
   };
 };

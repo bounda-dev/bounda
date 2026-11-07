@@ -572,10 +572,12 @@ describe("personal data", () => {
       readonly cancelledCommands: readonly CancelledCommand[];
       readonly removedDeadLetters: readonly RemovedDeadLetter[];
     }>();
-    expectTypeOf<PersonalDataForgottenReason>().toEqualTypeOf<"requested" | "retention">();
+    expectTypeOf<PersonalDataForgottenReason>().toEqualTypeOf<
+      "requested" | "retention" | "restored"
+    >();
     expectTypeOf<
       AuditOnPersonalDataForgotten.HandlerArgs["event"]["payload"]["reason"]
-    >().toEqualTypeOf<"requested" | "retention">();
+    >().toEqualTypeOf<"requested" | "retention" | "restored">();
     expectTypeOf<CancelledCommand>().toEqualTypeOf<{
       readonly commandId: string;
       readonly type: string;

@@ -39,6 +39,15 @@ export type {
   StoredEventType,
 } from "./storage/event-store.ts";
 export type {
+  ByForgetLedgerOrderFunction,
+  CreateForgetLedgerArgs,
+  ForgetLedger,
+  ForgetLedgerEntry,
+  ForgetLedgerPosition,
+  ReadForgetLedgerArgs,
+} from "./storage/forget-ledger.ts";
+export { byForgetLedgerOrder } from "./storage/forget-ledger.ts";
+export type {
   DispatchOutcome,
   GetIdempotencyRecordArgs,
   IdempotencyRecord,

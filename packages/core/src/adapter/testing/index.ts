@@ -18,6 +18,11 @@ export type {
 } from "./fixtures.ts";
 export { pendingEvent, testCommand, testContext, testMetadata, testOutcome } from "./fixtures.ts";
 export type {
+  ForgetLedgerContractArgs,
+  ForgetLedgerContractFunction,
+} from "./forget-ledger.contract.ts";
+export { forgetLedgerContract } from "./forget-ledger.contract.ts";
+export type {
   IdempotencyStoreContractArgs,
   IdempotencyStoreContractFunction,
 } from "./idempotency-store.contract.ts";

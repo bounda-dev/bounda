@@ -1,8 +1,16 @@
-import type { AdapterDefinition } from "@bounda-dev/core/adapter";
+import type {
+  Adapter,
+  AdapterDefinition,
+  ForgetLedger,
+  ForgetLedgerEntry,
+  ReadForgetLedgerArgs,
+} from "@bounda-dev/core/adapter";
 import {
   type Config,
   defineConfig,
+  defineForgetLedger,
   defineKeyWrapper,
+  type ForgetLedgerDefinition,
   type KeyWrapper,
   type KeyWrapperDefinition,
   masterKey,
@@ -272,5 +280,49 @@ describe("defineConfig", () => {
       unwrap: async () => new Uint8Array(),
     }));
     defineConfig({ storage: sqlite, ports, runtime: { personalData: { keyWrapper: kms } } });
+  });
+
+  it("takes as forget ledger an adapter of another database or a ledger definition", () => {
+    const ledgerDatabase = {} as Adapter<"sqlite", { path: string }>;
+    defineConfig({
+      storage: sqlite,
+      ports,
+      runtime: { personalData: { forgetLedger: ledgerDatabase } },
+    });
+    const own = defineForgetLedger(({ env: environment, tenant }) => {
+      expectTypeOf(environment).toEqualTypeOf<typeof env>();
+      expectTypeOf(tenant).toEqualTypeOf<string | undefined>();
+      return {
+        append: async (entries) => {
+          expectTypeOf(entries).toEqualTypeOf<readonly ForgetLedgerEntry[]>();
+        },
+        read: async (args) => {
+          expectTypeOf(args).toEqualTypeOf<ReadForgetLedgerArgs>();
+          return [];
+        },
+      };
+    });
+    expectTypeOf(own).toEqualTypeOf<ForgetLedgerDefinition>();
+    defineConfig({ storage: sqlite, ports, runtime: { personalData: { forgetLedger: own } } });
+    expectTypeOf<ForgetLedgerEntry>().toEqualTypeOf<{
+      readonly personId: string;
+      readonly eventId: string;
+      readonly forgottenAt: string;
+    }>();
+    expectTypeOf<ForgetLedger["visibilityDelayMs"]>().toEqualTypeOf<number | undefined>();
+    defineConfig({
+      storage: sqlite,
+      ports,
+      // @ts-expect-error a definition without factories opens no ledger
+      runtime: { personalData: { forgetLedger: sqlite } },
+    });
+    defineConfig({
+      storage: sqlite,
+      ports,
+      // @ts-expect-error a ledger is given through defineForgetLedger, not as it is
+      runtime: { personalData: { forgetLedger: {} as ForgetLedger } },
+    });
+    // @ts-expect-error a ledger reads in pages
+    defineForgetLedger(() => ({ append: async () => {}, read: async () => [] as string[] }));
   });
 });

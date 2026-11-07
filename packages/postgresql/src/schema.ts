@@ -18,6 +18,9 @@ export interface StorageTables {
   readonly personalKeys: string;
   readonly persons: string;
   readonly snapshots: string;
+  // In a database of its own, apart from the other tables, which `ensureStorageSchema` creates.
+  readonly forgetLedger: string;
+  readonly forgetLedgerOrder: string;
   readonly appendLockKey: string;
   // The first key of the advisory locks read models take on the checkpoints table.
   readonly checkpointsLockKey: string;
@@ -42,6 +45,7 @@ const MAX_CHANNEL_BYTES = 63;
 export const storageTablesFor: StorageTablesForFunction = ({ prefix, schema }) => {
   const events = storageTableNameFor({ prefix, table: "events" });
   const checkpoints = storageTableNameFor({ prefix, table: "checkpoints" });
+  const forgetLedger = storageTableNameFor({ prefix, table: "forgetLedger" });
   // Advisory locks and channels belong to the whole database, so each is qualified by the schema:
   // stores in two schemas of one database never wait on each other.
   const channel = `${schema}.${events}`;
@@ -61,6 +65,8 @@ export const storageTablesFor: StorageTablesForFunction = ({ prefix, schema }) =
     personalKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "personalKeys" })),
     persons: quoteIdentifier(storageTableNameFor({ prefix, table: "persons" })),
     snapshots: quoteIdentifier(storageTableNameFor({ prefix, table: "snapshots" })),
+    forgetLedger: quoteIdentifier(forgetLedger),
+    forgetLedgerOrder: quoteIdentifier(`${forgetLedger}_order_idx`),
     appendLockKey: `bounda:${schema}.${events}`,
     checkpointsLockKey: `bounda:${schema}.${checkpoints}`,
     channel,

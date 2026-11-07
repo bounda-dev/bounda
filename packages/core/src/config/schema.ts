@@ -3,6 +3,10 @@ import { isAdapterDefinition } from "../adapter/adapter-definition.ts";
 import { parseDuration } from "../contracts/duration.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
 import {
+  type ForgetLedgerSource,
+  isForgetLedgerSource,
+} from "../kernel/personal-data/forget-ledger.ts";
+import {
   isKeyWrapperDefinition,
   type KeyWrapperDefinition,
 } from "../kernel/personal-data/key-wrapper.ts";
@@ -117,6 +121,12 @@ const runtime = z.strictObject({
       keyWrapper: z
         .custom<KeyWrapperDefinition>(isKeyWrapperDefinition, {
           message: 'Expected a key wrapper such as masterKey({ from: "BOUNDA_MASTER_KEY" })',
+        })
+        .optional(),
+      forgetLedger: z
+        .custom<ForgetLedgerSource>(isForgetLedgerSource, {
+          message:
+            'Expected an adapter such as sqlite({ path: "./ledger/forget-ledger.db" }) or a forget ledger such as kvForgetLedger({ binding })',
         })
         .optional(),
     })
@@ -254,6 +264,7 @@ export const resolveConfig: ResolveConfigFunction = (config) => {
       personalData: {
         retentionMs: parsed.runtime?.personalData?.retention ?? null,
         keyWrapper: parsed.runtime?.personalData?.keyWrapper ?? null,
+        forgetLedger: parsed.runtime?.personalData?.forgetLedger ?? null,
       },
       overrides: resolvedOverrides,
     },

@@ -21,6 +21,12 @@ export {
   insertEventTypesStatements,
   selectEventTypesStatement,
 } from "./event-types.ts";
+export type {
+  CreateSqlForgetLedgerArgs,
+  CreateSqlForgetLedgerFunction,
+  ForgetLedgerStatementsFunction,
+} from "./forget-ledger.ts";
+export { createSqlForgetLedger, forgetLedgerStatements } from "./forget-ledger.ts";
 export {
   DEFAULT_TABLE_PREFIX,
   quoteIdentifier,

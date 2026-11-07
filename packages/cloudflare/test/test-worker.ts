@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import { createSequentialIdGenerator } from "@bounda-dev/core";
 import { masterKey } from "@bounda-dev/core/config";
 import { cloudflare } from "../src/definition.ts";
+import { kvForgetLedger } from "../src/forget-ledger.ts";
 import { createBoundaObject, createWorker } from "../src/index.ts";
 import { processRegistry, quietRegistry, regionRegistry, registry, slicedRegistry } from "./app.ts";
 import { clock } from "./clock.ts";
@@ -55,6 +56,19 @@ export const WrappedStore = createBoundaObject({
   config: {
     storage: cloudflare(),
     runtime: { personalData: { keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }) } },
+  },
+  clock,
+});
+
+/**
+ * The same app without policies or processes, recording every forgetting in the Worker's
+ * `FORGET_LEDGER` KV namespace.
+ */
+export const LedgerStore = createBoundaObject({
+  registry: quietRegistry,
+  config: {
+    storage: cloudflare(),
+    runtime: { personalData: { forgetLedger: kvForgetLedger({ binding: "FORGET_LEDGER" }) } },
   },
   clock,
 });
