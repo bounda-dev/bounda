@@ -107,9 +107,10 @@ when its handler rejects it, with the code in `rejected`. Return `failure(error)
 | `ValidationError` | 400 | `{ error, issues }`, each issue with the `path` of the field and its `message` |
 | `DomainError` | 409 | `{ error, issues: [], rejected }`, the code the command declares |
 | `IdempotencyKeyConflictError` | 422 | `{ error, issues: [] }`, the request's `Idempotency-Key` came back with another payload |
+| `SchemaAheadError` | 503 | `{ error, issues: [] }`, the command read an event newer code wrote while a [deploy rolls out](/guides/deployment/#deploying-a-change-to-events); trying again later goes through |
 
-`failure` goes by the error's `code`, `VALIDATION_FAILED`, `DOMAIN_ERROR` or
-`IDEMPOTENCY_KEY_CONFLICT`, so it answers the same for the refusals a Durable Object sends back on
+`failure` goes by the error's `code`, `VALIDATION_FAILED`, `DOMAIN_ERROR`,
+`IDEMPOTENCY_KEY_CONFLICT` or `SCHEMA_AHEAD`, so it answers the same for the refusals a Durable Object sends back on
 Cloudflare, which arrive as plain errors.
 Anything else is rethrown and reaches the route's `ErrorBoundary`. `Failure`, the shape of that
 data, is exported from `@bounda-dev/react-router`.

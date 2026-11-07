@@ -5,11 +5,13 @@ import type {
   StorageTransaction,
 } from "@bounda-dev/core/adapter";
 import {
+  createKnownEventTypes,
   createSqlCheckpointStore,
   createSqlForgetLedger,
   createSqlPersonalKeyStore,
   createSqlPersonStore,
   forgetLedgerStatements,
+  type KnownEventTypes,
   postgresqlDialect,
   type SqlTransaction,
 } from "@bounda-dev/core/adapter/sql";
@@ -98,10 +100,16 @@ export const postgresql: PostgresqlFunction = (options) => {
     createStorage: () =>
       using(async ({ db, sql }) => {
         await ensureStorageSchema({ db, schema, tables });
-        const storesOver = (database: PostgresqlDatabase): StorageTransaction => ({
+        const known = createKnownEventTypes();
+        const storesOver = (
+          database: PostgresqlDatabase,
+          types: KnownEventTypes,
+        ): StorageTransaction => ({
           eventStore: createPostgresqlEventStore({
             db: database,
             table: tables.events,
+            typesTable: tables.eventTypes,
+            known: types,
             lockKey: tables.appendLockKey,
             channel: tables.channel,
           }),
@@ -138,7 +146,7 @@ export const postgresql: PostgresqlFunction = (options) => {
           write: (work) => work(tx),
         });
         return {
-          ...storesOver(db),
+          ...storesOver(db, known),
           notifier: createPostgresqlEventNotifier({ sql, channel: tables.channel }),
           checkpointStore: createSqlCheckpointStore({
             db,
@@ -147,11 +155,15 @@ export const postgresql: PostgresqlFunction = (options) => {
           }),
           // The append lock comes first, before any row the work may lock: two transactions that
           // took the lock and a row in opposite orders would deadlock.
-          transact: (work) =>
-            db.write(async (tx) => {
+          transact: async (work) => {
+            const pending = known.pending();
+            const result = await db.write(async (tx) => {
               await tx.run("SELECT pg_advisory_xact_lock(hashtext($1))", [tables.appendLockKey]);
-              return work(storesOver(boundTo(tx)));
-            }),
+              return work(storesOver(boundTo(tx), pending));
+            });
+            pending.commit();
+            return result;
+          },
           close: release,
         };
       }),

@@ -192,5 +192,6 @@ export const withPersonalData: WithPersonalDataFunction = ({ eventStore, aggrega
       return settled((await eventStore.readByPerson(args)).map((e) => unsealed(e, key, ignored)));
     },
     lastPosition: () => eventStore.lastPosition(),
+    types: () => eventStore.types(),
   };
 };

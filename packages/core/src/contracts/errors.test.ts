@@ -11,6 +11,7 @@ import {
   RebuildSupersededError,
   rejectionOf,
   ScheduledClaimLostError,
+  SchemaAheadError,
   ValidationError,
 } from "./errors.ts";
 
@@ -64,6 +65,30 @@ describe("errors", () => {
     expect(error.code).toBe("REBUILD_SUPERSEDED");
     expect(error.readModel).toBe("orderSummary");
     expect(error.message).toContain('"orderSummary"');
+  });
+
+  it("name the event newer code wrote and what this code knows of its type", () => {
+    const args = {
+      eventId: "e9",
+      aggregateType: "order",
+      aggregateId: "o-1",
+      type: "OrderPlaced",
+      position: 9,
+      schemaVersion: 4,
+    };
+    const ahead = new SchemaAheadError({ ...args, known: 3 });
+    expect(ahead).toMatchObject({
+      ...args,
+      known: 3,
+      code: "SCHEMA_AHEAD",
+      name: "SchemaAheadError",
+    });
+    expect(ahead.message).toBe(
+      "Event e9 (order.OrderPlaced of order:o-1, position 9) was written with schema version 4 by newer code, and this code reads order.OrderPlaced up to version 3. Deploy that code on every instance; roll forward, never back",
+    );
+    expect(new SchemaAheadError({ ...args, known: null }).message).toBe(
+      "Event e9 (order.OrderPlaced of order:o-1, position 9) was written with schema version 4 by newer code, and this code has no module for order.OrderPlaced. Deploy that code on every instance; roll forward, never back",
+    );
   });
 
   it("name the scheduled command whose claim moved", () => {

@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { Adapter, CreateReadModelRebuildArgs } from "../../adapter/adapter.ts";
 import type { Table } from "../../adapter/storage/table.ts";
-import { RebuildSupersededError } from "../../contracts/errors.ts";
+import { pendingEvent } from "../../adapter/testing/fixtures.ts";
+import {
+  ConfigurationError,
+  RebuildSupersededError,
+  SchemaAheadError,
+} from "../../contracts/errors.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { createMemoryCheckpointStore } from "../../memory/checkpoint-store.ts";
 import { memory } from "../../memory/index.ts";
@@ -149,6 +154,46 @@ describe("rebuildReadModel", () => {
       { orderId: "o-1", total: 10 },
       { orderId: "o-2", total: 20 },
     ]);
+    await app.stop();
+  });
+
+  it("refuses to rebuild from a store holding events this code cannot read, touching nothing", async () => {
+    const { adapter, app, storage, config, rows } = await setUp();
+    await app.commands.placeOrder({ orderId: "o-1", total: 10 });
+    await app.runUntilIdle();
+    await storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "o-2",
+      expectedVersion: 0,
+      events: [pendingEvent({ aggregateId: "o-2", version: 1, schemaVersion: 9 })],
+    });
+    await expect(rebuildReadModel({ registry, config, name: "orderSummary" })).rejects.toThrow(
+      ConfigurationError,
+    );
+    expect(await rows()).toEqual([{ orderId: "o-1", total: 10 }]);
+    expect(await pendingRebuilds((await adapter.createStorage()).checkpointStore)).toEqual([]);
+    await app.stop();
+  });
+
+  it("stops before an event newer code wrote since it started, and keeps the live read model", async () => {
+    const { app, storage, config, rows } = await setUp();
+    await app.commands.placeOrder({ orderId: "o-1", total: 10 });
+    await app.runUntilIdle();
+    holdProjection = async () => {
+      holdProjection = undefined;
+      await storage.eventStore.append({
+        aggregateType: "order",
+        aggregateId: "o-2",
+        expectedVersion: 0,
+        events: [pendingEvent({ aggregateId: "o-2", version: 1, schemaVersion: 9 })],
+      });
+    };
+    mode = "halved";
+    await expect(rebuildReadModel({ registry, config, name: "orderSummary" })).rejects.toThrow(
+      SchemaAheadError,
+    );
+    mode = "ok";
+    expect(await rows()).toEqual([{ orderId: "o-1", total: 10 }]);
     await app.stop();
   });
 

@@ -4,7 +4,9 @@ import { describe, expect, it } from "vitest";
 import { ConfigurationError, RebuildSupersededError } from "../../contracts/errors.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { type FieldsRecord, fieldBuilder as f } from "../../modules/view.ts";
+import type { Storage } from "../adapter.ts";
 import type { SqlDatabase } from "../sql/database.ts";
+import { createKnownEventTypes } from "../sql/event-types.ts";
 import type { SqlExecutor } from "../sql/sql-table.ts";
 import {
   type ContractRow,
@@ -29,6 +31,16 @@ import {
 import { createSqliteEventStore } from "./event-store.ts";
 import { createSqliteAdapter } from "./index.ts";
 import { storageTablesFor } from "./schema.ts";
+
+const eventStoreOver = (db: SqlDatabase) => {
+  const tables = storageTablesFor("bounda_");
+  return createSqliteEventStore({
+    db,
+    table: tables.events,
+    typesTable: tables.eventTypes,
+    known: createKnownEventTypes(),
+  });
+};
 
 const bind = (params: readonly unknown[]): SQLInputValue[] =>
   params.map((value) => (typeof value === "boolean" ? Number(value) : value)) as SQLInputValue[];
@@ -163,11 +175,42 @@ describe("the SQLite event store", () => {
       },
       write: () => Promise.reject(new Error("not written here")),
     };
-    const store = createSqliteEventStore({ db: racing, table: storageTablesFor("bounda_").events });
+    const store = eventStoreOver(racing);
     const loaded = await store.load({ ...stream, fromVersion: 2 });
     expect(loaded.events.map((event) => event.version)).toEqual([2]);
     expect(loaded.version).toBe(2);
     expect(statements).toBe(2);
+  });
+
+  it("writes a type to the catalogue only when neither an append nor types() met it yet", async () => {
+    const db = new DatabaseSync(":memory:");
+    const prepare = db.prepare.bind(db);
+    let inserts = 0;
+    db.prepare = (sql: string) => {
+      if (sql.startsWith('INSERT INTO "bounda_event_types"')) inserts += 1;
+      return prepare(sql);
+    };
+    const append = (storage: Storage, aggregateId: string, type = "OrderPlaced") =>
+      storage.eventStore.append({
+        aggregateType: "order",
+        aggregateId,
+        expectedVersion: 0,
+        events: [pendingEvent({ aggregateId, version: 1, type })],
+      });
+    const first = await nodeSqlite(db).adapter.createStorage();
+    await append(first, "1");
+    await append(first, "2");
+    expect(inserts).toBe(1);
+    await first.transact(async (tx) => {
+      await append(tx as Storage, "3", "OrderPaid");
+    });
+    await append(first, "4", "OrderPaid");
+    expect(inserts).toBe(2);
+    const second = await nodeSqlite(db).adapter.createStorage();
+    await second.eventStore.types();
+    await append(second, "5");
+    await append(second, "6", "OrderPaid");
+    expect(inserts).toBe(2);
   });
 
   it("reads a load from the first event, or from past the head, in one statement", async () => {
@@ -188,10 +231,7 @@ describe("the SQLite event store", () => {
       },
       write: () => Promise.reject(new Error("not written here")),
     };
-    const store = createSqliteEventStore({
-      db: counting,
-      table: storageTablesFor("bounda_").events,
-    });
+    const store = eventStoreOver(counting);
     expect(await store.load(stream)).toMatchObject({ version: 2 });
     expect(statements).toBe(1);
     expect(await store.load({ ...stream, fromVersion: 1 })).toMatchObject({ version: 2 });
@@ -320,6 +360,7 @@ describe("createSqliteAdapter", () => {
     expect(tableNames(db, "app_")).toEqual([
       "app_checkpoints",
       "app_dead_letters",
+      "app_event_types",
       "app_events",
       "app_idempotency_keys",
       "app_inbox",

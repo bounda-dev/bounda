@@ -11,6 +11,7 @@ import { validateRegistry } from "../../modules/validate.ts";
 import { fieldBuilder } from "../../modules/view.ts";
 import type { AppEnv } from "../../register/index.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
+import { checkStoredTypes, processNamesOf } from "../aggregate/stored-types.ts";
 import { PartialBatchError } from "../dispatch/delivery.ts";
 import { appStorage } from "../events/app-event-store.ts";
 import {
@@ -145,11 +146,13 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
   const storage = await config.storage.createStorage();
   try {
     // A rebuild runs no handler, so it builds no implementation.
-    const { eventStore } = appStorage({
-      storage,
-      aggregates: buildAggregates({ registry, ports: {} }),
-      wrapping,
+    const aggregates = buildAggregates({ registry, ports: {} });
+    checkStoredTypes({
+      types: await storage.eventStore.types(),
+      aggregates,
+      processNames: processNamesOf(registry),
     });
+    const { eventStore } = appStorage({ storage, aggregates, wrapping });
     const progress = `${progressPrefix(name)}${fingerprintReadModel(entry)}`;
     const rebuild = await adapterForReadModel({ name, config }).rebuildReadModel<
       Record<string, unknown>

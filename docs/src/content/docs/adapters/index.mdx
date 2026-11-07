@@ -84,6 +84,7 @@ On first use the adapter creates its tables, prefixed with `bounda_` by default:
 | Table | Holds |
 | --- | --- |
 | `bounda_events` | Every event, with its stream version, a global position and the person it names, if any, which [`exportPersonalData`](/guides/personal-data/#exporting-a-persons-data) reads by |
+| `bounda_event_types` | Every kind of event the store holds, by aggregate, type and schema version, which the runtime [checks against the code](/guides/deployment/#deploying-a-change-to-events) on boot |
 | `bounda_checkpoints` | How far each projection, the policy runner, the process runner, the retention and the [forget ledger](/guides/personal-data/#backups)'s copy have read, where a paused rebuild stands, and the time of the last ledger entry the database applied |
 | `bounda_inbox` | Which handler already completed for which event, so a retry does not run it again |
 | `bounda_scheduled_commands` | Scheduled commands, process deadlines and timeouts, and delayed policy runs |

@@ -51,8 +51,8 @@ const merged = (
 
 /**
  * System events, such as a failed scheduled command, carry no state and are skipped, so they never
- * open the aggregate. Any other event the aggregate does not define is a configuration error: its
- * module no longer exists. An event without the function its place calls for (`begin` to open,
+ * open the aggregate. Any other event the aggregate does not define is a configuration error, as a
+ * defence: the app's event store refuses such an event before it reaches a fold. An event without the function its place calls for (`begin` to open,
  * `evolve` after) gets the one it has, since the pipeline only stores such a stream if it predates
  * the event's `begin`.
  */

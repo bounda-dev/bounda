@@ -9,6 +9,7 @@ import type { PostgresqlDatabase } from "./database.ts";
 
 export interface StorageTables {
   readonly events: string;
+  readonly eventTypes: string;
   readonly checkpoints: string;
   readonly inbox: string;
   readonly deadLetters: string;
@@ -55,6 +56,7 @@ export const storageTablesFor: StorageTablesForFunction = ({ prefix, schema }) =
   }
   return {
     events: quoteIdentifier(events),
+    eventTypes: quoteIdentifier(storageTableNameFor({ prefix, table: "eventTypes" })),
     checkpoints: quoteIdentifier(checkpoints),
     inbox: quoteIdentifier(storageTableNameFor({ prefix, table: "inbox" })),
     deadLetters: quoteIdentifier(storageTableNameFor({ prefix, table: "deadLetters" })),
@@ -104,6 +106,12 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     UNIQUE ("aggregate_type", "aggregate_id", "version")
   )`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.events, "person")} ON ${tables.events} ("person", "position")`,
+  `CREATE TABLE IF NOT EXISTS ${tables.eventTypes} (
+    "aggregate_type" text NOT NULL,
+    "type" text NOT NULL,
+    "schema_version" integer NOT NULL,
+    PRIMARY KEY ("aggregate_type", "type", "schema_version")
+  )`,
   checkpointTableStatement(tables.checkpoints),
   `CREATE TABLE IF NOT EXISTS ${tables.inbox} (
     "handler" text NOT NULL,
@@ -215,6 +223,7 @@ const unquoted = (identifier: string): string => identifier.slice(1, -1);
 export const ensureStorageSchema: EnsureStorageSchemaFunction = async ({ db, schema, tables }) => {
   const names = [
     tables.events,
+    tables.eventTypes,
     tables.checkpoints,
     tables.inbox,
     tables.deadLetters,

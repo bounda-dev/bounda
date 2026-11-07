@@ -72,7 +72,20 @@ dead letter with `errorType: "retriable_exhausted"`.
   registry entry that does not exist.
 - **`INVALID_CONFIGURATION`** (`ConfigurationError`; terminal). `bounda.config.ts` or the registry
   is malformed: an unknown key, a port with no implementation chosen, a module missing an export.
-  Thrown at boot, or when a handler reads a port a test left out.
+  Thrown at boot, or when a handler reads a port a test left out. Boot and `bounda rebuild` also
+  throw it for a store holding events the code cannot read: of a type, aggregate or process it no
+  longer has, or written with a schema version past the one it knows
+  ([Deploying a change to events](/guides/deployment/#deploying-a-change-to-events)).
+- **`SCHEMA_AHEAD`** (`SchemaAheadError`; held, never dead-lettered). An event newer code wrote,
+  while a deploy rolls out: its schema version is past the one this code knows, or its type is
+  one this code has no module for although the store's catalogue records it. `eventId`,
+  `aggregateType`, `aggregateId`, `type`, `position`, `schemaVersion`, and `known`, the version
+  this code reads up to, `null` for a type it lacks. A command that loads such a stream fails with
+  it. A policy or process holds the event and retries with its back-off past `maxAttempts`, never
+  giving up on it; each retry still counts as an attempt of its claim. A scheduled command waits
+  `runtime.dispatcher.backoff.baseDelay` without counting one, a read model stops right before the
+  event, and a dead-letter retry rejects with it, leaving the letter `failed`. It goes away once
+  that code runs on every instance; roll forward, never back.
 - **`CLAIM_LOST`** (`ClaimLostError`; handled by the runtime). A reaction's inbox claim expired and
   another instance took it over. The attempt writes nothing; the other instance's run is the one
   that counts.
@@ -113,6 +126,7 @@ The hosts map the codes a client can cause to a status:
 | `FOREIGN_REJECTION` | 500, code `INTERNAL`, logged | rethrown |
 | `NOT_FOUND` | 404 | rethrown |
 | `PAYLOAD_TOO_LARGE` | 413, a body over `maxPayloadBytes` | — |
+| `SCHEMA_AHEAD` | 503 | 503 |
 | `HANDLER_TIMEOUT` | 504 | rethrown |
 | anything else | 500, code `INTERNAL`, logged | rethrown, for the route's `ErrorBoundary` |
 

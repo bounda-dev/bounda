@@ -239,6 +239,7 @@ describe("sqlite adapter on a file", () => {
     expect(tables.rows.map((row) => row.name)).toEqual([
       "app_checkpoints",
       "app_dead_letters",
+      "app_event_types",
       "app_events",
       "app_idempotency_keys",
       "app_inbox",

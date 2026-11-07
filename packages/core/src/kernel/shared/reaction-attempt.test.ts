@@ -4,7 +4,7 @@ import type { DeadLetterErrorType } from "../../adapter/storage/dead-letter-stor
 import { pendingEvent } from "../../adapter/testing/fixtures.ts";
 import type { ResolvedRetryConfig } from "../../config/types.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
-import { ValidationError } from "../../contracts/errors.ts";
+import { SchemaAheadError, ValidationError } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
 import type { UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import { runAttempt } from "./reaction-attempt.ts";
@@ -161,6 +161,36 @@ describe("runAttempt", () => {
     const retry: ResolvedRetryConfig = { ...exponential, strategy: "none" };
     expect(await attempt({ retry, run: failing(() => new Error("network")) })).toBe("done");
     expect(gaveUp).toEqual(["1:retriable_exhausted"]);
+  });
+
+  it("holds an event newer code wrote past every attempt, with its back-off, and never gives up on it", async () => {
+    const { storage, clock, runs, gaveUp, waiting, attempt, failing } = await setUp();
+    const run = failing(
+      () =>
+        new SchemaAheadError({
+          eventId: "e9",
+          aggregateType: "order",
+          aggregateId: "1",
+          type: "OrderPlaced",
+          position: 9,
+          schemaVersion: 4,
+          known: 3,
+        }),
+    );
+    for (const delay of [1_000, 2_000, 4_000, 8_000]) {
+      expect(await attempt({ run })).toBe("hold");
+      clock.advance(delay);
+    }
+    expect(runs).toEqual([1, 2, 3, 4]);
+    expect(gaveUp).toEqual([]);
+    expect(waiting).toEqual([]);
+    expect(await storage.deadLetterStore.count()).toBe(0);
+    expect(await storage.inboxLedger.get(key)).toMatchObject({
+      status: "failed",
+      lastError: "SchemaAheadError (SCHEMA_AHEAD)",
+    });
+    expect(await storage.eventStore.lastPosition()).toBe(0);
+    expect(await attempt()).toBe("done");
   });
 
   it("runs the reaction again on a fresh unit when the commit finds a stream moved, without spending an attempt", async () => {
