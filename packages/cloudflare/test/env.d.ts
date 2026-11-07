@@ -1,5 +1,6 @@
 import type {
   Bare,
+  LedgerStore,
   ProcessStore,
   QuietStore,
   RegionStore,
@@ -19,6 +20,8 @@ declare global {
       readonly REGION_STORE: DurableObjectNamespace<InstanceType<typeof RegionStore>>;
       readonly RETAINED_STORE: DurableObjectNamespace<InstanceType<typeof RetainedStore>>;
       readonly WRAPPED_STORE: DurableObjectNamespace<InstanceType<typeof WrappedStore>>;
+      readonly LEDGER_STORE: DurableObjectNamespace<InstanceType<typeof LedgerStore>>;
+      readonly FORGET_LEDGER: KVNamespace;
       readonly BARE: DurableObjectNamespace<Bare>;
       readonly STORE_REGION: string;
       readonly BOUNDA_MASTER_KEY: string;

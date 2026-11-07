@@ -186,6 +186,44 @@ first, the error is printed and the exit code is `2`. For a process letter it al
 the parked events failed the process again. What a retry runs for each kind is in
 [Dead letters](/guides/dead-letters/).
 
+## `bounda forgotten` and `bounda forget`
+
+Apply again, by hand, the forgettings a restored backup undid, for an app without a
+[forget ledger](/guides/personal-data/#backups). Both boot the project as `bounda dead-letters`
+does.
+
+```bash
+bounda forgotten --since 2026-11-01T03:00:00Z > forgotten.jsonl
+bounda forgotten --since 18250 > forgotten.jsonl
+bounda forget --from forgotten.jsonl
+```
+
+`bounda forgotten` reads the stream and prints, one line of JSON each, the `PersonalDataForgotten`
+of every person forgotten since `--since`: a date, compared with each event's time, which reads the
+whole stream, or a position of the stream to read after. Each line is
+`{"personId":…,"eventId":…,"forgottenAt":…}`, the entry a ledger would hold; the count goes to
+standard error, so standard output is the list alone. Run it against the database before it is
+restored, or regularly next to the backups.
+
+`bounda forget --from <file>` forgets again, with `reason: "restored"`, each person listed who
+still holds a key, unless the database holds the forgetting the line names by `eventId`. A line
+may also be a bare person's id, forgotten whenever they hold a key; blank lines are skipped. It
+prints each person it forgot and how many of those listed:
+
+```
+forgot again c-42
+forgot again 1 of 3 listed; the rest hold no key, or this store holds their forgetting
+```
+
+| Option | Applies to | Meaning |
+| --- | --- | --- |
+| `--since <date\|position>` | `forgotten` | A date such as `2026-11-01` or `2026-11-01T03:00:00Z`, or a position: a whole number |
+| `--from <file>` | `forget` | What `bounda forgotten` printed, or one person's id a line |
+| `--root`, `--config`, `--registry` | both | As for `bounda rebuild` |
+
+Exit codes: `0` done, `1` bad arguments, `2` the project could not be loaded, or the file could not
+be read or has a line that is neither a person's id nor an entry, in which case nobody is forgotten.
+
 ## Programmatic use
 
 `bounda generate` is exported from `@bounda-dev/cli` as `generate`:

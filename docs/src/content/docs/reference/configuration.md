@@ -122,6 +122,19 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
   rewrapped by the worker in the background. Without it the keys are kept as they are and the app
   warns at start when the registry marks personal fields. It is app-wide. See
   [where the keys live](/guides/personal-data/#where-the-keys-live).
+- **`personalData.forgetLedger`**, none by default. Where every forgetting is recorded outside the
+  database, by person's id, event id and time: an adapter pointed at another database than
+  `storage`, such as `sqlite({ path: "./ledger/forget-ledger.db" })` or `postgresql({ url })`,
+  which creates its `bounda_forget_ledger` table there on first use; `kvForgetLedger({ binding })`
+  from `@bounda-dev/cloudflare` on Cloudflare; or a ledger of your own through
+  `defineForgetLedger`. The runtime copies each `PersonalDataForgotten` to it in the background
+  and, when the app starts, forgets again, with `reason: "restored"`, whoever a restored backup
+  brought back. A ledger that cannot be read at start, or does not answer within ten seconds, does
+  not fail it: the app logs an error and reconciles in the background, and `getLag()` reports
+  `forgetLedger: { reconciled: false }` meanwhile. An adapter pointing at the storage's own
+  database fails the start.
+  Without it, a restored backup brings back everyone forgotten after it was taken. See
+  [backups](/guides/personal-data/#backups).
 
 ### Per aggregate
 

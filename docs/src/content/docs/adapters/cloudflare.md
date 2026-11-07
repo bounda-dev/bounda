@@ -146,6 +146,17 @@ npx wrangler secret put BOUNDA_MASTER_KEY
 Deploy to Cloudflare asks for it from `.dev.vars.example`. An object started without it fails to
 start, with a `ConfigurationError` that names the variable.
 
+## The forget ledger
+
+Cloudflare restores a Durable Object's storage to a point in time, which brings back the keys of
+everyone forgotten after it. `kvForgetLedger({ binding })` keeps the record of every forgetting
+in a KV namespace instead, outside every object, and an object that starts forgets again whoever
+its restored storage brought back; restoring the storage restarts the object. Bind the namespace
+in `wrangler.jsonc` and name it in `runtime.personalData.forgetLedger`; an object whose `env`
+lacks the binding, or that was reached through an id without a name, fails to start with a
+`ConfigurationError`. Each object keeps its entries under its own name, and reads the ledger once more a minute after it starts, since KV may take that long
+to list a key. See [backups](/guides/personal-data/#backups).
+
 ## One object per tenant
 
 `createWorker` addresses the object by the tenant `tenantOf` names for each request: in the

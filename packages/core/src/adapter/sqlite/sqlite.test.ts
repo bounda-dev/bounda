@@ -12,6 +12,7 @@ import {
   contractFields,
   deadLetterStoreContract,
   eventStoreContract,
+  forgetLedgerContract,
   idempotencyStoreContract,
   inboxLedgerContract,
   pendingEvent,
@@ -109,6 +110,12 @@ describe("the SQLite stores on node:sqlite", () => {
   storageTransactionContract({ create: storage });
   personalKeyStoreContract({ create: async () => (await storage()).personalKeys });
   personStoreContract({ create: async () => (await storage()).persons });
+  forgetLedgerContract({
+    create: async () => {
+      const { adapter } = nodeSqlite();
+      return (tenant) => adapter.createForgetLedger({ tenant });
+    },
+  });
   tableContract({
     create: async () =>
       (
@@ -462,5 +469,15 @@ describe("createSqliteAdapter", () => {
     expect(await inboxLedger.get(key)).not.toHaveProperty("lastError");
     await inboxLedger.fail({ ...key, error: "boom" });
     expect(await inboxLedger.get(key)).toMatchObject({ lastError: "boom" });
+  });
+});
+
+describe("the SQLite forget ledger", () => {
+  it("lives in its own prefixed table, created the first time it is used", async () => {
+    const { adapter, db } = nodeSqlite(undefined, "app_");
+    const ledger = await adapter.createForgetLedger({ tenant: "t-1" });
+    expect(tableNames(db, "app_")).toEqual([]);
+    await ledger.read({ limit: 1 });
+    expect(tableNames(db, "app_")).toEqual(["app_forget_ledger"]);
   });
 });

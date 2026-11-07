@@ -5,6 +5,7 @@ import type { CheckpointStore } from "./storage/checkpoint-store.ts";
 import type { DeadLetterStore } from "./storage/dead-letter-store.ts";
 import type { EventNotifier } from "./storage/event-notifier.ts";
 import type { EventStore } from "./storage/event-store.ts";
+import type { CreateForgetLedgerArgs, ForgetLedger } from "./storage/forget-ledger.ts";
 import type { IdempotencyStore } from "./storage/idempotency-store.ts";
 import type { InboxLedger } from "./storage/inbox-ledger.ts";
 import type { PersonStore } from "./storage/person-store.ts";
@@ -197,6 +198,12 @@ export interface Adapter<Name extends string = string, Options = unknown>
   rebuildReadModel<Row extends object>(
     args: CreateReadModelRebuildArgs,
   ): Promise<ReadModelRebuild<Row>>;
+  /**
+   * Opens a forget ledger in this database, for an app whose storage is another one. Touches the
+   * database only when the ledger is first used, creating its table then, so a database that is
+   * down when the app starts fails the ledger's calls, never the start.
+   */
+  createForgetLedger(args: CreateForgetLedgerArgs): Promise<ForgetLedger>;
 }
 
 export interface IsAdapterFunction {

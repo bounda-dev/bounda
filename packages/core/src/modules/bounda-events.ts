@@ -33,10 +33,12 @@ export interface RemovedDeadLetter {
 }
 
 /**
- * Why a person was forgotten: `requested` by `forget`, from a client or a policy or process, or
- * `retention`, past `runtime.personalData.retention` without activity.
+ * Why a person was forgotten: `requested` by `forget`, from a client or a policy or process,
+ * `retention`, past `runtime.personalData.retention` without activity, or `restored`, again,
+ * because a backup restored from before they were forgotten brought their key back, as
+ * `runtime.personalData.forgetLedger` or `bounda forget --from` found.
  */
-export type PersonalDataForgottenReason = "requested" | "retention";
+export type PersonalDataForgottenReason = "requested" | "retention" | "restored";
 
 export interface PersonalDataForgottenPayload {
   readonly personId: string;

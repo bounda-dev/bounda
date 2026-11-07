@@ -1,4 +1,11 @@
 export type {
+  CreateForgetLedgerFromEnvArgs,
+  DefineForgetLedgerFunction,
+  ForgetLedgerDefinition,
+  ForgetLedgerSource,
+} from "../kernel/personal-data/forget-ledger.ts";
+export { defineForgetLedger } from "../kernel/personal-data/forget-ledger.ts";
+export type {
   CreateKeyWrapperArgs,
   DefineKeyWrapperFunction,
   KeyWrapper,

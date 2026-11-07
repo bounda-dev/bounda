@@ -6,8 +6,10 @@ import type {
 } from "@bounda-dev/core/adapter";
 import {
   createSqlCheckpointStore,
+  createSqlForgetLedger,
   createSqlPersonalKeyStore,
   createSqlPersonStore,
+  forgetLedgerStatements,
   postgresqlDialect,
   type SqlTransaction,
 } from "@bounda-dev/core/adapter/sql";
@@ -21,7 +23,7 @@ import { createPostgresqlInboxLedger } from "./inbox-ledger.ts";
 import { type PostgresqlOptions, resolvePostgresqlOptions } from "./options.ts";
 import { openPostgresqlReadModel, rebuildPostgresqlReadModel } from "./read-model.ts";
 import { createPostgresqlScheduler } from "./scheduler.ts";
-import { ensureStorageSchema, storageTablesFor } from "./schema.ts";
+import { ensureStorageSchema, inSchema, relationsExist, storageTablesFor } from "./schema.ts";
 import { createPostgresqlSnapshotStore } from "./snapshot-store.ts";
 
 /**
@@ -189,6 +191,30 @@ export const postgresql: PostgresqlFunction = (options) => {
           progress,
         });
       }),
+    createForgetLedger: async ({ tenant }) => {
+      const { db } = open();
+      const statements = forgetLedgerStatements(tables.forgetLedger, postgresqlDialect);
+      return createSqlForgetLedger({
+        db,
+        table: tables.forgetLedger,
+        dialect: postgresqlDialect,
+        tenant,
+        ensureSchema: async () => {
+          const names = [tables.forgetLedger, tables.forgetLedgerOrder].map((name) =>
+            name.slice(1, -1),
+          );
+          if (await relationsExist({ db, schema, names })) return;
+          await inSchema({
+            db,
+            schema,
+            work: async (tx) => {
+              for (const statement of statements) await tx.run(statement, []);
+            },
+          });
+        },
+        close: release,
+      });
+    },
   };
 };
 
