@@ -22,8 +22,13 @@ const post = (path: string, body?: unknown, tenant?: string) =>
   );
 
 // One request through a worker whose binding is a spy that hands out a recording stub.
-const throughSpy = async (path: string, body: string, consistency?: Consistency) => {
-  const { stub, commands, forgets } = recordingStub();
+const throughSpy = async (
+  path: string,
+  body: string,
+  consistency?: Consistency,
+  actorOf?: CreateWorkerArgs["actorOf"],
+) => {
+  const { stub, commands, queries, forgets } = recordingStub();
   const addressed: string[] = [];
   const spy = {
     idFromName: (name: string) => {
@@ -36,6 +41,7 @@ const throughSpy = async (path: string, body: string, consistency?: Consistency)
     config: { storage: cloudflare({ binding: "SPY" }) },
     tenantOf: () => "acme",
     ...(consistency === undefined ? {} : { consistency }),
+    ...(actorOf === undefined ? {} : { actorOf }),
   });
   const response = await worker.fetch?.(
     new Request(`https://bounda.test${path}`, { method: "POST", body }) as Request<
@@ -45,7 +51,13 @@ const throughSpy = async (path: string, body: string, consistency?: Consistency)
     { SPY: spy } as unknown as Cloudflare.Env,
     createExecutionContext(),
   );
-  return { status: response?.status, addressed, commands, forgets };
+  return {
+    status: response?.status,
+    addressed,
+    commands,
+    forgets,
+    ...(queries.length === 0 ? {} : { queries }),
+  };
 };
 
 describe("createWorker", () => {
@@ -72,24 +84,41 @@ describe("createWorker", () => {
     expect(await throughSpy("/commands/payOrder", payOrder, "eventual")).toEqual({
       status: 200,
       addressed: ["acme"],
-      commands: [["payOrder", { orderId: "o-1" }, {}, "eventual"]],
+      commands: [["payOrder", { orderId: "o-1" }, {}, "eventual", undefined]],
       forgets: [],
     });
     expect(await throughSpy("/commands/payOrder", payOrder)).toEqual({
       status: 200,
       addressed: ["acme"],
-      commands: [["payOrder", { orderId: "o-1" }, {}, "read-your-writes"]],
+      commands: [["payOrder", { orderId: "o-1" }, {}, "read-your-writes", undefined]],
       forgets: [],
+    });
+  });
+
+  it("sends who makes the request, as actorOf names them, with its command or query", async () => {
+    const actorOf = (request: Request) => request.headers.get("x-user") ?? undefined;
+    const payOrder = JSON.stringify({ orderId: "o-1" });
+    expect(await throughSpy("/commands/payOrder", payOrder, undefined, actorOf)).toMatchObject({
+      commands: [["payOrder", { orderId: "o-1" }, {}, "read-your-writes", undefined]],
+    });
+    const actorOfUser = async () => "user-1";
+    expect(await throughSpy("/commands/payOrder", payOrder, undefined, actorOfUser)).toMatchObject({
+      commands: [["payOrder", { orderId: "o-1" }, {}, "read-your-writes", "user-1"]],
+    });
+    expect(await throughSpy("/queries/getOrder", payOrder, undefined, actorOfUser)).toMatchObject({
+      queries: [["getOrder", { orderId: "o-1" }, "user-1"]],
     });
   });
 
   it("sends a blank body as no payload, and the delay and correlation id from the query string", async () => {
     expect((await throughSpy("/commands/payOrder", " \n")).commands).toEqual([
-      ["payOrder", undefined, {}, "read-your-writes"],
+      ["payOrder", undefined, {}, "read-your-writes", undefined],
     ]);
     expect(
       (await throughSpy("/commands/payOrder/?delay=10m&correlationId=c-1", "{}")).commands,
-    ).toEqual([["payOrder", {}, { delay: "10m", correlationId: "c-1" }, "read-your-writes"]]);
+    ).toEqual([
+      ["payOrder", {}, { delay: "10m", correlationId: "c-1" }, "read-your-writes", undefined],
+    ]);
   });
 
   it("answers a 500 and logs it when the binding the config names is missing", async () => {
@@ -151,6 +180,39 @@ describe("createWorker", () => {
     expect(errors).toEqual([
       ["bounda worker request failed", { path: "/queries/getOrder", message: "no session" }],
     ]);
+  });
+
+  it("answers a 500 and logs it, without the value, when actorOf names no valid actor", async () => {
+    const errors: unknown[][] = [];
+    const logger: Logger = {
+      debug: () => undefined,
+      info: () => undefined,
+      warn: () => undefined,
+      error: (...entry) => void errors.push(entry),
+    };
+    const { stub, queries } = recordingStub();
+    const worker = createWorker({
+      config: { storage: cloudflare({ binding: "SPY" }) },
+      tenantOf: () => "acme",
+      actorOf: () => "",
+      logger,
+    });
+    const response = await worker.fetch?.(
+      new Request("https://bounda.test/queries/getOrder", {
+        method: "POST",
+        body: JSON.stringify({ orderId: "o-1" }),
+      }) as Request<unknown, IncomingRequestCfProperties>,
+      { SPY: { idFromName: () => "id", get: () => stub } } as unknown as Cloudflare.Env,
+      createExecutionContext(),
+    );
+    expect(response?.status).toBe(500);
+    expect(await response?.json()).toEqual({
+      error: { code: "INTERNAL", message: "Internal error" },
+    });
+    expect(errors).toEqual([
+      ["bounda worker actorOf named no valid actor", { path: "/queries/getOrder" }],
+    ]);
+    expect(queries).toEqual([]);
   });
 
   it("refuses a configuration without cloudflare() storage, or none at all", () => {

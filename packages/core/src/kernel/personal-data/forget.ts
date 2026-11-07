@@ -12,6 +12,7 @@ import {
   type PersonalDataForgottenReason,
 } from "../../modules/bounda-events.ts";
 import { scheduledCommandId } from "../command/pipeline.ts";
+import { actedBy, startedBy } from "../shared/causation.ts";
 import { appendSystemEvent } from "../system-events.ts";
 import { checkPersonId, transactRetrying } from "./transact.ts";
 
@@ -86,13 +87,14 @@ export interface LogForgottenFunction {
   (logger: Logger, forgotten: Forgotten): void;
 }
 
-export const logForgotten: LogForgottenFunction = (logger, { hadKey, payload }) => {
+export const logForgotten: LogForgottenFunction = (logger, { hadKey, payload, event }) => {
   logger.info("personal data forgotten", {
     personId: payload.personId,
     reason: payload.reason,
     hadKey,
     cancelledCommands: payload.cancelledCommands.length,
     removedDeadLetters: payload.removedDeadLetters.length,
+    ...actedBy(event.metadata.actor),
   });
 };
 
@@ -117,6 +119,7 @@ export interface ForgetPersonalDataArgs {
   readonly logger: Logger;
   readonly concurrencyRetries: number;
   readonly personId: string;
+  readonly actor?: string | undefined;
 }
 
 export interface ForgetPersonalDataFunction {
@@ -133,6 +136,7 @@ export const forgetPersonalData: ForgetPersonalDataFunction = async ({
   logger,
   concurrencyRetries,
   personId,
+  actor,
 }) => {
   checkPersonId(personId, "forget");
   const correlationId = ids.next();
@@ -146,7 +150,7 @@ export const forgetPersonalData: ForgetPersonalDataFunction = async ({
         clock,
         personId,
         reason: "requested",
-        context: { correlationId, causationId: correlationId, depth: 0 },
+        context: startedBy(correlationId, actor),
       }),
   });
   logForgotten(logger, forgotten);

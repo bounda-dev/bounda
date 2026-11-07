@@ -8,6 +8,7 @@ import {
   readYourWrites,
 } from "@bounda-dev/core";
 import { createContext, type MiddlewareFunction, type RouterContext } from "react-router";
+import { type ActorFunction, actAs } from "./actor.ts";
 import { withIdempotencyKey } from "./idempotency-key.ts";
 
 /**
@@ -36,13 +37,18 @@ export interface CreateBoundaArgs<R extends Registry = AppRegistry> {
    * `"read-your-writes"`, so the page a redirect lands on already reflects it.
    */
   readonly consistency?: Consistency;
+  /**
+   * Who makes each request, which the client in its context acts as. Left out, requests act as
+   * nobody.
+   */
+  readonly actor?: ActorFunction;
 }
 
 /**
  * A React Router middleware that boots the app on the first request, starts it and puts it in
- * the context of every request, its commands carrying the request's `Idempotency-Key` header,
- * when it has one, as their `idempotencyKey`. Mount it in `root.tsx`:
- * `export const middleware = [boundaMiddleware]`.
+ * the context of every request, acting as the request's `actor`, its commands carrying the
+ * request's `Idempotency-Key` header, when it has one, as their `idempotencyKey`. Mount it in
+ * `root.tsx`, after any middleware `actor` reads from: `export const middleware = [boundaMiddleware]`.
  */
 export interface BoundaMiddleware {
   <Result>(...args: Parameters<MiddlewareFunction<Result>>): Promise<Result>;
@@ -149,14 +155,16 @@ export const createBounda: CreateBoundaFunction = <R extends Registry = AppRegis
   boot: bootApp = async () => (await import("@bounda-dev/core/node")).boot<R>(),
   key = DEFAULT_KEY,
   consistency = "read-your-writes",
+  actor,
 }: CreateBoundaArgs<R> = {}): Bounda<R> => {
   checkConsistency(consistency);
   const bounda = createContext<BoundaClient<R>>();
   const slot = slotFor<R>(key);
   void retire(slot);
 
-  const boundaMiddleware: BoundaMiddleware = async ({ context, request }, next) => {
-    context.set(bounda, await withIdempotencyKey(await load(slot, bootApp, consistency), request));
+  const boundaMiddleware: BoundaMiddleware = async (args, next) => {
+    const client = await actAs(await load(slot, bootApp, consistency), actor, args);
+    args.context.set(bounda, await withIdempotencyKey(client, args.request));
     return next();
   };
 

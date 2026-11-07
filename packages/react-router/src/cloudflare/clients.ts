@@ -6,12 +6,7 @@ import {
   type Registry,
 } from "@bounda-dev/core";
 import type { Config } from "@bounda-dev/core/config";
-import type { MiddlewareFunction } from "react-router";
-
-/**
- * What a middleware receives: the request, its route's params and its context.
- */
-export type RequestArgs = Parameters<MiddlewareFunction>[0];
+import type { RequestArgs } from "../actor.ts";
 
 /**
  * Names the store a request reaches: every tenant is its own Durable Object, with its own events
@@ -47,11 +42,11 @@ const lazyStub = (stubOf: () => Promise<BoundaStub>): BoundaStub => ({
   lag: async () => (await stubOf()).lag(),
   readEvents: async (args) => (await stubOf()).readEvents(args),
   listDeadLetters: async (...args) => (await stubOf()).listDeadLetters(...args),
-  retryDeadLetter: async (id) => (await stubOf()).retryDeadLetter(id),
-  discardDeadLetter: async (id) => (await stubOf()).discardDeadLetter(id),
+  retryDeadLetter: async (...args) => (await stubOf()).retryDeadLetter(...args),
+  discardDeadLetter: async (...args) => (await stubOf()).discardDeadLetter(...args),
   rebuildReadModel: async (name) => (await stubOf()).rebuildReadModel(name),
   forget: async (...args) => (await stubOf()).forget(...args),
-  exportPersonalData: async (personId) => (await stubOf()).exportPersonalData(personId),
+  exportPersonalData: async (...args) => (await stubOf()).exportPersonalData(...args),
   restrict: async (...args) => (await stubOf()).restrict(...args),
   unrestrict: async (...args) => (await stubOf()).unrestrict(...args),
 });

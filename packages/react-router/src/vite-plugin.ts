@@ -25,6 +25,7 @@ const PACKAGE_PATTERN = /^@bounda-dev\/react-router(\/|$)/;
 const APP_DIRECTORY = "app";
 const CONFIG_FILE = "bounda.config.ts";
 const TENANT_FILE = "tenant.ts";
+const ACTOR_FILE = "actor.ts";
 const WATCHED = ["domain", "read"];
 const EVENTS = ["add", "change", "unlink", "addDir", "unlinkDir"] as const;
 
@@ -33,8 +34,8 @@ const EVENTS = ["add", "change", "unlink", "addDir", "unlinkDir"] as const;
  * re-evaluates this module, and the app reboots, whenever either changes, and so that a build
  * bundles both. In Node the configuration is imported once `boot` has loaded `.env`, which it may
  * read. Only the dev server pins `root`: a build runs wherever it is deployed, from the working
- * directory. The `workerd` condition picks the Cloudflare host. The glob makes `app/tenant.ts`
- * optional, and Vite serves this module again when the file appears or goes. Paths go in with `/`,
+ * directory. The `workerd` condition picks the Cloudflare host. The globs make `app/tenant.ts` and
+ * `app/actor.ts` optional, and Vite serves this module again when either appears or goes. Paths go in with `/`,
  * Vite's form on every platform.
  */
 const serverModule = ({ root, command }: Generation, consistency: Consistency): string =>
@@ -47,6 +48,7 @@ const serverModule = ({ root, command }: Generation, consistency: Consistency): 
     "  registry,",
     `  importConfig: () => import(${JSON.stringify(normalizePath(join(root, CONFIG_FILE)))}),`,
     `  importTenant: Object.values(import.meta.glob(${JSON.stringify(`/${APP_DIRECTORY}/${TENANT_FILE}`)}))[0],`,
+    `  importActor: Object.values(import.meta.glob(${JSON.stringify(`/${APP_DIRECTORY}/${ACTOR_FILE}`)}))[0],`,
     `  consistency: ${JSON.stringify(consistency)},`,
     "});",
     `export { failure } from ${JSON.stringify(HOST_ID)};`,

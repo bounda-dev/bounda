@@ -8,6 +8,7 @@ import type { CommandRejection, DispatchResult, StoredDispatch } from "../contra
 import { ConfigurationError } from "../contracts/errors.ts";
 import { type IdGenerator, uuidV7IdGenerator } from "../contracts/ids.ts";
 import { type Logger, silentLogger } from "../contracts/logger.ts";
+import { checkActor } from "../contracts/metadata.ts";
 import type { CommandsFacade, QueriesFacade, Registry } from "../modules/registry.ts";
 import { validateRegistry } from "../modules/validate.ts";
 import type { AppEnv, AppRegistry, EnvSection } from "../register/index.ts";
@@ -66,6 +67,9 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
   readonly queries: QueriesFacade<R>;
   getLag(): Promise<AppLag>;
   readonly events: GlobalStream;
+  /**
+   * Retrying and discarding a letter is acted by the client's actor, as `as` says.
+   */
   readonly deadLetters: Pick<DeadLetters, "list" | "retry" | "discard">;
   /**
    * Rebuilds one read model from the whole stream into a fresh table and swaps it in, without
@@ -110,6 +114,17 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * an empty id.
    */
   unrestrict(personId: string): Promise<StoredDispatch>;
+  /**
+   * The same client, acting as `actor`: who does what it does, for the audit trail the event
+   * store keeps. Every command it dispatches carries the actor in its metadata, and so does every
+   * event that command writes, and every command and event the policies, processes and scheduled
+   * commands that follow from it write; so do the events `forget`, `restrict` and `unrestrict`
+   * append, and what a dead letter's `retry` writes. Calling `as` on a bound client acts as the new
+   * actor; a client without `as` names nobody. `actor` is an id, such as a user's or a service's,
+   * never a name or an email: it is stored in the clear in events that are never deleted. Throws
+   * `ValidationError` for an actor that is not a string of 1 to `MAX_ACTOR_LENGTH` characters.
+   */
+  as(actor: string): BoundaClient<R>;
 }
 
 /**
@@ -471,7 +486,6 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       clock,
       logger,
     });
-    const deadLetters = createDeadLetters({ storage, retries, processes, clock, logger });
     const lag = meter().createObservableGauge(METRICS.lag, {
       description: "Events each subscriber is behind the head of the stream",
       unit: "{event}",
@@ -514,12 +528,56 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       readModels: Object.keys(readModels.byName),
     });
 
-    return {
+    const { concurrencyRetries } = config.runtime.commands;
+    const events = createGlobalStream({ eventStore: written.eventStore });
+    const getLag = async (): Promise<AppLag> => ({
+      ...(await dispatcher.getLag()),
+      waitingDeadlines: worker.waitingDeadlines(),
+    });
+    const rebuild = (name: string, options: RebuildReadModelOptions = {}) =>
+      rebuildReadModel({ registry, config: rawConfig, name, logger, ...options });
+    const clientAs = (
+      actor: string | undefined,
+    ): BoundaClient<R> & { readonly deadLetters: DeadLetters } => ({
       commands: createCommandsFacade({
         aggregates,
-        dispatch: (command) => pipeline.dispatch(command),
+        dispatch: (command) => pipeline.dispatch({ ...command, actor }),
       }) as CommandsFacade<R>,
       queries: queryRunner.facade as QueriesFacade<R>,
+      getLag,
+      events,
+      deadLetters: createDeadLetters({ storage, retries, processes, clock, logger, actor }),
+      rebuildReadModel: rebuild,
+      forget: (personId) =>
+        forgetPersonalData({ storage, ids, clock, logger, concurrencyRetries, personId, actor }),
+      exportPersonalData: (personId) =>
+        exportPersonalData({
+          storage,
+          aggregates,
+          clock,
+          batchSize: config.runtime.dispatcher.batchSize,
+          personId,
+        }),
+      restrict: (personId) =>
+        restrictProcessing({ storage, ids, clock, logger, concurrencyRetries, personId, actor }),
+      unrestrict: (personId) =>
+        liftProcessingRestriction({
+          storage,
+          ids,
+          clock,
+          logger,
+          concurrencyRetries,
+          personId,
+          actor,
+        }),
+      as: (next) => {
+        checkActor(next);
+        return clientAs(next);
+      },
+    });
+
+    return {
+      ...clientAs(undefined),
       config,
       role,
       start: () => {
@@ -567,14 +625,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         if (through.scheduled) return;
         await dispatcher.catchUpThrough(through);
       },
-      rebuildReadModel: (name, { maxEvents } = {}) =>
-        rebuildReadModel({
-          registry,
-          config: rawConfig,
-          name,
-          logger,
-          ...(maxEvents === undefined ? {} : { maxEvents }),
-        }),
+      rebuildReadModel: rebuild,
       pendingRebuilds: async () => {
         const paused = await Promise.all(
           Object.values(readModels.byName).map(async ({ name, storage }) =>
@@ -583,47 +634,6 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         );
         return paused.flat();
       },
-      events: createGlobalStream({ eventStore: written.eventStore }),
-      deadLetters,
-      forget: (personId) =>
-        forgetPersonalData({
-          storage,
-          ids,
-          clock,
-          logger,
-          concurrencyRetries: config.runtime.commands.concurrencyRetries,
-          personId,
-        }),
-      exportPersonalData: (personId) =>
-        exportPersonalData({
-          storage,
-          aggregates,
-          clock,
-          batchSize: config.runtime.dispatcher.batchSize,
-          personId,
-        }),
-      restrict: (personId) =>
-        restrictProcessing({
-          storage,
-          ids,
-          clock,
-          logger,
-          concurrencyRetries: config.runtime.commands.concurrencyRetries,
-          personId,
-        }),
-      unrestrict: (personId) =>
-        liftProcessingRestriction({
-          storage,
-          ids,
-          clock,
-          logger,
-          concurrencyRetries: config.runtime.commands.concurrencyRetries,
-          personId,
-        }),
-      getLag: async () => ({
-        ...(await dispatcher.getLag()),
-        waitingDeadlines: worker.waitingDeadlines(),
-      }),
     };
   } catch (error) {
     for (const close of opened) await close().catch(() => undefined);

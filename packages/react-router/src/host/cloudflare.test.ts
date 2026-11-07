@@ -56,8 +56,24 @@ describe("createHost under the workerd condition", () => {
     }
     expect([config.imported.count, tenant.imported.count]).toEqual([1, 1]);
     expect(store.calls).toEqual([
-      ["acme", "command", "placeOrder", { orderId: "o-1" }, undefined, "eventual"],
-      ["acme", "command", "placeOrder", { orderId: "o-2" }, undefined, "eventual"],
+      ["acme", "command", "placeOrder", { orderId: "o-1" }, undefined, "eventual", undefined],
+      ["acme", "command", "placeOrder", { orderId: "o-2" }, undefined, "eventual", undefined],
+    ]);
+  });
+
+  it("acts as the actor of app/actor.ts, when the project has one, over RPC", async () => {
+    const { bounda, boundaMiddleware } = createHost({
+      registry,
+      importConfig: async () => ({ default: { storage: cloudflare() } }),
+      importTenant: async () => ({ tenant: () => "acme" }),
+      importActor: async () => ({ actor: () => "user-1" }),
+      consistency: "eventual",
+    });
+    const { context, args } = middlewareArgs();
+    await boundaMiddleware(args, async () => undefined);
+    await Reflect.get(context.get(bounda).commands, "placeOrder")({ orderId: "o-1" });
+    expect(store.calls).toEqual([
+      ["acme", "command", "placeOrder", { orderId: "o-1" }, undefined, "eventual", "user-1"],
     ]);
   });
 

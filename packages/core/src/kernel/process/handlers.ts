@@ -9,6 +9,7 @@ import type { CausationContext } from "../../contracts/metadata.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
 import { createReactionCommands, type ReactionCommands } from "../command/reaction-commands.ts";
+import { actedBy, causedBy } from "../shared/causation.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { isRecord, mergeFields } from "../shared/merge-fields.ts";
 import { withTimeout } from "../shared/timeout.ts";
@@ -17,7 +18,7 @@ import { ATTRIBUTES, traced } from "../telemetry.ts";
 import type { UnitStores } from "../unit-of-work/unit-of-work.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
 import { afterFrom, type Deadline } from "./deadlines.ts";
-import { eventContext, type ProcessInstance } from "./lifecycle.ts";
+import type { ProcessInstance } from "./lifecycle.ts";
 import { handlerOf } from "./routes.ts";
 
 export interface RunEventHandlerArgs {
@@ -31,6 +32,10 @@ export interface RunEventHandlerArgs {
    * run's.
    */
   readonly retryId?: string | undefined;
+  /**
+   * Who retries the dead letter, who then acts in place of the event's actor.
+   */
+  readonly actor?: string | undefined;
   /**
    * The unit of work the run's commands write to, to commit with the step that runs it.
    */
@@ -158,6 +163,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     instance,
     attempt,
     retryId,
+    actor,
     within,
   }: RunEventHandlerArgs): Promise<object> => {
     const idempotencyKey = deriveIdempotencyKey({
@@ -166,7 +172,12 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
       subject: event.id,
       retryId,
     });
-    const reaction = reactionFor(process, eventContext(event), idempotencyKey, within);
+    const reaction = reactionFor(
+      process,
+      { ...causedBy(event), ...actedBy(actor) },
+      idempotencyKey,
+      within,
+    );
     return runOf(reaction, async () => {
       const { returned } = await traced({
         name: `bounda.process ${process.name}`,
@@ -228,7 +239,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     });
     const reaction = reactionFor(
       process,
-      { correlationId: context.correlationId, causationId, depth: 0 },
+      { ...context, causationId, depth: 0 },
       idempotencyKey,
       within,
     );

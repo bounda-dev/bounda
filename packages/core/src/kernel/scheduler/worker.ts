@@ -390,6 +390,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
             personId: entry.command.aggregateId,
             unit,
             beforeEach: () => renew(entry),
+            actor: entry.context.actor,
           });
         } else {
           const { payload, forgotten } = await openCommandPayload({

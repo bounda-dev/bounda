@@ -59,16 +59,18 @@ export interface HandledEntriesFunction {
     instance: ProcessInstance,
     event: StoredEvent,
     state: object,
+    actor?: string,
   ): LifecycleEntry[];
 }
 
 /**
- * A follow-up of a timed-out instance never completes it: the instance has ended already.
+ * A follow-up of a timed-out instance never completes it: the instance has ended already. `actor`
+ * is who retries the step, who acts in place of the event's actor.
  */
-export const handledEntries: HandledEntriesFunction = (process, instance, event, state) => [
-  lifecycleEntries.handled(event, state),
+export const handledEntries: HandledEntriesFunction = (process, instance, event, state, actor) => [
+  lifecycleEntries.handled(event, state, actor),
   ...(completesOn(process, event) && instance.status !== "timed_out"
-    ? [lifecycleEntries.completed(event)]
+    ? [lifecycleEntries.completed(event, actor)]
     : []),
 ];
 

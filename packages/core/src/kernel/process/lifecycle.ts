@@ -1,6 +1,7 @@
 import type { NewDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
+import { actedBy, causedBy } from "../shared/causation.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
 import { type Deadline, deadlineAt, reachedKey, TIMEOUT_DEADLINE } from "./deadlines.ts";
 
@@ -105,7 +106,7 @@ export interface ProcessFailure {
   readonly letterId?: string;
 }
 
-export type DeadlineCause = Pick<CausationContext, "correlationId" | "causationId">;
+export type DeadlineCause = Omit<CausationContext, "depth">;
 
 export interface FoldProcessArgs {
   readonly initialState: object;
@@ -122,10 +123,10 @@ const stateOf = (event: StoredEvent, fallback: object): object => {
   return payload.state ?? fallback;
 };
 
-const causeOf = (event: StoredEvent): DeadlineCause => ({
-  correlationId: event.metadata.correlationId,
-  causationId: event.id,
-});
+const causeOf = (event: StoredEvent): DeadlineCause => {
+  const { depth: _depth, ...cause } = causedBy(event);
+  return cause;
+};
 
 /**
  * A failed instance stays failed until `ProcessResumed`; a `ProcessHandled` takes its event off
@@ -257,16 +258,6 @@ export interface LifecycleEntry {
   readonly id?: string;
 }
 
-export interface EventContextFunction {
-  (event: StoredEvent): CausationContext;
-}
-
-export const eventContext: EventContextFunction = (event) => ({
-  correlationId: event.metadata.correlationId,
-  causationId: event.id,
-  depth: event.metadata.depth,
-});
-
 export interface InstanceContextFunction {
   (process: ProcessRuntime, instanceId: string, instance: ProcessInstance): CausationContext;
 }
@@ -311,8 +302,8 @@ export type FailedOn =
  */
 export interface LifecycleEntries {
   started(event: StoredEvent, state: object, timeoutAt: string): LifecycleEntry;
-  handled(event: StoredEvent, state: object): LifecycleEntry;
-  completed(event: StoredEvent): LifecycleEntry;
+  handled(event: StoredEvent, state: object, actor?: string): LifecycleEntry;
+  completed(event: StoredEvent, actor?: string): LifecycleEntry;
   failed(failedOn: FailedOn, letter: NewDeadLetter, context: CausationContext): LifecycleEntry;
   parked(event: StoredEvent): LifecycleEntry;
   resumed(context: CausationContext): LifecycleEntry;
@@ -334,17 +325,17 @@ export const lifecycleEntries: LifecycleEntries = {
   started: (event, state, timeoutAt) => ({
     type: PROCESS_EVENTS.started,
     payload: { state, eventId: event.id, timeoutAt },
-    context: eventContext(event),
+    context: causedBy(event),
   }),
-  handled: (event, state) => ({
+  handled: (event, state, actor) => ({
     type: PROCESS_EVENTS.handled,
     payload: { state, eventId: event.id, eventType: event.type },
-    context: eventContext(event),
+    context: { ...causedBy(event), ...actedBy(actor) },
   }),
-  completed: (event) => ({
+  completed: (event, actor) => ({
     type: PROCESS_EVENTS.completed,
     payload: { eventId: event.id },
-    context: eventContext(event),
+    context: { ...causedBy(event), ...actedBy(actor) },
   }),
   failed: (failedOn, letter, context) => ({
     type: PROCESS_EVENTS.failed,
@@ -364,7 +355,7 @@ export const lifecycleEntries: LifecycleEntries = {
       aggregateType: event.aggregateType,
       aggregateId: event.aggregateId,
     } satisfies ParkedEvent,
-    context: eventContext(event),
+    context: causedBy(event),
   }),
   resumed: (context) => ({ type: PROCESS_EVENTS.resumed, payload: {}, context }),
   deadlineReached: (due, state, context, id) => ({

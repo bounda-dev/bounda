@@ -22,6 +22,7 @@ export const TELEMETRY_SCOPE: "@bounda-dev/core" = "@bounda-dev/core";
 export const ATTRIBUTES: {
   readonly correlationId: "bounda.correlation_id";
   readonly causationId: "bounda.causation_id";
+  readonly actor: "bounda.actor";
   readonly commandType: "bounda.command.type";
   readonly aggregateType: "bounda.aggregate.type";
   readonly aggregateId: "bounda.aggregate.id";
@@ -47,6 +48,7 @@ export const ATTRIBUTES: {
 } = {
   correlationId: "bounda.correlation_id",
   causationId: "bounda.causation_id",
+  actor: "bounda.actor",
   commandType: "bounda.command.type",
   aggregateType: "bounda.aggregate.type",
   aggregateId: "bounda.aggregate.id",

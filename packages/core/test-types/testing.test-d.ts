@@ -1,6 +1,6 @@
-import type { CreateAppArgs } from "@bounda-dev/core";
+import type { BoundaClient, CreateAppArgs } from "@bounda-dev/core";
 import type { AppTestPorts } from "@bounda-dev/core/register";
-import type { CreateTestAppArgs } from "@bounda-dev/core/testing";
+import type { CreateTestAppArgs, createTestApp } from "@bounda-dev/core/testing";
 import { describe, expectTypeOf, it } from "vitest";
 import type { registry } from "./fixtures/order-app/.bounda/registry.ts";
 import type { TestPorts } from "./fixtures/order-app/.bounda/types.ts";
@@ -56,5 +56,13 @@ describe("the tenant of an app", () => {
     expectTypeOf<Pick<CreateAppArgs<typeof registry>, "tenant">>().toEqualTypeOf<{
       readonly tenant?: string | undefined;
     }>();
+  });
+});
+
+describe("createTestApp's app", () => {
+  it("binds to who acts with as, typed from the registry", () => {
+    type App = Awaited<ReturnType<typeof createTestApp<typeof registry>>>["app"];
+    expectTypeOf<ReturnType<App["as"]>>().toEqualTypeOf<BoundaClient<typeof registry>>();
+    expectTypeOf<ReturnType<App["as"]>["commands"]>().toEqualTypeOf<App["commands"]>();
   });
 });

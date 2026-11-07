@@ -1,4 +1,9 @@
-import { type BoundaApp, ConfigurationError, idempotencyKeyFor } from "@bounda-dev/core";
+import {
+  type BoundaApp,
+  ConfigurationError,
+  type DispatchOptions,
+  idempotencyKeyFor,
+} from "@bounda-dev/core";
 import { RouterContextProvider } from "react-router";
 import { describe, expect, it } from "vitest";
 import { createBounda } from "./create-bounda.ts";
@@ -47,7 +52,60 @@ const middlewareArgs = () => {
   return { context, args: { request: new Request(url), url, pattern: "/", params: {}, context } };
 };
 
+// An app whose commands record who they act as and the idempotency key they carry.
+const actingApp = (): { readonly app: BoundaApp; readonly calls: unknown[][] } => {
+  const calls: unknown[][] = [];
+  const clientAs = (actor?: string) => ({
+    commands: {
+      placeOrder: async (_payload?: unknown, options?: DispatchOptions) => {
+        calls.push([actor, options?.idempotencyKey]);
+        return { scheduled: false, aggregateId: "o-1", version: 1, eventIds: [] };
+      },
+    },
+    as: (next: string) => clientAs(next),
+  });
+  const app = {
+    ...clientAs(),
+    catchUpReadModels: async () => {
+      calls.push(["catchUp"]);
+    },
+    start: () => undefined,
+    stop: async () => undefined,
+  } as unknown as BoundaApp;
+  return { app, calls };
+};
+
 describe("createBounda", () => {
+  it("acts as who makes each request, keeping the request's key and its own writes when bound again", async () => {
+    const acting = actingApp();
+    const { bounda, boundaMiddleware, dispose } = createBounda({
+      key: uniqueKey(),
+      boot: async () => acting.app,
+      actor: ({ request }) => request.headers.get("x-user") ?? undefined,
+    });
+    const signedIn = middlewareArgs();
+    signedIn.args.request.headers.set("x-user", "user-1");
+    signedIn.args.request.headers.set("Idempotency-Key", "req-1");
+    await boundaMiddleware(signedIn.args, async () => undefined);
+    const served = signedIn.context.get(bounda);
+    await (served.commands as unknown as OrderCommands).placeOrder();
+    await (served.as("user-2").commands as unknown as OrderCommands).placeOrder();
+    const anonymous = middlewareArgs();
+    await boundaMiddleware(anonymous.args, async () => undefined);
+    await (anonymous.context.get(bounda).commands as unknown as OrderCommands).placeOrder();
+
+    const key = idempotencyKeyFor("req-1", "placeOrder");
+    expect(acting.calls).toEqual([
+      ["user-1", key],
+      ["catchUp"],
+      ["user-2", key],
+      ["catchUp"],
+      [undefined, undefined],
+      ["catchUp"],
+    ]);
+    await dispose();
+  });
+
   it("serves an app that reads its own writes by default", async () => {
     const fake = fakeApp("one");
     const { bounda, boundaMiddleware } = createBounda({
