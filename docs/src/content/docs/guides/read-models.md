@@ -25,6 +25,25 @@ export const fields = ({ f }: View.FieldsArgs) => ({
 });
 ```
 
+Each field is a column: `f.string()`, `f.number()`, `f.boolean()`, `f.date()` or `f.json<T>()`,
+then `.optional()`, `.primaryKey()` (exactly one), `.unique()` or `.index()`. Two more say what
+the column means rather than how it is stored: `.person()` marks the column that holds the id of
+the person the row is about, a string, at most one per read model, and `.personal()` a column
+that holds that person's data:
+
+```ts
+// app/read/customer-directory/view.ts
+export const fields = ({ f }: View.FieldsArgs) => ({
+  customerId: f.string().primaryKey().person(),
+  email: f.string().optional().personal(),
+  plan: f.string(),
+});
+```
+
+A person's export then carries their rows, a query of the read model is recorded in the access
+log, and the read model must handle forgetting: see
+[Personal data in read models](/guides/personal-data/#personal-data-in-read-models).
+
 ## Projections
 
 A projection `projections/<aggregate>/<event>.ts` reacts to that aggregate's event, or exports
@@ -46,7 +65,7 @@ export const project = async ({ event, table }: Projection.Args) => {
 
 A projection of an event with a field marked `personal` sees it as `T | null`, and the read model
 then projects `PersonalDataForgotten` too, from `projections/bounda/personal-data-forgotten.ts`:
-see [Personal data](/guides/personal-data/#handling-it-in-a-read-model).
+see [Personal data](/guides/personal-data/#personal-data-in-read-models).
 
 ## Queries
 

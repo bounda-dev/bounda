@@ -1083,6 +1083,8 @@ const checkProjectionEvents = async (
   }
 };
 
+const AUDIT_FILE = "audit.ts";
+
 // No module is imported: the only text read is what the modules at an aggregate's or a read
 // model's root export, whether a policy or a projection exports `on`, and the interface a port
 // declares.
@@ -1125,11 +1127,13 @@ export const discoverProject: DiscoverProjectFunction = async ({ root, appDir = 
   checkUniqueNames(context, aggregates, readModels);
   problems.throwIfAny();
   await checkProjectionEvents(context, aggregates, readModels);
+  const audit = join(app, AUDIT_FILE);
   return {
     root,
     appDir,
     aggregates: await resolvePolicyTriggers(context, aggregates),
     readModels,
+    ...((await exists(audit)) ? { audit: moduleRef(context, audit) } : {}),
     warnings: context.warnings,
   };
 };

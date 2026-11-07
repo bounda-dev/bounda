@@ -114,6 +114,10 @@ describe("discoverProject on the order-app fixture", () => {
     const model = await discoverProject({ root: fixtureRoot });
     expect(model.root).toBe(fixtureRoot);
     expect(model.appDir).toBe("app");
+    expect(model.audit).toEqual({
+      path: join(fixtureRoot, "app", "audit.ts"),
+      relativePath: "app/audit.ts",
+    });
     expect(relativePaths(model)).toEqual({
       aggregates: [
         {
@@ -410,6 +414,24 @@ describe("discoverProject on the order-app fixture", () => {
     const model = await discoverProject({ root, appDir: "src" });
     expect(model.aggregates).toEqual([]);
     expect(model.readModels.map((readModel) => readModel.name)).toEqual(["summary"]);
+  });
+});
+
+describe("discoverProject and app/audit.ts", () => {
+  it("leaves it out of a project without one, and finds it under the app directory given", async () => {
+    const without = await discoverProject({
+      root: await project(["app/domain/order/order-placed.ts"]),
+    });
+    expect(without).not.toHaveProperty("audit");
+    const root = await project([
+      "src/domain/order/order-placed.ts",
+      ["src/audit.ts", "export const onPersonalDataAccess = () => {};\n"],
+      ["app/audit.ts", "export const onPersonalDataAccess = () => {};\n"],
+    ]);
+    expect((await discoverProject({ root, appDir: "src" })).audit).toEqual({
+      path: join(root, "src", "audit.ts"),
+      relativePath: "src/audit.ts",
+    });
   });
 });
 

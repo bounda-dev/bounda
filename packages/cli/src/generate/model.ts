@@ -107,4 +107,6 @@ export interface ProjectModel {
   readonly appDir: string;
   readonly aggregates: readonly AggregateModel[];
   readonly readModels: readonly ReadModelModel[];
+  // `app/audit.ts`, when the project has one.
+  readonly audit?: ModuleRef;
 }

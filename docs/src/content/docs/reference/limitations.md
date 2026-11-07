@@ -21,11 +21,35 @@ get today. Each item says why, so nobody discovers it the hard way:
 - **Notifications for scheduled commands.** The worker that runs due commands polls at
   `pollInterval`; only the event dispatcher is woken by `NOTIFY`. See
   [Tuning](/guides/deployment/#tuning).
+- **Every read of personal data in the access log.** See [The access log](#the-access-log).
+
+## The access log
+
+The [access log](/guides/personal-data/#who-opened-what) records what Bounda hands out through a
+client, and nothing it does not see:
+
+- **Code that reads a read model directly.** A route that opens the read model's database, or a
+  script on the tables, goes around the queries; only a query through `app.queries` is recorded.
+- **`client.raw`.** A query's `client.get` and `client.all` are watched; the driver behind
+  `client.raw` is not, so rows read through it name no one, and a query that reads only through it
+  is recorded with no persons.
+- **Rows without their person.** A query that selects columns with SQL and leaves out the
+  `person` column reads rows that name no one.
+- **Read models without personal fields.** A query of one is not recorded, even when its rows
+  hold a person's id: an id alone is what every event already carries.
+- **The global stream.** `app.events.read()` hands out events as stored, personal fields
+  encrypted, so it opens nothing and is not recorded; what decrypts them, such as a projection,
+  is the runtime's own work.
+- **What a policy sends out.** A port that mails a person their data, or a search index, records
+  what it does itself.
+
+## What it does get
 
 What a production app does get, and where it is explained:
 [rebuilding a read model](/guides/deployment/#rebuilding-a-read-model) without taking it offline,
 [forgetting a person](/guides/personal-data/) without deleting an event,
-[exporting their data](/guides/personal-data/#exporting-a-persons-data) and
+[exporting their data](/guides/personal-data/#exporting-a-persons-data), read models included,
+[recording who opened it](/guides/personal-data/#who-opened-what) and
 [restricting their processing](/guides/personal-data/#restricting-processing) without losing a
 reaction, [forgetting them](/guides/personal-data/#retention) after a retention or when a purpose
 ends, their keys [wrapped under a master key](/guides/personal-data/#a-master-key) kept out of

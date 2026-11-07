@@ -72,14 +72,15 @@ export const payload = ({ z, personal }: Event.PayloadArgs) =>
 does when the event belongs to someone else's aggregate. `app.forget("c-42")` deletes the key
 and appends `PersonalDataForgotten` to the person's own stream, and
 `app.exportPersonalData("c-42")` hands the person every marked field and every sealed error the
-store holds of them, for the right of access and the right to portability. `app.restrict("c-42")`
+store holds of them, and the rows of the read models that name them, for the right of access and
+the right to portability. `app.restrict("c-42")`
 keeps the data and refuses every command that touches the person until `unrestrict`, the GDPR's
 restriction of processing, and the reactions it refused run once it is lifted. With
 `runtime.personalData.retention` the runtime forgets whoever no event has named for that long, the
 GDPR's storage limitation, and a process that calls `forget` at its timeout forgets someone once a
 purpose of the domain ends. The [guide](/guides/personal-data/) has the rest: the types a
-forgotten field takes, what read models have to do, what an export holds, what a restriction
-refuses, how retention counts and where the keys live.
+forgotten field takes, what read models have to do, what an export holds, who opened what, what
+a restriction refuses, how retention counts and where the keys live.
 
 ## What forgetting changes for the rest of the app
 
@@ -89,7 +90,10 @@ row; a policy that sent it to the shipping provider gave it to a system of its o
 key makes the event unreadable and does nothing to those.
 
 So every read model that projects a personal field must also project `PersonalDataForgotten`,
-and the generator fails the build of one that does not. The runtime's own copies are its job:
+and the generator fails the build of one that does not. A read model says which of its columns
+are copies, with `.personal()`, and whose, with `.person()`: the person's export then carries
+those rows too, since the right of access covers everything kept about them and not only the
+log. The runtime's own copies are its job:
 [snapshots](/concepts/long-streams/#snapshots), which hold an aggregate's state in the clear,
 go with the key, in the same transaction. A policy on the same event is where the
 outside world gets told: erase the contact at the mailing provider, delete the profile the search
@@ -151,6 +155,10 @@ have work to do when it happens.
   they are forgotten; what the stream and the stores keep of a failure is the error's class and
   code. A command's payload marked `personal` is encrypted where it is stored, scheduled or
   dead-lettered, and `forget` cancels it; a payload left unmarked is not.
+- **Who read what, outside the client.** Every export, dead letter opened and query of a read
+  model with personal fields goes to an [access log](/guides/personal-data/#who-opened-what),
+  never sampled, and a read whose record cannot be kept fails. Code that reads a read model's
+  tables directly or through `client.raw` goes around it.
 - **Encrypted data under the GDPR.** Whether a ciphertext without a key still counts as personal
   data is a legal question Verraes raises and this page does not answer.
 

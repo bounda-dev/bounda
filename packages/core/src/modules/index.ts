@@ -6,6 +6,17 @@ export type {
   UnknownState,
 } from "./aggregate.ts";
 export type {
+  AuditModule,
+  DeadLetterAccess,
+  DeadLettersListAccess,
+  ExportAccess,
+  OnPersonalDataAccess,
+  OnPersonalDataAccessArgs,
+  PersonalDataAccess,
+  QueryAccess,
+} from "./audit.ts";
+export { MAX_ACCESS_PERSONS } from "./audit.ts";
+export type {
   CancelledCommand,
   PersonalDataForgottenEvent,
   PersonalDataForgottenPayload,
@@ -115,6 +126,7 @@ export type {
   Field,
   FieldBuilder,
   FieldDefinition,
+  FieldMark,
   FieldsArgs,
   FieldsRecord,
   FieldType,

@@ -5,8 +5,8 @@ sidebar:
   order: 2
 ---
 
-`bounda generate` reads `app/domain` and `app/read` by file and directory names; it imports no
-module. This page is the contract in one place. [Project layout](/guides/project-layout/) and
+`bounda generate` reads `app/domain` and `app/read` by file and directory names, and looks for
+`app/audit.ts`; it imports no module. This page is the contract in one place. [Project layout](/guides/project-layout/) and
 [Read models](/guides/read-models/) explain each kind of module with an example, and
 [Names](/guides/project-layout/#names) how a file name becomes the key and the type your code sees.
 
@@ -28,9 +28,10 @@ Names are kebab-case. `<x>` is a name you choose.
 | `app/domain/<aggregate>/processes/<process>/on-<event>.ts` | `handler` |
 | `app/domain/<aggregate>/processes/<process>/at-<deadline>.ts`, `at-timeout.ts` | `handler` |
 | `app/domain/<aggregate>/processes/<process>/<other-aggregate>/on-<event>.ts` | `handler`, for that aggregate's event |
-| `app/read/<read-model>/view.ts` | `fields` |
+| `app/audit.ts` | optional: `onPersonalDataAccess`, typed as `OnPersonalDataAccess`, where the [access log](/guides/personal-data/#who-opened-what) goes; without it, the app's logger |
+| `app/read/<read-model>/view.ts` | `fields`; `.person()` on at most one field, `.personal()` on those that hold that person's data |
 | `app/read/<read-model>/projections/<aggregate>/<event>.ts` | `project`; `on` optional |
-| `app/read/<read-model>/projections/bounda/personal-data-forgotten.ts` | `project`, required once a projection of the read model sees a field marked `personal` |
+| `app/read/<read-model>/projections/bounda/personal-data-forgotten.ts` | `project`, required once a projection of the read model sees a field marked `personal` or its view marks a field `.personal()` |
 | `app/read/<read-model>/projections/bounda/processing-restricted.ts`, `processing-restriction-lifted.ts` | `project`, optional |
 | `app/read/<read-model>/queries/<query>.ts` | `payload` (optional), `repository` (optional), `handler` |
 | `app/read/<read-model>/<port>.ts`, `infrastructure/<port>/<implementation>.ts` | as in an aggregate; only the queries' `handler` receives them |
@@ -67,10 +68,14 @@ does files that start with `_` or `.`, tests (`*.test.ts`, `*.test-d.ts`), decla
 - an aggregate or a read model whose generated types would meet others in `.bounda/types.ts`: one
   named `test` (`TestPorts` is Bounda's own), or `order-created` next to `order`.
 
-One rule is checked by the compiler rather than the generator: a read model that projects an
-event with a field marked `personal` and has no `projections/bounda/personal-data-forgotten.ts`
-fails to compile at the `<ReadModel>Forgetting` type of `.bounda/types.ts`, which says what to
-add. See [Personal data](/guides/personal-data/#handling-it-in-a-read-model).
+Some rules are checked by the compiler rather than the generator, at the `<ReadModel>Forgetting`
+type of `.bounda/types.ts`, which says what to add: a read model that projects an event with a
+field marked `personal`, or marks a field `.personal()`, and has no
+`projections/bounda/personal-data-forgotten.ts`; one that marks a field `.personal()` and none
+`.person()`; one that marks two fields `.person()`. The generated registry is checked against
+`Registry`, so an `app/audit.ts` whose `onPersonalDataAccess` is not an `OnPersonalDataAccess`
+fails to compile there. See
+[Personal data in read models](/guides/personal-data/#personal-data-in-read-models).
 
 ## What boot refuses
 
@@ -84,6 +89,9 @@ Some rules need the modules themselves, so the app checks them when it is create
 - an event of another aggregate that a process listens to and cannot assign to an instance, by an
   id field in its payload or by `correlate`;
 - a policy and a process that share a key;
+- a read model that marks two fields `.person()`, marks a field `.personal()` and none
+  `.person()`, or marks a field `.personal()` and does not project `PersonalDataForgotten`;
+- an `app/audit.ts` that does not export `onPersonalDataAccess` as a function;
 - a `payload`, `repository`, process `state` or `correlate` export that is not a function;
 - a configuration that names a port, an implementation, an aggregate or a read model that does
   not exist, or leaves out a port that has several implementations.
@@ -110,9 +118,9 @@ and not failed on:
 
 | Path | Holds |
 | --- | --- |
-| `.bounda/registry.ts` | Every module, grouped as the runtime needs it. `boot()` imports it |
+| `.bounda/registry.ts` | Every module, grouped as the runtime needs it, and `app/audit.ts` as `audit` when there is one. `boot()` imports it |
 | `.bounda/register.d.ts` | Registers the registry type and the type of the `ports` section with `@bounda-dev/core/register`, so `boot()` and `BoundaApp` are typed for the project without a type argument and `defineConfig` checks the implementation names |
-| `.bounda/types.ts` | The state, events, ports, commands, rows and queries maps the `+types` build on, and one `<ReadModel>Forgetting` check per read model that projects events |
+| `.bounda/types.ts` | The state, events, ports, commands, rows and queries maps the `+types` build on, and one `<ReadModel>Forgetting` check per read model |
 | `**/+types/<name>.ts` | The argument types each module imports. An implementation has none: it imports its port |
 
 They are derived from your code, so they are not versioned. `tsconfig.json` must include them as

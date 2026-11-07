@@ -1,6 +1,6 @@
 ---
 title: Personal data
-description: Mark the fields of an event that hold personal data, say whose they are, forget a person or export their data with one call, forget them after a retention or when a purpose ends, wrap their keys under a master key kept out of the database, and handle forgetting in every read model that showed them.
+description: Mark the fields of an event or a read model that hold personal data, say whose they are, forget a person or export their data with one call, record who opened whose data, forget them after a retention or when a purpose ends, wrap their keys under a master key kept out of the database, and handle forgetting in every read model that showed them.
 sidebar:
   order: 11
 ---
@@ -181,6 +181,10 @@ person, for them to take away, as the right of access and the right to portabili
     { id, kind: "policy", handler: "customer.welcomeOnCustomerRegistered",
       errorMessage: "no mailbox for ana@example.com", errorStack, data: {} },
   ],
+  readModels: {
+    customerDirectory: [{ key: "c-42", data: { email: "ana@example.com" } }],
+    orderSummary: [{ key: "o-9", data: {} }],
+  },
 }
 ```
 
@@ -194,24 +198,52 @@ for one the runtime scheduled itself, the scheduler's key, each with the same `d
 `errorMessage` and `errorStack` are encrypted with their key and come out opened, and the
 scheduled commands whose payload holds their fields, with its `data`. After `forget`, the
 person's events and letters are still theirs, and every field and error text reads as `null`, as
-a handler reads it. An empty id is refused with `ValidationError`.
+a handler reads it. `readModels` has an entry for every read model with a field marked
+[`.person()`](#personal-data-in-read-models): the rows whose person field holds the id, each
+with its primary key as `key`, so the person can tell them apart, and its fields marked
+`.personal()` as `data`, read through the read model's own storage, which may be another
+adapter's. An empty id is refused with `ValidationError`.
 
 Only what is marked comes out, and that is the limit to know: a field left unmarked is not
 personal data to Bounda, so the rest of `OrderPlaced` is the order's and stays out; a read model
-is a view your code builds and may hold the person in any shape, and whatever a policy sent out
-is at the mailing provider or the search index. An app that owes a person more than their marked
-fields takes this export and adds what it knows from its read models and its ports. An event
-stored before its type marked its fields names no one, so no export finds it: it holds the data
-in the clear, where `forget` does not reach it either.
+without a person field is a view Bounda cannot tell is about anyone, and whatever a policy sent
+out is at the mailing provider or the search index. An app that owes a person more than their
+marked fields takes this export and adds what it knows from its ports. An event stored before its
+type marked its fields names no one, so no export finds it: it holds the data in the clear, where
+`forget` does not reach it either.
 
 Each store keeps the person an event names in a `person` column, indexed with the position, and
 the adapters read by it with `readByPerson`; a scheduled command is found by the `persons` it
 carries, and a dead letter by its `person` or its `persons`.
 
-## Handling it in a read model
+## Personal data in read models
 
-A read model that projects an event with personal fields has those fields in its rows. It must
-project `PersonalDataForgotten` from `projections/bounda/personal-data-forgotten.ts`:
+A read model that projects an event with personal fields has copies of them in its rows. Its
+view marks them, as an event's payload does, with two methods of the field builder:
+
+```ts
+// app/read/customer-directory/view.ts
+import type { View } from "./+types/view";
+
+export const fields = ({ f }: View.FieldsArgs) => ({
+  customerId: f.string().primaryKey().person(),
+  email: f.string().optional().personal(),
+  plan: f.string(),
+});
+```
+
+`.personal()` marks a column that holds personal data; `.person()` marks the one that holds the
+id of the person the row is about, a `string` column, at most one per read model. They are
+methods of the field, next to `.index()`, because a read model's columns are declared there; a
+person who appears in many rows, such as a customer in an order summary, is marked on that
+foreign column (`customerId: f.string().index().person()`), with its own index if the export of
+a person with many rows must be fast. The marks change nothing about how the adapter stores the
+column. They do three things: the person's [export](#exporting-a-persons-data) includes the rows
+that name them, a [query](#who-opened-what) of a read model with personal fields is recorded in
+the access log, and the generator checks forgetting by them.
+
+Every read model that keeps personal data must project `PersonalDataForgotten` from
+`projections/bounda/personal-data-forgotten.ts`:
 
 ```ts
 // app/read/customer-directory/projections/bounda/personal-data-forgotten.ts
@@ -223,15 +255,74 @@ export const project = async ({ event, table }: Projection.Args) => {
 ```
 
 What it does is the read model's business: delete the row, as here, keep it without the personal
-columns by upserting it again without them, or keep a count. The
-generator checks it: `.bounda/types.ts` declares one type per read model,
-`CustomerDirectoryForgetting`, that fails to compile while the read model projects an event with
-personal fields and has no such projection, naming the read model and the file to add. A read
-model whose projections never see a personal field needs nothing.
+columns by upserting it again without them, or keep a count. The generator checks it:
+`.bounda/types.ts` declares one type per read model, `CustomerDirectoryForgetting`, that fails to
+compile, naming the read model and what to add, while the read model marks more than one field
+with `.person()`, marks fields with `.personal()` and none with `.person()`, or has fields marked
+`.personal()` or projects an event with personal fields and has no projection of
+`PersonalDataForgotten`. The app refuses to start on the same marks with `ConfigurationError`,
+for a project that skipped the type check. A read model that projects personal events and marks
+nothing is still checked for forgetting, and nothing more: Bounda cannot tell whether it kept a
+copy, and one that keeps only the order's total must not be made to mark anything. A person field
+alone holds an id, as events do, and needs no forgetting.
 
 A projection of a personal event handles `null` as well, since a rebuild replays every event, the
 forgotten ones included: a `string` column that is `NOT NULL` takes a `null` email badly, so make
 the column optional and leave it out, as the directory above does.
+
+## Who opened what
+
+Accountability asks to know who opened whose personal data. Every operation that hands out a
+person's data in the clear records it, once per call:
+
+| Operation | `persons` | `detail` |
+| --- | --- | --- |
+| `exportPersonalData` | the person | `{ events, scheduledCommands, deadLetters, readModelRows }`, how many of each |
+| `deadLetters.list` | those the letters name | `{ letters }`, how many |
+| `deadLetters.get`, `retry`, `discard` | those the letter names | `{ letter }`, its id |
+| a query of a read model with fields marked `.personal()` | those the `person` field names in the rows the query read | `{ query, readModel }` |
+
+Each record is `{ operation, actor, persons, personCount, at, detail }`: `actor` is the client's,
+from [`as`](/concepts/ids-causation-and-correlation/#who-acts), and `null` for a client that names nobody;
+`persons` names each person once, in the order read, and at most `MAX_ACCESS_PERSONS` of them,
+with `personCount` saying how many there were in all, so a query that lists every customer
+gives a bounded record; `at` is the app's clock.
+
+A query is matched to its read model by the module's place, and to its persons by the rows it
+read through its `table` or `client`, in `repository` and `handler` alike, not by its result: a
+handler that reshapes the rows into another object still handed their data out. So a query that
+reads rows and answers only a count is recorded too, with those persons, and one that only calls
+`table.count()` is recorded with none. A query that composes another records nothing of its own
+unless its read model has personal fields; the one it calls records itself, as the same actor.
+What this does not see is in [Limitations](/reference/limitations/#the-access-log).
+
+Without anything more, each record goes to the app's logger at `info`, with the message
+`personal data accessed` and the record as its fields. Where it should go instead, a log pipeline
+kept apart, a SIEM, a table in another database, is `app/audit.ts`:
+
+```ts
+// app/audit.ts
+import type { OnPersonalDataAccess } from "@bounda-dev/core";
+
+export const onPersonalDataAccess: OnPersonalDataAccess = async ({ access, env }) => {
+  await fetch(env.AUDIT_URL, { method: "POST", body: JSON.stringify(access) });
+};
+```
+
+The generator puts it in the registry, which checks it against `AuditModule`, and the app refuses
+to start when it does not export the function, so every host gets it: `boot()`, `createApp`, the
+Durable Object, React Router. It receives the record with the host's `env`, the `tenant` and the
+app's logger, as a port's `create` does. A test app never calls it: `createTestApp` sends the
+records to its `logger`, or to the `onPersonalDataAccess` the test passes. It runs after the data is read and before it is handed
+out (before a dead letter is retried or discarded), and the call waits for it. When it throws,
+the call rejects with that error and hands nothing out: data handed out without its record is
+what an access log exists to rule out, so a sink that is down stops the reads it would have
+recorded. A hook that would rather let them through catches its own failure and keeps the record
+somewhere else.
+
+The records are never sampled, unlike a trace, and nothing is written to the store by default:
+it would be a write on every read, and a record that names a person is personal data that
+`forget` would then have to reach. A logger that drops `info` drops them too.
 
 ## Telling the outside world
 

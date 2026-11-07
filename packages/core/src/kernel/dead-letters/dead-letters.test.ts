@@ -24,6 +24,7 @@ import {
   createRecordingLogger,
   type OrderProcessConfigArgs,
   orderAggregateEntry,
+  unrecordedAccess,
 } from "../test-support.ts";
 import { createDeadLetters, type DeadLetters } from "./dead-letters.ts";
 
@@ -155,6 +156,7 @@ const setUp = async () => {
     config: { runtime: { policies: { retry: { strategy: "none" } } } },
   });
   const deadLetters: DeadLetters = createDeadLetters({
+    recordAccess: unrecordedAccess,
     storage: harness.storage,
     retries: harness.retries,
     processes: harness.processes,
@@ -278,6 +280,7 @@ describe("deadLetters", () => {
       config: { runtime: { policies: { retry: { strategy: "none" }, timeout: "1h" } } },
     });
     const deadLetters = createDeadLetters({
+      recordAccess: unrecordedAccess,
       storage: harness.storage,
       retries: harness.retries,
       processes: harness.processes,
@@ -586,6 +589,7 @@ describe("deadLetters", () => {
       config: { runtime: { policies: { retry: { strategy: "none" } } } },
     });
     const deadLetters = createDeadLetters({
+      recordAccess: unrecordedAccess,
       storage: harness.storage,
       retries: harness.retries,
       processes: harness.processes,
@@ -647,6 +651,7 @@ describe("deadLetters", () => {
       config: { runtime: { policies: { retry: { strategy: "none" } } } },
     });
     const deadLetters = createDeadLetters({
+      recordAccess: unrecordedAccess,
       storage: harness.storage,
       retries: harness.retries,
       processes: harness.processes,

@@ -9,6 +9,7 @@ describe("fieldBuilder", () => {
       isPrimaryKey: false,
       isUnique: false,
       isIndexed: false,
+      mark: null,
     });
     expect(f.number().type).toBe("number");
     expect(f.boolean().type).toBe("boolean");
@@ -29,5 +30,14 @@ describe("fieldBuilder", () => {
       isPrimaryKey: false,
     });
     expect(f.string().unique().isUnique).toBe(true);
+  });
+
+  it("marks a field personal or as the person's id, keeping every other flag", () => {
+    const email = f.string().optional().personal().index();
+    expect(email).toMatchObject({ mark: "personal", isOptional: true, isIndexed: true });
+    const customerId = f.string().primaryKey().person().unique();
+    expect(customerId).toMatchObject({ mark: "person", isPrimaryKey: true, isUnique: true });
+    expect(f.json<{ street: string }>().personal().mark).toBe("personal");
+    expect(f.string().primaryKey().mark).toBeNull();
   });
 });

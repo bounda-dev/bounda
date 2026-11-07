@@ -33,6 +33,7 @@ export type {
   ExportedData,
   ExportedDeadLetter,
   ExportedEvent,
+  ExportedRow,
   ExportedScheduledCommand,
   PersonalDataExport,
 } from "./kernel/personal-data/export.ts";
