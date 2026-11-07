@@ -506,6 +506,9 @@ export type Queries = core.QueriesFacadeOf<Record<never, never>>;
     true,
     typeof import("../app/read/shipments/view.ts")
   >`);
+    expect(typesOf([projection("bounda", "processingRestricted")])).toContain(`    never,
+    false,
+    typeof import("../app/read/shipments/view.ts")`);
     expect(typesOf([])).toContain(`    never,
     false,
     typeof import("../app/read/shipments/view.ts")`);
