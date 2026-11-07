@@ -8,6 +8,12 @@ import type { ProcessDeadLetters } from "../process/dead-letter-retry.ts";
 import { createDeadLetters } from "./dead-letters.ts";
 import type { DeadLetterRetry } from "./retry.ts";
 
+interface Recorded {
+  readonly operation: string;
+  readonly detail: unknown;
+  readonly persons: RecordAccessArgs<"deadLetters.get">["persons"];
+}
+
 describe("the access log of dead letters", () => {
   it("names the person a letter's error is sealed under and those its payload holds, and nobody for a letter that names none", async () => {
     const storage = await memory().createStorage();
@@ -25,7 +31,7 @@ describe("the access log of dead letters", () => {
       ...testDeadLetter("dl-3"),
       firstFailedAt: "2026-01-01T00:02:00.000Z",
     });
-    const recorded: RecordAccessArgs<"deadLetters.list" | "deadLetters.get">[] = [];
+    const recorded: Recorded[] = [];
     const deadLetters = createDeadLetters({
       storage,
       retries: {} as DeadLetterRetry,
@@ -34,7 +40,7 @@ describe("the access log of dead letters", () => {
       logger: silentLogger,
       actor: "operator-1",
       recordAccess: async (args) => {
-        recorded.push(args as RecordAccessArgs<"deadLetters.list" | "deadLetters.get">);
+        recorded.push(args);
       },
     });
 
