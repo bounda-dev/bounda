@@ -9,6 +9,7 @@ import { ConfigurationError } from "../contracts/errors.ts";
 import { type IdGenerator, uuidV7IdGenerator } from "../contracts/ids.ts";
 import { type Logger, silentLogger } from "../contracts/logger.ts";
 import { checkActor } from "../contracts/metadata.ts";
+import type { OnPersonalDataAccess } from "../modules/audit.ts";
 import type { CommandsFacade, QueriesFacade, Registry } from "../modules/registry.ts";
 import { validateRegistry } from "../modules/validate.ts";
 import type { AppEnv, AppRegistry, EnvSection } from "../register/index.ts";
@@ -337,6 +338,11 @@ export interface AssembleAppArgs<R extends Registry> {
    * Given by `createTestApp`, whose `runUntilIdle` moves its clock to the retries waiting.
    */
   readonly pendingRetries?: PendingRetries;
+  /**
+   * Given by `createTestApp`: with `test`, the access log goes here instead of to the registry's
+   * `app/audit.ts`, and to the logger without it.
+   */
+  readonly onPersonalDataAccess?: OnPersonalDataAccess | undefined;
 }
 
 export interface AssembleAppFunction {
@@ -353,6 +359,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
   tenant,
   test,
   pendingRetries = ignoredRetries,
+  onPersonalDataAccess,
 }: AssembleAppArgs<R>): Promise<BoundaApp<R>> => {
   validateRegistry(registry);
   const config = resolveConfig(rawConfig);
@@ -422,7 +429,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       },
     });
     const recordAccess = createAccessLog({
-      hook: registry.audit?.onPersonalDataAccess,
+      hook: test === undefined ? registry.audit?.onPersonalDataAccess : onPersonalDataAccess,
       env,
       tenant,
       logger,

@@ -179,7 +179,18 @@ const setup = async () => {
     error.stack = `Error: ${message}\n    at handler`;
     return sealError({ error, person, keys: storage.personalKeys });
   };
-  return { storage, written, exportOf, register, place, sealedReminder, failure, table };
+  return {
+    storage,
+    written,
+    exportOf,
+    register,
+    place,
+    sealedReminder,
+    failure,
+    table,
+    aggregates,
+    readModels,
+  };
 };
 
 describe("exportPersonalData", () => {
@@ -428,6 +439,39 @@ describe("exportPersonalData", () => {
     expect(await exportOf("c-1", 100)).toEqual(exported);
     expect(JSON.stringify(exported)).not.toContain("bo");
     expect(JSON.stringify(exported)).not.toContain("pro");
+  });
+
+  it("rejects with the store's failure when the read models fail too, leaving none unhandled", async () => {
+    const { storage, aggregates, readModels } = await setup();
+    const down = new Error("store down");
+    const failing = Object.fromEntries(
+      Object.entries(readModels.byName).map(([name, readModel]) => [
+        name,
+        {
+          ...readModel,
+          storage: {
+            ...readModel.storage,
+            table: {
+              ...readModel.storage.table,
+              findMany: () => Promise.reject(new Error("rows down")),
+            },
+          },
+        },
+      ]),
+    );
+    await expect(
+      exportPersonalData({
+        storage: {
+          ...storage,
+          eventStore: { ...storage.eventStore, readByPerson: () => Promise.reject(down) },
+        },
+        aggregates,
+        readModels: { ...readModels, byName: failing },
+        clock: createFixedClock(),
+        batchSize: 2,
+        personId: "c-1",
+      }),
+    ).rejects.toBe(down);
   });
 
   it("reads a forgotten person's fields and error text as null", async () => {

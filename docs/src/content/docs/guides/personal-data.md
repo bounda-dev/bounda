@@ -312,7 +312,8 @@ export const onPersonalDataAccess: OnPersonalDataAccess = async ({ access, env }
 The generator puts it in the registry, which checks it against `AuditModule`, and the app refuses
 to start when it does not export the function, so every host gets it: `boot()`, `createApp`, the
 Durable Object, React Router. It receives the record with the host's `env`, the `tenant` and the
-app's logger, as a port's `create` does. It runs after the data is read and before it is handed
+app's logger, as a port's `create` does. A test app never calls it: `createTestApp` sends the
+records to its `logger`, or to the `onPersonalDataAccess` the test passes. It runs after the data is read and before it is handed
 out (before a dead letter is retried or discarded), and the call waits for it. When it throws,
 the call rejects with that error and hands nothing out: data handed out without its record is
 what an access log exists to rule out, so a sink that is down stops the reads it would have

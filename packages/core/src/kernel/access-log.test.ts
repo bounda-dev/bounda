@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { Table } from "../adapter/storage/table.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
+import { memory } from "../memory/index.ts";
 import { MAX_ACCESS_PERSONS, type OnPersonalDataAccessArgs } from "../modules/audit.ts";
 import type { EventPayloadArgs, PayloadArgs } from "../modules/payload.ts";
 import type { Registry } from "../modules/registry.ts";
 import type { FieldsArgs } from "../modules/view.ts";
 import { createTestApp } from "../testing/index.ts";
+import { createApp } from "./app.ts";
 import { createRecordingLogger } from "./test-support.ts";
 
 interface CustomerRow {
@@ -135,10 +137,10 @@ const registryWith = (audit?: Registry["audit"]) =>
 const setUp = async () => {
   const records: OnPersonalDataAccessArgs[] = [];
   const sink = { failing: false };
+  // The project's app/audit.ts, which a test app leaves alone.
   const registry = registryWith({
-    onPersonalDataAccess: async (args) => {
-      if (sink.failing) throw new Error("audit sink down");
-      records.push(args);
+    onPersonalDataAccess: () => {
+      throw new Error("app/audit.ts called from a test app");
     },
   });
   const test = await createTestApp({
@@ -146,6 +148,10 @@ const setUp = async () => {
     config: { runtime: { policies: { retry: { strategy: "none" } } } },
     env: { AUDIT_URL: "https://audit.example" },
     tenant: "shop-1",
+    onPersonalDataAccess: async (args) => {
+      if (sink.failing) throw new Error("audit sink down");
+      records.push(args);
+    },
   });
   const register = async (customerId: string, plan = "pro") => {
     await test.app.commands.registerCustomer({
@@ -338,10 +344,29 @@ describe("the access log", () => {
     );
   });
 
-  it("goes to the app's logger at info without app/audit.ts", async () => {
+  it("goes to app/audit.ts in an app that is not a test's", async () => {
+    const records: OnPersonalDataAccessArgs[] = [];
+    const app = await createApp({
+      registry: registryWith({
+        onPersonalDataAccess: (args) => {
+          records.push(args);
+        },
+      }),
+      config: { storage: memory() },
+    });
+    await app.as("operator-1").exportPersonalData("ana");
+    expect(records.map(({ access }) => access.operation)).toEqual(["exportPersonalData"]);
+    await app.stop();
+  });
+
+  it("goes to the app's logger at info without app/audit.ts, and in a test app without a hook of the test's", async () => {
     const { logger, entries } = createRecordingLogger();
     const { app } = await createTestApp({
-      registry: registryWith(),
+      registry: registryWith({
+        onPersonalDataAccess: () => {
+          throw new Error("app/audit.ts called from a test app");
+        },
+      }),
       config: { runtime: { policies: { retry: { strategy: "none" } } } },
       logger,
     });

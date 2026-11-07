@@ -160,6 +160,20 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
 }) => {
   checkPersonId(personId, "exportPersonalData");
   const exportedAt = clock.now().toISOString();
+  // Independent of the store's records, and often on another adapter, so read meanwhile; a
+  // failure of the store's reads first leaves this one handled, the export rejecting with that.
+  const rows = Promise.all(
+    Object.values(readModels.byName).flatMap(({ name, storage: rowsStorage, personalData }) =>
+      personalData === null
+        ? []
+        : [
+            exportedRows(rowsStorage, personalData, personId, batchSize).then(
+              (exported) => [name, exported] as const,
+            ),
+          ],
+    ),
+  );
+  rows.catch(() => undefined);
   const eventMarks = (event: StoredEvent): PersonalMarks | null =>
     aggregates.byName[event.aggregateType]?.eventsByType[event.type]?.personal ?? null;
   const commandMarks = (type: string): PersonalMarks | null =>
@@ -222,23 +236,12 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
   const deadLetters = await Promise.all(
     (await storage.deadLetterStore.listByPerson(personId)).map(exportedLetter),
   );
-  const rows = await Promise.all(
-    Object.values(readModels.byName).flatMap(({ name, storage: rowsStorage, personalData }) =>
-      personalData === null
-        ? []
-        : [
-            exportedRows(rowsStorage, personalData, personId, batchSize).then(
-              (exported) => [name, exported] as const,
-            ),
-          ],
-    ),
-  );
   return {
     personId,
     exportedAt,
     events,
     scheduledCommands,
     deadLetters,
-    readModels: Object.fromEntries(rows),
+    readModels: Object.fromEntries(await rows),
   };
 };

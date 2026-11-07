@@ -7,6 +7,7 @@ import { type Logger, silentLogger } from "../contracts/logger.ts";
 import { assembleApp, type BoundaApp } from "../kernel/app.ts";
 import { createPendingRetries } from "../kernel/shared/pending-retries.ts";
 import { memory } from "../memory/index.ts";
+import type { OnPersonalDataAccess } from "../modules/audit.ts";
 import type { Registry } from "../modules/registry.ts";
 import type { AppPortsConfig, AppTestPorts, EnvSection } from "../register/index.ts";
 
@@ -44,6 +45,11 @@ export type CreateTestAppArgs<R extends Registry> = {
    * `tenant`, as it would in that tenant's Durable Object. Left out, it receives none.
    */
   readonly tenant?: string;
+  /**
+   * Where the access log goes, in place of the project's `app/audit.ts`, which a test app never
+   * calls, as it reaches no port the test did not ask for. Left out, the records go to `logger`.
+   */
+  readonly onPersonalDataAccess?: OnPersonalDataAccess;
 } & EnvSection<R>;
 
 /**
@@ -89,6 +95,7 @@ export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
   now,
   env = {},
   tenant,
+  onPersonalDataAccess,
 }: CreateTestAppArgs<R>): Promise<TestApp<R>> => {
   const clock = createFixedClock(now);
   const ids = createSequentialIdGenerator();
@@ -106,6 +113,7 @@ export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
     env,
     tenant,
     pendingRetries: createPendingRetries(clock),
+    onPersonalDataAccess,
     test: {
       ports,
       onMissing: (error) => {
