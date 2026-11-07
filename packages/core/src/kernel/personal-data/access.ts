@@ -37,8 +37,13 @@ export interface CreateAccessLogFunction {
   (args: CreateAccessLogArgs): RecordAccess;
 }
 
-export const createAccessLog: CreateAccessLogFunction = ({ hook, env, tenant, logger, clock }) =>
-  (async ({ operation, detail, actor, persons }) => {
+export const createAccessLog: CreateAccessLogFunction = ({ hook, env, tenant, logger, clock }) => {
+  const recordAccess = async <Op extends Operation>({
+    operation,
+    detail,
+    actor,
+    persons,
+  }: RecordAccessArgs<Op>): Promise<void> => {
     const distinct = [...new Set(persons)];
     const access = {
       operation,
@@ -53,4 +58,6 @@ export const createAccessLog: CreateAccessLogFunction = ({ hook, env, tenant, lo
       return;
     }
     await hook({ access, env, ...(tenant === undefined ? {} : { tenant }), logger });
-  }) as RecordAccess;
+  };
+  return recordAccess;
+};
