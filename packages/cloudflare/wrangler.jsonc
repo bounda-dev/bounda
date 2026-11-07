@@ -11,12 +11,14 @@
       { "name": "QUIET_STORE", "class_name": "QuietStore" },
       { "name": "SLICED_STORE", "class_name": "SlicedStore" },
       { "name": "REGION_STORE", "class_name": "RegionStore" },
+      { "name": "RETAINED_STORE", "class_name": "RetainedStore" },
       { "name": "BARE", "class_name": "Bare" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["Store", "QuietStore", "SlicedStore", "Bare"] },
     { "tag": "v2", "new_sqlite_classes": ["ProcessStore"] },
-    { "tag": "v3", "new_sqlite_classes": ["RegionStore"] }
+    { "tag": "v3", "new_sqlite_classes": ["RegionStore"] },
+    { "tag": "v4", "new_sqlite_classes": ["RetainedStore"] }
   ]
 }

@@ -1,7 +1,8 @@
 /**
  * What the runtime keeps of a person apart from their key: whether the processing of their data
- * is restricted, and since when. A row outlives its restriction, and a person without a key has
- * one all the same.
+ * is restricted, and since when, and, while a retention is configured, when they were last active
+ * and last forgotten. A row outlives its restriction, and a person without a key has one all the
+ * same.
  */
 export interface StoredPerson {
   readonly person: string;
@@ -10,12 +11,45 @@ export interface StoredPerson {
    * restricted.
    */
   readonly restrictedSince: string | null;
+  /**
+   * The timestamp of the last event of the app's aggregates that named them, as recorded; `null`
+   * when none has been.
+   */
+  readonly lastActiveAt: string | null;
+  /**
+   * The timestamp of the `PersonalDataForgotten` recorded after their last activity; `null` when
+   * an event of theirs came after it, or none was recorded.
+   */
+  readonly forgottenAt: string | null;
 }
 
 /**
- * The persons the runtime knows something about, one row each. Every write answers whether it
- * changed the row, so restricting twice or lifting without a restriction is told apart from the
- * first time, and the caller appends the event of the change only once.
+ * What a run of events said about one person, recorded at once: `position` is that of the last of
+ * those events.
+ */
+export interface PersonActivity {
+  readonly person: string;
+  readonly position: number;
+  /**
+   * Absent when none of the events was an event of the app's aggregates, which leaves
+   * `lastActiveAt` as it was.
+   */
+  readonly lastActiveAt?: string;
+  readonly forgottenAt: string | null;
+}
+
+export interface ListIdleArgs {
+  /**
+   * Only the persons last active at or before it; every one when omitted.
+   */
+  readonly activeBefore?: Date;
+  readonly limit: number;
+}
+
+/**
+ * The persons the runtime knows something about, one row each. Every restriction write answers
+ * whether it changed the row, so restricting twice or lifting without a restriction is told apart
+ * from the first time, and the caller appends the event of the change only once.
  */
 export interface PersonStore {
   get(person: string): Promise<StoredPerson | null>;
@@ -30,4 +64,15 @@ export interface PersonStore {
    * or not, and creates no row for them.
    */
   unrestrict(person: string): Promise<boolean>;
+  /**
+   * Records what events said about the person, creating the row when the person is new, unless
+   * the row already records an event at `position` or later: a run recorded again, or late, by a
+   * subscriber that lost its checkpoint to another, changes nothing.
+   */
+  record(activity: PersonActivity): Promise<void>;
+  /**
+   * The persons a retention may forget, least recently active first: active once, not forgotten
+   * since, and not restricted.
+   */
+  listIdle(args: ListIdleArgs): Promise<readonly StoredPerson[]>;
 }

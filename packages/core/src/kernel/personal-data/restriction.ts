@@ -1,7 +1,6 @@
 import type { Storage, StorageTransaction } from "../../adapter/adapter.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { StoredDispatch } from "../../contracts/command.ts";
-import { ConcurrencyError, ValidationError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
@@ -14,6 +13,7 @@ import {
 } from "../../modules/bounda-events.ts";
 import { RETRY_RESTRICTED_COMMAND, retryRestrictedKey } from "../command/pipeline.ts";
 import { appendSystemEvent } from "../system-events.ts";
+import { checkPersonId, transactRetrying } from "./transact.ts";
 
 export interface ProcessingRestrictionArgs {
   readonly storage: Storage;
@@ -48,55 +48,49 @@ const change = async (
   { storage, ids, clock, logger, concurrencyRetries, personId }: ProcessingRestrictionArgs,
   { subject, type, logged, apply, after }: Change,
 ): Promise<StoredDispatch> => {
-  if (typeof personId !== "string" || personId === "") {
-    throw new ValidationError(`${subject} needs the id of the person`, [
-      { path: ["personId"], message: "Expected a non-empty string" },
-    ]);
-  }
+  checkPersonId(personId, subject);
   const correlationId = ids.next();
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      const { changed, version, event } = await storage.transact(async (transaction) => {
-        const now = clock.now();
-        if (!(await apply(transaction, now))) {
-          const { version } = await transaction.eventStore.load({
-            aggregateType: BOUNDA_AGGREGATE,
-            aggregateId: personId,
-            fromVersion: Number.MAX_SAFE_INTEGER,
-          });
-          return { changed: false, version, event: null };
-        }
-        const payload: ProcessingRestrictedPayload | ProcessingRestrictionLiftedPayload = {
-          personId,
-        };
-        const event = await appendSystemEvent({
-          eventStore: transaction.eventStore,
-          ids,
-          clock,
+  const { changed, version, event } = await transactRetrying({
+    storage,
+    concurrencyRetries,
+    work: async (transaction) => {
+      const now = clock.now();
+      if (!(await apply(transaction, now))) {
+        const { version } = await transaction.eventStore.load({
           aggregateType: BOUNDA_AGGREGATE,
           aggregateId: personId,
-          type,
-          payload,
-          person: personId,
-          context: { correlationId, causationId: correlationId, depth: 0 },
+          fromVersion: Number.MAX_SAFE_INTEGER,
         });
-        await after?.(transaction, event);
-        return { changed: true, version: event.version, event };
-      });
-      logger.info(logged, { personId, changed });
-      return {
-        scheduled: false,
+        return { changed: false, version, event: null };
+      }
+      const payload: ProcessingRestrictedPayload | ProcessingRestrictionLiftedPayload = {
+        personId,
+      };
+      const event = await appendSystemEvent({
+        eventStore: transaction.eventStore,
+        ids,
+        clock,
         aggregateType: BOUNDA_AGGREGATE,
         aggregateId: personId,
-        version,
-        eventIds: event === null ? [] : [event.id],
-        eventTypes: event === null ? [] : [event.type],
-        position: event?.position ?? 0,
-      };
-    } catch (error) {
-      if (!(error instanceof ConcurrencyError) || attempt >= concurrencyRetries) throw error;
-    }
-  }
+        type,
+        payload,
+        person: personId,
+        context: { correlationId, causationId: correlationId, depth: 0 },
+      });
+      await after?.(transaction, event);
+      return { changed: true, version: event.version, event };
+    },
+  });
+  logger.info(logged, { personId, changed });
+  return {
+    scheduled: false,
+    aggregateType: BOUNDA_AGGREGATE,
+    aggregateId: personId,
+    version,
+    eventIds: event === null ? [] : [event.id],
+    eventTypes: event === null ? [] : [event.type],
+    position: event?.position ?? 0,
+  };
 };
 
 /**

@@ -9,6 +9,7 @@ export type {
   CancelledCommand,
   PersonalDataForgottenEvent,
   PersonalDataForgottenPayload,
+  PersonalDataForgottenReason,
   ProcessingRestrictedEvent,
   ProcessingRestrictedPayload,
   ProcessingRestrictionLiftedEvent,
@@ -64,7 +65,7 @@ export type {
   PersonFunction,
   PersonSchema,
 } from "./personal.ts";
-export type { PolicyHandlerArgs, PolicyModule } from "./policy.ts";
+export type { PolicyHandlerArgs, PolicyModule, ReactionForgetFunction } from "./policy.ts";
 export type {
   CreateArgs,
   CreateImplementation,

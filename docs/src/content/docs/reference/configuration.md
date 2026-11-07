@@ -102,6 +102,17 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
   command changed, and how often it looks while another process holds them. Past `timeout` it logs a
   warning and the request reads what is there.
 
+### Personal data
+
+- **`personalData.retention`**, none by default. How long a person may go without an event of the
+  app's aggregates naming them before the runtime forgets them, as `forget` does, with `reason:
+  "retention"`. Without it nobody is forgotten for inactivity and nothing is recorded for it. A
+  person whose processing is restricted is left alone until it is lifted; one active again after
+  being forgotten starts a new clock. Turning it on applies it to the history: whoever was already
+  inactive for that long is forgotten in the first passes. It is app-wide and has no override per aggregate: a person's
+  events span aggregates, so their inactivity is one clock, not one per aggregate. See
+  [retention](/guides/personal-data/#retention).
+
 ### Per aggregate
 
 - **`overrides`**, default `{}`. Settings for one aggregate, by aggregate name: `commands.timeout`,

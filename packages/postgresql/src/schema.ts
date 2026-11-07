@@ -164,8 +164,13 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
   )`,
   `CREATE TABLE IF NOT EXISTS ${tables.persons} (
     "person" text PRIMARY KEY,
-    "restricted_since" text
+    "restricted_since" text,
+    "position" bigint NOT NULL DEFAULT 0,
+    "last_active_at" text,
+    "forgotten_at" text
   )`,
+  // What a retention sweep reads, least recently active first.
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.persons, "idle")} ON ${tables.persons} ("last_active_at", "person") WHERE "last_active_at" IS NOT NULL AND "forgotten_at" IS NULL AND "restricted_since" IS NULL`,
   `CREATE TABLE IF NOT EXISTS ${tables.snapshots} (
     "aggregate_type" text NOT NULL,
     "aggregate_id" text NOT NULL,
@@ -216,6 +221,7 @@ export const ensureStorageSchema: EnsureStorageSchemaFunction = async ({ db, sch
     indexName(tables.scheduledCommands, "unclaimed"),
     indexName(tables.scheduledCommands, "claimed_at"),
     indexName(tables.idempotencyKeys, "expires_at"),
+    indexName(tables.persons, "idle"),
     indexName(tables.snapshots, "persons"),
     indexName(tables.idempotencyKeys, "persons"),
     indexName(tables.scheduledCommands, "persons"),

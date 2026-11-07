@@ -52,7 +52,12 @@ describe("forgetPersonalData", () => {
         version: 1,
         position: 1,
         type: "PersonalDataForgotten",
-        payload: { personId: "c-1", cancelledCommands: [], removedDeadLetters: [] },
+        payload: {
+          personId: "c-1",
+          reason: "requested",
+          cancelledCommands: [],
+          removedDeadLetters: [],
+        },
         timestamp: "2026-01-01T00:00:00.000Z",
         metadata: {
           correlationId: "id-1",
@@ -67,7 +72,13 @@ describe("forgetPersonalData", () => {
     expect(logs).toContainEqual({
       level: "info",
       message: "personal data forgotten",
-      fields: { personId: "c-1", hadKey: true, cancelledCommands: 0, removedDeadLetters: 0 },
+      fields: {
+        personId: "c-1",
+        reason: "requested",
+        hadKey: true,
+        cancelledCommands: 0,
+        removedDeadLetters: 0,
+      },
     });
   });
 
@@ -77,8 +88,20 @@ describe("forgetPersonalData", () => {
     expect((await forget("c-2")).version).toBe(2);
     expect(await storage.eventStore.lastPosition()).toBe(2);
     expect(logs.map((entry) => entry.fields)).toEqual([
-      { personId: "c-2", hadKey: false, cancelledCommands: 0, removedDeadLetters: 0 },
-      { personId: "c-2", hadKey: false, cancelledCommands: 0, removedDeadLetters: 0 },
+      {
+        personId: "c-2",
+        reason: "requested",
+        hadKey: false,
+        cancelledCommands: 0,
+        removedDeadLetters: 0,
+      },
+      {
+        personId: "c-2",
+        reason: "requested",
+        hadKey: false,
+        cancelledCommands: 0,
+        removedDeadLetters: 0,
+      },
     ]);
   });
 
@@ -107,6 +130,7 @@ describe("forgetPersonalData", () => {
     const [event] = await storage.eventStore.readAll({ afterPosition: 0, limit: 10 });
     expect(event?.payload).toEqual({
       personId: "c-1",
+      reason: "requested",
       cancelledCommands: [
         { commandId: "cmd-1", type: "RemindCustomer" },
         { commandId: "deadline:x", type: "RemindCustomer" },
@@ -119,6 +143,7 @@ describe("forgetPersonalData", () => {
     expect((await storage.deadLetterStore.list()).map((letter) => letter.id)).toEqual(["dl-2"]);
     expect(logs.at(-1)?.fields).toEqual({
       personId: "c-1",
+      reason: "requested",
       hadKey: false,
       cancelledCommands: 2,
       removedDeadLetters: 1,
@@ -128,7 +153,7 @@ describe("forgetPersonalData", () => {
   it("refuses an empty id", async () => {
     const { storage, forget } = await setup();
     await expect(forget("")).rejects.toThrow(
-      new ValidationError("forget needs the id of the person to forget", [
+      new ValidationError("forget needs the id of the person", [
         { path: ["personId"], message: "Expected a non-empty string" },
       ]),
     );

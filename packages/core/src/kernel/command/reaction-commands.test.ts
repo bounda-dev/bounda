@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import type { Storage } from "../../adapter/adapter.ts";
 import { ValidationError } from "../../contracts/errors.ts";
+import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { createReactionCommandIds } from "../shared/idempotency-key.ts";
 import {
@@ -30,9 +32,17 @@ const setUp = async (registry: Registry = orderRegistry) => {
     idempotencyKey: "key-1",
     within: unit,
     logger,
+    ids: createSequentialIdGenerator(),
+    clock: harness.clock,
+    maxChainDepth: 5,
   });
   return { ...harness, reaction, unit, entries };
 };
+
+const forgottenEvents = async (storage: Storage) =>
+  (await storage.eventStore.readAll({ afterPosition: 0, limit: 50 })).filter(
+    (event) => event.type === "PersonalDataForgotten",
+  );
 
 describe("createReactionCommands", () => {
   it("dispatches one causal hop deeper, with ids derived from the idempotency key", async () => {
@@ -311,5 +321,87 @@ describe("createReactionCommands", () => {
       aggregateId: "o-1",
       executeAt: expect.any(String),
     });
+  });
+
+  it("forgets a person when the unit commits, once however often the run names them", async () => {
+    const { reaction, storage, unit, entries } = await setUp();
+    await storage.personalKeys.add("c-1", { key: "k", fingerprint: "f" });
+    await reaction.forget("c-1");
+    await reaction.forget("c-1");
+    expect(await storage.personalKeys.get("c-1")).not.toBeNull();
+    expect(await forgottenEvents(storage)).toEqual([]);
+    await unit.commit();
+
+    expect(await storage.personalKeys.get("c-1")).toBeNull();
+    const [forgotten, ...more] = await forgottenEvents(storage);
+    expect(more).toEqual([]);
+    expect(forgotten).toMatchObject({
+      aggregateType: "bounda",
+      aggregateId: "c-1",
+      person: "c-1",
+      payload: {
+        personId: "c-1",
+        reason: "requested",
+        cancelledCommands: [],
+        removedDeadLetters: [],
+      },
+      metadata: { correlationId: "req-1", causationId: "evt-1", depth: 5, system: true },
+    });
+    expect(entries).toContainEqual({
+      level: "info",
+      message: "personal data forgotten",
+      fields: {
+        personId: "c-1",
+        reason: "requested",
+        hadKey: true,
+        cancelledCommands: 0,
+        removedDeadLetters: 0,
+      },
+    });
+  });
+
+  it("forgets nobody for a unit that never commits", async () => {
+    const { reaction, storage } = await setUp();
+    await storage.personalKeys.add("c-1", { key: "k", fingerprint: "f" });
+    await reaction.forget("c-1");
+    expect(await storage.personalKeys.get("c-1")).not.toBeNull();
+    expect(await forgottenEvents(storage)).toEqual([]);
+  });
+
+  it("refuses to forget an empty id, and once the run is abandoned or has finished", async () => {
+    const { reaction } = await setUp();
+    await expect(reaction.forget("")).rejects.toThrow(
+      new ValidationError("forget needs the id of the person", [
+        { path: ["personId"], message: "Expected a non-empty string" },
+      ]),
+    );
+    await reaction.decided();
+    await expect(reaction.forget("c-1")).rejects.toMatchObject({
+      name: "ReactionFinishedError",
+      command: "forget",
+      message: "forget was called after its run had finished: call it while the handler runs",
+    });
+
+    const harness = await setUp();
+    const deep = createReactionCommands({
+      aggregates: harness.aggregates,
+      pipeline: harness.pipeline,
+      context: { ...context, depth: 5 },
+      idempotencyKey: "key-2",
+      within: harness.unit,
+      logger: createRecordingLogger().logger,
+      ids: createSequentialIdGenerator(),
+      clock: harness.clock,
+      maxChainDepth: 5,
+    });
+    await expect(deep.forget("c-1")).rejects.toMatchObject({
+      code: "CHAIN_DEPTH_EXCEEDED",
+      depth: 6,
+      maxDepth: 5,
+    });
+
+    const abandoned = (await setUp()).reaction;
+    abandoned.abandon(new Error("boom"));
+    await expect(abandoned.forget("c-1")).rejects.toThrow(ReactionAbandonedError);
   });
 });

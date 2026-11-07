@@ -3,6 +3,7 @@ import type {
   ProcessStore,
   QuietStore,
   RegionStore,
+  RetainedStore,
   SlicedStore,
   Store,
 } from "./test-worker.ts";
@@ -15,6 +16,7 @@ declare global {
       readonly QUIET_STORE: DurableObjectNamespace<InstanceType<typeof QuietStore>>;
       readonly SLICED_STORE: DurableObjectNamespace<InstanceType<typeof SlicedStore>>;
       readonly REGION_STORE: DurableObjectNamespace<InstanceType<typeof RegionStore>>;
+      readonly RETAINED_STORE: DurableObjectNamespace<InstanceType<typeof RetainedStore>>;
       readonly BARE: DurableObjectNamespace<Bare>;
       readonly STORE_REGION: string;
     }

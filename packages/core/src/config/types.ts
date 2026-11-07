@@ -125,6 +125,20 @@ export interface DispatcherConfig {
 }
 
 /**
+ * Runtime settings for personal data. App-wide only: a person's events span aggregates, so their
+ * inactivity is one clock, not one per aggregate.
+ */
+export interface PersonalDataConfig {
+  /**
+   * How long a person may go without an event of the app's aggregates naming them before the
+   * runtime forgets them, as `forget` does, with `reason: "retention"`. A person whose processing
+   * is restricted is left alone until it is lifted, and one active again after being forgotten
+   * starts a new clock. No default: without it nobody is forgotten for inactivity.
+   */
+  readonly retention?: DurationInput;
+}
+
+/**
  * The `backoff` of the dispatcher's settings.
  */
 export interface BackoffConfig {
@@ -194,6 +208,7 @@ export interface RuntimeConfig {
   readonly policies?: PoliciesConfig;
   readonly processes?: ProcessesConfig;
   readonly dispatcher?: DispatcherConfig;
+  readonly personalData?: PersonalDataConfig;
   readonly overrides?: Readonly<Record<string, AggregateOverrides>>;
 }
 
@@ -284,6 +299,12 @@ export interface ResolvedConfig {
       readonly projectionBatchTimeMs: number;
       readonly backoff: { readonly baseDelayMs: number; readonly maxDelayMs: number };
       readonly catchUp: { readonly timeoutMs: number; readonly pollIntervalMs: number };
+    };
+    readonly personalData: {
+      /**
+       * `null` when no retention is configured.
+       */
+      readonly retentionMs: number | null;
     };
     readonly overrides: Readonly<Record<string, ResolvedAggregateRuntime>>;
   };

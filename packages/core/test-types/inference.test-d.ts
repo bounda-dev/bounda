@@ -38,6 +38,7 @@ import type {
   PersonalDataExport,
   PersonalDataForgottenEvent,
   PersonalDataForgottenPayload,
+  PersonalDataForgottenReason,
   PersonalFunction,
   PersonFunction,
   ProcessCorrelation,
@@ -47,6 +48,7 @@ import type {
   ProcessingRestrictionLiftedPayload,
   QueriesFacade,
   ReactionDispatchResult,
+  ReactionForgetFunction,
   ReadClient,
   ReadEventsArgs,
   RejectedDispatch,
@@ -360,6 +362,22 @@ describe("idempotency keys", () => {
     expectTypeOf<PayOrder.HandlerArgs["signal"]>().toEqualTypeOf<AbortSignal>();
   });
 
+  it("lets policies and processes forget a person with their run, and no command handler", () => {
+    expectTypeOf<ReactionForgetFunction>().toEqualTypeOf<(personId: string) => Promise<void>>();
+    expectTypeOf<SendReceipt.HandlerArgs["forget"]>().toEqualTypeOf<ReactionForgetFunction>();
+    expectTypeOf<
+      NotifyOnOrderPlaced.HandlerArgs["forget"]
+    >().toEqualTypeOf<ReactionForgetFunction>();
+    expectTypeOf<
+      AuditOnPersonalDataForgotten.HandlerArgs["forget"]
+    >().toEqualTypeOf<ReactionForgetFunction>();
+    expectTypeOf<OnOrderPaid.HandlerArgs["forget"]>().toEqualTypeOf<ReactionForgetFunction>();
+    expectTypeOf<AtTimeout.DeadlineArgs["forget"]>().toEqualTypeOf<ReactionForgetFunction>();
+    expectTypeOf<AtNextReminder.DeadlineArgs["forget"]>().toEqualTypeOf<ReactionForgetFunction>();
+    expectTypeOf<PlaceOrder.HandlerArgs>().not.toHaveProperty("forget");
+    expectTypeOf<PayOrder.HandlerArgs>().not.toHaveProperty("forget");
+  });
+
   it("derive one per effect from the key a handler receives", () => {
     expectTypeOf(idempotencyKeyFor).toEqualTypeOf<
       (idempotencyKey: string, effect: string) => string
@@ -536,9 +554,14 @@ describe("personal data", () => {
     expectTypeOf<ProjectForgotten.Args["event"]["type"]>().toEqualTypeOf<"PersonalDataForgotten">();
     expectTypeOf<PersonalDataForgottenPayload>().toEqualTypeOf<{
       readonly personId: string;
+      readonly reason: PersonalDataForgottenReason;
       readonly cancelledCommands: readonly CancelledCommand[];
       readonly removedDeadLetters: readonly RemovedDeadLetter[];
     }>();
+    expectTypeOf<PersonalDataForgottenReason>().toEqualTypeOf<"requested" | "retention">();
+    expectTypeOf<
+      AuditOnPersonalDataForgotten.HandlerArgs["event"]["payload"]["reason"]
+    >().toEqualTypeOf<"requested" | "retention">();
     expectTypeOf<CancelledCommand>().toEqualTypeOf<{
       readonly commandId: string;
       readonly type: string;

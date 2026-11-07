@@ -107,6 +107,7 @@ const runtime = z.strictObject({
         .optional(),
     })
     .optional(),
+  personalData: z.strictObject({ retention: timeout.optional() }).optional(),
   overrides: z.record(z.string(), overrides).optional(),
 });
 
@@ -237,6 +238,7 @@ export const resolveConfig: ResolveConfigFunction = (config) => {
             parsed.runtime?.dispatcher?.catchUp?.pollInterval ?? DEFAULT_CATCH_UP_POLL_MS,
         },
       },
+      personalData: { retentionMs: parsed.runtime?.personalData?.retention ?? null },
       overrides: resolvedOverrides,
     },
     ports: parsed.ports ?? {},

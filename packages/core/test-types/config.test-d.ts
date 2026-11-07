@@ -174,6 +174,20 @@ describe("defineConfig", () => {
       // @ts-expect-error idempotencyKeyLifetime is not overridden per aggregate
       runtime: { overrides: { order: { commands: { idempotencyKeyLifetime: "1h" } } } },
     });
+    defineConfig({ storage: sqlite, ports, runtime: { personalData: { retention: "30d" } } });
+    defineConfig({ storage: sqlite, ports, runtime: { personalData: { retention: 86_400_000 } } });
+    defineConfig({
+      storage: sqlite,
+      ports,
+      // @ts-expect-error "a month" is not a duration string
+      runtime: { personalData: { retention: "a month" } },
+    });
+    defineConfig({
+      storage: sqlite,
+      ports,
+      // @ts-expect-error the retention is app-wide, never per aggregate
+      runtime: { overrides: { order: { personalData: { retention: "30d" } } } },
+    });
     // @ts-expect-error batch is not a role
     defineConfig({ storage: sqlite, ports, runtime: { role: "batch" } });
     defineConfig({

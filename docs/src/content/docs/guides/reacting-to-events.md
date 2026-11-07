@@ -202,6 +202,10 @@ outside world before dispatching, not after, and pass `idempotencyKey`, because 
 again. [Your event store is your outbox](/concepts/event-store-as-outbox/#what-one-attempt-is) lists
 what the transaction holds, how the claim and its lease work, and what stays outside.
 
+**A reaction can forget a person.** Policy and process handlers receive `forget(personId)`, which
+forgets them as `app.forget` does, in the attempt's transaction, so a run retried forgets once. It
+is how a process ends a purpose at its timeout ([retention](/guides/personal-data/#retention)).
+
 **Every reaction gets an idempotency key.** Policy and process handlers receive `idempotencyKey`, a
 UUID that is the same on every automatic retry of the handler for one event (for an `at-` handler,
 for one deadline at one moment) and new each time an operator retries the dead letter, so a provider

@@ -133,8 +133,13 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
   )`,
   `CREATE TABLE IF NOT EXISTS ${tables.persons} (
     "person" TEXT PRIMARY KEY,
-    "restricted_since" TEXT
+    "restricted_since" TEXT,
+    "position" INTEGER NOT NULL DEFAULT 0,
+    "last_active_at" TEXT,
+    "forgotten_at" TEXT
   )`,
+  // What a retention sweep reads, least recently active first.
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.persons, "idle")} ON ${tables.persons} ("last_active_at", "person") WHERE "last_active_at" IS NOT NULL AND "forgotten_at" IS NULL AND "restricted_since" IS NULL`,
   `CREATE TABLE IF NOT EXISTS ${tables.snapshots} (
     "aggregate_type" TEXT NOT NULL,
     "aggregate_id" TEXT NOT NULL,

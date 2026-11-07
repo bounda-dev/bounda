@@ -37,4 +37,17 @@ export type PolicyHandlerArgs<Event, Commands, Ports extends object = EmptyPaylo
    * those dispatched after that are refused, both with `REACTION_ABANDONED`.
    */
   readonly signal: AbortSignal;
+  /**
+   * Forgets a person, as `forget` on the app does, with the commands of this run: when its
+   * attempt commits, in the same transaction, once however often the attempt runs. Resolves at
+   * once; rejects with `ValidationError` an empty id.
+   */
+  readonly forget: ReactionForgetFunction;
 } & Readonly<Ports>;
+
+/**
+ * `forget` in the arguments of a policy or process handler.
+ */
+export interface ReactionForgetFunction {
+  (personId: string): Promise<void>;
+}

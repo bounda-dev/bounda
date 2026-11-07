@@ -55,6 +55,12 @@ The storefront's `at-timeout.ts` cancels the order, and the `OrderCancelled` it 
 `on-order-cancelled.ts`, which cancels the payment, exactly as for a cancellation from anywhere
 else. The compensation is written once.
 
+A timeout is also how the domain ends a purpose. "Forget the customer 30 days after their account
+closed, unless it reopens" is a process started by `AccountClosed`, completed by
+`AccountReopened`, with a `timeout` of `"30d"` and an `at-timeout.ts` that calls `forget`: a
+reopening ends the process before its timeout, and no erasure has to be cancelled
+([retention](/guides/personal-data/#retention)).
+
 ## What it buys
 
 - **Nothing to keep in sync.** The state is the only record of what is due. A cancel cannot get

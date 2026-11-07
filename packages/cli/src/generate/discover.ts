@@ -416,6 +416,7 @@ const AGGREGATE: ModuleKind = {
     "aggregateId",
     "after",
     "reject",
+    "forget",
   ]),
 };
 

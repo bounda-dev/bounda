@@ -98,6 +98,8 @@ const trackedPersons = (
     get: (person) => persons.get(person),
     restrict: (person, since) => tracked(entries, person, () => persons.restrict(person, since)),
     unrestrict: (person) => tracked(entries, person, () => persons.unrestrict(person)),
+    record: (activity) => tracked(entries, activity.person, () => persons.record(activity)),
+    listIdle: (args) => persons.listIdle(args),
   };
 };
 

@@ -301,7 +301,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
     it("restricts and unrestricts a person with the rest, or not at all", async () => {
       const work = async (tx: StorageTransaction) => {
         expect(await tx.persons.restrict("c-1", now)).toBe(true);
-        expect(await tx.persons.get("c-1")).toEqual({
+        expect(await tx.persons.get("c-1")).toMatchObject({
           person: "c-1",
           restrictedSince: now.toISOString(),
         });
@@ -332,7 +332,37 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       await storage.transact(async (tx) => {
         expect(await tx.persons.unrestrict("c-1")).toBe(true);
       });
-      expect(await storage.persons.get("c-1")).toEqual({ person: "c-1", restrictedSince: null });
+      expect(await storage.persons.get("c-1")).toMatchObject({
+        person: "c-1",
+        restrictedSince: null,
+      });
+    });
+
+    it("records a person's activity with the rest, or not at all", async () => {
+      const activity = {
+        person: "c-1",
+        position: 3,
+        lastActiveAt: now.toISOString(),
+        forgottenAt: null,
+      };
+      await expect(
+        storage.transact(async (tx) => {
+          await tx.persons.record(activity);
+          throw new Error("boom");
+        }),
+      ).rejects.toThrow("boom");
+      expect(await storage.persons.get("c-1")).toBeNull();
+      await storage.transact(async (tx) => {
+        await tx.persons.record(activity);
+      });
+      expect(await storage.persons.listIdle({ limit: 10 })).toEqual([
+        {
+          person: "c-1",
+          restrictedSince: null,
+          lastActiveAt: now.toISOString(),
+          forgottenAt: null,
+        },
+      ]);
     });
 
     it("forgets a person's snapshots and remembered rejections with their key", async () => {
