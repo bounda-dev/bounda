@@ -21,6 +21,7 @@ import {
   createRecordingLogger,
   type OrderProcessConfigArgs,
   orderAggregateEntry,
+  unrecordedAccess,
 } from "../test-support.ts";
 import { buildProcesses } from "./build-processes.ts";
 import {
@@ -561,6 +562,7 @@ describe("process deadlines", () => {
 
     reminding = "ok";
     const deadLetters = createDeadLetters({
+      recordAccess: unrecordedAccess,
       storage: harness.storage,
       retries: harness.retries,
       processes: harness.processes,

@@ -73,7 +73,9 @@ and stores the message and the stack encrypted with that person's key, as a
 [personal field](/guides/personal-data/) is. A letter that names nobody keeps them in the clear:
 a process deadline's, a policy's or process's for an event without personal fields, or whose
 fields were forgotten before the handler read them, and a scheduled command's whose payload holds
-no marked field. `app.deadLetters` and `bounda dead-letters list` open them for you. Once the
+no marked field. `app.deadLetters` and `bounda dead-letters list` open them for you, and every
+`list`, `get`, `retry` and `discard` is recorded in the
+[access log](/guides/personal-data/#who-opened-what), naming the persons its letters name. Once the
 person is forgotten, even while the handler was failing, the letter stays, with its name and code,
 and the message and the stack read as `null`: the process can still be retried, and the stream
 still says it failed. `ProcessFailed` and `ScheduledCommandFailed` name the error

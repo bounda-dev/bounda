@@ -72,7 +72,8 @@ export type CustomerDirectoryForgetting = Expect<
   core.ForgetsPersonalData<
     "customerDirectory",
     typeof import("../app/domain/customer/customer-registered.ts"),
-    true
+    true,
+    typeof import("../app/read/customer-directory/view.ts")
   >
 >;
 
@@ -85,7 +86,8 @@ export type OrderSummaryForgetting = Expect<
     "orderSummary",
     | typeof import("../app/domain/order/order-paid.ts")
     | typeof import("../app/domain/order/order-placed.ts"),
-    true
+    true,
+    typeof import("../app/read/order-summary/view.ts")
   >
 >;
 

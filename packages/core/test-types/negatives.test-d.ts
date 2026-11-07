@@ -1,6 +1,7 @@
 import {
   DomainError,
   type EventPayloadArgs,
+  type FieldsArgs,
   type ForgetsPersonalData,
   type ImplementationModule,
   type Instant,
@@ -220,6 +221,54 @@ describe("what does not compile", () => {
     >;
     const checks: [Refused?, Handled?] = [];
     void checks;
+  });
+
+  it("marks on read-model fields that the generator's check refuses", () => {
+    type Expect<Check extends true> = Check;
+    const personalWithoutPerson = {
+      fields: ({ f }: FieldsArgs) => ({
+        customerId: f.string().primaryKey(),
+        email: f.string().personal(),
+      }),
+    };
+    const twoPersons = {
+      fields: ({ f }: FieldsArgs) => ({
+        orderId: f.string().primaryKey().person(),
+        customerId: f.string().person(),
+      }),
+    };
+    const marked = {
+      fields: ({ f }: FieldsArgs) => ({
+        customerId: f.string().primaryKey().person(),
+        email: f.string().personal(),
+      }),
+    };
+    type NoPerson = Expect<
+      // @ts-expect-error a read model with personal fields needs a person field
+      ForgetsPersonalData<"customers", never, true, typeof personalWithoutPerson>
+    >;
+    // @ts-expect-error a read model has at most one person field
+    type TwoPersons = Expect<ForgetsPersonalData<"customers", never, true, typeof twoPersons>>;
+    // @ts-expect-error a read model with personal fields needs projections/bounda/personal-data-forgotten.ts
+    type Unforgotten = Expect<ForgetsPersonalData<"customers", never, false, typeof marked>>;
+    type Forgotten = Expect<ForgetsPersonalData<"customers", never, true, typeof marked>>;
+    type Unmarked = Expect<
+      ForgetsPersonalData<"customers", never, false, { fields: () => { id: { mark: null } } }>
+    >;
+    const checks: [NoPerson?, TwoPersons?, Unforgotten?, Forgotten?, Unmarked?] = [];
+    void checks;
+  });
+
+  it("marking a field that is not a string as the person, or a field twice", () => {
+    const fields = ({ f }: FieldsArgs) => ({
+      // @ts-expect-error the person field holds the person's id, a string
+      count: f.number().person(),
+      // @ts-expect-error a field is personal data or the person's id, not both
+      both: f.string().person().personal(),
+      // @ts-expect-error marked once
+      twice: f.string().personal().personal(),
+    });
+    void fields;
   });
 
   it("emitting an event of another aggregate", () => {

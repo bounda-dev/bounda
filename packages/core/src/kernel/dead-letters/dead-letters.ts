@@ -7,6 +7,7 @@ import type {
 import type { Clock } from "../../contracts/clock.ts";
 import { DeadLetterSettledError, NotFoundError } from "../../contracts/errors.ts";
 import type { Logger } from "../../contracts/logger.ts";
+import type { RecordAccess } from "../personal-data/access.ts";
 import { type KeyOfFunction, openCommandPayload, sealedKeys } from "../personal-data/commands.ts";
 import { openTextWith } from "../personal-data/errors.ts";
 import type { ProcessDeadLetters } from "../process/dead-letter-retry.ts";
@@ -15,7 +16,9 @@ import type { DeadLetterRetry } from "./retry.ts";
 
 /**
  * What an operator can do with the handler runs that gave up. Retrying or discarding a letter
- * leaves its row in place as a record.
+ * leaves its row in place as a record. `list`, `get`, `retry` and `discard` hand out the error's
+ * text and the payload opened, so each call is recorded in the access log first, naming the
+ * persons the letters name, and rejects with what the log's hook throws.
  */
 export interface DeadLetters {
   /**
@@ -64,11 +67,18 @@ export interface CreateDeadLettersArgs {
    * Who retries and discards, for the client bound to them.
    */
   readonly actor?: string | undefined;
+  readonly recordAccess: RecordAccess;
 }
 
 export interface CreateDeadLettersFunction {
   (args: CreateDeadLettersArgs): DeadLetters;
 }
+
+// The person the error's text is sealed under, and those whose fields a payload holds.
+const personsOf = (letter: StoredDeadLetter): string[] => [
+  ...(letter.person === null ? [] : [letter.person]),
+  ...(letter.persons ?? []).map(({ person }) => person),
+];
 
 export const createDeadLetters: CreateDeadLettersFunction = ({
   storage,
@@ -77,6 +87,7 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
   clock,
   logger,
   actor,
+  recordAccess,
 }) => {
   const failedLetter = async (id: string): Promise<StoredDeadLetter> => {
     const letter = await storage.deadLetterStore.get(id);
@@ -115,20 +126,39 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
     return { ...result, parked: await processes.parkedBehind(letter) };
   };
 
+  const recordLetter = (
+    operation: "deadLetters.get" | "deadLetters.retry" | "deadLetters.discard",
+    letter: StoredDeadLetter,
+  ): Promise<void> =>
+    recordAccess({ operation, detail: { letter: letter.id }, actor, persons: personsOf(letter) });
+
   return {
     list: async (args) => {
       // Each person's key read once for the whole page.
       const keyOf = sealedKeys(storage.personalKeys);
       const letters = await storage.deadLetterStore.list(args);
-      return Promise.all(letters.map((letter) => withParked(letter, keyOf)));
+      const listed = await Promise.all(letters.map((letter) => withParked(letter, keyOf)));
+      await recordAccess({
+        operation: "deadLetters.list",
+        detail: { letters: letters.length },
+        actor,
+        persons: letters.flatMap(personsOf),
+      });
+      return listed;
     },
     count: (args) => storage.deadLetterStore.count(args),
     get: async (id) => {
       const letter = await storage.deadLetterStore.get(id);
-      return letter === null ? null : withParked(letter);
+      if (letter === null) return null;
+      const got = await withParked(letter);
+      await recordLetter("deadLetters.get", letter);
+      return got;
     },
+    // Recorded before acting: a retry that fails again rejects with the handler's error, which
+    // may quote the person.
     retry: async (id) => {
       const letter = await failedLetter(id);
+      await recordLetter("deadLetters.retry", letter);
       await retries.retry(letter, actor);
       logger.info("dead letter retried", {
         id,
@@ -143,6 +173,7 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
     },
     discard: async (id) => {
       const letter = await failedLetter(id);
+      await recordLetter("deadLetters.discard", letter);
       await storage.deadLetterStore.updateStatus(id, "discarded");
       logger.info("dead letter discarded", {
         id,

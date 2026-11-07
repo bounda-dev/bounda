@@ -179,6 +179,19 @@ const withPorts: ProjectModel = {
 };
 
 describe("emitRegistry", () => {
+  it("lists app/audit.ts as the registry's audit when the project has one, under an alias of its own beside a policy of the same name", () => {
+    const audit = { path: "/project/app/audit.ts", relativePath: "app/audit.ts" };
+    const { content } = emitRegistry({
+      model: { ...model, audit },
+      path: "/project/.bounda/registry.ts",
+    });
+    expect(content).toContain('import * as appAudit from "../app/audit.ts";');
+    expect(content).toContain("  },\n  audit: appAudit,\n} as const satisfies Registry;");
+    expect(emitRegistry({ model, path: "/project/.bounda/registry.ts" }).content).not.toContain(
+      "app/audit.ts",
+    );
+  });
+
   it("imports an upcast module under its own alias and lists it under upcasts", () => {
     const shipment = model.aggregates[1] as ProjectModel["aggregates"][number];
     const created = shipment.events[0] as ProjectModel["aggregates"][number]["events"][number];
@@ -440,7 +453,8 @@ export type ShipmentsForgetting = Expect<
   core.ForgetsPersonalData<
     "shipments",
     typeof import("../app/domain/shipment/created.ts"),
-    false
+    false,
+    typeof import("../app/read/shipments/view.ts")
   >
 >;
 
@@ -448,7 +462,7 @@ export type Queries = core.QueriesFacadeOf<Record<never, never>>;
 `);
   });
 
-  it("checks that a read model projecting personal data handles forgetting, over every module it projects", () => {
+  it("checks every read model's marks and that one projecting personal data handles forgetting, over every module it projects", () => {
     const shipments = model.readModels[0] as ProjectModel["readModels"][number];
     const projection = (aggregate: string, eventKey: string) => ({
       aggregate,
@@ -475,21 +489,31 @@ export type Queries = core.QueriesFacadeOf<Record<never, never>>;
     | typeof import("../app/domain/shipment/created.ts")
     | TicketEvents[keyof TicketEvents]
     | typeof import("../app/domain/ticket/created.ts"),
-    true
+    true,
+    typeof import("../app/read/shipments/view.ts")
   >
 >;`);
     expect(
       typesOf([projection("shipment", "created"), projection("shipment", "personalDataForgotten")]),
     ).toContain(`    | typeof import("../app/domain/shipment/created.ts")
     | ShipmentEvents[keyof ShipmentEvents],
-    false
+    false,
+    typeof import("../app/read/shipments/view.ts")
   >`);
-    const onlyForgetting = typesOf([projection("bounda", "personalDataForgotten")]);
-    expect(onlyForgetting).not.toContain("Forgetting");
-    expect(onlyForgetting).toContain(
-      "export type ShipmentsPorts = core.EmptyPayload;\n\nexport type Queries",
-    );
-    expect(typesOf([])).not.toContain("Expect");
+    // The view alone may mark personal fields, so a read model that projects nothing is checked.
+    expect(typesOf([projection("bounda", "personalDataForgotten")])).toContain(`    "shipments",
+    never,
+    true,
+    typeof import("../app/read/shipments/view.ts")
+  >`);
+    expect(typesOf([])).toContain(`    never,
+    false,
+    typeof import("../app/read/shipments/view.ts")`);
+    const withoutReadModels = emitTypes({
+      model: { ...model, readModels: [] },
+      path: "/project/.bounda/types.ts",
+    }).content;
+    expect(withoutReadModels).not.toContain("Expect");
   });
 });
 

@@ -6,6 +6,7 @@ import type {
 } from "../contracts/command.ts";
 import type { DurationInput } from "../contracts/duration.ts";
 import type { StateModule } from "./aggregate.ts";
+import type { AuditModule } from "./audit.ts";
 import type { CommandEntry, CommandModule, RejectionCodeOf } from "./command.ts";
 import type { EventModules } from "./event.ts";
 import type { Simplify, UnionToIntersection } from "./naming.ts";
@@ -50,6 +51,10 @@ export interface ReadModelEntry {
 export interface Registry {
   readonly aggregates: Readonly<Record<string, AggregateEntry>>;
   readonly readModels: Readonly<Record<string, ReadModelEntry>>;
+  /**
+   * `app/audit.ts`, when the project has one.
+   */
+  readonly audit?: AuditModule;
 }
 
 // One overload per kind of call, so a result is typed by whether `options` carries `delay`. The

@@ -15,6 +15,7 @@ import { buildAggregates } from "./aggregate/build-aggregates.ts";
 import { createAggregateLoader } from "./aggregate/load-aggregate.ts";
 import type { AggregatesRuntime } from "./aggregate/runtime.ts";
 import { createCommandPipeline } from "./command/pipeline.ts";
+import type { RecordAccess } from "./personal-data/access.ts";
 import { createPorts, type ModulePorts } from "./ports/ports.ts";
 
 interface OrderState {
@@ -404,3 +405,8 @@ export const breakNextCommit: BreakNextCommitFunction = (storage) => {
     });
   return { broke: () => broken };
 };
+
+/**
+ * An access log that records nothing, for tests of what does not look at it.
+ */
+export const unrecordedAccess: RecordAccess = async () => undefined;

@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { Storage } from "../../adapter/adapter.ts";
 import { pendingEvent, testContext, testDeadLetter } from "../../adapter/testing/fixtures.ts";
+import { resolveConfig } from "../../config/schema.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { ValidationError } from "../../contracts/errors.ts";
+import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
+import type { FieldsArgs } from "../../modules/view.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { appStorage } from "../events/app-event-store.ts";
+import { buildReadModels } from "../read-model/build-read-models.ts";
 import { sealCommandPayload } from "./commands.ts";
 import { sealError } from "./errors.ts";
 import { exportPersonalData } from "./export.ts";
@@ -53,11 +57,69 @@ const registry: Registry = {
       processes: {},
     },
   },
-  readModels: {},
+  readModels: {
+    customerDirectory: {
+      view: {
+        fields: ({ f }: FieldsArgs) => ({
+          customerId: f.string().primaryKey().person(),
+          email: f.string().personal(),
+          plan: f.string(),
+        }),
+      },
+      projections: { bounda: { personalDataForgotten: { project: () => undefined } } },
+      queries: {},
+    },
+    orderNotes: {
+      view: {
+        fields: ({ f }: FieldsArgs) => ({
+          orderId: f.string().primaryKey(),
+          customerId: f.string().person(),
+          note: f.string().personal().optional(),
+          total: f.number(),
+        }),
+      },
+      projections: { bounda: { personalDataForgotten: { project: () => undefined } } },
+      queries: {},
+    },
+    // Only an id, with no field marked personal: its rows are theirs to know about.
+    orderCustomers: {
+      view: {
+        fields: ({ f }: FieldsArgs) => ({
+          orderId: f.string().primaryKey(),
+          customerId: f.string().person(),
+        }),
+      },
+      projections: {},
+      queries: {},
+    },
+    // No field marked: not in the export.
+    orderTotals: {
+      view: {
+        fields: ({ f }: FieldsArgs) => ({
+          orderId: f.string().primaryKey(),
+          customerId: f.string(),
+          total: f.number(),
+        }),
+      },
+      projections: {},
+      queries: {},
+    },
+  },
 };
 
 const setup = async () => {
   const aggregates = buildAggregates({ registry, ports: {} });
+  // A read model of its own adapter, as `readModels` in the configuration may give it.
+  const readModels = await buildReadModels({
+    registry,
+    config: resolveConfig({ storage: memory(), readModels: { orderNotes: memory() } }),
+    logger: silentLogger,
+  });
+  const table = (name: string) => {
+    const readModel = readModels.byName[name];
+    if (readModel === undefined) throw new Error(`no read model ${name}`);
+    return readModel.storage.table;
+  };
   const written = await memory().createStorage();
   const storage: Storage = appStorage({
     storage: written,
@@ -68,6 +130,7 @@ const setup = async () => {
     exportPersonalData({
       storage,
       aggregates,
+      readModels,
       clock: createFixedClock(),
       batchSize,
       personId,
@@ -116,7 +179,7 @@ const setup = async () => {
     error.stack = `Error: ${message}\n    at handler`;
     return sealError({ error, person, keys: storage.personalKeys });
   };
-  return { storage, written, exportOf, register, place, sealedReminder, failure };
+  return { storage, written, exportOf, register, place, sealedReminder, failure, table };
 };
 
 describe("exportPersonalData", () => {
@@ -226,6 +289,7 @@ describe("exportPersonalData", () => {
       ],
       scheduledCommands: [],
       deadLetters: [],
+      readModels: { customerDirectory: [], orderNotes: [], orderCustomers: [] },
     });
     expect(await exportOf("c-1", 100)).toEqual(exported);
     expect((await exportOf("c-2")).events.map((event) => event.data)).toEqual([
@@ -317,6 +381,53 @@ describe("exportPersonalData", () => {
       },
     ]);
     expect(JSON.stringify(exported)).not.toContain("bo@example.com");
+  });
+
+  it("includes the rows of every read model with a person field, page by page, with their key and marked fields only", async () => {
+    const { exportOf, table } = await setup();
+    await table("customerDirectory").insert({
+      customerId: "c-1",
+      email: "ana@example.com",
+      plan: "pro",
+    });
+    await table("customerDirectory").insert({
+      customerId: "c-2",
+      email: "bo@example.com",
+      plan: "free",
+    });
+    for (const [orderId, customerId, note] of [
+      ["o-3", "c-1", "leave at door"],
+      ["o-1", "c-1", "ring twice"],
+      ["o-2", "c-2", "bo's"],
+      ["o-4", "c-1", undefined],
+    ] as const) {
+      await table("orderNotes").insert({
+        orderId,
+        customerId,
+        total: 10,
+        ...(note === undefined ? {} : { note }),
+      });
+      await table("orderCustomers").insert({ orderId, customerId });
+      await table("orderTotals").insert({ orderId, customerId, total: 10 });
+    }
+
+    const exported = await exportOf("c-1");
+    expect(exported.readModels).toStrictEqual({
+      customerDirectory: [{ key: "c-1", data: { email: "ana@example.com" } }],
+      orderNotes: [
+        { key: "o-1", data: { note: "ring twice" } },
+        { key: "o-3", data: { note: "leave at door" } },
+        { key: "o-4", data: {} },
+      ],
+      orderCustomers: [
+        { key: "o-1", data: {} },
+        { key: "o-3", data: {} },
+        { key: "o-4", data: {} },
+      ],
+    });
+    expect(await exportOf("c-1", 100)).toEqual(exported);
+    expect(JSON.stringify(exported)).not.toContain("bo");
+    expect(JSON.stringify(exported)).not.toContain("pro");
   });
 
   it("reads a forgotten person's fields and error text as null", async () => {

@@ -229,16 +229,12 @@ const projectedModules = (model: ProjectModel, readModel: ReadModelModel, path: 
 };
 
 /**
- * A type that fails to compile while the read model projects an event with personal fields and
- * has no projection of `PersonalDataForgotten`; `null` for a read model that projects no module.
+ * A type that fails to compile while the read model marks more than one field with `.person()`,
+ * marks fields with `.personal()` and none with `.person()`, or projects an event with personal
+ * fields or marks fields with `.personal()` and has no projection of `PersonalDataForgotten`.
  */
-const emitForgetting = (
-  model: ProjectModel,
-  readModel: ReadModelModel,
-  path: string,
-): string | null => {
+const emitForgetting = (model: ProjectModel, readModel: ReadModelModel, path: string): string => {
   const modules = projectedModules(model, readModel, path);
-  if (modules.length === 0) return null;
   const handles = readModel.projections.some(
     (projection) =>
       projection.aggregate === BOUNDA_AGGREGATE && projection.eventKey === FORGOTTEN_EVENT_KEY,
@@ -247,12 +243,15 @@ const emitForgetting = (
     `export type ${forgettingTypeName(readModel.name)} = ${EXPECT_TYPE_NAME}<`,
     "  core.ForgetsPersonalData<",
     `    "${readModel.name}",`,
-    ...(modules.length === 1
-      ? [`    ${modules[0]},`]
-      : modules.map(
-          (module, index) => `    | ${module}${index === modules.length - 1 ? "," : ""}`,
-        )),
-    `    ${handles}`,
+    ...(modules.length === 0
+      ? ["    never,"]
+      : modules.length === 1
+        ? [`    ${modules[0]},`]
+        : modules.map(
+            (module, index) => `    | ${module}${index === modules.length - 1 ? "," : ""}`,
+          )),
+    `    ${handles},`,
+    `    ${typeofImport(path, readModel.view.path)}`,
     "  >",
     ">;",
   ].join("\n");
@@ -306,16 +305,15 @@ export const emitTypes: EmitTypesFunction = ({ model, path, inferredStates = {} 
   );
   sections.push(emitMap(COMMANDS_TYPE_NAME, "CommandsFacadeOf", commandModules));
   sections.push(emitMap(REACTION_COMMANDS_TYPE_NAME, "ReactionCommandsFacadeOf", commandModules));
-  const forgetting = model.readModels.map((readModel) => emitForgetting(model, readModel, path));
-  if (forgetting.some((check) => check !== null)) {
+  if (model.readModels.length > 0) {
     sections.push(`type ${EXPECT_TYPE_NAME}<Check extends true> = Check;`);
   }
-  for (const [index, readModel] of model.readModels.entries()) {
+  for (const readModel of model.readModels) {
     sections.push(
       [
         `export type ${rowTypeName(readModel.name)} = core.RowOf<${typeofImport(path, readModel.view.path)}>;`,
         emitPorts(readModel, path),
-        ...(forgetting[index] === null ? [] : [forgetting[index]]),
+        emitForgetting(model, readModel, path),
       ].join("\n"),
     );
   }

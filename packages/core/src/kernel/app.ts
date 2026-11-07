@@ -23,6 +23,7 @@ import { createDispatcher, type DispatcherLag } from "./dispatch/dispatcher.ts";
 import { alignReactiveCheckpoints } from "./dispatch/reactive-checkpoints.ts";
 import { appStorage } from "./events/app-event-store.ts";
 import { createGlobalStream, type GlobalStream } from "./events/global-stream.ts";
+import { createAccessLog } from "./personal-data/access.ts";
 import { exportPersonalData, type PersonalDataExport } from "./personal-data/export.ts";
 import { forgetPersonalData, logForgotten } from "./personal-data/forget.ts";
 import { openForgetLedger } from "./personal-data/forget-ledger.ts";
@@ -76,11 +77,16 @@ export interface CatchUpReadModelsArgs {
  */
 export interface BoundaClient<R extends Registry = AppRegistry> {
   readonly commands: CommandsFacade<R>;
+  /**
+   * A query of a read model with fields marked `.personal()` is recorded in the access log, as
+   * `exportPersonalData` is, naming the persons of the rows it read.
+   */
   readonly queries: QueriesFacade<R>;
   getLag(): Promise<AppLag>;
   readonly events: GlobalStream;
   /**
-   * Retrying and discarding a letter is acted by the client's actor, as `as` says.
+   * Retrying and discarding a letter is acted by the client's actor, as `as` says. Each call but
+   * `count` is recorded in the access log, as `exportPersonalData` is.
    */
   readonly deadLetters: Pick<DeadLetters, "list" | "retry" | "discard">;
   /**
@@ -102,9 +108,11 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * Everything the store holds that names a person, for them to take away: their events, with
    * the fields marked `personal` opened (`null` each once they are forgotten) and nothing else of
    * the payload, the scheduled commands that hold such fields of theirs, and the dead letters of
-   * work about them, with the error text sealed under their key opened. A field left unmarked, a
-   * read model and whatever a policy sent out are not in it. Rejects with `ValidationError` an
-   * empty id.
+   * work about them, with the error text sealed under their key opened, and the rows of every read
+   * model with a field marked `.person()` that name them, with their fields marked `.personal()`.
+   * A field left unmarked and whatever a policy sent out are not in it. Recorded in the access log
+   * before it resolves: `app/audit.ts`'s `onPersonalDataAccess`, or the app's logger at `info`
+   * without it; rejects with what the hook throws. Rejects with `ValidationError` an empty id.
    */
   exportPersonalData(personId: string): Promise<PersonalDataExport>;
   /**
@@ -131,7 +139,8 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * store keeps. Every command it dispatches carries the actor in its metadata, and so does every
    * event that command writes, and every command and event the policies, processes and scheduled
    * commands that follow from it write; so do the events `forget`, `restrict` and `unrestrict`
-   * append, and what a dead letter's `retry` writes. Calling `as` on a bound client acts as the new
+   * append, and what a dead letter's `retry` writes; and every record of the access log it causes
+   * names it. Calling `as` on a bound client acts as the new
    * actor; a client without `as` names nobody. `actor` is an id, such as a user's or a service's,
    * never a name or an email: it is stored in the clear in events that are never deleted. Throws
    * `ValidationError` for an actor that is not a string of 1 to `MAX_ACTOR_LENGTH` characters.
@@ -412,10 +421,18 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         for (const observed of observers) observed.push(rejection);
       },
     });
+    const recordAccess = createAccessLog({
+      hook: registry.audit?.onPersonalDataAccess,
+      env,
+      tenant,
+      logger,
+      clock,
+    });
     const queryRunner = createQueryRunner({
       queries: buildQueries({ readModels }),
       readModels,
       ports: ports.byReadModel,
+      recordAccess,
     });
     const processDefinitions = buildProcesses({ registry, aggregates, config });
     const processes = createProcessRunner({
@@ -646,21 +663,46 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         aggregates,
         dispatch: (command) => pipeline.dispatch({ ...command, actor }),
       }) as CommandsFacade<R>,
-      queries: queryRunner.facade as QueriesFacade<R>,
+      queries: queryRunner.facade(actor) as QueriesFacade<R>,
       getLag,
       events,
-      deadLetters: createDeadLetters({ storage, retries, processes, clock, logger, actor }),
+      deadLetters: createDeadLetters({
+        storage,
+        retries,
+        processes,
+        clock,
+        logger,
+        actor,
+        recordAccess,
+      }),
       rebuildReadModel: rebuild,
       forget: (personId) =>
         forgetPersonalData({ storage, ids, clock, logger, concurrencyRetries, personId, actor }),
-      exportPersonalData: (personId) =>
-        exportPersonalData({
+      exportPersonalData: async (personId) => {
+        const exported = await exportPersonalData({
           storage,
           aggregates,
+          readModels,
           clock,
           batchSize: config.runtime.dispatcher.batchSize,
           personId,
-        }),
+        });
+        await recordAccess({
+          operation: "exportPersonalData",
+          detail: {
+            events: exported.events.length,
+            scheduledCommands: exported.scheduledCommands.length,
+            deadLetters: exported.deadLetters.length,
+            readModelRows: Object.values(exported.readModels).reduce(
+              (sum, rows) => sum + rows.length,
+              0,
+            ),
+          },
+          actor,
+          persons: [personId],
+        });
+        return exported;
+      },
       restrict: (personId) =>
         restrictProcessing({ storage, ids, clock, logger, concurrencyRetries, personId, actor }),
       unrestrict: (personId) =>
