@@ -56,6 +56,7 @@ const STATUS_BY_CODE: Readonly<Record<string, number>> = {
   NOT_FOUND: 404,
   PAYLOAD_TOO_LARGE: 413,
   DOMAIN_ERROR: 409,
+  PROCESSING_RESTRICTED: 409,
   CONCURRENCY_CONFLICT: 409,
   CHAIN_DEPTH_EXCEEDED: 409,
   HANDLER_TIMEOUT: 504,
@@ -135,7 +136,8 @@ const route = (pathname: string): { readonly kind: string; readonly name: string
  *
  * Refusals come back as `{ error: { code, message } }`: 400 for a payload that fails validation,
  * with `issues`, 404 for an unknown command, query or row, 409 for a command's rejection, with its
- * code in `rejected`, or a conflict, 413 for a body over `maxPayloadBytes`. Anything else is a
+ * code in `rejected`, for one refused because the person it touches is restricted, or for a
+ * conflict, 413 for a body over `maxPayloadBytes`. Anything else is a
  * 500 without its message, which is logged instead. There is no authentication and no operator
  * endpoint: it is a starting point, and an app with users writes its own `fetch` over `connect`. Throws `ConfigurationError` when
  * `storage` is not `cloudflare()` or for a `consistency` it does not know.

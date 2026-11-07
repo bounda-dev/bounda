@@ -14,6 +14,8 @@ export {
   storageTableNameFor,
   tableNameFor,
 } from "./identifiers.ts";
+export type { CreateSqlPersonStoreArgs, CreateSqlPersonStoreFunction } from "./person-store.ts";
+export { createSqlPersonStore } from "./person-store.ts";
 export type {
   CreateSqlPersonalKeyStoreArgs,
   CreateSqlPersonalKeyStoreFunction,

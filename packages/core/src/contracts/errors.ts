@@ -217,6 +217,28 @@ export class ScheduledClaimLostError extends BoundaError {
 }
 
 /**
+ * The code of `ProcessingRestrictedError`, which the letters a restriction leaves behind carry.
+ */
+export const PROCESSING_RESTRICTED: "PROCESSING_RESTRICTED" = "PROCESSING_RESTRICTED";
+
+/**
+ * Thrown by a command that touches a person whose processing is restricted with `restrict`, before
+ * anything runs: the one their payload names with `person`, or whose aggregate is the person.
+ * Terminal: a reaction that dispatches such a command becomes a dead letter with this code and
+ * the person, which `unrestrict` retries. `forget` and the export of the person's data stay
+ * allowed.
+ */
+export class ProcessingRestrictedError extends BoundaError {
+  readonly personId: string;
+
+  // The message names no one: it reaches HTTP answers and logs.
+  constructor(personId: string) {
+    super(PROCESSING_RESTRICTED, "The processing of this person's data is restricted");
+    this.personId = personId;
+  }
+}
+
+/**
  * Thrown when a requested aggregate, read model row or registry entry does not exist.
  */
 export class NotFoundError extends BoundaError {

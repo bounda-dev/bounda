@@ -37,6 +37,7 @@ export {
   type IdempotencyKeyConflictErrorArgs,
   IdempotencyKeyTakenError,
   NotFoundError,
+  ProcessingRestrictedError,
   RebuildSupersededError,
   type Rejection,
   ScheduledClaimLostError,

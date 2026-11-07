@@ -41,6 +41,8 @@ export const storeNamespace = (): FakeStoreNamespace => {
       rebuildReadModel: record("rebuildReadModel"),
       forget: record("forget"),
       exportPersonalData: record("exportPersonalData"),
+      restrict: record("restrict"),
+      unrestrict: record("unrestrict"),
     };
   };
   return { calls, namespace: { idFromName: (name) => name, get: stubOf } };

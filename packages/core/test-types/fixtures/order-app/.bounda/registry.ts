@@ -19,6 +19,7 @@ import * as orderPaid from "../app/domain/order/order-paid.ts";
 import * as orderPlaced from "../app/domain/order/order-placed.ts";
 import * as orderPlacedUpcasts from "../app/domain/order/order-placed.upcast.ts";
 import * as boundaAuditOnPersonalDataForgotten from "../app/domain/order/policies/bounda/audit-on-personal-data-forgotten.ts";
+import * as boundaAuditOnProcessingRestrictionLifted from "../app/domain/order/policies/bounda/audit-on-processing-restriction-lifted.ts";
 import * as customerGreetOnCustomerRegistered from "../app/domain/order/policies/customer/greet-on-customer-registered.ts";
 import * as notifyOnOrderPlaced from "../app/domain/order/policies/notify-on-order-placed.ts";
 import * as sendReceiptOnOrderPaid from "../app/domain/order/policies/send-receipt-on-order-paid.ts";
@@ -35,6 +36,7 @@ import * as getCustomer from "../app/read/customer-directory/queries/get-custome
 import * as customerDirectoryView from "../app/read/customer-directory/view.ts";
 import * as orderSummaryRatesFixed from "../app/read/order-summary/infrastructure/rates/fixed.ts";
 import * as orderSummaryOnBoundaPersonalDataForgotten from "../app/read/order-summary/projections/bounda/personal-data-forgotten.ts";
+import * as orderSummaryOnBoundaProcessingRestricted from "../app/read/order-summary/projections/bounda/processing-restricted.ts";
 import * as orderSummaryOnOrderOrderPaid from "../app/read/order-summary/projections/order/order-paid.ts";
 import * as orderSummaryOnOrderOrderPlaced from "../app/read/order-summary/projections/order/order-placed.ts";
 import * as customerOverview from "../app/read/order-summary/queries/customer-overview.ts";
@@ -75,7 +77,7 @@ export const registry = {
         },
       },
       commands: { cancelOrder: { module: cancelOrder }, payOrder: { module: payOrder }, placeOrder: { module: placeOrder } },
-      policies: { boundaAuditOnPersonalDataForgotten: { module: boundaAuditOnPersonalDataForgotten, source: "bounda" }, customerGreetOnCustomerRegistered: { module: customerGreetOnCustomerRegistered, source: "customer" }, notifyOnOrderPlaced: { module: notifyOnOrderPlaced }, sendReceiptOnOrderPaid: { module: sendReceiptOnOrderPaid } },
+      policies: { boundaAuditOnPersonalDataForgotten: { module: boundaAuditOnPersonalDataForgotten, source: "bounda" }, boundaAuditOnProcessingRestrictionLifted: { module: boundaAuditOnProcessingRestrictionLifted, source: "bounda" }, customerGreetOnCustomerRegistered: { module: customerGreetOnCustomerRegistered, source: "customer" }, notifyOnOrderPlaced: { module: notifyOnOrderPlaced }, sendReceiptOnOrderPaid: { module: sendReceiptOnOrderPaid } },
       processes: {
         orderPayment: {
           module: orderPayment,
@@ -98,7 +100,7 @@ export const registry = {
           fixed: orderSummaryRatesFixed satisfies ImplementationModule<orderSummaryRates.Rates>,
         },
       },
-      projections: { bounda: { personalDataForgotten: orderSummaryOnBoundaPersonalDataForgotten }, order: { orderPaid: orderSummaryOnOrderOrderPaid, orderPlaced: orderSummaryOnOrderOrderPlaced } },
+      projections: { bounda: { personalDataForgotten: orderSummaryOnBoundaPersonalDataForgotten, processingRestricted: orderSummaryOnBoundaProcessingRestricted }, order: { orderPaid: orderSummaryOnOrderOrderPaid, orderPlaced: orderSummaryOnOrderOrderPlaced } },
       queries: { customerOverview, getOrder, listUnpaidOrders },
     },
   },

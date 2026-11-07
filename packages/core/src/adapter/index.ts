@@ -22,6 +22,7 @@ export type {
   DeadLetterStatus,
   DeadLetterStore,
   ListDeadLettersArgs,
+  ListFailedDeadLettersArgs,
   NewDeadLetter,
   StoredDeadLetter,
 } from "./storage/dead-letter-store.ts";
@@ -54,6 +55,7 @@ export type {
   RenewClaimArgs,
   SettleClaimArgs,
 } from "./storage/inbox-ledger.ts";
+export type { PersonStore, StoredPerson } from "./storage/person-store.ts";
 export type {
   KeyedPerson,
   PersonalEnvelope,

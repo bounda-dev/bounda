@@ -8,7 +8,7 @@ import { ConcurrencyError } from "../../contracts/errors.ts";
  */
 export type UnitStores = Pick<
   UnitOfWork,
-  "eventStore" | "scheduler" | "idempotencyStore" | "afterCommit"
+  "eventStore" | "scheduler" | "idempotencyStore" | "persons" | "afterCommit"
 >;
 
 /**
@@ -45,6 +45,9 @@ export const createUnitOfWork: CreateUnitOfWorkFunction = ({ storage }) => {
   return {
     eventStore: staged,
     ...stores,
+    // Read as the store holds it: a restriction is never staged, as nothing a reaction writes
+    // changes who is restricted.
+    persons: storage.persons,
     commit: async () => {
       const batches = staged.batches();
       if (batches.length > 0 || pending()) {

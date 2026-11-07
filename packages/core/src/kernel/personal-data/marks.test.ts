@@ -40,9 +40,9 @@ describe("personalMarksOf", () => {
     expect(personalMarksOf({ schema, path })).toBeNull();
   });
 
-  it("is null for a person without personal fields, which nothing encrypts", () => {
+  it("names the person of a payload without personal fields, which nothing encrypts", () => {
     const schema = z.object({ customerId: person(z.string()), total: z.number() });
-    expect(personalMarksOf({ schema, path })).toBeNull();
+    expect(personalMarksOf({ schema, path })).toEqual({ person: "customerId", fields: [] });
   });
 
   it("refuses two person fields", () => {

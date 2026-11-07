@@ -15,6 +15,7 @@ export interface StorageTables {
   readonly scheduledCommands: string;
   readonly idempotencyKeys: string;
   readonly personalKeys: string;
+  readonly persons: string;
   readonly snapshots: string;
   readonly appendLockKey: string;
   // The first key of the advisory locks read models take on the checkpoints table.
@@ -56,6 +57,7 @@ export const storageTablesFor: StorageTablesForFunction = ({ prefix, schema }) =
     scheduledCommands: quoteIdentifier(storageTableNameFor({ prefix, table: "scheduledCommands" })),
     idempotencyKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "idempotencyKeys" })),
     personalKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "personalKeys" })),
+    persons: quoteIdentifier(storageTableNameFor({ prefix, table: "persons" })),
     snapshots: quoteIdentifier(storageTableNameFor({ prefix, table: "snapshots" })),
     appendLockKey: `bounda:${schema}.${events}`,
     checkpointsLockKey: `bounda:${schema}.${checkpoints}`,
@@ -160,6 +162,10 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "key" text NOT NULL,
     "fingerprint" text NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS ${tables.persons} (
+    "person" text PRIMARY KEY,
+    "restricted_since" text
+  )`,
   `CREATE TABLE IF NOT EXISTS ${tables.snapshots} (
     "aggregate_type" text NOT NULL,
     "aggregate_id" text NOT NULL,
@@ -201,6 +207,7 @@ export const ensureStorageSchema: EnsureStorageSchemaFunction = async ({ db, sch
     tables.scheduledCommands,
     tables.idempotencyKeys,
     tables.personalKeys,
+    tables.persons,
     tables.snapshots,
     indexName(tables.events, "person"),
     indexName(tables.deadLetters, "listing"),

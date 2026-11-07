@@ -116,7 +116,11 @@ describe("readYourWrites", () => {
     });
     const forgotten = await consistent.forget("p-1");
     expect(forgotten).toMatchObject({ eventTypes: ["PersonalDataForgotten"] });
-    expect(through).toEqual([forgotten]);
+    const restricted = await consistent.restrict("p-2");
+    expect(restricted).toMatchObject({ eventTypes: ["ProcessingRestricted"] });
+    const lifted = await consistent.unrestrict("p-2");
+    expect(lifted).toMatchObject({ eventTypes: ["ProcessingRestrictionLifted"] });
+    expect(through).toEqual([forgotten, restricted, lifted]);
     await app.stop();
   });
 });

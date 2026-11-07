@@ -72,9 +72,11 @@ export const payload = ({ z, personal }: Event.PayloadArgs) =>
 does when the event belongs to someone else's aggregate. `app.forget("c-42")` deletes the key
 and appends `PersonalDataForgotten` to the person's own stream, and
 `app.exportPersonalData("c-42")` hands the person every marked field and every sealed error the
-store holds of them, for the right of access and the right to portability. The
+store holds of them, for the right of access and the right to portability. `app.restrict("c-42")`
+keeps the data and refuses every command that touches the person until `unrestrict`, the GDPR's
+restriction of processing, and the reactions it refused run once it is lifted. The
 [guide](/guides/personal-data/) has the rest: the types a forgotten field takes, what read models
-have to do, what an export holds and where the keys live.
+have to do, what an export holds, what a restriction refuses and where the keys live.
 
 ## What forgetting changes for the rest of the app
 

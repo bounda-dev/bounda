@@ -7,6 +7,7 @@ import type {
 import { createSqlCheckpointStore } from "../sql/checkpoint-store.ts";
 import type { SqlDatabase, SqlTransaction } from "../sql/database.ts";
 import { sqliteDialect } from "../sql/dialect.ts";
+import { createSqlPersonStore } from "../sql/person-store.ts";
 import { createSqlPersonalKeyStore } from "../sql/personal-key-store.ts";
 import { createSqliteDeadLetterStore } from "./dead-letter-store.ts";
 import { createSqliteEventStore } from "./event-store.ts";
@@ -99,6 +100,11 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
           personalKeys: createSqlPersonalKeyStore({
             db: database,
             table: tables.personalKeys,
+            dialect: sqliteDialect,
+          }),
+          persons: createSqlPersonStore({
+            db: database,
+            table: tables.persons,
             dialect: sqliteDialect,
           }),
           snapshotStore: createSqliteSnapshotStore({

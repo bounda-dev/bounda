@@ -11,10 +11,16 @@ import type { StoredEvent } from "../../contracts/event.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
-import { type CommandPipeline, scheduledCommandId } from "../command/pipeline.ts";
+import {
+  type CommandPipeline,
+  RETRY_RESTRICTED_COMMAND,
+  scheduledCommandId,
+} from "../command/pipeline.ts";
+import type { RestrictedRetries } from "../dead-letters/restricted.ts";
 import { openCommandPayload } from "../personal-data/commands.ts";
 import { sealError } from "../personal-data/errors.ts";
 import { personOfEvent } from "../personal-data/persons.ts";
+import { restrictedPersonOf } from "../personal-data/refusal.ts";
 import type { DelayedPolicies } from "../policy/delayed.ts";
 import { PROCESS_DEADLINE_COMMAND, type ProcessDeadlinePayload } from "../process/deadlines.ts";
 import type { ProcessDeadlines } from "../process/deliver-deadline.ts";
@@ -48,6 +54,9 @@ export interface ScheduledCommandWorker {
    * still outlive it.
    */
   readonly leaseMs: number;
+  /**
+   * How many due deadlines and restricted retries wait for the reactive runners to catch up.
+   */
   waitingDeadlines(): number;
 }
 
@@ -57,6 +66,12 @@ export interface CreateScheduledCommandWorkerArgs {
   readonly pipeline: CommandPipeline;
   readonly processes: ProcessDeadlines;
   readonly delayedPolicies: DelayedPolicies;
+  readonly restrictedRetries: RestrictedRetries;
+  /**
+   * The reactive subscribers the dispatcher runs, by name: what a deadline and a restricted
+   * retry wait for before they run.
+   */
+  readonly reactive: readonly string[];
   readonly config: ResolvedConfig;
   readonly ids: IdGenerator;
   readonly clock: Clock;
@@ -85,7 +100,8 @@ class RenewFailed extends Error {
 }
 
 /**
- * Rounds a due deadline waits for the process runner to catch up before it runs anyway.
+ * Rounds a due deadline, or a restricted retry, waits for the reactive runners to catch up before
+ * it runs anyway.
  */
 export const DEADLINE_WAIT_ROUNDS = 10;
 
@@ -102,8 +118,11 @@ interface DeadlineWait {
  * claim's failure. A deadline first waits for the process runner, so an event that cancels it is
  * seen first; this is best effort, since the aggregates still check what it sends. Deadline
  * entries are never removed here: the process runner writes what comes next, so a crash in between
- * leaves the entry to its lease instead of losing it. Every `IDEMPOTENCY_PURGE_INTERVAL_MS` a pass
- * also purges the idempotency keys that expired.
+ * leaves the entry to its lease instead of losing it. The entry `unrestrict` schedules retries the
+ * dead letters the restriction caused, after the same wait, so the runners have refused what they
+ * were going to; its letters are retried one by one, each in its own transaction, so a crash
+ * leaves the entry to its lease and the next run finds the rest still `failed`. Every
+ * `IDEMPOTENCY_PURGE_INTERVAL_MS` a pass also purges the idempotency keys that expired.
  */
 export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction = ({
   storage,
@@ -111,6 +130,8 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   pipeline,
   processes,
   delayedPolicies,
+  restrictedRetries,
+  reactive,
   config,
   ids,
   clock,
@@ -152,6 +173,16 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   const deadlineOf = (entry: ScheduledCommand): ProcessDeadlinePayload =>
     entry.command.payload as ProcessDeadlinePayload;
 
+  const isRestrictedRetry = (entry: ScheduledCommand): boolean =>
+    entry.command.type === RETRY_RESTRICTED_COMMAND;
+
+  // A deadline waits for the process runner; a restricted retry for every runner, since any of
+  // them may still have a refusal to write.
+  const runnersOf = (entry: ScheduledCommand): readonly string[] => {
+    if (isDeadline(entry)) return reactive.filter((name) => name === PROCESSES_SUBSCRIBER);
+    return isRestrictedRetry(entry) ? reactive : [];
+  };
+
   const aggregateOf = (entry: ScheduledCommand): string | undefined =>
     aggregates.commandsByType[entry.command.type]?.aggregate.name;
 
@@ -164,6 +195,14 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       : config.forAggregate(aggregate).policies.retry;
   };
 
+  const renew = async (entry: ClaimedCommand): Promise<void> => {
+    try {
+      await storage.scheduler.renew({ claim: entry, now: clock.now() });
+    } catch (error) {
+      throw error instanceof ScheduledClaimLostError ? error : new RenewFailed(error);
+    }
+  };
+
   const settled = (
     entry: ClaimedCommand,
     work: (unit: UnitOfWork) => Promise<void>,
@@ -172,13 +211,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       storage,
       concurrencyRetries: config.runtime.commands.concurrencyRetries,
       work,
-      beforeRerun: async () => {
-        try {
-          await storage.scheduler.renew({ claim: entry, now: clock.now() });
-        } catch (error) {
-          throw error instanceof ScheduledClaimLostError ? error : new RenewFailed(error);
-        }
-      },
+      beforeRerun: () => renew(entry),
     });
 
   const recordFailure = async (
@@ -207,7 +240,13 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
 
   // Whom the entry's work names: the person of the event a delayed policy ran on, as its handler
   // read it, or the one the payload was sealed for.
-  const personOf = (entry: ScheduledCommand, event: StoredEvent | undefined): string | null => {
+  const personOf = (
+    entry: ScheduledCommand,
+    event: StoredEvent | undefined,
+    error: unknown,
+  ): string | null => {
+    const refused = restrictedPersonOf(error);
+    if (refused !== null) return refused;
     if (!delayedPolicies.isDelayedPolicy(entry)) return entry.persons?.[0]?.person ?? null;
     return event === undefined ? null : personOfEvent({ aggregates, event });
   };
@@ -219,7 +258,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     reason: DeadLetterErrorType,
     event: StoredEvent | undefined,
   ): Promise<NewDeadLetter> => {
-    const person = personOf(entry, event);
+    const person = personOf(entry, event, error);
     const sealed = await sealError({ error, person, keys: storage.personalKeys });
     const now = clock.now().toISOString();
     if (delayedPolicies.isDelayedPolicy(entry)) {
@@ -295,6 +334,17 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       });
       return;
     }
+    // The runtime's own entry gets no letter: the person's letters are still there, `failed`,
+    // for an operator to retry, or for the next lift.
+    if (isRestrictedRetry(entry)) {
+      await storage.scheduler.fail({ claim: entry, error: errorLabel(errorIdentity(error)) });
+      logger.error("restricted dead letters could not be retried; retry them by hand", {
+        personId: entry.command.aggregateId,
+        attempts,
+        ...errorDetails(error),
+      });
+      return;
+    }
     const letter = await letterOf(entry, error, attempts, reason, event);
     await settled(entry, async (unit) => {
       if (!delayedPolicies.isDelayedPolicy(entry))
@@ -306,7 +356,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   };
 
   const run = (
-    entry: ScheduledCommand,
+    entry: ClaimedCommand,
     unit: UnitOfWork,
     event: StoredEvent | undefined,
   ): Promise<void> =>
@@ -325,6 +375,12 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
           await processes.handleDeadline({
             payload: deadlineOf(entry),
             within: unit,
+          });
+        } else if (isRestrictedRetry(entry)) {
+          await restrictedRetries.retryAll({
+            personId: entry.command.aggregateId,
+            unit,
+            beforeEach: () => renew(entry),
           });
         } else {
           const { payload, forgotten } = await openCommandPayload({
@@ -407,15 +463,18 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   const isDeadlineReady = async (
     due: readonly ClaimedCommand[],
   ): Promise<(entry: ClaimedCommand) => boolean> => {
-    if (!due.some(isDeadline)) return () => true;
-    const [head, position] = await Promise.all([
+    const runners = [...new Set(due.flatMap(runnersOf))];
+    if (runners.length === 0) return () => true;
+    const [head, ...positions] = await Promise.all([
       storage.eventStore.lastPosition(),
-      storage.checkpointStore.get(PROCESSES_SUBSCRIBER),
+      ...runners.map((name) => storage.checkpointStore.get(name)),
     ]);
+    const positionOf = (entry: ClaimedCommand): number =>
+      Math.min(...runnersOf(entry).map((name) => positions[runners.indexOf(name)] ?? 0));
     return (entry) => {
-      if (!isDeadline(entry)) return true;
+      if (runnersOf(entry).length === 0) return true;
       const wait = waits.get(entry.dedupeKey) ?? { head, rounds: 0 };
-      if (position >= wait.head || wait.rounds >= DEADLINE_WAIT_ROUNDS) {
+      if (positionOf(entry) >= wait.head || wait.rounds >= DEADLINE_WAIT_ROUNDS) {
         waits.delete(entry.dedupeKey);
         return true;
       }
@@ -442,7 +501,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       let unreadable: { readonly error: unknown } | undefined;
       const ready = await isDeadlineReady(due).catch((error: unknown) => {
         unreadable = { error };
-        return (entry: ClaimedCommand) => !isDeadline(entry);
+        return (entry: ClaimedCommand) => runnersOf(entry).length === 0;
       });
       for (const entry of due) {
         try {

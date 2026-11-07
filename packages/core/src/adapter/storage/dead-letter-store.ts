@@ -89,6 +89,15 @@ export interface DeadLetter extends Omit<StoredDeadLetter, "errorMessage" | "err
   readonly parked?: number;
 }
 
+/**
+ * What `listFailed` finds: the `failed` letters of work that names `person`, failed with the
+ * error `errorCode`.
+ */
+export interface ListFailedDeadLettersArgs {
+  readonly person: string;
+  readonly errorCode: string;
+}
+
 export interface ListDeadLettersArgs {
   readonly kind?: DeadLetterKind;
   readonly handler?: string;
@@ -111,6 +120,11 @@ export interface DeadLetterStore {
    */
   list(args?: ListDeadLettersArgs): Promise<readonly StoredDeadLetter[]>;
   count(args?: ListDeadLettersArgs): Promise<number>;
+  /**
+   * The `failed` letters whose `person` and `errorCode` are these, in the order of `list`: what
+   * lifting a person's restriction retries.
+   */
+  listFailed(args: ListFailedDeadLettersArgs): Promise<readonly StoredDeadLetter[]>;
   /**
    * Moves a `failed` letter to `status`. Rejects with `DeadLetterSettledError` when the letter is
    * missing or no longer `failed`, so of two retries or discards of one letter only the first

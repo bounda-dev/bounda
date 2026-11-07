@@ -8,6 +8,7 @@ import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { Subscriber } from "../dispatch/dispatcher.ts";
 import { sealError } from "../personal-data/errors.ts";
 import { personOfEvent } from "../personal-data/persons.ts";
+import { restrictedPersonOf } from "../personal-data/refusal.ts";
 import { deriveDeadLetterId } from "../shared/idempotency-key.ts";
 import { deliverInOrder, type ReactionOutcome } from "../shared/in-order.ts";
 import type { PendingRetries } from "../shared/pending-retries.ts";
@@ -18,7 +19,7 @@ import type { PoliciesRuntime, PolicyRuntime } from "./build-policies.ts";
 import { scheduleDelayedPolicy } from "./delayed.ts";
 import type { PolicyExecutor } from "./executor.ts";
 
-const POLICIES_SUBSCRIBER: "policies" = "policies";
+export const POLICIES_SUBSCRIBER: "policies" = "policies";
 
 export interface CreatePolicySubscriberArgs {
   readonly policies: PoliciesRuntime;
@@ -58,7 +59,7 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
     errorType: DeadLetterErrorType,
   ): Promise<void> => {
     const id = deriveDeadLetterId({ kind: "policy", handler: policy.name, subject: event.id });
-    const person = personOfEvent({ aggregates, event });
+    const person = restrictedPersonOf(error) ?? personOfEvent({ aggregates, event });
     const now = clock.now().toISOString();
     await unit.deadLetterStore.add({
       id,

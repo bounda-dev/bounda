@@ -130,6 +130,51 @@ describe("a Bounda Durable Object", () => {
     expect(refused).toMatchObject({ name: "ValidationError", code: "VALIDATION_FAILED" });
   });
 
+  it("restricts a person's processing, refusing their commands, and lifts it, arming the alarm that retries what was refused", async () => {
+    const { stub, store } = open();
+    await store.commands.placeOrder({ orderId: "o-1", total: 7, customer: "ada" });
+    const restricted = await store.restrict("ada");
+    expect(restricted).toMatchObject({
+      aggregateType: "bounda",
+      aggregateId: "ada",
+      eventTypes: ["ProcessingRestricted"],
+      position: 2,
+    });
+    const refused = await store.commands
+      .placeOrder({ orderId: "o-2", total: 3, customer: "ada" })
+      .catch((error: unknown) => error);
+    expect(refused).toMatchObject({
+      code: "PROCESSING_RESTRICTED",
+      message: "The processing of this person's data is restricted",
+    });
+    expect(
+      (await store.commands.placeOrder({ orderId: "o-3", total: 3, customer: "bo" })).eventTypes,
+    ).toEqual(["OrderPlaced"]);
+
+    // In one event of the object, so its alarm cannot run between the lift and the look.
+    const lifted = await runInDurableObject(stub, async (instance, state) => ({
+      outcome: await instance.unrestrict("ada"),
+      alarm: await state.storage.getAlarm(),
+    }));
+    expect(lifted.outcome).toMatchObject({
+      ok: true,
+      value: { eventTypes: ["ProcessingRestrictionLifted"], position: 4 },
+    });
+    expect(lifted.alarm).toBeLessThanOrEqual(Date.now());
+    await runAlarm(stub);
+    expect(await alarmOf(stub)).toBeNull();
+    expect(
+      (await store.commands.placeOrder({ orderId: "o-2", total: 3, customer: "ada" })).eventTypes,
+    ).toEqual(["OrderPlaced"]);
+    expect((await store.events.read()).map((event) => event.type)).toEqual([
+      "OrderPlaced",
+      "ProcessingRestricted",
+      "OrderPlaced",
+      "ProcessingRestrictionLifted",
+      "OrderPlaced",
+    ]);
+  });
+
   it("forgets with the caller's consistency, and leaves its alarm clear once the read models caught up", async () => {
     const stub = sliced();
     const store = connect<typeof slicedRegistry>(stub);

@@ -43,6 +43,8 @@ import {
 } from "../aggregate/load-aggregate.ts";
 import type { AggregateRuntime, AggregatesRuntime, CommandRuntime } from "../aggregate/runtime.ts";
 import { type SealedPayload, sealCommandPayload } from "../personal-data/commands.ts";
+import { personOfCommand } from "../personal-data/persons.ts";
+import { refuseRestricted } from "../personal-data/refusal.ts";
 import { errorDetails } from "../shared/retry.ts";
 import { withTimeout } from "../shared/timeout.ts";
 import { withPorts } from "../shared/with-ports.ts";
@@ -134,7 +136,28 @@ export const scheduledCommandId: ScheduledCommandIdFunction = (dedupeKey) =>
     ? dedupeKey.slice(SCHEDULED_COMMAND_PREFIX.length)
     : undefined;
 
-type DispatchStores = Pick<StorageTransaction, "eventStore" | "scheduler" | "idempotencyStore">;
+const RETRY_RESTRICTED_PREFIX = "retry-restricted:";
+
+/**
+ * The scheduler command type of the runtime's entry that retries the dead letters a person's
+ * restriction caused, once `unrestrict` lifts it. Not a user command: the worker runs it itself.
+ */
+export const RETRY_RESTRICTED_COMMAND: "bounda.RetryRestricted" = "bounda.RetryRestricted";
+
+export interface RetryRestrictedKeyFunction {
+  (personId: string): string;
+}
+
+/**
+ * The scheduler's dedupe key of that entry, one per person: lifting twice schedules one run.
+ */
+export const retryRestrictedKey: RetryRestrictedKeyFunction = (personId) =>
+  `${RETRY_RESTRICTED_PREFIX}${personId}`;
+
+type DispatchStores = Pick<
+  StorageTransaction,
+  "eventStore" | "scheduler" | "idempotencyStore" | "persons"
+>;
 
 interface Idempotency {
   readonly key: string;
@@ -547,6 +570,10 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
       lastLoad = loaded;
     };
     const perform = async (): Promise<DispatchResult | DomainError> => {
+      await refuseRestricted({
+        persons: stores.persons,
+        person: personOfCommand({ aggregate, command: runtime, payload: parsed, aggregateId }),
+      });
       if (options.delay !== undefined) {
         const delay = options.delay;
         // Before any transaction opens, since the key store it may write to is the storage's own.

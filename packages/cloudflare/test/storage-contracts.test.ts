@@ -11,6 +11,7 @@ import {
   idempotencyStoreContract,
   inboxLedgerContract,
   personalKeyStoreContract,
+  personStoreContract,
   readModelRebuildContract,
   readModelTransactionContract,
   schedulerContract,
@@ -43,6 +44,7 @@ describe("the Durable Object adapter", () => {
   snapshotStoreContract({ create: freshStorage });
   storageTransactionContract({ create: freshStorage });
   personalKeyStoreContract({ create: async () => (await freshStorage()).personalKeys });
+  personStoreContract({ create: async () => (await freshStorage()).persons });
   tableContract({
     create: async () =>
       (

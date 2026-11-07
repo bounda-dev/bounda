@@ -10,6 +10,7 @@ export interface StorageTables {
   readonly scheduledCommands: string;
   readonly idempotencyKeys: string;
   readonly personalKeys: string;
+  readonly persons: string;
   readonly snapshots: string;
 }
 
@@ -25,6 +26,7 @@ export const storageTablesFor: StorageTablesForFunction = (prefix) => ({
   scheduledCommands: quoteIdentifier(storageTableNameFor({ prefix, table: "scheduledCommands" })),
   idempotencyKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "idempotencyKeys" })),
   personalKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "personalKeys" })),
+  persons: quoteIdentifier(storageTableNameFor({ prefix, table: "persons" })),
   snapshots: quoteIdentifier(storageTableNameFor({ prefix, table: "snapshots" })),
 });
 
@@ -128,6 +130,10 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "person" TEXT PRIMARY KEY,
     "key" TEXT NOT NULL,
     "fingerprint" TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS ${tables.persons} (
+    "person" TEXT PRIMARY KEY,
+    "restricted_since" TEXT
   )`,
   `CREATE TABLE IF NOT EXISTS ${tables.snapshots} (
     "aggregate_type" TEXT NOT NULL,

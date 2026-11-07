@@ -159,6 +159,26 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       expect(await store.list({ limit: 2 })).toHaveLength(2);
     });
 
+    it("finds the failed letters of a person's work by the error's code, in the order of list", async () => {
+      const refused = (id: string, person: string | null, at = "2026-01-01T00:00:00.000Z") =>
+        letter(id, { person, errorCode: "PROCESSING_RESTRICTED", firstFailedAt: at });
+      await store.add(refused("b", "c-1", "2026-01-02T00:00:00.000Z"));
+      await store.add(refused("a", "c-1", "2026-01-02T00:00:00.000Z"));
+      await store.add(refused("c", "c-1"));
+      await store.add(refused("settled", "c-1"));
+      await store.add(refused("other", "c-2"));
+      await store.add(refused("nobody", null));
+      await store.add(letter("coded", { person: "c-1", errorCode: "VALIDATION_FAILED" }));
+      await store.add(letter("plain", { person: "c-1" }));
+      await store.updateStatus("settled", "retried");
+      const found = await store.listFailed({ person: "c-1", errorCode: "PROCESSING_RESTRICTED" });
+      expect(found.map(({ id }) => id)).toEqual(["c", "a", "b"]);
+      expect(found[0]).toEqual({ ...refused("c", "c-1"), status: "failed" });
+      expect(await store.listFailed({ person: "c-3", errorCode: "PROCESSING_RESTRICTED" })).toEqual(
+        [],
+      );
+    });
+
     it("rejects a status update for a letter it does not hold", async () => {
       const settled = await store
         .updateStatus("missing", "retried")

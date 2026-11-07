@@ -3,6 +3,7 @@ import {
   DomainError,
   IdempotencyKeyConflictError,
   type PayloadArgs,
+  ProcessingRestrictedError,
   type RejectFunction,
   type Rejection,
   ValidationError,
@@ -58,6 +59,15 @@ describe("failure", () => {
       error: "Order o-1 was already placed",
       issues: [],
       rejected: "AlreadyPlaced",
+    });
+    expect(answer.init).toEqual({ status: 409 });
+  });
+
+  it("answers a command refused for a restricted person with a 409", () => {
+    const answer = failure(new ProcessingRestrictedError("c-1"));
+    expect(answer.data).toEqual({
+      error: "The processing of this person's data is restricted",
+      issues: [],
     });
     expect(answer.init).toEqual({ status: 409 });
   });

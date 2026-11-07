@@ -59,6 +59,10 @@ export const createKeptDeadLetterStore: CreateKeptDeadLetterStoreFunction = () =
         .map(copy);
     },
     count: async (args = {}) => select(args).length,
+    listFailed: async ({ person, errorCode }) =>
+      select({ status: "failed" })
+        .filter((letter) => letter.person === person && letter.errorCode === errorCode)
+        .map(copy),
     updateStatus: async (id, status) => {
       const existing = letters.get(id);
       if (existing?.status !== "failed") throw new DeadLetterSettledError({ id });

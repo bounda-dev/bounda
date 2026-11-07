@@ -125,6 +125,13 @@ export const createSqliteDeadLetterStore: CreateSqliteDeadLetterStoreFunction = 
       );
       return Number(row?.count ?? 0);
     },
+    listFailed: async ({ person, errorCode }) =>
+      (
+        await db.all(
+          `SELECT ${COLUMNS} FROM ${table} WHERE "status" = 'failed' AND "person" = ? AND "error_code" = ? ORDER BY "first_failed_at", "id"`,
+          [person, errorCode],
+        )
+      ).map(toLetter),
     updateStatus: async (id, status) => {
       const updated = await db.all(
         `UPDATE ${table} SET "status" = ? WHERE "id" = ? AND "status" = 'failed' RETURNING "id"`,

@@ -21,6 +21,7 @@ import {
   inboxLedgerContract,
   pendingEvent,
   personalKeyStoreContract,
+  personStoreContract,
   readModelRebuildContract,
   readModelTransactionContract,
   schedulerContract,
@@ -102,6 +103,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
   snapshotStoreContract({ create: () => openStorage() });
   storageTransactionContract({ create: () => openStorage() });
   personalKeyStoreContract({ create: async () => (await openStorage()).personalKeys });
+  personStoreContract({ create: async () => (await openStorage()).persons });
 
   it("takes the append lock as a transaction starts, before anything it writes, and lets go of it with the transaction", async () => {
     const storage = await openStorage();
@@ -449,6 +451,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
       "idempotency_keys",
       "inbox",
       "personal_keys",
+      "persons",
       "rm_order_summary",
       "scheduled_commands",
       "snapshots",

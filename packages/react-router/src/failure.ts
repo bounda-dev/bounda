@@ -18,8 +18,9 @@ export interface FailureFunction {
 /**
  * Turns what a command is expected to throw into an action's answer, for the form to show: a
  * `ValidationError` becomes a 400 with its issues, a `DomainError`, the command's rejection, a 409
- * with its code in `rejected`, and an `IdempotencyKeyConflictError`, a key the request reuses
- * for another command, a 422. It goes by the error's `code`, so the same refusals that come back
+ * with its code in `rejected`, a `ProcessingRestrictedError`, a command refused because the person
+ * it touches is restricted, a 409 as well, and an `IdempotencyKeyConflictError`, a key the request
+ * reuses for another command, a 422. It goes by the error's `code`, so the same refusals that come back
  * from a Durable Object count too. Anything else is rethrown, for the route's `ErrorBoundary`.
  *
  * ```ts
@@ -40,6 +41,9 @@ export const failure: FailureFunction = (error) => {
   if (code === "DOMAIN_ERROR") {
     const { message, rejected } = error as Error & { readonly rejected: string };
     return data<Failure>({ error: message, issues: [], rejected }, { status: 409 });
+  }
+  if (code === "PROCESSING_RESTRICTED") {
+    return data<Failure>({ error: (error as Error).message, issues: [] }, { status: 409 });
   }
   if (code === "IDEMPOTENCY_KEY_CONFLICT") {
     return data<Failure>({ error: (error as Error).message, issues: [] }, { status: 422 });

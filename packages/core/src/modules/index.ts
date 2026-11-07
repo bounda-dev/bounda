@@ -9,12 +9,18 @@ export type {
   CancelledCommand,
   PersonalDataForgottenEvent,
   PersonalDataForgottenPayload,
+  ProcessingRestrictedEvent,
+  ProcessingRestrictedPayload,
+  ProcessingRestrictionLiftedEvent,
+  ProcessingRestrictionLiftedPayload,
   RemovedDeadLetter,
 } from "./bounda-events.ts";
 export {
   BOUNDA_AGGREGATE,
   BOUNDA_EVENTS,
   PERSONAL_DATA_FORGOTTEN_EVENT,
+  PROCESSING_RESTRICTED_EVENT,
+  PROCESSING_RESTRICTION_LIFTED_EVENT,
 } from "./bounda-events.ts";
 export type {
   CommandHandlerArgs,

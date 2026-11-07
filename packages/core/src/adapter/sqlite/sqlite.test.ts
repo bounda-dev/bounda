@@ -16,6 +16,7 @@ import {
   inboxLedgerContract,
   pendingEvent,
   personalKeyStoreContract,
+  personStoreContract,
   readModelRebuildContract,
   readModelTransactionContract,
   schedulerContract,
@@ -107,6 +108,7 @@ describe("the SQLite stores on node:sqlite", () => {
   snapshotStoreContract({ create: storage });
   storageTransactionContract({ create: storage });
   personalKeyStoreContract({ create: async () => (await storage()).personalKeys });
+  personStoreContract({ create: async () => (await storage()).persons });
   tableContract({
     create: async () =>
       (
@@ -315,6 +317,7 @@ describe("createSqliteAdapter", () => {
       "app_idempotency_keys",
       "app_inbox",
       "app_personal_keys",
+      "app_persons",
       "app_rm_order_summary",
       "app_scheduled_commands",
       "app_snapshots",

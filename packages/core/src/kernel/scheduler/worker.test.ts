@@ -102,6 +102,20 @@ describe("scheduled command worker", () => {
     ).toHaveLength(2);
   });
 
+  it("reads no runner's position when nothing it claimed waits for one", async () => {
+    const harness = await createReactiveHarness({ registry: orderRegistry });
+    await harness.pipeline.dispatch({
+      type: "PlaceOrder",
+      payload: { orderId: "o-1", total: 10 },
+      options: { delay: "1m" },
+    });
+    harness.clock.advance(60_000);
+    const { eventStore } = harness.storage;
+    const lastPosition = vi.spyOn(eventStore, "lastPosition");
+    expect(await harness.worker.runOnce()).toBe(1);
+    expect(lastPosition).not.toHaveBeenCalled();
+  });
+
   it("runs due commands with their stored context and completes them", async () => {
     const harness = await createReactiveHarness({ registry: orderRegistry });
     sentMessages.length = 0;

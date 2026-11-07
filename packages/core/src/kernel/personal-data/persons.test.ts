@@ -4,7 +4,7 @@ import type { StoredEvent } from "../../contracts/event.ts";
 import type { EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
-import { personOfEvent, personsOf } from "./persons.ts";
+import { personOfCommand, personOfEvent, personsOf } from "./persons.ts";
 
 const registry: Registry = {
   aggregates: {
@@ -26,7 +26,70 @@ const registry: Registry = {
         },
         orderPaid: { evolve: () => ({}) },
       },
-      commands: {},
+      commands: {
+        placeOrder: {
+          module: {
+            payload: ({ z, personal, person }: EventPayloadArgs) =>
+              z.object({
+                orderId: z.string(),
+                customerId: person(z.string()),
+                note: personal(z.string()).optional(),
+              }),
+            handler: () => [],
+          },
+        },
+        payOrder: {
+          module: {
+            payload: ({ z }: EventPayloadArgs) => z.object({ orderId: z.string() }),
+            handler: () => [],
+          },
+        },
+      },
+      policies: {},
+      processes: {},
+    },
+    customer: {
+      events: {
+        customerRegistered: {
+          payload: ({ z, personal }: EventPayloadArgs) => z.object({ email: personal(z.string()) }),
+          evolve: () => ({}),
+        },
+      },
+      commands: {
+        greetCustomer: {
+          module: {
+            payload: ({ z }: EventPayloadArgs) => z.object({ customerId: z.string() }),
+            handler: () => [],
+          },
+        },
+        remindCustomer: {
+          module: {
+            payload: ({ z, personal }: EventPayloadArgs) =>
+              z.object({ customerId: z.string(), email: personal(z.string()).optional() }),
+            handler: () => [],
+          },
+        },
+      },
+      policies: {},
+      processes: {},
+    },
+    shipment: {
+      events: { shipped: { evolve: () => ({}) } },
+      commands: {
+        ship: {
+          module: {
+            payload: ({ z }: EventPayloadArgs) => z.object({ shipmentId: z.string() }),
+            handler: () => [],
+          },
+        },
+        label: {
+          module: {
+            payload: ({ z, personal }: EventPayloadArgs) =>
+              z.object({ shipmentId: z.string(), address: personal(z.string()).optional() }),
+            handler: () => [],
+          },
+        },
+      },
       policies: {},
       processes: {},
     },
@@ -112,5 +175,33 @@ describe("personOfEvent", () => {
         event: { ...event(5, "OrderSigned", { signature: "x" }), aggregateType: "bounda" },
       }),
     ).toBeNull();
+  });
+});
+
+describe("personOfCommand", () => {
+  const touches = (type: string, payload: unknown): string | null => {
+    const entry = aggregates.commandsByType[type];
+    if (entry === undefined) throw new Error(`no command ${type}`);
+    return personOfCommand({
+      aggregate: entry.aggregate,
+      command: entry.command,
+      payload,
+      aggregateId: "a-1",
+    });
+  };
+
+  it("names the person the payload marks, the aggregate when it is the person, and nobody otherwise", () => {
+    expect(touches("PlaceOrder", { orderId: "o-1", customerId: "c-1" })).toBe("c-1");
+    expect(touches("PlaceOrder", { orderId: "o-1", customerId: 7 })).toBe("7");
+    expect(touches("PlaceOrder", { orderId: "o-1", customerId: "" })).toBe("");
+    expect(touches("PlaceOrder", { orderId: "o-1" })).toBeNull();
+    expect(touches("PlaceOrder", "text")).toBeNull();
+    // `OrderSigned` marks a field with no person, so the order is a person too.
+    expect(touches("PayOrder", { orderId: "o-1" })).toBe("a-1");
+    expect(touches("GreetCustomer", { customerId: "c-1" })).toBe("a-1");
+    expect(touches("RemindCustomer", { customerId: "c-1" })).toBe("a-1");
+    expect(touches("Ship", { shipmentId: "s-1" })).toBeNull();
+    // The command's own payload marks a field with no person: the shipment is the person.
+    expect(touches("Label", { shipmentId: "s-1" })).toBe("a-1");
   });
 });
