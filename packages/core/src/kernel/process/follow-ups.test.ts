@@ -12,6 +12,7 @@ import {
   createRecordingLogger,
   type OrderProcessConfigArgs,
   orderAggregateEntry,
+  unrecordedAccess,
 } from "../test-support.ts";
 import { PROCESS_DEADLINE_COMMAND } from "./deadlines.ts";
 import { PROCESS_EVENTS } from "./lifecycle.ts";
@@ -147,6 +148,7 @@ const setUp = async (
   beforeTimeout = undefined;
   const harness = await createReactiveHarness({ registry: app, config, adapter: adapter() });
   const deadLetters = createDeadLetters({
+    recordAccess: unrecordedAccess,
     storage: harness.storage,
     retries: harness.retries,
     processes: harness.processes,

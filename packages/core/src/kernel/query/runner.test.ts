@@ -9,6 +9,7 @@ import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
 import type { ModulePorts } from "../ports/ports.ts";
 import { buildReadModels } from "../read-model/build-read-models.ts";
+import { unrecordedAccess } from "../test-support.ts";
 import { buildQueries } from "./build-queries.ts";
 import { createQueryRunner } from "./runner.ts";
 
@@ -96,7 +97,12 @@ const setup = async (ports: ModulePorts = {}) => {
   await table.insert({ orderId: "o-1", customerId: "c-1", total: 10 });
   await table.insert({ orderId: "o-2", customerId: "c-1", total: 25 });
   await table.insert({ orderId: "o-3", customerId: "c-2", total: 5 });
-  return createQueryRunner({ queries: buildQueries({ readModels }), readModels, ports });
+  return createQueryRunner({
+    queries: buildQueries({ readModels }),
+    readModels,
+    ports,
+    recordAccess: unrecordedAccess,
+  });
 };
 
 describe("query runner", () => {
@@ -107,7 +113,7 @@ describe("query runner", () => {
       customerId: "c-1",
       total: 25,
     });
-    expect(await runner.facade.listOrders?.({ customerId: "c-1" })).toEqual({
+    expect(await runner.facade(undefined).listOrders?.({ customerId: "c-1" })).toEqual({
       orders: [
         { orderId: "o-2", customerId: "c-1", total: 25 },
         { orderId: "o-1", customerId: "c-1", total: 10 },
@@ -118,17 +124,17 @@ describe("query runner", () => {
 
   it("lets a handler compose other queries and work without a repository or payload", async () => {
     const runner = await setup();
-    expect(await runner.facade.customerOverview?.({ customerId: "c-1" })).toEqual({
+    expect(await runner.facade(undefined).customerOverview?.({ customerId: "c-1" })).toEqual({
       customerId: "c-1",
       outstanding: 35,
     });
-    expect(await runner.facade.countOrders?.()).toBe(3);
+    expect(await runner.facade(undefined).countOrders?.()).toBe(3);
   });
 
   it("hands a read model's ports to its query handlers, never to their repository", async () => {
     const runner = await setup({ orderSummary: { rates: async () => 1.5 } });
     seenByRepository.length = 0;
-    expect(await runner.facade.getOrderInUsd?.({ orderId: "o-2" })).toEqual({
+    expect(await runner.facade(undefined).getOrderInUsd?.({ orderId: "o-2" })).toEqual({
       orderId: "o-2",
       totalUsd: 37.5,
     });
@@ -146,8 +152,10 @@ describe("query runner", () => {
       }),
     };
     const runner = await setup(ports);
-    expect(await runner.facade.countOrders?.()).toBe(3);
-    await expect(runner.facade.getOrderInUsd?.({ orderId: "o-2" })).rejects.toBe(missing);
+    expect(await runner.facade(undefined).countOrders?.()).toBe(3);
+    await expect(runner.facade(undefined).getOrderInUsd?.({ orderId: "o-2" })).rejects.toBe(
+      missing,
+    );
   });
 
   it("validates payloads and rejects unknown queries", async () => {

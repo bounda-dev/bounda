@@ -286,6 +286,22 @@ await app.runUntilIdle();
 
 The bound client has no `runUntilIdle` or `stop`: those stay on `app`.
 
+The [access log](/guides/personal-data/#who-opened-what) names the actor too. A test app never
+calls the project's `app/audit.ts`, as it reaches no port the test did not ask for: its records
+go to `logger`, or to the `onPersonalDataAccess` the test passes:
+
+```ts
+const records: PersonalDataAccess[] = [];
+const { app } = await createTestApp({
+  registry,
+  onPersonalDataAccess: ({ access }) => {
+    records.push(access);
+  },
+});
+await app.as("support-7").exportPersonalData("ada");
+expect(records).toMatchObject([{ operation: "exportPersonalData", actor: "support-7", persons: ["ada"] }]);
+```
+
 ## Nothing left behind
 
 `app.getLag()` reports how far each subscriber is behind the head of the global stream.

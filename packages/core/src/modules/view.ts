@@ -6,26 +6,53 @@ import type { Simplify } from "./naming.ts";
 export type FieldType = "string" | "number" | "boolean" | "date" | "json";
 
 /**
+ * How a read-model field is marked: `personal` holds personal data of the person the row's
+ * `person` field names, `person` is that field.
+ */
+export type FieldMark = "personal" | "person";
+
+/**
  * A read-model field as the runtime and the adapters see it. `Value` is the TypeScript type of
  * the column; it is carried at the type level only.
  */
-export interface FieldDefinition<Value = unknown, Optional extends boolean = boolean> {
+export interface FieldDefinition<
+  Value = unknown,
+  Optional extends boolean = boolean,
+  Mark extends FieldMark | null = FieldMark | null,
+> {
   readonly type: FieldType;
   readonly isOptional: Optional;
   readonly isPrimaryKey: boolean;
   readonly isUnique: boolean;
   readonly isIndexed: boolean;
+  /**
+   * Adapters store a marked column as any other.
+   */
+  readonly mark: Mark;
   readonly _value?: Value;
 }
 
 /**
  * A field under construction. Every method returns a new field; nothing is mutated.
  */
-export interface Field<Value, Optional extends boolean> extends FieldDefinition<Value, Optional> {
-  optional(): Field<Value, true>;
-  primaryKey(): Field<Value, Optional>;
-  unique(): Field<Value, Optional>;
-  index(): Field<Value, Optional>;
+export interface Field<Value, Optional extends boolean, Mark extends FieldMark | null = null>
+  extends FieldDefinition<Value, Optional, Mark> {
+  optional(): Field<Value, true, Mark>;
+  primaryKey(): Field<Value, Optional, Mark>;
+  unique(): Field<Value, Optional, Mark>;
+  index(): Field<Value, Optional, Mark>;
+  /**
+   * Marks the field as personal data of the person the row's `person` field names: the export of
+   * that person carries it, and a query that reads rows of the read model is recorded in the
+   * access log. A read model with personal fields needs a `person` field and a projection of
+   * `PersonalDataForgotten`, or `.bounda/types.ts` does not compile.
+   */
+  personal(this: Field<Value, Optional, null>): Field<Value, Optional, "personal">;
+  /**
+   * Marks the field that holds the id of the person the row's personal fields belong to. A read
+   * model has at most one; its rows are in that person's export.
+   */
+  person(this: Field<string, Optional, null>): Field<Value, Optional, "person">;
 }
 
 /**
@@ -90,29 +117,34 @@ interface FieldFlags {
   readonly isPrimaryKey: boolean;
   readonly isUnique: boolean;
   readonly isIndexed: boolean;
+  readonly mark: FieldMark | null;
 }
 
-const createField = <Value, Optional extends boolean>(
+const createField = <Value, Optional extends boolean, Mark extends FieldMark | null>(
   flags: FieldFlags,
-): Field<Value, Optional> => ({
+): Field<Value, Optional, Mark> => ({
   type: flags.type,
   isOptional: flags.isOptional as Optional,
   isPrimaryKey: flags.isPrimaryKey,
   isUnique: flags.isUnique,
   isIndexed: flags.isIndexed,
-  optional: () => createField<Value, true>({ ...flags, isOptional: true }),
-  primaryKey: () => createField<Value, Optional>({ ...flags, isPrimaryKey: true }),
-  unique: () => createField<Value, Optional>({ ...flags, isUnique: true }),
-  index: () => createField<Value, Optional>({ ...flags, isIndexed: true }),
+  mark: flags.mark as Mark,
+  optional: () => createField<Value, true, Mark>({ ...flags, isOptional: true }),
+  primaryKey: () => createField<Value, Optional, Mark>({ ...flags, isPrimaryKey: true }),
+  unique: () => createField<Value, Optional, Mark>({ ...flags, isUnique: true }),
+  index: () => createField<Value, Optional, Mark>({ ...flags, isIndexed: true }),
+  personal: () => createField<Value, Optional, "personal">({ ...flags, mark: "personal" }),
+  person: () => createField<Value, Optional, "person">({ ...flags, mark: "person" }),
 });
 
 const field = <Value>(type: FieldType): Field<Value, false> =>
-  createField<Value, false>({
+  createField<Value, false, null>({
     type,
     isOptional: false,
     isPrimaryKey: false,
     isUnique: false,
     isIndexed: false,
+    mark: null,
   });
 
 /**

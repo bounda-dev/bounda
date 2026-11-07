@@ -203,6 +203,9 @@ export const validateRegistry: ValidateRegistryFunction = (registry) => {
   for (const [name, readModel] of Object.entries(registry.readModels)) {
     validateReadModel(problems, name, readModel, registry.aggregates);
   }
+  if (registry.audit !== undefined) {
+    requireFunction(problems, registry.audit, "audit", "onPersonalDataAccess");
+  }
   if (problems.length > 0) {
     const details = problems.map((problem) => `  ${problem.path}: ${problem.message}`).join("\n");
     throw new ConfigurationError(`Invalid registry:\n${details}`);

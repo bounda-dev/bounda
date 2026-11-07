@@ -6,7 +6,11 @@ import type { ProcessAfterFunction, ProcessStateArgs } from "../../modules/proce
 import type { Registry } from "../../modules/registry.ts";
 import { createDeadLetters } from "../dead-letters/dead-letters.ts";
 import { createReactiveHarness } from "../reactive-harness.ts";
-import { type OrderProcessConfigArgs, orderAggregateEntry } from "../test-support.ts";
+import {
+  type OrderProcessConfigArgs,
+  orderAggregateEntry,
+  unrecordedAccess,
+} from "../test-support.ts";
 import { type FoldProcessArgs, foldProcess, PROCESS_EVENTS } from "./lifecycle.ts";
 
 interface LedgerState {
@@ -124,6 +128,7 @@ const run = async (seed: number): Promise<void> => {
     },
   });
   const deadLetters = createDeadLetters({
+    recordAccess: unrecordedAccess,
     storage: harness.storage,
     retries: harness.retries,
     processes: harness.processes,

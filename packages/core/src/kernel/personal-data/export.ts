@@ -1,9 +1,10 @@
-import type { Storage } from "../../adapter/adapter.ts";
+import type { ReadModelStorage, Storage } from "../../adapter/adapter.ts";
 import type { DeadLetterKind, StoredDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { scheduledCommandId } from "../command/pipeline.ts";
+import type { ReadModelPersonalData, ReadModelsRuntime } from "../read-model/build-read-models.ts";
 import { isRecord } from "../shared/merge-fields.ts";
 import { openCommandPayload, sealedKeys } from "./commands.ts";
 import { openTextWith } from "./errors.ts";
@@ -66,9 +67,19 @@ export interface ExportedDeadLetter {
 }
 
 /**
+ * A row of a read model whose field marked `.person()` names the person: its primary key, which
+ * tells it apart, and its fields marked `.personal()`, a field the row does not have left out.
+ */
+export interface ExportedRow {
+  readonly key: unknown;
+  readonly data: ExportedData;
+}
+
+/**
  * What `exportPersonalData` answers: every record the runtime holds that names the person, with
- * the fields marked `personal` of theirs opened. Fields left unmarked are not personal data to
- * Bounda and stay out, as do read models and whatever left the store.
+ * the fields marked `personal` of theirs opened, and the rows of every read model with a field
+ * marked `.person()` that name them. Fields left unmarked are not personal data to Bounda and stay
+ * out, as do the rows of read models without such a field and whatever left the store.
  */
 export interface PersonalDataExport {
   readonly personId: string;
@@ -79,6 +90,10 @@ export interface PersonalDataExport {
   readonly events: readonly ExportedEvent[];
   readonly scheduledCommands: readonly ExportedScheduledCommand[];
   readonly deadLetters: readonly ExportedDeadLetter[];
+  /**
+   * By read model, every one with a field marked `.person()`, rows or none.
+   */
+  readonly readModels: Readonly<Record<string, readonly ExportedRow[]>>;
 }
 
 export interface ExportPersonalDataArgs {
@@ -87,6 +102,7 @@ export interface ExportPersonalDataArgs {
    */
   readonly storage: Storage;
   readonly aggregates: AggregatesRuntime;
+  readonly readModels: ReadModelsRuntime;
   readonly clock: Clock;
   readonly batchSize: number;
   readonly personId: string;
@@ -105,16 +121,59 @@ const markedFields = (marks: PersonalMarks | null, payload: unknown): ExportedDa
   );
 };
 
+// Each read model through its own storage, which may be another adapter's.
+const exportedRows = async (
+  storage: ReadModelStorage,
+  { person, personal, primaryKey }: ReadModelPersonalData,
+  personId: string,
+  batchSize: number,
+): Promise<readonly ExportedRow[]> => {
+  const rows: ExportedRow[] = [];
+  let page: readonly Record<string, unknown>[];
+  do {
+    page = await storage.table.findMany({
+      where: { [person]: personId },
+      orderBy: { field: primaryKey, direction: "asc" },
+      limit: batchSize,
+      offset: rows.length,
+    });
+    for (const row of page) {
+      rows.push({
+        key: row[primaryKey],
+        data: Object.fromEntries(
+          personal.filter((field) => row[field] !== undefined).map((field) => [field, row[field]]),
+        ),
+      });
+    }
+  } while (page.length === batchSize);
+  return rows;
+};
+
 // Nothing is locked: the export holds what each store held as it was read.
 export const exportPersonalData: ExportPersonalDataFunction = async ({
   storage,
   aggregates,
+  readModels,
   clock,
   batchSize,
   personId,
 }) => {
   checkPersonId(personId, "exportPersonalData");
   const exportedAt = clock.now().toISOString();
+  // Independent of the store's records, and often on another adapter, so read meanwhile; a
+  // failure of the store's reads first leaves this one handled, the export rejecting with that.
+  const rows = Promise.all(
+    Object.values(readModels.byName).flatMap(({ name, storage: rowsStorage, personalData }) =>
+      personalData === null
+        ? []
+        : [
+            exportedRows(rowsStorage, personalData, personId, batchSize).then(
+              (exported) => [name, exported] as const,
+            ),
+          ],
+    ),
+  );
+  rows.catch(() => undefined);
   const eventMarks = (event: StoredEvent): PersonalMarks | null =>
     aggregates.byName[event.aggregateType]?.eventsByType[event.type]?.personal ?? null;
   const commandMarks = (type: string): PersonalMarks | null =>
@@ -177,5 +236,12 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
   const deadLetters = await Promise.all(
     (await storage.deadLetterStore.listByPerson(personId)).map(exportedLetter),
   );
-  return { personId, exportedAt, events, scheduledCommands, deadLetters };
+  return {
+    personId,
+    exportedAt,
+    events,
+    scheduledCommands,
+    deadLetters,
+    readModels: Object.fromEntries(await rows),
+  };
 };

@@ -1,4 +1,5 @@
 import type { ImplementationModule, Registry } from "@bounda-dev/core";
+import * as audit from "../app/audit.ts";
 import * as registerCustomer from "../app/domain/customer/commands/register-customer.ts";
 import * as customerRegistered from "../app/domain/customer/customer-registered.ts";
 import * as customerState from "../app/domain/customer/state.ts";
@@ -104,4 +105,5 @@ export const registry = {
       queries: { customerOverview, getOrder, listUnpaidOrders },
     },
   },
+  audit,
 } as const satisfies Registry;

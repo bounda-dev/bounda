@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { Adapter, CreateReadModelArgs } from "../../adapter/adapter.ts";
 import { resolveConfig } from "../../config/schema.ts";
+import { ConfigurationError } from "../../contracts/errors.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
-import type { Registry } from "../../modules/registry.ts";
-import type { FieldsArgs } from "../../modules/view.ts";
-import { buildReadModels } from "./build-read-models.ts";
+import type { ReadModelEntry, Registry } from "../../modules/registry.ts";
+import { type FieldsArgs, type FieldsRecord, fieldBuilder as f } from "../../modules/view.ts";
+import { buildReadModels, personalDataOf } from "./build-read-models.ts";
 
 const view = { fields: ({ f }: FieldsArgs) => ({ orderId: f.string().primaryKey() }) };
 
@@ -94,5 +95,101 @@ describe("buildReadModels", () => {
     expect(closes()).toBe(0);
     await readModels.close();
     expect(closes()).toBe(2);
+  });
+});
+
+describe("personalDataOf", () => {
+  const forgetting: ReadModelEntry = {
+    view,
+    projections: { bounda: { personalDataForgotten: { project: () => undefined } } },
+    queries: {},
+  };
+  const of = (fields: FieldsRecord, entry: ReadModelEntry = forgetting) =>
+    personalDataOf({ name: "customers", entry, fields });
+
+  it("names the person field, the personal ones and the primary key", () => {
+    expect(
+      of({
+        orderId: f.string().primaryKey(),
+        customerId: f.string().person(),
+        email: f.string().personal(),
+        total: f.number(),
+        address: f.json<{ street: string }>().personal().optional(),
+      }),
+    ).toEqual({ person: "customerId", personal: ["email", "address"], primaryKey: "orderId" });
+    expect(
+      of({ customerId: f.string().primaryKey().person() }, { ...forgetting, projections: {} }),
+    ).toEqual({ person: "customerId", personal: [], primaryKey: "customerId" });
+  });
+
+  it("is null for a read model without a person field", () => {
+    expect(of({ orderId: f.string().primaryKey(), total: f.number() })).toBeNull();
+  });
+
+  it("refuses more than one person field, personal fields without one, and personal fields that are never forgotten", () => {
+    expect(() => of({ id: f.string().primaryKey().person(), other: f.string().person() })).toThrow(
+      new ConfigurationError(
+        'Read model "customers" marks more than one field with .person(): id, other',
+      ),
+    );
+    expect(() => of({ id: f.string().primaryKey(), email: f.string().personal() })).toThrow(
+      new ConfigurationError(
+        'Read model "customers" has fields marked .personal() and none marked .person(), the id of the person they belong to',
+      ),
+    );
+    const unforgotten = new ConfigurationError(
+      'Read model "customers" has fields marked .personal(), so it needs projections/bounda/personal-data-forgotten.ts',
+    );
+    expect(() =>
+      of(
+        { id: f.string().primaryKey().person(), email: f.string().personal() },
+        { view, projections: {}, queries: {} },
+      ),
+    ).toThrow(unforgotten);
+    expect(() =>
+      of(
+        { id: f.string().primaryKey().person(), email: f.string().personal() },
+        { view, projections: { bounda: {} }, queries: {} },
+      ),
+    ).toThrow(
+      new ConfigurationError(
+        'Read model "customers" has fields marked .personal(), so it needs projections/bounda/personal-data-forgotten.ts',
+      ),
+    );
+  });
+
+  it("fails the start before opening the read model's storage", async () => {
+    const { adapter, closes } = countingAdapter();
+    let opened = 0;
+    const counted: Adapter = {
+      ...adapter,
+      createReadModel: <Row extends object>(args: CreateReadModelArgs) => {
+        opened += 1;
+        return adapter.createReadModel<Row>(args);
+      },
+    };
+    await expect(
+      buildReadModels({
+        registry: {
+          aggregates: {},
+          readModels: {
+            customers: {
+              view: {
+                fields: ({ f: field }: FieldsArgs) => ({
+                  id: field.string().primaryKey(),
+                  email: field.string().personal(),
+                }),
+              },
+              projections: {},
+              queries: {},
+            },
+          },
+        },
+        config: resolveConfig({ storage: counted }),
+        logger: silentLogger,
+      }),
+    ).rejects.toBeInstanceOf(ConfigurationError);
+    expect(opened).toBe(0);
+    expect(closes()).toBe(0);
   });
 });

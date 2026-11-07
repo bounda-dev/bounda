@@ -73,3 +73,12 @@ loads nothing either, so their spans carry none of these. The dispatch result ne
 aggregate was loaded: a replay returns what the first dispatch returned, and a snapshot stays a
 cache nobody has to know about. To read these attributes in a test or a demo, register an
 in-memory span exporter, such as `InMemorySpanExporter` from `@opentelemetry/sdk-trace-base`.
+
+## Who opened personal data
+
+Who opened whose personal data is not in a span. A tracing backend samples, and drops spans under
+load, which is right for latency and wrong for an audit trail, where one missing entry is a
+read nobody can account for. The [access log](/guides/personal-data/#who-opened-what) is
+delivered on its own: to `app/audit.ts` when the project has one, else to the app's logger at
+`info` with the message `personal data accessed`, never sampled, and a hook that fails fails the
+read. Spans keep the `bounda.actor` of commands, which the event store also records.

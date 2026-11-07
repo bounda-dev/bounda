@@ -74,6 +74,7 @@ const collectImports = (model: ProjectModel): readonly ImportEntry[] => {
     }
     for (const query of readModel.queries) add(query.key, readModel.name, query.path);
   }
+  if (model.audit !== undefined) add("audit", "app", model.audit.path);
   return entries;
 };
 
@@ -245,7 +246,7 @@ export interface EmitRegistryFunction {
 
 /**
  * `.bounda/registry.ts`: one namespace import per module, a type import per port, and the
- * structured registry `createApp` consumes.
+ * structured registry `createApp` consumes, with `app/audit.ts` when the project has one.
  */
 export const emitRegistry: EmitRegistryFunction = ({ model, path, fingerprints = {} }) => {
   const aliases = resolveAliases(model, path);
@@ -269,6 +270,9 @@ export const emitRegistry: EmitRegistryFunction = ({ model, path, fingerprints =
       "readModels",
       model.readModels.map((readModel) => emitReadModel(readModel, aliases)),
     ),
+    ...(model.audit === undefined
+      ? []
+      : [`  ${record([["audit", aliases.of(model.audit.path)]]).slice(2, -2)},`]),
     "} as const satisfies Registry;",
     "",
   ].join("\n");

@@ -17,6 +17,7 @@ import type {
   CreateArgs,
   CreateImplementation,
   DeadLetter,
+  DeadLetterAccess,
   DeadLetterKind,
   DecidedDispatch,
   DispatchOptions,
@@ -30,14 +31,20 @@ import type {
   ExportedData,
   ExportedDeadLetter,
   ExportedEvent,
+  ExportedRow,
   ExportedScheduledCommand,
+  Field,
+  FieldsArgs,
   ForgetsPersonalData,
   HasPersonalFields,
   ImplementationModule,
   Instant,
   Logger,
+  OnPersonalDataAccess,
+  OnPersonalDataAccessArgs,
   PayloadArgs,
   PayloadInputOf,
+  PersonalDataAccess,
   PersonalDataExport,
   PersonalDataForgottenEvent,
   PersonalDataForgottenPayload,
@@ -63,15 +70,23 @@ import type {
   StoredEvent,
   Table,
 } from "@bounda-dev/core";
-import { checkActor, idempotencyKeyFor, MAX_ACTOR_LENGTH } from "@bounda-dev/core";
+import {
+  checkActor,
+  fieldBuilder,
+  idempotencyKeyFor,
+  MAX_ACCESS_PERSONS,
+  MAX_ACTOR_LENGTH,
+} from "@bounda-dev/core";
 import { describe, expectTypeOf, it } from "vitest";
 import type { registry } from "./fixtures/order-app/.bounda/registry.ts";
 import type {
   Commands,
   CustomerDirectoryForgetting,
+  CustomerDirectoryRow,
   OrderSummaryForgetting,
   Queries,
 } from "./fixtures/order-app/.bounda/types.ts";
+import type * as audit from "./fixtures/order-app/app/audit.ts";
 import type { Event as CustomerRegistered } from "./fixtures/order-app/app/domain/customer/+types/customer-registered.ts";
 import type { Command as RegisterCustomer } from "./fixtures/order-app/app/domain/customer/commands/+types/register-customer.ts";
 import type { Event as OrderPlaced } from "./fixtures/order-app/app/domain/order/+types/order-placed.ts";
@@ -548,6 +563,96 @@ describe("personal data", () => {
     expectTypeOf<HasPersonalFields<{ evolve: () => object }>>().toEqualTypeOf<false>();
   });
 
+  it("marks read-model fields without changing their rows, a person field being a string", () => {
+    expectTypeOf(fieldBuilder.string().person()).toEqualTypeOf<Field<string, false, "person">>();
+    expectTypeOf(fieldBuilder.string().optional().personal()).toEqualTypeOf<
+      Field<string, true, "personal">
+    >();
+    expectTypeOf(fieldBuilder.json<{ street: string }>().personal().index()).toEqualTypeOf<
+      Field<{ street: string }, false, "personal">
+    >();
+    expectTypeOf(fieldBuilder.string().mark).toEqualTypeOf<null>();
+    expectTypeOf<CustomerDirectoryRow>().toEqualTypeOf<{
+      readonly customerId: string;
+      readonly email?: string;
+    }>();
+    const view = {
+      fields: ({ f }: FieldsArgs) => ({
+        customerId: f.string().primaryKey().person(),
+        email: f.string().personal(),
+      }),
+    };
+    expectTypeOf<
+      ForgetsPersonalData<"customers", never, true, typeof view>
+    >().toEqualTypeOf<true>();
+    expectTypeOf<
+      ForgetsPersonalData<"customers", never, false, typeof view>
+    >().toEqualTypeOf<"Read model customers has fields marked .personal(), so it needs projections/bounda/personal-data-forgotten.ts">();
+    const unidentified = {
+      fields: ({ f }: FieldsArgs) => ({
+        id: f.string().primaryKey(),
+        email: f.string().personal(),
+      }),
+    };
+    expectTypeOf<
+      ForgetsPersonalData<"customers", never, true, typeof unidentified>
+    >().toEqualTypeOf<"Read model customers has fields marked .personal(), so it needs a field marked .person(): the id of the person they belong to">();
+    const twoPersons = {
+      fields: ({ f }: FieldsArgs) => ({
+        id: f.string().primaryKey().person(),
+        customerId: f.string().person(),
+      }),
+    };
+    expectTypeOf<
+      ForgetsPersonalData<"customers", never, true, typeof twoPersons>
+    >().toEqualTypeOf<"Read model customers marks more than one field with .person(); keep the one that names whose the row is">();
+    // A person field alone holds an id, which needs no forgetting.
+    const idOnly = { fields: ({ f }: FieldsArgs) => ({ id: f.string().primaryKey().person() }) };
+    expectTypeOf<
+      ForgetsPersonalData<"customers", never, false, typeof idOnly>
+    >().toEqualTypeOf<true>();
+  });
+
+  it("types the access log's hook and the records it receives", () => {
+    expectTypeOf<Registry["audit"]>().toEqualTypeOf<typeof audit>();
+    expectTypeOf<typeof audit.onPersonalDataAccess>().toEqualTypeOf<OnPersonalDataAccess>();
+    expectTypeOf<OnPersonalDataAccessArgs["access"]>().toEqualTypeOf<PersonalDataAccess>();
+    expectTypeOf<OnPersonalDataAccessArgs["tenant"]>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<OnPersonalDataAccessArgs["logger"]>().toEqualTypeOf<Logger>();
+    expectTypeOf<PersonalDataAccess["operation"]>().toEqualTypeOf<
+      | "query"
+      | "exportPersonalData"
+      | "deadLetters.list"
+      | "deadLetters.get"
+      | "deadLetters.retry"
+      | "deadLetters.discard"
+    >();
+    expectTypeOf<PersonalDataAccess["actor"]>().toEqualTypeOf<string | null>();
+    expectTypeOf<PersonalDataAccess["persons"]>().toEqualTypeOf<readonly string[]>();
+    expectTypeOf<PersonalDataAccess["personCount"]>().toEqualTypeOf<number>();
+    expectTypeOf<PersonalDataAccess["at"]>().toEqualTypeOf<string>();
+    expectTypeOf<Extract<PersonalDataAccess, { operation: "query" }>["detail"]>().toEqualTypeOf<{
+      readonly query: string;
+      readonly readModel: string;
+    }>();
+    expectTypeOf<DeadLetterAccess["operation"]>().toEqualTypeOf<
+      "deadLetters.get" | "deadLetters.retry" | "deadLetters.discard"
+    >();
+    expectTypeOf<DeadLetterAccess["detail"]>().toEqualTypeOf<{ readonly letter: string }>();
+    expectTypeOf<
+      Extract<PersonalDataAccess, { operation: "deadLetters.list" }>["detail"]
+    >().toEqualTypeOf<{ readonly letters: number }>();
+    expectTypeOf<
+      Extract<PersonalDataAccess, { operation: "exportPersonalData" }>["detail"]
+    >().toEqualTypeOf<{
+      readonly events: number;
+      readonly scheduledCommands: number;
+      readonly deadLetters: number;
+      readonly readModelRows: number;
+    }>();
+    expectTypeOf(MAX_ACCESS_PERSONS).toEqualTypeOf<number>();
+  });
+
   it("requires a read model projecting personal fields to handle forgetting", () => {
     expectTypeOf<CustomerDirectoryForgetting>().toEqualTypeOf<true>();
     expectTypeOf<OrderSummaryForgetting>().toEqualTypeOf<true>();
@@ -613,6 +718,11 @@ describe("personal data", () => {
       readonly events: readonly ExportedEvent[];
       readonly scheduledCommands: readonly ExportedScheduledCommand[];
       readonly deadLetters: readonly ExportedDeadLetter[];
+      readonly readModels: Readonly<Record<string, readonly ExportedRow[]>>;
+    }>();
+    expectTypeOf<ExportedRow>().toEqualTypeOf<{
+      readonly key: unknown;
+      readonly data: ExportedData;
     }>();
     expectTypeOf<ExportedEvent>().toEqualTypeOf<{
       readonly id: string;
