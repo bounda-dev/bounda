@@ -437,6 +437,64 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       expect((await storage.deadLetterStore.list()).map((letter) => letter.id)).toEqual(["d2"]);
     });
 
+    it("forgets the scheduled commands and dead letters of a person that the same transaction wrote", async () => {
+      const schedule = (tx: StorageTransaction, dedupeKey: string, person: string) =>
+        tx.scheduler.schedule({
+          dedupeKey,
+          command: testCommand(person),
+          executeAt: new Date(now.getTime() + 60_000),
+          context: testContext,
+          persons: [held(person, "1")],
+        });
+      await schedule(storage, "command:c1", "c-1");
+      await storage.deadLetterStore.add({ ...testDeadLetter("d1"), persons: [held("c-1", "1")] });
+      await storage.deadLetterStore.updateStatus("d1", "discarded");
+      const [cancelled, removed, again] = await storage.transact(async (tx) => {
+        await schedule(tx, "command:c1", "c-1");
+        await schedule(tx, "command:c1b", "c-1");
+        await schedule(tx, "command:c1c", "c-1");
+        await tx.scheduler.cancel("command:c1c");
+        await schedule(tx, "command:c2", "c-2");
+        await tx.deadLetterStore.add({ ...testDeadLetter("d1"), persons: [held("c-1", "1")] });
+        await tx.deadLetterStore.add({ ...testDeadLetter("d1b"), persons: [held("c-1", "1")] });
+        await tx.deadLetterStore.add({ ...testDeadLetter("d1c"), persons: [held("c-1", "1")] });
+        await tx.deadLetterStore.remove("d1c");
+        await tx.deadLetterStore.add({ ...testDeadLetter("d2"), persons: [held("c-2", "1")] });
+        const forgotten = [
+          await tx.scheduler.forget("c-1"),
+          await tx.deadLetterStore.forget("c-1"),
+        ] as const;
+        return [
+          ...forgotten,
+          [await tx.scheduler.forget("c-1"), await tx.deadLetterStore.forget("c-1")],
+        ] as const;
+      });
+      expect([...cancelled].sort((a, b) => a.dedupeKey.localeCompare(b.dedupeKey))).toMatchObject([
+        {
+          dedupeKey: "command:c1",
+          command: testCommand("c-1"),
+          attempts: 0,
+          persons: [held("c-1", "1")],
+        },
+        {
+          dedupeKey: "command:c1b",
+          command: testCommand("c-1"),
+          attempts: 0,
+          persons: [held("c-1", "1")],
+        },
+      ]);
+      expect(cancelled).toHaveLength(2);
+      expect(removed.map(({ id, status }) => [id, status]).sort()).toEqual([
+        ["d1", "discarded"],
+        ["d1b", "failed"],
+      ]);
+      expect(again).toEqual([[], []]);
+      expect((await storage.scheduler.list()).map((entry) => entry.dedupeKey)).toEqual([
+        "command:c2",
+      ]);
+      expect((await storage.deadLetterStore.list()).map((letter) => letter.id)).toEqual(["d2"]);
+    });
+
     it("leaves no dead letter of a person behind when a forget races the worker giving up their command", async () => {
       await storage.scheduler.schedule({
         dedupeKey: "command:c1",

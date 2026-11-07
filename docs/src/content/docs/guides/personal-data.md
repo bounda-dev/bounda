@@ -346,7 +346,10 @@ inactive for that long is forgotten in the first passes. A person named by an ev
 left for a later pass, read in the transaction that forgets them, so nobody is forgotten for an
 activity the row does not show yet, nor twice when two workers sweep at once; an event stored in
 a transaction running beside it may still be forgotten with them, as one a command stores while
-`forget` runs may be. A pass that leaves anyone due behind, or fails, holds the sweep for half a minute.
+`forget` runs may be. A person the sweep could not forget, because their forget failed or their
+row is behind, waits on their own, half a minute at first and twice as long after each failure up
+to an hour, while the pass goes on with the next ones; `nextDueAt()` names the end of that wait,
+so a host never wakes for them again at once.
 
 A host without a polling worker learns of it from `app.nextDueAt()`, which names the earliest
 retention deadline with the scheduled commands, so a [Durable Object](/adapters/cloudflare/)

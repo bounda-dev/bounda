@@ -16,8 +16,16 @@ export const RETENTION_SUBSCRIBER: "retention" = "retention";
 // How many persons a pass of the worker forgets at most.
 export const RETENTION_SWEEP_LIMIT = 50;
 
-// How long the sweep waits after a pass that left a due person undone or could not list them.
+// How long a person the sweep left undone waits before the next try, twice as long after each
+// failure up to `RETENTION_MAX_RETRY_MS`; and how long a list that could not be read holds it.
 export const RETENTION_RETRY_MS = 30_000;
+
+export const RETENTION_MAX_RETRY_MS = 3_600_000;
+
+interface Hold {
+  readonly until: number;
+  readonly failures: number;
+}
 
 const isActivity = (event: StoredEvent): boolean => event.aggregateType !== BOUNDA_AGGREGATE;
 
@@ -73,12 +81,12 @@ export interface RetentionSweep {
   /**
    * Forgets, as `forget` does with `reason: "retention"`, up to `RETENTION_SWEEP_LIMIT` persons
    * idle past the retention at `now`, and resolves to how many it forgot. Never rejects: what
-   * fails is logged and tried again `RETENTION_RETRY_MS` later.
+   * fails is logged and tried again later, a person on their own.
    */
   sweep(now: Date): Promise<number>;
   /**
-   * When the least recently active person the retention may forget becomes due, or the sweep's
-   * hold ends when that is later; `null` when there is none.
+   * When the next person the retention may forget becomes due, a held one not before their hold
+   * ends; `null` when there is none.
    */
   nextDueAt(): Promise<Date | null>;
 }
@@ -160,55 +168,78 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
     return "forgotten";
   };
 
-  // A pass that leaves due persons undone holds the sweep for a while, so the next does not
-  // retry them at once: a host that wakes for `nextDueAt` would otherwise wake again at once.
-  let heldUntil = Number.NEGATIVE_INFINITY;
+  // A person left undone waits on their own, so one whose forget keeps failing never holds the
+  // others back, and a host that wakes for `nextDueAt` never wakes for them again at once. A list
+  // that could not be read holds the whole sweep.
+  const holds = new Map<string, Hold>();
+  let listHeldUntil = Number.NEGATIVE_INFINITY;
 
-  const sweep = async (
-    now: Date,
-  ): Promise<{ readonly forgotten: number; readonly undone: number }> => {
+  const hold = (person: string, now: number, failed: boolean): void => {
+    const failures = (holds.get(person)?.failures ?? 0) + (failed ? 1 : 0);
+    const delay = RETENTION_RETRY_MS * 2 ** Math.max(failures - 1, 0);
+    holds.set(person, { until: now + Math.min(delay, RETENTION_MAX_RETRY_MS), failures });
+  };
+
+  const sweep = async (now: Date): Promise<number> => {
+    const at = now.getTime();
+    // Persons held take no place in the batch.
     const idle = await storage.persons.listIdle({
-      activeBefore: new Date(now.getTime() - retentionMs),
-      limit: RETENTION_SWEEP_LIMIT,
+      activeBefore: new Date(at - retentionMs),
+      limit: RETENTION_SWEEP_LIMIT + holds.size,
     });
-    if (idle.length === 0) return { forgotten: 0, undone: 0 };
+    const listed = new Set(idle.map(({ person }) => person));
+    for (const [person, held] of holds) {
+      if (held.until <= at && !listed.has(person)) holds.delete(person);
+    }
+    const due = idle
+      .filter(({ person }) => (holds.get(person)?.until ?? at) <= at)
+      .slice(0, RETENTION_SWEEP_LIMIT);
+    if (due.length === 0) return 0;
     const through = await storage.checkpointStore.get(RETENTION_SUBSCRIBER);
     let forgotten = 0;
-    let undone = 0;
-    for (const { person } of idle) {
+    for (const { person } of due) {
       try {
         const outcome = await forget(person, through);
+        if (outcome === "undone") {
+          hold(person, at, false);
+          continue;
+        }
+        holds.delete(person);
         if (outcome === "forgotten") forgotten += 1;
-        else if (outcome === "undone") undone += 1;
       } catch (error) {
-        undone += 1;
+        hold(person, at, true);
         logger.error("person past the retention could not be forgotten", {
           personId: person,
           ...errorDetails(error),
         });
       }
     }
-    return { forgotten, undone };
+    return forgotten;
   };
 
   return {
     sweep: async (now) => {
-      if (now.getTime() < heldUntil) return 0;
+      if (now.getTime() < listHeldUntil) return 0;
       try {
-        const { forgotten, undone } = await sweep(now);
-        heldUntil = undone > 0 ? now.getTime() + RETENTION_RETRY_MS : Number.NEGATIVE_INFINITY;
-        return forgotten;
+        return await sweep(now);
       } catch (error) {
-        heldUntil = now.getTime() + RETENTION_RETRY_MS;
+        listHeldUntil = now.getTime() + RETENTION_RETRY_MS;
         logger.error("persons past the retention could not be listed", errorDetails(error));
         return 0;
       }
     },
     nextDueAt: async () => {
-      const [least] = await storage.persons.listIdle({ limit: 1 });
-      const lastActiveAt = least?.lastActiveAt ?? null;
-      if (lastActiveAt === null) return null;
-      return new Date(Math.max(Date.parse(lastActiveAt) + retentionMs, heldUntil));
+      const idle = await storage.persons.listIdle({ limit: 1 + holds.size });
+      let next = Number.POSITIVE_INFINITY;
+      // Least recently active first: past the first person not held, nobody comes due sooner.
+      for (const { person, lastActiveAt } of idle) {
+        if (lastActiveAt === null) continue;
+        const held = holds.get(person)?.until;
+        const deadline = Date.parse(lastActiveAt) + retentionMs;
+        next = Math.min(next, Math.max(deadline, held ?? deadline));
+        if (held === undefined) break;
+      }
+      return next === Number.POSITIVE_INFINITY ? null : new Date(Math.max(next, listHeldUntil));
     },
   };
 };

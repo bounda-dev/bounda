@@ -129,8 +129,8 @@ interface DeadlineWait {
  * were going to; its letters are retried one by one, each in its own transaction, so a crash
  * leaves the entry to its lease and the next run finds the rest still `failed`. Every
  * `IDEMPOTENCY_PURGE_INTERVAL_MS` a pass also purges the idempotency keys that expired. Every pass
- * sweeps the retention, unless the last one held it: its read is one an index answers, as
- * `nextDueAt` is, so a host woken for a person's deadline forgets them in that pass.
+ * sweeps the retention, unless a list it could not read holds it: its read is one an index
+ * answers, as `nextDueAt` is, so a host woken for a person's deadline forgets them in that pass.
  */
 export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction = ({
   storage,

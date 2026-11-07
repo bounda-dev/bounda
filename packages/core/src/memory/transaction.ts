@@ -1,6 +1,7 @@
 import type { Storage } from "../adapter/adapter.ts";
 import {
   type DeferredStores,
+  type DeferredWrites,
   type DeferredWriteTarget,
   deferWrites,
 } from "../adapter/deferred-writes.ts";
@@ -105,26 +106,30 @@ const trackedPersons = (
 
 // Removed at once, as the keys are, so a forget answers what it removed: a worker that settles
 // the claim of a command it cancelled finds it lost, and one that dead-lettered it first has its
-// letter found. Put back the same way when the transaction fails.
+// letter found. Put back the same way when the transaction fails. What the transaction itself
+// wrote is still held back, so it is withdrawn from there, as a store that sees its own writes
+// would remove it.
 const trackedForgets = (
-  deferred: DeferredStores,
+  { stores, withdrawScheduled, withdrawLetters }: DeferredWrites,
   { scheduler, deadLetterStore, entries }: CreateUndoLogArgs,
   undos: Undos,
 ): Pick<DeferredStores, "scheduler" | "deadLetterStore"> => {
   const tracked = trackedBy(undos);
   return {
     scheduler: {
-      ...deferred.scheduler,
+      ...stores.scheduler,
       forget: async (person) => {
         const named = (await scheduler.list()).filter((entry) => namesPerson(entry, person));
         for (const { dedupeKey } of named) {
           await tracked(entries.scheduler, dedupeKey, () => scheduler.cancel(dedupeKey));
         }
-        return named;
+        const staged = withdrawScheduled(person);
+        const keys = new Set(staged.map(({ dedupeKey }) => dedupeKey));
+        return [...named.filter(({ dedupeKey }) => !keys.has(dedupeKey)), ...staged];
       },
     },
     deadLetterStore: {
-      ...deferred.deadLetterStore,
+      ...stores.deadLetterStore,
       forget: async (person) => {
         const named = (await deadLetterStore.list()).filter((letter) =>
           namesPerson(letter, person),
@@ -132,7 +137,9 @@ const trackedForgets = (
         for (const { id } of named) {
           await tracked(entries.deadLetterStore, id, () => deadLetterStore.remove(id));
         }
-        return named;
+        // A letter added under an id the store holds already changes nothing, so it stays as stored.
+        const ids = new Set(named.map(({ id }) => id));
+        return [...named, ...withdrawLetters(person).filter(({ id }) => !ids.has(id))];
       },
     },
   };
@@ -213,13 +220,14 @@ export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunct
         return position;
       },
     });
-    const { stores, flush } = deferWrites(live);
+    const deferred = deferWrites(live);
+    const { stores, flush } = deferred;
     const atOnce: Undos = [];
     try {
       const result = await work({
         eventStore: staged,
         ...stores,
-        ...trackedForgets(stores, live, atOnce),
+        ...trackedForgets(deferred, live, atOnce),
         personalKeys: trackedPersonalKeys(personalKeys, live.entries.personalKeys, atOnce),
         persons: trackedPersons(persons, live.entries.persons, atOnce),
         snapshotStore,
