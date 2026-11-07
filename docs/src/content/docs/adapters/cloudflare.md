@@ -261,10 +261,13 @@ instead of `@cloudflare/workers-types`. There is no `prepare` script: every scri
   another until the rebuilt table takes the live one's place. Queries read the live table all the
   while. Each slice is one more request to the object, and a slice that fails is retried after
   the dispatcher's poll interval.
-- **Cost.** Row writes are what runs out first. A command that inserts one read-model row writes
-  seven rows, indexes included: four for the event, two for the read-model row, one for the
-  checkpoint. On the free plan's 100,000 row writes a day that is about fourteen thousand
-  commands, when the app has no policies or processes and so no alarm to run after each one.
+- **Cost.** Row writes are what runs out first. Cloudflare counts every index a write updates as
+  one more row written, so each index declared on a view adds a row to every read-model row a
+  command inserts or changes. The view in the project `create-bounda` scaffolds for Cloudflare,
+  with its primary key and one `.index()`, makes a command that places an order write eight rows:
+  four for the event, three for the read-model row (the row, its primary key and the index), one
+  for the checkpoint. On the free plan's 100,000 row writes a day that is about 12,500 commands,
+  when the app has no policies or processes and so no alarm to run after each one.
   Each policy or process reaction adds its own writes, and the alarm that runs it is one more
   request. `"eventual"` consistency saves nothing: in an app without policies or processes each
   command then arms the alarm, which Cloudflare bills as one more row written, and the alarm that
