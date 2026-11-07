@@ -502,3 +502,105 @@ describe("bounda dead-letters", () => {
     expect(discard.stdout).toContain("the dead letter's id");
   });
 });
+
+describe("bounda forgotten and bounda forget", () => {
+  const fixture = resolve(import.meta.dirname, "fixtures/rebuild-project");
+
+  const open = async () => {
+    const project = await loadProject<typeof fixtureRegistry>({
+      root: fixture,
+      logger: silentLogger,
+    });
+    return createApp({ ...project, logger: silentLogger });
+  };
+
+  const list = async (): Promise<string> => {
+    const root = await mkdtemp(join(tmpdir(), "bounda-cli-forget-"));
+    temporary.push(root);
+    return root;
+  };
+
+  it("prints the persons forgotten since a position or a date, which forget --from takes back", async () => {
+    const run = Date.now();
+    const [kept, forgotten] = [`m-${run}-kept`, `m-${run}-forgotten`];
+    const app = await open();
+    await app.commands.join({ memberId: kept, name: "Ana" });
+    await app.commands.join({ memberId: forgotten, name: "Bea" });
+    const { lastPosition } = await app.getLag();
+    const before = new Date(Date.now() - 1).toISOString();
+    await app.forget(forgotten);
+    const [event] = (await app.events.read({ after: lastPosition })).filter(
+      ({ type }) => type === "PersonalDataForgotten",
+    );
+    await app.stop();
+
+    const byPosition = await cli(["forgotten", "--since", String(lastPosition)], fixture);
+    expect(byPosition.code).toBe(EXIT_OK);
+    expect(byPosition.stderr).toBe("1 person forgotten\n");
+    expect(byPosition.stdout).toBe(
+      `${JSON.stringify({ personId: forgotten, eventId: event?.id, forgottenAt: event?.timestamp })}\n`,
+    );
+    const byDate = await cli(["forgotten", "--since", before], fixture);
+    expect(byDate.code).toBe(EXIT_OK);
+    expect(byDate.stdout).toContain(`"personId":"${forgotten}"`);
+    const none = await cli(["forgotten", "--since", "2999-01-01"], fixture);
+    expect(none).toMatchObject({ code: EXIT_OK, stdout: "", stderr: "0 persons forgotten\n" });
+
+    const file = join(await list(), "forgotten.jsonl");
+    await writeFile(file, `${byPosition.stdout}\n  ${kept}  \n`);
+    const forget = await cli(["forget", "--from", file], fixture);
+    expect(forget.stderr).toBe("");
+    expect(forget.code).toBe(EXIT_OK);
+    expect(forget.stdout).toBe(
+      `forgot again ${kept}\nforgot again 1 of 2 listed; the rest hold no key, or this store holds their forgetting\n`,
+    );
+    const after = await open();
+    const reasons = (await after.events.read({ after: lastPosition, limit: 100 }))
+      .filter(({ type }) => type === "PersonalDataForgotten")
+      .map(({ aggregateId, payload }) => [aggregateId, (payload as { reason: string }).reason]);
+    await after.stop();
+    expect(reasons).toEqual([
+      [forgotten, "requested"],
+      [kept, "restored"],
+    ]);
+  });
+
+  it("refuses a --since that is neither a position nor a date", async () => {
+    for (const since of ["yesterday", "-3", "", "2026-13-45"]) {
+      const refused = await cli(["forgotten", "--since", since], fixture);
+      expect(refused.code).toBe(EXIT_CONVENTION);
+      expect(refused.stderr).toContain(
+        "expected a position of the stream, a whole number, or a date such as 2026-11-01",
+      );
+    }
+    expect((await cli(["forgotten"], fixture)).code).toBe(EXIT_CONVENTION);
+  });
+
+  it("forgets nobody from a list it cannot read, and says which line is wrong", async () => {
+    const root = await list();
+    const missing = await cli(["forget", "--from", "nowhere.jsonl"], root);
+    expect(missing.code).toBe(EXIT_FAILURE);
+    expect(missing.stderr).toMatch(/^error: nowhere\.jsonl: ENOENT/);
+    for (const [content, message] of [
+      ["m-1\n{not json", "line 2 is neither a person's id nor JSON"],
+      ['{"eventId":"e-1"}', 'line 1 needs a "personId" string, and "eventId" only as a string'],
+      ['{"personId":"m-1","eventId":7}', 'line 1 needs a "personId" string'],
+    ] as const) {
+      await writeFile(join(root, "list.jsonl"), content);
+      const refused = await cli(["forget", "--from", "list.jsonl", "--root", fixture], root);
+      expect(refused.code).toBe(EXIT_FAILURE);
+      expect(refused.stderr).toContain(message);
+    }
+  });
+
+  it("documents both commands in their help", async () => {
+    const help = async (command: string) =>
+      (await cli([command, "--help"], fixture)).stdout.replace(/\s+/g, " ");
+    const forgotten = await help("forgotten");
+    expect(forgotten).toContain("--since <date|position>");
+    expect(forgotten).toContain("since a position or a date, for bounda forget --from");
+    const forget = await help("forget");
+    expect(forget).toContain("--from <file>");
+    expect(forget).toContain("what bounda forgotten printed, or one person's id a line");
+  });
+});

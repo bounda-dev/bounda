@@ -100,8 +100,9 @@ context of React Router. A client bound with `as` records who asked on `Personal
 commands that hold their data, removes the dead letters of those that gave up, and appends
 `PersonalDataForgotten` to the stream `bounda:<personId>`: the runtime's own aggregate, `bounda`,
 has one stream per person it forgot. Its payload is `{ personId, reason, cancelledCommands,
-removedDeadLetters }`: `reason` is `"requested"` for `forget` and `"retention"` when the
-[retention](#retention) forgot them, and the rest are the ids and types of what went, the only
+removedDeadLetters }`: `reason` is `"requested"` for `forget`, `"retention"` when the
+[retention](#retention) forgot them and `"restored"` when they were forgotten again after a
+[backup was restored](#backups), and the rest are the ids and types of what went, the only
 record of commands that never became events. It resolves like a command, with the event's
 position, so `catchUpReadModels({ through })` waits for the read models that handle it, and the Durable Object's `forget` and the one in React
 Router's `bounda` context wait for them themselves unless `consistency` is `"eventual"`. A person
@@ -545,6 +546,139 @@ instance asks KMS once per person it reads, thanks to the cache, and once per pe
 
 A wrapper that fails, because KMS is unreachable, fails the command that needed the key, which
 the caller or the reaction's retry sees; the person's data is not touched.
+
+## Backups
+
+Restoring a copy of the database taken before someone was forgotten brings their key back, and
+with it their data: the only record that they were forgotten was in the database the copy
+replaced. The ICO's guidance for backups is to put them beyond use while they exist and, when one
+is restored, to apply the erasures again. A forget ledger is how Bounda does the second part.
+
+### The forget ledger
+
+The ledger is a record of every forgetting kept outside the database: for each `PersonalDataForgotten`,
+the person's id, the event's id and its time, and nothing else. It is a suppression list, the one
+thing about a forgotten person that has to outlive their data, so it holds no field of theirs and
+no reason. Give it a store a restore of the database does not touch:
+
+```ts
+import { defineConfig, masterKey } from "@bounda-dev/core/config";
+import { sqlite } from "@bounda-dev/sqlite";
+
+export default defineConfig({
+  storage: sqlite({ path: "./data/app.db" }),
+  runtime: {
+    personalData: {
+      keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+      forgetLedger: sqlite({ path: "./ledger/forget-ledger.db" }),
+    },
+  },
+});
+```
+
+`forgetLedger` takes any adapter pointed at another database, where it creates one table,
+`bounda_forget_ledger`, with the adapter's `tablePrefix`, the first time it is used: a SQLite file
+on another disk or volume for an app on one machine, `postgresql({ url })` on another server, or a
+schema of the same server backed up apart. A plain file of the app's own making would be the same
+thing with less: the SQLite file already is one, written atomically. The table keeps each tenant's
+entries apart, so tenants can share one ledger.
+
+On Cloudflare a restore of a Durable Object's storage goes back to a point in time, the ledger
+with it if it lived there, so the ledger is a KV namespace:
+
+```ts
+import { cloudflare, kvForgetLedger } from "@bounda-dev/cloudflare";
+import { defineConfig, masterKey } from "@bounda-dev/core/config";
+
+export default defineConfig({
+  storage: cloudflare(),
+  runtime: {
+    personalData: {
+      keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+      forgetLedger: kvForgetLedger({ binding: "FORGET_LEDGER" }),
+    },
+  },
+});
+```
+
+```jsonc
+// wrangler.jsonc
+"kv_namespaces": [{ "binding": "FORGET_LEDGER", "id": "<the namespace's id>" }]
+```
+
+Every object keeps its entries under its own name. KV may take up to a minute to list a key it
+just wrote, so an object that starts reads the ledger once more a minute later, and wakes for it.
+Anything else is a ledger of your own through `defineForgetLedger`, which receives the host's
+environment and the tenant when the app starts: its `read` returns entries in the order of their
+time, then of their event's id, and `byForgetLedgerOrder` from `@bounda-dev/core/adapter` sorts
+them so; `forgetLedgerContract` from `@bounda-dev/core/adapter/testing` is the test it has to pass.
+
+### What the runtime does with it
+
+The event store is the ledger's outbox. A subscriber of the dispatcher, `forget-ledger`, copies
+every `PersonalDataForgotten` to the ledger in batches, with a policy's guarantee: a batch the
+ledger refuses is delivered again, and the subscriber's lag in `getLag` and
+`bounda.dispatcher.lag` shows how far behind it is. Configuring a ledger on an app that already
+forgot people copies those forgettings first.
+
+When the app starts, before it serves anything, it reads the ledger past a cursor the database
+keeps, the time of the last entry it applied, and for each entry whose forgetting the database
+does not hold, it forgets the person again, with `reason: "restored"`, if they still hold a key.
+After a normal start that read returns next to nothing. After a restore the cursor went back with
+the copy, and the read returns exactly the forgettings made since the copy was taken; the read
+models that show those persons hear of it before the start resolves, and the app logs how many it
+forgot again:
+
+```
+forgot again persons a restored backup brought back
+```
+
+An entry whose forgetting the database holds is skipped even when the person holds a key, since
+that key was given to them after they were forgotten, as when they come back and register again.
+The check and the forgetting are one transaction, so instances starting together forget a person
+once. A Durable Object does it on every cold start; restoring its storage restarts it.
+
+Restart the app after restoring its database: it reconciles when it starts.
+
+A ledger that cannot be read when the app starts does not stop it: the app logs an error, starts,
+and its worker tries again after 30 seconds, then twice as long after each failure, up to an hour.
+Until then `getLag()` says `forgetLedger: { reconciled: false }`, and a person the restore
+brought back can be read; alert on it. An app without a ledger reports `forgetLedger: null`.
+
+A restore loses what the ledger had not received yet: a forgetting made while the ledger was down,
+or in the moment before the database was lost, that the subscriber had not copied. Keep the
+`forget-ledger` subscriber's lag near zero, as for any other.
+
+### Without a ledger
+
+The CLI does the same by hand. Before restoring, while the old database can still be read, or
+regularly, as part of the backups, save who was forgotten since the copy you will restore was
+taken:
+
+```bash
+bounda forgotten --since 2026-11-01T03:00:00Z > forgotten.jsonl
+```
+
+Then, once the copy is back:
+
+```bash
+bounda forget --from forgotten.jsonl
+```
+
+`bounda forgotten` prints one line of JSON per forgetting, the entry a ledger would hold;
+`bounda forget` forgets again, with `reason: "restored"`, each person listed who still holds a key,
+unless the database holds the forgetting a line names. A line may also be a bare person's id, for
+a list kept some other way, which is forgotten whenever the person holds a key: list only those
+forgotten after the copy was taken. `app.forgetAgain(entries)` is the same in code.
+
+Without either, a restored backup brings back the data of everyone forgotten after it was taken,
+until they are forgotten again.
+
+### Old backups
+
+The ledger handles a backup once it is restored. Rotating the [master key](#rotating-the-master-key)
+handles the others: destroying the old key once every backup it covers has expired leaves those
+backups unreadable as a whole, the forgotten persons with everyone else.
 
 ## In tests
 

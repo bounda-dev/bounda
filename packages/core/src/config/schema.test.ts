@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { AdapterDefinition } from "../adapter/adapter-definition.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
+import { defineForgetLedger } from "../kernel/personal-data/forget-ledger.ts";
 import { masterKey } from "../kernel/personal-data/master-key.ts";
+import { memory } from "../memory/index.ts";
 import { resolveConfig } from "./schema.ts";
 
 const sqlite: AdapterDefinition<"sqlite", { path: string }> = {
@@ -17,6 +19,7 @@ const postgres: AdapterDefinition<"postgresql", { url: string }> = {
 };
 
 const keyWrapper = masterKey({ from: "BOUNDA_MASTER_KEY" });
+const forgetLedger = defineForgetLedger(() => ({ append: async () => {}, read: async () => [] }));
 
 const message = (config: unknown): string => {
   try {
@@ -55,7 +58,7 @@ describe("resolveConfig", () => {
         backoff: { baseDelayMs: 1_000, maxDelayMs: 30_000 },
         catchUp: { timeoutMs: 2_000, pollIntervalMs: 15 },
       },
-      personalData: { retentionMs: null, keyWrapper: null },
+      personalData: { retentionMs: null, keyWrapper: null, forgetLedger: null },
       overrides: {},
     });
   });
@@ -77,7 +80,7 @@ describe("resolveConfig", () => {
           backoff: { baseDelay: "500ms", maxDelay: "1m" },
           catchUp: { timeout: "5s", pollInterval: 50 },
         },
-        personalData: { retention: "30d", keyWrapper },
+        personalData: { retention: "30d", keyWrapper, forgetLedger },
       },
       ports: { order: { inventory: "http" } },
     });
@@ -104,7 +107,18 @@ describe("resolveConfig", () => {
       backoff: { baseDelayMs: 500, maxDelayMs: 60_000 },
       catchUp: { timeoutMs: 5_000, pollIntervalMs: 50 },
     });
-    expect(resolved.runtime.personalData).toEqual({ retentionMs: 2_592_000_000, keyWrapper });
+    expect(resolved.runtime.personalData).toEqual({
+      retentionMs: 2_592_000_000,
+      keyWrapper,
+      forgetLedger,
+    });
+    const ledgerDatabase = memory();
+    expect(
+      resolveConfig({
+        storage: sqlite,
+        runtime: { personalData: { forgetLedger: ledgerDatabase } },
+      }).runtime.personalData.forgetLedger,
+    ).toBe(ledgerDatabase);
     expect(resolved.readModels["users-directory"]).toBe(sqlite);
     expect(resolved.ports.order?.inventory).toBe("http");
   });
@@ -230,6 +244,11 @@ describe("resolveConfig", () => {
     ).toContain(
       'runtime.personalData.keyWrapper: Expected a key wrapper such as masterKey({ from: "BOUNDA_MASTER_KEY" })',
     );
+    for (const forgetLedger of [sqlite, "./ledger.db", { kind: "bounda-forget-ledger" }, null]) {
+      expect(message({ storage: sqlite, runtime: { personalData: { forgetLedger } } })).toContain(
+        'runtime.personalData.forgetLedger: Expected an adapter such as sqlite({ path: "./ledger/forget-ledger.db" }) or a forget ledger such as kvForgetLedger({ binding })',
+      );
+    }
   });
 
   it("rejects unknown keys anywhere", () => {

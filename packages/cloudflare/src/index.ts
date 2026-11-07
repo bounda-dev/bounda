@@ -14,6 +14,8 @@ export type {
   IsCloudflareDefinitionFunction,
 } from "./definition.ts";
 export { cloudflare, isCloudflareDefinition } from "./definition.ts";
+export type { KvForgetLedgerFunction, KvForgetLedgerOptions } from "./forget-ledger.ts";
+export { KV_LIST_DELAY_MS, kvForgetLedger } from "./forget-ledger.ts";
 export type { RpcOutcome, RpcRefusal } from "./outcome.ts";
 export type {
   ActorOfFunction,

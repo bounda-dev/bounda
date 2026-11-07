@@ -1,5 +1,6 @@
 import type { AdapterDefinition } from "../adapter/adapter-definition.ts";
 import type { DurationInput } from "../contracts/duration.ts";
+import type { ForgetLedgerSource } from "../kernel/personal-data/forget-ledger.ts";
 import type { KeyWrapperDefinition } from "../kernel/personal-data/key-wrapper.ts";
 import type { AppPortsConfig } from "../register/index.ts";
 
@@ -145,6 +146,17 @@ export interface PersonalDataConfig {
    * registry marks personal fields.
    */
   readonly keyWrapper?: KeyWrapperDefinition;
+  /**
+   * Where every forgetting is recorded outside the database, so restoring a backup taken before
+   * someone was forgotten forgets them again: an adapter pointed at another database, such as
+   * `sqlite({ path: "./ledger/forget-ledger.db" })`, whose ledger table it creates there,
+   * `kvForgetLedger({ binding })` from `@bounda-dev/cloudflare`, or a ledger of your own through
+   * `defineForgetLedger`. The runtime copies each `PersonalDataForgotten` to it in the background
+   * and, when the app starts, forgets again, with `reason: "restored"`, whoever it names whose
+   * forgetting the database does not hold and who still holds a key. Without it, a restored
+   * backup brings back the keys of everyone forgotten after it was taken.
+   */
+  readonly forgetLedger?: ForgetLedgerSource;
 }
 
 /**
@@ -318,6 +330,10 @@ export interface ResolvedConfig {
        * `null` when no key wrapper is configured.
        */
       readonly keyWrapper: KeyWrapperDefinition | null;
+      /**
+       * `null` when no forget ledger is configured.
+       */
+      readonly forgetLedger: ForgetLedgerSource | null;
     };
     readonly overrides: Readonly<Record<string, ResolvedAggregateRuntime>>;
   };

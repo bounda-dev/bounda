@@ -15,6 +15,7 @@ import { createMemoryCheckpointStore } from "./checkpoint-store.ts";
 import { createKeptDeadLetterStore } from "./dead-letter-store.ts";
 import { createMemoryEventNotifier } from "./event-notifier.ts";
 import { createMemoryEventStore } from "./event-store.ts";
+import { createMemoryForgetLedgers } from "./forget-ledger.ts";
 import { createKeptIdempotencyStore } from "./idempotency-store.ts";
 import { createKeptInboxLedger } from "./inbox-ledger.ts";
 import { createKeptPersonStore } from "./person-store.ts";
@@ -71,6 +72,7 @@ export const memory: MemoryFunction = (options = {}) => {
   const locks = createMemoryLocks();
   const tables = new Map<string, LiveTable>();
   const shadows = new Map<string, MemoryTable<Record<string, unknown>>>();
+  const forgetLedgers = createMemoryForgetLedgers();
 
   const inTransaction = async <T>(
     target: MemoryTable<Record<string, unknown>>,
@@ -231,5 +233,6 @@ export const memory: MemoryFunction = (options = {}) => {
         pause: async () => {},
       };
     },
+    createForgetLedger: async ({ tenant }) => forgetLedgers.ledgerOf(tenant),
   };
 };

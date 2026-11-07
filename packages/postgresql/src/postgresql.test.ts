@@ -17,6 +17,7 @@ import {
   contractFields,
   deadLetterStoreContract,
   eventStoreContract,
+  forgetLedgerContract,
   idempotencyStoreContract,
   inboxLedgerContract,
   pendingEvent,
@@ -104,6 +105,17 @@ describe.skipIf(container === null)("postgresql adapter", () => {
   storageTransactionContract({ create: () => openStorage() });
   personalKeyStoreContract({ create: async () => (await openStorage()).personalKeys });
   personStoreContract({ create: async () => (await openStorage()).persons });
+  forgetLedgerContract({
+    create: async () => {
+      await closeOpened();
+      const adapter = fresh();
+      return async (tenant) => {
+        const ledger = await adapter.createForgetLedger({ tenant });
+        closers.push(async () => ledger.close?.());
+        return ledger;
+      };
+    },
+  });
 
   it("takes the append lock as a transaction starts, before anything it writes, and lets go of it with the transaction", async () => {
     const storage = await openStorage();

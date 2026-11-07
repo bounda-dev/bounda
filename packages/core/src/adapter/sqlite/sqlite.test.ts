@@ -12,6 +12,7 @@ import {
   contractFields,
   deadLetterStoreContract,
   eventStoreContract,
+  forgetLedgerContract,
   idempotencyStoreContract,
   inboxLedgerContract,
   pendingEvent,
@@ -109,6 +110,12 @@ describe("the SQLite stores on node:sqlite", () => {
   storageTransactionContract({ create: storage });
   personalKeyStoreContract({ create: async () => (await storage()).personalKeys });
   personStoreContract({ create: async () => (await storage()).persons });
+  forgetLedgerContract({
+    create: async () => {
+      const { adapter } = nodeSqlite();
+      return (tenant) => adapter.createForgetLedger({ tenant });
+    },
+  });
   tableContract({
     create: async () =>
       (

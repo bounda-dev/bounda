@@ -8,6 +8,12 @@ export { byFirstFailure, decodeErrorText, encodeErrorText } from "./dead-letters
 export { postgresqlDialect } from "./dialect.ts";
 export type { InsertEventsArgs, InsertEventsFunction, InsertStatement } from "./event-rows.ts";
 export { EVENTS_PER_INSERT, insertEventsStatements, positionsByVersion } from "./event-rows.ts";
+export type {
+  CreateSqlForgetLedgerArgs,
+  CreateSqlForgetLedgerFunction,
+  ForgetLedgerStatementsFunction,
+} from "./forget-ledger.ts";
+export { createSqlForgetLedger, forgetLedgerStatements } from "./forget-ledger.ts";
 export {
   DEFAULT_TABLE_PREFIX,
   quoteIdentifier,

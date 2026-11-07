@@ -24,11 +24,19 @@ import { alignReactiveCheckpoints } from "./dispatch/reactive-checkpoints.ts";
 import { appStorage } from "./events/app-event-store.ts";
 import { createGlobalStream, type GlobalStream } from "./events/global-stream.ts";
 import { exportPersonalData, type PersonalDataExport } from "./personal-data/export.ts";
-import { forgetPersonalData } from "./personal-data/forget.ts";
+import { forgetPersonalData, logForgotten } from "./personal-data/forget.ts";
+import { openForgetLedger } from "./personal-data/forget-ledger.ts";
+import { createLedgerOutbox } from "./personal-data/ledger-outbox.ts";
 import { marksPersonalFields } from "./personal-data/marks.ts";
+import {
+  createForgetLedgerReconciliation,
+  type ForgetAgainEntry,
+  forgetAgain,
+} from "./personal-data/reconciliation.ts";
 import { liftProcessingRestriction, restrictProcessing } from "./personal-data/restriction.ts";
 import { createRetentionSubscriber, createRetentionSweep } from "./personal-data/retention.ts";
 import { createKeyRotation } from "./personal-data/rotation.ts";
+import { checkPersonId } from "./personal-data/transact.ts";
 import { buildPersonalKeyWrapping } from "./personal-data/wrapped-keys.ts";
 import { buildPolicies } from "./policy/build-policies.ts";
 import { createDelayedPolicies } from "./policy/delayed.ts";
@@ -193,15 +201,34 @@ export interface BoundaApp<R extends Registry = AppRegistry> extends BoundaClien
    * The handler runs that gave up, and what to do about them: list, retry or discard.
    */
   readonly deadLetters: DeadLetters;
+  /**
+   * Forgets again, as `forget` does with `reason: "restored"`, each person an entry names who
+   * still holds a key, unless the store holds the `PersonalDataForgotten` the entry names by
+   * `eventId`: a store that holds it applied that forgetting, and a key the person holds was given
+   * to them after. What `bounda forget --from` runs, for a backup restored without
+   * `runtime.personalData.forgetLedger`; resolves to the ids of the persons it forgot, in order.
+   * Rejects with `ValidationError` an entry without a person's id, before forgetting anyone.
+   */
+  forgetAgain(entries: readonly ForgetAgainEntry[]): Promise<readonly string[]>;
 }
 
 /**
- * How far behind the background work is: every subscriber's lag, and how many process deadlines
+ * How far behind the background work is: every subscriber's lag, how many process deadlines
  * and restricted retries that came due this process holds back until the reactive runners catch
- * up.
+ * up, and whether the forget ledger was reconciled.
  */
 export interface AppLag extends DispatcherLag {
   readonly waitingDeadlines: number;
+  /**
+   * `null` without `runtime.personalData.forgetLedger`. `reconciled` is `false` while the ledger
+   * could not be read since the app started: a person a restored backup brought back may not be
+   * forgotten again yet, and the worker keeps trying.
+   */
+  readonly forgetLedger: ForgetLedgerLag | null;
+}
+
+export interface ForgetLedgerLag {
+  readonly reconciled: boolean;
 }
 
 export interface RebuildReadModelOptions {
@@ -345,6 +372,15 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
   try {
     const written = await config.storage.createStorage();
     opened.unshift(() => written.close());
+    const ledger = await openForgetLedger({
+      source: config.runtime.personalData.forgetLedger,
+      env,
+      tenant,
+    });
+    if (ledger?.close !== undefined) {
+      const close = ledger.close.bind(ledger);
+      opened.unshift(close);
+    }
     const aggregates = buildAggregates({ registry, ports: ports.byAggregate, config });
     const storage = appStorage({ storage: written, aggregates, wrapping });
     if (wrapping.wrapper === null && test === undefined && marksPersonalFields(aggregates)) {
@@ -444,6 +480,19 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             concurrencyRetries: config.runtime.commands.concurrencyRetries,
             batchSize: config.runtime.dispatcher.batchSize,
           });
+    const { concurrencyRetries } = config.runtime.commands;
+    const reconciliation =
+      ledger === null
+        ? undefined
+        : createForgetLedgerReconciliation({
+            ledger,
+            storage: written,
+            ids,
+            clock,
+            logger,
+            concurrencyRetries,
+            batchSize: config.runtime.dispatcher.batchSize,
+          });
     const rotation =
       wrapping.wrapper === null
         ? undefined
@@ -481,6 +530,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         ...(retention === undefined
           ? []
           : [createRetentionSubscriber({ persons: storage.persons })]),
+        ...(ledger === null ? [] : [createLedgerOutbox(ledger)]),
       ],
       batchSize: config.runtime.dispatcher.batchSize,
       pollIntervalMs: config.runtime.dispatcher.pollIntervalMs,
@@ -505,6 +555,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       restrictedRetries: createRestrictedRetries({ storage, retries, clock, logger }),
       retention,
       rotation,
+      reconciliation,
       reactive: following.map((subscriber) => subscriber.name),
       config,
       ids,
@@ -532,6 +583,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         scheduledDueAt(),
         retention?.nextDueAt() ?? null,
         rotation?.nextDueAt() ?? null,
+        reconciliation?.nextDueAt() ?? null,
       ]);
       return due.reduce<Date | null>(
         (earliest, at) =>
@@ -557,12 +609,18 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       readModels: Object.keys(readModels.byName),
     });
 
-    const { concurrencyRetries } = config.runtime.commands;
     const events = createGlobalStream({ eventStore: written.eventStore });
     const getLag = async (): Promise<AppLag> => ({
       ...(await dispatcher.getLag()),
       waitingDeadlines: worker.waitingDeadlines(),
+      forgetLedger:
+        reconciliation === undefined ? null : { reconciled: reconciliation.reconciled() },
     });
+    // Before the app serves anything: a backup restored brings back persons forgotten since, and
+    // the read models that show them hear of it by the time the start resolves.
+    if (((await reconciliation?.reconcile(clock.now())) ?? 0) > 0) {
+      await dispatcher.catchUp("projection");
+    }
     const rebuild = (name: string, options: RebuildReadModelOptions = {}) =>
       rebuildReadModelWith({ registry, config: rawConfig, name, logger, wrapping, ...options });
     const clientAs = (
@@ -622,7 +680,11 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             try {
               await readModels.close();
             } finally {
-              await storage.close();
+              try {
+                await storage.close();
+              } finally {
+                await ledger?.close?.();
+              }
             }
           } finally {
             await ports.dispose();
@@ -655,6 +717,23 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         await dispatcher.catchUpThrough(through);
       },
       rebuildReadModel: rebuild,
+      forgetAgain: async (entries) => {
+        for (const { personId } of entries) checkPersonId(personId, "forgetAgain");
+        const forgotten: string[] = [];
+        for (const entry of entries) {
+          const again = await forgetAgain({
+            storage: written,
+            ids,
+            clock,
+            concurrencyRetries,
+            entry,
+          });
+          if (again === null) continue;
+          logForgotten(logger, again);
+          forgotten.push(entry.personId);
+        }
+        return forgotten;
+      },
       pendingRebuilds: async () => {
         const paused = await Promise.all(
           Object.values(readModels.byName).map(async ({ name, storage }) =>

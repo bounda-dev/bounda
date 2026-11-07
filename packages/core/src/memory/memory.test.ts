@@ -6,6 +6,7 @@ import {
   contractFields,
   deadLetterStoreContract,
   eventStoreContract,
+  forgetLedgerContract,
   idempotencyStoreContract,
   inboxLedgerContract,
   pendingEvent,
@@ -38,6 +39,12 @@ describe("memory adapter", () => {
   storageTransactionContract({ create: storage });
   personalKeyStoreContract({ create: async () => (await storage()).personalKeys });
   personStoreContract({ create: async () => (await storage()).persons });
+  forgetLedgerContract({
+    create: async () => {
+      const adapter = memory();
+      return (tenant) => adapter.createForgetLedger({ tenant });
+    },
+  });
   tableContract({
     create: async () => {
       const model = await memory().createReadModel<ContractRow>({

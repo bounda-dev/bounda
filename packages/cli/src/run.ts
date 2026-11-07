@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
   type DeadLetterKind,
@@ -9,6 +10,7 @@ import {
 import { boot, loadProject } from "@bounda-dev/core/node";
 import { Command, CommanderError, InvalidArgumentError, Option } from "commander";
 import { formatLetter, formatRetried } from "./dead-letter-output.ts";
+import { parseForgetList, parseSince, readForgotten, type Since } from "./forgotten.ts";
 import { generateProject } from "./generate/generate.ts";
 import { ConventionError } from "./generate/problems.ts";
 import { watchFromFirstRun } from "./generate/watch.ts";
@@ -209,6 +211,54 @@ const runDiscardDeadLetter = (
     return EXIT_OK;
   });
 
+interface ForgottenOptions extends ProjectOptions {
+  readonly since: Since;
+}
+
+const runForgotten = (
+  options: ForgottenOptions,
+  cwd: string,
+  stdout: Output,
+  stderr: Output,
+): Promise<number> =>
+  withApp(options, cwd, stderr, async (app) => {
+    const lines = await readForgotten({ events: app.events, since: options.since });
+    for (const forgotten of lines) line(stdout, JSON.stringify(forgotten));
+    line(stderr, `${lines.length} person${lines.length === 1 ? "" : "s"} forgotten`);
+    return EXIT_OK;
+  });
+
+interface ForgetOptions extends ProjectOptions {
+  readonly from: string;
+}
+
+const runForget = async (
+  options: ForgetOptions,
+  cwd: string,
+  stdout: Output,
+  stderr: Output,
+): Promise<number> => {
+  let entries: ReturnType<typeof parseForgetList>;
+  try {
+    entries = parseForgetList(await readFile(resolve(cwd, options.from), "utf8"));
+  } catch (error) {
+    line(
+      stderr,
+      `error: ${options.from}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return EXIT_FAILURE;
+  }
+  return withApp(options, cwd, stderr, async (app) => {
+    const forgotten = await app.forgetAgain(entries);
+    for (const personId of forgotten) line(stdout, `forgot again ${personId}`);
+    line(
+      stdout,
+      `forgot again ${forgotten.length} of ${entries.length} listed; the rest hold no key, or this store holds their forgetting`,
+    );
+    return EXIT_OK;
+  });
+};
+
 // Records, so a kind or status added to core fails to compile here until the CLI accepts it.
 const DEAD_LETTER_KINDS = Object.keys({
   policy: true,
@@ -327,6 +377,32 @@ export const runCli: RunCliFunction = async ({ argv, cwd, stdout, stderr, signal
       .argument("<id>", "the dead letter's id"),
   ).action(async (id: string, options: ProjectOptions) => {
     exitCode = await runDiscardDeadLetter(id, options, cwd, stdout, stderr);
+  });
+
+  projectOptions(
+    program
+      .command("forgotten")
+      .description(
+        "print, one JSON line each, the persons forgotten since a position or a date, for bounda forget --from",
+      )
+      .requiredOption(
+        "--since <date|position>",
+        "a date such as 2026-11-01, or a position of the stream to read after",
+        parseSince,
+      ),
+  ).action(async (options: ForgottenOptions) => {
+    exitCode = await runForgotten(options, cwd, stdout, stderr);
+  });
+
+  projectOptions(
+    program
+      .command("forget")
+      .description(
+        "forget again, after restoring a backup, each person listed who still holds a key and whose forgetting the store does not hold",
+      )
+      .requiredOption("--from <file>", "what bounda forgotten printed, or one person's id a line"),
+  ).action(async (options: ForgetOptions) => {
+    exitCode = await runForget(options, cwd, stdout, stderr);
   });
 
   try {

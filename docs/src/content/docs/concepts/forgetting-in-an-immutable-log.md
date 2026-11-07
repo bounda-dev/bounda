@@ -138,11 +138,14 @@ have work to do when it happens.
 - **Data in the clear elsewhere.** A field marked `personal` in one event and left plain in
   another is readable through the second one. The mark is per field per event, so mark every
   event that carries the data, or carry it in one.
-- **What left the store.** Backups, logs that printed a payload, the external systems a policy
-  wrote to. A backup of the whole database restores the keys too, wrapped: with the master key it
-  is a copy of the data of everyone it holds, including a person forgotten after it was taken.
-  Rotating the master key and destroying the old one once those backups expire makes them
-  unreadable as a whole. Without a master key, a backup opens on its own.
+- **What left the store.** Logs that printed a payload, the external systems a policy wrote to,
+  and backups. A backup of the whole database restores the keys too, wrapped: with the master key
+  it is a copy of the data of everyone it holds, including a person forgotten after it was taken.
+  With a [forget ledger](/guides/personal-data/#backups), a record of every forgetting kept
+  outside the database, the app forgets those persons again when it starts on the restored copy,
+  so a restore is no longer outside; a backup that sits unrestored still is. Rotating the master
+  key and destroying the old one once those backups expire makes them unreadable as a whole.
+  Without a master key, a backup opens on its own.
 - **Errors.** A dead letter keeps the error a handler threw, its message and stack encrypted with
   the key of the person the work names, so one that quotes a decrypted field is unreadable once
   they are forgotten; what the stream and the stores keep of a failure is the error's class and
