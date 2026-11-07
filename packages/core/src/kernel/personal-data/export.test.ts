@@ -118,7 +118,7 @@ describe("exportPersonalData", () => {
   it("refuses an empty id, and reads nothing for it", async () => {
     const { exportOf } = await setup();
     await expect(exportOf("")).rejects.toThrow(
-      new ValidationError("exportPersonalData needs the id of the person to export", [
+      new ValidationError("exportPersonalData needs the id of the person", [
         { path: ["personId"], message: "Expected a non-empty string" },
       ]),
     );

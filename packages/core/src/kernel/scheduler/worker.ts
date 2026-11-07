@@ -21,6 +21,7 @@ import { openCommandPayload } from "../personal-data/commands.ts";
 import { sealError } from "../personal-data/errors.ts";
 import { personOfEvent } from "../personal-data/persons.ts";
 import { restrictedPersonOf } from "../personal-data/refusal.ts";
+import type { RetentionSweep } from "../personal-data/retention.ts";
 import type { DelayedPolicies } from "../policy/delayed.ts";
 import { PROCESS_DEADLINE_COMMAND, type ProcessDeadlinePayload } from "../process/deadlines.ts";
 import type { ProcessDeadlines } from "../process/deliver-deadline.ts";
@@ -45,7 +46,8 @@ export interface ScheduledCommandWorker {
   start(): void;
   stop(): Promise<void>;
   /**
-   * Resolves to how many entries it claimed, those it deferred included.
+   * Resolves to how many entries it claimed, those it deferred included, and persons it forgot
+   * for the retention.
    */
   runOnce(): Promise<number>;
   /**
@@ -67,6 +69,10 @@ export interface CreateScheduledCommandWorkerArgs {
   readonly processes: ProcessDeadlines;
   readonly delayedPolicies: DelayedPolicies;
   readonly restrictedRetries: RestrictedRetries;
+  /**
+   * Swept on every pass; absent without `runtime.personalData.retention`.
+   */
+  readonly retention?: RetentionSweep | undefined;
   /**
    * The reactive subscribers the dispatcher runs, by name: what a deadline and a restricted
    * retry wait for before they run.
@@ -122,7 +128,9 @@ interface DeadlineWait {
  * dead letters the restriction caused, after the same wait, so the runners have refused what they
  * were going to; its letters are retried one by one, each in its own transaction, so a crash
  * leaves the entry to its lease and the next run finds the rest still `failed`. Every
- * `IDEMPOTENCY_PURGE_INTERVAL_MS` a pass also purges the idempotency keys that expired.
+ * `IDEMPOTENCY_PURGE_INTERVAL_MS` a pass also purges the idempotency keys that expired. Every pass
+ * sweeps the retention, unless a list it could not read holds it: its read is one an index
+ * answers, as `nextDueAt` is, so a host woken for a person's deadline forgets them in that pass.
  */
 export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction = ({
   storage,
@@ -131,6 +139,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   processes,
   delayedPolicies,
   restrictedRetries,
+  retention,
   reactive,
   config,
   ids,
@@ -527,8 +536,9 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
         if (!due.some((entry) => entry.dedupeKey === key)) waits.delete(key);
       }
       await purgeExpiredKeys(claimedAt);
+      const forgotten = (await retention?.sweep(claimedAt)) ?? 0;
       if (unreadable !== undefined) throw unreadable.error;
-      return due.length;
+      return due.length + forgotten;
     });
 
   const schedule = (): void => {

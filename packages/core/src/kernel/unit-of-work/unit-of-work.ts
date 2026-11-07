@@ -8,7 +8,7 @@ import { ConcurrencyError } from "../../contracts/errors.ts";
  */
 export type UnitStores = Pick<
   UnitOfWork,
-  "eventStore" | "scheduler" | "idempotencyStore" | "persons" | "afterCommit"
+  "eventStore" | "scheduler" | "idempotencyStore" | "persons" | "atCommit" | "afterCommit"
 >;
 
 /**
@@ -23,6 +23,12 @@ export type UnitStores = Pick<
  */
 export interface UnitOfWork extends Omit<StorageTransaction, "personalKeys" | "snapshotStore"> {
   commit(): Promise<void>;
+  /**
+   * Runs `write` on the commit's transaction, after the unit's events and other writes, in the
+   * order given: for a write that needs what the transaction's stores answer, as forgetting a
+   * person does. Never for a unit that does not commit.
+   */
+  atCommit(write: (transaction: StorageTransaction) => Promise<void>): void;
   /**
    * Runs `callback` once the unit has committed, once however often it commits; never for a unit
    * that does not. `callback` must not throw: the commit would look failed when it is done.
@@ -41,6 +47,7 @@ export interface CreateUnitOfWorkFunction {
 export const createUnitOfWork: CreateUnitOfWorkFunction = ({ storage }) => {
   const staged = createStagedEventStore(storage.eventStore);
   const { stores, flush, pending } = deferWrites(storage);
+  const atCommit: ((transaction: StorageTransaction) => Promise<void>)[] = [];
   const committed: (() => void)[] = [];
   return {
     eventStore: staged,
@@ -50,13 +57,17 @@ export const createUnitOfWork: CreateUnitOfWorkFunction = ({ storage }) => {
     persons: storage.persons,
     commit: async () => {
       const batches = staged.batches();
-      if (batches.length > 0 || pending()) {
+      if (batches.length > 0 || pending() || atCommit.length > 0) {
         await storage.transact(async (transaction) => {
           for (const batch of batches) await transaction.eventStore.append(batch);
           await flush(transaction);
+          for (const write of atCommit) await write(transaction);
         });
       }
       for (const callback of committed.splice(0)) callback();
+    },
+    atCommit: (write) => {
+      atCommit.push(write);
     },
     afterCommit: (callback) => {
       committed.push(callback);

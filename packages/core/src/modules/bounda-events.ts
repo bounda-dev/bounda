@@ -8,10 +8,11 @@ import type { StoredEvent } from "../contracts/event.ts";
 export const BOUNDA_AGGREGATE: "bounda" = "bounda";
 
 /**
- * Appended by `forget(personId)` to the stream `bounda:<personId>`, once the person's key is
- * gone: every event's personal field of theirs reads as `null` from then on, and every read model
- * that projects such fields handles it. It names the stored commands that held the person's data
- * and went with the key, since no other event records them.
+ * Appended to the stream `bounda:<personId>` once the person's key is gone, by `forget(personId)`,
+ * a policy or process that forgets them, or the retention: every event's personal field of theirs
+ * reads as `null` from then on, and every read model that projects such fields handles it. It
+ * names the stored commands that held the person's data and went with the key, since no other
+ * event records them.
  */
 export const PERSONAL_DATA_FORGOTTEN_EVENT: "PersonalDataForgotten" = "PersonalDataForgotten";
 
@@ -31,8 +32,15 @@ export interface RemovedDeadLetter {
   readonly commandType: string;
 }
 
+/**
+ * Why a person was forgotten: `requested` by `forget`, from a client or a policy or process, or
+ * `retention`, past `runtime.personalData.retention` without activity.
+ */
+export type PersonalDataForgottenReason = "requested" | "retention";
+
 export interface PersonalDataForgottenPayload {
   readonly personId: string;
+  readonly reason: PersonalDataForgottenReason;
   readonly cancelledCommands: readonly CancelledCommand[];
   readonly removedDeadLetters: readonly RemovedDeadLetter[];
 }

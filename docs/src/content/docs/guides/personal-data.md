@@ -1,6 +1,6 @@
 ---
 title: Personal data
-description: Mark the fields of an event that hold personal data, say whose they are, forget a person or export their data with one call, and handle forgetting in every read model that showed them.
+description: Mark the fields of an event that hold personal data, say whose they are, forget a person or export their data with one call, forget them after a retention or when a purpose ends, and handle forgetting in every read model that showed them.
 sidebar:
   order: 11
 ---
@@ -98,10 +98,11 @@ await app.catchUpReadModels({ through: forgotten });
 context of React Router. In one transaction it deletes the person's key, cancels the scheduled
 commands that hold their data, removes the dead letters of those that gave up, and appends
 `PersonalDataForgotten` to the stream `bounda:<personId>`: the runtime's own aggregate, `bounda`,
-has one stream per person it forgot. Its payload is `{ personId, cancelledCommands,
-removedDeadLetters }`, the ids and types of what went, the only record of commands that never became
-events. It resolves like a command, with the event's position, so `catchUpReadModels({ through })`
-waits for the read models that handle it, and the Durable Object's `forget` and the one in React
+has one stream per person it forgot. Its payload is `{ personId, reason, cancelledCommands,
+removedDeadLetters }`: `reason` is `"requested"` for `forget` and `"retention"` when the
+[retention](#retention) forgot them, and the rest are the ids and types of what went, the only
+record of commands that never became events. It resolves like a command, with the event's
+position, so `catchUpReadModels({ through })` waits for the read models that handle it, and the Durable Object's `forget` and the one in React
 Router's `bounda` context wait for them themselves unless `consistency` is `"eventual"`. A person
 without a key is forgotten all the same, since a read model may hold what their events carried in
 the clear, and forgetting twice appends twice. An empty id is refused with `ValidationError`.
@@ -302,13 +303,107 @@ customer service looks, and a policy may react from
 `policies/bounda/<action>-on-processing-restricted.ts`, to tell the outside world. Both carry
 `{ personId }` and are typed `ProcessingRestrictedEvent` and `ProcessingRestrictionLiftedEvent`.
 
+## Retention
+
+The GDPR's storage limitation asks that personal data be kept no longer than its purpose needs.
+Bounda covers the two ways a purpose ends: a person who stops coming back, and something the
+domain decides.
+
+### Inactivity
+
+```ts
+// bounda.config.ts
+export default defineConfig({
+  storage: sqlite({ path: "./data/app.db" }),
+  runtime: { personalData: { retention: "730d" } },
+});
+```
+
+With `runtime.personalData.retention` set, the runtime forgets a person no event has named for that
+long, as `forget` does, with `reason: "retention"` in `PersonalDataForgotten`. There is no default:
+without it nobody is forgotten for inactivity. The setting is app-wide, with no override per
+aggregate, because a person's events span aggregates: a customer who places an order is active, as
+a customer, whatever aggregate the order is.
+
+Activity is an event of the app's aggregates that names the person, by its field marked `person`
+or its aggregate's id, as the [export](#exporting-a-persons-data) finds them. The runtime's own
+events on `bounda:<personId>` are not activity: restricting or lifting a restriction does not
+start the clock again, and neither does forgetting, which the runtime records instead. A person
+active again after being forgotten starts a new clock from that activity; their old events stay
+unreadable. A person whose processing is [restricted](#restricting-processing) is left alone
+while the restriction lasts, since keeping their data is what they asked for, and is forgotten
+once it is lifted if they are due by then.
+
+No timer is armed per person. A subscriber of the dispatcher, `retention`, follows the stream from
+its first event and records in `bounda_persons` when each person was last active and last
+forgotten, with its own checkpoint, in batches, like any subscriber; it shows in the lag, and
+started over from the first event it records the same rows. Every pass of the scheduled-command
+worker then sweeps: an indexed read of the persons whose last activity is older than the
+retention, not restricted and not forgotten since, a bounded batch of them each forgotten in a
+transaction of its own. The deadline is worked out at sweep time from the setting, so changing it
+applies at once, to everyone, and turning it on applies it to the history: whoever was already
+inactive for that long is forgotten in the first passes. A person named by an event the subscriber has not recorded yet is
+left for a later pass, read in the transaction that forgets them, so nobody is forgotten for an
+activity the row does not show yet, nor twice when two workers sweep at once; an event stored in
+a transaction running beside it may still be forgotten with them, as one a command stores while
+`forget` runs may be. A person the sweep could not forget, because their forget failed or their
+row is behind, waits on their own, half a minute at first and twice as long after each failure up
+to an hour, while the pass goes on with the next ones; `nextDueAt()` names the end of that wait,
+so a host never wakes for them again at once.
+
+A host without a polling worker learns of it from `app.nextDueAt()`, which names the earliest
+retention deadline with the scheduled commands, so a [Durable Object](/adapters/cloudflare/)
+arms its alarm for it.
+
+### End of purpose
+
+The domain knows when a purpose ends, so a [process](/guides/sagas/) decides: "forget the customer
+30 days after their account closed, unless it reopens" is a process started by `AccountClosed`,
+completed by `AccountReopened`, with a timeout of 30 days whose handler forgets them.
+
+```ts
+// app/domain/customer/processes/erasure/index.ts
+import type { Process } from "./+types/index";
+
+export const config = ({ events }: Process.ConfigArgs) => ({
+  startedBy: [events.customer.AccountClosed],
+  completedBy: [events.customer.AccountReopened],
+  timeout: "30d",
+});
+```
+
+```ts
+// app/domain/customer/processes/erasure/at-timeout.ts
+import type { Process } from "./+types/at-timeout";
+
+export const handler = async ({ aggregateId, forget }: Process.DeadlineArgs) => {
+  await forget(aggregateId);
+};
+```
+
+Policies and processes receive `forget(personId)` in their arguments, next to `commands`. It
+forgets as `forget` on the app does, with `reason: "requested"`, inside the run's own unit of work:
+the forgetting commits with the run's commands and its step, in the same transaction, or not at
+all, so a run that fails and is retried forgets once. It resolves at once, before the commit, and
+rejects an empty id with `ValidationError`. The `PersonalDataForgotten` it appends is caused by the
+event the handler reacted to, one hop deeper, as its commands are.
+
+### One key per person
+
+Each person has one key, so their marked fields are forgotten together. "Keep the invoices six
+years, the profile thirty days" does not fit one key: put the profile in marked events, which the
+retention or a process forgets, and keep what the law makes you hold longer, such as an invoice,
+behind a [port](/guides/calling-the-outside-world/) with a retention of its own, or in events whose
+fields you do not mark.
+
 ## Where the keys live
 
 Each adapter keeps the keys in a table next to the events, `bounda_personal_keys`, one row per
 person with the key and its fingerprint, a SHA-256 of it: the memory adapter in memory, SQLite and the Durable Object in their database, PostgreSQL
 in its schema. Whether a person's processing is restricted, and since when, lives apart, in
-`bounda_persons`, since a person without a key is restricted all the same. A key is created when the first event with a personal field of that person is
-stored, by the transaction that stores it, and deleted by `forget`. Encryption is AES-256-GCM
+`bounda_persons`, since a person without a key is restricted all the same, and so does, with a
+retention, when they were last active and last forgotten. A key is created when the first event
+with a personal field of that person is stored, by the transaction that stores it, and deleted by `forget`. Encryption is AES-256-GCM
 through WebCrypto, with a nonce per value, on Node and in `workerd` alike; what the store holds
 for a personal field is an envelope with the ciphertext, the person's id and a fingerprint of the
 key, which the [global stream](/guides/reading-the-stream/) shows as it is; a value sealed under a
@@ -344,4 +439,19 @@ expect((await app.exportPersonalData("c-1")).events.map((event) => event.data)).
   { email: null },
   {},
 ]);
+```
+
+`app.runUntilIdle()` never moves a test's clock to a retention deadline, or every person the test
+created would be forgotten; a test reaches it by moving the clock itself:
+
+```ts
+const { app, clock } = await createTestApp({
+  registry,
+  config: { runtime: { personalData: { retention: "30d" } } },
+});
+await app.commands.registerCustomer({ customerId: "c-1", email: "ana@example.com", plan: "pro" });
+await app.runUntilIdle();
+clock.advance(31 * 86_400_000);
+await app.runUntilIdle();
+expect((await app.exportPersonalData("c-1")).events[0]?.data).toEqual({ email: null });
 ```

@@ -57,9 +57,10 @@ export interface TestApp<R extends Registry> {
    */
   readonly app: BoundaApp<R>;
   /**
-   * The app's clock. Advance it to make scheduled commands and process time-outs due, then call
-   * `app.runUntilIdle()`, which moves it on its own only while a retry waits for its back-off: to
-   * that retry, stopping first at what falls due before it.
+   * The app's clock. Advance it to make scheduled commands, process time-outs and retention
+   * deadlines due, then call `app.runUntilIdle()`, which moves it on its own only while a retry
+   * waits for its back-off: to that retry, stopping first at a scheduled command due before it,
+   * never at a retention deadline.
    */
   readonly clock: FixedClock;
   /**

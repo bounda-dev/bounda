@@ -9,6 +9,7 @@ export type {
   CommandsRuntimeConfig,
   Config,
   DispatcherConfig,
+  PersonalDataConfig,
   PoliciesConfig,
   PortsConfig,
   PortsSection,

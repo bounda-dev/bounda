@@ -1,12 +1,16 @@
+import type { Clock } from "../../contracts/clock.ts";
 import type {
   DispatchResult,
   ReactionDispatchResult,
   RejectedDispatch,
 } from "../../contracts/command.ts";
-import { BoundaError } from "../../contracts/errors.ts";
+import { BoundaError, ChainDepthExceededError } from "../../contracts/errors.ts";
+import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
+import { forgetWithin, logForgotten } from "../personal-data/forget.ts";
+import { checkPersonId } from "../personal-data/transact.ts";
 import { createReactionCommandIds } from "../shared/idempotency-key.ts";
 import { errorDetails } from "../shared/retry.ts";
 import type { UnitStores } from "../unit-of-work/unit-of-work.ts";
@@ -34,11 +38,11 @@ export class ReactionAbandonedError extends BoundaError {
 export class ReactionFinishedError extends BoundaError {
   readonly command: string;
 
-  constructor(command: string) {
-    super(
-      "REACTION_FINISHED",
-      `Command ${command} was dispatched after its run had finished: dispatch commands while the handler runs`,
-    );
+  constructor(
+    command: string,
+    message = `Command ${command} was dispatched after its run had finished: dispatch commands while the handler runs`,
+  ) {
+    super("REACTION_FINISHED", message);
     this.command = command;
   }
 }
@@ -52,6 +56,11 @@ export interface ReactionCommands {
    * Aborted when the run is abandoned, so the handler can stop what it still does outside.
    */
   readonly signal: AbortSignal;
+  /**
+   * Forgets the person when the run's attempt commits, in its transaction: once however often the
+   * attempt runs, never for one that does not commit, and once for a person named twice.
+   */
+  forget(personId: string): Promise<void>;
   /**
    * What the run's commands decided, in the order they finished, once every dispatch, awaited by
    * the handler or not, has settled; rejects with the first that failed. The run awaits it before
@@ -80,9 +89,15 @@ export interface CreateReactionCommandsArgs {
    */
   readonly within: UnitStores;
   /**
-   * Where a command dispatched once the run has finished is reported.
+   * Where a command dispatched once the run has finished is reported, and a person forgotten.
    */
   readonly logger: Logger;
+  readonly ids: IdGenerator;
+  readonly clock: Clock;
+  /**
+   * How deep a `forget` may go, which no pipeline checks for it as it does for a command.
+   */
+  readonly maxChainDepth: number;
 }
 
 export interface CreateReactionCommandsFunction {
@@ -103,8 +118,12 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
   idempotencyKey,
   within,
   logger,
+  ids,
+  clock,
+  maxChainDepth,
 }) => {
   const commandIds = createReactionCommandIds(idempotencyKey);
+  const forgetting = new Set<string>();
   const handler = new AbortController();
   // A second signal, so the commands are refused with the reason wrapped while the handler's
   // signal carries it as it is.
@@ -179,6 +198,31 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
   return {
     commands,
     signal: handler.signal,
+    forget: async (personId) => {
+      checkPersonId(personId, "forget");
+      if (abandoned.signal.aborted) throw abandoned.signal.reason;
+      if (finished) {
+        throw new ReactionFinishedError(
+          "forget",
+          "forget was called after its run had finished: call it while the handler runs",
+        );
+      }
+      const depth = context.depth + 1;
+      if (depth > maxChainDepth) throw new ChainDepthExceededError(depth, maxChainDepth);
+      if (forgetting.has(personId)) return;
+      forgetting.add(personId);
+      within.atCommit(async (transaction) => {
+        const forgotten = await forgetWithin({
+          transaction,
+          ids,
+          clock,
+          personId,
+          reason: "requested",
+          context: { ...context, depth },
+        });
+        within.afterCommit(() => logForgotten(logger, forgotten));
+      });
+    },
     decided: async () => {
       for (let settled = 0; settled < dispatched.size; ) {
         settled = dispatched.size;
