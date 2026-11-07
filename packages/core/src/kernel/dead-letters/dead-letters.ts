@@ -10,6 +10,7 @@ import type { Logger } from "../../contracts/logger.ts";
 import { type KeyOfFunction, openCommandPayload, sealedKeys } from "../personal-data/commands.ts";
 import { openTextWith } from "../personal-data/errors.ts";
 import type { ProcessDeadLetters } from "../process/dead-letter-retry.ts";
+import { actedBy } from "../shared/causation.ts";
 import type { DeadLetterRetry } from "./retry.ts";
 
 /**
@@ -42,7 +43,8 @@ export interface DeadLetters {
    * whose personal fields a scheduled command holds was forgotten since. Rejects with
    * `DeadLetterSettledError` a letter that is no longer `failed`, or that another retry or a
    * discard settled while this one ran: a retry marked in its own transaction then writes
-   * nothing, any other process's has already handled its events.
+   * nothing, any other process's has already handled its events. Whoever retries acts in what
+   * the run writes, the client's actor (`as`) taking the place of the one the failed run had.
    */
   retry(id: string): Promise<DeadLetter>;
   /**
@@ -58,6 +60,10 @@ export interface CreateDeadLettersArgs {
   readonly processes: Pick<ProcessDeadLetters, "parkedBehind" | "stillParked">;
   readonly clock: Clock;
   readonly logger: Logger;
+  /**
+   * Who retries and discards, for the client bound to them.
+   */
+  readonly actor?: string | undefined;
 }
 
 export interface CreateDeadLettersFunction {
@@ -70,6 +76,7 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
   processes,
   clock,
   logger,
+  actor,
 }) => {
   const failedLetter = async (id: string): Promise<StoredDeadLetter> => {
     const letter = await storage.deadLetterStore.get(id);
@@ -122,12 +129,13 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
     },
     retry: async (id) => {
       const letter = await failedLetter(id);
-      await retries.retry(letter);
+      await retries.retry(letter, actor);
       logger.info("dead letter retried", {
         id,
         kind: letter.kind,
         handler: letter.handler,
         at: clock.now().toISOString(),
+        ...actedBy(actor),
       });
       const retried: DeadLetter = { ...(await opened(letter)), status: "retried" };
       if (letter.kind !== "process") return retried;
@@ -140,6 +148,7 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
         id,
         kind: letter.kind,
         handler: letter.handler,
+        ...actedBy(actor),
       });
       return { ...(await opened(letter)), status: "discarded" };
     },

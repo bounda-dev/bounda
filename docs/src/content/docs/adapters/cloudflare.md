@@ -187,6 +187,36 @@ again, because RPC drops an error's own properties on older dates. Check `error.
 carry it into the object, where the command runs to the end, bounded by
 `runtime.commands.timeout`.
 
+## Who makes a request
+
+Every event can say who acted: the `actor` in its metadata (see
+[Who acts](/concepts/ids-causation-and-correlation/#who-acts)). `connect(stub).as(userId)` gives
+the same client acting as that id: every call sends it over RPC, and the object acts as it, so the
+commands record it on their events, and `forget`, `restrict` and `unrestrict` on theirs.
+
+```ts
+const store = connect(env.STORE.get(env.STORE.idFromName(tenant))).as(user.id);
+await store.commands.placeOrder({ orderId, customerId, total });
+```
+
+`createWorker` takes `actorOf`, beside `tenantOf`: a function of the request that names who makes
+it, or `undefined` for nobody. Its commands and queries then act as that id.
+
+```ts
+export default createWorker({
+  config,
+  tenantOf: (request) => request.headers.get("x-bounda-tenant") ?? "default",
+  actorOf: async (request) => (await verifiedUser(request))?.id, // your authentication
+});
+```
+
+The worker trusts what `actorOf` returns: name the user the request proves it is, never a header
+anyone can send. The actor is an id, never a name or an email, since events keep it in the clear.
+`as` throws `ValidationError` for one that is not a string of 1 to 255 characters, and the object
+refuses one that reaches it that way with the same error. An `actorOf` that names such an actor is
+the Worker's mistake, not the caller's: the request gets a 500 and the log says so, without the
+value.
+
 ## Testing
 
 The tests run inside `workerd` through

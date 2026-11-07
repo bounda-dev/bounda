@@ -3,6 +3,7 @@ import type { ScheduledCommand, Scheduler } from "../../adapter/storage/schedule
 import type { ResolvedConfig, ResolvedRetryConfig } from "../../config/types.ts";
 import { ConfigurationError, NotFoundError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
+import { causedBy } from "../shared/causation.ts";
 import type { UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import type { PoliciesRuntime, PolicyRuntime } from "./build-policies.ts";
 import type { PolicyExecutor } from "./executor.ts";
@@ -58,11 +59,7 @@ export const scheduleDelayedPolicy: ScheduleDelayedPolicyFunction = ({
       } satisfies DelayedPolicyPayload,
     },
     executeAt: new Date(new Date(event.timestamp).getTime() + delayMs),
-    context: {
-      correlationId: event.metadata.correlationId,
-      causationId: event.id,
-      depth: event.metadata.depth,
-    },
+    context: causedBy(event),
   });
 
 /**

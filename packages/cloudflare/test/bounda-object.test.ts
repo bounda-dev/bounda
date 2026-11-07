@@ -411,6 +411,27 @@ describe("a Bounda Durable Object", () => {
     expect(Reflect.get(invalid, "issues")).toEqual(expect.arrayContaining([expect.any(Object)]));
   });
 
+  it("acts as the actor connect(...).as() sends, on the events of its commands and of forget", async () => {
+    const { stub, store } = open();
+    const user = store.as("user-1");
+    await user.commands.placeOrder({ orderId: "o-1", total: 42, customer: "ada" });
+    await store.as("dpo-1").forget("ada");
+    await store.commands.placeOrder({ orderId: "o-2", total: 1, customer: "bob" });
+    const actors = (await store.events.read()).map((event) => [
+      event.type,
+      event.metadata.actor ?? null,
+    ]);
+    expect(actors).toEqual([
+      ["OrderPlaced", "user-1"],
+      ["PersonalDataForgotten", "dpo-1"],
+      ["OrderPlaced", null],
+    ]);
+    expect(await stub.command("placeOrder", {}, undefined, undefined, "")).toMatchObject({
+      ok: false,
+      refusal: { code: "VALIDATION_FAILED" },
+    });
+  });
+
   it("dead-letters a failing policy and lets it be discarded", async () => {
     const { stub, store } = open();
     await store.commands.placeOrder({ orderId: "fail-1", total: 3, customer: "ada" });

@@ -8,7 +8,6 @@ import {
 } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
-import type { CausationContext } from "../../contracts/metadata.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
 import { openCommandPayload } from "../personal-data/commands.ts";
@@ -16,6 +15,7 @@ import type { PoliciesRuntime } from "../policy/build-policies.ts";
 import type { PolicyExecutor } from "../policy/executor.ts";
 import type { ProcessDeadLetters } from "../process/dead-letter-retry.ts";
 import { PROCESS_DEADLINE_COMMAND } from "../process/deadlines.ts";
+import { startedBy } from "../shared/causation.ts";
 import { commitWork, type UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 
 /**
@@ -26,9 +26,9 @@ export interface DeadLetterRetry {
    * Runs the failed handler the letter records once more and marks the letter `retried`, as
    * `DeadLetters.retry` describes, for a letter read as `failed`. Rejects as it does, without
    * running anything, when the app cannot retry it, and with the handler's error when it fails
-   * again, the letter left `failed`.
+   * again, the letter left `failed`. `actor` is who retries, who acts in what the run writes.
    */
-  retry(letter: StoredDeadLetter): Promise<void>;
+  retry(letter: StoredDeadLetter, actor?: string): Promise<void>;
 }
 
 export interface CreateDeadLetterRetryArgs {
@@ -93,7 +93,11 @@ export const createDeadLetterRetry: CreateDeadLetterRetryFunction = ({
     return event;
   };
 
-  const retryPolicy = async (letter: StoredDeadLetter, retryId: string): Promise<void> => {
+  const retryPolicy = async (
+    letter: StoredDeadLetter,
+    retryId: string,
+    actor: string | undefined,
+  ): Promise<void> => {
     const policy = policies.byName[letter.handler];
     if (policy === undefined) {
       throw new DeadLetterNotRetriableError(
@@ -107,11 +111,21 @@ export const createDeadLetterRetry: CreateDeadLetterRetryFunction = ({
       );
     }
     await settled(letter, (unit) =>
-      policyExecutor.run({ policy, event, attempt: letter.attempts + 1, retryId, within: unit }),
+      policyExecutor.run({
+        policy,
+        event,
+        attempt: letter.attempts + 1,
+        retryId,
+        actor,
+        within: unit,
+      }),
     );
   };
 
-  const retryScheduled = async (letter: StoredDeadLetter): Promise<void> => {
+  const retryScheduled = async (
+    letter: StoredDeadLetter,
+    actor: string | undefined,
+  ): Promise<void> => {
     if (aggregates.commandsByType[letter.eventType] === undefined) {
       throw new DeadLetterNotRetriableError(
         `Command "${letter.eventType}" is no longer in the registry`,
@@ -126,11 +140,7 @@ export const createDeadLetterRetry: CreateDeadLetterRetryFunction = ({
         `Command "${letter.eventType}" holds personal data of a person forgotten since`,
       );
     }
-    const context: CausationContext = {
-      correlationId: ids.next(),
-      causationId: letter.id,
-      depth: 0,
-    };
+    const context = { ...startedBy(ids.next(), actor), causationId: letter.id };
     await settled(letter, async (unit) => {
       await pipeline.dispatchUnattended({
         type: letter.eventType,
@@ -144,16 +154,20 @@ export const createDeadLetterRetry: CreateDeadLetterRetryFunction = ({
   // Resolves to whether the letter still has to be marked retried: a policy, scheduled command
   // or follow-up retry marks it in its own unit; any other process retry leaves it for after the
   // drain.
-  const run = async (letter: StoredDeadLetter, retryId: string): Promise<boolean> => {
+  const run = async (
+    letter: StoredDeadLetter,
+    retryId: string,
+    actor: string | undefined,
+  ): Promise<boolean> => {
     switch (letter.kind) {
       case "policy":
-        await retryPolicy(letter, retryId);
+        await retryPolicy(letter, retryId, actor);
         return false;
       case "process":
         if (letter.eventType === PROCESS_DEADLINE_COMMAND) {
           await processes.retryDeadline({
             payload: { process: letter.handler, aggregateId: letter.aggregateId },
-            context: { correlationId: ids.next(), causationId: letter.id, depth: 0 },
+            context: { ...startedBy(ids.next(), actor), causationId: letter.id },
             retryId,
             letter: letter.id,
           });
@@ -164,9 +178,10 @@ export const createDeadLetterRetry: CreateDeadLetterRetryFunction = ({
           event: await eventOf(letter),
           retryId,
           letter: letter.id,
+          actor,
         }));
       case "scheduled":
-        await retryScheduled(letter);
+        await retryScheduled(letter, actor);
         return false;
       default:
         // Stores cast the stored kind, so a row no release writes still reaches here.
@@ -177,8 +192,8 @@ export const createDeadLetterRetry: CreateDeadLetterRetryFunction = ({
   };
 
   return {
-    retry: async (letter) => {
-      if (await run(letter, ids.next())) {
+    retry: async (letter, actor) => {
+      if (await run(letter, ids.next(), actor)) {
         await storage.deadLetterStore.updateStatus(letter.id, "retried");
       }
     },

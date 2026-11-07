@@ -95,7 +95,8 @@ await app.catchUpReadModels({ through: forgotten });
 ```
 
 `forget` is on every `BoundaClient`: the app, the Durable Object through `connect`, the `bounda`
-context of React Router. In one transaction it deletes the person's key, cancels the scheduled
+context of React Router. A client bound with `as` records who asked on `PersonalDataForgotten`, in
+`metadata.actor`, and so on `ProcessingRestricted` and `ProcessingRestrictionLifted`. In one transaction it deletes the person's key, cancels the scheduled
 commands that hold their data, removes the dead letters of those that gave up, and appends
 `PersonalDataForgotten` to the stream `bounda:<personId>`: the runtime's own aggregate, `bounda`,
 has one stream per person it forgot. Its payload is `{ personId, reason, cancelledCommands,
@@ -149,6 +150,10 @@ you did not mark, stays readable, a command's payload left unmarked is stored as
 error of work that names nobody, such as a process deadline or a scheduled command whose payload
 marks nothing, stays in its dead letter in the clear. Log and throw with ids, not the data itself,
 and mark every field that holds it.
+
+Nor does it reach the `actor` in the metadata of events, who acted on them (see
+[Who acts](/concepts/ids-causation-and-correlation/#who-acts)): it is an id, as a person's id is,
+so bind clients with the id of a user or a service, never their name or email.
 
 ## Exporting a person's data
 

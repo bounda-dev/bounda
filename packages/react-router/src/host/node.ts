@@ -1,5 +1,6 @@
 import { type AppRegistry, ConfigurationError, type Registry } from "@bounda-dev/core";
 import { boot, type ImportModuleFunction } from "@bounda-dev/core/node";
+import { actorOfModule } from "../actor.ts";
 import { type Bounda, createBounda } from "../create-bounda.ts";
 import type { CreateHostArgs, CreateHostFunction } from "./args.ts";
 
@@ -28,7 +29,8 @@ const explainWorkers =
 
 /**
  * The host the `bounda()` Vite plugin serves the app from: in Node, `createBounda` booting the
- * project; under the `workerd` condition, the one of `@bounda-dev/react-router/cloudflare`. Not
+ * project and acting as the `actor` of its `app/actor.ts`, when it has one; under the `workerd`
+ * condition, the one of `@bounda-dev/react-router/cloudflare`. Not
  * meant to be called by hand: call either `createBounda` instead. In Node the boot rejects with
  * `ConfigurationError` when the configuration needs the Workers runtime, as `cloudflare()` does;
  * otherwise it throws as `createBounda` does.
@@ -37,6 +39,7 @@ export const createHost: CreateHostFunction = <R extends Registry = AppRegistry>
   root,
   registry,
   importConfig,
+  importActor,
   consistency,
 }: CreateHostArgs<R>): Bounda<R> =>
   createBounda<R>({
@@ -47,4 +50,5 @@ export const createHost: CreateHostFunction = <R extends Registry = AppRegistry>
         importConfig: explainWorkers(importConfig),
       }),
     consistency,
+    ...(importActor === undefined ? {} : { actor: actorOfModule(importActor) }),
   });

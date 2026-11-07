@@ -4,6 +4,7 @@ import {
   type BoundaClient,
   type CommandsFacade,
   type Consistency,
+  checkActor,
   checkConsistency,
   type DeadLetter,
   type DispatchOptions,
@@ -30,18 +31,19 @@ export interface BoundaStub {
     payload?: unknown,
     options?: DispatchOptions,
     consistency?: Consistency,
+    actor?: string,
   ): PromiseLike<unknown>;
-  query(name: string, payload?: unknown): PromiseLike<unknown>;
+  query(name: string, payload?: unknown, actor?: string): PromiseLike<unknown>;
   lag(): PromiseLike<unknown>;
   readEvents(args?: ReadEventsArgs): PromiseLike<unknown>;
-  listDeadLetters(args?: ListDeadLettersArgs): PromiseLike<unknown>;
-  retryDeadLetter(id: string): PromiseLike<unknown>;
-  discardDeadLetter(id: string): PromiseLike<unknown>;
+  listDeadLetters(args?: ListDeadLettersArgs, actor?: string): PromiseLike<unknown>;
+  retryDeadLetter(id: string, actor?: string): PromiseLike<unknown>;
+  discardDeadLetter(id: string, actor?: string): PromiseLike<unknown>;
   rebuildReadModel(name: string): PromiseLike<unknown>;
-  forget(personId: string, consistency?: Consistency): PromiseLike<unknown>;
-  exportPersonalData(personId: string): PromiseLike<unknown>;
-  restrict(personId: string, consistency?: Consistency): PromiseLike<unknown>;
-  unrestrict(personId: string, consistency?: Consistency): PromiseLike<unknown>;
+  forget(personId: string, consistency?: Consistency, actor?: string): PromiseLike<unknown>;
+  exportPersonalData(personId: string, actor?: string): PromiseLike<unknown>;
+  restrict(personId: string, consistency?: Consistency, actor?: string): PromiseLike<unknown>;
+  unrestrict(personId: string, consistency?: Consistency, actor?: string): PromiseLike<unknown>;
 }
 
 export interface ConnectOptions {
@@ -85,31 +87,44 @@ const byName = <T extends object>(call: (name: string, ...args: unknown[]) => un
  *
  * Every call is a round trip to the object. A command's `signal` only counts before the call
  * leaves the Worker: RPC cannot carry it into the object, where the command then runs to the end.
- * Throws `ConfigurationError` for a `consistency` it does not know.
+ * `as(actor)` sends the actor with every call, and the object acts as it. Throws
+ * `ConfigurationError` for a `consistency` it does not know.
  */
 export const connect: ConnectFunction = <R extends Registry = AppRegistry>(
   stub: BoundaStub,
   { consistency = "read-your-writes" }: ConnectOptions = {},
 ): BoundaClient<R> => {
   checkConsistency(consistency);
-  return {
+  const clientAs = (actor: string | undefined): BoundaClient<R> => ({
     commands: byName<CommandsFacade<R>>(async (name, payload, options) =>
       unwrap<DispatchResult>(
-        stub.command(name, payload, sendable(options as DispatchOptions | undefined), consistency),
+        stub.command(
+          name,
+          payload,
+          sendable(options as DispatchOptions | undefined),
+          consistency,
+          actor,
+        ),
       ),
     ),
-    queries: byName<QueriesFacade<R>>((name, payload) => unwrap(stub.query(name, payload))),
+    queries: byName<QueriesFacade<R>>((name, payload) => unwrap(stub.query(name, payload, actor))),
     getLag: () => unwrap<AppLag>(stub.lag()),
     events: { read: (args) => unwrap<readonly StoredEvent[]>(stub.readEvents(args)) },
     deadLetters: {
-      list: (args) => unwrap<readonly DeadLetter[]>(stub.listDeadLetters(args)),
-      retry: (id) => unwrap<DeadLetter>(stub.retryDeadLetter(id)),
-      discard: (id) => unwrap<DeadLetter>(stub.discardDeadLetter(id)),
+      list: (args) => unwrap<readonly DeadLetter[]>(stub.listDeadLetters(args, actor)),
+      retry: (id) => unwrap<DeadLetter>(stub.retryDeadLetter(id, actor)),
+      discard: (id) => unwrap<DeadLetter>(stub.discardDeadLetter(id, actor)),
     },
     rebuildReadModel: (name) => unwrap<RebuildReadModelResult>(stub.rebuildReadModel(name)),
-    forget: (personId) => unwrap<StoredDispatch>(stub.forget(personId, consistency)),
-    exportPersonalData: (personId) => unwrap<PersonalDataExport>(stub.exportPersonalData(personId)),
-    restrict: (personId) => unwrap<StoredDispatch>(stub.restrict(personId, consistency)),
-    unrestrict: (personId) => unwrap<StoredDispatch>(stub.unrestrict(personId, consistency)),
-  };
+    forget: (personId) => unwrap<StoredDispatch>(stub.forget(personId, consistency, actor)),
+    exportPersonalData: (personId) =>
+      unwrap<PersonalDataExport>(stub.exportPersonalData(personId, actor)),
+    restrict: (personId) => unwrap<StoredDispatch>(stub.restrict(personId, consistency, actor)),
+    unrestrict: (personId) => unwrap<StoredDispatch>(stub.unrestrict(personId, consistency, actor)),
+    as: (next) => {
+      checkActor(next);
+      return clientAs(next);
+    },
+  });
+  return clientAs(undefined);
 };

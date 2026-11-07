@@ -267,6 +267,25 @@ and from then on every `app.runUntilIdle()` throws it, so the test fails with th
 instead of an assertion further down. Handlers that never read the port run as usual, but reading every port
 at once, as `({ notifier, ...rest })` does, reads that one too.
 
+## Who acts
+
+`app.as(actor)` gives the same app as a client acting as that id, as a host binds it for a
+request (see [Who acts](/concepts/ids-causation-and-correlation/#who-acts)). A command whose
+handler reads `command.metadata.actor` is tested through it, and so is an audit read model that
+projects `event.metadata.actor`. In an app whose `cancelOrder` refuses anyone but the order's
+customer with `NotYourOrder`:
+
+```ts
+const ada = app.as("ada");
+await ada.commands.placeOrder({ orderId, customerId: "ada", total: 42 });
+await expect(
+  app.as("grace").commands.cancelOrder({ orderId }),
+).rejects.toMatchObject({ rejected: "NotYourOrder" });
+await app.runUntilIdle();
+```
+
+The bound client has no `runUntilIdle` or `stop`: those stay on `app`.
+
 ## Nothing left behind
 
 `app.getLag()` reports how far each subscriber is behind the head of the global stream.

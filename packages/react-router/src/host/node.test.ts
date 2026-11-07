@@ -10,6 +10,7 @@ const app = {
   commands: {},
   start: () => undefined,
   stop: async () => undefined,
+  as: (actor: string) => ({ actedAs: actor }),
 } as unknown as BoundaApp;
 const booted: BootArgs[] = [];
 
@@ -109,6 +110,16 @@ describe("createHost in Node", () => {
 
   it("hands the plugin's module failure too, so that it imports nothing else", () => {
     expect(nodeHost.failure).toBe(failure);
+  });
+
+  it("acts as the actor of app/actor.ts, when the project has one", async () => {
+    host = createHost({
+      registry,
+      importConfig: async () => ({}),
+      importActor: async () => ({ actor: () => "user-1" }),
+      consistency: "eventual",
+    });
+    expect(await served(host)).toEqual({ actedAs: "user-1" });
   });
 
   it("reads its own writes unless told otherwise", async () => {

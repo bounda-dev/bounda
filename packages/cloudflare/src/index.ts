@@ -15,7 +15,12 @@ export type {
 } from "./definition.ts";
 export { cloudflare, isCloudflareDefinition } from "./definition.ts";
 export type { RpcOutcome, RpcRefusal } from "./outcome.ts";
-export type { CreateWorkerArgs, CreateWorkerFunction, TenantOfFunction } from "./worker.ts";
+export type {
+  ActorOfFunction,
+  CreateWorkerArgs,
+  CreateWorkerFunction,
+  TenantOfFunction,
+} from "./worker.ts";
 export { createWorker, DEFAULT_MAX_PAYLOAD_BYTES } from "./worker.ts";
 
 declare module "@bounda-dev/core/register" {

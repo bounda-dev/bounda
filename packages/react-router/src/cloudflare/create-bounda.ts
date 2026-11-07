@@ -6,6 +6,7 @@ import {
   type Registry,
 } from "@bounda-dev/core";
 import type { Config } from "@bounda-dev/core/config";
+import type { ActorFunction } from "../actor.ts";
 import type { Bounda } from "../create-bounda.ts";
 import { cloudflareClients, type TenantFunction } from "./clients.ts";
 import { serve } from "./serve.ts";
@@ -22,6 +23,11 @@ export interface CreateBoundaArgs {
    * `"read-your-writes"`, so the page a redirect lands on already reflects it.
    */
   readonly consistency?: Consistency;
+  /**
+   * Who makes each request, which the client in its context acts as, over RPC. Left out, requests
+   * act as nobody.
+   */
+  readonly actor?: ActorFunction;
 }
 
 export interface CreateBoundaFunction {
@@ -48,8 +54,9 @@ export const createBounda: CreateBoundaFunction = <R extends Registry = AppRegis
   config,
   tenant,
   consistency = "read-your-writes",
+  actor,
 }: CreateBoundaArgs): Bounda<R> => {
   checkConsistency(consistency);
   const clientOf = cloudflareClients<R>({ env, config, tenant, consistency });
-  return serve(() => clientOf);
+  return serve(() => clientOf, actor);
 };

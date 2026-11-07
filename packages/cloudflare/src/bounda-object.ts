@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import {
   type AppLag,
   type BoundaApp,
+  type BoundaClient,
   type Clock,
   ConfigurationError,
   type Consistency,
@@ -67,20 +68,25 @@ export interface BoundaObjectMethods {
    * Dispatches a command. When it resolves its events are stored and, under
    * `"read-your-writes"`, the default, every read model reflects them, so a query issued next
    * sees them; under `"eventual"` the object's alarm brings the read models up to date. Policies
-   * and processes run right after, in the object's alarm.
+   * and processes run right after, in the object's alarm. Every method that takes an `actor`
+   * acts as it, as `BoundaClient.as` does, and as nobody without it.
    */
   command(
     name: string,
     payload?: unknown,
     options?: DispatchOptions,
     consistency?: Consistency,
+    actor?: string,
   ): Promise<RpcOutcome<DispatchResult>>;
-  query(name: string, payload?: unknown): Promise<RpcOutcome<unknown>>;
+  query(name: string, payload?: unknown, actor?: string): Promise<RpcOutcome<unknown>>;
   lag(): Promise<RpcOutcome<AppLag>>;
   readEvents(args?: ReadEventsArgs): Promise<RpcOutcome<readonly StoredEvent[]>>;
-  listDeadLetters(args?: ListDeadLettersArgs): Promise<RpcOutcome<readonly DeadLetter[]>>;
-  retryDeadLetter(id: string): Promise<RpcOutcome<DeadLetter>>;
-  discardDeadLetter(id: string): Promise<RpcOutcome<DeadLetter>>;
+  listDeadLetters(
+    args?: ListDeadLettersArgs,
+    actor?: string,
+  ): Promise<RpcOutcome<readonly DeadLetter[]>>;
+  retryDeadLetter(id: string, actor?: string): Promise<RpcOutcome<DeadLetter>>;
+  discardDeadLetter(id: string, actor?: string): Promise<RpcOutcome<DeadLetter>>;
   /**
    * Starts or continues rebuilding a read model with one slice of `eventsPerRebuildSlice` events.
    * When the result is not `done` the object's alarm runs the next slices, one per alarm, until
@@ -91,21 +97,33 @@ export interface BoundaObjectMethods {
    * Forgets a person, as `BoundaClient.forget` does, and like `command` waits for the read models
    * that handle it unless `consistency` is `"eventual"`.
    */
-  forget(personId: string, consistency?: Consistency): Promise<RpcOutcome<StoredDispatch>>;
+  forget(
+    personId: string,
+    consistency?: Consistency,
+    actor?: string,
+  ): Promise<RpcOutcome<StoredDispatch>>;
   /**
    * Exports a person's data, as `BoundaClient.exportPersonalData` does.
    */
-  exportPersonalData(personId: string): Promise<RpcOutcome<PersonalDataExport>>;
+  exportPersonalData(personId: string, actor?: string): Promise<RpcOutcome<PersonalDataExport>>;
   /**
    * Restricts the processing of a person's data, as `BoundaClient.restrict` does, waiting for the
    * read models that handle it as `forget` does.
    */
-  restrict(personId: string, consistency?: Consistency): Promise<RpcOutcome<StoredDispatch>>;
+  restrict(
+    personId: string,
+    consistency?: Consistency,
+    actor?: string,
+  ): Promise<RpcOutcome<StoredDispatch>>;
   /**
    * Lifts the restriction, as `BoundaClient.unrestrict` does, waiting the same way; the alarm
    * then retries the dead letters it caused.
    */
-  unrestrict(personId: string, consistency?: Consistency): Promise<RpcOutcome<StoredDispatch>>;
+  unrestrict(
+    personId: string,
+    consistency?: Consistency,
+    actor?: string,
+  ): Promise<RpcOutcome<StoredDispatch>>;
   /**
    * Runs the next slice of every paused rebuild, then policies, processes, due scheduled commands
    * and retries, in bounded slices, and arms the next alarm. Called by the platform.
@@ -206,6 +224,12 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
       return this.#app;
     }
 
+    // `as` checks the actor, so one that came over RPC malformed is refused like a bad payload.
+    #as(actor: string | undefined): BoundaClient<R> {
+      const app = this.#ready();
+      return actor === undefined ? app : app.as(actor);
+    }
+
     async #rearm(settled: boolean, idle: boolean, rebuildFailed = false): Promise<void> {
       const app = this.#ready();
       const [lag, due, rebuilds] = await Promise.all([
@@ -263,12 +287,13 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
       payload?: unknown,
       options?: DispatchOptions,
       consistency?: Consistency,
+      actor?: string,
     ): Promise<RpcOutcome<DispatchResult>> {
       return settle(async () => {
         const app = this.#ready();
         const dispatch = ownFunction<
           (payload?: unknown, options?: DispatchOptions) => Promise<DispatchResult>
-        >(app.commands, name);
+        >(this.#as(actor).commands, name);
         if (dispatch === undefined) throw new NotFoundError(`Unknown command "${name}"`);
         const result = await dispatch(payload, options);
         // Under "eventual" the read models are behind, so the rearm arms the alarm for now.
@@ -278,10 +303,10 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
       });
     }
 
-    query(name: string, payload?: unknown): Promise<RpcOutcome<unknown>> {
+    query(name: string, payload?: unknown, actor?: string): Promise<RpcOutcome<unknown>> {
       return settle(async () => {
         const run = ownFunction<(payload?: unknown) => Promise<unknown>>(
-          this.#ready().queries,
+          this.#as(actor).queries,
           name,
         );
         if (run === undefined) throw new NotFoundError(`Unknown query "${name}"`);
@@ -297,20 +322,23 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
       return settle(() => this.#ready().events.read(args));
     }
 
-    listDeadLetters(args?: ListDeadLettersArgs): Promise<RpcOutcome<readonly DeadLetter[]>> {
-      return settle(() => this.#ready().deadLetters.list(args));
+    listDeadLetters(
+      args?: ListDeadLettersArgs,
+      actor?: string,
+    ): Promise<RpcOutcome<readonly DeadLetter[]>> {
+      return settle(() => this.#as(actor).deadLetters.list(args));
     }
 
-    retryDeadLetter(id: string): Promise<RpcOutcome<DeadLetter>> {
+    retryDeadLetter(id: string, actor?: string): Promise<RpcOutcome<DeadLetter>> {
       return settle(async () => {
-        const letter = await this.#ready().deadLetters.retry(id);
+        const letter = await this.#as(actor).deadLetters.retry(id);
         await this.#rearm(false, true);
         return letter;
       });
     }
 
-    discardDeadLetter(id: string): Promise<RpcOutcome<DeadLetter>> {
-      return settle(() => this.#ready().deadLetters.discard(id));
+    discardDeadLetter(id: string, actor?: string): Promise<RpcOutcome<DeadLetter>> {
+      return settle(() => this.#as(actor).deadLetters.discard(id));
     }
 
     rebuildReadModel(name: string): Promise<RpcOutcome<RebuildReadModelResult>> {
@@ -325,32 +353,45 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
 
     // A change to a person answers like a command: its read models caught up, the alarm armed.
     #onPerson(
-      act: (app: BoundaApp<R>) => Promise<StoredDispatch>,
+      act: (client: BoundaClient<R>) => Promise<StoredDispatch>,
       consistency: Consistency | undefined,
+      actor: string | undefined,
     ): Promise<RpcOutcome<StoredDispatch>> {
       return settle(async () => {
         const app = this.#ready();
-        const result = await act(app);
+        const result = await act(this.#as(actor));
         if (consistency !== "eventual") await app.catchUpReadModels({ through: result });
         await this.#rearm(false, true);
         return result;
       });
     }
 
-    exportPersonalData(personId: string): Promise<RpcOutcome<PersonalDataExport>> {
-      return settle(() => this.#ready().exportPersonalData(personId));
+    exportPersonalData(personId: string, actor?: string): Promise<RpcOutcome<PersonalDataExport>> {
+      return settle(() => this.#as(actor).exportPersonalData(personId));
     }
 
-    forget(personId: string, consistency?: Consistency): Promise<RpcOutcome<StoredDispatch>> {
-      return this.#onPerson((app) => app.forget(personId), consistency);
+    forget(
+      personId: string,
+      consistency?: Consistency,
+      actor?: string,
+    ): Promise<RpcOutcome<StoredDispatch>> {
+      return this.#onPerson((client) => client.forget(personId), consistency, actor);
     }
 
-    restrict(personId: string, consistency?: Consistency): Promise<RpcOutcome<StoredDispatch>> {
-      return this.#onPerson((app) => app.restrict(personId), consistency);
+    restrict(
+      personId: string,
+      consistency?: Consistency,
+      actor?: string,
+    ): Promise<RpcOutcome<StoredDispatch>> {
+      return this.#onPerson((client) => client.restrict(personId), consistency, actor);
     }
 
-    unrestrict(personId: string, consistency?: Consistency): Promise<RpcOutcome<StoredDispatch>> {
-      return this.#onPerson((app) => app.unrestrict(personId), consistency);
+    unrestrict(
+      personId: string,
+      consistency?: Consistency,
+      actor?: string,
+    ): Promise<RpcOutcome<StoredDispatch>> {
+      return this.#onPerson((client) => client.unrestrict(personId), consistency, actor);
     }
 
     override async alarm(): Promise<void> {

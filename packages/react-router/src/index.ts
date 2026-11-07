@@ -1,3 +1,4 @@
+export type { ActorFunction } from "./actor.ts";
 export type {
   BootBoundaFunction,
   Bounda,

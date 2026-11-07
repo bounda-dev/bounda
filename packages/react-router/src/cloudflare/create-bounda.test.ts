@@ -35,9 +35,41 @@ describe("createBounda on Cloudflare", () => {
     expect(await boundaMiddleware(args, async () => "next")).toBe("next");
     await Reflect.get(context.get(bounda).commands, "placeOrder")({ orderId: "o-1" });
     expect(store.calls).toEqual([
-      ["localhost", "command", "placeOrder", { orderId: "o-1" }, undefined, "read-your-writes"],
+      [
+        "localhost",
+        "command",
+        "placeOrder",
+        { orderId: "o-1" },
+        undefined,
+        "read-your-writes",
+        undefined,
+      ],
     ]);
     await dispose();
+  });
+
+  it("sends who makes the request, as actor names them, with its commands", async () => {
+    const store = storeNamespace();
+    env.STORE = store.namespace;
+    const { bounda, boundaMiddleware } = createBounda({
+      config: { storage: cloudflare() },
+      tenant: () => "acme",
+      actor: async () => "user-1",
+    });
+    const { context, args } = middlewareArgs();
+    await boundaMiddleware(args, async () => undefined);
+    await Reflect.get(context.get(bounda).commands, "placeOrder")({ orderId: "o-1" });
+    expect(store.calls).toEqual([
+      [
+        "acme",
+        "command",
+        "placeOrder",
+        { orderId: "o-1" },
+        undefined,
+        "read-your-writes",
+        "user-1",
+      ],
+    ]);
   });
 
   it("sends commands with the consistency it is given", async () => {
@@ -52,7 +84,7 @@ describe("createBounda on Cloudflare", () => {
     await boundaMiddleware(args, async () => undefined);
     await Reflect.get(context.get(bounda).commands, "placeOrder")({ orderId: "o-1" });
     expect(store.calls).toEqual([
-      ["acme", "command", "placeOrder", { orderId: "o-1" }, undefined, "eventual"],
+      ["acme", "command", "placeOrder", { orderId: "o-1" }, undefined, "eventual", undefined],
     ]);
   });
 
@@ -78,8 +110,17 @@ describe("createBounda on Cloudflare", () => {
         { orderId: "o-1" },
         { idempotencyKey: idempotencyKeyFor("req-1", "placeOrder"), correlationId: "c-1" },
         "eventual",
+        undefined,
       ],
-      ["acme", "command", "payOrder", { orderId: "o-1" }, { idempotencyKey: "own" }, "eventual"],
+      [
+        "acme",
+        "command",
+        "payOrder",
+        { orderId: "o-1" },
+        { idempotencyKey: "own" },
+        "eventual",
+        undefined,
+      ],
     ]);
   });
 

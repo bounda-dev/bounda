@@ -205,6 +205,7 @@ describe("bounda() Vite plugin", () => {
         "  registry,",
         '  importConfig: () => import("/project/bounda.config.ts"),',
         '  importTenant: Object.values(import.meta.glob("/app/tenant.ts"))[0],',
+        '  importActor: Object.values(import.meta.glob("/app/actor.ts"))[0],',
         '  consistency: "read-your-writes",',
         "});",
         'export { failure } from "@bounda-dev/react-router/host";',

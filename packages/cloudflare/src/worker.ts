@@ -1,5 +1,6 @@
 import {
   type Consistency,
+  checkActor,
   checkConsistency,
   type DispatchOptions,
   type Logger,
@@ -14,6 +15,13 @@ export interface TenantOfFunction {
   (request: Request): string | Promise<string>;
 }
 
+/**
+ * Names who makes a request, by the id the request authenticates, or `undefined` for nobody.
+ */
+export interface ActorOfFunction {
+  (request: Request): string | undefined | Promise<string | undefined>;
+}
+
 export interface CreateWorkerArgs {
   /**
    * The app's configuration, with `storage: cloudflare()`, whose `binding` names the Bounda
@@ -25,6 +33,12 @@ export interface CreateWorkerArgs {
    * own object, with its own events and read models.
    */
   readonly tenantOf: TenantOfFunction;
+  /**
+   * Who makes a request: the id of the user or service the request authenticates, which every
+   * command and query it carries acts as (`BoundaClient.as`); `undefined` for nobody. Never a name
+   * or an email: events keep it in the clear. Left out, requests act as nobody.
+   */
+  readonly actorOf?: ActorOfFunction;
   /**
    * Whether a command answers once the read models reflect it, `"read-your-writes"` by default,
    * or as soon as its events are stored, `"eventual"`.
@@ -121,6 +135,15 @@ const optionsOf = (url: URL): DispatchOptions => {
   };
 };
 
+const isActor = (actor: unknown): boolean => {
+  try {
+    checkActor(actor);
+  } catch {
+    return false;
+  }
+  return true;
+};
+
 const route = (pathname: string): { readonly kind: string; readonly name: string } | null => {
   const match = /^\/(commands|queries)\/([A-Za-z][A-Za-z0-9]*)\/?$/.exec(pathname);
   return match === null ? null : { kind: match[1] as string, name: match[2] as string };
@@ -145,6 +168,7 @@ const route = (pathname: string): { readonly kind: string; readonly name: string
 export const createWorker: CreateWorkerFunction = ({
   config,
   tenantOf,
+  actorOf,
   consistency = "read-your-writes",
   logger = workersLogger,
   maxPayloadBytes = DEFAULT_MAX_PAYLOAD_BYTES,
@@ -177,10 +201,16 @@ export const createWorker: CreateWorkerFunction = ({
         const stub = namespace.get(
           namespace.idFromName(await tenantOf(request)),
         ) as unknown as BoundaStub;
+        const actor = await actorOf?.(request);
+        if (actor !== undefined && !isActor(actor)) {
+          // Not the caller's mistake, and the value may be what must not be logged, such as an email.
+          logger.error("bounda worker actorOf named no valid actor", { path: url.pathname });
+          return failure("INTERNAL", "Internal error", 500);
+        }
         const result = await unwrap(
           target.kind === "commands"
-            ? stub.command(target.name, payload, optionsOf(url), consistency)
-            : stub.query(target.name, payload),
+            ? stub.command(target.name, payload, optionsOf(url), consistency, actor)
+            : stub.query(target.name, payload, actor),
         );
         return json(result ?? null);
       } catch (error) {
