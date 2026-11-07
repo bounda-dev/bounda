@@ -368,6 +368,7 @@ describe("personal data in delayed commands", () => {
     await app.forget("c-1");
     expect(await forgottenPayload()).toEqual({
       personId: "c-1",
+      reason: "requested",
       cancelledCommands: named.map((entry) => ({
         commandId: entry.dedupeKey.replace(/^command:/, ""),
         type: entry.command.type,
@@ -409,6 +410,7 @@ describe("personal data in delayed commands", () => {
     expect(await storage.deadLetterStore.list()).toEqual([]);
     expect(await forgottenPayload()).toEqual({
       personId: "c-1",
+      reason: "requested",
       cancelledCommands: [],
       removedDeadLetters: [{ id: stored?.id, commandType: "RemindCustomer" }],
     });

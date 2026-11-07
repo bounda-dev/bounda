@@ -1,6 +1,7 @@
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
+import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
@@ -41,6 +42,7 @@ export interface CreatePolicyExecutorArgs {
   readonly aggregates: AggregatesRuntime;
   readonly pipeline: CommandPipeline;
   readonly config: ResolvedConfig;
+  readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly logger: Logger;
 }
@@ -53,6 +55,7 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
   aggregates,
   pipeline,
   config,
+  ids,
   clock,
   logger,
 }) => ({
@@ -74,6 +77,9 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
       idempotencyKey,
       within,
       logger,
+      ids,
+      clock,
+      maxChainDepth: config.forAggregate(policy.aggregate).policies.maxChainDepth,
     });
     const handled = traced({
       name: `bounda.policy ${policy.name}`,
@@ -95,6 +101,7 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
                 commands: reaction.commands,
                 idempotencyKey,
                 signal: reaction.signal,
+                forget: reaction.forget,
               }),
             );
             await reaction.decided();

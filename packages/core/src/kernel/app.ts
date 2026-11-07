@@ -26,6 +26,7 @@ import { createGlobalStream, type GlobalStream } from "./events/global-stream.ts
 import { exportPersonalData, type PersonalDataExport } from "./personal-data/export.ts";
 import { forgetPersonalData } from "./personal-data/forget.ts";
 import { liftProcessingRestriction, restrictProcessing } from "./personal-data/restriction.ts";
+import { createRetentionSubscriber, createRetentionSweep } from "./personal-data/retention.ts";
 import { buildPolicies } from "./policy/build-policies.ts";
 import { createDelayedPolicies } from "./policy/delayed.ts";
 import { createPolicyExecutor } from "./policy/executor.ts";
@@ -134,15 +135,17 @@ export interface BoundaApp<R extends Registry = AppRegistry> extends BoundaClien
    * Runs dispatcher passes and due scheduled commands until nothing moves, or until `maxPasses`
    * rounds when given, and says whether it got there. A retry waiting for its back-off is left
    * for later, except in an app from `createTestApp`, which moves its clock to it, running what
-   * falls due on the way, and counts that move as a round; there, nothing else may run on the app
-   * meanwhile, since moving the clock also runs out the time of a handler still running. What
+   * falls due on the way, and counts that move as a round, but never to a person's retention
+   * deadline, which a test reaches by moving the clock itself; there, nothing else may run on the
+   * app meanwhile, since moving the clock also runs out the time of a handler still running. What
    * tests await after dispatching commands, and what a host without a background loop, such as a
    * Durable Object alarm, runs in bounded slices. Works in every role.
    */
   runUntilIdle(options?: RunUntilIdleOptions): Promise<RunUntilIdleResult>;
   /**
-   * The earliest moment a scheduled command or a process deadline becomes due, or `null` when
-   * nothing is scheduled. A host without a polling worker arms its wake-up for it.
+   * The earliest moment a scheduled command or a process deadline becomes due, or a person
+   * becomes due for forgetting under `runtime.personalData.retention`; `null` when nothing is. A
+   * host without a polling worker arms its wake-up for it.
    */
   nextDueAt(): Promise<Date | null>;
   /**
@@ -365,7 +368,14 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       logger,
     });
     const policies = buildPolicies({ registry, aggregates });
-    const policyExecutor = createPolicyExecutor({ aggregates, pipeline, config, clock, logger });
+    const policyExecutor = createPolicyExecutor({
+      aggregates,
+      pipeline,
+      config,
+      ids,
+      clock,
+      logger,
+    });
     const reactive = [
       {
         subscriber: createPolicySubscriber({
@@ -398,6 +408,19 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       checkpointStore: storage.checkpointStore,
       following: following.map((subscriber) => subscriber.name),
     });
+    const { retentionMs } = config.runtime.personalData;
+    const retention =
+      retentionMs === null
+        ? undefined
+        : createRetentionSweep({
+            storage: written,
+            retentionMs,
+            ids,
+            clock,
+            logger,
+            concurrencyRetries: config.runtime.commands.concurrencyRetries,
+            batchSize: config.runtime.dispatcher.batchSize,
+          });
     const dispatcher = createDispatcher({
       eventStore: storage.eventStore,
       checkpointStore: storage.checkpointStore,
@@ -422,6 +445,9 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
               ...(test === undefined ? {} : { strict: { onError: test.onSnapshotError } }),
             }),
           ),
+        ...(retention === undefined
+          ? []
+          : [createRetentionSubscriber({ persons: storage.persons })]),
       ],
       batchSize: config.runtime.dispatcher.batchSize,
       pollIntervalMs: config.runtime.dispatcher.pollIntervalMs,
@@ -444,6 +470,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         config,
       }),
       restrictedRetries: createRestrictedRetries({ storage, retries, clock, logger }),
+      retention,
       reactive: following.map((subscriber) => subscriber.name),
       config,
       ids,
@@ -463,8 +490,18 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     };
     lag.addCallback(observeLag);
     const role = config.runtime.role;
-    const nextDueAt = (): Promise<Date | null> =>
+    const scheduledDueAt = (): Promise<Date | null> =>
       storage.scheduler.nextDueAt({ leaseMs: worker.leaseMs });
+    // A test app's `runUntilIdle` moves its clock to what `scheduledDueAt` says, never to a
+    // retention deadline: that would forget every person the test created.
+    const nextDueAt = async (): Promise<Date | null> => {
+      const [scheduled, retained] = await Promise.all([
+        scheduledDueAt(),
+        retention?.nextDueAt() ?? null,
+      ]);
+      if (scheduled === null || retained === null) return scheduled ?? retained;
+      return scheduled.getTime() <= retained.getTime() ? scheduled : retained;
+    };
     // A scheduled command that failed waits for its retry with its attempts counted; scheduling it
     // anew counts them from zero, so a retry that no longer waits is not taken for one.
     const nextRetryAt = async (): Promise<Date | null> => {
@@ -521,7 +558,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             const advanced = await dispatcher.processOnce();
             const ran = await worker.runOnce();
             if (advanced || ran > 0) continue;
-            if (!(await pendingRetries.skipToNext(nextDueAt, nextRetryAt))) {
+            if (!(await pendingRetries.skipToNext(scheduledDueAt, nextRetryAt))) {
               return { idle: true, rejections };
             }
           }

@@ -1,7 +1,6 @@
 import type { Storage } from "../../adapter/adapter.ts";
 import type { DeadLetterKind, StoredDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
-import { ValidationError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { scheduledCommandId } from "../command/pipeline.ts";
@@ -9,6 +8,7 @@ import { isRecord } from "../shared/merge-fields.ts";
 import { openCommandPayload, sealedKeys } from "./commands.ts";
 import { openTextWith } from "./errors.ts";
 import type { PersonalMarks } from "./marks.ts";
+import { checkPersonId } from "./transact.ts";
 
 /**
  * The marked fields of a stored payload, as a handler reads them: a field forgotten is `null`,
@@ -113,11 +113,7 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
   batchSize,
   personId,
 }) => {
-  if (typeof personId !== "string" || personId === "") {
-    throw new ValidationError("exportPersonalData needs the id of the person to export", [
-      { path: ["personId"], message: "Expected a non-empty string" },
-    ]);
-  }
+  checkPersonId(personId, "exportPersonalData");
   const exportedAt = clock.now().toISOString();
   const eventMarks = (event: StoredEvent): PersonalMarks | null =>
     aggregates.byName[event.aggregateType]?.eventsByType[event.type]?.personal ?? null;

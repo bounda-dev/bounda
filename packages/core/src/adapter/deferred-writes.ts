@@ -1,5 +1,8 @@
 import type { StorageTransaction } from "./adapter.ts";
+import type { NewDeadLetter, StoredDeadLetter } from "./storage/dead-letter-store.ts";
 import type { IdempotencyRecord } from "./storage/idempotency-store.ts";
+import { namesPerson } from "./storage/personal-key-store.ts";
+import type { ScheduleArgs, ScheduledCommand } from "./storage/scheduler.ts";
 
 /**
  * The write-side stores besides the event store.
@@ -38,6 +41,16 @@ export interface DeferredWrites {
    * Whether any write is recorded and not flushed yet.
    */
   pending(): boolean;
+  /**
+   * Withdraws the commands scheduled so far, and not flushed, whose `persons` names `person`, and
+   * resolves to them as the scheduler would hold them: what a `forget` that runs before the flush
+   * must find too, as it does in a store whose transaction sees its own writes.
+   */
+  withdrawScheduled(person: string): readonly ScheduledCommand[];
+  /**
+   * The same for the dead letters added so far.
+   */
+  withdrawLetters(person: string): readonly StoredDeadLetter[];
 }
 
 export interface DeferWritesFunction {
@@ -54,6 +67,8 @@ export const deferWrites: DeferWritesFunction = ({
 }) => {
   const recorded: Recorded[] = [];
   const records = new Map<string, IdempotencyRecord>();
+  const scheduled = new Map<string, ScheduleArgs>();
+  const letters = new Map<string, NewDeadLetter>();
   const later =
     <Args extends unknown[]>(
       write: (target: DeferredWriteTarget, ...args: Args) => Promise<unknown>,
@@ -76,13 +91,17 @@ export const deferWrites: DeferWritesFunction = ({
         count: deadLetterStore.count,
         listFailed: deadLetterStore.listFailed,
         add: async (letter) => {
+          letters.set(letter.id, letter);
           recorded.push((target) => target.deadLetterStore.add(letter));
           return { ...letter, status: "failed" };
         },
         updateStatus: later((target, id, status) =>
           target.deadLetterStore.updateStatus(id, status),
         ),
-        remove: later((target, id) => target.deadLetterStore.remove(id)),
+        remove: async (id) => {
+          letters.delete(id);
+          recorded.push((target) => target.deadLetterStore.remove(id));
+        },
         listByPerson: deadLetterStore.listByPerson,
         forget: deadLetterStore.forget,
       },
@@ -90,8 +109,14 @@ export const deferWrites: DeferWritesFunction = ({
         claimDue: scheduler.claimDue,
         nextDueAt: scheduler.nextDueAt,
         list: scheduler.list,
-        schedule: later((target, args) => target.scheduler.schedule(args)),
-        cancel: later((target, key) => target.scheduler.cancel(key)),
+        schedule: async (args) => {
+          scheduled.set(args.dedupeKey, args);
+          recorded.push((target) => target.scheduler.schedule(args));
+        },
+        cancel: async (key) => {
+          scheduled.delete(key);
+          recorded.push((target) => target.scheduler.cancel(key));
+        },
         complete: later((target, claim) => target.scheduler.complete(claim)),
         fail: later((target, args) => target.scheduler.fail(args)),
         defer: later((target, args) => target.scheduler.defer(args)),
@@ -119,5 +144,28 @@ export const deferWrites: DeferWritesFunction = ({
       for (const write of recorded) await write(target);
     },
     pending: () => recorded.length > 0,
+    withdrawScheduled: (person) => {
+      const named = [...scheduled.values()].filter((args) => namesPerson(args, person));
+      for (const { dedupeKey } of named) {
+        scheduled.delete(dedupeKey);
+        recorded.push((target) => target.scheduler.cancel(dedupeKey));
+      }
+      return named.map(({ dedupeKey, command, executeAt, context, persons }) => ({
+        dedupeKey,
+        command,
+        executeAt: executeAt.toISOString(),
+        context,
+        attempts: 0,
+        persons: persons ?? [],
+      }));
+    },
+    withdrawLetters: (person) => {
+      const named = [...letters.values()].filter((letter) => namesPerson(letter, person));
+      for (const { id } of named) {
+        letters.delete(id);
+        recorded.push((target) => target.deadLetterStore.remove(id));
+      }
+      return named.map((letter) => ({ ...letter, status: "failed" as const }));
+    },
   };
 };

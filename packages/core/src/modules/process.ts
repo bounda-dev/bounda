@@ -4,6 +4,7 @@ import type { Instant, instantSchema } from "../contracts/instant.ts";
 import type { EventModules, EventTypeNames, StoredEventOf } from "./event.ts";
 import type { TypeNameOf } from "./naming.ts";
 import type { EmptyPayload, PayloadArgs } from "./payload.ts";
+import type { ReactionForgetFunction } from "./policy.ts";
 
 /**
  * The event modules of every aggregate of the app, keyed by aggregate.
@@ -217,6 +218,12 @@ export type ProcessHandlerArgs<Event, State, Commands, Ports extends object = Em
    */
   readonly signal: AbortSignal;
   /**
+   * Forgets a person, as `forget` on the app does, with the commands of this run: when the step
+   * commits, in the same transaction. Resolves at once; rejects with `ValidationError` an empty
+   * id.
+   */
+  readonly forget: ReactionForgetFunction;
+  /**
    * A moment some time after the event: `nextReminder: after("24h")` schedules a deadline.
    */
   readonly after: ProcessAfterFunction;
@@ -250,6 +257,12 @@ export type ProcessDeadlineArgs<
    * those dispatched after that are refused, both with `REACTION_ABANDONED`.
    */
   readonly signal: AbortSignal;
+  /**
+   * Forgets a person, as `forget` on the app does, with the commands of this run: when the step
+   * commits, in the same transaction. Resolves at once; rejects with `ValidationError` an empty
+   * id. What `at-timeout.ts` calls to forget someone once a purpose ends.
+   */
+  readonly forget: ReactionForgetFunction;
   /**
    * A moment some time after the deadline that came due: `nextReminder: after("24h")` repeats it
    * every day, without drifting when a run is late.

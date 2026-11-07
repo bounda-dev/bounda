@@ -1,7 +1,9 @@
+import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { ReactionDispatchResult } from "../../contracts/command.ts";
 import { ValidationError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
+import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
@@ -73,6 +75,8 @@ export interface DeadlineRun {
 export interface CreateProcessHandlersArgs {
   readonly aggregates: AggregatesRuntime;
   readonly pipeline: CommandPipeline;
+  readonly config: ResolvedConfig;
+  readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly logger: Logger;
 }
@@ -84,15 +88,28 @@ export interface CreateProcessHandlersFunction {
 export const createProcessHandlers: CreateProcessHandlersFunction = ({
   aggregates,
   pipeline,
+  config,
+  ids,
   clock,
   logger,
 }) => {
   const reactionFor = (
+    process: ProcessRuntime,
     context: CausationContext,
     idempotencyKey: string,
     within: UnitStores,
   ): ReactionCommands =>
-    createReactionCommands({ aggregates, pipeline, context, idempotencyKey, within, logger });
+    createReactionCommands({
+      aggregates,
+      pipeline,
+      context,
+      idempotencyKey,
+      within,
+      logger,
+      ids,
+      clock,
+      maxChainDepth: config.forAggregate(process.aggregate).policies.maxChainDepth,
+    });
 
   const handlerArgs = (
     process: ProcessRuntime,
@@ -104,6 +121,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     withPorts(process.ports, {
       commands: reaction.commands,
       signal: reaction.signal,
+      forget: reaction.forget,
       idempotencyKey,
       after: afterFrom(triggeredAt),
       ...own,
@@ -148,7 +166,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
       subject: event.id,
       retryId,
     });
-    const reaction = reactionFor(eventContext(event), idempotencyKey, within);
+    const reaction = reactionFor(process, eventContext(event), idempotencyKey, within);
     return runOf(reaction, async () => {
       const { returned } = await traced({
         name: `bounda.process ${process.name}`,
@@ -209,6 +227,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
       retryId,
     });
     const reaction = reactionFor(
+      process,
       { correlationId: context.correlationId, causationId, depth: 0 },
       idempotencyKey,
       within,

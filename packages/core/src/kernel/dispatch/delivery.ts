@@ -8,9 +8,10 @@ import { ATTRIBUTES, traced } from "../telemetry.ts";
 
 /**
  * What a subscriber does with the events it receives: keep a read model up to date, run policies,
- * drive processes or snapshot an aggregate's state.
+ * drive processes, snapshot an aggregate's state or record when each person was last active, for
+ * the retention of personal data.
  */
-export type SubscriberKind = "projection" | "policy" | "process" | "snapshot";
+export type SubscriberKind = "projection" | "policy" | "process" | "snapshot" | "retention";
 
 /**
  * `process` resolves to how many leading events of the batch are done; the rest is delivered

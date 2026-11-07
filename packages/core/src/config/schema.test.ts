@@ -52,6 +52,7 @@ describe("resolveConfig", () => {
         backoff: { baseDelayMs: 1_000, maxDelayMs: 30_000 },
         catchUp: { timeoutMs: 2_000, pollIntervalMs: 15 },
       },
+      personalData: { retentionMs: null },
       overrides: {},
     });
   });
@@ -73,6 +74,7 @@ describe("resolveConfig", () => {
           backoff: { baseDelay: "500ms", maxDelay: "1m" },
           catchUp: { timeout: "5s", pollInterval: 50 },
         },
+        personalData: { retention: "30d" },
       },
       ports: { order: { inventory: "http" } },
     });
@@ -99,6 +101,7 @@ describe("resolveConfig", () => {
       backoff: { baseDelayMs: 500, maxDelayMs: 60_000 },
       catchUp: { timeoutMs: 5_000, pollIntervalMs: 50 },
     });
+    expect(resolved.runtime.personalData).toEqual({ retentionMs: 2_592_000_000 });
     expect(resolved.readModels["users-directory"]).toBe(sqlite);
     expect(resolved.ports.order?.inventory).toBe("http");
   });
@@ -216,6 +219,9 @@ describe("resolveConfig", () => {
     expect(
       message({ storage: sqlite, runtime: { processes: { handlerTimeout: "0s" } } }),
     ).toContain("runtime.processes.handlerTimeout: Expected a duration longer than 0");
+    expect(message({ storage: sqlite, runtime: { personalData: { retention: 0 } } })).toContain(
+      "runtime.personalData.retention: Expected a duration longer than 0",
+    );
   });
 
   it("rejects unknown keys anywhere", () => {
@@ -228,6 +234,9 @@ describe("resolveConfig", () => {
         runtime: { overrides: { order: { commands: { concurrencyRetries: 1 } } } },
       }),
     ).toMatch(/runtime\.overrides\.order\.commands: .*concurrencyRetries/);
+    expect(
+      message({ storage: sqlite, runtime: { overrides: { order: { personalData: {} } } } }),
+    ).toMatch(/runtime\.overrides\.order: .*personalData/);
   });
 
   it("rejects out-of-range numbers and empty implementation names", () => {

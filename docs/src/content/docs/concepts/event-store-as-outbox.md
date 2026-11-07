@@ -33,6 +33,8 @@ of the store:
   `ProcessCompleted`, `ProcessDeadlineReached`, `ProcessTimedOut`) and the entry of its next
   deadline, computed from the state it just wrote;
 - the mark in the inbox that says the event is done;
+- the forgetting of every person the handler called `forget` for: their key, what the store holds
+  of them, and `PersonalDataForgotten`, after the rest;
 - and, when the runtime gives up on the event, `ProcessFailed` and the dead letter (only the
   letter for a follow-up of a timed-out process, which has ended).
 

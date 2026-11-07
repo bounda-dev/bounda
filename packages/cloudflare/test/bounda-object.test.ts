@@ -253,6 +253,31 @@ describe("a Bounda Durable Object", () => {
     expect(await settledAlarm(stub)).toBeNull();
   });
 
+  it("arms its alarm for a person's retention deadline and forgets them when it comes", async () => {
+    const stub = env.RETAINED_STORE.get(env.RETAINED_STORE.newUniqueId());
+    const store = connect<typeof quietRegistry>(stub);
+    await store.commands.placeOrder({ orderId: "o-1", total: 42, customer: "ada", note: "ring" });
+    await runAlarm(stub);
+    const before = Date.now();
+    const armed = await settledAlarm(stub);
+    expect(armed).toBeGreaterThanOrEqual(before + 3_600_000 - 1_000);
+    expect(armed).toBeLessThanOrEqual(Date.now() + 3_600_000 + 1_000);
+
+    clock.advance(3_600_000);
+    await runAlarm(stub);
+    const forgotten = (await store.events.read()).filter(
+      (event) => event.type === "PersonalDataForgotten",
+    );
+    expect(forgotten.map((event) => event.payload)).toMatchObject([
+      { personId: "ada", reason: "retention" },
+    ]);
+    const keys = await runInDurableObject(stub as unknown as DurableObjectStub, (_i, state) =>
+      state.storage.sql.exec(`SELECT "person" FROM bounda_personal_keys`).toArray(),
+    );
+    expect(keys).toEqual([]);
+    expect(await settledAlarm(stub)).toBeNull();
+  });
+
   it("answers an eventual command once its events are stored and projects them in its alarm", async () => {
     const stub = env.QUIET_STORE.get(env.QUIET_STORE.newUniqueId());
     const before = Date.now();

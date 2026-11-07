@@ -36,6 +36,16 @@ export const QuietStore = createBoundaObject({
 });
 
 /**
+ * The same app without policies or processes, forgetting a person an hour after their last
+ * activity.
+ */
+export const RetainedStore = createBoundaObject({
+  registry: quietRegistry,
+  config: { storage: cloudflare(), runtime: { personalData: { retention: "1h" } } },
+  clock,
+});
+
+/**
  * The same app without policies and with a second read model, in small steps: one event per
  * batch, per rebuild slice and per alarm pass. Its ids are sequential and its logs are what the
  * tests read.

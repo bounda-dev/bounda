@@ -47,7 +47,7 @@ describe("restrictProcessing", () => {
       eventTypes: ["ProcessingRestricted"],
       position: 1,
     });
-    expect(await storage.persons.get("c-1")).toEqual({
+    expect(await storage.persons.get("c-1")).toMatchObject({
       person: "c-1",
       restrictedSince: "2026-01-01T00:00:00.000Z",
     });
@@ -158,7 +158,10 @@ describe("liftProcessingRestriction", () => {
       eventTypes: ["ProcessingRestrictionLifted"],
       position: 2,
     });
-    expect(await storage.persons.get("c-1")).toEqual({ person: "c-1", restrictedSince: null });
+    expect(await storage.persons.get("c-1")).toMatchObject({
+      person: "c-1",
+      restrictedSince: null,
+    });
     const [, lifted] = await storage.eventStore.readAll({ afterPosition: 0, limit: 10 });
     expect(lifted).toMatchObject({
       type: "ProcessingRestrictionLifted",
@@ -221,7 +224,13 @@ describe("refuseRestricted", () => {
   });
 
   it("reads nothing for work that touches nobody", async () => {
-    const persons: PersonStore = { get: vi.fn(), restrict: vi.fn(), unrestrict: vi.fn() };
+    const persons: PersonStore = {
+      get: vi.fn(),
+      restrict: vi.fn(),
+      unrestrict: vi.fn(),
+      record: vi.fn(),
+      listIdle: vi.fn(),
+    };
     await refuseRestricted({ persons, person: null });
     expect(persons.get).not.toHaveBeenCalled();
   });

@@ -50,10 +50,11 @@ dead letter with `errorType: "retriable_exhausted"`.
   dispatched after its run was abandoned, or that was still running then. `cause` is why the run was
   abandoned.
 - **`REACTION_FINISHED`** (no exported class; the run already ended). A command a reaction
-  dispatched after its run had finished, from a timer or a promise it left behind. Dispatch while
-  the handler runs.
+  dispatched, or a `forget` it called, after its run had finished, from a timer or a promise it
+  left behind. Dispatch and forget while the handler runs.
 - **`CHAIN_DEPTH_EXCEEDED`** (`ChainDepthExceededError`; terminal). A chain of reactions went deeper
-  than `runtime.policies.maxChainDepth`. `depth`, `maxDepth`.
+  than `runtime.policies.maxChainDepth`, by a command or by a `forget` a policy or process called.
+  `depth`, `maxDepth`.
 - **`IDEMPOTENCY_KEY_CONFLICT`** (`IdempotencyKeyConflictError`; terminal). A dispatch's
   `idempotencyKey` was already used, within `runtime.commands.idempotencyKeyLifetime`, for
   another command or for the same command with another payload or `delay`. Nothing runs.
