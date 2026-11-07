@@ -10,6 +10,7 @@ import {
   type PersonalDataForgottenPayload,
   type Registry,
 } from "@bounda-dev/core";
+import type { ForgetLedger } from "@bounda-dev/core/adapter";
 import { forgetLedgerContract } from "@bounda-dev/core/adapter/testing";
 import { createClient } from "@libsql/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -53,8 +54,17 @@ beforeAll(async () => {
   directory = await mkdtemp(join(tmpdir(), "bounda-forget-ledger-"));
 });
 
+// The ledgers the contract opens are closed before the directory goes, so their files can go.
+const opened: ForgetLedger[] = [];
+
 afterAll(async () => {
-  await rm(directory, { recursive: true, force: true });
+  await Promise.all(opened.map((ledger) => ledger.close?.()));
+  // libSQL lets go of a file that saw a write transaction only once its statements are garbage
+  // collected, and Windows cannot delete a file still open: there, those stay behind in the
+  // temporary directory.
+  await rm(directory, { recursive: true, force: true }).catch((error: NodeJS.ErrnoException) => {
+    if (process.platform !== "win32" || error.code !== "EBUSY") throw error;
+  });
 });
 
 const pathOf = (name: string): string => join(directory, `${name}.db`);
@@ -68,7 +78,11 @@ describe("the forget ledger in a SQLite file", () => {
   forgetLedgerContract({
     create: async () => {
       const adapter = sqlite({ path: fresh().ledger });
-      return (tenant) => adapter.createForgetLedger({ tenant });
+      return async (tenant) => {
+        const ledger = await adapter.createForgetLedger({ tenant });
+        opened.push(ledger);
+        return ledger;
+      };
     },
   });
 });
@@ -144,9 +158,12 @@ const backUp = async (from: string, to: string): Promise<void> => {
   }
 };
 
-const restore = async (backup: string, to: string): Promise<void> => {
-  await Promise.all([to, `${to}-wal`, `${to}-shm`].map((path) => rm(path, { force: true })));
+// The copy goes to a file of its own, as a restore beside the lost database would: libSQL holds
+// the old file until its statements are garbage collected, and Windows cannot replace it meanwhile.
+const restore = async (backup: string): Promise<string> => {
+  const to = pathOf(`restored-${databases}`);
   await copyFile(backup, to);
+  return to;
 };
 
 describe("restoring a backup with a forget ledger", () => {
@@ -162,15 +179,15 @@ describe("restoring a backup with a forget ledger", () => {
     expect(await nameOf(before, "c-1")).toBeNull();
     await before.stop();
 
-    await restore(backup, paths.store);
-    const restored = await boot(paths);
+    const restoredPaths = { ...paths, store: await restore(backup) };
+    const restored = await boot(restoredPaths);
     expect(await forgotten(restored)).toEqual([["c-1", "restored"]]);
     expect(await nameOf(restored, "c-1")).toBeNull();
     expect(await nameOf(restored, "c-2")).toBe("name of c-2");
     await restored.runUntilIdle();
     await restored.stop();
 
-    const again = await boot(paths);
+    const again = await boot(restoredPaths);
     expect(await forgotten(again)).toEqual([["c-1", "restored"]]);
     expect(await again.getLag()).toMatchObject({ forgetLedger: { reconciled: true } });
     await again.stop();
@@ -186,14 +203,14 @@ describe("restoring a backup with a forget ledger", () => {
     await before.runUntilIdle();
     await before.stop();
 
-    await restore(backup, paths.store);
+    const restoredPaths = { ...paths, store: await restore(backup) };
     // `VACUUM INTO` writes the copy in rollback-journal mode: two processes switching one file to
     // WAL at once fail with SQLITE_BUSY, as a first start of two instances on a new file would.
-    const client = createClient({ url: `file:${paths.store}` });
+    const client = createClient({ url: `file:${restoredPaths.store}` });
     await client.execute("PRAGMA journal_mode = WAL");
     client.close();
-    await Promise.all([startElsewhere(paths), startElsewhere(paths)]);
-    const after = await boot(paths);
+    await Promise.all([startElsewhere(restoredPaths), startElsewhere(restoredPaths)]);
+    const after = await boot(restoredPaths);
     expect(await forgotten(after)).toEqual([["c-1", "restored"]]);
     await after.stop();
   });
@@ -201,15 +218,14 @@ describe("restoring a backup with a forget ledger", () => {
   it("brings the person back without a ledger, which bounda forget --from then forgets again", async () => {
     const store = fresh().store;
     const backup = pathOf(`backup-${databases}`);
-    const plain = () => createApp({ registry, config: { storage: sqlite({ path: store }) } });
-    const before = await plain();
+    const plain = (path: string) => createApp({ registry, config: { storage: sqlite({ path }) } });
+    const before = await plain(store);
     await register(before, "c-1");
     await backUp(store, backup);
     await before.forget("c-1");
     await before.stop();
 
-    await restore(backup, store);
-    const restored = await plain();
+    const restored = await plain(await restore(backup));
     expect(await nameOf(restored, "c-1")).toBe("name of c-1");
     expect(await restored.forgetAgain([{ personId: "c-1" }])).toEqual(["c-1"]);
     expect(await nameOf(restored, "c-1")).toBeNull();
