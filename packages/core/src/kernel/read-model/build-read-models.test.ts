@@ -137,6 +137,15 @@ describe("personalDataOf", () => {
         'Read model "customers" has fields marked .personal() and none marked .person(), the id of the person they belong to',
       ),
     );
+    const unforgotten = new ConfigurationError(
+      'Read model "customers" has fields marked .personal(), so it needs projections/bounda/personal-data-forgotten.ts',
+    );
+    expect(() =>
+      of(
+        { id: f.string().primaryKey().person(), email: f.string().personal() },
+        { view, projections: {}, queries: {} },
+      ),
+    ).toThrow(unforgotten);
     expect(() =>
       of(
         { id: f.string().primaryKey().person(), email: f.string().personal() },

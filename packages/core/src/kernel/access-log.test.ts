@@ -93,6 +93,22 @@ const registryWith = (audit?: Registry["audit"]) =>
           },
         },
       },
+      // A person field and nothing personal: an id, which no query records.
+      customerPlans: {
+        view: {
+          fields: ({ f }: FieldsArgs) => ({
+            customerId: f.string().primaryKey().person(),
+            plan: f.string(),
+          }),
+        },
+        projections: {},
+        queries: {
+          plansOf: {
+            handler: ({ table }: { table: Table<{ customerId: string; plan: string }> }) =>
+              table.findMany(),
+          },
+        },
+      },
       planStats: {
         view: {
           fields: ({ f }: FieldsArgs) => ({
@@ -158,6 +174,7 @@ describe("the access log", () => {
     const exported = await app.as("operator-1").exportPersonalData("ana");
     expect(exported.readModels).toEqual({
       customerDirectory: [{ key: "ana", data: { email: "ana@example.com" } }],
+      customerPlans: [],
     });
     expect(accesses()).toEqual([
       {
@@ -239,6 +256,7 @@ describe("the access log", () => {
       "cy@example.com",
     ]);
     expect(await app.queries.customerCount()).toBe(3);
+    expect(await app.queries.plansOf()).toEqual([]);
     expect(await app.queries.customersOnPlan({ plan: "gold" })).toEqual([]);
 
     expect(accesses()).toEqual([

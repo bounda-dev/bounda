@@ -22,8 +22,8 @@ describe("reading", () => {
     const { stores } = await setUp();
     const { table } = stores;
     await table.insert({ orderId: "o-1", customerId: "ana", email: "a" });
-    await table.upsert({ orderId: "o-2", customerId: "bo", email: "b" });
-    await table.insert({ orderId: "o-3", customerId: "ana", email: "c" });
+    await table.insert({ orderId: "o-2", customerId: "bo", email: "b" });
+    await table.upsert({ orderId: "o-3", customerId: "ana", email: "c" });
     await table.insert({ orderId: "o-4", email: "d" });
     await table.update({ orderId: "o-3" }, { email: "c2" });
     await table.delete({ orderId: "o-2" });
