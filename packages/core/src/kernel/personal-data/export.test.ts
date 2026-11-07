@@ -11,6 +11,7 @@ import { appStorage } from "../events/app-event-store.ts";
 import { sealCommandPayload } from "./commands.ts";
 import { sealError } from "./errors.ts";
 import { exportPersonalData } from "./export.ts";
+import { createPersonalKeyWrapping } from "./wrapped-keys.ts";
 
 const registry: Registry = {
   aggregates: {
@@ -58,7 +59,11 @@ const registry: Registry = {
 const setup = async () => {
   const aggregates = buildAggregates({ registry, ports: {} });
   const written = await memory().createStorage();
-  const storage: Storage = appStorage({ storage: written, aggregates });
+  const storage: Storage = appStorage({
+    storage: written,
+    aggregates,
+    wrapping: createPersonalKeyWrapping({ wrapper: null }),
+  });
   const exportOf = (personId: string, batchSize = 2) =>
     exportPersonalData({
       storage,

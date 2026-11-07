@@ -28,7 +28,8 @@ What a production app does get, and where it is explained:
 [exporting their data](/guides/personal-data/#exporting-a-persons-data) and
 [restricting their processing](/guides/personal-data/#restricting-processing) without losing a
 reaction, [forgetting them](/guides/personal-data/#retention) after a retention or when a purpose
-ends,
+ends, their keys [wrapped under a master key](/guides/personal-data/#a-master-key) kept out of
+the database,
 [dead letters with a way out](/guides/dead-letters/), [upcasters](/guides/changing-events/) for
 events whose payload changed, [snapshots](/concepts/long-streams/#snapshots) whose validity the
 runtime checks itself, [observability](/reference/observability/) through OpenTelemetry, and a

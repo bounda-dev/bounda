@@ -58,8 +58,11 @@ export type {
 export type { PersonStore, StoredPerson } from "./storage/person-store.ts";
 export type {
   KeyedPerson,
+  ListWrappedUnderArgs,
   PersonalEnvelope,
+  PersonalKeyRow,
   PersonalKeyStore,
+  RewrappedKey,
   SealedValue,
   StoredPersonalKey,
 } from "./storage/personal-key-store.ts";

@@ -9,9 +9,14 @@ import { type Logger, silentLogger } from "../../contracts/logger.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { validateRegistry } from "../../modules/validate.ts";
 import { fieldBuilder } from "../../modules/view.ts";
+import type { AppEnv } from "../../register/index.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { PartialBatchError } from "../dispatch/delivery.ts";
 import { appStorage } from "../events/app-event-store.ts";
+import {
+  buildPersonalKeyWrapping,
+  type PersonalKeyWrapping,
+} from "../personal-data/wrapped-keys.ts";
 import { projectBatch, projectionSubscriberName } from "../projection/runner.ts";
 import { guardedLogger } from "../shared/guarded-logger.ts";
 import { adapterForReadModel, compileProjections } from "./build-read-models.ts";
@@ -25,6 +30,11 @@ export interface RebuildReadModelArgs {
    */
   readonly name: string;
   readonly logger?: Logger;
+  /**
+   * The host's environment, which `runtime.personalData.keyWrapper` is built from, so the
+   * projections read the personal fields: `process.env` in Node. Defaults to an empty object.
+   */
+  readonly env?: AppEnv;
   /**
    * Project at most about this many events, a batch more at most, then pause: the shadow table
    * and the position it reached are kept, and the next call for the same read model resumes from
@@ -88,11 +98,30 @@ export const pendingRebuilds: PendingRebuildsFunction = async (checkpointStore) 
  * the next call, unless the read model's fields or projections changed meanwhile: then it starts
  * again from a fresh shadow.
  */
-export const rebuildReadModel: RebuildReadModelFunction = async ({
+export const rebuildReadModel: RebuildReadModelFunction = async ({ env = {}, ...args }) =>
+  rebuildReadModelWith({
+    ...args,
+    wrapping: await buildPersonalKeyWrapping({
+      definition: resolveConfig(args.config).runtime.personalData.keyWrapper,
+      env,
+    }),
+  });
+
+export interface RebuildReadModelWithArgs extends Omit<RebuildReadModelArgs, "env"> {
+  readonly wrapping: PersonalKeyWrapping;
+}
+
+export interface RebuildReadModelWithFunction {
+  (args: RebuildReadModelWithArgs): Promise<RebuildReadModelResult>;
+}
+
+// What an app runs, with the key wrapping it built at start and the keys it unwrapped since.
+export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
   registry,
   config: rawConfig,
   name,
   logger: rawLogger = silentLogger,
+  wrapping,
   maxEvents,
 }) => {
   validateRegistry(registry);
@@ -119,6 +148,7 @@ export const rebuildReadModel: RebuildReadModelFunction = async ({
     const { eventStore } = appStorage({
       storage,
       aggregates: buildAggregates({ registry, ports: {} }),
+      wrapping,
     });
     const progress = `${progressPrefix(name)}${fingerprintReadModel(entry)}`;
     const rebuild = await adapterForReadModel({ name, config }).rebuildReadModel<

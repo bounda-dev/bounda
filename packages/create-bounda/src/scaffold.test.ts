@@ -60,6 +60,7 @@ describe("scaffoldProject", () => {
       versions,
     });
     expect(report.files).toEqual([
+      ".env",
       ".gitignore",
       "AGENTS.md",
       "README.md",
@@ -114,6 +115,12 @@ describe("scaffoldProject", () => {
     });
     expect(report.files).toContain(".env.example");
     expect(await readFile(join(target, ".env.example"), "utf8")).toContain("5432/shop");
+    expect(await readFile(join(target, ".env.example"), "utf8")).not.toMatch(
+      /^BOUNDA_MASTER_KEY=/m,
+    );
+    expect(await readFile(join(target, ".env"), "utf8")).toMatch(
+      /^BOUNDA_MASTER_KEY=[A-Za-z0-9+/]{43}=$/m,
+    );
     expect(await readFile(join(target, "bounda.config.ts"), "utf8")).toContain(
       "@bounda-dev/postgresql",
     );
@@ -140,6 +147,7 @@ describe("scaffoldProject", () => {
       versions,
     });
     expect(report.files).toEqual([
+      ".env",
       ".gitignore",
       "AGENTS.md",
       "README.md",
@@ -204,6 +212,8 @@ describe("scaffoldProject", () => {
       versions,
     });
     expect(report.files).toEqual([
+      ".dev.vars",
+      ".dev.vars.example",
       ".gitignore",
       "AGENTS.md",
       "README.md",
@@ -276,6 +286,8 @@ describe("scaffoldProject", () => {
       versions,
     });
     expect(report.files).toEqual([
+      ".dev.vars",
+      ".dev.vars.example",
       ".gitignore",
       "AGENTS.md",
       "README.md",
@@ -393,6 +405,48 @@ describe("scaffoldProject", () => {
     await writeFile(join(target, "extra.txt"), "x");
     await expect(scaffoldProject({ templateRoot, options, versions })).rejects.toThrow(
       /exists and is not empty/,
+    );
+  });
+
+  it("writes a master key the config reads: random for each project, or the one given", async () => {
+    const options = {
+      name: "shop",
+      runtime: "node",
+      framework: "none",
+      database: "sqlite",
+      packageManager: "pnpm",
+      install: true,
+      git: true,
+    } as const;
+    const keyOf = async (target: string) =>
+      /^BOUNDA_MASTER_KEY=(.*)$/m.exec(await readFile(join(target, ".env"), "utf8"))?.[1];
+    const first = await directory();
+    const second = await directory();
+    await scaffoldProject({ templateRoot, options: { ...options, directory: first }, versions });
+    await scaffoldProject({ templateRoot, options: { ...options, directory: second }, versions });
+    expect(await keyOf(first)).toMatch(/^[A-Za-z0-9+/]{43}=$/);
+    expect(await keyOf(first)).not.toBe(await keyOf(second));
+    expect(await readFile(join(first, "bounda.config.ts"), "utf8")).toContain(
+      'masterKey({ from: "BOUNDA_MASTER_KEY" })',
+    );
+    expect(await readFile(join(first, ".gitignore"), "utf8")).toMatch(/^\.env$/m);
+
+    const given = await directory();
+    await scaffoldProject({
+      templateRoot,
+      options: { ...options, directory: given, runtime: "cloudflare", database: "durable-object" },
+      versions,
+      masterKey: "given-key",
+    });
+    expect(await readFile(join(given, ".dev.vars"), "utf8")).toMatch(
+      /^BOUNDA_MASTER_KEY=given-key$/m,
+    );
+    expect(await readFile(join(given, ".dev.vars.example"), "utf8")).toMatch(
+      /^BOUNDA_MASTER_KEY=$/m,
+    );
+    expect(await readFile(join(given, ".gitignore"), "utf8")).toMatch(/^\.dev\.vars\*$/m);
+    expect(await readFile(join(given, "bounda.config.ts"), "utf8")).toContain(
+      'masterKey({ from: "BOUNDA_MASTER_KEY" })',
     );
   });
 });

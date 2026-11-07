@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, posix } from "node:path";
 import type { CreateOptions } from "./options.ts";
@@ -8,6 +9,10 @@ export interface ScaffoldProjectArgs {
   readonly templateRoot: string;
   readonly options: CreateOptions;
   readonly versions: Versions;
+  /**
+   * The master key written into `.env` or `.dev.vars`. Defaults to 32 random bytes in base64.
+   */
+  readonly masterKey?: string;
 }
 
 export interface ScaffoldReport {
@@ -32,12 +37,17 @@ const SCRIPTS = ["install", "test", "start", "dev", "build", "deploy", "generate
 const TEMPLATE_SUFFIX = ".tpl";
 /**
  * Files that cannot travel under their real name: npm drops `.gitignore` from packages and the
- * repository ignores `.env.*`.
+ * repository ignores `.env*` and `.dev.vars*`.
  */
 const RENAMES: Readonly<Record<string, string>> = {
   _gitignore: ".gitignore",
+  _env: ".env",
   "_env.example": ".env.example",
+  "_dev.vars": ".dev.vars",
+  "_dev.vars.example": ".dev.vars.example",
 };
+
+const MASTER_KEY_BYTES = 32;
 
 // Paths inside the template are built with `/` and handled with `posix`, never with the platform's
 // separator, so they come out the same on Windows; `join` only meets them at the file system.
@@ -89,12 +99,14 @@ export const scaffoldProject: ScaffoldProjectFunction = async ({
   templateRoot,
   options,
   versions,
+  masterKey = randomBytes(MASTER_KEY_BYTES).toString("base64"),
 }) => {
   if (!(await isEmptyDirectory(options.directory))) {
     throw new Error(`${options.directory} exists and is not empty`);
   }
   const values: Readonly<Record<string, string>> = {
     name: options.name,
+    masterKey,
     adapterPackage: ADAPTER_PACKAGES[options.database],
     boundaVersion: versions.bounda,
     typescriptVersion: versions.typescript,

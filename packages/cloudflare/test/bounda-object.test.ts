@@ -1,6 +1,7 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { createSqliteAdapter } from "@bounda-dev/core/adapter/sqlite";
+import { masterKey } from "@bounda-dev/core/config";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { configForObject } from "../src/bounda-object.ts";
 import { connect } from "../src/client.ts";
@@ -276,6 +277,29 @@ describe("a Bounda Durable Object", () => {
     );
     expect(keys).toEqual([]);
     expect(await settledAlarm(stub)).toBeNull();
+  });
+
+  it("wraps its personal keys under the master key in the Worker's secret, and opens them back", async () => {
+    const stub = env.WRAPPED_STORE.get(env.WRAPPED_STORE.newUniqueId());
+    const store = connect<typeof quietRegistry>(stub);
+    await store.commands.placeOrder({ orderId: "o-1", total: 42, customer: "ada", note: "ring" });
+    const rows = await runInDurableObject(stub as unknown as DurableObjectStub, (_i, state) =>
+      state.storage.sql
+        .exec(`SELECT "person", "key", "fingerprint", "kid" FROM bounda_personal_keys`)
+        .toArray(),
+    );
+    const wrapper = await masterKey({ from: "BOUNDA_MASTER_KEY" }).create({ env });
+    expect(rows).toEqual([
+      { person: "ada", key: expect.any(String), fingerprint: expect.any(String), kid: wrapper.kid },
+    ]);
+    const [row] = rows as { key: string; fingerprint: string }[];
+    const wrapped = Uint8Array.from(atob(row?.key ?? ""), (c) => c.charCodeAt(0));
+    const raw = await wrapper.unwrap({ kid: wrapper.kid, wrapped });
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", Uint8Array.from(raw)));
+    expect(btoa(String.fromCharCode(...digest))).toBe(row?.fingerprint);
+    expect((await store.exportPersonalData("ada")).events.map((event) => event.data)).toEqual([
+      { note: "ring" },
+    ]);
   });
 
   it("answers an eventual command once its events are stored and projects them in its alarm", async () => {

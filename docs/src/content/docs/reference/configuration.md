@@ -112,6 +112,16 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
   inactive for that long is forgotten in the first passes. It is app-wide and has no override per aggregate: a person's
   events span aggregates, so their inactivity is one clock, not one per aggregate. See
   [retention](/guides/personal-data/#retention).
+- **`personalData.keyWrapper`**, none by default. Wraps every person's key before the store keeps
+  it, so a copy of the database opens none of their data without the master key:
+  `masterKey({ from: "BOUNDA_MASTER_KEY", previous: [...] })` names the environment variables that
+  hold the current master key and the ones used before, 32 random bytes in base64 each (`openssl
+  rand -base64 32`), read from the host's environment when the app starts; a variable missing or
+  malformed fails the start with `ConfigurationError`. A KMS or a vault is given through
+  `defineKeyWrapper`. Keys wrapped under a previous master key, or kept unwrapped from before, are
+  rewrapped by the worker in the background. Without it the keys are kept as they are and the app
+  warns at start when the registry marks personal fields. It is app-wide. See
+  [where the keys live](/guides/personal-data/#where-the-keys-live).
 
 ### Per aggregate
 

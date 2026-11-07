@@ -6,12 +6,21 @@
   "gitignore": ["test-results/", "playwright-report/"],
   "package": {
     "description": "An event-sourced app on Bounda: one Worker and one Durable Object per tenant, with its events and read models in the object's SQLite.",
-    "scripts": { "test:e2e": "playwright test" },
-    "devDependencies": { "@playwright/test": "catalog:" },
+    "scripts": {
+      "test:e2e": "playwright test"
+    },
+    "devDependencies": {
+      "@playwright/test": "catalog:"
+    },
     "cloudflare": {
       "label": "Bounda event sourcing",
       "products": ["Workers", "Durable Objects"],
-      "categories": ["storage"]
+      "categories": ["storage"],
+      "bindings": {
+        "BOUNDA_MASTER_KEY": {
+          "description": "The master key every person's key is wrapped under, so a copy of the database opens none of their data without it: 32 random bytes in base64. Generate one with `openssl rand -base64 32` and keep it; a new one cannot open what the old one wrapped. [Where the keys live](https://docs.bounda.dev/guides/personal-data/#where-the-keys-live)"
+        }
+      }
     }
   }
 }

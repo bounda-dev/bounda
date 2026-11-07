@@ -125,6 +125,21 @@ export interface TestPersonalKeyFunction {
 export const testPersonalKey: TestPersonalKeyFunction = (name) => ({
   key: `k-${name}`,
   fingerprint: `f-${name}`,
+  kid: null,
+});
+
+export interface TestWrappedPersonalKeyFunction {
+  (name: string, kid: string): StoredPersonalKey;
+}
+
+/**
+ * The key `testPersonalKey(name)` as a store keeps it wrapped under `kid`: the same fingerprint,
+ * another text.
+ */
+export const testWrappedPersonalKey: TestWrappedPersonalKeyFunction = (name, kid) => ({
+  key: `w-${name}-${kid}`,
+  fingerprint: `f-${name}`,
+  kid,
 });
 
 export interface TestSealedValueFunction {

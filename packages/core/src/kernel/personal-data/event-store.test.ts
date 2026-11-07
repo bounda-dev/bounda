@@ -58,6 +58,8 @@ const setup = async () => {
       return storage.personalKeys.add(person, key);
     },
     remove: (person) => storage.personalKeys.remove(person),
+    listWrappedUnder: (args) => storage.personalKeys.listWrappedUnder(args),
+    rewrap: (person, from, to) => storage.personalKeys.rewrap(person, from, to),
   };
   const store = withPersonalData({
     eventStore: storage.eventStore,
@@ -280,12 +282,14 @@ describe("withPersonalData", () => {
 
   it("keeps the key another writer added first", async () => {
     const { storage, store, registered } = await setup();
-    const first = { key: "Zmlyc3Q=", fingerprint: "first" };
+    const first = { key: "Zmlyc3Q=", fingerprint: "first", kid: null };
     await storage.personalKeys.add("c-1", first);
     const concurrentKeys: PersonalKeyStore = {
       get: async () => null,
       add: (person, key) => storage.personalKeys.add(person, key),
       remove: (person) => storage.personalKeys.remove(person),
+      listWrappedUnder: (args) => storage.personalKeys.listWrappedUnder(args),
+      rewrap: (person, from, to) => storage.personalKeys.rewrap(person, from, to),
     };
     await expect(
       withPersonalData({
