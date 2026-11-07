@@ -1,14 +1,20 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { Adapter } from "../../adapter/adapter.ts";
 import type { ForgetLedger, ForgetLedgerEntry } from "../../adapter/storage/forget-ledger.ts";
+import type { Table } from "../../adapter/storage/table.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { ValidationError } from "../../contracts/errors.ts";
+import type { StoredEvent } from "../../contracts/event.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { type Logger, silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
-import type { PersonalDataForgottenPayload } from "../../modules/bounda-events.ts";
+import type {
+  PersonalDataForgottenEvent,
+  PersonalDataForgottenPayload,
+} from "../../modules/bounda-events.ts";
 import type { EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
+import type { FieldsArgs } from "../../modules/view.ts";
 import { createTestApp } from "../../testing/index.ts";
 import { createApp } from "../app.ts";
 import { defineForgetLedger, type ForgetLedgerSource } from "./forget-ledger.ts";
@@ -49,8 +55,55 @@ const registry = {
       processes: {},
     },
   },
-  readModels: {},
+  readModels: {
+    customers: {
+      view: {
+        fields: ({ f }: FieldsArgs) => ({ customerId: f.string().primaryKey(), name: f.string() }),
+      },
+      projections: {
+        customer: {
+          customerRegistered: {
+            project: async ({
+              event,
+              table,
+            }: {
+              event: StoredEvent<"CustomerRegistered", { name: string | null }>;
+              table: Table<CustomerRow>;
+            }) => {
+              await table.upsert({ customerId: event.aggregateId, name: event.payload.name ?? "" });
+            },
+          },
+        },
+        bounda: {
+          personalDataForgotten: {
+            project: async ({
+              event,
+              table,
+            }: {
+              event: PersonalDataForgottenEvent;
+              table: Table<CustomerRow>;
+            }) => {
+              await table.delete({ customerId: event.payload.personId });
+            },
+          },
+        },
+      },
+      queries: {
+        getCustomer: {
+          payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string() }),
+          repository: ({ table, customerId }: { table: Table<CustomerRow>; customerId: string }) =>
+            table.findOne({ customerId }),
+          handler: ({ repositoryData }: { repositoryData: CustomerRow | null }) => repositoryData,
+        },
+      },
+    },
+  },
 } as unknown as Registry;
+
+interface CustomerRow {
+  readonly customerId: string;
+  readonly name: string;
+}
 
 const stops: (() => Promise<void>)[] = [];
 
@@ -97,6 +150,10 @@ const start = async ({ storage, forgetLedger, now = START, logger = silentLogger
     await commands.registerCustomer?.({ customerId, name: `name of ${customerId}` });
     await app.runUntilIdle();
   };
+  const customer = (customerId: string): Promise<unknown> =>
+    (app.queries as unknown as Record<string, (args: unknown) => Promise<unknown>>).getCustomer?.({
+      customerId,
+    }) ?? Promise.resolve(undefined);
   const forgotten = async (): Promise<readonly (readonly [string, string])[]> =>
     (await app.events.read({ limit: 1000 }))
       .filter((event) => event.type === "PersonalDataForgotten")
@@ -104,7 +161,7 @@ const start = async ({ storage, forgetLedger, now = START, logger = silentLogger
         const { personId, reason } = event.payload as PersonalDataForgottenPayload;
         return [personId, reason] as const;
       });
-  return { app, clock, register, forgotten };
+  return { app, clock, register, forgotten, customer };
 };
 
 const entry = (personId: string, eventId: string, at: Date): ForgetLedgerEntry => ({
@@ -148,8 +205,19 @@ describe("the forget ledger", () => {
     await (await opened(ledgerAdapter)).append([entry("c-1", "lost-forget", START)]);
     await before.stop();
     const { logs, logger } = recording();
-    const { app, forgotten } = await start({ storage, forgetLedger: ledgerAdapter, logger });
+    const { app, forgotten, customer } = await start({
+      storage,
+      forgetLedger: ledgerAdapter,
+      logger,
+    });
     expect(await forgotten()).toEqual([["c-1", "restored"]]);
+    expect(await customer("c-1")).toBeNull();
+    expect(await customer("c-2")).toEqual({ customerId: "c-2", name: "name of c-2" });
+    expect(logs).toContainEqual([
+      "info",
+      "personal data forgotten",
+      expect.objectContaining({ personId: "c-1", reason: "restored", hadKey: true }),
+    ]);
     const exported = await app.exportPersonalData("c-1");
     expect(exported.events.map(({ type, data }) => [type, data])).toEqual([
       ["CustomerRegistered", { name: null }],
@@ -179,9 +247,22 @@ describe("the forget ledger", () => {
     await first.forget("c-1");
     await register("c-1");
     await first.runUntilIdle();
+    await (
+      first.commands as unknown as Record<string, (payload: unknown) => Promise<unknown>>
+    ).registerCustomer?.({ customerId: "c-2", name: "name of c-2" });
     await first.stop();
-    const { app, forgotten } = await start({ storage, forgetLedger: ledgerAdapter });
+    const { logs, logger } = recording();
+    const { app, forgotten, customer } = await start({
+      storage,
+      forgetLedger: ledgerAdapter,
+      logger,
+    });
     expect(await forgotten()).toEqual([["c-1", "requested"]]);
+    // A start that forgot nobody leaves the read models to the background.
+    expect(await customer("c-2")).toBeNull();
+    expect(logs.map(([, message]) => message)).not.toContain(
+      "forgot again persons a restored backup brought back",
+    );
     expect((await app.exportPersonalData("c-1")).events.at(-1)?.data).toEqual({
       name: "name of c-1",
     });
@@ -270,7 +351,7 @@ describe("the forget ledger", () => {
     expect(await forgotten()).toEqual([]);
     expect(await app.nextDueAt()).toEqual(new Date(START.getTime() + 3 * FORGET_LEDGER_RETRY_MS));
     clock.advance(2 * FORGET_LEDGER_RETRY_MS);
-    await app.runUntilIdle();
+    expect(await app.runUntilIdle({ maxPasses: 1 })).toMatchObject({ idle: false });
     expect(await forgotten()).toEqual([["c-1", "restored"]]);
     expect(await app.getLag()).toMatchObject({ forgetLedger: { reconciled: true } });
     expect(await app.nextDueAt()).toBeNull();
@@ -314,7 +395,8 @@ describe("the forget ledger", () => {
     });
     const { app, clock } = await start({ storage, forgetLedger: refusing });
     await app.forget("c-1");
-    await app.runUntilIdle();
+    await app.runUntilIdle({ maxPasses: 1 });
+    expect(refusals).toBe(0);
     expect(await (await opened(ledgerAdapter)).read({ limit: 10 })).toEqual([]);
     const lag = await app.getLag();
     expect(
@@ -341,6 +423,34 @@ describe("the forget ledger", () => {
     expect(closed).toBe(1);
   });
 
+  it("closes the ledger when the start fails after opening it", async () => {
+    let closed = 0;
+    const ledgerAdapter = memory();
+    const closing = defineForgetLedger(async () => ({
+      ...(await opened(ledgerAdapter)),
+      close: async () => {
+        closed += 1;
+      },
+    }));
+    const broken: Adapter = {
+      ...memory(),
+      createReadModel: async () => {
+        throw new Error("read model database is down");
+      },
+    };
+    await expect(
+      createApp({
+        registry,
+        config: {
+          storage: memory(),
+          readModels: { customers: broken },
+          runtime: { personalData: { forgetLedger: closing } },
+        },
+      }),
+    ).rejects.toThrow("read model database is down");
+    expect(closed).toBe(1);
+  });
+
   it("names no ledger in the lag of an app without one", async () => {
     const { app } = await createTestApp({ registry });
     stops.push(() => app.stop());
@@ -351,7 +461,12 @@ describe("the forget ledger", () => {
 describe("forgetAgain", () => {
   it("forgets again whom an entry names unless the store holds its forgetting or they hold no key", async () => {
     const storage = memory();
-    const { app, register, forgotten } = await start({ storage, forgetLedger: memory() });
+    const { logs, logger } = recording();
+    const { app, register, forgotten } = await start({
+      storage,
+      forgetLedger: memory(),
+      logger,
+    });
     await register("c-1");
     await register("c-2");
     await register("c-3");
@@ -370,6 +485,7 @@ describe("forgetAgain", () => {
       ]),
     ).toEqual(["c-1", "c-2"]);
     expect(held).toBeDefined();
+    expect(logs.filter(([, message]) => message === "personal data forgotten")).toHaveLength(3);
     expect(await forgotten()).toEqual([
       ["c-4", "requested"],
       ["c-1", "restored"],
@@ -380,9 +496,9 @@ describe("forgetAgain", () => {
   it("rejects an entry without a person's id before forgetting anyone", async () => {
     const { app, register, forgotten } = await start({ storage: memory(), forgetLedger: memory() });
     await register("c-1");
-    await expect(app.forgetAgain([{ personId: "c-1" }, { personId: "" }])).rejects.toBeInstanceOf(
-      ValidationError,
-    );
+    const refused = app.forgetAgain([{ personId: "c-1" }, { personId: "" }]);
+    await expect(refused).rejects.toBeInstanceOf(ValidationError);
+    await expect(refused).rejects.toThrow("forgetAgain needs the id of the person");
     expect(await forgotten()).toEqual([]);
   });
 });

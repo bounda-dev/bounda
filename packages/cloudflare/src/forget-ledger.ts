@@ -12,9 +12,8 @@ import { defineForgetLedger, type ForgetLedgerDefinition } from "@bounda-dev/cor
 export const KV_LIST_DELAY_MS = 60_000;
 
 // The latest time a `Date` holds, in milliseconds: keys hold what is left of it, so the newest
-// entry lists first.
+// entry lists first. Any time from 1970 on leaves sixteen digits, which sort as numbers do.
 const LATEST_MS = 8_640_000_000_000_000;
-const TIME_DIGITS = String(LATEST_MS).length;
 const LIST_LIMIT = 1_000;
 
 interface EntryMetadata {
@@ -22,10 +21,7 @@ interface EntryMetadata {
   readonly forgottenAt: string;
 }
 
-const timeKey = (forgottenAt: string): string => {
-  const ms = Math.min(Math.max(Date.parse(forgottenAt), 0), LATEST_MS);
-  return String(LATEST_MS - ms).padStart(TIME_DIGITS, "0");
-};
+const timeKey = (forgottenAt: string): string => String(LATEST_MS - Date.parse(forgottenAt));
 
 export interface CreateKvForgetLedgerArgs {
   readonly namespace: KVNamespace;

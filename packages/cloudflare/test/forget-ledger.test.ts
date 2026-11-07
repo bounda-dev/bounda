@@ -37,10 +37,101 @@ describe("the forget ledger in Workers KV", () => {
     expect(ada.visibilityDelayMs).toBe(KV_LIST_DELAY_MS);
   });
 
-  it("fails the start of an object whose env lacks the binding", async () => {
-    expect(() => kvForgetLedger({ binding: "MISSING" }).create({ env, tenant: "t" })).toThrow(
-      ConfigurationError,
-    );
+  it("fails the start of an object whose env lacks the binding, or binds something else", async () => {
+    for (const LEDGER of [
+      undefined,
+      null,
+      "a string",
+      { list: () => undefined },
+      { put: () => undefined },
+    ]) {
+      expect(() =>
+        kvForgetLedger({ binding: "LEDGER" }).create({
+          env: { ...env, LEDGER } as typeof env,
+          tenant: "t",
+        }),
+      ).toThrow(
+        new ConfigurationError(
+          "runtime.personalData.forgetLedger names the KV binding LEDGER, which the Worker's env does not hold: add it under kv_namespaces in wrangler.jsonc",
+        ),
+      );
+    }
+  });
+});
+
+// A namespace that lists in pages as KV does, and counts the pages it listed.
+const countingNamespace = () => {
+  const keys = new Map<string, unknown>();
+  let pages = 0;
+  const namespace = {
+    put: async (name: string, _value: string, options?: { metadata?: unknown }) => {
+      keys.set(name, options?.metadata ?? null);
+    },
+    list: async ({ prefix, limit = 1_000, cursor }: KVNamespaceListOptions = {}) => {
+      pages += 1;
+      const names = [...keys.keys()].filter((name) => name.startsWith(prefix ?? "")).sort();
+      const start = typeof cursor === "string" ? Number(cursor) : 0;
+      const page = names.slice(start, start + limit);
+      const complete = start + limit >= names.length;
+      return {
+        keys: page.map((name) => ({ name, metadata: keys.get(name) })),
+        list_complete: complete,
+        ...(complete ? {} : { cursor: String(start + limit) }),
+        cacheStatus: null,
+      };
+    },
+  } as unknown as KVNamespace;
+  return { namespace, keys, pages: () => pages };
+};
+
+const minute = (index: number): string =>
+  new Date(Date.UTC(2026, 10, 7) + index * 60_000).toISOString();
+
+describe("the KV forget ledger's listing", () => {
+  it("lists every page when it reads from the first entry", async () => {
+    const { namespace, pages } = countingNamespace();
+    const ledger = createKvForgetLedger({ namespace, prefix: "p/" });
+    const entries = Array.from({ length: 1_005 }, (_, index) => ({
+      personId: `c-${index}`,
+      eventId: `e-${String(index).padStart(4, "0")}`,
+      forgottenAt: minute(index),
+    }));
+    await ledger.append(entries);
+    expect(await ledger.read({ limit: 2_000 })).toEqual(entries);
+    expect(pages()).toBe(2);
+  });
+
+  it("stops listing at the first entry older than the one it reads after", async () => {
+    const { namespace, pages } = countingNamespace();
+    const ledger = createKvForgetLedger({ namespace, prefix: "p/" });
+    const entries = Array.from({ length: 1_005 }, (_, index) => ({
+      personId: `c-${index}`,
+      eventId: `e-${String(index).padStart(4, "0")}`,
+      forgottenAt: minute(index),
+    }));
+    await ledger.append(entries);
+    const after = entries[1_002] as (typeof entries)[number];
+    expect(await ledger.read({ after, limit: 10 })).toEqual(entries.slice(1_003));
+    expect(pages()).toBe(1);
+  });
+
+  it("skips a key without the entry's metadata", async () => {
+    const { namespace, keys } = countingNamespace();
+    const ledger = createKvForgetLedger({ namespace, prefix: "p/" });
+    keys.set("p/1:e-stray", null);
+    expect(await ledger.read({ limit: 10 })).toEqual([]);
+  });
+
+  it("keeps an object without a name under the empty tenant", async () => {
+    const { namespace, keys } = countingNamespace();
+    const ledger = await kvForgetLedger({ binding: "LEDGER" }).create({
+      env: { ...env, LEDGER: namespace } as typeof env,
+    });
+    await ledger.append([{ personId: "c-1", eventId: "e-1", forgottenAt: minute(0) }]);
+    expect([...keys.keys()]).toEqual([
+      `bounda/forget-ledger//${8_640_000_000_000_000 - Date.parse(minute(0))}:e-1`,
+    ]);
+    expect([...keys.values()]).toEqual([{ personId: "c-1", forgottenAt: minute(0) }]);
   });
 });
 

@@ -599,8 +599,14 @@ describe("bounda forgotten and bounda forget", () => {
     const forgotten = await help("forgotten");
     expect(forgotten).toContain("--since <date|position>");
     expect(forgotten).toContain("since a position or a date, for bounda forget --from");
+    expect(forgotten).toContain(
+      "a date such as 2026-11-01, or a position of the stream to read after",
+    );
     const forget = await help("forget");
     expect(forget).toContain("--from <file>");
     expect(forget).toContain("what bounda forgotten printed, or one person's id a line");
+    expect(forget).toContain(
+      "forget again, after restoring a backup, each person listed who still holds a key and whose forgetting the store does not hold",
+    );
   });
 });

@@ -304,6 +304,28 @@ describe.skipIf(container === null)("postgresql adapter", () => {
     }
   });
 
+  it("creates the forget ledger's table in its schema once, and takes no lock once it is there", async () => {
+    const schema = `ledger_${run}`;
+    const adapter = fresh({ schema });
+    const first = await adapter.createForgetLedger({});
+    closers.push(async () => first.close?.());
+    await first.read({ limit: 1 });
+    const holder = postgres(url, { max: 1, onnotice: () => undefined });
+    try {
+      const tables = await holder`SELECT tablename FROM pg_tables WHERE schemaname = ${schema}`;
+      expect(tables.map(({ tablename }) => tablename)).toEqual([
+        `t${run}_${prefixes}_forget_ledger`,
+      ]);
+      await holder`SELECT pg_advisory_lock(hashtext(${`bounda:${schema}:schema`}))`;
+      const second = await adapter.createForgetLedger({});
+      closers.push(async () => second.close?.());
+      expect(await second.read({ limit: 1 })).toEqual([]);
+      await holder`SELECT pg_advisory_unlock(hashtext(${`bounda:${schema}:schema`}))`;
+    } finally {
+      await holder.end({ timeout: 5 });
+    }
+  });
+
   it("notifies listeners of every committed append with the last position", async () => {
     const storage = await openStorage();
     const notifier = storage.notifier as NonNullable<typeof storage.notifier>;
