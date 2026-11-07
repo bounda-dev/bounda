@@ -25,8 +25,11 @@ import { appStorage } from "./events/app-event-store.ts";
 import { createGlobalStream, type GlobalStream } from "./events/global-stream.ts";
 import { exportPersonalData, type PersonalDataExport } from "./personal-data/export.ts";
 import { forgetPersonalData } from "./personal-data/forget.ts";
+import { marksPersonalFields } from "./personal-data/marks.ts";
 import { liftProcessingRestriction, restrictProcessing } from "./personal-data/restriction.ts";
 import { createRetentionSubscriber, createRetentionSweep } from "./personal-data/retention.ts";
+import { createKeyRotation } from "./personal-data/rotation.ts";
+import { buildPersonalKeyWrapping } from "./personal-data/wrapped-keys.ts";
 import { buildPolicies } from "./policy/build-policies.ts";
 import { createDelayedPolicies } from "./policy/delayed.ts";
 import { createPolicyExecutor } from "./policy/executor.ts";
@@ -41,7 +44,7 @@ import { buildReadModels } from "./read-model/build-read-models.ts";
 import {
   pendingRebuilds,
   type RebuildReadModelResult,
-  rebuildReadModel,
+  rebuildReadModelWith,
 } from "./read-model/rebuild.ts";
 import { createScheduledCommandWorker } from "./scheduler/worker.ts";
 import { guardedLogger } from "./shared/guarded-logger.ts";
@@ -157,9 +160,10 @@ export interface BoundaApp<R extends Registry = AppRegistry> extends BoundaClien
    */
   runUntilIdle(options?: RunUntilIdleOptions): Promise<RunUntilIdleResult>;
   /**
-   * The earliest moment a scheduled command or a process deadline becomes due, or a person
-   * becomes due for forgetting under `runtime.personalData.retention`; `null` when nothing is. A
-   * host without a polling worker arms its wake-up for it.
+   * The earliest moment a scheduled command or a process deadline becomes due, a person becomes
+   * due for forgetting under `runtime.personalData.retention`, or a person's key waits to be
+   * rewrapped under `runtime.personalData.keyWrapper`; `null` when nothing is. A host without a
+   * polling worker arms its wake-up for it.
    */
   nextDueAt(): Promise<Date | null>;
   /**
@@ -321,6 +325,11 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       `storage "${config.storage.name}" is a definition without factories. Import the adapter package's factory.`,
     );
   }
+  // Built first: a master key missing from the environment fails the start before anything opens.
+  const wrapping = await buildPersonalKeyWrapping({
+    definition: config.runtime.personalData.keyWrapper,
+    env,
+  });
   // Built before the storage opens and closed after it, so a `create` that fails leaves nothing
   // open; a failure further on closes them again.
   const ports = await createPorts({
@@ -337,7 +346,12 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     const written = await config.storage.createStorage();
     opened.unshift(() => written.close());
     const aggregates = buildAggregates({ registry, ports: ports.byAggregate, config });
-    const storage = appStorage({ storage: written, aggregates });
+    const storage = appStorage({ storage: written, aggregates, wrapping });
+    if (wrapping.wrapper === null && test === undefined && marksPersonalFields(aggregates)) {
+      logger.warn(
+        "personal keys are stored unwrapped, next to the data they open: set runtime.personalData.keyWrapper",
+      );
+    }
     const loader = createAggregateLoader({
       snapshotStore: storage.snapshotStore,
       logger,
@@ -430,6 +444,16 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             concurrencyRetries: config.runtime.commands.concurrencyRetries,
             batchSize: config.runtime.dispatcher.batchSize,
           });
+    const rotation =
+      wrapping.wrapper === null
+        ? undefined
+        : createKeyRotation({
+            keys: written.personalKeys,
+            wrapper: wrapping.wrapper,
+            wrapping,
+            clock,
+            logger,
+          });
     const dispatcher = createDispatcher({
       eventStore: storage.eventStore,
       checkpointStore: storage.checkpointStore,
@@ -480,6 +504,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       }),
       restrictedRetries: createRestrictedRetries({ storage, retries, clock, logger }),
       retention,
+      rotation,
       reactive: following.map((subscriber) => subscriber.name),
       config,
       ids,
@@ -503,12 +528,16 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     // A test app's `runUntilIdle` moves its clock to what `scheduledDueAt` says, never to a
     // retention deadline: that would forget every person the test created.
     const nextDueAt = async (): Promise<Date | null> => {
-      const [scheduled, retained] = await Promise.all([
+      const due = await Promise.all([
         scheduledDueAt(),
         retention?.nextDueAt() ?? null,
+        rotation?.nextDueAt() ?? null,
       ]);
-      if (scheduled === null || retained === null) return scheduled ?? retained;
-      return scheduled.getTime() <= retained.getTime() ? scheduled : retained;
+      return due.reduce<Date | null>(
+        (earliest, at) =>
+          at === null || (earliest !== null && earliest.getTime() <= at.getTime()) ? earliest : at,
+        null,
+      );
     };
     // A scheduled command that failed waits for its retry with its attempts counted; scheduling it
     // anew counts them from zero, so a retry that no longer waits is not taken for one.
@@ -535,7 +564,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       waitingDeadlines: worker.waitingDeadlines(),
     });
     const rebuild = (name: string, options: RebuildReadModelOptions = {}) =>
-      rebuildReadModel({ registry, config: rawConfig, name, logger, ...options });
+      rebuildReadModelWith({ registry, config: rawConfig, name, logger, wrapping, ...options });
     const clientAs = (
       actor: string | undefined,
     ): BoundaClient<R> & { readonly deadLetters: DeadLetters } => ({

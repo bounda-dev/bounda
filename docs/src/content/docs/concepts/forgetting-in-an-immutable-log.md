@@ -123,8 +123,13 @@ where the data was.
   application; Kurrent's own guidance on the GDPR is a blog post and a webinar.
 
 Bounda's choice sits with Axon's, with three differences. The key is per person, in the same
-database as the events, so that an adapter's backup and restore keep the two together and a test
-needs no second store. The forgotten value is `null`, in the type as in the data, rather than a
+database as the events, so that forgetting is one transaction, an adapter's backup and restore
+keep the two together and a test needs no second store; what makes that safe is envelope
+encryption, the practice of AWS and Google Cloud KMS, Rails and Laravel: each key is stored
+wrapped under a master key the database never holds, read from the host's environment or kept in
+a KMS, so a copy of the database opens nothing without it. Keeping the keys in another store
+would split forgetting across two systems; deriving them from the master key would leave nothing
+to destroy. The forgotten value is `null`, in the type as in the data, rather than a
 replacement the type hides. And forgetting is an event, because the read models and the policies
 have work to do when it happens.
 
@@ -133,10 +138,11 @@ have work to do when it happens.
 - **Data in the clear elsewhere.** A field marked `personal` in one event and left plain in
   another is readable through the second one. The mark is per field per event, so mark every
   event that carries the data, or carry it in one.
-- **What left the store.** Backups of the key table, logs that printed a payload, the external
-  systems a policy wrote to. The key store is a table like the others: a backup of the whole
-  database restores the keys too, so a backup kept past a person's erasure is itself a copy of
-  their data.
+- **What left the store.** Backups, logs that printed a payload, the external systems a policy
+  wrote to. A backup of the whole database restores the keys too, wrapped: with the master key it
+  is a copy of the data of everyone it holds, including a person forgotten after it was taken.
+  Rotating the master key and destroying the old one once those backups expire makes them
+  unreadable as a whole. Without a master key, a backup opens on its own.
 - **Errors.** A dead letter keeps the error a handler threw, its message and stack encrypted with
   the key of the person the work names, so one that quotes a decrypted field is unreadable once
   they are forgotten; what the stream and the stores keep of a failure is the error's class and

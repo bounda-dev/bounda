@@ -1,5 +1,12 @@
 import type { AdapterDefinition } from "@bounda-dev/core/adapter";
-import { type Config, defineConfig } from "@bounda-dev/core/config";
+import {
+  type Config,
+  defineConfig,
+  defineKeyWrapper,
+  type KeyWrapper,
+  type KeyWrapperDefinition,
+  masterKey,
+} from "@bounda-dev/core/config";
 import { describe, expectTypeOf, it } from "vitest";
 
 declare const sqlite: AdapterDefinition<"sqlite", { path: string }>;
@@ -188,6 +195,34 @@ describe("defineConfig", () => {
       // @ts-expect-error the retention is app-wide, never per aggregate
       runtime: { overrides: { order: { personalData: { retention: "30d" } } } },
     });
+    defineConfig({
+      storage: sqlite,
+      ports,
+      runtime: {
+        personalData: {
+          retention: "30d",
+          keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY", previous: ["BOUNDA_MASTER_KEY_OLD"] }),
+        },
+      },
+    });
+    defineConfig({
+      storage: sqlite,
+      ports,
+      // @ts-expect-error the master key is named by its variable, never given as a value
+      runtime: { personalData: { keyWrapper: "BOUNDA_MASTER_KEY" } },
+    });
+    defineConfig({
+      storage: sqlite,
+      ports,
+      // @ts-expect-error a wrapper is given through defineKeyWrapper, not as it is
+      runtime: { personalData: { keyWrapper: {} as KeyWrapper } },
+    });
+    defineConfig({
+      storage: sqlite,
+      ports,
+      // @ts-expect-error the key wrapper is app-wide, never per aggregate
+      runtime: { overrides: { order: { personalData: { keyWrapper: masterKey({ from: "K" }) } } } },
+    });
     // @ts-expect-error batch is not a role
     defineConfig({ storage: sqlite, ports, runtime: { role: "batch" } });
     defineConfig({
@@ -207,5 +242,35 @@ describe("defineConfig", () => {
   it("requires storage to be an adapter definition", () => {
     // @ts-expect-error a plain object is not an adapter definition
     defineConfig({ storage: { path: "./x.db" }, ports });
+  });
+
+  it("types the key wrappers: masterKey names variables, defineKeyWrapper builds one from env", () => {
+    expectTypeOf(masterKey).parameter(0).toEqualTypeOf<{
+      readonly from: string;
+      readonly previous?: readonly string[];
+    }>();
+    expectTypeOf(masterKey({ from: "BOUNDA_MASTER_KEY" })).toEqualTypeOf<KeyWrapperDefinition>();
+    const kms = defineKeyWrapper(({ env: received }) => {
+      expectTypeOf(received).toEqualTypeOf(env);
+      return {
+        kid: "arn:aws:kms:eu-west-1:1:key/1",
+        wrap: async (key) => {
+          expectTypeOf(key).toEqualTypeOf<Uint8Array>();
+          return key;
+        },
+        unwrap: async ({ kid, wrapped }) => {
+          expectTypeOf(kid).toEqualTypeOf<string>();
+          return wrapped;
+        },
+      };
+    });
+    expectTypeOf(kms).toEqualTypeOf<KeyWrapperDefinition>();
+    expectTypeOf<KeyWrapper["previous"]>().toEqualTypeOf<readonly string[] | undefined>();
+    // @ts-expect-error a wrapper names the key it wraps under
+    defineKeyWrapper(() => ({
+      wrap: async (key: Uint8Array) => key,
+      unwrap: async () => new Uint8Array(),
+    }));
+    defineConfig({ storage: sqlite, ports, runtime: { personalData: { keyWrapper: kms } } });
   });
 });

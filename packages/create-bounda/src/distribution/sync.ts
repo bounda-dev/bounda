@@ -193,6 +193,9 @@ export const generate: GenerateFunction = async ({
   await scaffold({ scaffolder, name: layer.name, cwd: root });
   const generated = join(root, layer.name);
   const project = layer.layout === "project" ? await hoist(generated, root) : generated;
+  // The master key the scaffolder generates is this machine's: whoever deploys the copy sets their
+  // own, as `.dev.vars.example` asks.
+  await rm(join(project, ".dev.vars"), { force: true });
 
   const extras = resolveCatalog(layer.package, fromWorkspaceCatalog);
   let manifest = mergeManifest(await readJson(join(project, "package.json")), extras);

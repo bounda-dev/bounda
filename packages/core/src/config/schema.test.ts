@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AdapterDefinition } from "../adapter/adapter-definition.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
+import { masterKey } from "../kernel/personal-data/master-key.ts";
 import { resolveConfig } from "./schema.ts";
 
 const sqlite: AdapterDefinition<"sqlite", { path: string }> = {
@@ -14,6 +15,8 @@ const postgres: AdapterDefinition<"postgresql", { url: string }> = {
   name: "postgresql",
   options: { url: "postgres://localhost/app" },
 };
+
+const keyWrapper = masterKey({ from: "BOUNDA_MASTER_KEY" });
 
 const message = (config: unknown): string => {
   try {
@@ -52,7 +55,7 @@ describe("resolveConfig", () => {
         backoff: { baseDelayMs: 1_000, maxDelayMs: 30_000 },
         catchUp: { timeoutMs: 2_000, pollIntervalMs: 15 },
       },
-      personalData: { retentionMs: null },
+      personalData: { retentionMs: null, keyWrapper: null },
       overrides: {},
     });
   });
@@ -74,7 +77,7 @@ describe("resolveConfig", () => {
           backoff: { baseDelay: "500ms", maxDelay: "1m" },
           catchUp: { timeout: "5s", pollInterval: 50 },
         },
-        personalData: { retention: "30d" },
+        personalData: { retention: "30d", keyWrapper },
       },
       ports: { order: { inventory: "http" } },
     });
@@ -101,7 +104,7 @@ describe("resolveConfig", () => {
       backoff: { baseDelayMs: 500, maxDelayMs: 60_000 },
       catchUp: { timeoutMs: 5_000, pollIntervalMs: 50 },
     });
-    expect(resolved.runtime.personalData).toEqual({ retentionMs: 2_592_000_000 });
+    expect(resolved.runtime.personalData).toEqual({ retentionMs: 2_592_000_000, keyWrapper });
     expect(resolved.readModels["users-directory"]).toBe(sqlite);
     expect(resolved.ports.order?.inventory).toBe("http");
   });
@@ -221,6 +224,11 @@ describe("resolveConfig", () => {
     ).toContain("runtime.processes.handlerTimeout: Expected a duration longer than 0");
     expect(message({ storage: sqlite, runtime: { personalData: { retention: 0 } } })).toContain(
       "runtime.personalData.retention: Expected a duration longer than 0",
+    );
+    expect(
+      message({ storage: sqlite, runtime: { personalData: { keyWrapper: "BOUNDA_MASTER_KEY" } } }),
+    ).toContain(
+      'runtime.personalData.keyWrapper: Expected a key wrapper such as masterKey({ from: "BOUNDA_MASTER_KEY" })',
     );
   });
 

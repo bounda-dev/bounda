@@ -34,6 +34,21 @@ export const createKeptPersonalKeyStore: CreateKeptPersonalKeyStoreFunction = ()
         return key;
       },
       remove: async (person) => keys.delete(person),
+      listWrappedUnder: async ({ kids, limit }) =>
+        [...keys.entries()]
+          .filter(([, key]) => kids.includes(key.kid))
+          // Persons are unique, so no two compare equal.
+          .sort(([a], [b]) => (a < b ? -1 : 1))
+          .slice(0, limit)
+          .map(([person, key]) => ({ person, key })),
+      rewrap: async (person, from, to) => {
+        const held = keys.get(person);
+        if (held === undefined || held.key !== from.key || held.fingerprint !== from.fingerprint) {
+          return false;
+        }
+        keys.set(person, { ...held, key: to.key, kid: to.kid });
+        return true;
+      },
     },
     entries: createStoreEntries(keys, (person) => person),
   };

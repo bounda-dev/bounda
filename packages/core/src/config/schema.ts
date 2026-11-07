@@ -3,6 +3,10 @@ import { isAdapterDefinition } from "../adapter/adapter-definition.ts";
 import { parseDuration } from "../contracts/duration.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
 import {
+  isKeyWrapperDefinition,
+  type KeyWrapperDefinition,
+} from "../kernel/personal-data/key-wrapper.ts";
+import {
   DEFAULT_BACKOFF_BASE_DELAY_MS,
   DEFAULT_BACKOFF_MAX_DELAY_MS,
   DEFAULT_BATCH_SIZE,
@@ -107,7 +111,16 @@ const runtime = z.strictObject({
         .optional(),
     })
     .optional(),
-  personalData: z.strictObject({ retention: timeout.optional() }).optional(),
+  personalData: z
+    .strictObject({
+      retention: timeout.optional(),
+      keyWrapper: z
+        .custom<KeyWrapperDefinition>(isKeyWrapperDefinition, {
+          message: 'Expected a key wrapper such as masterKey({ from: "BOUNDA_MASTER_KEY" })',
+        })
+        .optional(),
+    })
+    .optional(),
   overrides: z.record(z.string(), overrides).optional(),
 });
 
@@ -238,7 +251,10 @@ export const resolveConfig: ResolveConfigFunction = (config) => {
             parsed.runtime?.dispatcher?.catchUp?.pollInterval ?? DEFAULT_CATCH_UP_POLL_MS,
         },
       },
-      personalData: { retentionMs: parsed.runtime?.personalData?.retention ?? null },
+      personalData: {
+        retentionMs: parsed.runtime?.personalData?.retention ?? null,
+        keyWrapper: parsed.runtime?.personalData?.keyWrapper ?? null,
+      },
       overrides: resolvedOverrides,
     },
     ports: parsed.ports ?? {},

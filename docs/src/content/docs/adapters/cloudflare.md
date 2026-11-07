@@ -131,6 +131,21 @@ defaulting to `{}`.
 A Durable Object never stops its app, so `[Symbol.asyncDispose]` on what `create` returns only
 runs under `createTestApp` or an app you stop yourself.
 
+## The master key
+
+`masterKey({ from: "BOUNDA_MASTER_KEY" })` reads the object's `env` too, so the
+[master key](/guides/personal-data/#a-master-key) that wraps every person's key is a secret of
+the Worker, shared by every tenant's object, and never in the object's SQLite. A project from
+`create-bounda` has one generated in `.dev.vars`, which `wrangler dev` and the tests in `workerd`
+read and Git ignores, and a `.dev.vars.example` that names it. Before the first deploy, set it:
+
+```sh
+npx wrangler secret put BOUNDA_MASTER_KEY
+```
+
+Deploy to Cloudflare asks for it from `.dev.vars.example`. An object started without it fails to
+start, with a `ConfigurationError` that names the variable.
+
 ## One object per tenant
 
 `createWorker` addresses the object by the tenant `tenantOf` names for each request: in the

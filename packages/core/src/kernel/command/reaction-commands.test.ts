@@ -325,7 +325,7 @@ describe("createReactionCommands", () => {
 
   it("forgets a person when the unit commits, once however often the run names them", async () => {
     const { reaction, storage, unit, entries } = await setUp();
-    await storage.personalKeys.add("c-1", { key: "k", fingerprint: "f" });
+    await storage.personalKeys.add("c-1", { key: "k", fingerprint: "f", kid: null });
     await reaction.forget("c-1");
     await reaction.forget("c-1");
     expect(await storage.personalKeys.get("c-1")).not.toBeNull();
@@ -362,7 +362,7 @@ describe("createReactionCommands", () => {
 
   it("forgets nobody for a unit that never commits", async () => {
     const { reaction, storage } = await setUp();
-    await storage.personalKeys.add("c-1", { key: "k", fingerprint: "f" });
+    await storage.personalKeys.add("c-1", { key: "k", fingerprint: "f", kid: null });
     await reaction.forget("c-1");
     expect(await storage.personalKeys.get("c-1")).not.toBeNull();
     expect(await forgottenEvents(storage)).toEqual([]);

@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { createSequentialIdGenerator } from "@bounda-dev/core";
+import { masterKey } from "@bounda-dev/core/config";
 import { cloudflare } from "../src/definition.ts";
 import { createBoundaObject, createWorker } from "../src/index.ts";
 import { processRegistry, quietRegistry, regionRegistry, registry, slicedRegistry } from "./app.ts";
@@ -42,6 +43,19 @@ export const QuietStore = createBoundaObject({
 export const RetainedStore = createBoundaObject({
   registry: quietRegistry,
   config: { storage: cloudflare(), runtime: { personalData: { retention: "1h" } } },
+  clock,
+});
+
+/**
+ * The same app without policies or processes, its personal keys wrapped under the master key in
+ * the Worker's `BOUNDA_MASTER_KEY`.
+ */
+export const WrappedStore = createBoundaObject({
+  registry: quietRegistry,
+  config: {
+    storage: cloudflare(),
+    runtime: { personalData: { keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }) } },
+  },
   clock,
 });
 

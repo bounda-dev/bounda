@@ -3,7 +3,10 @@
   "main": "test/test-worker.ts",
   "compatibility_date": "2025-10-08",
   "compatibility_flags": ["nodejs_compat"],
-  "vars": { "STORE_REGION": "eu-test" },
+  "vars": {
+    "STORE_REGION": "eu-test",
+    "BOUNDA_MASTER_KEY": "5hmVukCECFtCyFw3rgVhT/y8hR2OrZBY5JonQlvHN1U="
+  },
   "durable_objects": {
     "bindings": [
       { "name": "STORE", "class_name": "Store" },
@@ -12,6 +15,7 @@
       { "name": "SLICED_STORE", "class_name": "SlicedStore" },
       { "name": "REGION_STORE", "class_name": "RegionStore" },
       { "name": "RETAINED_STORE", "class_name": "RetainedStore" },
+      { "name": "WRAPPED_STORE", "class_name": "WrappedStore" },
       { "name": "BARE", "class_name": "Bare" }
     ]
   },
@@ -19,6 +23,7 @@
     { "tag": "v1", "new_sqlite_classes": ["Store", "QuietStore", "SlicedStore", "Bare"] },
     { "tag": "v2", "new_sqlite_classes": ["ProcessStore"] },
     { "tag": "v3", "new_sqlite_classes": ["RegionStore"] },
-    { "tag": "v4", "new_sqlite_classes": ["RetainedStore"] }
+    { "tag": "v4", "new_sqlite_classes": ["RetainedStore"] },
+    { "tag": "v5", "new_sqlite_classes": ["WrappedStore"] }
   ]
 }

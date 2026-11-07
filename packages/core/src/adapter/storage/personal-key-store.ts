@@ -1,10 +1,33 @@
 /**
- * A person's key as the key store keeps it: the key, as opaque text the kernel chooses, and its
- * fingerprint, which names the key without revealing it.
+ * A person's key as the key store keeps it: the key, as opaque text the kernel chooses; its
+ * fingerprint, which names the key without revealing it and stays the same however the key is
+ * wrapped; and the id of the key it is wrapped under, `null` for a key kept unwrapped.
  */
 export interface StoredPersonalKey {
   readonly key: string;
   readonly fingerprint: string;
+  readonly kid: string | null;
+}
+
+/**
+ * A person and the key the store keeps for them.
+ */
+export interface PersonalKeyRow {
+  readonly person: string;
+  readonly key: StoredPersonalKey;
+}
+
+/**
+ * A key wrapped anew: its text and the id of the key it is now wrapped under.
+ */
+export type RewrappedKey = Pick<StoredPersonalKey, "key" | "kid">;
+
+export interface ListWrappedUnderArgs {
+  /**
+   * The ids of the wrapping keys to list the keys of; `null` lists the keys kept unwrapped.
+   */
+  readonly kids: readonly (string | null)[];
+  readonly limit: number;
 }
 
 /**
@@ -60,7 +83,10 @@ export const namesPerson: NamesPersonFunction = (row, person) =>
  * a person without one, as for one forgotten. `add` stores `key` for `person` unless one is in
  * force already and resolves with the one in force, so two writers that find none keep the same
  * key. `remove` forgets the key and reports whether there was one; what was encrypted with it can
- * never be read again.
+ * never be read again. `listWrappedUnder` lists, by person, keys wrapped under one of `kids`, and
+ * `rewrap` replaces the key `from` of a person with the same key wrapped as `to` says, keeping
+ * its fingerprint, only while the person still holds `from`, and reports whether it did: a key
+ * forgotten or replaced meanwhile is never written back.
  *
  * Stores that keep personal data in the clear, as snapshots do, compare a person's fingerprint
  * with the one in force in the same statement as they write, so the store must keep it where
@@ -70,4 +96,6 @@ export interface PersonalKeyStore {
   get(person: string): Promise<StoredPersonalKey | null>;
   add(person: string, key: StoredPersonalKey): Promise<StoredPersonalKey>;
   remove(person: string): Promise<boolean>;
+  listWrappedUnder(args: ListWrappedUnderArgs): Promise<readonly PersonalKeyRow[]>;
+  rewrap(person: string, from: StoredPersonalKey, to: RewrappedKey): Promise<boolean>;
 }

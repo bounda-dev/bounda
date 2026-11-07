@@ -6,6 +6,7 @@ import type {
   RetainedStore,
   SlicedStore,
   Store,
+  WrappedStore,
 } from "./test-worker.ts";
 
 declare global {
@@ -17,8 +18,10 @@ declare global {
       readonly SLICED_STORE: DurableObjectNamespace<InstanceType<typeof SlicedStore>>;
       readonly REGION_STORE: DurableObjectNamespace<InstanceType<typeof RegionStore>>;
       readonly RETAINED_STORE: DurableObjectNamespace<InstanceType<typeof RetainedStore>>;
+      readonly WRAPPED_STORE: DurableObjectNamespace<InstanceType<typeof WrappedStore>>;
       readonly BARE: DurableObjectNamespace<Bare>;
       readonly STORE_REGION: string;
+      readonly BOUNDA_MASTER_KEY: string;
     }
     interface GlobalProps {
       mainModule: typeof import("./test-worker.ts");

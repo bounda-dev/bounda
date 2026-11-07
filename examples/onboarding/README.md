@@ -4,11 +4,13 @@ User registration and activation on Bounda inside a React Router app. One `user`
 process that expires registrations nobody activates within a week, a policy that sends a welcome
 email a minute after registering, a reminder scheduled three days ahead, and two read models
 behind the pages. The user's email and name are personal data: "Delete my data" on their page
-forgets them, which also cancels the reminder. Every form carries an idempotency key, so one sent
+forgets them, which also cancels the reminder; their keys are wrapped under the master key in
+`.env`, so `data/onboarding.db` alone opens nothing of theirs. Every form carries an idempotency key, so one sent
 twice runs once.
 
 ```bash
 pnpm install
+echo "BOUNDA_MASTER_KEY=$(openssl rand -base64 32)" >> .env
 pnpm generate        # .bounda/registry.ts, .bounda/types.ts and every +types
 pnpm test            # the domain on the in-memory adapter
 pnpm dev             # http://localhost:5173 on SQLite (data/onboarding.db)

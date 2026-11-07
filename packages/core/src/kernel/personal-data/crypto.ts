@@ -79,21 +79,39 @@ export const refuseSealed: RefuseSealedFunction = ({ payload, subject, writer })
   );
 };
 
-const toBase64 = (bytes: Uint8Array): string => {
+export interface ToBase64Function {
+  (bytes: Uint8Array): string;
+}
+
+export const toBase64: ToBase64Function = (bytes) => {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary);
 };
 
-const fromBase64 = (text: string): Uint8Array<ArrayBuffer> =>
+export interface FromBase64Function {
+  (text: string): Uint8Array<ArrayBuffer>;
+}
+
+export const fromBase64: FromBase64Function = (text) =>
   Uint8Array.from(atob(text), (character) => character.charCodeAt(0));
+
+export interface FingerprintOfFunction {
+  (raw: Uint8Array<ArrayBuffer>): Promise<string>;
+}
+
+/**
+ * The SHA-256 of a raw key, in base64: what names the key in envelopes and in the key store.
+ */
+export const fingerprintOf: FingerprintOfFunction = async (raw) =>
+  toBase64(new Uint8Array(await crypto.subtle.digest("SHA-256", raw)));
 
 export interface GeneratePersonalKeyFunction {
   (): Promise<StoredPersonalKey>;
 }
 
 /**
- * A fresh key, as the key store keeps it: the raw key and its SHA-256, both in base64.
+ * A fresh key, unwrapped: the raw key and its fingerprint, both in base64.
  */
 export const generatePersonalKey: GeneratePersonalKeyFunction = async () => {
   const key = await crypto.subtle.generateKey({ name: ALGORITHM, length: KEY_BITS }, true, [
@@ -101,8 +119,7 @@ export const generatePersonalKey: GeneratePersonalKeyFunction = async () => {
     "decrypt",
   ]);
   const raw = new Uint8Array(await crypto.subtle.exportKey("raw", key));
-  const digest = await crypto.subtle.digest("SHA-256", raw);
-  return { key: toBase64(raw), fingerprint: toBase64(new Uint8Array(digest)) };
+  return { key: toBase64(raw), fingerprint: await fingerprintOf(raw), kid: null };
 };
 
 export interface ImportPersonalKeyFunction {

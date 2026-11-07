@@ -97,7 +97,7 @@ const runRebuild = async (
       configPath: options.config,
       registryPath: options.registry,
     });
-    const result = await rebuildReadModel({ ...project, name: readModel });
+    const result = await rebuildReadModel({ ...project, env: process.env, name: readModel });
     line(
       stdout,
       `rebuilt read model "${readModel}": ${result.events} events, checkpoint at position ${result.position}`,

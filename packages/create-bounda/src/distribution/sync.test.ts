@@ -66,7 +66,17 @@ describe("generate", () => {
     expect(manifest.scripts.test).toBe("bounda generate && vitest run");
     expect(manifest.devDependencies["@playwright/test"]).toMatch(/^\^\d+\.\d+\.\d+$/);
     expect(manifest.devDependencies.wrangler).toMatch(/^\^/);
-    expect(manifest.cloudflare).toMatchObject({ products: ["Workers", "Durable Objects"] });
+    expect(manifest.cloudflare).toMatchObject({
+      products: ["Workers", "Durable Objects"],
+      bindings: {
+        BOUNDA_MASTER_KEY: { description: expect.stringContaining("openssl rand -base64 32") },
+      },
+    });
+    // The deploy flow asks for the secret `.dev.vars.example` names; the scaffolder's key stays out.
+    expect(await readFile(join(project, ".dev.vars.example"), "utf8")).toMatch(
+      /^BOUNDA_MASTER_KEY=$/m,
+    );
+    await expect(readFile(join(project, ".dev.vars"), "utf8")).rejects.toThrow();
     expect(await readFile(join(project, "README.md"), "utf8")).toContain(
       "deploy.workers.cloudflare.com/?url=https://github.com/bounda-dev/bounda-cloudflare-template",
     );
@@ -96,7 +106,10 @@ describe("generate", () => {
       "@cloudflare/vitest-plugin": "1.1.3",
     });
     expect(manifest.dependencies["@bounda-dev/core"]).toMatch(/^\d+\.\d+\.\d+/);
-    expect(manifest.cloudflare).toMatchObject({ label: "Event Sourcing with Bounda" });
+    expect(manifest.cloudflare).toMatchObject({
+      label: "Event Sourcing with Bounda",
+      bindings: { BOUNDA_MASTER_KEY: { description: expect.any(String) } },
+    });
     expect(await readFile(join(project, "wrangler.jsonc"), "utf8")).toContain(
       '"compatibility_date": "2025-10-08"',
     );

@@ -1,5 +1,6 @@
 import type { AdapterDefinition } from "../adapter/adapter-definition.ts";
 import type { DurationInput } from "../contracts/duration.ts";
+import type { KeyWrapperDefinition } from "../kernel/personal-data/key-wrapper.ts";
 import type { AppPortsConfig } from "../register/index.ts";
 
 /**
@@ -136,6 +137,14 @@ export interface PersonalDataConfig {
    * starts a new clock. No default: without it nobody is forgotten for inactivity.
    */
   readonly retention?: DurationInput;
+  /**
+   * Wraps every person's key before the store keeps it, so a copy of the database holds no key
+   * that opens their data: `masterKey({ from: "BOUNDA_MASTER_KEY" })`, or a wrapper of your own
+   * through `defineKeyWrapper`. Built from the host's environment when the app starts. Without
+   * it the keys are kept as they are, next to the data, and the app warns at start when the
+   * registry marks personal fields.
+   */
+  readonly keyWrapper?: KeyWrapperDefinition;
 }
 
 /**
@@ -305,6 +314,10 @@ export interface ResolvedConfig {
        * `null` when no retention is configured.
        */
       readonly retentionMs: number | null;
+      /**
+       * `null` when no key wrapper is configured.
+       */
+      readonly keyWrapper: KeyWrapperDefinition | null;
     };
     readonly overrides: Readonly<Record<string, ResolvedAggregateRuntime>>;
   };
