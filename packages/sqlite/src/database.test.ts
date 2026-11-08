@@ -39,6 +39,13 @@ describe("createSqliteDatabase on a file", () => {
     expect(statements).toEqual([WAL, WAL, "SELECT 2"]);
   });
 
+  it("takes only the driver's own busy error for a busy file", async () => {
+    const { client, statements } = fakeClient([{ code: "SQLITE_BUSY" } as unknown as Error]);
+    const { db } = createSqliteDatabase(client, { local: true, wal: true });
+    await expect(db.all("SELECT 1", [])).rejects.toEqual({ code: "SQLITE_BUSY" });
+    expect(statements).toEqual([WAL]);
+  });
+
   it("never switches a database that is not a file", async () => {
     const { client, statements } = fakeClient([]);
     const { db } = createSqliteDatabase(client, { local: true, wal: false });

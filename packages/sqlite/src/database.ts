@@ -46,7 +46,7 @@ const createSerialQueue = (): (<T>(task: () => Promise<T>) => Promise<T>) => {
 };
 
 const isBusy = (error: unknown): boolean =>
-  error instanceof Error && "code" in error && error.code === "SQLITE_BUSY";
+  error instanceof Error && Reflect.get(error, "code") === "SQLITE_BUSY";
 
 const QUEUED_METHODS: ReadonlySet<PropertyKey> = new Set(["execute", "batch", "executeMultiple"]);
 

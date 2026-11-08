@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Worker } from "node:worker_threads";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createNodeSqliteAdapter } from "./node-sqlite.ts";
 import { SQLITE_BUSY_TIMEOUT_MS, switchToWal } from "./wal.ts";
 
@@ -37,6 +37,42 @@ describe("switchToWal", () => {
       expect(ms).toBeGreaterThanOrEqual(5);
       expect(ms).toBeLessThan(25);
     }
+  });
+
+  it("spreads its pauses over the whole range, from the shortest to the longest", async () => {
+    const pauses: number[] = [];
+    for (const random of [0, 0.5, 0.999]) {
+      vi.spyOn(Math, "random").mockReturnValue(random);
+      let attempts = 0;
+      await switchToWal({
+        execute: async () => {
+          attempts += 1;
+          if (attempts === 1) throw busy;
+        },
+        isBusy,
+        sleep: async (ms) => {
+          pauses.push(ms);
+        },
+      });
+      vi.restoreAllMocks();
+    }
+    expect(pauses[0]).toBe(5);
+    expect(pauses[1]).toBe(15);
+    expect(pauses[2]).toBeCloseTo(24.98);
+  });
+
+  it("waits for real between tries when given no sleep of its own", async () => {
+    let attempts = 0;
+    const started = Date.now();
+    await switchToWal({
+      execute: async () => {
+        attempts += 1;
+        if (attempts === 1) throw busy;
+      },
+      isBusy,
+    });
+    expect(attempts).toBe(2);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(4);
   });
 
   it("fails at once on any other error", async () => {
