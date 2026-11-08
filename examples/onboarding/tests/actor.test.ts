@@ -61,6 +61,10 @@ describe("the development session", () => {
       sessionForm({ intent: "sign-in", operatorId: "support-1" }, "not a url"),
     );
     expect(unreadable.headers.get("Location")).toBe("/");
+    const doubled = await post(
+      sessionForm({ intent: "sign-in", operatorId: "support-1" }, `${ORIGIN}//elsewhere.example/x`),
+    );
+    expect(doubled.headers.get("Location")).toBe("/");
     // A cookie made by hand, as anyone can: the session still names nobody unless it holds an id.
     expect(await actorOf(`dev-actor=${btoa(JSON.stringify("ada@example.com"))}`)).toBeUndefined();
     expect(await actorOf(`dev-actor=${btoa(JSON.stringify("support-2"))}`)).toBe("support-2");
