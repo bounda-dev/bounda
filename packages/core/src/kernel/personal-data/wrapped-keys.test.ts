@@ -348,6 +348,23 @@ describe("createPersonalKeyWrapping", () => {
     expect(wrapper.unwrapped).toHaveLength(1);
   });
 
+  it("still drops a person's new key when they forget them after their old one went out", async () => {
+    const store = await keyStore();
+    const wrapper = fakeWrapper("kid-1");
+    const keys = wrappingOf(wrapper, { keep: 2 }).over(store);
+    await keys.create("c-1");
+    // Forgotten on another instance, then keyed anew here: the old key is still kept.
+    await store.remove("c-1");
+    const renewed = await keys.create("c-1");
+    const stored = (await store.get("c-1")) ?? (await newStoredKey());
+    // The old key goes out, oldest; the person's new one must stay theirs.
+    await keys.create("c-2");
+    expect(await keys.remove("c-1")).toBe(true);
+    await store.add("c-1", stored);
+    await expectSameKey(renewed, await keys.held("c-1"));
+    expect(wrapper.unwrapped).toEqual(["kid-1"]);
+  });
+
   it("drops only the forgotten person's key", async () => {
     const store = await keyStore();
     const wrapper = fakeWrapper("kid-1");

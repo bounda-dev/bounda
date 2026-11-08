@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createDisposableKey,
   fingerprintOf,
@@ -9,6 +9,10 @@ import {
   unseal,
   withRawKey,
 } from "./crypto.ts";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("personal data crypto", () => {
   it("seals a value under a person and opens it with the same key, whatever its type", async () => {
@@ -62,10 +66,15 @@ describe("personal data crypto", () => {
 
   it("never seals under the fingerprint's nonce: every nonce drawn has its top bit set", async () => {
     const key = await createDisposableKey();
+    const firsts = new Set<number>();
     for (let sealing = 0; sealing < 64; sealing += 1) {
       const { $personal } = await seal({ key, person: "c-1", value: sealing });
-      expect(atob($personal.iv).charCodeAt(0)).toBeGreaterThanOrEqual(0x80);
+      const first = atob($personal.iv).charCodeAt(0);
+      expect(first).toBeGreaterThanOrEqual(0x80);
+      firsts.add(first);
     }
+    // The other seven bits stay random.
+    expect(firsts.size).toBeGreaterThan(1);
   });
 
   it("creates disposable keys that cannot be exported, and wrappable ones that can", async () => {
@@ -94,6 +103,13 @@ describe("personal data crypto", () => {
     const short = Uint8Array.of(1, 2, 3);
     await expect(importRawKey({ raw: short, extractable: false })).rejects.toThrow();
     expect(short).toEqual(new Uint8Array(3));
+  });
+
+  it("zeroes the copy WebCrypto imports from too", async () => {
+    const imported = vi.spyOn(crypto.subtle, "importKey");
+    await importRawKey({ raw: crypto.getRandomValues(new Uint8Array(32)), extractable: false });
+    const [, data] = imported.mock.calls[0] ?? [];
+    expect(data).toEqual(new Uint8Array(32));
   });
 
   it("lends an exportable key's raw bytes for one call and zeroes them once it settles", async () => {

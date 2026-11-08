@@ -335,6 +335,28 @@ describe("createResealKeys", () => {
     return { storage, keys, back, kept };
   };
 
+  it("reads each person's key once a transaction, however many values it seals", async () => {
+    const { storage, kept } = await setup();
+    const reads: string[] = [];
+    const counted = keysOver({
+      ...storage.personalKeys,
+      get: (person: string) => {
+        reads.push(person);
+        return storage.personalKeys.get(person);
+      },
+    });
+    const keys = createResealKeys({ transaction: storage, keys: counted });
+    for (const at of [null, "2026-01-01T00:00:00.000Z"]) {
+      expect(await keys.payload("kept", at)).toMatchObject({
+        key: { fingerprint: kept.fingerprint },
+      });
+    }
+    expect(await keys.errorText("kept", "2026-01-01T00:00:00.000Z")).toMatchObject({
+      discarded: false,
+    });
+    expect(reads).toEqual(["kept"]);
+  });
+
   it("discards a key for what an event held of a person forgotten after it, and creates one otherwise", async () => {
     const { storage, keys, back } = await setup();
     expect(await keys.event("gone", 3)).toMatchObject({ discarded: true });
