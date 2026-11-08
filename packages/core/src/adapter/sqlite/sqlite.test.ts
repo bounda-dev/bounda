@@ -30,6 +30,9 @@ import { createSqliteEventStore } from "./event-store.ts";
 import { createSqliteAdapter } from "./index.ts";
 import { storageTablesFor } from "./schema.ts";
 
+const { events: table, personalKeys, persons } = storageTablesFor("bounda_");
+const eventTables = { table, personalKeys, persons };
+
 const bind = (params: readonly unknown[]): SQLInputValue[] =>
   params.map((value) => (typeof value === "boolean" ? Number(value) : value)) as SQLInputValue[];
 
@@ -100,7 +103,7 @@ const tableNames = (db: DatabaseSync, prefix: string): unknown[] =>
     .map((row) => row.name);
 
 describe("the SQLite stores on node:sqlite", () => {
-  eventStoreContract({ create: async () => (await storage()).eventStore });
+  eventStoreContract({ create: storage });
   checkpointStoreContract({ create: async () => (await storage()).checkpointStore });
   inboxLedgerContract({ create: async () => (await storage()).inboxLedger });
   deadLetterStoreContract({ create: async () => (await storage()).deadLetterStore });
@@ -163,7 +166,7 @@ describe("the SQLite event store", () => {
       },
       write: () => Promise.reject(new Error("not written here")),
     };
-    const store = createSqliteEventStore({ db: racing, table: storageTablesFor("bounda_").events });
+    const store = createSqliteEventStore({ db: racing, ...eventTables });
     const loaded = await store.load({ ...stream, fromVersion: 2 });
     expect(loaded.events.map((event) => event.version)).toEqual([2]);
     expect(loaded.version).toBe(2);
@@ -188,10 +191,7 @@ describe("the SQLite event store", () => {
       },
       write: () => Promise.reject(new Error("not written here")),
     };
-    const store = createSqliteEventStore({
-      db: counting,
-      table: storageTablesFor("bounda_").events,
-    });
+    const store = createSqliteEventStore({ db: counting, ...eventTables });
     expect(await store.load(stream)).toMatchObject({ version: 2 });
     expect(statements).toBe(1);
     expect(await store.load({ ...stream, fromVersion: 1 })).toMatchObject({ version: 2 });

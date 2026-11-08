@@ -6,6 +6,7 @@ import type { Logger } from "../../contracts/logger.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
 import { createReactionCommands } from "../command/reaction-commands.ts";
+import { openedUnder } from "../personal-data/event-store.ts";
 import { actedBy, causedBy } from "../shared/causation.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { withTimeout } from "../shared/timeout.ts";
@@ -65,6 +66,7 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
   logger,
 }) => ({
   run: async ({ policy, event, attempt, retryId, actor, within }) => {
+    within.read(openedUnder(event));
     const idempotencyKey = deriveIdempotencyKey({
       kind: "policy",
       handler: policy.name,

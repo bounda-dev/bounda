@@ -12,6 +12,11 @@ export interface KeptPersonalKeyStore extends WithEntries<PersonalKeyStore, stri
    * between the two.
    */
   holds(held: KeyedPerson): boolean;
+  /**
+   * The fingerprint of the person's key, `null` when they hold none, answered at once for the
+   * same reason.
+   */
+  fingerprintOf(person: string): string | null;
 }
 
 export interface CreateKeptPersonalKeyStoreFunction {
@@ -25,6 +30,7 @@ export const createKeptPersonalKeyStore: CreateKeptPersonalKeyStoreFunction = ()
       const stored = keys.get(person);
       return fingerprint === null || stored?.fingerprint === fingerprint;
     },
+    fingerprintOf: (person) => keys.get(person)?.fingerprint ?? null,
     store: {
       get: async (person) => keys.get(person) ?? null,
       add: async (person, key) => {

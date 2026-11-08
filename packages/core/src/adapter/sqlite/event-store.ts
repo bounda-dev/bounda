@@ -2,6 +2,7 @@ import { ConcurrencyError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { EventMetadata } from "../../contracts/metadata.ts";
 import type { EventStore } from "../index.ts";
+import { checkSqlAppend } from "../sql/append-checks.ts";
 import type { SqlDatabase } from "../sql/database.ts";
 import { sqliteDialect } from "../sql/dialect.ts";
 import { insertEventsStatements, positionsByVersion } from "../sql/event-rows.ts";
@@ -9,6 +10,11 @@ import { insertEventsStatements, positionsByVersion } from "../sql/event-rows.ts
 export interface CreateSqliteEventStoreArgs {
   readonly db: SqlDatabase;
   readonly table: string;
+  /**
+   * The key and person tables an append checks the persons it names against.
+   */
+  readonly personalKeys: string;
+  readonly persons: string;
 }
 
 export interface CreateSqliteEventStoreFunction {
@@ -31,7 +37,12 @@ const toStoredEvent = (row: Record<string, unknown>): StoredEvent => ({
   person: row.person === null ? null : String(row.person),
 });
 
-export const createSqliteEventStore: CreateSqliteEventStoreFunction = ({ db, table }) => {
+export const createSqliteEventStore: CreateSqliteEventStoreFunction = ({
+  db,
+  table,
+  personalKeys,
+  persons,
+}) => {
   const currentVersion = async (
     executor: Pick<SqlDatabase, "all">,
     aggregateType: string,
@@ -45,8 +56,10 @@ export const createSqliteEventStore: CreateSqliteEventStoreFunction = ({ db, tab
   };
 
   return {
-    append: ({ aggregateType, aggregateId, expectedVersion, events }) =>
+    // The single writer orders a `forget` or `restrict` before the check or after the write.
+    append: (args) =>
       db.write(async (tx) => {
+        const { aggregateType, aggregateId, expectedVersion, events } = args;
         const actualVersion = await currentVersion(tx, aggregateType, aggregateId);
         if (actualVersion !== expectedVersion) {
           throw new ConcurrencyError({
@@ -55,6 +68,12 @@ export const createSqliteEventStore: CreateSqliteEventStoreFunction = ({ db, tab
             actualVersion,
           });
         }
+        await checkSqlAppend({
+          tx,
+          dialect: sqliteDialect,
+          tables: { personalKeys, persons },
+          args,
+        });
         const rows: Record<string, unknown>[] = [];
         for (const { sql, params } of insertEventsStatements({
           dialect: sqliteDialect,

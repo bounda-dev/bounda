@@ -142,6 +142,7 @@ export const createDeadLetterRetry: CreateDeadLetterRetryFunction = ({
     }
     const context = { ...startedBy(ids.next(), actor), causationId: letter.id };
     await settled(letter, async (unit) => {
+      unit.read(letter.persons ?? []);
       await pipeline.dispatchUnattended({
         type: letter.eventType,
         payload,

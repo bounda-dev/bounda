@@ -1,4 +1,8 @@
-import type { PersonalKeyStore, SealedValue } from "../../adapter/storage/personal-key-store.ts";
+import type {
+  KeyedPerson,
+  PersonalKeyStore,
+  SealedValue,
+} from "../../adapter/storage/personal-key-store.ts";
 import { type ErrorIdentity, errorDetails, errorIdentity } from "../shared/retry.ts";
 import type { KeyOfFunction } from "./commands.ts";
 import {
@@ -8,6 +12,7 @@ import {
   seal,
   unseal,
 } from "./crypto.ts";
+import { readUnder } from "./reads.ts";
 
 export interface SealErrorArgs {
   readonly error: unknown;
@@ -16,6 +21,11 @@ export interface SealErrorArgs {
    */
   readonly person: string | null;
   readonly keys: PersonalKeyStore;
+  /**
+   * What the failed work read of anyone besides what its unit of work noted on `error`, as the
+   * event it ran on.
+   */
+  readonly read?: readonly KeyedPerson[];
 }
 
 /**
@@ -31,17 +41,29 @@ export interface SealErrorFunction {
   (args: SealErrorArgs): Promise<SealedError>;
 }
 
-// The work read the person's data, so they held a key then: none now means they were forgotten
-// since. A key no store keeps seals the text unreadable, as the forget would have.
-const keyToSealWith = async (keys: PersonalKeyStore, person: string): Promise<PersonalKey> =>
-  importPersonalKey((await keys.get(person)) ?? (await generatePersonalKey()));
+// The person holds no key, or not every key the work read their data under: they were forgotten
+// since, and maybe keyed anew. A key no store keeps seals the text unreadable, as the forget would
+// have, where the new key would open what the work read before it.
+const keyToSealWith = async (
+  keys: PersonalKeyStore,
+  person: string,
+  readUnder: readonly string[],
+): Promise<PersonalKey> => {
+  const held = await keys.get(person);
+  return importPersonalKey(
+    held !== null && readUnder.every((fingerprint) => fingerprint === held.fingerprint)
+      ? held
+      : await generatePersonalKey(),
+  );
+};
 
 /**
- * Seals the message and the stack with the key the person holds, never creating one: a handler's
- * error may quote what it read of the person, so no store keeps its text in the clear once the
- * work names someone, and a forget that came meanwhile still reaches it.
+ * Seals the message and the stack with the key the person holds, never creating one, and only
+ * when the work read nothing of theirs under another: a handler's error may quote what it read of
+ * the person, so no store keeps its text in the clear once the work names someone, and a forget
+ * that came meanwhile still reaches it.
  */
-export const sealError: SealErrorFunction = async ({ error, person, keys }) => {
+export const sealError: SealErrorFunction = async ({ error, person, keys, read = [] }) => {
   const details = errorDetails(error);
   const identity = errorIdentity(error);
   if (person === null) {
@@ -51,7 +73,7 @@ export const sealError: SealErrorFunction = async ({ error, person, keys }) => {
       ...(details.stack === undefined ? {} : { errorStack: details.stack }),
     };
   }
-  const key = await keyToSealWith(keys, person);
+  const key = await keyToSealWith(keys, person, readUnder({ person, error, also: read }));
   return {
     ...identity,
     errorMessage: await seal({ key, person, value: details.message }),

@@ -40,9 +40,9 @@ dead letter with `errorType: "retriable_exhausted"`.
   the actor given to [`as`](/concepts/ids-causation-and-correlation/#who-acts) did not validate. `issues` lists each problem with its `path`.
 - **`CONCURRENCY_CONFLICT`** (`ConcurrencyError`; retried). An append found the stream at another
   version, or, with both versions equal, a person whose [personal data](/guides/personal-data/)
-  the command loaded was forgotten before it appended, whether or not they hold a new key by
-  then; after `runtime.commands.concurrencyRetries` runs of the command. `streamId`,
-  `expectedVersion`, `actualVersion`.
+  the command loaded, or whose fields its events seal, was forgotten before the append committed,
+  whether or not they hold a new key by then; after `runtime.commands.concurrencyRetries` runs of
+  the command. `streamId`, `expectedVersion`, `actualVersion`.
 - **`HANDLER_TIMEOUT`** (no exported class; retried). A command, policy or process handler ran out
   of time (`runtime.commands.timeout`, `runtime.policies.timeout`,
   `runtime.processes.handlerTimeout`).
@@ -62,8 +62,9 @@ dead letter with `errorType: "retriable_exhausted"`.
   See [idempotent commands](/guides/idempotent-commands/).
 - **`PROCESSING_RESTRICTED`** (`ProcessingRestrictedError`; terminal). A command touches a person
   whose [processing is restricted](/guides/personal-data/#restricting-processing): the one its
-  payload names with `person`, or whose aggregate is the person. Nothing runs and nothing is
-  recorded. `personId`. A reaction's letter with this code is retried by the runtime once
+  payload names with `person`, or whose aggregate is the person, refused before it runs; or one
+  restricted while it ran, or whose fields its events seal, refused as its events are appended.
+  Nothing is stored and nothing is recorded. `personId`. A reaction's letter with this code is retried by the runtime once
   `unrestrict` lifts the restriction.
 - **`CREATION_ORDER`** (`CreationOrderError`; terminal). A command returned events that do not fit
   whether its aggregate exists: the first event is not one that exports `begin`, or an event that

@@ -5,13 +5,17 @@ import {
   type DeferredWriteTarget,
   deferWrites,
 } from "../adapter/deferred-writes.ts";
-import { createStagedEventStore } from "../adapter/staged-event-store.ts";
+import { createStagedEventStore, type StagedBatch } from "../adapter/staged-event-store.ts";
 import type { CheckpointStore } from "../adapter/storage/checkpoint-store.ts";
 import type { DeadLetterStore } from "../adapter/storage/dead-letter-store.ts";
 import type { IdempotencyStore } from "../adapter/storage/idempotency-store.ts";
 import type { ClaimKey, InboxLedger } from "../adapter/storage/inbox-ledger.ts";
 import type { PersonStore } from "../adapter/storage/person-store.ts";
-import { namesPerson, type PersonalKeyStore } from "../adapter/storage/personal-key-store.ts";
+import {
+  keyedPersonId,
+  namesPerson,
+  type PersonalKeyStore,
+} from "../adapter/storage/personal-key-store.ts";
 import type { Scheduler } from "../adapter/storage/scheduler.ts";
 import type { SnapshotStore } from "../adapter/storage/snapshot-store.ts";
 import type { StoreEntries } from "./entries.ts";
@@ -68,22 +72,42 @@ const trackedBy =
     return written;
   };
 
+// The events check at commit what a store checks as they are appended. A key the transaction itself
+// removed, or a person it restricted, came after its appends, as a forget staged to run at commit
+// does, or was seen by the kernel before them, so it is left out of the check; a key it gave
+// afterwards is still checked.
+const ownChangesLeftOut = (
+  batches: readonly StagedBatch[],
+  removed: ReadonlySet<string>,
+  restricted: ReadonlySet<string>,
+): readonly StagedBatch[] =>
+  batches.map((batch) => ({
+    ...batch,
+    persons: batch.persons.filter((held) => !removed.has(keyedPersonId(held))),
+    touches: batch.touches.filter((person) => !restricted.has(person)),
+  }));
+
 const undoAll = (undos: Undos): void => {
   for (const undo of undos.splice(0).reverse()) undo();
 };
 
 // The keys are written at once, since `add` answers with the key in force, and put back when the
-// transaction fails.
+// transaction fails. Each key it removes goes in `removed`, as `keyedPersonId` names it.
 const trackedPersonalKeys = (
   personalKeys: PersonalKeyStore,
   entries: StoreEntries<string>,
   undos: Undos,
+  removed: Set<string>,
 ): PersonalKeyStore => {
   const tracked = trackedBy(undos);
   return {
     get: (person) => personalKeys.get(person),
     add: (person, key) => tracked(entries, person, () => personalKeys.add(person, key)),
-    remove: (person) => tracked(entries, person, () => personalKeys.remove(person)),
+    remove: async (person) => {
+      const held = await personalKeys.get(person);
+      if (held !== null) removed.add(keyedPersonId({ person, fingerprint: held.fingerprint }));
+      return tracked(entries, person, () => personalKeys.remove(person));
+    },
     listWrappedUnder: (args) => personalKeys.listWrappedUnder(args),
     rewrap: (person, from, to) =>
       tracked(entries, person, () => personalKeys.rewrap(person, from, to)),
@@ -91,16 +115,20 @@ const trackedPersonalKeys = (
 };
 
 // Written at once, as the keys are, since each write answers whether it changed the row, and put
-// back when the transaction fails.
+// back when the transaction fails. Whom it restricts goes in `restricted`.
 const trackedPersons = (
   persons: PersonStore,
   entries: StoreEntries<string>,
   undos: Undos,
+  restricted: Set<string>,
 ): PersonStore => {
   const tracked = trackedBy(undos);
   return {
     get: (person) => persons.get(person),
-    restrict: (person, since) => tracked(entries, person, () => persons.restrict(person, since)),
+    restrict: (person, since) => {
+      restricted.add(person);
+      return tracked(entries, person, () => persons.restrict(person, since));
+    },
     unrestrict: (person) => tracked(entries, person, () => persons.unrestrict(person)),
     record: (activity) => tracked(entries, activity.person, () => persons.record(activity)),
     listIdle: (args) => persons.listIdle(args),
@@ -226,13 +254,15 @@ export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunct
     const deferred = deferWrites(live);
     const { stores, flush } = deferred;
     const atOnce: Undos = [];
+    const removed = new Set<string>();
+    const restricted = new Set<string>();
     try {
       const result = await work({
         eventStore: staged,
         ...stores,
         ...trackedForgets(deferred, live, atOnce),
-        personalKeys: trackedPersonalKeys(personalKeys, live.entries.personalKeys, atOnce),
-        persons: trackedPersons(persons, live.entries.persons, atOnce),
+        personalKeys: trackedPersonalKeys(personalKeys, live.entries.personalKeys, atOnce, removed),
+        persons: trackedPersons(persons, live.entries.persons, atOnce, restricted),
         snapshotStore,
       });
       // A transaction committed from inside this commit, as from a store write, waits forever.
@@ -240,7 +270,7 @@ export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunct
       const log = createUndoLog(live);
       try {
         await flush(log.target);
-        await eventStore.appendAll(staged.batches());
+        await eventStore.appendAll(ownChangesLeftOut(staged.batches(), removed, restricted));
       } catch (error) {
         log.undo();
         throw error;

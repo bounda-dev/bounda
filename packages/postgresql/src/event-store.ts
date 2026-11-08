@@ -1,6 +1,7 @@
 import { ConcurrencyError, type EventMetadata, type StoredEvent } from "@bounda-dev/core";
 import type { EventStore } from "@bounda-dev/core/adapter";
 import {
+  checkSqlAppend,
   insertEventsStatements,
   positionsByVersion,
   postgresqlDialect,
@@ -19,6 +20,11 @@ export interface CreatePostgresqlEventStoreArgs {
    * listeners hear about the events only once they are committed.
    */
   readonly channel: string;
+  /**
+   * The key and person tables an append checks the persons it names against.
+   */
+  readonly personalKeys: string;
+  readonly persons: string;
 }
 
 export interface CreatePostgresqlEventStoreFunction {
@@ -51,6 +57,8 @@ export const createPostgresqlEventStore: CreatePostgresqlEventStoreFunction = ({
   table,
   lockKey,
   channel,
+  personalKeys,
+  persons,
 }) => {
   const currentVersion = async (
     executor: Pick<PostgresqlDatabase, "all">,
@@ -65,8 +73,9 @@ export const createPostgresqlEventStore: CreatePostgresqlEventStoreFunction = ({
   };
 
   return {
-    append: ({ aggregateType, aggregateId, expectedVersion, events }) =>
+    append: (args) =>
       db.write(async (tx) => {
+        const { aggregateType, aggregateId, expectedVersion, events } = args;
         await tx.run("SELECT pg_advisory_xact_lock(hashtext($1))", [lockKey]);
         const actualVersion = await currentVersion(tx, aggregateType, aggregateId);
         if (actualVersion !== expectedVersion) {
@@ -76,6 +85,15 @@ export const createPostgresqlEventStore: CreatePostgresqlEventStoreFunction = ({
             actualVersion,
           });
         }
+        // `forget` and `restrict` take the append lock first, so they commit before the check or
+        // after the write; the share lock also holds off a writer of those rows that does not.
+        await checkSqlAppend({
+          tx,
+          dialect: postgresqlDialect,
+          tables: { personalKeys, persons },
+          args,
+          lock: "FOR SHARE",
+        });
         const rows: Record<string, unknown>[] = [];
         for (const { sql, params } of insertEventsStatements({
           dialect: postgresqlDialect,

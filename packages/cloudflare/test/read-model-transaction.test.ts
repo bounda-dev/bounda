@@ -1,7 +1,8 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { fieldBuilder as f, silentLogger } from "@bounda-dev/core";
-import { contractFields } from "@bounda-dev/core/adapter/testing";
+import type { AppendArgs, Storage, StorageTransaction } from "@bounda-dev/core/adapter";
+import { contractFields, pendingEvent } from "@bounda-dev/core/adapter/testing";
 import { describe, expect, it } from "vitest";
 import { durableObjectAdapter } from "../src/adapter.ts";
 
@@ -223,5 +224,63 @@ describe("read model transactions in a Durable Object", () => {
       await timer;
       expect({ fired, rows: await model.table.count() }).toEqual({ fired: ["timer"], rows: 200 });
     });
+  });
+});
+
+describe("appends in a Durable Object", () => {
+  const key = { key: "k-one", fingerprint: "f-one", kid: null };
+  const appendNaming = (
+    storage: Storage,
+    names: Pick<AppendArgs, "persons" | "touches">,
+  ): Promise<unknown> =>
+    storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "1",
+      expectedVersion: 0,
+      events: [pendingEvent({ aggregateId: "1", version: 1 })],
+      ...names,
+    });
+
+  // A transaction held open while another call appends: the event store contract's cases that
+  // wait on one another, inside the object.
+  const heldUp = async (
+    write: (tx: StorageTransaction) => Promise<unknown>,
+    names: Pick<AppendArgs, "persons" | "touches">,
+  ): Promise<{ readonly refusal: unknown; readonly position: number }> =>
+    runInDurableObject(fresh(), async (_instance, state) => {
+      const storage = await durableObjectAdapter({
+        storage: state.storage,
+        options: {},
+      }).createStorage();
+      await storage.personalKeys.add("c-1", key);
+      let release = (): void => {};
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const transaction = storage.transact(async (tx) => {
+        await write(tx);
+        await held;
+      });
+      const append = appendNaming(storage, names).catch((error: unknown) => error);
+      for (let turn = 0; turn < 20; turn += 1) await Promise.resolve();
+      release();
+      await transaction;
+      return { refusal: await append, position: await storage.eventStore.lastPosition() };
+    });
+
+  it("refuses an append that a transaction restricting its person held up", async () => {
+    const { refusal, position } = await heldUp((tx) => tx.persons.restrict("c-1", new Date()), {
+      touches: ["c-1"],
+    });
+    expect(refusal).toMatchObject({ code: "PROCESSING_RESTRICTED", personId: "c-1" });
+    expect(position).toBe(0);
+  });
+
+  it("refuses an append that a transaction forgetting its person held up", async () => {
+    const { refusal, position } = await heldUp((tx) => tx.personalKeys.remove("c-1"), {
+      persons: [{ person: "c-1", fingerprint: key.fingerprint }],
+    });
+    expect(refusal).toMatchObject({ code: "CONCURRENCY_CONFLICT", personId: "c-1" });
+    expect(position).toBe(0);
   });
 });

@@ -366,6 +366,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     store: EventStore,
     signals: readonly AbortSignal[],
     onLoad: (loaded: LoadedAggregate) => void,
+    touches: readonly string[],
   ): Promise<StoredDispatch | DomainError> => {
     const attempts = config.runtime.commands.concurrencyRetries + 1;
     const { timeoutMs } = config.forAggregate(aggregate.name).commands;
@@ -433,6 +434,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
           expectedVersion: version,
           events,
           persons,
+          touches,
         });
         return storedDispatch(aggregate, command.aggregateId, appended);
       } catch (error) {
@@ -579,12 +581,16 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     let lastLoad: LoadedAggregate | undefined;
     const onLoad = (loaded: LoadedAggregate): void => {
       lastLoad = loaded;
+      within?.read(loaded.persons);
     };
+    // Refused before it runs, and again by the store as its events are written, so one running
+    // when `restrict` commits stores nothing.
+    const person = personOfCommand({ aggregate, command: runtime, payload: parsed, aggregateId });
+    const touches = person === null ? [] : [person];
+    const run = (store: EventStore): Promise<StoredDispatch | DomainError> =>
+      execute(aggregate, runtime, command, store, signals, onLoad, touches);
     const perform = async (): Promise<DispatchResult | DomainError> => {
-      await refuseRestricted({
-        persons: stores.persons,
-        person: personOfCommand({ aggregate, command: runtime, payload: parsed, aggregateId }),
-      });
+      await refuseRestricted({ persons: stores.persons, person });
       if (options.delay !== undefined) {
         const delay = options.delay;
         // Before any transaction opens, since the key store it may write to is the storage's own.
@@ -603,18 +609,9 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         };
         return within === undefined ? storage.transact(scheduling) : scheduling(within);
       }
-      if (idempotency === undefined) {
-        return execute(aggregate, runtime, command, stores.eventStore, signals, onLoad);
-      }
+      if (idempotency === undefined) return run(stores.eventStore);
       if (within !== undefined) {
-        const answer = await execute(
-          aggregate,
-          runtime,
-          command,
-          within.eventStore,
-          signals,
-          onLoad,
-        );
+        const answer = await run(within.eventStore);
         await within.idempotencyStore.put(
           recordOf(idempotency, outcomeOf(answer), personsOf(answer)),
         );
@@ -635,7 +632,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
           return appended;
         },
       };
-      const answer = await execute(aggregate, runtime, command, recording, signals, onLoad);
+      const answer = await run(recording);
       if (!recorded)
         await storage.idempotencyStore.put(
           recordOf(idempotency, outcomeOf(answer), personsOf(answer)),

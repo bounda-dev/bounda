@@ -90,7 +90,12 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
         const tables = storageTablesFor(tablePrefix);
         await ensureStorageSchema({ db, tables });
         const storesOver = (database: SqlDatabase): StorageTransaction => ({
-          eventStore: createSqliteEventStore({ db: database, table: tables.events }),
+          eventStore: createSqliteEventStore({
+            db: database,
+            table: tables.events,
+            personalKeys: tables.personalKeys,
+            persons: tables.persons,
+          }),
           inboxLedger: createSqliteInboxLedger({ db: database, table: tables.inbox }),
           deadLetterStore: createSqliteDeadLetterStore({ db: database, table: tables.deadLetters }),
           scheduler: createSqliteScheduler({ db: database, table: tables.scheduledCommands }),

@@ -95,7 +95,7 @@ afterAll(async () => {
 });
 
 describe.skipIf(container === null)("postgresql adapter", () => {
-  eventStoreContract({ create: async () => (await openStorage()).eventStore });
+  eventStoreContract({ create: openStorage });
   checkpointStoreContract({ create: async () => (await openStorage()).checkpointStore });
   inboxLedgerContract({ create: async () => (await openStorage()).inboxLedger });
   deadLetterStoreContract({ create: async () => (await openStorage()).deadLetterStore });
@@ -423,6 +423,54 @@ describe.skipIf(container === null)("postgresql adapter", () => {
     expect(await eventStore.lastPosition()).toBe(100);
   });
 
+  it("holds off a writer of the rows an append checked, that takes no append lock, until the append commits", async () => {
+    const storage = await openStorage();
+    await storage.personalKeys.add("c-1", { key: "k", fingerprint: "f", kid: null });
+    await storage.persons.restrict("c-2", new Date());
+    await storage.persons.unrestrict("c-2");
+    const steps: string[] = [];
+    let release = (): void => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let checked = (): void => {};
+    const checking = new Promise<void>((resolve) => {
+      checked = resolve;
+    });
+    const append = storage.transact(async (tx) => {
+      await tx.eventStore.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events: [pendingEvent({ aggregateId: "1", version: 1 })],
+        persons: [{ person: "c-1", fingerprint: "f" }],
+        touches: ["c-2"],
+      });
+      checked();
+      await held;
+      steps.push("append committed");
+    });
+    await checking;
+    const writes = [
+      storage.personalKeys.remove("c-1").then(() => steps.push("key removed")),
+      storage.persons.restrict("c-2", new Date()).then(() => steps.push("restricted")),
+    ];
+    // A writer waits on a row lock the append holds (the pool may queue the other), and nothing
+    // finished meanwhile.
+    const sql = postgres(url, { max: 1, onnotice: () => undefined });
+    closers.push(() => sql.end({ timeout: 5 }));
+    await vi.waitFor(async () => {
+      const [row] =
+        await sql`SELECT count(*)::int AS "waiting" FROM pg_stat_activity WHERE "wait_event_type" = 'Lock' AND "datname" = current_database()`;
+      expect(row?.waiting).toBeGreaterThan(0);
+    });
+    expect(steps).toEqual([]);
+    release();
+    await Promise.all([append, ...writes]);
+    expect(steps[0]).toBe("append committed");
+    expect(steps).toHaveLength(3);
+  });
+
   it("never reports a version past the events a load from a later version returns", async () => {
     const adapter = fresh();
     const storage = await openStorage(adapter);
@@ -456,6 +504,8 @@ describe.skipIf(container === null)("postgresql adapter", () => {
       table: `"${tablePrefix}events"`,
       lockKey: "unused",
       channel: "unused",
+      personalKeys: "unused",
+      persons: "unused",
     });
     const loaded = await store.load({ ...stream, fromVersion: 2 });
     expect(loaded.events.map((event) => event.version)).toEqual([2]);

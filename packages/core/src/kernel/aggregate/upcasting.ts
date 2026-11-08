@@ -1,6 +1,7 @@
 import type { EventStore } from "../../adapter/storage/event-store.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
+import { carryOpening } from "../personal-data/event-store.ts";
 import type { AggregatesRuntime } from "./runtime.ts";
 
 export interface WithUpcastingArgs {
@@ -39,11 +40,11 @@ export const upcastEvent: UpcastEventFunction = ({ event, aggregates }) => {
   for (const upcast of runtime.upcasts.slice(from - 1)) {
     payload = (upcast as (payload: unknown) => unknown)(payload);
   }
-  return {
+  return carryOpening(event, {
     ...event,
     payload,
     metadata: { ...event.metadata, schemaVersion: runtime.schemaVersion },
-  };
+  });
 };
 
 /**

@@ -9,6 +9,7 @@ import type { CausationContext } from "../../contracts/metadata.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
 import { createReactionCommands, type ReactionCommands } from "../command/reaction-commands.ts";
+import { openedUnder } from "../personal-data/event-store.ts";
 import { actedBy, causedBy } from "../shared/causation.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { isRecord, mergeFields } from "../shared/merge-fields.ts";
@@ -166,6 +167,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     actor,
     within,
   }: RunEventHandlerArgs): Promise<object> => {
+    within.read(openedUnder(event));
     const idempotencyKey = deriveIdempotencyKey({
       kind: "process",
       handler: process.name,

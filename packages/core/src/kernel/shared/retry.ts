@@ -68,6 +68,41 @@ export interface ErrorIdentityFunction {
   (error: unknown): ErrorIdentity;
 }
 
+/**
+ * A value thrown that is no error, wrapped where a run of work fails so it can carry what the run
+ * read. `errorIdentity` and `errorDetails` look through it, so it is recorded as the value it
+ * wraps; `thrownValue` hands that value back to a caller of the app.
+ */
+export class ThrownValue extends Error {
+  readonly value: unknown;
+
+  constructor(value: unknown) {
+    super(String(value), { cause: value });
+    this.value = value;
+  }
+}
+
+export interface AsErrorFunction {
+  (thrown: unknown): Error;
+}
+
+/**
+ * What was thrown, as an object that can carry what the run read: an `Error` as it is, any
+ * other value wrapped in a `ThrownValue`.
+ */
+export const asError: AsErrorFunction = (thrown) =>
+  thrown instanceof Error ? thrown : new ThrownValue(thrown);
+
+export interface ThrownValueFunction {
+  (error: unknown): unknown;
+}
+
+/**
+ * What the work threw, unwrapped from a `ThrownValue`.
+ */
+export const thrownValue: ThrownValueFunction = (error) =>
+  error instanceof ThrownValue ? error.value : error;
+
 // A subclass that does not set `name` inherits `Error`'s: its constructor names the class.
 const classOf = (error: Error): string =>
   error.name === "Error" && error.constructor.name !== "" ? error.constructor.name : error.name;
@@ -75,7 +110,8 @@ const classOf = (error: Error): string =>
 /**
  * `typeof` what was thrown when it is no error, since its text is all `errorDetails` can tell.
  */
-export const errorIdentity: ErrorIdentityFunction = (error) => {
+export const errorIdentity: ErrorIdentityFunction = (thrown) => {
+  const error = thrownValue(thrown);
   if (!(error instanceof Error)) return { errorName: typeof error };
   return error instanceof BoundaError
     ? { errorName: classOf(error), errorCode: error.code }
@@ -97,7 +133,9 @@ export interface ErrorDetailsFunction {
   (error: unknown): { readonly message: string; readonly stack?: string };
 }
 
-export const errorDetails: ErrorDetailsFunction = (error) =>
-  error instanceof Error
+export const errorDetails: ErrorDetailsFunction = (thrown) => {
+  const error = thrownValue(thrown);
+  return error instanceof Error
     ? { message: error.message, ...(error.stack === undefined ? {} : { stack: error.stack }) }
     : { message: String(error) };
+};
