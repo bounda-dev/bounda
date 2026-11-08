@@ -5,6 +5,7 @@ export declare namespace Projection {
   type Args = core.ProjectionArgs<
     core.StoredEventOf<generated.OrderEvents, "orderPlaced">,
     generated.OrderSummaryRow,
-    unknown
+    unknown,
+    generated.OrderSummaryFieldTypes
   >;
 }
