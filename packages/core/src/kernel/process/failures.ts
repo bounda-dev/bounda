@@ -2,13 +2,14 @@ import type {
   DeadLetterErrorType,
   NewDeadLetter,
 } from "../../adapter/storage/dead-letter-store.ts";
-import type { PersonalKeyStore } from "../../adapter/storage/personal-key-store.ts";
+import type { KeyedPerson, PersonalKeyStore } from "../../adapter/storage/personal-key-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { sealError } from "../personal-data/errors.ts";
+import { openedUnder } from "../personal-data/event-store.ts";
 import { personOfEvent } from "../personal-data/persons.ts";
 import { restrictedPersonOf } from "../personal-data/refusal.ts";
 import { classifyFailure } from "../shared/retry.ts";
@@ -24,6 +25,10 @@ import { type ProcessInstance, processAggregateType } from "./lifecycle.ts";
 export interface FailureSubject
   extends Pick<StoredEvent, "id" | "type" | "aggregateType" | "aggregateId"> {
   readonly person: string | null;
+  /**
+   * What the event was handed out with opened, so the letter is sealed under no other key.
+   */
+  readonly read: readonly KeyedPerson[];
 }
 
 export interface ProcessFailures {
@@ -73,6 +78,7 @@ export const createProcessFailures: CreateProcessFailuresFunction = ({
     aggregateType: event.aggregateType,
     aggregateId: event.aggregateId,
     person: personOfEvent({ aggregates, event }),
+    read: openedUnder(event),
   }),
   letterOf: async (process, subject, error, attempts, errorType) => {
     const person = restrictedPersonOf(error) ?? subject.person;
@@ -87,7 +93,7 @@ export const createProcessFailures: CreateProcessFailuresFunction = ({
       aggregateId: subject.aggregateId,
       person,
       errorType,
-      ...(await sealError({ error, person, keys })),
+      ...(await sealError({ error, person, keys, read: subject.read })),
       attempts,
       firstFailedAt: now,
       lastFailedAt: now,
@@ -117,6 +123,7 @@ export const deadlineSubject: DeadlineSubjectFunction = (process, instanceId, fi
   aggregateType: processAggregateType(process.name),
   aggregateId: instanceId,
   person: null,
+  read: [],
 });
 
 export interface BlockedOnFunction {

@@ -32,15 +32,16 @@ import { createSqliteEventStore } from "./event-store.ts";
 import { createSqliteAdapter } from "./index.ts";
 import { storageTablesFor } from "./schema.ts";
 
-const eventStoreOver = (db: SqlDatabase) => {
-  const tables = storageTablesFor("bounda_");
-  return createSqliteEventStore({
+const { events: table, eventTypes, personalKeys, persons } = storageTablesFor("bounda_");
+const eventTables = { table, personalKeys, persons };
+
+const eventStoreOver = (db: SqlDatabase) =>
+  createSqliteEventStore({
     db,
-    table: tables.events,
-    typesTable: tables.eventTypes,
+    ...eventTables,
+    typesTable: eventTypes,
     known: createKnownEventTypes(),
   });
-};
 
 const bind = (params: readonly unknown[]): SQLInputValue[] =>
   params.map((value) => (typeof value === "boolean" ? Number(value) : value)) as SQLInputValue[];
@@ -112,7 +113,7 @@ const tableNames = (db: DatabaseSync, prefix: string): unknown[] =>
     .map((row) => row.name);
 
 describe("the SQLite stores on node:sqlite", () => {
-  eventStoreContract({ create: async () => (await storage()).eventStore });
+  eventStoreContract({ create: storage });
   checkpointStoreContract({ create: async () => (await storage()).checkpointStore });
   inboxLedgerContract({ create: async () => (await storage()).inboxLedger });
   deadLetterStoreContract({ create: async () => (await storage()).deadLetterStore });

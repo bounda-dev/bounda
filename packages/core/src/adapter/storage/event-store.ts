@@ -16,11 +16,18 @@ export interface AppendArgs {
   readonly expectedVersion: number;
   readonly events: readonly PendingEvent[];
   /**
-   * The people whose personal data the state the events were decided on held, with the key each
-   * was read under. The kernel reads it before the store does, to refuse sealing their fields
-   * under any other key, as after they are forgotten; a store ignores it.
+   * The people whose personal data the events depend on, each with the key it was read or is
+   * sealed under: those the state the events were decided on held, and those whose fields the
+   * events seal. The store appends only while each one named with a fingerprint still holds that
+   * key, and otherwise throws `ForgottenSinceLoadError`, a `ConcurrencyError`; one named with
+   * `null` needs nothing. Checked with `checkAppend`, in the transaction that writes the events.
    */
   readonly persons?: readonly KeyedPerson[];
+  /**
+   * The people the events touch: the store refuses the append with `ProcessingRestrictedError`
+   * while the processing of one of them is restricted, checked the same way.
+   */
+  readonly touches?: readonly string[];
 }
 
 export interface AppendResult {

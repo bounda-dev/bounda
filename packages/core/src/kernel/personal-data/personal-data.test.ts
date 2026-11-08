@@ -635,6 +635,63 @@ describe("personal data in an app", () => {
     await app.stop();
   });
 
+  it.each([
+    ["without", {}],
+    ["with", { idempotencyKey: "remind-1" }],
+  ])(
+    "refuses a command %s an idempotency key that was running when restrict committed, storing none of its events",
+    async (_, options) => {
+      const adapter = memory();
+      const storage = await adapter.createStorage();
+      const { app, clock } = await createTestApp({ registry, adapter });
+      await app.commands.registerCustomer(ana);
+      whileDeciding = () => app.restrict("c-1");
+      const refused = await app.commands
+        .remindCustomer({ customerId: "c-1" }, options)
+        .catch((error: unknown) => error);
+      expect(whileDeciding).toBeNull();
+      expect(refused).toBeInstanceOf(ProcessingRestrictedError);
+      expect(refused).toMatchObject({ personId: "c-1" });
+      expect((await app.events.read()).map((event) => event.type)).toEqual([
+        "CustomerRegistered",
+        "ProcessingRestricted",
+      ]);
+      expect(await storage.idempotencyStore.get({ key: "remind-1", now: clock.now() })).toBeNull();
+      await app.stop();
+    },
+  );
+
+  it("dead-letters a reaction whose command was running when restrict committed, and retries it once lifted", async () => {
+    const { app } = await createTestApp({ registry });
+    whileDeciding = () => app.restrict("c-3");
+    await app.commands.invite({ newsletterId: "n-1", customerId: "c-3", email: "cy@example.com" });
+    expect((await app.runUntilIdle()).idle).toBe(true);
+    expect(whileDeciding).toBeNull();
+    expect(await app.deadLetters.list()).toMatchObject([
+      {
+        kind: "policy",
+        handler: "customer.registerOnInvited",
+        person: "c-3",
+        errorType: "terminal",
+        errorCode: "PROCESSING_RESTRICTED",
+      },
+    ]);
+    expect((await app.events.read()).map((event) => event.type)).toEqual([
+      "Invited",
+      "ProcessingRestricted",
+    ]);
+    await app.unrestrict("c-3");
+    expect((await app.runUntilIdle()).idle).toBe(true);
+    expect((await app.events.read()).map((event) => event.type)).toEqual([
+      "Invited",
+      "ProcessingRestricted",
+      "ProcessingRestrictionLifted",
+      "CustomerRegistered",
+      "CustomerReminded",
+    ]);
+    await app.stop();
+  });
+
   it("dead-letters a scheduled command that comes due under a restriction, naming the person the refusal names", async () => {
     const { app, clock } = await createTestApp({ registry });
     await app.commands.registerCustomer(ana);

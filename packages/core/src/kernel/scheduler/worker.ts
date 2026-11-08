@@ -19,6 +19,7 @@ import {
 import type { RestrictedRetries } from "../dead-letters/restricted.ts";
 import { openCommandPayload } from "../personal-data/commands.ts";
 import { sealError } from "../personal-data/errors.ts";
+import { openedUnder } from "../personal-data/event-store.ts";
 import { personOfEvent } from "../personal-data/persons.ts";
 import type { ForgetLedgerReconciliation } from "../personal-data/reconciliation.ts";
 import { restrictedPersonOf } from "../personal-data/refusal.ts";
@@ -283,7 +284,14 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     event: StoredEvent | undefined,
   ): Promise<NewDeadLetter> => {
     const person = personOf(entry, event, error);
-    const sealed = await sealError({ error, person, keys: storage.personalKeys });
+    // A scheduled command's payload needs nothing here: a forget cancels the command, so this run
+    // has lost its claim and files no letter.
+    const sealed = await sealError({
+      error,
+      person,
+      keys: storage.personalKeys,
+      read: event === undefined ? [] : openedUnder(event),
+    });
     const now = clock.now().toISOString();
     if (delayedPolicies.isDelayedPolicy(entry)) {
       const payload = delayedPolicies.payloadOf(entry);

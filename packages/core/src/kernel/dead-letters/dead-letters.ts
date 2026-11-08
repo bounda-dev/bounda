@@ -12,6 +12,7 @@ import { type KeyOfFunction, openCommandPayload, sealedKeys } from "../personal-
 import { openTextWith } from "../personal-data/errors.ts";
 import type { ProcessDeadLetters } from "../process/dead-letter-retry.ts";
 import { actedBy } from "../shared/causation.ts";
+import { thrownValue } from "../shared/retry.ts";
 import type { DeadLetterRetry } from "./retry.ts";
 
 /**
@@ -159,7 +160,9 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
     retry: async (id) => {
       const letter = await failedLetter(id);
       await recordLetter("deadLetters.retry", letter);
-      await retries.retry(letter, actor);
+      await retries.retry(letter, actor).catch((error: unknown) => {
+        throw thrownValue(error);
+      });
       logger.info("dead letter retried", {
         id,
         kind: letter.kind,

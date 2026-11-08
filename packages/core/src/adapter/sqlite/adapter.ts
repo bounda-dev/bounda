@@ -97,6 +97,8 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
             table: tables.events,
             typesTable: tables.eventTypes,
             known: types,
+            personalKeys: tables.personalKeys,
+            persons: tables.persons,
           }),
           inboxLedger: createSqliteInboxLedger({ db: database, table: tables.inbox }),
           deadLetterStore: createSqliteDeadLetterStore({ db: database, table: tables.deadLetters }),

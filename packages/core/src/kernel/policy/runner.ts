@@ -7,6 +7,7 @@ import type { Logger } from "../../contracts/logger.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { Subscriber } from "../dispatch/dispatcher.ts";
 import { sealError } from "../personal-data/errors.ts";
+import { openedUnder } from "../personal-data/event-store.ts";
 import { personOfEvent } from "../personal-data/persons.ts";
 import { restrictedPersonOf } from "../personal-data/refusal.ts";
 import { deriveDeadLetterId } from "../shared/idempotency-key.ts";
@@ -71,7 +72,7 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
       aggregateId: event.aggregateId,
       person,
       errorType,
-      ...(await sealError({ error, person, keys: storage.personalKeys })),
+      ...(await sealError({ error, person, keys: storage.personalKeys, read: openedUnder(event) })),
       attempts,
       firstFailedAt: now,
       lastFailedAt: now,

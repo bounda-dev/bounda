@@ -1,7 +1,12 @@
+import { ForgottenSinceLoadError } from "../../adapter/storage/append-checks.ts";
 import type { AppendArgs, EventStore, PendingEvent } from "../../adapter/storage/event-store.ts";
-import type { PersonalKeyStore } from "../../adapter/storage/personal-key-store.ts";
-import { ConcurrencyError, ValidationError } from "../../contracts/errors.ts";
-import { type StoredEvent, streamId } from "../../contracts/event.ts";
+import {
+  type KeyedPerson,
+  keyedPersonId,
+  type PersonalKeyStore,
+} from "../../adapter/storage/personal-key-store.ts";
+import { ValidationError } from "../../contracts/errors.ts";
+import type { StoredEvent } from "../../contracts/event.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { isRecord } from "../shared/merge-fields.ts";
 import {
@@ -38,16 +43,31 @@ const personOf = (event: PendingEvent, payload: Record<string, unknown>, field: 
   return String(value);
 };
 
-// A conflict like a moved stream: the events were decided on a state that held the person's data,
-// and the person was forgotten since, so the command is decided again on the state without it.
-// Forgotten even when they hold a key again: one given to them after `forget` is another key.
-class ForgottenSinceLoadError extends ConcurrencyError {
-  constructor(args: AppendArgs, person: string) {
-    const { expectedVersion } = args;
-    super({ streamId: streamId(args), expectedVersion, actualVersion: expectedVersion });
-    this.message = `Person ${person} was forgotten since ${streamId(args)} was loaded at version ${expectedVersion}`;
-  }
+// The keys each event handed out was opened under, by the event: a failure of the work that read
+// it is sealed under none other.
+const openings = new WeakMap<StoredEvent, readonly KeyedPerson[]>();
+
+export interface OpenedUnderFunction {
+  (event: StoredEvent): readonly KeyedPerson[];
 }
+
+/**
+ * The persons whose sealed fields `event` was handed out with opened, each with the key that
+ * opened them; none for an event this store did not hand out, or opened nothing of.
+ */
+export const openedUnder: OpenedUnderFunction = (event) => openings.get(event) ?? [];
+
+export interface CarryOpeningFunction {
+  (from: StoredEvent, to: StoredEvent): StoredEvent;
+}
+
+/**
+ * `to`, a copy of `from` made after it was handed out, as an upcast makes, opened as `from` was.
+ */
+export const carryOpening: CarryOpeningFunction = (from, to) => {
+  openings.set(to, openedUnder(from));
+  return to;
+};
 
 /**
  * The keys one call needs, each fetched once: a load reads many events of one person, and an
@@ -88,10 +108,11 @@ export const withPersonalData: WithPersonalDataFunction = ({ eventStore, aggrega
   };
 
   // The event names its person even when every marked field is absent: their export finds it by
-  // `person`.
+  // `person`, and the append is refused while they are restricted.
   const sealed = async (
     event: PendingEvent,
     key: (person: string) => Promise<PersonalKey>,
+    touched: Set<string>,
   ): Promise<PendingEvent> => {
     if (!isRecord(event.payload)) return event;
     refuseSealed({
@@ -103,6 +124,7 @@ export const withPersonalData: WithPersonalDataFunction = ({ eventStore, aggrega
     if (marks === null) return event;
     const person =
       marks.person === null ? event.aggregateId : personOf(event, event.payload, marks.person);
+    touched.add(person);
     const payload: Record<string, unknown> = { ...event.payload };
     for (const field of marks.fields) {
       const value = payload[field];
@@ -119,15 +141,21 @@ export const withPersonalData: WithPersonalDataFunction = ({ eventStore, aggrega
     opened: Map<string, string>,
   ): Promise<StoredEvent> => {
     const unsealed: Record<string, unknown> = { ...payload };
+    const read = new Map<string, KeyedPerson>();
     for (const field in payload) {
       const value = payload[field];
       if (!isSealed(value)) continue;
       const { person, key: sealedUnder } = (value as SealedValue).$personal;
       const personal = await key(person);
       unsealed[field] = await unseal({ key: personal, sealed: value as SealedValue });
-      if (personal?.fingerprint === sealedUnder) opened.set(person, sealedUnder);
+      if (personal?.fingerprint === sealedUnder) {
+        opened.set(person, sealedUnder);
+        read.set(person, { person, fingerprint: sealedUnder });
+      }
     }
-    return { ...event, payload: unsealed };
+    const result = { ...event, payload: unsealed };
+    openings.set(result, [...read.values()]);
+    return result;
   };
 
   // Most events hold nothing sealed, and a batch is read once per subscriber per pass: such an
@@ -156,12 +184,27 @@ export const withPersonalData: WithPersonalDataFunction = ({ eventStore, aggrega
   };
 
   return {
-    // The result carries the events as given, since the store holds them sealed.
+    // The store checks, as it writes, that each person still holds the key their data was read or
+    // is sealed under and is not restricted: either may have changed since this read the key. The
+    // result carries the events as given, since the store holds them sealed.
     append: async (args) => {
       const cache = keyCache<PersonalKey>();
-      const key = (person: string) => cache(person, () => keyInForce(args, person));
-      const events = await Promise.all(args.events.map((event) => sealed(event, key)));
-      const appended = await eventStore.append({ ...args, events });
+      const persons = new Map<string, KeyedPerson>();
+      for (const held of args.persons ?? []) persons.set(keyedPersonId(held), held);
+      const touched = new Set(args.touches);
+      const key = async (person: string): Promise<PersonalKey> => {
+        const personal = await cache(person, () => keyInForce(args, person));
+        const held = { person, fingerprint: personal.fingerprint };
+        persons.set(keyedPersonId(held), held);
+        return personal;
+      };
+      const events = await Promise.all(args.events.map((event) => sealed(event, key, touched)));
+      const appended = await eventStore.append({
+        ...args,
+        events,
+        persons: [...persons.values()],
+        touches: [...touched],
+      });
       return {
         ...appended,
         events: appended.events.map((event, index) => ({

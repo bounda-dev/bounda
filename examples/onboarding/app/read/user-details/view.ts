@@ -6,7 +6,9 @@ export const fields = ({ f }: View.FieldsArgs) => ({
   name: f.string().personal(),
   status: f.string(),
   registeredAt: f.date(),
+  registeredBy: f.string().optional(),
   welcomeEmailSentAt: f.date().optional(),
   activatedAt: f.date().optional(),
+  activatedBy: f.string().optional(),
   expiredAt: f.date().optional(),
 });

@@ -76,8 +76,9 @@ fields were forgotten before the handler read them, and a scheduled command's wh
 no marked field. `app.deadLetters` and `bounda dead-letters list` open them for you, and every
 `list`, `get`, `retry` and `discard` is recorded in the
 [access log](/guides/personal-data/#who-opened-what), naming the persons its letters name. Once the
-person is forgotten, even while the handler was failing, the letter stays, with its name and code,
-and the message and the stack read as `null`: the process can still be retried, and the stream
+person is forgotten, even while the handler was failing, and even when they are given a new key
+before it gives up, the letter stays, with its name and code, and the message and the stack read
+as `null`: the process can still be retried, and the stream
 still says it failed. `ProcessFailed` and `ScheduledCommandFailed` name the error
 the same way, `errorName` and `errorCode`, and never carry its text.
 

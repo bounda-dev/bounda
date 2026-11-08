@@ -44,4 +44,25 @@ describe("createConsoleLogger", () => {
     createConsoleLogger({ level: "warn" }).info("also skipped");
     expect(info).not.toHaveBeenCalled();
   });
+
+  it("writes every level to the stream it is given, and nothing to the console", () => {
+    const spies = (["debug", "info", "warn", "error"] as const).map((level) =>
+      vi.spyOn(console, level).mockImplementation(() => {}),
+    );
+    const written: string[] = [];
+    const logger = createConsoleLogger({
+      level: "info",
+      stream: { write: (text) => written.push(text) },
+    });
+    logger.debug("noise");
+    logger.info("listed", { letters: 2 });
+    logger.warn("careful");
+    logger.error("failed");
+    expect(written).toEqual([
+      '[bounda] info listed {"letters":2}\n',
+      "[bounda] warn careful\n",
+      "[bounda] error failed\n",
+    ]);
+    for (const spy of spies) expect(spy).not.toHaveBeenCalled();
+  });
 });

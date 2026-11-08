@@ -5,11 +5,13 @@ import type { Projection } from "./+types/user-registered";
 export const project = async ({ event, table }: Projection.Args) => {
   const { email, name } = event.payload;
   if (email === null || name === null) return;
+  const { actor } = event.metadata;
   await table.upsert({
     userId: event.aggregateId,
     email,
     name,
     status: "registered",
     registeredAt: new Date(event.timestamp),
+    ...(actor === undefined ? {} : { registeredBy: actor }),
   });
 };

@@ -83,7 +83,8 @@ lifted the restriction. What the runtime does on its own, such as forgetting a p
 So the event store is an audit trail of who changed what, with no table beside it to keep in step:
 a read model can project it, a policy can react to it, and a query on the stream finds every
 change one user made. The [React Router guide](/guides/react-router/#who-makes-a-request) and the
-[Cloudflare adapter](/adapters/cloudflare/#who-makes-a-request) bind it from the request.
+[Cloudflare adapter](/adapters/cloudflare/#who-makes-a-request) bind it from the request, and the
+CLI from [`--actor`](/reference/cli/#who-runs-a-command).
 
 **The actor is an id, never a name or an email.** It is stored in the clear in events that are
 never deleted, and [forgetting a person](/guides/personal-data/) cannot reach it, as it cannot

@@ -155,6 +155,37 @@ export const project = async ({ event, table }: Projection.Args) => {
 The reminder carries the address in its payload, marked too, so it waits encrypted until it comes
 due, and `forget` cancels it: `PersonalDataForgotten` lists it in `cancelledCommands`.
 
+**Who acts.** The header has a development sign-in: an id you type, such as `support-1`, kept in a
+cookie by `app/dev-session.server.ts`, which checks nothing and stands where a real session goes.
+`app/actor.ts` reads it ([who makes a request](/guides/react-router/#who-makes-a-request)):
+
+```ts
+// app/actor.ts
+import type { ActorFunction } from "@bounda-dev/react-router";
+import { devActorOf } from "./dev-session.server.ts";
+
+export const actor: ActorFunction = ({ request }) => devActorOf(request);
+```
+
+Every command a page dispatches then carries the id, and so do its events and those of the
+welcome email and the reminder that follow. The `user-details` projections keep it from
+`event.metadata.actor`, so the user's page shows who registered and who activated them:
+
+```ts
+// app/read/user-details/projections/user/user-activated.ts
+export const project = async ({ event, table }: Projection.Args) => {
+  const { actor } = event.metadata;
+  await table.update(
+    { userId: event.aggregateId },
+    {
+      status: "active",
+      activatedAt: new Date(event.timestamp),
+      ...(actor === undefined ? {} : { activatedBy: actor }),
+    },
+  );
+};
+```
+
 **Domain errors as form feedback.** Every action returns `failure(error)` from its `catch`, which
 turns `ValidationError` into a 400 with the issues and a command's rejection, a `DomainError`, into
 a 409 with its code; the route components render `actionData.error`.

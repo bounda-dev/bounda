@@ -32,9 +32,7 @@ afterAll(async () => {
 });
 
 describe.skipIf(server === null)("sqlite adapter on a libSQL server", () => {
-  eventStoreContract({
-    create: async () => (await fresh().createStorage()).eventStore,
-  });
+  eventStoreContract({ create: () => fresh().createStorage() });
   readModelTransactionContract({ create: async () => fresh(), locking: "single-writer" });
   readModelRebuildContract({ create: async () => fresh() });
 });

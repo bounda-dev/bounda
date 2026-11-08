@@ -192,6 +192,11 @@ fails the request saying so, and so does an actor that is not a string of 1 to 2
 On Cloudflare the actor goes over RPC with every call, and the Durable Object acts as it. Adding
 or removing `app/actor.ts` is picked up on the next request.
 
+The [onboarding example](/examples/onboarding/) has
+an `app/actor.ts` that reads a development sign-in, a cookie holding whatever id you type, so its
+pages show who registered and who activated each user. It is no authentication; it stands where a
+real session goes.
+
 ## Reading what you just wrote
 
 Read models are updated by projections that run in the background, so a page reached right after a

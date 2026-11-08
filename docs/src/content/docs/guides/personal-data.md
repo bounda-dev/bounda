@@ -110,12 +110,15 @@ without a key is forgotten all the same, since a read model may hold what their 
 the clear, and forgetting twice appends twice. An empty id is refused with `ValidationError`.
 
 From then on every personal field of theirs reads as `null`, in every event, however old. A
-person registered again gets a fresh key; their old events stay unreadable. A command that loaded
-their data before `forget` and appends after it never writes that data back, not even under the
-fresh key another command gave them meanwhile: the state it loaded remembers the key each
-person's data was read under, and an append that would seal their fields under any other fails
-with [`ConcurrencyError`](/reference/errors/), as on a stream that moved. The retry decides on the
-state without their data.
+person registered again gets a fresh key; their old events stay unreadable. A command running
+when `forget` commits stores nothing it decided on their data, nor anything sealed under the key
+`forget` removed: the state it loaded remembers the key each person's data was read under, its
+events name the key they seal each person's fields under, and the store appends them only while
+every one of those people still holds that key, checked in the append's own transaction. A
+`forget` that commits first makes the append fail with
+[`ConcurrencyError`](/reference/errors/), as on a stream that moved, even when another command
+gave the person a fresh key meanwhile; the retry decides on the state without their data, and
+seals what it writes of them under their fresh key, as for someone registered again.
 
 A scheduled command already running when `forget` comes writes nothing: its claim is gone, so
 neither its events nor a dead letter are stored, though its handler may have run. One that a
@@ -142,7 +145,9 @@ message and say what went wrong with its code and the ids involved.
 The message of an error a handler throws may quote a personal field it read, so a [dead
 letter](/guides/dead-letters/#what-a-letter-holds) keeps the message and the stack encrypted with
 the key of the person its work names, and `forget` leaves the letter in place with them reading as
-`null`; the stream's `ScheduledCommandFailed` and `ProcessFailed` name the error's class and code
+`null`. The key is the one the work read their data under: a person forgotten while the handler
+was failing, and given a fresh key before it gave up, has the text encrypted under a key nobody
+keeps, so it reads as `null` too instead of opening under the fresh key; the stream's `ScheduledCommandFailed` and `ProcessFailed` name the error's class and code
 and never its text, and so does the last error the inbox and the scheduler keep of a claim.
 
 What `forget` does not reach is text your code writes elsewhere and data left unmarked: your logs
@@ -367,8 +372,11 @@ payload or any event of the aggregate marks a field without `person`. A command 
 nowhere Bounda cannot tell is theirs, so mark the `person` field of every command that acts for
 someone. `app.commands` throws the refusal; nothing is recorded under an `idempotencyKey`, so the
 same request sent once the restriction is lifted runs. A command already running when `restrict`
-commits has read the person as not restricted and may still store its events, as a command
-running when `forget` comes may still decide on their data.
+commits is refused all the same: the store checks, in the transaction that would write its
+events, that nobody they touch is restricted, so the two are ordered one before the other and its
+events are never stored after the restriction. Its events touch the person the command names and
+every person whose fields they seal, so a command for someone else whose events copy a restricted
+person's marked fields is refused too.
 
 A policy, process or scheduled command whose command is refused this way becomes a dead letter at
 once, as for any terminal error, with `errorCode: "PROCESSING_RESTRICTED"` and the person in
@@ -765,7 +773,8 @@ bounda forget --from forgotten.jsonl
 `bounda forget` forgets again, with `reason: "restored"`, each person listed who still holds a key,
 unless the database holds the forgetting a line names. A line may also be a bare person's id, for
 a list kept some other way, which is forgotten whenever the person holds a key: list only those
-forgotten after the copy was taken. `app.forgetAgain(entries)` is the same in code.
+forgotten after the copy was taken. `--actor <id>` names who does it on each `PersonalDataForgotten`
+it appends. `app.forgetAgain(entries, { actor })` is the same in code.
 
 Without either, a restored backup brings back the data of everyone forgotten after it was taken,
 until they are forgotten again.

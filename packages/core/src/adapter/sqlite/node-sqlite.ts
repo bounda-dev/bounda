@@ -4,6 +4,17 @@ import type { Adapter } from "../adapter.ts";
 import type { SqlDatabase } from "../sql/database.ts";
 import type { SqlExecutor } from "../sql/sql-table.ts";
 import { createSqliteAdapter } from "./adapter.ts";
+import { SQLITE_BUSY_TIMEOUT_MS, switchToWal } from "./wal.ts";
+
+// node:sqlite reports a busy database as an error whose `errcode` is SQLite's own code.
+const SQLITE_BUSY = 5;
+
+const isBusy = (error: unknown): boolean =>
+  error instanceof Error &&
+  "errcode" in error &&
+  typeof error.errcode === "number" &&
+  // An extended code, such as SQLITE_BUSY_RECOVERY, keeps the primary one in its low byte.
+  error.errcode % 256 === SQLITE_BUSY;
 
 const bind = (params: readonly unknown[]): SQLInputValue[] =>
   params.map((value) => (typeof value === "boolean" ? Number(value) : value)) as SQLInputValue[];
@@ -26,8 +37,13 @@ export interface CreateNodeSqliteAdapterFunction {
  * single-writer store: one connection, `BEGIN IMMEDIATE` per write transaction, WAL when on disk.
  */
 export const createNodeSqliteAdapter: CreateNodeSqliteAdapterFunction = (path = ":memory:") => {
-  const db = new DatabaseSync(path);
-  if (path !== ":memory:") db.exec("PRAGMA journal_mode=WAL");
+  const db = new DatabaseSync(path, { timeout: SQLITE_BUSY_TIMEOUT_MS });
+  const ready =
+    path === ":memory:"
+      ? Promise.resolve()
+      : switchToWal({ execute: async (sql) => db.exec(sql), isBusy });
+  // Rejects, when the switch fails, through every statement awaiting it; never unhandled.
+  ready.catch(() => undefined);
   let opened = 0;
   const executor: SqlExecutor = {
     run: async (sql, params) => {
@@ -35,9 +51,10 @@ export const createNodeSqliteAdapter: CreateNodeSqliteAdapterFunction = (path = 
     },
     all: async (sql, params) => db.prepare(sql).all(...bind(params)) as Record<string, unknown>[],
   };
-  let queue: Promise<unknown> = Promise.resolve();
+  let queue: Promise<unknown> = ready;
   const database: SqlDatabase = {
-    ...executor,
+    run: (sql, params) => ready.then(() => executor.run(sql, params)),
+    all: (sql, params) => ready.then(() => executor.all(sql, params)),
     write: (work) => {
       const next = queue.then(async () => {
         db.exec("BEGIN IMMEDIATE");
