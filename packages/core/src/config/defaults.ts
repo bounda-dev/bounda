@@ -39,6 +39,10 @@ export const DEFAULT_BACKOFF_MAX_DELAY_MS: number = 30_000;
 export const DEFAULT_CATCH_UP_TIMEOUT_MS: number = 2_000;
 export const DEFAULT_CATCH_UP_POLL_MS: number = 15;
 /**
+ * The `reconcileEvery` of `runtime.personalData.forgetLedger` when it is left out.
+ */
+export const DEFAULT_FORGET_LEDGER_RECONCILE_EVERY_MS: number = 5 * 60_000;
+/**
  * The share of the loads from a snapshot checked against the whole stream when `snapshot.verify`
  * is left out.
  */

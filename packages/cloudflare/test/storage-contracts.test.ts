@@ -8,6 +8,7 @@ import {
   contractFields,
   deadLetterStoreContract,
   eventStoreContract,
+  forgetLedgerContract,
   idempotencyStoreContract,
   inboxLedgerContract,
   personalKeyStoreContract,
@@ -45,6 +46,12 @@ describe("the Durable Object adapter", () => {
   storageTransactionContract({ create: freshStorage });
   personalKeyStoreContract({ create: async () => (await freshStorage()).personalKeys });
   personStoreContract({ create: async () => (await freshStorage()).persons });
+  forgetLedgerContract({
+    create: async () => {
+      const adapter = await freshAdapter();
+      return (tenant) => adapter.createForgetLedger({ tenant });
+    },
+  });
   tableContract({
     create: async () =>
       (

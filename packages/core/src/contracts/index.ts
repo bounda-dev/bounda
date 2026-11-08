@@ -33,6 +33,7 @@ export {
   DeadLetterSettledError,
   type DeadLetterSettledErrorArgs,
   DomainError,
+  ForgetLedgerUnreconciledError,
   IdempotencyKeyConflictError,
   type IdempotencyKeyConflictErrorArgs,
   IdempotencyKeyTakenError,

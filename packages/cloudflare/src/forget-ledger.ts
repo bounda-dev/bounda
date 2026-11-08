@@ -15,6 +15,8 @@ export const KV_LIST_DELAY_MS = 60_000;
 // entry lists first. Any time from 1970 on leaves sixteen digits, which sort as numbers do.
 const LATEST_MS = 8_640_000_000_000_000;
 const LIST_LIMIT = 1_000;
+// The soonest KV lets a key expire, in seconds from now.
+const KV_MIN_TTL_S = 60;
 
 interface EntryMetadata {
   readonly personId: string;
@@ -29,6 +31,11 @@ export interface CreateKvForgetLedgerArgs {
    * Put in front of every key: what keeps one tenant's entries apart.
    */
   readonly prefix: string;
+  /**
+   * Expire each entry this long after its `forgottenAt`, which KV does by itself; kept for good
+   * when omitted.
+   */
+  readonly keepForMs?: number | undefined;
 }
 
 export interface CreateKvForgetLedgerFunction {
@@ -39,16 +46,30 @@ export interface CreateKvForgetLedgerFunction {
  * One key per entry, `<prefix><time>:<eventId>`, with the person and the time in its metadata.
  * KV lists keys in order and starts nowhere but at the first, so the time is kept counting down:
  * the newest entries list first, and a read stops listing at the first entry it does not need.
+ * That leaves the oldest entries last, out of reach of a prune, so with `keepForMs` each key
+ * expires on its own instead, and an entry already past it is not written.
  */
-export const createKvForgetLedger: CreateKvForgetLedgerFunction = ({ namespace, prefix }) => ({
+export const createKvForgetLedger: CreateKvForgetLedgerFunction = ({
+  namespace,
+  prefix,
+  keepForMs,
+}) => ({
   visibilityDelayMs: KV_LIST_DELAY_MS,
   append: async (entries) => {
+    const now = Date.now();
     await Promise.all(
-      entries.map(({ personId, eventId, forgottenAt }) =>
-        namespace.put(`${prefix}${timeKey(forgottenAt)}:${eventId}`, "", {
-          metadata: { personId, forgottenAt } satisfies EntryMetadata,
-        }),
-      ),
+      entries.flatMap(({ personId, eventId, forgottenAt }) => {
+        const metadata: EntryMetadata = { personId, forgottenAt };
+        const key = `${prefix}${timeKey(forgottenAt)}:${eventId}`;
+        if (keepForMs === undefined) return [namespace.put(key, "", { metadata })];
+        const expiresAt = Date.parse(forgottenAt) + keepForMs;
+        if (!(expiresAt > now)) return [];
+        const expiration = Math.max(
+          Math.ceil(expiresAt / 1000),
+          Math.floor(now / 1000) + KV_MIN_TTL_S,
+        );
+        return [namespace.put(key, "", { metadata, expiration })];
+      }),
     );
   },
   read: async ({ after, limit }) => {
@@ -104,7 +125,7 @@ const isKvNamespace = (value: unknown): value is KVNamespace =>
   typeof Reflect.get(value, "list") === "function";
 
 /**
- * A forget ledger in a Workers KV namespace, for `runtime.personalData.forgetLedger` of an app on
+ * A forget ledger in a Workers KV namespace, for `runtime.personalData.forgetLedger.store` of an app on
  * Cloudflare: outside the Durable Object, so restoring the object's storage to an earlier time
  * leaves it whole. Every object keeps its entries under its own name, so an object reached through
  * an id without a name fails its start. KV lists a new key within
@@ -113,11 +134,11 @@ const isKvNamespace = (value: unknown): value is KVNamespace =>
  * from the object's `env` fails its start with `ConfigurationError`.
  */
 export const kvForgetLedger: KvForgetLedgerFunction = ({ binding }) =>
-  defineForgetLedger(({ env, tenant }) => {
+  defineForgetLedger(({ env, tenant, keepForMs }) => {
     const namespace: unknown = Reflect.get(env, binding);
     if (!isKvNamespace(namespace)) {
       throw new ConfigurationError(
-        `runtime.personalData.forgetLedger names the KV binding ${binding}, which the Worker's env does not hold: add it under kv_namespaces in wrangler.jsonc`,
+        `runtime.personalData.forgetLedger.store names the KV binding ${binding}, which the Worker's env does not hold: add it under kv_namespaces in wrangler.jsonc`,
       );
     }
     // Objects without a name would all read one another's entries under one prefix.
@@ -129,5 +150,6 @@ export const kvForgetLedger: KvForgetLedgerFunction = ({ binding }) =>
     return createKvForgetLedger({
       namespace,
       prefix: `bounda/forget-ledger/${encodeURIComponent(tenant)}/`,
+      keepForMs,
     });
   });

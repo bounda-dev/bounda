@@ -746,13 +746,13 @@ export default defineConfig({
   runtime: {
     personalData: {
       keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
-      forgetLedger: sqlite({ path: "./ledger/forget-ledger.db" }),
+      forgetLedger: { store: sqlite({ path: "./ledger/forget-ledger.db" }) },
     },
   },
 });
 ```
 
-`forgetLedger` takes any adapter pointed at another database, where it creates one table,
+Its `store` takes any adapter pointed at another database, where it creates one table,
 `bounda_forget_ledger`, with the adapter's `tablePrefix`, the first time it is used: a SQLite file
 on another disk or volume for an app on one machine, `postgresql({ url })` on another server, or a
 schema of the same server backed up apart. A plain file of the app's own making would be the same
@@ -773,7 +773,7 @@ export default defineConfig({
   runtime: {
     personalData: {
       keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
-      forgetLedger: kvForgetLedger({ binding: "FORGET_LEDGER" }),
+      forgetLedger: { store: kvForgetLedger({ binding: "FORGET_LEDGER" }) },
     },
   },
 });
@@ -788,17 +788,22 @@ Every object keeps its entries under its own name, so an object reached through 
 name fails to start; `createWorker` names each by its tenant. KV may take up to a minute to list a key it
 just wrote, so an object that starts reads the ledger once more a minute later, and wakes for it.
 Anything else is a ledger of your own through `defineForgetLedger`, which receives the host's
-environment and the tenant when the app starts: its `read` returns entries in the order of their
-time, then of their event's id, and `byForgetLedgerOrder` from `@bounda-dev/core/adapter` sorts
-them so; `forgetLedgerContract` from `@bounda-dev/core/adapter/testing` is the test it has to pass.
+environment, the tenant and `keepForMs` when the app starts: its `read` returns entries in the
+order of their time, then of their event's id, and `byForgetLedgerOrder` from
+`@bounda-dev/core/adapter` sorts them so; its optional `prune` removes the entries older than a
+time; `forgetLedgerContract` from `@bounda-dev/core/adapter/testing` is the test it has to pass.
 
 ### What the runtime does with it
 
-The event store is the ledger's outbox. A subscriber of the dispatcher, `forget-ledger`, copies
-every `PersonalDataForgotten` to the ledger in batches, with a policy's guarantee: a batch the
-ledger refuses is delivered again, and the subscriber's lag in `getLag` and
-`bounda.dispatcher.lag` shows how far behind it is. Configuring a ledger on an app that already
-forgot people copies those forgettings first.
+Every transaction that forgets someone appends the forgetting to the ledger as soon as it commits,
+before `forget` resolves, whoever forgot them: `forget`, a policy or process, the retention or a
+reconciliation. The event store is also the ledger's outbox: a subscriber of the dispatcher,
+`forget-ledger`, copies every `PersonalDataForgotten` to the ledger again in batches, with a
+policy's guarantee, and the ledger keeps one entry per event however often it receives it. So a
+forgetting the ledger refused, or did not take within ten seconds, which the app logs as a
+warning, still reaches it: a batch the ledger refuses is delivered again, and the subscriber's
+lag in `getLag` and `bounda.dispatcher.lag` shows how far behind it is. Configuring a ledger on an
+app that already forgot people copies those forgettings first.
 
 When the app starts, before it serves anything, it reads the ledger past a cursor the database
 keeps, the time of the last entry it applied, and for each entry whose forgetting the database
@@ -817,7 +822,13 @@ that key was given to them after they were forgotten, as when they come back and
 The check and the forgetting are one transaction, so instances starting together forget a person
 once. A Durable Object does it on every cold start; restoring its storage restarts it.
 
-Restart the app after restoring its database: it reconciles when it starts.
+While the app runs, it reads the ledger again every `reconcileEvery`, five minutes unless you set
+it, so a database restored under a running app forgets again within that time. One instance
+takes each round, whichever finds it due first, and the time of the last round is kept in the
+database, so a restore takes it back too and cannot hold the next round off. The
+round runs on the worker's passes, in every instance whose role runs the worker; a Durable Object
+runs it on the passes it wakes for, never waking for it alone, since restoring its storage
+restarts it anyway. Restarting the app after a restore reconciles at once.
 
 A ledger that cannot be read when the app starts does not stop it: the app logs an error, starts,
 and its worker tries again after 30 seconds, then twice as long after each failure, up to an hour.
@@ -829,9 +840,38 @@ logged, and the app starts.
 Until then `getLag()` says `forgetLedger: { reconciled: false }`, and a person the restore
 brought back can be read; alert on it. An app without a ledger reports `forgetLedger: null`.
 
-A restore loses what the ledger had not received yet: a forgetting made while the ledger was down,
-or in the moment before the database was lost, that the subscriber had not copied. Keep the
+To never serve before the ledger was read, make it strict:
+
+```ts
+forgetLedger: { store: sqlite({ path: "./ledger/forget-ledger.db" }), strict: true },
+```
+
+A strict app waits at start for the reconciliation however long it takes, and a ledger it cannot
+read fails the start with
+[`FORGET_LEDGER_UNRECONCILED`](/reference/errors/#codes), the ledger's error as its `cause`;
+starting again tries again. The CLI starts the app too, so its commands need the ledger then.
+Availability now depends on the ledger's: give it a store at least as available as the database.
+
+A restore loses only what the ledger never received: a forgetting committed in the moment before
+the process stopped, before its append, and that the subscriber had not copied yet, or one made
+while the ledger was down whose copy was still waiting when the database was lost. Keep the
 `forget-ledger` subscriber's lag near zero, as for any other.
+
+### Keeping the ledger short
+
+The ledger only matters for backups you can still restore. With `keepFor`, an entry older than
+that is removed: set it a little longer than your oldest restorable backup.
+
+```ts
+forgetLedger: { store: sqlite({ path: "./ledger/forget-ledger.db" }), keepFor: "35d" },
+```
+
+The instance that takes a periodic round prunes after it, through the ledger's `prune`, and a
+forgetting older than `keepFor` is not appended at all. KV expires each key on its own instead,
+`keepFor` after its forgetting, since it cannot list its oldest keys first. A backup older than
+`keepFor` brings back whom the removed entries named, so when you keep backups longer, raise it
+first. Without `keepFor` entries are kept for good: ids and times only, but still the ids of
+people who asked to be forgotten.
 
 ### Without a ledger
 

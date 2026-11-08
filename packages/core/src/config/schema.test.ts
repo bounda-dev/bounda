@@ -4,6 +4,7 @@ import { ConfigurationError } from "../contracts/errors.ts";
 import { defineForgetLedger } from "../kernel/personal-data/forget-ledger.ts";
 import { masterKey } from "../kernel/personal-data/master-key.ts";
 import { memory } from "../memory/index.ts";
+import { DEFAULT_FORGET_LEDGER_RECONCILE_EVERY_MS } from "./defaults.ts";
 import { resolveConfig } from "./schema.ts";
 
 const sqlite: AdapterDefinition<"sqlite", { path: string }> = {
@@ -80,7 +81,11 @@ describe("resolveConfig", () => {
           backoff: { baseDelay: "500ms", maxDelay: "1m" },
           catchUp: { timeout: "5s", pollInterval: 50 },
         },
-        personalData: { retention: "30d", keyWrapper, forgetLedger },
+        personalData: {
+          retention: "30d",
+          keyWrapper,
+          forgetLedger: { store: forgetLedger, reconcileEvery: "1m", strict: true, keepFor: "90d" },
+        },
       },
       ports: { order: { inventory: "http" } },
     });
@@ -110,15 +115,25 @@ describe("resolveConfig", () => {
     expect(resolved.runtime.personalData).toEqual({
       retentionMs: 2_592_000_000,
       keyWrapper,
-      forgetLedger,
+      forgetLedger: {
+        store: forgetLedger,
+        reconcileEveryMs: 60_000,
+        strict: true,
+        keepForMs: 7_776_000_000,
+      },
     });
     const ledgerDatabase = memory();
-    expect(
-      resolveConfig({
-        storage: sqlite,
-        runtime: { personalData: { forgetLedger: ledgerDatabase } },
-      }).runtime.personalData.forgetLedger,
-    ).toBe(ledgerDatabase);
+    const defaulted = resolveConfig({
+      storage: sqlite,
+      runtime: { personalData: { forgetLedger: { store: ledgerDatabase } } },
+    }).runtime.personalData.forgetLedger;
+    expect(defaulted).toEqual({
+      store: ledgerDatabase,
+      reconcileEveryMs: DEFAULT_FORGET_LEDGER_RECONCILE_EVERY_MS,
+      strict: false,
+      keepForMs: null,
+    });
+    expect(defaulted?.store).toBe(ledgerDatabase);
     expect(resolved.readModels["users-directory"]).toBe(sqlite);
     expect(resolved.ports.order?.inventory).toBe("http");
   });
@@ -244,10 +259,56 @@ describe("resolveConfig", () => {
     ).toContain(
       'runtime.personalData.keyWrapper: Expected a key wrapper such as masterKey({ from: "BOUNDA_MASTER_KEY" })',
     );
-    for (const forgetLedger of [sqlite, "./ledger.db", { kind: "bounda-forget-ledger" }, null]) {
-      expect(message({ storage: sqlite, runtime: { personalData: { forgetLedger } } })).toContain(
-        'runtime.personalData.forgetLedger: Expected an adapter such as sqlite({ path: "./ledger/forget-ledger.db" }) or a forget ledger such as kvForgetLedger({ binding })',
+    for (const store of [sqlite, "./ledger.db", { kind: "bounda-forget-ledger" }, null]) {
+      expect(
+        message({ storage: sqlite, runtime: { personalData: { forgetLedger: { store } } } }),
+      ).toContain(
+        'runtime.personalData.forgetLedger.store: Expected an adapter such as sqlite({ path: "./ledger/forget-ledger.db" }) or a forget ledger such as kvForgetLedger({ binding })',
       );
+    }
+    expect(
+      message({ storage: sqlite, runtime: { personalData: { forgetLedger: forgetLedger } } }),
+    ).toContain("runtime.personalData.forgetLedger");
+    for (const [option, value] of [
+      ["reconcileEvery", 0],
+      ["keepFor", "0s"],
+    ] as const) {
+      expect(
+        message({
+          storage: sqlite,
+          runtime: { personalData: { forgetLedger: { store: forgetLedger, [option]: value } } },
+        }),
+      ).toContain(`runtime.personalData.forgetLedger.${option}: Expected a duration longer than 0`);
+    }
+    expect(
+      message({
+        storage: sqlite,
+        runtime: { personalData: { forgetLedger: { store: forgetLedger, strict: "yes" } } },
+      }),
+    ).toContain("runtime.personalData.forgetLedger.strict");
+    const keeping = (forgetLedgerOptions: object) =>
+      message({
+        storage: sqlite,
+        runtime: {
+          personalData: { forgetLedger: { store: forgetLedger, ...forgetLedgerOptions } },
+        },
+      });
+    const tooShort =
+      "runtime.personalData.forgetLedger.keepFor: Expected keepFor longer than reconcileEvery, or entries go before a round reads them";
+    expect(keeping({ keepFor: "5m" })).toContain(tooShort);
+    expect(keeping({ reconcileEvery: "1h", keepFor: "1h" })).toContain(tooShort);
+    for (const forgetLedgerOptions of [
+      { reconcileEvery: "1h", keepFor: "61m" },
+      { keepFor: "6m" },
+    ] as const) {
+      expect(
+        resolveConfig({
+          storage: sqlite,
+          runtime: {
+            personalData: { forgetLedger: { store: forgetLedger, ...forgetLedgerOptions } },
+          },
+        }).runtime.personalData.forgetLedger?.keepForMs,
+      ).toBeGreaterThan(0);
     }
   });
 

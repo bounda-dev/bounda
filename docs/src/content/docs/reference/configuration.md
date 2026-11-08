@@ -123,18 +123,29 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
   warns at start when the registry marks personal fields. It is app-wide. See
   [where the keys live](/guides/personal-data/#where-the-keys-live).
 - **`personalData.forgetLedger`**, none by default. Where every forgetting is recorded outside the
-  database, by person's id, event id and time: an adapter pointed at another database than
-  `storage`, such as `sqlite({ path: "./ledger/forget-ledger.db" })` or `postgresql({ url })`,
-  which creates its `bounda_forget_ledger` table there on first use; `kvForgetLedger({ binding })`
-  from `@bounda-dev/cloudflare` on Cloudflare; or a ledger of your own through
-  `defineForgetLedger`. The runtime copies each `PersonalDataForgotten` to it in the background
-  and, when the app starts, forgets again, with `reason: "restored"`, whoever a restored backup
-  brought back. A ledger that cannot be read at start, or does not answer within ten seconds, does
-  not fail it: the app logs an error and reconciles in the background, and `getLag()` reports
-  `forgetLedger: { reconciled: false }` meanwhile. An adapter pointing at the storage's own
-  database fails the start.
-  Without it, a restored backup brings back everyone forgotten after it was taken. See
-  [backups](/guides/personal-data/#backups).
+  database, by person's id, event id and time, and how the app reconciles with it. Without it, a
+  restored backup brings back everyone forgotten after it was taken. See
+  [backups](/guides/personal-data/#backups). It holds:
+  - **`store`**, required. The ledger: an adapter pointed at another database than `storage`, such
+    as `sqlite({ path: "./ledger/forget-ledger.db" })` or `postgresql({ url })`, which creates its
+    `bounda_forget_ledger` table there on first use; `kvForgetLedger({ binding })` from
+    `@bounda-dev/cloudflare` on Cloudflare; or a ledger of your own through `defineForgetLedger`.
+    The runtime appends each forgetting to it as the forgetting commits, and copies every
+    `PersonalDataForgotten` to it again from the stream in the background. An adapter pointing at
+    the storage's own database fails the start.
+  - **`reconcileEvery`**, `5m` by default (`DEFAULT_FORGET_LEDGER_RECONCILE_EVERY_MS` in
+    `@bounda-dev/core/config`). The app reads the ledger when it starts and, while it runs, again
+    this often, one instance a round, and forgets again, with `reason: "restored"`, whoever a
+    restored backup brought back. A Durable Object only runs a round on the passes it wakes for
+    anyway; it reconciles on every start.
+  - **`strict`**, `false` by default. When `false`, a ledger that cannot be read at start, or does
+    not answer within ten seconds, does not fail it: the app logs an error and reconciles in the
+    background, and `getLag()` reports `forgetLedger: { reconciled: false }` meanwhile. When
+    `true`, the start waits for the reconciliation however long it takes, and a ledger it cannot
+    read fails it with [`FORGET_LEDGER_UNRECONCILED`](/reference/errors/#codes).
+  - **`keepFor`**, none by default. How long an entry is kept after the forgetting; set it longer
+    than the oldest backup you can restore. The instance that runs a periodic round prunes the
+    older entries after it; KV expires each key on its own. Without it entries are kept for good.
 
 ### Per aggregate
 

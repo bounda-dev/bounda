@@ -45,6 +45,7 @@ export type {
   ForgetLedger,
   ForgetLedgerEntry,
   ForgetLedgerPosition,
+  PruneForgetLedgerArgs,
   ReadForgetLedgerArgs,
 } from "./storage/forget-ledger.ts";
 export { byForgetLedgerOrder } from "./storage/forget-ledger.ts";

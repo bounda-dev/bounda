@@ -18,6 +18,7 @@ import {
   DEFAULT_CATCH_UP_TIMEOUT_MS,
   DEFAULT_COMMANDS,
   DEFAULT_CONCURRENCY_RETRIES,
+  DEFAULT_FORGET_LEDGER_RECONCILE_EVERY_MS,
   DEFAULT_IDEMPOTENCY_KEY_LIFETIME_MS,
   DEFAULT_IDLE_INTERVAL_MS,
   DEFAULT_POLICIES,
@@ -32,6 +33,7 @@ import type {
   ResolvedAggregateRuntime,
   ResolvedCommandsConfig,
   ResolvedConfig,
+  ResolvedForgetLedgerConfig,
   ResolvedPoliciesConfig,
   ResolvedProcessesConfig,
   ResolvedRetryConfig,
@@ -91,6 +93,26 @@ const overrides = z.strictObject({
   snapshot: snapshot.optional(),
 });
 
+const forgetLedger = z
+  .strictObject({
+    store: z.custom<ForgetLedgerSource>(isForgetLedgerSource, {
+      message:
+        'Expected an adapter such as sqlite({ path: "./ledger/forget-ledger.db" }) or a forget ledger such as kvForgetLedger({ binding })',
+    }),
+    reconcileEvery: timeout.optional(),
+    strict: z.boolean().optional(),
+    keepFor: timeout.optional(),
+  })
+  .refine(
+    ({ reconcileEvery = DEFAULT_FORGET_LEDGER_RECONCILE_EVERY_MS, keepFor }) =>
+      keepFor === undefined || keepFor > reconcileEvery,
+    {
+      message:
+        "Expected keepFor longer than reconcileEvery, or entries go before a round reads them",
+      path: ["keepFor"],
+    },
+  );
+
 const runtime = z.strictObject({
   role: z.enum(["web", "worker", "all"]).optional(),
   commands: commands
@@ -123,12 +145,7 @@ const runtime = z.strictObject({
           message: 'Expected a key wrapper such as masterKey({ from: "BOUNDA_MASTER_KEY" })',
         })
         .optional(),
-      forgetLedger: z
-        .custom<ForgetLedgerSource>(isForgetLedgerSource, {
-          message:
-            'Expected an adapter such as sqlite({ path: "./ledger/forget-ledger.db" }) or a forget ledger such as kvForgetLedger({ binding })',
-        })
-        .optional(),
+      forgetLedger: forgetLedger.optional(),
     })
     .optional(),
   overrides: z.record(z.string(), overrides).optional(),
@@ -148,6 +165,7 @@ type ParsedCommands = z.output<typeof commands>;
 type ParsedPolicies = z.output<typeof policies>;
 type ParsedProcesses = z.output<typeof processes>;
 type ParsedSnapshot = z.output<typeof snapshot>;
+type ParsedForgetLedger = z.output<typeof forgetLedger>;
 
 const resolveRetry = (
   parsed: ParsedRetry | undefined,
@@ -194,6 +212,18 @@ const resolveSnapshot = (parsed: ParsedSnapshot | undefined): ResolvedSnapshotCo
         every: parsed.every,
         verify: parsed.verify ?? DEFAULT_SNAPSHOT_VERIFY,
         version: parsed.version ?? DEFAULT_SNAPSHOT_VERSION,
+      };
+
+const resolveForgetLedger = (
+  parsed: ParsedForgetLedger | undefined,
+): ResolvedForgetLedgerConfig | null =>
+  parsed === undefined
+    ? null
+    : {
+        store: parsed.store,
+        reconcileEveryMs: parsed.reconcileEvery ?? DEFAULT_FORGET_LEDGER_RECONCILE_EVERY_MS,
+        strict: parsed.strict ?? false,
+        keepForMs: parsed.keepFor ?? null,
       };
 
 const formatIssues = (issues: readonly z.core.$ZodIssue[]): string =>
@@ -264,7 +294,7 @@ export const resolveConfig: ResolveConfigFunction = (config) => {
       personalData: {
         retentionMs: parsed.runtime?.personalData?.retention ?? null,
         keyWrapper: parsed.runtime?.personalData?.keyWrapper ?? null,
-        forgetLedger: parsed.runtime?.personalData?.forgetLedger ?? null,
+        forgetLedger: resolveForgetLedger(parsed.runtime?.personalData?.forgetLedger),
       },
       overrides: resolvedOverrides,
     },

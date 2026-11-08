@@ -1,8 +1,10 @@
+import type { DurationInput } from "@bounda-dev/core";
 import type {
   Adapter,
   AdapterDefinition,
   ForgetLedger,
   ForgetLedgerEntry,
+  PruneForgetLedgerArgs,
   ReadForgetLedgerArgs,
 } from "@bounda-dev/core/adapter";
 import {
@@ -10,7 +12,9 @@ import {
   defineConfig,
   defineForgetLedger,
   defineKeyWrapper,
+  type ForgetLedgerConfig,
   type ForgetLedgerDefinition,
+  type ForgetLedgerSource,
   type KeyWrapper,
   type KeyWrapperDefinition,
   masterKey,
@@ -287,11 +291,12 @@ describe("defineConfig", () => {
     defineConfig({
       storage: sqlite,
       ports,
-      runtime: { personalData: { forgetLedger: ledgerDatabase } },
+      runtime: { personalData: { forgetLedger: { store: ledgerDatabase } } },
     });
-    const own = defineForgetLedger(({ env: environment, tenant }) => {
+    const own = defineForgetLedger(({ env: environment, tenant, keepForMs }) => {
       expectTypeOf(environment).toEqualTypeOf<typeof env>();
       expectTypeOf(tenant).toEqualTypeOf<string | undefined>();
+      expectTypeOf(keepForMs).toEqualTypeOf<number | undefined>();
       return {
         append: async (entries) => {
           expectTypeOf(entries).toEqualTypeOf<readonly ForgetLedgerEntry[]>();
@@ -300,27 +305,60 @@ describe("defineConfig", () => {
           expectTypeOf(args).toEqualTypeOf<ReadForgetLedgerArgs>();
           return [];
         },
+        prune: async (args) => {
+          expectTypeOf(args).toEqualTypeOf<PruneForgetLedgerArgs>();
+        },
       };
     });
     expectTypeOf(own).toEqualTypeOf<ForgetLedgerDefinition>();
-    defineConfig({ storage: sqlite, ports, runtime: { personalData: { forgetLedger: own } } });
+    defineConfig({
+      storage: sqlite,
+      ports,
+      runtime: {
+        personalData: {
+          forgetLedger: { store: own, reconcileEvery: "1m", strict: true, keepFor: "35d" },
+        },
+      },
+    });
+    expectTypeOf<ForgetLedgerConfig>().toEqualTypeOf<{
+      readonly store: ForgetLedgerSource;
+      readonly reconcileEvery?: DurationInput;
+      readonly strict?: boolean;
+      readonly keepFor?: DurationInput;
+    }>();
     expectTypeOf<ForgetLedgerEntry>().toEqualTypeOf<{
       readonly personId: string;
       readonly eventId: string;
       readonly forgottenAt: string;
     }>();
+    expectTypeOf<PruneForgetLedgerArgs>().toEqualTypeOf<{ readonly before: string }>();
     expectTypeOf<ForgetLedger["visibilityDelayMs"]>().toEqualTypeOf<number | undefined>();
+    expectTypeOf<ForgetLedger["prune"]>().toEqualTypeOf<
+      ((args: PruneForgetLedgerArgs) => Promise<void>) | undefined
+    >();
+    defineConfig({
+      storage: sqlite,
+      ports,
+      // @ts-expect-error the ledger goes under store, with its options beside it
+      runtime: { personalData: { forgetLedger: ledgerDatabase } },
+    });
     defineConfig({
       storage: sqlite,
       ports,
       // @ts-expect-error a definition without factories opens no ledger
-      runtime: { personalData: { forgetLedger: sqlite } },
+      runtime: { personalData: { forgetLedger: { store: sqlite } } },
     });
     defineConfig({
       storage: sqlite,
       ports,
       // @ts-expect-error a ledger is given through defineForgetLedger, not as it is
-      runtime: { personalData: { forgetLedger: {} as ForgetLedger } },
+      runtime: { personalData: { forgetLedger: { store: {} as ForgetLedger } } },
+    });
+    defineConfig({
+      storage: sqlite,
+      ports,
+      // @ts-expect-error strict is a boolean
+      runtime: { personalData: { forgetLedger: { store: own, strict: "yes" } } },
     });
     // @ts-expect-error a ledger reads in pages
     defineForgetLedger(() => ({ append: async () => {}, read: async () => [] as string[] }));

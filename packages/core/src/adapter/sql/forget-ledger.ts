@@ -108,6 +108,13 @@ export const createSqlForgetLedger: CreateSqlForgetLedgerFunction = ({
             );
       return rows.map(entryOf);
     },
+    prune: async ({ before }) => {
+      await prepared();
+      await db.run(`DELETE FROM ${table} WHERE "tenant" = ${p(1)} AND "forgotten_at" < ${p(2)}`, [
+        tenant,
+        before,
+      ]);
+    },
     close,
   };
 };
