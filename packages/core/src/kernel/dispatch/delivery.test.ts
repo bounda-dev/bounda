@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { pendingEvent } from "../../adapter/testing/fixtures.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
+import { SchemaAheadError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
@@ -336,6 +337,64 @@ describe("createCheckpointedSubscriber", () => {
       },
     });
     expect(transactions.waits).toEqual([true]);
+  });
+
+  it("catches up to an event newer code wrote, then fails without claiming, at its position", async () => {
+    const { checkpointStore, read: readAll } = await setup(3);
+    const ahead = new SchemaAheadError({
+      eventId: "order-1-3",
+      aggregateType: "order",
+      aggregateId: "1",
+      type: "OrderPlaced",
+      position: 3,
+      schemaVersion: 4,
+      known: 3,
+    });
+    // As the app's event store reads: the events before the unreadable one, and it when first.
+    const read = async (afterPosition: number) => {
+      if (afterPosition >= 2) throw ahead;
+      return (await readAll(afterPosition)).filter((event) => event.position < 3);
+    };
+    const { claim, transactions } = transactional(checkpointStore, "behind");
+    const subscriber = createCheckpointedSubscriber({
+      name: "behind",
+      kind: "projection",
+      position: () => checkpointStore.get("behind"),
+      claim,
+      process: async (events) => events.length,
+      logger: silentLogger,
+    });
+    expect((await subscriber.deliver({ read, wait: true })).outcome).toBe("advanced");
+    expect(await subscriber.position()).toBe(2);
+    expect(await subscriber.deliver({ read, wait: true })).toEqual({
+      outcome: "failed",
+      failure: {
+        position: 3,
+        eventId: "order-1-3",
+        eventType: "OrderPlaced",
+        message: ahead.message,
+      },
+    });
+    expect(transactions.waits).toEqual([true]);
+    expect(await subscriber.position()).toBe(2);
+  });
+
+  it("lets any other error of the read reach the caller", async () => {
+    const { checkpointStore } = await setup(1);
+    const subscriber = createCheckpointedSubscriber({
+      name: "broken",
+      kind: "projection",
+      position: () => checkpointStore.get("broken"),
+      claim: transactional(checkpointStore, "broken").claim,
+      process: async (events) => events.length,
+      logger: silentLogger,
+    });
+    await expect(
+      subscriber.deliver({
+        read: () => Promise.reject(new Error("connection lost")),
+        wait: true,
+      }),
+    ).rejects.toThrow("connection lost");
   });
 
   it("reports idle without claiming when nothing follows the checkpoint", async () => {

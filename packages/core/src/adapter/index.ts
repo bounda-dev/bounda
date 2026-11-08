@@ -41,6 +41,7 @@ export type {
   ReadAllArgs,
   ReadOneArgs,
   ResealedEvent,
+  StoredEventType,
 } from "./storage/event-store.ts";
 export type {
   ByForgetLedgerOrderFunction,

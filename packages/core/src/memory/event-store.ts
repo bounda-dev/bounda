@@ -1,5 +1,10 @@
 import { type CheckAppendArgs, checkAppend } from "../adapter/storage/append-checks.ts";
-import type { AppendArgs, AppendResult, EventStore } from "../adapter/storage/event-store.ts";
+import type {
+  AppendArgs,
+  AppendResult,
+  EventStore,
+  StoredEventType,
+} from "../adapter/storage/event-store.ts";
 import { ConcurrencyError } from "../contracts/errors.ts";
 import type { StoredEvent } from "../contracts/event.ts";
 import { streamId } from "../contracts/event.ts";
@@ -73,6 +78,7 @@ export const createMemoryEventStore: CreateMemoryEventStoreFunction = ({
   // The positions of each person's events, in the order they were written.
   const persons = new Map<string, number[]>();
   const gaps = new Set<number>();
+  const types = new Map<string, StoredEventType>();
   let reserved = 0;
   // Every position up to here is written or a gap: what readers see.
   let watermark = 0;
@@ -125,6 +131,14 @@ export const createMemoryEventStore: CreateMemoryEventStoreFunction = ({
           persons.set(event.person, [...(persons.get(event.person) ?? []), event.position]);
         }
       }
+      for (const { aggregateType, type, metadata } of events) {
+        const { schemaVersion } = metadata;
+        types.set(JSON.stringify([aggregateType, type, schemaVersion]), {
+          aggregateType,
+          type,
+          schemaVersion,
+        });
+      }
       return {
         version: expectedVersion + written.length,
         events: events.map((event, index) => ({
@@ -176,6 +190,7 @@ export const createMemoryEventStore: CreateMemoryEventStoreFunction = ({
         .slice(0, limit)
         .map((position) => restore(log.get(position) as Kept)),
     lastPosition: async () => watermark,
+    types: async () => [...types.values()],
     reseal: async (events) => {
       const kept = events.map(({ position, payload, person }) => ({
         position,

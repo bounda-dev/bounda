@@ -6,6 +6,7 @@ import {
   ProcessingRestrictedError,
   type RejectFunction,
   type Rejection,
+  SchemaAheadError,
   ValidationError,
 } from "@bounda-dev/core";
 import { createTestApp } from "@bounda-dev/core/testing";
@@ -82,6 +83,25 @@ describe("failure", () => {
       issues: [],
     });
     expect(answer.init).toEqual({ status: 422 });
+  });
+
+  it("answers an event newer code wrote with a 503 the client can try again", () => {
+    const ahead = new SchemaAheadError({
+      eventId: "e9",
+      aggregateType: "order",
+      aggregateId: "o-1",
+      type: "OrderPlaced",
+      position: 9,
+      schemaVersion: 4,
+      known: 3,
+    });
+    const answer = failure(ahead);
+    expect(answer.data).toEqual({ error: ahead.message, issues: [] });
+    expect(answer.init).toEqual({ status: 503 });
+    const remote = failure(
+      Object.assign(new Error("written by newer code"), { code: "SCHEMA_AHEAD" }),
+    );
+    expect(remote.init).toEqual({ status: 503 });
   });
 
   it("answers the refusals a Durable Object sends back, which arrive as plain errors with their code", () => {

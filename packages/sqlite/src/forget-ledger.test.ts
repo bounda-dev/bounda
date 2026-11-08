@@ -121,7 +121,8 @@ const nameOf = async (app: BoundaApp, customerId: string): Promise<unknown> =>
   (await app.exportPersonalData(customerId)).events[0]?.data.name;
 
 // Starts the same app in a process of its own, which exits once the start resolved: two of them
-// contend for the file's lock as instances on two machines would.
+// contend for the file's lock as instances on two machines would. Its registry has the customer
+// events the store holds, which the boot checks against the code, and nothing else it needs.
 const startElsewhere = (paths: Paths): Promise<void> =>
   new Promise((resolve, reject) => {
     const child = spawn(
@@ -132,7 +133,23 @@ const startElsewhere = (paths: Paths): Promise<void> =>
         `import { createApp } from "@bounda-dev/core";
         import { sqlite } from "./index.ts";
         const app = await createApp({
-          registry: { aggregates: {}, readModels: {} },
+          registry: {
+            aggregates: {
+              customer: {
+                state: { initialState: {} },
+                events: {
+                  customerRegistered: {
+                    payload: ({ z, personal }) => z.object({ name: personal(z.string()) }),
+                    evolve: () => ({}),
+                  },
+                },
+                commands: {},
+                policies: {},
+                processes: {},
+              },
+            },
+            readModels: {},
+          },
           config: {
             storage: sqlite({ path: ${JSON.stringify(paths.store)} }),
             runtime: { personalData: { forgetLedger: { store: sqlite({ path: ${JSON.stringify(paths.ledger)} }) } } },

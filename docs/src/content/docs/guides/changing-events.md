@@ -75,7 +75,10 @@ reason, rather than deriving them from today's event.
   handlers is always the current shape, stamped with the current version. Nothing is rewritten
   in the store.
 - An event written with a version this code does not know, because a newer deploy wrote it,
-  is refused with an error naming the event. Roll forward, never back, once new events exist.
+  is refused: at boot, which does not start, and while running, with the transient
+  `SCHEMA_AHEAD` until that deploy reaches every instance
+  ([Deploying a change to events](/guides/deployment/#deploying-a-change-to-events)). Roll
+  forward, never back, once new events exist.
 
 The types keep you honest in one direction: the last upcaster must return the current payload, so
 a change to `payload` in the event module fails to compile until the upcast module catches up.
@@ -101,9 +104,9 @@ change to how its state is folded does.
 
 ## What is not covered yet
 
-- **Renaming or removing an event type.** Upcasters change the payload, not the type. A stored
-  event whose module is gone still fails to fold; keep the module, even if its `evolve` changes
-  nothing (`() => ({})`).
+- **Renaming or removing an event type.** Upcasters change the payload, not the type. A store
+  that holds events whose module is gone refuses to boot; keep the module, even if its `evolve`
+  changes nothing (`() => ({})`).
 - **Process state.** A process keeps its state in its own lifecycle events. Changing that
   state's shape has the same problem and no upcaster yet; a `state.upcast.ts` in the process
   directory is the natural extension when it is needed.

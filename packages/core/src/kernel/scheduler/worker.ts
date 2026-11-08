@@ -5,7 +5,7 @@ import type {
 import type { ClaimedCommand, ScheduledCommand } from "../../adapter/storage/scheduler.ts";
 import type { ResolvedConfig, ResolvedRetryConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
-import { ScheduledClaimLostError } from "../../contracts/errors.ts";
+import { ScheduledClaimLostError, SchemaAheadError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
@@ -478,6 +478,20 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       if (error instanceof ScheduledClaimLostError || error instanceof RenewFailed) throw error;
       if (isDeadline(entry) && processes.lostRace(deadlineOf(entry), error)) {
         await deferToItsTime(entry, storage);
+        return;
+      }
+      // Newer code wrote an event the run read: the entry waits for it, without counting an attempt.
+      if (error instanceof SchemaAheadError) {
+        const executeAt = new Date(
+          clock.now().getTime() + config.runtime.dispatcher.backoff.baseDelayMs,
+        );
+        await storage.scheduler.defer({ claim: entry, executeAt });
+        logger.warn("scheduled command waits for an event newer code wrote", {
+          command: entry.command.type,
+          dedupeKey: entry.dedupeKey,
+          executeAt: executeAt.toISOString(),
+          message: error.message,
+        });
         return;
       }
       const attempts = entry.attempts + 1;

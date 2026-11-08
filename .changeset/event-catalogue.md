@@ -1,0 +1,10 @@
+---
+"@bounda-dev/core": minor
+"@bounda-dev/postgresql": minor
+"@bounda-dev/cloudflare": minor
+"@bounda-dev/react-router": minor
+---
+
+The store keeps a catalogue of every kind of event it holds, and the boot checks it against the code. `EventStore` gains `types()`, every `(aggregateType, type, schemaVersion)` of a committed event, each once; `append` records the ones it has not met in the same transaction, in a new `bounda_event_types` table on SQLite, PostgreSQL and the Durable Object, so a booted app writes nothing more for the types it already holds. `eventStoreContract` and `storageTransactionContract` pin it; an adapter of your own must add it. `createApp`, `boot()` and `bounda rebuild` refuse a store holding events the code cannot read, of an event type, aggregate or process it no longer has, or written with a schema version past the one it knows, with one `ConfigurationError` naming each. A store written before this version has no rows, and the catalogue fills as new events are appended.
+
+An event that newer code wrote while a deploy rolls out is now the transient `SchemaAheadError` (`SCHEMA_AHEAD`, with `eventId`, `aggregateType`, `aggregateId`, `type`, `position`, `schemaVersion` and `known`) instead of a terminal `ConfigurationError`: a future schema version, or a type this code has no module for that the catalogue records. A command that loads such a stream fails with it. Reads of the global stream stop right before the event, so a read model waits there and backs off as a failing one does, shown by `getLag().failing`; a policy or process holds the event and retries with its back-off past `maxAttempts`, never dead-lettering it; a scheduled command waits `runtime.dispatcher.backoff.baseDelay` without counting an attempt; a dead-letter retry rejects with it and the letter stays `failed`. A non-system event of an aggregate the app does not have is no longer passed through: it is refused the same way. `failure()` of React Router and `createWorker` answer it with a 503.

@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
+import type { PendingEvent } from "../../adapter/storage/event-store.ts";
 import type { Table as RowTable } from "../../adapter/storage/table.ts";
 import { pendingEvent, testContext, testDeadLetter } from "../../adapter/testing/fixtures.ts";
 import { resolveConfig } from "../../config/schema.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
-import { ValidationError } from "../../contracts/errors.ts";
+import { SchemaAheadError, ValidationError } from "../../contracts/errors.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
@@ -109,6 +110,12 @@ const registry: Registry = {
     },
   },
 };
+
+// What the runtime marks a process's lifecycle event with.
+const lifecycleEvent = (event: PendingEvent): PendingEvent => ({
+  ...event,
+  metadata: { ...event.metadata, system: true },
+});
 
 const setup = async () => {
   const aggregates = buildAggregates({ registry, ports: {} });
@@ -230,23 +237,6 @@ describe("exportPersonalData", () => {
       ],
     });
     await place("o-3", { customerId: "c-1", note: "leave at door", total: 30 });
-    // An event of a type the aggregate no longer defines, stored while it did.
-    await storage.eventStore.append({
-      aggregateType: "customer",
-      aggregateId: "c-1",
-      expectedVersion: 2,
-      events: [
-        pendingEvent({
-          aggregateType: "customer",
-          aggregateId: "c-1",
-          version: 3,
-          type: "CustomerMoved",
-          payload: { street: "x" },
-          person: "c-1",
-        }),
-      ],
-    });
-
     const exported = await exportOf("c-1");
     expect(exported).toStrictEqual({
       personId: "c-1",
@@ -292,16 +282,6 @@ describe("exportPersonalData", () => {
           timestamp: "2026-01-01T00:00:00.000Z",
           data: { note: "leave at door" },
         },
-        {
-          id: "customer-c-1-3",
-          type: "CustomerMoved",
-          aggregateType: "customer",
-          aggregateId: "c-1",
-          version: 3,
-          position: 7,
-          timestamp: "2026-01-01T00:00:00.000Z",
-          data: {},
-        },
       ],
       scheduledCommands: [],
       deadLetters: [],
@@ -316,6 +296,27 @@ describe("exportPersonalData", () => {
     expect((await exportOf("c-3")).events).toEqual([]);
   });
 
+  it("refuses to export a person while one of their events is one newer code wrote", async () => {
+    const { exportOf, register, storage } = await setup();
+    await register("c-1", "ana@example.com");
+    await storage.eventStore.append({
+      aggregateType: "customer",
+      aggregateId: "c-1",
+      expectedVersion: 1,
+      events: [
+        pendingEvent({
+          aggregateType: "customer",
+          aggregateId: "c-1",
+          version: 2,
+          type: "CustomerMoved",
+          payload: { street: "x" },
+          person: "c-1",
+        }),
+      ],
+    });
+    await expect(exportOf("c-1")).rejects.toBeInstanceOf(SchemaAheadError);
+  });
+
   it("holds no data of a lifecycle event of a process the app no longer has", async () => {
     const { exportOf, written } = await setup();
     await written.eventStore.append({
@@ -323,14 +324,16 @@ describe("exportPersonalData", () => {
       aggregateId: "c-1",
       expectedVersion: 0,
       events: [
-        pendingEvent({
-          aggregateType: "process:customer.gone",
-          aggregateId: "c-1",
-          version: 1,
-          type: "ProcessHandled",
-          payload: { state: { email: null } },
-          person: "c-1",
-        }),
+        lifecycleEvent(
+          pendingEvent({
+            aggregateType: "process:customer.gone",
+            aggregateId: "c-1",
+            version: 1,
+            type: "ProcessHandled",
+            payload: { state: { email: null } },
+            person: "c-1",
+          }),
+        ),
       ],
     });
     expect((await exportOf("c-1")).events.map((event) => [event.type, event.data])).toEqual([

@@ -12,6 +12,7 @@ import { validateRegistry } from "../../modules/validate.ts";
 import { fieldBuilder } from "../../modules/view.ts";
 import type { AppEnv } from "../../register/index.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
+import { checkStoredTypes, processNamesOf } from "../aggregate/stored-types.ts";
 import { PartialBatchError } from "../dispatch/delivery.ts";
 import { appStorage } from "../events/app-event-store.ts";
 import {
@@ -159,9 +160,15 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
   try {
     // A rebuild runs no handler, so it builds no implementation, and writes no lifecycle event,
     // whose state opens by its shape: it needs no process.
+    const aggregates = buildAggregates({ registry, ports: {} });
+    checkStoredTypes({
+      types: await storage.eventStore.types(),
+      aggregates,
+      processNames: processNamesOf(registry),
+    });
     const { eventStore } = appStorage({
       storage,
-      aggregates: buildAggregates({ registry, ports: {} }),
+      aggregates,
       processes: { byName: {} },
       wrapping,
     });

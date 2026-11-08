@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
+import { pendingEvent } from "../../adapter/testing/fixtures.ts";
 import {
   DeadLetterNotRetriableError,
   DeadLetterSettledError,
   NotFoundError,
+  SchemaAheadError,
   ValidationError,
 } from "../../contracts/errors.ts";
+import { memory } from "../../memory/index.ts";
 import type { RejectFunction } from "../../modules/command.ts";
 import type { PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
+import { createTestApp } from "../../testing/index.ts";
 import { PROCESS_DEADLINE_COMMAND } from "../process/deadlines.ts";
 import { PROCESS_EVENTS } from "../process/lifecycle.ts";
 import { createReactiveHarness } from "../reactive-harness.ts";
@@ -740,6 +744,31 @@ describe("deadLetters", () => {
     expect(paid?.payload).toEqual({ method: "card" });
     expect(paid?.metadata).toMatchObject({ depth: 0 });
     expect(paid?.metadata.correlationId).toEqual(expect.any(String));
+  });
+
+  it("rejects a retry that reads an event newer code wrote, and leaves the letter failed", async () => {
+    policyMode = "ok";
+    const adapter = memory();
+    const { app, clock } = await createTestApp({
+      registry,
+      adapter,
+      config: { runtime: { policies: { retry: { strategy: "none" } } } },
+    });
+    await app.commands.payOrder({ orderId: "o-1", method: "card" }, { delay: "1m" });
+    clock.advance(60_000);
+    await app.runUntilIdle();
+    const [letter] = await app.deadLetters.list({ kind: "scheduled" });
+    const placed = pendingEvent({ aggregateId: "o-1", version: 2 });
+    await (await adapter.createStorage()).eventStore.append({
+      aggregateType: "order",
+      aggregateId: "o-1",
+      expectedVersion: 1,
+      events: [{ ...placed, metadata: { ...placed.metadata, schemaVersion: 4 } }],
+    });
+
+    await expect(app.deadLetters.retry(letter?.id ?? "")).rejects.toBeInstanceOf(SchemaAheadError);
+    expect((await app.deadLetters.get(letter?.id ?? ""))?.status).toBe("failed");
+    await app.stop();
   });
 
   it("refuses a scheduled command letter whose command is gone, and a letter of an unknown kind", async () => {

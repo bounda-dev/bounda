@@ -310,6 +310,63 @@ export class SnapshotError extends BoundaError {
   }
 }
 
+export interface SchemaAheadErrorArgs {
+  readonly eventId: string;
+  readonly aggregateType: string;
+  readonly aggregateId: string;
+  readonly type: string;
+  readonly position: number;
+  readonly schemaVersion: number;
+  /**
+   * The schema version this code reads the event's type up to; `null` when it has no module for
+   * the type at all.
+   */
+  readonly known: number | null;
+}
+
+/**
+ * Thrown when reading an event that newer code wrote: its schema version is past the one this
+ * code knows, or its type is one this code has no module for although a Bounda writer recorded
+ * it. It goes away once that code runs on every instance; roll forward, never back. A command
+ * that loads such a stream fails with it; a policy, process or scheduled command is held and
+ * tried again later, never dead-lettered; a read model stops before the event.
+ */
+export class SchemaAheadError extends BoundaError {
+  readonly eventId: string;
+  readonly aggregateType: string;
+  readonly aggregateId: string;
+  readonly type: string;
+  readonly position: number;
+  readonly schemaVersion: number;
+  readonly known: number | null;
+
+  constructor({
+    eventId,
+    aggregateType,
+    aggregateId,
+    type,
+    position,
+    schemaVersion,
+    known,
+  }: SchemaAheadErrorArgs) {
+    const knows =
+      known === null
+        ? `this code has no module for ${aggregateType}.${type}`
+        : `this code reads ${aggregateType}.${type} up to version ${known}`;
+    super(
+      "SCHEMA_AHEAD",
+      `Event ${eventId} (${aggregateType}.${type} of ${aggregateType}:${aggregateId}, position ${position}) was written with schema version ${schemaVersion} by newer code, and ${knows}. Deploy that code on every instance; roll forward, never back`,
+    );
+    this.eventId = eventId;
+    this.aggregateType = aggregateType;
+    this.aggregateId = aggregateId;
+    this.type = type;
+    this.position = position;
+    this.schemaVersion = schemaVersion;
+    this.known = known;
+  }
+}
+
 /**
  * Thrown by a rebuild that another rebuild of the same read model has taken over. Only the most
  * recent rebuild writes: the older one stops at its next step and leaves its work to the newer.

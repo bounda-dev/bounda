@@ -42,6 +42,8 @@ export {
   RebuildSupersededError,
   type Rejection,
   ScheduledClaimLostError,
+  SchemaAheadError,
+  type SchemaAheadErrorArgs,
   SnapshotError,
   ValidationError,
   type ValidationIssue,

@@ -4,6 +4,7 @@ import { quoteIdentifier, storageTableNameFor } from "../sql/index.ts";
 // Every name is already quoted.
 export interface StorageTables {
   readonly events: string;
+  readonly eventTypes: string;
   readonly checkpoints: string;
   readonly inbox: string;
   readonly deadLetters: string;
@@ -21,6 +22,7 @@ export interface StorageTablesForFunction {
 
 export const storageTablesFor: StorageTablesForFunction = (prefix) => ({
   events: quoteIdentifier(storageTableNameFor({ prefix, table: "events" })),
+  eventTypes: quoteIdentifier(storageTableNameFor({ prefix, table: "eventTypes" })),
   checkpoints: quoteIdentifier(storageTableNameFor({ prefix, table: "checkpoints" })),
   inbox: quoteIdentifier(storageTableNameFor({ prefix, table: "inbox" })),
   deadLetters: quoteIdentifier(storageTableNameFor({ prefix, table: "deadLetters" })),
@@ -112,6 +114,12 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     UNIQUE ("aggregate_type", "aggregate_id", "version")
   )`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.events, "person")} ON ${tables.events} ("person", "position")`,
+  `CREATE TABLE IF NOT EXISTS ${tables.eventTypes} (
+    "aggregate_type" TEXT NOT NULL,
+    "type" TEXT NOT NULL,
+    "schema_version" INTEGER NOT NULL,
+    PRIMARY KEY ("aggregate_type", "type", "schema_version")
+  )`,
   checkpointTableStatement(tables.checkpoints),
   `CREATE TABLE IF NOT EXISTS ${tables.inbox} (
     "handler" TEXT NOT NULL,

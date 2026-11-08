@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ClaimedCommand } from "../../adapter/storage/scheduler.ts";
 import type { RuntimeConfig } from "../../config/types.ts";
-import { ConcurrencyError, ValidationError } from "../../contracts/errors.ts";
+import { ConcurrencyError, SchemaAheadError, ValidationError } from "../../contracts/errors.ts";
 import type { RejectFunction } from "../../modules/command.ts";
 import type { PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
@@ -886,6 +886,56 @@ describe("scheduled command worker", () => {
     });
     await harness.worker.runOnce();
     expect((await harness.storage.scheduler.list())[0]?.attempts).toBe(1);
+  });
+
+  it("hands a command that read an event newer code wrote back for the dispatcher's back-off, without an attempt, however often", async () => {
+    const harness = await createReactiveHarness({
+      registry: orderRegistry,
+      config: {
+        runtime: {
+          policies: { retry: { strategy: "fixed", maxAttempts: 1 } },
+          dispatcher: { backoff: { baseDelay: "5s" } },
+        },
+      },
+    });
+    let ahead = 3;
+    const original = harness.pipeline.dispatchUnattended.bind(harness.pipeline);
+    harness.pipeline.dispatchUnattended = async (args) => {
+      if (ahead > 0) {
+        ahead -= 1;
+        throw new SchemaAheadError({
+          eventId: "e9",
+          aggregateType: "order",
+          aggregateId: "o-1",
+          type: "OrderPlaced",
+          position: 9,
+          schemaVersion: 4,
+          known: 3,
+        });
+      }
+      return original(args);
+    };
+    await harness.pipeline.dispatch({
+      type: "PlaceOrder",
+      payload: { orderId: "o-1", total: 10 },
+      options: { delay: 0 },
+    });
+    for (let round = 0; round < 3; round += 1) {
+      expect(await harness.worker.runOnce()).toBe(1);
+      const [deferred] = await harness.storage.scheduler.list();
+      expect(deferred).toMatchObject({
+        attempts: 0,
+        executeAt: new Date(harness.clock.now().getTime() + 5_000).toISOString(),
+      });
+      harness.clock.advance(5_000);
+    }
+    expect(await harness.worker.runOnce()).toBe(1);
+    expect(await harness.storage.scheduler.list()).toEqual([]);
+    expect(await harness.storage.deadLetterStore.count()).toBe(0);
+    expect(
+      (await harness.storage.eventStore.load({ aggregateType: "order", aggregateId: "o-1" }))
+        .version,
+    ).toBe(1);
   });
 
   it("does not record ScheduledCommandFailed for terminal errors on unknown aggregates and polls in the background", async () => {
