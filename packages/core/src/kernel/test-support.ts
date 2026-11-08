@@ -1,9 +1,10 @@
 import { expect, vi } from "vitest";
 import type { Storage } from "../adapter/adapter.ts";
+import type { PersonalKeyStore, StoredPersonalKey } from "../adapter/storage/personal-key-store.ts";
 import { selectImplementations } from "../config/ports.ts";
 import { resolveConfig } from "../config/schema.ts";
 import type { Config, PortsConfig, ResolvedConfig } from "../config/types.ts";
-import { createFixedClock, type FixedClock } from "../contracts/clock.ts";
+import { type Clock, createFixedClock, type FixedClock } from "../contracts/clock.ts";
 import type { CommandRejection } from "../contracts/command.ts";
 import { createSequentialIdGenerator } from "../contracts/ids.ts";
 import { type LogFields, type Logger, silentLogger } from "../contracts/logger.ts";
@@ -15,7 +16,18 @@ import { buildAggregates } from "./aggregate/build-aggregates.ts";
 import { createAggregateLoader } from "./aggregate/load-aggregate.ts";
 import type { AggregatesRuntime } from "./aggregate/runtime.ts";
 import { createCommandPipeline } from "./command/pipeline.ts";
+import type { AppStorage } from "./events/app-event-store.ts";
 import type { RecordAccess } from "./personal-data/access.ts";
+import {
+  fingerprintOf,
+  fromBase64,
+  generateWrappableKey,
+  importRawKey,
+  type PersonalKey,
+  toBase64,
+  withRawKey,
+} from "./personal-data/crypto.ts";
+import { createPersonalKeyWrapping, type PersonalKeys } from "./personal-data/wrapped-keys.ts";
 import { createPorts, type ModulePorts } from "./ports/ports.ts";
 
 interface OrderState {
@@ -303,13 +315,13 @@ export const createKernelHarness: CreateKernelHarnessFunction = async ({
   sentMessages.length = 0;
   placeOrderKeys.length = 0;
   const adapter = memory();
-  const storage = await adapter.createStorage();
+  const clock = createFixedClock();
+  const storage = withPersonalKeys(await adapter.createStorage(), clock);
   const config = resolveConfig({
     storage: adapter,
     ports: defaultPorts(registry),
     ...overrides,
   });
-  const clock = createFixedClock();
   const { byAggregate } = await createPorts({
     registry,
     config: config.ports,
@@ -410,3 +422,61 @@ export const breakNextCommit: BreakNextCommitFunction = (storage) => {
  * An access log that records nothing, for tests of what does not look at it.
  */
 export const unrecordedAccess: RecordAccess = async () => undefined;
+
+export interface KeysOverFunction {
+  (keys: PersonalKeyStore, clock?: Clock): PersonalKeys;
+}
+
+/**
+ * A store's keys as the kernel reads them, kept unwrapped.
+ */
+export const keysOver: KeysOverFunction = (keys, clock = createFixedClock()) =>
+  createPersonalKeyWrapping({ wrapper: null, clock }).over(keys);
+
+export interface WithPersonalKeysFunction {
+  (storage: Storage, clock?: Clock): AppStorage;
+}
+
+/**
+ * The storage with its keys, and those of its transactions, as the kernel reads them; its event
+ * store as written.
+ */
+export const withPersonalKeys: WithPersonalKeysFunction = (storage, clock = createFixedClock()) => {
+  const wrapping = createPersonalKeyWrapping({ wrapper: null, clock });
+  return {
+    ...storage,
+    personalKeys: wrapping.over(storage.personalKeys),
+    transact: (work) =>
+      storage.transact((transaction) =>
+        work({ ...transaction, personalKeys: wrapping.over(transaction.personalKeys) }),
+      ),
+  };
+};
+
+export interface NewStoredKeyFunction {
+  (): Promise<StoredPersonalKey>;
+}
+
+/**
+ * A new key as a store keeps it without a wrapper.
+ */
+export const newStoredKey: NewStoredKeyFunction = async () => {
+  const key = await generateWrappableKey();
+  return {
+    key: await withRawKey(key, async (raw) => toBase64(raw)),
+    fingerprint: await fingerprintOf(key),
+    kid: null,
+  };
+};
+
+export interface OpenedKeyFunction {
+  (stored: StoredPersonalKey): Promise<PersonalKey>;
+}
+
+/**
+ * A key kept without a wrapper, as the kernel seals and opens with it.
+ */
+export const openedKey: OpenedKeyFunction = async ({ key, fingerprint }) => ({
+  fingerprint,
+  cryptoKey: await importRawKey({ raw: fromBase64(key), extractable: false }),
+});

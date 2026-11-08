@@ -5,7 +5,7 @@ import type { Logger } from "../../contracts/logger.ts";
 import { digest } from "../read-model/fingerprint.ts";
 import { errorDetails } from "../shared/retry.ts";
 import { createPause, holdAfter } from "./hold.ts";
-import type { KeyWrapper } from "./key-wrapper.ts";
+import type { CryptoKeyWrapper } from "./key-wrapper.ts";
 import type { PersonalKeyWrapping } from "./wrapped-keys.ts";
 
 // How many keys a pass of the worker rewraps at most.
@@ -48,7 +48,7 @@ export interface CreateKeyRotationArgs {
    */
   readonly keys: PersonalKeyStore;
   readonly checkpoints: CheckpointStore;
-  readonly wrapper: KeyWrapper;
+  readonly wrapper: Pick<CryptoKeyWrapper, "kid" | "previous">;
   readonly wrapping: PersonalKeyWrapping;
   readonly clock: Clock;
   readonly logger: Logger;
@@ -83,7 +83,7 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
   logger,
 }) => {
   // A wrapper that names its own key among the previous ones would rewrap it on every pass.
-  const previous = (wrapper.previous ?? []).filter((kid) => kid !== wrapper.kid);
+  const previous = wrapper.previous.filter((kid) => kid !== wrapper.kid);
   const kids = [...previous, null];
   const marker = markerOf(wrapper.kid, previous);
   // Until when a pass reads nothing: the mark stands, or every key left is held.

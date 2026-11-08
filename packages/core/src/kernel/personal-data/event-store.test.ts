@@ -15,7 +15,8 @@ import type { Registry } from "../../modules/registry.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { withUpcasting } from "../aggregate/upcasting.ts";
 import type { ProcessesRuntime } from "../process/build-processes.ts";
-import { generatePersonalKey, isSealed } from "./crypto.ts";
+import { keysOver, newStoredKey } from "../test-support.ts";
+import { isSealed } from "./crypto.ts";
 import { openedUnder, withPersonalData } from "./event-store.ts";
 
 const registry: Registry = {
@@ -76,7 +77,7 @@ const setup = async () => {
     eventStore: storage.eventStore,
     aggregates: buildAggregates({ registry, ports: {} }),
     processes: { byName: {} },
-    keys,
+    keys: keysOver(keys),
   });
   const registered = (version: number, email: string) =>
     pendingEvent({
@@ -107,7 +108,7 @@ describe("withPersonalData", () => {
     expect(isSealed(payload.email)).toBe(true);
     expect(JSON.stringify(stored)).not.toContain("ana@example.com");
     expect((payload.email as { $personal: { person: string } }).$personal.person).toBe("c-1");
-    expect((await storage.personalKeys.get("c-1"))?.fingerprint).toHaveLength(44);
+    expect((await storage.personalKeys.get("c-1"))?.fingerprint).toHaveLength(24);
     const loaded = await store.load({ aggregateType: "customer", aggregateId: "c-1" });
     expect(loaded.events[0]?.payload).toEqual({ email: "ana@example.com", plan: "pro" });
     expect((await store.readAll({ afterPosition: 0, limit: 10 }))[0]?.payload).toEqual({
@@ -136,7 +137,7 @@ describe("withPersonalData", () => {
     expect(payload.customerId).toBe("c-7");
     expect(isSealed(payload.address)).toBe(true);
     expect((payload.address as { $personal: { person: string } }).$personal.person).toBe("c-7");
-    expect((await storage.personalKeys.get("c-7"))?.fingerprint).toHaveLength(44);
+    expect((await storage.personalKeys.get("c-7"))?.fingerprint).toHaveLength(24);
     expect(await storage.personalKeys.get("o-1")).toBeNull();
     const loaded = await store.load({ aggregateType: "order", aggregateId: "o-1" });
     expect(loaded.events[0]?.payload).toEqual({
@@ -205,7 +206,7 @@ describe("withPersonalData", () => {
       events: [registered(1, "ana@example.com")],
     });
     const { fingerprints } = await store.load({ aggregateType: "customer", aggregateId: "c-1" });
-    const other = await generatePersonalKey();
+    const other = await newStoredKey();
     await storage.personalKeys.add("c-2", other);
     const read = [
       { person: "c-2", fingerprint: other.fingerprint },
@@ -234,7 +235,7 @@ describe("withPersonalData", () => {
     expect(calls).toEqual(["get:c-1"]);
     expect(await storage.personalKeys.get("c-1")).toBeNull();
 
-    const fresh = await generatePersonalKey();
+    const fresh = await newStoredKey();
     await storage.personalKeys.add("c-1", fresh);
     await expect(append(3, read)).rejects.toBeInstanceOf(ConcurrencyError);
     await expect(
@@ -296,7 +297,7 @@ describe("withPersonalData", () => {
 
   it("fails as a conflict when the key it sealed under is removed before the store writes", async () => {
     const { storage, registered } = await setup();
-    await storage.personalKeys.add("c-1", await generatePersonalKey());
+    await storage.personalKeys.add("c-1", await newStoredKey());
     const forgetting: PersonalKeyStore = {
       ...storage.personalKeys,
       get: async (person) => {
@@ -309,7 +310,7 @@ describe("withPersonalData", () => {
       eventStore: storage.eventStore,
       aggregates: buildAggregates({ registry, ports: {} }),
       processes: { byName: {} },
-      keys: forgetting,
+      keys: keysOver(forgetting),
     })
       .append({
         aggregateType: "customer",
@@ -336,7 +337,7 @@ describe("withPersonalData", () => {
       eventStore: storage.eventStore,
       aggregates: buildAggregates({ registry, ports: {} }),
       processes: { byName: {} },
-      keys: restricting,
+      keys: keysOver(restricting),
     })
       .append({
         aggregateType: "customer",
@@ -373,7 +374,7 @@ describe("withPersonalData", () => {
       },
       aggregates: buildAggregates({ registry, ports: {} }),
       processes: { byName: {} },
-      keys: storage.personalKeys,
+      keys: keysOver(storage.personalKeys),
     });
     const read = { person: "c-3", fingerprint: null };
     await recording.append({
@@ -420,7 +421,7 @@ describe("withPersonalData", () => {
       eventStore: storage.eventStore,
       aggregates,
       processes: { byName: {} },
-      keys: storage.personalKeys,
+      keys: keysOver(storage.personalKeys),
     });
     const store = withUpcasting({ eventStore: sealing, aggregates });
     await sealing.append({
@@ -479,7 +480,7 @@ describe("withPersonalData", () => {
         eventStore: storage.eventStore,
         aggregates: buildAggregates({ registry, ports: {} }),
         processes: { byName: {} },
-        keys: concurrentKeys,
+        keys: keysOver(concurrentKeys),
       }).append({
         aggregateType: "customer",
         aggregateId: "c-1",
@@ -660,7 +661,7 @@ describe("withPersonalData", () => {
       expectedVersion: 0,
       events: [placed({ customerId: 42, address: { street: "x" }, total: 1 })],
     });
-    expect((await storage.personalKeys.get("42"))?.fingerprint).toHaveLength(44);
+    expect((await storage.personalKeys.get("42"))?.fingerprint).toHaveLength(24);
   });
 });
 
@@ -679,7 +680,7 @@ describe("withPersonalData on a process's lifecycle events", () => {
       eventStore: storage.eventStore,
       aggregates: buildAggregates({ registry, ports: {} }),
       processes,
-      keys: storage.personalKeys,
+      keys: keysOver(storage.personalKeys),
     });
     const lifecycle = (
       version: number,

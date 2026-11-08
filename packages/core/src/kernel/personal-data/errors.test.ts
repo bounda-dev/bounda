@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { ValidationError } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
+import { keysOver, newStoredKey } from "../test-support.ts";
 import { sealedKeys } from "./commands.ts";
-import { generatePersonalKey, isSealed } from "./crypto.ts";
+import { isSealed } from "./crypto.ts";
 import { openTextWith, sealError } from "./errors.ts";
 
 const setup = async () => {
-  const keys = (await memory().createStorage()).personalKeys;
-  const held = await keys.add("c-1", await generatePersonalKey());
+  const keys = keysOver((await memory().createStorage()).personalKeys);
+  const held = await keys.add("c-1", await newStoredKey());
   return { keys, held, open: () => openTextWith(sealedKeys(keys)) };
 };
 

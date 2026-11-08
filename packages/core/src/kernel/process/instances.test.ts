@@ -6,6 +6,7 @@ import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { memory } from "../../memory/index.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { withPersonalData } from "../personal-data/event-store.ts";
+import { keysOver } from "../test-support.ts";
 import { createUnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
 import { createProcessInstances } from "./instances.ts";
@@ -85,7 +86,7 @@ describe("createProcessInstances", () => {
         eventStore: storage.eventStore,
         aggregates: buildAggregates({ registry: { aggregates: {}, readModels: {} }, ports: {} }),
         processes: { byName: { [onboarding.name]: onboarding } },
-        keys: storage.personalKeys,
+        keys: keysOver(storage.personalKeys),
       }),
       ids: createSequentialIdGenerator(),
       clock: createFixedClock(new Date(0)),

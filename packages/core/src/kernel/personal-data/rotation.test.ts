@@ -4,9 +4,8 @@ import type { PersonalKeyStore } from "../../adapter/storage/personal-key-store.
 import { createFixedClock } from "../../contracts/clock.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
-import { generatePersonalKey } from "./crypto.ts";
 import { HOLD_MAX_MS, HOLD_MS } from "./hold.ts";
-import type { KeyWrapper } from "./key-wrapper.ts";
+import { type CryptoKeyWrapper, cryptoKeyWrapperOver } from "./key-wrapper.ts";
 import {
   createKeyRotation,
   ROTATED_PREFIX,
@@ -16,14 +15,14 @@ import {
 } from "./rotation.ts";
 import { createPersonalKeyWrapping } from "./wrapped-keys.ts";
 
-const fakeWrapper = (kid: string, previous?: readonly string[]): KeyWrapper => {
+const fakeWrapper = (kid: string, previous?: readonly string[]): CryptoKeyWrapper => {
   const flip = (bytes: Uint8Array, under: string) => bytes.map((byte) => byte ^ under.length);
-  return {
+  return cryptoKeyWrapperOver({
     kid,
     ...(previous === undefined ? {} : { previous }),
     wrap: async (key) => flip(key, kid),
     unwrap: async ({ kid: under, wrapped }) => flip(wrapped, under),
-  };
+  });
 };
 
 interface Logged {
@@ -53,7 +52,7 @@ const clock = createFixedClock(new Date("2026-01-01T00:00:00Z"));
 interface RotationOverArgs {
   readonly keys: PersonalKeyStore;
   readonly checkpoints: CheckpointStore;
-  readonly wrapper: KeyWrapper;
+  readonly wrapper: CryptoKeyWrapper;
   readonly logger?: Logger;
 }
 
@@ -73,7 +72,7 @@ const rotationOver = ({
     logger,
   });
 
-const setUp = async (wrapper: KeyWrapper = fakeWrapper("new", ["old"])) => {
+const setUp = async (wrapper: CryptoKeyWrapper = fakeWrapper("new", ["old"])) => {
   const storage = await memory().createStorage();
   const store = storage.personalKeys;
   const checkpoints = storage.checkpointStore;
@@ -121,11 +120,13 @@ const countedMarks = (checkpoints: CheckpointStore) => {
   return { checkpoints: counting, reads };
 };
 
+// The key as the store keeps it.
 const addUnder = async (store: PersonalKeyStore, kid: string | null, person: string) => {
-  const key = await generatePersonalKey();
   const wrapper = kid === null ? null : fakeWrapper(kid);
-  await createPersonalKeyWrapping({ wrapper, clock }).over(store).add(person, key);
-  return key;
+  await createPersonalKeyWrapping({ wrapper, clock }).over(store).create(person);
+  const stored = await store.get(person);
+  if (stored === null) throw new Error(`no key stored for ${person}`);
+  return stored;
 };
 
 const kidsOf = async (store: PersonalKeyStore, persons: readonly string[]) =>
@@ -146,9 +147,10 @@ describe("createKeyRotation", () => {
       "unknown",
     ]);
     const keys = wrapping.over(store);
-    expect(await keys.get("c-1")).toEqual(old);
-    expect(await keys.get("c-2")).toEqual(plain);
-    expect(await keys.get("c-3")).toEqual(current);
+    expect((await keys.held("c-1"))?.fingerprint).toBe(old.fingerprint);
+    expect((await keys.held("c-2"))?.fingerprint).toBe(plain.fingerprint);
+    expect((await keys.held("c-3"))?.fingerprint).toBe(current.fingerprint);
+    expect((await store.get("c-3"))?.key).toBe(current.key);
     expect((await store.get("c-4"))?.fingerprint).toBe(other.fingerprint);
   });
 
@@ -506,7 +508,7 @@ describe("createKeyRotation", () => {
   it("holds a failed key on its row, so another instance skips it until the hold ends and a restart backs off from it", async () => {
     const { store, checkpoints, clock } = await setUp();
     const wrapper = fakeWrapper("new", ["old"]);
-    const failing: KeyWrapper = {
+    const failing: CryptoKeyWrapper = {
       ...wrapper,
       unwrap: async () => {
         throw new Error("unwrap failed");
@@ -540,7 +542,7 @@ describe("createKeyRotation", () => {
     const [row] = await store.listWrappedUnder({ kids: ["old"], limit: 1 });
     clock.advance(ROTATION_CHECK_INTERVAL_MS);
     const end = new Date(clock.now().getTime() + HOLD_MS);
-    await store.hold("c-1", row?.key ?? { ...key, kid: "old" }, {
+    await store.hold("c-1", row?.key ?? key, {
       until: end.toISOString(),
       attempts: 1,
     });

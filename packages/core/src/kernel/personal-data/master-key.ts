@@ -1,7 +1,11 @@
 import { ConfigurationError } from "../../contracts/errors.ts";
 import type { AppEnv } from "../../register/index.ts";
-import { fromBase64, toBase64 } from "./crypto.ts";
-import { defineKeyWrapper, type KeyWrapper, type KeyWrapperDefinition } from "./key-wrapper.ts";
+import { fromBase64, PERSONAL_KEY_ALGORITHM, PERSONAL_KEY_USAGES, toBase64 } from "./crypto.ts";
+import {
+  type CryptoKeyWrapper,
+  defineCryptoKeyWrapper,
+  type KeyWrapperDefinition,
+} from "./key-wrapper.ts";
 
 /**
  * What prints a master key in the encoding `masterKey` reads: 32 random bytes in base64.
@@ -12,6 +16,8 @@ export const GENERATE_MASTER_KEY_COMMAND = "openssl rand -base64 32";
 const MASTER_KEY = /^[A-Za-z0-9+/]{43}=$/;
 
 const KID_BYTES = 12;
+
+const WRAP_ALGORITHM = "AES-KW";
 
 export interface MasterKeyOptions {
   /**
@@ -55,14 +61,38 @@ const base64Url = (bytes: Uint8Array): string =>
   toBase64(bytes).replaceAll("+", "-").replaceAll("/", "_");
 
 // The id is part of the key's SHA-256: it tells keys apart and reveals nothing of a random one.
+// The variable's text is the one copy of the key the app cannot drop; the bytes read from it are
+// zeroed once imported.
 const importMasterKey = async (text: string): Promise<MasterKey> => {
   const raw = fromBase64(text);
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", raw));
-  return {
-    kid: base64Url(digest.slice(0, KID_BYTES)),
-    key: await crypto.subtle.importKey("raw", raw, "AES-KW", false, ["wrapKey", "unwrapKey"]),
-  };
+  try {
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", raw));
+    return {
+      kid: base64Url(digest.slice(0, KID_BYTES)),
+      key: await crypto.subtle.importKey("raw", raw, WRAP_ALGORITHM, false, [
+        "wrapKey",
+        "unwrapKey",
+      ]),
+    };
+  } finally {
+    raw.fill(0);
+  }
 };
+
+const unwrapUnder = (
+  wrapping: CryptoKey,
+  wrapped: Uint8Array,
+  extractable: boolean,
+): Promise<CryptoKey> =>
+  crypto.subtle.unwrapKey(
+    "raw",
+    Uint8Array.from(wrapped),
+    wrapping,
+    WRAP_ALGORITHM,
+    PERSONAL_KEY_ALGORITHM,
+    extractable,
+    [...PERSONAL_KEY_USAGES],
+  );
 
 /**
  * The key wrapper Bounda brings: AES-KW under a master key read from the host's environment when
@@ -70,10 +100,11 @@ const importMasterKey = async (text: string): Promise<MasterKey> => {
  * holds 32 random bytes in base64, as `openssl rand -base64 32` prints them. A variable that is
  * missing or holds anything else fails the start with `ConfigurationError`, naming the variable,
  * never its value. Each key's id is derived from the key, so a wrong master key is told apart
- * from the right one, and rotating takes only moving the old variable to `previous`.
+ * from the right one, and rotating takes only moving the old variable to `previous`. WebCrypto
+ * wraps and unwraps the keys itself: a person's raw key never reaches JavaScript memory.
  */
 export const masterKey: MasterKeyFunction = ({ from, previous = [] }) =>
-  defineKeyWrapper(async ({ env }): Promise<KeyWrapper> => {
+  defineCryptoKeyWrapper(async ({ env }): Promise<CryptoKeyWrapper> => {
     const current = await importMasterKey(read(env, from));
     const older = (
       await Promise.all(previous.map((name) => importMasterKey(read(env, name))))
@@ -83,38 +114,24 @@ export const masterKey: MasterKeyFunction = ({ from, previous = [] }) =>
       kid: current.kid,
       previous: [...new Set(older.map(({ kid }) => kid))],
       wrap: async (key) => {
-        const personal = await crypto.subtle.importKey(
-          "raw",
-          Uint8Array.from(key),
-          "AES-GCM",
-          true,
-          ["encrypt"],
+        const wrapped = new Uint8Array(
+          await crypto.subtle.wrapKey("raw", key, current.key, WRAP_ALGORITHM),
         );
-        return new Uint8Array(await crypto.subtle.wrapKey("raw", personal, current.key, "AES-KW"));
+        return { wrapped, key: await unwrapUnder(current.key, wrapped, false) };
       },
-      unwrap: async ({ kid, wrapped }) => {
+      unwrap: async ({ kid, wrapped, extractable }) => {
         const wrapping = byKid.get(kid);
         if (wrapping === undefined) {
           throw new ConfigurationError(`No master key configured has the id ${kid}`);
         }
-        let personal: CryptoKey;
         try {
-          personal = await crypto.subtle.unwrapKey(
-            "raw",
-            Uint8Array.from(wrapped),
-            wrapping,
-            "AES-KW",
-            "AES-GCM",
-            true,
-            ["encrypt"],
-          );
+          return await unwrapUnder(wrapping, wrapped, extractable);
         } catch (error) {
           throw new ConfigurationError(
             `A personal key does not unwrap under the master key ${kid}: the key was altered in the store`,
             { cause: error },
           );
         }
-        return new Uint8Array(await crypto.subtle.exportKey("raw", personal));
       },
     };
   });
