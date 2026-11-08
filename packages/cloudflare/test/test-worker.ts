@@ -68,7 +68,9 @@ export const LedgerStore = createBoundaObject({
   registry: quietRegistry,
   config: {
     storage: cloudflare(),
-    runtime: { personalData: { forgetLedger: kvForgetLedger({ binding: "FORGET_LEDGER" }) } },
+    runtime: {
+      personalData: { forgetLedger: { store: kvForgetLedger({ binding: "FORGET_LEDGER" }) } },
+    },
   },
   clock,
 });

@@ -52,7 +52,7 @@ describe("the forget ledger in Workers KV", () => {
         }),
       ).toThrow(
         new ConfigurationError(
-          "runtime.personalData.forgetLedger names the KV binding LEDGER, which the Worker's env does not hold: add it under kv_namespaces in wrangler.jsonc",
+          "runtime.personalData.forgetLedger.store names the KV binding LEDGER, which the Worker's env does not hold: add it under kv_namespaces in wrangler.jsonc",
         ),
       );
     }
@@ -62,10 +62,12 @@ describe("the forget ledger in Workers KV", () => {
 // A namespace that lists in pages as KV does, and counts the pages it listed.
 const countingNamespace = () => {
   const keys = new Map<string, unknown>();
+  const expirations = new Map<string, number | undefined>();
   let pages = 0;
   const namespace = {
-    put: async (name: string, _value: string, options?: { metadata?: unknown }) => {
+    put: async (name: string, _value: string, options?: KVNamespacePutOptions) => {
       keys.set(name, options?.metadata ?? null);
+      expirations.set(name, options?.expiration);
     },
     list: async ({ prefix, limit = 1_000, cursor }: KVNamespaceListOptions = {}) => {
       pages += 1;
@@ -81,7 +83,7 @@ const countingNamespace = () => {
       };
     },
   } as unknown as KVNamespace;
-  return { namespace, keys, pages: () => pages };
+  return { namespace, keys, expirations, pages: () => pages };
 };
 
 const minute = (index: number): string =>
@@ -113,6 +115,36 @@ describe("the KV forget ledger's listing", () => {
     const after = entries[1_002] as (typeof entries)[number];
     expect(await ledger.read({ after, limit: 10 })).toEqual(entries.slice(1_003));
     expect(pages()).toBe(1);
+  });
+
+  it("expires each entry keepFor after its forgetting, and writes none already past it", async () => {
+    const { namespace, keys, expirations } = countingNamespace();
+    const keepForMs = 3_600_000;
+    const ledger = await kvForgetLedger({ binding: "LEDGER" }).create({
+      env: { ...env, LEDGER: namespace } as typeof env,
+      tenant: "t",
+      keepForMs,
+    });
+    const now = Date.now();
+    const at = (milliseconds: number): string => new Date(now + milliseconds).toISOString();
+    await ledger.append([
+      { personId: "c-1", eventId: "e-1", forgottenAt: at(-keepForMs - 1_000) },
+      { personId: "c-2", eventId: "e-2", forgottenAt: at(-keepForMs + 30_000) },
+      { personId: "c-3", eventId: "e-3", forgottenAt: at(0) },
+    ]);
+    expect(
+      [...keys.values()].map((metadata) => (metadata as { personId: string }).personId),
+    ).toEqual(["c-2", "c-3"]);
+    const [soon, later] = [...expirations.values()] as [number, number];
+    // KV expires a key a minute from now at the soonest.
+    expect(soon).toBeGreaterThanOrEqual(Math.floor(now / 1000) + 60);
+    expect(soon).toBeLessThanOrEqual(Math.floor(Date.now() / 1000) + 60);
+    expect(later).toBe(Math.ceil((Date.parse(at(0)) + keepForMs) / 1000));
+    const forever = countingNamespace();
+    await createKvForgetLedger({ namespace: forever.namespace, prefix: "p/" }).append([
+      { personId: "c-1", eventId: "e-1", forgottenAt: at(-keepForMs * 1_000) },
+    ]);
+    expect([...forever.expirations.values()]).toEqual([undefined]);
   });
 
   it("skips a key without the entry's metadata", async () => {
@@ -151,7 +183,9 @@ describe("the KV forget ledger's listing", () => {
 
 const config = {
   storage: cloudflare(),
-  runtime: { personalData: { forgetLedger: kvForgetLedger({ binding: "FORGET_LEDGER" }) } },
+  runtime: {
+    personalData: { forgetLedger: { store: kvForgetLedger({ binding: "FORGET_LEDGER" }) } },
+  },
 };
 
 // Workerd keeps no point-in-time history of an object's storage, so a backup is a copy of every

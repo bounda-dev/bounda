@@ -259,6 +259,21 @@ export class ConfigurationError extends BoundaError {
 }
 
 /**
+ * Thrown by `createApp` when `runtime.personalData.forgetLedger.strict` is set and the forget
+ * ledger could not be read through: the app does not start, since a person a restored backup
+ * brought back could otherwise be read. `cause` is why the ledger failed. Starting again retries.
+ */
+export class ForgetLedgerUnreconciledError extends BoundaError {
+  constructor(cause: unknown) {
+    super(
+      "FORGET_LEDGER_UNRECONCILED",
+      "The forget ledger could not be read, and runtime.personalData.forgetLedger.strict keeps the app from starting until it is",
+      { cause },
+    );
+  }
+}
+
+/**
  * Thrown when a command handler returns events that do not fit whether its aggregate exists: an
  * aggregate one of whose events exports `begin` starts with such an event, and an event that only
  * exports `begin` cannot go on an aggregate that exists. A bug in the handler, not a refusal:

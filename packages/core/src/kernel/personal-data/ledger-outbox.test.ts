@@ -2,6 +2,7 @@ import { trace } from "@opentelemetry/api";
 import { describe, expect, it } from "vitest";
 import type { ForgetLedgerEntry } from "../../adapter/storage/forget-ledger.ts";
 import { pendingEvent } from "../../adapter/testing/fixtures.ts";
+import { createFixedClock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { memory } from "../../memory/index.ts";
 import { defineForgetLedger, isForgetLedgerSource, openForgetLedger } from "./forget-ledger.ts";
@@ -18,10 +19,14 @@ describe("the forget ledger's outbox", () => {
   it("appends only the runtime's PersonalDataForgotten, and all of a batch at once", async () => {
     const appended: (readonly ForgetLedgerEntry[])[] = [];
     const outbox = createLedgerOutbox({
-      append: async (entries) => {
-        appended.push(entries);
+      ledger: {
+        append: async (entries) => {
+          appended.push(entries);
+        },
+        read: async () => [],
       },
-      read: async () => [],
+      keepForMs: null,
+      clock: createFixedClock(new Date("2030-01-01T00:00:00.000Z")),
     });
     expect(outbox).toMatchObject({ name: FORGET_LEDGER_SUBSCRIBER, kind: "forget-ledger" });
     const events = [
@@ -57,6 +62,41 @@ describe("the forget ledger's outbox", () => {
       ],
     ]);
     expect(await outbox.process(events.slice(0, 3), span)).toBe(3);
+    expect(appended).toHaveLength(1);
+  });
+
+  it("leaves out the forgettings older than keepFor, which a prune would remove", async () => {
+    const appended: (readonly ForgetLedgerEntry[])[] = [];
+    const forgetting = (position: number, id: string, timestamp: string): StoredEvent => ({
+      ...stored(position, {
+        aggregateType: "bounda",
+        aggregateId: `c-${position}`,
+        version: 1,
+        type: "PersonalDataForgotten",
+        id,
+      }),
+      timestamp,
+    });
+    const outbox = createLedgerOutbox({
+      ledger: {
+        append: async (entries) => {
+          appended.push(entries);
+        },
+        read: async () => [],
+      },
+      keepForMs: 60_000,
+      clock: createFixedClock(new Date("2026-01-01T00:02:00.000Z")),
+    });
+    const events = [
+      forgetting(1, "f-1", "2026-01-01T00:00:59.999Z"),
+      forgetting(2, "f-2", "2026-01-01T00:01:00.000Z"),
+      forgetting(3, "f-3", "2026-01-01T00:01:00.001Z"),
+    ];
+    expect(await outbox.process(events, span)).toBe(3);
+    expect(appended).toEqual([
+      [{ personId: "c-3", eventId: "f-3", forgottenAt: "2026-01-01T00:01:00.001Z" }],
+    ]);
+    expect(await outbox.process(events.slice(0, 2), span)).toBe(2);
     expect(appended).toHaveLength(1);
   });
 });
@@ -111,7 +151,7 @@ describe("a forget ledger's source", () => {
       await expect(
         openForgetLedger({ source, storage: source === storage ? storage : app, env: {} }),
       ).rejects.toThrow(
-        "runtime.personalData.forgetLedger points at the storage's own database, which a restore rolls back with it: give it another database",
+        "runtime.personalData.forgetLedger.store points at the storage's own database, which a restore rolls back with it: give it another database",
       );
     }
     expect(

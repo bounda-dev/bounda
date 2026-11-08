@@ -33,11 +33,20 @@ export interface ReadForgetLedgerArgs {
   readonly limit: number;
 }
 
+export interface PruneForgetLedgerArgs {
+  /**
+   * Remove the entries whose `forgottenAt` is earlier than this, as `Date.prototype.toISOString`
+   * writes it.
+   */
+  readonly before: string;
+}
+
 /**
  * The record of every person forgotten, kept outside the database, so restoring a copy of the
  * database taken before someone was forgotten can forget them again. The runtime appends each
- * `PersonalDataForgotten` to it and reads it when the app starts. One ledger holds one store: a
- * ledger built for a tenant sees only that tenant's entries.
+ * forgetting to it as soon as it commits, and again from the stream, and reads it when the app
+ * starts and every `reconcileEvery` while it runs. One ledger holds one store: a ledger built for
+ * a tenant sees only that tenant's entries.
  */
 export interface ForgetLedger {
   /**
@@ -55,6 +64,12 @@ export interface ForgetLedger {
    */
   readonly visibilityDelayMs?: number;
   /**
+   * Removes the entries older than `before`, which the runtime calls with every periodic
+   * reconciliation when `keepFor` is set. A store that expires entries on its own leaves it out
+   * and expires each entry `keepForMs` after its `forgottenAt` instead.
+   */
+  prune?(args: PruneForgetLedgerArgs): Promise<void>;
+  /**
    * Releases what the ledger holds open; called when the app stops.
    */
   close?(): Promise<void>;
@@ -66,6 +81,11 @@ export interface CreateForgetLedgerArgs {
    * keeps apart from other stores'.
    */
   readonly tenant?: string | undefined;
+  /**
+   * How long the app keeps each entry after its `forgottenAt`, from `keepFor`; `undefined` keeps
+   * entries for good. Only a ledger without `prune` uses it, to expire its entries itself.
+   */
+  readonly keepForMs?: number | undefined;
 }
 
 const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
