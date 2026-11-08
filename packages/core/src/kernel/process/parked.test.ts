@@ -16,6 +16,7 @@ import {
   unrecordedAccess,
 } from "../test-support.ts";
 import { PROCESS_EVENTS } from "./lifecycle.ts";
+import { PROCESSES_SUBSCRIBER } from "./runner.ts";
 
 interface TallyState {
   readonly seen: readonly string[];
@@ -382,6 +383,9 @@ describe("events of a failed process", () => {
     await settle();
     expect((await types()).filter((type) => type === PROCESS_EVENTS.eventParked)).toEqual([]);
     expect((await types()).at(-1)).toBe(PROCESS_EVENTS.failed);
+    expect(await harness.storage.checkpointStore.get(PROCESSES_SUBSCRIBER)).toBe(
+      await harness.storage.eventStore.lastPosition(),
+    );
     expect(await harness.storage.deadLetterStore.list()).toEqual([]);
   });
 
@@ -1469,6 +1473,17 @@ describe("events of a failed process", () => {
         (event.payload as { eventId?: string }).eventId === "twice",
     );
     expect(failures).toHaveLength(1);
+  });
+
+  it("park behind a failure that names no letter", async () => {
+    const context = await setUp();
+    const { harness, types } = context;
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await context.settle();
+    await rawAppend(harness, PROCESS_EVENTS.failed, { eventId: "elsewhere", error: "elsewhere" });
+    await harness.pipeline.dispatch({ type: "ArchiveOrder", payload: { orderId: "o-1" } });
+    await harness.dispatcher.runUntilIdle();
+    expect((await types()).slice(-2)).toEqual([PROCESS_EVENTS.failed, PROCESS_EVENTS.eventParked]);
   });
 
   it("park a completing event when the instance fails between handling and completing it", async () => {
