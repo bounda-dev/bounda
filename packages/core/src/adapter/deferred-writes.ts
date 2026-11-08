@@ -16,11 +16,11 @@ export interface DeferredWriteTarget {
   readonly inboxLedger: Pick<DeferredStores["inboxLedger"], "complete" | "fail">;
   readonly deadLetterStore: Pick<
     DeferredStores["deadLetterStore"],
-    "add" | "updateStatus" | "remove"
+    "add" | "updateStatus" | "remove" | "reseal"
   >;
   readonly scheduler: Pick<
     DeferredStores["scheduler"],
-    "schedule" | "cancel" | "complete" | "fail" | "defer"
+    "schedule" | "cancel" | "complete" | "fail" | "defer" | "reseal"
   >;
   readonly idempotencyStore: Pick<DeferredStores["idempotencyStore"], "put" | "forget">;
 }
@@ -30,7 +30,7 @@ export interface DeferredWriteTarget {
  * every write in order, and `flush` runs the writes recorded so far against another set of the
  * same stores, a transaction's or the live ones. `add` answers the letter as filed, whatever the
  * store holds under that id already; `get` on the idempotency store answers a record `put`
- * recorded before anything `live` holds. `tryClaim`, `claimDue`, both `renew`, `purge` and the
+ * recorded before anything `live` holds. `tryClaim`, `claimDue`, both `renew`, both `purge` and the
  * `forget` of the scheduler and the dead letter store act at once, on `live`, since their answer
  * decides what happens next.
  */
@@ -95,15 +95,18 @@ export const deferWrites: DeferWritesFunction = ({
           recorded.push((target) => target.deadLetterStore.add(letter));
           return { ...letter, status: "failed" };
         },
-        updateStatus: later((target, id, status) =>
-          target.deadLetterStore.updateStatus(id, status),
+        updateStatus: later((target, id, status, at) =>
+          target.deadLetterStore.updateStatus(id, status, at),
         ),
         remove: async (id) => {
           letters.delete(id);
           recorded.push((target) => target.deadLetterStore.remove(id));
         },
+        reseal: later((target, id, letter) => target.deadLetterStore.reseal(id, letter)),
         listByPerson: deadLetterStore.listByPerson,
         forget: deadLetterStore.forget,
+        firstResolvedAt: deadLetterStore.firstResolvedAt,
+        purge: deadLetterStore.purge,
       },
       scheduler: {
         claimDue: scheduler.claimDue,
@@ -120,6 +123,7 @@ export const deferWrites: DeferWritesFunction = ({
         complete: later((target, claim) => target.scheduler.complete(claim)),
         fail: later((target, args) => target.scheduler.fail(args)),
         defer: later((target, args) => target.scheduler.defer(args)),
+        reseal: later((target, args) => target.scheduler.reseal(args)),
         renew: scheduler.renew,
         listByPerson: scheduler.listByPerson,
         forget: scheduler.forget,

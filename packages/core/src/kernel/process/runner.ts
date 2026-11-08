@@ -101,6 +101,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     schedule,
     deadlineStep,
     resume,
+    clock,
     logger,
   });
   return {

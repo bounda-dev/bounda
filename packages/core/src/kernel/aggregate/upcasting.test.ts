@@ -209,6 +209,8 @@ describe("withUpcasting", () => {
       ]),
     ).toEqual([[1, { money: { amount: 10, currency: "EUR" } }]]);
     expect(await store.lastPosition()).toBe(2);
+    await store.reseal([{ position: 2, payload: { method: "cash" }, person: "c-2" }]);
+    expect((await raw.readOne({ ...stream, eventId: "e2" }))?.payload).toEqual({ method: "cash" });
     expect(await store.types()).toEqual(await raw.types());
   });
 

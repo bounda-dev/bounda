@@ -606,6 +606,94 @@ export const eventStoreContract: EventStoreContractFunction = ({ create, concurr
       expect(await store.lastPosition()).toBe(2);
     });
 
+    it("reseals events in place, their position and the rest kept, and finds them by their new person", async () => {
+      await store.append({
+        aggregateType: "customer",
+        aggregateId: "c-1",
+        expectedVersion: 0,
+        events: [
+          pendingEvent({
+            aggregateType: "customer",
+            aggregateId: "c-1",
+            version: 1,
+            type: "CustomerRegistered",
+            payload: { email: "ada@example.com" },
+          }),
+          pendingEvent({
+            aggregateType: "customer",
+            aggregateId: "c-1",
+            version: 2,
+            type: "CustomerMoved",
+            payload: { city: "Bilbao" },
+            person: "c-2",
+          }),
+          pendingEvent({
+            aggregateType: "customer",
+            aggregateId: "c-1",
+            version: 3,
+            type: "CustomerNoted",
+            payload: {},
+            person: "c-2",
+          }),
+        ],
+      });
+      await store.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events: [pendingEvent({ aggregateId: "1", version: 1 })],
+      });
+      const [registered, moved, noted, placed] = await store.readAll({
+        afterPosition: 0,
+        limit: 10,
+      });
+      const sealed = { $personal: { person: "c-1", key: "k", iv: "iv", data: "data" } };
+      await store.reseal([
+        { position: 1, payload: { email: sealed }, person: "c-1" },
+        { position: 2, payload: { city: "Bilbao" }, person: null },
+        { position: 99, payload: { lost: true }, person: "c-1" },
+      ]);
+
+      const written = await store.readAll({ afterPosition: 0, limit: 10 });
+      expect(written).toEqual([
+        { ...registered, payload: { email: sealed }, person: "c-1" },
+        { ...moved, person: null },
+        noted,
+        placed,
+      ]);
+      expect(await store.load({ aggregateType: "customer", aggregateId: "c-1" })).toEqual({
+        events: written.slice(0, 3),
+        version: 3,
+      });
+      expect(
+        await store.readOne({
+          aggregateType: "customer",
+          aggregateId: "c-1",
+          eventId: String(registered?.id),
+        }),
+      ).toEqual(written[0]);
+      expect(await store.readByPerson({ person: "c-1", afterPosition: 0, limit: 10 })).toEqual([
+        written[0],
+      ]);
+      expect(await store.readByPerson({ person: "c-2", afterPosition: 0, limit: 10 })).toEqual([
+        noted,
+      ]);
+      await store.reseal([{ position: 4, payload: placed?.payload, person: "c-1" }]);
+      expect(
+        (await store.readByPerson({ person: "c-1", afterPosition: 0, limit: 10 })).map(
+          (event) => event.position,
+        ),
+      ).toEqual([1, 4]);
+      expect(await store.lastPosition()).toBe(4);
+    });
+
+    it("reseals nothing for an empty list", async () => {
+      await naming(1, {});
+      const before = await store.readAll({ afterPosition: 0, limit: 10 });
+      await store.reseal([]);
+      expect(await store.readAll({ afterPosition: 0, limit: 10 })).toEqual(before);
+    });
+
     it("starts the global stream at position 0", async () => {
       expect(await store.lastPosition()).toBe(0);
       expect(await store.readAll({ afterPosition: 0, limit: 10 })).toEqual([]);

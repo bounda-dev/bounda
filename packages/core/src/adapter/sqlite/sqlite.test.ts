@@ -8,6 +8,15 @@ import type { Storage } from "../adapter.ts";
 import type { SqlDatabase } from "../sql/database.ts";
 import { createKnownEventTypes } from "../sql/event-types.ts";
 import type { SqlExecutor } from "../sql/sql-table.ts";
+import type { KeyedPerson } from "../storage/personal-key-store.ts";
+import {
+  testKeyedPerson as held,
+  testPersonalKey as key,
+  testCommand,
+  testContext,
+  testDeadLetter,
+  testOutcome,
+} from "../testing/fixtures.ts";
 import {
   type ContractRow,
   checkpointStoreContract,
@@ -144,6 +153,156 @@ describe("the SQLite stores on node:sqlite", () => {
   readModelTransactionContract({
     create: async () => nodeSqlite().adapter,
     locking: "single-writer",
+  });
+});
+
+describe("the person index of the SQLite stores", () => {
+  const indexed = (db: DatabaseSync): unknown[] =>
+    db
+      .prepare('SELECT "person", "store", "row" FROM "bounda_person_rows" ORDER BY 1, 2, 3')
+      .all()
+      .map((row) => [row.person, row.store, row.row]);
+
+  it("keeps who each row names as its persons say, from its first write to its removal", async () => {
+    const { adapter, db } = nodeSqlite();
+    const storage = await adapter.createStorage();
+    await storage.personalKeys.add("c-1", key("1"));
+    await storage.personalKeys.add("c-2", key("2"));
+    await storage.snapshotStore.put({
+      aggregateType: "customer",
+      aggregateId: "c-1",
+      version: 1,
+      fingerprint: "s",
+      state: "{}",
+      persons: [held("c-1", "1"), held("c-1", null)],
+    });
+    await storage.idempotencyStore.put({
+      key: "i",
+      fingerprint: "f",
+      outcome: testOutcome("1"),
+      expiresAt: "2026-01-02T00:00:00.000Z",
+      persons: [held("c-2", "2")],
+      now: new Date("2026-01-01T00:00:00.000Z"),
+    });
+    const schedule = (persons: readonly KeyedPerson[]) =>
+      storage.scheduler.schedule({
+        dedupeKey: "s",
+        command: testCommand("1"),
+        executeAt: new Date("2026-01-01T00:00:00.000Z"),
+        context: testContext,
+        persons,
+      });
+    await schedule([held("c-1", "1")]);
+    await storage.deadLetterStore.add({
+      ...testDeadLetter("d"),
+      kind: "scheduled",
+      persons: [held("c-1", "1"), held("c-2", "2")],
+    });
+    await storage.deadLetterStore.add(testDeadLetter("unnamed"));
+    expect(indexed(db)).toEqual([
+      ["c-1", "dead_letters", '["d"]'],
+      ["c-1", "scheduled_commands", '["s"]'],
+      ["c-1", "snapshots", '["customer","c-1"]'],
+      ["c-2", "dead_letters", '["d"]'],
+      ["c-2", "idempotency_keys", '["i"]'],
+    ]);
+
+    await schedule([held("c-2", "2")]);
+    await storage.deadLetterStore.updateStatus("d", "retried", new Date());
+    expect(indexed(db)).toContainEqual(["c-2", "scheduled_commands", '["s"]']);
+    expect(indexed(db)).not.toContainEqual(["c-1", "scheduled_commands", '["s"]']);
+    expect(indexed(db)).toContainEqual(["c-1", "dead_letters", '["d"]']);
+
+    await storage.snapshotStore.remove({ aggregateType: "customer", aggregateId: "c-1" });
+    await storage.idempotencyStore.purge({ now: new Date("2026-01-03T00:00:00.000Z") });
+    await storage.scheduler.cancel("s");
+    await storage.deadLetterStore.remove("d");
+    expect(indexed(db)).toEqual([]);
+  });
+
+  it("rewrites a row's references when its persons are written again, whatever writes them", async () => {
+    const { adapter, db } = nodeSqlite();
+    const storage = await adapter.createStorage();
+    await storage.deadLetterStore.add({ ...testDeadLetter("d"), persons: [held("c-1", "1")] });
+    db.prepare('UPDATE "bounda_dead_letters" SET "persons" = ? WHERE "id" = ?').run(
+      JSON.stringify([held("c-2", "2"), held("c-3", "3")]),
+      "d",
+    );
+    expect(indexed(db)).toEqual([
+      ["c-2", "dead_letters", '["d"]'],
+      ["c-3", "dead_letters", '["d"]'],
+    ]);
+    expect((await storage.deadLetterStore.listByPerson("c-3")).map(({ id }) => id)).toEqual(["d"]);
+    expect(await storage.deadLetterStore.listByPerson("c-1")).toEqual([]);
+  });
+
+  // The query plan of every statement `work` prepares.
+  const plansOf = async (
+    db: DatabaseSync,
+    work: () => Promise<unknown>,
+  ): Promise<readonly (readonly [string, readonly string[]])[]> => {
+    const prepare = db.prepare.bind(db);
+    const seen: string[] = [];
+    db.prepare = (sql: string) => {
+      seen.push(sql);
+      return prepare(sql);
+    };
+    try {
+      await work();
+    } finally {
+      db.prepare = prepare;
+    }
+    return seen.map((sql) => [
+      sql,
+      prepare(`EXPLAIN QUERY PLAN ${sql}`)
+        .all()
+        .map((row) => String(row.detail)),
+    ]);
+  };
+
+  const scans = (plan: readonly string[]): readonly string[] =>
+    plan.filter((step) => step.startsWith("SCAN"));
+
+  it("finds the rows that name a person by index, never reading every row of a store", async () => {
+    const { adapter, db } = nodeSqlite();
+    const storage = await adapter.createStorage();
+    const plans = await plansOf(db, async () => {
+      await storage.snapshotStore.forget("c-1");
+      await storage.idempotencyStore.forget("c-1");
+      await storage.scheduler.listByPerson("c-1");
+      await storage.scheduler.forget("c-1");
+      await storage.deadLetterStore.listByPerson("c-1");
+      await storage.deadLetterStore.forget("c-1");
+    });
+    const lookups = plans.filter(([sql]) => sql.includes("bounda_person_rows"));
+    expect(lookups).toHaveLength(6);
+    for (const [, plan] of lookups) expect(scans(plan)).toEqual([]);
+  });
+
+  it("removes a row's references by index when the row goes", async () => {
+    const { adapter, db } = nodeSqlite();
+    await adapter.createStorage();
+    const plan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN DELETE FROM "bounda_person_rows" WHERE "store" = 'dead_letters' AND "row" = '["d"]'`,
+      )
+      .all()
+      .map((row) => String(row.detail));
+    expect(plan).toEqual([expect.stringContaining("bounda_person_rows_row_idx")]);
+  });
+
+  it("finds and purges the resolved dead letters by index", async () => {
+    const { adapter, db } = nodeSqlite();
+    const storage = await adapter.createStorage();
+    const plans = await plansOf(db, async () => {
+      await storage.deadLetterStore.firstResolvedAt();
+      await storage.deadLetterStore.purge({ resolvedBy: new Date(), limit: 1 });
+    });
+    expect(plans).toHaveLength(2);
+    for (const [, plan] of plans) {
+      expect(plan).toContainEqual(expect.stringContaining("bounda_dead_letters_resolved_idx"));
+      expect(scans(plan)).toEqual([]);
+    }
   });
 });
 
@@ -365,6 +524,7 @@ describe("createSqliteAdapter", () => {
       "app_events",
       "app_idempotency_keys",
       "app_inbox",
+      "app_person_rows",
       "app_personal_keys",
       "app_persons",
       "app_rm_order_summary",

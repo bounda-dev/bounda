@@ -7,12 +7,15 @@ import type {
 } from "../index.ts";
 import type { SqlDatabase } from "../sql/database.ts";
 import { heldKeys, naming } from "./held-keys.ts";
+import { PERSON_INDEXED } from "./schema.ts";
 
 export interface CreateSqliteIdempotencyStoreArgs {
   readonly db: SqlDatabase;
   readonly table: string;
   // The personal keys a record's persons must hold for `put` to write it.
   readonly personalKeys: string;
+  // Where the rows that name a person are indexed by person.
+  readonly personRows: string;
 }
 
 export interface CreateSqliteIdempotencyStoreFunction {
@@ -31,6 +34,7 @@ export const createSqliteIdempotencyStore: CreateSqliteIdempotencyStoreFunction 
   db,
   table,
   personalKeys,
+  personRows,
 }) => {
   const get: IdempotencyStore["get"] = async ({ key, now }) => {
     const [row] = await db.all(
@@ -77,6 +81,10 @@ export const createSqliteIdempotencyStore: CreateSqliteIdempotencyStoreFunction 
       ]);
       return rows.length;
     },
-    forget: (person) => db.run(`DELETE FROM ${table} WHERE ${naming(table)}`, [person]),
+    forget: (person) =>
+      db.run(
+        `DELETE FROM ${table} WHERE ${naming({ personRows, indexed: PERSON_INDEXED.idempotencyKeys })}`,
+        [person],
+      ),
   };
 };

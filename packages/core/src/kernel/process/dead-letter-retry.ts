@@ -1,4 +1,5 @@
 import type { StoredDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
+import type { Clock } from "../../contracts/clock.ts";
 import {
   DeadLetterNotRetriableError,
   DeadLetterSettledError,
@@ -85,6 +86,7 @@ export interface CreateProcessRetryArgs {
   readonly schedule: DeadlineSchedule;
   readonly deadlineStep: DeadlineStep;
   readonly resume: ResumeParked;
+  readonly clock: Clock;
   readonly logger: Logger;
 }
 
@@ -115,6 +117,7 @@ export const createProcessRetry: CreateProcessRetryFunction = ({
   schedule,
   deadlineStep,
   resume,
+  clock,
   logger,
 }) => {
   const { load } = units.live;
@@ -155,7 +158,7 @@ export const createProcessRetry: CreateProcessRetryFunction = ({
         if ((await unit.deadLetterStore.get(letter))?.status !== "failed") {
           throw new DeadLetterSettledError({ id: letter });
         }
-        await unit.deadLetterStore.updateStatus(letter, "retried");
+        await unit.deadLetterStore.updateStatus(letter, "retried", clock.now());
         settled = true;
       }
       if (current.handledEventIds.has(event.id)) {

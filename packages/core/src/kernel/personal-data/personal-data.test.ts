@@ -407,7 +407,7 @@ describe("personal data in an app", () => {
     await app.stop();
   });
 
-  it("snapshots a stream whose personal fields were stored in the clear, before they were marked", async () => {
+  it("seals the personal fields a stream stored in the clear, before they were marked, and drops the snapshot folded from them", async () => {
     const adapter = memory();
     const storage = await adapter.createStorage();
     const metadata = { correlationId: "c", causationId: "c", commandId: "c", depth: 0 };
@@ -433,13 +433,24 @@ describe("personal data in an app", () => {
     await app.commands.greetCustomer({ customerId: "c-9" });
     await app.runUntilIdle();
     const stream = { aggregateType: "customer", aggregateId: "c-9" };
-    expect(await storage.personalKeys.get("c-9")).toBeNull();
-    expect(await storage.snapshotStore.get(stream)).toMatchObject({
-      version: 2,
-      persons: [{ person: "c-9", fingerprint: null }],
+    const key = await storage.personalKeys.get("c-9");
+    const [registered] = await storage.eventStore.readAll({ afterPosition: 0, limit: 1 });
+    expect(registered).toMatchObject({
+      person: "c-9",
+      payload: {
+        email: { $personal: { person: "c-9", key: key?.fingerprint } },
+        name: "Old",
+      },
     });
-    await app.forget("c-9");
     expect(await storage.snapshotStore.get(stream)).toBeNull();
+    const exported = async () =>
+      (await app.exportPersonalData("c-9")).events.map((event) => [event.type, event.data]);
+    expect(await exported()).toEqual([["CustomerRegistered", { email: "old@example.com" }]]);
+    await app.forget("c-9");
+    expect(await exported()).toEqual([
+      ["CustomerRegistered", { email: null }],
+      ["PersonalDataForgotten", {}],
+    ]);
     await app.stop();
   });
 

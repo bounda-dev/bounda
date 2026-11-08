@@ -1,4 +1,5 @@
 import { byFirstFailure } from "../adapter/sql/dead-letters.ts";
+import { codePointOrder } from "../adapter/sql/order.ts";
 import type {
   DeadLetterStore,
   ListDeadLettersArgs,
@@ -33,11 +34,21 @@ const copy = ({
   ...(persons === undefined || persons.length === 0 ? {} : { persons: jsonCopy(persons) }),
 });
 
+interface Resolved extends StoredDeadLetter {
+  readonly resolvedAt: string;
+}
+
 export const createKeptDeadLetterStore: CreateKeptDeadLetterStoreFunction = () => {
   const letters = new Map<string, StoredDeadLetter>();
 
   const select = (args: ListDeadLettersArgs): StoredDeadLetter[] =>
     [...letters.values()].filter((letter) => matches(letter, args)).sort(byFirstFailure);
+
+  // Earliest `resolvedAt` first, then by `id`, as the SQL stores order them.
+  const resolved = (): Resolved[] =>
+    [...letters.values()]
+      .filter((letter): letter is Resolved => letter.resolvedAt !== undefined)
+      .sort((a, b) => codePointOrder(a.resolvedAt, b.resolvedAt) || codePointOrder(a.id, b.id));
 
   const store: DeadLetterStore = {
     add: async (letter) => {
@@ -63,13 +74,29 @@ export const createKeptDeadLetterStore: CreateKeptDeadLetterStoreFunction = () =
       select({ status: "failed" })
         .filter((letter) => letter.person === person && letter.errorCode === errorCode)
         .map(copy),
-    updateStatus: async (id, status) => {
+    updateStatus: async (id, status, at) => {
       const existing = letters.get(id);
       if (existing?.status !== "failed") throw new DeadLetterSettledError({ id });
-      letters.set(id, { ...existing, status });
+      letters.set(id, { ...existing, status, resolvedAt: at.toISOString() });
     },
     remove: async (id) => {
       letters.delete(id);
+    },
+    reseal: async (id, { person, errorMessage, errorStack, payload, persons }) => {
+      const existing = letters.get(id);
+      if (existing === undefined) return;
+      const { errorStack: _stack, payload: _payload, persons: _persons, ...kept } = existing;
+      letters.set(
+        id,
+        copy({
+          ...kept,
+          person,
+          errorMessage,
+          ...(errorStack === undefined ? {} : { errorStack }),
+          ...(payload === undefined ? {} : { payload }),
+          ...(persons === undefined ? {} : { persons }),
+        }),
+      );
     },
     listByPerson: async (person) =>
       select({})
@@ -79,6 +106,17 @@ export const createKeptDeadLetterStore: CreateKeptDeadLetterStoreFunction = () =
       const named = select({}).filter((letter) => namesPerson(letter, person));
       for (const { id } of named) letters.delete(id);
       return named.map(copy);
+    },
+    firstResolvedAt: async () => {
+      const [first] = resolved();
+      return first === undefined ? null : new Date(first.resolvedAt);
+    },
+    purge: async ({ resolvedBy, limit }) => {
+      const due = resolved()
+        .filter((letter) => Date.parse(letter.resolvedAt) <= resolvedBy.getTime())
+        .slice(0, limit);
+      for (const { id } of due) letters.delete(id);
+      return due.length;
     },
   };
   return { store, entries: createStoreEntries(letters, (id: string) => id) };

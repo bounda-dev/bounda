@@ -204,6 +204,18 @@ export interface ResolvedForgetLedgerConfig {
 }
 
 /**
+ * Runtime settings for dead letters.
+ */
+export interface DeadLettersConfig {
+  /**
+   * How long a letter is kept once retried or discarded. Past it, the scheduled-command worker
+   * removes it, its error text with it; a `failed` letter is never removed. No default: without
+   * it resolved letters are kept.
+   */
+  readonly retention?: DurationInput;
+}
+
+/**
  * The `backoff` of the dispatcher's settings.
  */
 export interface BackoffConfig {
@@ -274,6 +286,7 @@ export interface RuntimeConfig {
   readonly processes?: ProcessesConfig;
   readonly dispatcher?: DispatcherConfig;
   readonly personalData?: PersonalDataConfig;
+  readonly deadLetters?: DeadLettersConfig;
   readonly overrides?: Readonly<Record<string, AggregateOverrides>>;
 }
 
@@ -378,6 +391,12 @@ export interface ResolvedConfig {
        * `null` when no forget ledger is configured.
        */
       readonly forgetLedger: ResolvedForgetLedgerConfig | null;
+    };
+    readonly deadLetters: {
+      /**
+       * `null` when no retention is configured.
+       */
+      readonly retentionMs: number | null;
     };
     readonly overrides: Readonly<Record<string, ResolvedAggregateRuntime>>;
   };

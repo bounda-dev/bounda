@@ -131,5 +131,6 @@ export const withUpcasting: WithUpcastingFunction = ({ eventStore, aggregates })
     },
     lastPosition: () => eventStore.lastPosition(),
     types: () => eventStore.types(),
+    reseal: (events) => eventStore.reseal(events),
   };
 };

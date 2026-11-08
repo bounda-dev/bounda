@@ -25,7 +25,8 @@ bounda dead-letters discard 019a0c4e-…
 it or print JSON for a script. `retry` runs the failed handler once more and marks
 the letter `retried` if it succeeds; when it fails again the error is printed and the letter stays
 `failed`. `discard` marks it `discarded` without running anything. Letters are never deleted by
-these commands; they are the record of what happened.
+these commands; they are the record of what happened, until the
+[retention](#keeping-resolved-letters) you set removes the resolved ones.
 
 What a retry runs, and when it marks the letter, depends on the kind:
 
@@ -59,6 +60,25 @@ way worth retrying is left as it was and the run is retried; one refused because
 restricted again waits for the next lift. A letter the app cannot retry is
 logged and left as it is.
 
+## Keeping resolved letters
+
+A letter that was retried or discarded records when, as `resolvedAt`. With
+[`runtime.deadLetters.retention`](/reference/configuration/#dead-letters) set, the scheduled-command
+worker removes each one once it was resolved that long ago, a batch on each pass, together with its
+error text and payload; a `failed` letter stays until someone settles it. Without it resolved
+letters are kept for good.
+
+```ts
+export default defineConfig({
+  storage: sqlite({ path: "./data/app.db" }),
+  runtime: { deadLetters: { retention: "30d" } },
+});
+```
+
+A host without a polling worker, such as a Durable Object, is woken for it through `nextDueAt()`.
+A process instance whose letter was discarded stays given up once the letter is gone: the events
+that reach it are still dropped.
+
 ## What a letter holds
 
 A letter records what gave up and why: its `kind` and `handler`, the event it was about (or the
@@ -73,7 +93,8 @@ and stores the message and the stack encrypted with that person's key, as a
 [personal field](/guides/personal-data/) is. A letter that names nobody keeps them in the clear:
 a process deadline's, a policy's or process's for an event without personal fields, or whose
 fields were forgotten before the handler read them, and a scheduled command's whose payload holds
-no marked field. `app.deadLetters` and `bounda dead-letters list` open them for you, and every
+no marked field. A letter filed before the fields its work holds were marked is sealed in place
+once they are, by the [backfill](/guides/personal-data/#marking-a-field-later). `app.deadLetters` and `bounda dead-letters list` open them for you, and every
 `list`, `get`, `retry` and `discard` is recorded in the
 [access log](/guides/personal-data/#who-opened-what), naming the persons its letters name, with
 `outcome: "failed"` for a retry that fails again, whose error may quote them. Once the person is

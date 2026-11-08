@@ -3,6 +3,9 @@ import { DeadLetterSettledError } from "../../contracts/errors.ts";
 import type { DeadLetterStore, NewDeadLetter } from "../storage/dead-letter-store.ts";
 import { testKeyedPerson as held, testSealedValue as sealed } from "./fixtures.ts";
 
+// When a test resolves a letter.
+const resolvedAt = new Date("2026-01-03T00:00:00.000Z");
+
 export interface DeadLetterStoreContractArgs {
   readonly create: () => Promise<DeadLetterStore>;
 }
@@ -140,7 +143,7 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       await store.add(letter("a"));
       await store.add(letter("b", { kind: "process", handler: "order.orderPayment" }));
       await store.add(letter("c", { handler: "order.archiveOnOrderPaid" }));
-      await store.updateStatus("c", "retried");
+      await store.updateStatus("c", "retried", resolvedAt);
 
       expect((await store.list()).map((entry) => entry.id).sort()).toEqual(["a", "b", "c"]);
       expect((await store.list({ kind: "process" })).map((entry) => entry.id)).toEqual(["b"]);
@@ -170,7 +173,7 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       await store.add(refused("nobody", null));
       await store.add(letter("coded", { person: "c-1", errorCode: "VALIDATION_FAILED" }));
       await store.add(letter("plain", { person: "c-1" }));
-      await store.updateStatus("settled", "retried");
+      await store.updateStatus("settled", "retried", resolvedAt);
       const found = await store.listFailed({ person: "c-1", errorCode: "PROCESSING_RESTRICTED" });
       expect(found.map(({ id }) => id)).toEqual(["c", "a", "b"]);
       expect(found[0]).toEqual({ ...refused("c", "c-1"), status: "failed" });
@@ -181,7 +184,7 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
 
     it("rejects a status update for a letter it does not hold", async () => {
       const settled = await store
-        .updateStatus("missing", "retried")
+        .updateStatus("missing", "retried", resolvedAt)
         .catch((error: unknown) => error);
       expect(settled).toBeInstanceOf(DeadLetterSettledError);
       expect(settled).toMatchObject({ code: "DEAD_LETTER_SETTLED", id: "missing" });
@@ -191,27 +194,63 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
     it("changes a letter's status only while it is failed, and keeps the first change", async () => {
       await store.add(letter("a"));
       await store.add(letter("b"));
-      await store.updateStatus("a", "retried");
-      await store.updateStatus("b", "discarded");
+      await store.updateStatus("a", "retried", resolvedAt);
+      await store.updateStatus("b", "discarded", resolvedAt);
 
-      await expect(store.updateStatus("a", "discarded")).rejects.toBeInstanceOf(
+      await expect(store.updateStatus("a", "discarded", resolvedAt)).rejects.toBeInstanceOf(
         DeadLetterSettledError,
       );
-      await expect(store.updateStatus("a", "retried")).rejects.toBeInstanceOf(
+      await expect(store.updateStatus("a", "retried", resolvedAt)).rejects.toBeInstanceOf(
         DeadLetterSettledError,
       );
-      await expect(store.updateStatus("b", "retried")).rejects.toBeInstanceOf(
-        DeadLetterSettledError,
-      );
-      expect((await store.get("a"))?.status).toBe("retried");
-      expect((await store.get("b"))?.status).toBe("discarded");
+      await expect(
+        store.updateStatus("b", "retried", new Date("2026-02-01T00:00:00.000Z")),
+      ).rejects.toBeInstanceOf(DeadLetterSettledError);
+      expect(await store.get("a")).toMatchObject({
+        status: "retried",
+        resolvedAt: resolvedAt.toISOString(),
+      });
+      expect(await store.get("b")).toMatchObject({
+        status: "discarded",
+        resolvedAt: resolvedAt.toISOString(),
+      });
+    });
+
+    it("has no resolution time for a letter still failed", async () => {
+      await store.add(letter("a"));
+      expect(await store.get("a")).not.toHaveProperty("resolvedAt");
+      expect(await store.firstResolvedAt()).toBeNull();
+      expect(await store.purge({ resolvedBy: new Date("2100-01-01"), limit: 10 })).toBe(0);
+      expect(await store.get("a")).not.toBeNull();
+    });
+
+    it("purges the resolved letters up to a time, earliest first, never a failed one", async () => {
+      const at = (day: number) => new Date(Date.UTC(2026, 0, day));
+      await store.add(letter("failed"));
+      for (const id of ["late", "b", "a", "first"]) await store.add(letter(id));
+      await store.updateStatus("late", "retried", at(9));
+      await store.updateStatus("b", "discarded", at(5));
+      await store.updateStatus("a", "retried", at(5));
+      await store.updateStatus("first", "discarded", at(2));
+      expect(await store.firstResolvedAt()).toEqual(at(2));
+
+      expect(await store.purge({ resolvedBy: at(5), limit: 2 })).toBe(2);
+      expect((await store.list()).map(({ id }) => id).sort()).toEqual(["b", "failed", "late"]);
+      expect(await store.firstResolvedAt()).toEqual(at(5));
+      expect(await store.purge({ resolvedBy: at(4), limit: 10 })).toBe(0);
+      expect(await store.purge({ resolvedBy: at(5), limit: 10 })).toBe(1);
+      expect((await store.list()).map(({ id }) => id).sort()).toEqual(["failed", "late"]);
+      expect(await store.firstResolvedAt()).toEqual(at(9));
+      expect(await store.purge({ resolvedBy: at(30), limit: 10 })).toBe(1);
+      expect(await store.firstResolvedAt()).toBeNull();
+      expect((await store.list()).map(({ id }) => id)).toEqual(["failed"]);
     });
 
     it("lets one of two concurrent status changes through", async () => {
       await store.add(letter("a"));
       const outcomes = await Promise.allSettled([
-        store.updateStatus("a", "retried"),
-        store.updateStatus("a", "discarded"),
+        store.updateStatus("a", "retried", resolvedAt),
+        store.updateStatus("a", "discarded", resolvedAt),
       ]);
       expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
       const [rejected] = outcomes.filter((outcome) => outcome.status === "rejected");
@@ -235,7 +274,7 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       await store.add(scheduled("c", "2026-01-01T00:00:00.000Z", [held("c-2", "2")]));
       await store.add(scheduled("d", "2026-01-01T00:00:00.000Z"));
       await store.add(scheduled("e", "2026-01-01T00:00:00.000Z", []));
-      await store.updateStatus("b", "discarded");
+      await store.updateStatus("b", "discarded", resolvedAt);
       expect((await store.get("a"))?.persons).toEqual([held("c-1", "1")]);
       expect(await store.get("d")).not.toHaveProperty("persons");
       expect(await store.get("e")).not.toHaveProperty("persons");
@@ -254,6 +293,7 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
         {
           ...scheduled("b", "2026-01-01T00:01:00.000Z", [held("c-2", "2"), held("c-1", "1")]),
           status: "discarded",
+          resolvedAt: resolvedAt.toISOString(),
         },
         { ...scheduled("a", "2026-01-01T00:02:00.000Z", [held("c-1", "1")]), status: "failed" },
       ]);
@@ -305,7 +345,7 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       );
       await store.add(letter("other", { person: "c-2", errorMessage: sealed("c-2", "2") }));
       await store.add(letter("nobody"));
-      await store.updateStatus("process", "retried");
+      await store.updateStatus("process", "retried", resolvedAt);
 
       const named = await store.listByPerson("c-1");
       expect(named.map(({ id, status }) => [id, status])).toEqual([
@@ -317,9 +357,65 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       expect(await store.listByPerson("c-3")).toEqual([]);
     });
 
+    it("reseals a letter in place, whatever its status, keeping the rest of it", async () => {
+      await store.add(letter("p", { errorStack: "Error: timeout\n    at handler" }));
+      await store.add(
+        letter("s", { kind: "scheduled", handler: "RemindCustomer", payload: { email: "a" } }),
+      );
+      await store.updateStatus("s", "discarded", resolvedAt);
+      const [policy, scheduled] = [await store.get("p"), await store.get("s")];
+      await store.reseal("p", {
+        person: "c-1",
+        errorMessage: sealed("c-1", "1"),
+        errorStack: sealed("c-1", "1"),
+      });
+      await store.reseal("s", {
+        person: "c-2",
+        errorMessage: sealed("c-2", "2"),
+        payload: { email: sealed("c-2", "2") },
+        persons: [held("c-2", "2")],
+      });
+      await store.reseal("missing", { person: "c-1", errorMessage: "lost" });
+
+      expect(await store.get("p")).toEqual({
+        ...policy,
+        person: "c-1",
+        errorMessage: sealed("c-1", "1"),
+        errorStack: sealed("c-1", "1"),
+      });
+      expect(await store.get("s")).toEqual({
+        ...scheduled,
+        person: "c-2",
+        errorMessage: sealed("c-2", "2"),
+        payload: { email: sealed("c-2", "2") },
+        persons: [held("c-2", "2")],
+      });
+      expect(await store.get("missing")).toBeNull();
+      expect((await store.listByPerson("c-1")).map(({ id }) => id)).toEqual(["p"]);
+      expect((await store.forget("c-2")).map(({ id }) => id)).toEqual(["s"]);
+      expect(await store.forget("c-1")).toEqual([]);
+    });
+
+    it("reseals what a letter leaves out as none", async () => {
+      await store.add(
+        letter("s", {
+          kind: "scheduled",
+          errorStack: "stack",
+          payload: { email: "a" },
+          persons: [held("c-1", "1")],
+        }),
+      );
+      await store.reseal("s", { person: null, errorMessage: "timeout" });
+      const resealed = await store.get("s");
+      expect(resealed).not.toHaveProperty("errorStack");
+      expect(resealed).not.toHaveProperty("payload");
+      expect(resealed).not.toHaveProperty("persons");
+      expect(await store.forget("c-1")).toEqual([]);
+    });
+
     it("updates status and removes letters", async () => {
       await store.add(letter("a"));
-      await store.updateStatus("a", "discarded");
+      await store.updateStatus("a", "discarded", resolvedAt);
       expect((await store.get("a"))?.status).toBe("discarded");
       await store.remove("a");
       expect(await store.get("a")).toBeNull();

@@ -213,6 +213,8 @@ describe("restoring a Durable Object's storage with a forget ledger", () => {
     const store = connect<typeof quietRegistry>(stub);
     await store.commands.placeOrder({ orderId: "o-1", total: 7, customer: "ada", note: "bell" });
     await store.commands.placeOrder({ orderId: "o-2", total: 9, customer: "bob", note: "door" });
+    // A copy of an object that ran its alarm, so the walk over what came before the marks is in it.
+    await runInDurableObject(stub, (instance) => instance.alarm());
     await runInDurableObject(stub, (_instance, state) => copyTables(state.storage, false));
     await store.forget("ada");
     await runInDurableObject(stub, (instance) => instance.alarm());

@@ -66,6 +66,8 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
 
   // Whether `event` waits behind the instance's failure: not the event that failed, delivered
   // again, and nothing once the failure's letter was discarded, since the instance is given up.
+  // A letter is written with the failure, so one that is gone was purged once resolved: an
+  // instance still failed on it was given up.
   const parks = async (
     unit: UnitOfWork,
     process: ProcessRuntime,
@@ -82,7 +84,8 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
     }
     const letterId = instance.failure?.letterId;
     if (letterId === undefined) return true;
-    return (await unit.deadLetterStore.get(letterId))?.status !== "discarded";
+    const letter = await unit.deadLetterStore.get(letterId);
+    return letter !== null && letter.status !== "discarded";
   };
 
   // The instance with its start staged in `entries` when `event` starts it; as it is otherwise.

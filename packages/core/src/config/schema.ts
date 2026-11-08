@@ -148,6 +148,7 @@ const runtime = z.strictObject({
       forgetLedger: forgetLedger.optional(),
     })
     .optional(),
+  deadLetters: z.strictObject({ retention: timeout.optional() }).optional(),
   overrides: z.record(z.string(), overrides).optional(),
 });
 
@@ -295,6 +296,9 @@ export const resolveConfig: ResolveConfigFunction = (config) => {
         retentionMs: parsed.runtime?.personalData?.retention ?? null,
         keyWrapper: parsed.runtime?.personalData?.keyWrapper ?? null,
         forgetLedger: resolveForgetLedger(parsed.runtime?.personalData?.forgetLedger),
+      },
+      deadLetters: {
+        retentionMs: parsed.runtime?.deadLetters?.retention ?? null,
       },
       overrides: resolvedOverrides,
     },

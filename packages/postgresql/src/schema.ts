@@ -141,11 +141,14 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "first_failed_at" text NOT NULL,
     "last_failed_at" text NOT NULL,
     "status" text NOT NULL,
+    "resolved_at" text,
     "payload" jsonb,
     "persons" jsonb NOT NULL DEFAULT '[]'
   )`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "listing")} ON ${tables.deadLetters} ("status", "first_failed_at", "id")`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "person")} ON ${tables.deadLetters} ("person")`,
+  // What the retention of resolved letters reads and purges, earliest first.
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "resolved")} ON ${tables.deadLetters} ("resolved_at", "id") WHERE "resolved_at" IS NOT NULL`,
   `CREATE TABLE IF NOT EXISTS ${tables.scheduledCommands} (
     "dedupe_key" text PRIMARY KEY,
     "command_type" text NOT NULL,
@@ -243,6 +246,7 @@ export const ensureStorageSchema: EnsureStorageSchemaFunction = async ({ db, sch
     indexName(tables.events, "person"),
     indexName(tables.deadLetters, "listing"),
     indexName(tables.deadLetters, "person"),
+    indexName(tables.deadLetters, "resolved"),
     indexName(tables.scheduledCommands, "execute_at"),
     indexName(tables.scheduledCommands, "unclaimed"),
     indexName(tables.scheduledCommands, "claimed_at"),

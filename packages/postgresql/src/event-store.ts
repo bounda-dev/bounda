@@ -188,5 +188,15 @@ export const createPostgresqlEventStore: CreatePostgresqlEventStoreFunction = ({
       known.recorded(types);
       return types;
     },
+    reseal: (events) =>
+      db.write(async (tx) => {
+        for (const { position, payload, person } of events) {
+          await tx.run(`UPDATE ${table} SET "payload" = $1, "person" = $2 WHERE "position" = $3`, [
+            postgresqlDialect.encode("json", payload),
+            person,
+            position,
+          ]);
+        }
+      }),
   };
 };

@@ -142,7 +142,8 @@ have work to do when it happens.
 
 - **Data in the clear elsewhere.** A field marked `personal` in one event and left plain in
   another is readable through the second one. The mark is per field per event, so mark every
-  event that carries the data, or carry it in one.
+  event that carries the data, or carry it in one. A field marked late is not left out: the
+  runtime [seals in place](/guides/personal-data/#marking-a-field-later) what was written before.
 - **What left the store.** Logs that printed a payload, the external systems a policy wrote to,
   and backups. A backup of the whole database restores the keys too, wrapped: with the master key
   it is a copy of the data of everyone it holds, including a person forgotten after it was taken.

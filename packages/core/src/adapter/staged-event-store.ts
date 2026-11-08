@@ -1,18 +1,20 @@
 import { ConcurrencyError } from "../contracts/errors.ts";
 import { type StoredEvent, streamId } from "../contracts/event.ts";
-import type { AppendArgs, EventStore } from "./storage/event-store.ts";
+import type { AppendArgs, EventStore, ResealedEvent } from "./storage/event-store.ts";
 import { type KeyedPerson, keyedPersonId } from "./storage/personal-key-store.ts";
 
 /**
  * An event store that keeps what is appended to it aside: `load` answers with the base store's
  * events plus the ones staged for that stream, `append` stages with the version the stream has
  * in that view, and `readOne`, `readAll`, `readByPerson`, `lastPosition` and `types` read the base
- * store alone, since staged events are not written yet. `batches` hands out what to append at
- * commit, one batch per stream, each expecting the version the stream had in the base store when
- * the view first met it.
+ * store alone, since staged events are not written yet, nor are the events `reseal` stages.
+ * `batches` hands out what to append at commit, one batch per stream, each expecting the version
+ * the stream had in the base store when the view first met it, and `reseals` what to write again
+ * after.
  */
 export interface StagedEventStore extends EventStore {
   batches(): readonly StagedBatch[];
+  reseals(): readonly ResealedEvent[];
 }
 
 /**
@@ -51,6 +53,7 @@ export const createStagedEventStore: CreateStagedEventStoreFunction = (
   { nextPosition = () => 0 } = {},
 ) => {
   const streams = new Map<string, StagedStream>();
+  const resealed: ResealedEvent[] = [];
 
   const stagedFor = async (aggregateType: string, aggregateId: string): Promise<StagedStream> => {
     const key = streamId({ aggregateType, aggregateId });
@@ -132,6 +135,10 @@ export const createStagedEventStore: CreateStagedEventStoreFunction = (
     readByPerson: (args) => base.readByPerson(args),
     lastPosition: () => base.lastPosition(),
     types: () => base.types(),
+    reseal: async (events) => {
+      resealed.push(...events);
+    },
+    reseals: () => resealed,
     batches: () =>
       [...streams.values()]
         .filter((staged) => staged.events.length > 0)

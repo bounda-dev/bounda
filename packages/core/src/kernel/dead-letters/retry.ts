@@ -1,6 +1,7 @@
 import type { Storage } from "../../adapter/adapter.ts";
 import type { StoredDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
+import type { Clock } from "../../contracts/clock.ts";
 import {
   DeadLetterNotRetriableError,
   DeadLetterSettledError,
@@ -40,6 +41,7 @@ export interface CreateDeadLetterRetryArgs {
   readonly processes: ProcessDeadLetters;
   readonly config: ResolvedConfig;
   readonly ids: IdGenerator;
+  readonly clock: Clock;
 }
 
 export interface CreateDeadLetterRetryFunction {
@@ -59,6 +61,7 @@ export const createDeadLetterRetry: CreateDeadLetterRetryFunction = ({
   processes,
   config,
   ids,
+  clock,
 }) => {
   // The retry's writes and the letter's new status, together or not at all. A retry that
   // another one settled first writes nothing, and does not run again after a conflict.
@@ -71,7 +74,7 @@ export const createDeadLetterRetry: CreateDeadLetterRetryFunction = ({
       concurrencyRetries: config.runtime.commands.concurrencyRetries,
       work: async (unit) => {
         await run(unit);
-        await unit.deadLetterStore.updateStatus(letter.id, "retried");
+        await unit.deadLetterStore.updateStatus(letter.id, "retried", clock.now());
       },
       beforeRerun: async () => {
         const current = await storage.deadLetterStore.get(letter.id);
@@ -195,7 +198,7 @@ export const createDeadLetterRetry: CreateDeadLetterRetryFunction = ({
   return {
     retry: async (letter, actor) => {
       if (await run(letter, ids.next(), actor)) {
-        await storage.deadLetterStore.updateStatus(letter.id, "retried");
+        await storage.deadLetterStore.updateStatus(letter.id, "retried", clock.now());
       }
     },
   };

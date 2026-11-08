@@ -234,9 +234,11 @@ const createUndoLog = ({
       deadLetterStore: {
         add: (letter) =>
           tracked(entries.deadLetterStore, letter.id, () => deadLetterStore.add(letter)),
-        updateStatus: (id, status) =>
-          tracked(entries.deadLetterStore, id, () => deadLetterStore.updateStatus(id, status)),
+        updateStatus: (id, status, at) =>
+          tracked(entries.deadLetterStore, id, () => deadLetterStore.updateStatus(id, status, at)),
         remove: (id) => tracked(entries.deadLetterStore, id, () => deadLetterStore.remove(id)),
+        reseal: (id, letter) =>
+          tracked(entries.deadLetterStore, id, () => deadLetterStore.reseal(id, letter)),
       },
       scheduler: {
         schedule: (args) =>
@@ -249,6 +251,7 @@ const createUndoLog = ({
           tracked(entries.scheduler, args.claim.dedupeKey, () => scheduler.fail(args)),
         defer: (args) =>
           tracked(entries.scheduler, args.claim.dedupeKey, () => scheduler.defer(args)),
+        reseal: (args) => tracked(entries.scheduler, args.dedupeKey, () => scheduler.reseal(args)),
       },
       idempotencyStore: {
         put: (args) =>
@@ -264,14 +267,14 @@ const createUndoLog = ({
 /**
  * `Storage.transact` for the memory stores. The work's writes are held back, each event staged
  * with the position it will have, reserved from the store, so the work answers the positions
- * its appends will commit with; transactions then commit one at a time, every stream appended
+ * its appends will commit with, and the events it reseals written after its appends; transactions then commit one at a time, every stream appended
  * in one synchronous run, so no reader sees one stream appended without the others, nor an
  * event written meanwhile past a position still reserved. A failed transaction appends nothing,
  * gives its positions back and puts back each entry it changed, unless someone changed it since;
  * its personal keys, and the scheduled commands and dead letters it forgets, are written at once
  * and put back the same way, and the snapshots it forgets are gone at once, for good, as a cache
  * can be.
- * `tryClaim`, `claimDue`, both `renew`, `purge` and writes made on the stores themselves do not
+ * `tryClaim`, `claimDue`, both `renew`, both `purge` and writes made on the stores themselves do not
  * wait for a commit, so they can see a write it may still put back.
  */
 export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunction = ({
@@ -312,6 +315,7 @@ export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunct
       try {
         await flush(log.target);
         await eventStore.appendAll(ownChangesLeftOut(staged.batches(), removed, restricted));
+        await eventStore.reseal(staged.reseals());
         for (const activity of recorded) await persons.record(activity);
       } catch (error) {
         log.undo();

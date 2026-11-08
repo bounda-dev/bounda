@@ -17,6 +17,8 @@ import {
   scheduledCommandId,
 } from "../command/pipeline.ts";
 import type { RestrictedRetries } from "../dead-letters/restricted.ts";
+import type { DeadLetterRetention } from "../dead-letters/retention.ts";
+import type { PersonalDataBackfill } from "../personal-data/backfill.ts";
 import { openCommandPayload } from "../personal-data/commands.ts";
 import { sealError } from "../personal-data/errors.ts";
 import { openedUnder } from "../personal-data/event-store.ts";
@@ -50,7 +52,8 @@ export interface ScheduledCommandWorker {
   stop(): Promise<void>;
   /**
    * Resolves to how many entries it claimed, those it deferred included, persons it forgot for
-   * the retention or again from the forget ledger, and keys it rewrapped.
+   * the retention or again from the forget ledger, keys it rewrapped, resolved dead letters it
+   * purged, and events and records the backfill of personal data walked past or resealed.
    */
   runOnce(): Promise<number>;
   /**
@@ -77,6 +80,10 @@ export interface CreateScheduledCommandWorkerArgs {
    */
   readonly retention?: RetentionSweep | undefined;
   /**
+   * Swept on every pass; absent without `runtime.deadLetters.retention`.
+   */
+  readonly letterRetention?: DeadLetterRetention | undefined;
+  /**
    * Swept on every pass; absent without `runtime.personalData.keyWrapper`.
    */
   readonly rotation?: KeyRotation | undefined;
@@ -85,6 +92,10 @@ export interface CreateScheduledCommandWorkerArgs {
    * `runtime.personalData.forgetLedger`.
    */
   readonly reconciliation?: ForgetLedgerReconciliation | undefined;
+  /**
+   * Swept on every pass; absent when no schema marks personal data.
+   */
+  readonly backfill?: PersonalDataBackfill | undefined;
   /**
    * The reactive subscribers the dispatcher runs, by name: what a deadline and a restricted
    * retry wait for before they run.
@@ -145,7 +156,8 @@ interface DeadlineWait {
  * answers, as `nextDueAt` is, so a host woken for a person's deadline forgets them in that pass.
  * The rotation of the key wrapper rewraps a batch of keys on every pass the same way, and the forget
  * ledger is reconciled again when the one the start ran failed, when its entries may show late, and
- * every `reconcileEvery`.
+ * every `reconcileEvery`. The retention of dead letters purges the resolved ones on every pass the
+ * same way, and the backfill seals a batch of what was written before the marks of now.
  */
 export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction = ({
   storage,
@@ -155,8 +167,10 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   delayedPolicies,
   restrictedRetries,
   retention,
+  letterRetention,
   rotation,
   reconciliation,
+  backfill,
   reactive,
   config,
   ids,
@@ -579,8 +593,10 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       const forgotten = (await retention?.sweep(claimedAt)) ?? 0;
       const rewrapped = (await rotation?.sweep(claimedAt)) ?? 0;
       const forgottenAgain = (await reconciliation?.sweep(claimedAt)) ?? 0;
+      const purged = (await letterRetention?.sweep(claimedAt)) ?? 0;
+      const backfilled = (await backfill?.sweep(claimedAt)) ?? 0;
       if (unreadable !== undefined) throw unreadable.error;
-      return due.length + forgotten + rewrapped + forgottenAgain;
+      return due.length + forgotten + rewrapped + forgottenAgain + purged + backfilled;
     });
 
   const schedule = (): void => {
@@ -603,6 +619,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       running = false;
       cancelWait?.();
       await mutex.drain();
+      await backfill?.release();
     },
     runOnce,
     leaseMs,

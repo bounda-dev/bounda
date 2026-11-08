@@ -51,6 +51,7 @@ import type {
   PayloadArgs,
   PayloadInputOf,
   PersonalDataAccess,
+  PersonalDataBackfillLag,
   PersonalDataExport,
   PersonalDataForgottenEvent,
   PersonalDataForgottenPayload,
@@ -661,6 +662,7 @@ describe("personal data", () => {
       readonly query: string;
       readonly readModel: string;
     }>();
+    expectTypeOf<DeadLetter["resolvedAt"]>().toEqualTypeOf<string | undefined>();
     expectTypeOf<DeadLetterAccess["operation"]>().toEqualTypeOf<
       "deadLetters.get" | "deadLetters.retry" | "deadLetters.discard"
     >();
@@ -727,6 +729,16 @@ describe("personal data", () => {
       AuditOnPersonalDataForgotten.HandlerArgs["event"]
     >().toEqualTypeOf<PersonalDataForgottenEvent>();
     expectTypeOf<AuditOnPersonalDataForgotten.HandlerArgs["auditLog"]>().toHaveProperty("record");
+  });
+
+  it("reports where sealing what was written before the personal data marks stands", () => {
+    expectTypeOf<
+      Awaited<ReturnType<BoundaClient["getLag"]>>["personalDataBackfill"]
+    >().toEqualTypeOf<PersonalDataBackfillLag | null>();
+    expectTypeOf<PersonalDataBackfillLag>().toEqualTypeOf<{
+      readonly position: number;
+      readonly caughtUp: boolean;
+    }>();
   });
 
   it("lets every client forget a person, answering like a command", () => {

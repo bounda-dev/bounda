@@ -191,5 +191,30 @@ export const createMemoryEventStore: CreateMemoryEventStoreFunction = ({
         .map((position) => restore(log.get(position) as Kept)),
     lastPosition: async () => watermark,
     types: async () => [...types.values()],
+    reseal: async (events) => {
+      const kept = events.map(({ position, payload, person }) => ({
+        position,
+        payload: toJson(payload),
+        person,
+      }));
+      for (const { position, payload, person } of kept) {
+        const event = log.get(position);
+        if (event === undefined) continue;
+        const written: Kept = { ...event, payload, person };
+        log.set(position, written);
+        const key = streamId(event);
+        streams.set(
+          key,
+          (streams.get(key) ?? []).map((held) => (held.position === position ? written : held)),
+        );
+        if (event.person !== null) {
+          persons.set(
+            event.person,
+            (persons.get(event.person) ?? []).filter((at) => at !== position),
+          );
+        }
+        if (person !== null) persons.set(person, [...(persons.get(person) ?? []), position]);
+      }
+    },
   };
 };

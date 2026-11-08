@@ -60,6 +60,16 @@ export interface ReadByPersonArgs extends ReadAllArgs {
   readonly person: string;
 }
 
+/**
+ * An event `reseal` writes again where it is: the payload and `person` it gets, everything else
+ * as stored.
+ */
+export interface ResealedEvent {
+  readonly position: number;
+  readonly payload: unknown;
+  readonly person: string | null;
+}
+
 export interface ReadOneArgs {
   readonly aggregateType: string;
   readonly aggregateId: string;
@@ -101,4 +111,11 @@ export interface EventStore {
    * particular order. An append that rolls back leaves none.
    */
   types(): Promise<readonly StoredEventType[]>;
+  /**
+   * Replaces the payload and `person` of the event at each position given, and nothing else of
+   * it; a position the store does not hold is skipped. Every read after it, `readByPerson`
+   * included, sees the event as written again. Only the runtime calls it, to seal in place the
+   * personal fields of events written before their schema marked them.
+   */
+  reseal(events: readonly ResealedEvent[]): Promise<void>;
 }

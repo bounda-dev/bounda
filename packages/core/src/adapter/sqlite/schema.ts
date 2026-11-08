@@ -13,6 +13,7 @@ export interface StorageTables {
   readonly personalKeys: string;
   readonly persons: string;
   readonly snapshots: string;
+  readonly personRows: string;
 }
 
 export interface StorageTablesForFunction {
@@ -30,7 +31,32 @@ export const storageTablesFor: StorageTablesForFunction = (prefix) => ({
   personalKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "personalKeys" })),
   persons: quoteIdentifier(storageTableNameFor({ prefix, table: "persons" })),
   snapshots: quoteIdentifier(storageTableNameFor({ prefix, table: "snapshots" })),
+  personRows: quoteIdentifier(storageTableNameFor({ prefix, table: "personRows" })),
 });
+
+/**
+ * A store whose rows name persons in a `persons` column, and the columns of its primary key.
+ */
+export interface PersonIndexedStore {
+  readonly store: string;
+  readonly key: readonly string[];
+}
+
+export const PERSON_INDEXED: {
+  readonly snapshots: PersonIndexedStore;
+  readonly idempotencyKeys: PersonIndexedStore;
+  readonly scheduledCommands: PersonIndexedStore;
+  readonly deadLetters: PersonIndexedStore;
+} = {
+  snapshots: { store: "snapshots", key: ["aggregate_type", "aggregate_id"] },
+  idempotencyKeys: { store: "idempotency_keys", key: ["key"] },
+  scheduledCommands: { store: "scheduled_commands", key: ["dedupe_key"] },
+  deadLetters: { store: "dead_letters", key: ["id"] },
+};
+
+// A row's key as `personRows` keeps it: the JSON array of its key columns.
+const rowOf = (row: string, { key }: PersonIndexedStore): string =>
+  `json_array(${key.map((column) => `${row}."${column}"`).join(", ")})`;
 
 const indexName = (table: string, suffix: string): string =>
   quoteIdentifier(`${table.slice(1, -1)}_${suffix}_idx`);
@@ -47,6 +73,25 @@ export const checkpointTableStatement: CheckpointTableStatementFunction = (table
     "subscriber" TEXT PRIMARY KEY,
     "position" INTEGER NOT NULL
   )`;
+
+// A row's references follow its `persons` in the statement that writes or removes the row, whatever
+// runs it: writing a row's `persons` again is how its references are rewritten.
+const personRowTriggers = (
+  tables: StorageTables,
+  table: string,
+  indexed: PersonIndexedStore,
+): readonly string[] => {
+  const trigger = (event: string): string =>
+    quoteIdentifier(`${tables.personRows.slice(1, -1)}_${indexed.store}_${event}`);
+  const insert = `INSERT OR IGNORE INTO ${tables.personRows} ("person", "store", "row") SELECT json_extract("value", '$.person'), '${indexed.store}', ${rowOf("NEW", indexed)} FROM json_each(NEW."persons");`;
+  const remove = `DELETE FROM ${tables.personRows} WHERE "store" = '${indexed.store}' AND "row" = ${rowOf("OLD", indexed)};`;
+  const columns = ["persons", ...indexed.key].map((column) => `"${column}"`).join(", ");
+  return [
+    `CREATE TRIGGER IF NOT EXISTS ${trigger("insert")} AFTER INSERT ON ${table} BEGIN ${insert} END`,
+    `CREATE TRIGGER IF NOT EXISTS ${trigger("update")} AFTER UPDATE OF ${columns} ON ${table} BEGIN ${remove} ${insert} END`,
+    `CREATE TRIGGER IF NOT EXISTS ${trigger("delete")} AFTER DELETE ON ${table} BEGIN ${remove} END`,
+  ];
+};
 
 export interface StorageSchemaStatementsFunction {
   (tables: StorageTables): readonly string[];
@@ -104,11 +149,14 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "first_failed_at" TEXT NOT NULL,
     "last_failed_at" TEXT NOT NULL,
     "status" TEXT NOT NULL,
+    "resolved_at" TEXT,
     "payload" TEXT,
     "persons" TEXT NOT NULL DEFAULT '[]'
   )`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "listing")} ON ${tables.deadLetters} ("status", "first_failed_at", "id")`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "person")} ON ${tables.deadLetters} ("person")`,
+  // What the retention of resolved letters reads and purges, earliest first.
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "resolved")} ON ${tables.deadLetters} ("resolved_at", "id") WHERE "resolved_at" IS NOT NULL`,
   `CREATE TABLE IF NOT EXISTS ${tables.scheduledCommands} (
     "dedupe_key" TEXT PRIMARY KEY,
     "command_type" TEXT NOT NULL,
@@ -168,6 +216,19 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "persons" TEXT NOT NULL,
     PRIMARY KEY ("aggregate_type", "aggregate_id")
   )`,
+  // Which rows of the stores whose triggers follow name which person, so `forget` and the export
+  // find them by index instead of reading every `persons`.
+  `CREATE TABLE IF NOT EXISTS ${tables.personRows} (
+    "person" TEXT NOT NULL,
+    "store" TEXT NOT NULL,
+    "row" TEXT NOT NULL,
+    PRIMARY KEY ("person", "store", "row")
+  ) WITHOUT ROWID`,
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.personRows, "row")} ON ${tables.personRows} ("store", "row")`,
+  ...personRowTriggers(tables, tables.snapshots, PERSON_INDEXED.snapshots),
+  ...personRowTriggers(tables, tables.idempotencyKeys, PERSON_INDEXED.idempotencyKeys),
+  ...personRowTriggers(tables, tables.scheduledCommands, PERSON_INDEXED.scheduledCommands),
+  ...personRowTriggers(tables, tables.deadLetters, PERSON_INDEXED.deadLetters),
 ];
 
 export interface EnsureStorageSchemaArgs {

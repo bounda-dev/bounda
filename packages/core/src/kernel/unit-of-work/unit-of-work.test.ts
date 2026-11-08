@@ -241,7 +241,7 @@ describe("createUnitOfWork", () => {
       ...letter("new"),
       status: "failed",
     });
-    await unit.deadLetterStore.updateStatus("old", "discarded");
+    await unit.deadLetterStore.updateStatus("old", "discarded", new Date());
     await unit.deadLetterStore.remove("old");
     await unit.scheduler.schedule(entry("command:later"));
     await unit.scheduler.cancel("command:later");
@@ -292,6 +292,25 @@ describe("createUnitOfWork", () => {
       ["command:a", new Date(now.getTime() + 5_000).toISOString(), 1],
       ["command:b", new Date(now.getTime() + 9_000).toISOString(), 0],
     ]);
+  });
+
+  it("writes the events it reseals again at commit, and nothing before", async () => {
+    const storage = await memory().createStorage();
+    await storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "1",
+      expectedVersion: 0,
+      events: [pendingEvent({ aggregateId: "1", version: 1 })],
+    });
+    const unit = createUnitOfWork({ storage });
+    await unit.eventStore.reseal([{ position: 1, payload: { total: 9 }, person: "c-1" }]);
+    expect((await storage.eventStore.readAll({ afterPosition: 0, limit: 1 }))[0]?.payload).toEqual({
+      total: 1,
+    });
+    await unit.commit();
+    expect(
+      await storage.eventStore.readByPerson({ person: "c-1", afterPosition: 0, limit: 1 }),
+    ).toMatchObject([{ payload: { total: 9 } }]);
   });
 
   it("opens no transaction when nothing was staged", async () => {

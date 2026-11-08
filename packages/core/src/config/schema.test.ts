@@ -60,6 +60,7 @@ describe("resolveConfig", () => {
         catchUp: { timeoutMs: 2_000, pollIntervalMs: 15 },
       },
       personalData: { retentionMs: null, keyWrapper: null, forgetLedger: null },
+      deadLetters: { retentionMs: null },
       overrides: {},
     });
   });
@@ -86,6 +87,7 @@ describe("resolveConfig", () => {
           keyWrapper,
           forgetLedger: { store: forgetLedger, reconcileEvery: "1m", strict: true, keepFor: "90d" },
         },
+        deadLetters: { retention: "7d" },
       },
       ports: { order: { inventory: "http" } },
     });
@@ -122,6 +124,7 @@ describe("resolveConfig", () => {
         keepForMs: 7_776_000_000,
       },
     });
+    expect(resolved.runtime.deadLetters).toEqual({ retentionMs: 604_800_000 });
     const ledgerDatabase = memory();
     const defaulted = resolveConfig({
       storage: sqlite,
@@ -253,6 +256,9 @@ describe("resolveConfig", () => {
     ).toContain("runtime.processes.handlerTimeout: Expected a duration longer than 0");
     expect(message({ storage: sqlite, runtime: { personalData: { retention: 0 } } })).toContain(
       "runtime.personalData.retention: Expected a duration longer than 0",
+    );
+    expect(message({ storage: sqlite, runtime: { deadLetters: { retention: 0 } } })).toContain(
+      "runtime.deadLetters.retention: Expected a duration longer than 0",
     );
     expect(
       message({ storage: sqlite, runtime: { personalData: { keyWrapper: "BOUNDA_MASTER_KEY" } } }),

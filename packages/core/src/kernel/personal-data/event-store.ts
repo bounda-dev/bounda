@@ -300,5 +300,7 @@ export const withPersonalData: WithPersonalDataFunction = ({
     },
     lastPosition: () => eventStore.lastPosition(),
     types: () => eventStore.types(),
+    // Written as given: whoever reseals an event has sealed its payload already.
+    reseal: (events) => eventStore.reseal(events),
   };
 };

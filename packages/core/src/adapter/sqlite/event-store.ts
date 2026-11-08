@@ -166,5 +166,15 @@ export const createSqliteEventStore: CreateSqliteEventStoreFunction = ({
       known.recorded(types);
       return types;
     },
+    reseal: (events) =>
+      db.write(async (tx) => {
+        for (const { position, payload, person } of events) {
+          await tx.run(`UPDATE ${table} SET "payload" = ?, "person" = ? WHERE "position" = ?`, [
+            JSON.stringify(payload),
+            person,
+            position,
+          ]);
+        }
+      }),
   };
 };
