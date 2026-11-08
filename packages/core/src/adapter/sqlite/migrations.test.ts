@@ -86,6 +86,26 @@ describe("migrateSqlite", () => {
     await expect(migrateSqlite({ db: failing(busy), prefix: "app_", scopes })).rejects.toBe(busy);
   });
 
+  it("reads a missing versions table as an unversioned database, and rethrows any other failure to read it", async () => {
+    const { database } = onNodeSqlite();
+    const scopes = [sqliteCheckpointsScope('"app_checkpoints"')];
+    await expect(
+      migrateSqlite({
+        db: { ...database, all: () => Promise.reject(new Error("disk I/O error")) },
+        prefix: "app_",
+        scopes,
+      }),
+    ).rejects.toThrow("disk I/O error");
+    await expect(
+      migrateSqlite({
+        db: { ...database, all: () => Promise.reject("no such table: thrown as text") },
+        prefix: "app_",
+        scopes,
+      }),
+    ).rejects.toBe("no such table: thrown as text");
+    await expect(migrateSqlite({ db: database, prefix: "app_", scopes })).resolves.toBeUndefined();
+  });
+
   it("creates the forget ledger's table in its own scope, apart from the storage", async () => {
     const { database, db } = onNodeSqlite();
     await migrateSqlite({

@@ -20,7 +20,7 @@ export interface SchemaMigration {
  */
 export interface SchemaScope {
   readonly scope: string;
-  // Numbered from 1 with no gaps, in order.
+  // Numbered from 1 with no gaps, in order: the version a database is at counts those it applied.
   readonly migrations: readonly SchemaMigration[];
 }
 
@@ -83,8 +83,6 @@ export interface MigrateSchemasFunction {
   (args: MigrateSchemasArgs): Promise<void>;
 }
 
-const latestOf = ({ migrations }: SchemaScope): number => migrations.at(-1)?.version ?? 0;
-
 /**
  * Brings every scope to its latest version. A database already there costs one read and takes no
  * lock, so running instances never wait on one that starts. Otherwise each pending migration runs
@@ -116,17 +114,16 @@ export const migrateSchemas: MigrateSchemasFunction = async ({
   };
   const versionOf = (versions: ReadonlyMap<string, number>, schema: SchemaScope): number => {
     const version = versions.get(schema.scope) ?? 0;
-    const supported = latestOf(schema);
+    const supported = schema.migrations.length;
     if (version > supported) {
       throw new StorageSchemaTooNewError({ scope: schema.scope, version, supported });
     }
     return version;
   };
   const found = await versionsIn(db);
-  const pending = scopes.filter((schema) => versionOf(found, schema) < latestOf(schema));
-  for (const schema of pending) {
-    for (const migration of schema.migrations) {
-      if (migration.version <= versionOf(found, schema)) continue;
+  const behind = scopes.map((schema) => ({ schema, at: versionOf(found, schema) }));
+  for (const { schema, at } of behind) {
+    for (const migration of schema.migrations.slice(at)) {
       await locked(async (tx) => {
         await tx.run(schemaMigrationsTableStatement(table), []);
         if (migration.version <= versionOf(await versionsIn(tx), schema)) return;

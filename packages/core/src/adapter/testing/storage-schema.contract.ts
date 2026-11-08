@@ -5,6 +5,7 @@ import type { Adapter, Storage } from "../adapter.ts";
 import { schemaMigrationsTableFor, schemaMigrationsTableStatement } from "../sql/migrations.ts";
 import { earlierRowsFor, expectEarlierRowsTakenIn } from "./earlier-rows.ts";
 import { EARLIER_SCHEMAS, type EarlierVersion, earlierTablesFor } from "./earlier-schemas.ts";
+import { testDeadLetter } from "./fixtures.ts";
 import { contractFields } from "./table.contract.ts";
 
 /**
@@ -58,8 +59,8 @@ const opened = async <T>(adapter: Adapter, work: (storage: Storage) => Promise<T
 /**
  * The shape of a prefix's tables, the prefix taken out of every name so two prefixes compare:
  * columns with their type, nullability and primary key, then indexes and triggers as the engine
- * keeps their definition. Defaults are left out: a column added to an existing table needs one
- * where a new table has none.
+ * keeps their definition. Defaults count on PostgreSQL only: SQLite cannot drop the one a column
+ * added to an existing table needs where a new table has none.
  */
 const shapeOf = async (
   { execute, prefix }: StorageSchemaTarget,
@@ -86,7 +87,7 @@ const shapeOf = async (
     return shape.sort();
   }
   const columns = await execute(
-    `SELECT "table_name", "column_name", "data_type", "is_nullable" FROM information_schema.columns WHERE "table_schema" = current_schema() AND starts_with("table_name", '${prefix}')`,
+    `SELECT "table_name", "column_name", "data_type", "is_nullable", "column_default" FROM information_schema.columns WHERE "table_schema" = current_schema() AND starts_with("table_name", '${prefix}')`,
   );
   const indexes = await execute(
     `SELECT "indexname", "indexdef" FROM pg_indexes WHERE "schemaname" = current_schema() AND starts_with("tablename", '${prefix}')`,
@@ -94,7 +95,7 @@ const shapeOf = async (
   return [
     ...columns.map(
       (column) =>
-        `column ${local(column.table_name)}.${String(column.column_name)} ${String(column.data_type)} nullable=${String(column.is_nullable)}`,
+        `column ${local(column.table_name)}.${String(column.column_name)} ${String(column.data_type)} nullable=${String(column.is_nullable)} default=${local(column.column_default)}`,
     ),
     ...indexes.map((index) => `index ${local(index.indexname)} ${local(index.indexdef)}`),
   ].sort();
@@ -200,6 +201,40 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         await opened(target.adapter, (storage) => storage.checkpointStore.get("projection:x")),
       ).toBe(3);
       expect(await shapeOf(target, dialect)).toEqual(shape);
+    });
+
+    it("converts only what a table lacks, from a database between releases", async () => {
+      const fresh = await create();
+      await opened(fresh.adapter, async () => undefined);
+      const target = await create();
+      const letter = {
+        ...testDeadLetter("dl-1"),
+        errorMessage: '"already" encoded',
+        errorStack: "Error: x\n    at f",
+        lastFailedAt: "2026-01-02T00:00:00.000Z",
+      };
+      const claim = { handler: "order.notify", eventId: "e-1" };
+      await opened(target.adapter, async (storage) => {
+        await storage.deadLetterStore.add(letter);
+        await storage.deadLetterStore.updateStatus("dl-1", "discarded", new Date("2026-03-01"));
+        await storage.inboxLedger.tryClaim({ ...claim, now: new Date(), leaseMs: 1_000 });
+        await storage.inboxLedger.fail({ ...claim, error: "ValidationError" });
+      });
+      const { deadLetters } = earlierTablesFor(target.prefix);
+      await target.execute(`DROP TABLE ${schemaMigrationsTableFor(target.prefix)}`);
+      await target.execute(`DROP INDEX "${deadLetters.slice(1, -1)}_resolved_idx"`);
+      await target.execute(`ALTER TABLE ${deadLetters} DROP COLUMN "resolved_at"`);
+      await opened(target.adapter, async (storage) => {
+        expect(await storage.deadLetterStore.get("dl-1")).toEqual({
+          ...letter,
+          status: "discarded",
+          resolvedAt: "2026-01-02T00:00:00.000Z",
+        });
+        expect(await storage.inboxLedger.get(claim)).toMatchObject({
+          lastError: "ValidationError",
+        });
+      });
+      expect(await shapeOf(target, dialect)).toEqual(await shapeOf(fresh, dialect));
     });
 
     it("refuses tables older than 0.2.0, which had to be created again since", async () => {

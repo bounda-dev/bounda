@@ -39,6 +39,7 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import { createPostgresqlDatabase } from "./database.ts";
 import { createPostgresqlEventStore } from "./event-store.ts";
 import { type PostgresqlAdapter, type PostgresqlOptions, postgresql } from "./index.ts";
+import { migratePostgresql, postgresqlCheckpointsScope } from "./migrations.ts";
 import { resolvePostgresqlOptions } from "./options.ts";
 
 const reuseContainer = process.env.BOUNDA_PG_REUSE === "1";
@@ -334,6 +335,26 @@ describe.skipIf(container === null)("postgresql adapter", () => {
     } finally {
       await holder.end({ timeout: 5 });
     }
+  });
+
+  it("migrates a schema with no versions table yet, and rethrows any other failure to read it", async () => {
+    const client = postgres(url, { max: 1, onnotice: () => undefined });
+    closers.push(() => client.end({ timeout: 5 }));
+    const db = createPostgresqlDatabase(client);
+    const failing = { ...db, all: () => Promise.reject(new Error("connection lost")) };
+    await expect(
+      migratePostgresql({ db: failing, schema: "public", prefix: `m${run}_`, scopes: [] }),
+    ).rejects.toThrow("connection lost");
+    const prefix = `m${run}_`;
+    await migratePostgresql({
+      db,
+      schema: "public",
+      prefix,
+      scopes: [postgresqlCheckpointsScope(`"${prefix}checkpoints"`)],
+    });
+    expect(await db.all(`SELECT "scope", "version" FROM "${prefix}migrations"`, [])).toEqual([
+      { scope: "checkpoints", version: 1 },
+    ]);
   });
 
   it("creates the forget ledger's table in its schema once, and takes no lock once it is there", async () => {

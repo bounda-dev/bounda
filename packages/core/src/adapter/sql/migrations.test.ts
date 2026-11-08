@@ -215,6 +215,9 @@ describe("migrateSchemas", () => {
       version: 7,
       supported: 1,
     });
+    await expect(refused).rejects.toThrow(
+      'The Bounda tables of "a" are at schema version 7, newer than the 1 this version of Bounda supports',
+    );
     expect(locks()).toBe(before);
     expect(tables()).toEqual(["a1", "app_migrations"]);
   });
