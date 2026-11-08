@@ -185,11 +185,37 @@ while a runner is behind, and each runs anyway after ten rounds.
 
 ## Schema
 
-There are no migration files to run, and no migration step in your deploy. The adapter creates what
-it needs on start, and a view that gains a field gains a column, or an index for a field newly
-`unique()` or `index()`; one that loses a field, changes its type, moves its primary key or drops
-`unique()` needs the rebuild below ([what an adapter creates](/adapters/#what-an-adapter-creates)
-and [evolving a read model](/adapters/#evolving-a-read-model)).
+There are no migration files to write or run, and no migration step in your deploy. Bounda
+versions its own tables ([what an adapter creates](/adapters/#what-an-adapter-creates)) and brings
+them forward when the app starts, before it serves anything:
+
+- A database at the version the installed Bounda expects costs one read, and no lock.
+- One that is behind is migrated in place, one migration at a time, each in a transaction that
+  records its version as it commits, under the database's lock: an advisory lock on the schema on
+  PostgreSQL, the write transaction on SQLite and libSQL, the object itself in a Durable Object.
+  Instances that start together migrate it once; the others wait for the lock and find the work
+  done. A migration that fails leaves the database at the last version that committed, and the
+  next start tries again.
+- One that a newer version of Bounda migrated is refused, untouched, with
+  [`STORAGE_SCHEMA_TOO_NEW`](/reference/errors/#codes). Bounda never takes a schema back: to go
+  back to an older version after an upgrade, restore a backup taken before it, so take one before
+  you upgrade.
+- One created before the tables were versioned, by Bounda 0.2.0 or later, is taken in with
+  everything it holds: the columns its tables lack are added and filled with what they would have
+  held. Tables from before 0.2.0 are refused, as 0.2.0 already asked for them to be created again.
+
+Stop every instance of the previous version before the first one of the new version starts:
+instances already running never read the version again, and their code was written for the tables
+before the migration, so a rolling deploy across a release that migrates would have them write rows
+the new code misreads. One of them that starts after the migration is refused. Each table prefix
+keeps its own versions, and each Durable Object, so each tenant, migrates its tables the first time
+it starts on the new code. A [forget ledger](/guides/personal-data/#backups) in another database is
+migrated there the first time the app uses it.
+
+Read model tables are not versioned: they follow their view. A view that gains a field gains a
+column, or an index for a field newly `unique()` or `index()`; one that loses a field, changes its
+type, moves its primary key or drops `unique()` needs the rebuild below
+([evolving a read model](/adapters/#evolving-a-read-model)).
 
 ## Rebuilding a read model
 

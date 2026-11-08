@@ -63,6 +63,12 @@ export type {
 } from "./snapshot-store.contract.ts";
 export { snapshotStoreContract } from "./snapshot-store.contract.ts";
 export type {
+  StorageSchemaContractArgs,
+  StorageSchemaContractFunction,
+  StorageSchemaTarget,
+} from "./storage-schema.contract.ts";
+export { storageSchemaContract } from "./storage-schema.contract.ts";
+export type {
   StorageTransactionContractArgs,
   StorageTransactionContractFunction,
 } from "./storage-transaction.contract.ts";

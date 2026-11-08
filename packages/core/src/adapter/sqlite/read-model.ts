@@ -21,7 +21,7 @@ import {
   tableNameFor,
 } from "../sql/index.ts";
 import type { SqlExecutor } from "../sql/sql-table.ts";
-import { checkpointTableStatement } from "./schema.ts";
+import { migrateSqlite, sqliteCheckpointsScope } from "./migrations.ts";
 
 const quoteName = (name: string): string => `"${name.replaceAll('"', '""')}"`;
 
@@ -62,6 +62,7 @@ const existingColumns = async (
 export interface OpenSqliteReadModelArgs<Raw = unknown> {
   readonly db: SqlDatabase;
   readonly raw: Raw;
+  readonly isBusy?: ((error: unknown) => boolean) | undefined;
   readonly tablePrefix: string;
   // Already quoted.
   readonly checkpoints: string;
@@ -83,6 +84,7 @@ export const openSqliteReadModel: OpenSqliteReadModelFunction = async <
 >({
   db,
   raw,
+  isBusy,
   tablePrefix,
   checkpoints,
   name,
@@ -117,7 +119,12 @@ export const openSqliteReadModel: OpenSqliteReadModelFunction = async <
       }
     });
   }
-  await db.run(checkpointTableStatement(checkpoints), []);
+  await migrateSqlite({
+    db,
+    isBusy,
+    prefix: tablePrefix,
+    scopes: [sqliteCheckpointsScope(checkpoints)],
+  });
   return {
     table: createSqlTable<Row>({
       readModel: name,
@@ -188,6 +195,7 @@ export const rebuildSqliteReadModel: RebuildSqliteReadModelFunction = async <
 >({
   db,
   raw,
+  isBusy,
   tablePrefix,
   checkpoints,
   progress,
@@ -202,7 +210,12 @@ export const rebuildSqliteReadModel: RebuildSqliteReadModelFunction = async <
   const fencing = rebuildFencing(name);
   const checkpointsIn = (executor: SqlExecutor) =>
     createSqlCheckpointStore({ dialect: sqliteDialect, db: executor, table: checkpoints });
-  await db.run(checkpointTableStatement(checkpoints), []);
+  await migrateSqlite({
+    db,
+    isBusy,
+    prefix: tablePrefix,
+    scopes: [sqliteCheckpointsScope(checkpoints)],
+  });
   const opened = await db.write(async (tx) => {
     const store = checkpointsIn(tx);
     const generation = (await store.get(fencing.generation)) + 1;

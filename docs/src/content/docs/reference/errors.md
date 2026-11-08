@@ -73,12 +73,19 @@ dead letter with `errorType: "retriable_exhausted"`.
   registry entry that does not exist.
 - **`INVALID_CONFIGURATION`** (`ConfigurationError`; terminal). `bounda.config.ts` or the registry
   is malformed: an unknown key, a port with no implementation chosen, a module missing an export.
-  Thrown at boot, or when a handler reads a port a test left out.
+  Thrown at boot, or when a handler reads a port a test left out. Also thrown at start by a
+  database whose Bounda tables a version before 0.2.0 created.
 - **`FORGET_LEDGER_UNRECONCILED`** (`ForgetLedgerUnreconciledError`; a start's answer). Thrown
   by `createApp`, and so by `boot` and the CLI, when `runtime.personalData.forgetLedger.strict` is
   set and the [forget ledger](/guides/personal-data/#the-forget-ledger) could not be read through:
   the app does not start, since a person a restored backup brought back could be read. `cause` is
   the ledger's error. Starting again tries again.
+- **`STORAGE_SCHEMA_TOO_NEW`** (`StorageSchemaTooNewError`; a start's answer). Thrown by
+  `createApp`, and so by `boot` and the CLI, when a newer version of Bounda has
+  [migrated the database's Bounda tables](/guides/deployment/#schema) past what this version
+  knows: `scope` (`storage`, `checkpoints` or `forget-ledger`), its `version`, and `supported`,
+  the newest this version knows. The app does not start and nothing is written: Bounda never takes
+  a schema back. Run that version or a later one, or restore a backup taken before it migrated.
 - **`CLAIM_LOST`** (`ClaimLostError`; handled by the runtime). A reaction's inbox claim expired and
   another instance took it over. The attempt writes nothing; the other instance's run is the one
   that counts.

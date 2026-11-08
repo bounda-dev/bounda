@@ -79,7 +79,7 @@ export const createNodeSqliteAdapter: CreateNodeSqliteAdapterFunction = (path = 
     name: "node-sqlite",
     options: { path },
     tablePrefix: "bounda_",
-    acquire: () => ({ db: database, raw: db }),
+    acquire: () => ({ db: database, raw: db, isBusy }),
     release: async () => {},
   });
   return { adapter, db, transactions: () => opened };

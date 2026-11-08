@@ -1,7 +1,6 @@
 import { ConfigurationError } from "@bounda-dev/core";
 import {
   quoteIdentifier,
-  type SqlExecutor,
   type SqlTransaction,
   storageTableNameFor,
 } from "@bounda-dev/core/adapter/sql";
@@ -17,9 +16,8 @@ export interface StorageTables {
   readonly personalKeys: string;
   readonly persons: string;
   readonly snapshots: string;
-  // In a database of its own, apart from the other tables, which `ensureStorageSchema` creates.
+  // In a database of its own, apart from the other storage tables.
   readonly forgetLedger: string;
-  readonly forgetLedgerOrder: string;
   readonly appendLockKey: string;
   // The first key of the advisory locks read models take on the checkpoints table.
   readonly checkpointsLockKey: string;
@@ -64,7 +62,6 @@ export const storageTablesFor: StorageTablesForFunction = ({ prefix, schema }) =
     persons: quoteIdentifier(storageTableNameFor({ prefix, table: "persons" })),
     snapshots: quoteIdentifier(storageTableNameFor({ prefix, table: "snapshots" })),
     forgetLedger: quoteIdentifier(forgetLedger),
-    forgetLedgerOrder: quoteIdentifier(`${forgetLedger}_order_idx`),
     appendLockKey: `bounda:${schema}.${events}`,
     checkpointsLockKey: `bounda:${schema}.${checkpoints}`,
     channel,
@@ -88,6 +85,7 @@ export interface StorageSchemaStatementsFunction {
   (tables: StorageTables): readonly string[];
 }
 
+// The storage tables as the first migration leaves them; later migrations change them from there.
 // Every statement must be able to run again on a database that already has the tables.
 export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables) => [
   `CREATE TABLE IF NOT EXISTS ${tables.events} (
@@ -104,7 +102,6 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     UNIQUE ("aggregate_type", "aggregate_id", "version")
   )`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.events, "person")} ON ${tables.events} ("person", "position")`,
-  checkpointTableStatement(tables.checkpoints),
   `CREATE TABLE IF NOT EXISTS ${tables.inbox} (
     "handler" text NOT NULL,
     "event_id" text NOT NULL,
@@ -206,81 +203,6 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.scheduledCommands, "persons")} ON ${tables.scheduledCommands} USING gin ("persons" jsonb_path_ops)`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "persons")} ON ${tables.deadLetters} USING gin ("persons" jsonb_path_ops)`,
 ];
-
-export interface EnsureStorageSchemaArgs {
-  readonly db: PostgresqlDatabase;
-  readonly schema: string;
-  readonly tables: StorageTables;
-}
-
-export interface EnsureStorageSchemaFunction {
-  (args: EnsureStorageSchemaArgs): Promise<void>;
-}
-
-const unquoted = (identifier: string): string => identifier.slice(1, -1);
-
-/**
- * Creates the storage tables that are missing. A database that has them all, as every boot after
- * the first finds it, takes no lock: running instances never wait on a starting one.
- */
-export const ensureStorageSchema: EnsureStorageSchemaFunction = async ({ db, schema, tables }) => {
-  const names = [
-    tables.events,
-    tables.checkpoints,
-    tables.inbox,
-    tables.deadLetters,
-    tables.scheduledCommands,
-    tables.idempotencyKeys,
-    tables.personalKeys,
-    tables.persons,
-    tables.snapshots,
-    indexName(tables.events, "person"),
-    indexName(tables.deadLetters, "listing"),
-    indexName(tables.deadLetters, "person"),
-    indexName(tables.deadLetters, "resolved"),
-    indexName(tables.scheduledCommands, "execute_at"),
-    indexName(tables.scheduledCommands, "unclaimed"),
-    indexName(tables.scheduledCommands, "claimed_at"),
-    indexName(tables.idempotencyKeys, "expires_at"),
-    indexName(tables.persons, "idle"),
-    indexName(tables.persons, "held"),
-    indexName(tables.personalKeys, "kid"),
-    indexName(tables.personalKeys, "held"),
-    indexName(tables.snapshots, "persons"),
-    indexName(tables.idempotencyKeys, "persons"),
-    indexName(tables.scheduledCommands, "persons"),
-    indexName(tables.deadLetters, "persons"),
-  ].map(unquoted);
-  if (await relationsExist({ db, schema, names })) return;
-  await inSchema({
-    db,
-    schema,
-    work: async (tx) => {
-      for (const statement of storageSchemaStatements(tables)) await tx.run(statement, []);
-    },
-  });
-};
-
-export interface RelationsExistArgs {
-  readonly db: SqlExecutor;
-  readonly schema: string;
-  readonly names: readonly string[];
-}
-
-export interface RelationsExistFunction {
-  (args: RelationsExistArgs): Promise<boolean>;
-}
-
-/**
- * Whether every table or index named exists in the schema.
- */
-export const relationsExist: RelationsExistFunction = async ({ db, schema, names }) => {
-  const [row] = await db.all(
-    `SELECT count(*)::int AS "found" FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 AND c.relname = ANY($2::text[])`,
-    [schema, names],
-  );
-  return Number(row?.found ?? 0) === new Set(names).size;
-};
 
 export interface InSchemaArgs<T> {
   readonly db: PostgresqlDatabase;

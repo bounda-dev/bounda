@@ -6,6 +6,20 @@ export const SQLITE_BUSY_TIMEOUT_MS = 5_000;
 
 const RETRY_DELAY_MS = { min: 5, max: 25 } as const;
 
+export interface BusyRetryDelayFunction {
+  (): number;
+}
+
+// Apart, so connections that collided do not collide again on the next try.
+export const busyRetryDelay: BusyRetryDelayFunction = () =>
+  RETRY_DELAY_MS.min + Math.random() * (RETRY_DELAY_MS.max - RETRY_DELAY_MS.min);
+
+export interface PauseFunction {
+  (ms: number): Promise<void>;
+}
+
+export const pause: PauseFunction = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export interface SwitchToWalArgs {
   readonly execute: (sql: string) => Promise<unknown>;
   /**
@@ -19,8 +33,6 @@ export interface SwitchToWalArgs {
 export interface SwitchToWalFunction {
   (args: SwitchToWalArgs): Promise<void>;
 }
-
-const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * Switches a SQLite file to WAL, retrying for at most `SQLITE_BUSY_TIMEOUT_MS` while another
@@ -42,8 +54,7 @@ export const switchToWal: SwitchToWalFunction = async ({
       return;
     } catch (error) {
       if (!isBusy(error) || now() >= deadline) throw error;
-      // Apart, so connections that collided do not collide again on the next try.
-      await sleep(RETRY_DELAY_MS.min + Math.random() * (RETRY_DELAY_MS.max - RETRY_DELAY_MS.min));
+      await sleep(busyRetryDelay());
     }
   }
 };

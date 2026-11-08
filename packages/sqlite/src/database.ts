@@ -82,6 +82,7 @@ export const createSqliteDatabase: CreateSqliteDatabaseFunction = (client, { loc
     : client;
   return {
     raw,
+    isBusy,
     db: {
       run: (sql, params) => outside(() => direct.run(sql, params)),
       all: (sql, params) => outside(() => direct.all(sql, params)),

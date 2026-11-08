@@ -22,7 +22,8 @@ import {
 } from "@bounda-dev/core/adapter/sql";
 import type { Sql } from "postgres";
 import type { PostgresqlDatabase } from "./database.ts";
-import { checkpointTableStatement, inSchema, relationsExist } from "./schema.ts";
+import { migratePostgresql, postgresqlCheckpointsScope } from "./migrations.ts";
+import { inSchema } from "./schema.ts";
 
 /**
  * The table's columns with what its indexes say of them; none when the table does not exist.
@@ -86,7 +87,7 @@ export interface OpenPostgresqlReadModelFunction {
 }
 
 /**
- * The checkpoints table is created too, so a read model in a database of its own keeps its
+ * The checkpoints table is migrated too, so a read model in a database of its own keeps its
  * projections' checkpoints there.
  *
  * `transact` locks on two keys, the checkpoints table's and the subscriber: two-key advisory locks
@@ -117,12 +118,13 @@ export const openPostgresqlReadModel: OpenPostgresqlReadModelFunction = async <R
           : evolveTableStatements({ readModel: name, table, columns, existing }),
     };
   };
-  const checkpointsTable = checkpoints.slice(1, -1);
-  const planned = await plan(db);
-  if (
-    planned.statements.length > 0 ||
-    !(await relationsExist({ db, schema, names: [checkpointsTable] }))
-  ) {
+  await migratePostgresql({
+    db,
+    schema,
+    prefix: tablePrefix,
+    scopes: [postgresqlCheckpointsScope(checkpoints)],
+  });
+  if ((await plan(db)).statements.length > 0) {
     await inSchema({
       db,
       schema,
@@ -136,7 +138,6 @@ export const openPostgresqlReadModel: OpenPostgresqlReadModelFunction = async <R
             added: statements.length,
           });
         }
-        await tx.run(checkpointTableStatement(checkpoints), []);
       },
     });
   }
@@ -253,10 +254,11 @@ export const rebuildPostgresqlReadModel: RebuildPostgresqlReadModelFunction = as
       checkpointsLockKey,
       key,
     ]);
-  await inSchema({
+  await migratePostgresql({
     db,
     schema,
-    work: (tx) => tx.run(checkpointTableStatement(checkpoints), []),
+    prefix: tablePrefix,
+    scopes: [postgresqlCheckpointsScope(checkpoints)],
   });
   const opened = await db.write(async (tx) => {
     await lock(tx, fencing.lock);
