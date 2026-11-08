@@ -47,6 +47,7 @@ import { type SealedPayload, sealCommandPayload } from "../personal-data/command
 import { personOfCommand } from "../personal-data/persons.ts";
 import { refuseRestricted } from "../personal-data/refusal.ts";
 import { actedBy } from "../shared/causation.ts";
+import { runtimeText } from "../shared/runtime-text.ts";
 import { withTimeout } from "../shared/timeout.ts";
 import { withPorts } from "../shared/with-ports.ts";
 import { ATTRIBUTES, actorAttribute, METRICS, meter, SPAN_EVENTS, traced } from "../telemetry.ts";
@@ -261,13 +262,17 @@ const checkCreationOrder = (
   for (const event of events) {
     const runtime = aggregate.eventsByType[event.type];
     if (!exists && runtime?.begin === null) {
-      throw new CreationOrderError(
-        `Command "${command.type}" returned "${event.type}" for ${aggregate.name} ${command.aggregateId}, which does not exist yet: it must start with an event that exports begin`,
+      throw runtimeText(
+        new CreationOrderError(
+          `Command "${command.type}" returned "${event.type}" for ${aggregate.name} ${command.aggregateId}, which does not exist yet: it must start with an event that exports begin`,
+        ),
       );
     }
     if (exists && runtime?.evolve === null) {
-      throw new CreationOrderError(
-        `Command "${command.type}" returned "${event.type}" for ${aggregate.name} ${command.aggregateId}, which exists already: "${event.type}" only exports begin`,
+      throw runtimeText(
+        new CreationOrderError(
+          `Command "${command.type}" returned "${event.type}" for ${aggregate.name} ${command.aggregateId}, which exists already: "${event.type}" only exports begin`,
+        ),
       );
     }
     exists = true;
@@ -472,7 +477,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
   ): Promise<DispatchResult | Rejected> => {
     const stores: DispatchStores = within ?? storage;
     const entry = aggregates.commandsByType[type];
-    if (entry === undefined) throw new NotFoundError(`Unknown command "${type}"`);
+    if (entry === undefined) throw runtimeText(new NotFoundError(`Unknown command "${type}"`));
     const { aggregate, command: runtime } = entry;
     const depth = context?.depth ?? 0;
     const maxDepth = config.forAggregate(aggregate.name).policies.maxChainDepth;

@@ -3,6 +3,7 @@ import type { Clock } from "../../contracts/clock.ts";
 import { ConcurrencyError, NotFoundError } from "../../contracts/errors.ts";
 import { type StoredEvent, streamId } from "../../contracts/event.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
+import { runtimeText } from "../shared/runtime-text.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
 import {
   foldProcess,
@@ -123,8 +124,8 @@ export const createProcessInstances: CreateProcessInstancesFunction = ({
   }: ParkedEvent): Promise<StoredEvent> => {
     const event = await eventStore.readOne({ aggregateType, aggregateId, eventId });
     if (event === null) {
-      throw new NotFoundError(
-        `Parked event ${eventId} of ${aggregateType}:${aggregateId} not found`,
+      throw runtimeText(
+        new NotFoundError(`Parked event ${eventId} of ${aggregateType}:${aggregateId} not found`),
       );
     }
     return event;

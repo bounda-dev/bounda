@@ -14,6 +14,7 @@ import { openTextWith } from "../personal-data/errors.ts";
 import type { ProcessDeadLetters } from "../process/dead-letter-retry.ts";
 import { actedBy } from "../shared/causation.ts";
 import { thrownValue } from "../shared/retry.ts";
+import { runtimeText } from "../shared/runtime-text.ts";
 import { tracedOperation } from "../telemetry.ts";
 import type { DeadLetterRetry } from "./retry.ts";
 
@@ -96,7 +97,7 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
 }) => {
   const failedLetter = async (id: string): Promise<StoredDeadLetter> => {
     const letter = await storage.deadLetterStore.get(id);
-    if (letter === null) throw new NotFoundError(`Dead letter "${id}" not found`);
+    if (letter === null) throw runtimeText(new NotFoundError(`Dead letter "${id}" not found`));
     if (letter.status !== "failed") {
       throw new DeadLetterSettledError({ id, status: letter.status });
     }

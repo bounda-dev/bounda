@@ -126,6 +126,7 @@ describe("the retry of a restricted person's dead letters", () => {
           personId: "c-1",
           errorName: "DeadLetterNotRetriableError",
           errorCode: "DEAD_LETTER_NOT_RETRIABLE",
+          errorMessage: 'Policy "order.gone" is no longer in the registry',
         },
       },
       {

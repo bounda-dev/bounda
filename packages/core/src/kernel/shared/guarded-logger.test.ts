@@ -1,8 +1,44 @@
 import { describe, expect, it, onTestFinished } from "vitest";
+import { ValidationError } from "../../contracts/errors.ts";
 import type { LogFields, Logger } from "../../contracts/logger.ts";
 import { guardedLogger } from "./guarded-logger.ts";
 
 describe("guardedLogger", () => {
+  it("logs what was thrown as its class and code, and its text only when told to", () => {
+    const logged: (LogFields | undefined)[] = [];
+    const record = (_message: string, fields?: LogFields): void => {
+      logged.push(fields);
+    };
+    const quoting = new ValidationError("ana@example.com is taken", []);
+    for (const errorText of ["omit", "include"] as const) {
+      const logger = guardedLogger(
+        { debug: record, info: record, warn: record, error: record },
+        errorText,
+      );
+      logger.error("failed", { eventId: "e-1", error: quoting, cause: new TypeError("x of ana") });
+    }
+    expect(logged).toEqual([
+      {
+        eventId: "e-1",
+        errorName: "ValidationError",
+        errorCode: "VALIDATION_FAILED",
+        cause: { errorName: "TypeError" },
+      },
+      {
+        eventId: "e-1",
+        errorName: "ValidationError",
+        errorCode: "VALIDATION_FAILED",
+        errorMessage: "ana@example.com is taken",
+        errorStack: expect.stringContaining("ana@example.com is taken"),
+        cause: {
+          errorName: "TypeError",
+          errorMessage: "x of ana",
+          errorStack: expect.stringContaining("x of ana"),
+        },
+      },
+    ]);
+  });
+
   it("passes every level through to the logger, called as its method", () => {
     const lines: string[] = [];
     class PrefixLogger implements Logger {

@@ -367,7 +367,7 @@ describe("bounda rebuild", () => {
     );
     expect(help.stdout).toContain("<read-model>");
     expect(help.stdout).toContain("the read model's key in the registry, e.g. orderSummary");
-    for (const option of ["--root <dir>", "--config <file>", "--registry <file>"]) {
+    for (const option of ["--root <dir>", "--config <file>", "--registry <file>", "--error-text"]) {
       expect(help.stdout).toContain(option);
     }
     expect(help.stdout).toMatch(/\(default:\s+"bounda\.config\.ts"\)/);
@@ -520,7 +520,13 @@ describe("bounda dead-letters", () => {
     const id = await deadLetter();
     const retry = await cli(["dead-letters", "retry", id], fixture);
     expect(retry.code).toBe(EXIT_FAILURE);
-    expect(besidesLogs(retry.stderr)).toBe("error: alerts are down\n");
+    expect(besidesLogs(retry.stderr)).toBe(
+      "error: ValidationError (VALIDATION_FAILED); its message may quote personal data: run again with --error-text to print it\n",
+    );
+    expect(retry.stderr).not.toContain("alerts are down");
+    const told = await cli(["dead-letters", "retry", id, "--error-text"], fixture);
+    expect(told.code).toBe(EXIT_FAILURE);
+    expect(besidesLogs(told.stderr)).toBe("error: alerts are down\n");
 
     const discard = await cli(["dead-letters", "discard", id], fixture);
     expect(besidesLogs(discard.stderr)).toBe("");

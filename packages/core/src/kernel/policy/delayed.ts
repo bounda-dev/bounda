@@ -4,6 +4,7 @@ import type { ResolvedConfig, ResolvedRetryConfig } from "../../config/types.ts"
 import { ConfigurationError, NotFoundError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { causedBy } from "../shared/causation.ts";
+import { runtimeText } from "../shared/runtime-text.ts";
 import type { UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import type { PoliciesRuntime, PolicyRuntime } from "./build-policies.ts";
 import type { PolicyExecutor } from "./executor.ts";
@@ -129,11 +130,15 @@ export const createDelayedPolicies: CreateDelayedPoliciesFunction = ({
       const payload = payloadOf(entry);
       const policy = policies.byName[payload.policy];
       if (policy === undefined) {
-        throw new ConfigurationError(`Policy "${payload.policy}" is no longer in the registry`);
+        throw runtimeText(
+          new ConfigurationError(`Policy "${payload.policy}" is no longer in the registry`),
+        );
       }
       if (event === undefined) {
-        throw new NotFoundError(
-          `Event ${payload.eventId} of ${payload.aggregateType}:${entry.command.aggregateId} not found`,
+        throw runtimeText(
+          new NotFoundError(
+            `Event ${payload.eventId} of ${payload.aggregateType}:${entry.command.aggregateId} not found`,
+          ),
         );
       }
       await executor.run({ policy, event, attempt: entry.attempts + 1, within });
