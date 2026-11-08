@@ -1179,6 +1179,12 @@ describe.skipIf(container === null)("a person forgotten on PostgreSQL", () => {
     await app.forget("c-1");
     await app.forget("c-2");
     await app.runUntilIdle();
+    // A table of the schema that is not Bounda's is not the runtime's to answer for.
+    const sql = postgres(url, { max: 1, onnotice: () => undefined });
+    await sql.unsafe(
+      `CREATE TABLE "forgotten_${run}"."notes" ("note" text); INSERT INTO "forgotten_${run}"."notes" VALUES ('ana@example.com')`,
+    );
+    await sql.end();
     await expectForgotten(app, "c-1");
     const error = await expectForgotten(app, "c-2").catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(NotForgottenError);
