@@ -14,6 +14,7 @@ import type { Registry } from "../../modules/registry.ts";
 import { readUnder } from "../personal-data/reads.ts";
 import { PROCESS_EVENTS } from "../process/lifecycle.ts";
 import { createReactiveHarness, type ReactiveHarness } from "../reactive-harness.ts";
+import { asError, errorDetails, errorIdentity, ThrownValue, thrownValue } from "../shared/retry.ts";
 import {
   breakNextCommit,
   type OrderProcessConfigArgs,
@@ -534,17 +535,26 @@ describe("createUnitOfWork", () => {
       readUnder({ person: "c-1", error: failure, also: [{ person: "c-1", fingerprint: "f-3" }] }),
     ).toEqual(["f-1", "f-2", "f-3"]);
     expect(readUnder({ person: "c-1", error: "a string", also: [first] })).toEqual(["f-1"]);
-    await expect(
-      commitAttempt({
-        storage,
-        concurrencyRetries: 0,
-        work: async (unit) => {
-          unit.read([first]);
-          expect(unit.reads()).toEqual([first]);
-          throw "mailer down";
-        },
-      }),
-    ).rejects.toBe("mailer down");
+    const wrapped = await commitAttempt({
+      storage,
+      concurrencyRetries: 0,
+      work: async (unit) => {
+        unit.read([first]);
+        expect(unit.reads()).toEqual([first]);
+        throw "mailer down";
+      },
+    }).catch((error: unknown) => error);
+    expect(wrapped).toBeInstanceOf(ThrownValue);
+    expect(wrapped).toMatchObject({
+      message: "mailer down",
+      value: "mailer down",
+      cause: "mailer down",
+    });
+    expect(readUnder({ person: "c-1", error: wrapped })).toEqual(["f-1"]);
+    expect(errorIdentity(wrapped)).toEqual({ errorName: "string" });
+    expect(errorDetails(wrapped)).toEqual({ message: "mailer down" });
+    expect(asError(failure)).toBe(failure);
+    expect(thrownValue(failure)).toBe(failure);
     expect(readUnder({ person: "c-1", error: "mailer down" })).toEqual([]);
   });
 

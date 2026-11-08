@@ -4,6 +4,7 @@ import { createStagedEventStore } from "../../adapter/staged-event-store.ts";
 import type { KeyedPerson } from "../../adapter/storage/personal-key-store.ts";
 import { ConcurrencyError, ProcessingRestrictedError } from "../../contracts/errors.ts";
 import { noteReads } from "../personal-data/reads.ts";
+import { asError } from "../shared/retry.ts";
 
 /**
  * What a reaction's commands write through while its attempt runs.
@@ -122,9 +123,10 @@ export interface CommitAttemptFunction {
 /**
  * Runs `work` on a fresh unit of work and commits it. A commit that finds a stream moved runs the
  * work again on another fresh unit, up to `concurrencyRetries` times, then lets the
- * `ConcurrencyError` through. What the work throws carries what it read, for `readUnder`. A commit
- * refused because a person its events touch was restricted meanwhile throws the refusal, as the
- * work's own dispatch would have; any other failure of the commit is thrown as `CommitFailed`.
+ * `ConcurrencyError` through. What the work throws carries what it read, for `readUnder`, a value
+ * that is no error wrapped in a `ThrownValue` to carry it. A commit refused because a person its
+ * events touch was restricted meanwhile throws the refusal, as the work's own dispatch would have;
+ * any other failure of the commit is thrown as `CommitFailed`.
  */
 export const commitAttempt: CommitAttemptFunction = async ({
   storage,
@@ -137,7 +139,8 @@ export const commitAttempt: CommitAttemptFunction = async ({
     const unit = createUnitOfWork({ storage });
     try {
       await work(unit);
-    } catch (error) {
+    } catch (thrown) {
+      const error = asError(thrown);
       noteReads(error, unit.reads());
       throw error;
     }

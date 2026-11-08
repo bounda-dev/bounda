@@ -5,18 +5,16 @@ import type { KeyedPerson } from "../../adapter/storage/personal-key-store.ts";
 const readsByError = new WeakMap<object, KeyedPerson[]>();
 
 export interface NoteReadsFunction {
-  (error: unknown, reads: readonly KeyedPerson[]): void;
+  (error: Error, reads: readonly KeyedPerson[]): void;
 }
 
 /**
  * Remembers that the run that threw `error` read each person's data under the key named, adding
- * to what was noted for it before. A thrown value that is not an object cannot carry it: it is
- * noted on a wrapper nobody reads again.
+ * to what was noted for it before.
  */
 export const noteReads: NoteReadsFunction = (error, reads) => {
-  const target: object = Object(error);
-  const noted = readsByError.get(target);
-  if (noted === undefined) readsByError.set(target, [...reads]);
+  const noted = readsByError.get(error);
+  if (noted === undefined) readsByError.set(error, [...reads]);
   else noted.push(...reads);
 };
 
