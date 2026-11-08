@@ -1,7 +1,9 @@
 export interface AfterOptions {
   /**
-   * A wait that must not keep the process alive on its own, such as the expiry of a cache: the
-   * process may exit before it is due. Clocks that cannot tell may ignore it.
+   * A wait that must not keep the process alive on its own, such as the expiry of a cache that is
+   * also checked when read: the process may exit, or be put to sleep, before it is due. On a
+   * platform whose timers always keep it awake, as in a Durable Object, the system clock drops
+   * such a wait and its call never comes. Clocks that cannot tell may ignore it.
    */
   readonly background?: boolean;
 }
@@ -23,8 +25,9 @@ export interface Clock {
 // Node runs a timer whose delay does not fit in 32 bits at once, so a longer wait is armed in steps.
 const LONGEST_TIMER_MS = 2 ** 31 - 1;
 
-// Node's timers keep the process alive unless told not to; workerd's are plain numbers.
-const letGo = (timer: unknown): void => {
+// Node's timers keep the process alive unless told not to; workerd's are plain numbers, which
+// keep a Durable Object from sleeping. Resolves whether the timer could be let go.
+const letGo = (timer: unknown): boolean => {
   if (
     typeof timer === "object" &&
     timer !== null &&
@@ -32,7 +35,9 @@ const letGo = (timer: unknown): void => {
     typeof timer.unref === "function"
   ) {
     timer.unref();
+    return true;
   }
+  return false;
 };
 
 /**
@@ -47,7 +52,7 @@ export const systemClock: Clock = {
         left > LONGEST_TIMER_MS
           ? setTimeout(() => arm(left - LONGEST_TIMER_MS), LONGEST_TIMER_MS)
           : setTimeout(callback, left);
-      if (options?.background === true) letGo(timer);
+      if (options?.background === true && !letGo(timer)) clearTimeout(timer);
     };
     arm(milliseconds);
     return () => clearTimeout(timer);

@@ -153,8 +153,9 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
   const sweep = async (now: Date): Promise<number> => {
     const at = now.getTime();
     const markedAt = await checkpoints.get(marker);
-    // A set never marked reads 0, as long ago as can be.
-    if (at - markedAt < ROTATION_CHECK_INTERVAL_MS) {
+    // A set never marked reads 0, as long ago as can be; a mark ahead of this clock, set by an
+    // instance whose clock runs ahead, is checked rather than trusted for longer than it says.
+    if (markedAt <= at && at - markedAt < ROTATION_CHECK_INTERVAL_MS) {
       completeUntil = markedAt + ROTATION_CHECK_INTERVAL_MS;
       return 0;
     }

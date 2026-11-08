@@ -569,6 +569,18 @@ describe("createKeyRotation", () => {
     expect(await rotation.nextDueAt()).toEqual(clock.now());
   });
 
+  it("checks a mark set ahead of its own clock instead of trusting it longer", async () => {
+    const { store, checkpoints, clock, rotation } = await setUp();
+    expect(await rotation.sweep(clock.now())).toBe(0);
+    const [mark] = (await checkpoints.list()).filter(({ subscriber }) =>
+      subscriber.startsWith(ROTATED_PREFIX),
+    );
+    await checkpoints.set(mark?.subscriber ?? "", clock.now().getTime() + 20 * 60_000);
+    await addUnder(store, "old", "c-1");
+    const behind = rotationOver({ keys: store, checkpoints, wrapper: fakeWrapper("new", ["old"]) });
+    expect(await behind.sweep(clock.now())).toBe(1);
+  });
+
   it("rests while every key left is held, until the first hold ends", async () => {
     const { store, checkpoints, clock } = await setUp();
     const { keys, reads } = counted(store);

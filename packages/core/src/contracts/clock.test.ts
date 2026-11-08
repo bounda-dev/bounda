@@ -55,6 +55,25 @@ describe("systemClock", () => {
     }
   });
 
+  it("drops a background wait where the platform's timers cannot let a process go", () => {
+    const cleared: unknown[] = [];
+    const armed = vi
+      .spyOn(globalThis, "setTimeout")
+      .mockImplementation(((): number => 7) as unknown as typeof setTimeout);
+    const clear = vi.spyOn(globalThis, "clearTimeout").mockImplementation((timer) => {
+      cleared.push(timer);
+    });
+    try {
+      systemClock.after(60_000, () => undefined);
+      expect(cleared).toEqual([]);
+      systemClock.after(60_000, () => undefined, { background: true });
+      expect(cleared).toEqual([7]);
+    } finally {
+      armed.mockRestore();
+      clear.mockRestore();
+    }
+  });
+
   it("waits longer than one platform timer can, in steps, and cancels whichever step is armed", () => {
     vi.useFakeTimers();
     const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");

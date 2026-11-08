@@ -583,8 +583,10 @@ takes every person's data with it, as if each had been forgotten. `bounda rebuil
 Unwrapped keys are kept in memory, by fingerprint, up to ten thousand per app and for five
 minutes from the moment each was unwrapped, so a command does not pay for unwrapping on every
 read, and the raw key of someone no longer active does not stay in the process: a timer drops it
-when its time is up, whether the app reads anything or not. The person's row is still read first
-every time: a person forgotten on another instance is forgotten here at once.
+when its time is up, whether the app reads anything or not, without keeping a Node process alive.
+A Durable Object arms no such timer, which would keep it from sleeping: its keys go when they are
+next read past their time, or with the object when the platform evicts it. The person's row is
+still read first every time: a person forgotten on another instance is forgotten here at once.
 
 Without `keyWrapper` the keys are kept as they are, next to the data, and the app logs a warning
 when it starts if the registry marks any field `personal`; an app from `createTestApp` warns
@@ -666,7 +668,8 @@ returned. The runtime checks what `unwrap` returns against the key's fingerprint
 answers with another key fails loudly instead of sealing data under it. KMS rotates a key's
 material itself and keeps decrypting under the old one with the same ARN, so `kid` does not
 change; moving to another KMS key is a rotation as above, with the old ARN in `previous`. Each
-instance asks KMS once per person it reads, thanks to the cache, and once per person it creates.
+instance asks KMS once per person it creates, and once per person it reads in every five minutes
+they are active, thanks to the cache.
 
 A wrapper that fails, because KMS is unreachable, fails the command that needed the key, which
 the caller or the reaction's retry sees; the person's data is not touched.
