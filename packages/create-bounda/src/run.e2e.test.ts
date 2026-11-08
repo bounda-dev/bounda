@@ -300,7 +300,7 @@ describe("a project created by create-bounda", () => {
       [join(repoRoot, "node_modules/vitest/vitest.mjs"), "run", "--root", project],
       { cwd: project, env: { ...process.env, CI: "1" } },
     );
-    expect(`${tested.stdout}${tested.stderr}`).toMatch(/1 passed/);
+    expect(`${tested.stdout}${tested.stderr}`).toMatch(/Tests\s+2 passed/);
 
     // The script boots on the master key create-bounda wrote into `.env`, and refuses to without.
     expect(await readFile(join(project, ".env"), "utf8")).toMatch(
@@ -338,7 +338,7 @@ describe("a project created by create-bounda", () => {
       [join(repoRoot, "node_modules/vitest/vitest.mjs"), "run", "--root", project],
       { cwd: project, env: { ...process.env, CI: "1" } },
     );
-    expect(`${tested.stdout}${tested.stderr}`).toMatch(/1 passed/);
+    expect(`${tested.stdout}${tested.stderr}`).toMatch(/Tests\s+2 passed/);
     const built = await run(process.execPath, [reactRouter, "build"], { cwd: project });
     expect(`${built.stdout}${built.stderr}`).toMatch(/built in/);
 
@@ -432,7 +432,7 @@ describe("a project created by create-bounda", () => {
       [join(project, "node_modules/vitest/vitest.mjs"), "run", "--root", project],
       { cwd: project, env: { ...process.env, CI: "1" } },
     );
-    expect(`${tested.stdout}${tested.stderr}`).toMatch(/7 passed/);
+    expect(`${tested.stdout}${tested.stderr}`).toMatch(/Tests\s+9 passed/);
 
     const server = await startServer(project, {
       args: (port) => [wrangler, "dev", "--port", String(port), "--ip", "127.0.0.1"],
@@ -535,7 +535,7 @@ describe("a project created by create-bounda", () => {
       [join(project, "node_modules/vitest/vitest.mjs"), "run", "--root", project],
       { cwd: project, env: { ...process.env, CI: "1" } },
     );
-    expect(`${tested.stdout}${tested.stderr}`).toMatch(/3 passed/);
+    expect(`${tested.stdout}${tested.stderr}`).toMatch(/Tests\s+5 passed/);
     const built = await run(process.execPath, [reactRouter, "build"], { cwd: project });
     expect(`${built.stdout}${built.stderr}`).toMatch(/built in/);
 
