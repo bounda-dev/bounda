@@ -261,7 +261,7 @@ describe("createPersonalKeyWrapping", () => {
     expect(calls).toBe(2);
   });
 
-  it("drops what the rotation unwrapped for a person when they are forgotten, or dropped by name", async () => {
+  it("rewraps with a key kept, and keeps none it had to unwrap for it", async () => {
     const store = await keyStore();
     const wrapper = fakeWrapper("kid-1", ["kid-0"]);
     const late: typeof clock = { ...createFixedClock(), after: () => () => undefined };
@@ -269,19 +269,20 @@ describe("createPersonalKeyWrapping", () => {
     const keys = wrapping.over(store);
     const key = await generatePersonalKey();
     await keys.add("c-1", key);
-    const stored = await store.get("c-1");
-    // Expired, then unwrapped again by a read that names no one: still c-1's.
-    late.advance(1_000);
-    await wrapping.wrapped(stored ?? key);
-    await keys.remove("c-1");
-    await store.add("c-1", stored ?? key);
-    await keys.get("c-1");
-    expect(wrapper.unwrapped).toHaveLength(3);
-    await wrapping.wrapped(stored ?? key, "c-1");
+    const stored = (await store.get("c-1")) ?? key;
+    await wrapping.wrapped(stored);
+    expect(wrapper.unwrapped).toHaveLength(1);
     wrapping.drop("c-1");
     wrapping.drop("c-9");
+    await wrapping.wrapped(stored);
+    await wrapping.wrapped(stored);
+    expect(wrapper.unwrapped).toHaveLength(3);
+    await keys.get("c-1");
     await keys.get("c-1");
     expect(wrapper.unwrapped).toHaveLength(4);
+    late.advance(1_000);
+    await wrapping.wrapped(stored);
+    expect(wrapper.unwrapped).toHaveLength(5);
   });
 
   it("takes a key kept from further off than its time allows, after the clock was set back, as expired", async () => {
@@ -304,22 +305,6 @@ describe("createPersonalKeyWrapping", () => {
     await keys.add("c-2", kept);
     await keys.remove("c-1");
     expect(await keys.get("c-2")).toEqual(kept);
-    expect(wrapper.unwrapped).toHaveLength(2);
-  });
-
-  it("still drops a person's key when they are forgotten after a read that named no one", async () => {
-    const store = await keyStore();
-    const wrapper = fakeWrapper("kid-1");
-    const wrapping = createPersonalKeyWrapping({ clock, wrapper });
-    const keys = wrapping.over(store);
-    const key = await generatePersonalKey();
-    await keys.add("c-1", key);
-    const stored = await store.get("c-1");
-    await wrapping.wrapped(stored ?? key);
-    expect(wrapper.unwrapped).toHaveLength(1);
-    await keys.remove("c-1");
-    await store.add("c-1", stored ?? key);
-    await keys.get("c-1");
     expect(wrapper.unwrapped).toHaveLength(2);
   });
 
@@ -374,7 +359,9 @@ describe("createPersonalKeyWrapping", () => {
     const rewrapped = await wrapping.wrapped(stored ?? key);
     expect(rewrapped.kid).toBe("current");
     expect(rewrapped.key).not.toBe(stored?.key);
-    expect(await wrapping.unwrapped({ ...rewrapped, fingerprint: key.fingerprint })).toEqual(key);
+    expect(await wrapping.unwrapped({ ...rewrapped, fingerprint: key.fingerprint }, "c-1")).toEqual(
+      key,
+    );
   });
 
   it("keeps keys as they are without a wrapper", async () => {

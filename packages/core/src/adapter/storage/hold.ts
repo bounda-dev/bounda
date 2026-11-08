@@ -8,3 +8,14 @@ export interface Hold {
   readonly until: string;
   readonly attempts: number;
 }
+
+export interface IsReleasedByFunction {
+  (hold: Hold | null, at: Date | undefined): boolean;
+}
+
+/**
+ * Whether a row with `hold` may be tried at `at`, as `releasedBy` lists it; any row when `at` is
+ * not given. Timestamps are ISO strings of one length, so they compare as text, as SQL compares them.
+ */
+export const isReleasedBy: IsReleasedByFunction = (hold, at) =>
+  at === undefined || hold === null || hold.until <= at.toISOString();

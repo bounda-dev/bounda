@@ -128,7 +128,7 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
     at: number,
   ): Promise<{ readonly rewrapped: boolean; readonly kept: boolean }> => {
     try {
-      const to = await wrapping.wrapped(row.key, row.person);
+      const to = await wrapping.wrapped(row.key);
       return { rewrapped: await keys.rewrap(row.person, row.key, to), kept: true };
     } catch (error) {
       logger.error("personal key could not be rewrapped", {
@@ -178,8 +178,7 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
       if (outcome.rewrapped) rewrapped += 1;
       kept &&= outcome.kept;
     }
-    if (kept) pause.resume();
-    else pause.pause(at);
+    pause.settle(at, kept);
     if (rewrapped > 0) rewrappedAny = true;
     return rewrapped;
   };
@@ -189,7 +188,7 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
     const later = at + ROTATION_CHECK_INTERVAL_MS;
     if ((await checkpoints.get(marker)) > 0) return { next: null, until: later };
     const [due] = await keys.listWrappedUnder({ kids, releasedBy: now, limit: 1 });
-    if (due !== undefined) return { next: at, until: at };
+    if (due !== undefined) return { next: at, until: later };
     const heldUntil = (await keys.nextHoldEnd({ kids, after: now }))?.getTime() ?? null;
     return { next: heldUntil, until: Math.min(heldUntil ?? later, later) };
   };
@@ -212,7 +211,9 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
       const at = now.getTime();
       if (at < completeUntil) return null;
       if (answer === null || at >= answer.until) answer = await read(now);
-      return answer.next === null ? null : new Date(pause.notBefore(answer.next));
+      return answer.next === null
+        ? null
+        : new Date(pause.notBefore(Math.max(answer.next, restUntil)));
     },
   };
 };

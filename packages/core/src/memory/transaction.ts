@@ -10,7 +10,7 @@ import type { CheckpointStore } from "../adapter/storage/checkpoint-store.ts";
 import type { DeadLetterStore } from "../adapter/storage/dead-letter-store.ts";
 import type { IdempotencyStore } from "../adapter/storage/idempotency-store.ts";
 import type { ClaimKey, InboxLedger } from "../adapter/storage/inbox-ledger.ts";
-import type { PersonStore } from "../adapter/storage/person-store.ts";
+import type { PersonActivity, PersonStore } from "../adapter/storage/person-store.ts";
 import {
   keyedPersonId,
   namesPerson,
@@ -20,6 +20,7 @@ import type { Scheduler } from "../adapter/storage/scheduler.ts";
 import type { SnapshotStore } from "../adapter/storage/snapshot-store.ts";
 import type { StoreEntries } from "./entries.ts";
 import type { MemoryEventStore } from "./event-store.ts";
+import { blankPerson } from "./person-store.ts";
 
 export interface CreateMemoryStorageTransactionArgs {
   readonly eventStore: MemoryEventStore;
@@ -56,8 +57,12 @@ interface UndoLog {
 
 type Undos = (() => void)[];
 
+// What a failed write puts back when someone changed the entry since, from the entry before the
+// write, after it, and now; without one, the entry is left as they wrote it.
+type Merge = (before: unknown, after: unknown, now: unknown) => unknown;
+
 const trackedBy =
-  (undos: Undos) =>
+  (undos: Undos, merge?: Merge) =>
   <Key, Result>(
     store: StoreEntries<Key>,
     key: NoInfer<Key>,
@@ -68,7 +73,11 @@ const trackedBy =
     // A memory write changes its map before it returns, so this reads its change before anyone
     // else can write the entry.
     const after = store.read(key);
-    undos.push(() => store.putBack(key, before, after));
+    undos.push(() => {
+      const now = store.read(key);
+      if (merge === undefined || now === after) store.putBack(key, before, after);
+      else store.putBack(key, merge(before, after, now), now);
+    });
     return written;
   };
 
@@ -92,31 +101,19 @@ const isRow = (value: unknown): value is Readonly<Record<string, unknown>> =>
 
 // A person's row is written field by field, by writers that may run beside a transaction that
 // later fails, such as a restriction beside a forget: each field the write changed goes back
-// unless someone changed that field since, and the fields they wrote stay.
-const trackedFieldsBy =
-  (undos: Undos) =>
-  <Result>(
-    store: StoreEntries<string>,
-    key: string,
-    write: () => Promise<Result>,
-  ): Promise<Result> => {
-    const before = store.read(key);
-    const written = write();
-    const after = store.read(key);
-    undos.push(() => {
-      const now = store.read(key);
-      if (now === after || !isRow(before) || !isRow(after) || !isRow(now)) {
-        store.putBack(key, before, after);
-        return;
-      }
-      const merged = { ...now };
-      for (const [field, value] of Object.entries(after)) {
-        if (now[field] === value && before[field] !== value) merged[field] = before[field];
-      }
-      store.putBack(key, merged, now);
-    });
-    return written;
-  };
+// unless someone changed that field since, and the fields they wrote stay. A row the write
+// created goes back to a blank one.
+const personFields: Merge = (before, after, now) => {
+  if (!isRow(after) || !isRow(now)) return now;
+  const was: Readonly<Record<string, unknown>> = isRow(before)
+    ? before
+    : { ...blankPerson(String(now.person)) };
+  const merged: Record<string, unknown> = { ...now };
+  for (const [field, value] of Object.entries(after)) {
+    if (now[field] === value && was[field] !== value) merged[field] = was[field];
+  }
+  return merged;
+};
 
 const undoAll = (undos: Undos): void => {
   for (const undo of undos.splice(0).reverse()) undo();
@@ -149,14 +146,18 @@ const trackedPersonalKeys = (
 };
 
 // Written at once, as the keys are, since each write answers whether it changed the row, and put
-// back when the transaction fails. Whom it restricts goes in `restricted`.
+// back when the transaction fails. Whom it restricts goes in `restricted`. A record answers
+// nothing, so it waits for the commit in `recorded`, as a database makes a record beside it wait
+// for the row: written at once, it would hide an earlier activity recorded meanwhile, which its
+// undo could not bring back.
 const trackedPersons = (
   persons: PersonStore,
   entries: StoreEntries<string>,
   undos: Undos,
   restricted: Set<string>,
+  recorded: PersonActivity[],
 ): PersonStore => {
-  const tracked = trackedFieldsBy(undos);
+  const tracked = trackedBy(undos, personFields);
   return {
     get: (person) => persons.get(person),
     restrict: (person, since) => {
@@ -164,7 +165,9 @@ const trackedPersons = (
       return tracked(entries, person, () => persons.restrict(person, since));
     },
     unrestrict: (person) => tracked(entries, person, () => persons.unrestrict(person)),
-    record: (activity) => tracked(entries, activity.person, () => persons.record(activity)),
+    record: async (activity) => {
+      recorded.push(activity);
+    },
     listIdle: (args) => persons.listIdle(args),
     hold: (person, lastActiveAt, hold) =>
       tracked(entries, person, () => persons.hold(person, lastActiveAt, hold)),
@@ -293,13 +296,14 @@ export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunct
     const atOnce: Undos = [];
     const removed = new Set<string>();
     const restricted = new Set<string>();
+    const recorded: PersonActivity[] = [];
     try {
       const result = await work({
         eventStore: staged,
         ...stores,
         ...trackedForgets(deferred, live, atOnce),
         personalKeys: trackedPersonalKeys(personalKeys, live.entries.personalKeys, atOnce, removed),
-        persons: trackedPersons(persons, live.entries.persons, atOnce, restricted),
+        persons: trackedPersons(persons, live.entries.persons, atOnce, restricted, recorded),
         snapshotStore,
       });
       // A transaction committed from inside this commit, as from a store write, waits forever.
@@ -308,6 +312,7 @@ export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunct
       try {
         await flush(log.target);
         await eventStore.appendAll(ownChangesLeftOut(staged.batches(), removed, restricted));
+        for (const activity of recorded) await persons.record(activity);
       } catch (error) {
         log.undo();
         throw error;

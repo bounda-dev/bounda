@@ -74,30 +74,66 @@ describe("createMemoryStorageTransaction", () => {
       lastActiveAt: day(1),
       forgottenAt: null,
     });
-    let restricted: Promise<boolean> | undefined;
     await expect(
       stores.transact(async (tx) => {
-        await tx.persons.record({ person: "c-1", position: 2, forgottenAt: day(2) });
-        restricted = stores.persons.restrict("c-1", at(3));
-        await restricted;
+        await tx.persons.restrict("c-1", at(2));
+        await stores.persons.record({
+          person: "c-1",
+          position: 2,
+          lastActiveAt: day(3),
+          forgottenAt: null,
+        });
         await refused(tx);
       }),
     ).rejects.toBeInstanceOf(ScheduledClaimLostError);
-    expect(await restricted).toBe(true);
     expect(await stores.persons.get("c-1")).toEqual({
       person: "c-1",
-      restrictedSince: day(3),
+      restrictedSince: null,
+      lastActiveAt: day(3),
+      forgottenAt: null,
+      hold: null,
+    });
+    // The position the other write recorded stays too, so a late record behind it changes nothing.
+    await stores.persons.record({
+      person: "c-1",
+      position: 2,
+      lastActiveAt: day(9),
+      forgottenAt: null,
+    });
+    expect(await stores.persons.get("c-1")).toMatchObject({ lastActiveAt: day(3) });
+  });
+
+  it("puts back a person's row it created to a blank one, keeping what someone wrote on it since", async () => {
+    const stores = await storage();
+    const day = (n: number) => at(n).toISOString();
+    await expect(
+      stores.transact(async (tx) => {
+        await tx.persons.restrict("c-1", at(2));
+        await stores.persons.record({
+          person: "c-1",
+          position: 1,
+          lastActiveAt: day(1),
+          forgottenAt: null,
+        });
+        await tx.persons.restrict("c-2", at(4));
+        await stores.persons.unrestrict("c-2");
+        await stores.persons.restrict("c-2", at(5));
+        await refused(tx);
+      }),
+    ).rejects.toBeInstanceOf(ScheduledClaimLostError);
+    expect(await stores.persons.get("c-1")).toEqual({
+      person: "c-1",
+      restrictedSince: null,
       lastActiveAt: day(1),
       forgottenAt: null,
       hold: null,
     });
-    await stores.persons.unrestrict("c-1");
-    expect((await stores.persons.listIdle({ limit: 10 })).map(({ person }) => person)).toEqual([
-      "c-1",
-    ]);
+    expect(await stores.persons.restrict("c-1", at(5))).toBe(true);
+    // A field someone wrote over the transaction's write is theirs.
+    expect(await stores.persons.get("c-2")).toMatchObject({ restrictedSince: day(5) });
   });
 
-  it("keeps a field of a person's row that someone wrote over its write, and a row someone changed after it created it", async () => {
+  it("records a person's activity when it commits, never hiding one recorded meanwhile", async () => {
     const stores = await storage();
     const day = (n: number) => at(n).toISOString();
     await stores.persons.record({
@@ -108,15 +144,14 @@ describe("createMemoryStorageTransaction", () => {
     });
     await expect(
       stores.transact(async (tx) => {
-        await tx.persons.record({ person: "c-1", position: 2, forgottenAt: day(2) });
+        await tx.persons.record({ person: "c-1", position: 5, forgottenAt: day(5) });
+        expect(await tx.persons.get("c-1")).toMatchObject({ forgottenAt: null });
         await stores.persons.record({
           person: "c-1",
           position: 3,
           lastActiveAt: day(3),
           forgottenAt: null,
         });
-        await tx.persons.restrict("c-2", at(4));
-        await stores.persons.unrestrict("c-2");
         await refused(tx);
       }),
     ).rejects.toBeInstanceOf(ScheduledClaimLostError);
@@ -124,15 +159,13 @@ describe("createMemoryStorageTransaction", () => {
       lastActiveAt: day(3),
       forgottenAt: null,
     });
-    // The position the other write recorded stays too, so a late record behind it changes nothing.
-    await stores.persons.record({
-      person: "c-1",
-      position: 2,
-      lastActiveAt: day(9),
-      forgottenAt: null,
+    await stores.transact(async (tx) => {
+      await tx.persons.record({ person: "c-1", position: 6, forgottenAt: day(6) });
     });
-    expect(await stores.persons.get("c-1")).toMatchObject({ lastActiveAt: day(3) });
-    expect(await stores.persons.get("c-2")).toMatchObject({ restrictedSince: null });
+    expect(await stores.persons.get("c-1")).toMatchObject({
+      lastActiveAt: day(3),
+      forgottenAt: day(6),
+    });
   });
 
   it("leaves an entry alone that someone changed after its write", async () => {

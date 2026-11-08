@@ -1,11 +1,12 @@
 import type { Hold } from "../adapter/storage/hold.ts";
+import { isReleasedBy } from "../adapter/storage/hold.ts";
 import type {
   KeyedPerson,
   PersonalKeyStore,
   StoredPersonalKey,
 } from "../adapter/storage/personal-key-store.ts";
 import { createStoreEntries, type WithEntries } from "./entries.ts";
-import { earliestHoldEnd, isReleasedBy } from "./holds.ts";
+import { earliestHoldEnd } from "./holds.ts";
 
 export interface KeptPersonalKeyStore extends WithEntries<PersonalKeyStore, string> {
   /**

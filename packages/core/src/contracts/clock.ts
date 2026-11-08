@@ -1,9 +1,9 @@
 export interface AfterOptions {
   /**
    * A wait that must not keep the process alive on its own, such as the expiry of a cache that is
-   * also checked when read: the process may exit, or be put to sleep, before it is due. On a
-   * platform whose timers always keep it awake, as in a Durable Object, the system clock drops
-   * such a wait and its call never comes. Clocks that cannot tell may ignore it.
+   * also checked when read: the process may exit, or be put to sleep, before it is due. Where a
+   * pending timer keeps it awake, as in a Durable Object, such a wait is dropped and its call
+   * never comes. Clocks that cannot tell may ignore it.
    */
   readonly background?: boolean;
 }
@@ -25,8 +25,9 @@ export interface Clock {
 // Node runs a timer whose delay does not fit in 32 bits at once, so a longer wait is armed in steps.
 const LONGEST_TIMER_MS = 2 ** 31 - 1;
 
-// Node's timers keep the process alive unless told not to; workerd's are plain numbers, which
-// keep a Durable Object from sleeping. Resolves whether the timer could be let go.
+// Node's timers keep the process alive unless told not to; a timer with no `unref` cannot be let
+// go. Resolves whether it could. workerd's Node-style timers have one that does nothing, so the
+// Durable Object host drops background waits itself.
 const letGo = (timer: unknown): boolean => {
   if (
     typeof timer === "object" &&

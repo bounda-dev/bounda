@@ -1,6 +1,7 @@
+import { isReleasedBy } from "../adapter/storage/hold.ts";
 import type { PersonStore, StoredPerson } from "../adapter/storage/person-store.ts";
 import { createStoreEntries, type WithEntries } from "./entries.ts";
-import { earliestHoldEnd, isReleasedBy } from "./holds.ts";
+import { earliestHoldEnd } from "./holds.ts";
 
 export interface KeptPersonStore extends WithEntries<PersonStore, string> {
   /**
@@ -14,9 +15,23 @@ export interface CreateKeptPersonStoreFunction {
   (): KeptPersonStore;
 }
 
-interface KeptPerson extends StoredPerson {
+export interface KeptPerson extends StoredPerson {
   readonly position: number;
 }
+
+export interface BlankPersonFunction {
+  (person: string): KeptPerson;
+}
+
+// A row as a person who has none has it.
+export const blankPerson: BlankPersonFunction = (person) => ({
+  person,
+  restrictedSince: null,
+  lastActiveAt: null,
+  forgottenAt: null,
+  hold: null,
+  position: 0,
+});
 
 const stored = ({ position: _position, ...person }: KeptPerson): StoredPerson => person;
 
@@ -31,15 +46,7 @@ const isIdle = (
 
 export const createKeptPersonStore: CreateKeptPersonStoreFunction = () => {
   const persons = new Map<string, KeptPerson>();
-  const existing = (person: string): KeptPerson =>
-    persons.get(person) ?? {
-      person,
-      restrictedSince: null,
-      lastActiveAt: null,
-      forgottenAt: null,
-      hold: null,
-      position: 0,
-    };
+  const existing = (person: string): KeptPerson => persons.get(person) ?? blankPerson(person);
   return {
     restricted: (person) => (persons.get(person)?.restrictedSince ?? null) !== null,
     store: {

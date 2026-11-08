@@ -28,14 +28,14 @@ export interface PersonalKeyWrapping {
    */
   readonly wrapper: KeyWrapper | null;
   /**
-   * The key as the kernel uses it, `kid: null`, from the key as the store keeps it.
+   * The person's key as the kernel uses it, `kid: null`, from the key as the store keeps it.
    */
-  unwrapped(stored: StoredPersonalKey): Promise<StoredPersonalKey>;
+  unwrapped(stored: StoredPersonalKey, person: string): Promise<StoredPersonalKey>;
   /**
-   * The unwrapped key wrapped under the wrapper's `kid`, or as it is without a wrapper; `person`
-   * names whose key it is, so forgetting them drops what this unwrapped.
+   * The unwrapped key wrapped under the wrapper's `kid`, or as it is without a wrapper. A key it
+   * has to unwrap first is not kept: the rotation rewraps the keys of persons nobody reads.
    */
-  wrapped(key: StoredPersonalKey, person?: string): Promise<RewrappedKey>;
+  wrapped(key: StoredPersonalKey): Promise<RewrappedKey>;
   /**
    * Drops the person's unwrapped key, for a forgetting made on the store as written.
    */
@@ -71,15 +71,15 @@ export interface CreatePersonalKeyWrappingFunction {
 interface KeptKey {
   readonly raw: Promise<string>;
   readonly expiresAt: number;
-  person: string | null;
+  readonly person: string;
 }
 
 /**
  * The unwrapped keys are kept by fingerprint, which names one key whatever it is wrapped under,
  * but only ever looked up after the person's row was read: a key forgotten on another instance is
- * gone at once here too, even with unwrapping remote and slow. A key is dropped when it has been
- * kept `ttlMs`, by a timer armed for the first to expire, so nothing outlives its time in an
- * instance that reads no key any more.
+ * gone at once here too, even with unwrapping remote and slow. A key kept `ttlMs` is dropped at
+ * the next read of any key, and by a timer armed for the first to expire, which a clock may
+ * decline to arm where a pending timer keeps the process awake.
  */
 export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
   wrapper,
@@ -91,7 +91,7 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
   const kept = new Map<string, KeptKey>();
   // Unwrapped first, which, kept as long as each other, is also the first to expire.
   const unwrappedAt = new Map<string, KeptKey>();
-  // The fingerprint kept for each person a read named, so forgetting them drops their key at once.
+  // The fingerprint kept for each person, so forgetting them drops their key at once.
   const byPerson = new Map<string, string>();
   const known = new Set(wrapper === null ? [] : [wrapper.kid, ...(wrapper.previous ?? [])]);
   let cancelExpiry: (() => void) | null = null;
@@ -100,14 +100,7 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
     const person = kept.get(fingerprint)?.person;
     kept.delete(fingerprint);
     unwrappedAt.delete(fingerprint);
-    if (person !== undefined && person !== null && byPerson.get(person) === fingerprint) {
-      byPerson.delete(person);
-    }
-  };
-
-  const attribute = (key: KeptKey, fingerprint: string, person: string): void => {
-    key.person = person;
-    byPerson.set(person, fingerprint);
+    if (person !== undefined && byPerson.get(person) === fingerprint) byPerson.delete(person);
   };
 
   // A wall clock set back makes a key look younger than it can be: it is taken as expired.
@@ -122,13 +115,16 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
     });
   };
 
-  const expire = (): void => {
-    cancelExpiry = null;
-    const now = clock.now().getTime();
+  const dropExpired = (now: number): void => {
     for (const [fingerprint, key] of unwrappedAt) {
       if (!isExpired(key, now)) break;
       drop(fingerprint);
     }
+  };
+
+  const expire = (): void => {
+    cancelExpiry = null;
+    dropExpired(clock.now().getTime());
     armExpiry();
   };
 
@@ -144,12 +140,7 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
     return toBase64(raw);
   };
 
-  const unwrapped = async (
-    stored: StoredPersonalKey,
-    person?: string,
-  ): Promise<StoredPersonalKey> => {
-    const { kid } = stored;
-    if (kid === null) return stored;
+  const wrapperFor = (kid: string): KeyWrapper => {
     if (wrapper === null) {
       throw new ConfigurationError(
         `A personal key is wrapped under ${kid}, and runtime.personalData.keyWrapper is not set`,
@@ -160,23 +151,26 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
         `A personal key is wrapped under ${kid}, which is neither the key wrapper's key nor one of its previous ones`,
       );
     }
-    const { fingerprint } = stored;
+    return wrapper;
+  };
+
+  const unwrapped = async (
+    stored: StoredPersonalKey,
+    person: string,
+  ): Promise<StoredPersonalKey> => {
+    const { kid, fingerprint } = stored;
+    if (kid === null) return stored;
+    const unwrapping = wrapperFor(kid);
+    dropExpired(clock.now().getTime());
     let entry = kept.get(fingerprint);
-    // Dropped first, so the key unwrapped again goes to the end of both orders, still its owner's.
-    if (entry === undefined || isExpired(entry, clock.now().getTime())) {
-      const owner = entry?.person ?? null;
-      drop(fingerprint);
-      const unwrapping = unwrap(wrapper, { ...stored, kid });
-      const created: KeptKey = {
-        raw: unwrapping,
-        expiresAt: clock.now().getTime() + ttlMs,
-        person: null,
-      };
+    if (entry === undefined) {
+      const raw = unwrap(unwrapping, { ...stored, kid });
+      const created: KeptKey = { raw, expiresAt: clock.now().getTime() + ttlMs, person };
       entry = created;
       kept.set(fingerprint, created);
       unwrappedAt.set(fingerprint, created);
-      if (owner !== null) attribute(created, fingerprint, owner);
-      unwrapping.catch(() => {
+      byPerson.set(person, fingerprint);
+      raw.catch(() => {
         if (kept.get(fingerprint) === created) drop(fingerprint);
       });
       const [oldest] = kept.keys();
@@ -186,14 +180,20 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
       kept.delete(fingerprint);
       kept.set(fingerprint, entry);
     }
-    if (person !== undefined) attribute(entry, fingerprint, person);
     return { key: await entry.raw, fingerprint, kid: null };
   };
 
-  const wrapped = async (key: StoredPersonalKey, person?: string): Promise<RewrappedKey> => {
+  const rawOf = async (key: StoredPersonalKey): Promise<string> => {
+    const { kid, fingerprint } = key;
+    if (kid === null) return key.key;
+    const unwrapping = wrapperFor(kid);
+    dropExpired(clock.now().getTime());
+    return (await kept.get(fingerprint)?.raw) ?? unwrap(unwrapping, { ...key, kid });
+  };
+
+  const wrapped = async (key: StoredPersonalKey): Promise<RewrappedKey> => {
     if (wrapper === null) return { key: key.key, kid: key.kid };
-    const raw = fromBase64((await unwrapped(key, person)).key);
-    return { key: toBase64(await wrapper.wrap(raw)), kid: wrapper.kid };
+    return { key: toBase64(await wrapper.wrap(fromBase64(await rawOf(key)))), kid: wrapper.kid };
   };
 
   const dropPerson = (person: string): void => {

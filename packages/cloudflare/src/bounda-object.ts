@@ -27,6 +27,7 @@ import type { Config } from "@bounda-dev/core/config";
 import { durableObjectAdapter } from "./adapter.ts";
 import { cloudflareStorageOf, isCloudflareDefinition } from "./definition.ts";
 import { workersLogger } from "./logger.ts";
+import { objectClock } from "./object-clock.ts";
 import { type RpcOutcome, settle } from "./outcome.ts";
 import type { DurableSqlStorage } from "./sql-database.ts";
 import { nextWake } from "./wake.ts";
@@ -213,7 +214,7 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
           env,
           tenant: ctx.id.name,
           logger,
-          clock,
+          clock: objectClock(clock),
           ...(ids === undefined ? {} : { ids }),
         });
       });

@@ -1,5 +1,6 @@
 import type { Storage } from "../../adapter/adapter.ts";
 import type { EventStore } from "../../adapter/storage/event-store.ts";
+import { isReleasedBy } from "../../adapter/storage/hold.ts";
 import type {
   PersonActivity,
   PersonStore,
@@ -179,11 +180,13 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
     return "forgotten";
   };
 
+  // When the store itself fails a pass, so no row can keep the wait, the sweep stops in this
+  // instance for a while.
+  const pause = createPause();
+
   // A person left undone waits on their own row, so one whose forget keeps failing never holds
   // the others back, every instance skips them, and a host that wakes for `nextDueAt` never wakes
   // for them again at once.
-  const pause = createPause();
-
   const hold = async (person: StoredPerson, at: number, failed: boolean): Promise<boolean> => {
     try {
       await storage.persons.hold(
@@ -239,8 +242,7 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
       if (outcome.forgotten) forgotten += 1;
       kept &&= outcome.kept;
     }
-    if (kept) pause.resume();
-    else pause.pause(at);
+    pause.settle(at, kept);
     return forgotten;
   };
 
@@ -270,11 +272,7 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
       const now = clock.now();
       const [first] = await storage.persons.listIdle({ limit: 1 });
       let next = deadlineOf(first);
-      if (
-        first?.hold !== null &&
-        first?.hold !== undefined &&
-        Date.parse(first.hold.until) > now.getTime()
-      ) {
+      if (first !== undefined && !isReleasedBy(first.hold, now)) {
         const [[free], heldUntil] = await Promise.all([
           storage.persons.listIdle({ releasedBy: now, limit: 1 }),
           storage.persons.nextHoldEnd(now),

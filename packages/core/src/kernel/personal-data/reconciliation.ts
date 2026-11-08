@@ -4,7 +4,7 @@ import type {
   ForgetLedgerEntry,
   ForgetLedgerPosition,
 } from "../../adapter/storage/forget-ledger.ts";
-import type { Hold } from "../../adapter/storage/hold.ts";
+import { type Hold, isReleasedBy } from "../../adapter/storage/hold.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
@@ -233,7 +233,7 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
   // leaves only its end, which the next failure outlasts or waits for.
   const hold = async (at: number): Promise<void> => {
     const held = await storedHold().catch(() => local);
-    if (held !== null && Date.parse(held.until) > at) {
+    if (held !== null && !isReleasedBy(held, new Date(at))) {
       local = held;
       dueAt = Date.parse(held.until);
       return;

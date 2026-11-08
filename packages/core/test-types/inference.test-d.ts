@@ -1,5 +1,6 @@
 import type {
   AccessOutcome,
+  AfterOptions,
   AppRegistry,
   BoundaApp,
   BoundaClient,
@@ -279,6 +280,15 @@ describe("ports", () => {
     expectTypeOf<ReturnType<InventoryHttp["create"]>>().toEqualTypeOf<
       Inventory | Promise<Inventory>
     >();
+  });
+
+  it("type a clock's waits, taking one that may let the process go, and a clock that ignores it", () => {
+    expectTypeOf<Parameters<Clock["after"]>[2]>().toEqualTypeOf<AfterOptions | undefined>();
+    expectTypeOf<AfterOptions>().toEqualTypeOf<{ readonly background?: boolean }>();
+    expectTypeOf<{
+      now(): Date;
+      after(milliseconds: number, callback: () => void): () => void;
+    }>().toExtend<Clock>();
   });
 
   it("reach a read model's query handlers, and neither its repository nor its projections", () => {

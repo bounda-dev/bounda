@@ -33,14 +33,28 @@ export const appStorage: AppStorageFunction = ({ storage, aggregates, wrapping }
       }),
       aggregates,
     }),
-    transact: (work) =>
-      storage.transact((transaction) => {
-        const keys = wrapping.over(transaction.personalKeys);
+    // A key removed is dropped again once the removal commits: a read made before the commit, as
+    // a projection's, may have unwrapped it again meanwhile.
+    transact: async (work) => {
+      const removed: string[] = [];
+      const result = await storage.transact((transaction) => {
+        removed.length = 0;
+        const over = wrapping.over(transaction.personalKeys);
+        const keys = {
+          ...over,
+          remove: (person: string) => {
+            removed.push(person);
+            return over.remove(person);
+          },
+        };
         return work({
           ...transaction,
           personalKeys: keys,
           eventStore: withPersonalData({ eventStore: transaction.eventStore, aggregates, keys }),
         });
-      }),
+      });
+      for (const person of removed) wrapping.drop(person);
+      return result;
+    },
   };
 };

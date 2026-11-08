@@ -582,10 +582,11 @@ takes every person's data with it, as if each had been forgotten. `bounda rebuil
 
 Unwrapped keys are kept in memory, by fingerprint, up to ten thousand per app and for five
 minutes from the moment each was unwrapped, so a command does not pay for unwrapping on every
-read, and the raw key of someone no longer active does not stay in the process: a timer drops it
-when its time is up, whether the app reads anything or not, without keeping a Node process alive.
-A Durable Object arms no such timer, which would keep it from sleeping: its keys go when they are
-next read past their time, or with the object when the platform evicts it. The person's row is
+read, and the raw key of someone no longer active does not stay in the process: keys past their
+time go at the next read of any key, and a timer drops them when no key is read, without keeping
+a Node process alive. A Durable Object arms no such timer, which would keep it from sleeping: there
+they go at the next read, or with the object when the platform evicts it. A forgotten person's key
+goes once the forget commits, and the keys the rotation unwraps are not kept. The person's row is
 still read first every time: a person forgotten on another instance is forgotten here at once.
 
 Without `keyWrapper` the keys are kept as they are, next to the data, and the app logs a warning

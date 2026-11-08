@@ -373,13 +373,9 @@ describe("createRetentionSweep", () => {
   it("starts a person's back-off over once they are forgotten, or are no longer idle", async () => {
     const live = await memory().createStorage();
     let failing = true;
-    const { sweep, record, touch, advance, clock } = await setUp({
-      ...live,
-      transact: async (work) => {
-        if (failing) throw new Error("disk full");
-        return live.transact(work);
-      },
-    });
+    const { sweep, record, touch, advance, clock } = await setUp(
+      failingForgets(live, () => failing),
+    );
     const failTwice = async (): Promise<void> => {
       await sweep.sweep(clock.now());
       clock.advance(HOLD_MS);
@@ -411,13 +407,9 @@ describe("createRetentionSweep", () => {
   it("backs off a person no longer than HOLD_MAX_MS, and forgets the hold once they are", async () => {
     const live = await memory().createStorage();
     let broken = true;
-    const { sweep, record, touch, forgottenFor, advance, clock } = await setUp({
-      ...live,
-      transact: async (work) => {
-        if (broken) throw new Error("disk full");
-        return live.transact(work);
-      },
-    });
+    const { sweep, record, touch, forgottenFor, advance, clock } = await setUp(
+      failingForgets(live, () => broken),
+    );
     await touch("c-1");
     await record();
     advance(31);

@@ -52,6 +52,10 @@ export interface Pause {
    */
   resume(): void;
   /**
+   * After a pass: `resume` when the store kept every hold it wrote, `pause` otherwise.
+   */
+  settle(at: number, kept: boolean): void;
+  /**
    * `next`, or the end of the pause when that is later.
    */
   notBefore(next: number): number;
@@ -65,14 +69,17 @@ export const createPause: CreatePauseFunction = () => {
   let paused: Hold | null = null;
   const until = (): number =>
     paused === null ? Number.NEGATIVE_INFINITY : Date.parse(paused.until);
+  const pause = (at: number): void => {
+    paused = holdAfter({ held: paused, at, failed: true });
+  };
+  const resume = (): void => {
+    paused = null;
+  };
   return {
     isPaused: (at) => at < until(),
-    pause: (at) => {
-      paused = holdAfter({ held: paused, at, failed: true });
-    },
-    resume: () => {
-      paused = null;
-    },
+    pause,
+    resume,
+    settle: (at, kept) => (kept ? resume() : pause(at)),
     notBefore: (next) => Math.max(next, until()),
   };
 };

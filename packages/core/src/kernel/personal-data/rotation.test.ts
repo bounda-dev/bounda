@@ -389,6 +389,38 @@ describe("createKeyRotation", () => {
     expect(reads.count).toBe(checked);
   });
 
+  it("answers a key due without reading the table again until an interval passes, and never before a rest ends", async () => {
+    const { store, checkpoints, clock } = await setUp();
+    const { keys, reads } = counted(store);
+    const failing = fakeWrapper("new", ["old"]);
+    const rotation = rotationOver({
+      keys,
+      checkpoints,
+      wrapper: {
+        ...failing,
+        wrap: async () => {
+          throw new Error("wrap failed");
+        },
+      },
+    });
+    await addUnder(store, "old", "a-held");
+    expect(await rotation.sweep(clock.now())).toBe(0);
+    const heldAt = clock.now().getTime();
+    expect(await rotation.sweep(clock.now())).toBe(0);
+    await addUnder(store, "old", "c-1");
+    expect(await rotation.nextDueAt()).toEqual(new Date(heldAt + HOLD_MS));
+    const read = reads.count;
+    for (let ask = 0; ask < 5; ask += 1) {
+      expect(await rotation.nextDueAt()).toEqual(new Date(heldAt + HOLD_MS));
+    }
+    clock.advance(ROTATION_CHECK_INTERVAL_MS - 1);
+    expect(await rotation.nextDueAt()).toEqual(new Date(heldAt + HOLD_MS));
+    expect(reads.count).toBe(read);
+    clock.advance(1);
+    expect(await rotation.nextDueAt()).toEqual(clock.now());
+    expect(reads.count).toBeGreaterThan(read);
+  });
+
   it("checks a mark once an interval across instances, and drops it for a key found again", async () => {
     const { store, checkpoints, clock } = await setUp();
     const { keys, reads } = counted(store);

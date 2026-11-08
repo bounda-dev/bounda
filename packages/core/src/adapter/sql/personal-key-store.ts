@@ -41,6 +41,8 @@ export const createSqlPersonalKeyStore: CreateSqlPersonalKeyStoreFunction = ({
     ];
     return conditions.length === 0 ? null : { condition: conditions.join(" OR "), values: named };
   };
+  // The row as `from` was read: `rewrap` and `hold` change it only while it holds that key.
+  const holding = `"person" = ${p(3)} AND "key" = ${p(4)} AND "fingerprint" = ${p(5)}`;
   const get = async (person: string): Promise<StoredPersonalKey | null> => {
     const [row] = await db.all(
       `SELECT "key", "fingerprint", "kid" FROM ${table} WHERE "person" = ${p(1)}`,
@@ -84,13 +86,13 @@ export const createSqlPersonalKeyStore: CreateSqlPersonalKeyStoreFunction = ({
     rewrap: async (person, from, to) =>
       (
         await db.all(
-          `UPDATE ${table} SET "key" = ${p(1)}, "kid" = ${p(2)}, "held_until" = NULL, "attempts" = 0 WHERE "person" = ${p(3)} AND "key" = ${p(4)} AND "fingerprint" = ${p(5)} RETURNING "person"`,
+          `UPDATE ${table} SET "key" = ${p(1)}, "kid" = ${p(2)}, "held_until" = NULL, "attempts" = 0 WHERE ${holding} RETURNING "person"`,
           [to.key, to.kid, person, from.key, from.fingerprint],
         )
       ).length === 1,
     hold: async (person, from, { until, attempts }) => {
       await db.run(
-        `UPDATE ${table} SET "held_until" = ${p(1)}, "attempts" = ${p(2)} WHERE "person" = ${p(3)} AND "key" = ${p(4)} AND "fingerprint" = ${p(5)}`,
+        `UPDATE ${table} SET "held_until" = ${p(1)}, "attempts" = ${p(2)} WHERE ${holding}`,
         [until, attempts, person, from.key, from.fingerprint],
       );
     },

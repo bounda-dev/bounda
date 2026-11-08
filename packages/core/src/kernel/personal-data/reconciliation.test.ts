@@ -291,7 +291,7 @@ describe("the forget ledger's reconciliation", () => {
     expect(await storage.checkpointStore.get(FORGET_LEDGER_HELD_UNTIL)).toBe(0);
   });
 
-  it("reads the hold before the read a ledger's delay calls for only to clear it after", async () => {
+  it("reads the hold on a pass a ledger's delay calls for once, after the cursor, only to clear it", async () => {
     const storage = await memory().createStorage();
     const asked: string[] = [];
     const reconciliation = createForgetLedgerReconciliation({
