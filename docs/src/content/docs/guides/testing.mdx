@@ -9,7 +9,9 @@ import { TabItem, Tabs } from "@astrojs/starlight/components";
 
 `createTestApp` builds an app for tests: in-memory storage, a clock that only moves when you move
 it, and sequential ids (`id-1`, `id-2`, …). Nothing is shared between tests and nothing depends on
-wall-clock time, so the same assertions hold on every run.
+wall-clock time, so the same assertions hold on every run. Its logs carry the text of errors, so a
+failing test says what failed, unless the `config` you pass sets
+[`runtime.telemetry.errorText`](/reference/observability/#error-text).
 
 ```ts
 import { createTestApp } from "@bounda-dev/core/testing";

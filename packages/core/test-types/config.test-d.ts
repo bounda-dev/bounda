@@ -1,4 +1,9 @@
-import type { DurationInput } from "@bounda-dev/core";
+import {
+  type DurationInput,
+  type ErrorFields,
+  errorFields,
+  type SubscriberFailing,
+} from "@bounda-dev/core";
 import type {
   Adapter,
   AdapterDefinition,
@@ -12,6 +17,7 @@ import {
   defineConfig,
   defineForgetLedger,
   defineKeyWrapper,
+  type ErrorText,
   type ForgetLedgerConfig,
   type ForgetLedgerDefinition,
   type ForgetLedgerSource,
@@ -29,6 +35,25 @@ declare const env: Readonly<Record<string, string | undefined>>;
  * implementations, so every config here has to choose one.
  */
 const ports = { order: { inventory: "fake" } } as const;
+
+describe("errorFields", () => {
+  it("logs an error by its class and code, its text optional, under the rule of the configuration", () => {
+    expectTypeOf(errorFields({ error: new Error("x") })).toEqualTypeOf<ErrorFields>();
+    expectTypeOf(
+      errorFields({ error: "thrown", errorText: undefined as ErrorText | undefined }),
+    ).toEqualTypeOf<ErrorFields>();
+    expectTypeOf<ErrorFields>().toEqualTypeOf<{
+      readonly errorName: string;
+      readonly errorCode?: string;
+      readonly errorMessage?: string;
+      readonly errorStack?: string;
+    }>();
+    // @ts-expect-error errorText is "omit" or "include"
+    errorFields({ error: null, errorText: "all" });
+    expectTypeOf<SubscriberFailing["errorName"]>().toEqualTypeOf<string>();
+    expectTypeOf<SubscriberFailing>().not.toHaveProperty("message");
+  });
+});
 
 describe("defineConfig", () => {
   it("keeps the literal type of what it is given", () => {
@@ -247,6 +272,23 @@ describe("defineConfig", () => {
       ports,
       // @ts-expect-error the retention of dead letters is app-wide, never per aggregate
       runtime: { overrides: { order: { deadLetters: { retention: "30d" } } } },
+    });
+    defineConfig({ storage: sqlite, ports, runtime: { telemetry: { errorText: "include" } } });
+    defineConfig({ storage: sqlite, ports, runtime: { telemetry: { errorText: "omit" } } });
+    expectTypeOf<NonNullable<NonNullable<Config["runtime"]>["telemetry"]>>().toEqualTypeOf<{
+      readonly errorText?: ErrorText;
+    }>();
+    defineConfig({
+      storage: sqlite,
+      ports,
+      // @ts-expect-error errorText is "omit" or "include", never a boolean
+      runtime: { telemetry: { errorText: true } },
+    });
+    defineConfig({
+      storage: sqlite,
+      ports,
+      // @ts-expect-error what the telemetry carries is app-wide, never per aggregate
+      runtime: { overrides: { order: { telemetry: { errorText: "include" } } } },
     });
     // @ts-expect-error batch is not a role
     defineConfig({ storage: sqlite, ports, runtime: { role: "batch" } });

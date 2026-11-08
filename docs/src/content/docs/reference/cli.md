@@ -29,6 +29,25 @@ bounda dead-letters list --json | jq '.[].id'
 The app's logger writes one line each, `[bounda] <level> <message> <fields as JSON>`, at `info` and
 above.
 
+## Error text
+
+Standard error often ends up in a log, and the message of an error a handler throws may quote
+personal data it read. So a command that fails on such an error prints its class and code, not its
+message, and the app's log lines carry no error's text, as
+[`runtime.telemetry.errorText`](/reference/observability/#error-text) says by default:
+
+```
+error: ValidationError (VALIDATION_FAILED); its message may quote personal data: run again with --error-text to print it
+```
+
+`--error-text`, on every command that loads the project, prints the message and lets the log lines
+carry the text of errors for that run; a configuration that sets `errorText: "include"` does the
+same without it. What fails before any handler runs is printed in full: a configuration or a
+registry that cannot be loaded, a read model that is not in the registry, a list `forget` cannot
+read, and errors whose message Bounda writes from names and ids alone, such as a dead letter that is
+not found or was already settled. To read what a reaction failed on, read its letter:
+`bounda dead-letters list` opens the text it keeps encrypted, an access the access log records.
+
 ## Who runs a command
 
 `--actor <id>` names who runs a command that acts or reads personal data: `rebuild`,
@@ -162,6 +181,7 @@ bounda rebuild orderSummary --root ./apps/shop --config bounda.config.ts --regis
 | `--config <file>` | `bounda.config.ts` | The configuration module under the root |
 | `--registry <file>` | `.bounda/registry.ts` | The generated registry module under the root |
 | `--actor <id>` | | Who runs it, named in its log lines; see [who runs a command](#who-runs-a-command) |
+| `--error-text` | | Print the message of the error it fails on, and log the text of errors; see [error text](#error-text) |
 
 The projections run into a fresh table that takes the live table's place once it has caught up;
 an interrupted rebuild resumes where it stopped, and a second one started meanwhile takes over.
@@ -197,7 +217,7 @@ bounda dead-letters discard <id>
 | `--handler <name>` | `list` | The policy or process name as the letter records it, e.g. `order.notifyOnOrderPlaced`, or the scheduled command's type, e.g. `PlaceOrder` |
 | `--limit <n>` | `list` | At most this many letters: a whole number, 0 or more |
 | `--json` | `list` | Print the letters as JSON |
-| `--root`, `--config`, `--registry` | all | As for `bounda rebuild` |
+| `--root`, `--config`, `--registry`, `--error-text` | all | As for `bounda rebuild` |
 | `--actor <id>` | all | Who lists, retries or discards: named in the access log record each one writes, in the events a retry writes and in the log line of a retry or discard |
 
 ```
@@ -218,8 +238,8 @@ the person the work names, so it is left out once that person was
 [forgotten](/guides/personal-data/); see [what a letter holds](/guides/dead-letters/#what-a-letter-holds).
 
 When `retry` fails, because the handler fails again or the letter cannot be retried or was settled
-first, the error is printed and the exit code is `2`. For a process letter it also says when one of
-the parked events failed the process again. What a retry runs for each kind is in
+first, the error is printed, as [error text](#error-text) says, and the exit code is `2`. For a
+process letter it also says when one of the parked events failed the process again. What a retry runs for each kind is in
 [Dead letters](/guides/dead-letters/).
 
 ## `bounda forgotten` and `bounda forget`
@@ -255,7 +275,7 @@ forgot again 1 of 3 listed; the rest hold no key, or this store holds their forg
 | --- | --- | --- |
 | `--since <date\|position>` | `forgotten` | A date such as `2026-11-01` or `2026-11-01T03:00:00Z`, or a position: a whole number |
 | `--from <file>` | `forget` | What `bounda forgotten` printed, or one person's id a line |
-| `--root`, `--config`, `--registry` | both | As for `bounda rebuild` |
+| `--root`, `--config`, `--registry`, `--error-text` | both | As for `bounda rebuild` |
 | `--actor <id>` | `forget` | Who forgets them again, named in each `PersonalDataForgotten` and its log line |
 
 Exit codes: `0` done, `1` bad arguments, `2` the project could not be loaded, or the file could not

@@ -252,6 +252,12 @@ was failing, and given a fresh key before it gave up, has the text encrypted und
 keeps, so it reads as `null` too instead of opening under the fresh key; the stream's `ScheduledCommandFailed` and `ProcessFailed` name the error's class and code
 and never its text, and so does the last error the inbox and the scheduler keep of a claim.
 
+The runtime's own log lines and spans carry no error's text: an error is logged and traced by its
+class, its code and the ids of what failed, and the line that files a dead letter names the letter,
+whose text `app.deadLetters` opens for as long as the person is not forgotten. Only
+[`runtime.telemetry.errorText: "include"`](/reference/observability/#error-text) puts the message
+and the stack there, in the clear, out of `forget`'s reach: keep it to development.
+
 What `forget` does not reach is text your code writes elsewhere and data left unmarked: your logs
 keep whatever you wrote to them, an event's payload written in the clear, with the data in a field
 you did not mark, stays readable, a command's payload left unmarked is stored as it came, and the

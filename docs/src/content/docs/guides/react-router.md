@@ -228,6 +228,10 @@ right after.
 - `.env` is read when the app boots and never overrides a variable that is already set, so a
   change to it needs the dev server restarted. In development it is read from the project root;
   the built app reads it from the directory it runs in.
+- The dev server logs the text of errors, message and stack, unless `bounda.config.ts` sets
+  [`runtime.telemetry.errorText`](/reference/observability/#error-text); the built app does not,
+  since an error's message may quote personal data. On Cloudflare the app runs in its Durable
+  Object, which follows its own configuration.
 - `react-router build` bundles `bounda.config.ts` and the generated registry into the server
   build, so the build runs from wherever it is deployed, with no need to ship either file.
 - A component that touches `@bounda-dev/react-router/app` gets a clear error: the client build
