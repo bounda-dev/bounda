@@ -9,6 +9,7 @@ import {
   forgetLedgerContract,
   idempotencyStoreContract,
   inboxLedgerContract,
+  inspectionContract,
   pendingEvent,
   personalKeyStoreContract,
   personStoreContract,
@@ -39,6 +40,7 @@ describe("memory adapter", () => {
   storageTransactionContract({ create: storage });
   personalKeyStoreContract({ create: async () => (await storage()).personalKeys });
   personStoreContract({ create: async () => (await storage()).persons });
+  inspectionContract({ create: async () => memory() });
   forgetLedgerContract({
     create: async () => {
       const adapter = memory();

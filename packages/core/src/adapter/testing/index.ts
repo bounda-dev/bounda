@@ -33,6 +33,11 @@ export type {
 } from "./inbox-ledger.contract.ts";
 export { inboxLedgerContract } from "./inbox-ledger.contract.ts";
 export type {
+  InspectionContractArgs,
+  InspectionContractFunction,
+} from "./inspection.contract.ts";
+export { inspectionContract } from "./inspection.contract.ts";
+export type {
   PersonStoreContractArgs,
   PersonStoreContractFunction,
 } from "./person-store.contract.ts";

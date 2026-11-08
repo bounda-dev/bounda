@@ -28,6 +28,12 @@ export {
   tableNameFor,
 } from "./identifiers.ts";
 export type {
+  InspectSqlTableArgs,
+  InspectSqlTableFunction,
+  QuoteNameFunction,
+} from "./inspection.ts";
+export { inspectSqlTable, quoteName } from "./inspection.ts";
+export type {
   MigrateSchemasArgs,
   MigrateSchemasFunction,
   SchemaMigration,

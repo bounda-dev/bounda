@@ -19,6 +19,14 @@ export interface CreateMemoryTableArgs {
 export interface MemoryTable<Row> extends Table<Row> {
   // Returns what puts the rows back the way they were.
   snapshot(): () => void;
+  /**
+   * Every row as kept, encoded as the SQLite table would hold it.
+   */
+  rows(): readonly Readonly<Record<string, unknown>>[];
+  /**
+   * The field of its primary key.
+   */
+  readonly key: string;
 }
 
 export interface CreateMemoryTableFunction {
@@ -176,6 +184,8 @@ export const createMemoryTable: CreateMemoryTableFunction = <Row extends object>
     findOne: async (where) => select({ where, limit: 1 })[0] ?? null,
     findMany: async (args) => select(args),
     count: async (where) => [...rows.values()].filter(matcher(where)).length,
+    rows: () => [...rows.values()],
+    key: primaryKey.field,
     snapshot: () => {
       const saved = new Map(rows);
       return () => {

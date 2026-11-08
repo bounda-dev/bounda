@@ -9,7 +9,9 @@ import {
   createSqlForgetLedger,
   createSqlPersonalKeyStore,
   createSqlPersonStore,
+  inspectSqlTable,
   postgresqlDialect,
+  quoteName,
   type SqlTransaction,
 } from "@bounda-dev/core/adapter/sql";
 import postgres, { type Sql } from "postgres";
@@ -205,6 +207,33 @@ export const postgresql: PostgresqlFunction = (options) => {
           close: release,
           progress,
         });
+      }),
+    inspect: () =>
+      using(async ({ db }) => {
+        const names = await db.all(
+          `SELECT "table_name" FROM information_schema.tables WHERE "table_schema" = $1 AND "table_type" = 'BASE TABLE' ORDER BY "table_name"`,
+          [schema],
+        );
+        const inspected = [];
+        for (const { table_name: name } of names) {
+          const table = String(name);
+          if (!table.startsWith(tablePrefix)) continue;
+          const key = await db.all(
+            `SELECT k."column_name" FROM information_schema.table_constraints c JOIN information_schema.key_column_usage k ON k."constraint_schema" = c."constraint_schema" AND k."constraint_name" = c."constraint_name" WHERE c."table_schema" = $1 AND c."table_name" = $2 AND c."constraint_type" = 'PRIMARY KEY' ORDER BY k."ordinal_position"`,
+            [schema, table],
+          );
+          inspected.push(
+            await inspectSqlTable({
+              db,
+              prefix: tablePrefix,
+              name: table,
+              from: `${quoteName(schema)}.${quoteName(table)}`,
+              key: key.map(({ column_name: column }) => String(column)),
+            }),
+          );
+        }
+        await release();
+        return inspected;
       }),
     createForgetLedger: async ({ tenant }) => {
       const { db } = open();

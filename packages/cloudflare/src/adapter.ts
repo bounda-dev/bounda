@@ -5,15 +5,26 @@ import type { CloudflareOptions } from "./definition.ts";
 import { createDurableSqlDatabase, type DurableSqlStorage } from "./sql-database.ts";
 
 export interface DurableObjectAdapterArgs {
+  /**
+   * The object's `ctx.storage`, or the `state.storage` `runInDurableObject` hands a test.
+   */
   readonly storage: DurableSqlStorage;
-  readonly options: CloudflareOptions;
+  /**
+   * The options the app's `cloudflare()` takes. Defaults to none.
+   */
+  readonly options?: CloudflareOptions;
 }
 
 export interface DurableObjectAdapterFunction {
   (args: DurableObjectAdapterArgs): Adapter<"cloudflare", CloudflareOptions>;
 }
 
-export const durableObjectAdapter: DurableObjectAdapterFunction = ({ storage, options }) => {
+/**
+ * The adapter over a Durable Object's own SQLite, as the object opens it for its app. For a test
+ * that reads the object's storage from inside it, through `runInDurableObject`: give it to
+ * `expectForgotten` from `@bounda-dev/core/testing` to search every table the object keeps.
+ */
+export const durableObjectAdapter: DurableObjectAdapterFunction = ({ storage, options = {} }) => {
   const db = createDurableSqlDatabase(storage);
   return createSqliteAdapter({
     name: "cloudflare",

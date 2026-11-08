@@ -15,6 +15,7 @@ import {
   type ExistingColumn,
   evolveTableStatements,
   quoteIdentifier,
+  quoteName,
   rebuildTablesFor,
   shadowTableStatements,
   swapTableStatements,
@@ -22,8 +23,6 @@ import {
 } from "../sql/index.ts";
 import type { SqlExecutor } from "../sql/sql-table.ts";
 import { migrateSqlite, sqliteCheckpointsScope } from "./migrations.ts";
-
-const quoteName = (name: string): string => `"${name.replaceAll('"', '""')}"`;
 
 /**
  * The table's columns with what its indexes say of them; none when the table does not exist.
