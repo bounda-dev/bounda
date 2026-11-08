@@ -179,7 +179,7 @@ describe("delayed policies", () => {
 
   it("dead-letter a run that fails for good as the policy's, which a retry runs again", async () => {
     const telemetry = installFakeTelemetry();
-    const { logger, entries } = createRecordingLogger();
+    const { logger, entries } = createRecordingLogger("omit");
     const { harness, placed } = await setUp({}, logger);
     failures = { left: 1, error: () => new ValidationError("mailbox closed", []) };
     await harness.dispatcher.runUntilIdle();

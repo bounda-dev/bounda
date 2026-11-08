@@ -7,6 +7,7 @@ import type { Logger } from "../../contracts/logger.ts";
 import type { CreateArgs, PortModules } from "../../modules/port.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { AppEnv, TestPortsChoice } from "../../register/index.ts";
+import { asError } from "../shared/retry.ts";
 import { type PortChoice, selectTestImplementations } from "./test-ports.ts";
 
 /**
@@ -117,11 +118,9 @@ export const createPorts: CreatePortsFunction = async (args) => {
       try {
         await close();
       } catch (error) {
-        logger.error("implementation could not be closed", {
-          module,
-          port,
-          error,
-        });
+        // The ports' logger reads `error` as any value: what was thrown goes as an error, so a
+        // thrown string is reduced too.
+        logger.error("implementation could not be closed", { module, port, error: asError(error) });
       }
     }
   };

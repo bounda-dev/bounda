@@ -21,6 +21,7 @@ import {
 import { projectBatch, projectionSubscriberName } from "../projection/runner.ts";
 import { actedBy } from "../shared/causation.ts";
 import { guardedLogger } from "../shared/guarded-logger.ts";
+import { runtimeText } from "../shared/runtime-text.ts";
 import { adapterForReadModel, compileProjections } from "./build-read-models.ts";
 import { fingerprintReadModel } from "./fingerprint.ts";
 
@@ -147,8 +148,10 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
   checkConfigNames({ registry, config });
   const entry = registry.readModels[name];
   if (entry === undefined) {
-    throw new ConfigurationError(
-      `Unknown read model "${name}". The registry has: ${Object.keys(registry.readModels).join(", ") || "none"}`,
+    throw runtimeText(
+      new ConfigurationError(
+        `Unknown read model "${name}". The registry has: ${Object.keys(registry.readModels).join(", ") || "none"}`,
+      ),
     );
   }
   if (!isAdapter(config.storage)) {

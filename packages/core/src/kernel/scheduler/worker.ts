@@ -339,17 +339,16 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     };
   };
 
-  const dropped = (entry: ScheduledCommand, letter: NewDeadLetter): void => {
+  const dropped = (entry: ScheduledCommand, letter: NewDeadLetter, error: unknown): void => {
     deadLettered(letter);
     if (letter.kind === "policy") {
       logger.warn("policy dead-lettered", {
         policy: letter.handler,
         eventId: letter.eventId,
         letterId: letter.id,
-        errorName: letter.errorName,
-        ...(letter.errorCode === undefined ? {} : { errorCode: letter.errorCode }),
         errorType: letter.errorType,
         attempts: letter.attempts,
+        error,
       });
       return;
     }
@@ -357,10 +356,9 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       command: entry.command.type,
       dedupeKey: entry.dedupeKey,
       letterId: letter.id,
-      errorName: letter.errorName,
-      ...(letter.errorCode === undefined ? {} : { errorCode: letter.errorCode }),
       reason: letter.errorType,
       attempts: letter.attempts,
+      error,
     });
   };
 
@@ -399,7 +397,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       await unit.deadLetterStore.add(letter);
       await unit.scheduler.fail({ claim: entry, error: errorLabel(letter) });
     });
-    dropped(entry, letter);
+    dropped(entry, letter, error);
   };
 
   const run = (

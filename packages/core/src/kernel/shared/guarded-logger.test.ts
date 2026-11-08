@@ -4,6 +4,30 @@ import type { LogFields, Logger } from "../../contracts/logger.ts";
 import { guardedLogger } from "./guarded-logger.ts";
 
 describe("guardedLogger", () => {
+  it("reduces an error wherever it sits in the fields, and reads `error` as what was thrown only for the runtime", () => {
+    const logged: (LogFields | undefined)[] = [];
+    const record = (_message: string, fields?: LogFields): void => {
+      logged.push(fields);
+    };
+    const sink = { debug: record, info: record, warn: record, error: record };
+    const quoting = new Error("ana@example.com");
+    guardedLogger(sink, "omit").warn("x", {
+      error: "ana@example.com",
+      failures: [quoting, { cause: quoting }],
+    });
+    guardedLogger(sink, "omit", { thrownAsError: false }).warn("x", {
+      error: "timeout after 5s",
+      cause: quoting,
+    });
+    expect(logged).toEqual([
+      {
+        errorName: "string",
+        failures: [{ errorName: "Error" }, { cause: { errorName: "Error" } }],
+      },
+      { error: "timeout after 5s", cause: { errorName: "Error" } },
+    ]);
+  });
+
   it("logs what was thrown as its class and code, and its text only when told to", () => {
     const logged: (LogFields | undefined)[] = [];
     const record = (_message: string, fields?: LogFields): void => {

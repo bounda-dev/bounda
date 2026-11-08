@@ -283,7 +283,7 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
     const last = events.at(-1)?.position;
     if (last === undefined) return 0;
     const sealed = await traced({
-      errorText: errorText,
+      errorText,
       name: "bounda.backfill",
       attributes: {
         [ATTRIBUTES.afterPosition]: position,

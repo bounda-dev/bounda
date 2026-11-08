@@ -434,7 +434,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     registry,
     env,
     tenant,
-    logger,
+    logger: guardedLogger(rawLogger, errorText, { thrownAsError: false }),
     clock,
     ...(test === undefined ? { config: config.ports } : { test }),
   });

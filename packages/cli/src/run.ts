@@ -160,13 +160,6 @@ const runRebuild = async (
   const logger = logTo(stderr);
   const project = await load(options, cwd, logger, stderr);
   if (project === undefined) return EXIT_FAILURE;
-  if (project.registry.readModels[readModel] === undefined) {
-    line(
-      stderr,
-      `error: Unknown read model "${readModel}". The registry has: ${Object.keys(project.registry.readModels).join(", ") || "none"}`,
-    );
-    return EXIT_FAILURE;
-  }
   try {
     const result = await rebuildReadModel({
       ...project,
@@ -220,7 +213,8 @@ const withApp = async <T>(
   try {
     app = await boot({
       root: rootOf(options, cwd),
-      config: withErrorText(project.config, options),
+      config: project.config,
+      ...(options.errorText ? { errorText: "include" as const } : {}),
       registry: project.registry,
       loadEnv: false,
       signals: false,

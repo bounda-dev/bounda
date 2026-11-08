@@ -30,10 +30,8 @@ export interface RuntimeTextFunction {
   <E extends Error>(error: E): E;
 }
 
-/**
- * Marks an error the runtime makes with a message it wrote from names and ids alone, so the logs,
- * the spans and the CLI carry its text even when they carry no error text.
- */
+// For an error the runtime makes with a message written from names and ids alone: logs, spans
+// and the CLI carry its text even when they carry no error's text.
 export const runtimeText: RuntimeTextFunction = (error) => {
   vouched.add(error);
   return error;

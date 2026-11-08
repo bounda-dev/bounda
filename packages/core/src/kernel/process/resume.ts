@@ -82,6 +82,7 @@ export const createResumeParked: CreateResumeParkedFunction = ({
     stepOf: (instance: ProcessInstance) => "recorded" | "moved" | undefined,
     entryOf: (instance: ProcessInstance, letter: NewDeadLetter) => LifecycleEntry,
     letterOf: (instance: ProcessInstance) => Promise<NewDeadLetter>,
+    error: unknown,
   ): Promise<boolean> => {
     let outcome: "recorded" | "moved" | undefined;
     let filed: NewDeadLetter | undefined;
@@ -96,7 +97,7 @@ export const createResumeParked: CreateResumeParkedFunction = ({
       await schedule.stage(unit, process, instanceId);
       filed = letter;
     });
-    if (filed !== undefined) failures.filed(process, filed);
+    if (filed !== undefined) failures.filed(process, filed, error);
     return outcome === "moved";
   };
 
@@ -141,6 +142,7 @@ export const createResumeParked: CreateResumeParkedFunction = ({
             1,
             drainFailureType(cause),
           ),
+        cause,
       );
     }
   };
@@ -220,6 +222,7 @@ export const createResumeParked: CreateResumeParkedFunction = ({
             1,
             drainFailureType(cause),
           ),
+        cause,
       );
     }
   };

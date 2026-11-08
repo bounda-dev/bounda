@@ -254,7 +254,7 @@ describe("letterOf", () => {
 describe("filed", () => {
   it("counts the letter and warns, once its unit committed", async () => {
     const { failures, entries, telemetry } = await setup();
-    failures.filed(orderPayment, letter);
+    failures.filed(orderPayment, letter, new Error("mailer down"));
     expect(telemetry.counts).toEqual([
       {
         metric: "bounda.dead_letters",

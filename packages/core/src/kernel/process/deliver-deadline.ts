@@ -191,7 +191,7 @@ export const createDeadlineDelivery: CreateDeadlineDeliveryFunction = ({
       });
       return;
     }
-    failures.filed(process, letter);
+    failures.filed(process, letter, error);
   };
 
   return {

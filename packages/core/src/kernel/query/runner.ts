@@ -73,7 +73,7 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
     if (readModel === undefined)
       throw runtimeText(new NotFoundError(`Unknown read model "${query.readModel}"`));
     return traced({
-      errorText: errorText,
+      errorText,
       name: `bounda.query ${type}`,
       attributes: {
         [ATTRIBUTES.queryType]: type,
