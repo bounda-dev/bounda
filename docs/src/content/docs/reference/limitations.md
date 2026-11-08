@@ -30,9 +30,9 @@ client, and nothing it does not see:
 
 - **Code that reads a read model directly.** A route that opens the read model's database, or a
   script on the tables, goes around the queries; only a query through `app.queries` is recorded.
-- **`client.raw`.** A query's `client.get` and `client.all` are watched; the driver behind
-  `client.raw` is not, so rows read through it name no one, and a query that reads only through it
-  is recorded with no persons.
+- **Whose rows `client.raw` read.** A query's `client.get` and `client.all` are watched; the
+  driver behind `client.raw` is not, so a query that takes it is recorded with
+  `unattributed: true`, and the persons of the rows it read there are not in `persons`.
 - **Rows without their person.** A query that selects columns with SQL and leaves out the
   `person` column reads rows that name no one.
 - **Read models without personal fields.** A query of one is not recorded, even when its rows

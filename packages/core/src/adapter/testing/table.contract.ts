@@ -4,7 +4,7 @@ import { silentLogger } from "../../contracts/logger.ts";
 import type { FieldsRecord } from "../../modules/view.ts";
 import { fieldBuilder as f } from "../../modules/view.ts";
 import type { Adapter } from "../adapter.ts";
-import type { Table } from "../storage/table.ts";
+import type { Table, Where } from "../storage/table.ts";
 
 /**
  * The read model every table contract test uses.
@@ -124,7 +124,7 @@ export const tableContract: TableContractFunction = ({ create }) => {
       await table.insert(row("1", { paidAt: new Date("2026-01-01T00:00:00.000Z") }));
       await table.insert(row("2"));
       await table.upsert({ ...row("3"), paidAt: null as never });
-      const ids = async (where: Partial<ContractRow>) =>
+      const ids = async (where: Where<ContractRow>) =>
         (await table.findMany({ where, orderBy: { field: "orderId", direction: "asc" } })).map(
           (found) => found.orderId,
         );
@@ -150,11 +150,72 @@ export const tableContract: TableContractFunction = ({ create }) => {
       expect(await table.findOne({ orderId: "1" })).toEqual(row("1"));
     });
 
+    it("filters by range, inequality and membership in every call that takes a where", async () => {
+      const day = (n: number) => new Date(`2026-01-0${n}T00:00:00.000Z`);
+      await table.insert(row("a", { total: 10, paidAt: day(1) }));
+      await table.insert(row("b", { total: 20, status: "paid", paidAt: day(2) }));
+      await table.insert(row("c", { total: 30, customerId: "c-2", paidAt: day(3) }));
+      await table.insert(row("d", { total: 40, status: "cancelled" }));
+      const ids = async (where: Where<ContractRow>) =>
+        (await table.findMany({ where, orderBy: { field: "orderId", direction: "asc" } })).map(
+          (found) => found.orderId,
+        );
+      expect(await ids({ total: { gt: 20 } })).toEqual(["c", "d"]);
+      expect(await ids({ total: { gte: 20 } })).toEqual(["b", "c", "d"]);
+      expect(await ids({ total: { lt: 20 } })).toEqual(["a"]);
+      expect(await ids({ total: { lte: 20 } })).toEqual(["a", "b"]);
+      expect(await ids({ total: { gt: 10, lt: 40 } })).toEqual(["b", "c"]);
+      expect(await ids({ total: { gt: 10, lt: 40 }, customerId: "c-1" })).toEqual(["b"]);
+      expect(await ids({ orderId: { gt: "b" } })).toEqual(["c", "d"]);
+      expect(await ids({ orderId: { gte: "b", lt: "d" } })).toEqual(["b", "c"]);
+      expect(await ids({ paidAt: { gte: day(2) } })).toEqual(["b", "c"]);
+      expect(await ids({ paidAt: { lt: day(3) } })).toEqual(["a", "b"]);
+      expect(await ids({ status: { ne: "placed" } })).toEqual(["b", "d"]);
+      expect(await ids({ paidAt: { ne: day(1) } })).toEqual(["b", "c", "d"]);
+      expect(await ids({ paidAt: { ne: null } })).toEqual(["a", "b", "c"]);
+      expect(await ids({ status: { in: ["paid", "cancelled"] } })).toEqual(["b", "d"]);
+      expect(await ids({ paidAt: { in: [day(1), day(3)] } })).toEqual(["a", "c"]);
+      expect(await ids({ status: { in: [] } })).toEqual([]);
+      expect(await ids({ total: { gt: undefined, lt: 20 } })).toEqual(["a"]);
+      expect(await table.findOne({ total: { gt: 30 } })).toEqual(
+        row("d", { total: 40, status: "cancelled" }),
+      );
+      expect(await table.count({ total: { gte: 20 }, status: { ne: "cancelled" } })).toBe(2);
+      await table.update({ total: { lte: 20 } }, { status: "archived" });
+      expect(await ids({ status: "archived" })).toEqual(["a", "b"]);
+      await table.delete({ orderId: { in: ["a", "c"] } });
+      expect(await ids({})).toEqual(["b", "d"]);
+    });
+
+    it("refuses an operator it does not know, an operand that is null, and operators without a value", async () => {
+      const refused = (where: Record<string, unknown>) =>
+        expect(table.findMany({ where: where as Where<ContractRow> })).rejects.toBeInstanceOf(
+          ConfigurationError,
+        );
+      await refused({ total: { above: 1 } });
+      await refused({ total: { gt: null } });
+      await refused({ status: { in: "paid" } });
+      await refused({ status: { in: ["paid", null] } });
+      await refused({ total: {} });
+      await expect(
+        table.delete({ orderId: { in: undefined } } as Where<ContractRow>),
+      ).rejects.toBeInstanceOf(ConfigurationError);
+      await expect(
+        table.count({ total: { between: 1 } } as Where<ContractRow>),
+      ).rejects.toBeInstanceOf(ConfigurationError);
+      await expect(
+        table.delete({ total: { between: 1 } } as Where<ContractRow>),
+      ).rejects.toBeInstanceOf(ConfigurationError);
+      await expect(
+        table.update({ total: { between: 1 } } as Where<ContractRow>, { status: "x" }),
+      ).rejects.toBeInstanceOf(ConfigurationError);
+    });
+
     it("refuses a negative limit or offset and a field the view does not have", async () => {
       await expect(table.findMany({ limit: -1 })).rejects.toBeInstanceOf(ConfigurationError);
       await expect(table.findMany({ offset: -1 })).rejects.toBeInstanceOf(ConfigurationError);
       await expect(
-        table.findMany({ where: { missing: "x" } as Partial<ContractRow> }),
+        table.findMany({ where: { missing: "x" } as Where<ContractRow> }),
       ).rejects.toBeInstanceOf(ConfigurationError);
     });
   });
@@ -180,6 +241,18 @@ const personFields: FieldsRecord = {
   id: f.string().primaryKey(),
   email: f.string().unique(),
   handle: f.string().optional().unique(),
+};
+
+interface FlagRow {
+  readonly id: string;
+  readonly active?: boolean;
+  readonly value: unknown;
+}
+
+const flagFields: FieldsRecord = {
+  id: f.string().primaryKey(),
+  active: f.boolean().optional(),
+  value: f.json(),
 };
 
 export interface ViewContractArgs {
@@ -262,6 +335,26 @@ export const viewContract: ViewContractFunction = ({ create }) => {
       await expect(table.update({}, { email: "same@example.com" })).rejects.toThrow();
       await expect(table.insert({ id: "1" } as PersonRow)).rejects.toThrow();
       expect(await table.findMany({ orderBy: { field: "id", direction: "asc" } })).toEqual(rows);
+    });
+
+    it("filters a boolean by inequality and membership, and a JSON value by equality only", async () => {
+      const { table } = await (await create()).createReadModel<FlagRow>({
+        name: "flags",
+        fields: flagFields,
+        logger: silentLogger,
+      });
+      await table.insert({ id: "1", active: true, value: { gt: 1 } });
+      await table.insert({ id: "2", active: false, value: 2 });
+      await table.insert({ id: "3", value: [1] });
+      const ids = async (where: Where<FlagRow>) =>
+        (await table.findMany({ where, orderBy: { field: "id", direction: "asc" } })).map(
+          (found) => found.id,
+        );
+      expect(await ids({ active: { ne: true } })).toEqual(["2", "3"]);
+      expect(await ids({ active: { in: [false] } })).toEqual(["2"]);
+      expect(await ids({ active: { ne: null } })).toEqual(["1", "2"]);
+      expect(await ids({ value: { gt: 1 } })).toEqual(["1"]);
+      expect(await ids({ value: [1] })).toEqual(["3"]);
     });
 
     it("refuses a view with more than one primary key", async () => {

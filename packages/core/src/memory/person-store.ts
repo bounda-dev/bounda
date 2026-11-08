@@ -1,5 +1,7 @@
+import { isReleasedBy } from "../adapter/storage/hold.ts";
 import type { PersonStore, StoredPerson } from "../adapter/storage/person-store.ts";
 import { createStoreEntries, type WithEntries } from "./entries.ts";
+import { earliestHoldEnd } from "./holds.ts";
 
 export interface KeptPersonStore extends WithEntries<PersonStore, string> {
   /**
@@ -13,9 +15,23 @@ export interface CreateKeptPersonStoreFunction {
   (): KeptPersonStore;
 }
 
-interface KeptPerson extends StoredPerson {
+export interface KeptPerson extends StoredPerson {
   readonly position: number;
 }
+
+export interface BlankPersonFunction {
+  (person: string): KeptPerson;
+}
+
+// A row as a person who has none has it.
+export const blankPerson: BlankPersonFunction = (person) => ({
+  person,
+  restrictedSince: null,
+  lastActiveAt: null,
+  forgottenAt: null,
+  hold: null,
+  position: 0,
+});
 
 const stored = ({ position: _position, ...person }: KeptPerson): StoredPerson => person;
 
@@ -24,25 +40,13 @@ const compare = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 const isIdle = (
   kept: KeptPerson,
-  activeBefore: string | undefined,
 ): kept is KeptPerson & {
   readonly lastActiveAt: string;
-} =>
-  kept.lastActiveAt !== null &&
-  kept.forgottenAt === null &&
-  kept.restrictedSince === null &&
-  (activeBefore === undefined || kept.lastActiveAt <= activeBefore);
+} => kept.lastActiveAt !== null && kept.forgottenAt === null && kept.restrictedSince === null;
 
 export const createKeptPersonStore: CreateKeptPersonStoreFunction = () => {
   const persons = new Map<string, KeptPerson>();
-  const existing = (person: string): KeptPerson =>
-    persons.get(person) ?? {
-      person,
-      restrictedSince: null,
-      lastActiveAt: null,
-      forgottenAt: null,
-      position: 0,
-    };
+  const existing = (person: string): KeptPerson => persons.get(person) ?? blankPerson(person);
   return {
     restricted: (person) => (persons.get(person)?.restrictedSince ?? null) !== null,
     store: {
@@ -70,16 +74,30 @@ export const createKeptPersonStore: CreateKeptPersonStoreFunction = () => {
           position,
           lastActiveAt: lastActiveAt ?? kept.lastActiveAt,
           forgottenAt,
+          hold: null,
         });
       },
-      listIdle: async ({ activeBefore, limit }) => {
+      listIdle: async ({ activeBefore, releasedBy, limit }) => {
         const before = activeBefore?.toISOString();
         return [...persons.values()]
-          .filter((kept) => isIdle(kept, before))
+          .filter(isIdle)
+          .filter((kept) => before === undefined || kept.lastActiveAt <= before)
+          .filter((kept) => isReleasedBy(kept.hold, releasedBy))
           .sort((a, b) => compare(a.lastActiveAt, b.lastActiveAt) || compare(a.person, b.person))
           .slice(0, limit)
           .map(stored);
       },
+      hold: async (person, lastActiveAt, hold) => {
+        const kept = persons.get(person);
+        if (kept?.lastActiveAt === lastActiveAt && kept.forgottenAt === null) {
+          persons.set(person, { ...kept, hold });
+        }
+      },
+      nextHoldEnd: async (after) =>
+        earliestHoldEnd(
+          [...persons.values()].filter(isIdle).map(({ hold }) => hold),
+          after,
+        ),
     },
     entries: createStoreEntries(persons, (person) => person),
   };

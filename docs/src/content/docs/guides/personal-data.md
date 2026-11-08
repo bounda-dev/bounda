@@ -207,7 +207,8 @@ a handler reads it. `readModels` has an entry for every read model with a field 
 [`.person()`](#personal-data-in-read-models): the rows whose person field holds the id, each
 with its primary key as `key`, so the person can tell them apart, and its fields marked
 `.personal()` as `data`, read through the read model's own storage, which may be another
-adapter's. An empty id is refused with `ValidationError`.
+adapter's, in pages by primary key, so a projection that writes a row meanwhile cannot make
+another skip or repeat. An empty id is refused with `ValidationError`.
 
 Only what is marked comes out, and that is the limit to know: a field left unmarked is not
 personal data to Bounda, so the rest of `OrderPlaced` is the order's and stays out; a read model
@@ -282,24 +283,33 @@ person's data in the clear records it, once per call:
 
 | Operation | `persons` | `detail` |
 | --- | --- | --- |
-| `exportPersonalData` | the person | `{ events, scheduledCommands, deadLetters, readModelRows }`, how many of each |
+| `exportPersonalData` | the person | `{ events, scheduledCommands, deadLetters, readModelRows }`, how many of each; `null` when it failed |
 | `deadLetters.list` | those the letters name | `{ letters }`, how many |
 | `deadLetters.get`, `retry`, `discard` | those the letter names | `{ letter }`, its id |
 | a query of a read model with fields marked `.personal()` | those the `person` field names in the rows the query read | `{ query, readModel }` |
 
-Each record is `{ operation, actor, persons, personCount, at, detail }`: `actor` is the client's,
-from [`as`](/concepts/ids-causation-and-correlation/#who-acts), and `null` for a client that names nobody;
-`persons` names each person once, in the order read, and at most `MAX_ACCESS_PERSONS` of them,
-with `personCount` saying how many there were in all, so a query that lists every customer
-gives a bounded record; `at` is the app's clock.
+Each record is `{ operation, actor, persons, personCount, at, outcome, detail }`, and a query's
+adds `unattributed`: `actor` is the client's, from
+[`as`](/concepts/ids-causation-and-correlation/#who-acts), and `null` for a client that names
+nobody; `persons` names each person once, in the order read, and at most `MAX_ACCESS_PERSONS` of
+them, with `personCount` saying how many there were in all, so a query that lists every customer
+gives a bounded record; `at` is the app's clock; `outcome` is `ok` when the call handed its result
+out and `failed` when it rejected after reading, since its error may quote what it read, as a
+handler's `cannot reach ana@example.com` does.
 
 A query is matched to its read model by the module's place, and to its persons by the rows it
 read through its `table` or `client`, in `repository` and `handler` alike, not by its result: a
 handler that reshapes the rows into another object still handed their data out. So a query that
 reads rows and answers only a count is recorded too, with those persons, and one that only calls
-`table.count()` is recorded with none. A query that composes another records nothing of its own
-unless its read model has personal fields; the one it calls records itself, as the same actor.
-What this does not see is in [Limitations](/reference/limitations/#the-access-log).
+`table.count()` is recorded with none. A query whose `repository` or `handler` throws is
+recorded as `failed`, with the persons of the rows it read until then. A query that takes
+`client.raw`, the driver itself, reads rows Bounda cannot see: it is recorded with
+`unattributed: true`, which says that `persons` names only those of the rows read through `table`
+and `client`, and whose rows it read through the driver is unknown. A query that composes another
+records nothing of its own unless its read model has personal fields; the one it calls records
+itself, as the same actor. A query receives that actor too, in its `repository` and its `handler`,
+so it can read only what whoever asks may see: see [Queries](/guides/read-models/#queries). What
+the log does not see is in [Limitations](/reference/limitations/#the-access-log).
 
 Without anything more, each record goes to the app's logger at `info`, with the message
 `personal data accessed` and the record as its fields. Where it should go instead, a log pipeline
@@ -318,12 +328,14 @@ The generator puts it in the registry, which checks it against `AuditModule`, an
 to start when it does not export the function, so every host gets it: `boot()`, `createApp`, the
 Durable Object, React Router. It receives the record with the host's `env`, the `tenant` and the
 app's logger, as a port's `create` does. A test app never calls it: `createTestApp` sends the
-records to its `logger`, or to the `onPersonalDataAccess` the test passes. It runs after the data is read and before it is handed
-out (before a dead letter is retried or discarded), and the call waits for it. When it throws,
-the call rejects with that error and hands nothing out: data handed out without its record is
-what an access log exists to rule out, so a sink that is down stops the reads it would have
-recorded. A hook that would rather let them through catches its own failure and keeps the record
-somewhere else.
+records to its `logger`, or to the `onPersonalDataAccess` the test passes. It runs once the call
+has read and before it settles, whether it then hands its result out or rejects, and the call
+waits for it. When it throws, the call rejects with that error, handing out neither its result
+nor its own error: data handed out without its record is what an access log exists to rule out,
+so a sink that is down stops the reads it would have recorded. A retry or a discard of a dead
+letter acts first, so that its record can say how it went: with the sink down, the retry or the
+discard is done, and the call still rejects without the letter. A hook that would rather let the
+reads through catches its own failure and keeps the record somewhere else.
 
 The records are never sampled, unlike a trace, and nothing is written to the store by default:
 it would be a write on every read, and a record that names a person is personal data that
@@ -453,8 +465,12 @@ activity the row does not show yet, nor twice when two workers sweep at once; an
 a transaction running beside it may still be forgotten with them, as one a command stores while
 `forget` runs may be. A person the sweep could not forget, because their forget failed or their
 row is behind, waits on their own, half a minute at first and twice as long after each failure up
-to an hour, while the pass goes on with the next ones; `nextDueAt()` names the end of that wait,
-so a host never wakes for them again at once.
+to an hour, while the pass goes on with the next ones. The wait is kept on their row in
+`bounda_persons`, written only when an attempt does not succeed, so every instance skips them
+until it ends and a restart backs off from where it was; their next activity, or their
+forgetting, clears it. `nextDueAt()` names the end of that wait, so a host never wakes for them
+again at once. A database that cannot keep the wait, read-only after a failover say, pauses the
+sweep in that instance instead, for as long and growing the same way.
 
 A host without a polling worker learns of it from `app.nextDueAt()`, which names the earliest
 retention deadline with the scheduled commands, so a [Durable Object](/adapters/cloudflare/)
@@ -564,9 +580,14 @@ Keep the master key as you keep the database's backups, for as long as they are 
 takes every person's data with it, as if each had been forgotten. `bounda rebuild` reads it from
 `.env` like `boot()`; `rebuildReadModel` takes the environment as `env`.
 
-Unwrapped keys are kept in memory, by fingerprint, up to ten thousand per app, so a command does
-not pay for unwrapping on every read. The person's row is still read first every time: a person
-forgotten on another instance is forgotten here at once.
+Unwrapped keys are kept in memory, by fingerprint, up to ten thousand per app and for five
+minutes from the moment each was unwrapped, so a command does not pay for unwrapping on every
+read, and the raw key of someone no longer active does not stay in the process: keys past their
+time go at the next read of any key, and a timer drops them when no key is read, without keeping
+a Node process alive. A Durable Object arms no such timer, which would keep it from sleeping: there
+they go at the next read, or with the object when the platform evicts it. A forgotten person's key
+goes once the forget commits, and the keys the rotation unwraps are not kept. The person's row is
+still read first every time: a person forgotten on another instance is forgotten here at once.
 
 Without `keyWrapper` the keys are kept as they are, next to the data, and the app logs a warning
 when it starts if the registry marks any field `personal`; an app from `createTestApp` warns
@@ -582,16 +603,23 @@ keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY", previous: ["BOUNDA_MASTER_KEY
 ```
 
 A key wrapped under a previous master key still opens; the worker rewraps them under the current
-one in batches, on every pass, as the retention sweep runs, and logs once when none is left:
+one in batches, on every pass, as the retention sweep runs. A key that fails to rewrap waits on its
+row, as a person the retention could not forget does, while the others go on. Once none is left
+the worker marks the rotation complete for this set of master keys, in `bounda_checkpoints`, and
+logs it once:
 
 ```
 no personal key is wrapped under a previous key any more; remove them
 ```
 
 Then remove the old variable and `previous`. Rewrapping changes no event and no fingerprint, so it
-runs while the app serves. A Durable Object wakes for it as for a deadline. An instance still on
-the old configuration, in a rolling deploy, may wrap a new key under the old master key; the
-worker finds it within a minute.
+runs while the app serves. A Durable Object wakes for it as for a deadline. While the mark stands,
+`nextDueAt()` never reads the key table, and the passes read it once a minute across every
+instance, dropping the mark if they find a key to rewrap: an instance still on the old
+configuration, in a rolling deploy, may wrap a new key under the old master key, and the next
+pass after that minute finds it. Changing the master keys, `previous` included, reads the table
+again; the old configuration's mark stays while instances on it may still run, and goes once none
+has renewed it for ten minutes.
 
 Destroying the old master key once the backups taken before the rotation have expired is what
 makes those backups unreadable as a whole.
@@ -641,7 +669,8 @@ returned. The runtime checks what `unwrap` returns against the key's fingerprint
 answers with another key fails loudly instead of sealing data under it. KMS rotates a key's
 material itself and keeps decrypting under the old one with the same ARN, so `kid` does not
 change; moving to another KMS key is a rotation as above, with the old ARN in `previous`. Each
-instance asks KMS once per person it reads, thanks to the cache, and once per person it creates.
+instance asks KMS once per person it creates, and once per person it reads in every five minutes
+they are active, thanks to the cache.
 
 A wrapper that fails, because KMS is unreachable, fails the command that needed the key, which
 the caller or the reaction's retry sees; the person's data is not touched.
@@ -744,6 +773,9 @@ Restart the app after restoring its database: it reconciles when it starts.
 
 A ledger that cannot be read when the app starts does not stop it: the app logs an error, starts,
 and its worker tries again after 30 seconds, then twice as long after each failure, up to an hour.
+The wait is kept in `bounda_checkpoints`, beside the cursor, so every instance waits for the
+longest and a restart backs off from where it was, though a start always tries once; the first
+reconciliation that succeeds clears it.
 One that does not answer within ten seconds is left to finish in the background, with an error
 logged, and the app starts.
 Until then `getLag()` says `forgetLedger: { reconciled: false }`, and a person the restore

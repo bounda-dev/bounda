@@ -1,6 +1,7 @@
 import type { Clock } from "../../contracts/clock.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import {
+  type AccessOutcome,
   MAX_ACCESS_PERSONS,
   type OnPersonalDataAccess,
   type PersonalDataAccess,
@@ -16,6 +17,11 @@ export interface RecordAccessArgs<Op extends Operation> {
   readonly detail: (PersonalDataAccess & { readonly operation: Op })["detail"];
   readonly actor: string | undefined;
   readonly persons: Iterable<string>;
+  readonly outcome: AccessOutcome;
+  /**
+   * For a query only; any other record leaves it out.
+   */
+  readonly unattributed?: boolean;
 }
 
 /**
@@ -43,6 +49,8 @@ export const createAccessLog: CreateAccessLogFunction = ({ hook, env, tenant, lo
     detail,
     actor,
     persons,
+    outcome,
+    unattributed = false,
   }: RecordAccessArgs<Op>): Promise<void> => {
     const distinct = [...new Set(persons)];
     const access = {
@@ -51,6 +59,8 @@ export const createAccessLog: CreateAccessLogFunction = ({ hook, env, tenant, lo
       persons: distinct.slice(0, MAX_ACCESS_PERSONS),
       personCount: distinct.length,
       at: clock.now().toISOString(),
+      outcome,
+      ...(operation === "query" ? { unattributed } : {}),
       detail,
     } as PersonalDataAccess;
     if (hook === undefined) {
@@ -60,4 +70,28 @@ export const createAccessLog: CreateAccessLogFunction = ({ hook, env, tenant, lo
     await hook({ access, env, ...(tenant === undefined ? {} : { tenant }), logger });
   };
   return recordAccess;
+};
+
+export interface RecordedFunction {
+  <Result>(
+    record: (outcome: AccessOutcome) => Promise<void>,
+    run: () => Promise<Result>,
+  ): Promise<Result>;
+}
+
+/**
+ * Runs what reads personal data and records it however it settles. A failure is recorded before
+ * its error is thrown on, since the error may quote what was read; a record that fails rejects in
+ * its place, so neither the result nor that error goes out unrecorded.
+ */
+export const recorded: RecordedFunction = async (record, run) => {
+  let result: Awaited<ReturnType<typeof run>>;
+  try {
+    result = await run();
+  } catch (error) {
+    await record("failed");
+    throw error;
+  }
+  await record("ok");
+  return result;
 };

@@ -58,7 +58,8 @@ does files that start with `_` or `.`, tests (`*.test.ts`, `*.test-d.ts`), decla
   directory with no implementation or with subdirectories, an implementation with no port, and a
   port named after an event of its aggregate or after a reserved name: `command`, `state`,
   `events`, `event`, `commands`, `idempotencyKey`, `signal`, `aggregateId`, `after`, `reject`,
-  `forget` in an aggregate, and `view`, `query`, `repositoryData`, `table`, `queries` in a read model;
+  `forget` in an aggregate, and `view`, `query`, `repositoryData`, `table`, `queries`, `actor` in
+  a read model;
 - a policy and a process of one aggregate with the same key (`policies/checkout.ts` next to
   `processes/checkout/`, or `policies/payment-refund-on-payment-failed.ts` next to
   `policies/payment/refund-on-payment-failed.ts`), a policy named after an aggregate, a policy

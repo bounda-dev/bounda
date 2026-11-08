@@ -18,11 +18,13 @@ import type { FieldsArgs } from "../../modules/view.ts";
 import { createTestApp } from "../../testing/index.ts";
 import { createApp } from "../app.ts";
 import { defineForgetLedger, type ForgetLedgerSource } from "./forget-ledger.ts";
+import { HOLD_MS } from "./hold.ts";
 import { FORGET_LEDGER_SUBSCRIBER } from "./ledger-outbox.ts";
 import {
+  FORGET_LEDGER_ATTEMPTS,
   FORGET_LEDGER_CURSOR,
+  FORGET_LEDGER_HELD_UNTIL,
   FORGET_LEDGER_REREAD_MS,
-  FORGET_LEDGER_RETRY_MS,
   FORGET_LEDGER_START_TIMEOUT_MS,
 } from "./reconciliation.ts";
 
@@ -344,18 +346,92 @@ describe("the forget ledger", () => {
       "forget ledger could not be reconciled; persons a restored backup brought back are not forgotten yet",
       expect.objectContaining({ message: "ledger is down" }),
     ]);
-    expect(await app.nextDueAt()).toEqual(new Date(START.getTime() + FORGET_LEDGER_RETRY_MS));
+    expect(await app.nextDueAt()).toEqual(new Date(START.getTime() + HOLD_MS));
     expect(await app.runUntilIdle()).toMatchObject({ idle: true });
     expect(clock.now()).toEqual(START);
-    clock.advance(FORGET_LEDGER_RETRY_MS);
+    clock.advance(HOLD_MS);
     await app.runUntilIdle();
     expect(await forgotten()).toEqual([]);
-    expect(await app.nextDueAt()).toEqual(new Date(START.getTime() + 3 * FORGET_LEDGER_RETRY_MS));
-    clock.advance(2 * FORGET_LEDGER_RETRY_MS);
+    expect(await app.nextDueAt()).toEqual(new Date(START.getTime() + 3 * HOLD_MS));
+    clock.advance(2 * HOLD_MS);
     expect(await app.runUntilIdle({ maxPasses: 1 })).toMatchObject({ idle: false });
     expect(await forgotten()).toEqual([["c-1", "restored"]]);
     expect(await app.getLag()).toMatchObject({ forgetLedger: { reconciled: true } });
     expect(await app.nextDueAt()).toBeNull();
+  });
+
+  it("holds the reconciliation beside the cursor, so another instance waits for it, until one succeeds", async () => {
+    const storage = memory();
+    const ledgerAdapter = memory();
+    const { app: first, register } = await start({ storage, forgetLedger: ledgerAdapter });
+    await register("c-1");
+    await first.stop();
+    await (await opened(ledgerAdapter)).append([entry("c-1", "lost-forget", START)]);
+    let down = true;
+    let reads = 0;
+    const flaky = defineForgetLedger(async () => {
+      const inner = await opened(ledgerAdapter);
+      return {
+        append: (entries) => inner.append(entries),
+        read: async (args) => {
+          reads += 1;
+          if (down) throw new Error("ledger is down");
+          return inner.read(args);
+        },
+      };
+    });
+    const written = await storage.createStorage();
+    const stored = async () => [
+      await written.checkpointStore.get(FORGET_LEDGER_HELD_UNTIL),
+      await written.checkpointStore.get(FORGET_LEDGER_ATTEMPTS),
+    ];
+    const one = await start({ storage, forgetLedger: flaky });
+    expect(await stored()).toEqual([START.getTime() + HOLD_MS, 1]);
+    // Failing in the same round, the other instance waits for that hold instead of adding to it.
+    const later = new Date(START.getTime() + 10_000);
+    const other = await start({ storage, forgetLedger: flaky, now: later });
+    expect(await stored()).toEqual([START.getTime() + HOLD_MS, 1]);
+    expect(await other.app.nextDueAt()).toEqual(new Date(START.getTime() + HOLD_MS));
+    one.clock.advance(HOLD_MS);
+    await one.app.runUntilIdle();
+    const heldUntil = START.getTime() + 3 * HOLD_MS;
+    expect(await stored()).toEqual([heldUntil, 2]);
+    other.clock.set(new Date(START.getTime() + HOLD_MS));
+    const readsBefore = reads;
+    await other.app.runUntilIdle();
+    expect(reads).toBe(readsBefore);
+    expect(await stored()).toEqual([heldUntil, 2]);
+    expect(await other.app.nextDueAt()).toEqual(new Date(heldUntil));
+    down = false;
+    one.clock.set(new Date(heldUntil));
+    expect(await one.app.runUntilIdle({ maxPasses: 1 })).toMatchObject({ idle: false });
+    expect(await one.forgotten()).toEqual([["c-1", "restored"]]);
+    expect(await stored()).toEqual([0, 0]);
+    expect(await one.app.nextDueAt()).toBeNull();
+    other.clock.set(new Date(heldUntil));
+    await other.app.runUntilIdle();
+    expect(await other.app.getLag()).toMatchObject({ forgetLedger: { reconciled: true } });
+    expect(await other.forgotten()).toEqual([["c-1", "restored"]]);
+  });
+
+  it("reconciles at every start, and backs off from the failures before a restart", async () => {
+    const storage = memory();
+    const broken = defineForgetLedger(async () => ({
+      append: async () => undefined,
+      read: async () => {
+        throw new Error("ledger is down");
+      },
+    }));
+    const { app: first } = await start({ storage, forgetLedger: broken });
+    expect(await first.nextDueAt()).toEqual(new Date(START.getTime() + HOLD_MS));
+    await first.stop();
+    const restartedAt = new Date(START.getTime() + HOLD_MS + 1_000);
+    const { app } = await start({ storage, forgetLedger: broken, now: restartedAt });
+    expect(await app.getLag()).toMatchObject({ forgetLedger: { reconciled: false } });
+    expect(await app.nextDueAt()).toEqual(new Date(restartedAt.getTime() + 2 * HOLD_MS));
+    await app.stop();
+    const { app: early } = await start({ storage, forgetLedger: broken, now: restartedAt });
+    expect(await early.nextDueAt()).toEqual(new Date(restartedAt.getTime() + 2 * HOLD_MS));
   });
 
   it("starts once the ledger has not answered in time, and reconciles when it does", async () => {

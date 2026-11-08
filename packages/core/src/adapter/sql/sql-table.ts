@@ -1,5 +1,5 @@
 import type { FieldsRecord } from "../../modules/view.ts";
-import type { ReadClient, Table } from "../storage/table.ts";
+import type { ReadClient, Table, Where } from "../storage/table.ts";
 import type { SqlDialect } from "./dialect.ts";
 import { fromSnakeCase, quoteIdentifier } from "./identifiers.ts";
 import { buildLimit, buildOrderBy, buildWhere, columnFor } from "./query-builder.ts";
@@ -93,7 +93,7 @@ export const createSqlTable: CreateSqlTableFunction = <Row extends object>({
   };
 
   const select = async (args: {
-    readonly where?: Partial<Row>;
+    readonly where?: Where<Row>;
     readonly orderBy?: { readonly field: keyof Row & string; readonly direction: "asc" | "desc" };
     readonly limit?: number;
     readonly offset?: number;

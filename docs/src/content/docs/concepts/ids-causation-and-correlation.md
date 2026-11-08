@@ -75,9 +75,11 @@ in `metadata.actor`. From there it travels like the correlation: the commands a 
 process step dispatches from an event keep that event's actor, a scheduled command keeps the one
 it was scheduled with, a deadline the one of the step that set it. `forget`, `restrict` and
 `unrestrict` record theirs on the events they append, so the stream says who asked to forget
-someone. A dead letter's `retry` is acted by whoever retries, through a bound client; retried
-without one, it acts as the failed run did. The retries that `unrestrict` starts act as whoever
-lifted the restriction. What the runtime does on its own, such as forgetting a person whose
+someone. A dead letter's `retry` is acted by whoever retries, through a bound client, down to the
+`ProcessResumed` of a process that goes on after it; retried without one, it acts as the failed
+run did. The retries that `unrestrict` starts act as whoever lifted the restriction. Queries read
+the actor and record nothing: a query's `repository` and `handler` receive it to read only what
+that actor may see, and the [access log](/guides/personal-data/#who-opened-what) names it. What the runtime does on its own, such as forgetting a person whose
 [retention](/guides/personal-data/#retention) ran out, names nobody.
 
 So the event store is an audit trail of who changed what, with no table beside it to keep in step:

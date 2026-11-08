@@ -389,7 +389,47 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
           restrictedSince: null,
           lastActiveAt: now.toISOString(),
           forgottenAt: null,
+          hold: null,
         },
+      ]);
+    });
+
+    it("holds a person and a key with the rest, or not at all", async () => {
+      const key = stored("1");
+      await storage.personalKeys.add("c-1", key);
+      await storage.persons.record({
+        person: "c-1",
+        position: 1,
+        lastActiveAt: now.toISOString(),
+        forgottenAt: null,
+      });
+      const hold = { until: new Date(now.getTime() + 30_000).toISOString(), attempts: 1 };
+      await expect(
+        storage.transact(async (tx) => {
+          await tx.persons.hold("c-1", now.toISOString(), hold);
+          await tx.personalKeys.hold("c-1", key, hold);
+          throw new Error("boom");
+        }),
+      ).rejects.toThrow("boom");
+      expect((await storage.persons.get("c-1"))?.hold).toBeNull();
+      expect(await storage.personalKeys.listWrappedUnder({ kids: [null], limit: 10 })).toEqual([
+        { person: "c-1", key, hold: null },
+      ]);
+      await storage.transact(async (tx) => {
+        await tx.persons.hold("c-1", now.toISOString(), hold);
+        await tx.personalKeys.hold("c-1", key, hold);
+        expect(await tx.persons.nextHoldEnd(now)).toEqual(new Date(hold.until));
+        expect(await tx.personalKeys.nextHoldEnd({ kids: [null], after: now })).toEqual(
+          new Date(hold.until),
+        );
+        expect(await tx.persons.listIdle({ releasedBy: now, limit: 10 })).toEqual([]);
+        expect(
+          await tx.personalKeys.listWrappedUnder({ kids: [null], releasedBy: now, limit: 10 }),
+        ).toEqual([]);
+      });
+      expect((await storage.persons.get("c-1"))?.hold).toEqual(hold);
+      expect(await storage.personalKeys.listWrappedUnder({ kids: [null], limit: 10 })).toEqual([
+        { person: "c-1", key, hold },
       ]);
     });
 

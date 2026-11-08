@@ -75,10 +75,11 @@ a process deadline's, a policy's or process's for an event without personal fiel
 fields were forgotten before the handler read them, and a scheduled command's whose payload holds
 no marked field. `app.deadLetters` and `bounda dead-letters list` open them for you, and every
 `list`, `get`, `retry` and `discard` is recorded in the
-[access log](/guides/personal-data/#who-opened-what), naming the persons its letters name. Once the
-person is forgotten, even while the handler was failing, and even when they are given a new key
-before it gives up, the letter stays, with its name and code, and the message and the stack read
-as `null`: the process can still be retried, and the stream
+[access log](/guides/personal-data/#who-opened-what), naming the persons its letters name, with
+`outcome: "failed"` for a retry that fails again, whose error may quote them. Once the person is
+forgotten, even while the handler was failing, and even when they are given a new key before it
+gives up, the letter stays, with its name and code, and the message and the stack read as `null`:
+the process can still be retried, and the stream
 still says it failed. `ProcessFailed` and `ScheduledCommandFailed` name the error
 the same way, `errorName` and `errorCode`, and never carry its text.
 
@@ -100,8 +101,8 @@ Retrying the dead letter of the failure is what brings the instance back:
 2. the parked events are handled one by one, in order, with the same `idempotencyKey` each would
    have had; a deadline that came due before a parked event arrived runs before it, as it would
    have if the process had not failed;
-3. once none is left the instance records `ProcessResumed`, is `started` again, and its deadlines
-   are scheduled again.
+3. once none is left the instance records `ProcessResumed`, acted by whoever retried, as the
+   retried handler is, is `started` again, and its deadlines are scheduled again.
 
 A failure whose handler a deploy has since removed, an event's or a deadline's, is let through, and
 the retry goes on with what is parked. When the failure is the process's `timeout`, retrying it ends

@@ -1,6 +1,11 @@
 import type { Storage } from "../../adapter/adapter.ts";
 import type { EventStore } from "../../adapter/storage/event-store.ts";
-import type { PersonActivity, PersonStore } from "../../adapter/storage/person-store.ts";
+import { isReleasedBy } from "../../adapter/storage/hold.ts";
+import type {
+  PersonActivity,
+  PersonStore,
+  StoredPerson,
+} from "../../adapter/storage/person-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
@@ -9,6 +14,7 @@ import { BOUNDA_AGGREGATE, PERSONAL_DATA_FORGOTTEN_EVENT } from "../../modules/b
 import type { Subscriber } from "../dispatch/delivery.ts";
 import { errorDetails } from "../shared/retry.ts";
 import { forgetWithin, logForgotten } from "./forget.ts";
+import { createPause, holdAfter } from "./hold.ts";
 import { transactRetrying } from "./transact.ts";
 
 export const RETENTION_SUBSCRIBER: "retention" = "retention";
@@ -16,21 +22,17 @@ export const RETENTION_SUBSCRIBER: "retention" = "retention";
 // How many persons a pass of the worker forgets at most.
 export const RETENTION_SWEEP_LIMIT = 50;
 
-// How long a person the sweep left undone waits before the next try, twice as long after each
-// failure up to `RETENTION_MAX_RETRY_MS`; and how long a list that could not be read holds it.
-export const RETENTION_RETRY_MS = 30_000;
-
-export const RETENTION_MAX_RETRY_MS = 3_600_000;
-
-interface Hold {
-  readonly until: number;
-  readonly failures: number;
-}
-
 const isActivity = (event: StoredEvent): boolean => event.aggregateType !== BOUNDA_AGGREGATE;
 
 // Asked only of the runtime's own events, once `isActivity` said no.
 const isForget = (event: StoredEvent): boolean => event.type === PERSONAL_DATA_FORGOTTEN_EVENT;
+
+// What a `PersonalDataForgotten` says of its person; their last activity stays as it was.
+const forgettingOf = (event: StoredEvent & { readonly person: string }): PersonActivity => ({
+  person: event.person,
+  position: event.position,
+  forgottenAt: event.timestamp,
+});
 
 export interface CreateRetentionSubscriberArgs {
   readonly persons: PersonStore;
@@ -64,12 +66,7 @@ export const createRetentionSubscriber: CreateRetentionSubscriberFunction = ({ p
           forgottenAt: null,
         });
       } else if (isForget(event)) {
-        recorded.set(person, {
-          ...known,
-          person,
-          position: event.position,
-          forgottenAt: event.timestamp,
-        });
+        recorded.set(person, { ...known, ...forgettingOf({ ...event, person }) });
       }
     }
     for (const activity of recorded.values()) await persons.record(activity);
@@ -80,8 +77,9 @@ export const createRetentionSubscriber: CreateRetentionSubscriberFunction = ({ p
 export interface RetentionSweep {
   /**
    * Forgets, as `forget` does with `reason: "retention"`, up to `RETENTION_SWEEP_LIMIT` persons
-   * idle past the retention at `now`, and resolves to how many it forgot. Never rejects: what
-   * fails is logged and tried again later, a person on their own.
+   * idle past the retention at `now` and not held, and resolves to how many it forgot. Never
+   * rejects: a person it could not forget is logged and held on their row, longer after each
+   * failure.
    */
   sweep(now: Date): Promise<number>;
   /**
@@ -99,6 +97,10 @@ export interface CreateRetentionSweepArgs {
   readonly logger: Logger;
   readonly concurrencyRetries: number;
   readonly batchSize: number;
+  /**
+   * Called with each person forgotten, once their forgetting is committed.
+   */
+  readonly forgotten?: (personId: string) => void;
 }
 
 export interface CreateRetentionSweepFunction {
@@ -121,6 +123,7 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
   logger,
   concurrencyRetries,
   batchSize,
+  forgotten: onForgotten,
 }) => {
   const rowIsCurrent = async (
     eventStore: EventStore,
@@ -140,20 +143,23 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
     }
   };
 
-  // Resolves `undone` for a person whose row is behind, who is then left for a later pass.
+  // Resolves `undone` for a person whose row is behind, who is then left for a later pass, and
+  // `skipped` for one restricted, or forgotten by another instance, since the list was read.
   const forget = async (
     personId: string,
     through: number,
-  ): Promise<"forgotten" | "restricted" | "undone"> => {
+  ): Promise<"forgotten" | "skipped" | "undone"> => {
     const correlationId = ids.next();
     const forgotten = await transactRetrying({
       storage,
       concurrencyRetries,
       work: async (transaction) => {
         const row = await transaction.persons.get(personId);
-        if ((row?.restrictedSince ?? null) !== null) return "restricted";
+        if (row === null || row.restrictedSince !== null || row.forgottenAt !== null) {
+          return "skipped";
+        }
         if (!(await rowIsCurrent(transaction.eventStore, personId, through))) return "undone";
-        return forgetWithin({
+        const forgotten = await forgetWithin({
           transaction,
           ids,
           clock,
@@ -161,85 +167,119 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
           reason: "retention",
           context: { correlationId, causationId: correlationId, depth: 0 },
         });
+        // Recorded here as the subscriber will record it, so the row leaves the idle list, its
+        // hold with it, before any pass can take the person again; the subscriber's record of the
+        // same event then changes nothing.
+        await transaction.persons.record(forgettingOf({ ...forgotten.event, person: personId }));
+        return forgotten;
       },
     });
     if (typeof forgotten === "string") return forgotten;
     logForgotten(logger, forgotten);
+    onForgotten?.(personId);
     return "forgotten";
   };
 
-  // A person left undone waits on their own, so one whose forget keeps failing never holds the
-  // others back, and a host that wakes for `nextDueAt` never wakes for them again at once. A list
-  // that could not be read holds the whole sweep.
-  const holds = new Map<string, Hold>();
-  let listHeldUntil = Number.NEGATIVE_INFINITY;
+  // When the store itself fails a pass, so no row can keep the wait, the sweep stops in this
+  // instance for a while.
+  const pause = createPause();
 
-  const hold = (person: string, now: number, failed: boolean): void => {
-    const failures = (holds.get(person)?.failures ?? 0) + (failed ? 1 : 0);
-    const delay = RETENTION_RETRY_MS * 2 ** Math.max(failures - 1, 0);
-    holds.set(person, { until: now + Math.min(delay, RETENTION_MAX_RETRY_MS), failures });
+  // A person left undone waits on their own row, so one whose forget keeps failing never holds
+  // the others back, every instance skips them, and a host that wakes for `nextDueAt` never wakes
+  // for them again at once.
+  const hold = async (person: StoredPerson, at: number, failed: boolean): Promise<boolean> => {
+    try {
+      await storage.persons.hold(
+        person.person,
+        person.lastActiveAt ?? "",
+        holdAfter({ held: person.hold, at, failed }),
+      );
+      return true;
+    } catch (error) {
+      logger.error("person past the retention could not be held", {
+        personId: person.person,
+        ...errorDetails(error),
+      });
+      return false;
+    }
+  };
+
+  // Resolves whether the store kept up: a person it could not hold pauses the sweep.
+  const attempt = async (
+    person: StoredPerson,
+    at: number,
+    through: number,
+  ): Promise<{ readonly forgotten: boolean; readonly kept: boolean }> => {
+    try {
+      const outcome = await forget(person.person, through);
+      if (outcome !== "undone") return { forgotten: outcome === "forgotten", kept: true };
+      return { forgotten: false, kept: await hold(person, at, false) };
+    } catch (error) {
+      logger.error("person past the retention could not be forgotten", {
+        personId: person.person,
+        ...errorDetails(error),
+      });
+      return { forgotten: false, kept: await hold(person, at, true) };
+    }
   };
 
   const sweep = async (now: Date): Promise<number> => {
     const at = now.getTime();
-    // Persons held take no place in the batch.
-    const idle = await storage.persons.listIdle({
+    const due = await storage.persons.listIdle({
       activeBefore: new Date(at - retentionMs),
-      limit: RETENTION_SWEEP_LIMIT + holds.size,
+      releasedBy: now,
+      limit: RETENTION_SWEEP_LIMIT,
     });
-    const listed = new Set(idle.map(({ person }) => person));
-    for (const [person, held] of holds) {
-      if (held.until <= at && !listed.has(person)) holds.delete(person);
+    if (due.length === 0) {
+      pause.resume();
+      return 0;
     }
-    const due = idle
-      .filter(({ person }) => (holds.get(person)?.until ?? at) <= at)
-      .slice(0, RETENTION_SWEEP_LIMIT);
-    if (due.length === 0) return 0;
     const through = await storage.checkpointStore.get(RETENTION_SUBSCRIBER);
     let forgotten = 0;
-    for (const { person } of due) {
-      try {
-        const outcome = await forget(person, through);
-        if (outcome === "undone") {
-          hold(person, at, false);
-          continue;
-        }
-        holds.delete(person);
-        if (outcome === "forgotten") forgotten += 1;
-      } catch (error) {
-        hold(person, at, true);
-        logger.error("person past the retention could not be forgotten", {
-          personId: person,
-          ...errorDetails(error),
-        });
-      }
+    let kept = true;
+    for (const person of due) {
+      const outcome = await attempt(person, at, through);
+      if (outcome.forgotten) forgotten += 1;
+      kept &&= outcome.kept;
     }
+    pause.settle(at, kept);
     return forgotten;
   };
 
+  const deadlineOf = (person: StoredPerson | undefined): number =>
+    typeof person?.lastActiveAt === "string"
+      ? Date.parse(person.lastActiveAt) + retentionMs
+      : Number.POSITIVE_INFINITY;
+
   return {
     sweep: async (now) => {
-      if (now.getTime() < listHeldUntil) return 0;
+      const at = now.getTime();
+      if (pause.isPaused(at)) return 0;
       try {
         return await sweep(now);
       } catch (error) {
-        listHeldUntil = now.getTime() + RETENTION_RETRY_MS;
+        pause.pause(at);
         logger.error("persons past the retention could not be listed", errorDetails(error));
         return 0;
       }
     },
+    // Nobody comes due before the least recently active person's deadline, so while that person
+    // is not held it alone answers. A held person comes due when both their deadline and their
+    // hold have passed; the hold's end is named alone, so in the rare case of a retention
+    // lengthened since, a host wakes once too early, finds their hold over, and from then on reads
+    // their deadline with the persons free.
     nextDueAt: async () => {
-      const idle = await storage.persons.listIdle({ limit: 1 + holds.size });
-      let next = Number.POSITIVE_INFINITY;
-      // Least recently active first: past the first person not held, nobody comes due sooner.
-      for (const { person, lastActiveAt } of idle) {
-        if (lastActiveAt === null) continue;
-        const held = holds.get(person)?.until;
-        const deadline = Date.parse(lastActiveAt) + retentionMs;
-        next = Math.min(next, Math.max(deadline, held ?? deadline));
-        if (held === undefined) break;
+      const now = clock.now();
+      const [first] = await storage.persons.listIdle({ limit: 1 });
+      let next = deadlineOf(first);
+      if (first !== undefined && !isReleasedBy(first.hold, now)) {
+        const [[free], heldUntil] = await Promise.all([
+          storage.persons.listIdle({ releasedBy: now, limit: 1 }),
+          storage.persons.nextHoldEnd(now),
+        ]);
+        next = Math.min(deadlineOf(free), heldUntil?.getTime() ?? Number.POSITIVE_INFINITY);
       }
-      return next === Number.POSITIVE_INFINITY ? null : new Date(Math.max(next, listHeldUntil));
+      return next === Number.POSITIVE_INFINITY ? null : new Date(pause.notBefore(next));
     },
   };
 };

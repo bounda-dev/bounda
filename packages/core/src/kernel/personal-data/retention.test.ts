@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { Storage } from "../../adapter/adapter.ts";
 import type { StoredPerson } from "../../adapter/storage/person-store.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
@@ -9,12 +9,11 @@ import { createKeptPersonStore } from "../../memory/person-store.ts";
 import { tracer } from "../telemetry.ts";
 import { createRecordingLogger } from "../test-support.ts";
 import { forgetPersonalData } from "./forget.ts";
+import { HOLD_MAX_MS, HOLD_MS } from "./hold.ts";
 import { restrictProcessing } from "./restriction.ts";
 import {
   createRetentionSubscriber,
   createRetentionSweep,
-  RETENTION_MAX_RETRY_MS,
-  RETENTION_RETRY_MS,
   RETENTION_SUBSCRIBER,
   RETENTION_SWEEP_LIMIT,
 } from "./retention.ts";
@@ -82,6 +81,7 @@ describe("createRetentionSubscriber", () => {
       restrictedSince: null,
       lastActiveAt: day(3),
       forgottenAt: null,
+      hold: null,
     });
     expect(await store.get("c-2")).toMatchObject({ lastActiveAt: day(2), forgottenAt: day(4) });
     expect(await store.get("c-3")).toBeNull();
@@ -121,15 +121,17 @@ const setUp = async (storage?: Storage) => {
   const clock = createFixedClock(new Date(day(0)));
   const ids = createSequentialIdGenerator();
   const { logger, entries } = createRecordingLogger();
-  const sweep = createRetentionSweep({
-    storage: live,
-    retentionMs: 30 * DAY,
-    ids,
-    clock,
-    logger,
-    concurrencyRetries: 1,
-    batchSize: 2,
-  });
+  const sweepOver = (storage: Storage) =>
+    createRetentionSweep({
+      storage,
+      retentionMs: 30 * DAY,
+      ids,
+      clock,
+      logger,
+      concurrencyRetries: 1,
+      batchSize: 2,
+    });
+  const sweep = sweepOver(live);
   const subscriber = createRetentionSubscriber({ persons: live.persons });
   // What the dispatcher does: the batch, then the checkpoint past it.
   const record = async (): Promise<void> => {
@@ -184,12 +186,22 @@ const setUp = async (storage?: Storage) => {
     logger,
     entries,
     sweep,
+    sweepOver,
     record,
     touch,
     forgottenFor,
     advance,
   };
 };
+
+// A store whose forget fails, for whoever sweeps through it, while `failing` says so.
+const failingForgets = (live: Storage, failing: () => boolean): Storage => ({
+  ...live,
+  transact: async (work) => {
+    if (failing()) throw new Error("disk full");
+    return live.transact(work);
+  },
+});
 
 describe("createRetentionSweep", () => {
   it("forgets the persons idle past the retention, with reason retention, and no one else", async () => {
@@ -259,7 +271,7 @@ describe("createRetentionSweep", () => {
       ["c-4", "retention"],
     ]);
     await record();
-    clock.set(new Date(clock.now().getTime() + RETENTION_RETRY_MS));
+    clock.set(new Date(clock.now().getTime() + HOLD_MS));
     expect(await sweep.sweep(clock.now())).toBe(0);
     expect(await forgottenFor()).toHaveLength(2);
   });
@@ -282,6 +294,7 @@ describe("createRetentionSweep", () => {
     const forgotten = await Promise.all([sweep.sweep(clock.now()), other.sweep(clock.now())]);
     expect(forgotten.reduce((sum, count) => sum + count, 0)).toBe(1);
     expect(await forgottenFor()).toEqual([["c-1", "retention"]]);
+    expect((await storage.persons.get("c-1"))?.hold).toBeNull();
   });
 
   it("holds a person whose row is behind on their own, without backing off, and says so in nextDueAt", async () => {
@@ -292,13 +305,13 @@ describe("createRetentionSweep", () => {
     await touch("c-1");
     const skippedAt = clock.now().getTime();
     expect(await sweep.sweep(clock.now())).toBe(0);
-    expect(await sweep.nextDueAt()).toEqual(new Date(skippedAt + RETENTION_RETRY_MS));
-    clock.set(new Date(skippedAt + RETENTION_RETRY_MS));
+    expect(await sweep.nextDueAt()).toEqual(new Date(skippedAt + HOLD_MS));
+    clock.set(new Date(skippedAt + HOLD_MS));
     expect(await sweep.sweep(clock.now())).toBe(0);
-    expect(await sweep.nextDueAt()).toEqual(new Date(skippedAt + 2 * RETENTION_RETRY_MS));
+    expect(await sweep.nextDueAt()).toEqual(new Date(skippedAt + 2 * HOLD_MS));
     await record();
     expect(await sweep.nextDueAt()).toEqual(new Date(skippedAt + 30 * DAY));
-    clock.set(new Date(skippedAt + 2 * RETENTION_RETRY_MS));
+    clock.set(new Date(skippedAt + 2 * HOLD_MS));
     expect(await sweep.sweep(clock.now())).toBe(0);
     expect(await forgottenFor()).toEqual([]);
   });
@@ -328,7 +341,7 @@ describe("createRetentionSweep", () => {
     clock.set(new Date(day(1)));
     await touch("c-2");
     // Due between the first person's second and third tries.
-    clock.set(new Date(Date.parse(day(2)) + 2 * RETENTION_RETRY_MS));
+    clock.set(new Date(Date.parse(day(2)) + 2 * HOLD_MS));
     await touch("c-3");
     await record();
     clock.set(new Date(failedAt));
@@ -336,51 +349,45 @@ describe("createRetentionSweep", () => {
     expect(await forgottenFor()).toEqual([["c-2", "retention"]]);
     expect(entries.filter(({ level }) => level === "error")).toHaveLength(1);
     await record();
-    expect(await sweep.nextDueAt()).toEqual(new Date(failedAt + RETENTION_RETRY_MS));
-    clock.set(new Date(failedAt + RETENTION_RETRY_MS - 1));
+    expect(await sweep.nextDueAt()).toEqual(new Date(failedAt + HOLD_MS));
+    clock.set(new Date(failedAt + HOLD_MS - 1));
     expect(await sweep.sweep(clock.now())).toBe(0);
     expect(attempts).toEqual(["c-1", "c-2"]);
-    clock.set(new Date(failedAt + RETENTION_RETRY_MS));
+    clock.set(new Date(failedAt + HOLD_MS));
     expect(await sweep.sweep(clock.now())).toBe(0);
-    expect(await sweep.nextDueAt()).toEqual(new Date(failedAt + 2 * RETENTION_RETRY_MS));
-    clock.set(new Date(failedAt + 2 * RETENTION_RETRY_MS));
+    expect(await sweep.nextDueAt()).toEqual(new Date(failedAt + 2 * HOLD_MS));
+    clock.set(new Date(failedAt + 2 * HOLD_MS));
     expect(await sweep.sweep(clock.now())).toBe(1);
     expect(await forgottenFor()).toEqual([
       ["c-2", "retention"],
       ["c-3", "retention"],
     ]);
     await record();
-    expect(await sweep.nextDueAt()).toEqual(new Date(failedAt + 3 * RETENTION_RETRY_MS));
-    clock.set(new Date(failedAt + 3 * RETENTION_RETRY_MS));
+    expect(await sweep.nextDueAt()).toEqual(new Date(failedAt + 3 * HOLD_MS));
+    clock.set(new Date(failedAt + 3 * HOLD_MS));
     expect(await sweep.sweep(clock.now())).toBe(0);
     expect(attempts).toEqual(["c-1", "c-2", "c-1", "c-3", "c-1"]);
-    expect(await sweep.nextDueAt()).toEqual(new Date(failedAt + 7 * RETENTION_RETRY_MS));
+    expect(await sweep.nextDueAt()).toEqual(new Date(failedAt + 7 * HOLD_MS));
   });
 
   it("starts a person's back-off over once they are forgotten, or are no longer idle", async () => {
     const live = await memory().createStorage();
     let failing = true;
-    const { sweep, record, touch, advance, clock } = await setUp({
-      ...live,
-      transact: async (work) => {
-        if (failing) throw new Error("disk full");
-        return live.transact(work);
-      },
-    });
+    const { sweep, record, touch, advance, clock } = await setUp(
+      failingForgets(live, () => failing),
+    );
     const failTwice = async (): Promise<void> => {
       await sweep.sweep(clock.now());
-      clock.advance(RETENTION_RETRY_MS);
+      clock.advance(HOLD_MS);
       await sweep.sweep(clock.now());
-      expect(await sweep.nextDueAt()).toEqual(
-        new Date(clock.now().getTime() + 2 * RETENTION_RETRY_MS),
-      );
+      expect(await sweep.nextDueAt()).toEqual(new Date(clock.now().getTime() + 2 * HOLD_MS));
     };
     await touch("c-1");
     await record();
     advance(31);
     await failTwice();
     failing = false;
-    clock.advance(2 * RETENTION_RETRY_MS);
+    clock.advance(2 * HOLD_MS);
     expect(await sweep.sweep(clock.now())).toBe(1);
     await record();
     await touch("c-1");
@@ -390,40 +397,32 @@ describe("createRetentionSweep", () => {
     await failTwice();
     await touch("c-1");
     await record();
-    clock.advance(2 * RETENTION_RETRY_MS);
+    clock.advance(2 * HOLD_MS);
     await sweep.sweep(clock.now());
     advance(31);
     await sweep.sweep(clock.now());
-    expect(await sweep.nextDueAt()).toEqual(new Date(clock.now().getTime() + RETENTION_RETRY_MS));
+    expect(await sweep.nextDueAt()).toEqual(new Date(clock.now().getTime() + HOLD_MS));
   });
 
-  it("backs off a person no longer than RETENTION_MAX_RETRY_MS, and forgets the hold once they are", async () => {
+  it("backs off a person no longer than HOLD_MAX_MS, and forgets the hold once they are", async () => {
     const live = await memory().createStorage();
     let broken = true;
-    const { sweep, record, touch, forgottenFor, advance, clock } = await setUp({
-      ...live,
-      transact: async (work) => {
-        if (broken) throw new Error("disk full");
-        return live.transact(work);
-      },
-    });
+    const { sweep, record, touch, forgottenFor, advance, clock } = await setUp(
+      failingForgets(live, () => broken),
+    );
     await touch("c-1");
     await record();
     advance(31);
     for (let failure = 0; failure < 10; failure += 1) {
       await sweep.sweep(clock.now());
       const next = await sweep.nextDueAt();
-      expect((next?.getTime() ?? 0) - clock.now().getTime()).toBeLessThanOrEqual(
-        RETENTION_MAX_RETRY_MS,
-      );
+      expect((next?.getTime() ?? 0) - clock.now().getTime()).toBeLessThanOrEqual(HOLD_MAX_MS);
       clock.set(next ?? clock.now());
     }
     await sweep.sweep(clock.now());
-    expect(await sweep.nextDueAt()).toEqual(
-      new Date(clock.now().getTime() + RETENTION_MAX_RETRY_MS),
-    );
+    expect(await sweep.nextDueAt()).toEqual(new Date(clock.now().getTime() + HOLD_MAX_MS));
     broken = false;
-    clock.advance(RETENTION_MAX_RETRY_MS);
+    clock.advance(HOLD_MAX_MS);
     expect(await sweep.sweep(clock.now())).toBe(1);
     expect(await forgottenFor()).toEqual([["c-1", "retention"]]);
     await record();
@@ -484,14 +483,48 @@ describe("createRetentionSweep", () => {
       fields: expect.objectContaining({ personId: "c-1", message: "disk full" }),
     });
     await record();
-    expect(await sweep.nextDueAt()).toEqual(new Date(clock.now().getTime() + RETENTION_RETRY_MS));
+    expect(await sweep.nextDueAt()).toEqual(new Date(clock.now().getTime() + HOLD_MS));
     expect(await sweep.sweep(clock.now())).toBe(0);
-    clock.set(new Date(clock.now().getTime() + RETENTION_RETRY_MS));
+    clock.set(new Date(clock.now().getTime() + HOLD_MS));
     expect(await sweep.sweep(clock.now())).toBe(1);
     expect(await forgottenFor()).toEqual([
       ["c-2", "retention"],
       ["c-1", "retention"],
     ]);
+  });
+
+  it("waits longer after each list it cannot read, and as long as the first again after a pass that found nobody due", async () => {
+    const live = await memory().createStorage();
+    let broken = true;
+    let lists = 0;
+    const { sweepOver, clock } = await setUp(live);
+    const sweep = sweepOver({
+      ...live,
+      persons: {
+        ...live.persons,
+        listIdle: async (args) => {
+          if (args.activeBefore === undefined) return live.persons.listIdle(args);
+          lists += 1;
+          if (broken) throw new Error("connection reset");
+          return live.persons.listIdle(args);
+        },
+      },
+    });
+    const passAfter = async (milliseconds: number): Promise<number> => {
+      clock.advance(milliseconds);
+      const before = lists;
+      await sweep.sweep(clock.now());
+      return lists - before;
+    };
+    expect(await passAfter(0)).toBe(1);
+    expect(await passAfter(HOLD_MS)).toBe(1);
+    expect(await passAfter(2 * HOLD_MS - 1)).toBe(0);
+    broken = false;
+    expect(await passAfter(1)).toBe(1);
+    broken = true;
+    expect(await passAfter(0)).toBe(1);
+    expect(await passAfter(HOLD_MS - 1)).toBe(0);
+    expect(await passAfter(1)).toBe(1);
   });
 
   it("logs a list it cannot read, never rejecting, and tries again later", async () => {
@@ -520,7 +553,7 @@ describe("createRetentionSweep", () => {
       fields: expect.objectContaining({ message: "connection reset" }),
     });
     expect(await sweep.sweep(clock.now())).toBe(0);
-    clock.set(new Date(clock.now().getTime() + RETENTION_RETRY_MS));
+    clock.set(new Date(clock.now().getTime() + HOLD_MS));
     expect(await sweep.sweep(clock.now())).toBe(1);
     expect(await forgottenFor()).toEqual([["c-1", "retention"]]);
   });
@@ -542,9 +575,188 @@ describe("createRetentionSweep", () => {
     expect(await sweep.sweep(clock.now())).toBe(1);
   });
 
-  it("has nothing due without a person active once and not forgotten since", async () => {
-    const { sweep, clock } = await setUp();
+  it("holds a person on their row, so another instance skips them until the hold ends", async () => {
+    const { storage, sweepOver, record, touch, forgottenFor, advance, clock } = await setUp();
+    const failing = sweepOver(failingForgets(storage, () => true));
+    const healthy = sweepOver(storage);
+    await touch("c-1");
+    await record();
+    advance(31);
+    const failedAt = clock.now().getTime();
+    expect(await failing.sweep(clock.now())).toBe(0);
+    expect((await storage.persons.get("c-1"))?.hold).toEqual({
+      until: new Date(failedAt + HOLD_MS).toISOString(),
+      attempts: 1,
+    });
+    expect(await healthy.sweep(clock.now())).toBe(0);
+    expect(await healthy.nextDueAt()).toEqual(new Date(failedAt + HOLD_MS));
+    clock.set(new Date(failedAt + HOLD_MS - 1));
+    expect(await healthy.sweep(clock.now())).toBe(0);
+    expect(await forgottenFor()).toEqual([]);
+    clock.set(new Date(failedAt + HOLD_MS));
+    expect(await healthy.sweep(clock.now())).toBe(1);
+    expect(await forgottenFor()).toEqual([["c-1", "retention"]]);
+    expect(await storage.persons.get("c-1")).toMatchObject({
+      forgottenAt: clock.now().toISOString(),
+      hold: null,
+    });
+    expect(await healthy.nextDueAt()).toBeNull();
+  });
+
+  it("keeps a person's back-off through a restart, from the failures before it", async () => {
+    const { storage, sweepOver, record, touch, advance, clock } = await setUp();
+    const broken = failingForgets(storage, () => true);
+    const before = sweepOver(broken);
+    await touch("c-1");
+    await record();
+    advance(31);
+    await before.sweep(clock.now());
+    clock.advance(HOLD_MS);
+    await before.sweep(clock.now());
+    expect(await before.nextDueAt()).toEqual(new Date(clock.now().getTime() + 2 * HOLD_MS));
+    const restarted = sweepOver(broken);
+    expect(await restarted.nextDueAt()).toEqual(new Date(clock.now().getTime() + 2 * HOLD_MS));
+    expect(await restarted.sweep(clock.now())).toBe(0);
+    clock.advance(2 * HOLD_MS);
+    await restarted.sweep(clock.now());
+    expect(await restarted.nextDueAt()).toEqual(new Date(clock.now().getTime() + 4 * HOLD_MS));
+    expect((await storage.persons.get("c-1"))?.hold?.attempts).toBe(3);
+  });
+
+  it("writes no hold when a sweep forgets, and holds the whole sweep when a hold cannot be written", async () => {
+    const live = await memory().createStorage();
+    const holds: string[] = [];
+    let broken = false;
+    const { storage, sweepOver, record, touch, advance, clock, entries } = await setUp(live);
+    const sweep = sweepOver({
+      ...failingForgets(live, () => broken),
+      persons: {
+        ...live.persons,
+        hold: async (person, lastActiveAt, hold) => {
+          holds.push(person);
+          if (broken) throw new Error("read-only");
+          return live.persons.hold(person, lastActiveAt, hold);
+        },
+      },
+    });
+    await touch("c-1");
+    await touch("c-2");
+    await record();
+    advance(31);
+    expect(await sweep.sweep(clock.now())).toBe(2);
+    expect(holds).toEqual([]);
+    await touch("c-3");
+    await record();
+    advance(31);
+    broken = true;
+    expect(await sweep.sweep(clock.now())).toBe(0);
+    expect(entries).toContainEqual({
+      level: "error",
+      message: "person past the retention could not be held",
+      fields: expect.objectContaining({ personId: "c-3", message: "read-only" }),
+    });
+    expect((await storage.persons.get("c-3"))?.hold).toBeNull();
+    expect(await sweep.nextDueAt()).toEqual(new Date(clock.now().getTime() + HOLD_MS));
+    // Still unable to keep a hold: the sweep waits twice as long.
+    clock.advance(HOLD_MS - 1);
+    expect(await sweep.sweep(clock.now())).toBe(0);
+    clock.advance(1);
+    expect(await sweep.sweep(clock.now())).toBe(0);
+    expect(await sweep.nextDueAt()).toEqual(new Date(clock.now().getTime() + 2 * HOLD_MS));
+    broken = false;
+    clock.advance(2 * HOLD_MS);
+    expect(await sweep.sweep(clock.now())).toBe(1);
+    // A pass the store answered in full: the next failure waits as long as the first.
+    await touch("c-4");
+    await record();
+    advance(31);
+    broken = true;
+    await sweep.sweep(clock.now());
+    expect(await sweep.nextDueAt()).toEqual(new Date(clock.now().getTime() + HOLD_MS));
+  });
+
+  it("tells whom it forgot once their forgetting is committed, and reads one row for nextDueAt while the first is free", async () => {
+    const live = await memory().createStorage();
+    let lists = 0;
+    const { touch, record, advance, clock, sweepOver } = await setUp(live);
+    const told: string[] = [];
+    const sweep = createRetentionSweep({
+      storage: {
+        ...live,
+        persons: {
+          ...live.persons,
+          listIdle: (args) => {
+            lists += 1;
+            return live.persons.listIdle(args);
+          },
+        },
+      },
+      retentionMs: 30 * DAY,
+      ids: createSequentialIdGenerator(),
+      clock,
+      logger: createRecordingLogger().logger,
+      concurrencyRetries: 1,
+      batchSize: 2,
+      forgotten: (personId) => told.push(personId),
+    });
+    await touch("c-1");
+    await touch("c-2");
+    await record();
+    expect(await sweep.nextDueAt()).toEqual(new Date(Date.parse(day(30))));
+    expect(lists).toBe(1);
+    await live.persons.hold("c-1", day(0), { until: day(40), attempts: 1 });
+    lists = 0;
+    expect(await sweep.nextDueAt()).toEqual(new Date(Date.parse(day(30))));
+    expect(lists).toBe(2);
+    // Once the hold is over, the first person alone answers again.
+    clock.set(new Date(day(40)));
+    lists = 0;
+    expect(await sweep.nextDueAt()).toEqual(new Date(Date.parse(day(30))));
+    expect(lists).toBe(1);
+    advance(1);
+    expect(await sweep.sweep(clock.now())).toBe(2);
+    expect(told).toEqual(["c-1", "c-2"]);
+    expect(await sweepOver(live).sweep(clock.now())).toBe(0);
+  });
+
+  it("names a held person's hold end in nextDueAt, then their deadline once it is over", async () => {
+    const { storage, record, touch, clock, sweepOver } = await setUp();
+    await touch("c-1");
+    await record();
+    const longer = createRetentionSweep({
+      storage,
+      retentionMs: 60 * DAY,
+      ids: createSequentialIdGenerator(),
+      clock,
+      logger: createRecordingLogger().logger,
+      concurrencyRetries: 0,
+      batchSize: 2,
+    });
+    const end = new Date(clock.now().getTime() + HOLD_MS);
+    await storage.persons.hold("c-1", day(0), { until: end.toISOString(), attempts: 1 });
+    expect(await longer.nextDueAt()).toEqual(end);
+    expect(await sweepOver(storage).nextDueAt()).toEqual(end);
+    clock.set(end);
+    expect(await longer.sweep(clock.now())).toBe(0);
+    expect(await longer.nextDueAt()).toEqual(new Date(Date.parse(day(60))));
+  });
+
+  it("has nothing due without a person active once and not forgotten since, and reads no checkpoint", async () => {
+    const live = await memory().createStorage();
+    const asked: string[] = [];
+    const { sweepOver, clock } = await setUp(live);
+    const sweep = sweepOver({
+      ...live,
+      checkpointStore: {
+        ...live.checkpointStore,
+        get: async (name) => {
+          asked.push(name);
+          return live.checkpointStore.get(name);
+        },
+      },
+    });
     expect(await sweep.nextDueAt()).toBeNull();
     expect(await sweep.sweep(clock.now())).toBe(0);
+    expect(asked).toEqual([]);
   });
 });

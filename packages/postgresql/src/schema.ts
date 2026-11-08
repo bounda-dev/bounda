@@ -175,19 +175,27 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "person" text PRIMARY KEY,
     "key" text NOT NULL,
     "fingerprint" text NOT NULL,
-    "kid" text
+    "kid" text,
+    "held_until" text,
+    "attempts" integer NOT NULL DEFAULT 0
   )`,
   // What the rotation of the wrapping key reads: the keys still under an old one.
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.personalKeys, "kid")} ON ${tables.personalKeys} ("kid", "person")`,
+  // When the rotation is next due while every key it has left is held.
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.personalKeys, "held")} ON ${tables.personalKeys} ("held_until") WHERE "held_until" IS NOT NULL`,
   `CREATE TABLE IF NOT EXISTS ${tables.persons} (
     "person" text PRIMARY KEY,
     "restricted_since" text,
     "position" bigint NOT NULL DEFAULT 0,
     "last_active_at" text,
-    "forgotten_at" text
+    "forgotten_at" text,
+    "held_until" text,
+    "attempts" integer NOT NULL DEFAULT 0
   )`,
   // What a retention sweep reads, least recently active first.
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.persons, "idle")} ON ${tables.persons} ("last_active_at", "person") WHERE "last_active_at" IS NOT NULL AND "forgotten_at" IS NULL AND "restricted_since" IS NULL`,
+  // When the sweep is next due while the persons it has left are held.
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.persons, "held")} ON ${tables.persons} ("held_until") WHERE "last_active_at" IS NOT NULL AND "forgotten_at" IS NULL AND "restricted_since" IS NULL AND "held_until" IS NOT NULL`,
   `CREATE TABLE IF NOT EXISTS ${tables.snapshots} (
     "aggregate_type" text NOT NULL,
     "aggregate_id" text NOT NULL,
@@ -240,7 +248,9 @@ export const ensureStorageSchema: EnsureStorageSchemaFunction = async ({ db, sch
     indexName(tables.scheduledCommands, "claimed_at"),
     indexName(tables.idempotencyKeys, "expires_at"),
     indexName(tables.persons, "idle"),
+    indexName(tables.persons, "held"),
     indexName(tables.personalKeys, "kid"),
+    indexName(tables.personalKeys, "held"),
     indexName(tables.snapshots, "persons"),
     indexName(tables.idempotencyKeys, "persons"),
     indexName(tables.scheduledCommands, "persons"),

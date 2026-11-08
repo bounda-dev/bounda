@@ -1,6 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
 import { createFixedClock, systemClock } from "./clock.ts";
 
+const realSetTimeout = globalThis.setTimeout;
+
+// Records the timers the platform armed, as they are.
+const setTimeoutSpy = () => {
+  const armed: NodeJS.Timeout[] = [];
+  const spy = vi.spyOn(globalThis, "setTimeout").mockImplementation(((
+    callback: () => void,
+    milliseconds?: number,
+  ) => {
+    const timer = realSetTimeout(callback, milliseconds);
+    armed.push(timer);
+    return timer;
+  }) as typeof setTimeout);
+  return { armed, restore: () => spy.mockRestore() };
+};
+
 describe("systemClock", () => {
   it("returns the current time", () => {
     const before = Date.now();
@@ -23,6 +39,50 @@ describe("systemClock", () => {
       expect(vi.getTimerCount()).toBe(0);
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it("lets a process exit before a background wait, and only before one", () => {
+    const background = setTimeoutSpy();
+    try {
+      const cancelKept = systemClock.after(60_000, () => undefined);
+      const cancelLetGo = systemClock.after(60_000, () => undefined, { background: true });
+      expect(background.armed.map((timer) => timer.hasRef())).toEqual([true, false]);
+      cancelKept();
+      cancelLetGo();
+    } finally {
+      background.restore();
+    }
+  });
+
+  it("still calls back after a background wait where the process stays", () => {
+    vi.useFakeTimers();
+    try {
+      const calls: string[] = [];
+      systemClock.after(100, () => calls.push("background"), { background: true });
+      vi.advanceTimersByTime(100);
+      expect(calls).toEqual(["background"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops a background wait where the platform's timers cannot let a process go", () => {
+    const cleared: unknown[] = [];
+    const armed = vi
+      .spyOn(globalThis, "setTimeout")
+      .mockImplementation(((): number => 7) as unknown as typeof setTimeout);
+    const clear = vi.spyOn(globalThis, "clearTimeout").mockImplementation((timer) => {
+      cleared.push(timer);
+    });
+    try {
+      systemClock.after(60_000, () => undefined);
+      expect(cleared).toEqual([]);
+      systemClock.after(60_000, () => undefined, { background: true });
+      expect(cleared).toEqual([7]);
+    } finally {
+      armed.mockRestore();
+      clear.mockRestore();
     }
   });
 

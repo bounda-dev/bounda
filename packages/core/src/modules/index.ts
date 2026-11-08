@@ -6,6 +6,7 @@ export type {
   UnknownState,
 } from "./aggregate.ts";
 export type {
+  AccessOutcome,
   AuditModule,
   DeadLetterAccess,
   DeadLettersListAccess,

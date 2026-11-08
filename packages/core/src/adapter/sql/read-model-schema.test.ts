@@ -53,6 +53,21 @@ describe("columnsOf", () => {
     ).toThrow('Read model "x" declares more than one primary key field: a, b');
   });
 
+  it("refuses a json primary key, which has no order", () => {
+    expect(() =>
+      columnsOf({ readModel: "x", fields: { a: f.json().primaryKey() }, dialect: sqliteDialect }),
+    ).toThrow(
+      new ConfigurationError(
+        'Read model "x": primary key field "a" is json, which has no order to page by; make it a string, number or date',
+      ),
+    );
+    for (const key of [f.string(), f.number(), f.date(), f.boolean()]) {
+      expect(
+        columnsOf({ readModel: "x", fields: { a: key.primaryKey() }, dialect: sqliteDialect }),
+      ).toHaveLength(1);
+    }
+  });
+
   it("rejects field names that do not become identifiers", () => {
     expect(() =>
       columnsOf({

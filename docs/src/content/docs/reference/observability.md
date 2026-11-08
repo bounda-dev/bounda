@@ -26,13 +26,17 @@ Everything is reported under the scope `@bounda-dev/core`. Spans:
 | --- | --- | --- |
 | `bounda.command <Type>` | a command is dispatched | `bounda.command.type`, `bounda.aggregate.type`, `bounda.aggregate.id`, `bounda.correlation_id`, `bounda.causation_id`, `bounda.actor` when [someone acts](/concepts/ids-causation-and-correlation/#who-acts), `bounda.outcome` (`stored`, `scheduled`, `rejected`, or `replayed` for a dispatch answered from its `idempotencyKey`), `bounda.event.count`; a rejection adds the event `bounda.command.rejected`, its code in `bounda.rejected`, replayed or not; [how it loaded its aggregate](#how-a-command-loaded-its-aggregate) |
 | `bounda.subscriber <name>` | the dispatcher hands a batch to a projection, the policy runner, the process runner, a snapshot subscriber, the retention or the forget ledger's copy; idle passes produce none | `bounda.subscriber`, `bounda.subscriber.kind` (`projection`, `policy`, `process`, `snapshot`, `retention`, `forget-ledger`), `bounda.position.after`, `bounda.event.count`, `bounda.outcome` (`advanced`, `held`, `failed`, `moved`); a snapshot subscriber that wrote snapshots adds `bounda.snapshot.version`, the highest version it wrote, and one event `bounda.snapshot.written` per snapshot, with `bounda.aggregate.id` and `bounda.snapshot.version` |
-| `bounda.projection <readModel>.<projection>` | a projection handles one event | `bounda.read_model`, `bounda.projection`, the event's id, type and aggregate, `bounda.correlation_id` |
-| `bounda.policy <aggregate>.<policy>` | a policy handler runs | `bounda.policy`, the event's id, type and aggregate, `bounda.correlation_id`, `bounda.attempt` |
-| `bounda.process <aggregate>.<process>` | a process handler runs; `… at <field>` for an `at-<field>.ts`, `… at timeout` for `at-timeout.ts` | `bounda.process`, the event's id, type and aggregate, `bounda.correlation_id`, `bounda.attempt`; for a deadline, `bounda.process`, the process's aggregate type and id and `bounda.correlation_id` |
-| `bounda.scheduled <Type>` | the worker runs a due command or a process deadline (`bounda.ProcessDeadline`) | `bounda.command.type`, `bounda.aggregate.id`, `bounda.correlation_id`, `bounda.attempt` |
+| `bounda.projection <readModel>.<projection>` | a projection handles one event | `bounda.read_model`, `bounda.projection`, the event's id, type and aggregate, `bounda.correlation_id`, `bounda.actor` when the event names one |
+| `bounda.policy <aggregate>.<policy>` | a policy handler runs | `bounda.policy`, the event's id, type and aggregate, `bounda.correlation_id`, `bounda.attempt`, `bounda.actor`: the event's, or whoever retries its dead letter |
+| `bounda.process <aggregate>.<process>` | a process handler runs; `… at <field>` for an `at-<field>.ts`, `… at timeout` for `at-timeout.ts` | `bounda.process`, the event's id, type and aggregate, `bounda.correlation_id`, `bounda.attempt`; for a deadline, `bounda.process`, the process's aggregate type and id and `bounda.correlation_id`; `bounda.actor` as for a policy, or that of what set the deadline |
+| `bounda.scheduled <Type>` | the worker runs a due command or a process deadline (`bounda.ProcessDeadline`) | `bounda.command.type`, `bounda.aggregate.id`, `bounda.correlation_id`, `bounda.attempt`, `bounda.actor` of whoever scheduled it |
+| `bounda.query <Type>` | a query runs, and each one it composes | `bounda.query.type`, `bounda.read_model`, `bounda.actor` |
+| `bounda.operation <operation>` | the client runs `forget`, `restrict`, `unrestrict`, `exportPersonalData`, `rebuildReadModel`, or `deadLetters.list`, `count`, `get`, `retry` or `discard` | `bounda.operation`, as named here, `bounda.actor` |
 
-A handler that throws marks its span as an error with the message and records the exception. A
-command's rejection is an answer, not an error: its span keeps an unset status.
+`bounda.actor` is there only when [someone acts](/concepts/ids-causation-and-correlation/#who-acts):
+a client bound with `as`, and what follows from it. A handler, a query or an operation that throws
+marks its span as an error with the message and records the exception. A command's rejection is an
+answer, not an error: its span keeps an unset status.
 
 One request is not one trace. A policy runs in a later dispatcher pass, in whatever process picks
 it up, so the command's span and the policy's span are separate traces. What ties them together is
@@ -81,4 +85,5 @@ load, which is right for latency and wrong for an audit trail, where one missing
 read nobody can account for. The [access log](/guides/personal-data/#who-opened-what) is
 delivered on its own: to `app/audit.ts` when the project has one, else to the app's logger at
 `info` with the message `personal data accessed`, never sampled, and a hook that fails fails the
-read. Spans keep the `bounda.actor` of commands, which the event store also records.
+read. Spans carry `bounda.actor` to find the work of one actor in a trace, not to account for it:
+the event store records who acted on every command and event, and the access log who read.

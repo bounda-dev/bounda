@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { Adapter } from "../adapter/adapter.ts";
 import type { Table } from "../adapter/storage/table.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
 import { memory } from "../memory/index.ts";
@@ -92,6 +93,25 @@ const registryWith = (audit?: Registry["audit"]) =>
           },
           customerCount: {
             handler: ({ table }: { table: Table<CustomerRow> }) => table.count(),
+          },
+          emailCheck: {
+            payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string() }),
+            handler: async ({
+              query,
+              table,
+            }: {
+              query: { payload: { customerId: string } };
+              table: Table<CustomerRow>;
+            }) => {
+              const found = await table.findOne({ customerId: query.payload.customerId });
+              throw new Error(`cannot reach ${found?.email}`);
+            },
+          },
+          customersByDriver: {
+            repository: ({ client }: { client: { raw: Table<CustomerRow> } }) =>
+              client.raw.findMany(),
+            handler: ({ repositoryData }: { repositoryData: readonly CustomerRow[] }) =>
+              repositoryData.length,
           },
         },
       },
@@ -189,6 +209,7 @@ describe("the access log", () => {
         persons: ["ana"],
         personCount: 1,
         at: AT,
+        outcome: "ok",
         detail: { events: 1, scheduledCommands: 0, deadLetters: 1, readModelRows: 1 },
       },
     ]);
@@ -221,6 +242,7 @@ describe("the access log", () => {
         persons: ["ana", "bo"],
         personCount: 2,
         at: AT,
+        outcome: "ok",
         detail: { letters: 2 },
       },
       {
@@ -229,6 +251,7 @@ describe("the access log", () => {
         persons: ["ana"],
         personCount: 1,
         at: AT,
+        outcome: "ok",
         detail: { letter: first.id },
       },
       {
@@ -237,6 +260,7 @@ describe("the access log", () => {
         persons: ["ana"],
         personCount: 1,
         at: AT,
+        outcome: "failed",
         detail: { letter: first.id },
       },
       {
@@ -245,6 +269,7 @@ describe("the access log", () => {
         persons: ["bo"],
         personCount: 1,
         at: AT,
+        outcome: "ok",
         detail: { letter: second.id },
       },
     ]);
@@ -272,6 +297,8 @@ describe("the access log", () => {
         persons: ["ana", "cy"],
         personCount: 2,
         at: AT,
+        outcome: "ok",
+        unattributed: false,
         detail: { query: "customersOnPlan", readModel: "customerDirectory" },
       },
       {
@@ -280,6 +307,8 @@ describe("the access log", () => {
         persons: [],
         personCount: 0,
         at: AT,
+        outcome: "ok",
+        unattributed: false,
         detail: { query: "customerCount", readModel: "customerDirectory" },
       },
       {
@@ -288,7 +317,92 @@ describe("the access log", () => {
         persons: [],
         personCount: 0,
         at: AT,
+        outcome: "ok",
+        unattributed: false,
         detail: { query: "customersOnPlan", readModel: "customerDirectory" },
+      },
+    ]);
+  });
+
+  it("records a query that fails after reading, whose error may quote what it read, as failed", async () => {
+    const { app, register, accesses } = await setUp();
+    await register("ana");
+    await app.runUntilIdle();
+
+    await expect(app.as("operator-1").queries.emailCheck({ customerId: "ana" })).rejects.toThrow(
+      "cannot reach ana@example.com",
+    );
+    await expect(app.queries.emailCheck({} as never)).rejects.toThrow();
+    expect(accesses()).toEqual([
+      {
+        operation: "query",
+        actor: "operator-1",
+        persons: ["ana"],
+        personCount: 1,
+        at: AT,
+        outcome: "failed",
+        unattributed: false,
+        detail: { query: "emailCheck", readModel: "customerDirectory" },
+      },
+    ]);
+  });
+
+  it("records a query that takes the driver through client.raw as unattributed", async () => {
+    const { app, register, accesses } = await setUp();
+    await register("ana");
+    await register("bo");
+    await app.runUntilIdle();
+
+    expect(await app.queries.customersByDriver()).toBe(2);
+    expect(accesses()).toEqual([
+      expect.objectContaining({
+        operation: "query",
+        persons: [],
+        personCount: 0,
+        outcome: "ok",
+        unattributed: true,
+        detail: { query: "customersByDriver", readModel: "customerDirectory" },
+      }),
+    ]);
+  });
+
+  it("records an export that fails after it started reading as failed, with no counts", async () => {
+    const base = memory();
+    const rowsDown = new Error("rows down");
+    const failingRows: Adapter = {
+      ...base,
+      createReadModel: async <Row extends object>(
+        args: Parameters<Adapter["createReadModel"]>[0],
+      ) => {
+        const opened = await base.createReadModel<Row>(args);
+        return {
+          ...opened,
+          table: { ...opened.table, findMany: () => Promise.reject(rowsDown) },
+        };
+      },
+    };
+    const records: OnPersonalDataAccessArgs[] = [];
+    const { app } = await createTestApp({
+      registry: registryWith(),
+      config: { readModels: { customerDirectory: failingRows } },
+      onPersonalDataAccess: (args) => {
+        records.push(args);
+      },
+    });
+
+    await expect(app.as("operator-1").exportPersonalData("ana")).rejects.toBe(rowsDown);
+    await expect(app.exportPersonalData("")).rejects.toThrow(
+      "exportPersonalData needs the id of the person",
+    );
+    expect(records.map(({ access }) => access)).toEqual([
+      {
+        operation: "exportPersonalData",
+        actor: "operator-1",
+        persons: ["ana"],
+        personCount: 1,
+        at: AT,
+        outcome: "failed",
+        detail: null,
       },
     ]);
   });
@@ -324,21 +438,25 @@ describe("the access log", () => {
     expect(access?.personCount).toBe(ids.length);
   });
 
-  it("fails the call when the hook throws, and retries or discards nothing", async () => {
+  it("fails the call when the hook throws, handing out neither its result nor its error", async () => {
     const { app, register, sink } = await setUp();
     await register("ana");
+    await register("bo");
     await app.runUntilIdle();
-    const [letter] = await app.deadLetters.list();
-    if (letter === undefined) throw new Error("expected a letter");
+    const [first, second] = await app.deadLetters.list();
+    if (first === undefined || second === undefined) throw new Error("expected two letters");
     sink.failing = true;
 
     await expect(app.exportPersonalData("ana")).rejects.toThrow("audit sink down");
     await expect(app.queries.customersOnPlan({ plan: "pro" })).rejects.toThrow("audit sink down");
     await expect(app.deadLetters.list()).rejects.toThrow("audit sink down");
-    await expect(app.deadLetters.get(letter.id)).rejects.toThrow("audit sink down");
-    await expect(app.deadLetters.retry(letter.id)).rejects.toThrow("audit sink down");
-    await expect(app.deadLetters.discard(letter.id)).rejects.toThrow("audit sink down");
+    await expect(app.deadLetters.get(first.id)).rejects.toThrow("audit sink down");
+    // Acted on before the record, which says how it went: the retry failed again, the discard
+    // went through.
+    await expect(app.deadLetters.retry(first.id)).rejects.toThrow("audit sink down");
+    await expect(app.deadLetters.discard(second.id)).rejects.toThrow("audit sink down");
     expect(await app.deadLetters.count({ status: "failed" })).toBe(1);
+    expect(await app.deadLetters.count({ status: "discarded" })).toBe(1);
     expect(await app.queries.customerCount().catch((error: unknown) => error)).toEqual(
       new Error("audit sink down"),
     );
@@ -388,6 +506,8 @@ describe("the access log", () => {
           persons: ["ana"],
           personCount: 1,
           at: AT,
+          outcome: "ok",
+          unattributed: false,
           detail: { query: "customersOnPlan", readModel: "customerDirectory" },
         },
       },

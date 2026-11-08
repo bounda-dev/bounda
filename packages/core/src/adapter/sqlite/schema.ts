@@ -138,19 +138,27 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "person" TEXT PRIMARY KEY,
     "key" TEXT NOT NULL,
     "fingerprint" TEXT NOT NULL,
-    "kid" TEXT
+    "kid" TEXT,
+    "held_until" TEXT,
+    "attempts" INTEGER NOT NULL DEFAULT 0
   )`,
   // What the rotation of the wrapping key reads: the keys still under an old one.
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.personalKeys, "kid")} ON ${tables.personalKeys} ("kid", "person")`,
+  // When the rotation is next due while every key it has left is held.
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.personalKeys, "held")} ON ${tables.personalKeys} ("held_until") WHERE "held_until" IS NOT NULL`,
   `CREATE TABLE IF NOT EXISTS ${tables.persons} (
     "person" TEXT PRIMARY KEY,
     "restricted_since" TEXT,
     "position" INTEGER NOT NULL DEFAULT 0,
     "last_active_at" TEXT,
-    "forgotten_at" TEXT
+    "forgotten_at" TEXT,
+    "held_until" TEXT,
+    "attempts" INTEGER NOT NULL DEFAULT 0
   )`,
   // What a retention sweep reads, least recently active first.
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.persons, "idle")} ON ${tables.persons} ("last_active_at", "person") WHERE "last_active_at" IS NOT NULL AND "forgotten_at" IS NULL AND "restricted_since" IS NULL`,
+  // When the sweep is next due while the persons it has left are held.
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.persons, "held")} ON ${tables.persons} ("held_until") WHERE "last_active_at" IS NOT NULL AND "forgotten_at" IS NULL AND "restricted_since" IS NULL AND "held_until" IS NOT NULL`,
   `CREATE TABLE IF NOT EXISTS ${tables.snapshots} (
     "aggregate_type" TEXT NOT NULL,
     "aggregate_id" TEXT NOT NULL,

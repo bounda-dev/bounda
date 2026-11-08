@@ -15,7 +15,7 @@ import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { isRecord, mergeFields } from "../shared/merge-fields.ts";
 import { withTimeout } from "../shared/timeout.ts";
 import { withPorts } from "../shared/with-ports.ts";
-import { ATTRIBUTES, traced } from "../telemetry.ts";
+import { ATTRIBUTES, actorAttribute, traced } from "../telemetry.ts";
 import type { UnitStores } from "../unit-of-work/unit-of-work.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
 import { afterFrom, type Deadline } from "./deadlines.ts";
@@ -174,12 +174,8 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
       subject: event.id,
       retryId,
     });
-    const reaction = reactionFor(
-      process,
-      { ...causedBy(event), ...actedBy(actor) },
-      idempotencyKey,
-      within,
-    );
+    const context = { ...causedBy(event), ...actedBy(actor) };
+    const reaction = reactionFor(process, context, idempotencyKey, within);
     return runOf(reaction, async () => {
       const { returned } = await traced({
         name: `bounda.process ${process.name}`,
@@ -191,6 +187,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
           [ATTRIBUTES.aggregateId]: event.aggregateId,
           [ATTRIBUTES.correlationId]: event.metadata.correlationId,
           [ATTRIBUTES.attempt]: attempt,
+          ...actorAttribute(context.actor),
         },
         run: () =>
           withTimeout({
@@ -253,6 +250,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
           [ATTRIBUTES.aggregateType]: process.aggregate,
           [ATTRIBUTES.aggregateId]: instanceId,
           [ATTRIBUTES.correlationId]: context.correlationId,
+          ...actorAttribute(context.actor),
         },
         run: () =>
           withTimeout({

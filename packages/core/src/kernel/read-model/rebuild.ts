@@ -106,14 +106,18 @@ export const pendingRebuilds: PendingRebuildsFunction = async (checkpointStore) 
  * the next call, unless the read model's fields or projections changed meanwhile: then it starts
  * again from a fresh shadow.
  */
-export const rebuildReadModel: RebuildReadModelFunction = async ({ env = {}, ...args }) =>
-  rebuildReadModelWith({
-    ...args,
-    wrapping: await buildPersonalKeyWrapping({
-      definition: resolveConfig(args.config).runtime.personalData.keyWrapper,
-      env,
-    }),
+export const rebuildReadModel: RebuildReadModelFunction = async ({ env = {}, ...args }) => {
+  const wrapping = await buildPersonalKeyWrapping({
+    definition: resolveConfig(args.config).runtime.personalData.keyWrapper,
+    env,
+    clock: systemClock,
   });
+  try {
+    return await rebuildReadModelWith({ ...args, wrapping });
+  } finally {
+    wrapping.close();
+  }
+};
 
 export interface RebuildReadModelWithArgs extends Omit<RebuildReadModelArgs, "env"> {
   readonly wrapping: PersonalKeyWrapping;

@@ -1,4 +1,6 @@
 import type {
+  AccessOutcome,
+  AfterOptions,
   AppRegistry,
   BoundaApp,
   BoundaClient,
@@ -57,6 +59,7 @@ import type {
   ProcessingRestrictionLiftedEvent,
   ProcessingRestrictionLiftedPayload,
   QueriesFacade,
+  RangeFilter,
   ReactionDispatchResult,
   ReactionForgetFunction,
   ReadClient,
@@ -66,9 +69,11 @@ import type {
   RejectionCodeOf,
   RemovedDeadLetter,
   ScheduledDispatch,
+  SetFilter,
   StoredDispatch,
   StoredEvent,
   Table,
+  Where,
 } from "@bounda-dev/core";
 import {
   checkActor,
@@ -275,6 +280,15 @@ describe("ports", () => {
     expectTypeOf<ReturnType<InventoryHttp["create"]>>().toEqualTypeOf<
       Inventory | Promise<Inventory>
     >();
+  });
+
+  it("type a clock's waits, taking one that may let the process go, and a clock that ignores it", () => {
+    expectTypeOf<Parameters<Clock["after"]>[2]>().toEqualTypeOf<AfterOptions | undefined>();
+    expectTypeOf<AfterOptions>().toEqualTypeOf<{ readonly background?: boolean }>();
+    expectTypeOf<{
+      now(): Date;
+      after(milliseconds: number, callback: () => void): () => void;
+    }>().toExtend<Clock>();
   });
 
   it("reach a read model's query handlers, and neither its repository nor its projections", () => {
@@ -649,7 +663,12 @@ describe("personal data", () => {
       readonly scheduledCommands: number;
       readonly deadLetters: number;
       readonly readModelRows: number;
-    }>();
+    } | null>();
+    expectTypeOf<PersonalDataAccess["outcome"]>().toEqualTypeOf<AccessOutcome>();
+    expectTypeOf<AccessOutcome>().toEqualTypeOf<"ok" | "failed">();
+    expectTypeOf<
+      Extract<PersonalDataAccess, { operation: "query" }>["unattributed"]
+    >().toEqualTypeOf<boolean>();
     expectTypeOf(MAX_ACCESS_PERSONS).toEqualTypeOf<number>();
   });
 
@@ -905,6 +924,52 @@ describe("read models", () => {
       readonly OrderSummaryRow[]
     >();
     expectTypeOf<GetOrder.RepositoryArgs["orderId"]>().toEqualTypeOf<string>();
+  });
+
+  it("hand a query's repository and handler the actor of the client that asked", () => {
+    expectTypeOf<GetOrder.HandlerArgs["actor"]>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<GetOrder.RepositoryArgs["actor"]>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<CustomerOverview.HandlerArgs["actor"]>().toEqualTypeOf<string | undefined>();
+  });
+
+  it("filter a table by value or by the operators of each field's type", () => {
+    type FindMany = Parameters<GetOrder.HandlerArgs["table"]["findMany"]>[0];
+    expectTypeOf<NonNullable<FindMany>["where"]>().toEqualTypeOf<
+      Where<OrderSummaryRow> | undefined
+    >();
+    expectTypeOf<Where<OrderSummaryRow>["total"]>().toEqualTypeOf<
+      number | RangeFilter<number> | undefined
+    >();
+    expectTypeOf<Where<OrderSummaryRow>["orderId"]>().toEqualTypeOf<
+      string | RangeFilter<string> | undefined
+    >();
+    expectTypeOf<Where<OrderSummaryRow>["paidAt"]>().toEqualTypeOf<
+      Date | null | RangeFilter<Date> | undefined
+    >();
+    interface Flags {
+      readonly status: "placed" | "paid";
+      readonly active: boolean;
+      readonly archived?: boolean;
+      readonly tags: readonly string[];
+    }
+    expectTypeOf<Where<Flags>["status"]>().toEqualTypeOf<
+      "placed" | "paid" | RangeFilter<"placed" | "paid"> | undefined
+    >();
+    expectTypeOf<Where<Flags>["active"]>().toEqualTypeOf<
+      boolean | SetFilter<boolean> | undefined
+    >();
+    expectTypeOf<Where<Flags>["archived"]>().toEqualTypeOf<
+      boolean | null | SetFilter<boolean> | undefined
+    >();
+    expectTypeOf<Where<Flags>["tags"]>().toEqualTypeOf<readonly string[] | undefined>();
+    expectTypeOf<SetFilter<boolean>>().toEqualTypeOf<{
+      readonly ne?: boolean | null | undefined;
+      readonly in?: readonly boolean[] | undefined;
+    }>();
+    expectTypeOf<Parameters<Table<Flags>["update"]>[0]>().toEqualTypeOf<Where<Flags>>();
+    expectTypeOf<Parameters<Table<Flags>["delete"]>[0]>().toEqualTypeOf<Where<Flags>>();
+    expectTypeOf<Parameters<Table<Flags>["findOne"]>[0]>().toEqualTypeOf<Where<Flags>>();
+    expectTypeOf<Parameters<Table<Flags>["count"]>[0]>().toEqualTypeOf<Where<Flags> | undefined>();
   });
 
   it("let a query compose other queries through the typed facade", () => {

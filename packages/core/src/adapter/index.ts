@@ -49,6 +49,7 @@ export type {
   ReadForgetLedgerArgs,
 } from "./storage/forget-ledger.ts";
 export { byForgetLedgerOrder } from "./storage/forget-ledger.ts";
+export type { Hold } from "./storage/hold.ts";
 export type {
   DispatchOutcome,
   GetIdempotencyRecordArgs,
@@ -67,10 +68,16 @@ export type {
   RenewClaimArgs,
   SettleClaimArgs,
 } from "./storage/inbox-ledger.ts";
-export type { PersonStore, StoredPerson } from "./storage/person-store.ts";
+export type {
+  ListIdleArgs,
+  PersonActivity,
+  PersonStore,
+  StoredPerson,
+} from "./storage/person-store.ts";
 export type {
   KeyedPerson,
   ListWrappedUnderArgs,
+  NextKeyHoldEndArgs,
   PersonalEnvelope,
   PersonalKeyRow,
   PersonalKeyStore,
@@ -92,4 +99,13 @@ export type {
   Scheduler,
 } from "./storage/scheduler.ts";
 export type { Snapshot, SnapshotStore } from "./storage/snapshot-store.ts";
-export type { FindManyArgs, ReadClient, Table, TableOrder } from "./storage/table.ts";
+export type {
+  FieldFilter,
+  FindManyArgs,
+  RangeFilter,
+  ReadClient,
+  SetFilter,
+  Table,
+  TableOrder,
+  Where,
+} from "./storage/table.ts";

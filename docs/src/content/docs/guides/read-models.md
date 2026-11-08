@@ -1,6 +1,6 @@
 ---
 title: Read models
-description: The table a read model declares, the projections that fill it from events, the queries that read it, and the ports its queries may call.
+description: The table a read model declares, the projections that fill it from events, the queries that read it and filter it, and the ports its queries may call.
 sidebar:
   order: 1
 ---
@@ -67,6 +67,59 @@ A projection of an event with a field marked `personal` sees it as `T | null`, a
 then projects `PersonalDataForgotten` too, from `projections/bounda/personal-data-forgotten.ts`:
 see [Personal data](/guides/personal-data/#personal-data-in-read-models).
 
+## The table
+
+Projections and queries receive `table`, typed from the view. `upsert` and `insert` take a whole
+row, `update(where, patch)` sets the fields of `patch` in the rows that match, `delete(where)`
+removes them, and `findOne(where)`, `findMany({ where, orderBy, limit, offset })` and
+`count(where)` read. Every write is idempotent, so a redelivered event does no harm: `upsert`
+replaces, `insert` leaves a primary key already there alone, and `update` and `delete` do nothing
+when no row matches.
+
+A `where` names fields that must all match. Each takes a value, matched by equality (`null` for an
+optional field without one), or operators:
+
+| Operator | Matches | On |
+| --- | --- | --- |
+| `gt`, `gte`, `lt`, `lte` | rows above or below the operand; none without a value | strings, numbers, dates |
+| `ne` | rows with any other value, and those without one; `ne: null`, those with one | strings, numbers, dates, booleans |
+| `in` | rows with one of the values; `in: []` matches none | strings, numbers, dates, booleans |
+
+```ts
+const orders = await table.findMany({
+  where: {
+    customerId,
+    paidAt: { gte: from, lt: to },
+    status: { in: ["paid", "shipped"] },
+    total: { gt: 0 },
+  },
+  orderBy: { field: "paidAt", direction: "desc" },
+  limit: 20,
+});
+```
+
+The operators of one field all hold, and one left `undefined` adds nothing, so an optional bound
+passes straight through. A field whose operators have no value at all is refused with
+`ConfigurationError` rather than matching every row, so a missing list in
+`delete({ orderId: { in: ids } })` cannot empty the table: leave the field out to match any row.
+A `json` field matches by equality only, whatever its value, and cannot be
+the primary key. Strings compare as `orderBy` sorts them: by code point in SQLite and in memory, by
+the column's collation in PostgreSQL. The types refuse an operator a field has no use for, a range
+on a boolean or any operator on JSON, and the runtime refuses a field or an operator the view does
+not know with `ConfigurationError`.
+
+`offset` pages through rows as they are at each call, so a projection that writes between two
+pages can make a row skip or repeat. To page through rows that keep changing, page by the primary
+key instead:
+
+```ts
+const page = await table.findMany({
+  where: { customerId, orderId: { gt: lastOrderId } },
+  orderBy: { field: "orderId", direction: "asc" },
+  limit: 50,
+});
+```
+
 ## Queries
 
 A query `queries/<name>.ts` has an optional `payload`, an optional `repository` that reads
@@ -85,6 +138,27 @@ export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData
 
 Payload fields with a `.default()` are optional for whoever calls the command or query and
 always present in the handler: callers see the schema's input type, handlers its output type.
+
+A query run through a client bound with
+[`as(actor)`](/concepts/ids-causation-and-correlation/#who-acts) receives that `actor` in its
+`repository` and its `handler`, `undefined` when the client names nobody, so it can read only what
+whoever asks may see:
+
+```ts
+// app/read/support-tickets/queries/my-tickets.ts
+import type { Query } from "./+types/my-tickets";
+
+export const repository = ({ table, actor }: Query.RepositoryArgs) =>
+  actor === undefined
+    ? []
+    : table.findMany({ where: { assignee: actor, status: { ne: "closed" } } });
+
+export const handler = ({ repositoryData }: Query.HandlerArgs) => repositoryData;
+```
+
+The queries a handler composes run as the same actor. A query with a `repository` cannot name a
+payload field `client`, `table` or `actor`, which the repository receives as its own: the app
+refuses to start.
 
 The root of a read model is read like an aggregate's, without events: `view.ts`, the ports, and
 any other module or directory the projections and queries share, which the generator leaves

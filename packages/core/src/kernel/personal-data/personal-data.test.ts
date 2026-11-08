@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Table } from "../../adapter/storage/table.ts";
 import {
   ConfigurationError,
@@ -18,7 +18,9 @@ import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
 import { createTestApp } from "../../testing/index.ts";
 import { createApp } from "../app.ts";
+import { rebuildReadModel } from "../read-model/rebuild.ts";
 import { isSealed } from "./crypto.ts";
+import { masterKey } from "./master-key.ts";
 
 interface CustomerState {
   readonly email: string | null;
@@ -298,6 +300,31 @@ describe("personal data in an app", () => {
     expect((await app.runUntilIdle()).idle).toBe(true);
     expect(erased).toEqual(["c-1"]);
     await app.stop();
+  });
+
+  it("lets go of the keys a rebuild of its own unwrapped once it is done", async () => {
+    const storage = memory();
+    const env = {
+      BOUNDA_MASTER_KEY: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64"),
+    };
+    const runtime = { personalData: { keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }) } };
+    const app = await createApp({ registry, config: { storage, runtime }, env });
+    await app.commands.registerCustomer(ana);
+    await app.runUntilIdle();
+    await app.stop();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const rebuilt = await rebuildReadModel({
+        registry,
+        config: { storage, runtime },
+        name: "customerDirectory",
+        env,
+      });
+      expect(rebuilt).toMatchObject({ done: true });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("rebuilds a read model from the sealed stream, reading what is still readable", async () => {
