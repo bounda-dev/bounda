@@ -10,7 +10,11 @@ import { SQLITE_BUSY_TIMEOUT_MS, switchToWal } from "./wal.ts";
 const SQLITE_BUSY = 5;
 
 const isBusy = (error: unknown): boolean =>
-  error instanceof Error && "errcode" in error && error.errcode === SQLITE_BUSY;
+  error instanceof Error &&
+  "errcode" in error &&
+  typeof error.errcode === "number" &&
+  // An extended code, such as SQLITE_BUSY_RECOVERY, keeps the primary one in its low byte.
+  error.errcode % 256 === SQLITE_BUSY;
 
 const bind = (params: readonly unknown[]): SQLInputValue[] =>
   params.map((value) => (typeof value === "boolean" ? Number(value) : value)) as SQLInputValue[];
@@ -38,6 +42,8 @@ export const createNodeSqliteAdapter: CreateNodeSqliteAdapterFunction = (path = 
     path === ":memory:"
       ? Promise.resolve()
       : switchToWal({ execute: async (sql) => db.exec(sql), isBusy });
+  // Rejects, when the switch fails, through every statement awaiting it; never unhandled.
+  ready.catch(() => undefined);
   let opened = 0;
   const executor: SqlExecutor = {
     run: async (sql, params) => {
