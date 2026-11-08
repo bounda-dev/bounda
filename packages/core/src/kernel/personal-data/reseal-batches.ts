@@ -1,15 +1,11 @@
 import type { Storage, StorageTransaction } from "../../adapter/adapter.ts";
 import type { StoredDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
-import {
-  type KeyedPerson,
-  keyedPersonId,
-  type SealedValue,
-} from "../../adapter/storage/personal-key-store.ts";
+import { type KeyedPerson, keyedPersonId } from "../../adapter/storage/personal-key-store.ts";
 import type { ScheduledCommand } from "../../adapter/storage/scheduler.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { ProcessesRuntime } from "../process/build-processes.ts";
-import { type PersonalKey, seal } from "./crypto.ts";
+import { seal } from "./crypto.ts";
 import { personOfEvent } from "./persons.ts";
 import {
   createResealKeys,
@@ -96,10 +92,12 @@ interface Owned<Item> {
 
 interface LetterPlan {
   readonly letter: StoredDeadLetter;
+  // Whom the letter names once resealed.
+  readonly person: string;
   readonly payload: ResealPlan<Record<string, unknown>> | null;
-  // Whom the text of the error is sealed for, when it is in the clear and the work names someone
+  // Whether the text of its error is sealed too: it is in the clear and the work names someone
   // now.
-  readonly text: string | null;
+  readonly text: boolean;
 }
 
 const qualified = (event: StoredEvent): string => `${event.aggregateType}.${event.type}`;
@@ -112,13 +110,6 @@ const mergedPersons = (
   merged.set(keyedPersonId(added), added);
   return [...merged.values()];
 };
-
-const sealText = (
-  text: string | SealedValue,
-  person: string,
-  key: PersonalKey,
-): Promise<SealedValue> | SealedValue =>
-  typeof text === "string" ? seal({ key, person, value: text }) : text;
 
 const unsealable = (count: number, types: Iterable<string>): Sealed => ({
   ...NOTHING_SEALED,
@@ -281,19 +272,20 @@ export const createResealBatches: CreateResealBatchesFunction = ({
             aggregateId: letter.aggregateId,
           })
         : null;
-    const payload = planned === null || planned === "unsealable" ? null : planned;
-    const clearText = letter.person === null && typeof letter.errorMessage === "string";
+    const payload = planned === "unsealable" ? null : planned;
+    // A letter that names nobody keeps its text in the clear.
     let text: string | null = null;
-    if (clearText && letter.kind === "scheduled") text = payload?.person ?? null;
-    else if (clearText && Date.parse(letter.lastFailedAt) < started) {
+    if (letter.person === null && letter.kind === "scheduled") text = payload?.person ?? null;
+    else if (letter.person === null && Date.parse(letter.lastFailedAt) < started) {
       text = await personOfWork(letter);
     }
-    if (payload === null && text === null) return planned === "unsealable" ? "unsealable" : null;
-    return { letter, payload, text };
+    const person = payload?.person ?? text;
+    if (person === null) return planned === "unsealable" ? "unsealable" : null;
+    return { letter, person, payload, text: text !== null };
   };
 
   const resealLetter = async (
-    { letter, payload, text }: LetterPlan,
+    { letter, person: named, payload, text }: LetterPlan,
     transaction: StorageTransaction,
     keys: ResealKeys,
   ): Promise<boolean> => {
@@ -308,12 +300,16 @@ export const createResealBatches: CreateResealBatchesFunction = ({
         fingerprint: chosen.key.fingerprint,
       });
     }
-    if (text !== null) {
-      const chosen = await keys.errorText(text, letter.lastFailedAt);
-      discarded ||= chosen.discarded;
-      person = text;
-      errorMessage = await sealText(errorMessage, text, chosen.key);
-      if (errorStack !== undefined) errorStack = await sealText(errorStack, text, chosen.key);
+    if (text) {
+      const { key, discarded: thrownAway } = await keys.errorText(named, letter.lastFailedAt);
+      discarded ||= thrownAway;
+      person = named;
+      if (typeof errorMessage === "string") {
+        errorMessage = await seal({ key, person: named, value: errorMessage });
+      }
+      if (typeof errorStack === "string") {
+        errorStack = await seal({ key, person: named, value: errorStack });
+      }
     }
     await transaction.deadLetterStore.reseal(letter.id, {
       person,
@@ -331,10 +327,7 @@ export const createResealBatches: CreateResealBatchesFunction = ({
     for (const letter of batch) {
       const plan = await planLetter(letter, started);
       if (plan === "unsealable") nameless.push(letter);
-      else if (plan !== null) {
-        const person = plan.payload?.person ?? plan.text;
-        if (person !== null) owned.push({ person, item: plan });
-      }
+      else if (plan !== null) owned.push({ person: plan.person, item: plan });
     }
     const sealed = await perPerson(owned, async (items, transaction, keys) => {
       let discarded = 0;

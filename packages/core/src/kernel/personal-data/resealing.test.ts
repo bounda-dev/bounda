@@ -88,6 +88,26 @@ describe("marksFingerprint", () => {
     ].map(marksFingerprint);
     expect(new Set([one, ...others]).size).toBe(5);
   });
+
+  it("names what each mark belongs to, and is the same whatever order the registry lists them in", () => {
+    const marks = { person: null, fields: ["email"] };
+    const fingerprintOf = (marked: Marked) => marksFingerprint(runtimes(marked));
+    expect(fingerprintOf({ events: { A: marks, B: null } })).not.toEqual(
+      fingerprintOf({ events: { A: null, B: marks } }),
+    );
+    expect(fingerprintOf({ commands: { A: marks, B: null } })).not.toEqual(
+      fingerprintOf({ commands: { A: null, B: marks } }),
+    );
+    expect(fingerprintOf({ events: { A: marks, B: { person: "x", fields: [] } } })).toEqual(
+      fingerprintOf({ events: { B: { person: "x", fields: [] }, A: marks } }),
+    );
+    const named = (name: string) =>
+      marksFingerprint({
+        aggregates: runtimes({}).aggregates,
+        processes: { all: [{ name, personal: marks }] } as unknown as Pick<ProcessesRuntime, "all">,
+      });
+    expect(named("a.one")).not.toEqual(named("a.two"));
+  });
 });
 
 describe("planEventReseal", () => {
@@ -182,6 +202,18 @@ describe("planEventReseal", () => {
     expect(lifecycle({ customerId: null, email: null })).toBeNull();
     expect(lifecycle({ customerId: null, email: "ada@example.com" })).toBe("unsealable");
     expect(lifecycle({ customerId: "c-1", email: null }, "c-1")).toBeNull();
+    expect(lifecycle({ customerId: "c-1" }, "c-1")).toBeNull();
+    expect(
+      planEventReseal({
+        event: event({
+          aggregateType: "process:unknown.process",
+          type: "ProcessHandled",
+          payload: { state: { email: "a" } },
+        }),
+        aggregates,
+        processes,
+      }),
+    ).toBeNull();
     expect(
       planEventReseal({
         event: event({
@@ -290,6 +322,13 @@ describe("createResealKeys", () => {
       expectedVersion: 0,
       events: [forgotten("back", 1)],
     });
+    // A restriction after the forgetting is no forgetting.
+    await storage.eventStore.append({
+      aggregateType: BOUNDA_AGGREGATE,
+      aggregateId: "back",
+      expectedVersion: 1,
+      events: [{ ...forgotten("back", 2), type: "ProcessingRestricted", id: "restricted-back" }],
+    });
     const kept = await storage.personalKeys.add("kept", await generatePersonalKey());
     const keys = createResealKeys({ transaction: storage, keys: storage.personalKeys });
     return { storage, keys, back, kept };
@@ -301,6 +340,8 @@ describe("createResealKeys", () => {
     expect(await storage.personalKeys.get("gone")).toBeNull();
     const again = await keys.event("gone", 3);
     expect(again.key).toBe((await keys.event("gone", 1)).key);
+    expect(await keys.event("back", 4)).toMatchObject({ discarded: true });
+    expect(await keys.event("back", 5)).toMatchObject({ discarded: false });
     expect(await keys.event("back", 6)).toMatchObject({
       discarded: false,
       key: { fingerprint: back.fingerprint },
@@ -324,6 +365,9 @@ describe("createResealKeys", () => {
       discarded: false,
       key: { fingerprint: back.fingerprint },
     });
+    expect(await keys.payload("back", "2026-01-02T00:00:00.000Z")).toMatchObject({
+      discarded: false,
+    });
     expect(await keys.payload("back", null)).toMatchObject({ discarded: false });
     expect(await keys.payload("gone", null)).toMatchObject({ discarded: true });
     expect(await storage.personalKeys.get("gone")).toBeNull();
@@ -341,6 +385,9 @@ describe("createResealKeys", () => {
       discarded: true,
     });
     expect(await keys.errorText("back", "2026-01-03T00:00:00.000Z")).toMatchObject({
+      discarded: false,
+    });
+    expect(await keys.errorText("back", "2026-01-02T00:00:00.000Z")).toMatchObject({
       discarded: false,
     });
     expect(await keys.errorText("new", "2026-01-01T00:00:00.000Z")).toMatchObject({

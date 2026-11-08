@@ -531,6 +531,14 @@ export const eventStoreContract: EventStoreContractFunction = ({ create, concurr
             payload: { city: "Bilbao" },
             person: "c-2",
           }),
+          pendingEvent({
+            aggregateType: "customer",
+            aggregateId: "c-1",
+            version: 3,
+            type: "CustomerNoted",
+            payload: {},
+            person: "c-2",
+          }),
         ],
       });
       await store.append({
@@ -539,7 +547,10 @@ export const eventStoreContract: EventStoreContractFunction = ({ create, concurr
         expectedVersion: 0,
         events: [pendingEvent({ aggregateId: "1", version: 1 })],
       });
-      const [registered, moved, placed] = await store.readAll({ afterPosition: 0, limit: 10 });
+      const [registered, moved, noted, placed] = await store.readAll({
+        afterPosition: 0,
+        limit: 10,
+      });
       const sealed = { $personal: { person: "c-1", key: "k", iv: "iv", data: "data" } };
       await store.reseal([
         { position: 1, payload: { email: sealed }, person: "c-1" },
@@ -551,11 +562,12 @@ export const eventStoreContract: EventStoreContractFunction = ({ create, concurr
       expect(written).toEqual([
         { ...registered, payload: { email: sealed }, person: "c-1" },
         { ...moved, person: null },
+        noted,
         placed,
       ]);
       expect(await store.load({ aggregateType: "customer", aggregateId: "c-1" })).toEqual({
-        events: written.slice(0, 2),
-        version: 2,
+        events: written.slice(0, 3),
+        version: 3,
       });
       expect(
         await store.readOne({
@@ -567,8 +579,16 @@ export const eventStoreContract: EventStoreContractFunction = ({ create, concurr
       expect(await store.readByPerson({ person: "c-1", afterPosition: 0, limit: 10 })).toEqual([
         written[0],
       ]);
-      expect(await store.readByPerson({ person: "c-2", afterPosition: 0, limit: 10 })).toEqual([]);
-      expect(await store.lastPosition()).toBe(3);
+      expect(await store.readByPerson({ person: "c-2", afterPosition: 0, limit: 10 })).toEqual([
+        noted,
+      ]);
+      await store.reseal([{ position: 4, payload: placed?.payload, person: "c-1" }]);
+      expect(
+        (await store.readByPerson({ person: "c-1", afterPosition: 0, limit: 10 })).map(
+          (event) => event.position,
+        ),
+      ).toEqual([1, 4]);
+      expect(await store.lastPosition()).toBe(4);
     });
 
     it("reseals nothing for an empty list", async () => {

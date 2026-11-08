@@ -700,6 +700,10 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
       expect(kept?.command.payload).toEqual(newer);
       expect(kept).not.toHaveProperty("persons");
       expect(await scheduler.listByPerson("c-1")).toEqual([]);
+      await scheduler.reseal({ dedupeKey: "a", from: newer, payload: { email: "x" }, persons: [] });
+      const [rewritten] = await scheduler.list();
+      expect(rewritten?.command.payload).toEqual({ email: "x" });
+      expect(rewritten).not.toHaveProperty("persons");
     });
 
     it("lists pending commands ordered by execution time with paging", async () => {

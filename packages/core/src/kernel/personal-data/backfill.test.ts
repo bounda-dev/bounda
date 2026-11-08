@@ -251,6 +251,8 @@ describe.each(adapters)("the backfill of personal data on %s", (_name, adapterOf
     await after.app.runUntilIdle();
 
     const key = await storage.personalKeys.get("c-1");
+    // Without a retention, nobody's activity is recorded.
+    expect(await storage.persons.get("c-1")).toBeNull();
     const events = await raw(adapter);
     const [customer] = registered(events);
     expect(customer?.person).toBe("c-1");

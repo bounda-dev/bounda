@@ -44,7 +44,9 @@ const aggregates = {
   },
 } as unknown as AggregatesRuntime;
 
-const processes = { byName: {} } as unknown as Pick<ProcessesRuntime, "byName">;
+const processes = {
+  byName: { "signup.onboarding": { personal: { person: "customerId", fields: ["email"] } } },
+} as unknown as Pick<ProcessesRuntime, "byName">;
 
 const event = (
   aggregateType: string,
@@ -188,6 +190,24 @@ describe("resealing a batch of events", () => {
   });
 });
 
+describe("resealing a process's lifecycle events", () => {
+  it("seals their state under whom it names, with no snapshot to drop", async () => {
+    const { storage, reseal, append, opened } = await setup();
+    await append(
+      event("process:signup.onboarding", "s-1", 1, "ProcessHandled", {
+        step: "x",
+        state: { customerId: "c-1", email: "ada@example.com" },
+      }),
+    );
+    expect(await reseal.events(await all(storage))).toMatchObject({ resealed: 1 });
+    const [handled] = await all(storage);
+    expect(handled?.person).toBe("c-1");
+    expect(await opened("c-1", fieldOf(fieldOf(handled?.payload, "state"), "email"))).toBe(
+      "ada@example.com",
+    );
+  });
+});
+
 describe("resealing scheduled commands", () => {
   it("seals each payload under its person, keeping the persons it named, and counts what names nobody", async () => {
     const { storage, reseal, append, opened } = await setup();
@@ -322,7 +342,8 @@ describe("resealing dead letters", () => {
       event("customer", "c-1", 1, "CustomerRegistered", { email: "ada@example.com" }),
       forgotten("c-1"),
     );
-    await storage.deadLetterStore.add(letter("policy", { errorStack: undefined }));
+    const { errorStack: _stack, ...stackless } = letter("policy");
+    await storage.deadLetterStore.add(stackless);
     await storage.deadLetterStore.add(
       letter("scheduled", {
         kind: "scheduled",
@@ -339,5 +360,66 @@ describe("resealing dead letters", () => {
     const policy = await storage.deadLetterStore.get("policy");
     expect(isSealed(policy?.errorMessage)).toBe(true);
     expect(policy).not.toHaveProperty("errorStack");
+  });
+
+  it("seals the payload of a letter that names its person already, leaving its text as it is", async () => {
+    const { storage, reseal, opened } = await setup();
+    const key = await storage.personalKeys.add("c-1", await generatePersonalKey());
+    const sealedText = { $personal: { person: "c-1", key: key.fingerprint, iv: "iv", data: "d" } };
+    await storage.deadLetterStore.add(
+      letter("scheduled", {
+        kind: "scheduled",
+        handler: "RemindCustomer",
+        eventId: "command:r",
+        person: "c-1",
+        errorMessage: sealedText,
+        errorStack: sealedText,
+        payload: { email: "ada@example.com" },
+      }),
+    );
+    await storage.deadLetterStore.add(
+      letter("unmarked", {
+        kind: "scheduled",
+        handler: "Unmarked",
+        eventId: "command:u",
+        payload: { email: "ada@example.com" },
+      }),
+    );
+    expect(await reseal.letters(await storage.deadLetterStore.list(), started)).toMatchObject({
+      resealed: 1,
+    });
+    const resealed = await storage.deadLetterStore.get("scheduled");
+    expect(resealed).toMatchObject({
+      person: "c-1",
+      errorMessage: sealedText,
+      errorStack: sealedText,
+    });
+    expect(await opened("c-1", fieldOf(resealed?.payload, "email"))).toBe("ada@example.com");
+    expect((await storage.deadLetterStore.get("unmarked"))?.payload).toEqual({
+      email: "ada@example.com",
+    });
+  });
+
+  it("counts a letter discarded when its payload is, though its text opens under the key the person holds again", async () => {
+    const { storage, reseal, append, opened } = await setup();
+    await append(forgotten("c-1"));
+    await storage.personalKeys.add("c-1", await generatePersonalKey());
+    await storage.deadLetterStore.add(
+      letter("scheduled", {
+        kind: "scheduled",
+        handler: "RemindCustomer",
+        eventId: "command:r",
+        payload: { email: "ada@example.com" },
+        firstFailedAt: "2026-01-01T00:00:00.000Z",
+        lastFailedAt: "2026-01-09T00:00:00.000Z",
+      }),
+    );
+    expect(await reseal.letters(await storage.deadLetterStore.list(), started)).toMatchObject({
+      resealed: 1,
+      discarded: 1,
+    });
+    const resealed = await storage.deadLetterStore.get("scheduled");
+    expect(await opened("c-1", fieldOf(resealed?.payload, "email"))).toBeNull();
+    expect(await opened("c-1", resealed?.errorMessage)).toBe("cannot greet ada@example.com");
   });
 });

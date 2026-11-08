@@ -257,9 +257,10 @@ const planned = <Value>(
   person: string | null,
   seal: (person: string, key: PersonalKey) => Promise<Value>,
 ): ResealPlanOf<Value> => {
-  const nameless = person === null || (event.person !== null && event.person !== person);
-  if (clear.length === 0 && (event.person !== null || person === null)) return null;
-  if (nameless) return clear.length === 0 ? null : "unsealable";
+  if (clear.length === 0 && event.person !== null) return null;
+  if (person === null || (event.person !== null && event.person !== person)) {
+    return clear.length === 0 ? null : "unsealable";
+  }
   return { person, seal: (key) => seal(person, key) };
 };
 

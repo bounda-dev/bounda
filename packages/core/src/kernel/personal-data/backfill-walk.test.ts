@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import type { Storage } from "../../adapter/adapter.ts";
 import type { PendingEvent } from "../../adapter/storage/event-store.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
@@ -7,6 +7,8 @@ import { memory } from "../../memory/index.ts";
 import { BOUNDA_AGGREGATE, PERSONAL_DATA_FORGOTTEN_EVENT } from "../../modules/bounda-events.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { ProcessesRuntime } from "../process/build-processes.ts";
+import { ATTRIBUTES } from "../telemetry.ts";
+import { installFakeTelemetry } from "../telemetry-fake.ts";
 import {
   BACKFILL_EXPIRY_MS,
   BACKFILL_FOLLOW_INTERVAL_MS,
@@ -69,6 +71,7 @@ const recording = () => {
   const logs: [string, string, unknown][] = [];
   const logger: Logger = {
     ...silentLogger,
+    debug: (message, fields) => logs.push(["debug", message, fields]),
     info: (message, fields) => logs.push(["info", message, fields]),
     warn: (message, fields) => logs.push(["warn", message, fields]),
     error: (message, fields) => logs.push(["error", message, fields]),
@@ -150,7 +153,7 @@ describe("the backfill's walk", () => {
       "m1:stores": START.getTime(),
       "m1:lease": START.getTime() + BACKFILL_LEASE_MS,
     });
-    expect(logs).toEqual([
+    expect(logs.filter(([level]) => level !== "debug")).toEqual([
       [
         "warn",
         "personal data of persons forgotten before it was marked is sealed for good; rebuild the read models that project it",
@@ -186,6 +189,102 @@ describe("the backfill's walk", () => {
     ]);
   });
 
+  it("goes through the stores in pages, counting what it sealed of them, on the pass that catches up", async () => {
+    const telemetry = installFakeTelemetry();
+    onTestFinished(() => telemetry.restore());
+    const storage = await memory().createStorage();
+    await append(
+      storage,
+      pending("customer", "c-1", "CustomerRegistered", { email: "a" }),
+      pending(BOUNDA_AGGREGATE, "c-9", PERSONAL_DATA_FORGOTTEN_EVENT, { personId: "c-9" }),
+    );
+    const context = { correlationId: "c", causationId: "c", depth: 0 };
+    for (const [id, customerId] of [
+      ["s-1", "c-1"],
+      ["s-2", "c-1"],
+      ["s-3", "c-9"],
+    ] as const) {
+      await storage.scheduler.schedule({
+        dedupeKey: id,
+        command: {
+          type: "ShipOrder",
+          aggregateId: id,
+          payload: { customerId, address: id },
+        },
+        executeAt: START,
+        context,
+      });
+    }
+    const letter = {
+      kind: "scheduled" as const,
+      handler: "ShipOrder",
+      eventType: "ShipOrder",
+      aggregateType: "order",
+      aggregateId: "o-1",
+      person: null,
+      errorType: "terminal" as const,
+      errorName: "Error",
+      errorMessage: "boom",
+      attempts: 1,
+      firstFailedAt: START.toISOString(),
+      lastFailedAt: START.toISOString(),
+    };
+    await storage.deadLetterStore.add({
+      ...letter,
+      id: "d-1",
+      eventId: "command:d-1",
+      payload: { customerId: "c-9", address: "x" },
+    });
+    await storage.deadLetterStore.add({
+      ...letter,
+      id: "d-2",
+      eventId: "command:d-2",
+      payload: { customerId: "", address: "x" },
+    });
+    await storage.deadLetterStore.add({
+      ...letter,
+      id: "d-3",
+      eventId: "command:d-3",
+      payload: { customerId: "c-1", address: "x" },
+    });
+    const { logs, logger } = recording();
+    const { backfill } = walker({ storage, batchSize: 2, logger });
+    expect(await backfill.status(0)).toEqual({ position: 0, caughtUp: false });
+    expect(await backfill.sweep(START)).toBe(2);
+    expect(await backfill.sweep(START)).toBe(5);
+    expect(await backfill.status(2)).toEqual({ position: 2, caughtUp: true });
+    expect(await backfill.status(3)).toEqual({ position: 2, caughtUp: false });
+    expect(JSON.stringify(await storage.scheduler.list())).not.toContain('"address":"s-');
+    expect(logs).toContainEqual([
+      "debug",
+      "personal data written before its marks sealed",
+      { events: 1, afterPosition: 0, throughPosition: 2 },
+    ]);
+    expect(logs).toContainEqual([
+      "warn",
+      "commands stored before their marks name no person and stay in the clear",
+      { scheduledCommands: 0, deadLetters: 1, commandTypes: ["ShipOrder"] },
+    ]);
+    expect(logs).toContainEqual([
+      "info",
+      "personal data written before its marks is sealed",
+      {
+        marks: "m1",
+        events: 1,
+        discarded: 2,
+        unsealable: 1,
+        scheduledCommands: 3,
+        deadLetters: 2,
+      },
+    ]);
+    expect(telemetry.spans).toMatchObject([
+      {
+        name: "bounda.backfill",
+        attributes: { [ATTRIBUTES.afterPosition]: 0, [ATTRIBUTES.eventCount]: 2 },
+      },
+    ]);
+  });
+
   it("rests a follow interval at the head, then seals what came in the clear and goes through the stores again", async () => {
     const storage = await memory().createStorage();
     const { logs, logger } = recording();
@@ -197,6 +296,7 @@ describe("the backfill's walk", () => {
     const later = new Date(START.getTime() + BACKFILL_FOLLOW_INTERVAL_MS);
     expect(await backfill.sweep(later)).toBe(1);
     expect((await rows(storage))["m1:stores"]).toBe(later.getTime());
+    expect(logs.filter(([level]) => level === "warn")).toEqual([]);
     expect(logs.filter(([level]) => level === "info")).toEqual([
       [
         "info",
@@ -224,16 +324,34 @@ describe("the backfill's walk", () => {
     expect(await other.backfill.sweep(START)).toBe(0);
     expect(await other.backfill.nextDueAt()).toEqual(new Date(START.getTime() + BACKFILL_LEASE_MS));
     const half = START.getTime() + BACKFILL_LEASE_MS / 2;
-    expect(await one.backfill.sweep(new Date(START.getTime() + 1))).toBe(0);
+    expect(await one.backfill.sweep(START)).toBe(0);
     expect((await rows(storage))["m1:lease"]).toBe(START.getTime() + BACKFILL_LEASE_MS);
-    await one.backfill.sweep(new Date(half + 1));
-    expect((await rows(storage))["m1:lease"]).toBe(half + 1 + BACKFILL_LEASE_MS);
+    await one.backfill.sweep(new Date(half));
+    expect((await rows(storage))["m1:lease"]).toBe(half + BACKFILL_LEASE_MS);
     one.clock.set(new Date(half + 2));
     await one.backfill.release();
     expect((await rows(storage))["m1:lease"]).toBe(half + 2);
     await one.backfill.release();
     expect(await other.backfill.sweep(new Date(half + 3))).toBe(0);
     expect((await rows(storage))["m1:lease"]).toBe(half + 3 + BACKFILL_LEASE_MS);
+  });
+
+  it("walks nothing when another instance takes the lease first", async () => {
+    const base = await memory().createStorage();
+    await append(base, pending("customer", "c-1", "CustomerRegistered", { email: "a" }));
+    const storage: Storage = {
+      ...base,
+      checkpointStore: {
+        ...base.checkpointStore,
+        compareAndSet: async (subscriber, expected, position) =>
+          subscriber.endsWith(":lease")
+            ? false
+            : base.checkpointStore.compareAndSet(subscriber, expected, position),
+      },
+    };
+    const { backfill } = walker({ storage });
+    expect(await backfill.sweep(START)).toBe(0);
+    expect(await rows(base)).toEqual({});
   });
 
   it("takes a lease that lapsed, or one set by a clock ahead by more than a lease", async () => {
@@ -309,6 +427,24 @@ describe("the backfill's walk", () => {
     expect(left).not.toHaveProperty("m1:held-until");
   });
 
+  it("waits for the hold another instance set while this one was failing, counting no failure more", async () => {
+    const base = await memory().createStorage();
+    await append(base, pending("customer", "c-1", "CustomerRegistered", { email: "a" }));
+    const heldUntil = START.getTime() + 5 * HOLD_MS;
+    const storage: Storage = {
+      ...base,
+      transact: async () => {
+        await base.checkpointStore.set(`${BACKFILL_PREFIX}m1:held-until`, heldUntil);
+        await base.checkpointStore.set(`${BACKFILL_PREFIX}m1:attempts`, 3);
+        throw new Error("store is down");
+      },
+    };
+    const { backfill } = walker({ storage });
+    expect(await backfill.sweep(START)).toBe(0);
+    expect(await rows(base)).toMatchObject({ "m1:attempts": 3, "m1:held-until": heldUntil });
+    expect(await backfill.nextDueAt()).toEqual(new Date(heldUntil));
+  });
+
   it("pauses in this instance when the store cannot keep the hold", async () => {
     const base = await memory().createStorage();
     let broken = true;
@@ -334,6 +470,13 @@ describe("the backfill's walk", () => {
     expect(await backfill.nextDueAt()).toEqual(new Date(START.getTime() + HOLD_MS));
     expect(await backfill.sweep(new Date(START.getTime() + HOLD_MS))).toBe(0);
     expect(await backfill.nextDueAt()).toBeNull();
+    // Answered in full, the store's next failure waits as long as the first.
+    broken = true;
+    const again = START.getTime() + HOLD_MS + BACKFILL_FOLLOW_INTERVAL_MS;
+    expect(await backfill.sweep(new Date(again))).toBe(0);
+    broken = false;
+    expect(await backfill.sweep(new Date(again + HOLD_MS - 1))).toBe(0);
+    expect(logs.filter(([, message]) => message.includes("could not be sealed"))).toHaveLength(2);
   });
 
   it("logs a lease it could not give back, and gives none back it does not hold", async () => {
