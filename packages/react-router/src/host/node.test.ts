@@ -84,6 +84,18 @@ describe("createHost in Node", () => {
     booted.length = 0;
     host = createHost({
       registry,
+      importConfig: async () => ({ default: { storage } }),
+      consistency: "eventual",
+      errorText: "include",
+    });
+    await served(host);
+    expect(await booted[0]?.importConfig?.()).toEqual({
+      default: { storage, runtime: { telemetry: { errorText: "include" } } },
+    });
+    await host.dispose();
+    booted.length = 0;
+    host = createHost({
+      registry,
       importConfig: async () => ({}),
       consistency: "eventual",
       errorText: "include",
