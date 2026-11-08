@@ -27,6 +27,7 @@ export type {
   ListFailedDeadLettersArgs,
   NewDeadLetter,
   PurgeDeadLettersArgs,
+  ResealedDeadLetter,
   StoredDeadLetter,
 } from "./storage/dead-letter-store.ts";
 export type { EventListener, EventNotifier, Unsubscribe } from "./storage/event-notifier.ts";
@@ -39,6 +40,7 @@ export type {
   PendingEvent,
   ReadAllArgs,
   ReadOneArgs,
+  ResealedEvent,
 } from "./storage/event-store.ts";
 export type {
   ByForgetLedgerOrderFunction,
@@ -94,6 +96,7 @@ export type {
   ListScheduledArgs,
   NextDueAtArgs,
   RenewScheduledArgs,
+  ResealScheduledArgs,
   ScheduleArgs,
   ScheduledClaim,
   ScheduledCommand,

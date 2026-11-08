@@ -60,6 +60,19 @@ const sliced = () => env.SLICED_STORE.get(env.SLICED_STORE.newUniqueId());
 const objectLogs = (entries: readonly unknown[][]) =>
   entries.filter(([message]) => /^bounda (rebuild|alarm)/.test(String(message)));
 
+// Runs alarms until the walk over what was written before the personal data marks has caught up,
+// so a test of what an alarm wakes for next sees nothing else due.
+const backfilled = async (instance: {
+  lag(): Promise<{ ok: boolean; value?: { personalDataBackfill: { caughtUp: boolean } | null } }>;
+  alarm(): Promise<void>;
+}): Promise<void> => {
+  for (;;) {
+    const lag = await instance.lag();
+    if (lag.value?.personalDataBackfill?.caughtUp !== false) return;
+    await instance.alarm();
+  }
+};
+
 beforeEach(() => {
   logs.info.length = 0;
   logs.error.length = 0;
@@ -596,6 +609,8 @@ describe("a Bounda Durable Object", () => {
       for (const orderId of ["o-1", "o-2", "o-3"]) {
         await instance.command("placeOrder", { orderId, total: 5, customer: "ada" });
       }
+      await backfilled(instance);
+      logs.info.length = 0;
       const before = Date.now();
       const started = await instance.rebuildReadModel("orders");
       const alarms = [await state.storage.getAlarm()];
@@ -627,6 +642,8 @@ describe("a Bounda Durable Object", () => {
       await store.commands.placeOrder({ orderId, total: 5, customer: "ada" });
     }
     const failed = await runInDurableObject(stub, async (instance, state) => {
+      await backfilled(instance);
+      logs.info.length = 0;
       await instance.rebuildReadModel("orders");
       await instance.rebuildReadModel("customers");
       outage.projection = true;

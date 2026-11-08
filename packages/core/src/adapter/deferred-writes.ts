@@ -16,11 +16,11 @@ export interface DeferredWriteTarget {
   readonly inboxLedger: Pick<DeferredStores["inboxLedger"], "complete" | "fail">;
   readonly deadLetterStore: Pick<
     DeferredStores["deadLetterStore"],
-    "add" | "updateStatus" | "remove"
+    "add" | "updateStatus" | "remove" | "reseal"
   >;
   readonly scheduler: Pick<
     DeferredStores["scheduler"],
-    "schedule" | "cancel" | "complete" | "fail" | "defer"
+    "schedule" | "cancel" | "complete" | "fail" | "defer" | "reseal"
   >;
   readonly idempotencyStore: Pick<DeferredStores["idempotencyStore"], "put" | "forget">;
 }
@@ -102,6 +102,7 @@ export const deferWrites: DeferWritesFunction = ({
           letters.delete(id);
           recorded.push((target) => target.deadLetterStore.remove(id));
         },
+        reseal: later((target, id, letter) => target.deadLetterStore.reseal(id, letter)),
         listByPerson: deadLetterStore.listByPerson,
         forget: deadLetterStore.forget,
         firstResolvedAt: deadLetterStore.firstResolvedAt,
@@ -122,6 +123,7 @@ export const deferWrites: DeferWritesFunction = ({
         complete: later((target, claim) => target.scheduler.complete(claim)),
         fail: later((target, args) => target.scheduler.fail(args)),
         defer: later((target, args) => target.scheduler.defer(args)),
+        reseal: later((target, args) => target.scheduler.reseal(args)),
         renew: scheduler.renew,
         listByPerson: scheduler.listByPerson,
         forget: scheduler.forget,

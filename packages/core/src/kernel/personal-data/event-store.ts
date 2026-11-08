@@ -299,5 +299,7 @@ export const withPersonalData: WithPersonalDataFunction = ({
       return settled((await eventStore.readByPerson(args)).map((e) => unsealed(e, key, ignored)));
     },
     lastPosition: () => eventStore.lastPosition(),
+    // Written as given: whoever reseals an event has sealed its payload already.
+    reseal: (events) => eventStore.reseal(events),
   };
 };

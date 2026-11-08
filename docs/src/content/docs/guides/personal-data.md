@@ -1,6 +1,6 @@
 ---
 title: Personal data
-description: Mark the fields of an event, a process state or a read model that hold personal data, say whose they are, forget a person or export their data with one call, record who opened whose data, forget them after a retention or when a purpose ends, wrap their keys under a master key kept out of the database, and handle forgetting in every read model that showed them.
+description: Mark the fields of an event, a process state or a read model that hold personal data, say whose they are, seal what was written before a field was marked, forget a person or export their data with one call, record who opened whose data, forget them after a retention or when a purpose ends, wrap their keys under a master key kept out of the database, and handle forgetting in every read model that showed them.
 sidebar:
   order: 11
 ---
@@ -72,8 +72,8 @@ empty. The
 handler reads `command.payload.email` as a `string`, never `null`: a command whose person is
 forgotten never runs. A query's `PayloadArgs` has no `personal`, since a query is never stored.
 
-A command scheduled before its fields were marked keeps its payload as it was written, in the
-clear, and runs with it; `forget` cannot find it.
+A command scheduled before its fields were marked is sealed in place by the
+[backfill](#marking-a-field-later), and `forget` finds it from then on.
 
 ## In a process's state
 
@@ -117,7 +117,7 @@ events that name the person, with the fields of the state they carry; while thei
 [restricted](#restricting-processing), a step of the instance is refused before its handler runs;
 and a step that fails has its error text encrypted with the key of the person its event names,
 or else of the one the state names, which covers a deadline. A lifecycle event written before its
-state marked its fields keeps them in the clear.
+state marked its fields is sealed in place by the [backfill](#marking-a-field-later).
 
 ## What the types say
 
@@ -131,6 +131,63 @@ marked `.optional()` reads as `string | null | undefined`: absent, or forgotten.
 
 An [upcaster](/guides/changing-events/) runs on the payload after it is decrypted, so one that
 reads a personal field of an old shape must take `null` there too.
+
+## Marking a field later
+
+A field marked after events were written finds those events holding it in the clear, and naming
+nobody. The runtime fixes that in the background: the worker walks the whole stream from its first
+event and seals, in place, each value a field marked now holds in the clear, with the key of the
+person the marks name, who becomes the event's person. Then it does the same for the payloads of
+scheduled commands and dead letters, and for the error text of a policy's or a process's dead
+letter that failed before the marks, whose work names someone now. From then on `forget`, the
+[export](#exporting-a-persons-data) and [restricting](#restricting-processing) reach that data as
+if it had been marked from the start. Nothing to configure, nothing to run: it starts when an app
+whose schemas mark anything starts, and the lifecycle events of a process, whose state marks its
+fields the same way, are part of the stream it walks.
+
+It walks once per set of marks. Its position is kept under a fingerprint of every mark of the
+registry, so adding, removing or moving one walks the stream again from the start, and a restart
+with the same marks walks nothing twice. Once it reaches the head it goes through the scheduled
+commands and dead letters, and from then on reads what comes after once a minute: an instance still
+running the old marks, as in a rolling deploy, writes in the clear for a while, and what it writes
+is sealed that much later, the stores included. One instance walks at a time, under a lease kept in
+`bounda_checkpoints`; a batch that fails, because the [key wrapper](#where-the-keys-live) does not
+answer, say, holds the walk for every instance, 30 seconds and twice as long after each failure in
+a row, up to an hour, and the worker logs it.
+
+A person forgotten before the marks were added has no key to seal with, and creating one would make
+what their forgetting should have covered readable again. What an event held of them before their
+last forgetting is sealed under a key no store keeps, and reads as `null`, as if it had been marked
+then; what came after, once they were registered again, is sealed under the key they hold now. A
+scheduled command or a dead letter of a person who holds no key and was forgotten gets the same, and
+the text of an error never gets a new key, as when a handler fails. The worker logs `personal data of
+persons forgotten before it was marked is sealed for good; rebuild the read models that project it`
+with the event types: a read model that showed those fields keeps what it projected before the
+forgetting reached them, and a [rebuild](/guides/deployment/#rebuilding-a-read-model) replays the events with
+them forgotten. No other read model needs one: sealing changes how an event is stored, never what it
+reads as. A snapshot folded from fields in the clear is dropped with the batch that seals its stream,
+since it names nobody a `forget` would remove it for, and the next command folds the stream again.
+
+What it cannot seal stays as it was, and the worker says so: a value in the clear in an event whose
+`person` field is empty, `personal data written before its marks names no person and stays in the
+clear`, with the event types, and a scheduled or dead-lettered command whose `person` field is
+empty, `commands stored before their marks name no person and stay in the clear`. The
+marks are read on the payload as stored, below the [upcasters](/guides/changing-events/), so a field
+an upcaster renamed or computed is sealed under the name it was stored with, or not at all when it
+was never stored; an event whose `person` field changed since it was sealed keeps the person it was
+sealed for. A rejection remembered under an [`idempotencyKey`](/guides/idempotent-commands/) before
+the marks names nobody and lasts until its key expires, a day by default. A person whose processing
+is restricted has their data sealed all the same: sealing protects it, and processes nothing.
+
+`app.getLag()` reports where the walk stands, `personalDataBackfill: { position, caughtUp }`, `null`
+for an app that marks nothing: `caughtUp` once the walk has sealed the stream up to its head and
+every scheduled command and dead letter as the marks of now say, which is when an export or a
+`forget` reaches everything; what is written after is sealed as it is written, and an instance
+still on older marks makes it `false` again until the walk has sealed what that instance wrote. The worker logs `personal data written before its marks is sealed` with what it
+sealed once the walk catches up, and each batch it seals is a [`bounda.backfill`
+span](/reference/observability/). When retention is configured, a person an event names only once
+it is resealed has that event recorded as their last activity, so the [retention](#retention) forgets
+them in their time.
 
 ## Forgetting a person
 
@@ -263,8 +320,7 @@ personal data to Bounda, so the rest of `OrderPlaced` is the order's and stays o
 without a person field is a view Bounda cannot tell is about anyone, and whatever a policy sent
 out is at the mailing provider or the search index. An app that owes a person more than their
 marked fields takes this export and adds what it knows from its ports. An event stored before its
-type marked its fields names no one, so no export finds it: it holds the data in the clear, where
-`forget` does not reach it either.
+type marked its fields is found once the [backfill](#marking-a-field-later) has sealed it.
 
 Each store keeps the person an event names in a `person` column, indexed with the position, and
 the adapters read by it with `readByPerson`; a scheduled command is found by the `persons` it

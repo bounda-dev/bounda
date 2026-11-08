@@ -93,7 +93,8 @@ and stores the message and the stack encrypted with that person's key, as a
 [personal field](/guides/personal-data/) is. A letter that names nobody keeps them in the clear:
 a process deadline's, a policy's or process's for an event without personal fields, or whose
 fields were forgotten before the handler read them, and a scheduled command's whose payload holds
-no marked field. `app.deadLetters` and `bounda dead-letters list` open them for you, and every
+no marked field. A letter filed before the fields its work holds were marked is sealed in place
+once they are, by the [backfill](/guides/personal-data/#marking-a-field-later). `app.deadLetters` and `bounda dead-letters list` open them for you, and every
 `list`, `get`, `retry` and `discard` is recorded in the
 [access log](/guides/personal-data/#who-opened-what), naming the persons its letters name, with
 `outcome: "failed"` for a retry that fails again, whose error may quote them. Once the person is

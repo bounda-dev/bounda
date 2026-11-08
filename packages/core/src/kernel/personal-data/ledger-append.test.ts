@@ -75,6 +75,13 @@ describe("the append to the forget ledger as a transaction commits", () => {
     ]);
     await storage.transact(async () => undefined);
     expect(appended).toHaveLength(1);
+    await storage.transact((transaction) =>
+      transaction.eventStore.reseal([{ position: 1, payload: { total: 9 }, person: "c-9" }]),
+    );
+    expect(
+      await storage.eventStore.readByPerson({ person: "c-9", afterPosition: 0, limit: 1 }),
+    ).toMatchObject([{ payload: { total: 9 } }]);
+    expect(appended).toHaveLength(1);
   });
 
   it("appends nothing for a transaction that rolls back, nor for an earlier run of the work", async () => {

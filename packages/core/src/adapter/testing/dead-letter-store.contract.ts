@@ -357,6 +357,62 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       expect(await store.listByPerson("c-3")).toEqual([]);
     });
 
+    it("reseals a letter in place, whatever its status, keeping the rest of it", async () => {
+      await store.add(letter("p", { errorStack: "Error: timeout\n    at handler" }));
+      await store.add(
+        letter("s", { kind: "scheduled", handler: "RemindCustomer", payload: { email: "a" } }),
+      );
+      await store.updateStatus("s", "discarded", resolvedAt);
+      const [policy, scheduled] = [await store.get("p"), await store.get("s")];
+      await store.reseal("p", {
+        person: "c-1",
+        errorMessage: sealed("c-1", "1"),
+        errorStack: sealed("c-1", "1"),
+      });
+      await store.reseal("s", {
+        person: "c-2",
+        errorMessage: sealed("c-2", "2"),
+        payload: { email: sealed("c-2", "2") },
+        persons: [held("c-2", "2")],
+      });
+      await store.reseal("missing", { person: "c-1", errorMessage: "lost" });
+
+      expect(await store.get("p")).toEqual({
+        ...policy,
+        person: "c-1",
+        errorMessage: sealed("c-1", "1"),
+        errorStack: sealed("c-1", "1"),
+      });
+      expect(await store.get("s")).toEqual({
+        ...scheduled,
+        person: "c-2",
+        errorMessage: sealed("c-2", "2"),
+        payload: { email: sealed("c-2", "2") },
+        persons: [held("c-2", "2")],
+      });
+      expect(await store.get("missing")).toBeNull();
+      expect((await store.listByPerson("c-1")).map(({ id }) => id)).toEqual(["p"]);
+      expect((await store.forget("c-2")).map(({ id }) => id)).toEqual(["s"]);
+      expect(await store.forget("c-1")).toEqual([]);
+    });
+
+    it("reseals what a letter leaves out as none", async () => {
+      await store.add(
+        letter("s", {
+          kind: "scheduled",
+          errorStack: "stack",
+          payload: { email: "a" },
+          persons: [held("c-1", "1")],
+        }),
+      );
+      await store.reseal("s", { person: null, errorMessage: "timeout" });
+      const resealed = await store.get("s");
+      expect(resealed).not.toHaveProperty("errorStack");
+      expect(resealed).not.toHaveProperty("payload");
+      expect(resealed).not.toHaveProperty("persons");
+      expect(await store.forget("c-1")).toEqual([]);
+    });
+
     it("updates status and removes letters", async () => {
       await store.add(letter("a"));
       await store.updateStatus("a", "discarded", resolvedAt);

@@ -588,6 +588,73 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       expect(await storage.scheduler.list()).toEqual([]);
     });
 
+    it("reseals events, scheduled commands and dead letters with a key it adds, or not at all", async () => {
+      await storage.eventStore.append({
+        aggregateType: "customer",
+        aggregateId: "c-1",
+        expectedVersion: 0,
+        events: [
+          pendingEvent({
+            aggregateType: "customer",
+            aggregateId: "c-1",
+            version: 1,
+            type: "CustomerRegistered",
+            payload: { email: "a" },
+          }),
+        ],
+      });
+      await storage.scheduler.schedule({
+        dedupeKey: "command:c1",
+        command: testCommand("c-1", { email: "a" }),
+        executeAt: new Date(now.getTime() + 60_000),
+        context: testContext,
+      });
+      await storage.deadLetterStore.add(testDeadLetter("d1"));
+      const sealed = { $personal: { person: "c-1", key: "f-1", iv: "iv", data: "data" } };
+      const reseal = async (tx: StorageTransaction) => {
+        await tx.personalKeys.add("c-1", stored("1"));
+        await tx.eventStore.reseal([{ position: 1, payload: { email: sealed }, person: "c-1" }]);
+        await tx.scheduler.reseal({
+          dedupeKey: "command:c1",
+          from: { email: "a" },
+          payload: { email: sealed },
+          persons: [held("c-1", "1")],
+        });
+        await tx.deadLetterStore.reseal("d1", { person: "c-1", errorMessage: sealed });
+      };
+      await expect(
+        storage.transact(async (tx) => {
+          await reseal(tx);
+          throw new Error("boom");
+        }),
+      ).rejects.toThrow("boom");
+      expect(await storage.personalKeys.get("c-1")).toBeNull();
+      expect(
+        await storage.eventStore.readByPerson({ person: "c-1", afterPosition: 0, limit: 10 }),
+      ).toEqual([]);
+      expect((await storage.scheduler.list())[0]?.command.payload).toEqual({ email: "a" });
+      expect(await storage.deadLetterStore.get("d1")).toMatchObject({
+        person: null,
+        errorMessage: "boom",
+      });
+
+      await storage.transact(reseal);
+      expect(await storage.personalKeys.get("c-1")).toEqual(stored("1"));
+      const [event] = await storage.eventStore.readByPerson({
+        person: "c-1",
+        afterPosition: 0,
+        limit: 10,
+      });
+      expect(event?.payload).toEqual({ email: sealed });
+      expect((await storage.scheduler.listByPerson("c-1"))[0]?.command.payload).toEqual({
+        email: sealed,
+      });
+      expect(await storage.deadLetterStore.get("d1")).toMatchObject({
+        person: "c-1",
+        errorMessage: sealed,
+      });
+    });
+
     it("changes and removes dead letters with the rest, or not at all", async () => {
       await storage.deadLetterStore.add(testDeadLetter("d1"));
       await storage.deadLetterStore.add(testDeadLetter("d2"));

@@ -26,6 +26,7 @@ import { alignReactiveCheckpoints } from "./dispatch/reactive-checkpoints.ts";
 import { appStorage } from "./events/app-event-store.ts";
 import { createGlobalStream, type GlobalStream } from "./events/global-stream.ts";
 import { createAccessLog, recorded } from "./personal-data/access.ts";
+import { createPersonalDataBackfill } from "./personal-data/backfill.ts";
 import { exportPersonalData, type PersonalDataExport } from "./personal-data/export.ts";
 import { forgetPersonalData, logForgotten } from "./personal-data/forget.ts";
 import {
@@ -41,6 +42,7 @@ import {
   type ForgetAgainEntry,
   forgetAgain,
 } from "./personal-data/reconciliation.ts";
+import { marksFingerprint } from "./personal-data/resealing.ts";
 import { liftProcessingRestriction, restrictProcessing } from "./personal-data/restriction.ts";
 import { createRetentionSubscriber, createRetentionSweep } from "./personal-data/retention.ts";
 import { createKeyRotation } from "./personal-data/rotation.ts";
@@ -255,10 +257,33 @@ export interface AppLag extends DispatcherLag {
    * forgotten again yet, and the worker keeps trying.
    */
   readonly forgetLedger: ForgetLedgerLag | null;
+  /**
+   * `null` when no schema marks personal data. Marks added or changed seal in the background what
+   * was written before them: until `caughtUp`, an export or a forget may miss what they now mark
+   * in older events, scheduled commands and dead letters.
+   */
+  readonly personalDataBackfill: PersonalDataBackfillLag | null;
 }
 
 export interface ForgetLedgerLag {
   readonly reconciled: boolean;
+}
+
+/**
+ * How far the runtime has sealed what was written before the personal data marks of now.
+ */
+export interface PersonalDataBackfillLag {
+  /**
+   * The global position through which the events are sealed.
+   */
+  readonly position: number;
+  /**
+   * Whether the walk has sealed the stream up to its head and every scheduled command and dead
+   * letter as the marks of now say. What is written after is sealed as it is written; an
+   * instance still on older marks, as in a rolling deploy, makes it `false` again until what it
+   * wrote is sealed.
+   */
+  readonly caughtUp: boolean;
 }
 
 export interface ForgetAgainOptions {
@@ -587,6 +612,21 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             clock,
             logger,
           });
+    const marks = marksFingerprint({ aggregates, processes: processDefinitions });
+    const backfill =
+      marks === null
+        ? undefined
+        : createPersonalDataBackfill({
+            storage: written,
+            aggregates,
+            processes: processDefinitions,
+            wrapping,
+            marks,
+            batchSize: config.runtime.dispatcher.batchSize,
+            recordsActivity: retention !== undefined,
+            clock,
+            logger,
+          });
     const dispatcher = createDispatcher({
       eventStore: storage.eventStore,
       checkpointStore: storage.checkpointStore,
@@ -641,6 +681,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       letterRetention,
       rotation,
       reconciliation,
+      backfill,
       reactive: following.map((subscriber) => subscriber.name),
       config,
       ids,
@@ -670,6 +711,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         letterRetention?.nextDueAt() ?? null,
         rotation?.nextDueAt() ?? null,
         reconciliation?.nextDueAt() ?? null,
+        backfill?.nextDueAt() ?? null,
       ]);
       return due.reduce<Date | null>(
         (earliest, at) =>
@@ -701,6 +743,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       waitingDeadlines: worker.waitingDeadlines(),
       forgetLedger:
         reconciliation === undefined ? null : { reconciled: reconciliation.reconciled() },
+      personalDataBackfill: backfill === undefined ? null : await backfill.status(),
     });
     // Before the app serves anything: a backup restored brings back persons forgotten since, and
     // the read models that show them hear of it by the time the start resolves. A ledger that

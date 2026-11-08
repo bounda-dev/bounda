@@ -54,7 +54,8 @@ What a production app does get, and where it is explained:
 reaction, [forgetting them](/guides/personal-data/#retention) after a retention or when a purpose
 ends, their keys [wrapped under a master key](/guides/personal-data/#a-master-key) kept out of
 the database, their forgetting [applied again](/guides/personal-data/#backups) when a backup is
-restored,
+restored, what was written before a field was marked [sealed in
+place](/guides/personal-data/#marking-a-field-later),
 [dead letters with a way out](/guides/dead-letters/), [upcasters](/guides/changing-events/) for
 events whose payload changed, [snapshots](/concepts/long-streams/#snapshots) whose validity the
 runtime checks itself, [observability](/reference/observability/) through OpenTelemetry, and a

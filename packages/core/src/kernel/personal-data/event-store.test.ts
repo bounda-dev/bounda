@@ -527,6 +527,11 @@ describe("withPersonalData", () => {
     expect(all.map((event) => event.payload)).toEqual([{ name: "Ana" }, "text"]);
     expect(await storage.eventStore.readAll({ afterPosition: 0, limit: 10 })).toEqual(all);
     expect(await store.lastPosition()).toBe(2);
+    // Written as given: whoever reseals has sealed the payload already.
+    await store.reseal([{ position: 2, payload: { as: "given" }, person: "c-9" }]);
+    expect(
+      await storage.eventStore.readByPerson({ person: "c-9", afterPosition: 0, limit: 1 }),
+    ).toMatchObject([{ payload: { as: "given" } }]);
   });
 
   it("names the person on the event it seals, with every marked field absent too, and reads their events by person", async () => {
