@@ -5,7 +5,13 @@ import { pendingEvent } from "../../adapter/testing/fixtures.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { memory } from "../../memory/index.ts";
-import { defineForgetLedger, isForgetLedgerSource, openForgetLedger } from "./forget-ledger.ts";
+import {
+  defineForgetLedger,
+  FORGET_LEDGER_WAIT_MS,
+  isForgetLedgerSource,
+  openForgetLedger,
+  waitForLedger,
+} from "./forget-ledger.ts";
 import { createLedgerOutbox, FORGET_LEDGER_SUBSCRIBER } from "./ledger-outbox.ts";
 
 const span = trace.getTracer("test").startSpan("test");
@@ -169,5 +175,19 @@ describe("a forget ledger's source", () => {
       }),
     ).not.toBeNull();
     expect(await openForgetLedger({ source: memory(), storage, env: {} })).not.toBeNull();
+  });
+});
+
+describe("the wait for the forget ledger", () => {
+  it("resolves what the ledger answers in time and lets its timer go, or late once it passes", async () => {
+    const clock = createFixedClock(new Date("2026-01-01T00:00:00.000Z"));
+    expect(await waitForLedger(clock, Promise.resolve(3))).toBe(3);
+    expect(clock.pending()).toBe(0);
+    await expect(waitForLedger(clock, Promise.reject(new Error("down")))).rejects.toThrow("down");
+    expect(clock.pending()).toBe(0);
+    const waiting = waitForLedger(clock, new Promise<never>(() => undefined));
+    clock.advance(FORGET_LEDGER_WAIT_MS - 1);
+    clock.advance(1);
+    expect(await waiting).toBe("late");
   });
 });

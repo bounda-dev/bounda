@@ -84,7 +84,7 @@ export const withLedgerAppend: WithLedgerAppendFunction = ({
           eventStore: {
             append: async (args) => {
               const written = await eventStore.append(args);
-              appended.push(...written.events.filter(isForgetting));
+              appended.push(...written.events);
               return written;
             },
             load: (args) => eventStore.load(args),

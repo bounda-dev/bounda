@@ -407,7 +407,10 @@ describe("the forget ledger's periodic reconciliation", () => {
       reconcileEveryMs: EVERY,
       keepForMs,
     });
-    return { storage, reconciliation, reads };
+    const fail = (times: number): void => {
+      left = times;
+    };
+    return { storage, reconciliation, reads, fail };
   };
 
   const later = (milliseconds: number): Date => new Date(NOW.getTime() + milliseconds);
@@ -479,10 +482,6 @@ describe("the forget ledger's periodic reconciliation", () => {
           if (!readable && name === FORGET_LEDGER_LAST_RUN) throw new Error("read-only");
           return store.get(name);
         },
-        compareAndSet: async (name, expected, position) => {
-          if (!readable && name === FORGET_LEDGER_LAST_RUN) throw new Error("read-only");
-          return store.compareAndSet(name, expected, position);
-        },
       }),
     });
     await reconciliation.reconcile(NOW);
@@ -546,6 +545,10 @@ describe("the forget ledger's periodic reconciliation", () => {
     expect(pruned).toEqual([new Date(NOW.getTime() + EVERY - 60_000).toISOString()]);
     const failing = await periodic({ prune, keepForMs: 60_000 });
     await failing.reconciliation.reconcile(NOW);
+    failing.fail(1);
+    expect(await failing.reconciliation.sweep(later(EVERY))).toBe(0);
+    expect(failing.reads).toHaveLength(2);
+    expect(pruned).toHaveLength(1);
     const down = await periodic({ prune, keepForMs: 60_000, failures: 2 });
     await down.reconciliation.reconcile(NOW);
     await down.reconciliation.sweep(later(EVERY));

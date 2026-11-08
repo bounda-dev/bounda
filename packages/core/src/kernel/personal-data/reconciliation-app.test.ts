@@ -747,17 +747,23 @@ describe("the forget ledger", () => {
     expect(
       (await (await opened(ledgerAdapter)).read({ limit: 10 })).map(({ eventId }) => eventId),
     ).toEqual(["new"]);
-    const pruneless = defineForgetLedger(async () => {
+    const created: (number | undefined)[] = [];
+    const pruneless = defineForgetLedger(async ({ keepForMs }) => {
+      created.push(keepForMs);
       const { prune: _, ...inner } = await opened(ledgerAdapter);
       return inner;
     });
+    const { logs, logger } = recording();
     const { app: kept, clock: keptClock } = await start({
       storage: memory(),
       forgetLedger: pruneless,
       options: { reconcileEvery: "1m", keepFor: "1h" },
+      logger,
     });
+    expect(created).toEqual([3_600_000]);
     keptClock.advance(60_000);
     expect(await kept.runUntilIdle()).toMatchObject({ idle: true });
+    expect(logs.filter(([level]) => level === "error")).toEqual([]);
   });
 
   it("logs a prune that fails and goes on", async () => {
