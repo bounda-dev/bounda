@@ -1,12 +1,15 @@
 import type { KeyedPerson, Snapshot, SnapshotStore } from "../index.ts";
 import type { SqlExecutor } from "../sql/sql-table.ts";
 import { heldKeys, naming } from "./held-keys.ts";
+import { PERSON_INDEXED } from "./schema.ts";
 
 export interface CreateSqliteSnapshotStoreArgs {
   readonly db: SqlExecutor;
   readonly table: string;
   // The personal keys a snapshot's persons must hold for `put` to write it.
   readonly personalKeys: string;
+  // Where the rows that name a person are indexed by person.
+  readonly personRows: string;
 }
 
 export interface CreateSqliteSnapshotStoreFunction {
@@ -26,6 +29,7 @@ export const createSqliteSnapshotStore: CreateSqliteSnapshotStoreFunction = ({
   db,
   table,
   personalKeys,
+  personRows,
 }) => ({
   get: async ({ aggregateType, aggregateId }) => {
     const [row] = await db.all(
@@ -54,5 +58,9 @@ export const createSqliteSnapshotStore: CreateSqliteSnapshotStoreFunction = ({
       aggregateType,
       aggregateId,
     ]),
-  forget: (person) => db.run(`DELETE FROM ${table} WHERE ${naming(table)}`, [person]),
+  forget: (person) =>
+    db.run(
+      `DELETE FROM ${table} WHERE ${naming({ personRows, indexed: PERSON_INDEXED.snapshots })}`,
+      [person],
+    ),
 });

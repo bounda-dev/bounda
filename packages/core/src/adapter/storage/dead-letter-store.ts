@@ -57,6 +57,10 @@ export interface StoredDeadLetter {
   readonly lastFailedAt: string;
   readonly status: DeadLetterStatus;
   /**
+   * When the letter left `failed`, retried or discarded; absent while it is `failed`.
+   */
+  readonly resolvedAt?: string;
+  /**
    * Only on `scheduled` letters: the dropped command's payload, to dispatch it again.
    * Policy and process letters point at a stored event instead.
    */
@@ -70,7 +74,7 @@ export interface StoredDeadLetter {
   readonly persons?: readonly KeyedPerson[];
 }
 
-export type NewDeadLetter = Omit<StoredDeadLetter, "status">;
+export type NewDeadLetter = Omit<StoredDeadLetter, "status" | "resolvedAt">;
 
 /**
  * A dead letter as `app.deadLetters` hands it out: the error's message and stack opened with
@@ -96,6 +100,14 @@ export interface DeadLetter extends Omit<StoredDeadLetter, "errorMessage" | "err
 export interface ListFailedDeadLettersArgs {
   readonly person: string;
   readonly errorCode: string;
+}
+
+/**
+ * What `purge` removes: up to `limit` letters resolved at or before `resolvedBy`.
+ */
+export interface PurgeDeadLettersArgs {
+  readonly resolvedBy: Date;
+  readonly limit: number;
 }
 
 export interface ListDeadLettersArgs {
@@ -126,11 +138,11 @@ export interface DeadLetterStore {
    */
   listFailed(args: ListFailedDeadLettersArgs): Promise<readonly StoredDeadLetter[]>;
   /**
-   * Moves a `failed` letter to `status`. Rejects with `DeadLetterSettledError` when the letter is
-   * missing or no longer `failed`, so of two retries or discards of one letter only the first
-   * changes it.
+   * Moves a `failed` letter to `status`, resolved at `at`. Rejects with `DeadLetterSettledError`
+   * when the letter is missing or no longer `failed`, so of two retries or discards of one letter
+   * only the first changes it.
    */
-  updateStatus(id: string, status: DeadLetterStatus): Promise<void>;
+  updateStatus(id: string, status: DeadLetterStatus, at: Date): Promise<void>;
   remove(id: string): Promise<void>;
   /**
    * Every letter that names `person`, in `person` or in `persons`, whatever its status, in the
@@ -142,4 +154,13 @@ export interface DeadLetterStore {
    * in the order of `list`. A letter that names the person only in `person` stays.
    */
   forget(person: string): Promise<readonly StoredDeadLetter[]>;
+  /**
+   * The earliest `resolvedAt` of the letters held, `null` when none is resolved.
+   */
+  firstResolvedAt(): Promise<Date | null>;
+  /**
+   * Removes the resolved letters `args` names, earliest `resolvedAt` first, and resolves to how
+   * many it removed. A `failed` letter always stays.
+   */
+  purge(args: PurgeDeadLettersArgs): Promise<number>;
 }

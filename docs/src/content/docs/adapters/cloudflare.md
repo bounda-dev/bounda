@@ -282,7 +282,9 @@ instead of `@cloudflare/workers-types`. There is no `prepare` script: every scri
   for the checkpoint. On the free plan's 100,000 row writes a day that is about 12,500 commands,
   when the app has no policies or processes and so no alarm to run after each one.
   Each policy or process reaction adds its own writes, and the alarm that runs it is one more
-  request. `"eventual"` consistency saves nothing: in an app without policies or processes each
+  request. A scheduled command, dead letter, snapshot or remembered rejection that holds personal
+  data writes two more rows for each person it names, and as many again when it goes: the entry
+  in the table that finds it by person for `forget` and the export, and that entry's index. `"eventual"` consistency saves nothing: in an app without policies or processes each
   command then arms the alarm, which Cloudflare bills as one more row written, and the alarm that
   projects is one more request; with them, the alarm runs after each command anyway and projects
   in the same request. What it buys is a command that answers sooner. On the paid plan the first

@@ -29,6 +29,7 @@ export type {
   CatchUpConfig,
   CommandsRuntimeConfig,
   Config,
+  DeadLettersConfig,
   DispatcherConfig,
   ForgetLedgerConfig,
   PersonalDataConfig,

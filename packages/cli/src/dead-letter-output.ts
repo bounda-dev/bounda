@@ -16,7 +16,7 @@ const errorLine = ({ errorName, errorCode, errorMessage }: DeadLetter): string =
  */
 export const formatLetter: FormatLetterFunction = (letter) =>
   [
-    `${letter.id}  ${letter.status}  ${letter.kind}  ${letter.handler}`,
+    `${letter.id}  ${letter.status}${letter.resolvedAt === undefined ? "" : ` ${letter.resolvedAt}`}  ${letter.kind}  ${letter.handler}`,
     `    ${letter.eventType} on ${letter.aggregateType}:${letter.aggregateId}, ${letter.attempts} attempt${letter.attempts === 1 ? "" : "s"}, last ${letter.lastFailedAt} (${letter.errorType})`,
     `    ${errorLine(letter)}`,
     ...((letter.parked ?? 0) > 0

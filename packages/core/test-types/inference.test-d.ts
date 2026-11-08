@@ -661,6 +661,7 @@ describe("personal data", () => {
       readonly query: string;
       readonly readModel: string;
     }>();
+    expectTypeOf<DeadLetter["resolvedAt"]>().toEqualTypeOf<string | undefined>();
     expectTypeOf<DeadLetterAccess["operation"]>().toEqualTypeOf<
       "deadLetters.get" | "deadLetters.retry" | "deadLetters.discard"
     >();

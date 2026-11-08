@@ -358,6 +358,32 @@ describe("events of a failed process", () => {
     expect(await deadLetters.get("nope")).toBeNull();
   });
 
+  it("stay given up once the discarded failure's letter is purged", async () => {
+    const context = await setUp();
+    const { harness, deadLetters, settle, types } = context;
+    await failOnFirstPayment(context);
+    const [letter] = await deadLetters.list();
+    await deadLetters.discard(letter?.id ?? "");
+    expect(
+      await harness.storage.deadLetterStore.purge({ resolvedBy: harness.clock.now(), limit: 10 }),
+    ).toBe(1);
+    const order = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    const last = order.events.at(-1);
+    if (last === undefined) throw new Error("no order");
+    await harness.storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "o-1",
+      expectedVersion: order.events.length,
+      events: [{ ...last, id: "after-purge", version: order.events.length + 1 }],
+    });
+    await settle();
+    expect((await types()).filter((type) => type === PROCESS_EVENTS.eventParked)).toEqual([]);
+    expect((await types()).at(-1)).toBe(PROCESS_EVENTS.failed);
+  });
+
   it("wait behind a failed deadline, which runs first when retried", async () => {
     const context = await setUp();
     const { harness, deadLetters, settle, types } = context;
@@ -1456,6 +1482,23 @@ describe("events of a failed process", () => {
       if (args.aggregateType === stream.aggregateType) {
         loads += 1;
         if (loads === 2) {
+          // The runtime files a failure's letter with it.
+          await harness.storage.deadLetterStore.add({
+            id: "elsewhere-letter",
+            kind: "process",
+            handler: "order.tally",
+            eventId: "elsewhere",
+            eventType: "OrderPaid",
+            aggregateType: stream.aggregateType,
+            aggregateId: "o-1",
+            errorType: "terminal",
+            person: null,
+            errorName: "Error",
+            errorMessage: "elsewhere",
+            attempts: 1,
+            firstFailedAt: "2026-01-01T00:00:00.000Z",
+            lastFailedAt: "2026-01-01T00:00:00.000Z",
+          });
           await rawAppend(harness, PROCESS_EVENTS.failed, {
             eventId: "elsewhere",
             error: "elsewhere",

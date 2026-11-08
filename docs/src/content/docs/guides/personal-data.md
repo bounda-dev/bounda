@@ -200,7 +200,9 @@ keep whatever you wrote to them, an event's payload written in the clear, with t
 you did not mark, stays readable, a command's payload left unmarked is stored as it came, and the
 error of work that names nobody, such as a deadline of a process whose state names nobody or a
 scheduled command whose payload marks nothing, stays in its dead letter in the clear. Log and throw with ids, not the data itself,
-and mark every field that holds it.
+and mark every field that holds it. A letter retried or discarded keeps its text until
+[`runtime.deadLetters.retention`](/guides/dead-letters/#keeping-resolved-letters) removes it, sealed
+or not; set it to bound how long that is.
 
 Nor does it reach the `actor` in the metadata of events, who acted on them (see
 [Who acts](/concepts/ids-causation-and-correlation/#who-acts)): it is an id, as a person's id is,
@@ -266,7 +268,11 @@ type marked its fields names no one, so no export finds it: it holds the data in
 
 Each store keeps the person an event names in a `person` column, indexed with the position, and
 the adapters read by it with `readByPerson`; a scheduled command is found by the `persons` it
-carries, and a dead letter by its `person` or its `persons`.
+carries, and a dead letter by its `person` or its `persons`. `forget` and the export find those
+rows, and the snapshots and remembered rejections `forget` removes, through an index, never by
+reading every row: PostgreSQL indexes the `persons` column itself, and SQLite, the Durable Object
+included, keeps a table of which row names which person, written and removed by the same statement
+as the row.
 
 ## Personal data in read models
 

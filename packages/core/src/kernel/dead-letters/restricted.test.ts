@@ -325,7 +325,7 @@ describe("the retry of a restricted person's dead letters", () => {
         retry: async (letter) => {
           retried.push(letter.id);
           if (letter.id === "flaky") throw down;
-          await deadLetterStore.updateStatus(letter.id, "retried");
+          await deadLetterStore.updateStatus(letter.id, "retried", new Date());
         },
       },
       clock: harness.clock,

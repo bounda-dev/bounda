@@ -19,6 +19,7 @@ import { createCommandsFacade } from "./command/facade.ts";
 import { createCommandPipeline } from "./command/pipeline.ts";
 import { createDeadLetters, type DeadLetters } from "./dead-letters/dead-letters.ts";
 import { createRestrictedRetries } from "./dead-letters/restricted.ts";
+import { createDeadLetterRetention } from "./dead-letters/retention.ts";
 import { createDeadLetterRetry } from "./dead-letters/retry.ts";
 import { createDispatcher, type DispatcherLag } from "./dispatch/dispatcher.ts";
 import { alignReactiveCheckpoints } from "./dispatch/reactive-checkpoints.ts";
@@ -192,11 +193,11 @@ export interface BoundaApp<R extends Registry = AppRegistry> extends BoundaClien
   /**
    * The earliest moment a scheduled command or a process deadline becomes due, a person becomes
    * due for forgetting under `runtime.personalData.retention`, a person's key waits to be
-   * rewrapped under `runtime.personalData.keyWrapper`, or `runtime.personalData.forgetLedger` is
-   * to be read again, after a read that failed or once a ledger that shows entries late has had
-   * the time to; `null` when nothing is. A person, a key or a ledger read that failed counts
-   * from the end of its wait, never from now. A host without a polling worker arms its wake-up
-   * for it.
+   * rewrapped under `runtime.personalData.keyWrapper`, `runtime.personalData.forgetLedger` is to
+   * be read again, after a read that failed or once a ledger that shows entries late has had the
+   * time to, or a resolved dead letter outlives `runtime.deadLetters.retention`; `null` when
+   * nothing is. A person, a key, a ledger read or a purge that failed counts from the end of its
+   * wait, never from now. A host without a polling worker arms its wake-up for it.
    */
   nextDueAt(): Promise<Date | null>;
   /**
@@ -530,6 +531,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       processes,
       config,
       ids,
+      clock,
     });
     await alignReactiveCheckpoints({
       eventStore: storage.eventStore,
@@ -549,6 +551,15 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             concurrencyRetries: config.runtime.commands.concurrencyRetries,
             batchSize: config.runtime.dispatcher.batchSize,
             forgotten: wrapping.drop,
+          });
+    const letterRetentionMs = config.runtime.deadLetters.retentionMs;
+    const letterRetention =
+      letterRetentionMs === null
+        ? undefined
+        : createDeadLetterRetention({
+            store: written.deadLetterStore,
+            retentionMs: letterRetentionMs,
+            logger,
           });
     const { concurrencyRetries } = config.runtime.commands;
     const reconciliation =
@@ -627,6 +638,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       }),
       restrictedRetries: createRestrictedRetries({ storage, retries, clock, logger }),
       retention,
+      letterRetention,
       rotation,
       reconciliation,
       reactive: following.map((subscriber) => subscriber.name),
@@ -655,6 +667,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       const due = await Promise.all([
         scheduledDueAt(),
         retention?.nextDueAt() ?? null,
+        letterRetention?.nextDueAt() ?? null,
         rotation?.nextDueAt() ?? null,
         reconciliation?.nextDueAt() ?? null,
       ]);

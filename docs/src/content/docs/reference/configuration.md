@@ -147,6 +147,14 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
     than the oldest backup you can restore. The instance that runs a periodic round prunes the
     older entries after it; KV expires each key on its own. Without it entries are kept for good.
 
+### Dead letters
+
+- **`deadLetters.retention`**, none by default. How long a dead letter is kept once it was retried
+  or discarded. Past it, the scheduled-command worker removes it, its error text and payload with
+  it; a `failed` letter is never removed. Without it resolved letters are kept. A process instance
+  whose letter was discarded stays given up after the letter is gone. It is app-wide. See
+  [keeping resolved letters](/guides/dead-letters/#keeping-resolved-letters).
+
 ### Per aggregate
 
 - **`overrides`**, default `{}`. Settings for one aggregate, by aggregate name: `commands.timeout`,

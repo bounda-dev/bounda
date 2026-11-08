@@ -57,6 +57,18 @@ describe("dead letter output", () => {
     );
   });
 
+  it("says when a resolved letter was retried or discarded", () => {
+    const discarded = {
+      ...letter,
+      status: "discarded" as const,
+      resolvedAt: "2026-09-23T08:00:00.000Z",
+    };
+    expect(formatLetter(discarded).split("\n")[0]).toBe(
+      "dl-1  discarded 2026-09-23T08:00:00.000Z  process  order.orderPayment",
+    );
+    expect(formatLetter(letter).split("\n")[0]).toBe("dl-1  failed  process  order.orderPayment");
+  });
+
   it("says when a retry stopped because the process failed again", () => {
     const retried = { ...letter, status: "retried" as const };
     expect(formatRetried(retried)).toBe(

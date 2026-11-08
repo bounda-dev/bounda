@@ -17,6 +17,9 @@ import {
   testOutcome,
 } from "./fixtures.ts";
 
+// When a test resolves a letter.
+const resolvedAt = new Date("2026-01-03T00:00:00.000Z");
+
 export interface StorageTransactionContractArgs {
   readonly create: () => Promise<Storage>;
 }
@@ -193,7 +196,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
 
     it("writes nothing when the dead letter it settles was settled first", async () => {
       await storage.deadLetterStore.add(testDeadLetter("d1"));
-      await storage.deadLetterStore.updateStatus("d1", "discarded");
+      await storage.deadLetterStore.updateStatus("d1", "discarded", resolvedAt);
       await expect(
         storage.transact(async (tx) => {
           await tx.eventStore.append({
@@ -202,7 +205,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
             expectedVersion: 0,
             events: [pendingEvent({ aggregateId: "1", version: 1 })],
           });
-          await tx.deadLetterStore.updateStatus("d1", "retried");
+          await tx.deadLetterStore.updateStatus("d1", "retried", resolvedAt);
         }),
       ).rejects.toBeInstanceOf(DeadLetterSettledError);
       expect(await storage.eventStore.lastPosition()).toBe(0);
@@ -219,7 +222,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
             executeAt: new Date(now.getTime() + 60_000),
             context: testContext,
           });
-          await tx.deadLetterStore.updateStatus("d1", "retried");
+          await tx.deadLetterStore.updateStatus("d1", "retried", resolvedAt);
         });
       const outcomes = await Promise.allSettled([retry("command:a"), retry("command:b")]);
       expect(outcomes.map((outcome) => outcome.status).sort()).toEqual(["fulfilled", "rejected"]);
@@ -234,11 +237,11 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       await storage.deadLetterStore.add(testDeadLetter("d1"));
       const outcomes = await Promise.allSettled([
         storage.transact(async (tx) => {
-          await tx.deadLetterStore.updateStatus("d1", "retried");
+          await tx.deadLetterStore.updateStatus("d1", "retried", resolvedAt);
           await tx.scheduler.complete({ dedupeKey: "unclaimed", revision: 0, claimId: "lost" });
         }),
         storage.transact(async (tx) => {
-          await tx.deadLetterStore.updateStatus("d1", "discarded");
+          await tx.deadLetterStore.updateStatus("d1", "discarded", resolvedAt);
         }),
       ]);
       expect(outcomes.map((outcome) => outcome.status)).toEqual(["rejected", "fulfilled"]);
@@ -507,7 +510,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
         });
       await schedule(storage, "command:c1", "c-1");
       await storage.deadLetterStore.add({ ...testDeadLetter("d1"), persons: [held("c-1", "1")] });
-      await storage.deadLetterStore.updateStatus("d1", "discarded");
+      await storage.deadLetterStore.updateStatus("d1", "discarded", resolvedAt);
       const [cancelled, removed, again] = await storage.transact(async (tx) => {
         await schedule(tx, "command:c1", "c-1");
         await schedule(tx, "command:c1b", "c-1");
@@ -589,7 +592,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       await storage.deadLetterStore.add(testDeadLetter("d1"));
       await storage.deadLetterStore.add(testDeadLetter("d2"));
       const settle = async (tx: StorageTransaction) => {
-        await tx.deadLetterStore.updateStatus("d1", "retried");
+        await tx.deadLetterStore.updateStatus("d1", "retried", resolvedAt);
         await tx.deadLetterStore.remove("d2");
       };
       await expect(

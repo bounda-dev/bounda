@@ -10,10 +10,13 @@ import type {
 import type { SqlDatabase } from "../sql/database.ts";
 import { byExecuteAt, earliestDue } from "../sql/index.ts";
 import { naming } from "./held-keys.ts";
+import { PERSON_INDEXED } from "./schema.ts";
 
 export interface CreateSqliteSchedulerArgs {
   readonly db: SqlDatabase;
   readonly table: string;
+  // Where the rows that name a person are indexed by person.
+  readonly personRows: string;
 }
 
 export interface CreateSqliteSchedulerFunction {
@@ -45,7 +48,8 @@ const toClaimed = (row: Record<string, unknown>): ClaimedCommand => ({
   claimId: String(row.claim_id),
 });
 
-export const createSqliteScheduler: CreateSqliteSchedulerFunction = ({ db, table }) => {
+export const createSqliteScheduler: CreateSqliteSchedulerFunction = ({ db, table, personRows }) => {
+  const names = naming({ personRows, indexed: PERSON_INDEXED.scheduledCommands });
   // A fenced write that matched nothing met either a reschedule, whose row still has the claim to
   // release, or a row without the `claim_id`: then the claim is lost.
   const releaseUnless = async (
@@ -171,12 +175,12 @@ export const createSqliteScheduler: CreateSqliteSchedulerFunction = ({ db, table
     listByPerson: async (person) =>
       (
         await db.all(
-          `SELECT ${COLUMNS} FROM ${table} WHERE ${naming(table)} ORDER BY "execute_at", "dedupe_key"`,
+          `SELECT ${COLUMNS} FROM ${table} WHERE ${names} ORDER BY "execute_at", "dedupe_key"`,
           [person],
         )
       ).map(toScheduled),
     forget: async (person) =>
-      (await db.all(`DELETE FROM ${table} WHERE ${naming(table)} RETURNING ${COLUMNS}`, [person]))
+      (await db.all(`DELETE FROM ${table} WHERE ${names} RETURNING ${COLUMNS}`, [person]))
         .map(toScheduled)
         .sort(byExecuteAt),
   };
