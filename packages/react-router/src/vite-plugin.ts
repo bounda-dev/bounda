@@ -33,8 +33,8 @@ const EVENTS = ["add", "change", "unlink", "addDir", "unlinkDir"] as const;
  * The registry and the configuration are imported here rather than by the host, so that Vite
  * re-evaluates this module, and the app reboots, whenever either changes, and so that a build
  * bundles both. In Node the configuration is imported once `boot` has loaded `.env`, which it may
- * read. Only the dev server pins `root`: a build runs wherever it is deployed, from the working
- * directory. The `workerd` condition picks the Cloudflare host. The globs make `app/tenant.ts` and
+ * read. Only the dev server pins `root`, since a build runs wherever it is deployed, from the
+ * working directory, and logs the text of errors unless the configuration says otherwise. The `workerd` condition picks the Cloudflare host. The globs make `app/tenant.ts` and
  * `app/actor.ts` optional, and Vite serves this module again when either appears or goes. Paths go in with `/`,
  * Vite's form on every platform.
  */
@@ -44,7 +44,7 @@ const serverModule = ({ root, command }: Generation, consistency: Consistency): 
     `import { registry } from ${JSON.stringify(normalizePath(join(root, ".bounda/registry.ts")))};`,
     "",
     "export const { bounda, boundaMiddleware, dispose } = createHost({",
-    ...(command === "serve" ? [`  root: ${JSON.stringify(root)},`] : []),
+    ...(command === "serve" ? [`  root: ${JSON.stringify(root)},`, '  errorText: "include",'] : []),
     "  registry,",
     `  importConfig: () => import(${JSON.stringify(normalizePath(join(root, CONFIG_FILE)))}),`,
     `  importTenant: Object.values(import.meta.glob(${JSON.stringify(`/${APP_DIRECTORY}/${TENANT_FILE}`)}))[0],`,

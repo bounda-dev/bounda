@@ -1,4 +1,5 @@
 import { type AppRegistry, ConfigurationError, type Registry } from "@bounda-dev/core";
+import type { Config, ErrorText } from "@bounda-dev/core/config";
 import { boot, type ImportModuleFunction } from "@bounda-dev/core/node";
 import { actorOfModule } from "../actor.ts";
 import { type Bounda, createBounda } from "../create-bounda.ts";
@@ -13,11 +14,29 @@ const needsWorkers = (error: unknown): boolean =>
   Reflect.get(error, "code") === "ERR_UNSUPPORTED_ESM_URL_SCHEME" &&
   error.message.includes("'cloudflare:'");
 
+// The configuration's own `errorText` wins over the host's default.
+const withErrorText = (module: Readonly<Record<string, unknown>>, errorText: ErrorText) => {
+  const config = module.default as Config | undefined;
+  return config === undefined
+    ? module
+    : {
+        ...module,
+        default: {
+          ...config,
+          runtime: {
+            ...config.runtime,
+            telemetry: { errorText, ...config.runtime?.telemetry },
+          },
+        } satisfies Config,
+      };
+};
+
 const explainWorkers =
-  (importConfig: ImportModuleFunction): ImportModuleFunction =>
+  (importConfig: ImportModuleFunction, errorText: ErrorText | undefined): ImportModuleFunction =>
   async () => {
     try {
-      return await importConfig();
+      const module = await importConfig();
+      return errorText === undefined ? module : withErrorText(module, errorText);
     } catch (error) {
       if (!needsWorkers(error)) throw error;
       throw new ConfigurationError(
@@ -41,13 +60,14 @@ export const createHost: CreateHostFunction = <R extends Registry = AppRegistry>
   importConfig,
   importActor,
   consistency,
+  errorText,
 }: CreateHostArgs<R>): Bounda<R> =>
   createBounda<R>({
     boot: () =>
       boot<R>({
         ...(root === undefined ? {} : { root }),
         registry,
-        importConfig: explainWorkers(importConfig),
+        importConfig: explainWorkers(importConfig, errorText),
       }),
     consistency,
     ...(importActor === undefined ? {} : { actor: actorOfModule(importActor) }),

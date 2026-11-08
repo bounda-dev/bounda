@@ -689,7 +689,7 @@ describe("a Bounda Durable Object", () => {
     expect(failed.alarm).toBeGreaterThanOrEqual(failed.before + 1_000);
     expect(failed.alarm).toBeLessThanOrEqual(Date.now() + 1_000);
     expect(objectLogs(logs.error)).toEqual([
-      ["bounda rebuild slice failed", { readModel: "orders", message: "projection is down" }],
+      ["bounda rebuild slice failed", { readModel: "orders", errorName: "Error" }],
     ]);
     expect(objectLogs(logs.info)).toEqual([
       ["bounda rebuild continues", { readModel: "customers", position: 2 }],
@@ -709,9 +709,9 @@ describe("a Bounda Durable Object", () => {
       await instance.alarm();
     });
     expect(objectLogs(logs.error)).toEqual([
-      ["bounda rebuilds could not be listed", { message: expect.any(String) }],
-      ["bounda alarm failed; it will be retried", { message: expect.any(String) }],
-      ["bounda alarm could not re-arm", { message: expect.any(String) }],
+      ["bounda rebuilds could not be listed", { errorName: expect.any(String) }],
+      ["bounda alarm failed; it will be retried", { errorName: expect.any(String) }],
+      ["bounda alarm could not re-arm", { errorName: expect.any(String) }],
     ]);
   });
 

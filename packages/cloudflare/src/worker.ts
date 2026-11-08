@@ -3,6 +3,7 @@ import {
   checkActor,
   checkConsistency,
   type DispatchOptions,
+  errorFields,
   type Logger,
 } from "@bounda-dev/core";
 import type { Config } from "@bounda-dev/core/config";
@@ -161,7 +162,7 @@ const route = (pathname: string): { readonly kind: string; readonly name: string
  * with `issues`, 404 for an unknown command, query or row, 409 for a command's rejection, with its
  * code in `rejected`, for one refused because the person it touches is restricted, or for a
  * conflict, 413 for a body over `maxPayloadBytes`. Anything else is a
- * 500 without its message, which is logged instead. There is no authentication and no operator
+ * 500 without its message, which is logged instead, as `runtime.telemetry.errorText` says. There is no authentication and no operator
  * endpoint: it is a starting point, and an app with users writes its own `fetch` over `connect`. Throws `ConfigurationError` when
  * `storage` is not `cloudflare()` or for a `consistency` it does not know.
  */
@@ -226,7 +227,7 @@ export const createWorker: CreateWorkerFunction = ({
         }
         logger.error("bounda worker request failed", {
           path: url.pathname,
-          message: error instanceof Error ? error.message : String(error),
+          ...errorFields({ error, errorText: config.runtime?.telemetry?.errorText }),
         });
         return failure("INTERNAL", "Internal error", 500);
       }
