@@ -7,6 +7,7 @@ import type { PayloadArgs } from "../modules/payload.ts";
 import type { Registry } from "../modules/registry.ts";
 import type { FieldsArgs } from "../modules/view.ts";
 import { createApp } from "./app.ts";
+import type { DeadLetters } from "./dead-letters/dead-letters.ts";
 import { PROCESS_DEADLINE_COMMAND } from "./process/deadlines.ts";
 import { createReactiveHarness } from "./reactive-harness.ts";
 import { ATTRIBUTES, METRICS, SPAN_EVENTS, TELEMETRY_SCOPE, traced } from "./telemetry.ts";
@@ -62,7 +63,18 @@ const registry = {
           },
         },
       },
-      queries: {},
+      queries: {
+        getOrder: {
+          payload: ({ z }: PayloadArgs) => z.object({ orderId: z.string() }),
+          handler: ({
+            query,
+            table,
+          }: {
+            query: { payload: { orderId: string } };
+            table: { findOne: (where: object) => Promise<unknown> };
+          }) => table.findOne({ orderId: query.payload.orderId }),
+        },
+      },
     },
   },
 } satisfies Registry;
@@ -181,6 +193,75 @@ describe("telemetry", () => {
     const [bound, anonymous] = named(telemetry, "bounda.command");
     expect(bound?.attributes[ATTRIBUTES.actor]).toBe("user-1");
     expect(anonymous?.attributes).not.toHaveProperty(ATTRIBUTES.actor);
+    await app.stop();
+  });
+
+  it("puts who acts on the spans of what follows from a command, of queries and of client operations", async () => {
+    const { telemetry, app } = await setUp();
+    active = telemetry;
+    const user = app.as("user-1");
+    await user.commands.placeOrder({ orderId: "o-1", total: 10 });
+    await user.commands.payOrder({ orderId: "o-1", method: "card" }, { delay: "0s" });
+    await app.runUntilIdle();
+    await user.queries.getOrder({ orderId: "o-1" });
+    await app.queries.getOrder({ orderId: "o-1" });
+    await user.forget("p-1");
+    await user.restrict("p-2");
+    await user.unrestrict("p-2");
+    await user.exportPersonalData("p-2");
+    await user.deadLetters.list();
+    // The bound client's type offers neither, as an operator asks those of the app.
+    const letters = user.deadLetters as DeadLetters;
+    await letters.count();
+    await expect(letters.get("missing")).resolves.toBeNull();
+    await expect(user.deadLetters.retry("missing")).rejects.toThrow();
+    await expect(user.deadLetters.discard("missing")).rejects.toThrow();
+    await user.rebuildReadModel("orderSummary");
+    await app.forget("p-3");
+
+    const actorOf = (prefix: string) =>
+      named(telemetry, prefix).map((span) => span.attributes[ATTRIBUTES.actor]);
+    // The rebuild projects the event again, still under the actor of whoever placed the order.
+    expect(actorOf("bounda.projection")).toEqual(["user-1", "user-1"]);
+    expect(actorOf("bounda.policy")).toEqual(["user-1"]);
+    expect(actorOf("bounda.process")).toEqual(["user-1"]);
+    expect(actorOf("bounda.scheduled")).toEqual(["user-1"]);
+    expect(named(telemetry, "bounda.query").map((span) => [span.name, span.attributes])).toEqual([
+      [
+        "bounda.query GetOrder",
+        {
+          [ATTRIBUTES.queryType]: "GetOrder",
+          [ATTRIBUTES.readModel]: "orderSummary",
+          [ATTRIBUTES.actor]: "user-1",
+        },
+      ],
+      [
+        "bounda.query GetOrder",
+        { [ATTRIBUTES.queryType]: "GetOrder", [ATTRIBUTES.readModel]: "orderSummary" },
+      ],
+    ]);
+    expect(
+      named(telemetry, "bounda.operation").map((span) => [span.name, span.attributes]),
+    ).toEqual([
+      ...[
+        "forget",
+        "restrict",
+        "unrestrict",
+        "exportPersonalData",
+        "deadLetters.list",
+        "deadLetters.count",
+        "deadLetters.get",
+        "deadLetters.retry",
+        "deadLetters.discard",
+        "rebuildReadModel",
+      ].map((operation) => [
+        `bounda.operation ${operation}`,
+        { [ATTRIBUTES.operation]: operation, [ATTRIBUTES.actor]: "user-1" },
+      ]),
+      ["bounda.operation forget", { [ATTRIBUTES.operation]: "forget" }],
+    ]);
+    const failed = named(telemetry, "bounda.operation deadLetters.retry")[0];
+    expect(failed?.status.code).toBe(SpanStatusCode.ERROR);
     await app.stop();
   });
 

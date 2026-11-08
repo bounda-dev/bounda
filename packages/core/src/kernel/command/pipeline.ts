@@ -49,7 +49,7 @@ import { actedBy } from "../shared/causation.ts";
 import { errorDetails } from "../shared/retry.ts";
 import { withTimeout } from "../shared/timeout.ts";
 import { withPorts } from "../shared/with-ports.ts";
-import { ATTRIBUTES, METRICS, meter, SPAN_EVENTS, traced } from "../telemetry.ts";
+import { ATTRIBUTES, actorAttribute, METRICS, meter, SPAN_EVENTS, traced } from "../telemetry.ts";
 import type { UnitStores } from "../unit-of-work/unit-of-work.ts";
 import { fingerprintOf } from "./fingerprint.ts";
 import { validatePayload } from "./validate.ts";
@@ -648,7 +648,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         [ATTRIBUTES.aggregateId]: aggregateId,
         [ATTRIBUTES.correlationId]: command.metadata.correlationId,
         [ATTRIBUTES.causationId]: command.metadata.causationId,
-        ...(actor === undefined ? {} : { [ATTRIBUTES.actor]: actor }),
+        ...actorAttribute(actor),
       },
       run: async (span): Promise<DispatchResult | Rejected> => {
         const replay = async (): Promise<DispatchResult | Rejected | null> => {

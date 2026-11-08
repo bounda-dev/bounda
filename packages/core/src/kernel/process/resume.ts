@@ -1,7 +1,7 @@
 import type { NewDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
-import { causedBy } from "../shared/causation.ts";
+import { actedBy, causedBy } from "../shared/causation.ts";
 import type { UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
 import type { DeadlineStep } from "./deadline-step.ts";
@@ -23,13 +23,14 @@ export interface ResumeParked {
   /**
    * Called once the failed step succeeded on a dead-letter retry. Drains the parked events in
    * order, each deadline that came due before one of them running first, then writes
-   * `ProcessResumed`. Each step is one unit of work. Stops as soon as the instance is no longer
-   * failed on `letter`.
+   * `ProcessResumed`, acted by `actor`, as the retried step was. Each step is one unit of work.
+   * Stops as soon as the instance is no longer failed on `letter`.
    */
   resumeParked(
     process: ProcessRuntime,
     instanceId: string,
     letter: string | undefined,
+    actor: string | undefined,
   ): Promise<void>;
 }
 
@@ -221,6 +222,7 @@ export const createResumeParked: CreateResumeParkedFunction = ({
     process: ProcessRuntime,
     instanceId: string,
     letter: string | undefined,
+    actor: string | undefined,
   ): Promise<boolean> => {
     let resumed = false;
     await units.commit(async (unit, within) => {
@@ -228,7 +230,10 @@ export const createResumeParked: CreateResumeParkedFunction = ({
       resumed = false;
       if (!draining(instance, letter) || instance.parked.length > 0) return;
       await within.append(process, instanceId, instance, [
-        lifecycleEntries.resumed(instanceContext(process, instanceId, instance)),
+        lifecycleEntries.resumed({
+          ...instanceContext(process, instanceId, instance),
+          ...actedBy(actor),
+        }),
       ]);
       await schedule.stage(unit, process, instanceId);
       resumed = true;
@@ -241,6 +246,7 @@ export const createResumeParked: CreateResumeParkedFunction = ({
     process: ProcessRuntime,
     instanceId: string,
     letter: string | undefined,
+    actor: string | undefined,
   ): Promise<void> => {
     for (;;) {
       const instance = await load(process, instanceId);
@@ -257,7 +263,7 @@ export const createResumeParked: CreateResumeParkedFunction = ({
         continue;
       }
       if (event === undefined) {
-        if (await resume(process, instanceId, letter)) return;
+        if (await resume(process, instanceId, letter, actor)) return;
         continue;
       }
       if (!(await handleParked(process, instanceId, event, letter))) return;

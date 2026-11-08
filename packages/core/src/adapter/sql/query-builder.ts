@@ -30,6 +30,87 @@ export const columnFor: ColumnForFunction = ({ field, columns }) => {
   return column;
 };
 
+export type RangeOperator = "gt" | "gte" | "lt" | "lte";
+
+// Values are as the caller gave them; each table encodes them for its engine. `eq` and `ne` take
+// `null` for "no value", a range and `in` never do.
+export type Condition =
+  | {
+      readonly operator: "eq" | "ne" | RangeOperator;
+      readonly column: ColumnDefinition;
+      readonly value: unknown;
+    }
+  | {
+      readonly operator: "in";
+      readonly column: ColumnDefinition;
+      readonly values: readonly unknown[];
+    };
+
+const OPERATORS: ReadonlySet<string> = new Set(["gt", "gte", "lt", "lte", "ne", "in"]);
+
+// A JSON column's value is matched whole, so an object there is a value, not operators.
+const isOperators = (column: ColumnDefinition, value: unknown): value is object =>
+  column.type !== "json" &&
+  typeof value === "object" &&
+  value !== null &&
+  !(value instanceof Date) &&
+  !Array.isArray(value);
+
+const operand = (column: ColumnDefinition, operator: string, value: unknown): unknown => {
+  if (value === null) {
+    throw new ConfigurationError(`Field "${column.field}": "${operator}" needs a value, got null`);
+  }
+  return value;
+};
+
+const conditionsOfField = (column: ColumnDefinition, value: unknown): Condition[] => {
+  if (!isOperators(column, value)) return [{ operator: "eq", column, value: value ?? null }];
+  const conditions = Object.entries(value).flatMap(([operator, given]): Condition[] => {
+    if (!OPERATORS.has(operator)) {
+      throw new ConfigurationError(
+        `Field "${column.field}": unknown operator "${operator}"; use gt, gte, lt, lte, ne or in`,
+      );
+    }
+    if (given === undefined) return [];
+    if (operator === "ne") return [{ operator, column, value: given }];
+    if (operator !== "in") {
+      return [
+        { operator: operator as RangeOperator, column, value: operand(column, operator, given) },
+      ];
+    }
+    if (!Array.isArray(given)) {
+      throw new ConfigurationError(`Field "${column.field}": "in" needs an array`);
+    }
+    return [{ operator, column, values: given.map((item) => operand(column, operator, item)) }];
+  });
+  // Matching every row here would turn a missing operand into a `delete` of the whole table.
+  if (conditions.length === 0) {
+    throw new ConfigurationError(
+      `Field "${column.field}": no operator has a value; leave the field out to match any row`,
+    );
+  }
+  return conditions;
+};
+
+export interface ConditionsOfArgs {
+  readonly where: Readonly<Record<string, unknown>> | undefined;
+  readonly columns: readonly ColumnDefinition[];
+}
+
+export interface ConditionsOfFunction {
+  (args: ConditionsOfArgs): readonly Condition[];
+}
+
+/**
+ * The conditions of a `where`, all of which a row must meet. Throws `ConfigurationError` for a
+ * field the view does not have, an operator `Where` does not offer, a `null` operand, or operators
+ * none of which has a value.
+ */
+export const conditionsOf: ConditionsOfFunction = ({ where, columns }) =>
+  Object.entries(where ?? {}).flatMap(([field, value]) =>
+    conditionsOfField(columnFor({ field, columns }), value),
+  );
+
 export interface BuildWhereArgs {
   readonly where: Readonly<Record<string, unknown>> | undefined;
   readonly columns: readonly ColumnDefinition[];
@@ -42,15 +123,41 @@ export interface BuildWhereFunction {
   (args: BuildWhereArgs): SqlFragment;
 }
 
+const COMPARISONS: Readonly<Record<RangeOperator, string>> = {
+  gt: ">",
+  gte: ">=",
+  lt: "<",
+  lte: "<=",
+};
+
 export const buildWhere: BuildWhereFunction = ({ where, columns, dialect, offset = 0 }) => {
-  const entries = Object.entries(where ?? {});
-  if (entries.length === 0) return { sql: "", params: [] };
+  const conditions = conditionsOf({ where, columns });
+  if (conditions.length === 0) return { sql: "", params: [] };
   const params: unknown[] = [];
-  const clauses = entries.map(([field, value]) => {
-    const column = columnFor({ field, columns });
-    if (value === undefined || value === null) return `${quoteIdentifier(column.name)} IS NULL`;
-    params.push(dialect.encode(column.type, value));
-    return `${quoteIdentifier(column.name)} = ${dialect.placeholder(offset + params.length)}`;
+  const bind = (condition: Condition, value: unknown): string => {
+    params.push(dialect.encode(condition.column.type, value));
+    return dialect.placeholder(offset + params.length);
+  };
+  // `ne` keeps the rows without a value, as `!==` does: SQL's `<>` would leave them out.
+  const distinct = dialect.name === "postgresql" ? "IS DISTINCT FROM" : "IS NOT";
+  const clauses = conditions.map((condition) => {
+    const name = quoteIdentifier(condition.column.name);
+    switch (condition.operator) {
+      case "in":
+        return condition.values.length === 0
+          ? "1 = 0"
+          : `${name} IN (${condition.values.map((value) => bind(condition, value)).join(", ")})`;
+      case "eq":
+        return condition.value === null
+          ? `${name} IS NULL`
+          : `${name} = ${bind(condition, condition.value)}`;
+      case "ne":
+        return condition.value === null
+          ? `${name} IS NOT NULL`
+          : `${name} ${distinct} ${bind(condition, condition.value)}`;
+      default:
+        return `${name} ${COMPARISONS[condition.operator]} ${bind(condition, condition.value)}`;
+    }
   });
   return { sql: ` WHERE ${clauses.join(" AND ")}`, params };
 };

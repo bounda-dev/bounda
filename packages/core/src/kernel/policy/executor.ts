@@ -11,7 +11,7 @@ import { actedBy, causedBy } from "../shared/causation.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { withTimeout } from "../shared/timeout.ts";
 import { withPorts } from "../shared/with-ports.ts";
-import { ATTRIBUTES, traced } from "../telemetry.ts";
+import { ATTRIBUTES, actorAttribute, traced } from "../telemetry.ts";
 import type { UnitStores } from "../unit-of-work/unit-of-work.ts";
 import type { PolicyRuntime } from "./build-policies.ts";
 
@@ -73,10 +73,11 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
       subject: event.id,
       retryId,
     });
+    const context = { ...causedBy(event), ...actedBy(actor) };
     const reaction = createReactionCommands({
       aggregates,
       pipeline,
-      context: { ...causedBy(event), ...actedBy(actor) },
+      context,
       idempotencyKey,
       within,
       logger,
@@ -94,6 +95,7 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
         [ATTRIBUTES.aggregateId]: event.aggregateId,
         [ATTRIBUTES.correlationId]: event.metadata.correlationId,
         [ATTRIBUTES.attempt]: attempt,
+        ...actorAttribute(context.actor),
       },
       run: async () => {
         await withTimeout({

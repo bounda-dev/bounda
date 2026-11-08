@@ -5,7 +5,16 @@ export type {
   DeadLetterStatus,
   ListDeadLettersArgs,
 } from "./adapter/storage/dead-letter-store.ts";
-export type { FindManyArgs, ReadClient, Table, TableOrder } from "./adapter/storage/table.ts";
+export type {
+  FieldFilter,
+  FindManyArgs,
+  RangeFilter,
+  ReadClient,
+  SetFilter,
+  Table,
+  TableOrder,
+  Where,
+} from "./adapter/storage/table.ts";
 export * from "./contracts/index.ts";
 export type { Query } from "./contracts/query.ts";
 export type {

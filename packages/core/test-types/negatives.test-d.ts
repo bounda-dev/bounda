@@ -9,6 +9,7 @@ import {
   type ProcessDeadlineField,
   type ProcessHandlerReturnCheck,
   type ProcessStateOf,
+  type Table,
 } from "@bounda-dev/core";
 import type { AdapterDefinition } from "@bounda-dev/core/adapter";
 import { defineConfig } from "@bounda-dev/core/config";
@@ -167,6 +168,33 @@ describe("what does not compile", () => {
     type Field = ProcessHandlerReturnCheck<State, Seen>;
     const checks: [Accepted?, Field?] = [];
     void checks;
+  });
+
+  it("a where operator a field's type has no use for, or an operand of another type", () => {
+    interface Row {
+      readonly id: string;
+      readonly active: boolean;
+      readonly tags: readonly string[];
+      readonly total: number;
+      readonly status: "placed" | "paid";
+    }
+    const table = {} as Table<Row>;
+    // @ts-expect-error a boolean has no order to range over
+    void table.findMany({ where: { active: { gt: false } } });
+    // @ts-expect-error a JSON value matches by equality only
+    void table.findMany({ where: { tags: { in: [["a"]] } } });
+    // @ts-expect-error the operand has the field's type
+    void table.count({ total: { gte: "10" } });
+    // @ts-expect-error a value outside the field's union
+    void table.findOne({ status: { in: ["cancelled"] } });
+    // @ts-expect-error a required field always has a value
+    void table.delete({ total: null });
+    // @ts-expect-error a range takes no null
+    void table.findMany({ where: { total: { lt: null } } });
+    // @ts-expect-error no such operator
+    void table.update({ total: { between: 1 } }, {});
+    // @ts-expect-error no such field
+    void table.findMany({ where: { missing: 1 } });
   });
 
   it("a plain string where an Instant is expected", () => {

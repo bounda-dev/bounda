@@ -25,8 +25,30 @@ export interface BuildQueriesFunction {
   (args: BuildQueriesArgs): QueriesRuntime;
 }
 
+// A repository receives the payload's fields next to these, which would take their place.
+const REPOSITORY_ARGS: readonly string[] = ["client", "table", "actor"];
+
+export interface CheckPayloadFieldsFunction {
+  (path: string, fields: readonly string[]): void;
+}
+
 /**
- * Query keys must be unique across read models, since `app.queries` is one flat namespace.
+ * Throws `ConfigurationError` when a payload field is named as one of a repository's own
+ * arguments.
+ */
+export const checkPayloadFields: CheckPayloadFieldsFunction = (path, fields) => {
+  const shadowed = REPOSITORY_ARGS.find((name) => fields.includes(name));
+  if (shadowed !== undefined) {
+    throw new ConfigurationError(
+      `${path}: payload field "${shadowed}" is what the repository receives as its own ${shadowed}; give the field another name`,
+    );
+  }
+};
+
+/**
+ * Query keys must be unique across read models, since `app.queries` is one flat namespace, and a
+ * query with a repository cannot have a payload field named as one of the repository's own
+ * arguments.
  */
 export const buildQueries: BuildQueriesFunction = ({ readModels }) => {
   const byKey: Record<string, QueryRuntime> = {};
@@ -42,6 +64,10 @@ export const buildQueries: BuildQueriesFunction = ({ readModels }) => {
       const schema = module.payload === undefined ? null : module.payload({ z });
       if (schema !== null && !(schema instanceof z.ZodType)) {
         throw new ConfigurationError(`${path}: payload must return a Zod schema`);
+      }
+      // Checked again on each payload the query parses, which another schema may shape.
+      if (module.repository !== undefined && schema instanceof z.ZodObject) {
+        checkPayloadFields(path, Object.keys(schema.shape));
       }
       byKey[key] = {
         key,

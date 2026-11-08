@@ -45,7 +45,7 @@ describe("reading", () => {
     expect(stores.persons).toEqual(["ana", "ana", "ana"]);
   });
 
-  it("notes the rows the client reads, and hands its driver through", async () => {
+  it("notes the rows the client reads, and hands its driver through, noting it was taken", async () => {
     const found = [{ orderId: "o-1", customerId: "ana" }, { orderId: "o-2" }];
     const raw = { driver: true };
     const stores = reading({
@@ -62,7 +62,9 @@ describe("reading", () => {
     expect(await stores.client.get("one")).toEqual(found[0]);
     expect(await stores.client.get("none")).toBeNull();
     expect(await stores.client.all("all", [1])).toBe(found);
+    expect(stores.unattributed).toBe(false);
     expect(stores.client.raw).toBe(raw);
+    expect(stores.unattributed).toBe(true);
     expect(stores.persons).toEqual(["ana", "ana"]);
   });
 });

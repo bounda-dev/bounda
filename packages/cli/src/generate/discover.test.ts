@@ -802,7 +802,9 @@ describe("discoverProject convention problems", () => {
     const root = await project([
       "app/read/order-summary/view.ts",
       ["app/read/order-summary/table.ts", "export interface Table {}\n"],
+      ["app/read/order-summary/actor.ts", "export interface Actor {}\n"],
       `${infrastructure}/table/memory.ts`,
+      `${infrastructure}/actor/memory.ts`,
       `${infrastructure}/view/memory.ts`,
       `${infrastructure}/repository-data/memory.ts`,
       `${infrastructure}/search/memory.ts`,
@@ -816,6 +818,7 @@ describe("discoverProject convention problems", () => {
       ],
     ]);
     expect(await problemsOf(root)).toEqual([
+      `${infrastructure}/actor: "actor" is reserved; give the port another name`,
       `${infrastructure}/repository-data: "repositoryData" is reserved; give the port another name`,
       `${infrastructure}/search: has no port: add search.ts at the read model root exporting interface Search`,
       `${infrastructure}/table: "table" is reserved; give the port another name`,

@@ -427,7 +427,7 @@ const READ_MODEL: ModuleKind = {
     ["queries", ["query"]],
     [INFRASTRUCTURE, ["infra"]],
   ]),
-  reservedPortKeys: new Set(["view", "query", "repositoryData", "table", "queries"]),
+  reservedPortKeys: new Set(["view", "query", "repositoryData", "table", "queries", "actor"]),
 };
 
 // Past the first difference, the rest must match once one character is skipped in the longer

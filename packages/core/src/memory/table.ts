@@ -1,8 +1,13 @@
 import { sqliteDialect } from "../adapter/sql/dialect.ts";
 import { codePointOrder } from "../adapter/sql/order.ts";
-import { assertPage, columnFor } from "../adapter/sql/query-builder.ts";
+import {
+  assertPage,
+  columnFor,
+  conditionsOf,
+  type RangeOperator,
+} from "../adapter/sql/query-builder.ts";
 import { type ColumnDefinition, columnsOf } from "../adapter/sql/read-model-schema.ts";
-import type { FindManyArgs, ReadClient, Table } from "../adapter/storage/table.ts";
+import type { FindManyArgs, ReadClient, Table, Where } from "../adapter/storage/table.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
 import type { FieldsRecord } from "../modules/view.ts";
 
@@ -31,6 +36,13 @@ const compare = (a: unknown, b: unknown): number => {
   return (a as number) < (b as number) ? -1 : 1;
 };
 
+const RANGES: Readonly<Record<RangeOperator, (order: number) => boolean>> = {
+  gt: (order) => order > 0,
+  gte: (order) => order >= 0,
+  lt: (order) => order < 0,
+  lte: (order) => order <= 0,
+};
+
 // Behaves as the SQLite table, checks included: the table contract runs against both.
 export const createMemoryTable: CreateMemoryTableFunction = <Row extends object>({
   name,
@@ -56,12 +68,29 @@ export const createMemoryTable: CreateMemoryTableFunction = <Row extends object>
     return row as Row;
   };
   // Encoded once, and checked even when no row is there to compare, as SQL checks the statement.
-  const matcher = (where: Partial<Row> | undefined): ((stored: Stored) => boolean) => {
-    const expected = Object.entries(where ?? {}).map(([field, value]) => {
-      const column = columnFor({ field, columns });
-      return [column.field, sqliteDialect.encode(column.type, value)] as const;
-    });
-    return (stored) => expected.every(([field, value]) => stored[field] === value);
+  // A range holds for no row without a value, as in SQL; `ne` compares as `IS NOT` does.
+  const matcher = (where: Where<Row> | undefined): ((stored: Stored) => boolean) => {
+    const tests = conditionsOf({ where, columns }).map(
+      (condition): ((stored: Stored) => boolean) => {
+        const { field, type } = condition.column;
+        if (condition.operator === "in") {
+          const values = condition.values.map((value) => sqliteDialect.encode(type, value));
+          return (stored) => values.includes(stored[field]);
+        }
+        const value = sqliteDialect.encode(type, condition.value);
+        switch (condition.operator) {
+          case "eq":
+            return (stored) => stored[field] === value;
+          case "ne":
+            return (stored) => stored[field] !== value;
+          default: {
+            const holds = RANGES[condition.operator];
+            return (stored) => stored[field] !== null && holds(compare(stored[field], value));
+          }
+        }
+      },
+    );
+    return (stored) => tests.every((test) => test(stored));
   };
   const violated = (kind: "NOT NULL" | "UNIQUE", column: ColumnDefinition): Error =>
     new Error(`${kind} constraint failed: ${name}.${column.field}`);

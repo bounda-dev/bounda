@@ -11,7 +11,7 @@ import {
 import type { ProjectionRuntime, ReadModelRuntime } from "../read-model/build-read-models.ts";
 import { qualifiedEventType } from "../shared/qualified-event.ts";
 import { errorDetails } from "../shared/retry.ts";
-import { ATTRIBUTES, traced } from "../telemetry.ts";
+import { ATTRIBUTES, actorAttribute, traced } from "../telemetry.ts";
 
 export interface ProjectionTarget {
   readonly name: string;
@@ -68,6 +68,7 @@ export const projectBatch: ProjectBatchFunction = async ({
             [ATTRIBUTES.aggregateType]: event.aggregateType,
             [ATTRIBUTES.aggregateId]: event.aggregateId,
             [ATTRIBUTES.correlationId]: event.metadata.correlationId,
+            ...actorAttribute(event.metadata.actor),
           },
           run: async () => {
             await projection.project({ event, table, client });

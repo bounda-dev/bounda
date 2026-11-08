@@ -10,6 +10,10 @@ export interface ReadingStores {
    * The values of the `person` field in the rows read so far, in order, repeats included.
    */
   readonly persons: readonly string[];
+  /**
+   * Whether `client.raw` was taken: what the driver reads names no one Bounda can see.
+   */
+  readonly unattributed: boolean;
 }
 
 export interface ReadingArgs {
@@ -22,11 +26,12 @@ export interface ReadingFunction {
 }
 
 /**
- * A read model's `table` and `client` that note whose rows they read. `count` reads no row, and
- * `client.raw` is the driver's own, so neither is noted.
+ * A read model's `table` and `client` that note whose rows they read. `count` reads no row, so it
+ * notes no one; taking `client.raw` is noted as a read of rows whose persons are unknown.
  */
 export const reading: ReadingFunction = ({ storage: { table, client }, person }) => {
   const persons: string[] = [];
+  let unattributed = false;
   const note = <Found extends Row | null>(row: Found): Found => {
     const value = row?.[person];
     if (typeof value === "string") persons.push(value);
@@ -38,6 +43,9 @@ export const reading: ReadingFunction = ({ storage: { table, client }, person })
   };
   return {
     persons,
+    get unattributed() {
+      return unattributed;
+    },
     table: {
       upsert: (row) => table.upsert(row),
       insert: (row) => table.insert(row),
@@ -50,7 +58,10 @@ export const reading: ReadingFunction = ({ storage: { table, client }, person })
     client: {
       get: async (sql, params) => note(await client.get(sql, params)),
       all: async (sql, params) => noteAll(await client.all(sql, params)),
-      raw: client.raw,
+      get raw() {
+        unattributed = true;
+        return client.raw;
+      },
     },
   };
 };

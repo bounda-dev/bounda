@@ -121,7 +121,9 @@ const markedFields = (marks: PersonalMarks | null, payload: unknown): ExportedDa
   );
 };
 
-// Each read model through its own storage, which may be another adapter's.
+// Each read model through its own storage, which may be another adapter's. Paged by primary key
+// rather than by offset, so a row a projection writes or deletes meanwhile cannot make another one
+// skip a page or repeat.
 const exportedRows = async (
   storage: ReadModelStorage,
   { person, personal, primaryKey }: ReadModelPersonalData,
@@ -130,12 +132,15 @@ const exportedRows = async (
 ): Promise<readonly ExportedRow[]> => {
   const rows: ExportedRow[] = [];
   let page: readonly Record<string, unknown>[];
+  let after: unknown;
   do {
     page = await storage.table.findMany({
-      where: { [person]: personId },
+      where: {
+        [person]: personId,
+        ...(after === undefined ? {} : { [primaryKey]: { gt: after } }),
+      },
       orderBy: { field: primaryKey, direction: "asc" },
       limit: batchSize,
-      offset: rows.length,
     });
     for (const row of page) {
       rows.push({
@@ -145,7 +150,10 @@ const exportedRows = async (
         ),
       });
     }
-  } while (page.length === batchSize);
+    after = page.at(-1)?.[primaryKey];
+    // A person field that is the primary key names one row at most, and a range on it would
+    // take the place of the person's own value.
+  } while (page.length === batchSize && person !== primaryKey);
   return rows;
 };
 

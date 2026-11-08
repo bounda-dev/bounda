@@ -27,8 +27,8 @@ export interface ColumnsOfFunction {
 
 /**
  * Maps a view's `fields` to columns in declaration order. Throws `ConfigurationError` unless
- * exactly one field is the primary key and every column name is a valid identifier after
- * snake_casing.
+ * exactly one field is the primary key, it is not `json`, and every column name is a valid
+ * identifier after snake_casing.
  */
 export const columnsOf: ColumnsOfFunction = ({ readModel, fields, dialect }) => {
   const columns = Object.entries(fields).map(
@@ -55,6 +55,12 @@ export const columnsOf: ColumnsOfFunction = ({ readModel, fields, dialect }) => 
       `Read model "${readModel}" declares more than one primary key field: ${primaryKeys
         .map((column) => column.field)
         .join(", ")}`,
+    );
+  }
+  const [primaryKey] = primaryKeys as [ColumnDefinition];
+  if (primaryKey.type === "json") {
+    throw new ConfigurationError(
+      `Read model "${readModel}": primary key field "${primaryKey.field}" is json, which has no order to page by; make it a string, number or date`,
     );
   }
   return columns;
