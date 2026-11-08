@@ -171,6 +171,8 @@ export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
       },
     },
   });
+  let stopped = false;
+  const apps = { witness, adapters, ledgers, stopped: () => stopped };
   const tested: BoundaApp<R> = {
     ...app,
     runUntilIdle: async (options) => {
@@ -178,8 +180,18 @@ export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
       if (missing !== undefined) throw missing;
       return result;
     },
+    // A client bound to an actor is searched as the app it came from.
+    as: (actor) => {
+      const client = app.as(actor);
+      registerTestApp(client, apps);
+      return client;
+    },
+    stop: async () => {
+      stopped = true;
+      await app.stop();
+    },
   };
-  registerTestApp(tested, { witness, adapters, ledgers });
+  registerTestApp(tested, apps);
   return { app: tested, clock, ids };
 };
 

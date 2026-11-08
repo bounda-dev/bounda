@@ -73,18 +73,19 @@ export const inspectionContract: InspectionContractFunction = ({ create }) => {
       });
       const tables = await adapter.inspect();
       for (const { name } of tables) expect(name.startsWith("bounda_")).toBe(true);
-      for (const name of [
-        "bounda_events",
-        "bounda_checkpoints",
-        "bounda_inbox",
-        "bounda_scheduled_commands",
-        "bounda_dead_letters",
-        "bounda_idempotency_keys",
-        "bounda_personal_keys",
-        "bounda_persons",
-        "bounda_snapshots",
-      ]) {
+      for (const [name, store] of [
+        ["bounda_events", "events"],
+        ["bounda_checkpoints", "checkpoints"],
+        ["bounda_inbox", "inbox"],
+        ["bounda_scheduled_commands", "scheduledCommands"],
+        ["bounda_dead_letters", "deadLetters"],
+        ["bounda_idempotency_keys", "idempotencyKeys"],
+        ["bounda_personal_keys", "personalKeys"],
+        ["bounda_persons", "persons"],
+        ["bounda_snapshots", "snapshots"],
+      ] as const) {
         const table = tableOf(tables, name);
+        expect(table.store, name).toBe(store);
         expect(table.rows.length, name).toBeGreaterThan(0);
         expect(table.key.length, name).toBeGreaterThan(0);
         for (const row of table.rows) {
@@ -127,6 +128,8 @@ export const inspectionContract: InspectionContractFunction = ({ create }) => {
       expect(live.key).toHaveLength(1);
       expect(live.rows.map((row) => row[live.key[0] ?? ""])).toEqual(["o-1"]);
       expect(live.opaque).toEqual([]);
+      expect(live.store).toBe("readModel");
+      expect(tableOf(tables, "bounda_rm_order_summary__rebuild").store).toBe("readModel");
       expect(JSON.stringify(live.rows)).toContain("c-1");
       expect(JSON.stringify(tableOf(tables, "bounda_rm_order_summary__rebuild").rows)).toContain(
         "c-2",
@@ -145,6 +148,7 @@ export const inspectionContract: InspectionContractFunction = ({ create }) => {
       const { rows } = ledger;
       expect(rows).toEqual([expect.objectContaining({ tenant: "t-1" })]);
       expect(ledger.key).toHaveLength(2);
+      expect(ledger.store).toBe("forgetLedger");
       for (const column of ledger.key) expect(rows[0]?.[column]).toBeDefined();
       expect(JSON.stringify(rows)).toContain("e-1");
       await opened.close?.();

@@ -59,6 +59,7 @@ const readModelTable = (
   const live = tableNameFor({ prefix: DEFAULT_TABLE_PREFIX, readModel: name });
   return {
     name: shadow ? rebuildTablesFor(live).shadow : live,
+    store: "readModel",
     key: [table.key],
     opaque: [],
     rows: byKey(table.rows(), [table.key]),
@@ -174,7 +175,6 @@ export const memory: MemoryFunction = (options = {}) => {
           storageTable({
             table: "personalKeys",
             key: ["person"],
-            opaque: ["key", "fingerprint"],
             rows: entriesRows(personalKeys.entries, "person"),
           }),
           storageTable({ table: "persons", key: ["person"], rows: entriesRows(persons.entries) }),

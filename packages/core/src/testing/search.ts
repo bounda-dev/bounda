@@ -4,9 +4,6 @@
  */
 export const MIN_SUBSTRING_LENGTH = 6;
 
-/**
- * A value of a person, as text, with what finds it in a longer text.
- */
 export interface Needle {
   readonly value: string;
   readonly lower: string;
@@ -65,6 +62,7 @@ export const needlesOf: NeedlesOfFunction = ({ values, personId }) => {
 export interface Leaf {
   readonly path: readonly string[];
   readonly text: string;
+  readonly lower: string;
   /**
    * Key material or ciphertext: compared whole, never searched inside.
    */
@@ -102,17 +100,19 @@ const walk = (
   if (value === null || value === undefined || typeof value === "boolean") return;
   if (typeof value === "string") {
     const parsed = opaque ? undefined : parsedJson(value);
-    if (parsed === undefined) into.push({ path, text: value, opaque });
+    if (parsed === undefined) into.push({ path, text: value, lower: value.toLowerCase(), opaque });
     else walk(parsed, path, opaque, into, seen);
     return;
   }
   if (typeof value === "number" || typeof value === "bigint") {
-    into.push({ path, text: String(value), opaque });
+    const text = String(value);
+    into.push({ path, text, lower: text, opaque });
     return;
   }
   if (typeof value !== "object") return;
   if (value instanceof Date) {
-    into.push({ path, text: Number.isNaN(value.getTime()) ? "" : value.toISOString(), opaque });
+    const text = Number.isNaN(value.getTime()) ? "" : value.toISOString();
+    into.push({ path, text, lower: text.toLowerCase(), opaque });
     return;
   }
   if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
@@ -140,7 +140,7 @@ const walk = (
     return;
   }
   for (const [field, inner] of Object.entries(record)) {
-    into.push({ path: [...path, field], text: field, opaque });
+    into.push({ path: [...path, field], text: field, lower: field.toLowerCase(), opaque });
     walk(inner, [...path, field], opaque || OPAQUE_NAMES.has(field), into, seen);
   }
 };
@@ -163,8 +163,8 @@ export interface MatchesFunction {
   (needle: Needle, leaf: Leaf): boolean;
 }
 
-export const matches: MatchesFunction = (needle, { text, opaque }) => {
-  if (opaque) return text.toLowerCase() === needle.lower;
+export const matches: MatchesFunction = (needle, { text, lower, opaque }) => {
+  if (opaque) return lower === needle.lower;
   if (needle.word !== null) return needle.word.test(text);
-  return text.toLowerCase().includes(needle.lower);
+  return lower.includes(needle.lower);
 };

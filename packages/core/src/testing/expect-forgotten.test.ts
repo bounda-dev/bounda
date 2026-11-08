@@ -2,7 +2,7 @@ import { trace } from "@opentelemetry/api";
 import { describe, expect, it } from "vitest";
 import type { Adapter } from "../adapter/adapter.ts";
 import { createNodeSqliteAdapter } from "../adapter/sqlite/node-sqlite.ts";
-import type { InspectedTable } from "../adapter/storage/inspection.ts";
+import type { InspectedStore, InspectedTable } from "../adapter/storage/inspection.ts";
 import type { Table } from "../adapter/storage/table.ts";
 import type { StoredEvent } from "../contracts/event.ts";
 import type { LogFields } from "../contracts/logger.ts";
@@ -582,11 +582,13 @@ describe("expectForgotten", () => {
     expect((two as Error).message).toContain(": 2 places still hold a value");
   });
 
-  it("gives each kind of table its own advice, and a place of the test's none of theirs", async () => {
-    const adviceFor = async (table: string, places = {}): Promise<string> => {
+  it("gives each store its own advice, and a place of the test's none of theirs", async () => {
+    const adviceFor = async (store: InspectedStore | null, places = {}): Promise<string> => {
       const adapter = {
         ...memory(),
-        inspect: async () => [{ name: table, key: [], opaque: [], rows: [{ v: "secret-value" }] }],
+        inspect: async (): Promise<readonly InspectedTable[]> => [
+          { name: "t", store, key: [], opaque: [], rows: [{ v: "secret-value" }] },
+        ],
       };
       const error = await rejection(
         expectForgotten(adapter, "c-1", { values: ["secret-value"], places }),
@@ -595,43 +597,68 @@ describe("expectForgotten", () => {
     };
     const otherwise =
       "  - Find where the value is written in the clear and mark the field it comes from, or remove it when the person is forgotten.";
-    expect(await adviceFor("bounda_rm_orders")).toContain("A read model kept the value");
-    expect(await adviceFor("apprm_orders")).toContain("A read model kept the value");
-    expect(await adviceFor("bounda_events")).toContain("An event holds the value");
-    expect(await adviceFor("bounda_scheduled_commands")).toContain("A stored command holds");
-    expect(await adviceFor("bounda_dead_letters")).toContain("A dead letter holds the value");
-    expect(await adviceFor("bounda_idempotency_keys")).toContain("A remembered answer quotes");
-    expect(await adviceFor("bounda_snapshots")).toContain("A snapshot holds the value");
-    for (const table of [
-      "bounda_rm_orders__rebuild_x-y",
-      "bounda_events_archive",
-      "bounda_scheduled_commands_old",
-      "bounda_dead_letters_old",
-      "bounda_idempotency_keys_old",
-      "bounda_snapshots_old",
-      "logs",
-      "spans",
-    ]) {
-      expect(await adviceFor(table), table).toBe(otherwise);
+    expect(await adviceFor("readModel")).toContain("A read model kept the value");
+    expect(await adviceFor("events")).toContain("An event holds the value");
+    expect(await adviceFor("scheduledCommands")).toContain("A stored command holds");
+    expect(await adviceFor("deadLetters")).toContain("A dead letter holds the value");
+    expect(await adviceFor("idempotencyKeys")).toContain("A remembered answer quotes");
+    expect(await adviceFor("snapshots")).toContain("A snapshot holds the value");
+    for (const store of ["persons", "checkpoints", "forgetLedger", null] as const) {
+      expect(await adviceFor(store), String(store)).toBe(otherwise);
     }
-    expect(
-      await adviceFor("bounda_events", { logs: "secret-value", "span events": "secret-value" }),
-    ).toBe(
+    expect(await adviceFor("events", { logs: "secret-value", "span events": "secret-value" })).toBe(
       "  - An event holds the value in a field left unmarked: mark it personal() in the event's payload, or the process state's.\n" +
         otherwise,
     );
+  });
+
+  it("refuses to search once the app stopped, or an adapter that holds no table of Bounda's", async () => {
+    const { app } = await createTestApp({ registry });
+    await app.commands.registerCustomer(ana);
+    await app.forget("c-1");
+    await app.stop();
+    expect(((await rejection(expectForgotten(app, "c-1"))) as Error).message).toContain(
+      "call it before app.stop()",
+    );
+    const empty = { ...memory(), inspect: async () => [] };
+    expect(
+      ((await rejection(expectForgotten(empty, "c-1", { values: ["x"] }))) as Error).message,
+    ).toContain("found no table to search");
+  });
+
+  it("searches as the app a client bound to an actor came from", async () => {
+    const { app } = await createTestApp({ registry: leaky });
+    await app.commands.registerCustomer(ana);
+    await app.runUntilIdle();
+    const support = app.as("support-1");
+    await support.forget("c-1");
+    await app.runUntilIdle();
+    expect(await rejection(expectForgotten(support, "c-1"))).toBeInstanceOf(NotForgottenError);
+    await app.stop();
+  });
+
+  it("refuses to record the telemetry while another tracer provider is registered", () => {
+    const first = recordTelemetry();
+    try {
+      expect(() => recordTelemetry()).toThrow("another one is registered globally");
+    } finally {
+      first.stop();
+    }
+    recordTelemetry().stop();
   });
 
   it("names a row by every column of its key, by its place without one, and compares key material whole", async () => {
     const tables: readonly InspectedTable[] = [
       {
         name: "keyed",
+        store: null,
         key: ["a", "b"],
         opaque: [],
         rows: [{ a: 1, b: "x", note: "to Ana", lines: [{ notes: ["Ana"] }] }],
       },
       {
         name: "loose",
+        store: null,
         key: [],
         opaque: ["secret"],
         rows: [{ secret: "x" }, { secret: "+Ana+" }, { secret: "ana", note: "Ana" }],
@@ -656,7 +683,12 @@ describe("expectForgotten", () => {
       deadLetters: [{ data: { email: "letter-value" } }],
       readModels: { directory: [{ key: "c-1", data: { email: "row-value" } }] },
     } as unknown as PersonalDataExport;
-    const adapter = { ...memory(), inspect: async () => [] };
+    const adapter = {
+      ...memory(),
+      inspect: async (): Promise<readonly InspectedTable[]> => [
+        { name: "t", store: null, key: [], opaque: [], rows: [] },
+      ],
+    };
     const error = await rejection(
       expectForgotten(adapter, "c-1", {
         before,
@@ -771,7 +803,7 @@ describe("expectForgotten", () => {
       context: { correlationId: "c", causationId: "c" } as never,
     });
     const app = { forget: async () => ({}) } as never;
-    registerTestApp(app, { witness, adapters: [adapter], ledgers: [] });
+    registerTestApp(app, { witness, adapters: [adapter], ledgers: [], stopped: () => false });
     expect(((await rejection(expectForgotten(app, "c-1"))) as Error).message).toBe(
       'expectForgotten saw a value of "c-1" sealed under a key the test app never held; report this as a bug in Bounda',
     );

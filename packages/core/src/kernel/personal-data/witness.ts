@@ -15,9 +15,6 @@ export interface WitnessedWrappingFunction {
   (wrapping: PersonalKeyWrapping, witness: PersonalDataWitness): PersonalKeyWrapping;
 }
 
-/**
- * `wrapping`, telling `witness` of every key it hands out unwrapped.
- */
 export const witnessedWrapping: WitnessedWrappingFunction = (wrapping, witness) => {
   const seen = (person: string, key: StoredPersonalKey | null): StoredPersonalKey | null => {
     if (key !== null) witness.onPersonalKey(person, key);

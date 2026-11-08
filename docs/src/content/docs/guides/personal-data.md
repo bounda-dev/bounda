@@ -1037,6 +1037,8 @@ does.
 The options say what else to look for and where:
 
 ```ts
+import { expectForgotten, recordTelemetry } from "@bounda-dev/core/testing";
+
 const telemetry = recordTelemetry();
 try {
   // ...
@@ -1056,7 +1058,8 @@ try {
   every value it opened is looked for.
 - `telemetry`: what `recordTelemetry()` recorded, so every span the runtime started, its
   attributes, status, exceptions and events, is searched too. It registers a global
-  OpenTelemetry tracer provider until `stop()`.
+  OpenTelemetry tracer provider until `stop()`, and throws when one is registered already, since
+  OpenTelemetry keeps the first.
 - `places`: anything else, under the name the report gives it: what a test double of a port was
   sent, so a test proves the [policy that tells the outside world](#telling-the-outside-world)
   erased it there too.
@@ -1068,7 +1071,8 @@ with no value to look for and no `values`, rejects with an `Error` saying so.
 tables for `values` and `before` alone: for an app built with `createApp` or `boot()`, or a
 Durable Object's storage, read from inside the object with `durableObjectAdapter` from
 `@bounda-dev/cloudflare` (see [Testing on Cloudflare](/adapters/cloudflare/#testing)). It reads
-the whole database, so point it only at a test's. It works on every adapter: the in-memory one,
+the whole database, so point it only at a test's, and call it before `app.stop()`: an
+in-memory database is gone once the app stops. It works on every adapter: the in-memory one,
 SQLite, the Durable Object and PostgreSQL alike, each through its `inspect()`.
 
 `app.runUntilIdle()` never moves a test's clock to a retention deadline, or every person the test

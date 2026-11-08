@@ -63,13 +63,13 @@ describe("matching", () => {
       true,
     );
     expect(leavesIn({ $personal: { person: "c-1", key: "k", iv: "i", data: "d" } })).toEqual([
-      { path: ["$personal", "person"], text: "c-1", opaque: false },
-      { path: ["$personal", "key"], text: "k", opaque: true },
-      { path: ["$personal", "iv"], text: "i", opaque: true },
-      { path: ["$personal", "data"], text: "d", opaque: true },
+      { path: ["$personal", "person"], text: "c-1", lower: "c-1", opaque: false },
+      { path: ["$personal", "key"], text: "k", lower: "k", opaque: true },
+      { path: ["$personal", "iv"], text: "i", lower: "i", opaque: true },
+      { path: ["$personal", "data"], text: "d", lower: "d", opaque: true },
     ]);
     expect(leavesIn({ $personal: null })).toEqual([
-      { path: ["$personal"], text: "$personal", opaque: false },
+      { path: ["$personal"], text: "$personal", lower: "$personal", opaque: false },
     ]);
   });
 
@@ -83,9 +83,11 @@ describe("matching", () => {
     );
     expect(found("2026-01-01T00:00:00.000Z", new Date("2026-01-01T00:00:00Z"))).toBe(true);
     expect(found("42", 42)).toBe(true);
-    expect(leavesIn(42n)).toEqual([{ path: [], text: "42", opaque: false }]);
-    expect(leavesIn(new Date("not a date"))).toEqual([{ path: [], text: "", opaque: false }]);
-    expect(leavesIn("true")).toEqual([{ path: [], text: "true", opaque: false }]);
+    expect(leavesIn(42n)).toEqual([{ path: [], text: "42", lower: "42", opaque: false }]);
+    expect(leavesIn(new Date("not a date"))).toEqual([
+      { path: [], text: "", lower: "", opaque: false },
+    ]);
+    expect(leavesIn("true")).toEqual([{ path: [], text: "true", lower: "true", opaque: false }]);
     expect(leavesIn('  ["ana@example.com"]').map(({ path }) => path)).toEqual([["[0]"]]);
     expect(leavesIn('{"a":1} trailing').map(({ text }) => text)).toEqual(['{"a":1} trailing']);
     expect(leavesIn("plain [text").map(({ text }) => text)).toEqual(["plain [text"]);

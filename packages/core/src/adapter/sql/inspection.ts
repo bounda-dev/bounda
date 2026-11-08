@@ -1,5 +1,10 @@
-import type { InspectedTable } from "../storage/inspection.ts";
-import { storageTableNameFor } from "./identifiers.ts";
+import {
+  type InspectedStore,
+  type InspectedTable,
+  opaqueColumnsOf,
+  STORAGE_STORES,
+} from "../storage/inspection.ts";
+import { storageTableNameFor, tableNameFor } from "./identifiers.ts";
 import type { SqlExecutor } from "./sql-table.ts";
 
 export interface QuoteNameFunction {
@@ -27,16 +32,35 @@ export interface InspectSqlTableFunction {
   (args: InspectSqlTableArgs): Promise<InspectedTable>;
 }
 
+export interface StoreOfTableArgs {
+  readonly prefix: string;
+  readonly name: string;
+}
+
+export interface StoreOfTableFunction {
+  (args: StoreOfTableArgs): InspectedStore | null;
+}
+
+/**
+ * Which store a table under `prefix` holds, by its name.
+ */
+export const storeOfTable: StoreOfTableFunction = ({ prefix, name }) => {
+  const store = STORAGE_STORES.find((table) => storageTableNameFor({ prefix, table }) === name);
+  if (store !== undefined) return store;
+  return name.startsWith(tableNameFor({ prefix, readModel: "" })) ? "readModel" : null;
+};
+
 /**
  * Reads every row of a table, in the order of its key.
  */
 export const inspectSqlTable: InspectSqlTableFunction = async ({ db, prefix, name, from, key }) => {
   const order = key.length === 0 ? "" : ` ORDER BY ${key.map(quoteName).join(", ")}`;
+  const store = storeOfTable({ prefix, name });
   return {
     name,
+    store,
     key,
-    opaque:
-      name === storageTableNameFor({ prefix, table: "personalKeys" }) ? ["key", "fingerprint"] : [],
+    opaque: opaqueColumnsOf(store),
     rows: await db.all(`SELECT * FROM ${from}${order}`, []),
   };
 };

@@ -1,15 +1,18 @@
 import { DEFAULT_TABLE_PREFIX, storageTableNameFor } from "../adapter/sql/identifiers.ts";
-import { codePointOrder } from "../adapter/sql/order.ts";
-import type { InspectedTable } from "../adapter/storage/inspection.ts";
+import {
+  type InspectedStore,
+  type InspectedTable,
+  opaqueColumnsOf,
+} from "../adapter/storage/inspection.ts";
 import type { StoreEntries } from "./entries.ts";
+import { compareStored } from "./table.ts";
 
 export interface StorageTableArgs {
   /**
-   * The store's name in the SQL adapters, so a report reads alike on every adapter.
+   * Named as the SQL adapters name its table, so a report reads alike on every adapter.
    */
-  readonly table: string;
+  readonly table: Exclude<InspectedStore, "readModel">;
   readonly key: readonly string[];
-  readonly opaque?: readonly string[];
   readonly rows: readonly object[];
 }
 
@@ -17,17 +20,13 @@ export interface StorageTableFunction {
   (args: StorageTableArgs): InspectedTable;
 }
 
-export const storageTable: StorageTableFunction = ({ table, key, opaque = [], rows }) => ({
+export const storageTable: StorageTableFunction = ({ table, key, rows }) => ({
   name: storageTableNameFor({ prefix: DEFAULT_TABLE_PREFIX, table }),
+  store: table,
   key,
-  opaque,
+  opaque: opaqueColumnsOf(table),
   rows: byKey(rows as readonly Readonly<Record<string, unknown>>[], key),
 });
-
-const compare = (a: unknown, b: unknown): number => {
-  if (typeof a === "number" && typeof b === "number") return a - b;
-  return codePointOrder(String(a), String(b));
-};
 
 export interface ByKeyFunction {
   (
@@ -42,7 +41,7 @@ export interface ByKeyFunction {
 export const byKey: ByKeyFunction = (rows, key) =>
   [...rows].sort((a, b) => {
     for (const column of key) {
-      const order = compare(a[column], b[column]);
+      const order = compareStored(a[column], b[column]);
       if (order !== 0) return order;
     }
     return 0;

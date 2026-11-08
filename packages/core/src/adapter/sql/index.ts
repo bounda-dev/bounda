@@ -31,8 +31,10 @@ export type {
   InspectSqlTableArgs,
   InspectSqlTableFunction,
   QuoteNameFunction,
+  StoreOfTableArgs,
+  StoreOfTableFunction,
 } from "./inspection.ts";
-export { inspectSqlTable, quoteName } from "./inspection.ts";
+export { inspectSqlTable, quoteName, storeOfTable } from "./inspection.ts";
 export type {
   MigrateSchemasArgs,
   MigrateSchemasFunction,

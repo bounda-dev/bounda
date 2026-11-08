@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { testCommand, testContext, testDeadLetter } from "../adapter/testing/fixtures.ts";
+import {
+  pendingEvent,
+  testCommand,
+  testContext,
+  testDeadLetter,
+} from "../adapter/testing/fixtures.ts";
 import type { LogFields } from "../contracts/logger.ts";
 import { silentLogger } from "../contracts/logger.ts";
 import { memory } from "../memory/index.ts";
@@ -29,17 +34,15 @@ const forgetting = (personId: string, aggregateType = "bounda") => ({
   aggregateId: personId,
   expectedVersion: 0,
   events: [
-    {
+    pendingEvent({
       id: `forgot-${personId}-${aggregateType}`,
       aggregateType,
       aggregateId: personId,
       version: 1,
       type: "PersonalDataForgotten",
       payload: { personId },
-      metadata: {},
-      timestamp: "2026-01-01T00:00:00.000Z",
       person: personId,
-    },
+    }),
   ],
 });
 

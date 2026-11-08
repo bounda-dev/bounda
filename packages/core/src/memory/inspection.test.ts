@@ -37,8 +37,9 @@ describe("memory inspection", () => {
       }),
     ).toEqual({
       name: "bounda_personal_keys",
+      store: "personalKeys",
       key: ["person"],
-      opaque: [],
+      opaque: ["key", "fingerprint"],
       rows: [
         { person: "c-1", key: "k1" },
         { person: "c-2", key: "k2" },

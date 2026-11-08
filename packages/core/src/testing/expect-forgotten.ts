@@ -1,6 +1,6 @@
 import { type Adapter, isAdapter } from "../adapter/adapter.ts";
 import type { ForgetLedger, ForgetLedgerEntry } from "../adapter/storage/forget-ledger.ts";
-import type { InspectedTable } from "../adapter/storage/inspection.ts";
+import type { InspectedStore, InspectedTable } from "../adapter/storage/inspection.ts";
 import type { BoundaClient } from "../kernel/app.ts";
 import { importPersonalKey, unseal } from "../kernel/personal-data/crypto.ts";
 import type { PersonalDataExport } from "../kernel/personal-data/export.ts";
@@ -102,6 +102,10 @@ interface TestApps {
   readonly witness: TestWitness;
   readonly adapters: readonly Adapter[];
   /**
+   * Whether `app.stop()` ran: an in-memory database is gone then, and a ledger closed.
+   */
+  readonly stopped: () => boolean;
+  /**
    * The forget ledger this app opened, which closes with it.
    */
   readonly ledgers: readonly ForgetLedger[];
@@ -156,7 +160,7 @@ const placesOfTable = (table: InspectedTable): readonly Place[] =>
   table.rows.map((row, index) => ({
     store: table.name,
     row: rowOf(table, row, index),
-    advice: TABLE_ADVICE.find(({ test }) => test(table.name))?.advice ?? OTHERWISE,
+    advice: (table.store === null ? undefined : STORE_ADVICE[table.store]) ?? OTHERWISE,
     leaves: Object.entries(row).flatMap(([column, value]) =>
       leavesIn(value, table.opaque.includes(column)).map((leaf) => ({
         ...leaf,
@@ -180,42 +184,20 @@ const SPANS_ADVICE =
 const OTHERWISE =
   "Find where the value is written in the clear and mark the field it comes from, or remove it when the person is forgotten.";
 
-// By the end of a table's name, whatever the adapter's prefix.
-const TABLE_ADVICE: readonly {
-  readonly test: (table: string) => boolean;
-  readonly advice: string;
-}[] = [
-  {
-    test: (table) => /rm_[a-z0-9_]+$/.test(table),
-    advice:
-      "A read model kept the value: project PersonalDataForgotten in it and delete the row or clear the field, and mark the field .personal() so its export and the access log see it.",
-  },
-  {
-    test: (table) => /events$/.test(table),
-    advice:
-      "An event holds the value in a field left unmarked: mark it personal() in the event's payload, or the process state's.",
-  },
-  {
-    test: (table) => /scheduled_commands$/.test(table),
-    advice:
-      "A stored command holds the value in a field left unmarked: mark it personal() in the command's payload.",
-  },
-  {
-    test: (table) => /dead_letters$/.test(table),
-    advice:
-      "A dead letter holds the value: mark the field of the command's payload personal(), or name the person whose data the failed work read, and keep personal data out of error messages.",
-  },
-  {
-    test: (table) => /idempotency_keys$/.test(table),
-    advice:
-      "A remembered answer quotes the value: keep personal data out of a rejection's message and say what went wrong with its code and ids.",
-  },
-  {
-    test: (table) => /snapshots$/.test(table),
-    advice:
-      "A snapshot holds the value from a field left unmarked: mark it personal() where the state's value comes from.",
-  },
-];
+const STORE_ADVICE: Readonly<Partial<Record<InspectedStore, string>>> = {
+  readModel:
+    "A read model kept the value: project PersonalDataForgotten in it and delete the row or clear the field, and mark the field .personal() so its export and the access log see it.",
+  events:
+    "An event holds the value in a field left unmarked: mark it personal() in the event's payload, or the process state's.",
+  scheduledCommands:
+    "A stored command holds the value in a field left unmarked: mark it personal() in the command's payload.",
+  deadLetters:
+    "A dead letter holds the value: mark the field of the command's payload personal(), or name the person whose data the failed work read, and keep personal data out of error messages.",
+  idempotencyKeys:
+    "A remembered answer quotes the value: keep personal data out of a rejection's message and say what went wrong with its code and ids.",
+  snapshots:
+    "A snapshot holds the value from a field left unmarked: mark it personal() where the state's value comes from.",
+};
 
 const opened = async (witness: TestWitness, personId: string, held: string | null) => {
   const values: unknown[] = [];
@@ -236,7 +218,7 @@ const opened = async (witness: TestWitness, personId: string, held: string | nul
 // The fingerprint of the key the person holds now: what was sealed under it is theirs still.
 const heldKey = (tables: readonly InspectedTable[], personId: string): string | null => {
   for (const table of tables) {
-    if (!table.name.endsWith("personal_keys")) continue;
+    if (table.store !== "personalKeys") continue;
     const row = table.rows.find((candidate) => candidate.person === personId);
     if (row !== undefined) return String(row.fingerprint);
   }
@@ -269,8 +251,18 @@ export const expectForgotten: ExpectForgottenFunction = async (target, personId,
       "expectForgotten takes the app createTestApp returned, or an adapter: for an app built otherwise, pass its storage adapter with the values to look for",
     );
   }
+  if (apps?.stopped() === true) {
+    throw new Error(
+      "expectForgotten reads what the app keeps, so call it before app.stop(): an in-memory database is gone once the app stops",
+    );
+  }
   const adapters = apps?.adapters ?? [target as Adapter];
   const tables = (await Promise.all(adapters.map((adapter) => adapter.inspect()))).flat();
+  if (tables.length === 0) {
+    throw new Error(
+      "expectForgotten found no table to search: the adapter's database holds none of Bounda's, so it may be another one, or closed",
+    );
+  }
   const held = heldKey(tables, personId);
   const values: unknown[] = [...(options.values ?? [])];
   if (options.before !== undefined) values.push(...exportedValues(options.before));

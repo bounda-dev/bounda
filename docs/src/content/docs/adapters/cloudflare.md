@@ -259,7 +259,7 @@ the object with `runInDurableObject`, for the values of the person's export take
 `forget`:
 
 ```ts
-import { runInDurableObject } from "cloudflare:test";
+import { env, runInDurableObject } from "cloudflare:test";
 import { connect, durableObjectAdapter } from "@bounda-dev/cloudflare";
 import { expectForgotten } from "@bounda-dev/core/testing";
 

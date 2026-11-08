@@ -14,9 +14,6 @@ import type { PersonalDataWitness } from "../kernel/personal-data/witness.ts";
 import { BOUNDA_AGGREGATE, PERSONAL_DATA_FORGOTTEN_EVENT } from "../modules/bounda-events.ts";
 import type { FieldsRecord } from "../modules/view.ts";
 
-/**
- * What a log entry was, as the test app's logger received it.
- */
 export interface LoggedEntry {
   readonly level: keyof Logger;
   readonly message: string;
