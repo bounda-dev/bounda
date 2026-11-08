@@ -234,8 +234,8 @@ const createUndoLog = ({
       deadLetterStore: {
         add: (letter) =>
           tracked(entries.deadLetterStore, letter.id, () => deadLetterStore.add(letter)),
-        updateStatus: (id, status) =>
-          tracked(entries.deadLetterStore, id, () => deadLetterStore.updateStatus(id, status)),
+        updateStatus: (id, status, at) =>
+          tracked(entries.deadLetterStore, id, () => deadLetterStore.updateStatus(id, status, at)),
         remove: (id) => tracked(entries.deadLetterStore, id, () => deadLetterStore.remove(id)),
       },
       scheduler: {
@@ -271,7 +271,7 @@ const createUndoLog = ({
  * its personal keys, and the scheduled commands and dead letters it forgets, are written at once
  * and put back the same way, and the snapshots it forgets are gone at once, for good, as a cache
  * can be.
- * `tryClaim`, `claimDue`, both `renew`, `purge` and writes made on the stores themselves do not
+ * `tryClaim`, `claimDue`, both `renew`, both `purge` and writes made on the stores themselves do not
  * wait for a commit, so they can see a write it may still put back.
  */
 export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunction = ({

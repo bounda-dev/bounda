@@ -119,6 +119,12 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
     };
   };
 
+  // The letter as its retry left it, with the `resolvedAt` the retry stored.
+  const retried = async (letter: StoredDeadLetter): Promise<DeadLetter> => ({
+    ...(await opened((await storage.deadLetterStore.get(letter.id)) ?? letter)),
+    status: "retried",
+  });
+
   const withParked = async (
     letter: StoredDeadLetter,
     keyOf?: KeyOfFunction,
@@ -183,22 +189,23 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
           at: clock.now().toISOString(),
           ...actedBy(actor),
         });
-        const retried: DeadLetter = { ...(await opened(letter)), status: "retried" };
-        if (letter.kind !== "process") return retried;
-        return { ...retried, parked: await processes.stillParked(letter) };
+        const settled = await retried(letter);
+        if (letter.kind !== "process") return settled;
+        return { ...settled, parked: await processes.stillParked(letter) };
       });
     },
     discard: async (id) => {
       const letter = await failedLetter(id);
       return recordedLetter("deadLetters.discard", letter, async () => {
-        await storage.deadLetterStore.updateStatus(id, "discarded");
+        const at = clock.now();
+        await storage.deadLetterStore.updateStatus(id, "discarded", at);
         logger.info("dead letter discarded", {
           id,
           kind: letter.kind,
           handler: letter.handler,
           ...actedBy(actor),
         });
-        return { ...(await opened(letter)), status: "discarded" };
+        return { ...(await opened(letter)), status: "discarded", resolvedAt: at.toISOString() };
       });
     },
   };

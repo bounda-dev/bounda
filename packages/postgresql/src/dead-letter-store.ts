@@ -27,7 +27,7 @@ export interface CreatePostgresqlDeadLetterStoreFunction {
 }
 
 const COLUMNS =
-  '"id", "kind", "handler", "event_id", "event_type", "aggregate_type", "aggregate_id", "person", "error_type", "error_name", "error_code", "error_message", "error_stack", "attempts", "first_failed_at", "last_failed_at", "status", "payload", "persons"';
+  '"id", "kind", "handler", "event_id", "event_type", "aggregate_type", "aggregate_id", "person", "error_type", "error_name", "error_code", "error_message", "error_stack", "attempts", "first_failed_at", "last_failed_at", "status", "resolved_at", "payload", "persons"';
 
 const toLetter = (row: Record<string, unknown>): StoredDeadLetter => ({
   id: String(row.id),
@@ -51,6 +51,9 @@ const toLetter = (row: Record<string, unknown>): StoredDeadLetter => ({
   firstFailedAt: String(row.first_failed_at),
   lastFailedAt: String(row.last_failed_at),
   status: String(row.status) as DeadLetterStatus,
+  ...(row.resolved_at === null || row.resolved_at === undefined
+    ? {}
+    : { resolvedAt: String(row.resolved_at) }),
   ...(row.payload === null || row.payload === undefined ? {} : { payload: row.payload }),
   ...((row.persons as KeyedPerson[]).length === 0 ? {} : { persons: row.persons as KeyedPerson[] }),
 });
@@ -85,7 +88,7 @@ export const createPostgresqlDeadLetterStore: CreatePostgresqlDeadLetterStoreFun
   return {
     add: async (letter) => {
       await db.run(
-        `INSERT INTO ${table} (${COLUMNS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'failed', $17, $18) ON CONFLICT ("id") DO NOTHING`,
+        `INSERT INTO ${table} (${COLUMNS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'failed', NULL, $17, $18) ON CONFLICT ("id") DO NOTHING`,
         [
           letter.id,
           letter.kind,
@@ -133,10 +136,10 @@ export const createPostgresqlDeadLetterStore: CreatePostgresqlDeadLetterStoreFun
           [person, errorCode],
         )
       ).map(toLetter),
-    updateStatus: async (id, status) => {
+    updateStatus: async (id, status, at) => {
       const updated = await db.all(
-        `UPDATE ${table} SET "status" = $1 WHERE "id" = $2 AND "status" = 'failed' RETURNING "id"`,
-        [status, id],
+        `UPDATE ${table} SET "status" = $1, "resolved_at" = $2 WHERE "id" = $3 AND "status" = 'failed' RETURNING "id"`,
+        [status, at.toISOString(), id],
       );
       if (updated.length === 0) throw new DeadLetterSettledError({ id });
     },
@@ -152,5 +155,19 @@ export const createPostgresqlDeadLetterStore: CreatePostgresqlDeadLetterStoreFun
       (await db.all(`DELETE FROM ${table} WHERE ${naming("$1")} RETURNING ${COLUMNS}`, [person]))
         .map(toLetter)
         .sort(byFirstFailure),
+    firstResolvedAt: async () => {
+      const [row] = await db.all(
+        `SELECT "resolved_at" FROM ${table} WHERE "resolved_at" IS NOT NULL ORDER BY "resolved_at" LIMIT 1`,
+        [],
+      );
+      return row === undefined ? null : new Date(String(row.resolved_at));
+    },
+    purge: async ({ resolvedBy, limit }) =>
+      (
+        await db.all(
+          `DELETE FROM ${table} WHERE "id" IN (SELECT "id" FROM ${table} WHERE "resolved_at" <= $1 ORDER BY "resolved_at", "id" COLLATE "C" LIMIT $2) RETURNING "id"`,
+          [resolvedBy.toISOString(), limit],
+        )
+      ).length,
   };
 };

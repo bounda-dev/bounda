@@ -254,14 +254,14 @@ describe("createMemoryStorageTransaction", () => {
     const live = stores.scheduler.cancel;
     stores.scheduler.cancel = async (dedupeKey) => {
       discard ??= stores.transact(async (tx) => {
-        await tx.deadLetterStore.updateStatus("d1", "discarded");
+        await tx.deadLetterStore.updateStatus("d1", "discarded", new Date());
       });
       for (let tick = 0; tick < 10; tick += 1) await Promise.resolve();
       return live(dedupeKey);
     };
     await expect(
       stores.transact(async (tx) => {
-        await tx.deadLetterStore.updateStatus("d1", "retried");
+        await tx.deadLetterStore.updateStatus("d1", "retried", new Date());
         await tx.scheduler.cancel("a");
         await refused(tx);
       }),

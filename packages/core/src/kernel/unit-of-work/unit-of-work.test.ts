@@ -241,7 +241,7 @@ describe("createUnitOfWork", () => {
       ...letter("new"),
       status: "failed",
     });
-    await unit.deadLetterStore.updateStatus("old", "discarded");
+    await unit.deadLetterStore.updateStatus("old", "discarded", new Date());
     await unit.deadLetterStore.remove("old");
     await unit.scheduler.schedule(entry("command:later"));
     await unit.scheduler.cancel("command:later");

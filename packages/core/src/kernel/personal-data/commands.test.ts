@@ -127,7 +127,7 @@ const setup = async () => {
     const forgotten = events.filter((event) => event.type === "PersonalDataForgotten");
     return (forgotten.at(-1) as PersonalDataForgottenEvent | undefined)?.payload;
   };
-  return { app, storage, logs, runDue, forgottenPayload };
+  return { app, clock, storage, logs, runDue, forgottenPayload };
 };
 
 describe("sealCommandPayload and openCommandPayload", () => {
@@ -385,7 +385,7 @@ describe("personal data in delayed commands", () => {
   });
 
   it("dead-letters a delayed command sealed, shows it opened, and removes it on forget", async () => {
-    const { app, storage, runDue, forgottenPayload } = await setup();
+    const { app, clock, storage, runDue, forgottenPayload } = await setup();
     failing = true;
     await app.commands.remindCustomer(ana, { delay: "1m" });
     await runDue();
@@ -404,6 +404,7 @@ describe("personal data in delayed commands", () => {
     expect(await app.deadLetters.discard(stored?.id ?? "")).toEqual({
       ...opened,
       status: "discarded",
+      resolvedAt: clock.now().toISOString(),
     });
 
     await app.forget("c-1");

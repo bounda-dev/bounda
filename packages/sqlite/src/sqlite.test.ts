@@ -310,6 +310,7 @@ describe("sqlite adapter on a file", () => {
       "app_events",
       "app_idempotency_keys",
       "app_inbox",
+      "app_person_rows",
       "app_personal_keys",
       "app_persons",
       "app_rm_order_summary",

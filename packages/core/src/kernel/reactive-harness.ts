@@ -131,6 +131,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     processes,
     config,
     ids,
+    clock,
   });
   const worker = createScheduledCommandWorker({
     storage,

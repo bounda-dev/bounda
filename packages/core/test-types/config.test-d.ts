@@ -235,6 +235,19 @@ describe("defineConfig", () => {
       // @ts-expect-error the key wrapper is app-wide, never per aggregate
       runtime: { overrides: { order: { personalData: { keyWrapper: masterKey({ from: "K" }) } } } },
     });
+    defineConfig({ storage: sqlite, ports, runtime: { deadLetters: { retention: "30d" } } });
+    defineConfig({
+      storage: sqlite,
+      ports,
+      // @ts-expect-error "a month" is not a duration string
+      runtime: { deadLetters: { retention: "a month" } },
+    });
+    defineConfig({
+      storage: sqlite,
+      ports,
+      // @ts-expect-error the retention of dead letters is app-wide, never per aggregate
+      runtime: { overrides: { order: { deadLetters: { retention: "30d" } } } },
+    });
     // @ts-expect-error batch is not a role
     defineConfig({ storage: sqlite, ports, runtime: { role: "batch" } });
     defineConfig({

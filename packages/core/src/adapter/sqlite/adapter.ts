@@ -97,12 +97,21 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
             persons: tables.persons,
           }),
           inboxLedger: createSqliteInboxLedger({ db: database, table: tables.inbox }),
-          deadLetterStore: createSqliteDeadLetterStore({ db: database, table: tables.deadLetters }),
-          scheduler: createSqliteScheduler({ db: database, table: tables.scheduledCommands }),
+          deadLetterStore: createSqliteDeadLetterStore({
+            db: database,
+            table: tables.deadLetters,
+            personRows: tables.personRows,
+          }),
+          scheduler: createSqliteScheduler({
+            db: database,
+            table: tables.scheduledCommands,
+            personRows: tables.personRows,
+          }),
           idempotencyStore: createSqliteIdempotencyStore({
             db: database,
             table: tables.idempotencyKeys,
             personalKeys: tables.personalKeys,
+            personRows: tables.personRows,
           }),
           personalKeys: createSqlPersonalKeyStore({
             db: database,
@@ -118,6 +127,7 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
             db: database,
             table: tables.snapshots,
             personalKeys: tables.personalKeys,
+            personRows: tables.personRows,
           }),
         });
         // The stores over an open transaction: their statements join it, and a `write` of their own

@@ -211,6 +211,7 @@ bounda dead-letters discard <id>
 2 dead letters
 ```
 
+A letter retried or discarded shows when after its status (`retried 2026-09-23T08:00:00.000Z`).
 The third line of each letter is the error's class, its code when it is one of
 [Bounda's](/reference/errors/), and its message. The message is kept encrypted with the key of
 the person the work names, so it is left out once that person was

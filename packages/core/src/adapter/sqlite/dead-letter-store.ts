@@ -11,10 +11,13 @@ import type {
 import type { SqlDatabase } from "../sql/database.ts";
 import { byFirstFailure, decodeErrorText, encodeErrorText } from "../sql/dead-letters.ts";
 import { naming } from "./held-keys.ts";
+import { PERSON_INDEXED } from "./schema.ts";
 
 export interface CreateSqliteDeadLetterStoreArgs {
   readonly db: SqlDatabase;
   readonly table: string;
+  // Where the rows that name a person are indexed by person.
+  readonly personRows: string;
 }
 
 export interface CreateSqliteDeadLetterStoreFunction {
@@ -22,7 +25,7 @@ export interface CreateSqliteDeadLetterStoreFunction {
 }
 
 const COLUMNS =
-  '"id", "kind", "handler", "event_id", "event_type", "aggregate_type", "aggregate_id", "person", "error_type", "error_name", "error_code", "error_message", "error_stack", "attempts", "first_failed_at", "last_failed_at", "status", "payload", "persons"';
+  '"id", "kind", "handler", "event_id", "event_type", "aggregate_type", "aggregate_id", "person", "error_type", "error_name", "error_code", "error_message", "error_stack", "attempts", "first_failed_at", "last_failed_at", "status", "resolved_at", "payload", "persons"';
 
 const personsOf = (row: Record<string, unknown>): { persons?: KeyedPerson[] } => {
   const persons = JSON.parse(String(row.persons)) as KeyedPerson[];
@@ -51,6 +54,9 @@ const toLetter = (row: Record<string, unknown>): StoredDeadLetter => ({
   firstFailedAt: String(row.first_failed_at),
   lastFailedAt: String(row.last_failed_at),
   status: String(row.status) as DeadLetterStatus,
+  ...(row.resolved_at === null || row.resolved_at === undefined
+    ? {}
+    : { resolvedAt: String(row.resolved_at) }),
   ...(row.payload === null || row.payload === undefined
     ? {}
     : { payload: JSON.parse(String(row.payload)) as unknown }),
@@ -75,7 +81,12 @@ const filters = (
   return { sql: clauses.length === 0 ? "" : ` WHERE ${clauses.join(" AND ")}`, params };
 };
 
-export const createSqliteDeadLetterStore: CreateSqliteDeadLetterStoreFunction = ({ db, table }) => {
+export const createSqliteDeadLetterStore: CreateSqliteDeadLetterStoreFunction = ({
+  db,
+  table,
+  personRows,
+}) => {
+  const names = naming({ personRows, indexed: PERSON_INDEXED.deadLetters });
   const get = async (id: string): Promise<StoredDeadLetter | null> => {
     const [row] = await db.all(`SELECT ${COLUMNS} FROM ${table} WHERE "id" = ?`, [id]);
     return row === undefined ? null : toLetter(row);
@@ -84,7 +95,7 @@ export const createSqliteDeadLetterStore: CreateSqliteDeadLetterStoreFunction = 
   return {
     add: async (letter) => {
       await db.run(
-        `INSERT INTO ${table} (${COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'failed', ?, ?) ON CONFLICT ("id") DO NOTHING`,
+        `INSERT INTO ${table} (${COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'failed', NULL, ?, ?) ON CONFLICT ("id") DO NOTHING`,
         [
           letter.id,
           letter.kind,
@@ -132,10 +143,10 @@ export const createSqliteDeadLetterStore: CreateSqliteDeadLetterStoreFunction = 
           [person, errorCode],
         )
       ).map(toLetter),
-    updateStatus: async (id, status) => {
+    updateStatus: async (id, status, at) => {
       const updated = await db.all(
-        `UPDATE ${table} SET "status" = ? WHERE "id" = ? AND "status" = 'failed' RETURNING "id"`,
-        [status, id],
+        `UPDATE ${table} SET "status" = ?, "resolved_at" = ? WHERE "id" = ? AND "status" = 'failed' RETURNING "id"`,
+        [status, at.toISOString(), id],
       );
       if (updated.length === 0) throw new DeadLetterSettledError({ id });
     },
@@ -143,13 +154,27 @@ export const createSqliteDeadLetterStore: CreateSqliteDeadLetterStoreFunction = 
     listByPerson: async (person) =>
       (
         await db.all(
-          `SELECT ${COLUMNS} FROM ${table} WHERE "person" = ? OR ${naming(table)} ORDER BY "first_failed_at", "id"`,
+          `SELECT ${COLUMNS} FROM ${table} WHERE "person" = ? OR ${names} ORDER BY "first_failed_at", "id"`,
           [person, person],
         )
       ).map(toLetter),
     forget: async (person) =>
-      (await db.all(`DELETE FROM ${table} WHERE ${naming(table)} RETURNING ${COLUMNS}`, [person]))
+      (await db.all(`DELETE FROM ${table} WHERE ${names} RETURNING ${COLUMNS}`, [person]))
         .map(toLetter)
         .sort(byFirstFailure),
+    firstResolvedAt: async () => {
+      const [row] = await db.all(
+        `SELECT "resolved_at" FROM ${table} WHERE "resolved_at" IS NOT NULL ORDER BY "resolved_at" LIMIT 1`,
+        [],
+      );
+      return row === undefined ? null : new Date(String(row.resolved_at));
+    },
+    purge: async ({ resolvedBy, limit }) =>
+      (
+        await db.all(
+          `DELETE FROM ${table} WHERE "id" IN (SELECT "id" FROM ${table} WHERE "resolved_at" <= ? ORDER BY "resolved_at", "id" LIMIT ?) RETURNING "id"`,
+          [resolvedBy.toISOString(), limit],
+        )
+      ).length,
   };
 };

@@ -178,10 +178,13 @@ describe("deadLetters", () => {
 
     policyMode = "ok";
     const telemetry = installFakeTelemetry();
-    expect(await deadLetters.retry(letter?.id ?? "")).toMatchObject({
+    const retried = await deadLetters.retry(letter?.id ?? "");
+    expect(retried).toMatchObject({
       id: letter?.id,
       status: "retried",
+      resolvedAt: harness.clock.now().toISOString(),
     });
+    expect(retried).not.toHaveProperty("parked");
     expect(
       telemetry.spans.find((span) => span.name === "bounda.policy order.notifyOnOrderPlaced"),
     ).toMatchObject({ attributes: { [ATTRIBUTES.attempt]: 2 } });

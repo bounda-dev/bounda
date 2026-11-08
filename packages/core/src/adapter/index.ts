@@ -26,6 +26,7 @@ export type {
   ListDeadLettersArgs,
   ListFailedDeadLettersArgs,
   NewDeadLetter,
+  PurgeDeadLettersArgs,
   StoredDeadLetter,
 } from "./storage/dead-letter-store.ts";
 export type { EventListener, EventNotifier, Unsubscribe } from "./storage/event-notifier.ts";
