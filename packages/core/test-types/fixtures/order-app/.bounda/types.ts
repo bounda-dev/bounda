@@ -67,6 +67,7 @@ export type ReactionCommands = core.ReactionCommandsFacadeOf<{
 type Expect<Check extends true> = Check;
 
 export type CustomerDirectoryRow = core.RowOf<typeof import("../app/read/customer-directory/view.ts")>;
+export type CustomerDirectoryFieldTypes = core.FieldTypesOf<typeof import("../app/read/customer-directory/view.ts")>;
 export type CustomerDirectoryPorts = core.EmptyPayload;
 export type CustomerDirectoryForgetting = Expect<
   core.ForgetsPersonalData<
@@ -78,6 +79,7 @@ export type CustomerDirectoryForgetting = Expect<
 >;
 
 export type OrderSummaryRow = core.RowOf<typeof import("../app/read/order-summary/view.ts")>;
+export type OrderSummaryFieldTypes = core.FieldTypesOf<typeof import("../app/read/order-summary/view.ts")>;
 export type OrderSummaryPorts = {
   readonly rates: import("../app/read/order-summary/rates.ts").Rates;
 };

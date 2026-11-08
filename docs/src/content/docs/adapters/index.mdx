@@ -103,8 +103,9 @@ rebuilt there is also `bounda_rm_order_summary__rebuild`, and for an instant dur
 
 Adding a field to a view adds a nullable column the next time the app starts; existing rows keep
 working. Marking a field `unique()` or `index()` adds its index, and a `unique()` refuses to start
-while two rows share the value. Removing a field, changing its type, moving the primary key or
-dropping `unique()` is refused with an error that names the read model and the command that
+while two rows share the value. A string column made under the database's collation on PostgreSQL
+takes the `"C"` collation in place, keeping its rows. Removing a field, changing its type, moving
+the primary key or dropping `unique()` is refused with an error that names the read model and the command that
 rebuilds it, `bounda rebuild <read-model>`, which does so without taking the read model offline
 ([rebuilding a read model](/guides/deployment/#rebuilding-a-read-model)).
 
@@ -148,7 +149,7 @@ through `table`, and keep `client` for what `table` cannot say.
 The in-memory adapter is for tests and for trying Bounda: one process, which it notifies on each
 append. Its tables and stores behave as SQLite's: the same refusals, the same `null` and date
 semantics, payloads read back as JSON, and the same order, so a test that passes on it passes on
-SQLite. PostgreSQL differs in one place: a table ordered by a text field follows the database's
-collation, and puts rows without a value last. Start on SQLite and move to PostgreSQL when the
+SQLite. PostgreSQL orders read models alike: strings by code point whatever the database's
+collation, rows without a value where SQLite puts them. Start on SQLite and move to PostgreSQL when the
 background work needs more than one process; the domain code does not change. [Deployment](/guides/deployment/) covers the roles and what the
 instances share, and [How Bounda runs](/concepts/how-it-runs/) the ceiling of one store.

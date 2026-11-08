@@ -103,10 +103,15 @@ passes straight through. A field whose operators have no value at all is refused
 `ConfigurationError` rather than matching every row, so a missing list in
 `delete({ orderId: { in: ids } })` cannot empty the table: leave the field out to match any row.
 A `json` field matches by equality only, whatever its value, and cannot be
-the primary key. Strings compare as `orderBy` sorts them: by code point in SQLite and in memory, by
-the column's collation in PostgreSQL. The types refuse an operator a field has no use for, a range
-on a boolean or any operator on JSON, and the runtime refuses a field or an operator the view does
-not know with `ConfigurationError`.
+the primary key: an object there is the value to match, not operators. The table is typed from
+the view, so the types refuse a range on a boolean and any operator on a `json` field, even one
+whose values are strings. The runtime refuses a range on a boolean too, and a field or an
+operator the view does not know, with `ConfigurationError`.
+
+Every database orders rows alike, in `where` as in `orderBy`: strings by code point, so `"B"`
+comes before `"a"`, `"a-b"` before `"ab"`, and `"z"` before `"á"`, and rows without a value first
+going up and last going down. A page, a range or a test gives the same rows on SQLite, PostgreSQL,
+Cloudflare and in memory.
 
 `offset` pages through rows as they are at each call, so a projection that writes between two
 pages can make a row skip or repeat. To page through rows that keep changing, page by the primary

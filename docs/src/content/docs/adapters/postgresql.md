@@ -49,7 +49,12 @@ postgresql({ host: "localhost", port: 5432, database: "shop", user: "shop", pass
   scheduled commands are taken with `FOR UPDATE SKIP LOCKED`. Any number of instances can run the
   worker role and each due command is claimed by one of them at a time.
 - Payloads and metadata are `jsonb`; read-model booleans, dates and JSON fields use `boolean`,
-  `timestamp with time zone` and `jsonb`. Numbers are `double precision`.
+  `timestamp with time zone` and `jsonb`. Numbers are `double precision`. Strings are
+  `text COLLATE "C"`, which compares them by code point as SQLite does, so a range, an `orderBy`
+  and hand-written SQL over the column find the rows in the same order on both. The collation also
+  folds case in ASCII only, again as SQLite does: in hand-written SQL, `lower()`, `upper()` and
+  `ILIKE` leave `Á` as it is, unless the expression names another collation
+  (`lower("name" COLLATE "und-x-icu")`, on a server built with ICU).
 
 Storage and read models opened from the same `postgresql(...)` share one pool, closed when the
 app stops.

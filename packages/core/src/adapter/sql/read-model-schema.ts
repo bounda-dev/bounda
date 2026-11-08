@@ -9,6 +9,7 @@ export interface ColumnDefinition {
   readonly name: string;
   readonly type: FieldType;
   readonly sqlType: string;
+  readonly collation: string | null;
   readonly nullable: boolean;
   readonly primaryKey: boolean;
   readonly unique: boolean;
@@ -40,6 +41,7 @@ export const columnsOf: ColumnsOfFunction = ({ readModel, fields, dialect }) => 
       }),
       type: definition.type,
       sqlType: dialect.columnType(definition.type),
+      collation: dialect.collation(definition.type),
       nullable: definition.isOptional && !definition.isPrimaryKey,
       primaryKey: definition.isPrimaryKey,
       unique: definition.isUnique,
@@ -69,10 +71,13 @@ export const columnsOf: ColumnsOfFunction = ({ readModel, fields, dialect }) => 
 const indexName = (table: string, column: ColumnDefinition): string =>
   quoteIdentifier(`${table}_${column.name}_idx`);
 
+const typeClause = (column: ColumnDefinition): string =>
+  column.collation === null ? column.sqlType : `${column.sqlType} COLLATE "${column.collation}"`;
+
 const columnClause = (column: ColumnDefinition): string =>
   [
     quoteIdentifier(column.name),
-    column.sqlType,
+    typeClause(column),
     column.primaryKey ? "PRIMARY KEY" : column.nullable ? "" : "NOT NULL",
     column.unique && !column.primaryKey ? "UNIQUE" : "",
   ]
@@ -103,12 +108,14 @@ export const createTableStatements: CreateTableStatementsFunction = ({ table, co
 ];
 
 /**
- * A column as the engine reports it: its name, its declared type, and whether it is the primary
- * key, unique on its own, or the first column of an index.
+ * A column as the engine reports it: its name, its declared type, the collation it names (`null`
+ * for the engine's default), and whether it is the primary key, unique on its own, or the first
+ * column of an index.
  */
 export interface ExistingColumn {
   readonly name: string;
   readonly sqlType: string;
+  readonly collation: string | null;
   readonly primaryKey: boolean;
   readonly unique: boolean;
   readonly indexed: boolean;
@@ -133,10 +140,11 @@ const uniqueIndexName = (table: string, column: ColumnDefinition): string =>
 
 /**
  * The statements that bring an existing table up to the current `fields`. Evolution is additive:
- * new fields become nullable columns (existing rows have no value for them), and a field newly
- * `unique` or indexed gets its index. A field that disappeared, changed type, moved the primary
- * key or stopped being unique is an error naming the read model, because rebuilding a table
- * silently would drop data. `bounda rebuild` does it on purpose.
+ * new fields become nullable columns (existing rows have no value for them), a field newly
+ * `unique` or indexed gets its index, and a column takes the dialect's collation in place, which
+ * changes the order of its rows but none of their values. A field that disappeared, changed type,
+ * moved the primary key or stopped being unique is an error naming the read model, because
+ * rebuilding a table silently would drop data. `bounda rebuild` does it on purpose.
  */
 export const evolveTableStatements: EvolveTableStatementsFunction = ({
   readModel,
@@ -184,7 +192,10 @@ export const evolveTableStatements: EvolveTableStatementsFunction = ({
     const quoted = quoteIdentifier(column.name);
     return [
       ...(current === undefined
-        ? [`ALTER TABLE ${quotedTable} ADD COLUMN ${quoted} ${column.sqlType}`]
+        ? [`ALTER TABLE ${quotedTable} ADD COLUMN ${quoted} ${typeClause(column)}`]
+        : []),
+      ...(current !== undefined && current.collation !== column.collation
+        ? [`ALTER TABLE ${quotedTable} ALTER COLUMN ${quoted} TYPE ${typeClause(column)}`]
         : []),
       ...(column.unique && !column.primaryKey && current?.unique !== true
         ? [

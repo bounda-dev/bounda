@@ -3,13 +3,15 @@ import type * as generated from "../../../../../.bounda/types.ts";
 
 type Module = typeof import("../list-unpaid-orders.ts");
 type Row = generated.OrderSummaryRow;
+type FieldTypes = generated.OrderSummaryFieldTypes;
 
 export declare namespace Query {
   type PayloadArgs = core.PayloadArgs;
   type RepositoryArgs = core.QueryRepositoryArgs<
     core.PayloadOf<Module>,
     Row,
-    unknown
+    unknown,
+    FieldTypes
   >;
   type HandlerArgs = core.QueryHandlerArgs<
     "ListUnpaidOrders",
@@ -17,6 +19,7 @@ export declare namespace Query {
     core.RepositoryDataOf<Module>,
     Row,
     generated.Queries,
-    generated.OrderSummaryPorts
+    generated.OrderSummaryPorts,
+    FieldTypes
   >;
 }

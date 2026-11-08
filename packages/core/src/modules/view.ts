@@ -13,14 +13,16 @@ export type FieldMark = "personal" | "person";
 
 /**
  * A read-model field as the runtime and the adapters see it. `Value` is the TypeScript type of
- * the column; it is carried at the type level only.
+ * the column; it is carried at the type level only. `Type` is how it is stored, which decides
+ * what a table can filter it by.
  */
 export interface FieldDefinition<
   Value = unknown,
   Optional extends boolean = boolean,
   Mark extends FieldMark | null = FieldMark | null,
+  Type extends FieldType = FieldType,
 > {
-  readonly type: FieldType;
+  readonly type: Type;
   readonly isOptional: Optional;
   readonly isPrimaryKey: boolean;
   readonly isUnique: boolean;
@@ -35,35 +37,39 @@ export interface FieldDefinition<
 /**
  * A field under construction. Every method returns a new field; nothing is mutated.
  */
-export interface Field<Value, Optional extends boolean, Mark extends FieldMark | null = null>
-  extends FieldDefinition<Value, Optional, Mark> {
-  optional(): Field<Value, true, Mark>;
-  primaryKey(): Field<Value, Optional, Mark>;
-  unique(): Field<Value, Optional, Mark>;
-  index(): Field<Value, Optional, Mark>;
+export interface Field<
+  Value,
+  Optional extends boolean,
+  Mark extends FieldMark | null = null,
+  Type extends FieldType = FieldType,
+> extends FieldDefinition<Value, Optional, Mark, Type> {
+  optional(): Field<Value, true, Mark, Type>;
+  primaryKey(): Field<Value, Optional, Mark, Type>;
+  unique(): Field<Value, Optional, Mark, Type>;
+  index(): Field<Value, Optional, Mark, Type>;
   /**
    * Marks the field as personal data of the person the row's `person` field names: the export of
    * that person carries it, and a query that reads rows of the read model is recorded in the
    * access log. A read model with personal fields needs a `person` field and a projection of
    * `PersonalDataForgotten`, or `.bounda/types.ts` does not compile.
    */
-  personal(this: Field<Value, Optional, null>): Field<Value, Optional, "personal">;
+  personal(this: Field<Value, Optional, null, Type>): Field<Value, Optional, "personal", Type>;
   /**
    * Marks the field that holds the id of the person the row's personal fields belong to. A read
    * model has at most one; its rows are in that person's export.
    */
-  person(this: Field<string, Optional, null>): Field<Value, Optional, "person">;
+  person(this: Field<string, Optional, null, Type>): Field<Value, Optional, "person", Type>;
 }
 
 /**
  * The `f` object a view's `fields` function receives.
  */
 export interface FieldBuilder {
-  string(): Field<string, false>;
-  number(): Field<number, false>;
-  boolean(): Field<boolean, false>;
-  date(): Field<Date, false>;
-  json<Value>(): Field<Value, false>;
+  string(): Field<string, false, null, "string">;
+  number(): Field<number, false, null, "number">;
+  boolean(): Field<boolean, false, null, "boolean">;
+  date(): Field<Date, false, null, "date">;
+  json<Value>(): Field<Value, false, null, "json">;
 }
 
 /**
@@ -111,6 +117,15 @@ export type RowOf<Module> = Module extends {
   ? InferRow<Fields>
   : never;
 
+/**
+ * How each field of a view module is stored, which decides what its table can filter it by.
+ */
+export type FieldTypesOf<Module> = Module extends {
+  readonly fields: (args: FieldsArgs) => infer Fields extends FieldsRecord;
+}
+  ? { readonly [K in keyof Fields]: Fields[K]["type"] }
+  : never;
+
 interface FieldFlags {
   readonly type: FieldType;
   readonly isOptional: boolean;
@@ -120,25 +135,30 @@ interface FieldFlags {
   readonly mark: FieldMark | null;
 }
 
-const createField = <Value, Optional extends boolean, Mark extends FieldMark | null>(
+const createField = <
+  Value,
+  Optional extends boolean,
+  Mark extends FieldMark | null,
+  Type extends FieldType,
+>(
   flags: FieldFlags,
-): Field<Value, Optional, Mark> => ({
-  type: flags.type,
+): Field<Value, Optional, Mark, Type> => ({
+  type: flags.type as Type,
   isOptional: flags.isOptional as Optional,
   isPrimaryKey: flags.isPrimaryKey,
   isUnique: flags.isUnique,
   isIndexed: flags.isIndexed,
   mark: flags.mark as Mark,
-  optional: () => createField<Value, true, Mark>({ ...flags, isOptional: true }),
-  primaryKey: () => createField<Value, Optional, Mark>({ ...flags, isPrimaryKey: true }),
-  unique: () => createField<Value, Optional, Mark>({ ...flags, isUnique: true }),
-  index: () => createField<Value, Optional, Mark>({ ...flags, isIndexed: true }),
-  personal: () => createField<Value, Optional, "personal">({ ...flags, mark: "personal" }),
-  person: () => createField<Value, Optional, "person">({ ...flags, mark: "person" }),
+  optional: () => createField<Value, true, Mark, Type>({ ...flags, isOptional: true }),
+  primaryKey: () => createField<Value, Optional, Mark, Type>({ ...flags, isPrimaryKey: true }),
+  unique: () => createField<Value, Optional, Mark, Type>({ ...flags, isUnique: true }),
+  index: () => createField<Value, Optional, Mark, Type>({ ...flags, isIndexed: true }),
+  personal: () => createField<Value, Optional, "personal", Type>({ ...flags, mark: "personal" }),
+  person: () => createField<Value, Optional, "person", Type>({ ...flags, mark: "person" }),
 });
 
-const field = <Value>(type: FieldType): Field<Value, false> =>
-  createField<Value, false, null>({
+const field = <Value, Type extends FieldType>(type: Type): Field<Value, false, null, Type> =>
+  createField<Value, false, null, Type>({
     type,
     isOptional: false,
     isPrimaryKey: false,
@@ -151,9 +171,9 @@ const field = <Value>(type: FieldType): Field<Value, false> =>
  * The runtime `f` builder.
  */
 export const fieldBuilder: FieldBuilder = {
-  string: () => field<string>("string"),
-  number: () => field<number>("number"),
-  boolean: () => field<boolean>("boolean"),
-  date: () => field<Date>("date"),
-  json: <Value>() => field<Value>("json"),
+  string: () => field<string, "string">("string"),
+  number: () => field<number, "number">("number"),
+  boolean: () => field<boolean, "boolean">("boolean"),
+  date: () => field<Date, "date">("date"),
+  json: <Value>() => field<Value, "json">("json"),
 };

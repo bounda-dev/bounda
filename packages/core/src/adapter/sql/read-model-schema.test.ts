@@ -25,15 +25,22 @@ const fields = {
 describe("columnsOf", () => {
   it("maps fields to snake_case columns with the dialect's types", () => {
     const columns = columnsOf({ readModel: "orderSummary", fields, dialect: postgresqlDialect });
-    expect(columns.map((column) => [column.field, column.name, column.sqlType])).toEqual([
-      ["orderId", "order_id", "text"],
-      ["customerId", "customer_id", "text"],
-      ["email", "email", "text"],
-      ["total", "total", "double precision"],
-      ["paid", "paid", "boolean"],
-      ["paidAt", "paid_at", "timestamp with time zone"],
-      ["lines", "lines", "jsonb"],
+    expect(
+      columns.map((column) => [column.field, column.name, column.sqlType, column.collation]),
+    ).toEqual([
+      ["orderId", "order_id", "text", "C"],
+      ["customerId", "customer_id", "text", "C"],
+      ["email", "email", "text", "C"],
+      ["total", "total", "double precision", null],
+      ["paid", "paid", "boolean", null],
+      ["paidAt", "paid_at", "timestamp with time zone", null],
+      ["lines", "lines", "jsonb", null],
     ]);
+    expect(
+      columnsOf({ readModel: "orderSummary", fields, dialect: sqliteDialect }).map(
+        (column) => column.collation,
+      ),
+    ).toEqual([null, null, null, null, null, null, null]);
     expect(columns[0]).toMatchObject({ primaryKey: true, nullable: false, type: "string" });
     expect(columns[1]).toMatchObject({ indexed: true, unique: false });
     expect(columns[2]).toMatchObject({ unique: true });
@@ -89,14 +96,14 @@ describe("createTableStatements", () => {
     ]);
   });
 
-  it("uses the PostgreSQL types for that dialect", () => {
+  it("uses the PostgreSQL types for that dialect, text ordered by code point", () => {
     const columns = columnsOf({
       readModel: "orders",
       fields: { id: f.string().primaryKey(), paidAt: f.date() },
       dialect: postgresqlDialect,
     });
     expect(createTableStatements({ table: "orders", columns })).toEqual([
-      'CREATE TABLE IF NOT EXISTS "orders" ("id" text PRIMARY KEY, "paid_at" timestamp with time zone NOT NULL)',
+      'CREATE TABLE IF NOT EXISTS "orders" ("id" text COLLATE "C" PRIMARY KEY, "paid_at" timestamp with time zone NOT NULL)',
     ]);
   });
 });
@@ -106,6 +113,7 @@ describe("evolveTableStatements", () => {
   const existing = columns.map((column) => ({
     name: column.name,
     sqlType: column.sqlType,
+    collation: column.collation,
     primaryKey: column.primaryKey,
     unique: column.unique,
     indexed: column.indexed || column.unique || column.primaryKey,
@@ -113,6 +121,7 @@ describe("evolveTableStatements", () => {
   const fresh = (name: string, sqlType: string) => ({
     name,
     sqlType,
+    collation: null,
     primaryKey: false,
     unique: false,
     indexed: false,
@@ -170,6 +179,53 @@ describe("evolveTableStatements", () => {
   });
 });
 
+describe("evolveTableStatements with collations", () => {
+  const columns = columnsOf({ readModel: "orderSummary", fields, dialect: postgresqlDialect });
+  const reported = (collation: (name: string) => string | null) =>
+    columns.map((column) => ({
+      name: column.name,
+      sqlType: column.sqlType,
+      collation: collation(column.name),
+      primaryKey: column.primaryKey,
+      unique: column.unique,
+      indexed: column.indexed || column.unique || column.primaryKey,
+    }));
+
+  it("gives a text column the dialect's collation in place, keeping its rows", () => {
+    expect(
+      evolveTableStatements({
+        readModel: "orderSummary",
+        table: "t",
+        columns,
+        existing: reported((name) => (name === "email" ? "C" : null)),
+      }),
+    ).toEqual([
+      'ALTER TABLE "t" ALTER COLUMN "order_id" TYPE text COLLATE "C"',
+      'ALTER TABLE "t" ALTER COLUMN "customer_id" TYPE text COLLATE "C"',
+    ]);
+  });
+
+  it("adds a text column with its collation and leaves one that has it alone", () => {
+    const existing = reported((name) =>
+      ["order_id", "customer_id", "email"].includes(name) ? "C" : null,
+    );
+    expect(
+      evolveTableStatements({ readModel: "orderSummary", table: "t", columns, existing }),
+    ).toEqual([]);
+    expect(
+      evolveTableStatements({
+        readModel: "orderSummary",
+        table: "t",
+        columns,
+        existing: existing.filter((column) => column.name !== "email"),
+      }),
+    ).toEqual([
+      'ALTER TABLE "t" ADD COLUMN "email" text COLLATE "C"',
+      'CREATE UNIQUE INDEX IF NOT EXISTS "t_email_key" ON "t" ("email")',
+    ]);
+  });
+});
+
 describe("evolveTableStatements with keys and indexes", () => {
   const evolve = (
     next: Parameters<typeof columnsOf>[0]["fields"],
@@ -184,6 +240,7 @@ describe("evolveTableStatements with keys and indexes", () => {
   const column = (name: string, facts: { primaryKey?: boolean; unique?: boolean } = {}) => ({
     name,
     sqlType: "TEXT",
+    collation: null,
     primaryKey: facts.primaryKey ?? false,
     unique: facts.unique ?? false,
     indexed: (facts.primaryKey ?? false) || (facts.unique ?? false),

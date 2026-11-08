@@ -33,7 +33,7 @@ const existingColumns = async (
   table: string,
 ): Promise<readonly ExistingColumn[]> => {
   const columns = await db.all(
-    `SELECT "column_name", "data_type" FROM information_schema.columns WHERE "table_schema" = $1 AND "table_name" = $2 ORDER BY "ordinal_position"`,
+    `SELECT "column_name", "data_type", "collation_name" FROM information_schema.columns WHERE "table_schema" = $1 AND "table_name" = $2 ORDER BY "ordinal_position"`,
     [schema, table],
   );
   if (columns.length === 0) return [];
@@ -54,6 +54,7 @@ const existingColumns = async (
     return {
       name,
       sqlType: String(column.data_type),
+      collation: column.collation_name === null ? null : String(column.collation_name),
       primaryKey,
       unique: facts(name, "unique") && !primaryKey,
       indexed: indexes.some((index) => index.column === name),

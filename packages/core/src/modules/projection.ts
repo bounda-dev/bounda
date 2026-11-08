@@ -1,4 +1,4 @@
-import type { ReadClient, Table } from "../adapter/storage/table.ts";
+import type { FieldTypes, FieldTypesOfRow, ReadClient, Table } from "../adapter/storage/table.ts";
 import { capitalize } from "./naming.ts";
 
 export interface ProjectionModule {
@@ -8,11 +8,17 @@ export interface ProjectionModule {
 
 /**
  * Arguments of `project`: the event, the typed table of the read model and its client, whose
- * `raw` is the storage adapter's handle on the projection's transaction.
+ * `raw` is the storage adapter's handle on the projection's transaction. `Types` is how the view
+ * stores each field, which decides what the table filters it by.
  */
-export interface ProjectionArgs<Event, Row, Raw = unknown> {
+export interface ProjectionArgs<
+  Event,
+  Row,
+  Raw = unknown,
+  Types extends FieldTypes<Row> = FieldTypesOfRow<Row>,
+> {
   readonly event: Event;
-  readonly table: Table<Row>;
+  readonly table: Table<Row, Types>;
   readonly client: ReadClient<Row, Raw>;
 }
 
