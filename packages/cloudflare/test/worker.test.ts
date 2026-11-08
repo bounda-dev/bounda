@@ -150,6 +150,7 @@ describe("createWorker", () => {
 
   it.each([
     ["omits", undefined, { errorName: "Error" }],
+    ["omits by default", "unset" as const, { errorName: "Error" }],
     [
       "includes",
       "include" as const,
@@ -168,7 +169,12 @@ describe("createWorker", () => {
       const worker = createWorker({
         config: {
           storage: cloudflare({ binding: "SPY" }),
-          ...(errorText === undefined ? {} : { runtime: { telemetry: { errorText } } }),
+          ...(errorText === undefined
+            ? {}
+            : {
+                runtime:
+                  errorText === "unset" ? { role: "web" as const } : { telemetry: { errorText } },
+              }),
         },
         tenantOf: () => {
           throw new Error("no session for ana@example.com");
@@ -195,7 +201,7 @@ describe("createWorker", () => {
           {
             path: "/queries/getOrder",
             ...logged,
-            ...(errorText === undefined ? {} : { errorStack: expect.any(String) }),
+            ...(errorText === "include" ? { errorStack: expect.any(String) } : {}),
           },
         ],
       ]);

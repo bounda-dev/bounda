@@ -709,9 +709,9 @@ describe("a Bounda Durable Object", () => {
       await instance.alarm();
     });
     expect(objectLogs(logs.error)).toEqual([
-      ["bounda rebuilds could not be listed", { errorName: expect.any(String) }],
-      ["bounda alarm failed; it will be retried", { errorName: expect.any(String) }],
-      ["bounda alarm could not re-arm", { errorName: expect.any(String) }],
+      ["bounda rebuilds could not be listed", { errorName: "Error" }],
+      ["bounda alarm failed; it will be retried", { errorName: "Error" }],
+      ["bounda alarm could not re-arm", { errorName: "Error" }],
     ]);
   });
 

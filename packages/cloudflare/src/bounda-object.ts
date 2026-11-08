@@ -199,8 +199,9 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
   logger = workersLogger,
   ids,
   clock = systemClock,
-}: CreateBoundaObjectArgs<R>): BoundaObjectClass =>
-  class BoundaObject extends DurableObject implements BoundaObjectMethods {
+}: CreateBoundaObjectArgs<R>): BoundaObjectClass => {
+  const errorText = config.runtime?.telemetry?.errorText;
+  return class BoundaObject extends DurableObject implements BoundaObjectMethods {
     #app: BoundaApp<R> | undefined;
 
     constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
@@ -274,7 +275,7 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
           failed = true;
           logger.error("bounda rebuild slice failed", {
             readModel: name,
-            ...errorFields({ error, errorText: config.runtime?.telemetry?.errorText }),
+            ...errorFields({ error, errorText }),
           });
         }
       }
@@ -401,22 +402,23 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
       } catch (error) {
         rebuildFailed = true;
         logger.error("bounda rebuilds could not be listed", {
-          ...errorFields({ error, errorText: config.runtime?.telemetry?.errorText }),
+          ...errorFields({ error, errorText }),
         });
       }
       try {
         ({ idle } = await this.#ready().runUntilIdle({ maxPasses: passesPerAlarm }));
       } catch (error) {
         logger.error("bounda alarm failed; it will be retried", {
-          ...errorFields({ error, errorText: config.runtime?.telemetry?.errorText }),
+          ...errorFields({ error, errorText }),
         });
       }
       try {
         await this.#rearm(true, idle, rebuildFailed);
       } catch (error) {
         logger.error("bounda alarm could not re-arm", {
-          ...errorFields({ error, errorText: config.runtime?.telemetry?.errorText }),
+          ...errorFields({ error, errorText }),
         });
       }
     }
   };
+};
