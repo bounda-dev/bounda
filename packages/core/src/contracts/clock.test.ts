@@ -55,6 +55,18 @@ describe("systemClock", () => {
     }
   });
 
+  it("still calls back after a background wait where the process stays", () => {
+    vi.useFakeTimers();
+    try {
+      const calls: string[] = [];
+      systemClock.after(100, () => calls.push("background"), { background: true });
+      vi.advanceTimersByTime(100);
+      expect(calls).toEqual(["background"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("drops a background wait where the platform's timers cannot let a process go", () => {
     const cleared: unknown[] = [];
     const armed = vi

@@ -446,8 +446,10 @@ describe("createKeyRotation", () => {
     expect(logger.logged.map(({ message }) => message)).toEqual([
       "no personal key is wrapped under a previous key any more; remove them",
     ]);
+    await checkpoints.set("some-subscriber", 1);
     clock.advance(ROTATION_MARK_EXPIRY_MS);
     expect(await next.sweep(clock.now())).toBe(0);
+    expect(await checkpoints.get("some-subscriber")).toBe(1);
     const marks = await rotated();
     expect(marks).toHaveLength(1);
     expect(marks).not.toContain(first);
@@ -556,6 +558,41 @@ describe("createKeyRotation", () => {
     clock.advance(HOLD_MS - 1);
     expect(await rotation.sweep(clock.now())).toBe(0);
     expect(logger.logged).toHaveLength(2);
+  });
+
+  it("waits longer while holds cannot be written, and as long as the first again after a pass that kept them", async () => {
+    const { store, checkpoints, clock } = await setUp();
+    let writable = false;
+    const wrapper = fakeWrapper("new", ["old"]);
+    const rotation = rotationOver({
+      keys: {
+        ...store,
+        hold: async (person, from, hold) => {
+          if (!writable) throw new Error("read-only");
+          return store.hold(person, from, hold);
+        },
+      },
+      checkpoints,
+      wrapper: {
+        ...wrapper,
+        unwrap: async () => {
+          throw new Error("unwrap failed");
+        },
+      },
+    });
+    await addUnder(store, "old", "c-1");
+    await rotation.sweep(clock.now());
+    clock.advance(HOLD_MS);
+    await rotation.sweep(clock.now());
+    expect(await rotation.nextDueAt()).toEqual(new Date(clock.now().getTime() + 2 * HOLD_MS));
+    clock.advance(2 * HOLD_MS);
+    writable = true;
+    await rotation.sweep(clock.now());
+    writable = false;
+    await addUnder(store, "old", "c-2");
+    clock.advance(HOLD_MS);
+    await rotation.sweep(clock.now());
+    expect(await rotation.nextDueAt()).toEqual(new Date(clock.now().getTime() + HOLD_MS));
   });
 
   it("is due now while a key waits, and never otherwise, reading the store once an interval at most", async () => {

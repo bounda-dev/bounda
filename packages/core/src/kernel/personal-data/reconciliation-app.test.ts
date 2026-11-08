@@ -368,11 +368,13 @@ describe("the forget ledger", () => {
     await first.stop();
     await (await opened(ledgerAdapter)).append([entry("c-1", "lost-forget", START)]);
     let down = true;
+    let reads = 0;
     const flaky = defineForgetLedger(async () => {
       const inner = await opened(ledgerAdapter);
       return {
         append: (entries) => inner.append(entries),
         read: async (args) => {
+          reads += 1;
           if (down) throw new Error("ledger is down");
           return inner.read(args);
         },
@@ -395,7 +397,9 @@ describe("the forget ledger", () => {
     const heldUntil = START.getTime() + 3 * HOLD_MS;
     expect(await stored()).toEqual([heldUntil, 2]);
     other.clock.set(new Date(START.getTime() + HOLD_MS));
+    const readsBefore = reads;
     await other.app.runUntilIdle();
+    expect(reads).toBe(readsBefore);
     expect(await stored()).toEqual([heldUntil, 2]);
     expect(await other.app.nextDueAt()).toEqual(new Date(heldUntil));
     down = false;

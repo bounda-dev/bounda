@@ -501,6 +501,40 @@ describe("createRetentionSweep", () => {
     ]);
   });
 
+  it("waits longer after each list it cannot read, and as long as the first again after a pass that found nobody due", async () => {
+    const live = await memory().createStorage();
+    let broken = true;
+    let lists = 0;
+    const { sweepOver, clock } = await setUp(live);
+    const sweep = sweepOver({
+      ...live,
+      persons: {
+        ...live.persons,
+        listIdle: async (args) => {
+          if (args.activeBefore === undefined) return live.persons.listIdle(args);
+          lists += 1;
+          if (broken) throw new Error("connection reset");
+          return live.persons.listIdle(args);
+        },
+      },
+    });
+    const passAfter = async (milliseconds: number): Promise<number> => {
+      clock.advance(milliseconds);
+      const before = lists;
+      await sweep.sweep(clock.now());
+      return lists - before;
+    };
+    expect(await passAfter(0)).toBe(1);
+    expect(await passAfter(HOLD_MS)).toBe(1);
+    expect(await passAfter(2 * HOLD_MS - 1)).toBe(0);
+    broken = false;
+    expect(await passAfter(1)).toBe(1);
+    broken = true;
+    expect(await passAfter(0)).toBe(1);
+    expect(await passAfter(HOLD_MS - 1)).toBe(0);
+    expect(await passAfter(1)).toBe(1);
+  });
+
   it("logs a list it cannot read, never rejecting, and tries again later", async () => {
     const live = await memory().createStorage();
     let broken = true;
@@ -682,7 +716,12 @@ describe("createRetentionSweep", () => {
     lists = 0;
     expect(await sweep.nextDueAt()).toEqual(new Date(Date.parse(day(30))));
     expect(lists).toBe(2);
-    advance(41);
+    // Once the hold is over, the first person alone answers again.
+    clock.set(new Date(day(40)));
+    lists = 0;
+    expect(await sweep.nextDueAt()).toEqual(new Date(Date.parse(day(30))));
+    expect(lists).toBe(1);
+    advance(1);
     expect(await sweep.sweep(clock.now())).toBe(2);
     expect(told).toEqual(["c-1", "c-2"]);
     expect(await sweepOver(live).sweep(clock.now())).toBe(0);

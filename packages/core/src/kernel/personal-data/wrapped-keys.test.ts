@@ -323,6 +323,23 @@ describe("createPersonalKeyWrapping", () => {
     expect(wrapper.unwrapped).toHaveLength(2);
   });
 
+  it("arms its expiry as a background wait, so it never keeps a process alive", async () => {
+    const store = await keyStore();
+    const options: unknown[] = [];
+    const watched: typeof clock = {
+      ...createFixedClock(),
+      after: (_milliseconds, _callback, given) => {
+        options.push(given);
+        return () => undefined;
+      },
+    };
+    const keys = createPersonalKeyWrapping({ clock: watched, wrapper: fakeWrapper("kid-1") }).over(
+      store,
+    );
+    await keys.add("c-1", await generatePersonalKey());
+    expect(options).toEqual([{ background: true }]);
+  });
+
   it("drops every unwrapped key and its timer when closed", async () => {
     const store = await keyStore();
     const timed = createFixedClock();

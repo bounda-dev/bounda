@@ -337,6 +337,10 @@ describe("the forget ledger's reconciliation", () => {
     expect(await reconciliation.reconcile(NOW)).toBe(1);
     expect(told).toEqual(["c-1"]);
     expect(await storage.checkpointStore.get(FORGET_LEDGER_HELD_UNTIL)).toBe(0);
+    // Its attempts alone, too.
+    await storage.checkpointStore.set(FORGET_LEDGER_ATTEMPTS, 3);
+    expect(await reconciliation.reconcile(NOW)).toBe(0);
+    expect(await storage.checkpointStore.get(FORGET_LEDGER_ATTEMPTS)).toBe(0);
   });
 
   it("warns only when it forgot someone", async () => {
