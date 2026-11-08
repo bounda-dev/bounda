@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Adapter } from "../../adapter/adapter.ts";
 import { createNodeSqliteAdapter } from "../../adapter/sqlite/node-sqlite.ts";
 import type { RuntimeConfig } from "../../config/types.ts";
@@ -10,8 +10,8 @@ import type { EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { createTestApp } from "../../testing/index.ts";
 import { type BoundaApp, createApp } from "../app.ts";
-import { fingerprintOf, fromBase64 } from "./crypto.ts";
-import { defineKeyWrapper } from "./key-wrapper.ts";
+import { fingerprintOf, fromBase64, toBase64 } from "./crypto.ts";
+import { buildKeyWrapper, defineCryptoKeyWrapper, defineKeyWrapper } from "./key-wrapper.ts";
 import { masterKey } from "./master-key.ts";
 
 const registry = {
@@ -82,6 +82,19 @@ const recordingLogger = (): Logger & { readonly logged: Logged[] } => {
   return { logged, debug: at("debug"), info: at("info"), warn: at("warn"), error: at("error") };
 };
 
+const masterKeyOf = (env: Record<string, string>, previous?: readonly string[]) =>
+  buildKeyWrapper({
+    definition: masterKey({
+      from: "BOUNDA_MASTER_KEY",
+      ...(previous === undefined ? {} : { previous }),
+    }),
+    env,
+  });
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 const wrapped = (previous?: readonly string[]): RuntimeConfig => ({
   personalData: {
     keyWrapper: masterKey({
@@ -131,16 +144,20 @@ describe("personal keys wrapped under a master key", () => {
     const app = await start({ adapter, env, runtime: wrapped() });
     await register(app, "c-1");
     await register(app, "c-2");
-    const wrapper = await masterKey({ from: "BOUNDA_MASTER_KEY" }).create({ env });
+    const wrapper = await masterKeyOf(env);
     const rows = keyRows(db);
     expect(rows.map(({ person, kid }) => [person, kid])).toEqual([
       ["c-1", wrapper.kid],
       ["c-2", wrapper.kid],
     ]);
     for (const row of rows) {
-      expect(await fingerprintOf(fromBase64(row.key))).not.toBe(row.fingerprint);
-      const raw = await wrapper.unwrap({ kid: wrapper.kid, wrapped: fromBase64(row.key) });
-      expect(await fingerprintOf(Uint8Array.from(raw))).toBe(row.fingerprint);
+      expect(fromBase64(row.key)).toHaveLength(40);
+      const key = await wrapper.unwrap({
+        kid: wrapper.kid,
+        wrapped: fromBase64(row.key),
+        extractable: false,
+      });
+      expect(await fingerprintOf(key)).toBe(row.fingerprint);
     }
     expect(await emailOf(app, "c-1")).toEqual({ email: "c-1@example.com" });
     await app.stop();
@@ -163,8 +180,8 @@ describe("personal keys wrapped under a master key", () => {
     const { adapter, db } = createNodeSqliteAdapter();
     const env = { BOUNDA_MASTER_KEY: randomKey() };
     let unwraps = 0;
-    const counting = defineKeyWrapper(async (args) => {
-      const wrapper = await masterKey({ from: "BOUNDA_MASTER_KEY" }).create(args);
+    const counting = defineCryptoKeyWrapper(async (args) => {
+      const wrapper = await masterKeyOf(args.env as Record<string, string>);
       return {
         ...wrapper,
         unwrap: (wrapped) => {
@@ -203,10 +220,7 @@ describe("personal keys wrapped under a master key", () => {
       runtime: wrapped(["BOUNDA_MASTER_KEY_PREVIOUS"]),
       logger,
     });
-    const current = await masterKey({
-      from: "BOUNDA_MASTER_KEY",
-      previous: ["BOUNDA_MASTER_KEY_PREVIOUS"],
-    }).create({ env });
+    const current = await masterKeyOf(env, ["BOUNDA_MASTER_KEY_PREVIOUS"]);
     expect(current.previous).toHaveLength(1);
     expect(await rotated.nextDueAt()).not.toBeNull();
     expect(await rotated.runUntilIdle()).toEqual({ idle: true, rejections: [] });
@@ -214,7 +228,7 @@ describe("personal keys wrapped under a master key", () => {
     expect(logger.logged).toContainEqual({
       level: "info",
       message: "no personal key is wrapped under a previous key any more; remove them",
-      fields: { kid: current.kid, previous: current.previous ?? [] },
+      fields: { kid: current.kid, previous: current.previous },
     });
     expect(await rotated.nextDueAt()).toBeNull();
     await rotated.stop();
@@ -239,7 +253,7 @@ describe("personal keys wrapped under a master key", () => {
     const after = await start({ adapter, env, runtime: wrapped() });
     expect(await emailOf(after, "c-1")).toEqual({ email: "c-1@example.com" });
     await after.runUntilIdle();
-    const { kid } = await masterKey({ from: "BOUNDA_MASTER_KEY" }).create({ env });
+    const { kid } = await masterKeyOf(env);
     expect(keyRows(db).map((row) => row.kid)).toEqual([kid]);
     expect(await emailOf(after, "c-1")).toEqual({ email: "c-1@example.com" });
     await after.stop();
@@ -250,7 +264,7 @@ describe("personal keys wrapped under a master key", () => {
     const env = { BOUNDA_MASTER_KEY: randomKey() };
     const right = await start({ adapter, env, runtime: wrapped() });
     await register(right, "c-1");
-    const { kid } = await masterKey({ from: "BOUNDA_MASTER_KEY" }).create({ env });
+    const { kid } = await masterKeyOf(env);
     await right.stop();
 
     const wrong = await start({
@@ -294,6 +308,92 @@ describe("personal keys wrapped under a master key", () => {
     expect(clock.pending()).toBeGreaterThan(0);
     await app.stop();
     expect(clock.pending()).toBe(0);
+  });
+});
+
+describe("a person's raw key", () => {
+  // What the app does with its keys once it runs: register, read, forget, register again.
+  const exercise = async (app: BoundaApp<Registry>) => {
+    await register(app, "c-1");
+    await register(app, "c-2");
+    await emailOf(app, "c-1");
+    await emailOf(app, "c-2");
+    await app.forget("c-1");
+    await emailOf(app, "c-1");
+    await register(app, "c-1");
+    await emailOf(app, "c-1");
+  };
+
+  const watchSubtle = () => ({
+    exported: vi.spyOn(crypto.subtle, "exportKey"),
+    imported: vi.spyOn(crypto.subtle, "importKey"),
+  });
+
+  it("never reaches JavaScript under the master key: nothing is exported or imported from bytes", async () => {
+    const { adapter } = createNodeSqliteAdapter();
+    const app = await start({
+      adapter,
+      env: { BOUNDA_MASTER_KEY: randomKey() },
+      runtime: wrapped(),
+    });
+    const { exported, imported } = watchSubtle();
+    await exercise(app);
+    expect(exported).not.toHaveBeenCalled();
+    expect(imported).not.toHaveBeenCalled();
+    await app.stop();
+  });
+
+  it("never reaches JavaScript in a test app under the master key either", async () => {
+    const { app } = await createTestApp({
+      registry,
+      config: { runtime: wrapped() },
+      env: { BOUNDA_MASTER_KEY: randomKey() },
+    });
+    const { exported, imported } = watchSubtle();
+    await exercise(app);
+    expect(exported).not.toHaveBeenCalled();
+    expect(imported).not.toHaveBeenCalled();
+    await app.stop();
+  });
+
+  it("is exported without a wrapper only to be stored as it is, once per key, and read back only past its time", async () => {
+    const { app } = await createTestApp({ registry });
+    const { exported } = watchSubtle();
+    await exercise(app);
+    // c-1, c-2, and c-1 again after the forget.
+    expect(exported).toHaveBeenCalledTimes(3);
+    await app.stop();
+  });
+
+  it("is quoted by no log, event, export or stored row but the wrapped text, under a wrapper of the app's own", async () => {
+    const raws: string[] = [];
+    const flip = (bytes: Uint8Array) => bytes.map((byte) => byte ^ 0x5a);
+    const kms = defineKeyWrapper(() => ({
+      kid: "kms-1",
+      wrap: async (key) => {
+        raws.push(toBase64(key));
+        return flip(key);
+      },
+      unwrap: async ({ wrapped: given }) => flip(given),
+    }));
+    const { adapter, db } = createNodeSqliteAdapter();
+    const logger = recordingLogger();
+    const app = await start({
+      adapter,
+      logger,
+      runtime: { personalData: { keyWrapper: kms } },
+    });
+    await exercise(app);
+    const seen = JSON.stringify([
+      logger.logged,
+      await app.events.read(),
+      await app.exportPersonalData("c-1"),
+      await app.exportPersonalData("c-2"),
+      keyRows(db).map(({ fingerprint, kid }) => [fingerprint, kid]),
+    ]);
+    expect(raws).toHaveLength(3);
+    for (const raw of raws) expect(seen).not.toContain(raw);
+    await app.stop();
   });
 });
 

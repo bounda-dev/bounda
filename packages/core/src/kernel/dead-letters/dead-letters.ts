@@ -1,4 +1,3 @@
-import type { Storage } from "../../adapter/adapter.ts";
 import type {
   DeadLetter,
   ListDeadLettersArgs,
@@ -7,6 +6,7 @@ import type {
 import type { Clock } from "../../contracts/clock.ts";
 import { DeadLetterSettledError, NotFoundError } from "../../contracts/errors.ts";
 import type { Logger } from "../../contracts/logger.ts";
+import type { AppStorage } from "../events/app-event-store.ts";
 import { type RecordAccess, recorded } from "../personal-data/access.ts";
 import { type KeyOfFunction, openCommandPayload, sealedKeys } from "../personal-data/commands.ts";
 import { openTextWith } from "../personal-data/errors.ts";
@@ -60,7 +60,7 @@ export interface DeadLetters {
 }
 
 export interface CreateDeadLettersArgs {
-  readonly storage: Storage;
+  readonly storage: AppStorage;
   readonly retries: DeadLetterRetry;
   readonly processes: Pick<ProcessDeadLetters, "parkedBehind" | "stillParked">;
   readonly clock: Clock;

@@ -1,5 +1,4 @@
 import type { StorageTransaction } from "../../adapter/adapter.ts";
-import type { PersonalKeyStore } from "../../adapter/storage/personal-key-store.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { BOUNDA_AGGREGATE, PERSONAL_DATA_FORGOTTEN_EVENT } from "../../modules/bounda-events.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
@@ -7,15 +6,10 @@ import type { ProcessesRuntime } from "../process/build-processes.ts";
 import { processOfStream } from "../process/lifecycle.ts";
 import { digest } from "../read-model/fingerprint.ts";
 import { isRecord } from "../shared/merge-fields.ts";
-import {
-  generatePersonalKey,
-  importPersonalKey,
-  isSealed,
-  type PersonalKey,
-  seal,
-} from "./crypto.ts";
+import { createDisposableKey, isSealed, type PersonalKey, seal } from "./crypto.ts";
 import type { PersonalMarks } from "./marks.ts";
 import { lifecycleStateOf, sealState, statePersonOf } from "./process-state.ts";
+import type { PersonalKeys } from "./wrapped-keys.ts";
 
 export interface MarksFingerprintArgs {
   readonly aggregates: AggregatesRuntime;
@@ -89,7 +83,7 @@ export interface CreateResealKeysArgs {
   /**
    * The transaction's keys as the kernel reads and writes them, unwrapped.
    */
-  readonly keys: PersonalKeyStore;
+  readonly keys: PersonalKeys;
 }
 
 export interface CreateResealKeysFunction {
@@ -132,15 +126,13 @@ export const createResealKeys: CreateResealKeysFunction = ({ transaction, keys }
   const current = (person: string): Promise<PersonalKey | null> => {
     const known = held.get(person);
     if (known !== undefined) return known;
-    const read = keys
-      .get(person)
-      .then((stored) => (stored === null ? null : importPersonalKey(stored)));
+    const read = keys.held(person);
     held.set(person, read);
     return read;
   };
 
   const thrownAway = async (person: string): Promise<ChosenKey> => ({
-    key: await discarded(person, async () => importPersonalKey(await generatePersonalKey())),
+    key: await discarded(person, createDisposableKey),
     discarded: true,
   });
 
@@ -148,8 +140,7 @@ export const createResealKeys: CreateResealKeysFunction = ({ transaction, keys }
   const kept = async (person: string): Promise<ChosenKey> => {
     const key = await current(person);
     if (key !== null) return { key, discarded: false };
-    const added = (async () =>
-      importPersonalKey(await keys.add(person, await generatePersonalKey())))();
+    const added = keys.create(person);
     held.set(person, added);
     return { key: await added, discarded: false };
   };

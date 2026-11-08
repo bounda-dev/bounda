@@ -1,4 +1,3 @@
-import type { Storage } from "../../adapter/adapter.ts";
 import type { DeadLetterErrorType } from "../../adapter/storage/dead-letter-store.ts";
 import type { ResolvedConfig, ResolvedPoliciesConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
@@ -6,6 +5,7 @@ import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { Subscriber } from "../dispatch/dispatcher.ts";
+import type { AppStorage } from "../events/app-event-store.ts";
 import { sealError } from "../personal-data/errors.ts";
 import { openedUnder } from "../personal-data/event-store.ts";
 import { personOfEvent } from "../personal-data/persons.ts";
@@ -26,7 +26,7 @@ export interface CreatePolicySubscriberArgs {
   readonly policies: PoliciesRuntime;
   readonly aggregates: AggregatesRuntime;
   readonly executor: PolicyExecutor;
-  readonly storage: Storage;
+  readonly storage: AppStorage;
   readonly config: ResolvedConfig;
   readonly clock: Clock;
   readonly pendingRetries: PendingRetries;

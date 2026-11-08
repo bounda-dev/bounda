@@ -7,9 +7,9 @@ import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload
 import { person, personal } from "../../modules/personal.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { createTestApp } from "../../testing/index.ts";
-import { createRecordingLogger } from "../test-support.ts";
+import { createRecordingLogger, keysOver, newStoredKey } from "../test-support.ts";
 import { openCommandPayload, sealCommandPayload } from "./commands.ts";
-import { generatePersonalKey, isSealed } from "./crypto.ts";
+import { isSealed } from "./crypto.ts";
 import { personalMarksOf } from "./marks.ts";
 
 const received: unknown[] = [];
@@ -141,14 +141,14 @@ describe("sealCommandPayload and openCommandPayload", () => {
       aggregateId: "c-1",
       payload: { customerId: "c-1", email: "ana@example.com" },
       marks: marks({ customerId: z.string(), email: personal(z.email()) }),
-      keys: storage.personalKeys,
+      keys: keysOver(storage.personalKeys),
     });
     const key = await storage.personalKeys.get("c-1");
     expect(sealed.persons).toEqual([{ person: "c-1", fingerprint: key?.fingerprint }]);
     const payload = sealed.payload as { customerId: unknown; email: unknown };
     expect(payload.customerId).toBe("c-1");
     expect(isSealed(payload.email)).toBe(true);
-    expect(await openCommandPayload({ payload, keys: storage.personalKeys })).toEqual({
+    expect(await openCommandPayload({ payload, keys: keysOver(storage.personalKeys) })).toEqual({
       payload: { customerId: "c-1", email: "ana@example.com" },
       forgotten: false,
     });
@@ -156,13 +156,13 @@ describe("sealCommandPayload and openCommandPayload", () => {
 
   it("seals under the person a field names, and keeps the key in force", async () => {
     const storage = await memory().createStorage();
-    const kept = await storage.personalKeys.add("f-1", await generatePersonalKey());
+    const kept = await storage.personalKeys.add("f-1", await newStoredKey());
     const sealed = await sealCommandPayload({
       type: "IntroduceFriend",
       aggregateId: "c-1",
       payload: { customerId: "c-1", friendId: "f-1", note: "old friend" },
       marks: marks({ friendId: person(z.string()), note: personal(z.string()) }),
-      keys: storage.personalKeys,
+      keys: keysOver(storage.personalKeys),
     });
     expect(sealed.persons).toEqual([{ person: "f-1", fingerprint: kept.fingerprint }]);
     expect(await storage.personalKeys.get("c-1")).toBeNull();
@@ -182,7 +182,7 @@ describe("sealCommandPayload and openCommandPayload", () => {
           aggregateId: "c-1",
           payload,
           marks: payloadMarks,
-          keys: storage.personalKeys,
+          keys: keysOver(storage.personalKeys),
         }),
       ).toEqual({ payload, persons: [] });
     }
@@ -199,7 +199,7 @@ describe("sealCommandPayload and openCommandPayload", () => {
           aggregateId: "c-1",
           payload: { friendId, note: "hi" },
           marks: marks({ friendId: person(z.string()), note: personal(z.string()) }),
-          keys: storage.personalKeys,
+          keys: keysOver(storage.personalKeys),
         }),
       ).rejects.toThrow(
         new ValidationError('Command IntroduceFriend names no person in "friendId"', [
@@ -225,7 +225,7 @@ describe("sealCommandPayload and openCommandPayload", () => {
           aggregateId: "c-1",
           payload,
           marks: payloadMarks,
-          keys: storage.personalKeys,
+          keys: keysOver(storage.personalKeys),
         }),
       ).rejects.toThrow(
         new ValidationError(
@@ -244,13 +244,17 @@ describe("sealCommandPayload and openCommandPayload", () => {
       aggregateId: "c-1",
       payload: { email: "ana@example.com", plan: "pro" },
       marks: marks({ email: personal(z.email()), plan: z.string() }),
-      keys: storage.personalKeys,
+      keys: keysOver(storage.personalKeys),
     });
     await storage.personalKeys.remove("c-1");
     const forgotten = { payload: { email: null, plan: "pro" }, forgotten: true };
-    expect(await openCommandPayload({ payload, keys: storage.personalKeys })).toEqual(forgotten);
-    await storage.personalKeys.add("c-1", await generatePersonalKey());
-    expect(await openCommandPayload({ payload, keys: storage.personalKeys })).toEqual(forgotten);
+    expect(await openCommandPayload({ payload, keys: keysOver(storage.personalKeys) })).toEqual(
+      forgotten,
+    );
+    await storage.personalKeys.add("c-1", await newStoredKey());
+    expect(await openCommandPayload({ payload, keys: keysOver(storage.personalKeys) })).toEqual(
+      forgotten,
+    );
   });
 
   it("names a person by a numeric id, as text", async () => {
@@ -260,7 +264,7 @@ describe("sealCommandPayload and openCommandPayload", () => {
       aggregateId: "c-1",
       payload: { friendId: 7, note: "hi" },
       marks: marks({ friendId: person(z.number()), note: personal(z.string()) }),
-      keys: storage.personalKeys,
+      keys: keysOver(storage.personalKeys),
     });
     expect(sealed.persons.map((held) => held.person)).toEqual(["7"]);
   });
@@ -279,19 +283,19 @@ describe("sealCommandPayload and openCommandPayload", () => {
           aggregateId: "c-1",
           payload: { friendId, a, b },
           marks: marks(shape),
-          keys: storage.personalKeys,
+          keys: keysOver(storage.personalKeys),
         })
       ).payload as Record<string, unknown>;
     const ana = await sealedFor("f-1", "a1", "b1");
     const bo = await sealedFor("f-2", "a2", "b2");
     const reads: string[] = [];
-    const keys = {
+    const keys = keysOver({
       ...storage.personalKeys,
       get: (person: string) => {
         reads.push(person);
         return storage.personalKeys.get(person);
       },
-    };
+    });
     expect(await openCommandPayload({ payload: ana, keys })).toEqual({
       payload: { friendId: "f-1", a: "a1", b: "b1" },
       forgotten: false,
@@ -306,7 +310,7 @@ describe("sealCommandPayload and openCommandPayload", () => {
   it("opens a payload that holds nothing sealed as it is", async () => {
     const storage = await memory().createStorage();
     for (const payload of [{ email: "ana@example.com" }, "text", null]) {
-      expect(await openCommandPayload({ payload, keys: storage.personalKeys })).toEqual({
+      expect(await openCommandPayload({ payload, keys: keysOver(storage.personalKeys) })).toEqual({
         payload,
         forgotten: false,
       });
@@ -460,7 +464,7 @@ describe("personal data in delayed commands", () => {
     const { app, storage, logs, runDue } = await setup();
     await app.commands.remindCustomer(ana, { delay: "1m" });
     await storage.personalKeys.remove("c-1");
-    await storage.personalKeys.add("c-1", await generatePersonalKey());
+    await storage.personalKeys.add("c-1", await newStoredKey());
     await runDue();
     expect(received).toEqual([]);
     expect(await storage.scheduler.list()).toEqual([]);

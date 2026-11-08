@@ -1,4 +1,3 @@
-import type { Storage } from "../../adapter/adapter.ts";
 import type { StoredDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
@@ -11,6 +10,7 @@ import type { StoredEvent } from "../../contracts/event.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
+import type { AppStorage } from "../events/app-event-store.ts";
 import { openCommandPayload } from "../personal-data/commands.ts";
 import type { PoliciesRuntime } from "../policy/build-policies.ts";
 import type { PolicyExecutor } from "../policy/executor.ts";
@@ -33,7 +33,7 @@ export interface DeadLetterRetry {
 }
 
 export interface CreateDeadLetterRetryArgs {
-  readonly storage: Storage;
+  readonly storage: AppStorage;
   readonly pipeline: CommandPipeline;
   readonly aggregates: AggregatesRuntime;
   readonly policies: PoliciesRuntime;

@@ -4,7 +4,8 @@ import { memory } from "../../memory/index.ts";
 import { BOUNDA_AGGREGATE, PERSONAL_DATA_FORGOTTEN_EVENT } from "../../modules/bounda-events.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { ProcessesRuntime } from "../process/build-processes.ts";
-import { generatePersonalKey, importPersonalKey, isSealed, seal, unseal } from "./crypto.ts";
+import { keysOver, newStoredKey, openedKey } from "../test-support.ts";
+import { isSealed, seal, unseal } from "./crypto.ts";
 import type { PersonalMarks } from "./marks.ts";
 import {
   createResealKeys,
@@ -65,7 +66,7 @@ const byField: PersonalMarks = { person: "customerId", fields: ["address"] };
 
 const sealedWith = async <Value>(plan: ResealPlanOf<Value>) => {
   if (plan === null || plan === "unsealable") throw new Error(`no plan: ${String(plan)}`);
-  const key = await importPersonalKey(await generatePersonalKey());
+  const key = await openedKey(await newStoredKey());
   return { person: plan.person, key, value: await plan.seal(key) };
 };
 
@@ -135,7 +136,7 @@ describe("planEventReseal", () => {
   });
 
   it("keeps what is sealed already and seals the rest, and seals a null as the event store does", async () => {
-    const key = await importPersonalKey(await generatePersonalKey());
+    const key = await openedKey(await newStoredKey());
     const address = await seal({ key, person: "c-2", value: "Bilbao" });
     const partly = planEventReseal({
       event: event({ payload: { email: null }, person: null }),
@@ -315,7 +316,7 @@ describe("createResealKeys", () => {
       expectedVersion: 0,
       events: [forgotten("gone", 1)],
     });
-    const back = await storage.personalKeys.add("back", await generatePersonalKey());
+    const back = await storage.personalKeys.add("back", await newStoredKey());
     await storage.eventStore.append({
       aggregateType: BOUNDA_AGGREGATE,
       aggregateId: "back",
@@ -329,8 +330,8 @@ describe("createResealKeys", () => {
       expectedVersion: 1,
       events: [{ ...forgotten("back", 2), type: "ProcessingRestricted", id: "restricted-back" }],
     });
-    const kept = await storage.personalKeys.add("kept", await generatePersonalKey());
-    const keys = createResealKeys({ transaction: storage, keys: storage.personalKeys });
+    const kept = await storage.personalKeys.add("kept", await newStoredKey());
+    const keys = createResealKeys({ transaction: storage, keys: keysOver(storage.personalKeys) });
     return { storage, keys, back, kept };
   };
 

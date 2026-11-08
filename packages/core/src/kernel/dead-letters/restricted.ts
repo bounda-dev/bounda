@@ -1,4 +1,3 @@
-import type { Storage } from "../../adapter/adapter.ts";
 import type { StoredDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import {
@@ -9,6 +8,7 @@ import {
   ProcessingRestrictedError,
 } from "../../contracts/errors.ts";
 import type { Logger } from "../../contracts/logger.ts";
+import type { AppStorage } from "../events/app-event-store.ts";
 import { sealError } from "../personal-data/errors.ts";
 import { restrictedPersonOf } from "../personal-data/refusal.ts";
 import { classifyFailure, errorIdentity } from "../shared/retry.ts";
@@ -46,7 +46,7 @@ export interface RestrictedRetries {
 }
 
 export interface CreateRestrictedRetriesArgs {
-  readonly storage: Storage;
+  readonly storage: AppStorage;
   readonly retries: DeadLetterRetry;
   readonly clock: Clock;
   readonly logger: Logger;

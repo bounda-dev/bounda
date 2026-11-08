@@ -1,4 +1,4 @@
-import type { Storage, StorageTransaction } from "../../adapter/adapter.ts";
+import type { StorageTransaction } from "../../adapter/adapter.ts";
 import type { AppendResult, EventStore, PendingEvent } from "../../adapter/storage/event-store.ts";
 import type {
   DispatchOutcome,
@@ -42,6 +42,7 @@ import {
   loadAttributes,
 } from "../aggregate/load-aggregate.ts";
 import type { AggregateRuntime, AggregatesRuntime, CommandRuntime } from "../aggregate/runtime.ts";
+import type { AppStorage } from "../events/app-event-store.ts";
 import { type SealedPayload, sealCommandPayload } from "../personal-data/commands.ts";
 import { personOfCommand } from "../personal-data/persons.ts";
 import { refuseRestricted } from "../personal-data/refusal.ts";
@@ -102,7 +103,7 @@ export interface CommandPipeline {
 export interface CreateCommandPipelineArgs {
   readonly aggregates: AggregatesRuntime;
   readonly loader: AggregateLoader;
-  readonly storage: Storage;
+  readonly storage: AppStorage;
   readonly config: ResolvedConfig;
   readonly ids: IdGenerator;
   readonly clock: Clock;

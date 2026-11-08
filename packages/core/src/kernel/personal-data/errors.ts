@@ -1,18 +1,9 @@
-import type {
-  KeyedPerson,
-  PersonalKeyStore,
-  SealedValue,
-} from "../../adapter/storage/personal-key-store.ts";
+import type { KeyedPerson, SealedValue } from "../../adapter/storage/personal-key-store.ts";
 import { type ErrorIdentity, errorDetails, errorIdentity } from "../shared/retry.ts";
 import type { KeyOfFunction } from "./commands.ts";
-import {
-  generatePersonalKey,
-  importPersonalKey,
-  type PersonalKey,
-  seal,
-  unseal,
-} from "./crypto.ts";
+import { createDisposableKey, type PersonalKey, seal, unseal } from "./crypto.ts";
 import { readUnder } from "./reads.ts";
+import type { PersonalKeys } from "./wrapped-keys.ts";
 
 export interface SealErrorArgs {
   readonly error: unknown;
@@ -20,7 +11,7 @@ export interface SealErrorArgs {
    * Whose key the text is sealed under; with `null` it is kept in the clear.
    */
   readonly person: string | null;
-  readonly keys: PersonalKeyStore;
+  readonly keys: PersonalKeys;
   /**
    * What the failed work read of anyone besides what its unit of work noted on `error`, as the
    * event it ran on.
@@ -45,16 +36,14 @@ export interface SealErrorFunction {
 // since, and maybe keyed anew. A key no store keeps seals the text unreadable, as the forget would
 // have, where the new key would open what the work read before it.
 const keyToSealWith = async (
-  keys: PersonalKeyStore,
+  keys: PersonalKeys,
   person: string,
   readUnder: readonly string[],
 ): Promise<PersonalKey> => {
   const held = await keys.get(person);
-  return importPersonalKey(
-    held !== null && readUnder.every((fingerprint) => fingerprint === held.fingerprint)
-      ? held
-      : await generatePersonalKey(),
-  );
+  return held !== null && readUnder.every((fingerprint) => fingerprint === held.fingerprint)
+    ? keys.open(person, held)
+    : createDisposableKey();
 };
 
 /**

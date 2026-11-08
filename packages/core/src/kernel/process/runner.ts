@@ -1,4 +1,3 @@
-import type { Storage } from "../../adapter/adapter.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
@@ -6,6 +5,7 @@ import type { Logger } from "../../contracts/logger.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
 import type { Subscriber } from "../dispatch/dispatcher.ts";
+import type { AppStorage } from "../events/app-event-store.ts";
 import { deliverInOrder } from "../shared/in-order.ts";
 import type { PendingRetries } from "../shared/pending-retries.ts";
 import type { ProcessesRuntime } from "./build-processes.ts";
@@ -27,7 +27,7 @@ export interface CreateProcessRunnerArgs {
   readonly processes: ProcessesRuntime;
   readonly aggregates: AggregatesRuntime;
   readonly pipeline: CommandPipeline;
-  readonly storage: Storage;
+  readonly storage: AppStorage;
   readonly config: ResolvedConfig;
   readonly ids: IdGenerator;
   readonly clock: Clock;
