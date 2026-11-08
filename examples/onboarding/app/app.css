@@ -137,3 +137,16 @@ code {
   gap: 1rem;
   margin-top: 1rem;
 }
+
+header form.session {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  max-width: none;
+  font-size: 0.85rem;
+}
+
+header form.session input {
+  width: 11rem;
+  padding: 0.25rem 0.4rem;
+}

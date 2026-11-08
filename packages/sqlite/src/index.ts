@@ -1,7 +1,11 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Adapter } from "@bounda-dev/core/adapter";
-import { createSqliteAdapter, type SqliteConnection } from "@bounda-dev/core/adapter/sqlite";
+import {
+  createSqliteAdapter,
+  SQLITE_BUSY_TIMEOUT_MS,
+  type SqliteConnection,
+} from "@bounda-dev/core/adapter/sqlite";
 import { type Client, createClient } from "@libsql/client";
 import { createSqliteDatabase } from "./database.ts";
 import { resolveSqliteOptions, type SqliteOptions } from "./options.ts";
@@ -22,12 +26,6 @@ interface Connection extends SqliteConnection<Client> {
 }
 
 /**
- * How long a statement on a local file waits for another process's lock before failing with
- * `SQLITE_BUSY`.
- */
-const BUSY_TIMEOUT_MS = 5_000;
-
-/**
  * SQLite storage through libSQL: a local file (`{ path }`, its directory is created), memory
  * (`{ memory: true }`) or a libSQL server such as Turso (`{ url, authToken }`). Storage and read
  * models opened from the same adapter share one connection, closed when the last of them closes.
@@ -44,7 +42,7 @@ export const sqlite: SqliteFunction = (options) => {
       const client = createClient({
         url,
         ...(authToken === undefined ? {} : { authToken }),
-        ...(location === "file" ? { timeout: BUSY_TIMEOUT_MS } : {}),
+        ...(location === "file" ? { timeout: SQLITE_BUSY_TIMEOUT_MS } : {}),
       });
       const { db, raw } = createSqliteDatabase(client, {
         local: location !== "remote",

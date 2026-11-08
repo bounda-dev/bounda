@@ -7,6 +7,12 @@ const ORDER: Readonly<Record<LogLevel, number>> = { debug: 10, info: 20, warn: 3
 
 export interface CreateConsoleLoggerArgs {
   readonly level?: LogLevel;
+  /**
+   * Where every line goes, whatever its level, such as `process.stderr` for a script whose
+   * standard output carries data. Defaults to the console: `debug` and `info` to standard output,
+   * `warn` and `error` to standard error.
+   */
+  readonly stream?: { write(text: string): unknown };
 }
 
 export interface CreateConsoleLoggerFunction {
@@ -17,23 +23,22 @@ const line = (level: LogLevel, message: string, fields: LogFields | undefined): 
   `[bounda] ${level} ${message}${fields === undefined ? "" : ` ${JSON.stringify(fields)}`}`;
 
 /**
- * A logger that writes one line per entry to the console, with the fields as JSON. Entries below
- * `level` are dropped.
+ * A logger that writes one line per entry to the console, or to `stream`, with the fields as JSON.
+ * Entries below `level` are dropped.
  */
-export const createConsoleLogger: CreateConsoleLoggerFunction = ({ level = "info" } = {}) => {
+export const createConsoleLogger: CreateConsoleLoggerFunction = ({
+  level = "info",
+  stream,
+} = {}) => {
   const enabled = (candidate: LogLevel): boolean => ORDER[candidate] >= ORDER[level];
-  return {
-    debug: (message, fields) => {
-      if (enabled("debug")) console.debug(line("debug", message, fields));
-    },
-    info: (message, fields) => {
-      if (enabled("info")) console.info(line("info", message, fields));
-    },
-    warn: (message, fields) => {
-      if (enabled("warn")) console.warn(line("warn", message, fields));
-    },
-    error: (message, fields) => {
-      if (enabled("error")) console.error(line("error", message, fields));
-    },
+  const write = (candidate: LogLevel, text: string): void => {
+    if (stream === undefined) console[candidate](text);
+    else stream.write(`${text}\n`);
   };
+  const at =
+    (candidate: LogLevel): Logger["info"] =>
+    (message, fields) => {
+      if (enabled(candidate)) write(candidate, line(candidate, message, fields));
+    };
+  return { debug: at("debug"), info: at("info"), warn: at("warn"), error: at("error") };
 };

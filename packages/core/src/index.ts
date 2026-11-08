@@ -15,6 +15,7 @@ export type {
   CatchUpReadModelsArgs,
   CreateAppArgs,
   CreateAppFunction,
+  ForgetAgainOptions,
   ForgetLedgerLag,
   RebuildReadModelOptions,
   RunUntilIdleOptions,

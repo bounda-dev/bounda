@@ -184,6 +184,8 @@ interface Server {
   readonly url: string;
   readonly port: number;
   readonly stop: () => Promise<void>;
+  // What the server printed so far, both streams.
+  readonly output: () => string;
 }
 
 /**
@@ -247,7 +249,7 @@ const startServer = async (project: string, command: ServerCommand): Promise<Ser
       await stop(child);
       throw error;
     });
-    if (!exited()) return { url, port, stop: () => stop(child) };
+    if (!exited()) return { url, port, stop: () => stop(child), output: () => output };
     await stop(child);
     if (attempt < PORT_ATTEMPTS && (await portTaken(port))) continue;
     throw new Error(
@@ -465,6 +467,39 @@ describe("a project created by create-bounda", () => {
       await server.stop();
     }
     expect(await portTaken(server.port)).toBe(false);
+
+    // Without the secret the object refuses to start, saying which one, rather than store keys in
+    // the clear; the Worker answers 500 without the reason, which it logs.
+    await rename(join(project, ".dev.vars"), join(project, ".dev.vars.kept"));
+    const keyless = await startServer(project, {
+      args: (port) => [wrangler, "dev", "--port", String(port), "--ip", "127.0.0.1"],
+    });
+    try {
+      const placed = await fetch(`${keyless.url}/commands/placeOrder`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-bounda-tenant": "acme" },
+        body: JSON.stringify({
+          orderId: "018f6a5e-4c3c-7c1e-9d4b-0b2c4a1d8e02",
+          customerId: "ada",
+          total: 1,
+        }),
+      });
+      expect(placed.status).toBe(500);
+      expect(await placed.json()).toEqual({
+        error: { code: "INTERNAL", message: "Internal error" },
+      });
+      await until(
+        () =>
+          /The environment variable BOUNDA_MASTER_KEY, which runtime\.personalData\.keyWrapper names as a master key, is not set/.test(
+            keyless.output(),
+          ),
+        () => `the object's failure was not logged:\n${keyless.output()}`,
+        10_000,
+      );
+    } finally {
+      await keyless.stop();
+      await rename(join(project, ".dev.vars.kept"), join(project, ".dev.vars"));
+    }
   }, 300_000);
 
   it("scaffolds a React Router app on Cloudflare that generates, type-checks, tests, builds and serves", async () => {

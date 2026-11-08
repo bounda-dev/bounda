@@ -6,4 +6,5 @@ export default [
   route("activate", "routes/activate.tsx"),
   route("users", "routes/users.tsx"),
   route("users/:userId", "routes/user.tsx"),
+  route("session", "routes/session.tsx"),
 ] satisfies RouteConfig;

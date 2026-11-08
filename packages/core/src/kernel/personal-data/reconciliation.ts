@@ -53,6 +53,7 @@ export interface ForgetAgainArgs {
   readonly clock: Clock;
   readonly concurrencyRetries: number;
   readonly entry: ForgetAgainEntry;
+  readonly actor?: string | undefined;
 }
 
 export interface ForgetAgainFunction {
@@ -72,6 +73,7 @@ export const forgetAgain: ForgetAgainFunction = async ({
   clock,
   concurrencyRetries,
   entry: { personId, eventId },
+  actor,
 }) => {
   checkPersonId(personId, "forgetting again");
   const isDue = async (stores: Pick<Storage, "eventStore" | "personalKeys">): Promise<boolean> => {
@@ -98,7 +100,7 @@ export const forgetAgain: ForgetAgainFunction = async ({
         clock,
         personId,
         reason: "restored",
-        context: startedBy(correlationId, undefined),
+        context: startedBy(correlationId, actor),
       });
     },
   });

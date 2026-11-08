@@ -247,7 +247,9 @@ watch the `read model rebuild progressed` log line.
 
 Programmatically, `app.rebuildReadModel(name)` on an app, or `rebuildReadModel({ registry,
 config, name })` from `@bounda-dev/core` on a project loaded with `loadProject()` from
-`@bounda-dev/core/node`. Both take `maxEvents` to run one slice and pause: the result says
+`@bounda-dev/core/node`; `app.as(actor).rebuildReadModel(name)` or an `actor` argument names who
+runs it in its log lines. `app.rebuildReadModel` and `rebuildReadModel` take `maxEvents` to run one
+slice and pause: the result says
 `done: false`, the next call resumes, and `app.pendingRebuilds()` lists the read models waiting
 for one. That is how a host without a long-running process, such as a Durable Object, rebuilds a
 read model whose history does not fit in one request.
