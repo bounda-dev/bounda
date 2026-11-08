@@ -170,7 +170,8 @@ since it names nobody a `forget` would remove it for, and the next command folds
 
 What it cannot seal stays as it was, and the worker says so: a value in the clear in an event whose
 `person` field is empty, `personal data written before its marks names no person and stays in the
-clear`, with the event types, and a stored command whose `person` field is empty the same way. The
+clear`, with the event types, and a scheduled or dead-lettered command whose `person` field is
+empty, `commands stored before their marks name no person and stay in the clear`. The
 marks are read on the payload as stored, below the [upcasters](/guides/changing-events/), so a field
 an upcaster renamed or computed is sealed under the name it was stored with, or not at all when it
 was never stored; an event whose `person` field changed since it was sealed keeps the person it was

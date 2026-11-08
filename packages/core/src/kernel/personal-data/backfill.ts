@@ -316,14 +316,12 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
       scheduledCommands: tally.scheduledCommands + commands.resealed,
       deadLetters: tally.deadLetters + letters.resealed,
     };
-    if (commands.unsealable > 0) {
-      logger.warn(
-        "scheduled commands stored before their marks name no person and stay in the clear",
-        {
-          scheduledCommands: commands.unsealable,
-          commandTypes: [...commands.unsealableTypes],
-        },
-      );
+    if (commands.unsealable + letters.unsealable > 0) {
+      logger.warn("commands stored before their marks name no person and stay in the clear", {
+        scheduledCommands: commands.unsealable,
+        deadLetters: letters.unsealable,
+        commandTypes: [...new Set([...commands.unsealableTypes, ...letters.unsealableTypes])],
+      });
     }
     await checkpointStore.set(rows.stores, at);
     return commands.resealed + letters.resealed;
