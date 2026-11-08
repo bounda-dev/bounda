@@ -146,12 +146,17 @@ interface Place {
   readonly store: string;
   readonly row: string;
   readonly leaves: readonly Leaf[];
+  /**
+   * What to do about a value found here.
+   */
+  readonly advice: string;
 }
 
 const placesOfTable = (table: InspectedTable): readonly Place[] =>
   table.rows.map((row, index) => ({
     store: table.name,
     row: rowOf(table, row, index),
+    advice: TABLE_ADVICE.find(({ test }) => test(table.name))?.advice ?? OTHERWISE,
     leaves: Object.entries(row).flatMap(([column, value]) =>
       leavesIn(value, table.opaque.includes(column)).map((leaf) => ({
         ...leaf,
@@ -166,59 +171,51 @@ const pathOf = (path: readonly string[]): string =>
     "",
   );
 
-const ADVICE: readonly { readonly test: (store: string) => boolean; readonly advice: string }[] = [
-  {
-    test: (store) => store.includes("rm_"),
-    advice:
-      "A read model kept the value: project PersonalDataForgotten in it and delete the row or clear the field, and mark the field .personal() so its export and the access log see it.",
-  },
-  {
-    test: (store) => /events$/.test(store),
-    advice:
-      "An event holds the value in a field left unmarked: mark it personal() in the event's payload, or the process state's.",
-  },
-  {
-    test: (store) => /scheduled_commands$/.test(store),
-    advice:
-      "A stored command holds the value in a field left unmarked: mark it personal() in the command's payload.",
-  },
-  {
-    test: (store) => /dead_letters$/.test(store),
-    advice:
-      "A dead letter holds the value: mark the field of the command's payload personal(), or name the person whose data the failed work read, and keep personal data out of error messages.",
-  },
-  {
-    test: (store) => /idempotency_keys$/.test(store),
-    advice:
-      "A remembered answer quotes the value: keep personal data out of a rejection's message and say what went wrong with its code and ids.",
-  },
-  {
-    test: (store) => /snapshots$/.test(store),
-    advice:
-      "A snapshot holds the value from a field left unmarked: mark it personal() where the state's value comes from.",
-  },
-  {
-    test: (store) => store === "logs",
-    advice:
-      "A log entry quotes the value, and a log cannot be forgotten: log ids, never the data itself.",
-  },
-  {
-    test: (store) => store === "spans" || store === "span events",
-    advice:
-      "A span carries the value to the tracing backend, where it cannot be forgotten: put ids in attributes and errors, never the data itself.",
-  },
-];
+const LOGS_ADVICE =
+  "A log entry quotes the value, and a log cannot be forgotten: log ids, never the data itself.";
+
+const SPANS_ADVICE =
+  "A span carries the value to the tracing backend, where it cannot be forgotten: put ids in attributes and errors, never the data itself.";
 
 const OTHERWISE =
   "Find where the value is written in the clear and mark the field it comes from, or remove it when the person is forgotten.";
 
-const adviceFor = (found: readonly ForgottenValueFound[]): readonly string[] => {
-  const given = new Set<string>();
-  for (const { store } of found) {
-    given.add(ADVICE.find(({ test }) => test(store))?.advice ?? OTHERWISE);
-  }
-  return [...given];
-};
+// By the end of a table's name, whatever the adapter's prefix.
+const TABLE_ADVICE: readonly {
+  readonly test: (table: string) => boolean;
+  readonly advice: string;
+}[] = [
+  {
+    test: (table) => /rm_[a-z0-9_]+$/.test(table),
+    advice:
+      "A read model kept the value: project PersonalDataForgotten in it and delete the row or clear the field, and mark the field .personal() so its export and the access log see it.",
+  },
+  {
+    test: (table) => /events$/.test(table),
+    advice:
+      "An event holds the value in a field left unmarked: mark it personal() in the event's payload, or the process state's.",
+  },
+  {
+    test: (table) => /scheduled_commands$/.test(table),
+    advice:
+      "A stored command holds the value in a field left unmarked: mark it personal() in the command's payload.",
+  },
+  {
+    test: (table) => /dead_letters$/.test(table),
+    advice:
+      "A dead letter holds the value: mark the field of the command's payload personal(), or name the person whose data the failed work read, and keep personal data out of error messages.",
+  },
+  {
+    test: (table) => /idempotency_keys$/.test(table),
+    advice:
+      "A remembered answer quotes the value: keep personal data out of a rejection's message and say what went wrong with its code and ids.",
+  },
+  {
+    test: (table) => /snapshots$/.test(table),
+    advice:
+      "A snapshot holds the value from a field left unmarked: mark it personal() where the state's value comes from.",
+  },
+];
 
 const opened = async (witness: TestWitness, personId: string, held: string | null) => {
   const values: unknown[] = [];
@@ -297,6 +294,7 @@ export const expectForgotten: ExpectForgottenFunction = async (target, personId,
         store: "logs",
         row: `entry ${index + 1} (${entry.level} "${entry.message}")`,
         leaves: leavesIn({ message: entry.message, fields: entry.fields ?? {} }),
+        advice: LOGS_ADVICE,
       });
     });
     for (const ledger of apps.ledgers) {
@@ -305,6 +303,7 @@ export const expectForgotten: ExpectForgottenFunction = async (target, personId,
           store: "forget ledger",
           row: `eventId=${entry.eventId}`,
           leaves: leavesIn(entry),
+          advice: OTHERWISE,
         });
       }
     }
@@ -314,6 +313,7 @@ export const expectForgotten: ExpectForgottenFunction = async (target, personId,
       store: "spans",
       row: `span ${index + 1} ("${span.name}")`,
       leaves: leavesIn(span),
+      advice: SPANS_ADVICE,
     });
   });
   options.telemetry?.spanEvents.forEach((event, index) => {
@@ -321,23 +321,28 @@ export const expectForgotten: ExpectForgottenFunction = async (target, personId,
       store: "span events",
       row: `event ${index + 1} ("${event.name}" of "${event.span}")`,
       leaves: leavesIn(event),
+      advice: SPANS_ADVICE,
     });
   });
   for (const [store, value] of Object.entries(options.places ?? {})) {
-    places.push({ store, row: "as given", leaves: leavesIn(value) });
+    places.push({ store, row: "as given", leaves: leavesIn(value), advice: OTHERWISE });
   }
 
-  const found = places.flatMap(({ store, row, leaves }) =>
-    leaves.flatMap((leaf) =>
+  const advice = new Set<string>();
+  const found = places.flatMap((place) =>
+    place.leaves.flatMap((leaf) =>
       needles
         .filter((needle) => matches(needle, leaf))
-        .map((needle) => ({
-          value: needle.value,
-          store,
-          row,
-          field: pathOf(leaf.path) || "value",
-        })),
+        .map((needle) => {
+          advice.add(place.advice);
+          return {
+            value: needle.value,
+            store: place.store,
+            row: place.row,
+            field: pathOf(leaf.path) || "value",
+          };
+        }),
     ),
   );
-  if (found.length > 0) throw new NotForgottenError(personId, found, adviceFor(found));
+  if (found.length > 0) throw new NotForgottenError(personId, found, [...advice]);
 };

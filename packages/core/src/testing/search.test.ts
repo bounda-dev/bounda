@@ -49,6 +49,7 @@ describe("matching", () => {
     expect(found("Zoë", "für Zoë.")).toBe(true);
     expect(found("Zoë", "Zoëy")).toBe(false);
     expect(found("a.b", "axb")).toBe(false);
+    expect(found("a+b", "x a+b y")).toBe(true);
   });
 
   it("compares key material and ciphertext whole, never inside", () => {
@@ -58,7 +59,18 @@ describe("matching", () => {
       found("Ana", { $personal: { person: "c-1", key: "k", iv: "+Ana+", data: "Ana+" } }),
     ).toBe(false);
     expect(found("Ana", { persons: [{ person: "c-2", fingerprint: "+Ana+" }] })).toBe(false);
-    expect(found("Ana", { $personal: { person: "Ana", key: "k", iv: "i", data: "d" } })).toBe(true);
+    expect(found("Ana", { $personal: { person: "Ana Smith", key: "k", iv: "i", data: "d" } })).toBe(
+      true,
+    );
+    expect(leavesIn({ $personal: { person: "c-1", key: "k", iv: "i", data: "d" } })).toEqual([
+      { path: ["$personal", "person"], text: "c-1", opaque: false },
+      { path: ["$personal", "key"], text: "k", opaque: true },
+      { path: ["$personal", "iv"], text: "i", opaque: true },
+      { path: ["$personal", "data"], text: "d", opaque: true },
+    ]);
+    expect(leavesIn({ $personal: null })).toEqual([
+      { path: ["$personal"], text: "$personal", opaque: false },
+    ]);
   });
 
   it("reads a JSON document held as text, its keys included, and bytes as UTF-8", () => {
@@ -71,6 +83,12 @@ describe("matching", () => {
     );
     expect(found("2026-01-01T00:00:00.000Z", new Date("2026-01-01T00:00:00Z"))).toBe(true);
     expect(found("42", 42)).toBe(true);
+    expect(leavesIn(42n)).toEqual([{ path: [], text: "42", opaque: false }]);
+    expect(leavesIn(new Date("not a date"))).toEqual([{ path: [], text: "", opaque: false }]);
+    expect(leavesIn("true")).toEqual([{ path: [], text: "true", opaque: false }]);
+    expect(leavesIn('  ["ana@example.com"]').map(({ path }) => path)).toEqual([["[0]"]]);
+    expect(leavesIn('{"a":1} trailing').map(({ text }) => text)).toEqual(['{"a":1} trailing']);
+    expect(leavesIn("plain [text").map(({ text }) => text)).toEqual(["plain [text"]);
     expect(found("42", [true, null, undefined, () => 42])).toBe(false);
   });
 

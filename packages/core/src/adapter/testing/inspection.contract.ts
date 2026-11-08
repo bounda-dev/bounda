@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { silentLogger } from "../../contracts/logger.ts";
 import type { Adapter } from "../adapter.ts";
 import type { InspectedTable } from "../storage/inspection.ts";
-import { pendingEvent } from "./fixtures.ts";
+import { pendingEvent, testCommand, testContext, testDeadLetter, testOutcome } from "./fixtures.ts";
 import { type ContractRow, contractFields } from "./table.contract.ts";
 
 export interface InspectionContractArgs {
@@ -33,36 +33,74 @@ export const inspectionContract: InspectionContractFunction = ({ create }) => {
       for (const table of await adapter.inspect()) expect(table.rows).toEqual([]);
     });
 
-    it("reads the storage's tables whole, as stored, each with its key", async () => {
+    it("reads the storage's tables whole, as stored, each row named by columns it holds", async () => {
       const adapter = await create();
       const storage = await adapter.createStorage();
+      const now = new Date("2026-01-01T00:00:00.000Z");
       await storage.eventStore.append({
         aggregateType: "order",
         aggregateId: "o-1",
         expectedVersion: 0,
         events: [pendingEvent({ aggregateId: "o-1", version: 1, payload: { note: "ring twice" } })],
       });
+      await storage.personalKeys.add("c-2", { key: "a2V5Mg==", fingerprint: "ZnAy", kid: null });
       await storage.personalKeys.add("c-1", { key: "a2V5", fingerprint: "ZnA=", kid: null });
+      await storage.checkpointStore.set("orders", 1);
+      await storage.inboxLedger.tryClaim({ handler: "order.p", eventId: "e1", now, leaseMs: 1 });
+      await storage.scheduler.schedule({
+        dedupeKey: "command:c1",
+        command: testCommand("1"),
+        executeAt: now,
+        context: testContext,
+      });
+      await storage.deadLetterStore.add(testDeadLetter("dl-1"));
+      await storage.idempotencyStore.put({
+        key: "idem-1",
+        fingerprint: "fp",
+        outcome: testOutcome("1"),
+        expiresAt: new Date(now.getTime() + 60_000).toISOString(),
+        persons: [],
+        now,
+      });
+      await storage.persons.restrict("c-1", now);
+      await storage.snapshotStore.put({
+        aggregateType: "order",
+        aggregateId: "o-1",
+        version: 1,
+        fingerprint: "abc",
+        state: "{}",
+        persons: [],
+      });
       const tables = await adapter.inspect();
+      for (const { name } of tables) expect(name.startsWith("bounda_")).toBe(true);
+      for (const name of [
+        "bounda_events",
+        "bounda_checkpoints",
+        "bounda_inbox",
+        "bounda_scheduled_commands",
+        "bounda_dead_letters",
+        "bounda_idempotency_keys",
+        "bounda_personal_keys",
+        "bounda_persons",
+        "bounda_snapshots",
+      ]) {
+        const table = tableOf(tables, name);
+        expect(table.rows.length, name).toBeGreaterThan(0);
+        expect(table.key.length, name).toBeGreaterThan(0);
+        for (const row of table.rows) {
+          for (const column of table.key) expect(row[column], `${name}.${column}`).toBeDefined();
+        }
+        if (name !== "bounda_personal_keys") expect(table.opaque, name).toEqual([]);
+      }
       const events = tableOf(tables, "bounda_events");
-      expect(events.key.length).toBeGreaterThan(0);
       expect(events.rows).toHaveLength(1);
       expect(JSON.stringify(events.rows)).toContain("ring twice");
       const keys = tableOf(tables, "bounda_personal_keys");
-      expect(keys.opaque).toEqual(expect.arrayContaining(["key", "fingerprint"]));
-      expect(keys.rows).toEqual([expect.objectContaining({ person: "c-1", key: "a2V5" })]);
-      expect(tables.map(({ name }) => name)).toEqual(
-        expect.arrayContaining([
-          "bounda_checkpoints",
-          "bounda_dead_letters",
-          "bounda_idempotency_keys",
-          "bounda_inbox",
-          "bounda_persons",
-          "bounda_scheduled_commands",
-          "bounda_snapshots",
-        ]),
-      );
-      for (const { name } of tables) expect(name.startsWith("bounda_")).toBe(true);
+      expect([...keys.opaque].sort()).toEqual(["fingerprint", "key"]);
+      expect(keys.rows.map((row) => [row.person, row.key])).toEqual([
+        ["c-1", "a2V5"],
+        ["c-2", "a2V5Mg=="],
+      ]);
       await storage.close();
     });
 
@@ -86,6 +124,8 @@ export const inspectionContract: InspectionContractFunction = ({ create }) => {
       const tables = await adapter.inspect();
       const live = tableOf(tables, "bounda_rm_order_summary");
       expect(live.key).toHaveLength(1);
+      expect(live.rows.map((row) => row[live.key[0] ?? ""])).toEqual(["o-1"]);
+      expect(live.opaque).toEqual([]);
       expect(JSON.stringify(live.rows)).toContain("c-1");
       expect(JSON.stringify(tableOf(tables, "bounda_rm_order_summary__rebuild").rows)).toContain(
         "c-2",
@@ -96,14 +136,17 @@ export const inspectionContract: InspectionContractFunction = ({ create }) => {
 
     it("reads a forget ledger kept in its database", async () => {
       const adapter = await create();
-      const ledger = await adapter.createForgetLedger({ tenant: "t-1" });
-      await ledger.append([
+      const opened = await adapter.createForgetLedger({ tenant: "t-1" });
+      await opened.append([
         { personId: "c-1", eventId: "e-1", forgottenAt: "2026-11-07T12:00:00.000Z" },
       ]);
-      const rows = tableOf(await adapter.inspect(), "bounda_forget_ledger").rows;
+      const ledger = tableOf(await adapter.inspect(), "bounda_forget_ledger");
+      const { rows } = ledger;
       expect(rows).toEqual([expect.objectContaining({ tenant: "t-1" })]);
+      expect(ledger.key).toHaveLength(2);
+      for (const column of ledger.key) expect(rows[0]?.[column]).toBeDefined();
       expect(JSON.stringify(rows)).toContain("e-1");
-      await ledger.close?.();
+      await opened.close?.();
     });
   });
 };

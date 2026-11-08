@@ -159,7 +159,6 @@ const createTestWitness = (): TestWitness => {
     return {
       ...stores,
       transact: (work) => storage.transact((transaction) => work(observedTransaction(transaction))),
-      close: () => storage.close(),
     };
   };
 
@@ -209,7 +208,6 @@ const createTestWitness = (): TestWitness => {
     table: keptBy(storage.table, marks),
     transact: (args) =>
       storage.transact({ ...args, work: (transaction) => args.work(keptIn(transaction, marks)) }),
-    close: () => storage.close(),
   });
 
   const readModelRebuild = <Row extends object>(
@@ -219,9 +217,6 @@ const createTestWitness = (): TestWitness => {
     ...rebuild,
     table: keptBy(rebuild.table, marks),
     transact: (work) => rebuild.transact((transaction) => work(keptIn(transaction, marks))),
-    commit: (args) => rebuild.commit(args),
-    abort: () => rebuild.abort(),
-    pause: () => rebuild.pause(),
   });
 
   const record =

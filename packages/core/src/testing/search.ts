@@ -110,7 +110,7 @@ const walk = (
     into.push({ path, text: String(value), opaque });
     return;
   }
-  if (typeof value !== "object" || typeof value === "function") return;
+  if (typeof value !== "object") return;
   if (value instanceof Date) {
     into.push({ path, text: Number.isNaN(value.getTime()) ? "" : value.toISOString(), opaque });
     return;

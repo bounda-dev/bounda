@@ -21,7 +21,7 @@ import { createMemoryEventStore } from "./event-store.ts";
 import { createMemoryForgetLedgers } from "./forget-ledger.ts";
 import { createKeptIdempotencyStore } from "./idempotency-store.ts";
 import { createKeptInboxLedger } from "./inbox-ledger.ts";
-import { entriesRows, storageTable } from "./inspection.ts";
+import { byKey, entriesRows, storageTable } from "./inspection.ts";
 import { createKeptPersonStore } from "./person-store.ts";
 import { createKeptPersonalKeyStore } from "./personal-key-store.ts";
 import { createKeptScheduler } from "./scheduler.ts";
@@ -61,7 +61,7 @@ const readModelTable = (
     name: shadow ? rebuildTablesFor(live).shadow : live,
     key: [table.key],
     opaque: [],
-    rows: table.rows(),
+    rows: byKey(table.rows(), [table.key]),
   };
 };
 

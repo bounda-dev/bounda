@@ -1,4 +1,5 @@
 import { DEFAULT_TABLE_PREFIX, storageTableNameFor } from "../adapter/sql/identifiers.ts";
+import { codePointOrder } from "../adapter/sql/order.ts";
 import type { InspectedTable } from "../adapter/storage/inspection.ts";
 import type { StoreEntries } from "./entries.ts";
 
@@ -20,8 +21,32 @@ export const storageTable: StorageTableFunction = ({ table, key, opaque = [], ro
   name: storageTableNameFor({ prefix: DEFAULT_TABLE_PREFIX, table }),
   key,
   opaque,
-  rows: rows as readonly Readonly<Record<string, unknown>>[],
+  rows: byKey(rows as readonly Readonly<Record<string, unknown>>[], key),
 });
+
+const compare = (a: unknown, b: unknown): number => {
+  if (typeof a === "number" && typeof b === "number") return a - b;
+  return codePointOrder(String(a), String(b));
+};
+
+export interface ByKeyFunction {
+  (
+    rows: readonly Readonly<Record<string, unknown>>[],
+    key: readonly string[],
+  ): readonly Readonly<Record<string, unknown>>[];
+}
+
+/**
+ * The rows in the order of their key, as a SQL adapter reads them.
+ */
+export const byKey: ByKeyFunction = (rows, key) =>
+  [...rows].sort((a, b) => {
+    for (const column of key) {
+      const order = compare(a[column], b[column]);
+      if (order !== 0) return order;
+    }
+    return 0;
+  });
 
 export interface EntriesRowsFunction {
   <Key>(entries: StoreEntries<Key>, key?: string): readonly Readonly<Record<string, unknown>>[];
