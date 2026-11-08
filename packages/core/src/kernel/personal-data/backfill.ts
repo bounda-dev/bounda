@@ -53,8 +53,8 @@ export interface PersonalDataBackfill {
    */
   sweep(now: Date): Promise<number>;
   /**
-   * Now while the walk has not caught up, unless a lease or a hold keeps it later; `null` once it
-   * has, since what comes after is read on the passes the worker runs anyway.
+   * Now until the walk has caught up once, unless a lease or a hold keeps it later; `null` from
+   * then on, since what comes after is read on the passes the worker runs anyway.
    */
   nextDueAt(): Promise<Date | null>;
   /**
@@ -386,10 +386,12 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
         return 0;
       }
     },
-    // A walk another instance, or an earlier start, caught up wakes nothing.
+    // A walk that caught up once, here, on another instance or before a restart, wakes nothing:
+    // what comes after is written sealed, but by an instance on older marks, which the passes
+    // the worker runs anyway follow.
     nextDueAt: async () => {
       if (caughtUp) return null;
-      caughtUp = (await status(await storage.eventStore.lastPosition())).caughtUp;
+      caughtUp = (await checkpointStore.get(rows.stores)) > 0;
       if (caughtUp) return null;
       return new Date(pause.notBefore(Math.max(clock.now().getTime(), restUntil, leasedUntil)));
     },
