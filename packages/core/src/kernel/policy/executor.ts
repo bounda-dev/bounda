@@ -86,6 +86,7 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
       maxChainDepth: config.forAggregate(policy.aggregate).policies.maxChainDepth,
     });
     const handled = traced({
+      errorText: config.runtime.telemetry.errorText,
       name: `bounda.policy ${policy.name}`,
       attributes: {
         [ATTRIBUTES.policy]: policy.name,

@@ -41,7 +41,7 @@ const busy = async (): Promise<Delivery> => ({ outcome: "busy" });
 
 const failed = async (): Promise<Delivery> => ({
   outcome: "failed",
-  failure: { position: 1, eventId: "e-1", eventType: "OrderPlaced", message: "boom" },
+  failure: { position: 1, eventId: "e-1", eventType: "OrderPlaced", errorName: "Error" },
 });
 
 const setUp = async (
@@ -60,6 +60,7 @@ const setUp = async (
     pollIntervalMs: 100,
     ...(catchUp === undefined ? {} : { catchUp }),
     logger,
+    errorText: "omit",
   });
   return { clock, dispatcher, entries };
 };
@@ -245,7 +246,7 @@ describe("catchUpThrough", () => {
         message: "read model catch-up failed",
         fields: expect.objectContaining({
           subscriber: "projection:broken",
-          message: "checkpoint unreadable",
+          errorMessage: "checkpoint unreadable",
         }),
       },
       {
@@ -253,7 +254,7 @@ describe("catchUpThrough", () => {
         message: "read model catch-up failed",
         fields: expect.objectContaining({
           subscriber: "projection:orders",
-          message: "connection lost",
+          errorMessage: "connection lost",
         }),
       },
       {

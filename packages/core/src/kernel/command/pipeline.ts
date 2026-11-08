@@ -47,7 +47,6 @@ import { type SealedPayload, sealCommandPayload } from "../personal-data/command
 import { personOfCommand } from "../personal-data/persons.ts";
 import { refuseRestricted } from "../personal-data/refusal.ts";
 import { actedBy } from "../shared/causation.ts";
-import { errorDetails } from "../shared/retry.ts";
 import { withTimeout } from "../shared/timeout.ts";
 import { withPorts } from "../shared/with-ports.ts";
 import { ATTRIBUTES, actorAttribute, METRICS, meter, SPAN_EVENTS, traced } from "../telemetry.ts";
@@ -293,7 +292,7 @@ const declaredMessage = (
   } catch (error) {
     logger.warn("command rejections threw; the rejection takes its code as message", {
       ...fields,
-      error: errorDetails(error),
+      error,
     });
     return code;
   }
@@ -642,6 +641,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     };
 
     return traced({
+      errorText: config.runtime.telemetry.errorText,
       name: `bounda.command ${type}`,
       attributes: {
         [ATTRIBUTES.commandType]: type,

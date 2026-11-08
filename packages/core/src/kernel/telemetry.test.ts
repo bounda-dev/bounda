@@ -256,7 +256,13 @@ describe("telemetry", () => {
         "rebuildReadModel",
       ].map((operation) => [
         `bounda.operation ${operation}`,
-        { [ATTRIBUTES.operation]: operation, [ATTRIBUTES.actor]: "user-1" },
+        {
+          [ATTRIBUTES.operation]: operation,
+          [ATTRIBUTES.actor]: "user-1",
+          ...(operation === "deadLetters.retry" || operation === "deadLetters.discard"
+            ? { "error.type": "NotFoundError" }
+            : {}),
+        },
       ]),
       ["bounda.operation forget", { [ATTRIBUTES.operation]: "forget" }],
     ]);
@@ -415,9 +421,20 @@ describe("telemetry", () => {
     );
     await app.runUntilIdle();
     expect(named(telemetry, "bounda.policy")[0]).toMatchObject({
-      status: { code: SpanStatusCode.ERROR, message: "no mail today" },
-      exceptions: ["no mail today"],
+      attributes: { "error.type": "ValidationError" },
+      status: { code: SpanStatusCode.ERROR, message: "ValidationError (VALIDATION_FAILED)" },
+      exceptions: [],
     });
+    expect(telemetry.spanEvents.filter((event) => event.name === "exception")).toEqual([
+      {
+        span: "bounda.policy order.notifyOnOrderPlaced",
+        name: "exception",
+        attributes: {
+          "exception.type": "ValidationError",
+          [ATTRIBUTES.errorCode]: "VALIDATION_FAILED",
+        },
+      },
+    ]);
     expect(telemetry.instruments).toEqual(
       expect.arrayContaining([
         {
@@ -488,6 +505,7 @@ describe("telemetry", () => {
     await expect(
       traced({
         name: `${TELEMETRY_SCOPE} test`,
+        errorText: "omit",
         run: async (span) => {
           span.setAttribute("x", 1);
           ran = true;
@@ -499,6 +517,7 @@ describe("telemetry", () => {
     await expect(
       traced({
         name: "fails",
+        errorText: "omit",
         run: async () => {
           throw new Error("boom");
         },

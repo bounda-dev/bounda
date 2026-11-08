@@ -138,11 +138,12 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
 }) => {
   if (actor !== undefined) checkActor(actor);
   validateRegistry(registry);
-  const logger = guardedLogger(rawLogger);
   if (maxEvents !== undefined && !(maxEvents >= 1)) {
     throw new ConfigurationError(`maxEvents must be at least 1, got ${maxEvents}`);
   }
   const config = resolveConfig(rawConfig);
+  const { errorText } = config.runtime.telemetry;
+  const logger = guardedLogger(rawLogger, errorText);
   checkConfigNames({ registry, config });
   const entry = registry.readModels[name];
   if (entry === undefined) {
@@ -200,6 +201,7 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
             table,
             client,
             logger,
+            errorText,
             budget: { clock: systemClock, maxMs: config.runtime.dispatcher.projectionBatchTimeMs },
           });
           await checkpointStore.set(progress, batch[projected - 1]?.position ?? position);

@@ -75,14 +75,13 @@ export const createSnapshotSubscriber: CreateSnapshotSubscriberFunction = ({
     try {
       state = serializeFold(folded);
     } catch (error) {
-      const details = errorDetails(error);
       if (strict !== undefined) {
         throw new SnapshotError(
-          `State of ${aggregate.name}:${aggregateId} cannot be snapshotted: ${details.message}`,
+          `State of ${aggregate.name}:${aggregateId} cannot be snapshotted: ${errorDetails(error).message}`,
           { cause: error },
         );
       }
-      logger.error("aggregate state cannot be snapshotted", { ...stream, version, ...details });
+      logger.error("aggregate state cannot be snapshotted", { ...stream, version, error });
       return;
     }
     await snapshotStore.put({ ...stream, version, fingerprint, state, persons });

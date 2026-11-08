@@ -187,6 +187,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
         person: instancePersonOf(process, instanceId, instance),
       });
       const { returned } = await traced({
+        errorText: config.runtime.telemetry.errorText,
         name: `bounda.process ${process.name}`,
         attributes: {
           [ATTRIBUTES.process]: process.name,
@@ -258,6 +259,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     return runOf(reaction, async () => {
       await refused();
       const { returned, decided } = await traced({
+        errorText: config.runtime.telemetry.errorText,
         name: `bounda.process ${process.name} at ${due.field}`,
         attributes: {
           [ATTRIBUTES.process]: process.name,

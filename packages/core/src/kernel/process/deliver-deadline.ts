@@ -5,7 +5,6 @@ import type {
 import type { ResolvedConfig, ResolvedRetryConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { Logger } from "../../contracts/logger.ts";
-import { errorDetails } from "../shared/retry.ts";
 import type { UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import type { ProcessesRuntime, ProcessRuntime } from "./build-processes.ts";
 import type { DeadlineStep } from "./deadline-step.ts";
@@ -188,7 +187,7 @@ export const createDeadlineDelivery: CreateDeadlineDeliveryFunction = ({
         aggregateId: payload.aggregateId,
         status,
         thrownBy: thrown?.field ?? null,
-        error: errorDetails(error).message,
+        error,
       });
       return;
     }

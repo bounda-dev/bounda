@@ -84,13 +84,16 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
     event: StoredEvent,
     attempts: number,
     errorType: DeadLetterErrorType,
+    error: unknown,
   ): void => {
     deadLettered({ kind: "policy", handler: policy.name, errorType });
     logger.warn("policy dead-lettered", {
       policy: policy.name,
       eventId: event.id,
+      letterId: deriveDeadLetterId({ kind: "policy", handler: policy.name, subject: event.id }),
       errorType,
       attempts,
+      error,
     });
   };
 
@@ -121,12 +124,13 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
       },
       giveUp: (unit, error, attempts, errorType) =>
         deadLetter(unit, policy, event, error, attempts, errorType),
-      gaveUp: (attempts, errorType) => gaveUp(policy, event, attempts, errorType),
-      willRetry: (attempts) => {
+      gaveUp: (attempts, errorType, error) => gaveUp(policy, event, attempts, errorType, error),
+      willRetry: (attempts, error) => {
         logger.warn("policy failed; will retry", {
           policy: policy.name,
           eventId: event.id,
           attempts,
+          error,
         });
       },
     });

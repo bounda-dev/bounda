@@ -7,7 +7,6 @@ import type { Logger } from "../../contracts/logger.ts";
 import type { CreateArgs, PortModules } from "../../modules/port.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { AppEnv, TestPortsChoice } from "../../register/index.ts";
-import { errorDetails } from "../shared/retry.ts";
 import { type PortChoice, selectTestImplementations } from "./test-ports.ts";
 
 /**
@@ -121,7 +120,7 @@ export const createPorts: CreatePortsFunction = async (args) => {
         logger.error("implementation could not be closed", {
           module,
           port,
-          ...errorDetails(error),
+          error,
         });
       }
     }

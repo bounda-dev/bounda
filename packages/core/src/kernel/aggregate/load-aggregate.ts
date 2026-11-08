@@ -6,7 +6,6 @@ import { SnapshotError } from "../../contracts/errors.ts";
 import type { StreamIdentity } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { personsOf } from "../personal-data/persons.ts";
-import { errorDetails } from "../shared/retry.ts";
 import { ATTRIBUTES, METRICS, meter } from "../telemetry.ts";
 import { type FoldedState, foldState } from "./fold-state.ts";
 import type { AggregateRuntime } from "./runtime.ts";
@@ -178,7 +177,7 @@ export const createAggregateLoader: CreateAggregateLoaderFunction = ({
         eventStore,
         "unreadable",
         "snapshot could not be read; the stream is folded from its first event",
-        { version: snapshot.version, ...errorDetails(error) },
+        { version: snapshot.version, error },
       );
     }
     const loaded = await eventStore.load({ ...stream, fromVersion: snapshot.version + 1 });

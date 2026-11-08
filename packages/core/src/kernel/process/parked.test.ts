@@ -124,7 +124,7 @@ const setUp = async ({
   adapter,
 }: SetUpArgs = {}) => {
   reset();
-  const { logger, entries: logs } = createRecordingLogger();
+  const { logger, entries: logs } = createRecordingLogger("omit");
   const harness = await createReactiveHarness({
     registry,
     config: {
@@ -143,6 +143,7 @@ const setUp = async ({
     processes: harness.processes,
     clock: harness.clock,
     logger: harness.logger,
+    errorText: "omit",
   });
   const settle = async (): Promise<void> => {
     for (;;) {
@@ -315,7 +316,15 @@ describe("events of a failed process", () => {
     expect(logs).toContainEqual({
       level: "warn",
       message: "process dead-lettered",
-      fields: { process: "order.tally", eventId: "again-1", errorType: "terminal", attempts: 1 },
+      fields: {
+        process: "order.tally",
+        eventId: "again-1",
+        letterId: second?.id,
+        errorName: "ValidationError",
+        errorCode: "VALIDATION_FAILED",
+        errorType: "terminal",
+        attempts: 1,
+      },
     });
 
     failingEvents.clear();
@@ -652,7 +661,7 @@ describe("events of a failed process", () => {
 
   it("let a parked event through when the process no longer acts on it", async () => {
     const context = await setUp();
-    const letThrough = createRecordingLogger();
+    const letThrough = createRecordingLogger("omit");
     const { harness, settle } = context;
     await failOnFirstPayment(context);
     const order = await harness.storage.eventStore.load({
@@ -827,7 +836,7 @@ describe("events of a failed process", () => {
 
   it("let a failure through when a deploy removed its handler, and resume", async () => {
     const context = await setUp();
-    const letThrough = createRecordingLogger();
+    const letThrough = createRecordingLogger("omit");
     const { harness } = context;
     await failOnFirstPayment(context);
     const tallyEntry = registry.aggregates.order?.processes.tally;
@@ -1551,7 +1560,7 @@ describe("events of a failed process", () => {
     expect(logs).toContainEqual({
       level: "error",
       message: "scheduled command could not be settled; its lease will lapse",
-      fields: expect.objectContaining({ command: "bounda.ProcessDeadline", message: "store down" }),
+      fields: expect.objectContaining({ command: "bounda.ProcessDeadline", errorName: "Error" }),
     });
     harness.clock.advance(harness.worker.leaseMs + 1);
     await settle();

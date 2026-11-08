@@ -260,7 +260,11 @@ describe("createKeyRotation", () => {
       {
         level: "error",
         message: "personal key could not be rewrapped",
-        context: expect.objectContaining({ personId: "c-1", kid: "old", message: "unwrap failed" }),
+        context: expect.objectContaining({
+          personId: "c-1",
+          kid: "old",
+          error: expect.objectContaining({ message: "unwrap failed" }),
+        }),
       },
     ]);
     const start = clock.now().getTime();
@@ -304,7 +308,9 @@ describe("createKeyRotation", () => {
       {
         level: "error",
         message: "personal keys to rewrap could not be listed",
-        context: expect.objectContaining({ message: "database down" }),
+        context: expect.objectContaining({
+          error: expect.objectContaining({ message: "database down" }),
+        }),
       },
     ]);
     broken = false;
@@ -586,7 +592,11 @@ describe("createKeyRotation", () => {
       "personal key could not be held",
     ]);
     expect(logger.logged[1]?.context).toEqual(
-      expect.objectContaining({ personId: "c-1", kid: "old", message: "read-only" }),
+      expect.objectContaining({
+        personId: "c-1",
+        kid: "old",
+        error: expect.objectContaining({ message: "read-only" }),
+      }),
     );
     expect(await rotation.nextDueAt()).toEqual(new Date(clock.now().getTime() + HOLD_MS));
     clock.advance(HOLD_MS - 1);

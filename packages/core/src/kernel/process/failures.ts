@@ -115,6 +115,9 @@ export const createProcessFailures: CreateProcessFailuresFunction = ({
     logger.warn("process dead-lettered", {
       process: process.name,
       eventId: letter.eventId,
+      letterId: letter.id,
+      errorName: letter.errorName,
+      ...(letter.errorCode === undefined ? {} : { errorCode: letter.errorCode }),
       errorType: letter.errorType,
       attempts: letter.attempts,
     });

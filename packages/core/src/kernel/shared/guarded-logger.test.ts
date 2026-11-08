@@ -20,7 +20,7 @@ describe("guardedLogger", () => {
         lines.push(`${this.prefix} error ${message}`);
       }
     }
-    const logger = guardedLogger(new PrefixLogger());
+    const logger = guardedLogger(new PrefixLogger(), "omit");
 
     logger.debug("a");
     logger.info("b", { id: 1 });
@@ -35,7 +35,10 @@ describe("guardedLogger", () => {
     const record = (...args: unknown[]): void => {
       calls.push(args);
     };
-    const logger = guardedLogger({ debug: record, info: record, warn: record, error: record });
+    const logger = guardedLogger(
+      { debug: record, info: record, warn: record, error: record },
+      "omit",
+    );
 
     logger.info("sent");
     logger.info("sent", { to: "ada" });
@@ -55,7 +58,10 @@ describe("guardedLogger", () => {
     const failing = async (): Promise<void> => {
       throw new Error("sink is down");
     };
-    const logger = guardedLogger({ debug: failing, info: failing, warn: failing, error: failing });
+    const logger = guardedLogger(
+      { debug: failing, info: failing, warn: failing, error: failing },
+      "omit",
+    );
 
     logger.info("a");
     logger.error("b");
@@ -68,7 +74,10 @@ describe("guardedLogger", () => {
     const failing = (): void => {
       throw new Error("disk full");
     };
-    const logger = guardedLogger({ debug: failing, info: failing, warn: failing, error: failing });
+    const logger = guardedLogger(
+      { debug: failing, info: failing, warn: failing, error: failing },
+      "omit",
+    );
 
     expect(() => {
       logger.debug("a");

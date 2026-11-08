@@ -1,3 +1,4 @@
+import type { ErrorText } from "../../config/types.ts";
 import { NotFoundError } from "../../contracts/errors.ts";
 import { validatePayload } from "../command/validate.ts";
 import { type RecordAccess, recorded } from "../personal-data/access.ts";
@@ -38,6 +39,7 @@ export interface CreateQueryRunnerArgs {
    */
   readonly ports: ModulePorts;
   readonly recordAccess: RecordAccess;
+  readonly errorText: ErrorText;
 }
 
 export interface CreateQueryRunnerFunction {
@@ -58,6 +60,7 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
   readModels,
   ports,
   recordAccess,
+  errorText,
 }) => {
   const runAs = async (
     { type, payload, actor }: RunQueryArgs,
@@ -68,6 +71,7 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
     const readModel = readModels.byName[query.readModel];
     if (readModel === undefined) throw new NotFoundError(`Unknown read model "${query.readModel}"`);
     return traced({
+      errorText: errorText,
       name: `bounda.query ${type}`,
       attributes: {
         [ATTRIBUTES.queryType]: type,

@@ -19,7 +19,8 @@ export type CreateTestAppArgs<R extends Registry> = {
   readonly registry: R;
   /**
    * Configuration without `storage`, which `adapter` replaces, nor `ports`, which the
-   * option of that name replaces.
+   * option of that name replaces. `runtime.telemetry.errorText` defaults to `"include"`, so a
+   * failing test logs what failed.
    */
   readonly config?: Omit<Config, "storage" | "ports">;
   /**
@@ -106,7 +107,15 @@ export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
     registry,
     // Required by the `Config` of a project whose ports need a choice, and never read here:
     // `test` replaces it.
-    config: { ...config, storage: adapter, ports: {} as AppPortsConfig },
+    config: {
+      ...config,
+      runtime: {
+        ...config.runtime,
+        telemetry: { errorText: "include", ...config.runtime?.telemetry },
+      },
+      storage: adapter,
+      ports: {} as AppPortsConfig,
+    },
     logger,
     ids,
     clock,

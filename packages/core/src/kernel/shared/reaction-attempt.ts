@@ -38,11 +38,11 @@ export interface RunAttemptArgs {
    * Called once the give-up is committed, for what must not be counted for a give-up that rolled
    * back: telemetry and logs.
    */
-  readonly gaveUp: (attempts: number, errorType: DeadLetterErrorType) => void;
+  readonly gaveUp: (attempts: number, errorType: DeadLetterErrorType, error: unknown) => void;
   /**
    * Called when a retriable failure will be retried on a later delivery.
    */
-  readonly willRetry: (attempts: number) => void;
+  readonly willRetry: (attempts: number, error: unknown) => void;
 }
 
 export interface RunAttemptFunction {
@@ -130,7 +130,7 @@ export const runAttempt: RunAttemptFunction = async ({
         pendingRetries.waiting(
           new Date(now.getTime() + retryDelayMs({ retry, attempt: attempts })),
         );
-        willRetry(attempts);
+        willRetry(attempts, error);
         return "hold";
       }
       await committed(async (unit) => {
@@ -142,7 +142,7 @@ export const runAttempt: RunAttemptFunction = async ({
       if (lost(recording)) return "hold";
       throw recording instanceof CommitFailed ? recording.cause : recording;
     }
-    reportGaveUp(attempts, gaveUp);
+    reportGaveUp(attempts, gaveUp, error);
     return "done";
   }
 };

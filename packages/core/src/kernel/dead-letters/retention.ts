@@ -1,7 +1,6 @@
 import type { DeadLetterStore } from "../../adapter/storage/dead-letter-store.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { createPause } from "../personal-data/hold.ts";
-import { errorDetails } from "../shared/retry.ts";
 
 // How many resolved letters a pass of the worker removes at most.
 export const DEAD_LETTER_PURGE_LIMIT = 100;
@@ -64,7 +63,7 @@ export const createDeadLetterRetention: CreateDeadLetterRetentionFunction = ({
         return purged;
       } catch (error) {
         pause.pause(at);
-        logger.error("resolved dead letters could not be purged", errorDetails(error));
+        logger.error("resolved dead letters could not be purged", { error });
         return 0;
       }
     },

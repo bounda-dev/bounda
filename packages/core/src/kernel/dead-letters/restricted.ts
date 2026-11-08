@@ -11,7 +11,7 @@ import type { Logger } from "../../contracts/logger.ts";
 import type { AppStorage } from "../events/app-event-store.ts";
 import { sealError } from "../personal-data/errors.ts";
 import { restrictedPersonOf } from "../personal-data/refusal.ts";
-import { classifyFailure, errorIdentity } from "../shared/retry.ts";
+import { classifyFailure } from "../shared/retry.ts";
 import type { UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import type { DeadLetterRetry } from "./retry.ts";
 
@@ -109,14 +109,14 @@ export const createRestrictedRetries: CreateRestrictedRetriesFunction = ({
           if (error instanceof DeadLetterNotRetriableError || error instanceof NotFoundError) {
             logger.warn("dead letter cannot be retried once the restriction was lifted", {
               ...fields,
-              ...errorIdentity(error),
+              error,
             });
             continue;
           }
           if (classifyFailure(error) === "retriable") {
             logger.warn("dead letter retry failed once the restriction was lifted; will retry", {
               ...fields,
-              ...errorIdentity(error),
+              error,
             });
             retriable ??= { error };
             continue;
@@ -124,7 +124,7 @@ export const createRestrictedRetries: CreateRestrictedRetriesFunction = ({
           await replace(unit, letter, error);
           logger.warn("dead letter failed again once the restriction was lifted", {
             ...fields,
-            ...errorIdentity(error),
+            error,
           });
         }
       }

@@ -234,7 +234,7 @@ describe("createAggregateLoader", () => {
         fields: expect.objectContaining({
           ...stream,
           version: 2,
-          message: "not a serialized fold",
+          errorMessage: "not a serialized fold",
         }),
       },
     ]);

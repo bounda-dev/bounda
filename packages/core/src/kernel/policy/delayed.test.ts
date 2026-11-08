@@ -204,6 +204,9 @@ describe("delayed policies", () => {
       fields: {
         policy: "order.remindOnOrderPlaced",
         eventId: placed?.id,
+        letterId: "id-3",
+        errorName: "ValidationError",
+        errorCode: "VALIDATION_FAILED",
         errorType: "terminal",
         attempts: 1,
       },
@@ -231,6 +234,7 @@ describe("delayed policies", () => {
       processes: harness.processes,
       clock: harness.clock,
       logger: harness.logger,
+      errorText: "omit",
     });
     await deadLetters.retry(letter?.id ?? "");
     expect(runs).toHaveLength(1);

@@ -502,7 +502,7 @@ describe("the backfill of personal data", () => {
     expect(logs).toContainEqual([
       "error",
       "personal data written before its marks could not be sealed",
-      expect.objectContaining({ message: "key service is down" }),
+      expect.objectContaining({ errorName: "Error" }),
     ]);
     expect(await one.app.nextDueAt()).toEqual(new Date(START.getTime() + HOLD_MS));
     await one.stop();

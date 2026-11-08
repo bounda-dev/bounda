@@ -61,6 +61,7 @@ describe("resolveConfig", () => {
       },
       personalData: { retentionMs: null, keyWrapper: null, forgetLedger: null },
       deadLetters: { retentionMs: null },
+      telemetry: { errorText: "omit" },
       overrides: {},
     });
   });
@@ -316,6 +317,22 @@ describe("resolveConfig", () => {
         }).runtime.personalData.forgetLedger?.keepForMs,
       ).toBeGreaterThan(0);
     }
+  });
+
+  it("takes whether the telemetry carries error text, and no mode it does not know", () => {
+    expect(
+      resolveConfig({ storage: sqlite, runtime: { telemetry: { errorText: "include" } } }).runtime
+        .telemetry,
+    ).toEqual({ errorText: "include" });
+    expect(
+      resolveConfig({ storage: sqlite, runtime: { telemetry: {} } }).runtime.telemetry,
+    ).toEqual({ errorText: "omit" });
+    expect(message({ storage: sqlite, runtime: { telemetry: { errorText: "all" } } })).toMatch(
+      /runtime\.telemetry\.errorText/,
+    );
+    expect(message({ storage: sqlite, runtime: { telemetry: { text: "include" } } })).toMatch(
+      /runtime\.telemetry: .*text/,
+    );
   });
 
   it("rejects unknown keys anywhere", () => {

@@ -39,6 +39,7 @@ describe("the access log of dead letters", () => {
       processes: {} as Pick<ProcessDeadLetters, "parkedBehind" | "stillParked">,
       clock: createFixedClock(),
       logger: silentLogger,
+      errorText: "omit",
       actor: "operator-1",
       recordAccess: async (args) => {
         recorded.push(args);

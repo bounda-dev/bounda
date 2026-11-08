@@ -116,6 +116,7 @@ const setup = async (ports: ModulePorts = {}) => {
     readModels,
     ports,
     recordAccess: unrecordedAccess,
+    errorText: "omit",
   });
 };
 
@@ -298,6 +299,7 @@ describe("buildQueries", () => {
       readModels: transformed,
       ports: {},
       recordAccess: unrecordedAccess,
+      errorText: "omit",
     });
     await expect(runner.run({ type: "ByActor", payload: { actor: "a" } })).rejects.toThrow(
       new ConfigurationError(
@@ -311,6 +313,7 @@ describe("buildQueries", () => {
       readModels: handlerOnly,
       ports: {},
       recordAccess: unrecordedAccess,
+      errorText: "omit",
     });
     expect(await handlerRunner.run({ type: "ByActor", payload: { actor: "a" } })).toBeNull();
     const named = await withPayload(["actorId"], true);

@@ -3,6 +3,7 @@ import type {
   ListDeadLettersArgs,
   StoredDeadLetter,
 } from "../../adapter/storage/dead-letter-store.ts";
+import type { ErrorText } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import { DeadLetterSettledError, NotFoundError } from "../../contracts/errors.ts";
 import type { Logger } from "../../contracts/logger.ts";
@@ -65,6 +66,7 @@ export interface CreateDeadLettersArgs {
   readonly processes: Pick<ProcessDeadLetters, "parkedBehind" | "stillParked">;
   readonly clock: Clock;
   readonly logger: Logger;
+  readonly errorText: ErrorText;
   /**
    * Who retries and discards, for the client bound to them.
    */
@@ -88,6 +90,7 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
   processes,
   clock,
   logger,
+  errorText,
   actor,
   recordAccess,
 }) => {
@@ -215,7 +218,12 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
       call: (...args: Args) => Promise<Result>,
     ) =>
     (...args: Args): Promise<Result> =>
-      tracedOperation({ operation: `deadLetters.${name}`, actor, run: () => call(...args) });
+      tracedOperation({
+        operation: `deadLetters.${name}`,
+        actor,
+        errorText,
+        run: () => call(...args),
+      });
   return {
     list: withSpan("list", calls.list),
     count: withSpan("count", calls.count),

@@ -98,6 +98,7 @@ const walker = ({ storage, marks = "m1", batchSize = 10, logger = silentLogger }
     recordsActivity: false,
     clock,
     logger,
+    errorText: "omit",
   });
   return { backfill, clock };
 };
@@ -468,7 +469,7 @@ describe("the backfill's walk", () => {
     expect(logs).toContainEqual([
       "error",
       "personal data written before its marks could not be sealed",
-      expect.objectContaining({ message: "store is down" }),
+      expect.objectContaining({ error: expect.objectContaining({ message: "store is down" }) }),
     ]);
     expect(await rows(base)).toMatchObject({
       "m1:attempts": 1,
@@ -571,7 +572,7 @@ describe("the backfill's walk", () => {
     expect(logs).toContainEqual([
       "error",
       "personal data backfill could not give its lease back",
-      expect.objectContaining({ message: "cannot write" }),
+      expect.objectContaining({ error: expect.objectContaining({ message: "cannot write" }) }),
     ]);
   });
 

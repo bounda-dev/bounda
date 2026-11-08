@@ -54,7 +54,7 @@ const failingRegistry: Registry = {
 
 describe("scheduled command worker", () => {
   it("purges the expired idempotency keys once per interval, and goes on when it cannot", async () => {
-    const { logger, entries } = createRecordingLogger();
+    const { logger, entries } = createRecordingLogger("omit");
     const harness = await createReactiveHarness({ registry: orderRegistry, logger });
     const { idempotencyStore } = harness.storage;
     const { purge } = idempotencyStore;
@@ -89,7 +89,7 @@ describe("scheduled command worker", () => {
     expect(entries).toContainEqual({
       level: "error",
       message: "expired idempotency keys could not be purged",
-      fields: expect.objectContaining({ message: "down" }),
+      fields: expect.objectContaining({ errorName: "Error" }),
     });
     harness.storage.idempotencyStore.purge = purge;
     harness.clock.advance(IDEMPOTENCY_PURGE_INTERVAL_MS);
@@ -140,7 +140,7 @@ describe("scheduled command worker", () => {
   });
 
   it("commits a run with the release of its claim, or neither, so a crash after the run does not run it twice", async () => {
-    const { logger, entries } = createRecordingLogger();
+    const { logger, entries } = createRecordingLogger("omit");
     const harness = await createReactiveHarness({
       registry: orderRegistry,
       logger,
@@ -244,7 +244,7 @@ describe("scheduled command worker", () => {
 
   it("drops a command that fails for good, records ScheduledCommandFailed and dead-letters it", async () => {
     const telemetry = installFakeTelemetry();
-    const { logger, entries } = createRecordingLogger();
+    const { logger, entries } = createRecordingLogger("omit");
     const harness = await createReactiveHarness({ registry: failingRegistry, logger });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
     await harness.pipeline.dispatch({
@@ -302,6 +302,9 @@ describe("scheduled command worker", () => {
       fields: {
         command: "PlaceOrder",
         dedupeKey: expect.stringMatching(/^command:/),
+        letterId: expect.any(String),
+        errorName: "ValidationError",
+        errorCode: "VALIDATION_FAILED",
         reason: "terminal",
         attempts: 1,
       },
@@ -558,7 +561,7 @@ describe("scheduled command worker", () => {
   ])(
     "writes nothing of a run that %s after another instance took its claim over",
     async (_, outcome, failures) => {
-      const { logger, entries } = createRecordingLogger();
+      const { logger, entries } = createRecordingLogger("omit");
       const harness = await createReactiveHarness({ registry: orderRegistry, logger });
       await harness.pipeline.dispatch({
         type: "PlaceOrder",
@@ -603,7 +606,7 @@ describe("scheduled command worker", () => {
   );
 
   it("runs none of the entries of its batch another instance took over before it reached them", async () => {
-    const { logger, entries } = createRecordingLogger();
+    const { logger, entries } = createRecordingLogger("omit");
     const harness = await createReactiveHarness({ registry: orderRegistry, logger });
     sentMessages.length = 0;
     for (const orderId of ["o-1", "o-2", "o-3"]) {
@@ -707,7 +710,7 @@ describe("scheduled command worker", () => {
     };
 
     it("renews its claim before running again, and stops once the claim moved", async () => {
-      const { logger, entries } = createRecordingLogger();
+      const { logger, entries } = createRecordingLogger("omit");
       const harness = await createReactiveHarness({ registry: orderRegistry, logger });
       const runs = await conflicting(harness);
       afterTheConflict(harness, async () => {
@@ -756,7 +759,7 @@ describe("scheduled command worker", () => {
     });
 
     it("leaves its claim to lapse when renewing it fails in the store, spending no attempt", async () => {
-      const { logger, entries } = createRecordingLogger();
+      const { logger, entries } = createRecordingLogger("omit");
       const harness = await createReactiveHarness({ registry: orderRegistry, logger });
       const runs = await conflicting(harness);
       afterTheConflict(harness, async () => {
@@ -774,7 +777,7 @@ describe("scheduled command worker", () => {
         {
           level: "error",
           message: "scheduled command could not be settled; its lease will lapse",
-          fields: expect.objectContaining({ command: "PlaceOrder", message: "connection reset" }),
+          fields: expect.objectContaining({ command: "PlaceOrder", errorName: "Error" }),
         },
       ]);
     });
@@ -840,7 +843,7 @@ describe("scheduled command worker", () => {
   });
 
   it("reports a failing run and keeps polling", async () => {
-    const { logger, entries } = createRecordingLogger();
+    const { logger, entries } = createRecordingLogger("omit");
     const harness = await createReactiveHarness({ registry: orderRegistry, logger });
     sentMessages.length = 0;
     const scheduler = harness.storage.scheduler;
@@ -865,7 +868,7 @@ describe("scheduled command worker", () => {
       {
         level: "error",
         message: "scheduled command worker failed",
-        fields: { message: "scheduler unavailable", stack: expect.any(String) },
+        fields: { errorName: "Error" },
       },
     ]);
     await advanceUntilWaiting(harness.clock, interval);
@@ -1004,7 +1007,7 @@ describe("scheduled command payload", () => {
   it("changes nothing when the handler rejects it, and is reported by runUntilIdle", async () => {
     receivedNotes.length = 0;
     closeNotes = true;
-    const { logger, entries } = createRecordingLogger();
+    const { logger, entries } = createRecordingLogger("omit");
     const { app, clock } = await createTestApp({ registry: noteRegistry, logger });
     await app.commands.writeNote({ noteId: "n-1", text: "hello" }, { delay: "1m" });
     clock.advance(60_000);

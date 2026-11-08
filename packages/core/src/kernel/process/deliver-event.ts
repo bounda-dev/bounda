@@ -203,11 +203,12 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
       gaveUp: () => {
         if (letter !== undefined) failures.filed(process, letter);
       },
-      willRetry: (attempts) => {
+      willRetry: (attempts, error) => {
         logger.warn("process handler failed; will retry", {
           process: process.name,
           eventId: event.id,
           attempts,
+          error,
         });
       },
     });

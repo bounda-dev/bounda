@@ -179,7 +179,10 @@ describe("the append to the forget ledger as a transaction commits", () => {
     expect(warnings).toEqual([
       [
         "forget ledger did not take the forgetting; the stream copies it",
-        expect.objectContaining({ forgotten: 1, message: "ledger is down" }),
+        expect.objectContaining({
+          forgotten: 1,
+          error: expect.objectContaining({ message: "ledger is down" }),
+        }),
       ],
     ]);
   });

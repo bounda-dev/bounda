@@ -60,6 +60,7 @@ describe("createDispatcher", () => {
       batchSize: 2,
       pollIntervalMs: 1_000,
       logger: silentLogger,
+      errorText: "omit",
     });
 
     expect(await dispatcher.processOnce()).toBe(true);
@@ -94,6 +95,7 @@ describe("createDispatcher", () => {
       batchSize: 2,
       pollIntervalMs: 1_000,
       logger: silentLogger,
+      errorText: "omit",
     });
 
     await dispatcher.catchUp("projection");
@@ -133,6 +135,7 @@ describe("createDispatcher", () => {
       batchSize: 10,
       pollIntervalMs: 1_000,
       logger,
+      errorText: "omit",
     });
     const telemetry = installFakeTelemetry();
     try {
@@ -146,8 +149,9 @@ describe("createDispatcher", () => {
             subscriber: "flaky",
             afterPosition: 0,
             failedPosition: 1,
-            message: "boom",
-            stack: expect.stringContaining("boom"),
+            errorName: "Error",
+            errorMessage: "boom",
+            errorStack: expect.stringContaining("boom"),
           },
         },
       ]);
@@ -187,6 +191,7 @@ describe("createDispatcher", () => {
       batchSize: 10,
       pollIntervalMs: 1_000,
       logger: silentLogger,
+      errorText: "omit",
     });
     const telemetry = installFakeTelemetry();
     try {
@@ -230,6 +235,7 @@ describe("createDispatcher", () => {
       batchSize: 2,
       pollIntervalMs: 1_000,
       logger,
+      errorText: "omit",
     });
 
     const telemetry = installFakeTelemetry();
@@ -293,6 +299,7 @@ describe("createDispatcher", () => {
       batchSize: 1,
       pollIntervalMs: 1,
       logger: silentLogger,
+      errorText: "omit",
     });
     dispatcher.start();
     dispatcher.start();
@@ -338,6 +345,7 @@ describe("createDispatcher", () => {
       batchSize: 10,
       pollIntervalMs: 2,
       logger: silentLogger,
+      errorText: "omit",
     });
     dispatcher.start();
     await appendMany(eventStore, 2);
@@ -360,6 +368,7 @@ describe("createDispatcher", () => {
       batchSize: 10,
       pollIntervalMs: 1_000,
       logger: silentLogger,
+      errorText: "omit",
     });
     expect(await dispatcher.getLag()).toEqual({
       lastPosition: 5,
@@ -396,6 +405,7 @@ describe("createDispatcher", () => {
       batchSize: 1,
       pollIntervalMs: 100,
       logger: silentLogger,
+      errorText: "omit",
     });
     await appendMany(eventStore, 3);
     dispatcher.start();
@@ -440,6 +450,7 @@ describe("createDispatcher", () => {
       batchSize: 10,
       pollIntervalMs: 100,
       logger,
+      errorText: "omit",
     });
     await appendMany(eventStore, 1);
     dispatcher.start();
@@ -448,7 +459,11 @@ describe("createDispatcher", () => {
       {
         level: "error",
         message: "dispatcher pass failed",
-        fields: { message: "checkpoints unavailable", stack: expect.any(String) },
+        fields: {
+          errorName: "Error",
+          errorMessage: "checkpoints unavailable",
+          errorStack: expect.any(String),
+        },
       },
     ]);
     await advanceUntilWaiting(clock, 100);
@@ -471,6 +486,7 @@ describe("createDispatcher", () => {
       idleIntervalMs: 30_000,
       ...(notifier === undefined ? {} : { notifier }),
       logger: silentLogger,
+      errorText: "omit",
     });
     dispatcher.start();
     expect(clock.pending()).toBe(1);
@@ -520,6 +536,7 @@ describe("createDispatcher", () => {
       idleIntervalMs: 30_000,
       ...(notifier === undefined ? {} : { notifier }),
       logger: silentLogger,
+      errorText: "omit",
     });
     dispatcher.start();
     await advanceUntilWaiting(clock, 100);
@@ -572,6 +589,7 @@ describe("createDispatcher", () => {
       idleIntervalMs: 30_000,
       ...(notifier === undefined ? {} : { notifier }),
       logger: silentLogger,
+      errorText: "omit",
     });
     dispatcher.start();
     await appendMany(eventStore, 1);
@@ -623,6 +641,7 @@ describe("createDispatcher", () => {
       pollIntervalMs: 100,
       ...(notifier === undefined ? {} : { notifier }),
       logger: silentLogger,
+      errorText: "omit",
     });
     dispatcher.start();
     await appendMany(eventStore, 1);
@@ -661,6 +680,7 @@ describe("createDispatcher", () => {
         },
       },
       logger,
+      errorText: "omit",
     });
     dispatcher.start();
     await eventually(() =>
@@ -668,7 +688,11 @@ describe("createDispatcher", () => {
         {
           level: "error",
           message: "dispatcher could not subscribe to notifications; polling",
-          fields: { message: "no LISTEN for you", stack: expect.any(String) },
+          fields: {
+            errorName: "Error",
+            errorMessage: "no LISTEN for you",
+            errorStack: expect.any(String),
+          },
         },
       ]),
     );
@@ -691,6 +715,7 @@ describe("createDispatcher", () => {
       pollIntervalMs: 100,
       idleIntervalMs: 30_000,
       logger: silentLogger,
+      errorText: "omit",
     });
     dispatcher.start();
     await advanceUntilWaiting(clock, 100);
@@ -727,6 +752,7 @@ describe("createDispatcher", () => {
       idleIntervalMs: 30_000,
       ...(notifier === undefined ? {} : { notifier }),
       logger: silentLogger,
+      errorText: "omit",
     });
     await appendMany(eventStore, 1);
     dispatcher.start();
@@ -757,6 +783,7 @@ describe("createDispatcher", () => {
         },
       },
       logger: silentLogger,
+      errorText: "omit",
     });
     dispatcher.start();
     await dispatcher.stop();
