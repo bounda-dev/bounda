@@ -1,5 +1,6 @@
 import type { PersonalKeyStore, StoredPersonalKey } from "../storage/personal-key-store.ts";
 import type { SqlDialect } from "./dialect.ts";
+import { holdEndOf, holdOf, releasedBy as released } from "./hold.ts";
 import type { SqlExecutor } from "./sql-table.ts";
 
 export interface CreateSqlPersonalKeyStoreArgs {
@@ -29,6 +30,19 @@ export const createSqlPersonalKeyStore: CreateSqlPersonalKeyStoreFunction = ({
     fingerprint: String(row.fingerprint),
     kid: row.kid === null ? null : String(row.kid),
   });
+  // One equality per id, so the index on `kid` answers each.
+  const wrappedUnder = (
+    kids: readonly (string | null)[],
+  ): { readonly condition: string; readonly values: readonly string[] } | null => {
+    const named = kids.filter((kid) => kid !== null);
+    const conditions = [
+      ...named.map((_, index) => `"kid" = ${p(index + 1)}`),
+      ...(named.length < kids.length ? [`"kid" IS NULL`] : []),
+    ];
+    return conditions.length === 0 ? null : { condition: conditions.join(" OR "), values: named };
+  };
+  // The row as `from` was read: `rewrap` and `hold` change it only while it holds that key.
+  const holding = `"person" = ${p(3)} AND "key" = ${p(4)} AND "fingerprint" = ${p(5)}`;
   const get = async (person: string): Promise<StoredPersonalKey | null> => {
     const [row] = await db.all(
       `SELECT "key", "fingerprint", "kid" FROM ${table} WHERE "person" = ${p(1)}`,
@@ -49,26 +63,49 @@ export const createSqlPersonalKeyStore: CreateSqlPersonalKeyStoreFunction = ({
     remove: async (person) =>
       (await db.all(`DELETE FROM ${table} WHERE "person" = ${p(1)} RETURNING "person"`, [person]))
         .length === 1,
-    // One equality per id, so the index on `kid` answers each.
-    listWrappedUnder: async ({ kids, limit }) => {
-      const named = kids.filter((kid) => kid !== null);
-      const conditions = [
-        ...named.map((_, index) => `"kid" = ${p(index + 1)}`),
-        ...(named.length < kids.length ? [`"kid" IS NULL`] : []),
-      ];
-      if (conditions.length === 0) return [];
+    listWrappedUnder: async ({ kids, releasedBy, limit }) => {
+      const under = wrappedUnder(kids);
+      if (under === null) return [];
+      const conditions = [`(${under.condition})`];
+      const values: unknown[] = [...under.values];
+      if (releasedBy !== undefined) {
+        values.push(releasedBy.toISOString());
+        conditions.push(released(p(values.length)));
+      }
+      values.push(limit);
       const rows = await db.all(
-        `SELECT "person", "key", "fingerprint", "kid" FROM ${table} WHERE ${conditions.join(" OR ")} ORDER BY "person" LIMIT ${p(named.length + 1)}`,
-        [...named, limit],
+        `SELECT "person", "key", "fingerprint", "kid", "held_until", "attempts" FROM ${table} WHERE ${conditions.join(" AND ")} ORDER BY "person" LIMIT ${p(values.length)}`,
+        values,
       );
-      return rows.map((row) => ({ person: String(row.person), key: keyOf(row) }));
+      return rows.map((row) => ({
+        person: String(row.person),
+        key: keyOf(row),
+        hold: holdOf(row),
+      }));
     },
     rewrap: async (person, from, to) =>
       (
         await db.all(
-          `UPDATE ${table} SET "key" = ${p(1)}, "kid" = ${p(2)} WHERE "person" = ${p(3)} AND "key" = ${p(4)} AND "fingerprint" = ${p(5)} RETURNING "person"`,
+          `UPDATE ${table} SET "key" = ${p(1)}, "kid" = ${p(2)}, "held_until" = NULL, "attempts" = 0 WHERE ${holding} RETURNING "person"`,
           [to.key, to.kid, person, from.key, from.fingerprint],
         )
       ).length === 1,
+    hold: async (person, from, { until, attempts }) => {
+      await db.run(
+        `UPDATE ${table} SET "held_until" = ${p(1)}, "attempts" = ${p(2)} WHERE ${holding}`,
+        [until, attempts, person, from.key, from.fingerprint],
+      );
+    },
+    // The index on held keys answers it; few are held, so filtering them by id costs little.
+    nextHoldEnd: async ({ kids, after }) => {
+      const under = wrappedUnder(kids);
+      if (under === null) return null;
+      return holdEndOf(
+        await db.all(
+          `SELECT MIN("held_until") AS "until" FROM ${table} WHERE (${under.condition}) AND "held_until" > ${p(under.values.length + 1)}`,
+          [...under.values, after.toISOString()],
+        ),
+      );
+    },
   };
 };

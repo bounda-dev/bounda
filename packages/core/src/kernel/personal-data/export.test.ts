@@ -127,7 +127,7 @@ const setup = async () => {
   const storage: Storage = appStorage({
     storage: written,
     aggregates,
-    wrapping: createPersonalKeyWrapping({ wrapper: null }),
+    wrapping: createPersonalKeyWrapping({ wrapper: null, clock: createFixedClock() }),
   });
   const exportOf = (personId: string, batchSize = 2) =>
     exportPersonalData({

@@ -187,7 +187,9 @@ export interface BoundaApp<R extends Registry = AppRegistry> extends BoundaClien
    * due for forgetting under `runtime.personalData.retention`, a person's key waits to be
    * rewrapped under `runtime.personalData.keyWrapper`, or `runtime.personalData.forgetLedger` is
    * to be read again, after a read that failed or once a ledger that shows entries late has had
-   * the time to; `null` when nothing is. A host without a polling worker arms its wake-up for it.
+   * the time to; `null` when nothing is. A person, a key or a ledger read that failed counts
+   * from the end of its wait, never from now. A host without a polling worker arms its wake-up
+   * for it.
    */
   nextDueAt(): Promise<Date | null>;
   /**
@@ -390,6 +392,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
   const wrapping = await buildPersonalKeyWrapping({
     definition: config.runtime.personalData.keyWrapper,
     env,
+    clock,
   });
   // Built before the storage opens and closed after it, so a `create` that fails leaves nothing
   // open; a failure further on closes them again.
@@ -402,7 +405,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     ...(test === undefined ? { config: config.ports } : { test }),
   });
   // What a start that fails has to close, in the order `stop` closes it.
-  const opened: (() => Promise<void>)[] = [];
+  const opened: (() => Promise<void>)[] = [async () => wrapping.close()];
   try {
     const written = await config.storage.createStorage();
     opened.unshift(() => written.close());
@@ -522,6 +525,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             logger,
             concurrencyRetries: config.runtime.commands.concurrencyRetries,
             batchSize: config.runtime.dispatcher.batchSize,
+            forgotten: wrapping.drop,
           });
     const { concurrencyRetries } = config.runtime.commands;
     const reconciliation =
@@ -534,12 +538,14 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             clock,
             logger,
             concurrencyRetries,
+            forgotten: wrapping.drop,
           });
     const rotation =
       wrapping.wrapper === null
         ? undefined
         : createKeyRotation({
             keys: written.personalKeys,
+            checkpoints: written.checkpointStore,
             wrapper: wrapping.wrapper,
             wrapping,
             clock,
@@ -821,6 +827,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
               try {
                 await storage.close();
               } finally {
+                wrapping.close();
                 await ledger?.close?.();
               }
             }
@@ -870,6 +877,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           });
           if (again === null) continue;
           logForgotten(logger, again);
+          wrapping.drop(entry.personId);
           forgotten.push(entry.personId);
         }
         return forgotten;

@@ -11,6 +11,7 @@ import type { Registry } from "../../modules/registry.ts";
 import { createTestApp } from "../../testing/index.ts";
 import { type BoundaApp, createApp } from "../app.ts";
 import { fingerprintOf, fromBase64 } from "./crypto.ts";
+import { defineKeyWrapper } from "./key-wrapper.ts";
 import { masterKey } from "./master-key.ts";
 
 const registry = {
@@ -158,6 +159,34 @@ describe("personal keys wrapped under a master key", () => {
     await other.stop();
   });
 
+  it("lets go of the key it holds unwrapped for a person it forgets again", async () => {
+    const { adapter, db } = createNodeSqliteAdapter();
+    const env = { BOUNDA_MASTER_KEY: randomKey() };
+    let unwraps = 0;
+    const counting = defineKeyWrapper(async (args) => {
+      const wrapper = await masterKey({ from: "BOUNDA_MASTER_KEY" }).create(args);
+      return {
+        ...wrapper,
+        unwrap: (wrapped) => {
+          unwraps += 1;
+          return wrapper.unwrap(wrapped);
+        },
+      };
+    });
+    const app = await start({ adapter, env, runtime: { personalData: { keyWrapper: counting } } });
+    await register(app, "c-1");
+    const [row] = keyRows(db);
+    expect(await app.forgetAgain([{ personId: "c-1" }])).toEqual(["c-1"]);
+    // The same row put back, as a restore would: unwrapped again, so the app had let it go.
+    db.prepare(
+      `INSERT INTO "bounda_personal_keys" ("person", "key", "fingerprint", "kid") VALUES (?, ?, ?, ?)`,
+    ).run(row?.person ?? "", row?.key ?? "", row?.fingerprint ?? "", row?.kid ?? null);
+    const before = unwraps;
+    await emailOf(app, "c-1");
+    expect(unwraps).toBe(before + 1);
+    await app.stop();
+  });
+
   it("rewraps every key in the background once the master key moves to previous, and the data still opens", async () => {
     const { adapter, db } = createNodeSqliteAdapter();
     const old = randomKey();
@@ -251,8 +280,8 @@ describe("personal keys wrapped under a master key", () => {
     );
   });
 
-  it("runs in a test app given the master key in its env", async () => {
-    const { app } = await createTestApp({
+  it("runs in a test app given the master key in its env, and drops its unwrapped keys when it stops", async () => {
+    const { app, clock } = await createTestApp({
       registry,
       config: { runtime: wrapped() },
       env: { BOUNDA_MASTER_KEY: randomKey() },
@@ -261,7 +290,10 @@ describe("personal keys wrapped under a master key", () => {
     expect(await emailOf(app, "c-1")).toEqual({ email: "c-1@example.com" });
     await app.forget("c-1");
     expect(await emailOf(app, "c-1")).toEqual({ email: null });
+    await register(app, "c-2");
+    expect(clock.pending()).toBeGreaterThan(0);
     await app.stop();
+    expect(clock.pending()).toBe(0);
   });
 });
 
