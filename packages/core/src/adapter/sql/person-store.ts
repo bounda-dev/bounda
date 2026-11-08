@@ -99,7 +99,7 @@ export const createSqlPersonStore: CreateSqlPersonStoreFunction = ({ db, table, 
         `SELECT MIN("held_until") AS "until" FROM ${table} WHERE ${HELD} AND "held_until" > ${p(1)}`,
         [after.toISOString()],
       );
-      return row?.until === null || row?.until === undefined ? null : new Date(String(row.until));
+      return typeof row?.until === "string" ? new Date(row.until) : null;
     },
   };
 };

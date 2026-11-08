@@ -195,6 +195,89 @@ describe("createPersonalKeyWrapping", () => {
     expect(wrapper.unwrapped).toHaveLength(2);
   });
 
+  it("puts a key unwrapped again past its time last, so the next one in is not what goes out", async () => {
+    const store = await keyStore();
+    const wrapper = fakeWrapper("kid-1");
+    const late: typeof clock = { ...createFixedClock(), after: () => () => undefined };
+    const keys = createPersonalKeyWrapping({ clock: late, wrapper, keep: 2, ttlMs: 1_000 }).over(
+      store,
+    );
+    await keys.add("c-1", await generatePersonalKey());
+    late.advance(500);
+    await keys.add("c-2", await generatePersonalKey());
+    late.advance(500);
+    await keys.get("c-1");
+    expect(wrapper.unwrapped).toHaveLength(3);
+    late.advance(100);
+    await keys.add("c-3", await generatePersonalKey());
+    await keys.get("c-1");
+    expect(wrapper.unwrapped).toHaveLength(4);
+    await keys.get("c-2");
+    expect(wrapper.unwrapped).toHaveLength(5);
+  });
+
+  it("keeps a key unwrapped again when an older unwrapping of it fails late", async () => {
+    const store = await keyStore();
+    const key = await generatePersonalKey();
+    await createPersonalKeyWrapping({ clock, wrapper: fakeWrapper("kid-1") })
+      .over(store)
+      .add("c-1", key);
+    let fail: (error: Error) => void = () => undefined;
+    let calls = 0;
+    const slow: KeyWrapper = {
+      ...fakeWrapper("kid-1"),
+      unwrap: async (args) => {
+        calls += 1;
+        if (calls === 1) {
+          await new Promise<void>((_, reject) => {
+            fail = reject;
+          });
+        }
+        return fakeWrapper("kid-1").unwrap(args);
+      },
+    };
+    const late: typeof clock = { ...createFixedClock(), after: () => () => undefined };
+    const keys = createPersonalKeyWrapping({ clock: late, wrapper: slow, ttlMs: 1_000 }).over(
+      store,
+    );
+    const first = keys.get("c-1");
+    await new Promise((resolve) => setImmediate(resolve));
+    late.advance(1_000);
+    expect(await keys.get("c-1")).toEqual(key);
+    fail(new Error("KMS timed out"));
+    await expect(first).rejects.toThrow("KMS timed out");
+    expect(await keys.get("c-1")).toEqual(key);
+    expect(calls).toBe(2);
+  });
+
+  it("drops only the forgotten person's key", async () => {
+    const store = await keyStore();
+    const wrapper = fakeWrapper("kid-1");
+    const keys = createPersonalKeyWrapping({ clock, wrapper }).over(store);
+    await keys.add("c-1", await generatePersonalKey());
+    const kept = await generatePersonalKey();
+    await keys.add("c-2", kept);
+    await keys.remove("c-1");
+    expect(await keys.get("c-2")).toEqual(kept);
+    expect(wrapper.unwrapped).toHaveLength(2);
+  });
+
+  it("still drops a person's key when they are forgotten after a read that named no one", async () => {
+    const store = await keyStore();
+    const wrapper = fakeWrapper("kid-1");
+    const wrapping = createPersonalKeyWrapping({ clock, wrapper });
+    const keys = wrapping.over(store);
+    const key = await generatePersonalKey();
+    await keys.add("c-1", key);
+    const stored = await store.get("c-1");
+    await wrapping.wrapped(stored ?? key);
+    expect(wrapper.unwrapped).toHaveLength(1);
+    await keys.remove("c-1");
+    await store.add("c-1", stored ?? key);
+    await keys.get("c-1");
+    expect(wrapper.unwrapped).toHaveLength(2);
+  });
+
   it("drops every unwrapped key and its timer when closed", async () => {
     const store = await keyStore();
     const timed = createFixedClock();
@@ -280,6 +363,12 @@ describe("createPersonalKeyWrapping", () => {
     await keys.add("c-1", key);
     const [row] = await keys.listWrappedUnder({ kids: ["kid-1"], limit: 10 });
     expect(row?.person).toBe("c-1");
+    const hold = { until: "2026-01-01T00:00:30.000Z", attempts: 1 };
+    await keys.hold("c-1", row?.key ?? key, hold);
+    expect((await store.listWrappedUnder({ kids: ["kid-1"], limit: 10 }))[0]?.hold).toEqual(hold);
+    expect(await keys.nextHoldEnd({ kids: ["kid-1"], after: new Date(0) })).toEqual(
+      new Date(hold.until),
+    );
     expect(await keys.rewrap("c-1", row?.key ?? key, { key: "other", kid: "kid-2" })).toBe(true);
     expect(await store.get("c-1")).toEqual({
       key: "other",

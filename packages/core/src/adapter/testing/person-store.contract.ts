@@ -183,12 +183,15 @@ export const personStoreContract: PersonStoreContractFunction = ({ create }) => 
     it("keeps a hold through a restriction, and names no hold of a person a sweep would not list", async () => {
       await store.record({ person: "c-1", position: 1, lastActiveAt: at(1), forgottenAt: null });
       await store.record({ person: "c-2", position: 2, lastActiveAt: at(1), forgottenAt: null });
-      await store.hold("c-1", { until: at(5), attempts: 1 });
-      await store.hold("c-2", { until: at(6), attempts: 1 });
-      await store.restrict("c-1", since);
-      expect(await store.get("c-1")).toMatchObject({ hold: { until: at(5), attempts: 1 } });
+      await store.hold("c-1", { until: at(6), attempts: 1 });
+      await store.hold("c-2", { until: at(5), attempts: 1 });
+      await store.restrict("c-2", since);
+      expect(await store.get("c-2")).toMatchObject({ hold: { until: at(5), attempts: 1 } });
       expect(await store.nextHoldEnd(new Date(at(0)))).toEqual(new Date(at(6)));
-      await store.unrestrict("c-1");
+      await store.unrestrict("c-2");
+      expect(await store.nextHoldEnd(new Date(at(0)))).toEqual(new Date(at(5)));
+      await store.record({ person: "c-3", position: 3, lastActiveAt: at(1), forgottenAt: null });
+      await store.hold("c-3", { until: at(7), attempts: 1 });
       expect(await store.nextHoldEnd(new Date(at(0)))).toEqual(new Date(at(5)));
     });
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Storage } from "../../adapter/adapter.ts";
+import type { CheckpointStore } from "../../adapter/storage/checkpoint-store.ts";
 import type {
   ForgetLedger,
   ForgetLedgerEntry,
@@ -10,9 +11,12 @@ import { ValidationError } from "../../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { type Logger, silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
+import { HOLD_MS } from "./hold.ts";
 import {
   createForgetLedgerReconciliation,
+  FORGET_LEDGER_ATTEMPTS,
   FORGET_LEDGER_CURSOR,
+  FORGET_LEDGER_HELD_UNTIL,
   FORGET_LEDGER_REREAD_MS,
   type ForgetAgainEntry,
   forgetAgain,
@@ -199,6 +203,118 @@ describe("the forget ledger's reconciliation", () => {
     expect(await reconciliation.reconcile(NOW)).toBeNull();
     const due = reconciliation.nextDueAt() as Date;
     expect(await reconciliation.sweep(due)).toBe(1);
+  });
+
+  it("keeps its own hold when the store cannot keep it, and logs it", async () => {
+    const storage = await memory().createStorage();
+    const holdRows = new Set([FORGET_LEDGER_HELD_UNTIL, FORGET_LEDGER_ATTEMPTS]);
+    const refuse = (name: string): void => {
+      if (holdRows.has(name)) throw new Error("read-only");
+    };
+    const checkpoints: CheckpointStore = {
+      ...storage.checkpointStore,
+      get: async (name) => {
+        refuse(name);
+        return storage.checkpointStore.get(name);
+      },
+      set: async (name, value) => {
+        refuse(name);
+        return storage.checkpointStore.set(name, value);
+      },
+    };
+    const errors: unknown[] = [];
+    let reads = 0;
+    const reconciliation = createForgetLedgerReconciliation({
+      ledger: {
+        append: async () => {},
+        read: async () => {
+          reads += 1;
+          throw new Error("down");
+        },
+      },
+      storage: { ...storage, checkpointStore: checkpoints },
+      ids: createSequentialIdGenerator(),
+      clock: createFixedClock(NOW),
+      logger: { ...silentLogger, error: (message) => errors.push(message) },
+      concurrencyRetries: 3,
+    });
+    expect(await reconciliation.reconcile(NOW)).toBeNull();
+    expect(errors).toEqual([
+      "forget ledger could not be reconciled; persons a restored backup brought back are not forgotten yet",
+      "forget ledger's reconciliation could not be held",
+    ]);
+    expect(reconciliation.nextDueAt()).toEqual(new Date(NOW.getTime() + HOLD_MS));
+    expect(await reconciliation.sweep(new Date(NOW.getTime() + HOLD_MS - 1))).toBe(0);
+    expect(reads).toBe(1);
+    const due = new Date(NOW.getTime() + HOLD_MS);
+    expect(await reconciliation.sweep(due)).toBe(0);
+    expect(reads).toBe(2);
+    expect(reconciliation.nextDueAt()).toEqual(new Date(due.getTime() + 2 * HOLD_MS));
+  });
+
+  it("writes no hold when it succeeds with none, and clears one another instance left", async () => {
+    const storage = await memory().createStorage();
+    const written: string[] = [];
+    let removable = true;
+    const checkpoints: CheckpointStore = {
+      ...storage.checkpointStore,
+      set: async (name, value) => {
+        written.push(`set ${name}`);
+        return storage.checkpointStore.set(name, value);
+      },
+      remove: async (name) => {
+        written.push(`remove ${name}`);
+        if (!removable) throw new Error("read-only");
+        return storage.checkpointStore.remove(name);
+      },
+    };
+    const errors: unknown[] = [];
+    const create = () =>
+      createForgetLedgerReconciliation({
+        ledger: recordingLedger([]).ledger,
+        storage: { ...storage, checkpointStore: checkpoints },
+        ids: createSequentialIdGenerator(),
+        clock: createFixedClock(NOW),
+        logger: { ...silentLogger, error: (message) => errors.push(message) },
+        concurrencyRetries: 3,
+      });
+    expect(await create().reconcile(NOW)).toBe(0);
+    expect(written).toEqual([]);
+    await storage.checkpointStore.set(FORGET_LEDGER_ATTEMPTS, 3);
+    await storage.checkpointStore.set(FORGET_LEDGER_HELD_UNTIL, NOW.getTime() + HOLD_MS);
+    removable = false;
+    expect(await create().reconcile(NOW)).toBe(0);
+    expect(errors).toEqual(["forget ledger's reconciliation hold could not be cleared"]);
+    removable = true;
+    expect(await create().reconcile(NOW)).toBe(0);
+    expect(await storage.checkpointStore.get(FORGET_LEDGER_ATTEMPTS)).toBe(0);
+    expect(await storage.checkpointStore.get(FORGET_LEDGER_HELD_UNTIL)).toBe(0);
+  });
+
+  it("reads no hold for the read a ledger's delay calls for", async () => {
+    const storage = await memory().createStorage();
+    const asked: string[] = [];
+    const reconciliation = createForgetLedgerReconciliation({
+      ledger: recordingLedger([], 1).ledger,
+      storage: {
+        ...storage,
+        checkpointStore: {
+          ...storage.checkpointStore,
+          get: async (name) => {
+            asked.push(name);
+            return storage.checkpointStore.get(name);
+          },
+        },
+      },
+      ids: createSequentialIdGenerator(),
+      clock: createFixedClock(NOW),
+      logger: silentLogger,
+      concurrencyRetries: 3,
+    });
+    await reconciliation.reconcile(NOW);
+    asked.length = 0;
+    await reconciliation.sweep(new Date(NOW.getTime() + 1));
+    expect(asked).not.toContain(FORGET_LEDGER_HELD_UNTIL);
   });
 
   it("warns only when it forgot someone", async () => {

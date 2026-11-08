@@ -390,6 +390,14 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       await storage.transact(async (tx) => {
         await tx.persons.hold("c-1", hold);
         await tx.personalKeys.hold("c-1", key, hold);
+        expect(await tx.persons.nextHoldEnd(now)).toEqual(new Date(hold.until));
+        expect(await tx.personalKeys.nextHoldEnd({ kids: [null], after: now })).toEqual(
+          new Date(hold.until),
+        );
+        expect(await tx.persons.listIdle({ releasedBy: now, limit: 10 })).toEqual([]);
+        expect(
+          await tx.personalKeys.listWrappedUnder({ kids: [null], releasedBy: now, limit: 10 }),
+        ).toEqual([]);
       });
       expect((await storage.persons.get("c-1"))?.hold).toEqual(hold);
       expect(await storage.personalKeys.listWrappedUnder({ kids: [null], limit: 10 })).toEqual([

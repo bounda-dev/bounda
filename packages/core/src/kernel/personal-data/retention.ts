@@ -147,7 +147,7 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
       concurrencyRetries,
       work: async (transaction) => {
         const row = await transaction.persons.get(personId);
-        if (row !== null && (row.restrictedSince !== null || row.forgottenAt !== null)) {
+        if (row === null || row.restrictedSince !== null || row.forgottenAt !== null) {
           return "skipped";
         }
         if (!(await rowIsCurrent(transaction.eventStore, personId, through))) return "undone";
@@ -241,10 +241,11 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
         storage.persons.listIdle({ releasedBy: now, limit: 1 }),
         storage.persons.nextHoldEnd(now),
       ]);
+      const lastActiveAt = free?.lastActiveAt;
       const deadline =
-        free?.lastActiveAt === null || free?.lastActiveAt === undefined
-          ? Number.POSITIVE_INFINITY
-          : Date.parse(free.lastActiveAt) + retentionMs;
+        typeof lastActiveAt === "string"
+          ? Date.parse(lastActiveAt) + retentionMs
+          : Number.POSITIVE_INFINITY;
       const next = Math.min(deadline, heldUntil?.getTime() ?? Number.POSITIVE_INFINITY);
       return next === Number.POSITIVE_INFINITY ? null : new Date(Math.max(next, pausedUntil));
     },

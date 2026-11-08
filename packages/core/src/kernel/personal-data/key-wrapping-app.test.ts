@@ -251,8 +251,8 @@ describe("personal keys wrapped under a master key", () => {
     );
   });
 
-  it("runs in a test app given the master key in its env", async () => {
-    const { app } = await createTestApp({
+  it("runs in a test app given the master key in its env, and drops its unwrapped keys when it stops", async () => {
+    const { app, clock } = await createTestApp({
       registry,
       config: { runtime: wrapped() },
       env: { BOUNDA_MASTER_KEY: randomKey() },
@@ -261,7 +261,10 @@ describe("personal keys wrapped under a master key", () => {
     expect(await emailOf(app, "c-1")).toEqual({ email: "c-1@example.com" });
     await app.forget("c-1");
     expect(await emailOf(app, "c-1")).toEqual({ email: null });
+    await register(app, "c-2");
+    expect(clock.pending()).toBeGreaterThan(0);
     await app.stop();
+    expect(clock.pending()).toBe(0);
   });
 });
 

@@ -294,6 +294,7 @@ describe("createRetentionSweep", () => {
     const forgotten = await Promise.all([sweep.sweep(clock.now()), other.sweep(clock.now())]);
     expect(forgotten.reduce((sum, count) => sum + count, 0)).toBe(1);
     expect(await forgottenFor()).toEqual([["c-1", "retention"]]);
+    expect((await storage.persons.get("c-1"))?.hold).toBeNull();
   });
 
   it("holds a person whose row is behind on their own, without backing off, and says so in nextDueAt", async () => {
@@ -659,9 +660,22 @@ describe("createRetentionSweep", () => {
     expect(await longer.nextDueAt()).toEqual(new Date(Date.parse(day(60))));
   });
 
-  it("has nothing due without a person active once and not forgotten since", async () => {
-    const { sweep, clock } = await setUp();
+  it("has nothing due without a person active once and not forgotten since, and reads no checkpoint", async () => {
+    const live = await memory().createStorage();
+    const asked: string[] = [];
+    const { sweepOver, clock } = await setUp(live);
+    const sweep = sweepOver({
+      ...live,
+      checkpointStore: {
+        ...live.checkpointStore,
+        get: async (name) => {
+          asked.push(name);
+          return live.checkpointStore.get(name);
+        },
+      },
+    });
     expect(await sweep.nextDueAt()).toBeNull();
     expect(await sweep.sweep(clock.now())).toBe(0);
+    expect(asked).toEqual([]);
   });
 });

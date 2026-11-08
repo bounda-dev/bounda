@@ -212,16 +212,14 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
     }
   };
 
-  const storedHold = async (): Promise<Hold | null> => {
-    const until = await checkpointStore.get(FORGET_LEDGER_HELD_UNTIL);
-    const attempts = await checkpointStore.get(FORGET_LEDGER_ATTEMPTS);
-    return until === 0 && attempts === 0
-      ? null
-      : { until: new Date(until).toISOString(), attempts };
-  };
+  // No row reads as a hold that ended long ago, after no failure.
+  const storedHold = async (): Promise<Hold> => ({
+    until: new Date(await checkpointStore.get(FORGET_LEDGER_HELD_UNTIL)).toISOString(),
+    attempts: await checkpointStore.get(FORGET_LEDGER_ATTEMPTS),
+  });
 
-  // The attempts go first: a hold half written, or half cleared, only ever counts one failure
-  // more than there was.
+  // The attempts are written first and cleared last: a hold half written, or half cleared, only
+  // ever counts one failure more than there was.
   const hold = async (at: number): Promise<void> => {
     const held = await storedHold().catch(() => local);
     local = holdAfter({ held, at, failed: true });
@@ -232,7 +230,7 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
 
   const release = async (): Promise<void> => {
     local = null;
-    if ((await storedHold()) === null) return;
+    if ((await checkpointStore.get(FORGET_LEDGER_ATTEMPTS)) === 0) return;
     await checkpointStore.remove(FORGET_LEDGER_HELD_UNTIL);
     await checkpointStore.remove(FORGET_LEDGER_ATTEMPTS);
   };
@@ -269,9 +267,13 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
     sweep: async (now) => {
       const at = now.getTime();
       if (dueAt === null || at < dueAt) return 0;
-      if (!done) {
-        const held = await storedHold().catch(() => null);
-        const until = held === null ? at : Date.parse(held.until);
+      // A retry after a failure: another instance's may hold it longer.
+      if (local !== null) {
+        // A store that cannot say lets this instance's own hold, which has ended, decide.
+        const until = await storedHold().then(
+          (held) => Date.parse(held.until),
+          () => at,
+        );
         if (until > at) {
           dueAt = until;
           return 0;

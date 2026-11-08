@@ -110,7 +110,7 @@ export const personalKeyStoreContract: PersonalKeyStoreContractFunction = ({ cre
       await store.add("c-3", stored("3"));
       const hold = { until: "2026-02-01T00:00:30.000Z", attempts: 2 };
       await store.hold("c-1", first, hold);
-      await store.hold("c-3", stored("3"), { until: "2026-02-01T00:01:00.000Z", attempts: 1 });
+      await store.hold("c-3", stored("3"), { until: "2026-02-01T00:00:20.000Z", attempts: 1 });
       const before = new Date("2026-02-01T00:00:29.999Z");
       const end = new Date(hold.until);
       expect(
@@ -127,9 +127,15 @@ export const personalKeyStoreContract: PersonalKeyStoreContractFunction = ({ cre
       ]);
       expect(await store.get("c-1")).toEqual(first);
       expect(await store.nextHoldEnd({ kids: ["kid-1"], after: before })).toEqual(end);
-      expect(await store.nextHoldEnd({ kids: ["kid-1", null], after: end })).toEqual(
-        new Date("2026-02-01T00:01:00.000Z"),
-      );
+      expect(
+        await store.nextHoldEnd({
+          kids: ["kid-1", null],
+          after: new Date("2026-02-01T00:00:00.000Z"),
+        }),
+      ).toEqual(new Date("2026-02-01T00:00:20.000Z"));
+      expect(
+        await store.nextHoldEnd({ kids: [null], after: new Date("2026-02-01T00:00:20.000Z") }),
+      ).toBeNull();
       expect(await store.nextHoldEnd({ kids: ["kid-1"], after: end })).toBeNull();
       expect(await store.nextHoldEnd({ kids: ["kid-2"], after: before })).toBeNull();
       expect(await store.nextHoldEnd({ kids: [], after: before })).toBeNull();

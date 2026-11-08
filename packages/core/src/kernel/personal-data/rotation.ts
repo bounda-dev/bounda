@@ -3,6 +3,7 @@ import type { PersonalKeyRow, PersonalKeyStore } from "../../adapter/storage/per
 import type { Clock } from "../../contracts/clock.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { errorDetails } from "../shared/retry.ts";
+import { fingerprintOf } from "./crypto.ts";
 import { HOLD_MS, holdAfter } from "./hold.ts";
 import type { KeyWrapper } from "./key-wrapper.ts";
 import type { PersonalKeyWrapping } from "./wrapped-keys.ts";
@@ -52,13 +53,9 @@ export interface CreateKeyRotationFunction {
   (args: CreateKeyRotationArgs): KeyRotation;
 }
 
-const hex = (bytes: ArrayBuffer): string =>
-  [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-
 const markerOf = async (kid: string, previous: readonly string[]): Promise<string> => {
   const set = JSON.stringify([kid, ...[...new Set(previous)].sort()]);
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(set));
-  return `${ROTATED_PREFIX}${hex(digest).slice(0, 32)}`;
+  return `${ROTATED_PREFIX}${await fingerprintOf(new TextEncoder().encode(set))}`;
 };
 
 /**
@@ -129,7 +126,8 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
     const at = now.getTime();
     const name = await marker;
     const markedAt = await checkpoints.get(name);
-    if (markedAt > 0 && at - markedAt < ROTATION_CHECK_INTERVAL_MS) {
+    // A set never marked reads 0, as long ago as can be.
+    if (at - markedAt < ROTATION_CHECK_INTERVAL_MS) {
       completeUntil = markedAt + ROTATION_CHECK_INTERVAL_MS;
       return 0;
     }

@@ -87,18 +87,12 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
   const kept = new Map<string, KeptKey>();
   // Unwrapped first, which, kept as long as each other, is also the first to expire.
   const unwrappedAt = new Map<string, KeptKey>();
-  const fingerprints = new Map<string, string>();
   const known = new Set(wrapper === null ? [] : [wrapper.kid, ...(wrapper.previous ?? [])]);
   let cancelExpiry: (() => void) | null = null;
 
   const drop = (fingerprint: string): void => {
-    const key = kept.get(fingerprint);
-    if (key === undefined) return;
     kept.delete(fingerprint);
     unwrappedAt.delete(fingerprint);
-    if (key.person !== null && fingerprints.get(key.person) === fingerprint) {
-      fingerprints.delete(key.person);
-    }
   };
 
   const armExpiry = (): void => {
@@ -147,11 +141,9 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
     }
     const { fingerprint } = stored;
     let entry = kept.get(fingerprint);
-    if (entry !== undefined && entry.expiresAt <= clock.now().getTime()) {
+    // Dropped first, so the key unwrapped again goes to the end of both orders.
+    if (entry === undefined || entry.expiresAt <= clock.now().getTime()) {
       drop(fingerprint);
-      entry = undefined;
-    }
-    if (entry === undefined) {
       const unwrapping = unwrap(wrapper, { ...stored, kid });
       const created: KeptKey = {
         raw: unwrapping,
@@ -164,19 +156,14 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
       unwrapping.catch(() => {
         if (kept.get(fingerprint) === created) drop(fingerprint);
       });
-      if (kept.size > keep) {
-        const [oldest] = kept.keys();
-        if (oldest !== undefined) drop(oldest);
-      }
+      const [oldest] = kept.keys();
+      if (kept.size > keep && oldest !== undefined) drop(oldest);
       armExpiry();
     } else {
       kept.delete(fingerprint);
       kept.set(fingerprint, entry);
     }
-    if (person !== undefined) {
-      entry.person = person;
-      fingerprints.set(person, fingerprint);
-    }
+    if (person !== undefined) entry.person = person;
     return { key: await entry.raw, fingerprint, kid: null };
   };
 
@@ -206,8 +193,7 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
       // and is never read again meanwhile, since every read starts from the row.
       remove: async (person) => {
         const removed = await keys.remove(person);
-        const fingerprint = fingerprints.get(person);
-        if (fingerprint !== undefined) drop(fingerprint);
+        for (const [fingerprint, key] of kept) if (key.person === person) drop(fingerprint);
         return removed;
       },
       listWrappedUnder: (args) => keys.listWrappedUnder(args),
@@ -218,9 +204,7 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
     close: () => {
       cancelExpiry?.();
       cancelExpiry = null;
-      kept.clear();
-      unwrappedAt.clear();
-      fingerprints.clear();
+      for (const fingerprint of [...kept.keys()]) drop(fingerprint);
     },
   };
 };

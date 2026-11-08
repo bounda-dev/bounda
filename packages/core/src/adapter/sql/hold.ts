@@ -6,6 +6,6 @@ export interface HoldOfFunction {
 
 // A hold lives in two columns, `held_until` and `attempts`; `attempts` alone means nothing.
 export const holdOf: HoldOfFunction = (row) =>
-  row.held_until === null || row.held_until === undefined
-    ? null
-    : { until: String(row.held_until), attempts: Number(row.attempts) };
+  typeof row.held_until === "string"
+    ? { until: row.held_until, attempts: Number(row.attempts) }
+    : null;

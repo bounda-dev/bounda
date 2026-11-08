@@ -5,6 +5,7 @@ import type {
   StoredPersonalKey,
 } from "../adapter/storage/personal-key-store.ts";
 import { createStoreEntries, type WithEntries } from "./entries.ts";
+import { earliestHoldEnd, isReleasedBy } from "./holds.ts";
 
 export interface KeptPersonalKeyStore extends WithEntries<PersonalKeyStore, string> {
   /**
@@ -30,8 +31,10 @@ interface KeptPersonalKey extends StoredPersonalKey {
 
 const stored = ({ hold: _hold, ...key }: KeptPersonalKey): StoredPersonalKey => key;
 
-const isHeldBy = (held: StoredPersonalKey | undefined, from: StoredPersonalKey): boolean =>
-  held?.key === from.key && held.fingerprint === from.fingerprint;
+const isHeldBy = (
+  held: KeptPersonalKey | undefined,
+  from: StoredPersonalKey,
+): held is KeptPersonalKey => held?.key === from.key && held.fingerprint === from.fingerprint;
 
 export const createKeptPersonalKeyStore: CreateKeptPersonalKeyStoreFunction = () => {
   const keys = new Map<string, KeptPersonalKey>();
@@ -55,13 +58,10 @@ export const createKeptPersonalKeyStore: CreateKeptPersonalKeyStoreFunction = ()
       },
       remove: async (person) => keys.delete(person),
       listWrappedUnder: async ({ kids, releasedBy, limit }) => {
-        const released = releasedBy?.toISOString();
         return (
           [...keys.entries()]
             .filter(([, key]) => kids.includes(key.kid))
-            .filter(
-              ([, { hold }]) => released === undefined || hold === null || hold.until <= released,
-            )
+            .filter(([, { hold }]) => isReleasedBy(hold, releasedBy))
             // Persons are unique, so no two compare equal.
             .sort(([a], [b]) => (a < b ? -1 : 1))
             .slice(0, limit)
@@ -70,22 +70,19 @@ export const createKeptPersonalKeyStore: CreateKeptPersonalKeyStoreFunction = ()
       },
       rewrap: async (person, from, to) => {
         const held = keys.get(person);
-        if (held === undefined || !isHeldBy(held, from)) return false;
+        if (!isHeldBy(held, from)) return false;
         keys.set(person, { ...held, key: to.key, kid: to.kid, hold: null });
         return true;
       },
       hold: async (person, from, hold) => {
         const held = keys.get(person);
-        if (held !== undefined && isHeldBy(held, from)) keys.set(person, { ...held, hold });
+        if (isHeldBy(held, from)) keys.set(person, { ...held, hold });
       },
-      nextHoldEnd: async ({ kids, after }) => {
-        const from = after.toISOString();
-        const ends = [...keys.values()]
-          .filter((key) => kids.includes(key.kid))
-          .flatMap(({ hold }) => (hold !== null && hold.until > from ? [hold.until] : []))
-          .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-        return ends[0] === undefined ? null : new Date(ends[0]);
-      },
+      nextHoldEnd: async ({ kids, after }) =>
+        earliestHoldEnd(
+          [...keys.values()].filter((key) => kids.includes(key.kid)).map(({ hold }) => hold),
+          after,
+        ),
     },
     entries: createStoreEntries(keys, (person) => person),
   };

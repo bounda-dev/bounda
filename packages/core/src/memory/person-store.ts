@@ -1,5 +1,6 @@
 import type { PersonStore, StoredPerson } from "../adapter/storage/person-store.ts";
 import { createStoreEntries, type WithEntries } from "./entries.ts";
+import { earliestHoldEnd, isReleasedBy } from "./holds.ts";
 
 export interface KeptPersonStore extends WithEntries<PersonStore, string> {
   /**
@@ -27,9 +28,6 @@ const isIdle = (
 ): kept is KeptPerson & {
   readonly lastActiveAt: string;
 } => kept.lastActiveAt !== null && kept.forgottenAt === null && kept.restrictedSince === null;
-
-const isReleasedBy = (kept: KeptPerson, at: string | undefined): boolean =>
-  at === undefined || kept.hold === null || kept.hold.until <= at;
 
 export const createKeptPersonStore: CreateKeptPersonStoreFunction = () => {
   const persons = new Map<string, KeptPerson>();
@@ -74,11 +72,10 @@ export const createKeptPersonStore: CreateKeptPersonStoreFunction = () => {
       },
       listIdle: async ({ activeBefore, releasedBy, limit }) => {
         const before = activeBefore?.toISOString();
-        const released = releasedBy?.toISOString();
         return [...persons.values()]
           .filter(isIdle)
           .filter((kept) => before === undefined || kept.lastActiveAt <= before)
-          .filter((kept) => isReleasedBy(kept, released))
+          .filter((kept) => isReleasedBy(kept.hold, releasedBy))
           .sort((a, b) => compare(a.lastActiveAt, b.lastActiveAt) || compare(a.person, b.person))
           .slice(0, limit)
           .map(stored);
@@ -87,14 +84,11 @@ export const createKeptPersonStore: CreateKeptPersonStoreFunction = () => {
         const kept = persons.get(person);
         if (kept !== undefined) persons.set(person, { ...kept, hold });
       },
-      nextHoldEnd: async (after) => {
-        const from = after.toISOString();
-        const ends = [...persons.values()]
-          .filter(isIdle)
-          .flatMap(({ hold }) => (hold !== null && hold.until > from ? [hold.until] : []))
-          .sort(compare);
-        return ends[0] === undefined ? null : new Date(ends[0]);
-      },
+      nextHoldEnd: async (after) =>
+        earliestHoldEnd(
+          [...persons.values()].filter(isIdle).map(({ hold }) => hold),
+          after,
+        ),
     },
     entries: createStoreEntries(persons, (person) => person),
   };

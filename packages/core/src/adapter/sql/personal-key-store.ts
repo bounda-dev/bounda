@@ -102,7 +102,7 @@ export const createSqlPersonalKeyStore: CreateSqlPersonalKeyStoreFunction = ({
         `SELECT MIN("held_until") AS "until" FROM ${table} WHERE (${under.condition}) AND "held_until" > ${p(under.values.length + 1)}`,
         [...under.values, after.toISOString()],
       );
-      return row?.until === null || row?.until === undefined ? null : new Date(String(row.until));
+      return typeof row?.until === "string" ? new Date(row.until) : null;
     },
   };
 };
