@@ -78,7 +78,7 @@ describe("runtime.deadLetters.retention", () => {
     expect(await app.deadLetters.get(discarded)).toMatchObject({ status: "discarded" });
 
     clock.set(new Date(resolvedAt + 7 * DAY));
-    await app.runUntilIdle();
+    expect(await app.runUntilIdle({ maxPasses: 1 })).toMatchObject({ idle: false });
     expect(await app.deadLetters.get(discarded)).toBeNull();
     expect(await app.deadLetters.get(kept)).toMatchObject({ status: "failed" });
     expect(await app.nextDueAt()).toBeNull();

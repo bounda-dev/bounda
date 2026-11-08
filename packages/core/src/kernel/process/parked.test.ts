@@ -382,6 +382,7 @@ describe("events of a failed process", () => {
     await settle();
     expect((await types()).filter((type) => type === PROCESS_EVENTS.eventParked)).toEqual([]);
     expect((await types()).at(-1)).toBe(PROCESS_EVENTS.failed);
+    expect(await harness.storage.deadLetterStore.list()).toEqual([]);
   });
 
   it("wait behind a failed deadline, which runs first when retried", async () => {

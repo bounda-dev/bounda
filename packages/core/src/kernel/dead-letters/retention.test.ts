@@ -55,9 +55,8 @@ describe("the retention of dead letters", () => {
     expect(await retention.nextDueAt()).toEqual(later(7 * DAY + DEAD_LETTER_PURGE_LIMIT));
   });
 
-  it("writes nothing on a pass with nothing due", async () => {
-    const { store, retention, resolve } = await setUp();
-    await resolve("recent", start);
+  it("writes and logs nothing on a pass with nothing due", async () => {
+    const { store, logs, retention, resolve } = await setUp();
     const purge = store.purge;
     let purges = 0;
     store.purge = (args) => {
@@ -65,14 +64,17 @@ describe("the retention of dead letters", () => {
       return purge(args);
     };
     await retention.sweep(later(DAY));
+    await resolve("recent", start);
+    await retention.sweep(later(DAY));
     expect(purges).toBe(0);
+    expect(logs).toEqual([]);
   });
 
   it("logs a store that fails, waits before trying again, and names that wait as when it is due", async () => {
     const { store, logs, retention, resolve } = await setUp();
     await resolve("old", start);
     const purge = store.purge;
-    let failures = 1;
+    let failures = 2;
     store.purge = (args) => {
       if (failures === 0) return purge(args);
       failures -= 1;
@@ -89,7 +91,15 @@ describe("the retention of dead letters", () => {
     );
     expect(await retention.nextDueAt()).toEqual(new Date(due.getTime() + HOLD_MS));
     expect(await retention.sweep(new Date(due.getTime() + HOLD_MS - 1))).toBe(0);
-    expect(await retention.sweep(new Date(due.getTime() + HOLD_MS))).toBe(1);
+    const resumed = due.getTime() + HOLD_MS;
+    expect(await retention.sweep(new Date(resumed))).toBe(0);
+    expect(await retention.nextDueAt()).toEqual(new Date(resumed + 2 * HOLD_MS));
+    expect(await retention.sweep(new Date(resumed + 2 * HOLD_MS))).toBe(1);
     expect(await retention.nextDueAt()).toBeNull();
+    await resolve("next", new Date(resumed));
+    failures = 1;
+    const next = resumed + 7 * DAY;
+    expect(await retention.sweep(new Date(next))).toBe(0);
+    expect(await retention.nextDueAt()).toEqual(new Date(next + HOLD_MS));
   });
 });
