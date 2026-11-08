@@ -180,9 +180,10 @@ the marks names nobody and lasts until its key expires, a day by default. A pers
 is restricted has their data sealed all the same: sealing protects it, and processes nothing.
 
 `app.getLag()` reports where the walk stands, `personalDataBackfill: { position, caughtUp }`, `null`
-for an app that marks nothing: `caughtUp` once every event up to the head, and every scheduled
-command and dead letter, is sealed as the marks of now say, which is when an export or a `forget`
-reaches everything. The worker logs `personal data written before its marks is sealed` with what it
+for an app that marks nothing: `caughtUp` once the walk has sealed the stream up to its head and
+every scheduled command and dead letter as the marks of now say, which is when an export or a
+`forget` reaches everything; what is written after is sealed as it is written, and an instance
+still on older marks makes it `false` again until the walk has sealed what that instance wrote. The worker logs `personal data written before its marks is sealed` with what it
 sealed once the walk catches up, and each batch it seals is a [`bounda.backfill`
 span](/reference/observability/). When retention is configured, a person an event names only once
 it is resealed has that event recorded as their last activity, so the [retention](#retention) forgets

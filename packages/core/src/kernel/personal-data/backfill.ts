@@ -59,10 +59,10 @@ export interface PersonalDataBackfill {
   nextDueAt(): Promise<Date | null>;
   /**
    * Where the walk stands, as the rows say: the global position it sealed through, and whether
-   * it has reached the head of the stream after going through the scheduled commands and dead
-   * letters.
+   * it has reached the head of the stream and gone through the scheduled commands and dead
+   * letters since it last sealed something written with older marks.
    */
-  status(head: number): Promise<PersonalDataBackfillStatus>;
+  status(): Promise<PersonalDataBackfillStatus>;
   /**
    * Gives the lease back when this instance holds it, so another walks at once instead of waiting
    * for it to lapse. Never rejects.
@@ -156,16 +156,25 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
     recordsActivity,
   });
 
-  // Pages by offset, which resealing never moves: it changes no row's place in the order.
+  // Pages by offset, renewing the lease before each page and stopping, `null`, once another
+  // instance holds it. Resealing moves no row in the order, but a row removed meanwhile, a
+  // command run or a letter purged, moves those after it back past the offset: the pages are
+  // read again until a reading reseals nothing, so a row skipped once is met the next time.
   const sealPages = async <Row>(
     list: (page: { readonly limit: number; readonly offset: number }) => Promise<readonly Row[]>,
     sealPage: (rows: readonly Row[]) => Promise<Sealed>,
-  ): Promise<Sealed> => {
+  ): Promise<Sealed | null> => {
     let sealed = NOTHING_SEALED;
-    for (let offset = 0; ; offset += batchSize) {
-      const page = await list({ limit: batchSize, offset });
-      sealed = addSealed(sealed, await sealPage(page));
-      if (page.length < batchSize) return sealed;
+    for (;;) {
+      let reading = NOTHING_SEALED;
+      for (let offset = 0; ; offset += batchSize) {
+        if (!(await takeLease(clock.now().getTime()))) return null;
+        const page = await list({ limit: batchSize, offset });
+        reading = addSealed(reading, await sealPage(page));
+        if (page.length < batchSize) break;
+      }
+      sealed = addSealed(sealed, { ...reading, unsealable: 0 });
+      if (reading.resealed === 0) return { ...sealed, unsealable: reading.unsealable };
     }
   };
 
@@ -300,15 +309,18 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
     return events.length;
   };
 
-  const sealStores = async (at: number, started: number): Promise<number> => {
+  // `null` when another instance took the walk meanwhile.
+  const sealStores = async (at: number, started: number): Promise<number | null> => {
     const commands = await sealPages(
       (page) => storage.scheduler.list(page),
       (entries) => reseal.commands(entries),
     );
+    if (commands === null) return null;
     const letters = await sealPages(
       (page) => storage.deadLetterStore.list(page),
       (page) => reseal.letters(page, started),
     );
+    if (letters === null) return null;
     tally = {
       ...tally,
       discarded: tally.discarded + commands.discarded + letters.discarded,
@@ -327,12 +339,14 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
     return commands.resealed + letters.resealed;
   };
 
-  const status = async (head: number): Promise<PersonalDataBackfillStatus> => {
+  // What comes after the head once it caught up is written sealed, but by an instance on older
+  // marks, which takes the stores back to not caught up.
+  const status = async (): Promise<PersonalDataBackfillStatus> => {
     const [position, stores] = await Promise.all([
       checkpointStore.get(rows.position),
       checkpointStore.get(rows.stores),
     ]);
-    return { position, caughtUp: stores > 0 && position >= head };
+    return { position, caughtUp: stores > 0 };
   };
 
   const pass = async (now: Date): Promise<number> => {
@@ -354,7 +368,9 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
     if (walked >= batchSize) return walked;
     let stored = 0;
     if ((await checkpointStore.get(rows.stores)) === 0) {
-      stored = await sealStores(at, started);
+      const sealed = await sealStores(at, started);
+      if (sealed === null) return walked;
+      stored = sealed;
       report();
     }
     caughtUp = true;
@@ -389,7 +405,7 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
     // the worker runs anyway follow.
     nextDueAt: async () => {
       if (caughtUp) return null;
-      caughtUp = (await checkpointStore.get(rows.stores)) > 0;
+      caughtUp = (await status()).caughtUp;
       if (caughtUp) return null;
       return new Date(pause.notBefore(Math.max(clock.now().getTime(), restUntil, leasedUntil)));
     },

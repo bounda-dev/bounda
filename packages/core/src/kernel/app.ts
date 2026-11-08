@@ -278,8 +278,10 @@ export interface PersonalDataBackfillLag {
    */
   readonly position: number;
   /**
-   * Whether every event up to the head of the stream, and every scheduled command and dead letter,
-   * is sealed as the marks of now say.
+   * Whether the walk has sealed the stream up to its head and every scheduled command and dead
+   * letter as the marks of now say. What is written after is sealed as it is written; an
+   * instance still on older marks, as in a rolling deploy, makes it `false` again until what it
+   * wrote is sealed.
    */
   readonly caughtUp: boolean;
 }
@@ -736,17 +738,13 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     });
 
     const events = createGlobalStream({ eventStore: written.eventStore });
-    const getLag = async (): Promise<AppLag> => {
-      const lag = await dispatcher.getLag();
-      return {
-        ...lag,
-        waitingDeadlines: worker.waitingDeadlines(),
-        forgetLedger:
-          reconciliation === undefined ? null : { reconciled: reconciliation.reconciled() },
-        personalDataBackfill:
-          backfill === undefined ? null : await backfill.status(lag.lastPosition),
-      };
-    };
+    const getLag = async (): Promise<AppLag> => ({
+      ...(await dispatcher.getLag()),
+      waitingDeadlines: worker.waitingDeadlines(),
+      forgetLedger:
+        reconciliation === undefined ? null : { reconciled: reconciliation.reconciled() },
+      personalDataBackfill: backfill === undefined ? null : await backfill.status(),
+    });
     // Before the app serves anything: a backup restored brings back persons forgotten since, and
     // the read models that show them hear of it by the time the start resolves. A ledger that
     // does not answer in time is left to finish behind the start, as one that fails is retried,

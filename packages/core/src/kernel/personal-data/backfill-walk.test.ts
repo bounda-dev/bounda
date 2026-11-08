@@ -138,14 +138,14 @@ describe("the backfill's walk", () => {
     });
     const { logs, logger } = recording();
     const { backfill } = walker({ storage, batchSize: 2, logger });
-    expect(await backfill.status(4)).toEqual({ position: 0, caughtUp: false });
+    expect(await backfill.status()).toEqual({ position: 0, caughtUp: false });
     expect(await backfill.nextDueAt()).toEqual(START);
 
     expect(await backfill.sweep(START)).toBe(2);
-    expect(await backfill.status(4)).toEqual({ position: 2, caughtUp: false });
+    expect(await backfill.status()).toEqual({ position: 2, caughtUp: false });
     expect(await backfill.sweep(START)).toBe(2);
     expect(await backfill.sweep(START)).toBe(0);
-    expect(await backfill.status(4)).toEqual({ position: 4, caughtUp: true });
+    expect(await backfill.status()).toEqual({ position: 4, caughtUp: true });
     expect(await backfill.nextDueAt()).toBeNull();
     expect(await rows(storage)).toEqual({
       "m1:started": START.getTime(),
@@ -249,11 +249,10 @@ describe("the backfill's walk", () => {
     });
     const { logs, logger } = recording();
     const { backfill } = walker({ storage, batchSize: 2, logger });
-    expect(await backfill.status(0)).toEqual({ position: 0, caughtUp: false });
+    expect(await backfill.status()).toEqual({ position: 0, caughtUp: false });
     expect(await backfill.sweep(START)).toBe(2);
     expect(await backfill.sweep(START)).toBe(5);
-    expect(await backfill.status(2)).toEqual({ position: 2, caughtUp: true });
-    expect(await backfill.status(3)).toEqual({ position: 2, caughtUp: false });
+    expect(await backfill.status()).toEqual({ position: 2, caughtUp: true });
     expect(JSON.stringify(await storage.scheduler.list())).not.toContain('"address":"s-');
     expect(logs).toContainEqual([
       "debug",
@@ -283,6 +282,75 @@ describe("the backfill's walk", () => {
         attributes: { [ATTRIBUTES.afterPosition]: 0, [ATTRIBUTES.eventCount]: 2 },
       },
     ]);
+  });
+
+  it("reads the stores again until a reading seals nothing, so a row a removal moved past its page is sealed", async () => {
+    const base = await memory().createStorage();
+    for (const id of ["a", "b", "c", "d", "e"]) {
+      await base.scheduler.schedule({
+        dedupeKey: id,
+        command: {
+          type: "ShipOrder",
+          aggregateId: id,
+          payload: { customerId: "c-1", address: id },
+        },
+        executeAt: START,
+        context: { correlationId: "c", causationId: "c", depth: 0 },
+      });
+    }
+    let removed = false;
+    const storage: Storage = {
+      ...base,
+      scheduler: {
+        ...base.scheduler,
+        list: async (args) => {
+          if (args?.offset === 2 && !removed) {
+            removed = true;
+            await base.scheduler.cancel("a");
+          }
+          return base.scheduler.list(args);
+        },
+      },
+    };
+    const { logs, logger } = recording();
+    const { backfill } = walker({ storage, batchSize: 2, logger });
+    expect(await backfill.sweep(START)).toBe(5);
+    const entries = await base.scheduler.list();
+    expect(entries.map((entry) => entry.persons?.length)).toEqual([1, 1, 1, 1]);
+    expect(logs).toContainEqual([
+      "info",
+      "personal data written before its marks is sealed",
+      expect.objectContaining({ scheduledCommands: 5 }),
+    ]);
+  });
+
+  it("stops going through the stores once another instance takes the walk", async () => {
+    const base = await memory().createStorage();
+    await base.scheduler.schedule({
+      dedupeKey: "a",
+      command: {
+        type: "ShipOrder",
+        aggregateId: "a",
+        payload: { customerId: "c-1", address: "a" },
+      },
+      executeAt: START,
+      context: { correlationId: "c", causationId: "c", depth: 0 },
+    });
+    const taken = START.getTime() + BACKFILL_LEASE_MS - 1;
+    const storage: Storage = {
+      ...base,
+      scheduler: {
+        ...base.scheduler,
+        list: async (args) => {
+          await base.checkpointStore.set(`${BACKFILL_PREFIX}m1:lease`, taken);
+          return base.scheduler.list(args);
+        },
+      },
+    };
+    const { backfill } = walker({ storage });
+    expect(await backfill.sweep(START)).toBe(0);
+    expect(await rows(base)).not.toHaveProperty("m1:stores");
+    expect(await backfill.nextDueAt()).toEqual(new Date(taken));
   });
 
   it("rests a follow interval at the head, then seals what came in the clear and goes through the stores again", async () => {

@@ -324,11 +324,11 @@ export const createResealBatches: CreateResealBatchesFunction = ({
   const letters = async (batch: readonly StoredDeadLetter[], started: number): Promise<Sealed> => {
     const owned: Owned<LetterPlan>[] = [];
     const nameless: StoredDeadLetter[] = [];
-    for (const letter of batch) {
-      const plan = await planLetter(letter, started);
-      if (plan === "unsealable") nameless.push(letter);
+    const plans = await Promise.all(batch.map((letter) => planLetter(letter, started)));
+    plans.forEach((plan, index) => {
+      if (plan === "unsealable") nameless.push(batch[index] as StoredDeadLetter);
       else if (plan !== null) owned.push({ person: plan.person, item: plan });
-    }
+    });
     const sealed = await perPerson(owned, async (items, transaction, keys) => {
       let discarded = 0;
       for (const plan of items) {
