@@ -1,5 +1,6 @@
 import { ConfigurationError } from "../../contracts/errors.ts";
 import type { AppEnv } from "../../register/index.ts";
+import { runtimeText } from "../shared/runtime-text.ts";
 import { importRawKey, withRawKey } from "./crypto.ts";
 
 /**
@@ -118,8 +119,10 @@ export const cryptoKeyWrapperOver: CryptoKeyWrapperOverFunction = (wrapper) => (
   unwrap: async ({ kid, wrapped, extractable }) => {
     const raw: unknown = await wrapper.unwrap({ kid, wrapped });
     if (!(raw instanceof Uint8Array)) {
-      throw new ConfigurationError(
-        `The key wrapper's unwrap resolved no Uint8Array for a key wrapped under ${kid}`,
+      throw runtimeText(
+        new ConfigurationError(
+          `The key wrapper's unwrap resolved no Uint8Array for a key wrapped under ${kid}`,
+        ),
       );
     }
     return importRawKey({ raw, extractable });
@@ -160,8 +163,10 @@ export interface BuildKeyWrapperFunction {
 
 export const buildKeyWrapper: BuildKeyWrapperFunction = async ({ definition, env }) => {
   if (!isKeyWrapperDefinition(definition)) {
-    throw new ConfigurationError(
-      'runtime.personalData.keyWrapper is not a key wrapper: build one with masterKey({ from: "BOUNDA_MASTER_KEY" }) or defineKeyWrapper',
+    throw runtimeText(
+      new ConfigurationError(
+        'runtime.personalData.keyWrapper is not a key wrapper: build one with masterKey({ from: "BOUNDA_MASTER_KEY" }) or defineKeyWrapper',
+      ),
     );
   }
   return definition.create({ env });

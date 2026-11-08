@@ -6,6 +6,7 @@ import type {
 import type { Clock } from "../../contracts/clock.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import type { AppEnv } from "../../register/index.ts";
+import { runtimeText } from "../shared/runtime-text.ts";
 import {
   fingerprintOf,
   fromBase64,
@@ -156,13 +157,17 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
 
   const wrapperFor = (kid: string): CryptoKeyWrapper => {
     if (wrapper === null) {
-      throw new ConfigurationError(
-        `A personal key is wrapped under ${kid}, and runtime.personalData.keyWrapper is not set`,
+      throw runtimeText(
+        new ConfigurationError(
+          `A personal key is wrapped under ${kid}, and runtime.personalData.keyWrapper is not set`,
+        ),
       );
     }
     if (!known.has(kid)) {
-      throw new ConfigurationError(
-        `A personal key is wrapped under ${kid}, which is neither the key wrapper's key nor one of its previous ones`,
+      throw runtimeText(
+        new ConfigurationError(
+          `A personal key is wrapped under ${kid}, which is neither the key wrapper's key nor one of its previous ones`,
+        ),
       );
     }
     return wrapper;
@@ -176,10 +181,12 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
         ? await importRawKey({ raw: fromBase64(stored.key), extractable })
         : await wrapperFor(kid).unwrap({ kid, wrapped: fromBase64(stored.key), extractable });
     if ((await fingerprintOf(key)) !== stored.fingerprint) {
-      throw new ConfigurationError(
-        kid === null
-          ? `A personal key kept unwrapped does not match its fingerprint: the key was altered in the store, ${OLDER_DATABASE}`
-          : `A personal key unwrapped under ${kid} does not match its fingerprint: the key wrapper returned another key, ${OLDER_DATABASE}`,
+      throw runtimeText(
+        new ConfigurationError(
+          kid === null
+            ? `A personal key kept unwrapped does not match its fingerprint: the key was altered in the store, ${OLDER_DATABASE}`
+            : `A personal key unwrapped under ${kid} does not match its fingerprint: the key wrapper returned another key, ${OLDER_DATABASE}`,
+        ),
       );
     }
     return key;
