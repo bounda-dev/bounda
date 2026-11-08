@@ -4,7 +4,7 @@ import type { InspectedTable } from "../adapter/storage/inspection.ts";
 import type { BoundaClient } from "../kernel/app.ts";
 import { importPersonalKey, unseal } from "../kernel/personal-data/crypto.ts";
 import type { PersonalDataExport } from "../kernel/personal-data/export.ts";
-import { type Leaf, leavesIn, matches, type Needle, needlesOf } from "./search.ts";
+import { type Leaf, leavesIn, matches, needlesOf } from "./search.ts";
 import type { TelemetryRecording } from "./telemetry.ts";
 import type { TestWitness } from "./witness.ts";
 
