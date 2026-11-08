@@ -38,7 +38,7 @@ describe("the retention of dead letters", () => {
     expect(await retention.sweep(later(8 * DAY))).toBe(1);
     expect(await store.get("retried")).toBeNull();
     expect(logs).toContainEqual({
-      level: "info",
+      level: "debug",
       message: "resolved dead letters purged",
       fields: { purged: 1 },
     });
@@ -68,6 +68,45 @@ describe("the retention of dead letters", () => {
     await retention.sweep(later(DAY));
     expect(purges).toBe(0);
     expect(logs).toEqual([]);
+  });
+
+  it("reads the store again only once a letter can be due", async () => {
+    const { store, retention, resolve } = await setUp();
+    const firstResolvedAt = store.firstResolvedAt;
+    let reads = 0;
+    store.firstResolvedAt = () => {
+      reads += 1;
+      return firstResolvedAt();
+    };
+    await retention.sweep(start);
+    await resolve("a", later(DAY));
+    await retention.sweep(later(7 * DAY - 1));
+    expect(reads).toBe(1);
+    expect(await retention.sweep(later(7 * DAY))).toBe(0);
+    expect(reads).toBe(2);
+    await retention.sweep(later(8 * DAY - 1));
+    expect(reads).toBe(2);
+    expect(await retention.sweep(later(8 * DAY))).toBe(1);
+    expect(await retention.sweep(later(8 * DAY))).toBe(0);
+    expect(reads).toBe(4);
+  });
+
+  it("waits as long as the first time again once a pass reads the store", async () => {
+    const { store, retention } = await setUp();
+    const firstResolvedAt = store.firstResolvedAt;
+    let failing = true;
+    store.firstResolvedAt = () =>
+      failing ? Promise.reject(new Error("database is down")) : firstResolvedAt();
+    expect(await retention.sweep(start)).toBe(0);
+    failing = false;
+    expect(await retention.sweep(later(HOLD_MS))).toBe(0);
+    failing = true;
+    const again = later(HOLD_MS + 7 * DAY);
+    expect(await retention.sweep(again)).toBe(0);
+    failing = false;
+    expect(await retention.nextDueAt()).toBeNull();
+    store.firstResolvedAt = async () => new Date(0);
+    expect(await retention.nextDueAt()).toEqual(new Date(again.getTime() + HOLD_MS));
   });
 
   it("logs a store that fails, waits before trying again, and names that wait as when it is due", async () => {

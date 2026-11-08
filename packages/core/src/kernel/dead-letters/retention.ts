@@ -31,7 +31,8 @@ export interface CreateDeadLetterRetentionFunction {
 
 /**
  * Asks the store first when the earliest resolved letter is due, a read an index answers, so a
- * pass with nothing due writes nothing.
+ * pass with nothing due writes nothing; and asks again only once that time comes, since a letter
+ * resolved after the read comes due a whole retention later.
  */
 export const createDeadLetterRetention: CreateDeadLetterRetentionFunction = ({
   store,
@@ -41,22 +42,25 @@ export const createDeadLetterRetention: CreateDeadLetterRetentionFunction = ({
   const pause = createPause();
   const dueAt = (resolvedAt: Date | null): number | null =>
     resolvedAt === null ? null : resolvedAt.getTime() + retentionMs;
+  let unreadUntil = Number.NEGATIVE_INFINITY;
 
   return {
     sweep: async (now) => {
       const at = now.getTime();
-      if (pause.isPaused(at)) return 0;
+      if (pause.isPaused(at) || at < unreadUntil) return 0;
       try {
         const due = dueAt(await store.firstResolvedAt());
-        const purged =
-          due === null || due > at
-            ? 0
-            : await store.purge({
-                resolvedBy: new Date(at - retentionMs),
-                limit: DEAD_LETTER_PURGE_LIMIT,
-              });
+        if (due === null || due > at) {
+          unreadUntil = due ?? at + retentionMs;
+          pause.resume();
+          return 0;
+        }
+        const purged = await store.purge({
+          resolvedBy: new Date(at - retentionMs),
+          limit: DEAD_LETTER_PURGE_LIMIT,
+        });
         pause.resume();
-        if (purged > 0) logger.info("resolved dead letters purged", { purged });
+        logger.debug("resolved dead letters purged", { purged });
         return purged;
       } catch (error) {
         pause.pause(at);

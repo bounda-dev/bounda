@@ -269,6 +269,18 @@ describe("the person index of the SQLite stores", () => {
     for (const [, plan] of lookups) expect(scans(plan)).toEqual([]);
   });
 
+  it("removes a row's references by index when the row goes", async () => {
+    const { adapter, db } = nodeSqlite();
+    await adapter.createStorage();
+    const plan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN DELETE FROM "bounda_person_rows" WHERE "store" = 'dead_letters' AND "row" = '["d"]'`,
+      )
+      .all()
+      .map((row) => String(row.detail));
+    expect(plan).toEqual([expect.stringContaining("bounda_person_rows_row_idx")]);
+  });
+
   it("finds and purges the resolved dead letters by index", async () => {
     const { adapter, db } = nodeSqlite();
     const storage = await adapter.createStorage();
