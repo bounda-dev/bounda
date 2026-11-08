@@ -8,6 +8,7 @@ import {
   foldProcess,
   instanceContext,
   PROCESS_EVENTS,
+  type ProcessInstance,
   processAggregateType,
 } from "./lifecycle.ts";
 
@@ -336,6 +337,7 @@ describe("deadlineContext", () => {
     handlerTimeoutMs: 30_000,
     initialState: {},
     stateSchema: null,
+    personal: null,
     handlers: {},
     deadlineFields: [],
     deadlineHandlers: {},
@@ -345,10 +347,15 @@ describe("deadlineContext", () => {
 
   it("puts a deadline under the event that set it at its moment, and under the instance when none did", () => {
     const timeoutAt = "2026-01-08T00:00:00.000Z";
-    const instance = fold({
-      initialState: {},
-      events: [lifecycle(PROCESS_EVENTS.started, { state: {}, eventId: "e1", timeoutAt }, 1, "c1")],
-    });
+    const instance: ProcessInstance = {
+      ...fold({
+        initialState: {},
+        events: [
+          lifecycle(PROCESS_EVENTS.started, { state: {}, eventId: "e1", timeoutAt }, 1, "c1"),
+        ],
+      }),
+      persons: [],
+    };
     expect(deadlineContext(process, "o-1", instance, { field: "timeout", at: timeoutAt })).toEqual({
       correlationId: "c1",
       causationId: "p1",

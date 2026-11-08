@@ -133,8 +133,14 @@ export const createResumeParked: CreateResumeParkedFunction = ({
           return undefined;
         },
         (_current, filed) => lifecycleEntries.failed({ eventId: event.id }, filed, causedBy(event)),
-        () =>
-          failures.letterOf(process, failures.subjectOf(event), cause, 1, drainFailureType(cause)),
+        (current) =>
+          failures.letterOf(
+            process,
+            failures.subjectOf(process, event, { instanceId, instance: current }),
+            cause,
+            1,
+            drainFailureType(cause),
+          ),
       );
     }
   };
@@ -206,10 +212,10 @@ export const createResumeParked: CreateResumeParkedFunction = ({
             filed,
             instanceContext(process, instanceId, current),
           ),
-        () =>
+        (current) =>
           failures.letterOf(
             process,
-            deadlineSubject(process, instanceId, due.field),
+            deadlineSubject(process, instanceId, due.field, current),
             cause,
             1,
             drainFailureType(cause),

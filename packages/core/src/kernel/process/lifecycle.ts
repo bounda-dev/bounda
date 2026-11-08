@@ -1,6 +1,8 @@
 import type { NewDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
+import type { KeyedPerson } from "../../adapter/storage/personal-key-store.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
+import { statePersonOf } from "../personal-data/process-state.ts";
 import { actedBy, causedBy } from "../shared/causation.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
 import { type Deadline, deadlineAt, reachedKey, TIMEOUT_DEADLINE } from "./deadlines.ts";
@@ -49,8 +51,21 @@ export interface ProcessAggregateTypeFunction {
   (processName: string): string;
 }
 
+const STREAM_PREFIX = "process:";
+
 export const processAggregateType: ProcessAggregateTypeFunction = (processName) =>
-  `process:${processName}`;
+  `${STREAM_PREFIX}${processName}`;
+
+export interface ProcessOfStreamFunction {
+  (aggregateType: string): string | null;
+}
+
+/**
+ * The process whose instances an aggregate type holds, `processAggregateType` read back; `null`
+ * for an aggregate's own type, which never has the prefix.
+ */
+export const processOfStream: ProcessOfStreamFunction = (aggregateType) =>
+  aggregateType.startsWith(STREAM_PREFIX) ? aggregateType.slice(STREAM_PREFIX.length) : null;
 
 export interface ProcessInstance {
   readonly exists: boolean;
@@ -95,7 +110,38 @@ export interface ProcessInstance {
    * instance that never failed.
    */
   readonly failure: ProcessFailure | null;
+  /**
+   * The people whose personal fields loading the instance opened, each with the key that opened
+   * them: what its next lifecycle events depend on, and what a failure of its step read.
+   */
+  readonly persons: readonly KeyedPerson[];
 }
+
+/**
+ * An instance as its events say it is, before the store tells whose fields it opened.
+ */
+export type FoldedProcess = Omit<ProcessInstance, "persons">;
+
+export interface InstancePersonOfFunction {
+  (
+    process: Pick<ProcessRuntime, "personal">,
+    instanceId: string,
+    instance: Pick<ProcessInstance, "state">,
+  ): string | null;
+}
+
+/**
+ * Whom the instance's state names, by its `person()` field or its id; `null` for a process whose
+ * state marks nobody, or that has not learnt whom yet.
+ */
+export const instancePersonOf: InstancePersonOfFunction = (process, instanceId, { state }) =>
+  process.personal === null
+    ? null
+    : statePersonOf({
+        marks: process.personal,
+        state: state as Readonly<Record<string, unknown>>,
+        instanceId,
+      });
 
 export interface ProcessFailure {
   readonly eventId?: string;
@@ -115,7 +161,7 @@ export interface FoldProcessArgs {
 }
 
 export interface FoldProcessFunction {
-  (args: FoldProcessArgs): ProcessInstance;
+  (args: FoldProcessArgs): FoldedProcess;
 }
 
 const stateOf = (event: StoredEvent, fallback: object): object => {

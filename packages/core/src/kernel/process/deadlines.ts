@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { parseDuration } from "../../contracts/duration.ts";
 import { type Instant, instantSchema } from "../../contracts/instant.ts";
+import { person, personal } from "../../modules/personal.ts";
 import type {
   DeadlineFieldSchema,
   InstantFieldSchema,
@@ -45,7 +46,7 @@ const deadline = (): DeadlineFieldSchema => {
 /**
  * What a process `state` schema function receives.
  */
-export const processStateArgs: ProcessStateArgs = { z, deadline, instant };
+export const processStateArgs: ProcessStateArgs = { z, deadline, instant, personal, person };
 
 export interface DeadlineFieldsOfFunction {
   (schema: z.ZodType | null): readonly string[];

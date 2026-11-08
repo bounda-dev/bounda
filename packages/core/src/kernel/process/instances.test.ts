@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { ForgottenSinceLoadError } from "../../adapter/storage/append-checks.ts";
+import { pendingEvent } from "../../adapter/testing/fixtures.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { memory } from "../../memory/index.ts";
+import { buildAggregates } from "../aggregate/build-aggregates.ts";
+import { withPersonalData } from "../personal-data/event-store.ts";
 import { createUnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
 import { createProcessInstances } from "./instances.ts";
@@ -16,6 +20,7 @@ const process: ProcessRuntime = {
   handlerTimeoutMs: 30_000,
   initialState: {},
   stateSchema: null,
+  personal: null,
   handlers: {},
   deadlineFields: [],
   deadlineHandlers: {},
@@ -67,5 +72,42 @@ describe("createProcessInstances", () => {
     await instances.append(process, "o-1", order, [lifecycleEntries.resumed(context)]);
     expect((await instances.load(process, "o-1")).exists).toBe(true);
     expect((await instances.load(shipment, "o-1")).exists).toBe(false);
+  });
+
+  it("loads with the keys the state was opened under, and appends only while they hold", async () => {
+    const storage = await memory().createStorage();
+    const onboarding: ProcessRuntime = {
+      ...process,
+      personal: { person: "customerId", fields: ["email"] },
+    };
+    const instances = createProcessInstances({
+      eventStore: withPersonalData({
+        eventStore: storage.eventStore,
+        aggregates: buildAggregates({ registry: { aggregates: {}, readModels: {} }, ports: {} }),
+        processes: { byName: { [onboarding.name]: onboarding } },
+        keys: storage.personalKeys,
+      }),
+      ids: createSequentialIdGenerator(),
+      clock: createFixedClock(new Date(0)),
+    });
+    const placed = pendingEvent({ aggregateId: "o-1", version: 1 });
+    const state = { customerId: "c-1", email: "ana@example.com" };
+    const handled = lifecycleEntries.handled({ ...placed, position: 1 }, state);
+
+    const fresh = await instances.load(onboarding, "o-1");
+    expect(fresh.persons).toEqual([]);
+    await instances.append(onboarding, "o-1", fresh, [handled]);
+    const loaded = await instances.load(onboarding, "o-1");
+    const fingerprint = (await storage.personalKeys.get("c-1"))?.fingerprint ?? null;
+    expect(loaded.state).toEqual(state);
+    expect(loaded.persons).toEqual([{ person: "c-1", fingerprint }]);
+
+    await storage.personalKeys.remove("c-1");
+    await expect(
+      instances.append(onboarding, "o-1", loaded, [lifecycleEntries.resumed(context)]),
+    ).rejects.toThrow(ForgottenSinceLoadError);
+    const forgotten = await instances.load(onboarding, "o-1");
+    expect(forgotten.state).toEqual({ ...state, email: null });
+    expect(forgotten.persons).toEqual([]);
   });
 });

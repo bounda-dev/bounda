@@ -147,22 +147,25 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
 
   // Stages what giving up on `event` records: the dead letter, and `ProcessFailed` while the
   // instance still runs, after its start when `event` is what starts it, with its deadline entry.
+  // Resolves to the letter, sealed under whom the event or else the instance's state names.
   const failFor = async (
     unit: UnitOfWork,
     process: ProcessRuntime,
     event: StoredEvent,
     instanceId: string,
-    letter: NewDeadLetter,
-  ): Promise<void> => {
+    letterOf: (instance: ProcessInstance) => Promise<NewDeadLetter>,
+  ): Promise<NewDeadLetter> => {
     const within = units.over(unit);
     const entries: LifecycleEntry[] = [];
     const current = started(process, event, await within.load(process, instanceId), entries);
+    const letter = await letterOf(current);
     if (current.status === "started") {
       entries.push(lifecycleEntries.failed({ eventId: event.id }, letter, causedBy(event)));
       await within.append(process, instanceId, current, entries);
       await schedule.stage(unit, process, instanceId);
     }
     await unit.deadLetterStore.add(letter);
+    return letter;
   };
 
   const handle = async (
@@ -184,14 +187,15 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
         parked = await step(unit, process, event, instanceId, attempt);
       },
       giveUp: async (unit, error, attempts, errorType) => {
-        letter = await failures.letterOf(
-          process,
-          failures.subjectOf(event),
-          error,
-          attempts,
-          errorType,
+        letter = await failFor(unit, process, event, instanceId, (instance) =>
+          failures.letterOf(
+            process,
+            failures.subjectOf(process, event, { instanceId, instance }),
+            error,
+            attempts,
+            errorType,
+          ),
         );
-        await failFor(unit, process, event, instanceId, letter);
       },
       gaveUp: () => {
         if (letter !== undefined) failures.filed(process, letter);
@@ -223,7 +227,7 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
     if (claimId === null) return "hold";
     const letter = await failures.letterOf(
       process,
-      failures.subjectOf(event),
+      failures.subjectOf(process, event, null),
       error,
       1,
       "terminal",

@@ -67,13 +67,14 @@ export const createProcessInstances: CreateProcessInstancesFunction = ({
 
   const load = async (process: ProcessRuntime, instanceId: string): Promise<ProcessInstance> => {
     const stream = { aggregateType: processAggregateType(process.name), aggregateId: instanceId };
-    const { events } = await eventStore.load(stream);
+    const { events, fingerprints = new Map<string, string>() } = await eventStore.load(stream);
     const instance: Viewed = {
       ...foldProcess({
         initialState: process.initialState,
         deadlineFields: process.deadlineFields,
         events,
       }),
+      persons: [...fingerprints].map(([person, fingerprint]) => ({ person, fingerprint })),
       [VIEW]: view,
     };
     return instance;
@@ -95,6 +96,7 @@ export const createProcessInstances: CreateProcessInstancesFunction = ({
       aggregateType,
       aggregateId: instanceId,
       expectedVersion: instance.version,
+      persons: instance.persons,
       events: entries.map((entry, index) => ({
         id: entry.id ?? ids.next(),
         aggregateType,

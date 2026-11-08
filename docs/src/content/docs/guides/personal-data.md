@@ -1,6 +1,6 @@
 ---
 title: Personal data
-description: Mark the fields of an event or a read model that hold personal data, say whose they are, forget a person or export their data with one call, record who opened whose data, forget them after a retention or when a purpose ends, wrap their keys under a master key kept out of the database, and handle forgetting in every read model that showed them.
+description: Mark the fields of an event, a process state or a read model that hold personal data, say whose they are, forget a person or export their data with one call, record who opened whose data, forget them after a retention or when a purpose ends, wrap their keys under a master key kept out of the database, and handle forgetting in every read model that showed them.
 sidebar:
   order: 11
 ---
@@ -75,11 +75,56 @@ forgotten never runs. A query's `PayloadArgs` has no `personal`, since a query i
 A command scheduled before its fields were marked keeps its payload as it was written, in the
 clear, and runs with it; `forget` cannot find it.
 
+## In a process's state
+
+A [process](/guides/reacting-to-events/) keeps its state in the lifecycle events of its own
+stream, so a state that holds personal data marks it the same way, with `personal` and `person`
+from its `StateArgs`:
+
+```ts
+// app/domain/signup/processes/onboarding/index.ts
+import type { Process } from "./+types/index";
+
+export const config = ({ events }: Process.ConfigArgs) => ({
+  startedBy: [events.signup.SignupStarted],
+  completedBy: [events.signup.SignupConfirmed],
+});
+
+export const state = ({ z, deadline, personal, person }: Process.StateArgs) =>
+  z.object({
+    customerId: person(z.string()).nullable().default(null),
+    email: personal(z.email()).nullable().default(null),
+    reminder: deadline(),
+  });
+```
+
+Every lifecycle event that carries the state stores its marked fields encrypted with the key of
+the person the state names: the field marked `person`, or, when none is marked, the instance's
+id while a personal field holds a value, as an event's aggregate id is. A state learns whose it is
+in a later step, so it starts naming nobody: its `personal` and `person` fields default to `null`,
+and the app does not start otherwise. While its `person` field is `null` it names nobody, and a
+step that sets a personal field with nobody named fails with `ValidationError`, as a terminal
+error. A personal field holding `null` holds nothing of theirs and is stored as it is.
+
+Once the person is forgotten, those fields read as `null` and the instance carries on: its
+handlers and deadlines run on the rest of the state, and the types say so, `string | null` for
+`email` whatever its schema. The schema takes `null` for a personal field too, so a handler may
+clear one itself. Only the marked fields are encrypted, never the whole state, which would leave
+an instance unable to go on once its person is forgotten.
+
+The rest follows from the stream: the [export](#exporting-a-persons-data) lists the lifecycle
+events that name the person, with the fields of the state they carry; while their processing is
+[restricted](#restricting-processing), a step of the instance is refused before its handler runs;
+and a step that fails has its error text encrypted with the key of the person its event names,
+or else of the one the state names, which covers a deadline. A lifecycle event written before its
+state marked its fields keeps them in the clear.
+
 ## What the types say
 
 Whoever writes the event, the command handler through `events.customerRegistered({ email })`,
 passes what the schema takes: a `string`. Whoever reads it, `begin`, `evolve`, a policy, a
-projection, a process, sees `string | null`: the value, or `null` once the person is forgotten.
+projection, a process, sees `string | null`: the value, or `null` once the person is forgotten. So does a process handler that
+reads a personal field of its own state.
 The `null` reaches the state too, so the `begin` above gives the customer an `email` of
 `string | null`, and a command handler that reads `state.email` handles the case. A field
 marked `.optional()` reads as `string | null | undefined`: absent, or forgotten.
@@ -153,8 +198,8 @@ and never its text, and so does the last error the inbox and the scheduler keep 
 What `forget` does not reach is text your code writes elsewhere and data left unmarked: your logs
 keep whatever you wrote to them, an event's payload written in the clear, with the data in a field
 you did not mark, stays readable, a command's payload left unmarked is stored as it came, and the
-error of work that names nobody, such as a process deadline or a scheduled command whose payload
-marks nothing, stays in its dead letter in the clear. Log and throw with ids, not the data itself,
+error of work that names nobody, such as a deadline of a process whose state names nobody or a
+scheduled command whose payload marks nothing, stays in its dead letter in the clear. Log and throw with ids, not the data itself,
 and mark every field that holds it.
 
 Nor does it reach the `actor` in the metadata of events, who acted on them (see
@@ -196,7 +241,8 @@ person, for them to take away, as the right of access and the right to portabili
 `events` are every event that names the person, by its field marked `person` or its aggregate's
 id, in position order, the events of their own stream `bounda:<personId>` included; `data` holds
 the fields marked `personal` of that event, opened, and nothing else of its payload, so an event
-without such fields has an empty `data`. `scheduledCommands` are the commands waiting to run
+without such fields has an empty `data`. A process's lifecycle event names the person [its state
+names](#in-a-processs-state), and its `data` holds the personal fields of that state. `scheduledCommands` are the commands waiting to run
 whose payload holds personal fields of theirs, with `commandId` the id the dispatch answered or,
 for one the runtime scheduled itself, the scheduler's key, each with the same `data`.
 `deadLetters` are the handler runs that gave up and name the person: work about them, whose
@@ -393,8 +439,10 @@ person's marked fields is refused too.
 A policy, process or scheduled command whose command is refused this way becomes a dead letter at
 once, as for any terminal error, with `errorCode: "PROCESSING_RESTRICTED"` and the person in
 `person`, even when the event it handled names nobody: a policy on `Invited`, an event of the
-newsletter, dispatching `registerCustomer` for the restricted customer. A failed process parks
-what follows, as [it always does](/guides/dead-letters/#a-failed-process). Reading the person's
+newsletter, dispatching `registerCustomer` for the restricted customer. So does a step of a
+process instance whose [state names the person](#in-a-processs-state), before its handler runs,
+and the store refuses a lifecycle event that would encrypt their fields as it refuses a command's.
+A failed process parks what follows, as [it always does](/guides/dead-letters/#a-failed-process). Reading the person's
 data, `forget` and the export of their data stay allowed: a restriction is not an erasure.
 
 `unrestrict` lifts it:

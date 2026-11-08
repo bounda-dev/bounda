@@ -2,11 +2,12 @@ import { z } from "zod";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import { personalMarkOf } from "../../modules/personal.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
+import type { ProcessesRuntime } from "../process/build-processes.ts";
 
 /**
- * What an event's or a command's payload schema marks: the fields to encrypt, and the field naming
- * the person they belong to, or whom the payload touches when it marks no field to encrypt;
- * `null` when the aggregate's id names them.
+ * What an event's or a command's payload schema, or a process's state schema, marks: the fields to
+ * encrypt, and the field naming the person they belong to, or whom the payload touches when it
+ * marks no field to encrypt; `null` when the aggregate's or the instance's id names them.
  */
 export interface PersonalMarks {
   readonly person: string | null;
@@ -45,14 +46,21 @@ export const personalMarksOf: PersonalMarksOfFunction = ({ schema, path }) => {
   return { person: persons[0] ?? null, fields };
 };
 
+export interface MarksPersonalFieldsArgs {
+  readonly aggregates: AggregatesRuntime;
+  readonly processes: ProcessesRuntime;
+}
+
 export interface MarksPersonalFieldsFunction {
-  (aggregates: AggregatesRuntime): boolean;
+  (args: MarksPersonalFieldsArgs): boolean;
 }
 
 /**
- * Whether any event or command of the registry marks a field `personal`, which then needs keys.
+ * Whether any event, command or process state of the registry marks a field `personal`, which
+ * then needs keys.
  */
-export const marksPersonalFields: MarksPersonalFieldsFunction = (aggregates) =>
+export const marksPersonalFields: MarksPersonalFieldsFunction = ({ aggregates, processes }) =>
+  processes.all.some((process) => (process.personal?.fields.length ?? 0) > 0) ||
   Object.values(aggregates.byName).some(
     (aggregate) =>
       Object.values(aggregate.eventsByType).some(
