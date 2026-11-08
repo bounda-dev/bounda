@@ -25,6 +25,7 @@ const orderPayment: ProcessRuntime = {
   handlerTimeoutMs: 30_000,
   initialState: {},
   stateSchema: null,
+  personal: null,
   handlers: {},
   deadlineFields: [],
   deadlineHandlers: {},
@@ -96,6 +97,7 @@ const instance = (overrides: Partial<ProcessInstance> = {}): ProcessInstance => 
   parked: [],
   followUps: new Set(),
   failure: { eventId: "e-1", letterId: "letter-1" },
+  persons: [],
   ...overrides,
 });
 
@@ -125,14 +127,22 @@ const setup = async () => {
 describe("subjectOf", () => {
   it("names the person the event names, and nobody for an event without their data", async () => {
     const { failures } = await setup();
-    expect(failures.subjectOf(placed({ customerId: "c-1", note: "ring" }))).toEqual({
+    expect(
+      failures.subjectOf(orderPayment, placed({ customerId: "c-1", note: "ring" }), null),
+    ).toEqual({
       ...subject,
       person: "c-1",
     });
-    expect(failures.subjectOf(placed({ customerId: "c-1", note: null }))).toEqual(subject);
-    expect(failures.subjectOf(placed({ customerId: "c-1" }))).toEqual(subject);
     expect(
-      failures.subjectOf({ ...placed({ customerId: "c-1", note: "ring" }), aggregateType: "x" }),
+      failures.subjectOf(orderPayment, placed({ customerId: "c-1", note: null }), null),
+    ).toEqual(subject);
+    expect(failures.subjectOf(orderPayment, placed({ customerId: "c-1" }), null)).toEqual(subject);
+    expect(
+      failures.subjectOf(
+        orderPayment,
+        { ...placed({ customerId: "c-1", note: "ring" }), aggregateType: "x" },
+        null,
+      ),
     ).toEqual({ ...subject, aggregateType: "x" });
   });
 });
@@ -266,9 +276,56 @@ describe("filed", () => {
   });
 });
 
+describe("subjectOf an event on a loaded instance", () => {
+  const onboarding: ProcessRuntime = {
+    ...orderPayment,
+    personal: { person: "customerId", fields: ["email"] },
+  };
+  const held = { person: "c-2", fingerprint: "f-2" };
+  const loaded = instance({ state: { customerId: "c-2", email: "a@b.c" }, persons: [held] });
+
+  it("names whom the state names when the event names nobody, with what the instance opened", async () => {
+    const { failures } = await setup();
+    expect(
+      failures.subjectOf(onboarding, placed({ customerId: "c-1" }), {
+        instanceId: "o-1",
+        instance: loaded,
+      }),
+    ).toEqual({
+      ...subject,
+      person: "c-2",
+      read: [held],
+    });
+    expect(
+      failures.subjectOf(onboarding, placed({ customerId: "c-1", note: "ring" }), {
+        instanceId: "o-1",
+        instance: loaded,
+      }),
+    ).toEqual({ ...subject, person: "c-1", read: [held] });
+    expect(
+      failures.subjectOf(orderPayment, placed({ customerId: "c-1" }), {
+        instanceId: "o-1",
+        instance: loaded,
+      }),
+    ).toEqual({
+      ...subject,
+      read: [held],
+    });
+  });
+
+  it("stands a deadline in under whom the state names", () => {
+    expect(deadlineSubject(onboarding, "o-1", "paymentDeadline", loaded)).toMatchObject({
+      person: "c-2",
+      read: [held],
+    });
+  });
+});
+
 describe("deadlineSubject", () => {
   it("stands a deadline in for the event on the process's own stream", () => {
-    expect(deadlineSubject(orderPayment, "o-1", "paymentDeadline")).toEqual({
+    expect(
+      deadlineSubject(orderPayment, "o-1", "paymentDeadline", { state: {}, persons: [] }),
+    ).toEqual({
       id: "deadline:paymentDeadline",
       type: "bounda.ProcessDeadline",
       aggregateType: "process:orderPayment",
@@ -279,7 +336,9 @@ describe("deadlineSubject", () => {
   });
 
   it("names the timeout's letter deadline:timeout, which bounda dead-letters list relies on", () => {
-    expect(deadlineSubject(orderPayment, "o-1", TIMEOUT_DEADLINE).id).toBe("deadline:timeout");
+    expect(
+      deadlineSubject(orderPayment, "o-1", TIMEOUT_DEADLINE, { state: {}, persons: [] }).id,
+    ).toBe("deadline:timeout");
   });
 });
 

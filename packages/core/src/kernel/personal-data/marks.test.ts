@@ -3,6 +3,7 @@ import { z } from "zod";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import { person, personal } from "../../modules/personal.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
+import type { ProcessesRuntime } from "../process/build-processes.ts";
 import { marksPersonalFields, type PersonalMarks, personalMarksOf } from "./marks.ts";
 
 const path = "aggregates.order.events.orderPlaced";
@@ -79,17 +80,26 @@ describe("marksPersonalFields", () => {
       },
       commandsByType: {},
     }) as unknown as AggregatesRuntime;
+  const processes = (states: readonly (PersonalMarks | null)[]): ProcessesRuntime =>
+    ({ all: states.map((personal) => ({ personal })) }) as unknown as ProcessesRuntime;
   const fields = { person: null, fields: ["email"] };
   const personOnly = { person: "customerId", fields: [] };
+  const marks = (
+    events: readonly (PersonalMarks | null)[],
+    commands: readonly (PersonalMarks | null)[],
+    states: readonly (PersonalMarks | null)[] = [],
+  ): boolean =>
+    marksPersonalFields({ aggregates: aggregates(events, commands), processes: processes(states) });
 
-  it("is true when an event or a command marks a field personal", () => {
-    expect(marksPersonalFields(aggregates([null, fields], []))).toBe(true);
-    expect(marksPersonalFields(aggregates([], [null, fields]))).toBe(true);
-    expect(marksPersonalFields(aggregates([fields], [null]))).toBe(true);
+  it("is true when an event, a command or a process state marks a field personal", () => {
+    expect(marks([null, fields], [])).toBe(true);
+    expect(marks([], [null, fields])).toBe(true);
+    expect(marks([fields], [null])).toBe(true);
+    expect(marks([], [], [null, fields])).toBe(true);
   });
 
   it("is false when nothing is marked, or only whom a payload touches", () => {
-    expect(marksPersonalFields(aggregates([], []))).toBe(false);
-    expect(marksPersonalFields(aggregates([null, personOnly], [null, personOnly]))).toBe(false);
+    expect(marks([], [])).toBe(false);
+    expect(marks([null, personOnly], [null, personOnly], [null, personOnly])).toBe(false);
   });
 });

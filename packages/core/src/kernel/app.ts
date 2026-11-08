@@ -100,7 +100,8 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
   rebuildReadModel(name: string): Promise<RebuildReadModelResult>;
   /**
    * Forgets a person: deletes the key their personal fields are encrypted with, so every event
-   * of theirs reads those fields as `null` from now on, and appends `PersonalDataForgotten` to
+   * of theirs, and the state of every process instance that names them, reads those fields as
+   * `null` from now on, the instance carrying on, and appends `PersonalDataForgotten` to
    * the stream `bounda:<personId>`, which every read model that projects personal fields handles.
    * Both happen together or not at all. Resolves like a command, so
    * `catchUpReadModels({ through })` waits for those read models. Rejects with
@@ -110,7 +111,8 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
   /**
    * Everything the store holds that names a person, for them to take away: their events, with
    * the fields marked `personal` opened (`null` each once they are forgotten) and nothing else of
-   * the payload, the scheduled commands that hold such fields of theirs, and the dead letters of
+   * the payload, among them the lifecycle events of the process instances whose state names them,
+   * the scheduled commands that hold such fields of theirs, and the dead letters of
    * work about them, with the error text sealed under their key opened, and the rows of every read
    * model with a field marked `.person()` that name them, with their fields marked `.personal()`.
    * A field left unmarked and whatever a policy sent out are not in it. Recorded in the access log
@@ -123,7 +125,8 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * Restricts the processing of a person's data: from then on every command that touches them,
    * the one their payload names with `person` or whose aggregate is the person, is refused with
    * `ProcessingRestrictedError`, and a policy, process or scheduled command whose command is
-   * refused becomes a dead letter at once, with that code and the person. Writes their row and
+   * refused becomes a dead letter at once, with that code and the person, as does a step of a
+   * process instance whose state names them, before its handler runs. Writes their row and
    * appends `ProcessingRestricted` to the stream `bounda:<personId>` together, and resolves like
    * a command, so `catchUpReadModels({ through })` waits for the read models that handle it.
    * Restricting a person restricted already appends nothing and resolves without events. Reading
@@ -420,8 +423,18 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       opened.unshift(close);
     }
     const aggregates = buildAggregates({ registry, ports: ports.byAggregate, config });
-    const storage = appStorage({ storage: written, aggregates, wrapping });
-    if (wrapping.wrapper === null && test === undefined && marksPersonalFields(aggregates)) {
+    const processDefinitions = buildProcesses({ registry, aggregates, config });
+    const storage = appStorage({
+      storage: written,
+      aggregates,
+      processes: processDefinitions,
+      wrapping,
+    });
+    if (
+      wrapping.wrapper === null &&
+      test === undefined &&
+      marksPersonalFields({ aggregates, processes: processDefinitions })
+    ) {
       logger.warn(
         "personal keys are stored unwrapped, next to the data they open: set runtime.personalData.keyWrapper",
       );
@@ -460,7 +473,6 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       ports: ports.byReadModel,
       recordAccess,
     });
-    const processDefinitions = buildProcesses({ registry, aggregates, config });
     const processes = createProcessRunner({
       processes: processDefinitions,
       aggregates,
@@ -717,6 +729,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             exported = await exportPersonalData({
               storage,
               aggregates,
+              processes: processDefinitions,
               readModels,
               clock,
               batchSize: config.runtime.dispatcher.batchSize,

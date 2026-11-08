@@ -84,7 +84,8 @@ Some rules need the modules themselves, so the app checks them when it is create
 `ConfigurationError`:
 
 - a policy or a projection whose trigger is not an event of the aggregate it listens to, the
-  runtime's own `bounda` included; an event that marks two fields with `person`;
+  runtime's own `bounda` included; an event, a command or a process `state` that marks two fields
+  with `person`, and a process `state` that starts with a `personal` or `person` field set;
 - a `deadline()` field without its `at-` file, and an `at-` file without its field; the name
   `timeout` is reserved for the process's lifetime;
 - an event of another aggregate that a process listens to and cannot assign to an instance, by an

@@ -166,7 +166,7 @@ export const createDeadlineDelivery: CreateDeadlineDeliveryFunction = ({
       ) {
         letter = await failures.letterOf(
           process,
-          deadlineSubject(process, payload.aggregateId, failed.field),
+          deadlineSubject(process, payload.aggregateId, failed.field, instance),
           error,
           attempts,
           errorType,

@@ -16,26 +16,34 @@ import { classifyFailure } from "../shared/retry.ts";
 import { deadLettered } from "../telemetry.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
 import { PROCESS_DEADLINE_COMMAND } from "./deadlines.ts";
-import { type ProcessInstance, processAggregateType } from "./lifecycle.ts";
+import { instancePersonOf, type ProcessInstance, processAggregateType } from "./lifecycle.ts";
 
 /**
  * What a process dead letter is about: the event whose handler failed, or a deadline standing in
- * for one, with the person it names, whose key seals the letter's error text.
+ * for one, with the person it names, or else the one the instance's state names, whose key seals
+ * the letter's error text.
  */
 export interface FailureSubject
   extends Pick<StoredEvent, "id" | "type" | "aggregateType" | "aggregateId"> {
   readonly person: string | null;
   /**
-   * What the event was handed out with opened, so the letter is sealed under no other key.
+   * What the event was handed out with opened, and the instance loaded with, so the letter is
+   * sealed under no other key.
    */
   readonly read: readonly KeyedPerson[];
 }
 
+export interface LoadedInstance {
+  readonly instanceId: string;
+  readonly instance: ProcessInstance;
+}
+
 export interface ProcessFailures {
   /**
-   * The event as a letter's subject, naming the person it names.
+   * The event as a letter's subject, naming the person it names, or else the one the state of the
+   * instance `at` names; `null` for an event that belongs to no instance.
    */
-  subjectOf(event: StoredEvent): FailureSubject;
+  subjectOf(process: ProcessRuntime, event: StoredEvent, at: LoadedInstance | null): FailureSubject;
   /**
    * The letter of the failure, its error text sealed under the subject's person, to stage in a
    * unit's dead letters.
@@ -72,13 +80,15 @@ export const createProcessFailures: CreateProcessFailuresFunction = ({
   clock,
   logger,
 }) => ({
-  subjectOf: (event) => ({
+  subjectOf: (process, event, at) => ({
     id: event.id,
     type: event.type,
     aggregateType: event.aggregateType,
     aggregateId: event.aggregateId,
-    person: personOfEvent({ aggregates, event }),
-    read: openedUnder(event),
+    person:
+      personOfEvent({ aggregates, event }) ??
+      (at === null ? null : instancePersonOf(process, at.instanceId, at.instance)),
+    read: [...openedUnder(event), ...(at?.instance.persons ?? [])],
   }),
   letterOf: async (process, subject, error, attempts, errorType) => {
     const person = restrictedPersonOf(error) ?? subject.person;
@@ -111,19 +121,25 @@ export const createProcessFailures: CreateProcessFailuresFunction = ({
 });
 
 export interface DeadlineSubjectFunction {
-  (process: ProcessRuntime, instanceId: string, field: string): FailureSubject;
+  (
+    process: ProcessRuntime,
+    instanceId: string,
+    field: string,
+    instance: Pick<ProcessInstance, "state" | "persons">,
+  ): FailureSubject;
 }
 
 /**
- * How a failed deadline is recorded in a dead letter, where an event would be.
+ * How a failed deadline is recorded in a dead letter, where an event would be, naming whom the
+ * instance's state names.
  */
-export const deadlineSubject: DeadlineSubjectFunction = (process, instanceId, field) => ({
+export const deadlineSubject: DeadlineSubjectFunction = (process, instanceId, field, instance) => ({
   id: `deadline:${field}`,
   type: PROCESS_DEADLINE_COMMAND,
   aggregateType: processAggregateType(process.name),
   aggregateId: instanceId,
-  person: null,
-  read: [],
+  person: instancePersonOf(process, instanceId, instance),
+  read: instance.persons,
 });
 
 export interface BlockedOnFunction {

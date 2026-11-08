@@ -110,6 +110,7 @@ describe("what does not compile", () => {
         Returning<Promise<{ reminders: number } | { paidAt: null } | undefined>>
       >,
       ProcessHandlerReturnCheck<State, Returning<void>>,
+      ProcessHandlerReturnCheck<State, Returning<{ contact: null; customerId: string }>>,
     ];
     type Plain = Returning<{ nextReminder: string }>;
     type Wrong = Returning<{ reminders: "1" }>;
@@ -118,6 +119,9 @@ describe("what does not compile", () => {
     type PlainString = ProcessHandlerReturnCheck<State, Plain>;
     // @ts-expect-error reminders is a number
     type WrongField = ProcessHandlerReturnCheck<State, Wrong>;
+    type NotAnEmail = Returning<{ contact: number }>;
+    // @ts-expect-error a personal field keeps its schema's type, null aside
+    type WrongPersonal = ProcessHandlerReturnCheck<State, NotAnEmail>;
     // @ts-expect-error a handler returns the next state, not anything else
     type NotAState = ProcessHandlerReturnCheck<State, Other>;
     type Misspelt = Returning<{ reminders: number; remindrs: number }>;
@@ -128,7 +132,15 @@ describe("what does not compile", () => {
     type Typo = ProcessHandlerReturnCheck<State, Misspelt>;
     // @ts-expect-error in any branch of what it returns
     type TypoInABranch = ProcessHandlerReturnCheck<State, MisspeltInABranch>;
-    const checks: [Accepted?, PlainString?, WrongField?, NotAState?, Typo?, TypoInABranch?] = [];
+    const checks: [
+      Accepted?,
+      PlainString?,
+      WrongField?,
+      WrongPersonal?,
+      NotAState?,
+      Typo?,
+      TypoInABranch?,
+    ] = [];
     void checks;
   });
 

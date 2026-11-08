@@ -14,6 +14,7 @@ import type { EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { withUpcasting } from "../aggregate/upcasting.ts";
+import type { ProcessesRuntime } from "../process/build-processes.ts";
 import { generatePersonalKey, isSealed } from "./crypto.ts";
 import { openedUnder, withPersonalData } from "./event-store.ts";
 
@@ -74,6 +75,7 @@ const setup = async () => {
   const store = withPersonalData({
     eventStore: storage.eventStore,
     aggregates: buildAggregates({ registry, ports: {} }),
+    processes: { byName: {} },
     keys,
   });
   const registered = (version: number, email: string) =>
@@ -306,6 +308,7 @@ describe("withPersonalData", () => {
     const refused = await withPersonalData({
       eventStore: storage.eventStore,
       aggregates: buildAggregates({ registry, ports: {} }),
+      processes: { byName: {} },
       keys: forgetting,
     })
       .append({
@@ -332,6 +335,7 @@ describe("withPersonalData", () => {
     const refused = await withPersonalData({
       eventStore: storage.eventStore,
       aggregates: buildAggregates({ registry, ports: {} }),
+      processes: { byName: {} },
       keys: restricting,
     })
       .append({
@@ -368,6 +372,7 @@ describe("withPersonalData", () => {
         },
       },
       aggregates: buildAggregates({ registry, ports: {} }),
+      processes: { byName: {} },
       keys: storage.personalKeys,
     });
     const read = { person: "c-3", fingerprint: null };
@@ -414,6 +419,7 @@ describe("withPersonalData", () => {
     const sealing = withPersonalData({
       eventStore: storage.eventStore,
       aggregates,
+      processes: { byName: {} },
       keys: storage.personalKeys,
     });
     const store = withUpcasting({ eventStore: sealing, aggregates });
@@ -472,6 +478,7 @@ describe("withPersonalData", () => {
       withPersonalData({
         eventStore: storage.eventStore,
         aggregates: buildAggregates({ registry, ports: {} }),
+        processes: { byName: {} },
         keys: concurrentKeys,
       }).append({
         aggregateType: "customer",
@@ -649,5 +656,136 @@ describe("withPersonalData", () => {
       events: [placed({ customerId: 42, address: { street: "x" }, total: 1 })],
     });
     expect((await storage.personalKeys.get("42"))?.fingerprint).toHaveLength(44);
+  });
+});
+
+describe("withPersonalData on a process's lifecycle events", () => {
+  const processes = {
+    byName: {
+      "signup.onboarding": { personal: { person: "customerId", fields: ["email"] } },
+      "signup.plain": { personal: null },
+    },
+  } as unknown as Pick<ProcessesRuntime, "byName">;
+  const stream = { aggregateType: "process:signup.onboarding", aggregateId: "s-1" };
+
+  const lifecycleSetup = async () => {
+    const storage = await memory().createStorage();
+    const store = withPersonalData({
+      eventStore: storage.eventStore,
+      aggregates: buildAggregates({ registry, ports: {} }),
+      processes,
+      keys: storage.personalKeys,
+    });
+    const lifecycle = (
+      version: number,
+      type: string,
+      payload: object,
+      aggregateType = stream.aggregateType,
+    ) => pendingEvent({ aggregateType, aggregateId: "s-1", version, type, payload });
+    const append = (events: ReturnType<typeof lifecycle>[], args: Partial<AppendArgs> = {}) =>
+      store.append({
+        aggregateType: events[0]?.aggregateType ?? stream.aggregateType,
+        aggregateId: "s-1",
+        expectedVersion: (events[0]?.version ?? 1) - 1,
+        events,
+        ...args,
+      });
+    return { storage, store, lifecycle, append };
+  };
+
+  it("seals the state's personal fields under whom it names, and opens them on every read", async () => {
+    const { storage, store, lifecycle, append } = await lifecycleSetup();
+    const state = { customerId: "c-1", email: "ana@example.com", nudges: 1 };
+    await append([lifecycle(1, "ProcessHandled", { state, eventId: "e-1" })]);
+
+    const [stored] = await storage.eventStore.readAll({ afterPosition: 0, limit: 10 });
+    const sealed = (stored?.payload as { state: Record<string, unknown> } | undefined)?.state ?? {};
+    expect(isSealed(sealed.email)).toBe(true);
+    expect(sealed.customerId).toBe("c-1");
+    expect(stored?.person).toBe("c-1");
+    expect(JSON.stringify(stored)).not.toContain("ana@example.com");
+
+    const fingerprint = (await storage.personalKeys.get("c-1"))?.fingerprint;
+    const loaded = await store.load(stream);
+    expect(loaded.events[0]?.payload).toEqual({ state, eventId: "e-1" });
+    expect(loaded.fingerprints).toEqual(new Map([["c-1", fingerprint]]));
+    expect(openedUnder(loaded.events[0] as StoredEvent)).toEqual([{ person: "c-1", fingerprint }]);
+    const [byPerson] = await store.readByPerson({ person: "c-1", afterPosition: 0, limit: 10 });
+    expect(byPerson?.payload).toEqual({ state, eventId: "e-1" });
+
+    await storage.personalKeys.remove("c-1");
+    expect((await store.load(stream)).events[0]?.payload).toEqual({
+      state: { ...state, email: null },
+      eventId: "e-1",
+    });
+  });
+
+  it("leaves alone what names nobody: no state, a state with no person yet, a process that marks nothing or is gone", async () => {
+    const { storage, store, lifecycle, append } = await lifecycleSetup();
+    await append([
+      lifecycle(1, "ProcessStarted", { state: { customerId: null, email: null }, eventId: "e-1" }),
+      lifecycle(2, "ProcessCompleted", { eventId: "e-2" }),
+    ]);
+    await append([
+      lifecycle(1, "ProcessStarted", { state: { email: "a@b.c" } }, "process:signup.plain"),
+    ]);
+    await append([
+      lifecycle(1, "ProcessStarted", { state: { email: "a@b.c" } }, "process:signup.gone"),
+    ]);
+
+    const stored = await storage.eventStore.readAll({ afterPosition: 0, limit: 10 });
+    expect(stored.map((event) => [event.person, event.payload])).toEqual([
+      [null, { state: { customerId: null, email: null }, eventId: "e-1" }],
+      [null, { eventId: "e-2" }],
+      [null, { state: { email: "a@b.c" } }],
+      [null, { state: { email: "a@b.c" } }],
+    ]);
+    expect(await storage.personalKeys.get("c-1")).toBeNull();
+    expect(await store.readAll({ afterPosition: 0, limit: 10 })).toEqual(stored);
+  });
+
+  it("refuses an envelope in a state, whatever its process marks", async () => {
+    const { lifecycle, append } = await lifecycleSetup();
+    const envelope = { $personal: { person: "c-1", key: "k", iv: "i", data: "d" } };
+    for (const aggregateType of [stream.aggregateType, "process:signup.plain"]) {
+      await expect(
+        append([
+          lifecycle(
+            1,
+            "ProcessHandled",
+            { state: { customerId: "c-1", note: envelope } },
+            aggregateType,
+          ),
+        ]),
+      ).rejects.toThrow(
+        `State of process ${aggregateType.slice("process:".length)} for s-1 carries a sealed value in "note": personal fields are sealed by the runtime, never by a handler`,
+      );
+    }
+  });
+
+  it("refuses a personal value with nobody named, and appends while its person is restricted never", async () => {
+    const { storage, lifecycle, append } = await lifecycleSetup();
+    await expect(
+      append([lifecycle(1, "ProcessHandled", { state: { customerId: null, email: "a@b.c" } })]),
+    ).rejects.toThrow(ValidationError);
+
+    await storage.persons.restrict("c-1", new Date(0));
+    await expect(
+      append([lifecycle(1, "ProcessHandled", { state: { customerId: "c-1", email: null } })]),
+    ).rejects.toThrow(ProcessingRestrictedError);
+  });
+
+  it("refuses to seal anew under a key other than the one the instance was loaded under", async () => {
+    const { storage, lifecycle, append } = await lifecycleSetup();
+    const state = { customerId: "c-1", email: "ana@example.com" };
+    await append([lifecycle(1, "ProcessHandled", { state })]);
+    const fingerprint = (await storage.personalKeys.get("c-1"))?.fingerprint ?? null;
+    await storage.personalKeys.remove("c-1");
+
+    await expect(
+      append([lifecycle(2, "ProcessHandled", { state })], {
+        persons: [{ person: "c-1", fingerprint }],
+      }),
+    ).rejects.toThrow(ForgottenSinceLoadError);
   });
 });

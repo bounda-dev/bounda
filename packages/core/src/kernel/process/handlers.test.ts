@@ -21,12 +21,14 @@ describe("validState", () => {
   it("takes the state as it is when the process has no schema", () => {
     const state = { anything: true };
 
-    expect(validState({ name: "order.orderPayment", stateSchema: null }, state)).toBe(state);
+    expect(
+      validState({ name: "order.orderPayment", stateSchema: null, personal: null }, state, "o-1"),
+    ).toBe(state);
   });
 
   it("refuses a state that is not an object when the process has no schema", () => {
     const error = refused(() =>
-      validState({ name: "order.orderPayment", stateSchema: null }, null),
+      validState({ name: "order.orderPayment", stateSchema: null, personal: null }, null, "o-1"),
     );
 
     expect(error.message).toBe("Process order.orderPayment returned a state that is not an object");
@@ -38,7 +40,9 @@ describe("validState", () => {
   it("returns the state its schema parses", () => {
     const stateSchema = z.object({ attempts: z.number().default(0) });
 
-    expect(validState({ name: "order.orderPayment", stateSchema }, {})).toEqual({ attempts: 0 });
+    expect(
+      validState({ name: "order.orderPayment", stateSchema, personal: null }, {}, "o-1"),
+    ).toEqual({ attempts: 0 });
   });
 
   it("refuses a state its schema refuses, with every issue by path and message", () => {
@@ -49,8 +53,9 @@ describe("validState", () => {
 
     const error = refused(() =>
       validState(
-        { name: "order.orderPayment", stateSchema },
+        { name: "order.orderPayment", stateSchema, personal: null },
         { attempts: "two", items: [{ sku: 1 }] },
+        "o-1",
       ),
     );
 
@@ -66,7 +71,9 @@ describe("validState", () => {
       context.addIssue({ code: "custom", message: "refused", path: [Symbol("meta"), "items", 0] });
     });
 
-    const error = refused(() => validState({ name: "order.orderPayment", stateSchema }, {}));
+    const error = refused(() =>
+      validState({ name: "order.orderPayment", stateSchema, personal: null }, {}, "o-1"),
+    );
 
     expect(error.issues).toEqual([{ path: ["items", 0], message: "refused" }]);
   });

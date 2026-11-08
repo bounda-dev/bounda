@@ -10,6 +10,8 @@ import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
 import { createReactionCommands, type ReactionCommands } from "../command/reaction-commands.ts";
 import { openedUnder } from "../personal-data/event-store.ts";
+import { checkStatePerson } from "../personal-data/process-state.ts";
+import { refuseRestricted } from "../personal-data/refusal.ts";
 import { actedBy, causedBy } from "../shared/causation.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { isRecord, mergeFields } from "../shared/merge-fields.ts";
@@ -19,7 +21,7 @@ import { ATTRIBUTES, actorAttribute, traced } from "../telemetry.ts";
 import type { UnitStores } from "../unit-of-work/unit-of-work.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
 import { afterFrom, type Deadline } from "./deadlines.ts";
-import type { ProcessInstance } from "./lifecycle.ts";
+import { instancePersonOf, type ProcessInstance } from "./lifecycle.ts";
 import { handlerOf } from "./routes.ts";
 
 export interface RunEventHandlerArgs {
@@ -63,7 +65,9 @@ export interface RunDeadlineHandlerArgs {
  * awaited or not. Each resolves to the state with the fields the handler
  * returned merged over it, validated by the process schema; a deadline's also to what its commands
  * decided. A run whose handler or one of whose commands fails, or that runs out of time, is
- * abandoned: its commands are refused from then on.
+ * abandoned: its commands are refused from then on. A step on an instance whose state names a
+ * person whose processing is restricted is refused with `ProcessingRestrictedError` before its
+ * handler runs, as a command of theirs would be.
  */
 export interface ProcessHandlers {
   runEventHandler(args: RunEventHandlerArgs): Promise<object>;
@@ -168,6 +172,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     within,
   }: RunEventHandlerArgs): Promise<object> => {
     within.read(openedUnder(event));
+    within.read(instance.persons);
     const idempotencyKey = deriveIdempotencyKey({
       kind: "process",
       handler: process.name,
@@ -177,6 +182,10 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     const context = { ...causedBy(event), ...actedBy(actor) };
     const reaction = reactionFor(process, context, idempotencyKey, within);
     return runOf(reaction, async () => {
+      await refuseRestricted({
+        persons: within.persons,
+        person: instancePersonOf(process, instanceId, instance),
+      });
       const { returned } = await traced({
         name: `bounda.process ${process.name}`,
         attributes: {
@@ -209,11 +218,11 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
             clock,
           }),
       });
-      return validState(process, merged(instance.state, returned));
+      return validState(process, merged(instance.state, returned), instanceId);
     });
   };
 
-  const runDeadlineHandler = ({
+  const runDeadlineHandler = async ({
     process,
     instanceId,
     instance,
@@ -223,12 +232,16 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     retryId,
     within,
   }: RunDeadlineHandlerArgs): Promise<DeadlineRun> => {
+    within.read(instance.persons);
+    const refused = () =>
+      refuseRestricted({
+        persons: within.persons,
+        person: instancePersonOf(process, instanceId, instance),
+      });
     const handler = process.deadlineHandlers[due.field];
     if (handler === undefined) {
-      return runOf({ abandon: () => undefined }, async () => ({
-        state: validState(process, instance.state),
-        decided: [],
-      }));
+      await refused();
+      return { state: validState(process, instance.state, instanceId), decided: [] };
     }
     const idempotencyKey = deriveIdempotencyKey({
       kind: "process",
@@ -243,6 +256,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
       within,
     );
     return runOf(reaction, async () => {
+      await refused();
       const { returned, decided } = await traced({
         name: `bounda.process ${process.name} at ${due.field}`,
         attributes: {
@@ -269,7 +283,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
           }),
       });
       return {
-        state: validState(process, merged(instance.state, returned)),
+        state: validState(process, merged(instance.state, returned), instanceId),
         decided,
       };
     });
@@ -284,10 +298,16 @@ const merged = (state: object, returned: unknown): unknown =>
   returned === undefined ? state : isRecord(returned) ? mergeFields(state, returned) : returned;
 
 export interface ValidStateFunction {
-  (process: Pick<ProcessRuntime, "name" | "stateSchema">, state: unknown): object;
+  (
+    process: Pick<ProcessRuntime, "name" | "stateSchema" | "personal">,
+    state: unknown,
+    instanceId: string,
+  ): object;
 }
 
-export const validState: ValidStateFunction = (process, state) => {
+// A personal value with nobody named to seal it under fails the step here, as a handler's own
+// mistake, rather than at the commit.
+export const validState: ValidStateFunction = (process, state, instanceId) => {
   if (process.stateSchema === null) {
     if (isRecord(state)) return state;
     throw new ValidationError(`Process ${process.name} returned a state that is not an object`, [
@@ -295,7 +315,13 @@ export const validState: ValidStateFunction = (process, state) => {
     ]);
   }
   const parsed = process.stateSchema.safeParse(state);
-  if (parsed.success) return parsed.data as object;
+  if (parsed.success) {
+    const data = parsed.data as Readonly<Record<string, unknown>>;
+    if (process.personal !== null) {
+      checkStatePerson({ process: process.name, marks: process.personal, state: data, instanceId });
+    }
+    return data;
+  }
   throw new ValidationError(
     `Process ${process.name} returned a state its schema refuses`,
     parsed.error.issues.map((issue) => ({

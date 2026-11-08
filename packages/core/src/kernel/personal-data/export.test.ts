@@ -127,12 +127,14 @@ const setup = async () => {
   const storage: Storage = appStorage({
     storage: written,
     aggregates,
+    processes: { byName: {} },
     wrapping: createPersonalKeyWrapping({ wrapper: null, clock: createFixedClock() }),
   });
   const exportOf = (personId: string, batchSize = 2) =>
     exportPersonalData({
       storage,
       aggregates,
+      processes: { byName: {} },
       readModels,
       clock: createFixedClock(),
       batchSize,
@@ -314,6 +316,28 @@ describe("exportPersonalData", () => {
     expect((await exportOf("c-3")).events).toEqual([]);
   });
 
+  it("holds no data of a lifecycle event of a process the app no longer has", async () => {
+    const { exportOf, written } = await setup();
+    await written.eventStore.append({
+      aggregateType: "process:customer.gone",
+      aggregateId: "c-1",
+      expectedVersion: 0,
+      events: [
+        pendingEvent({
+          aggregateType: "process:customer.gone",
+          aggregateId: "c-1",
+          version: 1,
+          type: "ProcessHandled",
+          payload: { state: { email: null } },
+          person: "c-1",
+        }),
+      ],
+    });
+    expect((await exportOf("c-1")).events.map((event) => [event.type, event.data])).toEqual([
+      ["ProcessHandled", {}],
+    ]);
+  });
+
   it("includes the scheduled commands and dead letters that hold the person's fields, opened", async () => {
     const { exportOf, storage, sealedReminder, failure } = await setup();
     const ana = await sealedReminder("c-1", "ana@example.com");
@@ -481,6 +505,7 @@ describe("exportPersonalData", () => {
       const exported = await exportPersonalData({
         storage,
         aggregates,
+        processes: { byName: {} },
         readModels: { ...readModels, byName: { ...readModels.byName, orderNotes: writing } },
         clock: createFixedClock(),
         batchSize: 3,
@@ -521,6 +546,7 @@ describe("exportPersonalData", () => {
           eventStore: { ...storage.eventStore, readByPerson: () => Promise.reject(down) },
         },
         aggregates,
+        processes: { byName: {} },
         readModels: { ...readModels, byName: failing },
         clock: createFixedClock(),
         batchSize: 2,

@@ -4,11 +4,14 @@ import type { Clock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { scheduledCommandId } from "../command/pipeline.ts";
+import type { ProcessesRuntime } from "../process/build-processes.ts";
+import { processOfStream } from "../process/lifecycle.ts";
 import type { ReadModelPersonalData, ReadModelsRuntime } from "../read-model/build-read-models.ts";
 import { isRecord } from "../shared/merge-fields.ts";
 import { openCommandPayload, sealedKeys } from "./commands.ts";
 import { openTextWith } from "./errors.ts";
 import type { PersonalMarks } from "./marks.ts";
+import { lifecycleStateOf } from "./process-state.ts";
 import { checkPersonId } from "./transact.ts";
 
 /**
@@ -19,7 +22,7 @@ export type ExportedData = Readonly<Record<string, unknown>>;
 
 /**
  * An event that names the person, with the personal fields it holds of them and nothing else of
- * its payload.
+ * its payload: for a process's lifecycle event, those of the state it carries.
  */
 export interface ExportedEvent {
   readonly id: string;
@@ -102,6 +105,10 @@ export interface ExportPersonalDataArgs {
    */
   readonly storage: Storage;
   readonly aggregates: AggregatesRuntime;
+  /**
+   * Whose state schemas mark the fields their lifecycle events hold.
+   */
+  readonly processes: Pick<ProcessesRuntime, "byName">;
   readonly readModels: ReadModelsRuntime;
   readonly clock: Clock;
   readonly batchSize: number;
@@ -161,6 +168,7 @@ const exportedRows = async (
 export const exportPersonalData: ExportPersonalDataFunction = async ({
   storage,
   aggregates,
+  processes,
   readModels,
   clock,
   batchSize,
@@ -182,8 +190,18 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
     ),
   );
   rows.catch(() => undefined);
-  const eventMarks = (event: StoredEvent): PersonalMarks | null =>
-    aggregates.byName[event.aggregateType]?.eventsByType[event.type]?.personal ?? null;
+  // A process's lifecycle event holds the fields its state marks, in that state.
+  const eventData = (event: StoredEvent): ExportedData => {
+    const process = processOfStream(event.aggregateType);
+    if (process === null) {
+      const marks = aggregates.byName[event.aggregateType]?.eventsByType[event.type]?.personal;
+      return markedFields(marks ?? null, event.payload);
+    }
+    return markedFields(
+      processes.byName[process]?.personal ?? null,
+      lifecycleStateOf(event.payload),
+    );
+  };
   const commandMarks = (type: string): PersonalMarks | null =>
     aggregates.commandsByType[type]?.command.personal ?? null;
   // Each person's key read once for the whole export.
@@ -227,7 +245,7 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
         version: event.version,
         position: event.position,
         timestamp: event.timestamp,
-        data: markedFields(eventMarks(event), event.payload),
+        data: eventData(event),
       });
       afterPosition = event.position;
     }

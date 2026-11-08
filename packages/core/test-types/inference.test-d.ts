@@ -906,6 +906,14 @@ describe("processes", () => {
     expectTypeOf<AtNextReminder.DeadlineArgs["state"]["reminders"]>().toEqualTypeOf<number>();
   });
 
+  it("process state: personal() reads as possibly null, person() as declared", () => {
+    expectTypeOf<OnOrderPaid.HandlerArgs["state"]["contact"]>().toEqualTypeOf<string | null>();
+    expectTypeOf<AtNextReminder.DeadlineArgs["state"]["contact"]>().toEqualTypeOf<string | null>();
+    expectTypeOf<OnOrderPaid.HandlerArgs["state"]["customerId"]>().toEqualTypeOf<string | null>();
+    expectTypeOf<OrderPayment.StateArgs["personal"]>().toEqualTypeOf<PersonalFunction>();
+    expectTypeOf<OrderPayment.StateArgs["person"]>().toEqualTypeOf<PersonFunction>();
+  });
+
   it("give every process handler after(), from a duration to an instant", () => {
     expectTypeOf<OnOrderPaid.HandlerArgs["after"]>().parameter(0).toEqualTypeOf<DurationInput>();
     expectTypeOf<OnOrderPaid.HandlerArgs["after"]>().returns.toEqualTypeOf<Instant>();
