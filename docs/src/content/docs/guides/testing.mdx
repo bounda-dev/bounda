@@ -314,6 +314,23 @@ stopped reacting:
 expect((await app.getLag()).maxLag).toBe(0);
 ```
 
+## Nothing left of a forgotten person
+
+`expectForgotten` checks, after `forget`, that no value the person had is left readable in any
+table the app keeps, read as stored, in what it logged or in its spans, and rejects naming each
+place and what to do:
+
+```ts
+import { createTestApp, expectForgotten } from "@bounda-dev/core/testing";
+
+await app.forget("c-1");
+await app.runUntilIdle();
+await expectForgotten(app, "c-1");
+```
+
+[Personal data in tests](/guides/personal-data/#in-tests) says what it looks for and where, and
+how to point it at a Durable Object's storage.
+
 ## Snapshots are checked
 
 An aggregate configured with [`snapshot`](/concepts/long-streams/#snapshots) gets them in a test

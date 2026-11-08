@@ -16,6 +16,10 @@ import {
   trace,
 } from "@opentelemetry/api";
 
+/**
+ * A span as it stands: its attributes, status, the messages of the exceptions recorded on it, and
+ * whether it ended.
+ */
 export interface RecordedSpan {
   readonly name: string;
   readonly attributes: Attributes;

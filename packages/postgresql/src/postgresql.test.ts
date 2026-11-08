@@ -1,9 +1,11 @@
 import {
   ConfigurationError,
   createApp,
+  type EventPayloadArgs,
   type FieldsArgs,
   fieldBuilder as f,
   type PayloadArgs,
+  type PersonalDataForgottenEvent,
   type Registry,
   readYourWrites,
   silentLogger,
@@ -20,6 +22,7 @@ import {
   forgetLedgerContract,
   idempotencyStoreContract,
   inboxLedgerContract,
+  inspectionContract,
   pendingEvent,
   personalKeyStoreContract,
   personStoreContract,
@@ -32,7 +35,7 @@ import {
   tableContract,
   viewContract,
 } from "@bounda-dev/core/adapter/testing";
-import { createTestApp } from "@bounda-dev/core/testing";
+import { createTestApp, expectForgotten, NotForgottenError } from "@bounda-dev/core/testing";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import postgres, { type Sql } from "postgres";
 import { afterAll, describe, expect, it, vi } from "vitest";
@@ -121,6 +124,12 @@ describe.skipIf(container === null)("postgresql adapter", () => {
   storageTransactionContract({ create: () => openStorage() });
   personalKeyStoreContract({ create: async () => (await openStorage()).personalKeys });
   personStoreContract({ create: async () => (await openStorage()).persons });
+  inspectionContract({
+    create: async () => {
+      await closeOpened();
+      return fresh({ tablePrefix: "bounda_", schema: `inspected_${run}_${prefixes}` });
+    },
+  });
   forgetLedgerContract({
     create: async () => {
       await closeOpened();
@@ -1060,6 +1069,127 @@ const registry = {
     },
   },
 } as const satisfies Registry;
+
+interface CustomerRow {
+  readonly customerId: string;
+  readonly email?: string;
+}
+
+const customers = {
+  aggregates: {
+    customer: {
+      state: { initialState: { email: null as string | null } },
+      events: {
+        customerRegistered: {
+          payload: ({ z, personal }: EventPayloadArgs) => z.object({ email: personal(z.email()) }),
+          evolve: ({ event }: { event: { payload: { email: string | null } } }) => ({
+            email: event.payload.email,
+          }),
+        },
+        customerGreeted: {
+          payload: ({ z }: EventPayloadArgs) => z.object({ to: z.string().nullable() }),
+          evolve: ({ state }: { state: { email: string | null } }) => state,
+        },
+      },
+      commands: {
+        registerCustomer: {
+          module: {
+            payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string(), email: z.email() }),
+            handler: ({
+              command,
+              events,
+            }: {
+              command: { payload: { email: string } };
+              events: Record<string, (payload?: unknown) => unknown>;
+            }) => [events.customerRegistered?.({ email: command.payload.email })],
+          },
+        },
+        greetCustomer: {
+          module: {
+            payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string() }),
+            handler: ({
+              state,
+              events,
+            }: {
+              state: { email: string | null };
+              events: Record<string, (payload?: unknown) => unknown>;
+            }) => [events.customerGreeted?.({ to: state.email })],
+          },
+        },
+      },
+      policies: {},
+      processes: {},
+    },
+  },
+  readModels: {
+    customerDirectory: {
+      view: {
+        fields: ({ f: fields }: FieldsArgs) => ({
+          customerId: fields.string().primaryKey().person(),
+          email: fields.string().optional().personal(),
+        }),
+      },
+      projections: {
+        customer: {
+          customerRegistered: {
+            project: async ({
+              event,
+              table,
+            }: {
+              event: { aggregateId: string; payload: { email: string | null } };
+              table: Table<CustomerRow>;
+            }) => {
+              const { email } = event.payload;
+              await table.upsert({
+                customerId: event.aggregateId,
+                ...(email === null ? {} : { email }),
+              });
+            },
+          },
+        },
+        bounda: {
+          personalDataForgotten: {
+            project: async ({
+              event,
+              table,
+            }: {
+              event: PersonalDataForgottenEvent;
+              table: Table<CustomerRow>;
+            }) => {
+              await table.delete({ customerId: event.payload.personId });
+            },
+          },
+        },
+      },
+      queries: {},
+    },
+  },
+} as const satisfies Registry;
+
+describe.skipIf(container === null)("a person forgotten on PostgreSQL", () => {
+  it("leaves nothing of theirs readable in any table, and expectForgotten names an event that copied it unmarked", async () => {
+    const { app } = await createTestApp({
+      registry: customers,
+      adapter: postgresql({ url, schema: `forgotten_${run}`, maxConnections: 3 }),
+    });
+    await app.commands.registerCustomer({ customerId: "c-1", email: "ana@example.com" });
+    await app.commands.registerCustomer({ customerId: "c-2", email: "bo@example.com" });
+    await app.commands.greetCustomer({ customerId: "c-2" });
+    await app.runUntilIdle();
+    await app.forget("c-1");
+    await app.forget("c-2");
+    await app.runUntilIdle();
+    await expectForgotten(app, "c-1");
+    const error = await expectForgotten(app, "c-2").catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(NotForgottenError);
+    expect(error).toMatchObject({
+      found: [
+        { value: "bo@example.com", store: "bounda_events", row: "position=3", field: "payload.to" },
+      ],
+    });
+    await app.stop();
+  });
+});
 
 const refusingRegistry = (runs: string[]) =>
   ({

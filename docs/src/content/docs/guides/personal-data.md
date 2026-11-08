@@ -1,6 +1,6 @@
 ---
 title: Personal data
-description: Mark the fields of an event, a process state or a read model that hold personal data, say whose they are, seal what was written before a field was marked, forget a person or export their data with one call, record who opened whose data, forget them after a retention or when a purpose ends, wrap their keys under a master key kept out of the database, and handle forgetting in every read model that showed them.
+description: Mark the fields of an event, a process state or a read model that hold personal data, say whose they are, seal what was written before a field was marked, forget a person or export their data with one call, record who opened whose data, forget them after a retention or when a purpose ends, wrap their keys under a master key kept out of the database, handle forgetting in every read model that showed them, and check in a test that nothing of a forgotten person is left readable.
 sidebar:
   order: 11
 ---
@@ -989,26 +989,87 @@ backups unreadable as a whole, the forgotten persons with everyone else.
 
 ## In tests
 
-`createTestApp` forgets like any app:
+`createTestApp` forgets like any app, and `expectForgotten` checks that nothing of the person is
+left readable:
 
 ```ts
+import { createTestApp, expectForgotten } from "@bounda-dev/core/testing";
+
 const { app } = await createTestApp({ registry });
 await app.commands.registerCustomer({ customerId: "c-1", email: "ana@example.com", plan: "pro" });
 await app.forget("c-1");
 await app.runUntilIdle();
 expect(await app.queries.getCustomer({ customerId: "c-1" })).toEqual({ customerId: "c-1" });
-expect(JSON.stringify(await app.events.read())).not.toContain("ana@example.com");
+await expectForgotten(app, "c-1");
 ```
 
-The second assertion is the one that matters: the stream, read raw, holds nothing of the person.
-After `forget`, an export reads the same way: the person's events, with nothing of theirs in them.
+It looks for every value the person had: each value of a field marked `personal()` that the test
+app sealed under a key they no longer hold, in an event, a process's state, a command it stored or
+a dead letter, a cancelled command's included, and each value a read model kept in a field marked
+`.personal()` for them before they were forgotten. It searches every place the runtime keeps
+something, read as stored, never through the APIs that open fields: every table of the storage
+and of each read model's adapter, unmarked columns and JSON documents included, so a projection
+that copied the email into a column it did not mark is found; the forget ledger; and every entry
+the app logged through the test app's `logger`. A person given a key again after the forgetting
+keeps what they gave since: only what was sealed under the keys they lost is looked for.
+
+When it finds a value, it rejects with `NotForgottenError`, whose message lists each place and
+says what to do about each kind:
+
+```
+Person "c-1" was not forgotten everywhere: 1 place still holds a value of theirs in the clear.
+  - "ana@example.com" in bounda_rm_customer_directory, customer_id=c-1, greeting
+What to do:
+  - A read model kept the value: project PersonalDataForgotten in it and delete the row or clear the field, and mark the field .personal() so its export and the access log see it.
+```
+
+`error.found` holds the same as data: `{ value, store, row, field }` for each. It is a plain
+`async` function, so it works under any test runner.
+
+A value is matched whatever its case, inside any longer text: an error message, a log line, a
+JSON column. One shorter than `MIN_SUBSTRING_LENGTH` characters is matched only as a whole word,
+since `Ana` turns up inside `Banana`; key material and ciphertext are compared whole, never
+searched inside, since a short value turns up in random text by chance. Numbers count as their
+digits, booleans and `null` not at all, and a value equal to the person's id is never looked for,
+since ids stay by design. Give test data values that appear nowhere else, as `ana@example.com`
+does.
+
+The options say what else to look for and where:
 
 ```ts
-expect((await app.exportPersonalData("c-1")).events.map((event) => event.data)).toEqual([
-  { email: null },
-  {},
-]);
+const telemetry = recordTelemetry();
+try {
+  // ...
+  await expectForgotten(app, "c-1", {
+    values: ["Ana G.", "+34 600 123 456"],
+    telemetry,
+    places: { mailer: mailer.sent },
+  });
+} finally {
+  telemetry.stop();
+}
 ```
+
+- `values`: what a handler or a projection derived from the person's fields, a lowercased
+  email or a formatted phone number, which no seal holds.
+- `before`: the person's [export](#exporting-a-persons-data), taken before they were forgotten;
+  every value it opened is looked for.
+- `telemetry`: what `recordTelemetry()` recorded, so every span the runtime started, its
+  attributes, status, exceptions and events, is searched too. It registers a global
+  OpenTelemetry tracer provider until `stop()`.
+- `places`: anything else, under the name the report gives it: what a test double of a port was
+  sent, so a test proves the [policy that tells the outside world](#telling-the-outside-world)
+  erased it there too.
+
+It refuses to pass for want of something to look for: a person who still holds their key, or one
+with no value to look for and no `values`, rejects with an `Error` saying so.
+
+`expectForgotten` also takes an adapter instead of the app, and then searches that adapter's
+tables for `values` and `before` alone: for an app built with `createApp` or `boot()`, or a
+Durable Object's storage, read from inside the object with `durableObjectAdapter` from
+`@bounda-dev/cloudflare` (see [Testing on Cloudflare](/adapters/cloudflare/#testing)). It reads
+the whole database, so point it only at a test's. It works on every adapter: the in-memory one,
+SQLite, the Durable Object and PostgreSQL alike, each through its `inspect()`.
 
 `app.runUntilIdle()` never moves a test's clock to a retention deadline, or every person the test
 created would be forgotten; a test reaches it by moving the clock itself:

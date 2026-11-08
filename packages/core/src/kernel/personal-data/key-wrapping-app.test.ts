@@ -8,7 +8,7 @@ import type { LogFields, Logger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import type { EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
-import { createTestApp } from "../../testing/index.ts";
+import { createTestApp, expectForgotten } from "../../testing/index.ts";
 import { type BoundaApp, createApp } from "../app.ts";
 import { errorFields } from "../shared/error-fields.ts";
 import { fingerprintOf, fromBase64, toBase64 } from "./crypto.ts";
@@ -311,6 +311,7 @@ describe("personal keys wrapped under a master key", () => {
     await app.forget("c-1");
     expect(await emailOf(app, "c-1")).toEqual({ email: null });
     await register(app, "c-2");
+    await expectForgotten(app, "c-1");
     expect(clock.pending()).toBeGreaterThan(0);
     await app.stop();
     expect(clock.pending()).toBe(0);

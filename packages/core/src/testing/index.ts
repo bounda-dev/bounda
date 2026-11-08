@@ -1,4 +1,5 @@
-import type { Adapter } from "../adapter/adapter.ts";
+import { type Adapter, isAdapter } from "../adapter/adapter.ts";
+import type { ForgetLedger } from "../adapter/storage/forget-ledger.ts";
 import type { Config } from "../config/types.ts";
 import { createFixedClock, type FixedClock } from "../contracts/clock.ts";
 import type { ConfigurationError, SnapshotError } from "../contracts/errors.ts";
@@ -10,6 +11,8 @@ import { memory } from "../memory/index.ts";
 import type { OnPersonalDataAccess } from "../modules/audit.ts";
 import type { Registry } from "../modules/registry.ts";
 import type { AppPortsConfig, AppTestPorts, EnvSection } from "../register/index.ts";
+import { registerTestApp } from "./expect-forgotten.ts";
+import { testWitnessOf } from "./witness.ts";
 
 /**
  * `env` is what port implementations receive in `create`, never the test's
@@ -100,9 +103,18 @@ export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
 }: CreateTestAppArgs<R>): Promise<TestApp<R>> => {
   const clock = createFixedClock(now);
   const ids = createSequentialIdGenerator();
+  // What `expectForgotten` searches once a person is forgotten: every adapter's tables, and what
+  // the witness saw on the way in, which their tables no longer show.
+  const witness = testWitnessOf(adapter);
+  const readModels = Object.entries(config.readModels ?? {});
+  const adapters = [adapter, ...readModels.map(([, store]) => store)]
+    .filter(isAdapter)
+    .filter((store, index, all) => all.indexOf(store) === index);
   // A reaction's failure stays in its dead letter, so the first port read without a value is
   // kept here for `runUntilIdle` to throw: the test fails saying what to pass.
   let missing: ConfigurationError | SnapshotError | undefined;
+  const ledgers: ForgetLedger[] = [];
+  const ledger = config.runtime?.personalData?.forgetLedger;
   const app = await assembleApp<R>({
     registry,
     // Required by the `Config` of a project whose ports need a choice, and never read here:
@@ -112,11 +124,37 @@ export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
       runtime: {
         ...config.runtime,
         telemetry: { errorText: "include", ...config.runtime?.telemetry },
+        // The same observed adapter as the storage's when it is the storage's, which the app
+        // refuses.
+        ...(ledger === undefined || !isAdapter(ledger.store)
+          ? {}
+          : {
+              personalData: {
+                ...config.runtime?.personalData,
+                forgetLedger: { ...ledger, store: witness.storage(ledger.store) },
+              },
+            }),
       },
-      storage: adapter,
+      storage: witness.storage(adapter),
+      ...(config.readModels === undefined
+        ? {}
+        : {
+            readModels: Object.fromEntries(
+              readModels.map(([name, store]) => [
+                name,
+                isAdapter(store) ? witness.storage(store) : store,
+              ]),
+            ),
+          }),
       ports: {} as AppPortsConfig,
     },
-    logger,
+    logger: witness.logger(logger),
+    witness: {
+      onPersonalKey: witness.onPersonalKey,
+      onForgetLedger: (opened) => {
+        ledgers.push(opened);
+      },
+    },
     ids,
     clock,
     env,
@@ -133,21 +171,34 @@ export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
       },
     },
   });
-  return {
-    app: {
-      ...app,
-      runUntilIdle: async (options) => {
-        const result = await app.runUntilIdle(options);
-        if (missing !== undefined) throw missing;
-        return result;
-      },
+  const tested: BoundaApp<R> = {
+    ...app,
+    runUntilIdle: async (options) => {
+      const result = await app.runUntilIdle(options);
+      if (missing !== undefined) throw missing;
+      return result;
     },
-    clock,
-    ids,
   };
+  registerTestApp(tested, { witness, adapters, ledgers });
+  return { app: tested, clock, ids };
 };
 
 export { createFixedClock, type FixedClock } from "../contracts/clock.ts";
 export { createSequentialIdGenerator } from "../contracts/ids.ts";
 export { silentLogger } from "../contracts/logger.ts";
 export { memory } from "../memory/index.ts";
+export type {
+  ExpectForgottenFunction,
+  ExpectForgottenOptions,
+  ExpectForgottenTarget,
+  ForgottenValueFound,
+} from "./expect-forgotten.ts";
+export { expectForgotten, NotForgottenError } from "./expect-forgotten.ts";
+export { MIN_SUBSTRING_LENGTH } from "./search.ts";
+export type {
+  RecordedSpan,
+  RecordedSpanEvent,
+  RecordTelemetryFunction,
+  TelemetryRecording,
+} from "./telemetry.ts";
+export { recordTelemetry } from "./telemetry.ts";

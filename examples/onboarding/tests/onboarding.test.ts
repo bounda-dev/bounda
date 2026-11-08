@@ -1,5 +1,5 @@
 import { DomainError, ValidationError } from "@bounda-dev/core";
-import { createTestApp } from "@bounda-dev/core/testing";
+import { createTestApp, expectForgotten } from "@bounda-dev/core/testing";
 import { describe, expect, it } from "vitest";
 import { registry } from "../.bounda/registry.ts";
 import type { EmailSenderArgs } from "../app/domain/user/email-sender.ts";
@@ -154,6 +154,8 @@ describe("onboarding", () => {
     await app.rebuildReadModel("userDetails");
     expect((await app.queries.listUsers({})).users.map((user) => user.name)).toEqual(["Grace"]);
     expect(await app.queries.getUserDetails({ userId: ADA })).toBeNull();
+    // Nothing of hers is left readable in any table, log or ledger.
+    await expectForgotten(app, ADA);
     await app.stop();
   });
 

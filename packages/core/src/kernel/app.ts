@@ -47,6 +47,7 @@ import { liftProcessingRestriction, restrictProcessing } from "./personal-data/r
 import { createRetentionSubscriber, createRetentionSweep } from "./personal-data/retention.ts";
 import { createKeyRotation } from "./personal-data/rotation.ts";
 import { checkPersonId } from "./personal-data/transact.ts";
+import { type PersonalDataWitness, witnessedWrapping } from "./personal-data/witness.ts";
 import { buildPersonalKeyWrapping } from "./personal-data/wrapped-keys.ts";
 import { buildPolicies } from "./policy/build-policies.ts";
 import { createDelayedPolicies } from "./policy/delayed.ts";
@@ -394,6 +395,10 @@ export interface AssembleAppArgs<R extends Registry> {
    * `app/audit.ts`, and to the logger without it.
    */
   readonly onPersonalDataAccess?: OnPersonalDataAccess | undefined;
+  /**
+   * Given by `createTestApp`: told of the keys and the ledger the app holds.
+   */
+  readonly witness?: PersonalDataWitness | undefined;
 }
 
 export interface AssembleAppFunction {
@@ -411,6 +416,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
   test,
   pendingRetries = ignoredRetries,
   onPersonalDataAccess,
+  witness,
 }: AssembleAppArgs<R>): Promise<BoundaApp<R>> => {
   validateRegistry(registry);
   const config = resolveConfig(rawConfig);
@@ -423,11 +429,12 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     );
   }
   // Built first: a master key missing from the environment fails the start before anything opens.
-  const wrapping = await buildPersonalKeyWrapping({
+  const built = await buildPersonalKeyWrapping({
     definition: config.runtime.personalData.keyWrapper,
     env,
     clock,
   });
+  const wrapping = witness === undefined ? built : witnessedWrapping(built, witness);
   // Built before the storage opens and closed after it, so a `create` that fails leaves nothing
   // open; a failure further on closes them again.
   const ports = await createPorts({
@@ -452,6 +459,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       tenant,
       keepForMs: keepForMs ?? undefined,
     });
+    if (ledger !== null) witness?.onForgetLedger(ledger);
     if (ledger?.close !== undefined) {
       const close = ledger.close.bind(ledger);
       opened.unshift(close);

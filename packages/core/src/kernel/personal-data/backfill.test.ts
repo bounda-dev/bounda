@@ -10,6 +10,7 @@ import { type Logger, silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import type { CommandPayloadArgs, EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
+import { expectForgotten } from "../../testing/expect-forgotten.ts";
 import { createApp } from "../app.ts";
 import {
   BACKFILL_EXPIRY_MS,
@@ -304,6 +305,7 @@ describe.each(adapters)("the backfill of personal data on %s", (_name, adapterOf
     expect(
       (await after.app.exportPersonalData("c-1")).events.map((event) => event.data),
     ).toContainEqual({ email: null });
+    await expectForgotten(adapter, "c-1", { values: ["ada@example.com"] });
   });
 
   it("seals under a key nobody holds what a person forgotten before the marks had, and gives them no key", async () => {
