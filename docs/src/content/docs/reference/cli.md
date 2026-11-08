@@ -14,6 +14,39 @@ pnpm add -D @bounda-dev/cli typescript
 TypeScript 7 or newer is an optional peer: the generator needs it only to infer the state of
 aggregates without `state.ts`.
 
+## Output
+
+Every command prints its result on standard output and everything else on standard error: the
+app's log lines, through Bounda's logger or straight to the console, the
+[access log](/guides/personal-data/#who-opened-what) records, warnings, progress and errors.
+Standard output carries nothing but the result, so `bounda dead-letters list --json` and
+`bounda forgotten` pipe into another program as they are:
+
+```bash
+bounda dead-letters list --json | jq '.[].id'
+```
+
+The app's logger writes one line each, `[bounda] <level> <message> <fields as JSON>`, at `info` and
+above.
+
+## Who runs a command
+
+`--actor <id>` names who runs a command that acts or reads personal data: `rebuild`,
+`dead-letters list`, `retry` and `discard`, and `forget`. The command acts as that id, as
+[`client.as(actor)`](/concepts/ids-causation-and-correlation/#who-acts) does in code: the events it
+writes carry it in their metadata, its log lines name it, and so does every access log record it
+causes.
+
+```bash
+bounda dead-letters retry 019a0c4e-3c9e-7a1b-9f1e-2b3c4d5e6f70 --actor ops-ana
+bounda forget --from forgotten.jsonl --actor ops-ana
+```
+
+Give an id, such as the operator's account, never a name or an email: events keep it in the clear
+and are never deleted. Without `--actor` the command names nobody, as before. An id that is not 1
+to 255 characters is refused with exit code `1`. `bounda forgotten` takes none: it prints ids the
+stream holds in the clear and records nothing, and `bounda generate` loads no app.
+
 ## `bounda generate`
 
 Reads the project layout and writes `.bounda/registry.ts`, `.bounda/register.d.ts`,
@@ -70,7 +103,7 @@ or add state.ts
 `--watch` regenerates after each burst of changes, 100 ms after the last one, and ignores changes
 to `+types` and `.bounda` directories. It makes its first run only once it is listening, so a module saved while
 that run is going is regenerated right after it, and prints `watching app/ for changes` once that
-run has succeeded. To know it is listening, it writes a file named `.bounda-watch-<uuid>` into
+run has succeeded, on standard error. To know it is listening, it writes a file named `.bounda-watch-<uuid>` into
 the application directory until it sees the change come back, then removes it: the file system can
 start listening a moment after it is asked to, and miss what changes before. When it has not seen
 it after 20 tries, a second, it prints a warning that watching may miss changes, removes the file
@@ -128,6 +161,7 @@ bounda rebuild orderSummary --root ./apps/shop --config bounda.config.ts --regis
 | `--root <dir>` | current directory | The project root, where the configuration and `.bounda/` are |
 | `--config <file>` | `bounda.config.ts` | The configuration module under the root |
 | `--registry <file>` | `.bounda/registry.ts` | The generated registry module under the root |
+| `--actor <id>` | | Who runs it, named in its log lines; see [who runs a command](#who-runs-a-command) |
 
 The projections run into a fresh table that takes the live table's place once it has caught up;
 an interrupted rebuild resumes where it stopped, and a second one started meanwhile takes over.
@@ -164,6 +198,7 @@ bounda dead-letters discard <id>
 | `--limit <n>` | `list` | At most this many letters: a whole number, 0 or more |
 | `--json` | `list` | Print the letters as JSON |
 | `--root`, `--config`, `--registry` | all | As for `bounda rebuild` |
+| `--actor <id>` | all | Who lists, retries or discards: named in the access log record each one writes, in the events a retry writes and in the log line of a retry or discard |
 
 ```
 019a0c4e-3c9e-7a1b-9f1e-2b3c4d5e6f70  failed  policy  order.notifyOnOrderPlaced
@@ -220,6 +255,7 @@ forgot again 1 of 3 listed; the rest hold no key, or this store holds their forg
 | `--since <date\|position>` | `forgotten` | A date such as `2026-11-01` or `2026-11-01T03:00:00Z`, or a position: a whole number |
 | `--from <file>` | `forget` | What `bounda forgotten` printed, or one person's id a line |
 | `--root`, `--config`, `--registry` | both | As for `bounda rebuild` |
+| `--actor <id>` | `forget` | Who forgets them again, named in each `PersonalDataForgotten` and its log line |
 
 Exit codes: `0` done, `1` bad arguments, `2` the project could not be loaded, or the file could not
 be read or has a line that is neither a person's id nor an entry, in which case nobody is forgotten.
@@ -238,6 +274,9 @@ report.warnings; // layout and inference warnings, per aggregate or read model
 
 It throws `ConventionError` when the layout breaks a convention; `formatConventionError` and
 `formatWarnings` format the error and the warnings as the command prints them. `bounda rebuild` is `rebuildReadModel` from
-`@bounda-dev/core` over a project loaded with `loadProject` from `@bounda-dev/core/node`; an app
-exposes the same as `app.rebuildReadModel(name)`. `bounda dead-letters` is `app.deadLetters` on
-a booted app.
+`@bounda-dev/core` over a project loaded with `loadProject` from `@bounda-dev/core/node`, with
+`actor` for `--actor`; an app exposes the same as `app.rebuildReadModel(name)`, and
+`app.as(actor).rebuildReadModel(name)`. `bounda dead-letters` is `app.deadLetters` on a booted app,
+or `app.as(actor).deadLetters`, and `bounda forget` is `app.forgetAgain(entries, { actor })`. The
+commands boot the app with `createConsoleLogger({ stream: process.stderr })` from
+`@bounda-dev/core/node`, which writes every level to the stream it is given.

@@ -6,6 +6,7 @@ import type { Config } from "../../config/types.ts";
 import { systemClock } from "../../contracts/clock.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import { type Logger, silentLogger } from "../../contracts/logger.ts";
+import { checkActor } from "../../contracts/metadata.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { validateRegistry } from "../../modules/validate.ts";
 import { fieldBuilder } from "../../modules/view.ts";
@@ -18,6 +19,7 @@ import {
   type PersonalKeyWrapping,
 } from "../personal-data/wrapped-keys.ts";
 import { projectBatch, projectionSubscriberName } from "../projection/runner.ts";
+import { actedBy } from "../shared/causation.ts";
 import { guardedLogger } from "../shared/guarded-logger.ts";
 import { adapterForReadModel, compileProjections } from "./build-read-models.ts";
 import { fingerprintReadModel } from "./fingerprint.ts";
@@ -41,6 +43,11 @@ export interface RebuildReadModelArgs {
    * there. Without it the rebuild runs to the end in one call.
    */
   readonly maxEvents?: number;
+  /**
+   * Who runs the rebuild, named in its log lines: an id, as `as` takes. Throws `ValidationError`
+   * for one that is not a string of 1 to `MAX_ACTOR_LENGTH` characters.
+   */
+  readonly actor?: string;
 }
 
 export interface RebuildReadModelResult {
@@ -123,7 +130,9 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
   logger: rawLogger = silentLogger,
   wrapping,
   maxEvents,
+  actor,
 }) => {
+  if (actor !== undefined) checkActor(actor);
   validateRegistry(registry);
   const logger = guardedLogger(rawLogger);
   if (maxEvents !== undefined && !(maxEvents >= 1)) {
@@ -168,7 +177,12 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
       for (;;) {
         if (events >= budget) {
           await rebuild.pause();
-          logger.info("read model rebuild paused", { readModel: name, events, position });
+          logger.info("read model rebuild paused", {
+            readModel: name,
+            events,
+            position,
+            ...actedBy(actor),
+          });
           return { events, position, done: false };
         }
         const batch = await eventStore.readAll({ afterPosition: position, limit: batchSize });
@@ -194,7 +208,7 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
       await rebuild.abort().catch(() => undefined);
       throw error instanceof PartialBatchError ? error.cause : error;
     }
-    logger.info("read model rebuilt", { readModel: name, events, position });
+    logger.info("read model rebuilt", { readModel: name, events, position, ...actedBy(actor) });
     return { events, position, done: true };
   } finally {
     await storage.close();

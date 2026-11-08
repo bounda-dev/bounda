@@ -2,12 +2,15 @@ import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
+  checkActor,
   type DeadLetterKind,
   type DeadLetterStatus,
   type ListDeadLettersArgs,
+  type Logger,
+  MAX_ACTOR_LENGTH,
   rebuildReadModel,
 } from "@bounda-dev/core";
-import { boot, loadProject } from "@bounda-dev/core/node";
+import { boot, createConsoleLogger, loadProject } from "@bounda-dev/core/node";
 import { Command, CommanderError, InvalidArgumentError, Option } from "commander";
 import { formatLetter, formatRetried } from "./dead-letter-output.ts";
 import { parseForgetList, parseSince, readForgotten, type Since } from "./forgotten.ts";
@@ -24,6 +27,8 @@ export interface RunCliArgs {
   // The arguments after the program name: `["generate", "--watch"]`.
   readonly argv: readonly string[];
   readonly cwd: string;
+  // What a command prints as its result. Everything else, the app's log lines included, goes to
+  // `stderr`, so a result piped into another program is never mixed with them.
   readonly stdout: Output;
   readonly stderr: Output;
   readonly signal?: AbortSignal;
@@ -83,23 +88,31 @@ const runGenerate = async (
   }
 };
 
-type RebuildOptions = ProjectOptions;
+const logTo = (stderr: Output): Logger => createConsoleLogger({ stream: stderr });
 
 const runRebuild = async (
   readModel: string,
-  options: RebuildOptions,
+  options: ActingOptions,
   cwd: string,
   stdout: Output,
   stderr: Output,
 ): Promise<number> => {
   const root = resolve(cwd, options.root ?? ".");
+  const logger = logTo(stderr);
   try {
     const project = await loadProject({
       root,
       configPath: options.config,
       registryPath: options.registry,
+      logger,
     });
-    const result = await rebuildReadModel({ ...project, env: process.env, name: readModel });
+    const result = await rebuildReadModel({
+      ...project,
+      env: process.env,
+      name: readModel,
+      logger,
+      ...(options.actor === undefined ? {} : { actor: options.actor }),
+    });
     line(
       stdout,
       `rebuilt read model "${readModel}": ${result.events} events, checkpoint at position ${result.position}`,
@@ -117,7 +130,11 @@ interface ProjectOptions {
   readonly registry: string;
 }
 
-interface ListDeadLettersOptions extends ProjectOptions {
+interface ActingOptions extends ProjectOptions {
+  readonly actor?: string;
+}
+
+interface ListDeadLettersOptions extends ActingOptions {
   readonly kind?: string;
   readonly status?: string;
   readonly handler?: string;
@@ -125,20 +142,23 @@ interface ListDeadLettersOptions extends ProjectOptions {
   readonly json: boolean;
 }
 
+type App = Awaited<ReturnType<typeof boot>>;
+
 const withApp = async <T>(
   options: ProjectOptions,
   cwd: string,
   stderr: Output,
-  work: (app: Awaited<ReturnType<typeof boot>>) => Promise<T>,
+  work: (app: App) => Promise<T>,
 ): Promise<T | typeof EXIT_FAILURE> => {
   const root = resolve(cwd, options.root ?? ".");
-  let app: Awaited<ReturnType<typeof boot>> | undefined;
+  let app: App | undefined;
   try {
     app = await boot({
       root,
       configPath: options.config,
       registryPath: options.registry,
       signals: false,
+      logger: logTo(stderr),
     });
     return await work(app);
   } catch (error) {
@@ -147,6 +167,20 @@ const withApp = async <T>(
   } finally {
     await app?.stop();
   }
+};
+
+const actingAs = (app: App, { actor }: ActingOptions) =>
+  actor === undefined ? app : app.as(actor);
+
+const parseActor = (value: string): string => {
+  try {
+    checkActor(value);
+  } catch {
+    throw new InvalidArgumentError(
+      `expected the id of who acts, of 1 to ${MAX_ACTOR_LENGTH} characters`,
+    );
+  }
+  return value;
 };
 
 const parseLimit = (value: string): number => {
@@ -171,7 +205,7 @@ const runListDeadLetters = (
   stderr: Output,
 ): Promise<number> =>
   withApp(options, cwd, stderr, async (app) => {
-    const letters = await app.deadLetters.list(listFilters(options));
+    const letters = await actingAs(app, options).deadLetters.list(listFilters(options));
     if (options.json) {
       line(stdout, JSON.stringify(letters, null, 2));
     } else if (letters.length === 0) {
@@ -185,25 +219,25 @@ const runListDeadLetters = (
 
 const runRetryDeadLetter = (
   id: string,
-  options: ProjectOptions,
+  options: ActingOptions,
   cwd: string,
   stdout: Output,
   stderr: Output,
 ): Promise<number> =>
   withApp(options, cwd, stderr, async (app) => {
-    line(stdout, formatRetried(await app.deadLetters.retry(id)));
+    line(stdout, formatRetried(await actingAs(app, options).deadLetters.retry(id)));
     return EXIT_OK;
   });
 
 const runDiscardDeadLetter = (
   id: string,
-  options: ProjectOptions,
+  options: ActingOptions,
   cwd: string,
   stdout: Output,
   stderr: Output,
 ): Promise<number> =>
   withApp(options, cwd, stderr, async (app) => {
-    const letter = await app.deadLetters.discard(id);
+    const letter = await actingAs(app, options).deadLetters.discard(id);
     line(
       stdout,
       `discarded dead letter ${id}: ${letter.kind} ${letter.handler} for ${letter.eventType}`,
@@ -228,7 +262,7 @@ const runForgotten = (
     return EXIT_OK;
   });
 
-interface ForgetOptions extends ProjectOptions {
+interface ForgetOptions extends ActingOptions {
   readonly from: string;
 }
 
@@ -249,7 +283,10 @@ const runForget = async (
     return EXIT_FAILURE;
   }
   return withApp(options, cwd, stderr, async (app) => {
-    const forgotten = await app.forgetAgain(entries);
+    const forgotten = await app.forgetAgain(
+      entries,
+      options.actor === undefined ? {} : { actor: options.actor },
+    );
     for (const personId of forgotten) line(stdout, `forgot again ${personId}`);
     line(
       stdout,
@@ -276,6 +313,13 @@ const projectOptions = <T extends Command>(command: T): T =>
     .option("--root <dir>", "project root (default: current directory)")
     .option("--config <file>", "configuration module under the root", "bounda.config.ts")
     .option("--registry <file>", "generated registry module under the root", ".bounda/registry.ts");
+
+const actingOptions = <T extends Command>(command: T): T =>
+  projectOptions(command).option(
+    "--actor <id>",
+    "the id of who runs the command, named in the events it writes, its log lines and the access log",
+    parseActor,
+  );
 
 export const runCli: RunCliFunction = async ({ argv, cwd, stdout, stderr, signal }) => {
   let exitCode = EXIT_OK;
@@ -324,7 +368,7 @@ export const runCli: RunCliFunction = async ({ argv, cwd, stdout, stderr, signal
               stderr,
               `warning: the file system has not reported a change under ${options.appDir}/; watching may miss changes`,
             ),
-          onWatching: () => line(stdout, `watching ${options.appDir}/ for changes`),
+          onWatching: () => line(stderr, `watching ${options.appDir}/ for changes`),
         });
       } finally {
         process.off("SIGINT", stop);
@@ -332,19 +376,19 @@ export const runCli: RunCliFunction = async ({ argv, cwd, stdout, stderr, signal
       }
     });
 
-  projectOptions(
+  actingOptions(
     program
       .command("rebuild")
       .description("rebuild a read model from the whole stream into a fresh table and swap it in")
       .argument("<read-model>", "the read model's key in the registry, e.g. orderSummary"),
-  ).action(async (readModel: string, options: RebuildOptions) => {
+  ).action(async (readModel: string, options: ActingOptions) => {
     exitCode = await runRebuild(readModel, options, cwd, stdout, stderr);
   });
 
   const deadLetters = program
     .command("dead-letters")
     .description("list, retry or discard the handler runs that gave up");
-  projectOptions(
+  actingOptions(
     deadLetters
       .command("list")
       .description("list dead letters, failed ones by default")
@@ -362,20 +406,20 @@ export const runCli: RunCliFunction = async ({ argv, cwd, stdout, stderr, signal
   ).action(async (options: ListDeadLettersOptions) => {
     exitCode = await runListDeadLetters(options, cwd, stdout, stderr);
   });
-  projectOptions(
+  actingOptions(
     deadLetters
       .command("retry")
       .description("run the failed handler again and mark the letter retried if it succeeds")
       .argument("<id>", "the dead letter's id"),
-  ).action(async (id: string, options: ProjectOptions) => {
+  ).action(async (id: string, options: ActingOptions) => {
     exitCode = await runRetryDeadLetter(id, options, cwd, stdout, stderr);
   });
-  projectOptions(
+  actingOptions(
     deadLetters
       .command("discard")
       .description("mark the letter discarded without running anything")
       .argument("<id>", "the dead letter's id"),
-  ).action(async (id: string, options: ProjectOptions) => {
+  ).action(async (id: string, options: ActingOptions) => {
     exitCode = await runDiscardDeadLetter(id, options, cwd, stdout, stderr);
   });
 
@@ -394,7 +438,7 @@ export const runCli: RunCliFunction = async ({ argv, cwd, stdout, stderr, signal
     exitCode = await runForgotten(options, cwd, stdout, stderr);
   });
 
-  projectOptions(
+  actingOptions(
     program
       .command("forget")
       .description(

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Adapter, CreateReadModelRebuildArgs } from "../../adapter/adapter.ts";
 import type { Table } from "../../adapter/storage/table.ts";
-import { RebuildSupersededError } from "../../contracts/errors.ts";
+import { RebuildSupersededError, ValidationError } from "../../contracts/errors.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { createMemoryCheckpointStore } from "../../memory/checkpoint-store.ts";
 import { memory } from "../../memory/index.ts";
@@ -128,6 +128,37 @@ describe("rebuildReadModel", () => {
       message: "read model rebuilt",
       fields: { readModel: "orderSummary", events: 3, position: 3 },
     });
+    await app.stop();
+  });
+
+  it("names who runs it in its log lines, through as or its own argument, and refuses an actor as would", async () => {
+    mode = "ok";
+    const { app, config, entries } = await setUp();
+    await app.commands.placeOrder({ orderId: "o-1", total: 10 });
+    await app.commands.placeOrder({ orderId: "o-2", total: 20 });
+    await app.as("operator-1").rebuildReadModel("orderSummary");
+    expect(entries).toContainEqual({
+      level: "info",
+      message: "read model rebuilt",
+      fields: { readModel: "orderSummary", events: 2, position: 2, actor: "operator-1" },
+    });
+    const { logger, entries: own } = createRecordingLogger();
+    await rebuildReadModel({
+      registry,
+      config,
+      name: "orderSummary",
+      logger,
+      maxEvents: 1,
+      actor: "operator-2",
+    });
+    expect(own).toContainEqual({
+      level: "info",
+      message: "read model rebuild paused",
+      fields: { readModel: "orderSummary", events: 1, position: 1, actor: "operator-2" },
+    });
+    await expect(
+      rebuildReadModel({ registry, config, name: "orderSummary", actor: "" }),
+    ).rejects.toBeInstanceOf(ValidationError);
     await app.stop();
   });
 

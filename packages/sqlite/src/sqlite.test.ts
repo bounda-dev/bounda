@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Worker } from "node:worker_threads";
 import {
   ConfigurationError,
   type FieldsArgs,
@@ -29,7 +30,7 @@ import {
   viewContract,
 } from "@bounda-dev/core/adapter/testing";
 import { createTestApp } from "@bounda-dev/core/testing";
-import type { Client } from "@libsql/client";
+import { type Client, createClient } from "@libsql/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sqlite } from "./index.ts";
 import { resolveSqliteOptions } from "./options.ts";
@@ -206,6 +207,73 @@ describe("sqlite adapter on a file", () => {
     const [mode] = (await (readModel.client.raw as Client).execute("PRAGMA journal_mode")).rows;
     expect(mode?.[0]).toBe("wal");
     await readModel.close();
+  });
+
+  it("opens a file not in WAL yet, such as one just restored, from several connections at once", async () => {
+    const connections = 6;
+    // Each worker loads the adapter, waits at the gate with the others, then opens its storage:
+    // the first statements of every connection meet on the file at the same moment.
+    const worker = `
+      const { workerData, parentPort } = require("node:worker_threads");
+      import(workerData.module).then(async ({ sqlite }) => {
+        parentPort.postMessage("loaded");
+        Atomics.wait(new Int32Array(workerData.gate), 0, 0);
+        try {
+          await (await sqlite({ path: workerData.path }).createStorage()).close();
+          parentPort.postMessage("opened");
+        } catch (error) {
+          parentPort.postMessage(String(error));
+        }
+      });`;
+    for (let round = 0; round < 3; round += 1) {
+      const sourcePath = freshPath();
+      const source = await openFile(sourcePath);
+      await source.eventStore.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events: [pendingEvent({ aggregateId: "1", version: 1 })],
+      });
+      const path = freshPath();
+      const backup = createClient({ url: `file:${sourcePath}` });
+      await backup.execute({ sql: "VACUUM INTO ?", args: [path] });
+      backup.close();
+      const restored = createClient({ url: `file:${path}` });
+      expect((await restored.execute("PRAGMA journal_mode")).rows[0]?.[0]).toBe("delete");
+      restored.close();
+
+      const gate = new SharedArrayBuffer(4);
+      const workers = Array.from(
+        { length: connections },
+        () =>
+          new Worker(worker, {
+            eval: true,
+            workerData: { module: new URL("./index.ts", import.meta.url).href, path, gate },
+          }),
+      );
+      const loaded = workers.map(
+        (each) =>
+          new Promise<void>((resolve) => {
+            each.once("message", () => resolve());
+            each.once("error", () => resolve());
+          }),
+      );
+      const outcomes = workers.map(
+        (each) =>
+          new Promise<string>((resolve) => {
+            each.on("message", (message: string) => {
+              if (message !== "loaded") resolve(message);
+            });
+            each.on("error", (error) => resolve(String(error)));
+          }),
+      );
+      await Promise.all(loaded);
+      Atomics.store(new Int32Array(gate), 0, 1);
+      Atomics.notify(new Int32Array(gate), 0);
+      expect(await Promise.all(outcomes)).toEqual(Array(connections).fill("opened"));
+      await Promise.all(workers.map((each) => each.terminate()));
+      expect(await (await openFile(path)).eventStore.lastPosition()).toBe(1);
+    }
   });
 
   it("creates the directory of a file that does not exist yet", async () => {

@@ -39,6 +39,24 @@ context, the `boundaMiddleware` that `root.tsx` mounts, and `dispose`. Loaders a
 the app with `context.get(bounda)`. The served module imports the generated registry by value, so
 editing a domain module re-evaluates it and the next request boots an app from the new code.
 `register.d.ts`, also generated, types `bounda` for this project.
+
+## Who acts
+
+The header has a development sign-in: type an id such as `support-1` and press "Act as", and every
+request after it acts as that id until you press "Stop". `app/dev-session.server.ts` keeps the id
+in a cookie and checks nothing, so it is no authentication: it stands in for one. `app/actor.ts`
+is what the plugin reads:
+
+```ts
+export const actor: ActorFunction = ({ request }) => devActorOf(request);
+```
+
+The client in `context.get(bounda)` acts as the id it returns, so `registerUser`, `activateUser`
+and "Delete my data" record it in their events' metadata, as do the welcome email and the reminder
+that follow from a registration. The `userDetails` read model keeps who registered and who
+activated each user, and the user's page shows it. An app with users reads its real session in
+`app/actor.ts` instead, and drops `dev-session.server.ts` and the `/session` route.
+
 ## Reading what you just wrote
 
 Projections run in the background, so a redirect straight after a command could reach the page

@@ -157,6 +157,32 @@ describe("onboarding", () => {
     await app.stop();
   });
 
+  it("keeps who registered and who activated a user, and what their requests caused", async () => {
+    const { app, clock } = await start();
+    await app.as("support-1").commands.registerUser({
+      userId: ADA,
+      email: "ada@example.com",
+      name: "Ada",
+    });
+    await app.commands.registerUser({ userId: GRACE, email: "grace@example.com", name: "Grace" });
+    await app.as("support-2").commands.activateUser({ userId: ADA });
+    clock.advance(MINUTE);
+    await app.runUntilIdle();
+
+    expect(await app.queries.getUserDetails({ userId: ADA })).toMatchObject({
+      registeredBy: "support-1",
+      activatedBy: "support-2",
+    });
+    const grace = await app.queries.getUserDetails({ userId: GRACE });
+    expect(grace?.registeredBy).toBeUndefined();
+    expect(grace?.activatedBy).toBeUndefined();
+    const welcome = (await app.events.read({ limit: 100 })).find(
+      (event) => event.type === "WelcomeEmailSent" && event.aggregateId === ADA,
+    );
+    expect(welcome?.metadata.actor).toBe("support-1");
+    await app.stop();
+  });
+
   it("rejects duplicate registrations and invalid payloads", async () => {
     const { app } = await start();
     await app.commands.registerUser({ userId: ADA, email: "ada@example.com", name: "Ada" });

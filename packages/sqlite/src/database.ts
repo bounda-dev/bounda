@@ -1,5 +1,5 @@
 import type { SqlExecutor } from "@bounda-dev/core/adapter/sql";
-import type { SqliteConnection } from "@bounda-dev/core/adapter/sqlite";
+import { type SqliteConnection, switchToWal } from "@bounda-dev/core/adapter/sqlite";
 import type { Client, InValue, ResultSet, Transaction } from "@libsql/client";
 
 export interface CreateSqliteDatabaseOptions {
@@ -11,7 +11,8 @@ export interface CreateSqliteDatabaseOptions {
    */
   readonly local: boolean;
   /**
-   * Switches a file to WAL on first use, so other processes keep reading while one writes.
+   * Switches a file to WAL on first use, so other processes keep reading while one writes. The
+   * client must already have its busy timeout.
    */
   readonly wal: boolean;
 }
@@ -44,6 +45,9 @@ const createSerialQueue = (): (<T>(task: () => Promise<T>) => Promise<T>) => {
   };
 };
 
+const isBusy = (error: unknown): boolean =>
+  error instanceof Error && "code" in error && error.code === "SQLITE_BUSY";
+
 const QUEUED_METHODS: ReadonlySet<PropertyKey> = new Set(["execute", "batch", "executeMultiple"]);
 
 export const createSqliteDatabase: CreateSqliteDatabaseFunction = (client, { local, wal }) => {
@@ -51,7 +55,7 @@ export const createSqliteDatabase: CreateSqliteDatabaseFunction = (client, { loc
   let ready: Promise<void> | undefined;
   const prepared = <T>(task: () => Promise<T>): Promise<T> => {
     if (ready === undefined && wal) {
-      const switching = client.execute("PRAGMA journal_mode = WAL").then(() => undefined);
+      const switching = switchToWal({ execute: (sql) => client.execute(sql), isBusy });
       ready = switching;
       // A first use that could not switch, say behind another process's long write, leaves the
       // next one to try again rather than failing every statement after it.

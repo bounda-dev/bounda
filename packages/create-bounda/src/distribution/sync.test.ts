@@ -1,8 +1,8 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { generate, loadLayer, repositoryFixes } from "./sync.ts";
+import { generate, loadLayer, repositoryFixes, TARGETS } from "./sync.ts";
 
 const temporary: string[] = [];
 
@@ -50,6 +50,26 @@ const templatesRepository = async (): Promise<string> => {
   );
   return root;
 };
+
+describe("the layer of every copy", () => {
+  it("declares, with a description, each secret the Deploy button asks for", async () => {
+    const example = await readFile(
+      resolve(import.meta.dirname, "../../template/durable-object/_dev.vars.example"),
+      "utf8",
+    );
+    const secrets = [...example.matchAll(/^([A-Z][A-Z0-9_]*)=/gm)].map(([, name]) => name ?? "");
+    expect(secrets).toEqual(["BOUNDA_MASTER_KEY"]);
+    for (const target of TARGETS) {
+      const { cloudflare } = (await loadLayer(target)).package as {
+        readonly cloudflare: { readonly bindings: Readonly<Record<string, unknown>> };
+      };
+      expect(Object.keys(cloudflare.bindings)).toEqual(secrets);
+      for (const name of secrets) {
+        expect(cloudflare.bindings[name]).toEqual({ description: expect.stringMatching(/\S/) });
+      }
+    }
+  });
+});
 
 describe("generate", () => {
   it("builds the template repository from the scaffolder's output and its extras", async () => {

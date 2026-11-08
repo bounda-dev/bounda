@@ -49,12 +49,13 @@ it("warns when the file system reports no change, and still generates and watche
     stderr,
     signal: controller.signal,
   });
-  await vi.waitFor(() => expect(stdout.text()).toContain("watching app/ for changes"), {
+  await vi.waitFor(() => expect(stderr.text()).toContain("watching app/ for changes"), {
     timeout: 5_000,
   });
   expect(stderr.text()).toBe(
-    "warning: the file system has not reported a change under app/; watching may miss changes\n",
+    "warning: the file system has not reported a change under app/; watching may miss changes\nwatching app/ for changes\n",
   );
+  expect(stdout.text()).toContain("3 files (3 written");
   await stat(join(root, ".bounda/registry.ts"));
   controller.abort();
   expect(await running).toBe(EXIT_OK);

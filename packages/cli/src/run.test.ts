@@ -59,6 +59,22 @@ const cli = async (argv: readonly string[], cwd: string, signal?: AbortSignal) =
   return { code, stdout: stdout.text(), stderr: stderr.text() };
 };
 
+// What a command wrote to standard error besides the app's log lines.
+const besidesLogs = (stderr: string): string =>
+  stderr
+    .split("\n")
+    .filter((row) => !row.startsWith("[bounda] "))
+    .join("\n");
+
+// The fields of each log line with this message, parsed.
+const logged = (stderr: string, level: string, message: string): unknown[] => {
+  const prefix = `[bounda] ${level} ${message} `;
+  return stderr
+    .split("\n")
+    .filter((row) => row.startsWith(prefix))
+    .map((row) => JSON.parse(row.slice(prefix.length)));
+};
+
 afterAll(async () => {
   await Promise.all(temporary.map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -212,14 +228,14 @@ describe("bounda generate", () => {
     expect((await cli(["generate", "--no-infer"], root)).code).toBe(EXIT_OK);
     expect([process.listenerCount("SIGINT"), process.listenerCount("SIGTERM")]).toEqual(before);
 
-    const stdout = capture();
+    const stderr = capture();
     const running = runCli({
       argv: ["generate", "--no-infer", "--watch"],
       cwd: root,
-      stdout,
-      stderr: capture(),
+      stdout: capture(),
+      stderr,
     });
-    await vi.waitFor(() => expect(stdout.text()).toContain("watching app/ for changes"), {
+    await vi.waitFor(() => expect(stderr.text()).toContain("watching app/ for changes"), {
       timeout: 5_000,
     });
     expect(process.listenerCount("SIGINT")).toBe((before[0] ?? 0) + 1);
@@ -240,7 +256,7 @@ describe("bounda generate", () => {
       stderr,
       signal: controller.signal,
     });
-    await vi.waitFor(() => expect(stdout.text()).toContain("watching app/ for changes"), {
+    await vi.waitFor(() => expect(stderr.text()).toContain("watching app/ for changes"), {
       timeout: 5_000,
     });
     const registry = join(root, ".bounda/registry.ts");
@@ -302,11 +318,27 @@ describe("bounda rebuild", () => {
 
   it("loads the project, rebuilds the read model and reports what it did", async () => {
     const result = await cli(["rebuild", "counterTotals"], fixture);
-    expect(result.stderr).toBe("");
+    expect(besidesLogs(result.stderr)).toBe("");
+    expect(result.stderr).toContain(
+      '[bounda] info read model rebuilt {"readModel":"counterTotals","events":0,"position":0}',
+    );
     expect(result.code).toBe(EXIT_OK);
     expect(result.stdout).toBe(
       'rebuilt read model "counterTotals": 0 events, checkpoint at position 0\n',
     );
+  });
+
+  it("names who runs it with --actor, and refuses an actor as would", async () => {
+    const result = await cli(["rebuild", "counterTotals", "--actor", "operator-1"], fixture);
+    expect(result.code).toBe(EXIT_OK);
+    expect(logged(result.stderr, "info", "read model rebuilt")).toEqual([
+      { readModel: "counterTotals", events: 0, position: 0, actor: "operator-1" },
+    ]);
+    for (const actor of ["", "x".repeat(256)]) {
+      const refused = await cli(["rebuild", "counterTotals", "--actor", actor], fixture);
+      expect(refused.code).toBe(EXIT_CONVENTION);
+      expect(refused.stderr).toContain("expected the id of who acts, of 1 to 255 characters");
+    }
   });
 
   it("honours --root, --config and --registry", async () => {
@@ -340,6 +372,9 @@ describe("bounda rebuild", () => {
     }
     expect(help.stdout).toMatch(/\(default:\s+"bounda\.config\.ts"\)/);
     expect(help.stdout).toMatch(/\(default:\s+"\.bounda\/registry\.ts"\)/);
+    expect(help.stdout.replace(/\s+/g, " ")).toContain(
+      "--actor <id> the id of who runs the command, named in the events it writes, its log lines and the access log",
+    );
   });
 
   it("exits 2 with the reason when the read model or the project is not there", async () => {
@@ -377,7 +412,7 @@ describe("bounda dead-letters", () => {
   it("lists the failed letters of the project, or says there are none", async () => {
     const id = await deadLetter();
     const listed = await cli(["dead-letters", "list"], fixture);
-    expect(listed.stderr).toBe("");
+    expect(besidesLogs(listed.stderr)).toBe("");
     expect(listed.code).toBe(EXIT_OK);
     expect(listed.stdout).toContain(`${id}  failed  policy  counter.alertOnIncremented`);
     expect(listed.stdout).toContain("Incremented on counter:c-");
@@ -396,6 +431,47 @@ describe("bounda dead-letters", () => {
     const none = await cli(["dead-letters", "list", "--status", "retried"], fixture);
     expect(none.code).toBe(EXIT_OK);
     expect(none.stdout).toBe("no dead letters\n");
+  });
+
+  it("prints the letters alone on standard output, so --json parses while the app logs on standard error", async () => {
+    const id = await deadLetter();
+    const json = await cli(["dead-letters", "list", "--json"], fixture);
+    expect(json.code).toBe(EXIT_OK);
+    expect(JSON.parse(json.stdout)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id, kind: "policy" })]),
+    );
+    expect(json.stderr).toContain("[bounda] info bounda app created");
+    expect(logged(json.stderr, "info", "personal data accessed")).toEqual([
+      expect.objectContaining({ operation: "deadLetters.list", actor: null }),
+    ]);
+
+    const acting = await cli(["dead-letters", "list", "--json", "--actor", "operator-1"], fixture);
+    expect(JSON.parse(acting.stdout)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id })]),
+    );
+    expect(logged(acting.stderr, "info", "personal data accessed")).toEqual([
+      expect.objectContaining({ operation: "deadLetters.list", actor: "operator-1" }),
+    ]);
+  });
+
+  it("names who retries or discards a letter with --actor, in the log and the access log", async () => {
+    const id = await deadLetter();
+    const retry = await cli(["dead-letters", "retry", id, "--actor", "operator-1"], fixture);
+    expect(retry.code).toBe(EXIT_FAILURE);
+    expect(logged(retry.stderr, "info", "personal data accessed")).toEqual([
+      expect.objectContaining({ operation: "deadLetters.retry", actor: "operator-1" }),
+    ]);
+    const discard = await cli(["dead-letters", "discard", id, "--actor", "operator-2"], fixture);
+    expect(discard.code).toBe(EXIT_OK);
+    expect(logged(discard.stderr, "info", "personal data accessed")).toEqual([
+      expect.objectContaining({ operation: "deadLetters.discard", actor: "operator-2" }),
+    ]);
+    expect(logged(discard.stderr, "info", "dead letter discarded")).toEqual([
+      expect.objectContaining({ id, actor: "operator-2" }),
+    ]);
+    const refused = await cli(["dead-letters", "list", "--actor", ""], fixture);
+    expect(refused.code).toBe(EXIT_CONVENTION);
+    expect(refused.stderr).toContain("expected the id of who acts");
   });
 
   it("takes only a whole number of letters, 0 or more, as the limit", async () => {
@@ -444,10 +520,10 @@ describe("bounda dead-letters", () => {
     const id = await deadLetter();
     const retry = await cli(["dead-letters", "retry", id], fixture);
     expect(retry.code).toBe(EXIT_FAILURE);
-    expect(retry.stderr).toBe("error: alerts are down\n");
+    expect(besidesLogs(retry.stderr)).toBe("error: alerts are down\n");
 
     const discard = await cli(["dead-letters", "discard", id], fixture);
-    expect(discard.stderr).toBe("");
+    expect(besidesLogs(discard.stderr)).toBe("");
     expect(discard.code).toBe(EXIT_OK);
     expect(discard.stdout).toBe(
       `discarded dead letter ${id}: policy counter.alertOnIncremented for Incremented\n`,
@@ -455,10 +531,10 @@ describe("bounda dead-letters", () => {
 
     const again = await cli(["dead-letters", "retry", id], fixture);
     expect(again.code).toBe(EXIT_FAILURE);
-    expect(again.stderr).toBe(`error: Dead letter "${id}" was already discarded\n`);
+    expect(besidesLogs(again.stderr)).toBe(`error: Dead letter "${id}" was already discarded\n`);
     const missing = await cli(["dead-letters", "discard", "nope"], fixture);
     expect(missing.code).toBe(EXIT_FAILURE);
-    expect(missing.stderr).toBe('error: Dead letter "nope" not found\n');
+    expect(besidesLogs(missing.stderr)).toBe('error: Dead letter "nope" not found\n');
   });
 
   it("documents its subcommands and options in its help", async () => {
@@ -492,14 +568,17 @@ describe("bounda dead-letters", () => {
       /--status <status>.*\(choices:\s+"failed",\s+"retried",\s+"discarded",\s+default:\s+"failed"\)/s,
     );
     expect(list.stdout).toContain("list dead letters, failed ones by default");
+    expect(list.stdout).toContain("--actor <id>");
     const retry = await cli(["dead-letters", "retry", "--help"], fixture);
     expect(retry.stdout).toContain(
       "run the failed handler again and mark the letter retried if it succeeds",
     );
     expect(retry.stdout).toContain("<id>");
+    expect(retry.stdout).toContain("--actor <id>");
     const discard = await cli(["dead-letters", "discard", "--help"], fixture);
     expect(discard.stdout).toContain("mark the letter discarded without running anything");
     expect(discard.stdout).toContain("the dead letter's id");
+    expect(discard.stdout).toContain("--actor <id>");
   });
 });
 
@@ -536,7 +615,7 @@ describe("bounda forgotten and bounda forget", () => {
 
     const byPosition = await cli(["forgotten", "--since", String(lastPosition)], fixture);
     expect(byPosition.code).toBe(EXIT_OK);
-    expect(byPosition.stderr).toBe("1 person forgotten\n");
+    expect(besidesLogs(byPosition.stderr)).toBe("1 person forgotten\n");
     expect(byPosition.stdout).toBe(
       `${JSON.stringify({ personId: forgotten, eventId: event?.id, forgottenAt: event?.timestamp })}\n`,
     );
@@ -544,12 +623,13 @@ describe("bounda forgotten and bounda forget", () => {
     expect(byDate.code).toBe(EXIT_OK);
     expect(byDate.stdout).toContain(`"personId":"${forgotten}"`);
     const none = await cli(["forgotten", "--since", "2999-01-01"], fixture);
-    expect(none).toMatchObject({ code: EXIT_OK, stdout: "", stderr: "0 persons forgotten\n" });
+    expect(none).toMatchObject({ code: EXIT_OK, stdout: "" });
+    expect(besidesLogs(none.stderr)).toBe("0 persons forgotten\n");
 
     const file = join(await list(), "forgotten.jsonl");
     await writeFile(file, `${byPosition.stdout}\n  ${kept}  \n`);
     const forget = await cli(["forget", "--from", file], fixture);
-    expect(forget.stderr).toBe("");
+    expect(besidesLogs(forget.stderr)).toBe("");
     expect(forget.code).toBe(EXIT_OK);
     expect(forget.stdout).toBe(
       `forgot again ${kept}\nforgot again 1 of 2 listed; the rest hold no key, or this store holds their forgetting\n`,
@@ -563,6 +643,26 @@ describe("bounda forgotten and bounda forget", () => {
       [forgotten, "requested"],
       [kept, "restored"],
     ]);
+  });
+
+  it("names who forgets again with --actor, in the event's metadata", async () => {
+    const memberId = `m-${Date.now()}-acted`;
+    const app = await open();
+    await app.commands.join({ memberId, name: "Eva" });
+    await app.stop();
+    const file = join(await list(), "forget.txt");
+    await writeFile(file, `${memberId}\n`);
+    const forget = await cli(["forget", "--from", file, "--actor", "operator-1"], fixture);
+    expect(forget.code).toBe(EXIT_OK);
+    expect(logged(forget.stderr, "info", "personal data forgotten")).toEqual([
+      expect.objectContaining({ personId: memberId, reason: "restored", actor: "operator-1" }),
+    ]);
+    const after = await open();
+    const forgetting = (await after.events.read({ limit: 1_000 })).find(
+      (event) => event.type === "PersonalDataForgotten" && event.aggregateId === memberId,
+    );
+    await after.stop();
+    expect(forgetting?.metadata.actor).toBe("operator-1");
   });
 
   it("refuses a --since that is neither a position nor a date", async () => {
@@ -602,7 +702,10 @@ describe("bounda forgotten and bounda forget", () => {
     expect(forgotten).toContain(
       "a date such as 2026-11-01, or a position of the stream to read after",
     );
+    expect(forgotten).not.toContain("--actor");
+    expect((await cli(["generate", "--help"], fixture)).stdout).not.toContain("--actor");
     const forget = await help("forget");
+    expect(forget).toContain("--actor <id>");
     expect(forget).toContain("--from <file>");
     expect(forget).toContain("what bounda forgotten printed, or one person's id a line");
     expect(forget).toContain(

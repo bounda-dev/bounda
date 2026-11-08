@@ -765,7 +765,8 @@ bounda forget --from forgotten.jsonl
 `bounda forget` forgets again, with `reason: "restored"`, each person listed who still holds a key,
 unless the database holds the forgetting a line names. A line may also be a bare person's id, for
 a list kept some other way, which is forgotten whenever the person holds a key: list only those
-forgotten after the copy was taken. `app.forgetAgain(entries)` is the same in code.
+forgotten after the copy was taken. `--actor <id>` names who does it on each `PersonalDataForgotten`
+it appends. `app.forgetAgain(entries, { actor })` is the same in code.
 
 Without either, a restored backup brings back the data of everyone forgotten after it was taken,
 until they are forgotten again.

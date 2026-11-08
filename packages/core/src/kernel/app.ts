@@ -141,7 +141,8 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * event that command writes, and every command and event the policies, processes and scheduled
    * commands that follow from it write; so do the events `forget`, `restrict` and `unrestrict`
    * append, and what a dead letter's `retry` writes; and every record of the access log it causes
-   * names it. Calling `as` on a bound client acts as the new
+   * names it, as do the log lines of its dead letters' `retry` and `discard` and of its
+   * `rebuildReadModel`. Calling `as` on a bound client acts as the new
    * actor; a client without `as` names nobody. `actor` is an id, such as a user's or a service's,
    * never a name or an email: it is stored in the clear in events that are never deleted. Throws
    * `ValidationError` for an actor that is not a string of 1 to `MAX_ACTOR_LENGTH` characters.
@@ -219,9 +220,13 @@ export interface BoundaApp<R extends Registry = AppRegistry> extends BoundaClien
    * `eventId`: a store that holds it applied that forgetting, and a key the person holds was given
    * to them after. What `bounda forget --from` runs, for a backup restored without
    * `runtime.personalData.forgetLedger`; resolves to the ids of the persons it forgot, in order.
-   * Rejects with `ValidationError` an entry without a person's id, before forgetting anyone.
+   * Rejects with `ValidationError` an entry without a person's id, or an `actor` that `as` would
+   * refuse, before forgetting anyone.
    */
-  forgetAgain(entries: readonly ForgetAgainEntry[]): Promise<readonly string[]>;
+  forgetAgain(
+    entries: readonly ForgetAgainEntry[],
+    options?: ForgetAgainOptions,
+  ): Promise<readonly string[]>;
 }
 
 /**
@@ -241,6 +246,14 @@ export interface AppLag extends DispatcherLag {
 
 export interface ForgetLedgerLag {
   readonly reconciled: boolean;
+}
+
+export interface ForgetAgainOptions {
+  /**
+   * Who forgets them again, named in the metadata of each `PersonalDataForgotten` and in its log
+   * line, as `as` names who acts: `forgetAgain` lives on the app, not on a client.
+   */
+  readonly actor?: string;
 }
 
 export interface RebuildReadModelOptions {
@@ -661,8 +674,10 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         await dispatcher.catchUp("projection");
       }
     }
-    const rebuild = (name: string, options: RebuildReadModelOptions = {}) =>
-      rebuildReadModelWith({ registry, config: rawConfig, name, logger, wrapping, ...options });
+    const rebuild = (
+      name: string,
+      options: RebuildReadModelOptions & { readonly actor?: string } = {},
+    ) => rebuildReadModelWith({ registry, config: rawConfig, name, logger, wrapping, ...options });
     const clientAs = (
       actor: string | undefined,
     ): BoundaClient<R> & { readonly deadLetters: DeadLetters } => ({
@@ -682,7 +697,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         actor,
         recordAccess,
       }),
-      rebuildReadModel: rebuild,
+      rebuildReadModel: (name) => rebuild(name, actor === undefined ? {} : { actor }),
       forget: (personId) =>
         forgetPersonalData({ storage, ids, clock, logger, concurrencyRetries, personId, actor }),
       exportPersonalData: async (personId) => {
@@ -782,7 +797,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         await dispatcher.catchUpThrough(through);
       },
       rebuildReadModel: rebuild,
-      forgetAgain: async (entries) => {
+      forgetAgain: async (entries, { actor } = {}) => {
+        if (actor !== undefined) checkActor(actor);
         for (const { personId } of entries) checkPersonId(personId, "forgetAgain");
         const forgotten: string[] = [];
         for (const entry of entries) {
@@ -792,6 +808,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             clock,
             concurrencyRetries,
             entry,
+            actor,
           });
           if (again === null) continue;
           logForgotten(logger, again);

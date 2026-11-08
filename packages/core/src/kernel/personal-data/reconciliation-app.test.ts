@@ -547,6 +547,26 @@ describe("forgetAgain", () => {
     ]);
   });
 
+  it("names who forgets them again, in the event's metadata and the log, and refuses an actor as would", async () => {
+    const { logs, logger } = recording();
+    const { app, register } = await start({ storage: memory(), forgetLedger: memory(), logger });
+    await register("c-1");
+    await expect(app.forgetAgain([{ personId: "c-1" }], { actor: "" })).rejects.toBeInstanceOf(
+      ValidationError,
+    );
+    expect(await app.forgetAgain([{ personId: "c-1" }], { actor: "operator-1" })).toEqual(["c-1"]);
+    const forgetting = (await app.events.read({ limit: 100 })).at(-1);
+    expect(forgetting).toMatchObject({
+      type: "PersonalDataForgotten",
+      metadata: { actor: "operator-1" },
+    });
+    expect(logs).toContainEqual([
+      "info",
+      "personal data forgotten",
+      expect.objectContaining({ personId: "c-1", reason: "restored", actor: "operator-1" }),
+    ]);
+  });
+
   it("rejects an entry without a person's id before forgetting anyone", async () => {
     const { app, register, forgotten } = await start({ storage: memory(), forgetLedger: memory() });
     await register("c-1");

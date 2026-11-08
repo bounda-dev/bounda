@@ -24,6 +24,16 @@ export const action = async ({ request, params, context }: Route.ActionArgs) => 
   return null;
 };
 
+// Who the request acted as, from app/actor.ts: the events record it, and this read model keeps it.
+function ActedBy({ actor }: { readonly actor: string | undefined }) {
+  return (
+    <span className="muted">
+      {" "}
+      by {actor === undefined ? "nobody signed in" : <code>{actor}</code>}
+    </span>
+  );
+}
+
 export default function User({ loaderData, actionData }: Route.ComponentProps) {
   const { user } = loaderData;
   const submitting = useNavigation().state === "submitting";
@@ -44,11 +54,17 @@ export default function User({ loaderData, actionData }: Route.ComponentProps) {
           </span>
         </dd>
         <dt>Registered</dt>
-        <dd>{formatDate(user.registeredAt)}</dd>
+        <dd>
+          {formatDate(user.registeredAt)}
+          <ActedBy actor={user.registeredBy} />
+        </dd>
         <dt>Welcome email</dt>
         <dd>{formatDate(user.welcomeEmailSentAt)}</dd>
         <dt>Activated</dt>
-        <dd>{formatDate(user.activatedAt)}</dd>
+        <dd>
+          {formatDate(user.activatedAt)}
+          {user.activatedAt !== undefined && <ActedBy actor={user.activatedBy} />}
+        </dd>
         <dt>Expired</dt>
         <dd>{formatDate(user.expiredAt)}</dd>
       </dl>
