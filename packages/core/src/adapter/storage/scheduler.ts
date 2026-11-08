@@ -92,6 +92,17 @@ export interface NextDueAtArgs {
   readonly leaseMs: number;
 }
 
+export interface ResealScheduledArgs {
+  readonly dedupeKey: string;
+  /**
+   * The payload the command held when it was read: the entry is written only while it still
+   * holds this one.
+   */
+  readonly from: unknown;
+  readonly payload: unknown;
+  readonly persons: readonly KeyedPerson[];
+}
+
 export interface ListScheduledArgs {
   readonly limit?: number;
   readonly offset?: number;
@@ -144,6 +155,14 @@ export interface Scheduler {
    * no longer holds this claim, so the run does not start again.
    */
   renew(args: RenewScheduledArgs): Promise<void>;
+  /**
+   * Replaces the payload and `persons` of the command under `dedupeKey`, only while its payload is
+   * still `from`, and keeps the rest of the entry, its time, attempts, revision and claim
+   * included: the same command with its personal fields sealed, which a claim taken before it
+   * still completes. Only the runtime calls it, for commands stored before their schema marked
+   * those fields.
+   */
+  reseal(args: ResealScheduledArgs): Promise<void>;
   /**
    * Every command, earliest `executeAt` first, then by `dedupeKey`.
    */

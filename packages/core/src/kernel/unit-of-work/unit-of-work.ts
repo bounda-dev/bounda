@@ -70,9 +70,11 @@ export const createUnitOfWork: CreateUnitOfWorkFunction = ({ storage }) => {
     persons: storage.persons,
     commit: async () => {
       const batches = staged.batches();
-      if (batches.length > 0 || pending() || atCommit.length > 0) {
+      const reseals = staged.reseals();
+      if (batches.length > 0 || reseals.length > 0 || pending() || atCommit.length > 0) {
         await storage.transact(async (transaction) => {
           for (const batch of batches) await transaction.eventStore.append(batch);
+          if (reseals.length > 0) await transaction.eventStore.reseal(reseals);
           await flush(transaction);
           for (const write of atCommit) await write(transaction);
         });

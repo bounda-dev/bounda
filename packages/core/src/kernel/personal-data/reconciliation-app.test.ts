@@ -437,6 +437,8 @@ describe("the forget ledger", () => {
       },
     }));
     const { app: first } = await start({ storage, forgetLedger: broken });
+    // A fresh store's first pass finds nothing written before the marks.
+    await first.runUntilIdle();
     expect(await first.nextDueAt()).toEqual(new Date(START.getTime() + HOLD_MS));
     await first.stop();
     const restartedAt = new Date(START.getTime() + HOLD_MS + 1_000);

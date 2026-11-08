@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { ScheduledClaimLostError } from "../../contracts/errors.ts";
 import type { ClaimedCommand, ScheduleArgs, Scheduler } from "../storage/scheduler.ts";
-import { testKeyedPerson as held, testCommand, testContext } from "./fixtures.ts";
+import { testKeyedPerson as held, testCommand, testContext, testSealedValue } from "./fixtures.ts";
 
 export interface SchedulerContractArgs {
   readonly create: () => Promise<Scheduler>;
@@ -609,6 +609,97 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
       await schedule();
       expect((await scheduler.list())[0]).not.toHaveProperty("persons");
       expect(await scheduler.forget("c-1")).toEqual([]);
+    });
+
+    it("reseals a command in place, claimed or not, keeping its time, attempts and claim", async () => {
+      const payload = { email: "ada@example.com", note: 1 };
+      const sealed = { email: testSealedValue("c-1", "1"), note: 1 };
+      await scheduler.schedule({
+        dedupeKey: "a",
+        command: testCommand("1", payload),
+        executeAt: at(1_000),
+        context: testContext,
+      });
+      await scheduler.schedule({
+        dedupeKey: "b",
+        command: testCommand("2", payload),
+        executeAt: at(2_000),
+        context: testContext,
+      });
+      const claimed = claimOf(
+        await scheduler.claimDue({ now: at(1_000), limit: 10, leaseMs: 60_000 }),
+        "a",
+      );
+      await scheduler.fail({ claim: claimed, error: "boom", retryAt: at(1_500) });
+      const retried = claimOf(
+        await scheduler.claimDue({ now: at(1_500), limit: 10, leaseMs: 60_000 }),
+        "a",
+      );
+      for (const dedupeKey of ["a", "b"]) {
+        await scheduler.reseal({
+          dedupeKey,
+          from: payload,
+          payload: sealed,
+          persons: [held("c-1", "1")],
+        });
+      }
+      await scheduler.reseal({
+        dedupeKey: "missing",
+        from: payload,
+        payload: sealed,
+        persons: [held("c-1", "1")],
+      });
+
+      expect(await scheduler.list()).toEqual([
+        {
+          dedupeKey: "a",
+          command: testCommand("1", sealed),
+          executeAt: at(1_500).toISOString(),
+          context: testContext,
+          attempts: 1,
+          persons: [held("c-1", "1")],
+        },
+        {
+          dedupeKey: "b",
+          command: testCommand("2", sealed),
+          executeAt: at(2_000).toISOString(),
+          context: testContext,
+          attempts: 0,
+          persons: [held("c-1", "1")],
+        },
+      ]);
+      expect(await scheduler.claimDue({ now: at(1_500), limit: 10, leaseMs: 60_000 })).toEqual([]);
+      expect((await scheduler.listByPerson("c-1")).map((entry) => entry.dedupeKey)).toEqual([
+        "a",
+        "b",
+      ]);
+      await scheduler.complete(retried);
+      expect((await scheduler.forget("c-1")).map((entry) => entry.dedupeKey)).toEqual(["b"]);
+      expect(await scheduler.list()).toEqual([]);
+    });
+
+    it("reseals a command only while it still holds the payload it was read with", async () => {
+      const read = { email: "ada@example.com" };
+      const newer = { email: "grace@example.com" };
+      const schedule = (payload: unknown) =>
+        scheduler.schedule({
+          dedupeKey: "a",
+          command: testCommand("1", payload),
+          executeAt: at(1_000),
+          context: testContext,
+        });
+      await schedule(read);
+      await schedule(newer);
+      await scheduler.reseal({
+        dedupeKey: "a",
+        from: read,
+        payload: { email: testSealedValue("c-1", "1") },
+        persons: [held("c-1", "1")],
+      });
+      const [kept] = await scheduler.list();
+      expect(kept?.command.payload).toEqual(newer);
+      expect(kept).not.toHaveProperty("persons");
+      expect(await scheduler.listByPerson("c-1")).toEqual([]);
     });
 
     it("lists pending commands ordered by execution time with paging", async () => {

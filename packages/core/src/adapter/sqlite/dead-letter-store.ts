@@ -151,6 +151,18 @@ export const createSqliteDeadLetterStore: CreateSqliteDeadLetterStoreFunction = 
       if (updated.length === 0) throw new DeadLetterSettledError({ id });
     },
     remove: (id) => db.run(`DELETE FROM ${table} WHERE "id" = ?`, [id]),
+    reseal: (id, { person, errorMessage, errorStack, payload, persons }) =>
+      db.run(
+        `UPDATE ${table} SET "person" = ?, "error_message" = ?, "error_stack" = ?, "payload" = ?, "persons" = ? WHERE "id" = ?`,
+        [
+          person,
+          encodeErrorText(errorMessage),
+          errorStack === undefined ? null : encodeErrorText(errorStack),
+          payload === undefined ? null : JSON.stringify(payload),
+          JSON.stringify(persons ?? []),
+          id,
+        ],
+      ),
     listByPerson: async (person) =>
       (
         await db.all(

@@ -92,6 +92,7 @@ export const withLedgerAppend: WithLedgerAppendFunction = ({
             readAll: (args) => eventStore.readAll(args),
             readByPerson: (args) => eventStore.readByPerson(args),
             lastPosition: () => eventStore.lastPosition(),
+            reseal: (events) => eventStore.reseal(events),
           },
         });
       });

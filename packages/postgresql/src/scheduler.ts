@@ -169,6 +169,16 @@ export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ d
       );
       if (renewed.length === 0) throw new ScheduledClaimLostError(claim.dedupeKey);
     },
+    reseal: ({ dedupeKey, from, payload, persons }) =>
+      db.run(
+        `UPDATE ${table} SET "payload" = $1, "persons" = $2 WHERE "dedupe_key" = $3 AND "payload" = $4::jsonb`,
+        [
+          postgresqlDialect.encode("json", payload),
+          postgresqlDialect.encode("json", persons),
+          dedupeKey,
+          postgresqlDialect.encode("json", from),
+        ],
+      ),
     list: async ({ limit, offset = 0 } = {}) =>
       (
         await db.all(

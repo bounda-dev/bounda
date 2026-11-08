@@ -165,6 +165,13 @@ export const createSqliteScheduler: CreateSqliteSchedulerFunction = ({ db, table
       );
       if (renewed.length === 0) throw new ScheduledClaimLostError(claim.dedupeKey);
     },
+    // The payload was written by `JSON.stringify` and read back with `JSON.parse`, so writing the
+    // one read again gives the same text.
+    reseal: ({ dedupeKey, from, payload, persons }) =>
+      db.run(
+        `UPDATE ${table} SET "payload" = ?, "persons" = ? WHERE "dedupe_key" = ? AND "payload" = ?`,
+        [JSON.stringify(payload), JSON.stringify(persons), dedupeKey, JSON.stringify(from)],
+      ),
     list: async ({ limit, offset = 0 } = {}) =>
       (
         await db.all(

@@ -144,6 +144,18 @@ export const createPostgresqlDeadLetterStore: CreatePostgresqlDeadLetterStoreFun
       if (updated.length === 0) throw new DeadLetterSettledError({ id });
     },
     remove: (id) => db.run(`DELETE FROM ${table} WHERE "id" = $1`, [id]),
+    reseal: (id, { person, errorMessage, errorStack, payload, persons }) =>
+      db.run(
+        `UPDATE ${table} SET "person" = $1, "error_message" = $2, "error_stack" = $3, "payload" = $4, "persons" = $5 WHERE "id" = $6`,
+        [
+          person,
+          encodeErrorText(errorMessage),
+          errorStack === undefined ? null : encodeErrorText(errorStack),
+          postgresqlDialect.encode("json", payload),
+          postgresqlDialect.encode("json", persons ?? []),
+          id,
+        ],
+      ),
     listByPerson: async (person) =>
       (
         await db.all(

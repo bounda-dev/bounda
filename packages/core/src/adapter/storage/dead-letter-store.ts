@@ -77,6 +77,14 @@ export interface StoredDeadLetter {
 export type NewDeadLetter = Omit<StoredDeadLetter, "status" | "resolvedAt">;
 
 /**
+ * What `reseal` writes again of a letter: whom it names and what it holds of them.
+ */
+export type ResealedDeadLetter = Pick<
+  StoredDeadLetter,
+  "person" | "errorMessage" | "errorStack" | "payload" | "persons"
+>;
+
+/**
  * A dead letter as `app.deadLetters` hands it out: the error's message and stack opened with
  * `person`'s key, `null` once the person was forgotten.
  */
@@ -144,6 +152,12 @@ export interface DeadLetterStore {
    */
   updateStatus(id: string, status: DeadLetterStatus, at: Date): Promise<void>;
   remove(id: string): Promise<void>;
+  /**
+   * Writes the letter's `person`, `errorMessage`, `errorStack`, `payload` and `persons` as given,
+   * one left out as none, and nothing else of it; a letter the store does not hold is skipped.
+   * Only the runtime calls it, for letters filed before their schema marked what they hold.
+   */
+  reseal(id: string, letter: ResealedDeadLetter): Promise<void>;
   /**
    * Every letter that names `person`, in `person` or in `persons`, whatever its status, in the
    * order of `list`.

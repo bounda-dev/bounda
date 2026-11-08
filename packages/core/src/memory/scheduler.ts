@@ -9,7 +9,7 @@ import type {
 } from "../adapter/storage/scheduler.ts";
 import { ScheduledClaimLostError } from "../contracts/errors.ts";
 import { createStoreEntries, type WithEntries } from "./entries.ts";
-import { jsonCopy } from "./json-copy.ts";
+import { jsonCopy, toJson } from "./json-copy.ts";
 
 export interface CreateKeptSchedulerFunction {
   (): WithEntries<Scheduler, string>;
@@ -166,6 +166,16 @@ export const createKeptScheduler: CreateKeptSchedulerFunction = () => {
     },
     renew: async ({ claim, now }) => {
       entries.set(claim.dedupeKey, { ...heldBy(claim), claimedAt: now.toISOString() });
+    },
+    reseal: async ({ dedupeKey, from, payload, persons }) => {
+      const entry = entries.get(dedupeKey);
+      if (entry === undefined || toJson(entry.command.payload) !== toJson(from)) return;
+      const { persons: _persons, ...rest } = entry;
+      entries.set(dedupeKey, {
+        ...rest,
+        command: { ...entry.command, payload: jsonCopy(payload) },
+        ...(persons.length === 0 ? {} : { persons: jsonCopy(persons) }),
+      });
     },
     list: async ({ limit, offset = 0 } = {}) =>
       [...entries.values()]

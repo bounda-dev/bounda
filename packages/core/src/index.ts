@@ -28,6 +28,7 @@ export type {
   CreateAppFunction,
   ForgetAgainOptions,
   ForgetLedgerLag,
+  PersonalDataBackfillLag,
   RebuildReadModelOptions,
   RunUntilIdleOptions,
   RunUntilIdleResult,

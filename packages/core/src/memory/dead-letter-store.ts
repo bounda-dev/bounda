@@ -82,6 +82,22 @@ export const createKeptDeadLetterStore: CreateKeptDeadLetterStoreFunction = () =
     remove: async (id) => {
       letters.delete(id);
     },
+    reseal: async (id, { person, errorMessage, errorStack, payload, persons }) => {
+      const existing = letters.get(id);
+      if (existing === undefined) return;
+      const { errorStack: _stack, payload: _payload, persons: _persons, ...kept } = existing;
+      letters.set(
+        id,
+        copy({
+          ...kept,
+          person,
+          errorMessage,
+          ...(errorStack === undefined ? {} : { errorStack }),
+          ...(payload === undefined ? {} : { payload }),
+          ...(persons === undefined ? {} : { persons }),
+        }),
+      );
+    },
     listByPerson: async (person) =>
       select({})
         .filter((letter) => letter.person === person || namesPerson(letter, person))
