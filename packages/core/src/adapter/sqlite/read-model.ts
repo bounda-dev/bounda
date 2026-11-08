@@ -50,6 +50,8 @@ const existingColumns = async (
     return {
       name,
       sqlType: String(column.type),
+      // SQLite does not report it, and Bounda never names one there.
+      collation: null,
       primaryKey,
       unique: unique.has(name) && !primaryKey,
       indexed: indexed.has(name),

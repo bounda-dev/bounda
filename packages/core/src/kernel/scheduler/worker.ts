@@ -144,7 +144,8 @@ interface DeadlineWait {
  * sweeps the retention, unless a list it could not read holds it: its read is one an index
  * answers, as `nextDueAt` is, so a host woken for a person's deadline forgets them in that pass.
  * The rotation of the key wrapper rewraps a batch of keys on every pass the same way, and the forget
- * ledger is reconciled again when the one the start ran failed, or its entries may show late.
+ * ledger is reconciled again when the one the start ran failed, when its entries may show late, and
+ * every `reconcileEvery`.
  */
 export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction = ({
   storage,

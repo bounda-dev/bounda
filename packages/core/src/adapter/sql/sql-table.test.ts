@@ -104,6 +104,7 @@ describe("createSqlTable on SQLite", () => {
     ).map((column) => ({
       name: column.name,
       sqlType: column.type,
+      collation: null,
       primaryKey: column.name === "id",
       unique: false,
       indexed: column.name === "id",
@@ -188,7 +189,7 @@ describe("createSqlTable statements for PostgreSQL", () => {
         ["o-1", 1],
       ],
       [
-        'SELECT "order_id", "status", "paid_at" FROM "bounda_rm_orders" WHERE "status" = $1 ORDER BY "paid_at" DESC LIMIT $2 OFFSET $3',
+        'SELECT "order_id", "status", "paid_at" FROM "bounda_rm_orders" WHERE "status" = $1 ORDER BY "paid_at" DESC NULLS LAST LIMIT $2 OFFSET $3',
         ["paid", 10, 20],
       ],
       ['SELECT COUNT(*) AS count FROM "bounda_rm_orders"', []],

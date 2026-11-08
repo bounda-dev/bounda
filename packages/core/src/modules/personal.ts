@@ -32,10 +32,11 @@ export interface CommandPersonalSchema<Schema extends z.ZodType>
 }
 
 /**
- * Marks a field of an event's payload as personal data: it is stored encrypted with the key of
- * the person the event names, and reads as `null` once that person is forgotten. Any schema
- * works, an object or an array included, at the top level of the payload. A query payload cannot
- * use it; a command's has its own, `CommandPersonalFunction`.
+ * Marks a field of an event's payload, or of a process's state, as personal data: it is stored
+ * encrypted with the key of the person the event or the state names, and reads as `null` once
+ * that person is forgotten. Any schema works, an object or an array included, at the top level of
+ * the payload or the state. A query payload cannot use it; a command's has its own,
+ * `CommandPersonalFunction`.
  */
 export interface PersonalFunction {
   <Schema extends z.ZodType>(schema: Schema): PersonalSchema<Schema>;
@@ -52,9 +53,10 @@ export interface CommandPersonalFunction {
 }
 
 /**
- * Marks the field of an event's or a command's payload that identifies the person its personal
- * fields belong to, such as the customer's id in an order's event. Without it, the aggregate's id
- * is the person. A payload has at most one.
+ * Marks the field of an event's or a command's payload, or of a process's state, that identifies
+ * the person its personal fields belong to, such as the customer's id in an order's event.
+ * Without it, the aggregate's id is the person, or the process instance's. A payload or a state
+ * has at most one.
  */
 export interface PersonFunction {
   <Schema extends z.ZodType>(schema: Schema): PersonSchema<Schema>;

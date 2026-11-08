@@ -5,6 +5,7 @@ export declare namespace Projection {
   type Args = core.ProjectionArgs<
     core.StoredEventOf<generated.CustomerEvents, "customerRegistered">,
     generated.CustomerDirectoryRow,
-    unknown
+    unknown,
+    generated.CustomerDirectoryFieldTypes
   >;
 }

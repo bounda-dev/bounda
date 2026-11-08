@@ -7,6 +7,7 @@ import {
   DeadLetterNotRetriableError,
   DeadLetterSettledError,
   DomainError,
+  ForgetLedgerUnreconciledError,
   NotFoundError,
   RebuildSupersededError,
   rejectionOf,
@@ -58,6 +59,15 @@ describe("errors", () => {
     expect(error.code).toBe("CHAIN_DEPTH_EXCEEDED");
     expect(error.depth).toBe(26);
     expect(error.maxDepth).toBe(25);
+  });
+
+  it("say why the forget ledger kept the app from starting", () => {
+    const cause = new Error("down");
+    const error = new ForgetLedgerUnreconciledError(cause);
+    expect(error.code).toBe("FORGET_LEDGER_UNRECONCILED");
+    expect(error.name).toBe("ForgetLedgerUnreconciledError");
+    expect(error.cause).toBe(cause);
+    expect(error.message).toContain("runtime.personalData.forgetLedger.strict");
   });
 
   it("name the read model whose rebuild was taken over", () => {

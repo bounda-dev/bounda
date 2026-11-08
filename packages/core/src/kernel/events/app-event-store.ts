@@ -3,10 +3,12 @@ import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { withUpcasting } from "../aggregate/upcasting.ts";
 import { withPersonalData } from "../personal-data/event-store.ts";
 import type { PersonalKeyWrapping } from "../personal-data/wrapped-keys.ts";
+import type { ProcessesRuntime } from "../process/build-processes.ts";
 
 export interface AppStorageArgs {
   readonly storage: Storage;
   readonly aggregates: AggregatesRuntime;
+  readonly processes: Pick<ProcessesRuntime, "byName">;
   readonly wrapping: PersonalKeyWrapping;
 }
 
@@ -20,7 +22,7 @@ export interface AppStorageFunction {
  * personal fields and upcast what they read, so handlers only ever see current, readable
  * payloads. The adapter's own `eventStore` stays as written, for the global stream.
  */
-export const appStorage: AppStorageFunction = ({ storage, aggregates, wrapping }) => {
+export const appStorage: AppStorageFunction = ({ storage, aggregates, processes, wrapping }) => {
   const personalKeys = wrapping.over(storage.personalKeys);
   return {
     ...storage,
@@ -29,6 +31,7 @@ export const appStorage: AppStorageFunction = ({ storage, aggregates, wrapping }
       eventStore: withPersonalData({
         eventStore: storage.eventStore,
         aggregates,
+        processes,
         keys: personalKeys,
       }),
       aggregates,
@@ -50,7 +53,12 @@ export const appStorage: AppStorageFunction = ({ storage, aggregates, wrapping }
         return work({
           ...transaction,
           personalKeys: keys,
-          eventStore: withPersonalData({ eventStore: transaction.eventStore, aggregates, keys }),
+          eventStore: withPersonalData({
+            eventStore: transaction.eventStore,
+            aggregates,
+            processes,
+            keys,
+          }),
         });
       });
       for (const person of removed) wrapping.drop(person);

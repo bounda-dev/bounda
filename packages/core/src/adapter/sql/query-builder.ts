@@ -74,6 +74,11 @@ const conditionsOfField = (column: ColumnDefinition, value: unknown): Condition[
     if (given === undefined) return [];
     if (operator === "ne") return [{ operator, column, value: given }];
     if (operator !== "in") {
+      if (column.type === "boolean") {
+        throw new ConfigurationError(
+          `Field "${column.field}": a boolean has no order for "${operator}"; use ne or in`,
+        );
+      }
       return [
         { operator: operator as RangeOperator, column, value: operand(column, operator, given) },
       ];
@@ -171,10 +176,15 @@ export interface BuildOrderByFunction {
   (args: BuildOrderByArgs): string;
 }
 
+// Rows without a value come first as SQLite and the in-memory tables put them, where PostgreSQL
+// would put them last. Only a nullable column says so: the clause would keep PostgreSQL from
+// reading a required column, the primary key included, in the order of its index.
 export const buildOrderBy: BuildOrderByFunction = ({ orderBy, columns }) => {
   if (orderBy === undefined) return "";
   const column = columnFor({ field: orderBy.field, columns });
-  return ` ORDER BY ${quoteIdentifier(column.name)} ${orderBy.direction === "desc" ? "DESC" : "ASC"}`;
+  const descending = orderBy.direction === "desc";
+  const nulls = column.nullable ? (descending ? " NULLS LAST" : " NULLS FIRST") : "";
+  return ` ORDER BY ${quoteIdentifier(column.name)} ${descending ? "DESC" : "ASC"}${nulls}`;
 };
 
 export interface BuildLimitArgs {

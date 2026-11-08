@@ -7,6 +7,8 @@ import { capitalize, toKebabCase } from "../../modules/naming.ts";
 import type { ProcessCorrelation, ProcessEntry } from "../../modules/process.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
+import { type PersonalMarks, personalMarksOf } from "../personal-data/marks.ts";
+import { holdsPersonalValue, statePersonOf } from "../personal-data/process-state.ts";
 import { qualifiedEventType } from "../shared/qualified-event.ts";
 import { deadlineFieldsOf, processStateArgs, TIMEOUT_DEADLINE } from "./deadlines.ts";
 
@@ -20,6 +22,10 @@ export interface ProcessRuntime {
   readonly handlerTimeoutMs: number;
   readonly initialState: object;
   readonly stateSchema: z.ZodType | null;
+  /**
+   * What the state schema marks with `personal()` and `person()`; `null` when it marks nothing.
+   */
+  readonly personal: PersonalMarks | null;
   readonly handlers: Readonly<Record<string, (args: Record<string, unknown>) => unknown>>;
   readonly deadlineFields: readonly string[];
   /**
@@ -45,22 +51,52 @@ export interface ProcessesRuntime {
   readonly byEvent: Readonly<Record<string, readonly ProcessRuntime[]>>;
 }
 
-const compileState = (
-  path: string,
-  entry: ProcessEntry,
-): { readonly schema: z.ZodType | null; readonly initial: object } => {
-  if (entry.module.state === undefined) return { schema: null, initial: {} };
-  const schema = entry.module.state(processStateArgs);
-  if (!(schema instanceof z.ZodType)) {
+interface CompiledState {
+  readonly schema: z.ZodType | null;
+  readonly initial: object;
+  readonly personal: PersonalMarks | null;
+}
+
+// A personal field reads as `null` once its person is forgotten, and the instance carries on, so
+// the schema every step's state goes through takes `null` for it.
+const forgettable = (schema: z.ZodType, marks: PersonalMarks | null): z.ZodType => {
+  if (marks === null || !(schema instanceof z.ZodObject)) return schema;
+  const shape = schema.shape as Readonly<Record<string, z.ZodType>>;
+  return schema.safeExtend(
+    Object.fromEntries(
+      Object.entries(shape)
+        .filter(([field]) => marks.fields.includes(field))
+        .map(([field, fieldSchema]) => [field, fieldSchema.nullable()]),
+    ),
+  );
+};
+
+const compileState = (path: string, entry: ProcessEntry): CompiledState => {
+  if (entry.module.state === undefined) return { schema: null, initial: {}, personal: null };
+  const declared = entry.module.state(processStateArgs);
+  if (!(declared instanceof z.ZodType)) {
     throw new ConfigurationError(`${path}: state must return a Zod schema`);
   }
+  const personal = personalMarksOf({ schema: declared, path: `${path}.state` });
+  const schema = forgettable(declared, personal);
   const initial = schema.safeParse({});
   if (!initial.success) {
     throw new ConfigurationError(
       `${path}: state schema must accept an empty object; give every field a default`,
     );
   }
-  return { schema, initial: initial.data as object };
+  const data = initial.data as Readonly<Record<string, unknown>>;
+  // So a start, which a restriction must never refuse, touches nobody.
+  if (
+    personal !== null &&
+    (holdsPersonalValue(personal, data) ||
+      statePersonOf({ marks: personal, state: data, instanceId: "" }) !== null)
+  ) {
+    throw new ConfigurationError(
+      `${path}: the state starts with personal data; default its personal() and person() fields to null`,
+    );
+  }
+  return { schema, initial: initial.data as object, personal };
 };
 
 type Correlator = (event: StoredEvent) => string | null;
@@ -265,6 +301,7 @@ const buildProcess = (
     handlerTimeoutMs: config.forAggregate(aggregate).processes.handlerTimeoutMs,
     initialState: state.initial,
     stateSchema: state.schema,
+    personal: state.personal,
     handlers,
     deadlineFields,
     deadlineHandlers: compileDeadlines(path, entry, deadlineFields),

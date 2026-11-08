@@ -7,6 +7,8 @@ export type {
 } from "./adapter/storage/dead-letter-store.ts";
 export type {
   FieldFilter,
+  FieldTypes,
+  FieldTypesOfRow,
   FindManyArgs,
   RangeFilter,
   ReadClient,

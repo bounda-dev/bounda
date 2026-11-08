@@ -131,6 +131,7 @@ export type {
   FieldsArgs,
   FieldsRecord,
   FieldType,
+  FieldTypesOf,
   InferRow,
   RowOf,
 } from "./view.ts";

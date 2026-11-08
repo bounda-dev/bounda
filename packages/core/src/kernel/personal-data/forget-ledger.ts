@@ -1,6 +1,7 @@
 import type { Adapter } from "../../adapter/adapter.ts";
 import type { AdapterDefinition } from "../../adapter/adapter-definition.ts";
 import type { ForgetLedger } from "../../adapter/storage/forget-ledger.ts";
+import type { Clock } from "../../contracts/clock.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import type { AppEnv } from "../../register/index.ts";
 
@@ -14,6 +15,11 @@ export interface CreateForgetLedgerFromEnvArgs {
    * The name of the store the app serves, whose entries the ledger keeps apart.
    */
   readonly tenant?: string | undefined;
+  /**
+   * How long the app keeps each entry after its `forgottenAt`, from `keepFor`; `undefined` keeps
+   * entries for good. Only a ledger without `prune` uses it, to expire its entries itself.
+   */
+  readonly keepForMs?: number | undefined;
 }
 
 /**
@@ -26,8 +32,8 @@ export interface ForgetLedgerDefinition {
 }
 
 /**
- * What `runtime.personalData.forgetLedger` holds: an adapter pointed at another database than the
- * storage, whose ledger table it creates there, or a ledger definition.
+ * What `runtime.personalData.forgetLedger.store` holds: an adapter pointed at another database
+ * than the storage, whose ledger table it creates there, or a ledger definition.
  */
 export type ForgetLedgerSource = Adapter | ForgetLedgerDefinition;
 
@@ -85,14 +91,38 @@ export const openForgetLedger: OpenForgetLedgerFunction = async ({
   storage,
   env,
   tenant,
+  keepForMs,
 }) => {
   if (source === null) return null;
   if (source.kind === "bounda-adapter" && sharesStorage(source, storage)) {
     throw new ConfigurationError(
-      "runtime.personalData.forgetLedger points at the storage's own database, which a restore rolls back with it: give it another database",
+      "runtime.personalData.forgetLedger.store points at the storage's own database, which a restore rolls back with it: give it another database",
     );
   }
   return source.kind === "bounda-forget-ledger"
-    ? source.create({ env, tenant })
-    : source.createForgetLedger({ tenant });
+    ? source.create({ env, tenant, keepForMs })
+    : source.createForgetLedger({ tenant, keepForMs });
+};
+
+// How long the app waits for the ledger, at start or after a forgetting, before it goes on and
+// lets the ledger finish behind.
+export const FORGET_LEDGER_WAIT_MS = 10_000;
+
+export interface WaitForLedgerFunction {
+  <T>(clock: Clock, work: Promise<T>): Promise<T | "late">;
+}
+
+/**
+ * `work`, or `"late"` once `FORGET_LEDGER_WAIT_MS` has passed without it settling.
+ */
+export const waitForLedger: WaitForLedgerFunction = async (clock, work) => {
+  let cancel: () => void = () => undefined;
+  const late = new Promise<"late">((resolve) => {
+    cancel = clock.after(FORGET_LEDGER_WAIT_MS, () => resolve("late"));
+  });
+  try {
+    return await Promise.race([work, late]);
+  } finally {
+    cancel();
+  }
 };

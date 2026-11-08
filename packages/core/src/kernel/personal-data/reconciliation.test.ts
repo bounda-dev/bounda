@@ -17,12 +17,14 @@ import {
   FORGET_LEDGER_ATTEMPTS,
   FORGET_LEDGER_CURSOR,
   FORGET_LEDGER_HELD_UNTIL,
+  FORGET_LEDGER_LAST_RUN,
   FORGET_LEDGER_REREAD_MS,
   type ForgetAgainEntry,
   forgetAgain,
 } from "./reconciliation.ts";
 
 const NOW = new Date("2026-03-01T00:00:00.000Z");
+const EVERY = 5 * 60_000;
 
 const keyed = async (storage: Storage, persons: readonly string[]): Promise<void> => {
   for (const person of persons) {
@@ -75,6 +77,8 @@ const setUp = async ({
     clock: createFixedClock(NOW),
     logger,
     concurrencyRetries: 3,
+    reconcileEveryMs: EVERY,
+    keepForMs: null,
     pageSize,
   });
   return { storage, reconciliation, reads };
@@ -146,7 +150,7 @@ describe("the forget ledger's reconciliation", () => {
     expect(await storage.checkpointStore.get(FORGET_LEDGER_CURSOR)).toBe(later);
   });
 
-  it("is not reconciled before its first reconciliation, nor due again after one", async () => {
+  it("is not reconciled before its first reconciliation, nor due again until the period ends", async () => {
     const { reconciliation, reads } = await setUp({ entries: [] });
     expect(reconciliation.reconciled()).toBe(false);
     expect(reconciliation.nextDueAt()).toBeNull();
@@ -155,8 +159,11 @@ describe("the forget ledger's reconciliation", () => {
     await reconciliation.reconcile(NOW);
     expect(reconciliation.reconciled()).toBe(true);
     expect(reconciliation.nextDueAt()).toBeNull();
-    expect(await reconciliation.sweep(new Date(NOW.getTime() + 3_600_000))).toBe(0);
+    expect(await reconciliation.sweep(new Date(NOW.getTime() + EVERY - 1))).toBe(0);
     expect(reads).toHaveLength(1);
+    expect(await reconciliation.sweep(new Date(NOW.getTime() + EVERY))).toBe(0);
+    expect(reads).toHaveLength(2);
+    expect(reconciliation.nextDueAt()).toBeNull();
   });
 
   it("reads a ledger without delay once, and one with a delay once more after it", async () => {
@@ -198,9 +205,11 @@ describe("the forget ledger's reconciliation", () => {
       clock: createFixedClock(NOW),
       logger: silentLogger,
       concurrencyRetries: 3,
+      reconcileEveryMs: EVERY,
+      keepForMs: null,
       pageSize: 10,
     });
-    expect(await reconciliation.reconcile(NOW)).toBeNull();
+    expect(await reconciliation.reconcile(NOW)).toEqual({ failed: new Error("down") });
     const due = reconciliation.nextDueAt() as Date;
     expect(await reconciliation.sweep(due)).toBe(1);
   });
@@ -237,8 +246,10 @@ describe("the forget ledger's reconciliation", () => {
       clock: createFixedClock(NOW),
       logger: { ...silentLogger, error: (message) => errors.push(message) },
       concurrencyRetries: 3,
+      reconcileEveryMs: EVERY,
+      keepForMs: null,
     });
-    expect(await reconciliation.reconcile(NOW)).toBeNull();
+    expect(await reconciliation.reconcile(NOW)).toEqual({ failed: new Error("down") });
     expect(errors).toEqual([
       "forget ledger could not be reconciled; persons a restored backup brought back are not forgotten yet",
       "forget ledger's reconciliation could not be held",
@@ -277,6 +288,8 @@ describe("the forget ledger's reconciliation", () => {
         clock: createFixedClock(NOW),
         logger: { ...silentLogger, error: (message) => errors.push(message) },
         concurrencyRetries: 3,
+        reconcileEveryMs: EVERY,
+        keepForMs: null,
       });
     expect(await create().reconcile(NOW)).toBe(0);
     expect(written).toEqual([]);
@@ -310,6 +323,8 @@ describe("the forget ledger's reconciliation", () => {
       clock: createFixedClock(NOW),
       logger: silentLogger,
       concurrencyRetries: 3,
+      reconcileEveryMs: EVERY,
+      keepForMs: null,
     });
     await reconciliation.reconcile(NOW);
     asked.length = 0;
@@ -332,6 +347,8 @@ describe("the forget ledger's reconciliation", () => {
       clock: createFixedClock(NOW),
       logger: silentLogger,
       concurrencyRetries: 3,
+      reconcileEveryMs: EVERY,
+      keepForMs: null,
       forgotten: (personId) => told.push(personId),
     });
     expect(await reconciliation.reconcile(NOW)).toBe(1);
@@ -349,6 +366,197 @@ describe("the forget ledger's reconciliation", () => {
     const { reconciliation } = await setUp({ entries: [entry("c-1", "e-1", at(0))], logger });
     await reconciliation.reconcile(NOW);
     expect(warnings).toEqual([]);
+  });
+});
+
+describe("the forget ledger's periodic reconciliation", () => {
+  const periodic = async ({
+    checkpoints = (store: CheckpointStore) => store,
+    prune,
+    keepForMs = null,
+    logger = silentLogger,
+    failures = 0,
+  }: {
+    readonly checkpoints?: (store: CheckpointStore) => CheckpointStore;
+    readonly prune?: ForgetLedger["prune"];
+    readonly keepForMs?: number | null;
+    readonly logger?: Logger;
+    readonly failures?: number;
+  } = {}) => {
+    const storage = await memory().createStorage();
+    const { ledger, reads } = recordingLedger([]);
+    let left = failures;
+    const reconciliation = createForgetLedgerReconciliation({
+      ledger: {
+        ...ledger,
+        read: async (args) => {
+          if (left > 0) {
+            left -= 1;
+            reads.push(args);
+            throw new Error("down");
+          }
+          return ledger.read(args);
+        },
+        ...(prune === undefined ? {} : { prune }),
+      },
+      storage: { ...storage, checkpointStore: checkpoints(storage.checkpointStore) },
+      ids: createSequentialIdGenerator(),
+      clock: createFixedClock(NOW),
+      logger,
+      concurrencyRetries: 3,
+      reconcileEveryMs: EVERY,
+      keepForMs,
+    });
+    const fail = (times: number): void => {
+      left = times;
+    };
+    return { storage, reconciliation, reads, fail };
+  };
+
+  const later = (milliseconds: number): Date => new Date(NOW.getTime() + milliseconds);
+
+  it("keeps when it last reconciled, and leaves the period to whichever instance took it last", async () => {
+    const { storage, reconciliation, reads } = await periodic();
+    expect(await reconciliation.reconcile(NOW)).toBe(0);
+    expect(await storage.checkpointStore.get(FORGET_LEDGER_LAST_RUN)).toBe(NOW.getTime());
+    // Another instance took the period since.
+    await storage.checkpointStore.set(FORGET_LEDGER_LAST_RUN, NOW.getTime() + 1_000);
+    expect(await reconciliation.sweep(later(EVERY))).toBe(0);
+    expect(reads).toHaveLength(1);
+    expect(await reconciliation.sweep(later(EVERY + 999))).toBe(0);
+    expect(reads).toHaveLength(1);
+    expect(await reconciliation.sweep(later(EVERY + 1_000))).toBe(0);
+    expect(reads).toHaveLength(2);
+    expect(await storage.checkpointStore.get(FORGET_LEDGER_LAST_RUN)).toBe(
+      NOW.getTime() + EVERY + 1_000,
+    );
+  });
+
+  it("takes a period whose last run a clock ahead wrote more than a round from now", async () => {
+    const { storage, reconciliation, reads } = await periodic();
+    await reconciliation.reconcile(NOW);
+    await storage.checkpointStore.set(FORGET_LEDGER_LAST_RUN, NOW.getTime() + 2 * EVERY + 1);
+    expect(await reconciliation.sweep(later(EVERY))).toBe(0);
+    expect(reads).toHaveLength(2);
+    expect(await storage.checkpointStore.get(FORGET_LEDGER_LAST_RUN)).toBe(NOW.getTime() + EVERY);
+    await storage.checkpointStore.set(FORGET_LEDGER_LAST_RUN, NOW.getTime() + 3 * EVERY);
+    expect(await reconciliation.sweep(later(2 * EVERY))).toBe(0);
+    expect(reads).toHaveLength(2);
+  });
+
+  it("reconciles at once when a restore took the last run back", async () => {
+    const { storage, reconciliation, reads } = await periodic();
+    await reconciliation.reconcile(NOW);
+    await storage.checkpointStore.set(FORGET_LEDGER_LAST_RUN, NOW.getTime() - EVERY);
+    expect(await reconciliation.sweep(later(EVERY - 1))).toBe(0);
+    expect(reads).toHaveLength(1);
+    expect(await reconciliation.sweep(later(EVERY))).toBe(0);
+    expect(reads).toHaveLength(2);
+  });
+
+  it("leaves the period to the instance that moved the row first", async () => {
+    const { reconciliation, reads } = await periodic({
+      checkpoints: (store) => ({
+        ...store,
+        compareAndSet: async (name, expected, position) =>
+          name === FORGET_LEDGER_LAST_RUN && position === NOW.getTime() + EVERY
+            ? false
+            : store.compareAndSet(name, expected, position),
+      }),
+    });
+    await reconciliation.reconcile(NOW);
+    expect(await reconciliation.sweep(later(EVERY))).toBe(0);
+    expect(reads).toHaveLength(1);
+    expect(await reconciliation.sweep(later(2 * EVERY - 1))).toBe(0);
+    expect(reads).toHaveLength(1);
+    expect(await reconciliation.sweep(later(2 * EVERY))).toBe(0);
+    expect(reads).toHaveLength(2);
+  });
+
+  it("reconciles when the store cannot say whether another instance did", async () => {
+    let readable = true;
+    const { reconciliation, reads } = await periodic({
+      checkpoints: (store) => ({
+        ...store,
+        get: async (name) => {
+          if (!readable && name === FORGET_LEDGER_LAST_RUN) throw new Error("read-only");
+          return store.get(name);
+        },
+      }),
+    });
+    await reconciliation.reconcile(NOW);
+    readable = false;
+    expect(await reconciliation.sweep(later(EVERY))).toBe(0);
+    expect(reads).toHaveLength(2);
+    readable = true;
+    const writes = await periodic({
+      checkpoints: (store) => ({
+        ...store,
+        compareAndSet: async (name, expected, position) => {
+          if (name === FORGET_LEDGER_LAST_RUN && position === NOW.getTime() + EVERY) {
+            throw new Error("read-only");
+          }
+          return store.compareAndSet(name, expected, position);
+        },
+      }),
+    });
+    await writes.reconciliation.reconcile(NOW);
+    expect(await writes.reconciliation.sweep(later(EVERY))).toBe(0);
+    expect(writes.reads).toHaveLength(2);
+  });
+
+  it("logs a last run it cannot keep, and stays reconciled", async () => {
+    const errors: unknown[] = [];
+    const { reconciliation } = await periodic({
+      checkpoints: (store) => ({
+        ...store,
+        compareAndSet: async (name, expected, position) => {
+          if (name === FORGET_LEDGER_LAST_RUN) throw new Error("read-only");
+          return store.compareAndSet(name, expected, position);
+        },
+      }),
+      logger: { ...silentLogger, error: (message) => errors.push(message) },
+    });
+    expect(await reconciliation.reconcile(NOW)).toBe(0);
+    expect(errors).toEqual(["forget ledger's last reconciliation could not be kept"]);
+    expect(reconciliation.reconciled()).toBe(true);
+  });
+
+  it("waits for a failure's hold, of any instance, before the period", async () => {
+    const { storage, reconciliation, reads } = await periodic();
+    await reconciliation.reconcile(NOW);
+    await storage.checkpointStore.set(FORGET_LEDGER_HELD_UNTIL, NOW.getTime() + EVERY + 1_000);
+    expect(await reconciliation.sweep(later(EVERY))).toBe(0);
+    expect(reads).toHaveLength(1);
+    expect(await reconciliation.sweep(later(EVERY + 1_000))).toBe(0);
+    expect(reads).toHaveLength(2);
+  });
+
+  it("prunes the entries past keepFor after a periodic reconciliation, never after a start or a failure", async () => {
+    const pruned: string[] = [];
+    const prune: ForgetLedger["prune"] = async ({ before }) => {
+      pruned.push(before);
+    };
+    const { reconciliation } = await periodic({ prune, keepForMs: 60_000, failures: 1 });
+    expect(await reconciliation.reconcile(NOW)).toEqual({ failed: new Error("down") });
+    await reconciliation.reconcile(NOW);
+    expect(pruned).toEqual([]);
+    expect(await reconciliation.sweep(later(EVERY))).toBe(0);
+    expect(pruned).toEqual([new Date(NOW.getTime() + EVERY - 60_000).toISOString()]);
+    const failing = await periodic({ prune, keepForMs: 60_000 });
+    await failing.reconciliation.reconcile(NOW);
+    failing.fail(1);
+    expect(await failing.reconciliation.sweep(later(EVERY))).toBe(0);
+    expect(failing.reads).toHaveLength(2);
+    expect(pruned).toHaveLength(1);
+    const down = await periodic({ prune, keepForMs: 60_000, failures: 2 });
+    await down.reconciliation.reconcile(NOW);
+    await down.reconciliation.sweep(later(EVERY));
+    expect(pruned).toHaveLength(1);
+    const keeping = await periodic({ prune });
+    await keeping.reconciliation.reconcile(NOW);
+    await keeping.reconciliation.sweep(later(EVERY));
+    expect(pruned).toHaveLength(1);
   });
 });
 

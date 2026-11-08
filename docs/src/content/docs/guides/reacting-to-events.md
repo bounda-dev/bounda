@@ -77,6 +77,11 @@ terminal error. The compiler checks it first: the `+types` of every handler asse
 returns fits the state, so a field of the wrong type, or a plain string where a deadline wants an
 `Instant`, is a type error reported in that `+types` file.
 
+A state that holds personal data marks its fields with `personal()` and names whose they are with
+`person()`, both from `Process.StateArgs`, as an event's payload does: the marked fields are stored
+encrypted, read as `null` once that person is forgotten, and the instance carries on. See
+[personal data in a process's state](/guides/personal-data/#in-a-processs-state).
+
 ## Deadlines
 
 A process that has to act at a moment keeps the moment in its state. A field declared with

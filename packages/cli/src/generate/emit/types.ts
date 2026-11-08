@@ -61,6 +61,13 @@ export interface RowTypeNameFunction {
 export const rowTypeName: RowTypeNameFunction = (readModelName) =>
   `${typeNameOf(readModelName)}Row`;
 
+export interface FieldTypesTypeNameFunction {
+  (readModelName: string): string;
+}
+
+export const fieldTypesTypeName: FieldTypesTypeNameFunction = (readModelName) =>
+  `${typeNameOf(readModelName)}FieldTypes`;
+
 export interface ForgettingTypeNameFunction {
   (readModelName: string): string;
 }
@@ -312,6 +319,7 @@ export const emitTypes: EmitTypesFunction = ({ model, path, inferredStates = {} 
     sections.push(
       [
         `export type ${rowTypeName(readModel.name)} = core.RowOf<${typeofImport(path, readModel.view.path)}>;`,
+        `export type ${fieldTypesTypeName(readModel.name)} = core.FieldTypesOf<${typeofImport(path, readModel.view.path)}>;`,
         emitPorts(readModel, path),
         emitForgetting(model, readModel, path),
       ].join("\n"),

@@ -36,7 +36,11 @@ import type {
   ExportedRow,
   ExportedScheduledCommand,
   Field,
+  FieldFilter,
   FieldsArgs,
+  FieldTypes,
+  FieldTypesOf,
+  FieldTypesOfRow,
   ForgetsPersonalData,
   HasPersonalFields,
   ImplementationModule,
@@ -86,8 +90,11 @@ import { describe, expectTypeOf, it } from "vitest";
 import type { registry } from "./fixtures/order-app/.bounda/registry.ts";
 import type {
   Commands,
+  CustomerDirectoryFieldTypes,
   CustomerDirectoryForgetting,
   CustomerDirectoryRow,
+  OrderSummaryRow as GeneratedOrderSummaryRow,
+  OrderSummaryFieldTypes,
   OrderSummaryForgetting,
   Queries,
 } from "./fixtures/order-app/.bounda/types.ts";
@@ -109,6 +116,7 @@ import type { Process as OrderPayment } from "./fixtures/order-app/app/domain/or
 import type { Process as OnOrderPaid } from "./fixtures/order-app/app/domain/order/processes/order-payment/+types/on-order-paid.ts";
 import type { Process as OnCustomerRegistered } from "./fixtures/order-app/app/domain/order/processes/order-payment/customer/+types/on-customer-registered.ts";
 import type { Projection as ProjectCustomerRegistered } from "./fixtures/order-app/app/read/customer-directory/projections/customer/+types/customer-registered.ts";
+import type { Query as GetCustomer } from "./fixtures/order-app/app/read/customer-directory/queries/+types/get-customer.ts";
 import type { Projection as ProjectForgotten } from "./fixtures/order-app/app/read/order-summary/projections/bounda/+types/personal-data-forgotten.ts";
 import type { Projection as ProjectRestricted } from "./fixtures/order-app/app/read/order-summary/projections/bounda/+types/processing-restricted.ts";
 import type { Projection as ProjectOrderPaid } from "./fixtures/order-app/app/read/order-summary/projections/order/+types/order-paid.ts";
@@ -578,17 +586,21 @@ describe("personal data", () => {
   });
 
   it("marks read-model fields without changing their rows, a person field being a string", () => {
-    expectTypeOf(fieldBuilder.string().person()).toEqualTypeOf<Field<string, false, "person">>();
+    expectTypeOf(fieldBuilder.string().person()).toEqualTypeOf<
+      Field<string, false, "person", "string">
+    >();
     expectTypeOf(fieldBuilder.string().optional().personal()).toEqualTypeOf<
-      Field<string, true, "personal">
+      Field<string, true, "personal", "string">
     >();
     expectTypeOf(fieldBuilder.json<{ street: string }>().personal().index()).toEqualTypeOf<
-      Field<{ street: string }, false, "personal">
+      Field<{ street: string }, false, "personal", "json">
     >();
     expectTypeOf(fieldBuilder.string().mark).toEqualTypeOf<null>();
     expectTypeOf<CustomerDirectoryRow>().toEqualTypeOf<{
       readonly customerId: string;
       readonly email?: string;
+      readonly tier?: "regular" | "vip";
+      readonly newsletter?: boolean;
     }>();
     const view = {
       fields: ({ f }: FieldsArgs) => ({
@@ -894,6 +906,14 @@ describe("processes", () => {
     expectTypeOf<AtNextReminder.DeadlineArgs["state"]["reminders"]>().toEqualTypeOf<number>();
   });
 
+  it("process state: personal() reads as possibly null, person() as declared", () => {
+    expectTypeOf<OnOrderPaid.HandlerArgs["state"]["contact"]>().toEqualTypeOf<string | null>();
+    expectTypeOf<AtNextReminder.DeadlineArgs["state"]["contact"]>().toEqualTypeOf<string | null>();
+    expectTypeOf<OnOrderPaid.HandlerArgs["state"]["customerId"]>().toEqualTypeOf<string | null>();
+    expectTypeOf<OrderPayment.StateArgs["personal"]>().toEqualTypeOf<PersonalFunction>();
+    expectTypeOf<OrderPayment.StateArgs["person"]>().toEqualTypeOf<PersonFunction>();
+  });
+
   it("give every process handler after(), from a duration to an instant", () => {
     expectTypeOf<OnOrderPaid.HandlerArgs["after"]>().parameter(0).toEqualTypeOf<DurationInput>();
     expectTypeOf<OnOrderPaid.HandlerArgs["after"]>().returns.toEqualTypeOf<Instant>();
@@ -970,6 +990,116 @@ describe("read models", () => {
     expectTypeOf<Parameters<Table<Flags>["delete"]>[0]>().toEqualTypeOf<Where<Flags>>();
     expectTypeOf<Parameters<Table<Flags>["findOne"]>[0]>().toEqualTypeOf<Where<Flags>>();
     expectTypeOf<Parameters<Table<Flags>["count"]>[0]>().toEqualTypeOf<Where<Flags> | undefined>();
+  });
+
+  it("type a table from how its view stores each field, not from the values alone", () => {
+    expectTypeOf<CustomerDirectoryFieldTypes>().toEqualTypeOf<{
+      readonly customerId: "string";
+      readonly email: "string";
+      readonly tier: "json";
+      readonly newsletter: "boolean";
+    }>();
+    expectTypeOf<OrderSummaryFieldTypes>().toEqualTypeOf<{
+      readonly orderId: "string";
+      readonly customerId: "string";
+      readonly status: "string";
+      readonly total: "number";
+      readonly paidAt: "date";
+    }>();
+    type Customers = Table<CustomerDirectoryRow, CustomerDirectoryFieldTypes>;
+    expectTypeOf<GetCustomer.RepositoryArgs["table"]>().toEqualTypeOf<Customers>();
+    expectTypeOf<GetCustomer.HandlerArgs["table"]>().toEqualTypeOf<Customers>();
+    expectTypeOf<ProjectCustomerRegistered.Args["table"]>().toEqualTypeOf<Customers>();
+    expectTypeOf<ProjectOrderPaid.Args["table"]>().toEqualTypeOf<
+      Table<GeneratedOrderSummaryRow, OrderSummaryFieldTypes>
+    >();
+    type CustomerWhere = Where<CustomerDirectoryRow, CustomerDirectoryFieldTypes>;
+    expectTypeOf<NonNullable<Parameters<Customers["findMany"]>[0]>["where"]>().toEqualTypeOf<
+      CustomerWhere | undefined
+    >();
+    expectTypeOf<CustomerWhere["tier"]>().toEqualTypeOf<"regular" | "vip" | null | undefined>();
+    expectTypeOf<CustomerWhere["newsletter"]>().toEqualTypeOf<
+      boolean | null | SetFilter<boolean> | undefined
+    >();
+    expectTypeOf<CustomerWhere["email"]>().toEqualTypeOf<
+      string | null | RangeFilter<string> | undefined
+    >();
+    expectTypeOf<Where<CustomerDirectoryRow>["tier"]>().toEqualTypeOf<
+      "regular" | "vip" | null | RangeFilter<"regular" | "vip"> | undefined
+    >();
+  });
+
+  it("refuse in the types what the runtime refuses: operators on JSON, a range on a boolean", () => {
+    const filter = (table: GetCustomer.RepositoryArgs["table"]) => {
+      table.findMany({ where: { tier: "vip", newsletter: { ne: false }, email: { gte: "a" } } });
+      table.count({ newsletter: { in: [true] }, customerId: { in: ["c-1"] } });
+      table.delete({ tier: null });
+      // @ts-expect-error a JSON field takes no range, even one whose values are strings
+      table.findMany({ where: { tier: { gt: "regular" } } });
+      // @ts-expect-error a JSON field takes no membership
+      table.count({ tier: { in: ["vip"] } });
+      // @ts-expect-error a JSON field takes no inequality
+      table.update({ tier: { ne: "vip" } }, { newsletter: true });
+      // @ts-expect-error a boolean has no order to range over
+      table.findOne({ newsletter: { gt: false } });
+      // @ts-expect-error a boolean has no order to range over
+      table.delete({ newsletter: { lte: true } });
+      // @ts-expect-error an operator the table does not know
+      table.findMany({ where: { email: { like: "a%" } } });
+    };
+    expectTypeOf(filter).toBeFunction();
+  });
+
+  it("pick a field's operators by how it is stored, and by its value without a view", () => {
+    expectTypeOf<FieldFilter<string, "json">>().toEqualTypeOf<string>();
+    expectTypeOf<FieldFilter<number | undefined, "json">>().toEqualTypeOf<
+      number | null | undefined
+    >();
+    expectTypeOf<FieldFilter<boolean, "boolean">>().toEqualTypeOf<boolean | SetFilter<boolean>>();
+    expectTypeOf<FieldFilter<Date, "date">>().toEqualTypeOf<Date | RangeFilter<Date>>();
+    expectTypeOf<FieldFilter<string>>().toEqualTypeOf<string | RangeFilter<string>>();
+    expectTypeOf<FieldFilter<{ a: 1 }>>().toEqualTypeOf<{ a: 1 }>();
+    interface Mixed {
+      readonly id: string;
+      readonly at?: Date;
+      readonly on: boolean;
+      readonly count: number;
+      readonly doc: { readonly a: number };
+    }
+    expectTypeOf<FieldTypesOfRow<Mixed>>().toEqualTypeOf<{
+      readonly id: "string";
+      readonly at: "date";
+      readonly on: "boolean";
+      readonly count: "number";
+      readonly doc: "json";
+    }>();
+    expectTypeOf<Table<Mixed>>().toEqualTypeOf<Table<Mixed, FieldTypesOfRow<Mixed>>>();
+    interface Unions {
+      readonly key: string | number;
+      readonly either: string | { readonly a: number };
+    }
+    expectTypeOf<FieldTypesOfRow<Unions>>().toEqualTypeOf<{
+      readonly key: "string" | "number";
+      readonly either: "json";
+    }>();
+    expectTypeOf<Where<Unions>["key"]>().toEqualTypeOf<
+      string | number | RangeFilter<string | number> | undefined
+    >();
+    expectTypeOf<FieldTypesOfRow<Mixed>>().toExtend<FieldTypes<Mixed>>();
+    const view = {
+      fields: ({ f }: FieldsArgs) => ({ id: f.string().primaryKey(), doc: f.json<string>() }),
+    };
+    expectTypeOf<FieldTypesOf<typeof view>>().toEqualTypeOf<{
+      readonly id: "string";
+      readonly doc: "json";
+    }>();
+    expectTypeOf<FieldTypesOf<{ fields: string }>>().toBeNever();
+  });
+
+  it("let a table typed from its view go where a table typed from its row is expected", () => {
+    expectTypeOf<Table<CustomerDirectoryRow, CustomerDirectoryFieldTypes>>().toExtend<
+      Table<CustomerDirectoryRow>
+    >();
   });
 
   it("let a query compose other queries through the typed facade", () => {

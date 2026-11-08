@@ -1,6 +1,6 @@
 ---
 title: Personal data
-description: Mark the fields of an event or a read model that hold personal data, say whose they are, forget a person or export their data with one call, record who opened whose data, forget them after a retention or when a purpose ends, wrap their keys under a master key kept out of the database, and handle forgetting in every read model that showed them.
+description: Mark the fields of an event, a process state or a read model that hold personal data, say whose they are, forget a person or export their data with one call, record who opened whose data, forget them after a retention or when a purpose ends, wrap their keys under a master key kept out of the database, and handle forgetting in every read model that showed them.
 sidebar:
   order: 11
 ---
@@ -75,11 +75,56 @@ forgotten never runs. A query's `PayloadArgs` has no `personal`, since a query i
 A command scheduled before its fields were marked keeps its payload as it was written, in the
 clear, and runs with it; `forget` cannot find it.
 
+## In a process's state
+
+A [process](/guides/reacting-to-events/) keeps its state in the lifecycle events of its own
+stream, so a state that holds personal data marks it the same way, with `personal` and `person`
+from its `StateArgs`:
+
+```ts
+// app/domain/signup/processes/onboarding/index.ts
+import type { Process } from "./+types/index";
+
+export const config = ({ events }: Process.ConfigArgs) => ({
+  startedBy: [events.signup.SignupStarted],
+  completedBy: [events.signup.SignupConfirmed],
+});
+
+export const state = ({ z, deadline, personal, person }: Process.StateArgs) =>
+  z.object({
+    customerId: person(z.string()).nullable().default(null),
+    email: personal(z.email()).nullable().default(null),
+    reminder: deadline(),
+  });
+```
+
+Every lifecycle event that carries the state stores its marked fields encrypted with the key of
+the person the state names: the field marked `person`, or, when none is marked, the instance's
+id while a personal field holds a value, as an event's aggregate id is. A state learns whose it is
+in a later step, so it starts naming nobody: its `personal` and `person` fields default to `null`,
+and the app does not start otherwise. While its `person` field is `null` it names nobody, and a
+step that sets a personal field with nobody named fails with `ValidationError`, as a terminal
+error. A personal field holding `null` holds nothing of theirs and is stored as it is.
+
+Once the person is forgotten, those fields read as `null` and the instance carries on: its
+handlers and deadlines run on the rest of the state, and the types say so, `string | null` for
+`email` whatever its schema. The schema takes `null` for a personal field too, so a handler may
+clear one itself. Only the marked fields are encrypted, never the whole state, which would leave
+an instance unable to go on once its person is forgotten.
+
+The rest follows from the stream: the [export](#exporting-a-persons-data) lists the lifecycle
+events that name the person, with the fields of the state they carry; while their processing is
+[restricted](#restricting-processing), a step of the instance is refused before its handler runs;
+and a step that fails has its error text encrypted with the key of the person its event names,
+or else of the one the state names, which covers a deadline. A lifecycle event written before its
+state marked its fields keeps them in the clear.
+
 ## What the types say
 
 Whoever writes the event, the command handler through `events.customerRegistered({ email })`,
 passes what the schema takes: a `string`. Whoever reads it, `begin`, `evolve`, a policy, a
-projection, a process, sees `string | null`: the value, or `null` once the person is forgotten.
+projection, a process, sees `string | null`: the value, or `null` once the person is forgotten. So does a process handler that
+reads a personal field of its own state.
 The `null` reaches the state too, so the `begin` above gives the customer an `email` of
 `string | null`, and a command handler that reads `state.email` handles the case. A field
 marked `.optional()` reads as `string | null | undefined`: absent, or forgotten.
@@ -153,8 +198,8 @@ and never its text, and so does the last error the inbox and the scheduler keep 
 What `forget` does not reach is text your code writes elsewhere and data left unmarked: your logs
 keep whatever you wrote to them, an event's payload written in the clear, with the data in a field
 you did not mark, stays readable, a command's payload left unmarked is stored as it came, and the
-error of work that names nobody, such as a process deadline or a scheduled command whose payload
-marks nothing, stays in its dead letter in the clear. Log and throw with ids, not the data itself,
+error of work that names nobody, such as a deadline of a process whose state names nobody or a
+scheduled command whose payload marks nothing, stays in its dead letter in the clear. Log and throw with ids, not the data itself,
 and mark every field that holds it.
 
 Nor does it reach the `actor` in the metadata of events, who acted on them (see
@@ -196,7 +241,8 @@ person, for them to take away, as the right of access and the right to portabili
 `events` are every event that names the person, by its field marked `person` or its aggregate's
 id, in position order, the events of their own stream `bounda:<personId>` included; `data` holds
 the fields marked `personal` of that event, opened, and nothing else of its payload, so an event
-without such fields has an empty `data`. `scheduledCommands` are the commands waiting to run
+without such fields has an empty `data`. A process's lifecycle event names the person [its state
+names](#in-a-processs-state), and its `data` holds the personal fields of that state. `scheduledCommands` are the commands waiting to run
 whose payload holds personal fields of theirs, with `commandId` the id the dispatch answered or,
 for one the runtime scheduled itself, the scheduler's key, each with the same `data`.
 `deadLetters` are the handler runs that gave up and name the person: work about them, whose
@@ -393,8 +439,10 @@ person's marked fields is refused too.
 A policy, process or scheduled command whose command is refused this way becomes a dead letter at
 once, as for any terminal error, with `errorCode: "PROCESSING_RESTRICTED"` and the person in
 `person`, even when the event it handled names nobody: a policy on `Invited`, an event of the
-newsletter, dispatching `registerCustomer` for the restricted customer. A failed process parks
-what follows, as [it always does](/guides/dead-letters/#a-failed-process). Reading the person's
+newsletter, dispatching `registerCustomer` for the restricted customer. So does a step of a
+process instance whose [state names the person](#in-a-processs-state), before its handler runs,
+and the store refuses a lifecycle event that would encrypt their fields as it refuses a command's.
+A failed process parks what follows, as [it always does](/guides/dead-letters/#a-failed-process). Reading the person's
 data, `forget` and the export of their data stay allowed: a restriction is not an erasure.
 
 `unrestrict` lifts it:
@@ -698,13 +746,13 @@ export default defineConfig({
   runtime: {
     personalData: {
       keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
-      forgetLedger: sqlite({ path: "./ledger/forget-ledger.db" }),
+      forgetLedger: { store: sqlite({ path: "./ledger/forget-ledger.db" }) },
     },
   },
 });
 ```
 
-`forgetLedger` takes any adapter pointed at another database, where it creates one table,
+Its `store` takes any adapter pointed at another database, where it creates one table,
 `bounda_forget_ledger`, with the adapter's `tablePrefix`, the first time it is used: a SQLite file
 on another disk or volume for an app on one machine, `postgresql({ url })` on another server, or a
 schema of the same server backed up apart. A plain file of the app's own making would be the same
@@ -725,7 +773,7 @@ export default defineConfig({
   runtime: {
     personalData: {
       keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
-      forgetLedger: kvForgetLedger({ binding: "FORGET_LEDGER" }),
+      forgetLedger: { store: kvForgetLedger({ binding: "FORGET_LEDGER" }) },
     },
   },
 });
@@ -740,17 +788,22 @@ Every object keeps its entries under its own name, so an object reached through 
 name fails to start; `createWorker` names each by its tenant. KV may take up to a minute to list a key it
 just wrote, so an object that starts reads the ledger once more a minute later, and wakes for it.
 Anything else is a ledger of your own through `defineForgetLedger`, which receives the host's
-environment and the tenant when the app starts: its `read` returns entries in the order of their
-time, then of their event's id, and `byForgetLedgerOrder` from `@bounda-dev/core/adapter` sorts
-them so; `forgetLedgerContract` from `@bounda-dev/core/adapter/testing` is the test it has to pass.
+environment, the tenant and `keepForMs` when the app starts: its `read` returns entries in the
+order of their time, then of their event's id, and `byForgetLedgerOrder` from
+`@bounda-dev/core/adapter` sorts them so; its optional `prune` removes the entries older than a
+time; `forgetLedgerContract` from `@bounda-dev/core/adapter/testing` is the test it has to pass.
 
 ### What the runtime does with it
 
-The event store is the ledger's outbox. A subscriber of the dispatcher, `forget-ledger`, copies
-every `PersonalDataForgotten` to the ledger in batches, with a policy's guarantee: a batch the
-ledger refuses is delivered again, and the subscriber's lag in `getLag` and
-`bounda.dispatcher.lag` shows how far behind it is. Configuring a ledger on an app that already
-forgot people copies those forgettings first.
+Every transaction that forgets someone appends the forgetting to the ledger as soon as it commits,
+before `forget` resolves, whoever forgot them: `forget`, a policy or process, the retention or a
+reconciliation. The event store is also the ledger's outbox: a subscriber of the dispatcher,
+`forget-ledger`, copies every `PersonalDataForgotten` to the ledger again in batches, with a
+policy's guarantee, and the ledger keeps one entry per event however often it receives it. So a
+forgetting the ledger refused, or did not take within ten seconds, which the app logs as a
+warning, still reaches it: a batch the ledger refuses is delivered again, and the subscriber's
+lag in `getLag` and `bounda.dispatcher.lag` shows how far behind it is. Configuring a ledger on an
+app that already forgot people copies those forgettings first.
 
 When the app starts, before it serves anything, it reads the ledger past a cursor the database
 keeps, the time of the last entry it applied, and for each entry whose forgetting the database
@@ -769,7 +822,13 @@ that key was given to them after they were forgotten, as when they come back and
 The check and the forgetting are one transaction, so instances starting together forget a person
 once. A Durable Object does it on every cold start; restoring its storage restarts it.
 
-Restart the app after restoring its database: it reconciles when it starts.
+While the app runs, it reads the ledger again every `reconcileEvery`, five minutes unless you set
+it, so a database restored under a running app forgets again within that time. One instance
+takes each round, whichever finds it due first, and the time of the last round is kept in the
+database, so a restore takes it back too and cannot hold the next round off. The
+round runs on the worker's passes, in every instance whose role runs the worker; a Durable Object
+runs it on the passes it wakes for, never waking for it alone, since restoring its storage
+restarts it anyway. Restarting the app after a restore reconciles at once.
 
 A ledger that cannot be read when the app starts does not stop it: the app logs an error, starts,
 and its worker tries again after 30 seconds, then twice as long after each failure, up to an hour.
@@ -781,9 +840,38 @@ logged, and the app starts.
 Until then `getLag()` says `forgetLedger: { reconciled: false }`, and a person the restore
 brought back can be read; alert on it. An app without a ledger reports `forgetLedger: null`.
 
-A restore loses what the ledger had not received yet: a forgetting made while the ledger was down,
-or in the moment before the database was lost, that the subscriber had not copied. Keep the
+To never serve before the ledger was read, make it strict:
+
+```ts
+forgetLedger: { store: sqlite({ path: "./ledger/forget-ledger.db" }), strict: true },
+```
+
+A strict app waits at start for the reconciliation however long it takes, and a ledger it cannot
+read fails the start with
+[`FORGET_LEDGER_UNRECONCILED`](/reference/errors/#codes), the ledger's error as its `cause`;
+starting again tries again. The CLI starts the app too, so its commands need the ledger then.
+Availability now depends on the ledger's: give it a store at least as available as the database.
+
+A restore loses only what the ledger never received: a forgetting committed in the moment before
+the process stopped, before its append, and that the subscriber had not copied yet, or one made
+while the ledger was down whose copy was still waiting when the database was lost. Keep the
 `forget-ledger` subscriber's lag near zero, as for any other.
+
+### Keeping the ledger short
+
+The ledger only matters for backups you can still restore. With `keepFor`, an entry older than
+that is removed: set it a little longer than your oldest restorable backup.
+
+```ts
+forgetLedger: { store: sqlite({ path: "./ledger/forget-ledger.db" }), keepFor: "35d" },
+```
+
+The instance that takes a periodic round prunes after it, through the ledger's `prune`, and a
+forgetting older than `keepFor` is not appended at all. KV expires each key on its own instead,
+`keepFor` after its forgetting, since it cannot list its oldest keys first. A backup older than
+`keepFor` brings back whom the removed entries named, so when you keep backups longer, raise it
+first. Without `keepFor` entries are kept for good: ids and times only, but still the ids of
+people who asked to be forgotten.
 
 ### Without a ledger
 

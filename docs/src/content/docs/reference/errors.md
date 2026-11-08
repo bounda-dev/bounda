@@ -87,6 +87,11 @@ dead letter with `errorType: "retriable_exhausted"`.
   `runtime.dispatcher.backoff.baseDelay` without counting one, a read model stops right before the
   event, and a dead-letter retry rejects with it, leaving the letter `failed`. It goes away once
   that code runs on every instance; roll forward, never back.
+- **`FORGET_LEDGER_UNRECONCILED`** (`ForgetLedgerUnreconciledError`; a start's answer). Thrown
+  by `createApp`, and so by `boot` and the CLI, when `runtime.personalData.forgetLedger.strict` is
+  set and the [forget ledger](/guides/personal-data/#the-forget-ledger) could not be read through:
+  the app does not start, since a person a restored backup brought back could be read. `cause` is
+  the ledger's error. Starting again tries again.
 - **`CLAIM_LOST`** (`ClaimLostError`; handled by the runtime). A reaction's inbox claim expired and
   another instance took it over. The attempt writes nothing; the other instance's run is the one
   that counts.

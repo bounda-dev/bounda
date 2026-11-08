@@ -4,6 +4,7 @@ import type { Instant, instantSchema } from "../contracts/instant.ts";
 import type { EventModules, EventTypeNames, StoredEventOf } from "./event.ts";
 import type { TypeNameOf } from "./naming.ts";
 import type { EmptyPayload, PayloadArgs } from "./payload.ts";
+import type { PersonalFunction, PersonFunction } from "./personal.ts";
 import type { ReactionForgetFunction } from "./policy.ts";
 
 /**
@@ -81,11 +82,18 @@ export type DeadlineFieldSchema = InstantFieldSchema & { readonly "~deadline": t
 /**
  * Arguments of a process `state` schema function. `deadline()` declares a moment the process acts
  * at: setting it to `after("24h")` in a handler schedules its `at-<field>.ts`, changing it moves
- * it and `null` cancels it. `instant()` declares a moment it only records.
+ * it and `null` cancels it. `instant()` declares a moment it only records. `personal()` marks a
+ * top-level field as personal data, stored encrypted in the instance's lifecycle events with the
+ * key of the person the state names: the field marked `person()`, or the instance's id when none
+ * is. Both start empty, since a state starts naming nobody. Once that person is forgotten
+ * the field reads as `null` and the instance carries on, so handlers see it as possibly `null`,
+ * and may set it to `null` themselves.
  */
 export interface ProcessStateArgs extends PayloadArgs {
   readonly deadline: () => DeadlineFieldSchema;
   readonly instant: () => InstantFieldSchema;
+  readonly personal: PersonalFunction;
+  readonly person: PersonFunction;
 }
 
 /**

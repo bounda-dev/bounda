@@ -5,6 +5,7 @@ import { type GeneratedFile, importPath } from "./paths.ts";
 import {
   createdStateTypeName,
   eventsTypeName,
+  fieldTypesTypeName,
   portsTypeName,
   rowTypeName,
   stateTypeName,
@@ -256,6 +257,7 @@ const readModelFiles = (
   typesPath: string,
 ): GeneratedFile[] => {
   const row = `generated.${rowTypeName(readModel.name)}`;
+  const fieldTypes = `generated.${fieldTypesTypeName(readModel.name)}`;
   return [
     render(plusTypesPath(readModel.view.path), typesPath, {
       imports: { generated: false, module: null },
@@ -267,19 +269,24 @@ const readModelFiles = (
       return render(plusTypesPath(projection.path), typesPath, {
         imports: { generated: true, module: null },
         namespace: "Projection",
-        members: [["Args", generic("core.ProjectionArgs", [event, row, "unknown"])]],
+        members: [["Args", generic("core.ProjectionArgs", [event, row, "unknown", fieldTypes])]],
       });
     }),
     ...readModel.queries.map((query) =>
       render(plusTypesPath(query.path), typesPath, {
         imports: { generated: true, module: query.path },
-        extraTypes: [`type Row = ${row};`],
+        extraTypes: [`type Row = ${row};`, `type FieldTypes = ${fieldTypes};`],
         namespace: "Query",
         members: [
           ["PayloadArgs", "core.PayloadArgs"],
           [
             "RepositoryArgs",
-            generic("core.QueryRepositoryArgs", ["core.PayloadOf<Module>", "Row", "unknown"]),
+            generic("core.QueryRepositoryArgs", [
+              "core.PayloadOf<Module>",
+              "Row",
+              "unknown",
+              "FieldTypes",
+            ]),
           ],
           [
             "HandlerArgs",
@@ -290,6 +297,7 @@ const readModelFiles = (
               "Row",
               "generated.Queries",
               portsType(readModel),
+              "FieldTypes",
             ]),
           ],
         ],

@@ -69,7 +69,8 @@ export const payload = ({ z, personal }: Event.PayloadArgs) =>
 ```
 
 `personal` marks a field; the aggregate's id names the person, or a field marked with `person`
-does when the event belongs to someone else's aggregate. `app.forget("c-42")` deletes the key
+does when the event belongs to someone else's aggregate. A process's state marks its fields the
+same way, and its instance carries on once they read as `null`. `app.forget("c-42")` deletes the key
 and appends `PersonalDataForgotten` to the person's own stream, and
 `app.exportPersonalData("c-42")` hands the person every marked field and every sealed error the
 store holds of them, and the rows of the read models that name them, for the right of access and

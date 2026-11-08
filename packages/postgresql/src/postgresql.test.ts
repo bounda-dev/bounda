@@ -721,6 +721,61 @@ describe.skipIf(container === null)("postgresql adapter", () => {
     ).rejects.toThrow(/Changing a field's type needs a rebuild: run `bounda rebuild orders`/);
   });
 
+  it("orders the text of a table made with the database's collation by code point once reopened", async () => {
+    const adapter = fresh();
+    const table = `t${run}_${prefixes}_rm_labels`;
+    const evolved: unknown[] = [];
+    const logger = {
+      ...silentLogger,
+      info: (message: string, fields?: unknown) => {
+        evolved.push([message, fields]);
+      },
+    };
+    const fields = { id: f.string().primaryKey(), label: f.string().index(), rank: f.number() };
+    type Label = { id: string; label: string; rank: number };
+    const first = await openReadModel<Label>(adapter, "labels", fields);
+    const raw = first.client.raw as Sql;
+    for (const column of ["id", "label"]) {
+      await raw.unsafe(
+        `ALTER TABLE "${table}" ALTER COLUMN "${column}" TYPE text COLLATE "default"`,
+      );
+    }
+    for (const [index, id] of ["b", "B", "á", "a"].entries()) {
+      await first.table.insert({ id, label: id, rank: index });
+    }
+    const collations = async () =>
+      (
+        await raw.unsafe(
+          `SELECT "column_name", "collation_name" FROM information_schema.columns WHERE "table_name" = $1 ORDER BY "ordinal_position"`,
+          [table],
+        )
+      ).map((column) => [column.column_name, column.collation_name]);
+    expect(await collations()).toEqual([
+      ["id", null],
+      ["label", null],
+      ["rank", null],
+    ]);
+
+    const second = await openReadModel<Label>(adapter, "labels", fields, logger);
+    expect(evolved).toEqual([
+      ["read model table evolved", { readModel: "labels", table, added: 2 }],
+    ]);
+    expect(await collations()).toEqual([
+      ["id", "C"],
+      ["label", "C"],
+      ["rank", null],
+    ]);
+    const ordered = await second.table.findMany({ orderBy: { field: "label", direction: "asc" } });
+    expect(ordered).toEqual([
+      { id: "B", label: "B", rank: 1 },
+      { id: "a", label: "a", rank: 3 },
+      { id: "b", label: "b", rank: 0 },
+      { id: "á", label: "á", rank: 2 },
+    ]);
+    await openReadModel<Label>(adapter, "labels", fields, logger);
+    expect(evolved).toHaveLength(1);
+  });
+
   it("refuses a moved primary key, and indexes a field newly unique once", async () => {
     const adapter = fresh();
     const evolved: string[] = [];

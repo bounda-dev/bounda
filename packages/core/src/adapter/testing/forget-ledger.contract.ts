@@ -106,6 +106,23 @@ export const forgetLedgerContract: ForgetLedgerContractFunction = ({ create }) =
       expect(await readAll(ledger, 25)).toEqual(many);
     });
 
+    it("prunes the entries older than a time, the rest and other tenants' left as they were", async (context) => {
+      if (ledger.prune === undefined) context.skip("the ledger expires entries on its own");
+      const other = await ledgerFor("tenant-b");
+      const entries = [1, 2, 3].map((minute) => entry(`c-${minute}`, `e-${minute}`, minute));
+      await ledger.append(entries);
+      await other.append(entries);
+      await ledger.prune?.({ before: (entries[1] as ForgetLedgerEntry).forgottenAt });
+      expect(await ledger.read({ limit: 10 })).toEqual(entries.slice(1));
+      expect(await other.read({ limit: 10 })).toEqual(entries);
+      await ledger.prune?.({ before: entry("c-0", "e-0", 0).forgottenAt });
+      expect(await ledger.read({ limit: 10 })).toEqual(entries.slice(1));
+      await ledger.prune?.({ before: entry("c-9", "e-9", 9).forgottenAt });
+      expect(await ledger.read({ limit: 10 })).toEqual([]);
+      await ledger.append([entries[0] as ForgetLedgerEntry]);
+      expect(await ledger.read({ limit: 10 })).toEqual(entries.slice(0, 1));
+    });
+
     it("keeps each tenant's entries apart", async () => {
       const other = await ledgerFor("tenant-b");
       const third = await ledgerFor("tenant-c");

@@ -148,15 +148,59 @@ export interface PersonalDataConfig {
   readonly keyWrapper?: KeyWrapperDefinition;
   /**
    * Where every forgetting is recorded outside the database, so restoring a backup taken before
-   * someone was forgotten forgets them again: an adapter pointed at another database, such as
+   * someone was forgotten forgets them again, and how the app reconciles with it. Without it, a
+   * restored backup brings back the keys of everyone forgotten after it was taken.
+   */
+  readonly forgetLedger?: ForgetLedgerConfig;
+}
+
+/**
+ * The `runtime.personalData.forgetLedger` of the configuration. The runtime appends each
+ * forgetting to the ledger as soon as it commits, and copies it again from the stream in the
+ * background, in case the process stops in between. When the app starts, and every
+ * `reconcileEvery` while it runs, it reads the ledger and forgets again, with `reason:
+ * "restored"`, whoever it names whose forgetting the database does not hold and who still holds
+ * a key.
+ */
+export interface ForgetLedgerConfig {
+  /**
+   * The ledger: an adapter pointed at another database, such as
    * `sqlite({ path: "./ledger/forget-ledger.db" })`, whose ledger table it creates there,
    * `kvForgetLedger({ binding })` from `@bounda-dev/cloudflare`, or a ledger of your own through
-   * `defineForgetLedger`. The runtime copies each `PersonalDataForgotten` to it in the background
-   * and, when the app starts, forgets again, with `reason: "restored"`, whoever it names whose
-   * forgetting the database does not hold and who still holds a key. Without it, a restored
-   * backup brings back the keys of everyone forgotten after it was taken.
+   * `defineForgetLedger`.
    */
-  readonly forgetLedger?: ForgetLedgerSource;
+  readonly store: ForgetLedgerSource;
+  /**
+   * How often the running app reads the ledger again, one instance at a time across all of them,
+   * so a database restored while the app runs forgets again within that time. Defaults to
+   * `DEFAULT_FORGET_LEDGER_RECONCILE_EVERY_MS` (five minutes). A host that wakes only for
+   * `nextDueAt`, such as a Durable Object, reconciles at every start instead, which restoring its
+   * storage causes, and on the passes it runs for other work.
+   */
+  readonly reconcileEvery?: DurationInput;
+  /**
+   * When `true`, the app does not start until it has read the ledger through: a ledger that cannot
+   * be read fails the start with `ForgetLedgerUnreconciledError`, and the start waits for the
+   * reconciliation however long it takes. When `false`, the default, the app starts anyway, waits
+   * for the ledger at most a few seconds, and reconciles in the background.
+   */
+  readonly strict?: boolean;
+  /**
+   * How long the ledger keeps each entry after the forgetting: set it longer than the oldest backup
+   * you can restore, since a backup older than that brings back whom the pruned entries named. No
+   * default: entries are kept for good.
+   */
+  readonly keepFor?: DurationInput;
+}
+
+export interface ResolvedForgetLedgerConfig {
+  readonly store: ForgetLedgerSource;
+  readonly reconcileEveryMs: number;
+  readonly strict: boolean;
+  /**
+   * `null` when entries are kept for good.
+   */
+  readonly keepForMs: number | null;
 }
 
 /**
@@ -333,7 +377,7 @@ export interface ResolvedConfig {
       /**
        * `null` when no forget ledger is configured.
        */
-      readonly forgetLedger: ForgetLedgerSource | null;
+      readonly forgetLedger: ResolvedForgetLedgerConfig | null;
     };
     readonly overrides: Readonly<Record<string, ResolvedAggregateRuntime>>;
   };

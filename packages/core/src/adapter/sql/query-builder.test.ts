@@ -107,10 +107,13 @@ describe("buildWhere", () => {
 });
 
 describe("buildOrderBy", () => {
-  it("orders by an allow-listed column", () => {
+  it("orders by an allow-listed column, a nullable one's rows without a value first going up and last going down", () => {
     expect(buildOrderBy({ orderBy: undefined, columns: pg })).toBe("");
     expect(buildOrderBy({ orderBy: { field: "paidAt", direction: "desc" }, columns: pg })).toBe(
-      ' ORDER BY "paid_at" DESC',
+      ' ORDER BY "paid_at" DESC NULLS LAST',
+    );
+    expect(buildOrderBy({ orderBy: { field: "paidAt", direction: "asc" }, columns: pg })).toBe(
+      ' ORDER BY "paid_at" ASC NULLS FIRST',
     );
     expect(buildOrderBy({ orderBy: { field: "orderId", direction: "asc" }, columns: pg })).toBe(
       ' ORDER BY "order_id" ASC',

@@ -187,6 +187,55 @@ export const tableContract: TableContractFunction = ({ create }) => {
       expect(await ids({})).toEqual(["b", "d"]);
     });
 
+    it("orders, ranges and pages strings by code point, case, accents and punctuation included", async () => {
+      const byCodePoint = ["B", "Z", "a", "a b", "a-b", "ab", "b", "á", "ｱ", "😀"];
+      for (const orderId of ["b", "á", "B", "a-b", "😀", "Z", "ab", "a", "ｱ", "a b"]) {
+        await table.insert(row(orderId));
+      }
+      const ids = async (where: Where<ContractRow>, direction: "asc" | "desc" = "asc") =>
+        (await table.findMany({ where, orderBy: { field: "orderId", direction } })).map(
+          (found) => found.orderId,
+        );
+      expect(await ids({})).toEqual(byCodePoint);
+      expect(await ids({}, "desc")).toEqual([...byCodePoint].reverse());
+      expect(await ids({ orderId: { gt: "Z" } })).toEqual(byCodePoint.slice(2));
+      expect(await ids({ orderId: { gte: "a", lt: "b" } })).toEqual(["a", "a b", "a-b", "ab"]);
+      expect(await ids({ orderId: { lte: "ab" }, status: "placed" })).toEqual(
+        byCodePoint.slice(0, 6),
+      );
+      const pages: string[][] = [];
+      let after: string | undefined;
+      for (;;) {
+        const page = await table.findMany({
+          where: after === undefined ? {} : { orderId: { gt: after } },
+          orderBy: { field: "orderId", direction: "asc" },
+          limit: 3,
+        });
+        if (page.length === 0) break;
+        pages.push(page.map((found) => found.orderId));
+        after = page.at(-1)?.orderId;
+      }
+      expect(pages).toEqual([
+        byCodePoint.slice(0, 3),
+        byCodePoint.slice(3, 6),
+        byCodePoint.slice(6, 9),
+        byCodePoint.slice(9),
+      ]);
+    });
+
+    it("puts rows without a value first in ascending order and last in descending", async () => {
+      const day = (n: number) => new Date(`2026-01-0${n}T00:00:00.000Z`);
+      await table.insert(row("a", { paidAt: day(2) }));
+      await table.insert(row("b"));
+      await table.insert(row("c", { paidAt: day(1) }));
+      const ids = async (direction: "asc" | "desc") =>
+        (await table.findMany({ orderBy: { field: "paidAt", direction } })).map(
+          (found) => found.orderId,
+        );
+      expect(await ids("asc")).toEqual(["b", "c", "a"]);
+      expect(await ids("desc")).toEqual(["a", "c", "b"]);
+    });
+
     it("refuses an operator it does not know, an operand that is null, and operators without a value", async () => {
       const refused = (where: Record<string, unknown>) =>
         expect(table.findMany({ where: where as Where<ContractRow> })).rejects.toBeInstanceOf(
@@ -337,7 +386,7 @@ export const viewContract: ViewContractFunction = ({ create }) => {
       expect(await table.findMany({ orderBy: { field: "id", direction: "asc" } })).toEqual(rows);
     });
 
-    it("filters a boolean by inequality and membership, and a JSON value by equality only", async () => {
+    it("filters a boolean by inequality and membership but not by range, and a JSON value by equality only", async () => {
       const { table } = await (await create()).createReadModel<FlagRow>({
         name: "flags",
         fields: flagFields,
@@ -355,6 +404,15 @@ export const viewContract: ViewContractFunction = ({ create }) => {
       expect(await ids({ active: { ne: null } })).toEqual(["1", "2"]);
       expect(await ids({ value: { gt: 1 } })).toEqual(["1"]);
       expect(await ids({ value: [1] })).toEqual(["3"]);
+      for (const operator of ["gt", "gte", "lt", "lte"]) {
+        await expect(
+          table.findMany({ where: { active: { [operator]: false } } as Where<FlagRow> }),
+        ).rejects.toThrow(
+          new ConfigurationError(
+            `Field "active": a boolean has no order for "${operator}"; use ne or in`,
+          ),
+        );
+      }
     });
 
     it("refuses a view with more than one primary key", async () => {

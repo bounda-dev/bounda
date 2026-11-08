@@ -36,12 +36,15 @@ export const FORGET_LEDGER_HELD_UNTIL = "forget-ledger:held-until";
 
 export const FORGET_LEDGER_ATTEMPTS = "forget-ledger:attempts";
 
+/**
+ * The checkpoint row that keeps, in milliseconds, when an instance last took the periodic
+ * reconciliation, or finished one at start: the others leave it until `reconcileEvery` after.
+ */
+export const FORGET_LEDGER_LAST_RUN = "forget-ledger:last-run";
+
 // How many entries a reconciliation reads at once: a store that lists from its newest entry, as
 // KV does, lists again for every page.
 export const FORGET_LEDGER_PAGE = 1_000;
-
-// How long the start waits for the reconciliation before it serves and lets it finish behind.
-export const FORGET_LEDGER_START_TIMEOUT_MS = 10_000;
 
 export interface ForgetAgainEntry {
   readonly personId: string;
@@ -111,21 +114,27 @@ export const forgetAgain: ForgetAgainFunction = async ({
   });
 };
 
+export interface ReconciliationFailed {
+  readonly failed: unknown;
+}
+
 export interface ForgetLedgerReconciliation {
   /**
    * Reads the ledger past the database's cursor and forgets again whom `forgetAgain` finds; then
-   * moves the cursor. Resolves to how many persons it forgot, or `null` when it could not read
-   * the ledger through; never rejects: a failure is logged and the worker tries again later.
+   * moves the cursor. Resolves to how many persons it forgot, or to why it could not read the
+   * ledger through; never rejects: a failure is logged and the worker tries again later.
    */
-  reconcile(now: Date): Promise<number | null>;
+  reconcile(now: Date): Promise<number | ReconciliationFailed>;
   /**
-   * Reconciles when a reconciliation is due, after a failure, unless another instance's failure
-   * holds it longer, or once the ledger's `visibilityDelayMs` has passed since the first, and
-   * resolves to how many persons it forgot.
+   * Reconciles when a reconciliation is due: after a failure, unless another instance's failure
+   * holds it longer; once the ledger's `visibilityDelayMs` has passed since the first; or
+   * `reconcileEvery` after the last one any instance took, which this one then takes, and prunes
+   * the ledger after it. Resolves to how many persons it forgot.
    */
   sweep(now: Date): Promise<number>;
   /**
-   * When the next reconciliation is due; `null` when none is.
+   * When the next reconciliation after a failure, or for a ledger's delay, is due; `null` when
+   * none is. The periodic one is left out: a host that only wakes for it would never sleep.
    */
   nextDueAt(): Date | null;
   /**
@@ -145,6 +154,11 @@ export interface CreateForgetLedgerReconciliationArgs {
   readonly clock: Clock;
   readonly logger: Logger;
   readonly concurrencyRetries: number;
+  readonly reconcileEveryMs: number;
+  /**
+   * `null` keeps every entry.
+   */
+  readonly keepForMs: number | null;
   /**
    * Defaults to `FORGET_LEDGER_PAGE`.
    */
@@ -165,6 +179,9 @@ export interface CreateForgetLedgerReconciliationFunction {
  * hold. The cursor only moves forward, so two instances reconciling at once never move it back. A
  * failure holds the next reconciliation beside the cursor, longer after each failure in a row of
  * any instance, and the first that succeeds clears it; a start reconciles whatever the hold says.
+ * The periodic reconciliation is shared the same way: the instance that finds it due takes it by
+ * moving `FORGET_LEDGER_LAST_RUN`, which a restore also takes back, so the first instance due
+ * after a restore made while the app runs reconciles.
  */
 export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationFunction = ({
   ledger,
@@ -173,20 +190,24 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
   clock,
   logger,
   concurrencyRetries,
+  reconcileEveryMs,
+  keepForMs,
   pageSize = FORGET_LEDGER_PAGE,
   forgotten: onForgotten,
 }) => {
   const { checkpointStore } = storage;
   let done = false;
   let dueAt: number | null = null;
+  // When this instance next looks whether the periodic reconciliation is due.
+  let periodicAt: number = clock.now().getTime() + reconcileEveryMs;
   // The last hold this instance set, for when the store cannot say.
   let local: Hold | null = null;
   let settled = ledger.visibilityDelayMs === undefined || ledger.visibilityDelayMs <= 0;
 
-  const advance = async (to: number): Promise<void> => {
+  const advance = async (row: string, to: number): Promise<void> => {
     for (;;) {
-      const at = await checkpointStore.get(FORGET_LEDGER_CURSOR);
-      if (at >= to || (await checkpointStore.compareAndSet(FORGET_LEDGER_CURSOR, at, to))) return;
+      const at = await checkpointStore.get(row);
+      if (at >= to || (await checkpointStore.compareAndSet(row, at, to))) return;
     }
   };
 
@@ -212,7 +233,7 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
       const last = page.at(-1);
       if (last === undefined) return forgotten;
       const time = Date.parse(last.forgottenAt);
-      if (Number.isFinite(time)) await advance(time);
+      if (Number.isFinite(time)) await advance(FORGET_LEDGER_CURSOR, time);
       if (page.length < pageSize) return forgotten;
       after = last;
     }
@@ -252,7 +273,7 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
     await checkpointStore.remove(FORGET_LEDGER_HELD_UNTIL);
   };
 
-  const reconcile = async (now: Date): Promise<number | null> => {
+  const reconcile = async (now: Date): Promise<number | ReconciliationFailed> => {
     const at = now.getTime();
     let forgotten: number;
     try {
@@ -266,37 +287,86 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
       await hold(at).catch((holdError: unknown) =>
         logger.error("forget ledger's reconciliation could not be held", errorDetails(holdError)),
       );
-      return null;
+      return { failed: error };
     }
     if (forgotten > 0)
       logger.warn("forgot again persons a restored backup brought back", { forgotten });
     done = true;
     dueAt = settled ? null : at + (ledger.visibilityDelayMs ?? 0);
     settled = true;
+    periodicAt = at + reconcileEveryMs;
     await release().catch((error: unknown) =>
       logger.error("forget ledger's reconciliation hold could not be cleared", errorDetails(error)),
     );
+    await advance(FORGET_LEDGER_LAST_RUN, at).catch((error: unknown) =>
+      logger.error("forget ledger's last reconciliation could not be kept", errorDetails(error)),
+    );
     return forgotten;
   };
+
+  const prune = async (at: number): Promise<void> => {
+    if (keepForMs === null || ledger.prune === undefined) return;
+    try {
+      await ledger.prune({ before: new Date(at - keepForMs).toISOString() });
+    } catch (error) {
+      logger.error("forget ledger could not be pruned", errorDetails(error));
+    }
+  };
+
+  // Resolves whether this instance takes the periodic reconciliation: none took it within
+  // `reconcileEvery`, no failure holds it, and this one moved the row first. A store that cannot
+  // say lets it run, as the reconciliation will find out.
+  const takePeriodic = async (at: number): Promise<boolean> => {
+    let last: number;
+    let until: number;
+    try {
+      [last, until] = await Promise.all([
+        checkpointStore.get(FORGET_LEDGER_LAST_RUN),
+        checkpointStore.get(FORGET_LEDGER_HELD_UNTIL),
+      ]);
+    } catch {
+      return true;
+    }
+    // A run more than a round ahead was written by a clock that runs ahead: left as it is, it would
+    // hold every instance's rounds off until that clock's time comes.
+    const next = last > at + reconcileEveryMs ? at : Math.max(last + reconcileEveryMs, until);
+    if (next > at) {
+      periodicAt = next;
+      return false;
+    }
+    const taken = await checkpointStore
+      .compareAndSet(FORGET_LEDGER_LAST_RUN, last, at)
+      .catch(() => true);
+    if (!taken) periodicAt = at + reconcileEveryMs;
+    return taken;
+  };
+
+  const forgottenBy = (result: number | ReconciliationFailed): number =>
+    typeof result === "number" ? result : 0;
 
   return {
     reconcile,
     sweep: async (now) => {
       const at = now.getTime();
-      if (dueAt === null || at < dueAt) return 0;
-      // A retry after a failure: another instance's may hold it longer.
-      if (local !== null) {
-        // A store that cannot say lets this instance's own hold, which has ended, decide.
-        const until = await storedHold().then(
-          (held) => Date.parse(held.until),
-          () => at,
-        );
-        if (until > at) {
-          dueAt = until;
-          return 0;
+      if (dueAt !== null && at >= dueAt) {
+        // A retry after a failure: another instance's may hold it longer.
+        if (local !== null) {
+          // A store that cannot say lets this instance's own hold, which has ended, decide.
+          const until = await storedHold().then(
+            (held) => Date.parse(held.until),
+            () => at,
+          );
+          if (until > at) {
+            dueAt = until;
+            return 0;
+          }
         }
+        return forgottenBy(await reconcile(now));
       }
-      return (await reconcile(now)) ?? 0;
+      if (at < periodicAt || !(await takePeriodic(at))) return 0;
+      const result = await reconcile(now);
+      if (typeof result === "number") await prune(at);
+      return forgottenBy(result);
     },
     nextDueAt: () => (dueAt === null ? null : new Date(dueAt)),
     reconciled: () => done,

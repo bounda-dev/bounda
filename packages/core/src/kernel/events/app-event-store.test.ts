@@ -22,6 +22,7 @@ const setUp = async () => {
   const storage = appStorage({
     storage: written,
     aggregates: buildAggregates({ registry: { aggregates: {}, readModels: {} }, ports: {} }),
+    processes: { byName: {} },
     wrapping,
   });
   await storage.personalKeys.add("c-1", await generatePersonalKey());

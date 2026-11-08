@@ -158,14 +158,20 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
   }
   const storage = await config.storage.createStorage();
   try {
-    // A rebuild runs no handler, so it builds no implementation.
+    // A rebuild runs no handler, so it builds no implementation, and writes no lifecycle event,
+    // whose state opens by its shape: it needs no process.
     const aggregates = buildAggregates({ registry, ports: {} });
     checkStoredTypes({
       types: await storage.eventStore.types(),
       aggregates,
       processNames: processNamesOf(registry),
     });
-    const { eventStore } = appStorage({ storage, aggregates, wrapping });
+    const { eventStore } = appStorage({
+      storage,
+      aggregates,
+      processes: { byName: {} },
+      wrapping,
+    });
     const progress = `${progressPrefix(name)}${fingerprintReadModel(entry)}`;
     const rebuild = await adapterForReadModel({ name, config }).rebuildReadModel<
       Record<string, unknown>

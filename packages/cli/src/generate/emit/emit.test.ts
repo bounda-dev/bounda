@@ -448,6 +448,7 @@ export type ReactionCommands = core.ReactionCommandsFacadeOf<Record<never, never
 type Expect<Check extends true> = Check;
 
 export type ShipmentsRow = core.RowOf<typeof import("../app/read/shipments/view.ts")>;
+export type ShipmentsFieldTypes = core.FieldTypesOf<typeof import("../app/read/shipments/view.ts")>;
 export type ShipmentsPorts = core.EmptyPayload;
 export type ShipmentsForgetting = Expect<
   core.ForgetsPersonalData<
@@ -637,7 +638,9 @@ describe("emitProject with a read model's ports", () => {
       "ecb: shipmentsRatesEcb satisfies ImplementationModule<shipmentsRates.Rates>,",
     );
     const query = contentOf("queries/+types/list-shipments.ts");
-    expect(query).toContain("    generated.Queries,\n    generated.ShipmentsPorts\n  >;");
+    expect(query).toContain(
+      "    generated.Queries,\n    generated.ShipmentsPorts,\n    FieldTypes\n  >;",
+    );
     expect(query).not.toMatch(/type RepositoryArgs = [^;]*Ports/s);
     expect(contentOf("projections/shipment/+types/created.ts")).not.toContain("Ports");
   });

@@ -34,6 +34,11 @@ export const createMemoryForgetLedgers: CreateMemoryForgetLedgersFunction = () =
             .sort(byForgetLedgerOrder)
             .slice(0, limit)
             .map((entry) => ({ ...entry })),
+        prune: async ({ before }) => {
+          for (const [eventId, entry] of entries) {
+            if (entry.forgottenAt < before) entries.delete(eventId);
+          }
+        },
       };
     },
   };

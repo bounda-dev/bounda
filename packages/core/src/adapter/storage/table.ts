@@ -1,3 +1,5 @@
+import type { FieldType } from "../../modules/view.ts";
+
 export interface TableOrder<Row> {
   readonly field: keyof Row & string;
   readonly direction: "asc" | "desc";
@@ -24,32 +26,65 @@ export interface RangeFilter<Value> {
  */
 export type SetFilter<Value> = Pick<RangeFilter<Value>, "ne" | "in">;
 
-type Comparable = string | number | Date;
-
 // `null` (or `undefined`) matches a row without a value, so only an optional field takes it.
 type Equality<Value> = undefined extends Value ? NonNullable<Value> | null | undefined : Value;
 
 /**
- * What `where` accepts for one field: a value, matched by equality, or the operators of its type.
- * Strings, numbers and dates take a `RangeFilter`, booleans a `SetFilter`, and JSON values only a
- * value.
+ * How each field of a row is stored, as its view declares it with `f.string()`, `f.json()` and the
+ * rest. It decides what `where` takes for the field.
  */
-export type FieldFilter<Value> = [NonNullable<Value>] extends [Comparable]
-  ? Equality<Value> | RangeFilter<NonNullable<Value>>
-  : [NonNullable<Value>] extends [boolean]
-    ? Equality<Value> | SetFilter<boolean>
-    : Equality<Value>;
+export type FieldTypes<Row> = { readonly [Field in keyof Row]-?: FieldType };
+
+type Comparable = string | number | Date;
+
+type ComparableAs<Value> = Value extends string
+  ? "string"
+  : Value extends number
+    ? "number"
+    : Value extends Date
+      ? "date"
+      : never;
+
+// A union of strings, numbers and dates keeps its ranges; one with anything else is JSON.
+type StoredAs<Value> = [Value] extends [Comparable]
+  ? ComparableAs<Value>
+  : [Value] extends [boolean]
+    ? "boolean"
+    : "json";
 
 /**
- * The rows a table call acts on: every field named must match. Strings compare as the database
- * orders them, as `orderBy` does: by code point in SQLite and in memory, by the column's collation
- * in PostgreSQL. A field the view declares as `json` matches by equality only, whatever the type of
- * its value.
+ * The field types a row's values imply, for a table typed without its view: strings, numbers,
+ * dates and booleans as such, any other value as JSON.
  */
-export type Where<Row> = { readonly [Field in keyof Row]?: FieldFilter<Row[Field]> };
+export type FieldTypesOfRow<Row> = {
+  readonly [Field in keyof Row]-?: StoredAs<NonNullable<Row[Field]>>;
+};
 
-export interface FindManyArgs<Row> {
-  readonly where?: Where<Row>;
+/**
+ * What `where` accepts for one field: a value, matched by equality, or the operators of how it is
+ * stored. Strings, numbers and dates take a `RangeFilter`, booleans a `SetFilter`, and JSON only a
+ * value, whatever its type.
+ */
+export type FieldFilter<
+  Value,
+  Type extends FieldType = StoredAs<NonNullable<Value>>,
+> = Type extends "json"
+  ? Equality<Value>
+  : Type extends "boolean"
+    ? Equality<Value> | SetFilter<NonNullable<Value>>
+    : Equality<Value> | RangeFilter<NonNullable<Value>>;
+
+/**
+ * The rows a table call acts on: every field named must match. Strings compare by code point, as
+ * `orderBy` sorts them, on every database. A field the view declares as `json` matches by
+ * equality only, so an object there is the value to match, not operators.
+ */
+export type Where<Row, Types extends FieldTypes<Row> = FieldTypesOfRow<Row>> = {
+  readonly [Field in keyof Row]?: FieldFilter<Row[Field], Types[Field]>;
+};
+
+export interface FindManyArgs<Row, Types extends FieldTypes<Row> = FieldTypesOfRow<Row>> {
+  readonly where?: Where<Row, Types>;
   readonly orderBy?: TableOrder<Row>;
   readonly limit?: number;
   readonly offset?: number;
@@ -58,17 +93,20 @@ export interface FindManyArgs<Row> {
 /**
  * A typed view over one read-model table. Every write is idempotent, so a redelivered event does
  * no harm: `upsert` replaces, `update` and `delete` are no-ops when nothing matches, `insert`
- * ignores duplicates of the primary key. A `where` naming a field the view does not have, or an
- * operator it does not know, rejects with `ConfigurationError`.
+ * ignores duplicates of the primary key. Rows are ordered as SQLite orders them on every
+ * database: strings by code point, rows without a value first going up and last going down. A
+ * `where` naming a field the view does not have, an operator it does not know, or a range on a
+ * boolean, rejects with `ConfigurationError`. `Types` is how the view stores each field; without it, the values'
+ * types stand in.
  */
-export interface Table<Row> {
+export interface Table<Row, Types extends FieldTypes<Row> = FieldTypesOfRow<Row>> {
   upsert(row: Row): Promise<void>;
   insert(row: Row): Promise<void>;
-  update(where: Where<Row>, patch: Partial<Row>): Promise<void>;
-  delete(where: Where<Row>): Promise<void>;
-  findOne(where: Where<Row>): Promise<Row | null>;
-  findMany(args?: FindManyArgs<Row>): Promise<readonly Row[]>;
-  count(where?: Where<Row>): Promise<number>;
+  update(where: Where<Row, Types>, patch: Partial<Row>): Promise<void>;
+  delete(where: Where<Row, Types>): Promise<void>;
+  findOne(where: Where<Row, Types>): Promise<Row | null>;
+  findMany(args?: FindManyArgs<Row, Types>): Promise<readonly Row[]>;
+  count(where?: Where<Row, Types>): Promise<number>;
 }
 
 /**

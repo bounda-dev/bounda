@@ -85,7 +85,7 @@ On first use the adapter creates its tables, prefixed with `bounda_` by default:
 | --- | --- |
 | `bounda_events` | Every event, with its stream version, a global position and the person it names, if any, which [`exportPersonalData`](/guides/personal-data/#exporting-a-persons-data) reads by |
 | `bounda_event_types` | Every kind of event the store holds, by aggregate, type and schema version, which the runtime [checks against the code](/guides/deployment/#deploying-a-change-to-events) on boot |
-| `bounda_checkpoints` | How far each projection, the policy runner, the process runner, the retention and the [forget ledger](/guides/personal-data/#backups)'s copy have read, where a paused rebuild stands, the time of the last ledger entry the database applied and the wait of a reconciliation that failed, and when the [key rotation](/guides/personal-data/#rotating-the-master-key) was last found complete for a set of master keys |
+| `bounda_checkpoints` | How far each projection, the policy runner, the process runner, the retention and the [forget ledger](/guides/personal-data/#backups)'s copy have read, where a paused rebuild stands, the time of the last ledger entry the database applied, when the last reconciliation ran and the wait of one that failed, and when the [key rotation](/guides/personal-data/#rotating-the-master-key) was last found complete for a set of master keys |
 | `bounda_inbox` | Which handler already completed for which event, so a retry does not run it again |
 | `bounda_scheduled_commands` | Scheduled commands, process deadlines and timeouts, and delayed policy runs |
 | `bounda_dead_letters` | Handler runs that gave up, with the error and the attempt count |
@@ -104,8 +104,9 @@ rebuilt there is also `bounda_rm_order_summary__rebuild`, and for an instant dur
 
 Adding a field to a view adds a nullable column the next time the app starts; existing rows keep
 working. Marking a field `unique()` or `index()` adds its index, and a `unique()` refuses to start
-while two rows share the value. Removing a field, changing its type, moving the primary key or
-dropping `unique()` is refused with an error that names the read model and the command that
+while two rows share the value. A string column made under the database's collation on PostgreSQL
+takes the `"C"` collation in place, keeping its rows. Removing a field, changing its type, moving
+the primary key or dropping `unique()` is refused with an error that names the read model and the command that
 rebuilds it, `bounda rebuild <read-model>`, which does so without taking the read model offline
 ([rebuilding a read model](/guides/deployment/#rebuilding-a-read-model)).
 
@@ -149,7 +150,7 @@ through `table`, and keep `client` for what `table` cannot say.
 The in-memory adapter is for tests and for trying Bounda: one process, which it notifies on each
 append. Its tables and stores behave as SQLite's: the same refusals, the same `null` and date
 semantics, payloads read back as JSON, and the same order, so a test that passes on it passes on
-SQLite. PostgreSQL differs in one place: a table ordered by a text field follows the database's
-collation, and puts rows without a value last. Start on SQLite and move to PostgreSQL when the
+SQLite. PostgreSQL orders read models alike: strings by code point whatever the database's
+collation, rows without a value where SQLite puts them. Start on SQLite and move to PostgreSQL when the
 background work needs more than one process; the domain code does not change. [Deployment](/guides/deployment/) covers the roles and what the
 instances share, and [How Bounda runs](/concepts/how-it-runs/) the ceiling of one store.

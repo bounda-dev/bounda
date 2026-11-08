@@ -7,6 +7,9 @@ export interface SqlDialect {
   // As `CREATE TABLE` declares it and as the engine reports it back: evolving a table compares the
   // two.
   columnType(type: FieldType): string;
+  // What a column of the type compares and sorts text by, when the engine's default is not by code
+  // point: every engine orders strings alike, as the in-memory tables do.
+  collation(type: FieldType): string | null;
   // `undefined` binds as `null`.
   encode(type: FieldType, value: unknown): unknown;
   // `null` decodes to `undefined`, which the table then leaves out of the row.
@@ -55,6 +58,8 @@ export const sqliteDialect: SqlDialect = {
   name: "sqlite",
   placeholder: () => "?",
   columnType: (type) => SQLITE_TYPES[type],
+  // SQLite's default, `BINARY`, compares UTF-8 bytes: by code point.
+  collation: () => null,
   encode: (type, value) => {
     if (value === undefined || value === null) return null;
     switch (type) {
@@ -96,6 +101,9 @@ export const postgresqlDialect: SqlDialect = {
   name: "postgresql",
   placeholder: (index) => `$${index}`,
   columnType: (type) => POSTGRESQL_TYPES[type],
+  // A column takes the database's collation unless it names one; "C" compares bytes, which in UTF-8
+  // is by code point.
+  collation: (type) => (type === "string" ? "C" : null),
   encode: (type, value) => {
     if (value === undefined || value === null) return null;
     if (type === "date") return toDate(value);

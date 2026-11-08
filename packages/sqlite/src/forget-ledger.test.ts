@@ -97,7 +97,7 @@ const boot = (paths: Paths): Promise<BoundaApp> =>
     registry,
     config: {
       storage: sqlite({ path: paths.store }),
-      runtime: { personalData: { forgetLedger: sqlite({ path: paths.ledger }) } },
+      runtime: { personalData: { forgetLedger: { store: sqlite({ path: paths.ledger }) } } },
     },
   });
 
@@ -152,7 +152,7 @@ const startElsewhere = (paths: Paths): Promise<void> =>
           },
           config: {
             storage: sqlite({ path: ${JSON.stringify(paths.store)} }),
-            runtime: { personalData: { forgetLedger: sqlite({ path: ${JSON.stringify(paths.ledger)} }) } },
+            runtime: { personalData: { forgetLedger: { store: sqlite({ path: ${JSON.stringify(paths.ledger)} }) } } },
           },
         });
         await app.stop();`,

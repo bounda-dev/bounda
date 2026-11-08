@@ -8,6 +8,8 @@ import {
 import { ValidationError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
+import type { ProcessesRuntime } from "../process/build-processes.ts";
+import { processOfStream } from "../process/lifecycle.ts";
 import { isRecord } from "../shared/merge-fields.ts";
 import {
   generatePersonalKey,
@@ -21,10 +23,15 @@ import {
   unseal,
 } from "./crypto.ts";
 import type { PersonalMarks } from "./marks.ts";
+import { lifecycleStateOf, sealLifecycleEvent } from "./process-state.ts";
 
 export interface WithPersonalDataArgs {
   readonly eventStore: EventStore;
   readonly aggregates: AggregatesRuntime;
+  /**
+   * Whose state schemas mark the fields their lifecycle events seal.
+   */
+  readonly processes: Pick<ProcessesRuntime, "byName">;
   readonly keys: PersonalKeyStore;
 }
 
@@ -88,9 +95,15 @@ const keyCache = <Key>() => {
 /**
  * The event store handlers write to and read from: personal fields go in encrypted with the key
  * of the person the event names, created on their first event, and come out decrypted, or as
- * `null` once the person's key is gone. Below the upcasts, which see the fields as written.
+ * `null` once the person's key is gone. So do those of a process's state, in the lifecycle events
+ * that carry it. Below the upcasts, which see the fields as written.
  */
-export const withPersonalData: WithPersonalDataFunction = ({ eventStore, aggregates, keys }) => {
+export const withPersonalData: WithPersonalDataFunction = ({
+  eventStore,
+  aggregates,
+  processes,
+  keys,
+}) => {
   const marksOf = (event: Pick<StoredEvent, "aggregateType" | "type">): PersonalMarks | null =>
     aggregates.byName[event.aggregateType]?.eventsByType[event.type]?.personal ?? null;
 
@@ -107,6 +120,28 @@ export const withPersonalData: WithPersonalDataFunction = ({ eventStore, aggrega
     return importPersonalKey(stored ?? (await keys.add(person, await generatePersonalKey())));
   };
 
+  // A lifecycle event names the person its state names, as a domain event does: the append is
+  // refused while they are restricted, and their export finds it.
+  const sealedState = async (
+    event: PendingEvent,
+    process: string,
+    key: (person: string) => Promise<PersonalKey>,
+    touched: Set<string>,
+  ): Promise<PendingEvent> => {
+    const state = lifecycleStateOf(event.payload);
+    if (state === null) return event;
+    refuseSealed({
+      payload: state,
+      subject: `State of process ${process} for ${event.aggregateId}`,
+      writer: "handler",
+    });
+    const marks = processes.byName[process]?.personal ?? null;
+    if (marks === null) return event;
+    const sealed = await sealLifecycleEvent({ process, marks, event, key });
+    if (sealed.person !== null) touched.add(sealed.person);
+    return sealed;
+  };
+
   // The event names its person even when every marked field is absent: their export finds it by
   // `person`, and the append is refused while they are restricted.
   const sealed = async (
@@ -114,6 +149,8 @@ export const withPersonalData: WithPersonalDataFunction = ({ eventStore, aggrega
     key: (person: string) => Promise<PersonalKey>,
     touched: Set<string>,
   ): Promise<PendingEvent> => {
+    const process = processOfStream(event.aggregateType);
+    if (process !== null) return sealedState(event, process, key, touched);
     if (!isRecord(event.payload)) return event;
     refuseSealed({
       payload: event.payload,
@@ -134,27 +171,52 @@ export const withPersonalData: WithPersonalDataFunction = ({ eventStore, aggrega
     return { ...event, payload, person };
   };
 
-  const open = async (
-    event: StoredEvent,
-    payload: Record<string, unknown>,
+  // `read` gets each person whose fields opened, with the key that opened them.
+  const openFields = async (
+    fields: Readonly<Record<string, unknown>>,
     key: (person: string) => Promise<PersonalKey | null>,
-    opened: Map<string, string>,
-  ): Promise<StoredEvent> => {
-    const unsealed: Record<string, unknown> = { ...payload };
-    const read = new Map<string, KeyedPerson>();
-    for (const field in payload) {
-      const value = payload[field];
+    read: Map<string, string>,
+  ): Promise<Record<string, unknown>> => {
+    const unsealed: Record<string, unknown> = { ...fields };
+    for (const field in fields) {
+      const value = fields[field];
       if (!isSealed(value)) continue;
       const { person, key: sealedUnder } = (value as SealedValue).$personal;
       const personal = await key(person);
       unsealed[field] = await unseal({ key: personal, sealed: value as SealedValue });
-      if (personal?.fingerprint === sealedUnder) {
-        opened.set(person, sealedUnder);
-        read.set(person, { person, fingerprint: sealedUnder });
-      }
+      if (personal?.fingerprint === sealedUnder) read.set(person, sealedUnder);
     }
+    return unsealed;
+  };
+
+  // Where sealed fields sit: at the top of a domain event's payload, in the state of a process's
+  // lifecycle event.
+  const sealedIn = (event: StoredEvent): "payload" | "state" | null => {
+    if (processOfStream(event.aggregateType) === null) {
+      return isRecord(event.payload) && holdsSealed(event.payload) ? "payload" : null;
+    }
+    const state = lifecycleStateOf(event.payload);
+    return state !== null && holdsSealed(state) ? "state" : null;
+  };
+
+  const open = async (
+    event: StoredEvent,
+    payload: Record<string, unknown>,
+    where: "payload" | "state",
+    key: (person: string) => Promise<PersonalKey | null>,
+    opened: Map<string, string>,
+  ): Promise<StoredEvent> => {
+    const read = new Map<string, string>();
+    const unsealed =
+      where === "state"
+        ? { ...payload, state: await openFields(lifecycleStateOf(payload) ?? {}, key, read) }
+        : await openFields(payload, key, read);
+    for (const [person, fingerprint] of read) opened.set(person, fingerprint);
     const result = { ...event, payload: unsealed };
-    openings.set(result, [...read.values()]);
+    openings.set(
+      result,
+      [...read].map(([person, fingerprint]) => ({ person, fingerprint })),
+    );
     return result;
   };
 
@@ -164,10 +226,12 @@ export const withPersonalData: WithPersonalDataFunction = ({ eventStore, aggrega
     event: StoredEvent,
     key: (person: string) => Promise<PersonalKey | null>,
     opened: Map<string, string>,
-  ): StoredEvent | Promise<StoredEvent> =>
-    isRecord(event.payload) && holdsSealed(event.payload)
-      ? open(event, event.payload, key, opened)
-      : event;
+  ): StoredEvent | Promise<StoredEvent> => {
+    const where = sealedIn(event);
+    return where === null
+      ? event
+      : open(event, event.payload as Record<string, unknown>, where, key, opened);
+  };
 
   const settled = (events: readonly (StoredEvent | Promise<StoredEvent>)[]) =>
     events.some((event) => event instanceof Promise)

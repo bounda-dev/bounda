@@ -84,7 +84,8 @@ Some rules need the modules themselves, so the app checks them when it is create
 `ConfigurationError`:
 
 - a policy or a projection whose trigger is not an event of the aggregate it listens to, the
-  runtime's own `bounda` included; an event that marks two fields with `person`;
+  runtime's own `bounda` included; an event, a command or a process `state` that marks two fields
+  with `person`, and a process `state` that starts with a `personal` or `person` field set;
 - a `deadline()` field without its `at-` file, and an `at-` file without its field; the name
   `timeout` is reserved for the process's lifetime;
 - an event of another aggregate that a process listens to and cannot assign to an instance, by an
@@ -121,7 +122,7 @@ and not failed on:
 | --- | --- |
 | `.bounda/registry.ts` | Every module, grouped as the runtime needs it, and `app/audit.ts` as `audit` when there is one. `boot()` imports it |
 | `.bounda/register.d.ts` | Registers the registry type and the type of the `ports` section with `@bounda-dev/core/register`, so `boot()` and `BoundaApp` are typed for the project without a type argument and `defineConfig` checks the implementation names |
-| `.bounda/types.ts` | The state, events, ports, commands, rows and queries maps the `+types` build on, and one `<ReadModel>Forgetting` check per read model |
+| `.bounda/types.ts` | The state, events, ports, commands, rows and queries maps the `+types` build on, how each read model stores its fields (`<ReadModel>FieldTypes`, which decides what its table filters each field by), and one `<ReadModel>Forgetting` check per read model |
 | `**/+types/<name>.ts` | The argument types each module imports. An implementation has none: it imports its port |
 
 They are derived from your code, so they are not versioned. `tsconfig.json` must include them as
