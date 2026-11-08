@@ -5,6 +5,7 @@ import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import type { RecordAccessArgs } from "../personal-data/access.ts";
 import type { ProcessDeadLetters } from "../process/dead-letter-retry.ts";
+import { withPersonalKeys } from "../test-support.ts";
 import { createDeadLetters } from "./dead-letters.ts";
 import type { DeadLetterRetry } from "./retry.ts";
 
@@ -16,7 +17,7 @@ interface Recorded {
 
 describe("the access log of dead letters", () => {
   it("names the person a letter's error is sealed under and those its payload holds, and nobody for a letter that names none", async () => {
-    const storage = await memory().createStorage();
+    const storage = withPersonalKeys(await memory().createStorage());
     await storage.deadLetterStore.add({ ...testDeadLetter("dl-1"), person: "ana" });
     await storage.deadLetterStore.add({
       ...testDeadLetter("dl-2"),

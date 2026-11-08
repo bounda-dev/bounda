@@ -8,9 +8,9 @@ import { memory } from "../../memory/index.ts";
 import type { EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
-import { generatePersonalKey, isSealed } from "../personal-data/crypto.ts";
+import { isSealed } from "../personal-data/crypto.ts";
 import { type FakeTelemetry, installFakeTelemetry } from "../telemetry-fake.ts";
-import { createRecordingLogger } from "../test-support.ts";
+import { createRecordingLogger, keysOver, newStoredKey } from "../test-support.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
 import { TIMEOUT_DEADLINE } from "./deadlines.ts";
 import { blockedOn, createProcessFailures, deadlineSubject, drainFailureType } from "./failures.ts";
@@ -116,7 +116,7 @@ const setup = async () => {
   const clock = createFixedClock(new Date("2026-03-04T05:06:07.000Z"));
   const failures = createProcessFailures({
     aggregates,
-    keys: storage.personalKeys,
+    keys: keysOver(storage.personalKeys),
     ids: createSequentialIdGenerator({ prefix: "letter" }),
     clock,
     logger,
@@ -199,7 +199,7 @@ describe("letterOf", () => {
 
   it("seals the message and the stack under the key the subject's person holds", async () => {
     const { failures, storage } = await setup();
-    await storage.personalKeys.add("c-1", await generatePersonalKey());
+    await storage.personalKeys.add("c-1", await newStoredKey());
     const error = new Error("cannot mail ana@example.com");
     const letter = await failures.letterOf(
       orderPayment,
@@ -221,8 +221,8 @@ describe("letterOf", () => {
 
   it("seals the text unreadable when the person no longer holds the key the subject was read under", async () => {
     const { failures, storage } = await setup();
-    const read = await generatePersonalKey();
-    await storage.personalKeys.add("c-1", await generatePersonalKey());
+    const read = await newStoredKey();
+    await storage.personalKeys.add("c-1", await newStoredKey());
     const letter = await failures.letterOf(
       orderPayment,
       { ...subject, person: "c-1", read: [{ person: "c-1", fingerprint: read.fingerprint }] },

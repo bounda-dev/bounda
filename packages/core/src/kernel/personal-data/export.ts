@@ -1,9 +1,10 @@
-import type { ReadModelStorage, Storage } from "../../adapter/adapter.ts";
+import type { ReadModelStorage } from "../../adapter/adapter.ts";
 import type { DeadLetterKind, StoredDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { scheduledCommandId } from "../command/pipeline.ts";
+import type { AppStorage } from "../events/app-event-store.ts";
 import type { ProcessesRuntime } from "../process/build-processes.ts";
 import { processOfStream } from "../process/lifecycle.ts";
 import type { ReadModelPersonalData, ReadModelsRuntime } from "../read-model/build-read-models.ts";
@@ -103,7 +104,7 @@ export interface ExportPersonalDataArgs {
   /**
    * The app's storage, whose event store opens the fields and upcasts the payloads.
    */
-  readonly storage: Storage;
+  readonly storage: AppStorage;
   readonly aggregates: AggregatesRuntime;
   /**
    * Whose state schemas mark the fields their lifecycle events hold.

@@ -1,10 +1,6 @@
 import { ForgottenSinceLoadError } from "../../adapter/storage/append-checks.ts";
 import type { AppendArgs, EventStore, PendingEvent } from "../../adapter/storage/event-store.ts";
-import {
-  type KeyedPerson,
-  keyedPersonId,
-  type PersonalKeyStore,
-} from "../../adapter/storage/personal-key-store.ts";
+import { type KeyedPerson, keyedPersonId } from "../../adapter/storage/personal-key-store.ts";
 import { ValidationError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
@@ -12,9 +8,7 @@ import type { ProcessesRuntime } from "../process/build-processes.ts";
 import { processOfStream } from "../process/lifecycle.ts";
 import { isRecord } from "../shared/merge-fields.ts";
 import {
-  generatePersonalKey,
   holdsSealed,
-  importPersonalKey,
   isSealed,
   type PersonalKey,
   refuseSealed,
@@ -24,6 +18,7 @@ import {
 } from "./crypto.ts";
 import type { PersonalMarks } from "./marks.ts";
 import { lifecycleStateOf, sealLifecycleEvent } from "./process-state.ts";
+import type { PersonalKeys } from "./wrapped-keys.ts";
 
 export interface WithPersonalDataArgs {
   readonly eventStore: EventStore;
@@ -32,7 +27,7 @@ export interface WithPersonalDataArgs {
    * Whose state schemas mark the fields their lifecycle events seal.
    */
   readonly processes: Pick<ProcessesRuntime, "byName">;
-  readonly keys: PersonalKeyStore;
+  readonly keys: PersonalKeys;
 }
 
 export interface WithPersonalDataFunction {
@@ -117,7 +112,7 @@ export const withPersonalData: WithPersonalDataFunction = ({
     if (readUnder.some((held) => held.fingerprint !== stored?.fingerprint)) {
       throw new ForgottenSinceLoadError(args, person);
     }
-    return importPersonalKey(stored ?? (await keys.add(person, await generatePersonalKey())));
+    return stored === null ? keys.create(person) : keys.open(person, stored);
   };
 
   // A lifecycle event names the person its state names, as a domain event does: the append is
@@ -242,8 +237,7 @@ export const withPersonalData: WithPersonalDataFunction = ({
     const cache = keyCache<PersonalKey | null>();
     return (person) =>
       cache(person, async () => {
-        const stored = await keys.get(person);
-        return stored === null ? null : importPersonalKey(stored);
+        return keys.held(person);
       });
   };
 

@@ -1,8 +1,8 @@
-import type { Storage } from "../../adapter/adapter.ts";
+import type { Storage, StorageTransaction } from "../../adapter/adapter.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { withUpcasting } from "../aggregate/upcasting.ts";
 import { withPersonalData } from "../personal-data/event-store.ts";
-import type { PersonalKeyWrapping } from "../personal-data/wrapped-keys.ts";
+import type { PersonalKeys, PersonalKeyWrapping } from "../personal-data/wrapped-keys.ts";
 import type { ProcessesRuntime } from "../process/build-processes.ts";
 
 export interface AppStorageArgs {
@@ -12,13 +12,22 @@ export interface AppStorageArgs {
   readonly wrapping: PersonalKeyWrapping;
 }
 
+export interface AppStorageTransaction extends Omit<StorageTransaction, "personalKeys"> {
+  readonly personalKeys: PersonalKeys;
+}
+
+export interface AppStorage extends Omit<Storage, "personalKeys" | "transact"> {
+  readonly personalKeys: PersonalKeys;
+  transact<T>(work: (transaction: AppStorageTransaction) => Promise<T>): Promise<T>;
+}
+
 export interface AppStorageFunction {
-  (args: AppStorageArgs): Storage;
+  (args: AppStorageArgs): AppStorage;
 }
 
 /**
- * The storage as the kernel uses it: its personal keys, and those of every transaction, come out
- * unwrapped and go in wrapped; its event store, and the one of every transaction, seal and open
+ * The storage as the kernel uses it: its personal keys, and those of every transaction, also come
+ * out ready to seal and open with; its event store, and the one of every transaction, seal and open
  * personal fields and upcast what they read, so handlers only ever see current, readable
  * payloads. The adapter's own `eventStore` stays as written, for the global stream.
  */

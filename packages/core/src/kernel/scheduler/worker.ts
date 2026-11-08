@@ -1,4 +1,3 @@
-import type { Storage } from "../../adapter/adapter.ts";
 import type {
   DeadLetterErrorType,
   NewDeadLetter,
@@ -18,6 +17,7 @@ import {
 } from "../command/pipeline.ts";
 import type { RestrictedRetries } from "../dead-letters/restricted.ts";
 import type { DeadLetterRetention } from "../dead-letters/retention.ts";
+import type { AppStorage } from "../events/app-event-store.ts";
 import type { PersonalDataBackfill } from "../personal-data/backfill.ts";
 import { openCommandPayload } from "../personal-data/commands.ts";
 import { sealError } from "../personal-data/errors.ts";
@@ -69,7 +69,7 @@ export interface ScheduledCommandWorker {
 }
 
 export interface CreateScheduledCommandWorkerArgs {
-  readonly storage: Storage;
+  readonly storage: AppStorage;
   readonly aggregates: AggregatesRuntime;
   readonly pipeline: CommandPipeline;
   readonly processes: ProcessDeadlines;

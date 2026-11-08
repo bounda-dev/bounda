@@ -7,7 +7,8 @@ import { memory } from "../../memory/index.ts";
 import { BOUNDA_AGGREGATE, PERSONAL_DATA_FORGOTTEN_EVENT } from "../../modules/bounda-events.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { ProcessesRuntime } from "../process/build-processes.ts";
-import { generatePersonalKey, importPersonalKey, isSealed, unseal } from "./crypto.ts";
+import { newStoredKey, openedKey } from "../test-support.ts";
+import { isSealed, unseal } from "./crypto.ts";
 import { createResealBatches } from "./reseal-batches.ts";
 import { createPersonalKeyWrapping } from "./wrapped-keys.ts";
 
@@ -99,7 +100,7 @@ const setup = async (recordsActivity = true) => {
   };
   const opened = async (person: string, value: unknown) => {
     const stored = await storage.personalKeys.get(person);
-    const key = stored === null ? null : await importPersonalKey(stored);
+    const key = stored === null ? null : await openedKey(stored);
     return unseal({ key, sealed: value as never });
   };
   return { storage, reseal, append, opened };
@@ -211,7 +212,7 @@ describe("resealing a process's lifecycle events", () => {
 describe("resealing scheduled commands", () => {
   it("seals each payload under its person, keeping the persons it named, and counts what names nobody", async () => {
     const { storage, reseal, append, opened } = await setup();
-    const old = await importPersonalKey(await generatePersonalKey());
+    const old = await openedKey(await newStoredKey());
     await append(forgotten("c-9"));
     const schedule = (dedupeKey: string, type: string, aggregateId: string, payload: unknown) =>
       storage.scheduler.schedule({
@@ -277,7 +278,7 @@ describe("resealing dead letters", () => {
       event("customer", "c-1", 1, "CustomerRegistered", { email: "ada@example.com" }),
       event("customer", "c-3", 1, "CustomerRegistered", {}),
     );
-    await storage.personalKeys.add("c-1", await generatePersonalKey());
+    await storage.personalKeys.add("c-1", await newStoredKey());
     await storage.deadLetterStore.add(letter("policy"));
     await storage.deadLetterStore.add(
       letter("scheduled", {
@@ -364,7 +365,7 @@ describe("resealing dead letters", () => {
 
   it("seals the payload of a letter that names its person already, leaving its text as it is", async () => {
     const { storage, reseal, opened } = await setup();
-    const key = await storage.personalKeys.add("c-1", await generatePersonalKey());
+    const key = await storage.personalKeys.add("c-1", await newStoredKey());
     const sealedText = { $personal: { person: "c-1", key: key.fingerprint, iv: "iv", data: "d" } };
     await storage.deadLetterStore.add(
       letter("scheduled", {
@@ -403,7 +404,7 @@ describe("resealing dead letters", () => {
   it("counts a letter discarded when its payload is, though its text opens under the key the person holds again", async () => {
     const { storage, reseal, append, opened } = await setup();
     await append(forgotten("c-1"));
-    await storage.personalKeys.add("c-1", await generatePersonalKey());
+    await storage.personalKeys.add("c-1", await newStoredKey());
     await storage.deadLetterStore.add(
       letter("scheduled", {
         kind: "scheduled",

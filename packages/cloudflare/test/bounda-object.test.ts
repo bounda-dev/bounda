@@ -1,8 +1,7 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { createSqliteAdapter } from "@bounda-dev/core/adapter/sqlite";
-import { masterKey } from "@bounda-dev/core/config";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configForObject } from "../src/bounda-object.ts";
 import { connect } from "../src/client.ts";
 import { cloudflare } from "../src/definition.ts";
@@ -295,21 +294,57 @@ describe("a Bounda Durable Object", () => {
   it("wraps its personal keys under the master key in the Worker's secret, and opens them back", async () => {
     const stub = env.WRAPPED_STORE.get(env.WRAPPED_STORE.newUniqueId());
     const store = connect<typeof quietRegistry>(stub);
+    // Started first, so the master key is read and imported before the watch begins.
+    await store.exportPersonalData("nobody");
+    const exported = vi.spyOn(crypto.subtle, "exportKey");
+    const imported = vi.spyOn(crypto.subtle, "importKey");
+    const sealed = vi.spyOn(crypto.subtle, "encrypt");
     await store.commands.placeOrder({ orderId: "o-1", total: 42, customer: "ada", note: "ring" });
+    expect((await store.exportPersonalData("ada")).events.map((event) => event.data)).toEqual([
+      { note: "ring" },
+    ]);
+    // The watch sees inside the object, which sealed the note, yet the person's raw key never
+    // reached JavaScript there.
+    expect(sealed).toHaveBeenCalled();
+    expect(exported).not.toHaveBeenCalled();
+    expect(imported).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
     const rows = await runInDurableObject(stub as unknown as DurableObjectStub, (_i, state) =>
       state.storage.sql
         .exec(`SELECT "person", "key", "fingerprint", "kid" FROM bounda_personal_keys`)
         .toArray(),
     );
-    const wrapper = await masterKey({ from: "BOUNDA_MASTER_KEY" }).create({ env });
+    const bytes = (text: string) => Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
+    const master = bytes(env.BOUNDA_MASTER_KEY);
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", master));
+    const kid = btoa(String.fromCharCode(...digest.slice(0, 12)))
+      .replaceAll("+", "-")
+      .replaceAll("/", "_");
     expect(rows).toEqual([
-      { person: "ada", key: expect.any(String), fingerprint: expect.any(String), kid: wrapper.kid },
+      { person: "ada", key: expect.any(String), fingerprint: expect.any(String), kid },
     ]);
     const [row] = rows as { key: string; fingerprint: string }[];
-    const wrapped = Uint8Array.from(atob(row?.key ?? ""), (c) => c.charCodeAt(0));
-    const raw = await wrapper.unwrap({ kid: wrapper.kid, wrapped });
-    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", Uint8Array.from(raw)));
-    expect(btoa(String.fromCharCode(...digest))).toBe(row?.fingerprint);
+    // Unwrapped by WebCrypto straight into a key that can never be exported, and checked by the
+    // AES-GCM tag of nothing under the all-zero nonce, as the runtime fingerprints it.
+    const wrapping = await crypto.subtle.importKey("raw", master, "AES-KW", false, ["unwrapKey"]);
+    const key = await crypto.subtle.unwrapKey(
+      "raw",
+      bytes(row?.key ?? ""),
+      wrapping,
+      "AES-KW",
+      "AES-GCM",
+      false,
+      ["encrypt", "decrypt"],
+    );
+    await expect(crypto.subtle.exportKey("raw", key)).rejects.toThrow();
+    const tag = new Uint8Array(
+      await crypto.subtle.encrypt(
+        { name: "AES-GCM", iv: new Uint8Array(12) },
+        key,
+        new Uint8Array(),
+      ),
+    );
+    expect(btoa(String.fromCharCode(...tag))).toBe(row?.fingerprint);
     expect((await store.exportPersonalData("ada")).events.map((event) => event.data)).toEqual([
       { note: "ring" },
     ]);

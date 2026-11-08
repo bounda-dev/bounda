@@ -2,7 +2,7 @@ import type {
   DeadLetterErrorType,
   NewDeadLetter,
 } from "../../adapter/storage/dead-letter-store.ts";
-import type { KeyedPerson, PersonalKeyStore } from "../../adapter/storage/personal-key-store.ts";
+import type { KeyedPerson } from "../../adapter/storage/personal-key-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
@@ -12,6 +12,7 @@ import { sealError } from "../personal-data/errors.ts";
 import { openedUnder } from "../personal-data/event-store.ts";
 import { personOfEvent } from "../personal-data/persons.ts";
 import { restrictedPersonOf } from "../personal-data/refusal.ts";
+import type { PersonalKeys } from "../personal-data/wrapped-keys.ts";
 import { classifyFailure } from "../shared/retry.ts";
 import { deadLettered } from "../telemetry.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
@@ -63,7 +64,7 @@ export interface ProcessFailures {
 
 export interface CreateProcessFailuresArgs {
   readonly aggregates: AggregatesRuntime;
-  readonly keys: PersonalKeyStore;
+  readonly keys: PersonalKeys;
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly logger: Logger;

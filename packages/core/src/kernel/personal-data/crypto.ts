@@ -1,18 +1,15 @@
-import type {
-  PersonalEnvelope,
-  SealedValue,
-  StoredPersonalKey,
-} from "../../adapter/storage/personal-key-store.ts";
+import type { PersonalEnvelope, SealedValue } from "../../adapter/storage/personal-key-store.ts";
 import { ValidationError } from "../../contracts/errors.ts";
 
 export type { PersonalEnvelope, SealedValue };
 
-const ALGORITHM = "AES-GCM";
+export const PERSONAL_KEY_ALGORITHM = "AES-GCM";
 const KEY_BITS = 256;
 const IV_BYTES = 12;
 
 /**
- * A person's key as the store uses it, with the fingerprint envelopes name it by.
+ * A person's key as the kernel seals and opens with it, with the fingerprint envelopes name it by.
+ * The key can never be exported: its raw bytes are not reachable from JavaScript.
  */
 export interface PersonalKey {
   readonly fingerprint: string;
@@ -96,43 +93,107 @@ export interface FromBase64Function {
 export const fromBase64: FromBase64Function = (text) =>
   Uint8Array.from(atob(text), (character) => character.charCodeAt(0));
 
+/**
+ * The usages every personal key is created or imported with: the fingerprint is computed by
+ * encrypting, so even a key only ever used to open needs both.
+ */
+export const PERSONAL_KEY_USAGES: readonly KeyUsage[] = ["encrypt", "decrypt"];
+
+// The fingerprint's nonce. Every nonce `seal` draws has its top bit set, so no value is ever
+// encrypted under this one: the fingerprint is the encryption of a block nothing else uses.
+const FINGERPRINT_IV = new Uint8Array(IV_BYTES);
+const SEAL_IV_MARK = 0x80;
+
 export interface FingerprintOfFunction {
-  (raw: Uint8Array<ArrayBuffer>): Promise<string>;
+  (key: CryptoKey): Promise<string>;
 }
 
 /**
- * The SHA-256 of a raw key, in base64: what names the key in envelopes and in the key store.
+ * What names a key in envelopes and in the key store, in base64: the AES-GCM tag of nothing under
+ * a nonce reserved for it, a key check value. It reveals nothing of the key and is computed from
+ * the key itself, so a key that can never be exported is fingerprinted, and checked against its
+ * fingerprint, all the same.
  */
-export const fingerprintOf: FingerprintOfFunction = async (raw) =>
-  toBase64(new Uint8Array(await crypto.subtle.digest("SHA-256", raw)));
+export const fingerprintOf: FingerprintOfFunction = async (key) =>
+  toBase64(
+    new Uint8Array(
+      await crypto.subtle.encrypt(
+        { name: PERSONAL_KEY_ALGORITHM, iv: FINGERPRINT_IV },
+        key,
+        new Uint8Array(),
+      ),
+    ),
+  );
 
-export interface GeneratePersonalKeyFunction {
-  (): Promise<StoredPersonalKey>;
+export interface GenerateWrappableKeyFunction {
+  (): Promise<CryptoKey>;
 }
 
 /**
- * A fresh key, unwrapped: the raw key and its fingerprint, both in base64.
+ * A fresh key that can be exported, so it can be wrapped: never used to seal, never kept past
+ * wrapping it.
  */
-export const generatePersonalKey: GeneratePersonalKeyFunction = async () => {
-  const key = await crypto.subtle.generateKey({ name: ALGORITHM, length: KEY_BITS }, true, [
-    "encrypt",
-    "decrypt",
+export const generateWrappableKey: GenerateWrappableKeyFunction = async () =>
+  crypto.subtle.generateKey({ name: PERSONAL_KEY_ALGORITHM, length: KEY_BITS }, true, [
+    ...PERSONAL_KEY_USAGES,
   ]);
-  const raw = new Uint8Array(await crypto.subtle.exportKey("raw", key));
-  return { key: toBase64(raw), fingerprint: await fingerprintOf(raw), kid: null };
+
+export interface CreateDisposableKeyFunction {
+  (): Promise<PersonalKey>;
+}
+
+/**
+ * A fresh key no store keeps, which cannot be exported: what is sealed under it can never be
+ * opened once it is let go.
+ */
+export const createDisposableKey: CreateDisposableKeyFunction = async () => {
+  const cryptoKey = await crypto.subtle.generateKey(
+    { name: PERSONAL_KEY_ALGORITHM, length: KEY_BITS },
+    false,
+    [...PERSONAL_KEY_USAGES],
+  );
+  return { fingerprint: await fingerprintOf(cryptoKey), cryptoKey };
 };
 
-export interface ImportPersonalKeyFunction {
-  (stored: StoredPersonalKey): Promise<PersonalKey>;
+export interface ImportRawKeyArgs {
+  /**
+   * Zeroed once imported, imported or not.
+   */
+  readonly raw: Uint8Array;
+  readonly extractable: boolean;
 }
 
-export const importPersonalKey: ImportPersonalKeyFunction = async ({ key, fingerprint }) => ({
-  fingerprint,
-  cryptoKey: await crypto.subtle.importKey("raw", fromBase64(key), ALGORITHM, false, [
-    "encrypt",
-    "decrypt",
-  ]),
-});
+export interface ImportRawKeyFunction {
+  (args: ImportRawKeyArgs): Promise<CryptoKey>;
+}
+
+export const importRawKey: ImportRawKeyFunction = async ({ raw, extractable }) => {
+  const copy = Uint8Array.from(raw);
+  try {
+    return await crypto.subtle.importKey("raw", copy, PERSONAL_KEY_ALGORITHM, extractable, [
+      ...PERSONAL_KEY_USAGES,
+    ]);
+  } finally {
+    copy.fill(0);
+    raw.fill(0);
+  }
+};
+
+export interface WithRawKeyFunction {
+  <T>(key: CryptoKey, use: (raw: Uint8Array<ArrayBuffer>) => Promise<T>): Promise<T>;
+}
+
+/**
+ * Runs `use` on the raw bytes of an exportable key, and zeroes them once it settles.
+ */
+export const withRawKey: WithRawKeyFunction = async (key, use) => {
+  const raw = new Uint8Array(await crypto.subtle.exportKey("raw", key));
+  try {
+    return await use(raw);
+  } finally {
+    raw.fill(0);
+  }
+};
 
 export interface SealArgs {
   readonly key: PersonalKey;
@@ -145,12 +206,14 @@ export interface SealFunction {
 }
 
 /**
- * Encrypts `value` as JSON, under a nonce of its own, so equal values never store alike.
+ * Encrypts `value` as JSON, under a nonce of its own, so equal values never store alike, and never
+ * the fingerprint's.
  */
 export const seal: SealFunction = async ({ key, person, value }) => {
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
+  iv[0] = (iv[0] ?? 0) | SEAL_IV_MARK;
   const encrypted = await crypto.subtle.encrypt(
-    { name: ALGORITHM, iv },
+    { name: PERSONAL_KEY_ALGORITHM, iv },
     key.cryptoKey,
     new TextEncoder().encode(JSON.stringify(value)),
   );
@@ -180,7 +243,7 @@ export interface UnsealFunction {
 export const unseal: UnsealFunction = async ({ key, sealed: { $personal: envelope } }) => {
   if (key === null || key.fingerprint !== envelope.key) return null;
   const decrypted = await crypto.subtle.decrypt(
-    { name: ALGORITHM, iv: fromBase64(envelope.iv) },
+    { name: PERSONAL_KEY_ALGORITHM, iv: fromBase64(envelope.iv) },
     key.cryptoKey,
     fromBase64(envelope.data),
   );

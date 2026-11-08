@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ValidationError } from "../../contracts/errors.ts";
-import { generatePersonalKey, importPersonalKey, isSealed, unseal } from "./crypto.ts";
+import { newStoredKey, openedKey } from "../test-support.ts";
+import { isSealed, unseal } from "./crypto.ts";
 import type { PersonalMarks } from "./marks.ts";
 import {
   checkStatePerson,
@@ -71,7 +72,7 @@ describe("checkStatePerson", () => {
 
 describe("sealState", () => {
   it("seals each personal value under the person's key, keeping nulls and what is sealed already", async () => {
-    const key = await importPersonalKey(await generatePersonalKey());
+    const key = await openedKey(await newStoredKey());
     const persons: string[] = [];
     const sealOnce = async (state: Record<string, unknown>) =>
       sealState({
@@ -97,7 +98,7 @@ describe("sealState", () => {
 
 describe("sealLifecycleEvent", () => {
   const sealing = async (payload: unknown) => {
-    const key = await importPersonalKey(await generatePersonalKey());
+    const key = await openedKey(await newStoredKey());
     const event = { aggregateId: "s-1", payload, person: null };
     return {
       event,

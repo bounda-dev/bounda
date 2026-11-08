@@ -630,9 +630,11 @@ fields you do not mark.
 ## Where the keys live
 
 Each adapter keeps the keys in a table next to the events, `bounda_personal_keys`, one row per
-person with the key, the id of the key it is wrapped under and its fingerprint, a SHA-256 of the
-raw key: the memory adapter in memory, SQLite and the Durable Object in their database, PostgreSQL
-in its schema. Whether a person's processing is restricted, and since when, lives apart, in
+person with the key, the id of the key it is wrapped under and its fingerprint: the memory adapter
+in memory, SQLite and the Durable Object in their database, PostgreSQL in its schema. The
+fingerprint is the key's AES-GCM tag of nothing under a nonce no value is ever sealed under, a key
+check value: it names the key without revealing anything of it, and the runtime computes it from
+the key itself, so it checks every key it reads against it, even one it can never export. Whether a person's processing is restricted, and since when, lives apart, in
 `bounda_persons`, since a person without a key is restricted all the same, and so does, with a
 retention, when they were last active and last forgotten. A key is created when the first event
 with a personal field of that person is stored, by the transaction that stores it, and deleted by
@@ -650,8 +652,9 @@ back as `null`, or not at all.
 A key kept next to the data opens it for whoever reads the database: a dump, a backup, a replica,
 a support session. So the runtime wraps every person's key before the store keeps it, under a
 master key that never enters the database: envelope encryption, what a cloud KMS does. The
-fingerprint stays that of the raw key, so `forget` is still one transaction and nothing else
-changes; a copy of the database without the master key opens nothing.
+fingerprint stays that of the key, whatever it is wrapped under, so `forget` is still one
+transaction and nothing else changes; a copy of the database without the master key opens
+nothing.
 
 ```ts
 import { defineConfig, masterKey } from "@bounda-dev/core/config";
@@ -690,9 +693,15 @@ Keep the master key as you keep the database's backups, for as long as they are 
 takes every person's data with it, as if each had been forgotten. `bounda rebuild` reads it from
 `.env` like `boot()`; `rebuildReadModel` takes the environment as `env`.
 
+Under a master key, a person's key exists in the app only as a WebCrypto key that can never be
+exported. WebCrypto generates it, wraps it under the master key and unwraps it straight into a key
+it seals and opens with, so its raw bytes never reach JavaScript memory, where nothing could erase
+them: no string, no buffer, on Node, in `workerd` or in a test app given the master key. The bytes read from the master key's variable
+are zeroed once imported; the variable itself is the one copy the host keeps.
+
 Unwrapped keys are kept in memory, by fingerprint, up to ten thousand per app and for five
 minutes from the moment each was unwrapped, so a command does not pay for unwrapping on every
-read, and the raw key of someone no longer active does not stay in the process: keys past their
+read, and the key of someone no longer active does not stay usable in the process: keys past their
 time go at the next read of any key, and a timer drops them when no key is read, without keeping
 a Node process alive. A Durable Object arms no such timer, which would keep it from sleeping: there
 they go at the next read, or with the object when the platform evicts it. A forgotten person's key
@@ -701,7 +710,8 @@ still read first every time: a person forgotten on another instance is forgotten
 
 Without `keyWrapper` the keys are kept as they are, next to the data, and the app logs a warning
 when it starts if the registry marks any field `personal`; an app from `createTestApp` warns
-nothing. Setting one later wraps the keys kept so far in the background, as a rotation does.
+nothing. Then the key's text is what the store holds, read back as a string: the runtime exports a
+new key once, to store it, imports what it reads at once, and zeroes the bytes either way. Setting one later wraps the keys kept so far in the background, as a rotation does.
 
 ### Rotating the master key
 
@@ -775,12 +785,16 @@ export default defineConfig({
 ```
 
 `kid` is stored next to every key the wrapper wraps; `unwrap` receives it back, with what `wrap`
-returned. The runtime checks what `unwrap` returns against the key's fingerprint, so a wrapper that
-answers with another key fails loudly instead of sealing data under it. KMS rotates a key's
-material itself and keeps decrypting under the old one with the same ARN, so `kid` does not
-change; moving to another KMS key is a rotation as above, with the old ARN in `previous`. Each
-instance asks KMS once per person it creates, and once per person it reads in every five minutes
-they are active, thanks to the cache.
+returned. A KMS needs the key's raw bytes, so they exist while `wrap` and `unwrap` run, and only
+then: the runtime zeroes the array it gives `wrap` once it settles, and imports what `unwrap`
+resolves as a key that can never be exported and zeroes that array at once. So resolve a
+`Uint8Array` of your own, as the SDK hands it, and keep no copy of either. The runtime checks the
+key `unwrap` answers against its fingerprint, so a wrapper that answers with another key fails
+loudly instead of sealing data under it. Creating a key takes one call to `wrap` and none to
+`unwrap`. KMS rotates a key's material itself and keeps decrypting under the old one with the
+same ARN, so `kid` does not change; moving to another KMS key is a rotation as above, with the old
+ARN in `previous`. Each instance asks KMS once per person it creates, and once per person it reads
+in every five minutes they are active, thanks to the cache.
 
 A wrapper that fails, because KMS is unreachable, fails the command that needed the key, which
 the caller or the reaction's retry sees; the person's data is not touched.

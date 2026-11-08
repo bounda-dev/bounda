@@ -1,4 +1,4 @@
-import type { Adapter, Storage } from "../adapter/adapter.ts";
+import type { Adapter } from "../adapter/adapter.ts";
 import { resolveConfig } from "../config/schema.ts";
 import type { Config, ResolvedConfig } from "../config/types.ts";
 import { createFixedClock, type FixedClock } from "../contracts/clock.ts";
@@ -13,6 +13,7 @@ import { createCommandPipeline } from "./command/pipeline.ts";
 import { createRestrictedRetries } from "./dead-letters/restricted.ts";
 import { createDeadLetterRetry, type DeadLetterRetry } from "./dead-letters/retry.ts";
 import { createDispatcher, type Dispatcher } from "./dispatch/dispatcher.ts";
+import type { AppStorage } from "./events/app-event-store.ts";
 import { buildPolicies, type PoliciesRuntime } from "./policy/build-policies.ts";
 import { createDelayedPolicies } from "./policy/delayed.ts";
 import { createPolicyExecutor, type PolicyExecutor } from "./policy/executor.ts";
@@ -24,10 +25,10 @@ import { createProjectionSubscriber } from "./projection/runner.ts";
 import { buildReadModels, type ReadModelsRuntime } from "./read-model/build-read-models.ts";
 import { createScheduledCommandWorker, type ScheduledCommandWorker } from "./scheduler/worker.ts";
 import { ignoredRetries } from "./shared/pending-retries.ts";
-import { defaultPorts } from "./test-support.ts";
+import { defaultPorts, withPersonalKeys } from "./test-support.ts";
 
 export interface ReactiveHarness {
-  readonly storage: Storage;
+  readonly storage: AppStorage;
   readonly config: ResolvedConfig;
   readonly aggregates: AggregatesRuntime;
   readonly readModels: ReadModelsRuntime;
@@ -71,14 +72,14 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
   logger = silentLogger,
   adapter = memory(),
 }) => {
-  const storage = await adapter.createStorage();
+  const clock = createFixedClock();
+  const storage = withPersonalKeys(await adapter.createStorage(), clock);
   const config = resolveConfig({
     storage: adapter,
     ports: defaultPorts(registry),
     ...overrides,
   });
   const ids = createSequentialIdGenerator();
-  const clock = createFixedClock();
   const { byAggregate } = await createPorts({
     registry,
     config: config.ports,

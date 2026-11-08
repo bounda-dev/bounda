@@ -1,23 +1,16 @@
-import type { KeyedPerson, PersonalKeyStore } from "../../adapter/storage/personal-key-store.ts";
+import type { KeyedPerson } from "../../adapter/storage/personal-key-store.ts";
 import { ValidationError } from "../../contracts/errors.ts";
 import { isRecord } from "../shared/merge-fields.ts";
-import {
-  generatePersonalKey,
-  importPersonalKey,
-  isSealed,
-  type PersonalKey,
-  refuseSealed,
-  seal,
-  unseal,
-} from "./crypto.ts";
+import { isSealed, type PersonalKey, refuseSealed, seal, unseal } from "./crypto.ts";
 import type { PersonalMarks } from "./marks.ts";
+import type { PersonalKeys } from "./wrapped-keys.ts";
 
 export interface SealCommandPayloadArgs {
   readonly type: string;
   readonly aggregateId: string;
   readonly payload: unknown;
   readonly marks: PersonalMarks | null;
-  readonly keys: PersonalKeyStore;
+  readonly keys: PersonalKeys;
 }
 
 /**
@@ -47,17 +40,15 @@ const personOf = (
   return String(value);
 };
 
-const keyInForce = async (keys: PersonalKeyStore, person: string): Promise<PersonalKey> =>
-  importPersonalKey(
-    (await keys.get(person)) ?? (await keys.add(person, await generatePersonalKey())),
-  );
+const keyInForce = async (keys: PersonalKeys, person: string): Promise<PersonalKey> =>
+  (await keys.held(person)) ?? (await keys.create(person));
 
 export interface KeyOfFunction {
   (person: string, fingerprint: string): Promise<PersonalKey | null>;
 }
 
 export interface SealedKeysFunction {
-  (keys: PersonalKeyStore): KeyOfFunction;
+  (keys: PersonalKeys): KeyOfFunction;
 }
 
 /**
@@ -73,7 +64,7 @@ export const sealedKeys: SealedKeysFunction = (keys) => {
     const key = keys
       .get(person)
       .then((stored) =>
-        stored === null || stored.fingerprint !== fingerprint ? null : importPersonalKey(stored),
+        stored === null || stored.fingerprint !== fingerprint ? null : keys.open(person, stored),
       );
     imported.set(id, key);
     return key;
@@ -103,7 +94,7 @@ export const sealCommandPayload: SealCommandPayloadFunction = async (args) => {
 
 export interface OpenCommandPayloadArgs {
   readonly payload: unknown;
-  readonly keys: PersonalKeyStore;
+  readonly keys: PersonalKeys;
   /**
    * Keys already read, shared with what else the caller opens; read from `keys` otherwise.
    */

@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import type { Storage } from "../../adapter/adapter.ts";
 import type { PendingEvent } from "../../adapter/storage/event-store.ts";
 import type { Table as RowTable } from "../../adapter/storage/table.ts";
 import { pendingEvent, testContext, testDeadLetter } from "../../adapter/testing/fixtures.ts";
@@ -12,8 +11,9 @@ import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload
 import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
-import { appStorage } from "../events/app-event-store.ts";
+import { type AppStorage, appStorage } from "../events/app-event-store.ts";
 import { buildReadModels } from "../read-model/build-read-models.ts";
+import { keysOver } from "../test-support.ts";
 import { sealCommandPayload } from "./commands.ts";
 import { sealError } from "./errors.ts";
 import { exportPersonalData } from "./export.ts";
@@ -131,7 +131,7 @@ const setup = async () => {
     return readModel.storage.table;
   };
   const written = await memory().createStorage();
-  const storage: Storage = appStorage({
+  const storage: AppStorage = appStorage({
     storage: written,
     aggregates,
     processes: { byName: {} },
@@ -183,13 +183,13 @@ const setup = async () => {
       aggregateId: customerId,
       payload: { customerId, email },
       marks: aggregates.commandsByType.RemindCustomer?.command.personal ?? null,
-      keys: storage.personalKeys,
+      keys: keysOver(storage.personalKeys),
     });
   // An error whose message quotes the person, as a handler's may.
   const failure = (person: string | null, message: string) => {
     const error = new Error(message);
     error.stack = `Error: ${message}\n    at handler`;
-    return sealError({ error, person, keys: storage.personalKeys });
+    return sealError({ error, person, keys: keysOver(storage.personalKeys) });
   };
   return {
     storage,
