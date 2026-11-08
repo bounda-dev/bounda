@@ -1,4 +1,4 @@
-export type { Clock, CreateFixedClockFunction, FixedClock } from "./clock.ts";
+export type { AfterOptions, Clock, CreateFixedClockFunction, FixedClock } from "./clock.ts";
 export { createFixedClock, systemClock } from "./clock.ts";
 export type {
   Command,

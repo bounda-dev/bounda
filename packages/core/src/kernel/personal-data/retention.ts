@@ -13,7 +13,7 @@ import { BOUNDA_AGGREGATE, PERSONAL_DATA_FORGOTTEN_EVENT } from "../../modules/b
 import type { Subscriber } from "../dispatch/delivery.ts";
 import { errorDetails } from "../shared/retry.ts";
 import { forgetWithin, logForgotten } from "./forget.ts";
-import { HOLD_MS, holdAfter } from "./hold.ts";
+import { createPause, holdAfter } from "./hold.ts";
 import { transactRetrying } from "./transact.ts";
 
 export const RETENTION_SUBSCRIBER: "retention" = "retention";
@@ -25,6 +25,13 @@ const isActivity = (event: StoredEvent): boolean => event.aggregateType !== BOUN
 
 // Asked only of the runtime's own events, once `isActivity` said no.
 const isForget = (event: StoredEvent): boolean => event.type === PERSONAL_DATA_FORGOTTEN_EVENT;
+
+// What a `PersonalDataForgotten` says of its person; their last activity stays as it was.
+const forgettingOf = (event: StoredEvent & { readonly person: string }): PersonActivity => ({
+  person: event.person,
+  position: event.position,
+  forgottenAt: event.timestamp,
+});
 
 export interface CreateRetentionSubscriberArgs {
   readonly persons: PersonStore;
@@ -58,12 +65,7 @@ export const createRetentionSubscriber: CreateRetentionSubscriberFunction = ({ p
           forgottenAt: null,
         });
       } else if (isForget(event)) {
-        recorded.set(person, {
-          ...known,
-          person,
-          position: event.position,
-          forgottenAt: event.timestamp,
-        });
+        recorded.set(person, { ...known, ...forgettingOf({ ...event, person }) });
       }
     }
     for (const activity of recorded.values()) await persons.record(activity);
@@ -94,6 +96,10 @@ export interface CreateRetentionSweepArgs {
   readonly logger: Logger;
   readonly concurrencyRetries: number;
   readonly batchSize: number;
+  /**
+   * Called with each person forgotten, once their forgetting is committed.
+   */
+  readonly forgotten?: (personId: string) => void;
 }
 
 export interface CreateRetentionSweepFunction {
@@ -116,6 +122,7 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
   logger,
   concurrencyRetries,
   batchSize,
+  forgotten: onForgotten,
 }) => {
   const rowIsCurrent = async (
     eventStore: EventStore,
@@ -162,34 +169,54 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
         // Recorded here as the subscriber will record it, so the row leaves the idle list, its
         // hold with it, before any pass can take the person again; the subscriber's record of the
         // same event then changes nothing.
-        await transaction.persons.record({
-          person: personId,
-          position: forgotten.event.position,
-          forgottenAt: forgotten.event.timestamp,
-        });
+        await transaction.persons.record(forgettingOf({ ...forgotten.event, person: personId }));
         return forgotten;
       },
     });
     if (typeof forgotten === "string") return forgotten;
     logForgotten(logger, forgotten);
+    onForgotten?.(personId);
     return "forgotten";
   };
 
   // A person left undone waits on their own row, so one whose forget keeps failing never holds
   // the others back, every instance skips them, and a host that wakes for `nextDueAt` never wakes
-  // for them again at once. A list that could not be read, or a hold that could not be written,
-  // holds the whole sweep here, as nothing else can.
-  let pausedUntil = Number.NEGATIVE_INFINITY;
+  // for them again at once.
+  const pause = createPause();
 
-  const hold = async (person: StoredPerson, at: number, failed: boolean): Promise<void> => {
+  const hold = async (person: StoredPerson, at: number, failed: boolean): Promise<boolean> => {
     try {
-      await storage.persons.hold(person.person, holdAfter({ held: person.hold, at, failed }));
+      await storage.persons.hold(
+        person.person,
+        person.lastActiveAt ?? "",
+        holdAfter({ held: person.hold, at, failed }),
+      );
+      return true;
     } catch (error) {
-      pausedUntil = at + HOLD_MS;
       logger.error("person past the retention could not be held", {
         personId: person.person,
         ...errorDetails(error),
       });
+      return false;
+    }
+  };
+
+  // Resolves whether the store kept up: a person it could not hold pauses the sweep.
+  const attempt = async (
+    person: StoredPerson,
+    at: number,
+    through: number,
+  ): Promise<{ readonly forgotten: boolean; readonly kept: boolean }> => {
+    try {
+      const outcome = await forget(person.person, through);
+      if (outcome !== "undone") return { forgotten: outcome === "forgotten", kept: true };
+      return { forgotten: false, kept: await hold(person, at, false) };
+    } catch (error) {
+      logger.error("person past the retention could not be forgotten", {
+        personId: person.person,
+        ...errorDetails(error),
+      });
+      return { forgotten: false, kept: await hold(person, at, true) };
     }
   };
 
@@ -200,54 +227,61 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
       releasedBy: now,
       limit: RETENTION_SWEEP_LIMIT,
     });
-    if (due.length === 0) return 0;
+    if (due.length === 0) {
+      pause.resume();
+      return 0;
+    }
     const through = await storage.checkpointStore.get(RETENTION_SUBSCRIBER);
     let forgotten = 0;
+    let kept = true;
     for (const person of due) {
-      let outcome: Awaited<ReturnType<typeof forget>>;
-      try {
-        outcome = await forget(person.person, through);
-      } catch (error) {
-        logger.error("person past the retention could not be forgotten", {
-          personId: person.person,
-          ...errorDetails(error),
-        });
-        await hold(person, at, true);
-        continue;
-      }
-      if (outcome === "undone") await hold(person, at, false);
-      else if (outcome === "forgotten") forgotten += 1;
+      const outcome = await attempt(person, at, through);
+      if (outcome.forgotten) forgotten += 1;
+      kept &&= outcome.kept;
     }
+    if (kept) pause.resume();
+    else pause.pause(at);
     return forgotten;
   };
 
+  const deadlineOf = (person: StoredPerson | undefined): number =>
+    typeof person?.lastActiveAt === "string"
+      ? Date.parse(person.lastActiveAt) + retentionMs
+      : Number.POSITIVE_INFINITY;
+
   return {
     sweep: async (now) => {
-      if (now.getTime() < pausedUntil) return 0;
+      const at = now.getTime();
+      if (pause.isPaused(at)) return 0;
       try {
         return await sweep(now);
       } catch (error) {
-        pausedUntil = now.getTime() + HOLD_MS;
+        pause.pause(at);
         logger.error("persons past the retention could not be listed", errorDetails(error));
         return 0;
       }
     },
-    // A held person comes due when both their deadline and their hold have passed; the hold's end
-    // is named alone, so in the rare case of a retention lengthened since, a host wakes once too
-    // early, finds their hold over, and from then on reads their deadline with the persons free.
+    // Nobody comes due before the least recently active person's deadline, so while that person
+    // is not held it alone answers. A held person comes due when both their deadline and their
+    // hold have passed; the hold's end is named alone, so in the rare case of a retention
+    // lengthened since, a host wakes once too early, finds their hold over, and from then on reads
+    // their deadline with the persons free.
     nextDueAt: async () => {
       const now = clock.now();
-      const [[free], heldUntil] = await Promise.all([
-        storage.persons.listIdle({ releasedBy: now, limit: 1 }),
-        storage.persons.nextHoldEnd(now),
-      ]);
-      const lastActiveAt = free?.lastActiveAt;
-      const deadline =
-        typeof lastActiveAt === "string"
-          ? Date.parse(lastActiveAt) + retentionMs
-          : Number.POSITIVE_INFINITY;
-      const next = Math.min(deadline, heldUntil?.getTime() ?? Number.POSITIVE_INFINITY);
-      return next === Number.POSITIVE_INFINITY ? null : new Date(Math.max(next, pausedUntil));
+      const [first] = await storage.persons.listIdle({ limit: 1 });
+      let next = deadlineOf(first);
+      if (
+        first?.hold !== null &&
+        first?.hold !== undefined &&
+        Date.parse(first.hold.until) > now.getTime()
+      ) {
+        const [[free], heldUntil] = await Promise.all([
+          storage.persons.listIdle({ releasedBy: now, limit: 1 }),
+          storage.persons.nextHoldEnd(now),
+        ]);
+        next = Math.min(deadlineOf(free), heldUntil?.getTime() ?? Number.POSITIVE_INFINITY);
+      }
+      return next === Number.POSITIVE_INFINITY ? null : new Date(pause.notBefore(next));
     },
   };
 };

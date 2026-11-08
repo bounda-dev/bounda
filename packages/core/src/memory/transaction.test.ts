@@ -65,6 +65,38 @@ describe("createMemoryStorageTransaction", () => {
     expect(await stores.scheduler.list()).toEqual(before);
   });
 
+  it("puts back the fields of a person's row its write changed, keeping those someone wrote since", async () => {
+    const stores = await storage();
+    const day = (n: number) => at(n).toISOString();
+    await stores.persons.record({
+      person: "c-1",
+      position: 1,
+      lastActiveAt: day(1),
+      forgottenAt: null,
+    });
+    let restricted: Promise<boolean> | undefined;
+    await expect(
+      stores.transact(async (tx) => {
+        await tx.persons.record({ person: "c-1", position: 2, forgottenAt: day(2) });
+        restricted = stores.persons.restrict("c-1", at(3));
+        await restricted;
+        await refused(tx);
+      }),
+    ).rejects.toBeInstanceOf(ScheduledClaimLostError);
+    expect(await restricted).toBe(true);
+    expect(await stores.persons.get("c-1")).toEqual({
+      person: "c-1",
+      restrictedSince: day(3),
+      lastActiveAt: day(1),
+      forgottenAt: null,
+      hold: null,
+    });
+    await stores.persons.unrestrict("c-1");
+    expect((await stores.persons.listIdle({ limit: 10 })).map(({ person }) => person)).toEqual([
+      "c-1",
+    ]);
+  });
+
   it("leaves an entry alone that someone changed after its write", async () => {
     const stores = await storage();
     const live = stores.scheduler.schedule;

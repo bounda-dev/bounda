@@ -24,8 +24,8 @@ export interface StoredPerson {
    */
   readonly forgottenAt: string | null;
   /**
-   * The wait a retention sweep set after it could not forget them; `null` when none is set, and
-   * cleared by every record.
+   * The wait a retention sweep set after it could not forget them; `null` when none is set. A
+   * record that changes the row clears it.
    */
   readonly hold: Hold | null;
 }
@@ -88,9 +88,11 @@ export interface PersonStore {
    */
   listIdle(args: ListIdleArgs): Promise<readonly StoredPerson[]>;
   /**
-   * Sets the person's hold, replacing the one they had; a person without a row is left without.
+   * Sets the person's hold, replacing the one they had, only while they are still last active at
+   * `lastActiveAt` and not forgotten since: a hold meant for an idle person never lands on one a
+   * record has just made active. A person without a row is left without.
    */
-  hold(person: string, hold: Hold): Promise<void>;
+  hold(person: string, lastActiveAt: string, hold: Hold): Promise<void>;
   /**
    * The earliest end of a hold past `after` among the persons `listIdle` lists; `null` when none
    * is held past it.

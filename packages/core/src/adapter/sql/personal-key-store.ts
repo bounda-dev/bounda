@@ -1,6 +1,6 @@
 import type { PersonalKeyStore, StoredPersonalKey } from "../storage/personal-key-store.ts";
 import type { SqlDialect } from "./dialect.ts";
-import { holdOf } from "./hold.ts";
+import { holdEndOf, holdOf, releasedBy as released } from "./hold.ts";
 import type { SqlExecutor } from "./sql-table.ts";
 
 export interface CreateSqlPersonalKeyStoreArgs {
@@ -64,15 +64,15 @@ export const createSqlPersonalKeyStore: CreateSqlPersonalKeyStoreFunction = ({
     listWrappedUnder: async ({ kids, releasedBy, limit }) => {
       const under = wrappedUnder(kids);
       if (under === null) return [];
+      const conditions = [`(${under.condition})`];
       const values: unknown[] = [...under.values];
-      let released = "";
       if (releasedBy !== undefined) {
         values.push(releasedBy.toISOString());
-        released = ` AND ("held_until" IS NULL OR "held_until" <= ${p(values.length)})`;
+        conditions.push(released(p(values.length)));
       }
       values.push(limit);
       const rows = await db.all(
-        `SELECT "person", "key", "fingerprint", "kid", "held_until", "attempts" FROM ${table} WHERE (${under.condition})${released} ORDER BY "person" LIMIT ${p(values.length)}`,
+        `SELECT "person", "key", "fingerprint", "kid", "held_until", "attempts" FROM ${table} WHERE ${conditions.join(" AND ")} ORDER BY "person" LIMIT ${p(values.length)}`,
         values,
       );
       return rows.map((row) => ({
@@ -98,11 +98,12 @@ export const createSqlPersonalKeyStore: CreateSqlPersonalKeyStoreFunction = ({
     nextHoldEnd: async ({ kids, after }) => {
       const under = wrappedUnder(kids);
       if (under === null) return null;
-      const [row] = await db.all(
-        `SELECT MIN("held_until") AS "until" FROM ${table} WHERE (${under.condition}) AND "held_until" > ${p(under.values.length + 1)}`,
-        [...under.values, after.toISOString()],
+      return holdEndOf(
+        await db.all(
+          `SELECT MIN("held_until") AS "until" FROM ${table} WHERE (${under.condition}) AND "held_until" > ${p(under.values.length + 1)}`,
+          [...under.values, after.toISOString()],
+        ),
       );
-      return typeof row?.until === "string" ? new Date(row.until) : null;
     },
   };
 };

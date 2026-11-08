@@ -80,9 +80,11 @@ export const createKeptPersonStore: CreateKeptPersonStoreFunction = () => {
           .slice(0, limit)
           .map(stored);
       },
-      hold: async (person, hold) => {
+      hold: async (person, lastActiveAt, hold) => {
         const kept = persons.get(person);
-        if (kept !== undefined) persons.set(person, { ...kept, hold });
+        if (kept?.lastActiveAt === lastActiveAt && kept.forgottenAt === null) {
+          persons.set(person, { ...kept, hold });
+        }
       },
       nextHoldEnd: async (after) =>
         earliestHoldEnd(

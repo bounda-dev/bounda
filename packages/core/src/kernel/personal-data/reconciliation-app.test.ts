@@ -385,15 +385,19 @@ describe("the forget ledger", () => {
     ];
     const one = await start({ storage, forgetLedger: flaky });
     expect(await stored()).toEqual([START.getTime() + HOLD_MS, 1]);
+    // Failing in the same round, the other instance waits for that hold instead of adding to it.
     const later = new Date(START.getTime() + 10_000);
     const other = await start({ storage, forgetLedger: flaky, now: later });
-    const heldUntil = later.getTime() + 2 * HOLD_MS;
-    expect(await stored()).toEqual([heldUntil, 2]);
-    expect(await other.app.nextDueAt()).toEqual(new Date(heldUntil));
+    expect(await stored()).toEqual([START.getTime() + HOLD_MS, 1]);
+    expect(await other.app.nextDueAt()).toEqual(new Date(START.getTime() + HOLD_MS));
     one.clock.advance(HOLD_MS);
     await one.app.runUntilIdle();
+    const heldUntil = START.getTime() + 3 * HOLD_MS;
     expect(await stored()).toEqual([heldUntil, 2]);
-    expect(await one.app.nextDueAt()).toEqual(new Date(heldUntil));
+    other.clock.set(new Date(START.getTime() + HOLD_MS));
+    await other.app.runUntilIdle();
+    expect(await stored()).toEqual([heldUntil, 2]);
+    expect(await other.app.nextDueAt()).toEqual(new Date(heldUntil));
     down = false;
     one.clock.set(new Date(heldUntil));
     expect(await one.app.runUntilIdle({ maxPasses: 1 })).toMatchObject({ idle: false });
@@ -417,10 +421,13 @@ describe("the forget ledger", () => {
     const { app: first } = await start({ storage, forgetLedger: broken });
     expect(await first.nextDueAt()).toEqual(new Date(START.getTime() + HOLD_MS));
     await first.stop();
-    const restartedAt = new Date(START.getTime() + 1_000);
+    const restartedAt = new Date(START.getTime() + HOLD_MS + 1_000);
     const { app } = await start({ storage, forgetLedger: broken, now: restartedAt });
     expect(await app.getLag()).toMatchObject({ forgetLedger: { reconciled: false } });
     expect(await app.nextDueAt()).toEqual(new Date(restartedAt.getTime() + 2 * HOLD_MS));
+    await app.stop();
+    const { app: early } = await start({ storage, forgetLedger: broken, now: restartedAt });
+    expect(await early.nextDueAt()).toEqual(new Date(restartedAt.getTime() + 2 * HOLD_MS));
   });
 
   it("starts once the ledger has not answered in time, and reconciles when it does", async () => {

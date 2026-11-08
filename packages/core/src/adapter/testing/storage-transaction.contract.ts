@@ -378,7 +378,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       const hold = { until: new Date(now.getTime() + 30_000).toISOString(), attempts: 1 };
       await expect(
         storage.transact(async (tx) => {
-          await tx.persons.hold("c-1", hold);
+          await tx.persons.hold("c-1", now.toISOString(), hold);
           await tx.personalKeys.hold("c-1", key, hold);
           throw new Error("boom");
         }),
@@ -388,7 +388,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
         { person: "c-1", key, hold: null },
       ]);
       await storage.transact(async (tx) => {
-        await tx.persons.hold("c-1", hold);
+        await tx.persons.hold("c-1", now.toISOString(), hold);
         await tx.personalKeys.hold("c-1", key, hold);
         expect(await tx.persons.nextHoldEnd(now)).toEqual(new Date(hold.until));
         expect(await tx.personalKeys.nextHoldEnd({ kids: [null], after: now })).toEqual(

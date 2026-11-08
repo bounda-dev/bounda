@@ -16,9 +16,9 @@ export const UNWRAPPED_KEYS_KEPT = 10_000;
 
 /**
  * How long an unwrapped key is kept from the moment it was unwrapped, however often it is read
- * since: five minutes cover the commands and reactions a person's activity sets off, so a remote
- * unwrap is paid about once a burst, and bound how long the raw key of someone no longer active
- * stays reachable in the process, idle or not.
+ * since: long enough to cover the commands and reactions one burst of a person's activity sets
+ * off, so a remote unwrap is paid about once a burst, and short enough that the raw key of someone
+ * no longer active does not stay reachable in the process, idle or not.
  */
 export const UNWRAPPED_KEY_TTL_MS: number = 5 * 60_000;
 
@@ -32,9 +32,14 @@ export interface PersonalKeyWrapping {
    */
   unwrapped(stored: StoredPersonalKey): Promise<StoredPersonalKey>;
   /**
-   * The unwrapped key wrapped under the wrapper's `kid`, or as it is without a wrapper.
+   * The unwrapped key wrapped under the wrapper's `kid`, or as it is without a wrapper; `person`
+   * names whose key it is, so forgetting them drops what this unwrapped.
    */
-  wrapped(key: StoredPersonalKey): Promise<RewrappedKey>;
+  wrapped(key: StoredPersonalKey, person?: string): Promise<RewrappedKey>;
+  /**
+   * Drops the person's unwrapped key, for a forgetting made on the store as written.
+   */
+  drop(person: string): void;
   /**
    * `keys` as the kernel reads and writes them: unwrapped out of `get` and `add`, wrapped into
    * the store.
@@ -66,7 +71,6 @@ export interface CreatePersonalKeyWrappingFunction {
 interface KeptKey {
   readonly raw: Promise<string>;
   readonly expiresAt: number;
-  // Whose key it is, once a read of their row named them, so forgetting them drops it at once.
   person: string | null;
 }
 
@@ -87,25 +91,42 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
   const kept = new Map<string, KeptKey>();
   // Unwrapped first, which, kept as long as each other, is also the first to expire.
   const unwrappedAt = new Map<string, KeptKey>();
+  // The fingerprint kept for each person a read named, so forgetting them drops their key at once.
+  const byPerson = new Map<string, string>();
   const known = new Set(wrapper === null ? [] : [wrapper.kid, ...(wrapper.previous ?? [])]);
   let cancelExpiry: (() => void) | null = null;
 
   const drop = (fingerprint: string): void => {
+    const person = kept.get(fingerprint)?.person;
     kept.delete(fingerprint);
     unwrappedAt.delete(fingerprint);
+    if (person !== undefined && person !== null && byPerson.get(person) === fingerprint) {
+      byPerson.delete(person);
+    }
   };
+
+  const attribute = (key: KeptKey, fingerprint: string, person: string): void => {
+    key.person = person;
+    byPerson.set(person, fingerprint);
+  };
+
+  // A wall clock set back makes a key look younger than it can be: it is taken as expired.
+  const isExpired = (key: KeptKey, now: number): boolean =>
+    key.expiresAt <= now || key.expiresAt - now > ttlMs;
 
   const armExpiry = (): void => {
     const [first] = unwrappedAt.values();
     if (cancelExpiry !== null || first === undefined) return;
-    cancelExpiry = clock.after(first.expiresAt - clock.now().getTime(), expire);
+    cancelExpiry = clock.after(first.expiresAt - clock.now().getTime(), expire, {
+      background: true,
+    });
   };
 
   const expire = (): void => {
     cancelExpiry = null;
     const now = clock.now().getTime();
     for (const [fingerprint, key] of unwrappedAt) {
-      if (key.expiresAt > now) break;
+      if (!isExpired(key, now)) break;
       drop(fingerprint);
     }
     armExpiry();
@@ -141,8 +162,9 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
     }
     const { fingerprint } = stored;
     let entry = kept.get(fingerprint);
-    // Dropped first, so the key unwrapped again goes to the end of both orders.
-    if (entry === undefined || entry.expiresAt <= clock.now().getTime()) {
+    // Dropped first, so the key unwrapped again goes to the end of both orders, still its owner's.
+    if (entry === undefined || isExpired(entry, clock.now().getTime())) {
+      const owner = entry?.person ?? null;
       drop(fingerprint);
       const unwrapping = unwrap(wrapper, { ...stored, kid });
       const created: KeptKey = {
@@ -153,6 +175,7 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
       entry = created;
       kept.set(fingerprint, created);
       unwrappedAt.set(fingerprint, created);
+      if (owner !== null) attribute(created, fingerprint, owner);
       unwrapping.catch(() => {
         if (kept.get(fingerprint) === created) drop(fingerprint);
       });
@@ -163,20 +186,26 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
       kept.delete(fingerprint);
       kept.set(fingerprint, entry);
     }
-    if (person !== undefined) entry.person = person;
+    if (person !== undefined) attribute(entry, fingerprint, person);
     return { key: await entry.raw, fingerprint, kid: null };
   };
 
-  const wrapped = async (key: StoredPersonalKey): Promise<RewrappedKey> => {
+  const wrapped = async (key: StoredPersonalKey, person?: string): Promise<RewrappedKey> => {
     if (wrapper === null) return { key: key.key, kid: key.kid };
-    const raw = fromBase64((await unwrapped(key)).key);
+    const raw = fromBase64((await unwrapped(key, person)).key);
     return { key: toBase64(await wrapper.wrap(raw)), kid: wrapper.kid };
+  };
+
+  const dropPerson = (person: string): void => {
+    const fingerprint = byPerson.get(person);
+    if (fingerprint !== undefined) drop(fingerprint);
   };
 
   return {
     wrapper,
     unwrapped,
     wrapped,
+    drop: dropPerson,
     over: (keys) => ({
       get: async (person) => {
         const stored = await keys.get(person);
@@ -193,7 +222,7 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
       // and is never read again meanwhile, since every read starts from the row.
       remove: async (person) => {
         const removed = await keys.remove(person);
-        for (const [fingerprint, key] of kept) if (key.person === person) drop(fingerprint);
+        dropPerson(person);
         return removed;
       },
       listWrappedUnder: (args) => keys.listWrappedUnder(args),

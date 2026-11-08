@@ -291,7 +291,7 @@ describe("the forget ledger's reconciliation", () => {
     expect(await storage.checkpointStore.get(FORGET_LEDGER_HELD_UNTIL)).toBe(0);
   });
 
-  it("reads no hold for the read a ledger's delay calls for", async () => {
+  it("reads the hold before the read a ledger's delay calls for only to clear it after", async () => {
     const storage = await memory().createStorage();
     const asked: string[] = [];
     const reconciliation = createForgetLedgerReconciliation({
@@ -314,7 +314,29 @@ describe("the forget ledger's reconciliation", () => {
     await reconciliation.reconcile(NOW);
     asked.length = 0;
     await reconciliation.sweep(new Date(NOW.getTime() + 1));
-    expect(asked).not.toContain(FORGET_LEDGER_HELD_UNTIL);
+    expect(asked.filter((name) => name === FORGET_LEDGER_HELD_UNTIL)).toHaveLength(1);
+    expect(asked.indexOf(FORGET_LEDGER_HELD_UNTIL)).toBeGreaterThan(
+      asked.indexOf(FORGET_LEDGER_CURSOR),
+    );
+  });
+
+  it("clears a hold left with its end alone, and tells whom it forgot again", async () => {
+    const storage = await memory().createStorage();
+    await keyed(storage, ["c-1"]);
+    await storage.checkpointStore.set(FORGET_LEDGER_HELD_UNTIL, NOW.getTime() + 60_000);
+    const told: string[] = [];
+    const reconciliation = createForgetLedgerReconciliation({
+      ledger: recordingLedger([entry("c-1", "e-1", at(0))]).ledger,
+      storage,
+      ids: createSequentialIdGenerator(),
+      clock: createFixedClock(NOW),
+      logger: silentLogger,
+      concurrencyRetries: 3,
+      forgotten: (personId) => told.push(personId),
+    });
+    expect(await reconciliation.reconcile(NOW)).toBe(1);
+    expect(told).toEqual(["c-1"]);
+    expect(await storage.checkpointStore.get(FORGET_LEDGER_HELD_UNTIL)).toBe(0);
   });
 
   it("warns only when it forgot someone", async () => {

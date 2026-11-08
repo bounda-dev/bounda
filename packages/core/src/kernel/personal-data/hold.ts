@@ -1,13 +1,21 @@
 import type { Hold } from "../../adapter/storage/hold.ts";
+import type { ResolvedRetryConfig } from "../../config/types.ts";
+import { retryDelayMs } from "../shared/retry.ts";
 
 /**
  * How long a row the runtime could not settle waits before it is tried again, twice as long after
- * each failure in a row up to `HOLD_MAX_MS`; and how long a list that could not be read holds the
- * work it feeds.
+ * each failure in a row up to `HOLD_MAX_MS`.
  */
 export const HOLD_MS = 30_000;
 
 export const HOLD_MAX_MS = 3_600_000;
+
+const HOLD_RETRY: ResolvedRetryConfig = {
+  strategy: "exponential",
+  baseDelayMs: HOLD_MS,
+  maxDelayMs: HOLD_MAX_MS,
+  maxAttempts: Number.POSITIVE_INFINITY,
+};
 
 export interface HoldAfterArgs {
   /**
@@ -28,6 +36,43 @@ export interface HoldAfterFunction {
 
 export const holdAfter: HoldAfterFunction = ({ held, at, failed }) => {
   const attempts = (held?.attempts ?? 0) + (failed ? 1 : 0);
-  const delay = Math.min(HOLD_MS * 2 ** Math.max(attempts - 1, 0), HOLD_MAX_MS);
+  const delay = retryDelayMs({ retry: HOLD_RETRY, attempt: Math.max(attempts, 1) });
   return { until: new Date(at + delay).toISOString(), attempts };
+};
+
+/**
+ * What a job does when the store itself fails it, a list it cannot read or a hold it cannot
+ * write: it stops for a while, longer after each failure in a row, since no row can keep the wait.
+ */
+export interface Pause {
+  isPaused(at: number): boolean;
+  pause(at: number): void;
+  /**
+   * After a pass the store answered in full: the next failure waits as long as the first.
+   */
+  resume(): void;
+  /**
+   * `next`, or the end of the pause when that is later.
+   */
+  notBefore(next: number): number;
+}
+
+export interface CreatePauseFunction {
+  (): Pause;
+}
+
+export const createPause: CreatePauseFunction = () => {
+  let paused: Hold | null = null;
+  const until = (): number =>
+    paused === null ? Number.NEGATIVE_INFINITY : Date.parse(paused.until);
+  return {
+    isPaused: (at) => at < until(),
+    pause: (at) => {
+      paused = holdAfter({ held: paused, at, failed: true });
+    },
+    resume: () => {
+      paused = null;
+    },
+    notBefore: (next) => Math.max(next, until()),
+  };
 };

@@ -525,6 +525,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             logger,
             concurrencyRetries: config.runtime.commands.concurrencyRetries,
             batchSize: config.runtime.dispatcher.batchSize,
+            forgotten: wrapping.drop,
           });
     const { concurrencyRetries } = config.runtime.commands;
     const reconciliation =
@@ -537,6 +538,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             clock,
             logger,
             concurrencyRetries,
+            forgotten: wrapping.drop,
           });
     const rotation =
       wrapping.wrapper === null
@@ -875,6 +877,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           });
           if (again === null) continue;
           logForgotten(logger, again);
+          wrapping.drop(entry.personId);
           forgotten.push(entry.personId);
         }
         return forgotten;

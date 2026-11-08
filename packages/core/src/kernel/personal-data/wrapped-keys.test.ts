@@ -151,8 +151,19 @@ describe("createPersonalKeyWrapping", () => {
     expect(reads()).toBe(before + 1);
   });
 
-  it("keeps an unwrapped key UNWRAPPED_KEY_TTL_MS, five minutes, by default", () => {
+  it("keeps an unwrapped key UNWRAPPED_KEY_TTL_MS by default, five minutes", async () => {
     expect(UNWRAPPED_KEY_TTL_MS).toBe(300_000);
+    const store = await keyStore();
+    const timed = createFixedClock();
+    const wrapper = fakeWrapper("kid-1");
+    const keys = createPersonalKeyWrapping({ clock: timed, wrapper }).over(store);
+    await keys.add("c-1", await generatePersonalKey());
+    timed.advance(UNWRAPPED_KEY_TTL_MS - 1);
+    await keys.get("c-1");
+    expect(wrapper.unwrapped).toHaveLength(1);
+    timed.advance(1);
+    await keys.get("c-1");
+    expect(wrapper.unwrapped).toHaveLength(2);
   });
 
   it("drops an unwrapped key its time after it was unwrapped, however often it is read, with nothing read meanwhile", async () => {
@@ -248,6 +259,40 @@ describe("createPersonalKeyWrapping", () => {
     await expect(first).rejects.toThrow("KMS timed out");
     expect(await keys.get("c-1")).toEqual(key);
     expect(calls).toBe(2);
+  });
+
+  it("drops what the rotation unwrapped for a person when they are forgotten, or dropped by name", async () => {
+    const store = await keyStore();
+    const wrapper = fakeWrapper("kid-1", ["kid-0"]);
+    const late: typeof clock = { ...createFixedClock(), after: () => () => undefined };
+    const wrapping = createPersonalKeyWrapping({ clock: late, wrapper, ttlMs: 1_000 });
+    const keys = wrapping.over(store);
+    const key = await generatePersonalKey();
+    await keys.add("c-1", key);
+    const stored = await store.get("c-1");
+    // Expired, then unwrapped again by a read that names no one: still c-1's.
+    late.advance(1_000);
+    await wrapping.wrapped(stored ?? key);
+    await keys.remove("c-1");
+    await store.add("c-1", stored ?? key);
+    await keys.get("c-1");
+    expect(wrapper.unwrapped).toHaveLength(3);
+    await wrapping.wrapped(stored ?? key, "c-1");
+    wrapping.drop("c-1");
+    wrapping.drop("c-9");
+    await keys.get("c-1");
+    expect(wrapper.unwrapped).toHaveLength(4);
+  });
+
+  it("takes a key kept from further off than its time allows, after the clock was set back, as expired", async () => {
+    const store = await keyStore();
+    const timed = createFixedClock(new Date("2026-01-01T01:00:00Z"));
+    const wrapper = fakeWrapper("kid-1");
+    const keys = createPersonalKeyWrapping({ clock: timed, wrapper, ttlMs: 1_000 }).over(store);
+    await keys.add("c-1", await generatePersonalKey());
+    timed.set(new Date("2026-01-01T00:00:00Z"));
+    await keys.get("c-1");
+    expect(wrapper.unwrapped).toHaveLength(2);
   });
 
   it("drops only the forgotten person's key", async () => {

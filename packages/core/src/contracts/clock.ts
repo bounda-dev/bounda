@@ -1,3 +1,11 @@
+export interface AfterOptions {
+  /**
+   * A wait that must not keep the process alive on its own, such as the expiry of a cache: the
+   * process may exit before it is due. Clocks that cannot tell may ignore it.
+   */
+  readonly background?: boolean;
+}
+
 /**
  * Source of the current time, and of every wait the runtime makes: the dispatcher's and the
  * scheduler's polls, and handler time-outs. Injected so that a test decides when time passes, for
@@ -9,24 +17,37 @@ export interface Clock {
    * Calls `callback` once `milliseconds` have passed on this clock. Returns a function that
    * cancels the call if it has not happened yet.
    */
-  after(milliseconds: number, callback: () => void): () => void;
+  after(milliseconds: number, callback: () => void, options?: AfterOptions): () => void;
 }
 
 // Node runs a timer whose delay does not fit in 32 bits at once, so a longer wait is armed in steps.
 const LONGEST_TIMER_MS = 2 ** 31 - 1;
+
+// Node's timers keep the process alive unless told not to; workerd's are plain numbers.
+const letGo = (timer: unknown): void => {
+  if (
+    typeof timer === "object" &&
+    timer !== null &&
+    "unref" in timer &&
+    typeof timer.unref === "function"
+  ) {
+    timer.unref();
+  }
+};
 
 /**
  * The wall clock, with the platform's timers.
  */
 export const systemClock: Clock = {
   now: () => new Date(),
-  after: (milliseconds, callback) => {
+  after: (milliseconds, callback, options) => {
     let timer: ReturnType<typeof setTimeout>;
     const arm = (left: number): void => {
       timer =
         left > LONGEST_TIMER_MS
           ? setTimeout(() => arm(left - LONGEST_TIMER_MS), LONGEST_TIMER_MS)
           : setTimeout(callback, left);
+      if (options?.background === true) letGo(timer);
     };
     arm(milliseconds);
     return () => clearTimeout(timer);

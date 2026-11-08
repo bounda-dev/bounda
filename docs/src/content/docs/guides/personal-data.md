@@ -466,9 +466,11 @@ a transaction running beside it may still be forgotten with them, as one a comma
 `forget` runs may be. A person the sweep could not forget, because their forget failed or their
 row is behind, waits on their own, half a minute at first and twice as long after each failure up
 to an hour, while the pass goes on with the next ones. The wait is kept on their row in
-`bounda_persons`, written only when an attempt fails, so every instance skips them until it ends
-and a restart backs off from where it was; their next activity, or their forgetting, clears it.
-`nextDueAt()` names the end of that wait, so a host never wakes for them again at once.
+`bounda_persons`, written only when an attempt does not succeed, so every instance skips them
+until it ends and a restart backs off from where it was; their next activity, or their
+forgetting, clears it. `nextDueAt()` names the end of that wait, so a host never wakes for them
+again at once. A database that cannot keep the wait, read-only after a failover say, pauses the
+sweep in that instance instead, for as long and growing the same way.
 
 A host without a polling worker learns of it from `app.nextDueAt()`, which names the earliest
 retention deadline with the scheduled commands, so a [Durable Object](/adapters/cloudflare/)
@@ -609,10 +611,12 @@ no personal key is wrapped under a previous key any more; remove them
 
 Then remove the old variable and `previous`. Rewrapping changes no event and no fingerprint, so it
 runs while the app serves. A Durable Object wakes for it as for a deadline. While the mark stands,
-neither the passes nor `nextDueAt()` read the key table, except one pass a minute across every
-instance, which drops the mark if it finds a key to rewrap: an instance still on the old
-configuration, in a rolling deploy, may wrap a new key under the old master key, and the worker
-finds it within a minute. Changing the master keys, `previous` included, reads the table again.
+`nextDueAt()` never reads the key table, and the passes read it once a minute across every
+instance, dropping the mark if they find a key to rewrap: an instance still on the old
+configuration, in a rolling deploy, may wrap a new key under the old master key, and the next
+pass after that minute finds it. Changing the master keys, `previous` included, reads the table
+again; the old configuration's mark stays while instances on it may still run, and goes once none
+has renewed it for ten minutes.
 
 Destroying the old master key once the backups taken before the rotation have expired is what
 makes those backups unreadable as a whole.

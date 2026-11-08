@@ -12,6 +12,7 @@ import {
   ROTATED_PREFIX,
   ROTATION_BATCH,
   ROTATION_CHECK_INTERVAL_MS,
+  ROTATION_MARK_EXPIRY_MS,
 } from "./rotation.ts";
 import { createPersonalKeyWrapping } from "./wrapped-keys.ts";
 
@@ -347,7 +348,7 @@ describe("createKeyRotation", () => {
     expect(logger.logged).toEqual([]);
   });
 
-  it("marks the rotation complete, and reads the key table no more, in a pass or in nextDueAt, nor after a restart", async () => {
+  it("marks the rotation complete: nextDueAt never reads the key table again, nor a pass but once an interval", async () => {
     const { store, checkpoints: stored, clock } = await setUp();
     const { keys, reads } = counted(store);
     const { checkpoints, reads: markReads } = countedMarks(stored);
@@ -372,15 +373,20 @@ describe("createKeyRotation", () => {
     );
     expect(marks).toEqual([{ subscriber: expect.any(String), position: markedAt }]);
     const before = reads.count;
+    for (let pass = 0; pass < 10; pass += 1) expect(await rotation.nextDueAt()).toBeNull();
+    const restarted = rotationOver({ keys, checkpoints, wrapper });
+    expect(await restarted.nextDueAt()).toBeNull();
+    expect(reads.count).toBe(before);
+    // A host that asks before every pass still gets its once-an-interval check.
+    expect(await rotation.sweep(clock.now())).toBe(0);
+    expect(reads.count).toBeGreaterThan(before);
+    const checked = reads.count;
     for (let pass = 0; pass < 5; pass += 1) {
       expect(await rotation.nextDueAt()).toBeNull();
       expect(await rotation.sweep(clock.now())).toBe(0);
       clock.advance(ROTATION_CHECK_INTERVAL_MS / 10);
     }
-    const restarted = rotationOver({ keys, checkpoints, wrapper });
-    expect(await restarted.nextDueAt()).toBeNull();
-    expect(await restarted.sweep(clock.now())).toBe(0);
-    expect(reads.count).toBe(before);
+    expect(reads.count).toBe(checked);
   });
 
   it("checks a mark once an interval across instances, and drops it for a key found again", async () => {
@@ -414,7 +420,7 @@ describe("createKeyRotation", () => {
     expect(await fresh.nextDueAt()).toEqual(clock.now());
   });
 
-  it("reads the key table again once another set of keys is configured, and keeps only its mark", async () => {
+  it("reads the key table again once another set of keys is configured, and removes marks no instance renews", async () => {
     const { store, checkpoints, clock, rotation } = await setUp();
     await addUnder(store, "old", "c-1");
     expect(await rotation.sweep(clock.now())).toBe(1);
@@ -435,12 +441,17 @@ describe("createKeyRotation", () => {
     expect(await next.sweep(clock.now())).toBe(1);
     expect(await kidsOf(store, ["c-1"])).toEqual(["newer"]);
     expect(await next.sweep(clock.now())).toBe(0);
-    const marks = await rotated();
-    expect(marks).toHaveLength(1);
-    expect(marks).not.toContain(first);
+    // The first set's mark is fresh: an instance on that set may still run, so it stays.
+    expect(await rotated()).toHaveLength(2);
     expect(logger.logged.map(({ message }) => message)).toEqual([
       "no personal key is wrapped under a previous key any more; remove them",
     ]);
+    clock.advance(ROTATION_MARK_EXPIRY_MS);
+    expect(await next.sweep(clock.now())).toBe(0);
+    const marks = await rotated();
+    expect(marks).toHaveLength(1);
+    expect(marks).not.toContain(first);
+    expect(logger.logged).toHaveLength(1);
     const { keys, reads } = counted(store);
     const same = rotationOver({
       keys,
@@ -547,13 +558,40 @@ describe("createKeyRotation", () => {
     expect(logger.logged).toHaveLength(2);
   });
 
-  it("is due now while a key waits, and never otherwise", async () => {
+  it("is due now while a key waits, and never otherwise, reading the store once an interval at most", async () => {
     const { store, clock, rotation } = await setUp();
     expect(await rotation.nextDueAt()).toBeNull();
     await addUnder(store, "new", "c-1");
-    expect(await rotation.nextDueAt()).toBeNull();
     await addUnder(store, "old", "c-2");
+    expect(await rotation.nextDueAt()).toBeNull();
+    clock.advance(ROTATION_CHECK_INTERVAL_MS);
     expect(await rotation.nextDueAt()).toEqual(clock.now());
+    expect(await rotation.nextDueAt()).toEqual(clock.now());
+  });
+
+  it("rests while every key left is held, until the first hold ends", async () => {
+    const { store, checkpoints, clock } = await setUp();
+    const { keys, reads } = counted(store);
+    const failing = fakeWrapper("new", ["old"]);
+    const rotation = rotationOver({
+      keys,
+      checkpoints,
+      wrapper: {
+        ...failing,
+        unwrap: async () => {
+          throw new Error("unwrap failed");
+        },
+      },
+    });
+    await addUnder(store, "old", "c-1");
+    expect(await rotation.sweep(clock.now())).toBe(0);
+    const held = reads.count;
+    for (let pass = 0; pass < 5; pass += 1) {
+      clock.advance(HOLD_MS / 10);
+      expect(await rotation.sweep(clock.now())).toBe(0);
+    }
+    expect(reads.count).toBe(held + 2);
+    expect(await rotation.nextDueAt()).toEqual(new Date(clock.now().getTime() + HOLD_MS / 2));
   });
 });
 

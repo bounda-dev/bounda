@@ -149,6 +149,10 @@ export interface CreateForgetLedgerReconciliationArgs {
    * Defaults to `FORGET_LEDGER_PAGE`.
    */
   readonly pageSize?: number;
+  /**
+   * Called with each person forgotten again, once their forgetting is committed.
+   */
+  readonly forgotten?: (personId: string) => void;
 }
 
 export interface CreateForgetLedgerReconciliationFunction {
@@ -170,6 +174,7 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
   logger,
   concurrencyRetries,
   pageSize = FORGET_LEDGER_PAGE,
+  forgotten: onForgotten,
 }) => {
   const { checkpointStore } = storage;
   let done = false;
@@ -201,6 +206,7 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
         const again = await forgetAgain({ storage, ids, clock, concurrencyRetries, entry });
         if (again === null) continue;
         logForgotten(logger, again);
+        onForgotten?.(entry.personId);
         forgotten += 1;
       }
       const last = page.at(-1);
@@ -213,15 +219,25 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
   };
 
   // No row reads as a hold that ended long ago, after no failure.
-  const storedHold = async (): Promise<Hold> => ({
-    until: new Date(await checkpointStore.get(FORGET_LEDGER_HELD_UNTIL)).toISOString(),
-    attempts: await checkpointStore.get(FORGET_LEDGER_ATTEMPTS),
-  });
+  const storedHold = async (): Promise<Hold> => {
+    const [until, attempts] = await Promise.all([
+      checkpointStore.get(FORGET_LEDGER_HELD_UNTIL),
+      checkpointStore.get(FORGET_LEDGER_ATTEMPTS),
+    ]);
+    return { until: new Date(until).toISOString(), attempts };
+  };
 
-  // The attempts are written first and cleared last: a hold half written, or half cleared, only
-  // ever counts one failure more than there was.
+  // A hold still running was set by another instance failing in the same round: this failure
+  // waits for it rather than counting once more. The attempts are written first and cleared
+  // first, so a hold half written counts one failure more than there was, and one half cleared
+  // leaves only its end, which the next failure outlasts or waits for.
   const hold = async (at: number): Promise<void> => {
     const held = await storedHold().catch(() => local);
+    if (held !== null && Date.parse(held.until) > at) {
+      local = held;
+      dueAt = Date.parse(held.until);
+      return;
+    }
     local = holdAfter({ held, at, failed: true });
     dueAt = Date.parse(local.until);
     await checkpointStore.set(FORGET_LEDGER_ATTEMPTS, local.attempts);
@@ -230,9 +246,10 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
 
   const release = async (): Promise<void> => {
     local = null;
-    if ((await checkpointStore.get(FORGET_LEDGER_ATTEMPTS)) === 0) return;
-    await checkpointStore.remove(FORGET_LEDGER_HELD_UNTIL);
+    const { until, attempts } = await storedHold();
+    if (Date.parse(until) === 0 && attempts === 0) return;
     await checkpointStore.remove(FORGET_LEDGER_ATTEMPTS);
+    await checkpointStore.remove(FORGET_LEDGER_HELD_UNTIL);
   };
 
   const reconcile = async (now: Date): Promise<number | null> => {

@@ -87,6 +87,37 @@ const ownChangesLeftOut = (
     touches: batch.touches.filter((person) => !restricted.has(person)),
   }));
 
+const isRow = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null;
+
+// A person's row is written field by field, by writers that may run beside a transaction that
+// later fails, such as a restriction beside a forget: each field the write changed goes back
+// unless someone changed that field since, and the fields they wrote stay.
+const trackedFieldsBy =
+  (undos: Undos) =>
+  <Result>(
+    store: StoreEntries<string>,
+    key: string,
+    write: () => Promise<Result>,
+  ): Promise<Result> => {
+    const before = store.read(key);
+    const written = write();
+    const after = store.read(key);
+    undos.push(() => {
+      const now = store.read(key);
+      if (now === after || !isRow(before) || !isRow(after) || !isRow(now)) {
+        store.putBack(key, before, after);
+        return;
+      }
+      const merged = { ...now };
+      for (const [field, value] of Object.entries(after)) {
+        if (now[field] === value && before[field] !== value) merged[field] = before[field];
+      }
+      store.putBack(key, merged, now);
+    });
+    return written;
+  };
+
 const undoAll = (undos: Undos): void => {
   for (const undo of undos.splice(0).reverse()) undo();
 };
@@ -125,7 +156,7 @@ const trackedPersons = (
   undos: Undos,
   restricted: Set<string>,
 ): PersonStore => {
-  const tracked = trackedBy(undos);
+  const tracked = trackedFieldsBy(undos);
   return {
     get: (person) => persons.get(person),
     restrict: (person, since) => {
@@ -135,7 +166,8 @@ const trackedPersons = (
     unrestrict: (person) => tracked(entries, person, () => persons.unrestrict(person)),
     record: (activity) => tracked(entries, activity.person, () => persons.record(activity)),
     listIdle: (args) => persons.listIdle(args),
-    hold: (person, hold) => tracked(entries, person, () => persons.hold(person, hold)),
+    hold: (person, lastActiveAt, hold) =>
+      tracked(entries, person, () => persons.hold(person, lastActiveAt, hold)),
     nextHoldEnd: (after) => persons.nextHoldEnd(after),
   };
 };

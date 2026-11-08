@@ -2,9 +2,9 @@ import type { CheckpointStore } from "../../adapter/storage/checkpoint-store.ts"
 import type { PersonalKeyRow, PersonalKeyStore } from "../../adapter/storage/personal-key-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { Logger } from "../../contracts/logger.ts";
+import { digest } from "../read-model/fingerprint.ts";
 import { errorDetails } from "../shared/retry.ts";
-import { fingerprintOf } from "./crypto.ts";
-import { HOLD_MS, holdAfter } from "./hold.ts";
+import { createPause, holdAfter } from "./hold.ts";
 import type { KeyWrapper } from "./key-wrapper.ts";
 import type { PersonalKeyWrapping } from "./wrapped-keys.ts";
 
@@ -22,6 +22,11 @@ export const ROTATION_CHECK_INTERVAL_MS = 60_000;
  * nothing left to rewrap under that set, so another set of keys reads the table again.
  */
 export const ROTATED_PREFIX = "personal-keys:rotated:";
+
+// How old the mark of another set of wrapping keys must be before a rotation completing removes
+// it: a set some instance still runs is checked, and its mark renewed, every
+// `ROTATION_CHECK_INTERVAL_MS`, so a mark this old is no running instance's.
+export const ROTATION_MARK_EXPIRY_MS: number = 10 * ROTATION_CHECK_INTERVAL_MS;
 
 export interface KeyRotation {
   /**
@@ -53,10 +58,13 @@ export interface CreateKeyRotationFunction {
   (args: CreateKeyRotationArgs): KeyRotation;
 }
 
-const markerOf = async (kid: string, previous: readonly string[]): Promise<string> => {
-  const set = JSON.stringify([kid, ...[...new Set(previous)].sort()]);
-  return `${ROTATED_PREFIX}${await fingerprintOf(new TextEncoder().encode(set))}`;
-};
+const markerOf = (kid: string, previous: readonly string[]): string =>
+  `${ROTATED_PREFIX}${digest(JSON.stringify([kid, ...[...new Set(previous)].sort()]))}`;
+
+interface Answer {
+  readonly next: number | null;
+  readonly until: number;
+}
 
 /**
  * Keys wrapped under a previous key, and keys from before a wrapper was configured, are
@@ -64,7 +72,7 @@ const markerOf = async (kid: string, previous: readonly string[]): Promise<strin
  * left as the store holds it. Once none is left the rotation marks it complete for this set of
  * wrapping keys and logs it, once until it rewraps again, so an operator knows the previous keys
  * can go. While the mark stands nothing reads the key table, but a pass once every
- * `ROTATION_CHECK_INTERVAL_MS`, which drops the mark when it finds a key again.
+ * `ROTATION_CHECK_INTERVAL_MS` across instances, which drops the mark when it finds a key again.
  */
 export const createKeyRotation: CreateKeyRotationFunction = ({
   keys,
@@ -78,11 +86,13 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
   const previous = (wrapper.previous ?? []).filter((kid) => kid !== wrapper.kid);
   const kids = [...previous, null];
   const marker = markerOf(wrapper.kid, previous);
-  // Until when this instance takes the rotation for complete without reading anything.
+  // Until when a pass reads nothing: the mark stands, or every key left is held.
   let completeUntil = Number.NEGATIVE_INFINITY;
-  // A list that could not be read, or a hold that could not be written, holds the whole rotation
-  // here, as nothing else can.
-  let pausedUntil = Number.NEGATIVE_INFINITY;
+  let restUntil = Number.NEGATIVE_INFINITY;
+  // What `nextDueAt` last read, so a host that asks after every request reads the store once a
+  // check interval at most; a pass that reads the table forgets it.
+  let answer: Answer | null = null;
+  const pause = createPause();
   let rewrappedAny = false;
 
   const report = (): void => {
@@ -96,95 +106,112 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
     }
   };
 
-  // Of several instances finding it complete at once, the one that marks it first logs it; the
-  // marks of other sets of keys go, since none stands for the keys as they are now.
-  const complete = async (name: string, markedAt: number, at: number): Promise<void> => {
+  // Of several instances finding it complete at once, the one that marks it first logs it.
+  const complete = async (markedAt: number, at: number): Promise<void> => {
     completeUntil = at + ROTATION_CHECK_INTERVAL_MS;
-    if (!(await checkpoints.compareAndSet(name, markedAt, at)) || markedAt > 0) return;
-    report();
-    for (const { subscriber } of await checkpoints.list()) {
-      if (subscriber.startsWith(ROTATED_PREFIX) && subscriber !== name) {
+    if (!(await checkpoints.compareAndSet(marker, markedAt, at))) return;
+    if (markedAt === 0) report();
+    for (const { subscriber, position } of await checkpoints.list()) {
+      if (
+        subscriber.startsWith(ROTATED_PREFIX) &&
+        subscriber !== marker &&
+        at - position >= ROTATION_MARK_EXPIRY_MS
+      ) {
         await checkpoints.remove(subscriber);
       }
     }
   };
 
-  const hold = async ({ person, key, hold }: PersonalKeyRow, at: number): Promise<void> => {
+  // Resolves whether the store kept the hold; one it could not keep pauses the rotation.
+  const rewrap = async (
+    row: PersonalKeyRow,
+    at: number,
+  ): Promise<{ readonly rewrapped: boolean; readonly kept: boolean }> => {
     try {
-      await keys.hold(person, key, holdAfter({ held: hold, at, failed: true }));
+      const to = await wrapping.wrapped(row.key, row.person);
+      return { rewrapped: await keys.rewrap(row.person, row.key, to), kept: true };
     } catch (error) {
-      pausedUntil = at + HOLD_MS;
-      logger.error("personal key could not be held", {
-        personId: person,
-        kid: key.kid,
+      logger.error("personal key could not be rewrapped", {
+        personId: row.person,
+        kid: row.key.kid,
         ...errorDetails(error),
       });
+    }
+    try {
+      await keys.hold(row.person, row.key, holdAfter({ held: row.hold, at, failed: true }));
+      return { rewrapped: false, kept: true };
+    } catch (error) {
+      logger.error("personal key could not be held", {
+        personId: row.person,
+        kid: row.key.kid,
+        ...errorDetails(error),
+      });
+      return { rewrapped: false, kept: false };
     }
   };
 
   const sweep = async (now: Date): Promise<number> => {
     const at = now.getTime();
-    const name = await marker;
-    const markedAt = await checkpoints.get(name);
+    const markedAt = await checkpoints.get(marker);
     // A set never marked reads 0, as long ago as can be.
     if (at - markedAt < ROTATION_CHECK_INTERVAL_MS) {
       completeUntil = markedAt + ROTATION_CHECK_INTERVAL_MS;
       return 0;
     }
+    answer = null;
     const due = await keys.listWrappedUnder({ kids, releasedBy: now, limit: ROTATION_BATCH });
     if (due.length === 0) {
-      if ((await keys.nextHoldEnd({ kids, after: now })) === null) {
-        await complete(name, markedAt, at);
-      } else if (markedAt > 0) {
-        await checkpoints.remove(name);
+      const heldUntil = await keys.nextHoldEnd({ kids, after: now });
+      if (heldUntil === null) {
+        await complete(markedAt, at);
+        pause.resume();
+        return 0;
       }
-      return 0;
+      restUntil = Math.min(heldUntil.getTime(), at + ROTATION_CHECK_INTERVAL_MS);
     }
-    if (markedAt > 0) await checkpoints.remove(name);
+    if (markedAt > 0) await checkpoints.remove(marker);
     let rewrapped = 0;
+    let kept = true;
     for (const row of due) {
-      try {
-        if (await keys.rewrap(row.person, row.key, await wrapping.wrapped(row.key))) rewrapped += 1;
-      } catch (error) {
-        logger.error("personal key could not be rewrapped", {
-          personId: row.person,
-          kid: row.key.kid,
-          ...errorDetails(error),
-        });
-        await hold(row, at);
-      }
+      const outcome = await rewrap(row, at);
+      if (outcome.rewrapped) rewrapped += 1;
+      kept &&= outcome.kept;
     }
+    if (kept) pause.resume();
+    else pause.pause(at);
     if (rewrapped > 0) rewrappedAny = true;
     return rewrapped;
+  };
+
+  const read = async (now: Date): Promise<Answer> => {
+    const at = now.getTime();
+    const later = at + ROTATION_CHECK_INTERVAL_MS;
+    if ((await checkpoints.get(marker)) > 0) return { next: null, until: later };
+    const [due] = await keys.listWrappedUnder({ kids, releasedBy: now, limit: 1 });
+    if (due !== undefined) return { next: at, until: at };
+    const heldUntil = (await keys.nextHoldEnd({ kids, after: now }))?.getTime() ?? null;
+    return { next: heldUntil, until: Math.min(heldUntil ?? later, later) };
   };
 
   return {
     sweep: async (now) => {
       const at = now.getTime();
-      if (at < pausedUntil || at < completeUntil) return 0;
+      if (pause.isPaused(at) || at < completeUntil || at < restUntil) return 0;
       try {
         return await sweep(now);
       } catch (error) {
-        pausedUntil = at + HOLD_MS;
+        pause.pause(at);
         logger.error("personal keys to rewrap could not be listed", errorDetails(error));
         return 0;
       }
     },
+    // A mark that stands, however old, wakes nothing: the passes check it again as they run.
     nextDueAt: async () => {
       const now = clock.now();
       const at = now.getTime();
       if (at < completeUntil) return null;
-      // A mark that stands, however old, wakes nothing: the passes check it again as they run.
-      if ((await checkpoints.get(await marker)) > 0) {
-        completeUntil = at + ROTATION_CHECK_INTERVAL_MS;
-        return null;
-      }
-      const [due] = await keys.listWrappedUnder({ kids, releasedBy: now, limit: 1 });
-      const next =
-        due === undefined
-          ? ((await keys.nextHoldEnd({ kids, after: now }))?.getTime() ?? null)
-          : at;
-      return next === null ? null : new Date(Math.max(next, pausedUntil));
+      if (answer === null || at >= answer.until) answer = await read(now);
+      return answer.next === null ? null : new Date(pause.notBefore(answer.next));
     },
   };
 };

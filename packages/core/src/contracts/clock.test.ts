@@ -1,6 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
 import { createFixedClock, systemClock } from "./clock.ts";
 
+const realSetTimeout = globalThis.setTimeout;
+
+// Records the timers the platform armed, as they are.
+const setTimeoutSpy = () => {
+  const armed: NodeJS.Timeout[] = [];
+  const spy = vi.spyOn(globalThis, "setTimeout").mockImplementation(((
+    callback: () => void,
+    milliseconds?: number,
+  ) => {
+    const timer = realSetTimeout(callback, milliseconds);
+    armed.push(timer);
+    return timer;
+  }) as typeof setTimeout);
+  return { armed, restore: () => spy.mockRestore() };
+};
+
 describe("systemClock", () => {
   it("returns the current time", () => {
     const before = Date.now();
@@ -23,6 +39,19 @@ describe("systemClock", () => {
       expect(vi.getTimerCount()).toBe(0);
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it("lets a process exit before a background wait, and only before one", () => {
+    const background = setTimeoutSpy();
+    try {
+      const cancelKept = systemClock.after(60_000, () => undefined);
+      const cancelLetGo = systemClock.after(60_000, () => undefined, { background: true });
+      expect(background.armed.map((timer) => timer.hasRef())).toEqual([true, false]);
+      cancelKept();
+      cancelLetGo();
+    } finally {
+      background.restore();
     }
   });
 

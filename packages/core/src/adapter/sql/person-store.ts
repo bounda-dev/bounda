@@ -1,6 +1,6 @@
 import type { PersonStore, StoredPerson } from "../storage/person-store.ts";
 import type { SqlDialect } from "./dialect.ts";
-import { holdOf } from "./hold.ts";
+import { holdEndOf, holdOf, releasedBy as released } from "./hold.ts";
 import type { SqlExecutor } from "./sql-table.ts";
 
 export interface CreateSqlPersonStoreArgs {
@@ -79,7 +79,7 @@ export const createSqlPersonStore: CreateSqlPersonStoreFunction = ({ db, table, 
       }
       if (releasedBy !== undefined) {
         values.push(releasedBy.toISOString());
-        conditions.push(`("held_until" IS NULL OR "held_until" <= ${p(values.length)})`);
+        conditions.push(released(p(values.length)));
       }
       values.push(limit);
       const rows = await db.all(
@@ -88,18 +88,18 @@ export const createSqlPersonStore: CreateSqlPersonStoreFunction = ({ db, table, 
       );
       return rows.map(storedPerson);
     },
-    hold: async (person, { until, attempts }) => {
+    hold: async (person, lastActiveAt, { until, attempts }) => {
       await db.run(
-        `UPDATE ${table} SET "held_until" = ${p(1)}, "attempts" = ${p(2)} WHERE "person" = ${p(3)}`,
-        [until, attempts, person],
+        `UPDATE ${table} SET "held_until" = ${p(1)}, "attempts" = ${p(2)} WHERE "person" = ${p(3)} AND "last_active_at" = ${p(4)} AND "forgotten_at" IS NULL`,
+        [until, attempts, person, lastActiveAt],
       );
     },
-    nextHoldEnd: async (after) => {
-      const [row] = await db.all(
-        `SELECT MIN("held_until") AS "until" FROM ${table} WHERE ${HELD} AND "held_until" > ${p(1)}`,
-        [after.toISOString()],
-      );
-      return typeof row?.until === "string" ? new Date(row.until) : null;
-    },
+    nextHoldEnd: async (after) =>
+      holdEndOf(
+        await db.all(
+          `SELECT MIN("held_until") AS "until" FROM ${table} WHERE ${HELD} AND "held_until" > ${p(1)}`,
+          [after.toISOString()],
+        ),
+      ),
   };
 };

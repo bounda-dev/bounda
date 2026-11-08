@@ -38,8 +38,10 @@ export interface ListWrappedUnderArgs {
   readonly limit: number;
 }
 
-export interface NextKeyHoldEndArgs {
-  readonly kids: readonly (string | null)[];
+export interface NextKeyHoldEndArgs extends Pick<ListWrappedUnderArgs, "kids"> {
+  /**
+   * Only the holds that end after it.
+   */
   readonly after: Date;
 }
 
