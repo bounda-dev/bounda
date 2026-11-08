@@ -58,6 +58,7 @@ const subject = {
   aggregateType: "order",
   aggregateId: "o-1",
   person: null,
+  read: [],
 };
 
 const placed = (payload: unknown) => ({
@@ -208,6 +209,24 @@ describe("letterOf", () => {
     });
   });
 
+  it("seals the text unreadable when the person no longer holds the key the subject was read under", async () => {
+    const { failures, storage } = await setup();
+    const read = await generatePersonalKey();
+    await storage.personalKeys.add("c-1", await generatePersonalKey());
+    const letter = await failures.letterOf(
+      orderPayment,
+      { ...subject, person: "c-1", read: [{ person: "c-1", fingerprint: read.fingerprint }] },
+      new Error("cannot mail ana@example.com"),
+      1,
+      "terminal",
+    );
+    expect(isSealed(letter.errorMessage)).toBe(true);
+    expect(letter.errorMessage).not.toMatchObject({
+      $personal: { key: (await storage.personalKeys.get("c-1"))?.fingerprint },
+    });
+    expect(letter.errorMessage).not.toMatchObject({ $personal: { key: read.fingerprint } });
+  });
+
   it("gives no key to a person who holds none, sealing the text unreadable", async () => {
     const { failures, storage } = await setup();
     const letter = await failures.letterOf(
@@ -255,6 +274,7 @@ describe("deadlineSubject", () => {
       aggregateType: "process:orderPayment",
       aggregateId: "o-1",
       person: null,
+      read: [],
     });
   });
 

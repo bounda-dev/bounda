@@ -437,6 +437,25 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       expect((await storage.deadLetterStore.list()).map((letter) => letter.id)).toEqual(["d2"]);
     });
 
+    it("commits events naming a person the same transaction forgets or restricts after appending them", async () => {
+      await storage.personalKeys.add("c-1", stored("one"));
+      await storage.transact(async (tx) => {
+        await tx.eventStore.append({
+          aggregateType: "order",
+          aggregateId: "1",
+          expectedVersion: 0,
+          events: [pendingEvent({ aggregateId: "1", version: 1 })],
+          persons: [held("c-1", "one")],
+          touches: ["c-1"],
+        });
+        await tx.personalKeys.remove("c-1");
+        await tx.persons.restrict("c-1", now);
+      });
+      expect(await storage.eventStore.lastPosition()).toBe(1);
+      expect(await storage.personalKeys.get("c-1")).toBeNull();
+      expect((await storage.persons.get("c-1"))?.restrictedSince).not.toBeNull();
+    });
+
     it("forgets the scheduled commands and dead letters of a person that the same transaction wrote", async () => {
       const schedule = (tx: StorageTransaction, dedupeKey: string, person: string) =>
         tx.scheduler.schedule({

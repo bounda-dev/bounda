@@ -1,27 +1,155 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { ConcurrencyError } from "../../contracts/errors.ts";
-import type { EventStore } from "../storage/event-store.ts";
-import { pendingEvent } from "./fixtures.ts";
+import { ConcurrencyError, ProcessingRestrictedError } from "../../contracts/errors.ts";
+import type { Storage } from "../adapter.ts";
+import { ForgottenSinceLoadError } from "../storage/append-checks.ts";
+import type { AppendArgs, EventStore } from "../storage/event-store.ts";
+import { pendingEvent, testPersonalKey } from "./fixtures.ts";
 
 export interface EventStoreContractArgs {
-  readonly create: () => Promise<EventStore>;
+  /**
+   * Fresh, empty storage: the contract appends through its event store, and checks what an
+   * append names against its keys and persons.
+   */
+  readonly create: () => Promise<Storage>;
+  /**
+   * `false` skips the cases where an append waits on a transaction the test holds open, for a
+   * storage whose calls cannot wait on one another, as a Durable Object's called from outside.
+   */
+  readonly concurrent?: boolean;
 }
 
 export interface EventStoreContractFunction {
   (args: EventStoreContractArgs): void;
 }
 
+const now = new Date("2026-01-01T00:00:00.000Z");
+
 /**
  * The behaviour every event store must exhibit. Call it inside a `describe` of the adapter's
- * test file with a factory that returns a fresh, empty store.
+ * test file with a factory that returns fresh, empty storage.
  */
-export const eventStoreContract: EventStoreContractFunction = ({ create }) => {
+export const eventStoreContract: EventStoreContractFunction = ({ create, concurrent = true }) => {
   describe("event store contract", () => {
+    let storage: Storage;
     let store: EventStore;
 
     beforeEach(async () => {
-      store = await create();
+      storage = await create();
+      store = storage.eventStore;
     });
+
+    const naming = (
+      version: number,
+      names: Pick<AppendArgs, "persons" | "touches">,
+      target: EventStore = store,
+    ) =>
+      target.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: version - 1,
+        events: [pendingEvent({ aggregateId: "1", version })],
+        ...names,
+      });
+
+    const holding = () => {
+      let release = (): void => {};
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return { held, release };
+    };
+
+    it("appends only while each person it names with a key still holds that key", async () => {
+      await storage.personalKeys.add("c-1", testPersonalKey("one"));
+      const first = { person: "c-1", fingerprint: testPersonalKey("one").fingerprint };
+      await naming(1, { persons: [first, { person: "c-2", fingerprint: null }] });
+      await storage.personalKeys.remove("c-1");
+      const refused = await naming(2, { persons: [first] }).catch((error: unknown) => error);
+      expect(refused).toBeInstanceOf(ForgottenSinceLoadError);
+      expect(refused).toBeInstanceOf(ConcurrencyError);
+      expect(refused).toMatchObject({
+        code: "CONCURRENCY_CONFLICT",
+        personId: "c-1",
+        streamId: "order:1",
+        expectedVersion: 1,
+        actualVersion: 1,
+      });
+      await storage.personalKeys.add("c-1", testPersonalKey("two"));
+      await expect(naming(2, { persons: [first] })).rejects.toBeInstanceOf(ForgottenSinceLoadError);
+      await expect(
+        storage.transact((tx) => naming(2, { persons: [first] }, tx.eventStore)),
+      ).rejects.toBeInstanceOf(ForgottenSinceLoadError);
+      expect(await store.lastPosition()).toBe(1);
+      await naming(2, {
+        persons: [{ person: "c-1", fingerprint: testPersonalKey("two").fingerprint }],
+      });
+      expect((await store.load({ aggregateType: "order", aggregateId: "1" })).version).toBe(2);
+    });
+
+    it("refuses to append while a person it touches is restricted, before any key it names", async () => {
+      await storage.persons.restrict("c-1", now);
+      const refused = await naming(1, {
+        touches: ["c-2", "c-1"],
+        persons: [{ person: "c-1", fingerprint: "a key never held" }],
+      }).catch((error: unknown) => error);
+      expect(refused).toBeInstanceOf(ProcessingRestrictedError);
+      expect(refused).toMatchObject({ code: "PROCESSING_RESTRICTED", personId: "c-1" });
+      await expect(
+        storage.transact((tx) => naming(1, { touches: ["c-1"] }, tx.eventStore)),
+      ).rejects.toBeInstanceOf(ProcessingRestrictedError);
+      expect(await store.lastPosition()).toBe(0);
+      await naming(1, { touches: ["c-2"] });
+      await storage.persons.unrestrict("c-1");
+      await naming(2, { touches: ["c-1", "c-2"] });
+      expect(await store.lastPosition()).toBe(2);
+    });
+
+    it.skipIf(!concurrent)(
+      "refuses an append that a transaction restricting its person held up",
+      async () => {
+        const { held, release } = holding();
+        let restricted = (): void => {};
+        const restricting = new Promise<void>((resolve) => {
+          restricted = resolve;
+        });
+        const restriction = storage.transact(async (tx) => {
+          await tx.persons.restrict("c-1", now);
+          restricted();
+          await held;
+        });
+        await restricting;
+        const append = naming(1, { touches: ["c-1"] });
+        release();
+        await restriction;
+        await expect(append).rejects.toBeInstanceOf(ProcessingRestrictedError);
+        expect(await store.lastPosition()).toBe(0);
+      },
+    );
+
+    it.skipIf(!concurrent)(
+      "refuses an append that a transaction forgetting its person held up",
+      async () => {
+        await storage.personalKeys.add("c-1", testPersonalKey("one"));
+        const { held, release } = holding();
+        let removed = (): void => {};
+        const removing = new Promise<void>((resolve) => {
+          removed = resolve;
+        });
+        const forget = storage.transact(async (tx) => {
+          await tx.personalKeys.remove("c-1");
+          removed();
+          await held;
+        });
+        await removing;
+        const append = naming(1, {
+          persons: [{ person: "c-1", fingerprint: testPersonalKey("one").fingerprint }],
+        });
+        release();
+        await forget;
+        await expect(append).rejects.toBeInstanceOf(ForgottenSinceLoadError);
+        expect(await store.lastPosition()).toBe(0);
+      },
+    );
 
     it("appends to a new stream and assigns increasing positions", async () => {
       const result = await store.append({

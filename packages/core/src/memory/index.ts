@@ -111,7 +111,10 @@ export const memory: MemoryFunction = (options = {}) => {
       const idempotencyStore = createKeptIdempotencyStore({ holds: personalKeys.holds });
       const snapshotStore = createMemorySnapshotStore({ holds: personalKeys.holds });
       const stores = {
-        eventStore: createMemoryEventStore({ onAppend: notifier.notify }),
+        eventStore: createMemoryEventStore({
+          onAppend: notifier.notify,
+          checks: { fingerprintOf: personalKeys.fingerprintOf, restricted: persons.restricted },
+        }),
         inboxLedger: inboxLedger.store,
         deadLetterStore: deadLetterStore.store,
         scheduler: scheduler.store,

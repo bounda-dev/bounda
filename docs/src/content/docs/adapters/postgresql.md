@@ -35,7 +35,10 @@ postgresql({ host: "localhost", port: 5432, database: "shop", user: "shop", pass
   The lock, like the notification channel and the read models' locks below, belongs to the
   store's `schema`, so stores in two schemas of one database never wait on each other.
 - The stream version is checked in the same transaction as the write; a stale version rolls back
-  with a `ConcurrencyError` and the command is retried with fresh state.
+  with a `ConcurrencyError` and the command is retried with fresh state. So are the people the
+  events name: the rows of their keys and of `bounda_persons` are read under a share lock, after
+  the advisory lock that `forget` and `restrict` also take first, so a person forgotten or
+  restricted beside the append is so before it or after it, never across.
 - The transaction ends with `pg_notify` on a channel named after the schema and the events
   table (`public.bounda_events` by default), carrying the last position written. PostgreSQL
   delivers it at commit. Every worker listens on that channel through a dedicated connection Postgres.js keeps

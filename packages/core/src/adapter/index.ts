@@ -14,6 +14,8 @@ export type {
 export type { AdapterDefinition } from "./adapter-definition.ts";
 export type { RebuildFencing, RebuildFencingFunction } from "./rebuild-fencing.ts";
 export { rebuildFencing } from "./rebuild-fencing.ts";
+export type { CheckAppendArgs, CheckAppendFunction } from "./storage/append-checks.ts";
+export { checkAppend, ForgottenSinceLoadError } from "./storage/append-checks.ts";
 export type { Checkpoint, CheckpointStore } from "./storage/checkpoint-store.ts";
 export type {
   DeadLetter,

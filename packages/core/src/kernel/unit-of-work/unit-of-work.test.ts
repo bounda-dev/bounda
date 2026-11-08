@@ -3,10 +3,15 @@ import type { Adapter, Storage, StorageTransaction } from "../../adapter/adapter
 import { createNodeSqliteAdapter } from "../../adapter/sqlite/node-sqlite.ts";
 import { pendingEvent } from "../../adapter/testing/fixtures.ts";
 import type { RetryConfig } from "../../config/types.ts";
-import { ConcurrencyError, ValidationError } from "../../contracts/errors.ts";
+import {
+  ConcurrencyError,
+  ProcessingRestrictedError,
+  ValidationError,
+} from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
 import type { ProcessAfterFunction, ProcessStateArgs } from "../../modules/process.ts";
 import type { Registry } from "../../modules/registry.ts";
+import { readUnder } from "../personal-data/reads.ts";
 import { PROCESS_EVENTS } from "../process/lifecycle.ts";
 import { createReactiveHarness, type ReactiveHarness } from "../reactive-harness.ts";
 import {
@@ -484,6 +489,63 @@ describe("createUnitOfWork", () => {
         },
       }),
     ).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it("throws a commit refused because a person its events touch is restricted as the refusal", async () => {
+    const storage = await memory().createStorage();
+    await storage.persons.restrict("c-1", new Date());
+    const refused = await commitAttempt({
+      storage,
+      concurrencyRetries: 3,
+      work: async (unit) => {
+        await unit.eventStore.append({
+          aggregateType: "order",
+          aggregateId: "1",
+          expectedVersion: 0,
+          events: [pendingEvent({ aggregateId: "1", version: 1 })],
+          touches: ["c-1"],
+        });
+      },
+    }).catch((error: unknown) => error);
+    expect(refused).toBeInstanceOf(ProcessingRestrictedError);
+    expect(await storage.eventStore.lastPosition()).toBe(0);
+  });
+
+  it("notes on what the work throws whose data it read, adding to what was noted on it before", async () => {
+    const storage = await memory().createStorage();
+    const failure = new Error("mailer down");
+    const first = { person: "c-1", fingerprint: "f-1" };
+    const second = { person: "c-1", fingerprint: "f-2" };
+    for (const read of [first, second]) {
+      await expect(
+        commitAttempt({
+          storage,
+          concurrencyRetries: 0,
+          work: async (unit) => {
+            unit.read([read, { person: "c-2", fingerprint: null }]);
+            throw failure;
+          },
+        }),
+      ).rejects.toBe(failure);
+    }
+    expect(readUnder({ person: "c-1", error: failure })).toEqual(["f-1", "f-2"]);
+    expect(readUnder({ person: "c-2", error: failure })).toEqual([]);
+    expect(
+      readUnder({ person: "c-1", error: failure, also: [{ person: "c-1", fingerprint: "f-3" }] }),
+    ).toEqual(["f-1", "f-2", "f-3"]);
+    expect(readUnder({ person: "c-1", error: "a string", also: [first] })).toEqual(["f-1"]);
+    await expect(
+      commitAttempt({
+        storage,
+        concurrencyRetries: 0,
+        work: async (unit) => {
+          unit.read([first]);
+          expect(unit.reads()).toEqual([first]);
+          throw "mailer down";
+        },
+      }),
+    ).rejects.toBe("mailer down");
+    expect(readUnder({ person: "c-1", error: "mailer down" })).toEqual([]);
   });
 
   it("hands a commit failure on as the store threw it, for a caller that does not tell it apart", async () => {

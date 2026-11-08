@@ -1,14 +1,16 @@
 import type { Storage, StorageTransaction } from "../../adapter/adapter.ts";
 import { deferWrites } from "../../adapter/deferred-writes.ts";
 import { createStagedEventStore } from "../../adapter/staged-event-store.ts";
-import { ConcurrencyError } from "../../contracts/errors.ts";
+import type { KeyedPerson } from "../../adapter/storage/personal-key-store.ts";
+import { ConcurrencyError, ProcessingRestrictedError } from "../../contracts/errors.ts";
+import { noteReads } from "../personal-data/reads.ts";
 
 /**
  * What a reaction's commands write through while its attempt runs.
  */
 export type UnitStores = Pick<
   UnitOfWork,
-  "eventStore" | "scheduler" | "idempotencyStore" | "persons" | "atCommit" | "afterCommit"
+  "eventStore" | "scheduler" | "idempotencyStore" | "persons" | "atCommit" | "afterCommit" | "read"
 >;
 
 /**
@@ -34,6 +36,15 @@ export interface UnitOfWork extends Omit<StorageTransaction, "personalKeys" | "s
    * that does not. `callback` must not throw: the commit would look failed when it is done.
    */
   afterCommit(callback: () => void): void;
+  /**
+   * Records whose personal data the work read, and under which key, so a failure of it is sealed
+   * under no other.
+   */
+  read(persons: readonly KeyedPerson[]): void;
+  /**
+   * Everything `read` recorded.
+   */
+  reads(): readonly KeyedPerson[];
 }
 
 export interface CreateUnitOfWorkArgs {
@@ -49,6 +60,7 @@ export const createUnitOfWork: CreateUnitOfWorkFunction = ({ storage }) => {
   const { stores, flush, pending } = deferWrites(storage);
   const atCommit: ((transaction: StorageTransaction) => Promise<void>)[] = [];
   const committed: (() => void)[] = [];
+  const read: KeyedPerson[] = [];
   return {
     eventStore: staged,
     ...stores,
@@ -72,6 +84,10 @@ export const createUnitOfWork: CreateUnitOfWorkFunction = ({ storage }) => {
     afterCommit: (callback) => {
       committed.push(callback);
     },
+    read: (persons) => {
+      read.push(...persons);
+    },
+    reads: () => read,
   };
 };
 
@@ -106,7 +122,9 @@ export interface CommitAttemptFunction {
 /**
  * Runs `work` on a fresh unit of work and commits it. A commit that finds a stream moved runs the
  * work again on another fresh unit, up to `concurrencyRetries` times, then lets the
- * `ConcurrencyError` through; any other failure of the commit is thrown as `CommitFailed`.
+ * `ConcurrencyError` through. What the work throws carries what it read, for `readUnder`. A commit
+ * refused because a person its events touch was restricted meanwhile throws the refusal, as the
+ * work's own dispatch would have; any other failure of the commit is thrown as `CommitFailed`.
  */
 export const commitAttempt: CommitAttemptFunction = async ({
   storage,
@@ -117,11 +135,17 @@ export const commitAttempt: CommitAttemptFunction = async ({
   for (let race = 0; ; race += 1) {
     if (race > 0) await beforeRerun?.();
     const unit = createUnitOfWork({ storage });
-    await work(unit);
+    try {
+      await work(unit);
+    } catch (error) {
+      noteReads(error, unit.reads());
+      throw error;
+    }
     try {
       await unit.commit();
       return;
     } catch (error) {
+      if (error instanceof ProcessingRestrictedError) throw error;
       if (!(error instanceof ConcurrencyError)) throw new CommitFailed(error);
       if (race >= concurrencyRetries) throw error;
     }

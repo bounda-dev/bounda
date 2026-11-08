@@ -38,7 +38,7 @@ const openStorage = (adapter = sqlite({ memory: true })): Promise<Storage> =>
   adapter.createStorage();
 
 describe("sqlite adapter in memory", () => {
-  eventStoreContract({ create: async () => (await openStorage()).eventStore });
+  eventStoreContract({ create: openStorage });
   checkpointStoreContract({ create: async () => (await openStorage()).checkpointStore });
   inboxLedgerContract({ create: async () => (await openStorage()).inboxLedger });
   deadLetterStoreContract({ create: async () => (await openStorage()).deadLetterStore });
@@ -135,7 +135,7 @@ describe("sqlite adapter on a file", () => {
     });
   });
 
-  eventStoreContract({ create: async () => (await openFile()).eventStore });
+  eventStoreContract({ create: openFile });
   schedulerContract({ create: async () => (await openFile()).scheduler });
   readModelRebuildContract({ create: async () => sqlite({ path: freshPath() }) });
   readModelTransactionContract({

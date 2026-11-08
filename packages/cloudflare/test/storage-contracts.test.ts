@@ -35,7 +35,7 @@ const freshAdapter = async (): Promise<Adapter> => {
 const freshStorage = async () => (await freshAdapter()).createStorage();
 
 describe("the Durable Object adapter", () => {
-  eventStoreContract({ create: async () => (await freshStorage()).eventStore });
+  eventStoreContract({ create: freshStorage, concurrent: false });
   checkpointStoreContract({ create: async () => (await freshStorage()).checkpointStore });
   inboxLedgerContract({ create: async () => (await freshStorage()).inboxLedger });
   deadLetterStoreContract({ create: async () => (await freshStorage()).deadLetterStore });

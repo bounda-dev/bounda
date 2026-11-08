@@ -19,6 +19,8 @@ interface Registered {
 }
 
 let mailerDown = true;
+// Thrown as a plain string, which carries nothing of what the run read.
+let asString = false;
 // Runs once, inside the first handler that fails, before it throws.
 let whileFailing: (() => Promise<unknown>) | null = null;
 
@@ -27,7 +29,9 @@ const refuse = async (email: string | null): Promise<never> => {
   const run = whileFailing;
   whileFailing = null;
   await run?.();
-  throw new ValidationError(`mailer refuses ${email ?? "nobody"}`, []);
+  const message = `mailer refuses ${email ?? "nobody"}`;
+  if (asString) throw message;
+  throw new ValidationError(message, []);
 };
 
 const registry = {
@@ -125,6 +129,7 @@ const ana = { customerId: "c-1", email: "ana@example.com" };
 
 const setup = async () => {
   mailerDown = true;
+  asString = false;
   whileFailing = null;
   const adapter = memory();
   const storage = await adapter.createStorage();
@@ -320,6 +325,53 @@ describe("dead letters of work that names a person", () => {
     expect(stored.filter((letter) => letter.person === "c-1")).toHaveLength(1);
     await app.stop();
   });
+
+  it("keeps unreadable what a handler read before its person was forgotten and keyed anew while it failed", async () => {
+    const { app, storage } = await setup();
+    whileFailing = async () => {
+      await app.forget("c-1");
+      await app.commands.registerCustomer({ customerId: "c-1", email: "ana@again.example" });
+    };
+    await app.commands.registerCustomer(ana);
+    await app.runUntilIdle();
+    expect(await storage.personalKeys.get("c-1")).not.toBeNull();
+    const listed = await app.deadLetters.list();
+    expect(JSON.stringify(listed)).not.toContain("ana@example.com");
+    // The policy read the first registration under the key the forget removed, and the second
+    // under the new one; the process read the first after the forget.
+    expect(listed.map((letter) => [letter.kind, letter.person, letter.errorMessage])).toEqual([
+      ["policy", "c-1", null],
+      ["policy", "c-1", "mailer refuses ana@again.example"],
+      ["process", null, "mailer refuses nobody"],
+    ]);
+    await app.stop();
+  });
+
+  it.each([
+    ["an error", false],
+    ["a string", true],
+  ])(
+    "keeps unreadable what a delayed policy that threw %s read before its person was forgotten and keyed anew while it failed",
+    async (_, thrownAsString) => {
+      const { app, clock } = await setup();
+      asString = thrownAsString;
+      await app.commands.registerCustomer(ana);
+      await app.runUntilIdle();
+      whileFailing = async () => {
+        await app.forget("c-1");
+        await app.commands.registerCustomer({ customerId: "c-1", email: "ana@again.example" });
+      };
+      clock.advance(60_000);
+      await app.runUntilIdle();
+      const listed = await app.deadLetters.list();
+      expect(JSON.stringify(listed)).not.toContain("ana@example.com");
+      const [delayed] = listed.filter(
+        (letter) => letter.handler === "customer.followUpOnCustomerRegistered",
+      );
+      expect(delayed).toMatchObject({ person: "c-1", errorMessage: null });
+      await app.stop();
+    },
+  );
 
   it("names the person a delayed policy read, even when they are forgotten while it fails", async () => {
     const { app, storage, clock } = await setup();

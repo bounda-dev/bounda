@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { StorageTransaction } from "../adapter/adapter.ts";
-import { testCommand, testContext, testDeadLetter } from "../adapter/testing/fixtures.ts";
+import { ForgottenSinceLoadError } from "../adapter/storage/append-checks.ts";
+import {
+  pendingEvent,
+  testCommand,
+  testContext,
+  testDeadLetter,
+  testKeyedPerson,
+  testPersonalKey,
+} from "../adapter/testing/fixtures.ts";
 import { ScheduledClaimLostError } from "../contracts/errors.ts";
 import { createMemoryCheckpointStore } from "./checkpoint-store.ts";
 import { memory } from "./index.ts";
@@ -18,6 +26,27 @@ describe("createMemoryStorageTransaction", () => {
   // Refused when the transaction commits: nobody handed out this claim.
   const refused = (tx: StorageTransaction) =>
     tx.scheduler.complete({ dedupeKey: "unclaimed", revision: 0, claimId: "lost" });
+
+  it("checks at commit a key it gave a person after removing their old one", async () => {
+    const storage = await memory().createStorage();
+    await storage.personalKeys.add("c-1", testPersonalKey("one"));
+    await expect(
+      storage.transact(async (tx) => {
+        await tx.personalKeys.remove("c-1");
+        await tx.personalKeys.add("c-1", testPersonalKey("two"));
+        await tx.eventStore.append({
+          aggregateType: "order",
+          aggregateId: "1",
+          expectedVersion: 0,
+          events: [pendingEvent({ aggregateId: "1", version: 1 })],
+          persons: [testKeyedPerson("c-1", "one"), testKeyedPerson("c-1", "two")],
+        });
+        // Another writer removes the key this transaction gave, before it commits.
+        await storage.personalKeys.remove("c-1");
+      }),
+    ).rejects.toBeInstanceOf(ForgottenSinceLoadError);
+    expect(await storage.eventStore.lastPosition()).toBe(0);
+  });
 
   it("puts back every entry it changed, newest first, when a later write fails", async () => {
     const stores = await storage();

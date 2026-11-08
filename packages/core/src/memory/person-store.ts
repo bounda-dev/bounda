@@ -1,8 +1,16 @@
 import type { PersonStore, StoredPerson } from "../adapter/storage/person-store.ts";
 import { createStoreEntries, type WithEntries } from "./entries.ts";
 
+export interface KeptPersonStore extends WithEntries<PersonStore, string> {
+  /**
+   * Whether the processing of the person's data is restricted, answered at once: the memory event
+   * store checks it in the same step as it writes.
+   */
+  restricted(person: string): boolean;
+}
+
 export interface CreateKeptPersonStoreFunction {
-  (): WithEntries<PersonStore, string>;
+  (): KeptPersonStore;
 }
 
 interface KeptPerson extends StoredPerson {
@@ -36,6 +44,7 @@ export const createKeptPersonStore: CreateKeptPersonStoreFunction = () => {
       position: 0,
     };
   return {
+    restricted: (person) => (persons.get(person)?.restrictedSince ?? null) !== null,
     store: {
       get: async (person) => {
         const kept = persons.get(person);

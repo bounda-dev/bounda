@@ -29,7 +29,7 @@ import { memory } from "./index.ts";
 const storage = async () => memory().createStorage();
 
 describe("memory adapter", () => {
-  eventStoreContract({ create: async () => (await storage()).eventStore });
+  eventStoreContract({ create: storage });
   checkpointStoreContract({ create: async () => (await storage()).checkpointStore });
   inboxLedgerContract({ create: async () => (await storage()).inboxLedger });
   deadLetterStoreContract({ create: async () => (await storage()).deadLetterStore });
@@ -60,8 +60,15 @@ describe("memory adapter", () => {
     const positions: number[] = [];
     const store = createMemoryEventStore({ onAppend: (position) => positions.push(position) });
     const order = { aggregateType: "order", aggregateId: "1" };
+    // Without checks, a store checks nobody an append names.
     const results = await store.appendAll([
-      { ...order, expectedVersion: 0, events: [pendingEvent({ aggregateId: "1", version: 1 })] },
+      {
+        ...order,
+        expectedVersion: 0,
+        events: [pendingEvent({ aggregateId: "1", version: 1 })],
+        persons: [{ person: "c-1", fingerprint: "a key nobody holds" }],
+        touches: ["c-1"],
+      },
       { ...order, expectedVersion: 1, events: [] },
       {
         ...order,

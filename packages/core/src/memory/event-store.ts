@@ -1,12 +1,20 @@
+import { type CheckAppendArgs, checkAppend } from "../adapter/storage/append-checks.ts";
 import type { AppendArgs, AppendResult, EventStore } from "../adapter/storage/event-store.ts";
 import { ConcurrencyError } from "../contracts/errors.ts";
 import type { StoredEvent } from "../contracts/event.ts";
 import { streamId } from "../contracts/event.ts";
 import { toJson } from "./json-copy.ts";
 
+/**
+ * How an append reads the keys and restrictions of the persons it names, at once.
+ */
+export type MemoryAppendChecks = Omit<CheckAppendArgs, "args">;
+
 export interface CreateMemoryEventStoreArgs {
   // Receives the last position readers can see.
   readonly onAppend?: (position: number) => void;
+  // Without them an append checks no person.
+  readonly checks?: MemoryAppendChecks;
 }
 
 /**
@@ -56,7 +64,10 @@ const restore = ({ payload, metadata, ...rest }: Kept): StoredEvent => ({
   metadata: JSON.parse(metadata),
 });
 
-export const createMemoryEventStore: CreateMemoryEventStoreFunction = ({ onAppend } = {}) => {
+export const createMemoryEventStore: CreateMemoryEventStoreFunction = ({
+  onAppend,
+  checks,
+} = {}) => {
   const streams = new Map<string, Kept[]>();
   const log = new Map<number, Kept>();
   // The positions of each person's events, in the order they were written.
@@ -77,17 +88,19 @@ export const createMemoryEventStore: CreateMemoryEventStoreFunction = ({ onAppen
     return reserved;
   };
 
-  // Atomic because nothing yields between the version checks and the writes.
+  // Atomic because nothing yields between the checks and the writes.
   const appendAll = async (
     batches: readonly PositionedAppendArgs[],
   ): Promise<readonly AppendResult[]> => {
     const versions = new Map<string, number>();
-    for (const { aggregateType, aggregateId, expectedVersion, events } of batches) {
+    for (const batch of batches) {
+      const { aggregateType, aggregateId, expectedVersion, events } = batch;
       const key = streamId({ aggregateType, aggregateId });
       const actualVersion = versions.get(key) ?? streams.get(key)?.length ?? 0;
       if (actualVersion !== expectedVersion) {
         throw new ConcurrencyError({ streamId: key, expectedVersion, actualVersion });
       }
+      if (checks !== undefined) checkAppend({ args: batch, ...checks });
       versions.set(key, actualVersion + events.length);
     }
     // Every batch is kept before any is written, so one that JSON refuses appends nothing.

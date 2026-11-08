@@ -104,6 +104,8 @@ export const postgresql: PostgresqlFunction = (options) => {
             table: tables.events,
             lockKey: tables.appendLockKey,
             channel: tables.channel,
+            personalKeys: tables.personalKeys,
+            persons: tables.persons,
           }),
           inboxLedger: createPostgresqlInboxLedger({ db: database, table: tables.inbox }),
           deadLetterStore: createPostgresqlDeadLetterStore({

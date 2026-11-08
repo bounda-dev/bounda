@@ -1,3 +1,5 @@
+export type { CheckSqlAppendArgs, CheckSqlAppendFunction } from "./append-checks.ts";
+export { checkSqlAppend } from "./append-checks.ts";
 export type {
   CreateSqlCheckpointStoreArgs,
   CreateSqlCheckpointStoreFunction,
