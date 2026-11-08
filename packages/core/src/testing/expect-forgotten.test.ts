@@ -223,6 +223,46 @@ const chatty = {
   },
 } as const satisfies Registry;
 
+// Keeps a handle made from the email in a field it marks, and in the greeting it keeps.
+const deriving = {
+  ...registry,
+  readModels: {
+    customerDirectory: {
+      ...registry.readModels.customerDirectory,
+      view: {
+        fields: ({ f }: FieldsArgs) => ({
+          customerId: f.string().primaryKey().person(),
+          email: f.string().optional().personal(),
+          greeting: f.string().optional(),
+        }),
+      },
+      projections: {
+        customer: {
+          customerRegistered: {
+            project: async ({
+              event,
+              table,
+            }: {
+              event: StoredEvent<"CustomerRegistered", { email: string | null }>;
+              table: Table<Row>;
+            }) => {
+              const { email } = event.payload;
+              if (email === null) return;
+              const handle = email.replace(/[@.]/g, "_").toUpperCase();
+              await table.upsert({
+                customerId: event.aggregateId,
+                email: handle,
+                greeting: `Hi ${handle}`,
+              });
+            },
+          },
+        },
+        bounda: leaky.readModels.customerDirectory.projections.bounda,
+      },
+    },
+  },
+} as const satisfies Registry;
+
 const ana = { customerId: "c-1", email: "ana@example.com", plan: "pro" };
 
 const rejection = async (pending: Promise<unknown>): Promise<unknown> => {
@@ -364,8 +404,9 @@ describe.each(adapters)("expectForgotten on %s", (_name, adapterOf) => {
         .startSpan("mail", { attributes: { to: "ana@example.com" } })
         .end();
       const error = await rejection(expectForgotten(app, "c-1", { telemetry }));
+      const mail = telemetry.spans.findIndex(({ name }) => name === "mail") + 1;
       expect(error).toMatchObject({
-        found: [{ store: "spans", row: expect.stringContaining('"mail"'), field: "attributes.to" }],
+        found: [{ store: "spans", row: `span ${mail} ("mail")`, field: "attributes.to" }],
       });
       await app.stop();
     } finally {
@@ -477,6 +518,42 @@ describe("expectForgotten", () => {
     ).rejects.toThrow("points at the storage's own database");
   });
 
+  it("looks for what a read model derived and kept in a field it marks, wherever it keeps its rows", async () => {
+    for (const config of [{}, { readModels: { customerDirectory: memory() } }]) {
+      const { app } = await createTestApp({ registry: deriving, config });
+      await app.commands.registerCustomer(ana);
+      await app.runUntilIdle();
+      await app.forget("c-1");
+      await app.runUntilIdle();
+      const error = await rejection(expectForgotten(app, "c-1"));
+      expect((error as NotForgottenError).found).toEqual([
+        {
+          value: "ANA_EXAMPLE_COM",
+          store: "bounda_rm_customer_directory",
+          row: "customerId=c-1",
+          field: "greeting",
+        },
+      ]);
+      await app.stop();
+    }
+  });
+
+  it("searches an adapter the storage shares with its read models once", async () => {
+    const adapter = memory();
+    const { app } = await createTestApp({
+      registry: leaky,
+      adapter,
+      config: { readModels: { customerDirectory: adapter } },
+    });
+    await app.commands.registerCustomer(ana);
+    await app.runUntilIdle();
+    await app.forget("c-1");
+    await app.runUntilIdle();
+    const error = await rejection(expectForgotten(app, "c-1"));
+    expect((error as NotForgottenError).found).toHaveLength(1);
+    await app.stop();
+  });
+
   it("refuses anything that is neither a test app nor an adapter", async () => {
     const error = await rejection(expectForgotten({ forget: async () => ({}) } as never, "c-1"));
     expect(error).toBeInstanceOf(TypeError);
@@ -547,7 +624,12 @@ describe("expectForgotten", () => {
 
   it("names a row by every column of its key, by its place without one, and compares key material whole", async () => {
     const tables: readonly InspectedTable[] = [
-      { name: "keyed", key: ["a", "b"], opaque: [], rows: [{ a: 1, b: "x", note: "to Ana" }] },
+      {
+        name: "keyed",
+        key: ["a", "b"],
+        opaque: [],
+        rows: [{ a: 1, b: "x", note: "to Ana", lines: [{ notes: ["Ana"] }] }],
+      },
       {
         name: "loose",
         key: [],
@@ -559,6 +641,7 @@ describe("expectForgotten", () => {
     const error = await rejection(expectForgotten(adapter, "c-1", { values: ["Ana"] }));
     expect((error as NotForgottenError).found).toEqual([
       { value: "Ana", store: "keyed", row: "a=1, b=x", field: "note" },
+      { value: "Ana", store: "keyed", row: "a=1, b=x", field: "lines[0].notes[0]" },
       { value: "Ana", store: "loose", row: "row 3", field: "secret" },
       { value: "Ana", store: "loose", row: "row 3", field: "note" },
     ]);

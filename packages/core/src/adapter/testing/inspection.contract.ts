@@ -93,6 +93,7 @@ export const inspectionContract: InspectionContractFunction = ({ create }) => {
         if (name !== "bounda_personal_keys") expect(table.opaque, name).toEqual([]);
       }
       const events = tableOf(tables, "bounda_events");
+      expect(events.key).toEqual(["position"]);
       expect(events.rows).toHaveLength(1);
       expect(JSON.stringify(events.rows)).toContain("ring twice");
       const keys = tableOf(tables, "bounda_personal_keys");
