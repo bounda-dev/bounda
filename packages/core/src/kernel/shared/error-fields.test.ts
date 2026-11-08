@@ -28,7 +28,18 @@ describe("errorFields", () => {
     });
   });
 
+  it("leaves the stack out of an error that has none", () => {
+    const stackless = new Error("ana@example.com");
+    Reflect.deleteProperty(stackless, "stack");
+    expect(errorFields({ error: stackless, errorText: "include" })).toStrictEqual({
+      errorName: "Error",
+      errorMessage: "ana@example.com",
+    });
+  });
+
   it("names what was thrown that is no error by its type, wrapped or not", () => {
+    expect(errorFields({ error: null })).toEqual({ errorName: "object" });
+    expect(errorFields({ error: undefined })).toEqual({ errorName: "undefined" });
     for (const error of ["ana@example.com", new ThrownValue("ana@example.com")]) {
       expect(errorFields({ error })).toEqual({ errorName: "string" });
       expect(errorFields({ error, errorText: "include" })).toEqual({

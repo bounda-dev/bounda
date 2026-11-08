@@ -4,6 +4,32 @@ import type { LogFields, Logger } from "../../contracts/logger.ts";
 import { guardedLogger } from "./guarded-logger.ts";
 
 describe("guardedLogger", () => {
+  it("passes instances other than plain objects as they are, and stops at a cycle", () => {
+    const logged: (LogFields | undefined)[] = [];
+    const record = (_message: string, fields?: LogFields): void => {
+      logged.push(fields);
+    };
+    const at = new Date("2026-01-01T00:00:00Z");
+    const bare = Object.assign(Object.create(null) as Record<string, unknown>, {
+      cause: new Error("ana@example.com"),
+    });
+    const cyclic: Record<string, unknown> = { cause: new Error("ana@example.com") };
+    cyclic.self = cyclic;
+    const looped: unknown[] = [new Error("ana@example.com")];
+    looped.push(looped);
+    guardedLogger({ debug: record, info: record, warn: record, error: record }, "omit").info("x", {
+      at,
+      bare,
+      cyclic,
+      looped,
+    });
+    const [fields] = logged;
+    expect(fields?.at).toBe(at);
+    expect(fields?.bare).toEqual({ cause: { errorName: "Error" } });
+    expect(fields?.cyclic).toMatchObject({ cause: { errorName: "Error" } });
+    expect((fields?.looped as readonly unknown[] | undefined)?.[0]).toEqual({ errorName: "Error" });
+  });
+
   it("reduces an error wherever it sits in the fields, and reads `error` as what was thrown only for the runtime", () => {
     const logged: (LogFields | undefined)[] = [];
     const record = (_message: string, fields?: LogFields): void => {

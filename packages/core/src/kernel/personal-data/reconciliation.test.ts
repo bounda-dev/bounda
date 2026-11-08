@@ -9,7 +9,7 @@ import type {
 import { createFixedClock } from "../../contracts/clock.ts";
 import { ValidationError } from "../../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
-import { type Logger, silentLogger } from "../../contracts/logger.ts";
+import { type LogFields, type Logger, silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import { HOLD_MS } from "./hold.ts";
 import {
@@ -22,6 +22,14 @@ import {
   type ForgetAgainEntry,
   forgetAgain,
 } from "./reconciliation.ts";
+
+// Each error line as its message, marked when it carries no error.
+const loggingErrors = (errors: unknown[]): Logger => ({
+  ...silentLogger,
+  error: (message: string, fields?: LogFields) => {
+    errors.push(fields?.error instanceof Error ? message : `${message} (without its error)`);
+  },
+});
 
 const NOW = new Date("2026-03-01T00:00:00.000Z");
 const EVERY = 5 * 60_000;
@@ -244,7 +252,7 @@ describe("the forget ledger's reconciliation", () => {
       storage: { ...storage, checkpointStore: checkpoints },
       ids: createSequentialIdGenerator(),
       clock: createFixedClock(NOW),
-      logger: { ...silentLogger, error: (message) => errors.push(message) },
+      logger: loggingErrors(errors),
       concurrencyRetries: 3,
       reconcileEveryMs: EVERY,
       keepForMs: null,
@@ -286,7 +294,7 @@ describe("the forget ledger's reconciliation", () => {
         storage: { ...storage, checkpointStore: checkpoints },
         ids: createSequentialIdGenerator(),
         clock: createFixedClock(NOW),
-        logger: { ...silentLogger, error: (message) => errors.push(message) },
+        logger: loggingErrors(errors),
         concurrencyRetries: 3,
         reconcileEveryMs: EVERY,
         keepForMs: null,
@@ -515,7 +523,7 @@ describe("the forget ledger's periodic reconciliation", () => {
           return store.compareAndSet(name, expected, position);
         },
       }),
-      logger: { ...silentLogger, error: (message) => errors.push(message) },
+      logger: loggingErrors(errors),
     });
     expect(await reconciliation.reconcile(NOW)).toBe(0);
     expect(errors).toEqual(["forget ledger's last reconciliation could not be kept"]);

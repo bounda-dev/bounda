@@ -3,16 +3,19 @@ import type { Adapter } from "../adapter/adapter.ts";
 import type { ErrorText } from "../config/types.ts";
 import { createFixedClock } from "../contracts/clock.ts";
 import { createSequentialIdGenerator } from "../contracts/ids.ts";
+import type { LogFields } from "../contracts/logger.ts";
 import { memory } from "../memory/index.ts";
 import type { CommandPayloadArgs, EventPayloadArgs } from "../modules/payload.ts";
+import type { CreateArgs } from "../modules/port.ts";
 import type { ProcessStateArgs } from "../modules/process.ts";
 import type { Registry } from "../modules/registry.ts";
 import type { FieldsArgs } from "../modules/view.ts";
 import { createTestApp } from "../testing/index.ts";
 import { createApp } from "./app.ts";
 import { rebuildReadModel } from "./read-model/rebuild.ts";
+import { errorFields } from "./shared/error-fields.ts";
 import { type FakeTelemetry, installFakeTelemetry } from "./telemetry-fake.ts";
-import { advanceUntilWaiting, createRecordingLogger } from "./test-support.ts";
+import { advanceUntilWaiting, createKernelHarness, createRecordingLogger } from "./test-support.ts";
 
 const EMAIL = "ana@example.com";
 
@@ -313,7 +316,7 @@ describe("the text of a handler's error that quotes personal data", () => {
       expect(span.exceptions).toEqual([]);
     }
     for (const event of telemetry.spanEvents.filter((event) => event.name === "exception")) {
-      expect(event.attributes).toEqual({ "exception.type": "Error" });
+      expect(event.attributes).toStrictEqual({ "exception.type": "Error" });
     }
     await app.stop();
   });
@@ -424,5 +427,56 @@ describe("the text of a handler's error that quotes personal data", () => {
       errorName: "Error",
     });
     expect(await everythingSeen(entries, null)).not.toContain(EMAIL);
+  });
+
+  it("keeps the fields a port's code logs, reducing only the errors among them", async () => {
+    const entries: { readonly message: string; readonly fields?: LogFields }[] = [];
+    const record = (message: string, fields?: LogFields): void => {
+      entries.push({ message, ...(fields === undefined ? {} : { fields }) });
+    };
+    const logger = { debug: record, info: record, warn: record, error: record };
+    const app = await createApp({
+      registry: {
+        aggregates: {
+          shop: {
+            events: {},
+            commands: {},
+            policies: {},
+            processes: {},
+            ports: {
+              mailer: {
+                smtp: {
+                  create: ({ logger: portLogger }: CreateArgs) => {
+                    portLogger.warn("smtp slow", {
+                      error: "timeout after 5s",
+                      cause: new Error(`refused ${EMAIL}`),
+                    });
+                    return { send: () => undefined };
+                  },
+                },
+              },
+            },
+          },
+        },
+        readModels: {},
+      } satisfies Registry,
+      config: { storage: memory(), ports: { shop: { mailer: "smtp" } } },
+      logger,
+    });
+    expect(entries.find((entry) => entry.message === "smtp slow")?.fields).toEqual({
+      error: "timeout after 5s",
+      cause: { errorName: "Error" },
+    });
+    await app.stop();
+  });
+
+  it("names Bounda's own error of an unknown command with its message", async () => {
+    const { pipeline } = await createKernelHarness({});
+    const unknown = await pipeline.dispatch({ type: "Nope", payload: {} }).catch((e: unknown) => e);
+    expect(errorFields({ error: unknown })).toEqual({
+      errorName: "NotFoundError",
+      errorCode: "NOT_FOUND",
+      errorMessage: 'Unknown command "Nope"',
+    });
   });
 });

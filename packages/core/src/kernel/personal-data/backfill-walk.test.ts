@@ -530,9 +530,13 @@ describe("the backfill's walk", () => {
     const { logs, logger } = recording();
     const { backfill } = walker({ storage, logger });
     expect(await backfill.sweep(START)).toBe(0);
-    expect(logs.map(([, message]) => message)).toEqual([
-      "personal data written before its marks could not be sealed",
-      "personal data backfill could not be held",
+    expect(logs).toEqual([
+      [
+        "error",
+        "personal data written before its marks could not be sealed",
+        { error: expect.any(Error) },
+      ],
+      ["error", "personal data backfill could not be held", { error: expect.any(Error) }],
     ]);
     broken = false;
     expect(await backfill.sweep(new Date(START.getTime() + 1))).toBe(0);
