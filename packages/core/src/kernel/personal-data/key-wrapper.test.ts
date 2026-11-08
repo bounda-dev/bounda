@@ -88,6 +88,21 @@ describe("cryptoKeyWrapperOver", () => {
     ).rejects.toThrow();
     expect(answered).toEqual(new Uint8Array(3));
   });
+
+  it("refuses what a wrapper unwraps when it is no Uint8Array", async () => {
+    const over = cryptoKeyWrapperOver({
+      kid: "kid-1",
+      wrap: async (key) => key,
+      unwrap: async () => new ArrayBuffer(32) as unknown as Uint8Array,
+    });
+    await expect(
+      over.unwrap({ kid: "kid-1", wrapped: new Uint8Array(40), extractable: false }),
+    ).rejects.toThrow(
+      new ConfigurationError(
+        "The key wrapper's unwrap resolved no Uint8Array for a key wrapped under kid-1",
+      ),
+    );
+  });
 });
 
 describe("defineKeyWrapper", () => {

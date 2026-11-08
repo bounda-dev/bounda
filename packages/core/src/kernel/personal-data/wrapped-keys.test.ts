@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { PersonalKeyStore } from "../../adapter/storage/personal-key-store.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
@@ -428,6 +428,18 @@ describe("createPersonalKeyWrapping", () => {
     await expectSameKey(key, await wrapping.over(moved).held("c-1"));
   });
 
+  it("imports a new key once without a wrapper, never reading it back from the store", async () => {
+    const store = await keyStore();
+    const imported = vi.spyOn(crypto.subtle, "importKey");
+    try {
+      const key = await wrappingOf(null).over(store).create("c-1");
+      expect(imported).toHaveBeenCalledTimes(1);
+      expect(key.fingerprint).toBe((await store.get("c-1"))?.fingerprint);
+    } finally {
+      imported.mockRestore();
+    }
+  });
+
   it("keeps keys as they are without a wrapper", async () => {
     const store = await keyStore();
     const wrapping = wrappingOf(null);
@@ -462,7 +474,7 @@ describe("createPersonalKeyWrapping", () => {
     const liar: KeyWrapper = { ...fakeWrapper("kid-1"), unwrap: async () => new Uint8Array(32) };
     await expect(wrappingOf(liar).over(store).held("c-1")).rejects.toThrow(
       new ConfigurationError(
-        "A personal key unwrapped under kid-1 does not match its fingerprint: the key wrapper returned another key",
+        "A personal key unwrapped under kid-1 does not match its fingerprint: the key wrapper returned another key, or the database was written before fingerprints were key check values and must be created anew",
       ),
     );
     await expect(
@@ -476,7 +488,7 @@ describe("createPersonalKeyWrapping", () => {
     await store.add("c-1", { ...stored, fingerprint: other.fingerprint });
     await expect(wrappingOf(fakeWrapper("kid-1")).over(store).held("c-1")).rejects.toThrow(
       new ConfigurationError(
-        "A personal key kept unwrapped does not match its fingerprint: the key was altered in the store",
+        "A personal key kept unwrapped does not match its fingerprint: the key was altered in the store, or the database was written before fingerprints were key check values and must be created anew",
       ),
     );
   });
@@ -492,6 +504,24 @@ describe("createPersonalKeyWrapping", () => {
     );
   });
 
+  it("wraps a key added as it is kept unwrapped, and keeps one already wrapped under its kid as it is", async () => {
+    const store = await keyStore();
+    const wrapper = fakeWrapper("kid-1");
+    const keys = wrappingOf(wrapper).over(store);
+    const plain = await newStoredKey();
+    expect(await keys.add("c-1", plain)).toMatchObject({
+      fingerprint: plain.fingerprint,
+      kid: "kid-1",
+    });
+    expect((await store.get("c-1"))?.key).not.toBe(plain.key);
+    expect(await fingerprintOf(keys.held("c-1"))).toBe(plain.fingerprint);
+    const wrappedRow = (await store.get("c-1")) ?? plain;
+    const unwraps = wrapper.unwrapped.length;
+    expect(await keys.add("c-2", wrappedRow)).toEqual(wrappedRow);
+    expect(wrapper.unwrapped).toHaveLength(unwraps);
+    expect(await wrappingOf(null).over(store).add("c-3", plain)).toEqual(plain);
+  });
+
   it("passes reading, adding, forgetting, listing and rewrapping through to the store", async () => {
     const store = await keyStore();
     const keys = wrappingOf(fakeWrapper("kid-1")).over(store);
@@ -500,9 +530,11 @@ describe("createPersonalKeyWrapping", () => {
     expect(row?.person).toBe("c-1");
     const stored = row?.key ?? (await newStoredKey());
     expect(await keys.get("c-1")).toEqual(stored);
-    const plain = await newStoredKey();
-    expect(await keys.add("c-2", plain)).toEqual(plain);
-    expect(await store.get("c-2")).toEqual(plain);
+    const other = await wrappingOf(fakeWrapper("kid-1"))
+      .over(await keyStore())
+      .create("c-2");
+    expect((await keys.add("c-2", stored)).fingerprint).toBe(key.fingerprint);
+    expect(other.fingerprint).not.toBe(key.fingerprint);
     const hold = { until: "2026-01-01T00:00:30.000Z", attempts: 1 };
     await keys.hold("c-1", stored, hold);
     expect((await store.listWrappedUnder({ kids: ["kid-1"], limit: 10 }))[0]?.hold).toEqual(hold);

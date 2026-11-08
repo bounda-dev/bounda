@@ -115,8 +115,15 @@ export const cryptoKeyWrapperOver: CryptoKeyWrapperOverFunction = (wrapper) => (
       const wrapped = Uint8Array.from(await wrapper.wrap(raw));
       return { wrapped, key: await importRawKey({ raw, extractable: false }) };
     }),
-  unwrap: async ({ kid, wrapped, extractable }) =>
-    importRawKey({ raw: await wrapper.unwrap({ kid, wrapped }), extractable }),
+  unwrap: async ({ kid, wrapped, extractable }) => {
+    const raw: unknown = await wrapper.unwrap({ kid, wrapped });
+    if (!(raw instanceof Uint8Array)) {
+      throw new ConfigurationError(
+        `The key wrapper's unwrap resolved no Uint8Array for a key wrapped under ${kid}`,
+      );
+    }
+    return importRawKey({ raw, extractable });
+  },
 });
 
 export interface DefineKeyWrapperFunction {

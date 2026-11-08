@@ -693,10 +693,10 @@ Keep the master key as you keep the database's backups, for as long as they are 
 takes every person's data with it, as if each had been forgotten. `bounda rebuild` reads it from
 `.env` like `boot()`; `rebuildReadModel` takes the environment as `env`.
 
-A person's key exists in the app only as a WebCrypto key that can never be exported. WebCrypto
-generates it, wraps it under the master key and unwraps it straight into a key it seals and opens
-with, so its raw bytes never reach JavaScript memory, where nothing could erase them: no string,
-no buffer, on Node, in `workerd` or in a test app. The bytes read from the master key's variable
+Under a master key, a person's key exists in the app only as a WebCrypto key that can never be
+exported. WebCrypto generates it, wraps it under the master key and unwraps it straight into a key
+it seals and opens with, so its raw bytes never reach JavaScript memory, where nothing could erase
+them: no string, no buffer, on Node, in `workerd` or in a test app given the master key. The bytes read from the master key's variable
 are zeroed once imported; the variable itself is the one copy the host keeps.
 
 Unwrapped keys are kept in memory, by fingerprint, up to ten thousand per app and for five
@@ -787,14 +787,14 @@ export default defineConfig({
 `kid` is stored next to every key the wrapper wraps; `unwrap` receives it back, with what `wrap`
 returned. A KMS needs the key's raw bytes, so they exist while `wrap` and `unwrap` run, and only
 then: the runtime zeroes the array it gives `wrap` once it settles, and imports what `unwrap`
-resolves as a key that can never be exported and zeroes that array at once. So resolve an array
-of your own, as the SDK hands it, and keep no copy of either. The runtime checks the key `unwrap`
-answers against its fingerprint, so a wrapper that answers with another key fails loudly instead
-of sealing data under it. Creating a key takes one call to `wrap` and none to `unwrap`. KMS rotates a key's
-material itself and keeps decrypting under the old one with the same ARN, so `kid` does not
-change; moving to another KMS key is a rotation as above, with the old ARN in `previous`. Each
-instance asks KMS once per person it creates, and once per person it reads in every five minutes
-they are active, thanks to the cache.
+resolves as a key that can never be exported and zeroes that array at once. So resolve a
+`Uint8Array` of your own, as the SDK hands it, and keep no copy of either. The runtime checks the
+key `unwrap` answers against its fingerprint, so a wrapper that answers with another key fails
+loudly instead of sealing data under it. Creating a key takes one call to `wrap` and none to
+`unwrap`. KMS rotates a key's material itself and keeps decrypting under the old one with the
+same ARN, so `kid` does not change; moving to another KMS key is a rotation as above, with the old
+ARN in `previous`. Each instance asks KMS once per person it creates, and once per person it reads
+in every five minutes they are active, thanks to the cache.
 
 A wrapper that fails, because KMS is unreachable, fails the command that needed the key, which
 the caller or the reaction's retry sees; the person's data is not touched.

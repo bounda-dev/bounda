@@ -38,6 +38,9 @@ export const UNWRAPPED_KEY_TTL_MS: number = 5 * 60_000;
  * A transaction's or the storage's keys as the kernel uses them: the store as written, and the
  * person's key ready to seal and open with.
  */
+const OLDER_DATABASE =
+  "or the database was written before fingerprints were key check values and must be created anew";
+
 export interface PersonalKeys extends PersonalKeyStore {
   /**
    * The key the person holds, `null` when they hold none.
@@ -175,8 +178,8 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
     if ((await fingerprintOf(key)) !== stored.fingerprint) {
       throw new ConfigurationError(
         kid === null
-          ? "A personal key kept unwrapped does not match its fingerprint: the key was altered in the store"
-          : `A personal key unwrapped under ${kid} does not match its fingerprint: the key wrapper returned another key`,
+          ? `A personal key kept unwrapped does not match its fingerprint: the key was altered in the store, ${OLDER_DATABASE}`
+          : `A personal key unwrapped under ${kid} does not match its fingerprint: the key wrapper returned another key, ${OLDER_DATABASE}`,
       );
     }
     return key;
@@ -195,7 +198,7 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
     armExpiry();
   };
 
-  const open = async (stored: StoredPersonalKey, person: string): Promise<PersonalKey> => {
+  const open = async (person: string, stored: StoredPersonalKey): Promise<PersonalKey> => {
     const { kid, fingerprint } = stored;
     // Before the cache, so a key rewrapped under a kid this app does not know fails however
     // recently it was kept.
@@ -248,16 +251,23 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
     drop: dropPerson,
     over: (keys) => ({
       get: (person) => keys.get(person),
-      add: (person, key) => keys.add(person, key),
+      // Wrapped on the way in, as every key the store keeps.
+      add: async (person, key) =>
+        keys.add(
+          person,
+          key.kid === (wrapper?.kid ?? null)
+            ? key
+            : { ...(await wrapped(key)), fingerprint: key.fingerprint },
+        ),
       held: async (person) => {
         const stored = await keys.get(person);
-        return stored === null ? null : open(stored, person);
+        return stored === null ? null : open(person, stored);
       },
-      open: (person, stored) => open(stored, person),
+      open,
       create: async (person) => {
         const fresh = await generate();
         const inForce = await keys.add(person, fresh.stored);
-        if (inForce.fingerprint !== fresh.key.fingerprint) return open(inForce, person);
+        if (inForce.fingerprint !== fresh.key.fingerprint) return open(person, inForce);
         remember(fresh.key.fingerprint, person, Promise.resolve(fresh.key.cryptoKey));
         return fresh.key;
       },

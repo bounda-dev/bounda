@@ -20,6 +20,7 @@ import type { AppStorage } from "./events/app-event-store.ts";
 import type { RecordAccess } from "./personal-data/access.ts";
 import {
   fingerprintOf,
+  fromBase64,
   generateWrappableKey,
   importRawKey,
   type PersonalKey,
@@ -422,20 +423,25 @@ export const breakNextCommit: BreakNextCommitFunction = (storage) => {
  */
 export const unrecordedAccess: RecordAccess = async () => undefined;
 
+export interface KeysOverFunction {
+  (keys: PersonalKeyStore, clock?: Clock): PersonalKeys;
+}
+
 /**
  * A store's keys as the kernel reads them, kept unwrapped.
  */
-export const keysOver = (keys: PersonalKeyStore, clock: Clock = createFixedClock()): PersonalKeys =>
+export const keysOver: KeysOverFunction = (keys, clock = createFixedClock()) =>
   createPersonalKeyWrapping({ wrapper: null, clock }).over(keys);
+
+export interface WithPersonalKeysFunction {
+  (storage: Storage, clock?: Clock): AppStorage;
+}
 
 /**
  * The storage with its keys, and those of its transactions, as the kernel reads them; its event
  * store as written.
  */
-export const withPersonalKeys = (
-  storage: Storage,
-  clock: Clock = createFixedClock(),
-): AppStorage => {
+export const withPersonalKeys: WithPersonalKeysFunction = (storage, clock = createFixedClock()) => {
   const wrapping = createPersonalKeyWrapping({ wrapper: null, clock });
   return {
     ...storage,
@@ -447,10 +453,14 @@ export const withPersonalKeys = (
   };
 };
 
+export interface NewStoredKeyFunction {
+  (): Promise<StoredPersonalKey>;
+}
+
 /**
  * A new key as a store keeps it without a wrapper.
  */
-export const newStoredKey = async (): Promise<StoredPersonalKey> => {
+export const newStoredKey: NewStoredKeyFunction = async () => {
   const key = await generateWrappableKey();
   return {
     key: await withRawKey(key, async (raw) => toBase64(raw)),
@@ -459,13 +469,14 @@ export const newStoredKey = async (): Promise<StoredPersonalKey> => {
   };
 };
 
+export interface OpenedKeyFunction {
+  (stored: StoredPersonalKey): Promise<PersonalKey>;
+}
+
 /**
  * A key kept without a wrapper, as the kernel seals and opens with it.
  */
-export const openedKey = async ({ key, fingerprint }: StoredPersonalKey): Promise<PersonalKey> => ({
+export const openedKey: OpenedKeyFunction = async ({ key, fingerprint }) => ({
   fingerprint,
-  cryptoKey: await importRawKey({
-    raw: Uint8Array.from(atob(key), (character) => character.charCodeAt(0)),
-    extractable: false,
-  }),
+  cryptoKey: await importRawKey({ raw: fromBase64(key), extractable: false }),
 });
