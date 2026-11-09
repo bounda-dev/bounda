@@ -182,7 +182,8 @@ database; read `failing`, and the `subscriber failed` log line that names the ev
 why. The last failure of each subscriber, by any instance, is also kept in the database, with its
 text encrypted under the person the event names: `bounda status` shows it without the text, and
 `app.subscriberFailures.get("projection:orderSummary")` opens it, a read the
-[access log](/guides/personal-data/#who-opened-what) records. The event itself, payload included, is one read of the global stream away:
+[access log](/guides/personal-data/#who-opened-what) records. The event itself, payload included,
+is one read of the global stream away:
 `app.events.read({ after: 41, limit: 1 })` ([Reading the global stream](/guides/reading-the-stream/)).
 
 `waitingDeadlines`, next to `subscribers`, counts the process deadlines this instance's worker
@@ -228,8 +229,9 @@ bounda status            # "storage  storage  1 of 2  (migrations pending: bound
 # stop the previous version
 bounda migrate
 # start the new one
-``` Each table prefix
-keeps its own versions, and each Durable Object, so each tenant, migrates its tables the first time
+```
+
+Each table prefix keeps its own versions, and each Durable Object, so each tenant, migrates its tables the first time
 it starts on the new code. A [forget ledger](/guides/personal-data/#backups) in another database is
 migrated there the first time the app uses it.
 
