@@ -135,6 +135,7 @@ export const memory: MemoryFunction = (options = {}) => {
       const persons = createKeptPersonStore();
       const idempotencyStore = createKeptIdempotencyStore({ holds: personalKeys.holds });
       const snapshotStore = createMemorySnapshotStore({ holds: personalKeys.holds });
+      const subscriberFailures = createMemorySubscriberFailureStore();
       const stores = {
         eventStore: createMemoryEventStore({
           onAppend: notifier.notify,
@@ -155,6 +156,11 @@ export const memory: MemoryFunction = (options = {}) => {
             table: "snapshots",
             key: ["aggregateType", "aggregateId"],
             rows: snapshotStore.rows(),
+          }),
+          storageTable({
+            table: "subscriberFailures",
+            key: ["subscriber"],
+            rows: subscriberFailures.rows(),
           }),
           storageTable({
             table: "inbox",
@@ -189,7 +195,7 @@ export const memory: MemoryFunction = (options = {}) => {
         notifier,
         checkpointStore,
         snapshotStore,
-        subscriberFailures: createMemorySubscriberFailureStore(),
+        subscriberFailures,
         transact: createMemoryStorageTransaction({
           ...stores,
           entries: {

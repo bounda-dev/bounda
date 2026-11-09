@@ -4,8 +4,15 @@ import type {
 } from "../adapter/storage/subscriber-failure-store.ts";
 import { jsonCopy } from "./json-copy.ts";
 
+export interface MemorySubscriberFailureStore extends SubscriberFailureStore {
+  /**
+   * Every row as kept, for `inspect`.
+   */
+  rows(): readonly StoredSubscriberFailure[];
+}
+
 export interface CreateMemorySubscriberFailureStoreFunction {
-  (): SubscriberFailureStore;
+  (): MemorySubscriberFailureStore;
 }
 
 export const createMemorySubscriberFailureStore: CreateMemorySubscriberFailureStoreFunction =
@@ -39,5 +46,6 @@ export const createMemorySubscriberFailureStore: CreateMemorySubscriberFailureSt
         [...failures.values()]
           .sort((a, b) => (a.subscriber < b.subscriber ? -1 : 1))
           .map((kept) => jsonCopy(kept)),
+      rows: () => [...failures.values()],
     };
   };
