@@ -151,5 +151,18 @@ export const forgetLedgerContract: ForgetLedgerContractFunction = ({ create }) =
       ]);
       expect(await third.read({ limit: 10 })).toEqual([]);
     });
+
+    it("raises a mark only upward, keeps it apart from the entries, and each tenant's apart", async () => {
+      const other = await ledgerFor("tenant-b");
+      expect(await ledger.readMark("restore:generation")).toBe(0);
+      await ledger.raiseMark("restore:generation", 7);
+      await ledger.raiseMark("restore:generation", 5);
+      expect(await ledger.readMark("restore:generation")).toBe(7);
+      await ledger.raiseMark("restore:generation", 9);
+      expect(await ledger.readMark("restore:generation")).toBe(9);
+      expect(await ledger.readMark("another")).toBe(0);
+      expect(await other.readMark("restore:generation")).toBe(0);
+      expect(await ledger.read({ limit: 10 })).toEqual([]);
+    });
   });
 };

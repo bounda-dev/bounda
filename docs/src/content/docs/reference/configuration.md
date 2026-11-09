@@ -129,7 +129,8 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
   [backups](/guides/personal-data/#backups). It holds:
   - **`store`**, required. The ledger: an adapter pointed at another database than `storage`, such
     as `sqlite({ path: "./ledger/forget-ledger.db" })` or `postgresql({ url })`, which creates its
-    `bounda_forget_ledger` table there on first use; `kvForgetLedger({ binding })` from
+    `bounda_forget_ledger` table there on first use, with `bounda_forget_ledger_marks` for the mark
+    that tells a [restore](/guides/personal-data/#restores) made while the app was stopped; `kvForgetLedger({ binding })` from
     `@bounda-dev/cloudflare` on Cloudflare; or a ledger of your own through `defineForgetLedger`.
     Every forgetting writes its intention to it before it commits, and the runtime copies every
     `PersonalDataForgotten` to it again from the stream in the background. An adapter pointing at
@@ -138,8 +139,9 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
     `@bounda-dev/core/config`). The app reads the ledger when it starts and, while it runs, again
     this often, one instance a round, and commits again, under its own id, time and reason, each
     forgetting the database does not hold whose person still holds a key it names: one a restored
-    backup rolled back, or one whose commit never happened. A Durable Object only runs a round on
-    the passes it wakes for anyway; it reconciles on every start.
+    backup rolled back, or one whose commit never happened; a restore the instances find
+    reconciles at once. A Durable Object only runs a round on the passes it wakes for anyway; it
+    reconciles on every start.
   - **`strict`**, `false` by default. When `false`, a forgetting whose intention the ledger does
     not take is logged and commits all the same, for the stream to copy later, and a ledger that
     cannot be read at start, or a reconciliation longer than `timeout`, does not fail it: the app

@@ -56,6 +56,8 @@ const recordingLedger = (entries: readonly ForgetLedgerEntry[], visibilityDelayM
   const inner = memory();
   const ledger: ForgetLedger = {
     ...(visibilityDelayMs === undefined ? {} : { visibilityDelayMs }),
+    readMark: async () => 0,
+    raiseMark: async () => undefined,
     append: async () => {},
     read: async (args) => {
       reads.push(args);
@@ -214,6 +216,8 @@ describe("the forget ledger's reconciliation", () => {
       }),
       retentionDue: NEVER_DUE,
       ledger: {
+        readMark: async () => 0,
+        raiseMark: async () => undefined,
         append: async () => {},
         read: async (args) => {
           if (failures > 0) {
@@ -263,6 +267,8 @@ describe("the forget ledger's reconciliation", () => {
       }),
       retentionDue: NEVER_DUE,
       ledger: {
+        readMark: async () => 0,
+        raiseMark: async () => undefined,
         append: async () => {},
         read: async () => {
           reads += 1;
@@ -703,6 +709,17 @@ describe("what the reconciliation commits again", () => {
     expect(reconciliation.nextDueAt()).toBeNull();
   });
 
+  it("commits a young entry at once after a restore, and gives the grace again after that", async () => {
+    const young = new Date(NOW.getTime() - 1).toISOString();
+    const entries: ForgetLedgerEntry[] = [entry("c-1", "e-1", young)];
+    const { reconciliation, storage } = await setUp({ entries, persons: ["c-1", "c-2"] });
+    await reconciliation.restored(false);
+    expect(await reconciliation.reconcile(NOW)).toBe(1);
+    entries.push(entry("c-2", "e-2", young));
+    expect(await reconciliation.reconcile(NOW)).toBe(0);
+    expect(await storage.personalKeys.get("c-2")).not.toBeNull();
+  });
+
   it("is due at the sooner of a ledger's delay and an entry's grace", async () => {
     const young = new Date(NOW.getTime() - 1).toISOString();
     const late = await setUp({ entries: [entry("c-1", "e-1", young)], visibilityDelayMs: 1_000 });
@@ -788,6 +805,8 @@ describe("forgetAgain", () => {
       ledger: {
         store: boundForgetLedger({
           ledger: {
+            readMark: async () => 0,
+            raiseMark: async () => undefined,
             append: async (entries) => {
               if (down) throw new Error("ledger is down");
               recorded.push(...entries);
@@ -967,5 +986,92 @@ describe("forgetAgain", () => {
     });
     expect(await run({ ...entry("c-1", "e-1", at(3)), fingerprints: ["f-c-1"] })).toBeNull();
     expect(await storage.eventStore.lastPosition()).toBe(0);
+  });
+});
+
+describe("the reconciliation's status and restores", () => {
+  it("says where it stands from the database's rows, and that it read the ledger through", async () => {
+    const { storage, reconciliation } = await setUp({ entries: [entry("c-1", "e-1", at(-5))] });
+    expect(await reconciliation.status()).toEqual({
+      reconciled: false,
+      appliedThrough: null,
+      lastRunAt: null,
+      held: null,
+    });
+    await reconciliation.reconcile(NOW);
+    expect(await reconciliation.status()).toEqual({
+      reconciled: true,
+      appliedThrough: at(-5),
+      lastRunAt: NOW.toISOString(),
+      held: null,
+    });
+    await storage.checkpointStore.set(FORGET_LEDGER_HELD_UNTIL, NOW.getTime() + 60_000);
+    expect((await reconciliation.status()).held).toEqual({
+      until: new Date(NOW.getTime() + 60_000).toISOString(),
+      attempts: 0,
+    });
+    await storage.checkpointStore.remove(FORGET_LEDGER_HELD_UNTIL);
+    await storage.checkpointStore.set(FORGET_LEDGER_ATTEMPTS, 1);
+    expect((await reconciliation.status()).held).toEqual({
+      until: new Date(0).toISOString(),
+      attempts: 1,
+    });
+    await storage.checkpointStore.set(FORGET_LEDGER_ATTEMPTS, 2);
+    await storage.checkpointStore.set(FORGET_LEDGER_HELD_UNTIL, NOW.getTime() + 60_000);
+    expect((await reconciliation.status()).held).toEqual({
+      until: new Date(NOW.getTime() + 60_000).toISOString(),
+      attempts: 2,
+    });
+  });
+
+  it("is due at once after a restore, and clears the copy's hold on the instance that found it first", async () => {
+    const { storage, reconciliation } = await setUp({ entries: [] });
+    await reconciliation.reconcile(NOW);
+    expect(reconciliation.nextDueAt()).toBeNull();
+    await storage.checkpointStore.set(FORGET_LEDGER_ATTEMPTS, 4);
+    await storage.checkpointStore.set(FORGET_LEDGER_HELD_UNTIL, NOW.getTime() + 3_600_000);
+    await reconciliation.restored(false);
+    expect(reconciliation.nextDueAt()).toEqual(NOW);
+    expect(reconciliation.reconciled()).toBe(false);
+    expect(await storage.checkpointStore.get(FORGET_LEDGER_ATTEMPTS)).toBe(4);
+    await reconciliation.restored(true);
+    expect(await storage.checkpointStore.get(FORGET_LEDGER_ATTEMPTS)).toBe(0);
+    expect(await storage.checkpointStore.get(FORGET_LEDGER_HELD_UNTIL)).toBe(0);
+    expect(await reconciliation.sweep(NOW)).toBe(0);
+    expect(reconciliation.reconciled()).toBe(true);
+  });
+
+  it("logs a hold it could not clear after a restore, and is due all the same", async () => {
+    const storage = await memory().createStorage();
+    const logged: unknown[][] = [];
+    const reconciliation = createForgetLedgerReconciliation({
+      ledger: recordingLedger([]).ledger,
+      intentions: withoutLedger({
+        ids: createSequentialIdGenerator(),
+        clock: createFixedClock(NOW),
+      }),
+      retentionDue: NEVER_DUE,
+      storage: {
+        ...storage,
+        checkpointStore: {
+          ...storage.checkpointStore,
+          get: () => Promise.reject(new Error("down")),
+        },
+      },
+      ids: createSequentialIdGenerator(),
+      clock: createFixedClock(NOW),
+      logger: { ...silentLogger, error: (...args: unknown[]) => logged.push(args) },
+      concurrencyRetries: 3,
+      reconcileEveryMs: EVERY,
+      keepForMs: null,
+    });
+    await reconciliation.restored(true);
+    expect(reconciliation.nextDueAt()).toEqual(NOW);
+    expect(logged).toEqual([
+      [
+        "forget ledger's reconciliation hold could not be cleared",
+        { error: expect.objectContaining({ message: "down" }) },
+      ],
+    ]);
   });
 });

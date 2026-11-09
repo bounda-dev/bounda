@@ -1,9 +1,24 @@
 import { describe, expect, it } from "vitest";
+import { testMetadata } from "../../adapter/testing/fixtures.ts";
 import { createFixedClock, type FixedClock } from "../../contracts/clock.ts";
+import type { StoredEvent } from "../../contracts/event.ts";
 import { memory } from "../../memory/index.ts";
 import { createRecordingLogger, eventually } from "../test-support.ts";
 import type { CheckpointedSubscriber, Delivery } from "./delivery.ts";
 import { createDispatcher, type DispatcherCatchUp, type Subscriber } from "./dispatcher.ts";
+
+const failedEvent: StoredEvent = {
+  id: "e-1",
+  aggregateType: "order",
+  aggregateId: "o-1",
+  version: 1,
+  position: 1,
+  type: "OrderPlaced",
+  payload: {},
+  timestamp: "2026-01-01T00:00:00.000Z",
+  metadata: testMetadata,
+  person: null,
+};
 
 interface Fake extends CheckpointedSubscriber {
   at: number;
@@ -42,6 +57,8 @@ const busy = async (): Promise<Delivery> => ({ outcome: "busy" });
 const failed = async (): Promise<Delivery> => ({
   outcome: "failed",
   failure: { position: 1, eventId: "e-1", eventType: "OrderPlaced", errorName: "Error" },
+  event: failedEvent,
+  error: new Error("boom"),
 });
 
 const setUp = async (

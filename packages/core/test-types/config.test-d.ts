@@ -364,6 +364,14 @@ describe("defineConfig", () => {
         prune: async (args) => {
           expectTypeOf(args).toEqualTypeOf<PruneForgetLedgerArgs>();
         },
+        readMark: async (name) => {
+          expectTypeOf(name).toEqualTypeOf<string>();
+          return 0;
+        },
+        raiseMark: async (name, value) => {
+          expectTypeOf(name).toEqualTypeOf<string>();
+          expectTypeOf(value).toEqualTypeOf<number>();
+        },
       };
     });
     expectTypeOf(own).toEqualTypeOf<ForgetLedgerDefinition>();

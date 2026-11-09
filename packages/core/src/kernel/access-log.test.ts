@@ -210,7 +210,13 @@ describe("the access log", () => {
         personCount: 1,
         at: AT,
         outcome: "ok",
-        detail: { events: 1, scheduledCommands: 0, deadLetters: 1, readModelRows: 1 },
+        detail: {
+          events: 1,
+          scheduledCommands: 0,
+          deadLetters: 1,
+          subscriberFailures: 0,
+          readModelRows: 1,
+        },
       },
     ]);
     expect(records[0]).toMatchObject({

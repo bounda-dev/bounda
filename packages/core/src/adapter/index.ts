@@ -9,6 +9,8 @@ export type {
   ReadModelTransactArgs,
   ReadModelTransacted,
   ReadModelTransaction,
+  SchemaScopeName,
+  SchemaVersion,
   Storage,
   StorageTransaction,
 } from "./adapter.ts";
@@ -106,6 +108,11 @@ export type {
   Scheduler,
 } from "./storage/scheduler.ts";
 export type { Snapshot, SnapshotStore } from "./storage/snapshot-store.ts";
+export type {
+  NewSubscriberFailure,
+  StoredSubscriberFailure,
+  SubscriberFailureStore,
+} from "./storage/subscriber-failure-store.ts";
 export type {
   FieldFilter,
   FindManyArgs,

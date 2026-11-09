@@ -75,9 +75,13 @@ export interface OpenForgetLedgerFunction {
   (args: OpenForgetLedgerArgs): Promise<ForgetLedger>;
 }
 
-// The same adapter, or one of the same kind with the same options: a database a restore rolls back
-// together with the storage. Two memory adapters are two stores whatever their options.
-const sharesStorage = (source: Adapter, storage: AdapterDefinition): boolean =>
+export interface SharesStorageFunction {
+  (source: Adapter, storage: AdapterDefinition): boolean;
+}
+
+// The same adapter, or one of the same kind with the same options: the same database. Two memory
+// adapters are two stores whatever their options.
+export const sharesStorage: SharesStorageFunction = (source, storage) =>
   source === storage ||
   (source.name !== "memory" &&
     source.name === storage.name &&
@@ -149,6 +153,8 @@ export const boundForgetLedger: BoundForgetLedgerFunction = ({ ledger, timeoutMs
   return {
     append: (entries) => bound("append", () => ledger.append(entries)),
     read: (args) => bound("read", () => ledger.read(args)),
+    readMark: (name) => bound("readMark", () => ledger.readMark(name)),
+    raiseMark: (name, value) => bound("raiseMark", () => ledger.raiseMark(name, value)),
     ...(ledger.visibilityDelayMs === undefined
       ? {}
       : { visibilityDelayMs: ledger.visibilityDelayMs }),

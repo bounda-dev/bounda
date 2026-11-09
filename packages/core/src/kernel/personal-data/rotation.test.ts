@@ -4,6 +4,7 @@ import type { PersonalKeyStore } from "../../adapter/storage/personal-key-store.
 import { createFixedClock } from "../../contracts/clock.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
+import { LEASE_MS } from "../shared/lease.ts";
 import { HOLD_MAX_MS, HOLD_MS } from "./hold.ts";
 import { type CryptoKeyWrapper, cryptoKeyWrapperOver } from "./key-wrapper.ts";
 import {
@@ -11,6 +12,7 @@ import {
   ROTATED_PREFIX,
   ROTATION_BATCH,
   ROTATION_CHECK_INTERVAL_MS,
+  ROTATION_LEASE_PREFIX,
   ROTATION_MARK_EXPIRY_MS,
 } from "./rotation.ts";
 import { createPersonalKeyWrapping } from "./wrapped-keys.ts";
@@ -522,9 +524,10 @@ describe("createKeyRotation", () => {
     };
     await addUnder(store, "old", "c-1");
     const failedAt = clock.now().getTime();
-    expect(
-      await rotationOver({ keys: store, checkpoints, wrapper: failing }).sweep(clock.now()),
-    ).toBe(0);
+    const first = rotationOver({ keys: store, checkpoints, wrapper: failing });
+    expect(await first.sweep(clock.now())).toBe(0);
+    // Stopped, as an instance gives its lease back when it stops.
+    await first.release();
     const [row] = await store.listWrappedUnder({ kids: ["old"], limit: 1 });
     expect(row?.hold).toEqual({ until: new Date(failedAt + HOLD_MS).toISOString(), attempts: 1 });
     const healthy = rotationOver({ keys: store, checkpoints, wrapper });
@@ -534,6 +537,7 @@ describe("createKeyRotation", () => {
     const restarted = rotationOver({ keys: store, checkpoints, wrapper: failing });
     expect(await restarted.sweep(clock.now())).toBe(0);
     expect(await restarted.nextDueAt()).toEqual(new Date(clock.now().getTime() + 2 * HOLD_MS));
+    await restarted.release();
     clock.advance(2 * HOLD_MS);
     expect(await healthy.sweep(clock.now())).toBe(1);
     expect(await store.listWrappedUnder({ kids: ["new"], limit: 1 })).toEqual([
@@ -689,3 +693,179 @@ describe("createKeyRotation", () => {
 });
 
 const toText = (bytes: Uint8Array): string => Buffer.from(bytes).toString("base64");
+
+describe("the key rotation across instances", () => {
+  const wrapper = () => fakeWrapper("new", ["old"]);
+
+  // Counts the rewraps each key had, by person, whichever instance wrote them.
+  const countingRewraps = (
+    store: PersonalKeyStore,
+    counts: Map<string, number>,
+    afterEach: () => Promise<void> = async () => undefined,
+  ): PersonalKeyStore => ({
+    ...store,
+    rewrap: async (person, from, to) => {
+      counts.set(person, (counts.get(person) ?? 0) + 1);
+      const rewrapped = await store.rewrap(person, from, to);
+      await afterEach();
+      return rewrapped;
+    },
+  });
+
+  it("rewraps each key once while two instances run it: the one holding the lease", async () => {
+    const { store, checkpoints } = await setUp();
+    const persons = ["c-1", "c-2", "c-3"];
+    for (const person of persons) await addUnder(store, "old", person);
+    const counts = new Map<string, number>();
+    const keys = countingRewraps(store, counts);
+    const one = rotationOver({ keys, checkpoints, wrapper: wrapper() });
+    const other = rotationOver({ keys, checkpoints, wrapper: wrapper() });
+    expect(await one.sweep(clock.now())).toBe(3);
+    expect(await other.sweep(clock.now())).toBe(0);
+    expect(await kidsOf(store, persons)).toEqual(["new", "new", "new"]);
+    expect([...counts.values()]).toEqual([1, 1, 1]);
+    const leases = (await checkpoints.list()).filter(({ subscriber }) =>
+      subscriber.startsWith(ROTATION_LEASE_PREFIX),
+    );
+    expect(leases.map(({ position }) => position)).toEqual([clock.now().getTime() + LEASE_MS]);
+  });
+
+  it("leaves another instance's keys to it while it holds the lease, and names when it lapses", async () => {
+    const { store, checkpoints } = await setUp();
+    await addUnder(store, "old", "c-1");
+    const one = rotationOver({ keys: store, checkpoints, wrapper: wrapper() });
+    const leased = clock.now().getTime() + LEASE_MS;
+    expect(await one.sweep(clock.now())).toBe(1);
+    await addUnder(store, "old", "c-2");
+    clock.advance(ROTATION_CHECK_INTERVAL_MS);
+    const { keys, reads } = counted(store);
+    const other = rotationOver({ keys, checkpoints, wrapper: wrapper() });
+    expect(await other.sweep(clock.now())).toBe(0);
+    expect(await other.sweep(clock.now())).toBe(0);
+    expect(reads.count).toBe(1);
+    expect(await kidsOf(store, ["c-2"])).toEqual(["old"]);
+    expect(await other.nextDueAt()).toEqual(new Date(leased));
+    await one.release();
+    expect(await other.sweep(clock.now())).toBe(1);
+  });
+
+  it("hands the rest to another instance when its lease lapses mid-way, rewrapping no key twice", async () => {
+    const { store, checkpoints } = await setUp();
+    const persons = ["c-1", "c-2", "c-3", "c-4"];
+    for (const person of persons) await addUnder(store, "old", person);
+    const counts = new Map<string, number>();
+    let handedOver = 0;
+    const plain = countingRewraps(store, counts);
+    const other = rotationOver({ keys: plain, checkpoints, wrapper: wrapper() });
+    // After its second key the instance stalls past its lease, and the other runs a pass.
+    const stalling = countingRewraps(store, counts, async () => {
+      if (counts.size !== 2 || handedOver > 0) return;
+      clock.advance(LEASE_MS);
+      handedOver = await other.sweep(clock.now());
+    });
+    const one = rotationOver({ keys: stalling, checkpoints, wrapper: wrapper() });
+    expect(await one.sweep(clock.now())).toBe(2);
+    expect(handedOver).toBe(2);
+    expect(await kidsOf(store, persons)).toEqual(["new", "new", "new", "new"]);
+    expect([...counts.values()]).toEqual([1, 1, 1, 1]);
+  });
+
+  it("starts over at once after a restore taken mid-way, without the holds the copy brought back", async () => {
+    const { store, checkpoints } = await setUp();
+    await addUnder(store, "old", "c-1");
+    const held = await addUnder(store, "old", "c-2");
+    const later = (ms: number) => new Date(clock.now().getTime() + ms).toISOString();
+    await store.hold("c-2", held, { until: later(HOLD_MAX_MS), attempts: 7 });
+    const rotation = rotationOver({ keys: store, checkpoints, wrapper: wrapper() });
+    expect(await rotation.sweep(clock.now())).toBe(1);
+    // The rotation goes on to the end, then the copy taken at this point comes back: c-2 held
+    // again under the old key, and no mark.
+    await store.hold("c-2", held, { until: later(0), attempts: 7 });
+    expect(await rotation.sweep(clock.now())).toBe(1);
+    expect(await rotation.sweep(clock.now())).toBe(0);
+    expect(await rotation.nextDueAt()).toBeNull();
+    await store.remove("c-2");
+    await store.add("c-2", held);
+    await store.hold("c-2", held, { until: later(HOLD_MAX_MS), attempts: 7 });
+    for (const { subscriber } of await checkpoints.list()) await checkpoints.remove(subscriber);
+    await rotation.restored(true);
+    expect(await store.listWrappedUnder({ kids: ["old"], limit: 10 })).toEqual([
+      { person: "c-2", key: held, hold: null },
+    ]);
+    expect(await rotation.nextDueAt()).toEqual(clock.now());
+    expect(await rotation.sweep(clock.now())).toBe(1);
+    expect(await kidsOf(store, ["c-1", "c-2"])).toEqual(["new", "new"]);
+  });
+
+  it("rewraps again at once after a restore, though the store had paused it", async () => {
+    const { store, checkpoints } = await setUp();
+    await addUnder(store, "old", "c-1");
+    let down = true;
+    const rotation = rotationOver({
+      keys: {
+        ...store,
+        listWrappedUnder: (args) =>
+          down ? Promise.reject(new Error("down")) : store.listWrappedUnder(args),
+      },
+      checkpoints,
+      wrapper: wrapper(),
+    });
+    expect(await rotation.sweep(clock.now())).toBe(0);
+    down = false;
+    expect(await rotation.sweep(clock.now())).toBe(0);
+    await rotation.restored(false);
+    expect(await rotation.sweep(clock.now())).toBe(1);
+  });
+
+  it("leaves the holds to the instance that found the restore first", async () => {
+    const { store, checkpoints } = await setUp();
+    const held = await addUnder(store, "old", "c-1");
+    const hold = { until: new Date(clock.now().getTime() + HOLD_MS).toISOString(), attempts: 2 };
+    await store.hold("c-1", held, hold);
+    const rotation = rotationOver({ keys: store, checkpoints, wrapper: wrapper() });
+    await rotation.restored(false);
+    expect((await store.listWrappedUnder({ kids: ["old"], limit: 1 }))[0]?.hold).toEqual(hold);
+  });
+
+  it("logs holds it could not clear after a restore, and goes on", async () => {
+    const { store, checkpoints } = await setUp();
+    const logger = recordingLogger();
+    const rotation = rotationOver({
+      keys: { ...store, releaseHolds: () => Promise.reject(new Error("cannot write")) },
+      checkpoints,
+      wrapper: wrapper(),
+      logger,
+    });
+    await rotation.restored(true);
+    expect(logger.logged).toContainEqual({
+      level: "error",
+      message: "personal keys' holds could not be cleared",
+      context: { error: expect.objectContaining({ message: "cannot write" }) },
+    });
+  });
+
+  it("says how many keys are left to rewrap, and when a pass last found none", async () => {
+    const { store, checkpoints } = await setUp();
+    await addUnder(store, "old", "c-1");
+    await addUnder(store, null, "c-2");
+    const rotation = rotationOver({
+      keys: store,
+      checkpoints,
+      wrapper: fakeWrapper("new", ["old", "new"]),
+    });
+    expect(await rotation.status()).toEqual({
+      kid: "new",
+      previous: ["old"],
+      pending: 2,
+      completeAt: null,
+    });
+    await rotation.sweep(clock.now());
+    await rotation.sweep(clock.now());
+    expect(await rotation.status()).toEqual({
+      kid: "new",
+      previous: ["old"],
+      pending: 0,
+      completeAt: clock.now().toISOString(),
+    });
+  });
+});

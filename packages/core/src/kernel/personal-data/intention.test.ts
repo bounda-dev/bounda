@@ -31,7 +31,12 @@ const setUp = async ({
 
 const recordingLedger = (append: (entries: readonly ForgetLedgerEntry[]) => Promise<void>) =>
   boundForgetLedger({
-    ledger: { append, read: async () => [] },
+    ledger: {
+      append,
+      read: async () => [],
+      readMark: async () => 0,
+      raiseMark: async () => undefined,
+    },
     timeoutMs: 1_000,
     clock: createFixedClock(NOW),
   });
@@ -136,6 +141,8 @@ describe("the intentions of forgetting", () => {
     let late = true;
     let appends = 0;
     const ledger: BoundedForgetLedger = {
+      readMark: async () => 0,
+      raiseMark: async () => undefined,
       append: async () => {
         appends += 1;
       },

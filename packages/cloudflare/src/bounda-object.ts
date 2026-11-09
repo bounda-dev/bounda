@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import {
   type AppLag,
+  type AppStatus,
   type BoundaApp,
   type BoundaClient,
   type Clock,
@@ -22,6 +23,7 @@ import {
   type Registry,
   type StoredDispatch,
   type StoredEvent,
+  type SubscriberFailure,
   systemClock,
 } from "@bounda-dev/core";
 import type { Config } from "@bounda-dev/core/config";
@@ -82,6 +84,16 @@ export interface BoundaObjectMethods {
   ): Promise<RpcOutcome<DispatchResult>>;
   query(name: string, payload?: unknown, actor?: string): Promise<RpcOutcome<unknown>>;
   lag(): Promise<RpcOutcome<AppLag>>;
+  status(): Promise<RpcOutcome<AppStatus>>;
+  /**
+   * Each subscriber's last failure with its text opened, recorded in the access log as
+   * `BoundaClient.subscriberFailures` records it.
+   */
+  listSubscriberFailures(actor?: string): Promise<RpcOutcome<readonly SubscriberFailure[]>>;
+  getSubscriberFailure(
+    subscriber: string,
+    actor?: string,
+  ): Promise<RpcOutcome<SubscriberFailure | null>>;
   readEvents(args?: ReadEventsArgs): Promise<RpcOutcome<readonly StoredEvent[]>>;
   listDeadLetters(
     args?: ListDeadLettersArgs,
@@ -316,6 +328,21 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
 
     lag(): Promise<RpcOutcome<AppLag>> {
       return settle(() => this.#ready().getLag());
+    }
+
+    status(): Promise<RpcOutcome<AppStatus>> {
+      return settle(() => this.#ready().status());
+    }
+
+    listSubscriberFailures(actor?: string): Promise<RpcOutcome<readonly SubscriberFailure[]>> {
+      return settle(() => this.#as(actor).subscriberFailures.list());
+    }
+
+    getSubscriberFailure(
+      subscriber: string,
+      actor?: string,
+    ): Promise<RpcOutcome<SubscriberFailure | null>> {
+      return settle(() => this.#as(actor).subscriberFailures.get(subscriber));
     }
 
     readEvents(args?: ReadEventsArgs): Promise<RpcOutcome<readonly StoredEvent[]>> {

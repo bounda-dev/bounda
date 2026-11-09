@@ -31,6 +31,8 @@ describe("the forget ledger's outbox", () => {
           appended.push(entries);
         },
         read: async () => [],
+        readMark: async () => 0,
+        raiseMark: async () => undefined,
       },
       keepForMs: null,
       clock: createFixedClock(new Date("2030-01-01T00:00:00.000Z")),
@@ -100,6 +102,8 @@ describe("the forget ledger's outbox", () => {
           appended.push(entries);
         },
         read: async () => [],
+        readMark: async () => 0,
+        raiseMark: async () => undefined,
       },
       keepForMs: 60_000,
       clock: createFixedClock(new Date("2026-01-01T00:02:00.000Z")),
@@ -170,7 +174,12 @@ describe("a forgetting's entry", () => {
 
 describe("a forget ledger's source", () => {
   it("is an adapter that opens ledgers or a ledger definition, nothing else", () => {
-    const definition = defineForgetLedger(() => ({ append: async () => {}, read: async () => [] }));
+    const definition = defineForgetLedger(() => ({
+      append: async () => {},
+      read: async () => [],
+      readMark: async () => 0,
+      raiseMark: async () => undefined,
+    }));
     expect(isForgetLedgerSource(memory())).toBe(true);
     expect(isForgetLedgerSource(definition)).toBe(true);
     for (const value of [
@@ -188,7 +197,12 @@ describe("a forget ledger's source", () => {
     const seen: unknown[] = [];
     const definition = defineForgetLedger((args) => {
       seen.push(args);
-      return { append: async () => {}, read: async () => [] };
+      return {
+        append: async () => {},
+        read: async () => [],
+        readMark: async () => 0,
+        raiseMark: async () => undefined,
+      };
     });
     const env = { REGION: "eu" };
     await openForgetLedger({ source: definition, storage: memory(), env, tenant: "t-1" });
@@ -278,6 +292,8 @@ describe("the forget ledger bound by its timeout", () => {
     const ledger = boundForgetLedger({
       ledger: {
         visibilityDelayMs: 60_000,
+        readMark: async () => 0,
+        raiseMark: async () => undefined,
         append: async (entries) => {
           calls.push(`append ${entries.length}`);
         },
@@ -304,7 +320,12 @@ describe("the forget ledger bound by its timeout", () => {
     expect(ledger.late()).toBe(false);
     expect(clock.pending()).toBe(0);
     const bare = boundForgetLedger({
-      ledger: { append: async () => {}, read: async () => [] },
+      ledger: {
+        append: async () => {},
+        read: async () => [],
+        readMark: async () => 0,
+        raiseMark: async () => undefined,
+      },
       timeoutMs: 500,
       clock,
     });
@@ -318,6 +339,8 @@ describe("the forget ledger bound by its timeout", () => {
     let answer: () => void = () => undefined;
     const ledger = boundForgetLedger({
       ledger: {
+        readMark: async () => 0,
+        raiseMark: async () => undefined,
         append: () =>
           new Promise<void>((resolve) => {
             answer = resolve;

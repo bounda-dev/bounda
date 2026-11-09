@@ -20,6 +20,7 @@ import {
   snapshotStoreContract,
   storageSchemaContract,
   storageTransactionContract,
+  subscriberFailureStoreContract,
   tableContract,
   viewContract,
 } from "@bounda-dev/core/adapter/testing";
@@ -64,6 +65,7 @@ describe("the Durable Object adapter", () => {
   personalKeyStoreContract({ create: async () => (await freshStorage()).personalKeys });
   personStoreContract({ create: async () => (await freshStorage()).persons });
   inspectionContract({ create: freshAdapter });
+  subscriberFailureStoreContract({ create: async () => (await freshStorage()).subscriberFailures });
   forgetLedgerContract({
     create: async () => {
       const adapter = await freshAdapter();

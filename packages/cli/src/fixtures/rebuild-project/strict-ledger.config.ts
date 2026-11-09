@@ -12,7 +12,12 @@ export default defineConfig({
     role: "all",
     personalData: {
       forgetLedger: {
-        store: defineForgetLedger(() => ({ append: down, read: down })),
+        store: defineForgetLedger(() => ({
+          append: down,
+          read: down,
+          readMark: down,
+          raiseMark: down,
+        })),
         strict: true,
       },
     },

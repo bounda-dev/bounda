@@ -71,6 +71,8 @@ const withLedger = async () => {
       ledger: {
         store: boundForgetLedger({
           ledger: {
+            readMark: async () => 0,
+            raiseMark: async () => undefined,
             append: async (appended) => {
               recorded.push(...appended);
               keysAtRecord.push(await harness.storage.personalKeys.get("c-1"));

@@ -118,7 +118,12 @@ describe("migrateSqlite", () => {
         .prepare("SELECT name FROM sqlite_master WHERE name LIKE 'app_%' ORDER BY name")
         .all()
         .map((row) => row.name),
-    ).toEqual(["app_forget_ledger", "app_forget_ledger_order_idx", "app_migrations"]);
+    ).toEqual([
+      "app_forget_ledger",
+      "app_forget_ledger_marks",
+      "app_forget_ledger_order_idx",
+      "app_migrations",
+    ]);
   });
 });
 

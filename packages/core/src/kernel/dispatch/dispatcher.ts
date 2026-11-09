@@ -21,6 +21,7 @@ import {
   type Subscriber,
   type SubscriberKind,
 } from "./delivery.ts";
+import type { LastFailures } from "./last-failures.ts";
 
 const untilNothingMoves = async (pass: () => Promise<boolean>): Promise<void> => {
   for (;;) {
@@ -106,6 +107,11 @@ export interface Dispatcher {
    */
   catchUpThrough(args: CatchUpThroughArgs): Promise<boolean>;
   getLag(): Promise<DispatcherLag>;
+  /**
+   * Forgets the failures this instance met, as after the database went back to an earlier copy:
+   * every subscriber is tried again at once, its attempts counted from the first.
+   */
+  restored(): void;
 }
 
 interface FailingState {
@@ -128,6 +134,10 @@ export interface CreateDispatcherArgs {
    */
   readonly idleIntervalMs?: number;
   readonly notifier?: EventNotifier;
+  /**
+   * Where each subscriber's last failure is kept, its text sealed; without it, nowhere.
+   */
+  readonly lastFailures?: LastFailures;
   readonly clock: Clock;
   readonly logger: Logger;
   readonly errorText: ErrorText;
@@ -166,6 +176,7 @@ export const createDispatcher: CreateDispatcherFunction = ({
   catchUp = { timeoutMs: DEFAULT_CATCH_UP_TIMEOUT_MS, pollIntervalMs: DEFAULT_CATCH_UP_POLL_MS },
   idleIntervalMs = pollIntervalMs,
   notifier,
+  lastFailures,
   clock,
   logger,
   errorText,
@@ -189,7 +200,12 @@ export const createDispatcher: CreateDispatcherFunction = ({
   const delayFor = (attempts: number): number =>
     Math.min(backoff.maxDelayMs, backoff.baseDelayMs * 2 ** (attempts - 1));
 
-  const record = (subscriber: string, delivery: Delivery): void => {
+  // The subscribers whose last failure kept in the store this process has resolved, or found
+  // past, since it started: a failure another instance or an earlier start met is resolved by the
+  // first delivery that moves the subscriber here.
+  const checked = new Set<string>();
+
+  const record = async (subscriber: string, delivery: Delivery): Promise<void> => {
     const current = failing.get(subscriber);
     if (delivery.outcome === "failed") {
       const attempts = (current?.attempts ?? 0) + 1;
@@ -199,7 +215,18 @@ export const createDispatcher: CreateDispatcherFunction = ({
         since: current?.since ?? now(),
         retryAt: now() + delayFor(attempts),
       });
+      checked.delete(subscriber);
+      await lastFailures?.record({
+        subscriber,
+        event: delivery.event,
+        error: delivery.error,
+        at: clock.now(),
+      });
       return;
+    }
+    if (delivery.outcome === "advanced" && !checked.has(subscriber)) {
+      checked.add(subscriber);
+      await lastFailures?.resolve(subscriber, clock.now());
     }
     if (current === undefined || delivery.outcome === "busy" || delivery.outcome === "held") return;
     failing.delete(subscriber);
@@ -233,7 +260,7 @@ export const createDispatcher: CreateDispatcherFunction = ({
         if ((await subscriber.position()) >= position) return true;
         if (now() >= deadline || backingOff(subscriber.name)) return false;
         const delivery = await subscriber.deliver({ read, wait: false });
-        record(subscriber.name, delivery);
+        await record(subscriber.name, delivery);
         if (delivery.outcome === "failed") return false;
         if (!moving.has(delivery.outcome)) await sleep(catchUp.pollIntervalMs);
       }
@@ -252,7 +279,7 @@ export const createDispatcher: CreateDispatcherFunction = ({
       if (only !== undefined && subscriber.kind !== only) continue;
       if (patient && backingOff(subscriber.name)) continue;
       const delivery = await subscriber.deliver({ read, wait });
-      record(subscriber.name, delivery);
+      await record(subscriber.name, delivery);
       advanced = moving.has(delivery.outcome) || advanced;
     }
     return advanced;
@@ -343,6 +370,10 @@ export const createDispatcher: CreateDispatcherFunction = ({
         timeoutMs: catchUp.timeoutMs,
       });
       return false;
+    },
+    restored: () => {
+      failing.clear();
+      checked.clear();
     },
     getLag: async () => {
       const lastPosition = await eventStore.lastPosition();

@@ -1,10 +1,13 @@
 import { ConfigurationError } from "@bounda-dev/core";
+import type { SchemaVersion } from "@bounda-dev/core/adapter";
 import {
+  forgetLedgerMarksStatement,
   forgetLedgerReasonStatements,
   forgetLedgerStatements,
   migrateSchemas,
   postgresqlDialect,
   quoteIdentifier,
+  readSchemaVersions,
   resolvedAtOfEarlierLetters,
   SCHEMA_SCOPES,
   type SchemaScope,
@@ -18,6 +21,7 @@ import {
   inSchema,
   type StorageTables,
   storageSchemaStatements,
+  subscriberFailuresTableStatement,
 } from "./schema.ts";
 
 type StorageTable = Exclude<
@@ -144,7 +148,13 @@ export interface PostgresqlStorageScopeFunction {
 
 export const postgresqlStorageScope: PostgresqlStorageScopeFunction = ({ schema, tables }) => ({
   scope: SCHEMA_SCOPES.storage,
-  migrations: [{ version: 1, migrate: (tx) => adoptStorageTables(tx, schema, tables) }],
+  migrations: [
+    { version: 1, migrate: (tx) => adoptStorageTables(tx, schema, tables) },
+    {
+      version: 2,
+      migrate: (tx) => tx.run(subscriberFailuresTableStatement(tables.subscriberFailures), []),
+    },
+  ],
 });
 
 export interface PostgresqlCheckpointsScopeFunction {
@@ -171,8 +181,9 @@ export const postgresqlForgetLedgerScope: PostgresqlForgetLedgerScopeFunction = 
         }
       },
     },
+    { version: 2, migrate: (tx) => tx.run(forgetLedgerMarksStatement(table), []) },
     {
-      version: 2,
+      version: 3,
       migrate: async (tx) => {
         for (const statement of forgetLedgerReasonStatements(table)) await tx.run(statement, []);
       },
@@ -194,6 +205,32 @@ export interface MigratePostgresqlFunction {
   (args: MigratePostgresqlArgs): Promise<void>;
 }
 
+const isUndefinedTable = (error: unknown): boolean =>
+  error instanceof Error && Reflect.get(error, "code") === UNDEFINED_TABLE;
+
+export interface ReadPostgresqlSchemaVersionsArgs {
+  readonly db: PostgresqlDatabase;
+  readonly prefix: string;
+  readonly scopes: readonly SchemaScope[];
+}
+
+export interface ReadPostgresqlSchemaVersionsFunction {
+  (args: ReadPostgresqlSchemaVersionsArgs): Promise<readonly SchemaVersion[]>;
+}
+
+// In the schema the connection's `search_path` names, where the adapter keeps its tables.
+export const readPostgresqlSchemaVersions: ReadPostgresqlSchemaVersionsFunction = ({
+  db,
+  prefix,
+  scopes,
+}) =>
+  readSchemaVersions({
+    db,
+    table: schemaMigrationsTableFor(prefix),
+    scopes,
+    isMissingTable: isUndefinedTable,
+  });
+
 /**
  * `migrateSchemas` in a schema, under the schema's advisory lock, which the read models' changes
  * to their tables take too.
@@ -205,6 +242,5 @@ export const migratePostgresql: MigratePostgresqlFunction = ({ db, schema, prefi
     table: schemaMigrationsTableFor(prefix),
     scopes,
     locked: (work) => inSchema({ db, schema, work }),
-    isMissingTable: (error) =>
-      error instanceof Error && Reflect.get(error, "code") === UNDEFINED_TABLE,
+    isMissingTable: isUndefinedTable,
   });

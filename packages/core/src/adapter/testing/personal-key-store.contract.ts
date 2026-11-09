@@ -151,6 +151,29 @@ export const personalKeyStoreContract: PersonalKeyStoreContractFunction = ({ cre
       expect(await store.nextHoldEnd({ kids: ["kid-1", "kid-2"], after: before })).toBeNull();
     });
 
+    it("counts the keys wrapped under the ids asked for, held or not, and clears every hold at once", async () => {
+      await store.add("c-1", wrapped("1", "kid-1"));
+      await store.add("c-2", wrapped("2", "kid-1"));
+      await store.add("c-3", stored("3"));
+      await store.add("c-4", wrapped("4", "kid-2"));
+      await store.hold("c-1", wrapped("1", "kid-1"), {
+        until: "2026-02-01T00:00:30.000Z",
+        attempts: 2,
+      });
+      await store.hold("c-3", stored("3"), { until: "2026-02-01T00:00:20.000Z", attempts: 1 });
+      expect(await store.countWrappedUnder({ kids: ["kid-1"] })).toBe(2);
+      expect(await store.countWrappedUnder({ kids: ["kid-1", null] })).toBe(3);
+      expect(await store.countWrappedUnder({ kids: [null] })).toBe(1);
+      expect(await store.countWrappedUnder({ kids: [] })).toBe(0);
+      expect(await store.releaseHolds()).toBe(2);
+      expect(await store.listWrappedUnder({ kids: ["kid-1", null], limit: 10 })).toEqual([
+        { person: "c-1", key: wrapped("1", "kid-1"), hold: null },
+        { person: "c-2", key: wrapped("2", "kid-1"), hold: null },
+        { person: "c-3", key: stored("3"), hold: null },
+      ]);
+      expect(await store.releaseHolds()).toBe(0);
+    });
+
     it("never holds a key forgotten or replaced since it was read, and forgets a hold with its key", async () => {
       const read = wrapped("first", "kid-1");
       const hold = { until: "2026-02-01T00:00:30.000Z", attempts: 1 };

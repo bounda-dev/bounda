@@ -15,6 +15,8 @@ export type {
   OnPersonalDataAccessArgs,
   PersonalDataAccess,
   QueryAccess,
+  SubscriberFailureAccess,
+  SubscriberFailuresListAccess,
 } from "./audit.ts";
 export { MAX_ACCESS_PERSONS } from "./audit.ts";
 export type {

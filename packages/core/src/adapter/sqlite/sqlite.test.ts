@@ -34,6 +34,7 @@ import {
   snapshotStoreContract,
   storageSchemaContract,
   storageTransactionContract,
+  subscriberFailureStoreContract,
   tableContract,
   viewContract,
 } from "../testing/index.ts";
@@ -133,6 +134,7 @@ describe("the SQLite stores on node:sqlite", () => {
   personalKeyStoreContract({ create: async () => (await storage()).personalKeys });
   personStoreContract({ create: async () => (await storage()).persons });
   inspectionContract({ create: async () => nodeSqlite().adapter });
+  subscriberFailureStoreContract({ create: async () => (await storage()).subscriberFailures });
   forgetLedgerContract({
     create: async () => {
       const { adapter } = nodeSqlite();
@@ -528,6 +530,7 @@ describe("createSqliteAdapter", () => {
       "app_rm_order_summary",
       "app_scheduled_commands",
       "app_snapshots",
+      "app_subscriber_failures",
     ]);
   });
 
@@ -678,6 +681,10 @@ describe("the SQLite forget ledger", () => {
     const ledger = await adapter.createForgetLedger({ tenant: "t-1" });
     expect(tableNames(db, "app_")).toEqual([]);
     await ledger.read({ limit: 1 });
-    expect(tableNames(db, "app_")).toEqual(["app_forget_ledger", "app_migrations"]);
+    expect(tableNames(db, "app_")).toEqual([
+      "app_forget_ledger",
+      "app_forget_ledger_marks",
+      "app_migrations",
+    ]);
   });
 });

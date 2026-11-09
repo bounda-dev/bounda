@@ -18,6 +18,7 @@ import {
   schedulerContract,
   snapshotStoreContract,
   storageTransactionContract,
+  subscriberFailureStoreContract,
   tableContract,
   viewContract,
 } from "../adapter/testing/index.ts";
@@ -41,6 +42,7 @@ describe("memory adapter", () => {
   personalKeyStoreContract({ create: async () => (await storage()).personalKeys });
   personStoreContract({ create: async () => (await storage()).persons });
   inspectionContract({ create: async () => memory() });
+  subscriberFailureStoreContract({ create: async () => (await storage()).subscriberFailures });
   forgetLedgerContract({
     create: async () => {
       const adapter = memory();

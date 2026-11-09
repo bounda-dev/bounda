@@ -32,6 +32,7 @@ import {
   snapshotStoreContract,
   storageSchemaContract,
   storageTransactionContract,
+  subscriberFailureStoreContract,
   tableContract,
   viewContract,
 } from "@bounda-dev/core/adapter/testing";
@@ -130,6 +131,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
       return fresh({ tablePrefix: "bounda_", schema: `inspected_${run}_${prefixes}` });
     },
   });
+  subscriberFailureStoreContract({ create: async () => (await openStorage()).subscriberFailures });
   forgetLedgerContract({
     create: async () => {
       await closeOpened();
@@ -377,6 +379,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
       const tables = await holder`SELECT tablename FROM pg_tables WHERE schemaname = ${schema}`;
       expect(tables.map(({ tablename }) => tablename).sort()).toEqual([
         `t${run}_${prefixes}_forget_ledger`,
+        `t${run}_${prefixes}_forget_ledger_marks`,
         `t${run}_${prefixes}_migrations`,
       ]);
       await holder`SELECT pg_advisory_lock(hashtext(${`bounda:${schema}:schema`}))`;
@@ -603,6 +606,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
       "rm_order_summary",
       "scheduled_commands",
       "snapshots",
+      "subscriber_failures",
     ]);
   });
 

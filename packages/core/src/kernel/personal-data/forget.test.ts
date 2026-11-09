@@ -205,6 +205,8 @@ describe("forgetIntended", () => {
       ledger: {
         store: boundForgetLedger({
           ledger: {
+            readMark: async () => 0,
+            raiseMark: async () => undefined,
             append: async (entries) => {
               recorded.push(...entries);
             },

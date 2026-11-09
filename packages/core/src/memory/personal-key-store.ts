@@ -84,6 +84,17 @@ export const createKeptPersonalKeyStore: CreateKeptPersonalKeyStoreFunction = ()
           [...keys.values()].filter((key) => kids.includes(key.kid)).map(({ hold }) => hold),
           after,
         ),
+      countWrappedUnder: async ({ kids }) =>
+        [...keys.values()].filter((key) => kids.includes(key.kid)).length,
+      releaseHolds: async () => {
+        let released = 0;
+        for (const [person, kept] of keys) {
+          if (kept.hold === null) continue;
+          keys.set(person, { ...kept, hold: null });
+          released += 1;
+        }
+        return released;
+      },
     },
     entries: createStoreEntries(keys, (person) => person),
   };

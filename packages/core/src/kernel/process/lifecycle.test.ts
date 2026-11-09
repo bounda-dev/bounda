@@ -7,6 +7,7 @@ import {
   type FoldProcessArgs,
   foldProcess,
   instanceContext,
+  lifecycleEntries,
   PROCESS_EVENTS,
   type ProcessInstance,
   processAggregateType,
@@ -107,6 +108,7 @@ describe("foldProcess", () => {
       failed: "ProcessFailed",
       eventParked: "ProcessEventParked",
       resumed: "ProcessResumed",
+      abandoned: "ProcessAbandoned",
     });
   });
 
@@ -371,6 +373,34 @@ describe("deadlineContext", () => {
       correlationId: "c1",
       causationId: "process:order.orderPayment:o-1",
       depth: 0,
+    });
+  });
+
+  it("ends a failed process with ProcessAbandoned, and only a failed one", () => {
+    const failed = [
+      lifecycle(PROCESS_EVENTS.started, { state: { step: 0 } }, 1),
+      lifecycle(PROCESS_EVENTS.failed, { eventId: "e2", letterId: "l-1" }, 2),
+    ];
+    expect(
+      fold({
+        initialState: {},
+        events: [...failed, lifecycle(PROCESS_EVENTS.abandoned, { letterId: "l-1" }, 3)],
+      }),
+    ).toMatchObject({ status: "abandoned", failure: { eventId: "e2", letterId: "l-1" } });
+    expect(
+      fold({
+        initialState: {},
+        events: [
+          lifecycle(PROCESS_EVENTS.started, { state: { step: 0 } }, 1),
+          lifecycle(PROCESS_EVENTS.abandoned, { letterId: "l-1" }, 2),
+        ],
+      }).status,
+    ).toBe("started");
+    const context = { correlationId: "c", causationId: "x", depth: 0 };
+    expect(lifecycleEntries.abandoned("l-1", context)).toEqual({
+      type: "ProcessAbandoned",
+      payload: { letterId: "l-1" },
+      context,
     });
   });
 });

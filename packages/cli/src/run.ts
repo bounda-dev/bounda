@@ -9,8 +9,11 @@ import {
   type ListDeadLettersArgs,
   type Logger,
   MAX_ACTOR_LENGTH,
+  migrateTables,
   parseDuration,
+  type Registry,
   rebuildReadModel,
+  type SubscriberFailure,
 } from "@bounda-dev/core";
 import { type AdapterDefinition, isAdapter, type Storage } from "@bounda-dev/core/adapter";
 import type { Config, ErrorText } from "@bounda-dev/core/config";
@@ -28,6 +31,7 @@ import { generateProject } from "./generate/generate.ts";
 import { ConventionError } from "./generate/problems.ts";
 import { watchFromFirstRun } from "./generate/watch.ts";
 import { formatConventionError, formatReport, formatWarnings } from "./reporter.ts";
+import { formatSchema, formatStatus } from "./status-output.ts";
 
 export interface Output {
   write(text: string): void;
@@ -454,6 +458,90 @@ const runExpire = async (
   }
 };
 
+interface StatusOptions extends ActingOptions {
+  readonly json: boolean;
+}
+
+// The text of each failure is opened only when asked for, through the call the access log records.
+const runStatus = (
+  options: StatusOptions,
+  cwd: string,
+  stdout: Output,
+  stderr: Output,
+): Promise<number> =>
+  withApp(options, cwd, stderr, async (app) => {
+    const status = await app.status();
+    const opened = options.errorText
+      ? await actingAs(app, options).subscriberFailures.list()
+      : undefined;
+    if (options.json) {
+      line(
+        stdout,
+        JSON.stringify(
+          opened === undefined ? status : { ...status, subscriberFailures: opened },
+          null,
+          2,
+        ),
+      );
+    } else {
+      line(
+        stdout,
+        formatStatus({
+          status,
+          ...(opened === undefined
+            ? {}
+            : { opened: new Map<string, SubscriberFailure>(opened.map((f) => [f.subscriber, f])) }),
+        }),
+      );
+    }
+    return EXIT_OK;
+  });
+
+const runRestored = (
+  options: ProjectOptions,
+  cwd: string,
+  stdout: Output,
+  stderr: Output,
+): Promise<number> =>
+  withApp(options, cwd, stderr, async (app) => {
+    await app.restored();
+    line(
+      stdout,
+      `restore recorded: ${(await app.status()).restoresFound} found so far; the background jobs start over from the copy, without the holds it brought back`,
+    );
+    return EXIT_OK;
+  });
+
+// Only the configuration is read: the tables are migrated before any app of this release starts.
+const NO_REGISTRY: Registry = { aggregates: {}, readModels: {} };
+
+const runMigrate = async (
+  options: ProjectOptions,
+  cwd: string,
+  stdout: Output,
+  stderr: Output,
+): Promise<number> => {
+  const logger = logTo(stderr);
+  let config: Config;
+  try {
+    ({ config } = await loadProject({
+      root: rootOf(options, cwd),
+      configPath: options.config,
+      registry: NO_REGISTRY,
+      logger,
+    }));
+  } catch (error) {
+    line(stderr, `error: ${error instanceof Error ? error.message : String(error)}`);
+    return EXIT_FAILURE;
+  }
+  try {
+    line(stdout, `migrated\n${formatSchema(await migrateTables({ config }))}`);
+    return EXIT_OK;
+  } catch (error) {
+    return failed(stderr, error, errorTextOf(options, config));
+  }
+};
+
 // Records, so a kind or status added to core fails to compile here until the CLI accepts it.
 const DEAD_LETTER_KINDS = Object.keys({
   policy: true,
@@ -639,6 +727,38 @@ export const runCli: RunCliFunction = async ({
     .option("--root <dir>", "the project's root directory, where wrangler is installed")
     .action(async (options: ExpireOptions) => {
       exitCode = await runExpire(options, cwd, stdout, stderr, wrangler);
+    });
+
+  actingOptions(
+    program
+      .command("status")
+      .description(
+        "print the version of the tables, every subscriber's lag and last failure, and how the backfill, forget ledger, key rotation and retention stand",
+      )
+      .option("--json", "print the status as JSON", false),
+  ).action(async (options: StatusOptions) => {
+    exitCode = await runStatus(options, cwd, stdout, stderr);
+  });
+
+  projectOptions(
+    program
+      .command("restored")
+      .description(
+        "say the database was restored from a copy while the app was stopped: every instance starts its background jobs over, without the holds the copy brought back",
+      ),
+  ).action(async (options: ProjectOptions) => {
+    exitCode = await runRestored(options, cwd, stdout, stderr);
+  });
+
+  program
+    .command("migrate")
+    .description(
+      "bring Bounda's tables to this release's version in every database of the configuration, before a deploy",
+    )
+    .option("--root <dir>", "project root (default: current directory)")
+    .option("--config <file>", "configuration module under the root", "bounda.config.ts")
+    .action(async (options: ProjectOptions) => {
+      exitCode = await runMigrate({ ...options, errorText: false }, cwd, stdout, stderr);
     });
 
   try {

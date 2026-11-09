@@ -256,13 +256,7 @@ const run = async (seed: number): Promise<void> => {
           aggregateType: "process:order.ledger",
           aggregateId: order,
         });
-        const instance = fold({ initialState: {}, events });
-        const blocking = instance.failure?.letterId;
-        const letter =
-          blocking === undefined ? null : await harness.storage.deadLetterStore.get(blocking);
-        return instance.status === "failed" && letter?.status === "discarded"
-          ? "abandoned"
-          : instance.status;
+        return fold({ initialState: {}, events }).status;
       }),
     );
     const failed = await harness.storage.deadLetterStore.list({ status: "failed" });
@@ -328,10 +322,15 @@ const run = async (seed: number): Promise<void> => {
         .filter((id) => id?.startsWith("pay-") === true || id === template.id);
       const instance = fold({ initialState: {}, events });
       const blocking = instance.failure?.letterId;
-      const abandoned =
-        instance.status === "failed" &&
-        blocking !== undefined &&
-        (await harness.storage.deadLetterStore.get(blocking))?.status === "discarded";
+      const abandoned = instance.status === "abandoned";
+      if (abandoned) {
+        expect(
+          blocking === undefined
+            ? null
+            : (await harness.storage.deadLetterStore.get(blocking))?.status,
+          `${where}: ${order} was abandoned by discarding its failure's letter`,
+        ).toBe("discarded");
+      }
       const orderEvents = (
         await harness.storage.eventStore.load({ aggregateType: "order", aggregateId: order })
       ).events;
@@ -360,8 +359,13 @@ const run = async (seed: number): Promise<void> => {
             (event.payload as { letterId?: string }).letterId === instance.failure?.letterId,
         );
         expect(
-          events.slice(after + 1).filter((event) => event.type !== PROCESS_EVENTS.eventParked)
-            .length + 0,
+          events
+            .slice(after + 1)
+            .filter(
+              (event) =>
+                event.type !== PROCESS_EVENTS.eventParked &&
+                event.type !== PROCESS_EVENTS.abandoned,
+            ).length,
           `${where}: ${order} ran nothing once given up`,
         ).toBe(0);
       } else {
