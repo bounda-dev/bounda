@@ -200,6 +200,8 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
       completeUntil = markedAt + ROTATION_CHECK_INTERVAL_MS;
       return 0;
     }
+    // While another instance holds the lease, its row is one read, the keys a batch.
+    if (at < lease.heldElsewhereUntil() && !(await lease.take(at))) return 0;
     answer = null;
     const due = await keys.listWrappedUnder({ kids, releasedBy: now, limit: ROTATION_BATCH });
     if (due.length === 0) {

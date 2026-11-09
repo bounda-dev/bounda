@@ -61,4 +61,25 @@ describe("createLastFailures", () => {
       },
     ]);
   });
+
+  it("seals the text under the person the store names when the marks name nobody", async () => {
+    const storage = await memory().createStorage();
+    const lastFailures = createLastFailures({
+      store: storage.subscriberFailures,
+      aggregates: buildAggregates({ registry: { aggregates: {}, readModels: {} }, ports: {} }),
+      keys: createPersonalKeyWrapping({ wrapper: null, clock: createFixedClock() }).over(
+        storage.personalKeys,
+      ),
+      logger: createRecordingLogger("omit").logger,
+    });
+    await lastFailures.record({
+      subscriber: "projection:x",
+      event: { ...event, person: "c-9" },
+      error: new Error("cannot reach ana@example.com"),
+      at: new Date("2026-01-01T00:00:00.000Z"),
+    });
+    const stored = await storage.subscriberFailures.get("projection:x");
+    expect(stored).toMatchObject({ person: "c-9", errorMessage: { $personal: { person: "c-9" } } });
+    expect(JSON.stringify(stored)).not.toContain("ana@example.com");
+  });
 });

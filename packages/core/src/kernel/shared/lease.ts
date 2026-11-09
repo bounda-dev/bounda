@@ -84,6 +84,8 @@ export const createLease: CreateLeaseFunction = ({ checkpoints, row, clock, logg
       if (held === null) return;
       const until = held;
       held = null;
+      // Given back, it is no longer this instance's: another may write the same time next.
+      written = written.filter((value) => value !== until);
       const lapsed = Math.min(until, clock.now().getTime());
       await checkpoints.compareAndSet(row, until, lapsed).catch((error: unknown) => {
         logger.error("background job could not give its lease back", { lease: row, error });

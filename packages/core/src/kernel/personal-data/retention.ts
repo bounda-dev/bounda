@@ -256,6 +256,8 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
 
   const sweep = async (now: Date): Promise<number> => {
     const at = now.getTime();
+    // While another instance holds the lease, its row is one read, the persons a batch.
+    if (at < lease.heldElsewhereUntil() && !(await lease.take(at))) return 0;
     const due = await storage.persons.listIdle({
       activeBefore: new Date(at - retentionMs),
       releasedBy: now,

@@ -98,6 +98,32 @@ describe("the dispatcher's backoff", () => {
     expect(attemptsAt).toEqual([100, 1_100, 3_100, 7_100, 11_100]);
   });
 
+  it("resolves the stored failure again after a restore, which may have brought it back", async () => {
+    const resolved: string[] = [];
+    const { eventStore, checkpointStore } = await memory().createStorage();
+    const recovering = scripted("projection:x", [{ outcome: "advanced" }, { outcome: "advanced" }]);
+    const dispatcher = createDispatcher({
+      clock: createFixedClock(),
+      eventStore,
+      checkpointStore,
+      subscribers: [recovering],
+      batchSize: 10,
+      pollIntervalMs: 100,
+      lastFailures: {
+        record: async () => undefined,
+        resolve: async (subscriber) => {
+          resolved.push(subscriber);
+        },
+      },
+      logger: silentLogger,
+      errorText: "omit",
+    });
+    await dispatcher.processOnce();
+    dispatcher.restored();
+    await dispatcher.processOnce();
+    expect(resolved).toEqual(["projection:x", "projection:x"]);
+  });
+
   it("forgets every failure it met after a restore, so each is tried again at once", async () => {
     const poisoned = scripted("projection:poisoned", [failed, failed, failed]);
     const { clock, dispatcher } = await setUp([poisoned]);

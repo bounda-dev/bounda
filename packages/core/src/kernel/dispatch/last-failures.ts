@@ -52,7 +52,9 @@ export const createLastFailures: CreateLastFailuresFunction = ({
 }) => ({
   record: async ({ subscriber, event, error, at }) => {
     try {
-      const person = personOfEvent({ aggregates, event });
+      // The store's `person` when the marks name nobody, as for a person forgotten since: the text
+      // is then sealed under a key no store keeps.
+      const person = personOfEvent({ aggregates, event }) ?? event.person;
       await store.record({
         subscriber,
         position: event.position,

@@ -738,8 +738,11 @@ describe("the key rotation across instances", () => {
     expect(await one.sweep(clock.now())).toBe(1);
     await addUnder(store, "old", "c-2");
     clock.advance(ROTATION_CHECK_INTERVAL_MS);
-    const other = rotationOver({ keys: store, checkpoints, wrapper: wrapper() });
+    const { keys, reads } = counted(store);
+    const other = rotationOver({ keys, checkpoints, wrapper: wrapper() });
     expect(await other.sweep(clock.now())).toBe(0);
+    expect(await other.sweep(clock.now())).toBe(0);
+    expect(reads.count).toBe(1);
     expect(await kidsOf(store, ["c-2"])).toEqual(["old"]);
     expect(await other.nextDueAt()).toEqual(new Date(leased));
     await one.release();

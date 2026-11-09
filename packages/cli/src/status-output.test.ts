@@ -16,6 +16,8 @@ const failure = {
   resolvedAt: null,
 };
 
+const { errorCode: _code, ...withoutCode } = failure;
+
 const status: AppStatus = {
   schema: [
     { database: "storage", scope: "storage", version: 1, latest: 2 },
@@ -37,9 +39,8 @@ const status: AppStatus = {
   subscriberFailures: [
     { ...failure, current: true },
     {
-      ...failure,
+      ...withoutCode,
       subscriber: "policies",
-      errorCode: undefined,
       errorName: "Error",
       attempts: 1,
       resolvedAt: "2026-05-02T00:00:00.000Z",

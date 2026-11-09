@@ -117,7 +117,10 @@ export const checkpointStoreContract: CheckpointStoreContractFunction = ({ creat
         expect(await one.take(start)).toBe(true);
         await one.release();
         expect(await store.get("job:lease")).toBe(start);
-        expect(await leaseOver().take(start)).toBe(true);
+        const other = leaseOver();
+        expect(await other.take(start)).toBe(true);
+        expect(await one.take(start)).toBe(false);
+        expect(await store.get("job:lease")).toBe(start + LEASE_MS);
       });
 
       it("takes back as its own a lease of its own a restored copy brought back", async () => {

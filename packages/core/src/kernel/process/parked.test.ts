@@ -457,6 +457,36 @@ describe("events of a failed process", () => {
     ).toHaveLength(1);
   });
 
+  it("abandon an instance whose letter was discarded before ProcessAbandoned existed", async () => {
+    const context = await setUp();
+    const { harness, deadLetters, settle, types } = context;
+    await failOnFirstPayment(context);
+    const [letter] = await deadLetters.list();
+    // As a discard before this release left it: the letter discarded, the instance failed.
+    await harness.storage.deadLetterStore.updateStatus(
+      letter?.id ?? "",
+      "discarded",
+      harness.clock.now(),
+    );
+    const order = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    const last = order.events.at(-1);
+    if (last === undefined) throw new Error("no order");
+    await harness.storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "o-1",
+      expectedVersion: order.events.length,
+      events: [{ ...last, id: "after-upgrade", version: order.events.length + 1 }],
+    });
+    await settle();
+    expect((await types()).slice(-2)).toEqual([PROCESS_EVENTS.failed, PROCESS_EVENTS.abandoned]);
+    expect((await harness.storage.eventStore.load(stream)).events.at(-1)?.payload).toEqual({
+      letterId: letter?.id,
+    });
+  });
+
   it("abandon nothing for a letter its instance is not failed on", async () => {
     const context = await setUp();
     const { harness, deadLetters, types } = context;

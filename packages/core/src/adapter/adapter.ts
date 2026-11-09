@@ -238,6 +238,9 @@ export interface Adapter<Name extends string = string, Options = unknown>
  */
 export type SchemaScopeName = "storage" | "checkpoints" | "forget-ledger";
 
+/**
+ * Where one scope of Bounda's tables stands in a database, as `Adapter.schemaVersions` reads it.
+ */
 export interface SchemaVersion {
   readonly scope: string;
   /**

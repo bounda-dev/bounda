@@ -794,7 +794,6 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         lag: getLag,
         failures: written.subscriberFailures,
         restores,
-        backfill,
         reconciliation,
         rotation,
         retention,

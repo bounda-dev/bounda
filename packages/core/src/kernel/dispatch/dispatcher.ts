@@ -373,6 +373,7 @@ export const createDispatcher: CreateDispatcherFunction = ({
     },
     restored: () => {
       failing.clear();
+      checked.clear();
     },
     getLag: async () => {
       const lastPosition = await eventStore.lastPosition();

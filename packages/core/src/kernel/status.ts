@@ -7,7 +7,7 @@ import type {
 import type { ResolvedConfig } from "../config/types.ts";
 import type { AppLag } from "./app.ts";
 import type { DeadLetterRetention, DeadLetterRetentionStatus } from "./dead-letters/retention.ts";
-import type { PersonalDataBackfill } from "./personal-data/backfill.ts";
+import { sharesStorage } from "./personal-data/forget-ledger.ts";
 import type {
   ForgetLedgerReconciliation,
   ForgetLedgerReconciliationStatus,
@@ -76,7 +76,6 @@ export interface ReadAppStatusArgs {
   readonly lag: () => Promise<AppLag>;
   readonly failures: SubscriberFailureStore;
   readonly restores: RestoreWatch;
-  readonly backfill?: PersonalDataBackfill | undefined;
   readonly reconciliation?: ForgetLedgerReconciliation | undefined;
   readonly rotation?: KeyRotation | undefined;
   readonly retention?: RetentionSweep | undefined;
@@ -108,7 +107,9 @@ export const databasesOf: DatabasesOfFunction = (config) => {
     });
   }
   for (const [name, adapter] of Object.entries(config.readModels)) {
-    if (!isAdapter(adapter) || databases.some((known) => known.adapter === adapter)) continue;
+    if (!isAdapter(adapter) || databases.some((known) => sharesStorage(adapter, known.adapter))) {
+      continue;
+    }
     databases.push({ database: `readModels.${name}`, adapter, scopes: ["checkpoints"] });
   }
   const ledger = config.runtime.personalData.forgetLedger?.store;
@@ -133,7 +134,6 @@ export const readAppStatus: ReadAppStatusFunction = async ({
   lag,
   failures,
   restores,
-  backfill,
   reconciliation,
   rotation,
   retention,
@@ -168,7 +168,7 @@ export const readAppStatus: ReadAppStatusFunction = async ({
           failure.resolvedAt === null && position !== undefined && position < failure.position,
       };
     }),
-    personalDataBackfill: backfill === undefined ? null : await backfill.status(),
+    personalDataBackfill: current.personalDataBackfill,
     forgetLedger,
     keyRotation,
     retention: retained,
