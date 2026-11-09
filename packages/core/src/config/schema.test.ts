@@ -261,6 +261,13 @@ describe("resolveConfig", () => {
     expect(
       message({ storage: sqlite, runtime: { personalData: { retention: "1.5y" as "1y" } } }),
     ).toContain("runtime.personalData.retention: Invalid retention");
+    expect(message({ storage: sqlite, runtime: { personalData: { retention: "0mo" } } })).toContain(
+      "runtime.personalData.retention: Expected a retention longer than 0",
+    );
+    expect(
+      resolveConfig({ storage: sqlite, runtime: { personalData: { retention: "1mo" } } }).runtime
+        .personalData.retention,
+    ).toEqual({ months: 1, ms: 0 });
     expect(message({ storage: sqlite, runtime: { deadLetters: { retention: 0 } } })).toContain(
       "runtime.deadLetters.retention: Expected a duration longer than 0",
     );

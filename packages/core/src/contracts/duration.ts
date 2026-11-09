@@ -87,7 +87,7 @@ export interface Retention {
   readonly ms: number;
 }
 
-const CALENDAR_PATTERN = /^(\d+)(mo|y)$/;
+const CALENDAR_PATTERN = /^(\d+(?:\.\d+)?)(mo|y)$/;
 
 export interface ParseRetentionFunction {
   (input: LooseDurationInput): Retention;
@@ -98,15 +98,13 @@ export interface ParseRetentionFunction {
  */
 export const parseRetention: ParseRetentionFunction = (input) => {
   const match = typeof input === "string" ? CALENDAR_PATTERN.exec(input) : null;
-  if (match === null) {
-    if (typeof input === "string" && /^\d+(?:\.\d+)?(mo|y)$/.test(input)) {
-      throw new ValidationError(`Invalid retention: "${input}"`, [
-        { path: [], message: "Expected a whole number of months or years" },
-      ]);
-    }
-    return { months: 0, ms: parseDuration(input) };
-  }
+  if (match === null) return { months: 0, ms: parseDuration(input) };
   const [, amount, unit] = match;
+  if (!Number.isInteger(Number(amount))) {
+    throw new ValidationError(`Invalid retention: "${input}"`, [
+      { path: [], message: "Expected a whole number of months or years" },
+    ]);
+  }
   return { months: Number(amount) * (unit === "y" ? 12 : 1), ms: 0 };
 };
 
@@ -156,7 +154,6 @@ export interface RetentionStartFunction {
  */
 export const retentionStart: RetentionStartFunction = (end, { months, ms }) => {
   const by = end - ms;
-  if (months === 0) return by;
   const at = new Date(by);
   const year = at.getUTCFullYear();
   const month = at.getUTCMonth() - months;
