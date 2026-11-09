@@ -42,7 +42,10 @@ export interface ForgetLedgerMarksStatementFunction {
   (table: string): string;
 }
 
-// The second migration of the ledger's scope: its marks, one row per tenant and name.
+/**
+ * The table of the ledger's marks, one row per tenant and name, beside the ledger's own `table`,
+ * quoted: the second migration of the ledger's scope.
+ */
 export const forgetLedgerMarksStatement: ForgetLedgerMarksStatementFunction = (table) =>
   `CREATE TABLE IF NOT EXISTS ${forgetLedgerMarksTableFor(table)} (
     "tenant" TEXT NOT NULL,
