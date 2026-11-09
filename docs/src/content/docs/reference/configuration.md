@@ -128,7 +128,8 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
   [backups](/guides/personal-data/#backups). It holds:
   - **`store`**, required. The ledger: an adapter pointed at another database than `storage`, such
     as `sqlite({ path: "./ledger/forget-ledger.db" })` or `postgresql({ url })`, which creates its
-    `bounda_forget_ledger` table there on first use; `kvForgetLedger({ binding })` from
+    `bounda_forget_ledger` table there on first use, with `bounda_forget_ledger_marks` for the mark
+    that tells a [restore](/guides/personal-data/#restores) made while the app was stopped; `kvForgetLedger({ binding })` from
     `@bounda-dev/cloudflare` on Cloudflare; or a ledger of your own through `defineForgetLedger`.
     The runtime appends each forgetting to it as the forgetting commits, and copies every
     `PersonalDataForgotten` to it again from the stream in the background. An adapter pointing at
@@ -136,8 +137,8 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
   - **`reconcileEvery`**, `5m` by default (`DEFAULT_FORGET_LEDGER_RECONCILE_EVERY_MS` in
     `@bounda-dev/core/config`). The app reads the ledger when it starts and, while it runs, again
     this often, one instance a round, and forgets again, with `reason: "restored"`, whoever a
-    restored backup brought back. A Durable Object only runs a round on the passes it wakes for
-    anyway; it reconciles on every start.
+    restored backup brought back; a restore the instances find reconciles at once. A Durable Object
+    only runs a round on the passes it wakes for anyway; it reconciles on every start.
   - **`strict`**, `false` by default. When `false`, a ledger that cannot be read at start, or does
     not answer within ten seconds, does not fail it: the app logs an error and reconciles in the
     background, and `getLag()` reports `forgetLedger: { reconciled: false }` meanwhile. When
