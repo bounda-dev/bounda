@@ -1,9 +1,11 @@
 import { type Adapter, isAdapter } from "../adapter/adapter.ts";
 import type { ForgetLedger, ForgetLedgerEntry } from "../adapter/storage/forget-ledger.ts";
 import type { InspectedStore, InspectedTable } from "../adapter/storage/inspection.ts";
+import { DEFAULT_PERSONAL_CATEGORY } from "../adapter/storage/personal-key-store.ts";
 import type { BoundaClient } from "../kernel/app.ts";
-import { unseal } from "../kernel/personal-data/crypto.ts";
+import { categoryOf, unseal } from "../kernel/personal-data/crypto.ts";
 import type { PersonalDataExport } from "../kernel/personal-data/export.ts";
+import type { PersonalCategoryName } from "../modules/personal-data.ts";
 import { type Leaf, leavesIn, matches, needlesOf } from "./search.ts";
 import type { TelemetryRecording } from "./telemetry.ts";
 import type { TestWitness } from "./witness.ts";
@@ -81,6 +83,13 @@ export interface ExpectForgottenOptions {
    * was sent, a log of your own.
    */
   readonly places?: Readonly<Record<string, unknown>>;
+  /**
+   * Checks only these categories, as after `forget(personId, { categories })`: what was sealed or
+   * kept of the person in them, and the fields of `before` in them, are looked for, and the
+   * person must hold no key in force of them. Without it, every category the person no longer
+   * holds a key of.
+   */
+  readonly categories?: readonly PersonalCategoryName[];
 }
 
 /**
@@ -140,12 +149,32 @@ const ledgerEntries = async (ledger: ForgetLedger): Promise<readonly ForgetLedge
   }
 };
 
-const exportedValues = (exported: PersonalDataExport): readonly unknown[] => [
-  ...exported.events.map(({ data }) => data),
-  ...exported.scheduledCommands.map(({ data }) => data),
-  ...exported.deadLetters.map(({ data }) => data),
-  ...Object.values(exported.readModels).flatMap((rows) => rows.map(({ data }) => data)),
-];
+interface ExportedRecord {
+  readonly data: Readonly<Record<string, unknown>>;
+  readonly categories: Readonly<Record<string, string>>;
+}
+
+// The fields of each record, of the categories asked for alone when they are.
+const exportedValues = (
+  exported: PersonalDataExport,
+  categories: readonly string[] | undefined,
+): readonly unknown[] => {
+  const records: readonly ExportedRecord[] = [
+    ...exported.events,
+    ...exported.scheduledCommands,
+    ...exported.deadLetters,
+    ...Object.values(exported.readModels).flat(),
+  ];
+  return records.map(({ data, categories: of }) =>
+    categories === undefined
+      ? data
+      : Object.fromEntries(
+          Object.entries(data).filter(([field]) =>
+            categories.includes(of[field] ?? DEFAULT_PERSONAL_CATEGORY),
+          ),
+        ),
+  );
+};
 
 const rowOf = (table: InspectedTable, row: Readonly<Record<string, unknown>>, index: number) =>
   table.key.length === 0
@@ -210,10 +239,18 @@ const STORE_ADVICE: Readonly<Partial<Record<InspectedStore, string>>> = {
     "A snapshot holds the value from a field left unmarked: mark it personal() where the state's value comes from.",
 };
 
-const opened = async (witness: TestWitness, personId: string, held: string | null) => {
+const opened = async (
+  witness: TestWitness,
+  personId: string,
+  held: ReadonlySet<string>,
+  categories: readonly string[] | undefined,
+) => {
   const values: unknown[] = [];
   for (const { envelope, key } of witness.sealedFor(personId)) {
-    if (envelope.key === held) continue;
+    if (held.has(envelope.key)) continue;
+    if (categories !== undefined && !categories.includes(categoryOf({ $personal: envelope }))) {
+      continue;
+    }
     if (key === null) {
       throw new Error(
         `expectForgotten saw a value of "${personId}" sealed under a key the test app never held; report this as a bug in Bounda`,
@@ -224,14 +261,30 @@ const opened = async (witness: TestWitness, personId: string, held: string | nul
   return values;
 };
 
-// The fingerprint of the key the person holds now: what was sealed under it is theirs still.
-const heldKey = (tables: readonly InspectedTable[], personId: string): string | null => {
-  for (const table of tables) {
-    if (table.store !== "personalKeys") continue;
-    const row = table.rows.find((candidate) => candidate.person === personId);
-    if (row !== undefined) return String(row.fingerprint);
-  }
-  return null;
+interface HeldKeys {
+  /**
+   * The fingerprints of every key the person holds, in force or kept past a forgetting: what was
+   * sealed under one is theirs still, or kept lawfully.
+   */
+  readonly fingerprints: ReadonlySet<string>;
+  /**
+   * The categories of the keys they hold in force.
+   */
+  readonly inForce: ReadonlySet<string>;
+}
+
+const heldKeys = (tables: readonly InspectedTable[], personId: string): HeldKeys => {
+  const rows = tables
+    .filter((table) => table.store === "personalKeys")
+    .flatMap((table) => table.rows.filter((row) => row.person === personId));
+  return {
+    fingerprints: new Set(rows.map((row) => String(row.fingerprint))),
+    inForce: new Set(
+      rows
+        .filter((row) => row.retained_since === null || row.retained_since === undefined)
+        .map((row) => String(row.category ?? DEFAULT_PERSONAL_CATEGORY)),
+    ),
+  };
 };
 
 /**
@@ -241,8 +294,9 @@ const heldKey = (tables: readonly InspectedTable[], personId: string): string | 
  *
  * Given the app `createTestApp` returned, it looks for every value of a field marked
  * `personal()` that the app sealed under a key the person no longer holds, and for every value a
- * read model kept in a field marked `.personal()` for them before they were forgotten, and adds
- * `values` and `before`. It searches each table of the storage and of every read model, read as
+ * read model kept in a field marked `.personal()` for them before its category was forgotten, and
+ * adds `values` and `before`; with `categories`, those of the categories named alone. A key a
+ * legal obligation kept past the forgetting is still held, so what it sealed is not looked for. It searches each table of the storage and of every read model, read as
  * stored and never opened, the forget ledger, every entry the app logged and, with `telemetry`,
  * every span. Given an adapter, such as one over a Durable Object's storage, it searches that
  * adapter's tables for `values` and `before` alone.
@@ -272,17 +326,26 @@ export const expectForgotten: ExpectForgottenFunction = async (target, personId,
       "expectForgotten found no table to search: the adapter's database holds none of Bounda's, so it may be another one, or closed",
     );
   }
-  const held = heldKey(tables, personId);
+  const { categories } = options;
+  const held = heldKeys(tables, personId);
+  const stillHeld = [...held.inForce].filter(
+    (category) => categories === undefined || categories.includes(category),
+  );
+  if (categories !== undefined && stillHeld.length > 0) {
+    throw new Error(
+      `"${personId}" still holds a key in force of ${stillHeld.map((category) => `"${category}"`).join(", ")}: forget those categories before expectForgotten`,
+    );
+  }
   const values: unknown[] = [...(options.values ?? [])];
-  if (options.before !== undefined) values.push(...exportedValues(options.before));
+  if (options.before !== undefined) values.push(...exportedValues(options.before, categories));
   if (apps !== undefined) {
-    values.push(...(await opened(apps.witness, personId, held)));
-    values.push(...apps.witness.keptFor(personId));
+    values.push(...(await opened(apps.witness, personId, held.fingerprints, categories)));
+    values.push(...apps.witness.keptFor(personId, categories));
   }
   const needles = needlesOf({ values, personId });
   if (needles.length === 0) {
     throw new Error(
-      held === null
+      stillHeld.length === 0
         ? `expectForgotten found no value of "${personId}" to look for: pass the ones the test gave them as values, or their export as before`
         : `"${personId}" still holds a key: forget them before expectForgotten, which looks only for what was sealed under keys they no longer hold`,
     );

@@ -1087,7 +1087,7 @@ await expectForgotten(app, "c-1");
 It looks for every value the person had: each value of a field marked `personal()` that the test
 app sealed under a key they no longer hold, in an event, a process's state, a command it stored or
 a dead letter, a cancelled command's included, and each value a read model kept in a field marked
-`.personal()` for them before they were forgotten. It searches every place the runtime keeps
+`.personal()` for them before its category was forgotten. It searches every place the runtime keeps
 something, read as stored, never through the APIs that open fields: every table of the storage
 and of each read model's adapter, unmarked columns and JSON documents included, so a projection
 that copied the email into a column it did not mark is found; the forget ledger; and every entry
@@ -1147,9 +1147,16 @@ try {
 - `places`: anything else, under the name the report gives it: what a test double of a port was
   sent, so a test proves the [policy that tells the outside world](#telling-the-outside-world)
   erased it there too.
+- `categories`: the [categories](#categories) to check alone, after
+  `forget(personId, { categories })`: what was sealed or kept of the person in them, and the
+  fields of `before` in them, are looked for, and the person must hold no key in force of them.
 
-It refuses to pass for want of something to look for: a person who still holds their key, or one
-with no value to look for and no `values`, rejects with an `Error` saying so.
+Without `categories` it looks for what was sealed under every key the person no longer holds, so a
+category a legal obligation kept past the forgetting, whose key they still hold, is left out: that
+data stays lawfully, and its values may turn up anywhere it was kept. It refuses to pass for want
+of something to look for: a person who still holds their keys, or one with no value to look for
+and no `values`, rejects with an `Error` saying so, and so does one who still holds a key in force
+of a category `categories` names.
 
 `expectForgotten` also takes an adapter instead of the app, and then searches that adapter's
 tables for `values` and `before` alone: for an app built with `createApp` or `boot()`, or a

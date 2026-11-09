@@ -6,7 +6,10 @@ import type {
   Storage,
   StorageTransaction,
 } from "../adapter/adapter.ts";
-import type { PersonalEnvelope } from "../adapter/storage/personal-key-store.ts";
+import {
+  DEFAULT_PERSONAL_CATEGORY,
+  type PersonalEnvelope,
+} from "../adapter/storage/personal-key-store.ts";
 import type { Table } from "../adapter/storage/table.ts";
 import type { LogFields, Logger } from "../contracts/logger.ts";
 import { isSealed, type PersonalKey } from "../kernel/personal-data/crypto.ts";
@@ -21,14 +24,21 @@ export interface LoggedEntry {
 }
 
 /**
- * A value a read model kept in a field marked `.personal()`, and how many times its person had
- * been forgotten when it was written: only what was written before their last forgetting is
- * theirs no longer.
+ * A value a read model kept in a field marked `.personal()`, its category, and how many times its
+ * person had been forgotten when it was written: only what was written before a later forgetting
+ * of its category is theirs no longer.
  */
 interface KeptValue {
   readonly value: unknown;
+  readonly category: string;
   readonly forgettings: number;
 }
+
+/**
+ * The categories a `PersonalDataForgotten` forgot, `null` for every one, as one recorded before
+ * categories did.
+ */
+type Forgetting = readonly string[] | null;
 
 /**
  * Everything the test apps over one storage saw that `expectForgotten` needs once the person's
@@ -44,10 +54,10 @@ export interface TestWitness {
    */
   sealedFor(person: string): readonly SealedFor[];
   /**
-   * What the read models kept in their personal fields of the person, before they were last
-   * forgotten.
+   * What the read models kept in their personal fields of the person, in a category forgotten
+   * since; with `categories`, in one of those alone.
    */
-  keptFor(person: string): readonly unknown[];
+  keptFor(person: string, categories?: readonly string[]): readonly unknown[];
   /**
    * `adapter`, observed: the same object for the same adapter, so the app still tells it apart
    * from another, as the forget ledger's check that it is not the storage does.
@@ -90,7 +100,7 @@ const createTestWitness = (): TestWitness => {
   const keys = new Map<string, Map<string, PersonalKey>>();
   const envelopes = new Map<string, Map<string, PersonalEnvelope>>();
   const kept = new Map<string, KeptValue[]>();
-  const forgettings = new Map<string, number>();
+  const forgettings = new Map<string, Forgetting[]>();
   const logs: LoggedEntry[] = [];
   const wrapped = new WeakMap<Adapter, Adapter>();
 
@@ -115,7 +125,11 @@ const createTestWitness = (): TestWitness => {
       record.aggregateType === BOUNDA_AGGREGATE &&
       typeof record.aggregateId === "string"
     ) {
-      forgettings.set(record.aggregateId, (forgettings.get(record.aggregateId) ?? 0) + 1);
+      const forgot: unknown = Reflect.get(Object(record.payload), "categories");
+      forgettings.set(record.aggregateId, [
+        ...(forgettings.get(record.aggregateId) ?? []),
+        Array.isArray(forgot) ? forgot.map(String) : null,
+      ]);
     }
     for (const [name, inner] of Object.entries(record)) observe(inner, name, seen);
   };
@@ -164,9 +178,13 @@ const createTestWitness = (): TestWitness => {
     const person = marks.person === null ? undefined : row[marks.person];
     if (typeof person !== "string") return;
     const values = kept.get(person) ?? [];
-    for (const field of marks.personal) {
-      if (row[field] === undefined || row[field] === null) continue;
-      values.push({ value: row[field], forgettings: forgettings.get(person) ?? 0 });
+    for (const { name, category } of marks.personal) {
+      if (row[name] === undefined || row[name] === null) continue;
+      values.push({
+        value: row[name],
+        category,
+        forgettings: forgettings.get(person)?.length ?? 0,
+      });
     }
     kept.set(person, values);
   };
@@ -183,7 +201,7 @@ const createTestWitness = (): TestWitness => {
     },
     update: async (where, patch) => {
       const changes = patch as Record<string, unknown>;
-      if (marks.personal.some((field) => changes[field] !== undefined)) {
+      if (marks.personal.some(({ name }) => changes[name] !== undefined)) {
         for (const row of await table.findMany({ where })) {
           keep({ ...(row as Record<string, unknown>), ...changes }, marks);
         }
@@ -235,10 +253,16 @@ const createTestWitness = (): TestWitness => {
         envelope,
         key: keys.get(person)?.get(envelope.key) ?? null,
       })),
-    keptFor: (person) =>
-      (kept.get(person) ?? [])
-        .filter((value) => value.forgettings < (forgettings.get(person) ?? 0))
-        .map(({ value }) => value),
+    keptFor: (person, categories) => {
+      const since = forgettings.get(person) ?? [];
+      return (kept.get(person) ?? [])
+        .filter(
+          ({ category, forgettings: before }) =>
+            (categories === undefined || categories.includes(category)) &&
+            since.slice(before).some((forgot) => forgot === null || forgot.includes(category)),
+        )
+        .map(({ value }) => value);
+    },
     storage: (adapter) => {
       const existing = wrapped.get(adapter);
       if (existing !== undefined) return existing;
@@ -264,13 +288,15 @@ const createTestWitness = (): TestWitness => {
 
 interface ReadModelMarks {
   readonly person: string | null;
-  readonly personal: readonly string[];
+  readonly personal: readonly { readonly name: string; readonly category: string }[];
 }
 
 const marksOf = (fields: FieldsRecord): ReadModelMarks => {
   const entries = Object.entries(fields);
   return {
     person: entries.find(([, field]) => field.mark === "person")?.[0] ?? null,
-    personal: entries.filter(([, field]) => field.mark === "personal").map(([name]) => name),
+    personal: entries
+      .filter(([, field]) => field.mark === "personal")
+      .map(([name, field]) => ({ name, category: field.category ?? DEFAULT_PERSONAL_CATEGORY })),
   };
 };
