@@ -208,7 +208,7 @@ export const createBounda: CreateBoundaFunction = <R extends Registry = AppRegis
     // Before any app has booted, what `boot()` would resolve without the configuration.
     errorText: () =>
       slot.errorText ??
-      resolveErrorText({ env: globalThis.process?.env, fallback: errorText, invalidEnv: "ignore" }),
+      resolveErrorText({ env: process.env, fallback: errorText, invalidEnv: "ignore" }),
     logger: () => {
       if (logger !== undefined) return logger;
       consoleLogger ??= import("@bounda-dev/core/node").then((node) => node.createConsoleLogger());
