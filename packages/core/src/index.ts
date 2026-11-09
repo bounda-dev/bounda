@@ -83,6 +83,17 @@ export type {
   ErrorFieldsFunction,
 } from "./kernel/shared/error-fields.ts";
 export { errorFields } from "./kernel/shared/error-fields.ts";
+export type {
+  ResolveErrorTextArgs,
+  ResolveErrorTextFunction,
+  WithErrorTextArgs,
+  WithErrorTextFunction,
+} from "./kernel/shared/error-text.ts";
+export {
+  ERROR_TEXT_VARIABLE,
+  resolveErrorText,
+  withErrorText,
+} from "./kernel/shared/error-text.ts";
 export type { IdempotencyKeyForFunction } from "./kernel/shared/idempotency-key.ts";
 export { idempotencyKeyFor } from "./kernel/shared/idempotency-key.ts";
 export type { AppStatus, SchemaStatus, SubscriberFailureStatus } from "./kernel/status.ts";

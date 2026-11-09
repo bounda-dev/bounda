@@ -1,4 +1,9 @@
-import { type AppRegistry, ConfigurationError, type Registry } from "@bounda-dev/core";
+import {
+  type AppRegistry,
+  ConfigurationError,
+  type Registry,
+  withErrorText,
+} from "@bounda-dev/core";
 import type { Config, ErrorText } from "@bounda-dev/core/config";
 import { boot, type ImportModuleFunction } from "@bounda-dev/core/node";
 import { actorOfModule } from "../actor.ts";
@@ -14,21 +19,13 @@ const needsWorkers = (error: unknown): boolean =>
   Reflect.get(error, "code") === "ERR_UNSUPPORTED_ESM_URL_SCHEME" &&
   error.message.includes("'cloudflare:'");
 
-// The configuration's own `errorText` wins over the host's default.
-const withErrorText = (module: Readonly<Record<string, unknown>>, errorText: ErrorText) => {
+// The host's default applies under the configuration's own `errorText`; `boot()` then applies
+// `BOUNDA_ERROR_TEXT` over both.
+const withFallback = (module: Readonly<Record<string, unknown>>, fallback: ErrorText) => {
   const config = module.default as Config | undefined;
   return config === undefined
     ? module
-    : {
-        ...module,
-        default: {
-          ...config,
-          runtime: {
-            ...config.runtime,
-            telemetry: { errorText, ...config.runtime?.telemetry },
-          },
-        } satisfies Config,
-      };
+    : { ...module, default: withErrorText({ config, fallback }) };
 };
 
 const explainWorkers =
@@ -36,7 +33,7 @@ const explainWorkers =
   async () => {
     try {
       const module = await importConfig();
-      return errorText === undefined ? module : withErrorText(module, errorText);
+      return errorText === undefined ? module : withFallback(module, errorText);
     } catch (error) {
       if (!needsWorkers(error)) throw error;
       throw new ConfigurationError(
@@ -71,4 +68,5 @@ export const createHost: CreateHostFunction = <R extends Registry = AppRegistry>
       }),
     consistency,
     ...(importActor === undefined ? {} : { actor: actorOfModule(importActor) }),
+    errorText,
   });

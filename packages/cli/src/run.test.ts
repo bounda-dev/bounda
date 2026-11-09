@@ -403,6 +403,51 @@ describe("bounda rebuild", () => {
     expect(told.stderr).toContain('"errorMessage":"cannot total ana@example.com"');
   });
 
+  it("prints and logs the text of errors as BOUNDA_ERROR_TEXT says, under --error-text", async () => {
+    const args = ["dead-letters", "list", "--registry", ".bounda/failing-registry.ts"];
+    try {
+      process.env.BOUNDA_ERROR_TEXT = "include";
+      const told = await cli(args, fixture);
+      expect(told.stderr).toContain('"errorMessage":"probed ana@example.com"');
+      process.env.BOUNDA_ERROR_TEXT = "omit";
+      const quiet = await cli(args, fixture);
+      expect(quiet.stderr).not.toContain("ana@example.com");
+      const flagged = await cli([...args, "--error-text"], fixture);
+      expect(flagged.stderr).toContain('"errorMessage":"probed ana@example.com"');
+      process.env.BOUNDA_ERROR_TEXT = "loud";
+      const refused = await cli(args, fixture);
+      expect(refused.code).toBe(EXIT_FAILURE);
+      expect(refused.stderr).toBe(
+        'error: BOUNDA_ERROR_TEXT must be "omit" or "include", not "loud"\n',
+      );
+    } finally {
+      delete process.env.BOUNDA_ERROR_TEXT;
+    }
+  });
+
+  it("prints the text of a rebuild's error when BOUNDA_ERROR_TEXT includes it", async () => {
+    const project = await loadProject<typeof failingRegistry>({
+      root: fixture,
+      registryPath: ".bounda/failing-registry.ts",
+      logger: silentLogger,
+    });
+    const app = await createApp({ ...project, logger: silentLogger });
+    await app.commands.increment({ counterId: `c-${Date.now()}` });
+    await app.stop();
+    try {
+      process.env.BOUNDA_ERROR_TEXT = "include";
+      const told = await cli(
+        ["rebuild", "failingTotals", "--registry", ".bounda/failing-registry.ts"],
+        fixture,
+      );
+      expect(told.code).toBe(EXIT_FAILURE);
+      expect(told.stderr).toContain("error: cannot total ana@example.com\n");
+      expect(told.stderr).toContain('"errorMessage":"cannot total ana@example.com"');
+    } finally {
+      delete process.env.BOUNDA_ERROR_TEXT;
+    }
+  });
+
   it("logs the text of errors while the app runs only with --error-text", async () => {
     const args = ["dead-letters", "list", "--registry", ".bounda/failing-registry.ts"];
     const quiet = await cli(args, fixture);
@@ -821,6 +866,28 @@ describe("bounda status", () => {
     ]);
   });
 
+  it.each([
+    ["include", [], true],
+    ["omit", [], false],
+    ["omit", ["--error-text"], true],
+  ] as const)(
+    "opens the texts of the failures as BOUNDA_ERROR_TEXT %s says, under %j",
+    async (variable, flags, opened) => {
+      await fail();
+      try {
+        process.env.BOUNDA_ERROR_TEXT = variable;
+        const result = await cli(["status", ...failing, ...flags], fixture);
+        expect(result.code).toBe(EXIT_OK);
+        expect(result.stdout.includes("cannot total ana@example.com")).toBe(opened);
+        expect(logged(result.stderr, "info", "personal data accessed")).toHaveLength(
+          opened ? 1 : 0,
+        );
+      } finally {
+        delete process.env.BOUNDA_ERROR_TEXT;
+      }
+    },
+  );
+
   it("prints the status as JSON with --json, with the texts only when asked for", async () => {
     await fail();
     const quiet = await cli(["status", ...failing, "--json"], fixture);
@@ -902,6 +969,28 @@ export default { storage: adapter };
       expect(result.stderr).toContain("error: Error; its message may quote personal data");
     } finally {
       delete process.env.REFUSE_MIGRATION;
+    }
+  });
+
+  it("prints the text a migration fails on under BOUNDA_ERROR_TEXT, and refuses a value it does not know before migrating", async () => {
+    const root = await migrating();
+    process.env.REFUSE_MIGRATION = "1";
+    try {
+      process.env.BOUNDA_ERROR_TEXT = "include";
+      const told = await cli(["migrate", "--root", root], repoRoot);
+      expect(told.code).toBe(EXIT_FAILURE);
+      expect(told.stderr).toContain("ana@example.com");
+      Reflect.deleteProperty(globalThis, "migratedScopes");
+      process.env.BOUNDA_ERROR_TEXT = "loud";
+      const refused = await cli(["migrate", "--root", root], repoRoot);
+      expect(refused.code).toBe(EXIT_FAILURE);
+      expect(refused.stderr).toBe(
+        'error: BOUNDA_ERROR_TEXT must be "omit" or "include", not "loud"\n',
+      );
+      expect(Reflect.get(globalThis, "migratedScopes")).toBeUndefined();
+    } finally {
+      delete process.env.REFUSE_MIGRATION;
+      delete process.env.BOUNDA_ERROR_TEXT;
     }
   });
 

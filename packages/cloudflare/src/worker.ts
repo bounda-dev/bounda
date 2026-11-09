@@ -5,6 +5,7 @@ import {
   type DispatchOptions,
   errorFields,
   type Logger,
+  resolveErrorText,
 } from "@bounda-dev/core";
 import type { Config } from "@bounda-dev/core/config";
 import type { BoundaStub } from "./client.ts";
@@ -162,7 +163,8 @@ const route = (pathname: string): { readonly kind: string; readonly name: string
  * with `issues`, 404 for an unknown command, query or row, 409 for a command's rejection, with its
  * code in `rejected`, for one refused because the person it touches is restricted, or for a
  * conflict, 413 for a body over `maxPayloadBytes`. Anything else is a
- * 500 without its message, which is logged instead, as `runtime.telemetry.errorText` says. There is no authentication and no operator
+ * 500 without its message, which is logged instead, as `BOUNDA_ERROR_TEXT` in the Worker's `env`
+ * says, or else `runtime.telemetry.errorText`. There is no authentication and no operator
  * endpoint: it is a starting point, and an app with users writes its own `fetch` over `connect`. Throws `ConfigurationError` when
  * `storage` is not `cloudflare()` or for a `consistency` it does not know.
  */
@@ -227,7 +229,12 @@ export const createWorker: CreateWorkerFunction = ({
         }
         logger.error("bounda worker request failed", {
           path: url.pathname,
-          ...errorFields({ error, errorText: config.runtime?.telemetry?.errorText }),
+          // The object refuses a `BOUNDA_ERROR_TEXT` it does not know, and the request fails with
+          // that: logging the failure must not throw instead.
+          ...errorFields({
+            error,
+            errorText: resolveErrorText({ env, config, ignoreInvalidEnv: true }),
+          }),
         });
         return failure("INTERNAL", "Internal error", 500);
       }

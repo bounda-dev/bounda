@@ -24,6 +24,10 @@ const project = async (fixture = "order-app-inferred"): Promise<string> => {
     filter: (source) => !source.includes("/+types"),
   });
   await writeFile(
+    join(root, "app/entry.server.tsx"),
+    'export { handleError } from "@bounda-dev/react-router/app";\n',
+  );
+  await writeFile(
     join(root, "tsconfig.json"),
     JSON.stringify({
       extends: join(repoRoot, "tsconfig.base.json"),
@@ -200,7 +204,7 @@ describe("bounda() Vite plugin", () => {
         'import { createHost } from "@bounda-dev/react-router/host";',
         'import { registry } from "/project/.bounda/registry.ts";',
         "",
-        "export const { bounda, boundaMiddleware, dispose } = createHost({",
+        "export const { bounda, boundaMiddleware, dispose, handleError } = createHost({",
         '  root: "/project",',
         '  errorText: "include",',
         "  registry,",
@@ -245,6 +249,7 @@ describe("bounda() Vite plugin", () => {
         "export const bounda = new Proxy({}, { get: serverOnly });",
         "export const boundaMiddleware = serverOnly;",
         "export const dispose = serverOnly;",
+        "export const handleError = serverOnly;",
         "export const failure = serverOnly;",
         "",
       ].join("\n"),
@@ -253,10 +258,12 @@ describe("bounda() Vite plugin", () => {
       bounda: { defaultValue?: unknown };
       boundaMiddleware: () => unknown;
       failure: () => unknown;
+      handleError: () => unknown;
     };
     expect(() => module.bounda.defaultValue).toThrow("server-only");
     expect(() => module.boundaMiddleware()).toThrow("server-only");
     expect(() => module.failure()).toThrow("server-only");
+    expect(() => module.handleError()).toThrow("server-only");
   });
 
   it("serves nothing before the config is resolved", () => {
@@ -306,6 +313,48 @@ describe("bounda() Vite plugin", () => {
     expect(await exists(join(root, ".bounda/registry.ts"))).toBe(true);
     expect(recorded.warnings).toEqual([]);
     expect(recorded.errors).toEqual([]);
+  });
+
+  it.each([
+    ['export { handleError } from "@bounda-dev/react-router/app";', "entry.server.tsx", false],
+    ['export { default, handleError } from "./server.ts";', "entry.server.ts", false],
+    ["export function handleError() {}", "entry.server.jsx", false],
+    ["export async function handleError() {}", "entry.server.mts", false],
+    ["export const handleError = () => undefined;", "entry.server.js", false],
+    ["export default function handleRequest() {}", "entry.server.tsx", true],
+    ["const handleError = () => undefined;", "entry.server.tsx", true],
+    [undefined, undefined, true],
+  ] as const)(
+    "warns once, on serve and build, unless the entry server exports handleError: %s in %s",
+    async (source, file, warned) => {
+      const root = await project("order-app");
+      await rm(join(root, "app/entry.server.tsx"));
+      if (source !== undefined && file !== undefined) {
+        await writeFile(join(root, "app", file), `${source}\n`);
+      }
+      for (const command of ["serve", "build"] as const) {
+        const { configure, start, recorded } = harness(root);
+        configure(command);
+        await start(true);
+        await start(true);
+        expect(recorded.warnings).toEqual(
+          warned
+            ? [
+                `[bounda] ${file === undefined ? "app/entry.server.tsx is missing" : `app/${file} does not export handleError`}, so React Router logs the message and the stack of whatever a loader, an action or the render throws, and a message may quote personal data. Export Bounda's from it: export { handleError } from "@bounda-dev/react-router/app"; see https://docs.bounda.dev/guides/react-router/#logging-errors`,
+              ]
+            : [],
+        );
+      }
+    },
+  );
+
+  it("warns that the entry server is missing in a project without an app directory", async () => {
+    const root = await mkdtemp(join(tmpdir(), "bounda-vite-"));
+    temporary.push(root);
+    const { configure, start, recorded } = harness(root);
+    configure("serve");
+    await start().catch(() => undefined);
+    expect(recorded.warnings[0]).toMatch(/^\[bounda\] app\/entry\.server\.tsx is missing, /);
   });
 
   it("does nothing at build start before the config is resolved", async () => {

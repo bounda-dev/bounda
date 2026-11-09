@@ -36,8 +36,8 @@ export default defineConfig({ plugins: [bounda(), reactRouter()] });
 The plugin does two things. It runs `bounda generate` when the dev server or the build starts and
 after every change under `app/domain` and `app/read`, so there is no generator to keep running on
 the side. And it serves `@bounda-dev/react-router/app`: the `bounda` context, the
-`boundaMiddleware`, a `dispose()` and `failure`, wired to the generated registry and typed for
-your project through `.bounda/register.d.ts`.
+`boundaMiddleware`, a `dispose()`, `failure` and `handleError`, wired to the generated registry and
+typed for your project through `.bounda/register.d.ts`.
 
 Bounda's modules live in the same `app/` directory as your routes: `app/domain` and `app/read`
 next to `app/routes`, `app/root.tsx` and `app/routes.ts`. The generator only looks at those two
@@ -113,6 +113,42 @@ when its handler rejects it, with the code in `rejected`. Return `failure(error)
 Cloudflare, which arrive as plain errors.
 Anything else is rethrown and reaches the route's `ErrorBoundary`. `Failure`, the shape of that
 data, is exported from `@bounda-dev/react-router`.
+
+## Logging errors
+
+React Router logs what a loader, an action or the render throws, and its default `handleError`
+logs the message and the stack, in production too. A message may quote what the code read, a
+person's email included, and a log keeps it in the clear, where `forget` never reaches. So export
+Bounda's `handleError` from `app/entry.server.tsx`, and call it from the render's `onError`:
+
+```tsx
+// app/entry.server.tsx
+import { handleError } from "@bounda-dev/react-router/app";
+
+export { handleError };
+
+export default function handleRequest(/* … */) {
+  // React Router's default entry, with `onError` calling
+  // `void handleError(error, { request })` where the default calls `console.error(error)`.
+}
+```
+
+It logs one line per error, `request failed` with the method, the error's class and, for one of
+Bounda's, its `code`, under the rule of
+[error text](/reference/observability/#error-text): the message, the stack and the request's path,
+which may quote what a user typed, only with `runtime.telemetry.errorText: "include"` or
+`BOUNDA_ERROR_TEXT=include`. Like the default, it skips a request the client aborted, and it
+unwraps what React Router throws itself, such as no route matching, to the error inside. On Node
+it writes to the console as `boot()` does, and follows the app's configuration once it has booted:
+the dev server's `"include"` before that, `"omit"` in a build. On Cloudflare it writes JSON lines,
+as the Durable Object does, and follows `BOUNDA_ERROR_TEXT` in the Worker's `env`, or else the
+configuration once a request has imported it: it never waits for an import, which the Worker could
+cancel once the response is sent.
+
+`create-bounda` writes the whole file, React Router's default entry for the runtime with these two
+changes: in an existing project, `react-router reveal entry.server` writes the default into `app/`
+to start from. Without the file, or when it does not export `handleError`, the `bounda()` plugin warns
+when the dev server or the build starts.
 
 ## When the client goes away
 
@@ -230,8 +266,8 @@ right after.
   the built app reads it from the directory it runs in.
 - The dev server logs the text of errors, message and stack, unless `bounda.config.ts` sets
   [`runtime.telemetry.errorText`](/reference/observability/#error-text); the built app does not,
-  since an error's message may quote personal data. On Cloudflare the app runs in its Durable
-  Object, which follows its own configuration.
+  since an error's message may quote personal data. `BOUNDA_ERROR_TEXT` in the environment or in
+  `.env` overrides both. On Cloudflare the app runs in its Durable Object: see below.
 - `react-router build` bundles `bounda.config.ts` and the generated registry into the server
   build, so the build runs from wherever it is deployed, with no need to ship either file.
 - A component that touches `@bounda-dev/react-router/app` gets a clear error: the client build
@@ -325,6 +361,10 @@ processes and scheduled commands run in the object's alarm, as
 - `react-router build` writes the Worker and its `wrangler.json`; `wrangler deploy` deploys it.
 - Bounda loads no `.env` here: the Worker's variables and secrets come from Wrangler, locally from
   `.dev.vars`, and port implementations receive them as `env` in `create`.
+- The configuration is the same bundle in development and in production, so the text of errors
+  comes from `.dev.vars`: `BOUNDA_ERROR_TEXT=include` there makes the Durable Object's logs and
+  `handleError` in the Worker carry it under `react-router dev` and `wrangler dev`, and a
+  deployment, which never reads `.dev.vars`, logs without it. `create-bounda` writes that line.
 - With `storage: cloudflare()` but without `@cloudflare/vite-plugin`, the server runs in Node,
   which cannot import the Workers runtime, and the first request fails saying to add the plugin.
 
@@ -348,7 +388,7 @@ import { boot } from "@bounda-dev/core/node";
 import { createBounda } from "@bounda-dev/react-router";
 import { registry } from "../.bounda/registry.ts";
 
-export const { bounda, boundaMiddleware, dispose } = createBounda({
+export const { bounda, boundaMiddleware, dispose, handleError } = createBounda({
   boot: () => boot({ registry, importConfig: () => import("../bounda.config.ts") }),
 });
 ```
@@ -358,8 +398,11 @@ build bundles both and a change to either re-evaluates this file in development;
 then stops the app booted before, and the next request boots a new one once that stop has
 finished, so the two never hold the storage at the same time. Its options are `boot` (how to
 create the app, `boot()` by default), `consistency`, `actor` (the function `app/actor.ts` would
-export) and `key` (where the running app is kept on `globalThis`, one app per key). `dispose()` stops the running app and forgets it, and resolves
-once every app booted under that key has stopped. Import `failure` from
+export), `key` (where the running app is kept on `globalThis`, one app per key), and for
+`handleError` a `logger` (`createConsoleLogger()` by default) and the `errorText` it follows before
+an app has booted (`"omit"` by default). `dispose()` stops the running app and forgets it, and resolves
+once every app booted under that key has stopped. Export `handleError` from
+`app/entry.server.tsx` as [above](#logging-errors). Import `failure` from
 `@bounda-dev/react-router`.
 
 On Cloudflare, `createBounda` from `@bounda-dev/react-router/cloudflare` takes the configuration
@@ -370,12 +413,13 @@ and the tenant instead, and reads the binding from the Worker's `env`:
 import { createBounda } from "@bounda-dev/react-router/cloudflare";
 import config from "../bounda.config.ts";
 
-export const { bounda, boundaMiddleware } = createBounda({
+export const { bounda, boundaMiddleware, handleError } = createBounda({
   config,
   tenant: ({ params }) => params.workspace ?? "default",
 });
 ```
 
-It takes `consistency` and `actor` too, and throws `ConfigurationError` when `storage` is not `cloudflare()`,
+It takes `consistency`, `actor` and a `logger` for `handleError` (`workersLogger` from
+`@bounda-dev/cloudflare` by default) too, and throws `ConfigurationError` when `storage` is not `cloudflare()`,
 when the Worker has no such binding, without a `tenant` function, or for a `consistency` it does
 not know.
