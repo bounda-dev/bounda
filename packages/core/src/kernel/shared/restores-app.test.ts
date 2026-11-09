@@ -270,6 +270,8 @@ describe("a database restored while the app runs", () => {
       .filter((event) => event.type === "PersonalDataForgotten")
       .map((event) => (event.payload as PersonalDataForgottenPayload).reason);
     expect(reasons).toEqual(["restored"]);
+    // Found once, though the reconciliation of the same pass forgot someone again.
+    expect((await app.status()).restoresFound).toBe(1);
   });
 
   it("tells every running instance, the first that found it once", async () => {

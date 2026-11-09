@@ -161,11 +161,11 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
 
   // Moves the generation past what this instance read, and the mark with it: a copy taken before
   // holds less than both from then on.
-  const move = async (at: number): Promise<void> => {
-    if (seen === null) return;
-    const next = seen.generation + 1;
-    if (await checkpoints.compareAndSet(RESTORE_GENERATION, seen.generation, next)) {
-      seen = { ...seen, generation: next };
+  const move = async (from: Seen, at: number): Promise<void> => {
+    const next = from.generation + 1;
+    seen = from;
+    if (await checkpoints.compareAndSet(RESTORE_GENERATION, from.generation, next)) {
+      seen = { ...from, generation: next };
       await raise(next);
     }
     movedAt = at;
@@ -197,7 +197,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
       pending = true;
     }
     seen = current;
-    if (pending && !unmarked && at - movedAt >= GENERATION_INTERVAL_MS) await move(at);
+    if (pending && !unmarked && at - movedAt >= GENERATION_INTERVAL_MS) await move(current, at);
     return restored;
   };
 
@@ -215,7 +215,8 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
         head = await events.lastPosition();
         seen = stored;
         const restored = await compareWithMark(stored);
-        if (restored === null && marks !== null) await raise(stored.generation);
+        // A mark only goes up: past a restore it is already higher.
+        await raise(stored.generation);
         return restored;
       } catch (error) {
         return logged("the database could not be compared with the forget ledger's mark")(error);
@@ -233,8 +234,9 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
       if (seen === null || unmarked) return;
       try {
         const last = await events.lastPosition();
-        if (pending || (head !== null && last !== head)) await move(Number.NEGATIVE_INFINITY);
-        else await raise(seen.generation);
+        if (pending || (head !== null && last !== head)) {
+          await move(seen, Number.NEGATIVE_INFINITY);
+        } else await raise(seen.generation);
       } catch (error) {
         logger.error("the database could not be checked for a restore", { error });
       }

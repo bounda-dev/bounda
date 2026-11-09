@@ -195,4 +195,31 @@ describe("createRestoreWatch", () => {
     expect(await watch.declare()).toEqual({ first: true });
     expect(await checkpointStore.get(RESTORES_FOUND)).toBe(5);
   });
+
+  it("moves nothing on a stop without a write since the last move, and logs a stream it cannot read", async () => {
+    let down = false;
+    const { checkpointStore } = await memory().createStorage();
+    const ledger = await memory().createForgetLedger({});
+    const { logger, entries } = createRecordingLogger("omit");
+    const watch = createRestoreWatch({
+      checkpoints: checkpointStore,
+      events: {
+        lastPosition: async () => {
+          if (down) throw new Error("down");
+          return 0;
+        },
+      },
+      marks: ledger,
+      logger,
+    });
+    await watch.start();
+    await watch.check(at(0), { active: true });
+    await watch.flush();
+    expect(await checkpointStore.get(RESTORE_GENERATION)).toBe(1);
+    down = true;
+    await watch.flush();
+    expect(entries.map(({ message }) => message)).toEqual([
+      "the database could not be checked for a restore",
+    ]);
+  });
 });
