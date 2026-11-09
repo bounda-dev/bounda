@@ -202,6 +202,48 @@ describe("a database restored while the app runs", () => {
     expect(await app.status()).toMatchObject({ restoresFound: 1 });
   });
 
+  it("moves the generation after a pass that wrote no event, as a key rewrapped, and not while idle", async () => {
+    const { adapter, db } = createNodeSqliteAdapter();
+    const old = randomKey();
+    const before = await start({
+      adapter,
+      env: { BOUNDA_MASTER_KEY: old },
+      runtime: { personalData: { keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }) } },
+    });
+    await register(before.app, "c-1");
+    await before.app.stop();
+    const { app, clock } = await start({
+      adapter,
+      env: { BOUNDA_MASTER_KEY: randomKey(), BOUNDA_MASTER_KEY_PREVIOUS: old },
+      runtime: {
+        personalData: {
+          keyWrapper: masterKey({
+            from: "BOUNDA_MASTER_KEY",
+            previous: ["BOUNDA_MASTER_KEY_PREVIOUS"],
+          }),
+        },
+      },
+    });
+    const generation = () =>
+      (
+        db
+          .prepare(
+            `SELECT "position" FROM "bounda_checkpoints" WHERE "subscriber" = 'runtime:generation'`,
+          )
+          .get() as { position: number } | undefined
+      )?.position ?? 0;
+    await app.runUntilIdle({ maxPasses: 1 });
+    const rewrapped = generation();
+    clock.advance(GENERATION_INTERVAL_MS);
+    await app.runUntilIdle({ maxPasses: 1 });
+    expect(generation()).toBe(rewrapped + 1);
+    clock.advance(GENERATION_INTERVAL_MS);
+    await app.runUntilIdle({ maxPasses: 1 });
+    clock.advance(GENERATION_INTERVAL_MS);
+    await app.runUntilIdle({ maxPasses: 1 });
+    expect(generation()).toBe(rewrapped + 1);
+  });
+
   it("forgets again at once whom the copy brings back, without waiting for the periodic reconciliation", async () => {
     const { adapter, db } = createNodeSqliteAdapter();
     const ledger = memory();

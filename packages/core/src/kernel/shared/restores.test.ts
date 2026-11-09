@@ -158,4 +158,39 @@ describe("createRestoreWatch", () => {
     expect(await checkpointStore.get(RESTORE_GENERATION)).toBe(1);
     expect(await ledger.readMark(RESTORE_MARK)).toBe(1);
   });
+
+  it("touches no ledger and logs nothing without one", async () => {
+    const { entries, watchOver } = await setUp({ marks: false });
+    const watch = watchOver();
+    expect(await watch.start(at(0))).toBeNull();
+    await watch.check(at(1), { active: true });
+    await watch.flush();
+    expect(entries).toEqual([]);
+  });
+
+  it("raises nothing on a flush before the mark could be read", async () => {
+    let raises = 0;
+    const { watchOver } = await setUp({
+      ledger: () => ({
+        readMark: () => Promise.reject(new Error("down")),
+        raiseMark: async () => {
+          raises += 1;
+        },
+      }),
+    });
+    const watch = watchOver();
+    await watch.start(at(0));
+    await watch.flush();
+    expect(raises).toBe(0);
+  });
+
+  it("declares a restore past the count it read, which the database may have taken back", async () => {
+    const { checkpointStore, watchOver } = await setUp({ marks: false });
+    const watch = watchOver();
+    await checkpointStore.set(RESTORES_FOUND, 4);
+    await watch.check(at(0));
+    await checkpointStore.set(RESTORES_FOUND, 2);
+    expect(await watch.declare()).toEqual({ first: true });
+    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(5);
+  });
 });
