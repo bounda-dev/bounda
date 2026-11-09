@@ -63,9 +63,10 @@ export interface ScheduledCommandWorker {
   waitingDeadlines(): number;
   /**
    * Starts every background job over from what the database holds, as after a restore, between
-   * passes; `first` also clears the holds the copy brought back. Never rejects.
+   * passes; `first` also clears the holds the copy brought back, and `reconciled` leaves alone
+   * the reconciliation that found it. Never rejects.
    */
-  restored(first: boolean): Promise<void>;
+  restored(first: boolean, options?: { readonly reconciled?: boolean }): Promise<void>;
 }
 
 export interface CreateScheduledCommandWorkerArgs {
@@ -559,7 +560,8 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
 
   // The jobs' holds the copy brought back count failures it undid: the instance that found the
   // restore first clears them, and every one forgets what it knew of the jobs. Each never rejects.
-  const restart = async (first: boolean): Promise<void> => {
+  // `reconciled` when the reconciliation that just ran is what found the restore.
+  const restart = async (first: boolean, reconciled = false): Promise<void> => {
     logger.warn("the database went back to an earlier copy; background jobs start over", {
       first,
     });
@@ -570,7 +572,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     await Promise.all([
       retention?.restored(first),
       rotation?.restored(first),
-      reconciliation?.restored(first),
+      reconciled ? undefined : reconciliation?.restored(first),
       backfill?.restored(first),
     ]);
   };
@@ -619,6 +621,11 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       const forgotten = (await retention?.sweep(claimedAt)) ?? 0;
       const rewrapped = (await rotation?.sweep(claimedAt)) ?? 0;
       const forgottenAgain = (await reconciliation?.sweep(claimedAt)) ?? 0;
+      // A forgetting the ledger holds and the database does not: the database went back, though
+      // the generation did not show it, as for a copy taken just before a forget.
+      if (forgottenAgain > 0 && restores !== undefined && (restored ?? null) === null) {
+        await restart((await restores.declare()).first, true);
+      }
       const purged = (await letterRetention?.sweep(claimedAt)) ?? 0;
       const backfilled = (await backfill?.sweep(claimedAt)) ?? 0;
       if (unreadable !== undefined) throw unreadable.error;
@@ -657,6 +664,6 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     runOnce,
     leaseMs,
     waitingDeadlines: () => waits.size,
-    restored: (first) => mutex.run(() => restart(first)),
+    restored: (first, { reconciled } = {}) => mutex.run(() => restart(first, reconciled)),
   };
 };

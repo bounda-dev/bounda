@@ -13,6 +13,7 @@ import type { PersonalDataForgottenPayload } from "../../modules/bounda-events.t
 import type { EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { type BoundaApp, createApp } from "../app.ts";
+import { defineForgetLedger } from "../personal-data/forget-ledger.ts";
 import { HOLD_MAX_MS } from "../personal-data/hold.ts";
 import { masterKey } from "../personal-data/master-key.ts";
 import { ROTATION_CHECK_INTERVAL_MS } from "../personal-data/rotation.ts";
@@ -357,6 +358,34 @@ describe("a database restored while the app was stopped", () => {
     const again = recordingLogger();
     await start({ adapter: store.adapter, runtime, logger: again });
     expect(restarts(again)).toEqual([]);
+  });
+
+  it("is found from a forgetting the ledger holds and the copy does not, though the mark reads stale", async () => {
+    const paths = files();
+    const store = createNodeSqliteAdapter(paths.storage);
+    const ledgerAdapter = createNodeSqliteAdapter(paths.ledger).adapter;
+    // A store whose reads may lag its writes, as Workers KV's: the mark always reads as never raised.
+    const stale = defineForgetLedger(async () => {
+      const inner = await ledgerAdapter.createForgetLedger({});
+      return {
+        append: (entries) => inner.append(entries),
+        read: (args) => inner.read(args),
+        readMark: async () => 0,
+        raiseMark: (name, value) => inner.raiseMark(name, value),
+      };
+    });
+    const runtime: RuntimeConfig = { personalData: { forgetLedger: { store: stale } } };
+    const before = await start({ adapter: store.adapter, runtime });
+    await register(before.app, "c-1");
+    const copy = copyOf(store.db);
+    await before.app.forget("c-1");
+    await before.app.stop();
+    restore(store.db, copy);
+    const logger = recordingLogger();
+    const after = await start({ adapter: store.adapter, runtime, logger });
+    expect(restarts(logger).map(({ fields }) => fields)).toEqual([{ first: true }]);
+    expect((await after.app.status()).restoresFound).toBe(1);
+    expect((await after.app.getLag()).forgetLedger).toEqual({ reconciled: true });
   });
 
   it("is declared without a ledger by bounda restored, which every running instance learns", async () => {

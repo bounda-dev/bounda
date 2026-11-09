@@ -6,7 +6,6 @@ import { createRecordingLogger } from "../test-support.ts";
 import {
   createRestoreWatch,
   GENERATION_INTERVAL_MS,
-  MARK_INTERVAL_MS,
   RESTORE_GENERATION,
   RESTORE_MARK,
   RESTORES_FOUND,
@@ -92,23 +91,26 @@ describe("createRestoreWatch", () => {
     expect(await ledger.readMark(RESTORE_MARK)).toBe(2);
     await checkpointStore.set(RESTORE_GENERATION, copy);
     const restarted = watchOver();
-    expect(await restarted.start(at(MARK_INTERVAL_MS))).toEqual({ first: true });
+    expect(await restarted.start(at(GENERATION_INTERVAL_MS + 1))).toEqual({ first: true });
     expect(await checkpointStore.get(RESTORES_FOUND)).toBe(1);
     expect(await checkpointStore.get(RESTORE_GENERATION)).toBe(3);
     expect(await ledger.readMark(RESTORE_MARK)).toBe(3);
-    expect(await watchOver().start(at(MARK_INTERVAL_MS + 1))).toBeNull();
+    expect(await watchOver().start(at(GENERATION_INTERVAL_MS + 2))).toBeNull();
   });
 
-  it("raises the mark as the generation moves, at most once a mark interval, and on a flush", async () => {
-    const { ledger, watchOver } = await setUp();
+  it("raises the mark with every move of the generation, and moves it on a stop after recent writes", async () => {
+    const { ledger, stream, watchOver } = await setUp();
     const watch = watchOver();
     await watch.start(at(0));
     await watch.check(at(1), { active: true });
-    expect(await ledger.readMark(RESTORE_MARK)).toBe(0);
-    await watch.check(at(MARK_INTERVAL_MS), { active: true });
+    expect(await ledger.readMark(RESTORE_MARK)).toBe(1);
+    await watch.check(at(2), { active: true });
+    expect(await ledger.readMark(RESTORE_MARK)).toBe(1);
+    await watch.flush();
     expect(await ledger.readMark(RESTORE_MARK)).toBe(2);
-    await watch.check(at(MARK_INTERVAL_MS + GENERATION_INTERVAL_MS), { active: true });
+    await watch.flush();
     expect(await ledger.readMark(RESTORE_MARK)).toBe(2);
+    stream.head = 4;
     await watch.flush();
     expect(await ledger.readMark(RESTORE_MARK)).toBe(3);
   });

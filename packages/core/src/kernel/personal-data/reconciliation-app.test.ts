@@ -703,14 +703,17 @@ describe("the forget ledger", () => {
     one.clock.advance(1);
     other.clock.advance(1);
     await one.app.runUntilIdle();
-    await other.app.runUntilIdle();
     expect(reads).toBe(3);
+    // The forgetting the ledger held is a restore the other instance learns of: it reads the
+    // ledger at once too.
+    await other.app.runUntilIdle();
+    expect(reads).toBe(4);
     expect(await one.forgotten()).toEqual([["c-1", "restored"]]);
     expect(await one.customer("c-1")).toBeNull();
     other.clock.advance(60_000);
     await other.app.runUntilIdle();
     await one.app.runUntilIdle();
-    expect(reads).toBe(4);
+    expect(reads).toBe(5);
   });
 
   it("waits for another instance's failure before its periodic reconciliation", async () => {

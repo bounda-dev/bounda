@@ -23,10 +23,9 @@ export const RESTORES_FOUND = "runtime:restores";
  */
 export const RESTORE_MARK = "restore:generation";
 
+// Also how often the forget ledger's mark follows it at most: Workers KV takes one write a second
+// to a key.
 export const GENERATION_INTERVAL_MS = 5_000;
-
-// How often a moved generation is raised in the forget ledger at most, which a stop also does.
-export const MARK_INTERVAL_MS = 60_000;
 
 export interface Restored {
   /**
@@ -56,8 +55,9 @@ export interface RestoreWatch {
    */
   declare(): Promise<Restored>;
   /**
-   * Raises the forget ledger's mark to the generation this instance read last; what a stop does.
-   * Never rejects.
+   * Moves the generation once more when this instance wrote since it last did, whatever the
+   * interval, and raises the forget ledger's mark to it: what a stop does, so a copy taken before
+   * the stop always holds less. Never rejects.
    */
   flush(): Promise<void>;
   /**
@@ -108,7 +108,6 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
 }) => {
   let seen: Seen | null = null;
   let movedAt = Number.NEGATIVE_INFINITY;
-  let markedAt = Number.NEGATIVE_INFINITY;
   let head: number | null = null;
   let pending = false;
   // While the ledger's mark could not be read, the generation stays where it is: moving it could
@@ -140,11 +139,10 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     return { first };
   };
 
-  const raise = async (at: number, generation: number): Promise<void> => {
+  const raise = async (generation: number): Promise<void> => {
     if (marks === null) return;
     try {
       await marks.raiseMark(RESTORE_MARK, generation);
-      markedAt = at;
     } catch (error) {
       logger.error("the forget ledger's mark could not be raised", { error });
     }
@@ -159,6 +157,19 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     const restored = await count(stored, stored.restores, mark);
     await marks.raiseMark(RESTORE_MARK, seen?.generation ?? mark);
     return restored;
+  };
+
+  // Moves the generation past what this instance read, and the mark with it: a copy taken before
+  // holds less than both from then on.
+  const move = async (at: number): Promise<void> => {
+    if (seen === null) return;
+    const next = seen.generation + 1;
+    if (await checkpoints.compareAndSet(RESTORE_GENERATION, seen.generation, next)) {
+      seen = { ...seen, generation: next };
+      await raise(next);
+    }
+    movedAt = at;
+    pending = false;
   };
 
   const check = async (now: Date, active: boolean): Promise<Restored | null> => {
@@ -185,16 +196,8 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
       }
       pending = true;
     }
-    if (pending && !unmarked && at - movedAt >= GENERATION_INTERVAL_MS) {
-      const next = current.generation + 1;
-      if (await checkpoints.compareAndSet(RESTORE_GENERATION, current.generation, next)) {
-        current = { ...current, generation: next };
-        if (at - markedAt >= MARK_INTERVAL_MS) await raise(at, next);
-      }
-      movedAt = at;
-      pending = false;
-    }
     seen = current;
+    if (pending && !unmarked && at - movedAt >= GENERATION_INTERVAL_MS) await move(at);
     return restored;
   };
 
@@ -212,7 +215,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
         head = await events.lastPosition();
         seen = stored;
         const restored = await compareWithMark(stored);
-        if (restored === null && marks !== null) await raise(now.getTime(), stored.generation);
+        if (restored === null && marks !== null) await raise(stored.generation);
         return restored;
       } catch (error) {
         return logged("the database could not be compared with the forget ledger's mark")(error);
@@ -228,7 +231,13 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     },
     flush: async () => {
       if (seen === null || unmarked) return;
-      await raise(Number.NEGATIVE_INFINITY, seen.generation);
+      try {
+        const last = await events.lastPosition();
+        if (pending || (head !== null && last !== head)) await move(Number.NEGATIVE_INFINITY);
+        else await raise(seen.generation);
+      } catch (error) {
+        logger.error("the database could not be checked for a restore", { error });
+      }
     },
     found: () => checkpoints.get(RESTORES_FOUND),
   };

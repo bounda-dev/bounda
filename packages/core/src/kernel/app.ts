@@ -853,6 +853,10 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       } else if (typeof forgotten !== "number") {
         if (ledgerConfig?.strict) throw new ForgetLedgerUnreconciledError(forgotten.failed);
       } else if (forgotten > 0) {
+        // The ledger held a forgetting the database does not: a restore, whatever the mark said.
+        if (cold === null) {
+          await worker.restored((await restores.declare()).first, { reconciled: true });
+        }
         await dispatcher.catchUp("projection");
       }
     }

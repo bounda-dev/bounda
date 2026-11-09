@@ -1021,7 +1021,7 @@ and `bounda status` counts the restores found. How it is found depends on when t
 | The copy was restored | Found by | What is guaranteed |
 | --- | --- | --- |
 | under the running app | every instance, on its next pass, or within five seconds in the `web` role | Any copy taken before the last write the instances saw. A copy taken after it differs from the database in nothing but waits, which the jobs read again anyway. |
-| while the app was stopped, with a forget ledger | the first instance to start, before it serves anything | Any copy taken before the last mark the ledger holds: raised at most once a minute while the app writes, and when it stops. A copy taken in the last minute before a crash goes unseen, as above. |
+| while the app was stopped, with a forget ledger | the first instance to start, before it serves anything | Any copy taken before the last mark the ledger holds, which follows every move of the counter and a stop after any write, or before a forgetting the ledger holds and the copy does not. Only after a crash can a copy of the last five seconds of writes, with no forgetting among them, go unseen: it differs from the database in waits alone. |
 | while the app was stopped, without a ledger | `bounda restored`, which you run after restoring | What you declare: the database alone cannot tell a copy from itself. |
 
 Under the running app, every instance moves a counter in `bounda_checkpoints` one forward after
@@ -1029,7 +1029,15 @@ it wrote, at most every five seconds, and remembers what it read: a copy holds l
 first instance to see it counts the restore in another row, which every other instance then sees
 changed. An idle instance writes nothing, so neither does its watch. With a forget ledger the
 counter is also raised in the ledger, as a mark outside the database, which is how a start tells
-a copy restored while the app was stopped. Without one, run, after restoring:
+a copy restored while the app was stopped; and a forgetting the ledger holds that the database
+does not is a restore too, whatever the counter says, so the forgettings a copy undid are
+applied again and found by the same reconciliation. A forgetting never depends on the mark: what
+a restore that goes unseen leaves is waits, which end on their own within an hour.
+
+On Workers KV, `kvForgetLedger`, a read may lag a write by up to a minute in another location, so
+a start there may read an older mark and miss a copy of the last minute, unless a forgetting
+tells it; with only one object per tenant writing it, the mark itself never goes down. A ledger
+in a SQL database reads what was written. Without a ledger, run, after restoring:
 
 ```bash
 bounda restored
