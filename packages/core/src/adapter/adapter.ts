@@ -13,6 +13,7 @@ import type { PersonStore } from "./storage/person-store.ts";
 import type { PersonalKeyStore } from "./storage/personal-key-store.ts";
 import type { Scheduler } from "./storage/scheduler.ts";
 import type { SnapshotStore } from "./storage/snapshot-store.ts";
+import type { SubscriberFailureStore } from "./storage/subscriber-failure-store.ts";
 import type { ReadClient, Table } from "./storage/table.ts";
 
 /**
@@ -57,6 +58,10 @@ export interface Storage {
    * command of an aggregate with snapshots.
    */
   readonly snapshotStore: SnapshotStore;
+  /**
+   * The last failure of each subscriber, written by the dispatcher outside any transaction.
+   */
+  readonly subscriberFailures: SubscriberFailureStore;
   /**
    * Only for a backend that can push new events; without it the dispatcher only polls.
    */
@@ -211,6 +216,38 @@ export interface Adapter<Name extends string = string, Options = unknown>
    * searches. It reads the whole database, so it is for tests.
    */
   inspect(): Promise<readonly InspectedTable[]>;
+  /**
+   * The version of each scope of Bounda's tables this adapter knows, as its database holds it,
+   * `0` for one never migrated there, beside the latest this version of Bounda migrates it to.
+   * Reads only: nothing is created or migrated. `[]` for an adapter without tables.
+   */
+  schemaVersions(): Promise<readonly SchemaVersion[]>;
+  /**
+   * Brings the tables of `scopes` in this adapter's database to their latest version, as opening
+   * them does, and resolves to the versions after, as `schemaVersions` gives them: what
+   * `bounda migrate` runs before a deploy. Throws `StorageSchemaTooNewError` for a scope a newer
+   * version migrated, writing nothing.
+   */
+  migrate(scopes: readonly SchemaScopeName[]): Promise<readonly SchemaVersion[]>;
+}
+
+/**
+ * A set of Bounda's tables versioned together: `storage`, the write side; `checkpoints`, the
+ * positions of the subscribers, which read models in a database of their own keep there too; and
+ * `forget-ledger`, a forget ledger's table, wherever it lives.
+ */
+export type SchemaScopeName = "storage" | "checkpoints" | "forget-ledger";
+
+export interface SchemaVersion {
+  readonly scope: string;
+  /**
+   * How many of the scope's migrations the database applied.
+   */
+  readonly version: number;
+  /**
+   * How many this version of Bounda has.
+   */
+  readonly latest: number;
 }
 
 export interface IsAdapterFunction {

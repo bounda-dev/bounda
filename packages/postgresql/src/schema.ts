@@ -16,6 +16,7 @@ export interface StorageTables {
   readonly personalKeys: string;
   readonly persons: string;
   readonly snapshots: string;
+  readonly subscriberFailures: string;
   // In a database of its own, apart from the other storage tables.
   readonly forgetLedger: string;
   readonly appendLockKey: string;
@@ -61,6 +62,9 @@ export const storageTablesFor: StorageTablesForFunction = ({ prefix, schema }) =
     personalKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "personalKeys" })),
     persons: quoteIdentifier(storageTableNameFor({ prefix, table: "persons" })),
     snapshots: quoteIdentifier(storageTableNameFor({ prefix, table: "snapshots" })),
+    subscriberFailures: quoteIdentifier(
+      storageTableNameFor({ prefix, table: "subscriberFailures" }),
+    ),
     forgetLedger: quoteIdentifier(forgetLedger),
     appendLockKey: `bounda:${schema}.${events}`,
     checkpointsLockKey: `bounda:${schema}.${checkpoints}`,
@@ -79,6 +83,28 @@ export const checkpointTableStatement: CheckpointTableStatementFunction = (table
   `CREATE TABLE IF NOT EXISTS ${table} (
     "subscriber" text PRIMARY KEY,
     "position" bigint NOT NULL
+  )`;
+
+export interface SubscriberFailuresTableStatementFunction {
+  (table: string): string;
+}
+
+// Migration 2 of the storage tables. One row per subscriber, without an index: there are few.
+export const subscriberFailuresTableStatement: SubscriberFailuresTableStatementFunction = (table) =>
+  `CREATE TABLE IF NOT EXISTS ${table} (
+    "subscriber" text PRIMARY KEY,
+    "position" bigint NOT NULL,
+    "event_id" text NOT NULL,
+    "event_type" text NOT NULL,
+    "person" text,
+    "error_name" text NOT NULL,
+    "error_code" text,
+    "error_message" text NOT NULL,
+    "error_stack" text,
+    "attempts" integer NOT NULL,
+    "first_failed_at" text NOT NULL,
+    "last_failed_at" text NOT NULL,
+    "resolved_at" text
   )`;
 
 export interface StorageSchemaStatementsFunction {

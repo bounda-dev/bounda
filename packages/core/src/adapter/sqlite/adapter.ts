@@ -2,6 +2,7 @@ import type {
   Adapter,
   CreateReadModelArgs,
   CreateReadModelRebuildArgs,
+  SchemaScopeName,
   StorageTransaction,
 } from "../adapter.ts";
 import { createSqlCheckpointStore } from "../sql/checkpoint-store.ts";
@@ -10,13 +11,20 @@ import { sqliteDialect } from "../sql/dialect.ts";
 import { createSqlForgetLedger } from "../sql/forget-ledger.ts";
 import { quoteIdentifier, storageTableNameFor } from "../sql/identifiers.ts";
 import { inspectSqlTable, quoteName } from "../sql/inspection.ts";
+import {
+  readSchemaVersions,
+  type SchemaScope,
+  schemaMigrationsTableFor,
+} from "../sql/migrations.ts";
 import { createSqlPersonStore } from "../sql/person-store.ts";
 import { createSqlPersonalKeyStore } from "../sql/personal-key-store.ts";
+import { createSqlSubscriberFailureStore } from "../sql/subscriber-failure-store.ts";
 import { createSqliteDeadLetterStore } from "./dead-letter-store.ts";
 import { createSqliteEventStore } from "./event-store.ts";
 import { createSqliteIdempotencyStore } from "./idempotency-store.ts";
 import { createSqliteInboxLedger } from "./inbox-ledger.ts";
 import {
+  isMissingSqliteTable,
   migrateSqlite,
   sqliteCheckpointsScope,
   sqliteForgetLedgerScope,
@@ -93,10 +101,47 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
       throw error;
     }
   };
+  const ledgerTable = quoteIdentifier(
+    storageTableNameFor({ prefix: tablePrefix, table: "forgetLedger" }),
+  );
+  const scopes: Readonly<Record<SchemaScopeName, SchemaScope>> = {
+    storage: sqliteStorageScope(storageTablesFor(tablePrefix)),
+    checkpoints: sqliteCheckpointsScope(storageTablesFor(tablePrefix).checkpoints),
+    "forget-ledger": sqliteForgetLedgerScope(ledgerTable),
+  };
+  const versionsOn = (db: SqlDatabase) =>
+    readSchemaVersions({
+      db,
+      table: schemaMigrationsTableFor(tablePrefix),
+      scopes: Object.values(scopes),
+      isMissingTable: isMissingSqliteTable,
+    });
+  // A connection for one call, handed back whatever the call does.
+  const briefly = async <T>(
+    work: (connection: SqliteConnection<Raw>) => Promise<T>,
+  ): Promise<T> => {
+    const connection = acquire();
+    try {
+      return await work(connection);
+    } finally {
+      await release();
+    }
+  };
   return {
     kind: "bounda-adapter",
     name,
     options,
+    schemaVersions: () => briefly(({ db }) => versionsOn(db)),
+    migrate: (names) =>
+      briefly(async ({ db, isBusy }) => {
+        await migrateSqlite({
+          db,
+          isBusy,
+          prefix: tablePrefix,
+          scopes: names.map((scope) => scopes[scope]),
+        });
+        return versionsOn(db);
+      }),
     createStorage: () =>
       using(async ({ db, isBusy }) => {
         const tables = storageTablesFor(tablePrefix);
@@ -159,6 +204,11 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
           checkpointStore: createSqlCheckpointStore({
             db,
             table: tables.checkpoints,
+            dialect: sqliteDialect,
+          }),
+          subscriberFailures: createSqlSubscriberFailureStore({
+            db,
+            table: tables.subscriberFailures,
             dialect: sqliteDialect,
           }),
           transact: (work) => db.write((tx) => work(storesOver(boundTo(tx)))),

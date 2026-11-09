@@ -79,6 +79,11 @@ export type {
 } from "./storage-transaction.contract.ts";
 export { storageTransactionContract } from "./storage-transaction.contract.ts";
 export type {
+  SubscriberFailureStoreContractArgs,
+  SubscriberFailureStoreContractFunction,
+} from "./subscriber-failure-store.contract.ts";
+export { subscriberFailureStoreContract } from "./subscriber-failure-store.contract.ts";
+export type {
   ContractRow,
   TableContractArgs,
   TableContractFunction,

@@ -30,10 +30,11 @@ export interface StorageSchemaContractFunction {
   (args: StorageSchemaContractArgs): void;
 }
 
-// What a new database holds: every scope the storage migrates, at its latest version.
+// What a new database holds: every migration of every scope the storage migrates, one row each.
 const LATEST = [
   { scope: "checkpoints", version: 1 },
   { scope: "storage", version: 1 },
+  { scope: "storage", version: 2 },
 ];
 
 const versionsOf = async ({ execute, prefix }: StorageSchemaTarget) =>
@@ -169,7 +170,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         code: "STORAGE_SCHEMA_TOO_NEW",
         scope: "storage",
         version: 999,
-        supported: 1,
+        supported: 2,
       });
       expect(await shapeOf(target, dialect)).toEqual(shape);
     });

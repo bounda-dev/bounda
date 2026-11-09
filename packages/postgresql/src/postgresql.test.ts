@@ -32,6 +32,7 @@ import {
   snapshotStoreContract,
   storageSchemaContract,
   storageTransactionContract,
+  subscriberFailureStoreContract,
   tableContract,
   viewContract,
 } from "@bounda-dev/core/adapter/testing";
@@ -130,6 +131,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
       return fresh({ tablePrefix: "bounda_", schema: `inspected_${run}_${prefixes}` });
     },
   });
+  subscriberFailureStoreContract({ create: async () => (await openStorage()).subscriberFailures });
   forgetLedgerContract({
     create: async () => {
       await closeOpened();

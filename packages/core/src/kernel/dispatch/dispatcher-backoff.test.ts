@@ -1,11 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { pendingEvent } from "../../adapter/testing/fixtures.ts";
+import { pendingEvent, testMetadata } from "../../adapter/testing/fixtures.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
+import type { StoredEvent } from "../../contracts/event.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import { advanceUntilWaiting, eventually } from "../test-support.ts";
 import type { CheckpointedSubscriber, Delivery, DeliveryFailure } from "./delivery.ts";
 import { createDispatcher, type Subscriber } from "./dispatcher.ts";
+
+const failedEvent: StoredEvent = {
+  id: "e-1",
+  aggregateType: "order",
+  aggregateId: "o-1",
+  version: 1,
+  position: 1,
+  type: "OrderPlaced",
+  payload: {},
+  timestamp: "2026-01-01T00:00:00.000Z",
+  metadata: testMetadata,
+  person: null,
+};
 
 const failure: DeliveryFailure = {
   position: 1,
@@ -13,7 +27,12 @@ const failure: DeliveryFailure = {
   eventType: "OrderPlaced",
   errorName: "Error",
 };
-const failed: Delivery = { outcome: "failed", failure };
+const failed: Delivery = {
+  outcome: "failed",
+  failure,
+  event: failedEvent,
+  error: new Error("boom"),
+};
 
 interface Scripted extends CheckpointedSubscriber {
   readonly deliveries: number;
