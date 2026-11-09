@@ -1,4 +1,5 @@
 import { StorageSchemaTooNewError } from "../../contracts/errors.ts";
+import type { SchemaVersion } from "../adapter.ts";
 import type { SqlTransaction } from "./database.ts";
 import type { SqlDialect } from "./dialect.ts";
 import { quoteIdentifier, storageTableNameFor } from "./identifiers.ts";
@@ -90,6 +91,52 @@ export interface MigrateSchemasFunction {
  * together apply each migration once, and one that fails leaves the ones before it applied.
  * Throws `StorageSchemaTooNewError`, before writing anything, when a scope is past what it knows.
  */
+const versionsIn = async (
+  executor: SqlExecutor,
+  table: string,
+  isMissingTable: (error: unknown) => boolean,
+): Promise<ReadonlyMap<string, number>> => {
+  try {
+    const rows = await executor.all(
+      `SELECT "scope", max("version") AS "version" FROM ${table} GROUP BY "scope"`,
+      [],
+    );
+    return new Map(rows.map((row) => [String(row.scope), Number(row.version)]));
+  } catch (error) {
+    if (isMissingTable(error)) return new Map();
+    throw error;
+  }
+};
+
+export interface ReadSchemaVersionsArgs {
+  readonly db: SqlExecutor;
+  // Quoted.
+  readonly table: string;
+  readonly scopes: readonly SchemaScope[];
+  readonly isMissingTable: (error: unknown) => boolean;
+}
+
+export interface ReadSchemaVersionsFunction {
+  (args: ReadSchemaVersionsArgs): Promise<readonly SchemaVersion[]>;
+}
+
+/**
+ * The version each scope is at, `0` for one never migrated, beside its latest: one read, no lock.
+ */
+export const readSchemaVersions: ReadSchemaVersionsFunction = async ({
+  db,
+  table,
+  scopes,
+  isMissingTable,
+}) => {
+  const found = await versionsIn(db, table, isMissingTable);
+  return scopes.map(({ scope, migrations }) => ({
+    scope,
+    version: found.get(scope) ?? 0,
+    latest: migrations.length,
+  }));
+};
+
 export const migrateSchemas: MigrateSchemasFunction = async ({
   db,
   dialect,
@@ -100,18 +147,6 @@ export const migrateSchemas: MigrateSchemasFunction = async ({
   now = () => new Date(),
 }) => {
   const p = dialect.placeholder;
-  const versionsIn = async (executor: SqlExecutor): Promise<ReadonlyMap<string, number>> => {
-    try {
-      const rows = await executor.all(
-        `SELECT "scope", max("version") AS "version" FROM ${table} GROUP BY "scope"`,
-        [],
-      );
-      return new Map(rows.map((row) => [String(row.scope), Number(row.version)]));
-    } catch (error) {
-      if (isMissingTable(error)) return new Map();
-      throw error;
-    }
-  };
   const versionOf = (versions: ReadonlyMap<string, number>, schema: SchemaScope): number => {
     const version = versions.get(schema.scope) ?? 0;
     const supported = schema.migrations.length;
@@ -120,13 +155,14 @@ export const migrateSchemas: MigrateSchemasFunction = async ({
     }
     return version;
   };
-  const found = await versionsIn(db);
+  const found = await versionsIn(db, table, isMissingTable);
   const behind = scopes.map((schema) => ({ schema, at: versionOf(found, schema) }));
   for (const { schema, at } of behind) {
     for (const migration of schema.migrations.slice(at)) {
       await locked(async (tx) => {
         await tx.run(schemaMigrationsTableStatement(table), []);
-        if (migration.version <= versionOf(await versionsIn(tx), schema)) return;
+        if (migration.version <= versionOf(await versionsIn(tx, table, isMissingTable), schema))
+          return;
         await migration.migrate(tx);
         await tx.run(
           `INSERT INTO ${table} ("scope", "version", "applied_at") VALUES (${p(1)}, ${p(2)}, ${p(3)})`,

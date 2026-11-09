@@ -21,6 +21,7 @@ export interface CreateMemoryForgetLedgersFunction {
  */
 export const createMemoryForgetLedgers: CreateMemoryForgetLedgersFunction = () => {
   const byTenant = new Map<string, Map<string, ForgetLedgerEntry>>();
+  const marks = new Map<string, number>();
   return {
     rows: () =>
       [...byTenant.entries()].flatMap(([tenant, entries]) =>
@@ -46,6 +47,11 @@ export const createMemoryForgetLedgers: CreateMemoryForgetLedgersFunction = () =
           for (const [eventId, entry] of entries) {
             if (entry.forgottenAt < before) entries.delete(eventId);
           }
+        },
+        readMark: async (name) => marks.get(`${key}\u0000${name}`) ?? 0,
+        raiseMark: async (name, value) => {
+          const mark = `${key}\u0000${name}`;
+          marks.set(mark, Math.max(marks.get(mark) ?? 0, value));
         },
       };
     },

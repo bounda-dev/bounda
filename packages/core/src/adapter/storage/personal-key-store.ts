@@ -117,4 +117,13 @@ export interface PersonalKeyStore {
   rewrap(person: string, from: StoredPersonalKey, to: RewrappedKey): Promise<boolean>;
   hold(person: string, from: StoredPersonalKey, hold: Hold): Promise<void>;
   nextHoldEnd(args: NextKeyHoldEndArgs): Promise<Date | null>;
+  /**
+   * How many keys are wrapped under one of `kids`, whatever their holds.
+   */
+  countWrappedUnder(args: Pick<ListWrappedUnderArgs, "kids">): Promise<number>;
+  /**
+   * Clears every key's hold, and resolves to how many it cleared: what the runtime does once the
+   * database went back to a copy, whose holds count failures the copy undid.
+   */
+  releaseHolds(): Promise<number>;
 }

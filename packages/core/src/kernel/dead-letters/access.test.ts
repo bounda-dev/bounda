@@ -36,7 +36,7 @@ describe("the access log of dead letters", () => {
     const deadLetters = createDeadLetters({
       storage,
       retries: {} as DeadLetterRetry,
-      processes: {} as Pick<ProcessDeadLetters, "parkedBehind" | "stillParked">,
+      processes: {} as Pick<ProcessDeadLetters, "parkedBehind" | "stillParked" | "abandon">,
       clock: createFixedClock(),
       logger: silentLogger,
       errorText: "omit",

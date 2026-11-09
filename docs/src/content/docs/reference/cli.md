@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: "The bounda command: generate the registry and the types, rebuild a read model, deal with dead letters."
+description: "The bounda command: generate the registry and the types, rebuild a read model, deal with dead letters, read the runtime's status, migrate its tables and declare a restore."
 sidebar:
   order: 0
 ---
@@ -47,11 +47,13 @@ registry that cannot be loaded, a read model that is not in the registry, a list
 read, and errors whose message Bounda writes from names and ids alone, such as a dead letter that is
 not found or was already settled. To read what a reaction failed on, read its letter:
 `bounda dead-letters list` opens the text it keeps encrypted, an access the access log records.
+What a subscriber, a projection say, failed on last is in `bounda status --error-text`, recorded
+the same way.
 
 ## Who runs a command
 
 `--actor <id>` names who runs a command that acts or reads personal data: `rebuild`,
-`dead-letters list`, `retry` and `discard`, and `forget`. The command acts as that id, as
+`dead-letters list`, `retry` and `discard`, `status`, and `forget`. The command acts as that id, as
 [`client.as(actor)`](/concepts/ids-causation-and-correlation/#who-acts) does in code: the events it
 writes carry it in their metadata, its log lines name it, and so does every access log record it
 causes.
@@ -242,6 +244,111 @@ first, the error is printed, as [error text](#error-text) says, and the exit cod
 process letter it also says when one of the parked events failed the process again. What a retry runs for each kind is in
 [Dead letters](/guides/dead-letters/).
 
+## `bounda status`
+
+Prints where the runtime's background work stands, as the database says. It boots the project as
+`bounda dead-letters` does.
+
+```bash
+bounda status
+bounda status --json
+bounda status --error-text --actor ops-ana
+```
+
+```
+tables
+  storage  storage  2 of 2
+  storage  checkpoints  1 of 1
+  forgetLedger  forget-ledger  1 of 1
+restores found while running: 0
+subscribers (head at 1204)
+  projection:customerDirectory  at 1197, 7 behind
+    failing: Error on CustomerRegistered at 1198, 4 attempts since 2026-11-09T10:02:11.000Z
+  policies  at 1204, 0 behind
+personal data backfill: sealed through position 1204, caught up
+forget ledger: reconciled, applied through 2026-11-08T22:15:00.000Z, last run 2026-11-09T10:00:00.000Z
+key rotation: under 7Kx0Qw9z (previous Wn3eT1aa), 12 keys left to rewrap
+retention: 730d, 0 persons past it, next due 2028-01-04T09:13:00.000Z
+dead letter retention: 30d, next purge 2026-11-20T08:00:00.000Z
+```
+
+- `tables`: each scope of Bounda's tables, in each database the configuration names (`storage`,
+  `readModels.<name>` for read models in a database of their own, `forgetLedger`), at the version
+  the database holds of the one this release migrates it to; one behind says
+  `(migrations pending: bounda migrate)`. A store without tables, as `memory()`, has none.
+- `restores found while running`: how many times a running instance found the database gone back
+  to an earlier copy ([restores](/guides/personal-data/#restores)), or declared by `bounda restored`.
+- each subscriber's checkpoint and lag, and its last failure, by any instance: `failing` while it is
+  still stuck on it, `last failed, resolved …` once it got past. Its class and code, the event, how
+  many deliveries in a row failed and since when; never its text.
+- the [backfill](/guides/personal-data/#marking-a-field-later) of personal data, the forget
+  ledger's [reconciliation](/guides/personal-data/#what-the-runtime-does-with-it), the
+  [rotation](/guides/personal-data/#rotating-the-master-key) of the master key, the
+  [retention](/guides/personal-data/#inactivity) and the [purge of resolved dead
+  letters](/guides/dead-letters/#keeping-resolved-letters), each `not configured` when it is off.
+
+`--error-text` also prints, under each failure, the text it keeps, encrypted under the person the
+event names: it is read through `app.subscriberFailures.list()`, which records it in the
+[access log](/guides/personal-data/#who-opened-what) with the persons and `--actor`. A failure whose
+person was forgotten says its text went with them.
+
+| Option | Meaning |
+| --- | --- |
+| `--json` | Print `app.status()` as JSON; with `--error-text`, `subscriberFailures` holds the failures with their text |
+| `--root`, `--config`, `--registry`, `--error-text` | As for `bounda rebuild` |
+| `--actor <id>` | Who reads the failures' text with `--error-text`, named in the access log |
+
+## `bounda restored`
+
+Says the database was restored from a copy while the app was stopped, for an app without a
+[forget ledger](/guides/personal-data/#backups), whose mark tells it on its own. It boots the
+project as `bounda dead-letters` does.
+
+```bash
+bounda restored
+```
+
+```
+restore recorded: 1 found so far; the background jobs start over from the copy, without the holds it brought back
+```
+
+The restore is counted, so every running instance starts its background jobs over; the holds of
+failures the copy brought back are cleared; and with a ledger, it is reconciled at once. Run it
+after `bounda forget --from` when restoring without a ledger (see
+[restores](/guides/personal-data/#restores)). Options: `--root`, `--config`, `--registry`,
+`--error-text`, as for `bounda rebuild`. Exit codes: `0` recorded, `2` the project could not be
+loaded.
+
+## `bounda migrate`
+
+Brings Bounda's tables to this release's version in every database the configuration names, as
+the first instance to start would, and prints the versions after:
+
+```bash
+bounda migrate
+```
+
+```
+migrated
+  storage  storage  2 of 2
+  storage  checkpoints  1 of 1
+  readModels.reports  checkpoints  1 of 1
+```
+
+It reads only the configuration, never the registry, and starts no app: run it as a step of the
+deploy, after stopping the previous version and before starting the new one (see
+[Schema](/guides/deployment/#schema)). Each database migrates under its own lock, as a start does,
+so running it twice, or while an instance starts, migrates once. Tables a newer release migrated
+are refused untouched with [`STORAGE_SCHEMA_TOO_NEW`](/reference/errors/#codes).
+
+| Option | Meaning |
+| --- | --- |
+| `--root <dir>` | The project root, the current directory by default |
+| `--config <file>` | The configuration module under the root, `bounda.config.ts` by default |
+
+Exit codes: `0` migrated, `1` bad arguments, `2` the configuration could not be loaded or a
+migration failed.
+
 ## `bounda forgotten` and `bounda forget`
 
 Apply again, by hand, the forgettings a restored backup undid, for an app without a
@@ -297,7 +404,9 @@ It throws `ConventionError` when the layout breaks a convention; `formatConventi
 `formatWarnings` format the error and the warnings as the command prints them. `bounda rebuild` is `rebuildReadModel` from
 `@bounda-dev/core` over a project loaded with `loadProject` from `@bounda-dev/core/node`, with
 `actor` for `--actor`; an app exposes the same as `app.rebuildReadModel(name)`, and
-`app.as(actor).rebuildReadModel(name)`. `bounda dead-letters` is `app.deadLetters` on a booted app,
+`app.as(actor).rebuildReadModel(name)`. `bounda status` is `app.status()`, and its failures' text
+`app.as(actor).subscriberFailures.list()`; `bounda migrate` is `migrateTables({ config })` from
+`@bounda-dev/core`; `bounda restored` is `app.restored()`. `bounda dead-letters` is `app.deadLetters` on a booted app,
 or `app.as(actor).deadLetters`, and `bounda forget` is `app.forgetAgain(entries, { actor })`. The
 commands boot the app with `createConsoleLogger({ stream: process.stderr })` from
 `@bounda-dev/core/node`, which writes every level to the stream it is given.

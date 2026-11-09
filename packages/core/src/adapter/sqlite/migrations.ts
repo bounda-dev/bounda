@@ -2,7 +2,7 @@ import { ConfigurationError } from "../../contracts/errors.ts";
 import type { SqlDatabase, SqlTransaction } from "../sql/database.ts";
 import { resolvedAtOfEarlierLetters } from "../sql/dead-letters.ts";
 import { sqliteDialect } from "../sql/dialect.ts";
-import { forgetLedgerStatements } from "../sql/forget-ledger.ts";
+import { forgetLedgerMarksStatement, forgetLedgerStatements } from "../sql/forget-ledger.ts";
 import { quoteIdentifier } from "../sql/identifiers.ts";
 import {
   migrateSchemas,
@@ -16,6 +16,7 @@ import {
   personRowsBackfillStatements,
   type StorageTables,
   storageSchemaStatements,
+  subscriberFailuresTableStatement,
 } from "./schema.ts";
 import { busyRetryDelay, pause } from "./wal.ts";
 
@@ -118,7 +119,13 @@ export interface SqliteStorageScopeFunction {
 
 export const sqliteStorageScope: SqliteStorageScopeFunction = (tables) => ({
   scope: SCHEMA_SCOPES.storage,
-  migrations: [{ version: 1, migrate: (tx) => adoptStorageTables(tx, tables) }],
+  migrations: [
+    { version: 1, migrate: (tx) => adoptStorageTables(tx, tables) },
+    {
+      version: 2,
+      migrate: (tx) => tx.run(subscriberFailuresTableStatement(tables.subscriberFailures), []),
+    },
+  ],
 });
 
 export interface SqliteCheckpointsScopeFunction {
@@ -145,8 +152,16 @@ export const sqliteForgetLedgerScope: SqliteForgetLedgerScopeFunction = (table) 
         }
       },
     },
+    { version: 2, migrate: (tx) => tx.run(forgetLedgerMarksStatement(table), []) },
   ],
 });
+
+export interface IsMissingSqliteTableFunction {
+  (error: unknown): boolean;
+}
+
+export const isMissingSqliteTable: IsMissingSqliteTableFunction = (error) =>
+  error instanceof Error && /no such table/i.test(error.message);
 
 export interface MigrateSqliteArgs {
   readonly db: SqlDatabase;
@@ -190,5 +205,5 @@ export const migrateSqlite: MigrateSqliteFunction = ({
         }
       }
     },
-    isMissingTable: (error) => error instanceof Error && /no such table/i.test(error.message),
+    isMissingTable: isMissingSqliteTable,
   });

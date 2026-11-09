@@ -117,5 +117,6 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     retryDeadline: deadLetters.retryDeadline,
     parkedBehind: deadLetters.parkedBehind,
     stillParked: deadLetters.stillParked,
+    abandon: deadLetters.abandon,
   };
 };

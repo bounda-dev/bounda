@@ -37,6 +37,8 @@ const setUp = async ({
         appended.push(entries);
       },
       read: async () => [],
+      readMark: async () => 0,
+      raiseMark: async () => undefined,
       ...ledger,
     },
     keepForMs,
@@ -114,6 +116,8 @@ describe("the append to the forget ledger as a transaction commits", () => {
           appended.push(entries);
         },
         read: async () => [],
+        readMark: async () => 0,
+        raiseMark: async () => undefined,
       },
       keepForMs: null,
       clock: createFixedClock(NOW),
@@ -204,6 +208,8 @@ describe("the append to the forget ledger as a transaction commits", () => {
             : Promise.resolve();
         },
         read: async () => [],
+        readMark: async () => 0,
+        raiseMark: async () => undefined,
       },
       keepForMs: null,
       clock,

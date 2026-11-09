@@ -342,6 +342,8 @@ describe("the forget ledger", () => {
       const inner = await opened(ledgerAdapter);
       return {
         append: (entries) => inner.append(entries),
+        readMark: (name) => inner.readMark(name),
+        raiseMark: (name, value) => inner.raiseMark(name, value),
         read: async (args) => {
           if (failures > 0) {
             failures -= 1;
@@ -387,6 +389,8 @@ describe("the forget ledger", () => {
       const inner = await opened(ledgerAdapter);
       return {
         append: (entries) => inner.append(entries),
+        readMark: (name) => inner.readMark(name),
+        raiseMark: (name, value) => inner.raiseMark(name, value),
         read: async (args) => {
           reads += 1;
           if (down) throw new Error("ledger is down");
@@ -435,6 +439,8 @@ describe("the forget ledger", () => {
       read: async () => {
         throw new Error("ledger is down");
       },
+      readMark: async () => 0,
+      raiseMark: async () => undefined,
     }));
     const { app: first } = await start({ storage, forgetLedger: broken });
     // A fresh store's first pass finds nothing written before the marks.
@@ -465,6 +471,8 @@ describe("the forget ledger", () => {
       const inner = await opened(ledgerAdapter);
       return {
         append: (entries) => inner.append(entries),
+        readMark: (name) => inner.readMark(name),
+        raiseMark: (name, value) => inner.raiseMark(name, value),
         read: async (args) => {
           await answered;
           return inner.read(args);
@@ -530,6 +538,8 @@ describe("the forget ledger", () => {
       const inner = await opened(ledgerAdapter);
       return {
         read: (args) => inner.read(args),
+        readMark: async () => 0,
+        raiseMark: async () => undefined,
         append: async (entries) => {
           if (refusals > 0) {
             refusals -= 1;
@@ -596,6 +606,8 @@ describe("the forget ledger", () => {
       const inner = await opened(ledgerAdapter);
       return {
         read: (args) => inner.read(args),
+        readMark: async () => 0,
+        raiseMark: async () => undefined,
         append: async (entries) => {
           appends.push(...entries.map(({ personId }) => personId));
           await inner.append(entries);
@@ -636,6 +648,8 @@ describe("the forget ledger", () => {
       const inner = await opened(ledgerAdapter);
       return {
         read: (args) => inner.read(args),
+        readMark: async () => 0,
+        raiseMark: async () => undefined,
         append: () => new Promise<void>(() => undefined),
       };
     });
@@ -666,6 +680,8 @@ describe("the forget ledger", () => {
       const inner = await opened(ledgerAdapter);
       return {
         append: (entries) => inner.append(entries),
+        readMark: (name) => inner.readMark(name),
+        raiseMark: (name, value) => inner.raiseMark(name, value),
         read: async (args) => {
           reads += 1;
           return inner.read(args);
@@ -687,14 +703,17 @@ describe("the forget ledger", () => {
     one.clock.advance(1);
     other.clock.advance(1);
     await one.app.runUntilIdle();
-    await other.app.runUntilIdle();
     expect(reads).toBe(3);
+    // The forgetting the ledger held is a restore the other instance learns of: it reads the
+    // ledger at once too.
+    await other.app.runUntilIdle();
+    expect(reads).toBe(4);
     expect(await one.forgotten()).toEqual([["c-1", "restored"]]);
     expect(await one.customer("c-1")).toBeNull();
     other.clock.advance(60_000);
     await other.app.runUntilIdle();
     await one.app.runUntilIdle();
-    expect(reads).toBe(4);
+    expect(reads).toBe(5);
   });
 
   it("waits for another instance's failure before its periodic reconciliation", async () => {
@@ -706,6 +725,8 @@ describe("the forget ledger", () => {
       const inner = await opened(ledgerAdapter);
       return {
         append: (entries) => inner.append(entries),
+        readMark: (name) => inner.readMark(name),
+        raiseMark: (name, value) => inner.raiseMark(name, value),
         read: async (args) => {
           reads += 1;
           if (failures > 0) {
@@ -803,6 +824,8 @@ describe("the forget ledger", () => {
     const down = new Error("ledger is down");
     let closed = 0;
     const broken = defineForgetLedger(async () => ({
+      readMark: async () => 0,
+      raiseMark: async () => undefined,
       append: async () => {},
       read: async () => {
         throw down;
@@ -826,6 +849,8 @@ describe("the forget ledger", () => {
       const inner = await opened(ledgerAdapter);
       return {
         append: (entries) => inner.append(entries),
+        readMark: (name) => inner.readMark(name),
+        raiseMark: (name, value) => inner.raiseMark(name, value),
         read: async (args) => {
           await answered;
           return inner.read(args);

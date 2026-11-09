@@ -761,3 +761,192 @@ describe("bounda forgotten and bounda forget", () => {
     );
   });
 });
+
+describe("bounda status", () => {
+  const fixture = resolve(import.meta.dirname, "fixtures/rebuild-project");
+  const failing = ["--registry", ".bounda/failing-registry.ts"];
+
+  const fail = async (): Promise<void> => {
+    const project = await loadProject<typeof failingRegistry>({
+      root: fixture,
+      registryPath: ".bounda/failing-registry.ts",
+      logger: silentLogger,
+    });
+    const app = await createApp({ ...project, logger: silentLogger });
+    await app.commands.increment({ counterId: `c-${Date.now()}` });
+    await app.runUntilIdle({ maxPasses: 2 });
+    await app.stop();
+  };
+
+  it("prints every subscriber's lag and last failure without its text, and the background jobs", async () => {
+    await fail();
+    const result = await cli(["status", ...failing], fixture);
+    expect(result.code).toBe(EXIT_OK);
+    expect(besidesLogs(result.stderr)).toBe("");
+    expect(result.stdout).not.toContain("ana@example.com");
+    const lines = result.stdout.split("\n");
+    expect(lines.slice(0, 3)).toEqual(["tables", "  no tables to version", expect.any(String)]);
+    expect(lines[2]).toMatch(/^restores found while running: \d+$/);
+    expect(result.stdout).toMatch(/^ {2}projection:failingTotals {2}at \d+, \d+ behind$/m);
+    expect(result.stdout).toMatch(
+      /^ {4}failing: Error on Incremented at \d+, \d+ attempts? since \S+$/m,
+    );
+    // The fixture's other registry marks personal data, and the store is shared by the tests.
+    expect(lines.at(-6)).toMatch(
+      /^personal data backfill: (no personal data marked|sealed through position \d+, caught up)$/,
+    );
+    expect(lines.slice(-5, -1)).toEqual([
+      "forget ledger: not configured",
+      "key rotation: not configured",
+      "retention: not configured",
+      "dead letter retention: not configured",
+    ]);
+    expect(logged(result.stderr, "info", "personal data accessed")).toEqual([]);
+  });
+
+  it("prints the text of each failure with --error-text, through a call the access log records", async () => {
+    await fail();
+    const result = await cli(
+      ["status", ...failing, "--error-text", "--actor", "operator-1"],
+      fixture,
+    );
+    expect(result.code).toBe(EXIT_OK);
+    expect(result.stdout).toMatch(/^ {4}cannot total ana@example\.com$/m);
+    expect(logged(result.stderr, "info", "personal data accessed")).toEqual([
+      expect.objectContaining({
+        operation: "subscriberFailures.list",
+        actor: "operator-1",
+        outcome: "ok",
+      }),
+    ]);
+  });
+
+  it("prints the status as JSON with --json, with the texts only when asked for", async () => {
+    await fail();
+    const quiet = await cli(["status", ...failing, "--json"], fixture);
+    expect(quiet.code).toBe(EXIT_OK);
+    const status = JSON.parse(quiet.stdout);
+    expect(status).toMatchObject({ schema: [], forgetLedger: null, keyRotation: null });
+    expect(status.subscriberFailures).toContainEqual(
+      expect.objectContaining({ subscriber: "projection:failingTotals", errorName: "Error" }),
+    );
+    expect(quiet.stdout).not.toContain("ana@example.com");
+    const told = await cli(["status", ...failing, "--json", "--error-text"], fixture);
+    expect(JSON.parse(told.stdout).subscriberFailures).toContainEqual(
+      expect.objectContaining({ errorMessage: "cannot total ana@example.com" }),
+    );
+  });
+
+  it("documents its options in its help", async () => {
+    const help = await cli(["status", "--help"], fixture);
+    expect(help.code).toBe(EXIT_OK);
+    expect(help.stdout.replace(/\s+/g, " ")).toContain(
+      "print the version of the tables, every subscriber's lag and last failure, and how the backfill, forget ledger, key rotation and retention stand",
+    );
+    for (const option of ["--json", "--error-text", "--actor <id>", "--registry <file>"]) {
+      expect(help.stdout).toContain(option);
+    }
+  });
+});
+
+describe("bounda migrate", () => {
+  // A configuration whose storage records the scopes it is asked to migrate: what the CLI hands
+  // over. Migrating real tables is core's, tested there on every database.
+  const migrating = async (): Promise<string> => {
+    const root = await mkdtemp(join(tmpdir(), "bounda-cli-migrate-"));
+    temporary.push(root);
+    await writeFile(
+      join(root, "bounda.config.ts"),
+      `const versions = (scopes) => [
+  { scope: "storage", version: scopes.includes("storage") ? 2 : 0, latest: 2 },
+  { scope: "checkpoints", version: scopes.includes("checkpoints") ? 1 : 0, latest: 1 },
+];
+const adapter = {
+  kind: "bounda-adapter",
+  name: "recording",
+  options: {},
+  createStorage: async () => { throw new Error("not opened by migrate"); },
+  createReadModel: async () => { throw new Error("not opened by migrate"); },
+  rebuildReadModel: async () => { throw new Error("not opened by migrate"); },
+  createForgetLedger: async () => { throw new Error("not opened by migrate"); },
+  schemaVersions: async () => versions([]),
+  migrate: async (scopes) => {
+    globalThis.migratedScopes = scopes;
+    if (process.env.REFUSE_MIGRATION === "1") throw new Error("too new for ana@example.com");
+    return versions(scopes);
+  },
+};
+export default { storage: adapter };
+`,
+    );
+    return root;
+  };
+
+  it("migrates the scopes of every database the configuration names, needing no registry", async () => {
+    const root = await migrating();
+    const result = await cli(["migrate"], root);
+    expect(result.code).toBe(EXIT_OK);
+    expect(Reflect.get(globalThis, "migratedScopes")).toEqual(["storage", "checkpoints"]);
+    expect(result.stdout).toBe(
+      "migrated\n  storage  storage  2 of 2\n  storage  checkpoints  1 of 1\n",
+    );
+  });
+
+  it("names the error a migration fails on without its text, and exits 2", async () => {
+    const root = await migrating();
+    process.env.REFUSE_MIGRATION = "1";
+    try {
+      const result = await cli(["migrate", "--root", root], repoRoot);
+      expect(result.code).toBe(EXIT_FAILURE);
+      expect(result.stderr).not.toContain("ana@example.com");
+      expect(result.stderr).toContain("error: Error; its message may quote personal data");
+    } finally {
+      delete process.env.REFUSE_MIGRATION;
+    }
+  });
+
+  it("exits 2 with the reason when the configuration is not there", async () => {
+    const root = await mkdtemp(join(tmpdir(), "bounda-cli-migrate-"));
+    temporary.push(root);
+    const result = await cli(["migrate"], root);
+    expect(result.code).toBe(EXIT_FAILURE);
+    expect(result.stderr).toMatch(/^error: Cannot find the configuration/);
+  });
+
+  it("documents its options in its help", async () => {
+    const help = await cli(["migrate", "--help"], repoRoot);
+    expect(help.code).toBe(EXIT_OK);
+    expect(help.stdout.replace(/\s+/g, " ")).toContain(
+      "bring Bounda's tables to this release's version in every database of the configuration, before a deploy",
+    );
+    for (const option of ["--root <dir>", "--config <file>"]) {
+      expect(help.stdout).toContain(option);
+    }
+  });
+});
+
+describe("bounda restored", () => {
+  const fixture = resolve(import.meta.dirname, "fixtures/rebuild-project");
+
+  it("records a restore, which the status counts", async () => {
+    const before = JSON.parse((await cli(["status", "--json"], fixture)).stdout).restoresFound;
+    const result = await cli(["restored"], fixture);
+    expect(result.code).toBe(EXIT_OK);
+    expect(besidesLogs(result.stderr)).toBe("");
+    expect(result.stdout).toBe(
+      `restore recorded: ${before + 1} found so far; the background jobs start over from the copy, without the holds it brought back\n`,
+    );
+    expect(result.stderr).toContain(
+      '[bounda] warn the database went back to an earlier copy; background jobs start over {"first":true}',
+    );
+  });
+
+  it("documents itself in its help", async () => {
+    const help = await cli(["restored", "--help"], fixture);
+    expect(help.code).toBe(EXIT_OK);
+    expect(help.stdout.replace(/\s+/g, " ")).toContain(
+      "say the database was restored from a copy while the app was stopped",
+    );
+    expect(help.stdout).toContain("--registry <file>");
+  });
+});

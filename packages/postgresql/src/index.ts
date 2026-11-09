@@ -2,6 +2,7 @@ import type {
   Adapter,
   CreateReadModelArgs,
   CreateReadModelRebuildArgs,
+  SchemaScopeName,
   StorageTransaction,
 } from "@bounda-dev/core/adapter";
 import {
@@ -9,9 +10,11 @@ import {
   createSqlForgetLedger,
   createSqlPersonalKeyStore,
   createSqlPersonStore,
+  createSqlSubscriberFailureStore,
   inspectSqlTable,
   postgresqlDialect,
   quoteName,
+  type SchemaScope,
   type SqlTransaction,
 } from "@bounda-dev/core/adapter/sql";
 import postgres, { type Sql } from "postgres";
@@ -26,6 +29,7 @@ import {
   postgresqlCheckpointsScope,
   postgresqlForgetLedgerScope,
   postgresqlStorageScope,
+  readPostgresqlSchemaVersions,
 } from "./migrations.ts";
 import { type PostgresqlOptions, resolvePostgresqlOptions } from "./options.ts";
 import { openPostgresqlReadModel, rebuildPostgresqlReadModel } from "./read-model.ts";
@@ -98,10 +102,38 @@ export const postgresql: PostgresqlFunction = (options) => {
     }
   };
 
+  const scopes: Readonly<Record<SchemaScopeName, SchemaScope>> = {
+    storage: postgresqlStorageScope({ schema, tables }),
+    checkpoints: postgresqlCheckpointsScope(tables.checkpoints),
+    "forget-ledger": postgresqlForgetLedgerScope(tables.forgetLedger),
+  };
+  // A use of the pool for one call, handed back whatever the call does.
+  const briefly = async <T>(work: (connection: Connection) => Promise<T>): Promise<T> => {
+    const connection = open();
+    try {
+      return await work(connection);
+    } finally {
+      await release();
+    }
+  };
+  const versionsOn = (db: PostgresqlDatabase) =>
+    readPostgresqlSchemaVersions({ db, prefix: tablePrefix, scopes: Object.values(scopes) });
+
   return {
     kind: "bounda-adapter",
     name: "postgresql",
     options,
+    schemaVersions: () => briefly(({ db }) => versionsOn(db)),
+    migrate: (names) =>
+      briefly(async ({ db }) => {
+        await migratePostgresql({
+          db,
+          schema,
+          prefix: tablePrefix,
+          scopes: names.map((scope) => scopes[scope]),
+        });
+        return versionsOn(db);
+      }),
     createStorage: () =>
       using(async ({ db, sql }) => {
         await migratePostgresql({
@@ -160,6 +192,11 @@ export const postgresql: PostgresqlFunction = (options) => {
           checkpointStore: createSqlCheckpointStore({
             db,
             table: tables.checkpoints,
+            dialect: postgresqlDialect,
+          }),
+          subscriberFailures: createSqlSubscriberFailureStore({
+            db,
+            table: tables.subscriberFailures,
             dialect: postgresqlDialect,
           }),
           // The append lock comes first, before any row the work may lock: two transactions that

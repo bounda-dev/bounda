@@ -8,9 +8,10 @@ import type { ProcessRuntime } from "./build-processes.ts";
 import { type Deadline, deadlineAt, reachedKey, TIMEOUT_DEADLINE } from "./deadlines.ts";
 
 /**
- * Status of a process instance, derived from its lifecycle events.
+ * Status of a process instance, derived from its lifecycle events. `abandoned` is a failed
+ * instance whose failure's dead letter was discarded: it ends there, as `completed` does.
  */
-export type ProcessStatus = "started" | "completed" | "failed" | "timed_out";
+export type ProcessStatus = "started" | "completed" | "failed" | "timed_out" | "abandoned";
 
 export const PROCESS_EVENTS: {
   readonly started: "ProcessStarted";
@@ -21,6 +22,7 @@ export const PROCESS_EVENTS: {
   readonly failed: "ProcessFailed";
   readonly eventParked: "ProcessEventParked";
   readonly resumed: "ProcessResumed";
+  readonly abandoned: "ProcessAbandoned";
 } = {
   started: "ProcessStarted",
   handled: "ProcessHandled",
@@ -30,6 +32,7 @@ export const PROCESS_EVENTS: {
   failed: "ProcessFailed",
   eventParked: "ProcessEventParked",
   resumed: "ProcessResumed",
+  abandoned: "ProcessAbandoned",
 };
 
 /**
@@ -175,8 +178,8 @@ const causeOf = (event: StoredEvent): DeadlineCause => {
 };
 
 /**
- * A failed instance stays failed until `ProcessResumed`; a `ProcessHandled` takes its event off
- * the parked ones.
+ * A failed instance stays failed until `ProcessResumed`, or ends with `ProcessAbandoned`; a
+ * `ProcessHandled` takes its event off the parked ones.
  */
 export const foldProcess: FoldProcessFunction = ({ initialState, deadlineFields, events }) => {
   const handled = new Set<string>();
@@ -274,6 +277,9 @@ export const foldProcess: FoldProcessFunction = ({ initialState, deadlineFields,
       case PROCESS_EVENTS.resumed:
         if (status === "failed") status = "started";
         break;
+      case PROCESS_EVENTS.abandoned:
+        if (status === "failed") status = "abandoned";
+        break;
       default:
         break;
     }
@@ -353,6 +359,7 @@ export interface LifecycleEntries {
   failed(failedOn: FailedOn, letter: NewDeadLetter, context: CausationContext): LifecycleEntry;
   parked(event: StoredEvent): LifecycleEntry;
   resumed(context: CausationContext): LifecycleEntry;
+  abandoned(letterId: string, context: CausationContext): LifecycleEntry;
   deadlineReached(
     due: Deadline,
     state: object,
@@ -404,6 +411,11 @@ export const lifecycleEntries: LifecycleEntries = {
     context: causedBy(event),
   }),
   resumed: (context) => ({ type: PROCESS_EVENTS.resumed, payload: {}, context }),
+  abandoned: (letterId, context) => ({
+    type: PROCESS_EVENTS.abandoned,
+    payload: { letterId },
+    context,
+  }),
   deadlineReached: (due, state, context, id) => ({
     type: PROCESS_EVENTS.deadlineReached,
     payload: { field: due.field, at: due.at, state },

@@ -20,7 +20,12 @@ export type {
   CreateSqlForgetLedgerFunction,
   ForgetLedgerStatementsFunction,
 } from "./forget-ledger.ts";
-export { createSqlForgetLedger, forgetLedgerStatements } from "./forget-ledger.ts";
+export {
+  createSqlForgetLedger,
+  forgetLedgerMarksStatement,
+  forgetLedgerMarksTableFor,
+  forgetLedgerStatements,
+} from "./forget-ledger.ts";
 export {
   DEFAULT_TABLE_PREFIX,
   quoteIdentifier,
@@ -38,10 +43,17 @@ export { inspectSqlTable, quoteName, storeOfTable } from "./inspection.ts";
 export type {
   MigrateSchemasArgs,
   MigrateSchemasFunction,
+  ReadSchemaVersionsArgs,
+  ReadSchemaVersionsFunction,
   SchemaMigration,
   SchemaScope,
 } from "./migrations.ts";
-export { migrateSchemas, SCHEMA_SCOPES, schemaMigrationsTableFor } from "./migrations.ts";
+export {
+  migrateSchemas,
+  readSchemaVersions,
+  SCHEMA_SCOPES,
+  schemaMigrationsTableFor,
+} from "./migrations.ts";
 export type { CreateSqlPersonStoreArgs, CreateSqlPersonStoreFunction } from "./person-store.ts";
 export { createSqlPersonStore } from "./person-store.ts";
 export type {
@@ -62,3 +74,4 @@ export {
 export { byExecuteAt, earliestDue } from "./scheduling.ts";
 export type { SqlExecutor } from "./sql-table.ts";
 export { createSqlReadClient, createSqlTable } from "./sql-table.ts";
+export { createSqlSubscriberFailureStore } from "./subscriber-failure-store.ts";

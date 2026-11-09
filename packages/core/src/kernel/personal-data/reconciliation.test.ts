@@ -51,6 +51,8 @@ const recordingLedger = (entries: readonly ForgetLedgerEntry[], visibilityDelayM
   const inner = memory();
   const ledger: ForgetLedger = {
     ...(visibilityDelayMs === undefined ? {} : { visibilityDelayMs }),
+    readMark: async () => 0,
+    raiseMark: async () => undefined,
     append: async () => {},
     read: async (args) => {
       reads.push(args);
@@ -199,6 +201,8 @@ describe("the forget ledger's reconciliation", () => {
     await inner.append([entry("c-1", "e-1", at(0))]);
     const reconciliation = createForgetLedgerReconciliation({
       ledger: {
+        readMark: async () => 0,
+        raiseMark: async () => undefined,
         append: async () => {},
         read: async (args) => {
           if (failures > 0) {
@@ -243,6 +247,8 @@ describe("the forget ledger's reconciliation", () => {
     let reads = 0;
     const reconciliation = createForgetLedgerReconciliation({
       ledger: {
+        readMark: async () => 0,
+        raiseMark: async () => undefined,
         append: async () => {},
         read: async () => {
           reads += 1;
@@ -605,5 +611,87 @@ describe("forgetAgain", () => {
     await keyed(storage, ["c-1"]);
     expect(await run({ personId: "c-1", eventId: "e-1" })).not.toBeNull();
     expect(transactions).toBe(1);
+  });
+});
+
+describe("the reconciliation's status and restores", () => {
+  it("says where it stands from the database's rows, and that it read the ledger through", async () => {
+    const { storage, reconciliation } = await setUp({ entries: [entry("c-1", "e-1", at(-5))] });
+    expect(await reconciliation.status()).toEqual({
+      reconciled: false,
+      appliedThrough: null,
+      lastRunAt: null,
+      held: null,
+    });
+    await reconciliation.reconcile(NOW);
+    expect(await reconciliation.status()).toEqual({
+      reconciled: true,
+      appliedThrough: at(-5),
+      lastRunAt: NOW.toISOString(),
+      held: null,
+    });
+    await storage.checkpointStore.set(FORGET_LEDGER_HELD_UNTIL, NOW.getTime() + 60_000);
+    expect((await reconciliation.status()).held).toEqual({
+      until: new Date(NOW.getTime() + 60_000).toISOString(),
+      attempts: 0,
+    });
+    await storage.checkpointStore.remove(FORGET_LEDGER_HELD_UNTIL);
+    await storage.checkpointStore.set(FORGET_LEDGER_ATTEMPTS, 1);
+    expect((await reconciliation.status()).held).toEqual({
+      until: new Date(0).toISOString(),
+      attempts: 1,
+    });
+    await storage.checkpointStore.set(FORGET_LEDGER_ATTEMPTS, 2);
+    await storage.checkpointStore.set(FORGET_LEDGER_HELD_UNTIL, NOW.getTime() + 60_000);
+    expect((await reconciliation.status()).held).toEqual({
+      until: new Date(NOW.getTime() + 60_000).toISOString(),
+      attempts: 2,
+    });
+  });
+
+  it("is due at once after a restore, and clears the copy's hold on the instance that found it first", async () => {
+    const { storage, reconciliation } = await setUp({ entries: [] });
+    await reconciliation.reconcile(NOW);
+    expect(reconciliation.nextDueAt()).toBeNull();
+    await storage.checkpointStore.set(FORGET_LEDGER_ATTEMPTS, 4);
+    await storage.checkpointStore.set(FORGET_LEDGER_HELD_UNTIL, NOW.getTime() + 3_600_000);
+    await reconciliation.restored(false);
+    expect(reconciliation.nextDueAt()).toEqual(NOW);
+    expect(reconciliation.reconciled()).toBe(false);
+    expect(await storage.checkpointStore.get(FORGET_LEDGER_ATTEMPTS)).toBe(4);
+    await reconciliation.restored(true);
+    expect(await storage.checkpointStore.get(FORGET_LEDGER_ATTEMPTS)).toBe(0);
+    expect(await storage.checkpointStore.get(FORGET_LEDGER_HELD_UNTIL)).toBe(0);
+    expect(await reconciliation.sweep(NOW)).toBe(0);
+    expect(reconciliation.reconciled()).toBe(true);
+  });
+
+  it("logs a hold it could not clear after a restore, and is due all the same", async () => {
+    const storage = await memory().createStorage();
+    const logged: unknown[][] = [];
+    const reconciliation = createForgetLedgerReconciliation({
+      ledger: recordingLedger([]).ledger,
+      storage: {
+        ...storage,
+        checkpointStore: {
+          ...storage.checkpointStore,
+          get: () => Promise.reject(new Error("down")),
+        },
+      },
+      ids: createSequentialIdGenerator(),
+      clock: createFixedClock(NOW),
+      logger: { ...silentLogger, error: (...args: unknown[]) => logged.push(args) },
+      concurrencyRetries: 3,
+      reconcileEveryMs: EVERY,
+      keepForMs: null,
+    });
+    await reconciliation.restored(true);
+    expect(reconciliation.nextDueAt()).toEqual(NOW);
+    expect(logged).toEqual([
+      [
+        "forget ledger's reconciliation hold could not be cleared",
+        { error: expect.objectContaining({ message: "down" }) },
+      ],
+    ]);
   });
 });

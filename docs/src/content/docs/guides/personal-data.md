@@ -296,6 +296,10 @@ person, for them to take away, as the right of access and the right to portabili
     { id, kind: "policy", handler: "customer.welcomeOnCustomerRegistered",
       errorMessage: "no mailbox for ana@example.com", errorStack, data: {} },
   ],
+  subscriberFailures: [
+    { subscriber: "projection:customerDirectory", eventId, eventType: "CustomerRegistered",
+      errorMessage: "cannot index ana@example.com", errorStack },
+  ],
   readModels: {
     customerDirectory: [{ key: "c-42", data: { email: "ana@example.com" } }],
     orderSummary: [{ key: "o-9", data: {} }],
@@ -312,9 +316,11 @@ whose payload holds personal fields of theirs, with `commandId` the id the dispa
 for one the runtime scheduled itself, the scheduler's key, each with the same `data`.
 `deadLetters` are the handler runs that gave up and name the person: work about them, whose
 `errorMessage` and `errorStack` are encrypted with their key and come out opened, and the
-scheduled commands whose payload holds their fields, with its `data`. After `forget`, the
-person's events and letters are still theirs, and every field and error text reads as `null`, as
-a handler reads it. `readModels` has an entry for every read model with a field marked
+scheduled commands whose payload holds their fields, with its `data`. `subscriberFailures` are the
+last failures of the subscribers on an event that names them, kept with their error text
+encrypted with their key (see [observability](/reference/observability/#error-text)), opened.
+After `forget`, the person's events and letters are still theirs, and every field and error text
+reads as `null`, as a handler reads it. `readModels` has an entry for every read model with a field marked
 [`.person()`](#personal-data-in-read-models): the rows whose person field holds the id, each
 with its primary key as `key`, so the person can tell them apart, and its fields marked
 `.personal()` as `data`, read through the read model's own storage, which may be another
@@ -397,9 +403,11 @@ person's data in the clear records it, once per call:
 
 | Operation | `persons` | `detail` |
 | --- | --- | --- |
-| `exportPersonalData` | the person | `{ events, scheduledCommands, deadLetters, readModelRows }`, how many of each; `null` when it failed |
+| `exportPersonalData` | the person | `{ events, scheduledCommands, deadLetters, subscriberFailures, readModelRows }`, how many of each; `null` when it failed |
 | `deadLetters.list` | those the letters name | `{ letters }`, how many |
 | `deadLetters.get`, `retry`, `discard` | those the letter names | `{ letter }`, its id |
+| `subscriberFailures.list` | those the failures' events name | `{ failures }`, how many |
+| `subscriberFailures.get` | the one the failure's event names | `{ subscriber }`, its name |
 | a query of a read model with fields marked `.personal()` | those the `person` field names in the rows the query read | `{ query, readModel }` |
 
 Each record is `{ operation, actor, persons, personCount, at, outcome, detail }`, and a query's
@@ -573,11 +581,14 @@ forgotten, with its own checkpoint, in batches, like any subscriber; it shows in
 started over from the first event it records the same rows. Every pass of the scheduled-command
 worker then sweeps: an indexed read of the persons whose last activity is older than the
 retention, not restricted and not forgotten since, a bounded batch of them each forgotten in a
-transaction of its own. The deadline is worked out at sweep time from the setting, so changing it
+transaction of its own. One instance sweeps at a time, under a lease kept in `bounda_checkpoints`
+that the others leave alone until it lapses, two minutes after the holder last renewed it; an
+instance that stalled past its lease stops at the next person, and the one that took it over goes
+on. The deadline is worked out at sweep time from the setting, so changing it
 applies at once, to everyone, and turning it on applies it to the history: whoever was already
 inactive for that long is forgotten in the first passes. A person named by an event the subscriber has not recorded yet is
 left for a later pass, read in the transaction that forgets them, so nobody is forgotten for an
-activity the row does not show yet, nor twice when two workers sweep at once; an event stored in
+activity the row does not show yet, nor twice when a lease changes hands mid-way; an event stored in
 a transaction running beside it may still be forgotten with them, as one a command stores while
 `forget` runs may be. A person the sweep could not forget, because their forget failed or their
 row is behind, waits on their own, half a minute at first and twice as long after each failure up
@@ -729,7 +740,8 @@ keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY", previous: ["BOUNDA_MASTER_KEY
 ```
 
 A key wrapped under a previous master key still opens; the worker rewraps them under the current
-one in batches, on every pass, as the retention sweep runs. A key that fails to rewrap waits on its
+one in batches, on every pass, as the retention sweep runs, one instance at a time under a lease
+of its own for each set of master keys, as the retention's. A key that fails to rewrap waits on its
 row, as a person the retention could not forget does, while the others go on. Once none is left
 the worker marks the rotation complete for this set of master keys, in `bounda_checkpoints`, and
 logs it once:
@@ -873,7 +885,9 @@ Anything else is a ledger of your own through `defineForgetLedger`, which receiv
 environment, the tenant and `keepForMs` when the app starts: its `read` returns entries in the
 order of their time, then of their event's id, and `byForgetLedgerOrder` from
 `@bounda-dev/core/adapter` sorts them so; its optional `prune` removes the entries older than a
-time; `forgetLedgerContract` from `@bounda-dev/core/adapter/testing` is the test it has to pass.
+time; its `readMark` and `raiseMark` keep numbers that only go up, which the runtime uses to tell
+a copy [restored while the app was stopped](#restores); `forgetLedgerContract` from
+`@bounda-dev/core/adapter/testing` is the test it has to pass.
 
 ### What the runtime does with it
 
@@ -905,12 +919,12 @@ The check and the forgetting are one transaction, so instances starting together
 once. A Durable Object does it on every cold start; restoring its storage restarts it.
 
 While the app runs, it reads the ledger again every `reconcileEvery`, five minutes unless you set
-it, so a database restored under a running app forgets again within that time. One instance
-takes each round, whichever finds it due first, and the time of the last round is kept in the
-database, so a restore takes it back too and cannot hold the next round off. The
+it. One instance takes each round, whichever finds it due first, and the time of the last round is
+kept in the database, so a restore takes it back too and cannot hold the next round off. The
 round runs on the worker's passes, in every instance whose role runs the worker; a Durable Object
 runs it on the passes it wakes for, never waking for it alone, since restoring its storage
-restarts it anyway. Restarting the app after a restore reconciles at once.
+restarts it anyway. A database restored under a running app is reconciled at once, on the next
+pass that [finds the restore](#restores).
 
 A ledger that cannot be read when the app starts does not stop it: the app logs an error, starts,
 and its worker tries again after 30 seconds, then twice as long after each failure, up to an hour.
@@ -976,10 +990,61 @@ bounda forget --from forgotten.jsonl
 unless the database holds the forgetting a line names. A line may also be a bare person's id, for
 a list kept some other way, which is forgotten whenever the person holds a key: list only those
 forgotten after the copy was taken. `--actor <id>` names who does it on each `PersonalDataForgotten`
-it appends. `app.forgetAgain(entries, { actor })` is the same in code.
+it appends. `app.forgetAgain(entries, { actor })` is the same in code. Then run `bounda restored`,
+so the jobs start over from the copy ([restores](#restores)).
 
 Without either, a restored backup brings back the data of everyone forgotten after it was taken,
 until they are forgotten again.
+
+### Restores
+
+A copy of the database brings back more than forgotten persons: the waits of the jobs that had
+failed, which count failures against data the copy holds as it was. So the runtime finds a
+restore, wherever it happens, and then:
+
+- reconciles the forget ledger at once, without waiting for `reconcileEvery` or for a wait the copy
+  brought back;
+- has every instance forget what it knew of its background jobs, the backfill caught up, the
+  rotation complete, the pauses after a failure, the dispatcher's backoff, and read the copy again;
+- and, on the instance that found it first, clears the waits the copy brought back, on persons,
+  keys, the backfill and the reconciliation.
+
+The attempts of handlers, a policy's, a process's or a scheduled command's, stay as the copy has
+them: those runs happened, and what they did through a port is not undone. Each find logs
+
+```
+the database went back to an earlier copy; background jobs start over
+```
+
+and `bounda status` counts the restores found. How it is found depends on when the copy came back:
+
+| The copy was restored | Found by | What is guaranteed |
+| --- | --- | --- |
+| under the running app | every instance, on its next pass, or within five seconds in the `web` role | Any copy taken before the last write the instances saw. A copy taken after it differs from the database in nothing but waits, which the jobs read again anyway. |
+| while the app was stopped, with a forget ledger | the first instance to start, before it serves anything | Any copy taken before the last mark the ledger holds, which follows every move of the counter and a stop after any write, or before a forgetting the ledger holds and the copy does not. Only after a crash can a copy of the last five seconds of writes, with no forgetting among them, go unseen: it differs from the database in waits alone. |
+| while the app was stopped, without a ledger | `bounda restored`, which you run after restoring | What you declare: the database alone cannot tell a copy from itself. |
+
+Under the running app, every instance moves a counter in `bounda_checkpoints` one forward after
+it wrote, at most every five seconds, and remembers what it read: a copy holds less, and the
+first instance to see it counts the restore in another row, which every other instance then sees
+changed. An idle instance writes nothing, so neither does its watch. With a forget ledger the
+counter is also raised in the ledger, as a mark outside the database, which is how a start tells
+a copy restored while the app was stopped; and a forgetting the ledger holds that the database
+does not is a restore too, whatever the counter says, so the forgettings a copy undid are
+applied again and found by the same reconciliation. A forgetting never depends on the mark: what
+a restore that goes unseen leaves is waits, which end on their own within an hour.
+
+On Workers KV, `kvForgetLedger`, a read may lag a write by up to a minute in another location, so
+a start there may read an older mark and miss a copy of the last minute, unless a forgetting
+tells it; with only one object per tenant writing it, the mark itself never goes down. A ledger
+in a SQL database reads what was written. Without a ledger, run, after restoring:
+
+```bash
+bounda restored
+```
+
+`app.restored()` is the same in code. It counts the restore, so running instances learn of it
+too, clears the waits, and reconciles the ledger at once when there is one.
 
 ### Old backups
 

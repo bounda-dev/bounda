@@ -107,5 +107,21 @@ export const createSqlPersonalKeyStore: CreateSqlPersonalKeyStoreFunction = ({
         ),
       );
     },
+    countWrappedUnder: async ({ kids }) => {
+      const under = wrappedUnder(kids);
+      if (under === null) return 0;
+      const [row] = await db.all(
+        `SELECT count(*) AS "count" FROM ${table} WHERE ${under.condition}`,
+        under.values,
+      );
+      return Number(row?.count ?? 0);
+    },
+    releaseHolds: async () =>
+      (
+        await db.all(
+          `UPDATE ${table} SET "held_until" = NULL, "attempts" = 0 WHERE "held_until" IS NOT NULL RETURNING "person"`,
+          [],
+        )
+      ).length,
   };
 };

@@ -54,8 +54,10 @@ What a production app does get, and where it is explained:
 reaction, [forgetting them](/guides/personal-data/#retention) after a retention or when a purpose
 ends, their keys [wrapped under a master key](/guides/personal-data/#a-master-key) kept out of
 the database and out of JavaScript memory, their forgetting [applied again](/guides/personal-data/#backups) when a backup is
-restored, what was written before a field was marked [sealed in
-place](/guides/personal-data/#marking-a-field-later),
+restored, and [found](/guides/personal-data/#restores) whether restored under the running app or while it was stopped,
+what was written before a field was marked [sealed in
+place](/guides/personal-data/#marking-a-field-later), [the status of the background
+work](/reference/cli/#bounda-status) and [migrations run before a deploy](/reference/cli/#bounda-migrate),
 [dead letters with a way out](/guides/dead-letters/), [upcasters](/guides/changing-events/) for
 events whose payload changed, [snapshots](/concepts/long-streams/#snapshots) whose validity the
 runtime checks itself, [observability](/reference/observability/) through OpenTelemetry, and a

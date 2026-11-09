@@ -67,6 +67,9 @@ describe("cloudflareClients", () => {
     })(requestArgs());
 
     await client.getLag();
+    await client.status();
+    await client.subscriberFailures.list();
+    await client.subscriberFailures.get("projection:orders");
     await client.events.read({ after: 3, limit: 10 });
     await client.deadLetters.list({ limit: 5 });
     await client.deadLetters.retry("d-1");
@@ -78,6 +81,9 @@ describe("cloudflareClients", () => {
     await client.unrestrict("c-2");
     expect(store.calls).toEqual([
       ["acme", "lag"],
+      ["acme", "status"],
+      ["acme", "listSubscriberFailures", undefined],
+      ["acme", "getSubscriberFailure", "projection:orders", undefined],
       ["acme", "readEvents", { after: 3, limit: 10 }],
       ["acme", "listDeadLetters", { limit: 5 }, undefined],
       ["acme", "retryDeadLetter", "d-1", undefined],

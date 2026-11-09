@@ -70,6 +70,16 @@ export interface ForgetLedger {
    */
   prune?(args: PruneForgetLedgerArgs): Promise<void>;
   /**
+   * The highest value raised under `name` for this ledger's store, `0` for none. What the runtime
+   * keeps of the database outside it: a copy restored while the app was stopped holds less than
+   * the ledger says the database reached.
+   */
+  readMark(name: string): Promise<number>;
+  /**
+   * Raises the mark `name` to `value`, unless it is already that high: a mark never goes down.
+   */
+  raiseMark(name: string, value: number): Promise<void>;
+  /**
    * Releases what the ledger holds open; called when the app stops.
    */
   close?(): Promise<void>;

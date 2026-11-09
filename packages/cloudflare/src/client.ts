@@ -1,6 +1,7 @@
 import {
   type AppLag,
   type AppRegistry,
+  type AppStatus,
   type BoundaClient,
   type CommandsFacade,
   type Consistency,
@@ -17,6 +18,7 @@ import {
   type Registry,
   type StoredDispatch,
   type StoredEvent,
+  type SubscriberFailure,
 } from "@bounda-dev/core";
 import { unwrap } from "./outcome.ts";
 
@@ -35,6 +37,9 @@ export interface BoundaStub {
   ): PromiseLike<unknown>;
   query(name: string, payload?: unknown, actor?: string): PromiseLike<unknown>;
   lag(): PromiseLike<unknown>;
+  status(): PromiseLike<unknown>;
+  listSubscriberFailures(actor?: string): PromiseLike<unknown>;
+  getSubscriberFailure(subscriber: string, actor?: string): PromiseLike<unknown>;
   readEvents(args?: ReadEventsArgs): PromiseLike<unknown>;
   listDeadLetters(args?: ListDeadLettersArgs, actor?: string): PromiseLike<unknown>;
   retryDeadLetter(id: string, actor?: string): PromiseLike<unknown>;
@@ -109,6 +114,12 @@ export const connect: ConnectFunction = <R extends Registry = AppRegistry>(
     ),
     queries: byName<QueriesFacade<R>>((name, payload) => unwrap(stub.query(name, payload, actor))),
     getLag: () => unwrap<AppLag>(stub.lag()),
+    status: () => unwrap<AppStatus>(stub.status()),
+    subscriberFailures: {
+      list: () => unwrap<readonly SubscriberFailure[]>(stub.listSubscriberFailures(actor)),
+      get: (subscriber) =>
+        unwrap<SubscriberFailure | null>(stub.getSubscriberFailure(subscriber, actor)),
+    },
     events: { read: (args) => unwrap<readonly StoredEvent[]>(stub.readEvents(args)) },
     deadLetters: {
       list: (args) => unwrap<readonly DeadLetter[]>(stub.listDeadLetters(args, actor)),

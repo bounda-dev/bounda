@@ -52,7 +52,8 @@ never changes, so the instance is a stable sequence, and parking can follow it.
 So when a step fails for good, the instance parks every later event in its own stream, in the
 order it arrived, and the process runner moves on to the other instances. Retrying the dead letter
 runs the failed handler again and drains what is parked, in order, before the instance resumes;
-discarding it gives the instance up. [A failed process](/guides/dead-letters/#a-failed-process) has
+discarding it gives the instance up with `ProcessAbandoned`, which ends it as `abandoned`, a status
+of its own, so the purge of resolved letters never decides what happens to it. [A failed process](/guides/dead-letters/#a-failed-process) has
 the rules: what is parked, how deadlines interleave, and what a retry cut short does.
 
 ## Why not park them as dead letters

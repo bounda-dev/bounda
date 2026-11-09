@@ -55,8 +55,11 @@ export interface DeadLetters {
    */
   retry(id: string): Promise<DeadLetter>;
   /**
-   * Marks the letter `discarded`. Rejects a letter that is missing, and with
-   * `DeadLetterSettledError` one that is no longer `failed`.
+   * Marks the letter `discarded`. A process letter whose instance is still failed on it ends the
+   * instance with `ProcessAbandoned` in the same transaction, acted by the client's actor: the
+   * events parked behind it stay unhandled, and later ones are no longer parked. Rejects a letter
+   * that is missing, and with `DeadLetterSettledError` one that is no longer `failed`, or that a
+   * retry settled while this ran.
    */
   discard(id: string): Promise<DeadLetter>;
 }
@@ -64,7 +67,7 @@ export interface DeadLetters {
 export interface CreateDeadLettersArgs {
   readonly storage: AppStorage;
   readonly retries: DeadLetterRetry;
-  readonly processes: Pick<ProcessDeadLetters, "parkedBehind" | "stillParked">;
+  readonly processes: Pick<ProcessDeadLetters, "parkedBehind" | "stillParked" | "abandon">;
   readonly clock: Clock;
   readonly logger: Logger;
   readonly errorText: ErrorText;
@@ -202,7 +205,8 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
       const letter = await failedLetter(id);
       return recordedLetter("deadLetters.discard", letter, async () => {
         const at = clock.now();
-        await storage.deadLetterStore.updateStatus(id, "discarded", at);
+        if (letter.kind === "process") await processes.abandon({ letter, at, actor });
+        else await storage.deadLetterStore.updateStatus(id, "discarded", at);
         logger.info("dead letter discarded", {
           id,
           kind: letter.kind,

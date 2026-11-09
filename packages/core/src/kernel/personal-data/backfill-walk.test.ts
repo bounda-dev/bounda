@@ -575,8 +575,11 @@ describe("the backfill's walk", () => {
     await backfill.release();
     expect(logs).toContainEqual([
       "error",
-      "personal data backfill could not give its lease back",
-      expect.objectContaining({ error: expect.objectContaining({ message: "cannot write" }) }),
+      "background job could not give its lease back",
+      expect.objectContaining({
+        lease: `${BACKFILL_PREFIX}m1:lease`,
+        error: expect.objectContaining({ message: "cannot write" }),
+      }),
     ]);
   });
 
@@ -610,5 +613,47 @@ describe("the backfill's walk", () => {
     await storage.checkpointStore.remove(`${BACKFILL_PREFIX}m1:lease`);
     await later.backfill.sweep(new Date(START.getTime() + 5_000));
     expect((await rows(storage))["m1:started"]).toBe(START.getTime());
+  });
+
+  it("starts over at once after a restore, clearing the copy's hold on the instance that found it first", async () => {
+    const storage = await memory().createStorage();
+    const { logs, logger } = recording();
+    const one = walker({ storage, logger });
+    await one.backfill.sweep(START);
+    expect(await one.backfill.nextDueAt()).toBeNull();
+    await storage.checkpointStore.set(`${BACKFILL_PREFIX}m1:attempts`, 3);
+    await storage.checkpointStore.set(`${BACKFILL_PREFIX}m1:held-until`, START.getTime() + HOLD_MS);
+    await storage.checkpointStore.remove(`${BACKFILL_PREFIX}m1:stores`);
+    await one.backfill.restored(false);
+    expect(await rows(storage)).toMatchObject({ "m1:attempts": 3 });
+    expect(await one.backfill.nextDueAt()).toEqual(START);
+    await one.backfill.sweep(START);
+    expect(await one.backfill.status()).toMatchObject({ caughtUp: false });
+    await one.backfill.restored(true);
+    const left = await rows(storage);
+    expect(left).not.toHaveProperty("m1:attempts");
+    expect(left).not.toHaveProperty("m1:held-until");
+    expect(await one.backfill.nextDueAt()).toEqual(START);
+    await one.backfill.sweep(START);
+    expect(await one.backfill.status()).toMatchObject({ caughtUp: true });
+    expect(logs.filter(([level]) => level === "error")).toEqual([]);
+  });
+
+  it("logs a hold it could not clear after a restore", async () => {
+    const base = await memory().createStorage();
+    const storage: Storage = {
+      ...base,
+      checkpointStore: {
+        ...base.checkpointStore,
+        get: () => Promise.reject(new Error("store is down")),
+      },
+    };
+    const { logs, logger } = recording();
+    await walker({ storage, logger }).backfill.restored(true);
+    expect(logs).toContainEqual([
+      "error",
+      "personal data backfill's hold could not be cleared",
+      expect.objectContaining({ error: expect.objectContaining({ message: "store is down" }) }),
+    ]);
   });
 });
