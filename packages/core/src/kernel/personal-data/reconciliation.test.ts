@@ -624,6 +624,17 @@ describe("the reconciliation's status and restores", () => {
       lastRunAt: NOW.toISOString(),
       held: null,
     });
+    await storage.checkpointStore.set(FORGET_LEDGER_HELD_UNTIL, NOW.getTime() + 60_000);
+    expect((await reconciliation.status()).held).toEqual({
+      until: new Date(NOW.getTime() + 60_000).toISOString(),
+      attempts: 0,
+    });
+    await storage.checkpointStore.remove(FORGET_LEDGER_HELD_UNTIL);
+    await storage.checkpointStore.set(FORGET_LEDGER_ATTEMPTS, 1);
+    expect((await reconciliation.status()).held).toEqual({
+      until: new Date(0).toISOString(),
+      attempts: 1,
+    });
     await storage.checkpointStore.set(FORGET_LEDGER_ATTEMPTS, 2);
     await storage.checkpointStore.set(FORGET_LEDGER_HELD_UNTIL, NOW.getTime() + 60_000);
     expect((await reconciliation.status()).held).toEqual({

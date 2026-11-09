@@ -797,6 +797,26 @@ describe("the key rotation across instances", () => {
     expect(await kidsOf(store, ["c-1", "c-2"])).toEqual(["new", "new"]);
   });
 
+  it("rewraps again at once after a restore, though the store had paused it", async () => {
+    const { store, checkpoints } = await setUp();
+    await addUnder(store, "old", "c-1");
+    let down = true;
+    const rotation = rotationOver({
+      keys: {
+        ...store,
+        listWrappedUnder: (args) =>
+          down ? Promise.reject(new Error("down")) : store.listWrappedUnder(args),
+      },
+      checkpoints,
+      wrapper: wrapper(),
+    });
+    expect(await rotation.sweep(clock.now())).toBe(0);
+    down = false;
+    expect(await rotation.sweep(clock.now())).toBe(0);
+    await rotation.restored(false);
+    expect(await rotation.sweep(clock.now())).toBe(1);
+  });
+
   it("leaves the holds to the instance that found the restore first", async () => {
     const { store, checkpoints } = await setUp();
     const held = await addUnder(store, "old", "c-1");

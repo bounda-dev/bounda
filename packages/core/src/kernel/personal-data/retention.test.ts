@@ -810,8 +810,20 @@ describe("the retention across instances", () => {
     await touch("c-2");
     await record();
     advance(31);
-    const other = sweepOver(storage);
+    let lists = 0;
+    const other = sweepOver({
+      ...storage,
+      persons: {
+        ...storage.persons,
+        listIdle: (args) => {
+          lists += 1;
+          return storage.persons.listIdle(args);
+        },
+      },
+    });
     expect(await other.sweep(clock.now())).toBe(0);
+    expect(await other.sweep(clock.now())).toBe(0);
+    expect(lists).toBe(1);
     expect(await other.nextDueAt()).toEqual(new Date(leased));
     await one.release();
     expect(await other.sweep(clock.now())).toBe(1);
@@ -850,6 +862,24 @@ describe("the retention across instances", () => {
     await sweep.restored(true);
     expect((await storage.persons.get("c-1"))?.hold).toBeNull();
     expect(await sweep.nextDueAt()).toEqual(new Date(Date.parse(day(0)) + 30 * DAY));
+    expect(await sweep.sweep(clock.now())).toBe(1);
+  });
+
+  it("sweeps again at once after a restore, though the store had paused it", async () => {
+    const { storage, sweepOver, clock } = await idle(["c-1"]);
+    let down = true;
+    const sweep = sweepOver({
+      ...storage,
+      persons: {
+        ...storage.persons,
+        listIdle: (args) =>
+          down ? Promise.reject(new Error("down")) : storage.persons.listIdle(args),
+      },
+    });
+    expect(await sweep.sweep(clock.now())).toBe(0);
+    down = false;
+    expect(await sweep.sweep(clock.now())).toBe(0);
+    await sweep.restored(false);
     expect(await sweep.sweep(clock.now())).toBe(1);
   });
 

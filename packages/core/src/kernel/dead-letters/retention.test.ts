@@ -192,6 +192,18 @@ describe("the retention of dead letters across instances", () => {
     expect(await store.count()).toBe(1);
   });
 
+  it("purges again at once after a restore, though the store had paused it", async () => {
+    const { store, retention, resolve } = await setUp();
+    await resolve("a", later(-8 * DAY));
+    const { firstResolvedAt } = store;
+    store.firstResolvedAt = () => Promise.reject(new Error("down"));
+    expect(await retention.sweep(start)).toBe(0);
+    store.firstResolvedAt = firstResolvedAt;
+    expect(await retention.sweep(start)).toBe(0);
+    retention.restored();
+    expect(await retention.sweep(start)).toBe(1);
+  });
+
   it("reads the store again at once after a restore", async () => {
     const { store, retention, resolve } = await setUp();
     await retention.sweep(start);

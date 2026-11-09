@@ -101,7 +101,12 @@ describe("the dispatcher's backoff", () => {
   it("resolves the stored failure again after a restore, which may have brought it back", async () => {
     const resolved: string[] = [];
     const { eventStore, checkpointStore } = await memory().createStorage();
-    const recovering = scripted("projection:x", [{ outcome: "advanced" }, { outcome: "advanced" }]);
+    const recovering = scripted("projection:x", [
+      { outcome: "advanced" },
+      { outcome: "advanced" },
+      { outcome: "moved" },
+      { outcome: "advanced" },
+    ]);
     const dispatcher = createDispatcher({
       clock: createFixedClock(),
       eventStore,
@@ -119,6 +124,9 @@ describe("the dispatcher's backoff", () => {
       errorText: "omit",
     });
     await dispatcher.processOnce();
+    await dispatcher.processOnce();
+    await dispatcher.processOnce();
+    expect(resolved).toEqual(["projection:x"]);
     dispatcher.restored();
     await dispatcher.processOnce();
     expect(resolved).toEqual(["projection:x", "projection:x"]);

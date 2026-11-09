@@ -522,6 +522,35 @@ describe("a Bounda Durable Object", () => {
     });
   });
 
+  it("reports its status and keeps a projection's last failure, opened through a recorded call", async () => {
+    const { store } = open();
+    outage.projection = true;
+    await store.commands.placeOrder({ orderId: "o-1", total: 5, customer: "ada", note: "x" });
+    outage.projection = false;
+    const status = await store.status();
+    expect(status.schema).toEqual([
+      { database: "storage", scope: "storage", version: 2, latest: 2 },
+      { database: "storage", scope: "checkpoints", version: 1, latest: 1 },
+    ]);
+    expect(status.subscriberFailures).toContainEqual(
+      expect.objectContaining({
+        subscriber: "projection:orders",
+        errorName: "Error",
+        current: true,
+      }),
+    );
+    expect(JSON.stringify(status)).not.toContain("projection is down");
+    const [failure] = await store.as("ops-1").subscriberFailures.list();
+    expect(failure).toMatchObject({
+      subscriber: "projection:orders",
+      errorMessage: "projection is down",
+    });
+    expect(await store.subscriberFailures.get("projection:orders")).toMatchObject({
+      errorMessage: "projection is down",
+    });
+    expect(await store.subscriberFailures.get("projection:nothing")).toBeNull();
+  });
+
   it("dead-letters a failing policy and lets it be discarded", async () => {
     const { stub, store } = open();
     await store.commands.placeOrder({ orderId: "fail-1", total: 3, customer: "ada" });
