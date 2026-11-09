@@ -146,7 +146,13 @@ export const inspectionContract: InspectionContractFunction = ({ create }) => {
       const adapter = await create();
       const opened = await adapter.createForgetLedger({ tenant: "t-1" });
       await opened.append([
-        { personId: "c-1", eventId: "e-1", forgottenAt: "2026-11-07T12:00:00.000Z" },
+        {
+          personId: "c-1",
+          eventId: "e-1",
+          forgottenAt: "2026-11-07T12:00:00.000Z",
+          reason: "requested",
+          fingerprints: [],
+        },
       ]);
       const ledger = tableOf(await adapter.inspect(), "bounda_forget_ledger");
       const { rows } = ledger;
