@@ -1,4 +1,4 @@
-import { errorFields, errorTextFromEnv, type Logger } from "@bounda-dev/core";
+import { errorFields, type Logger } from "@bounda-dev/core";
 import type { ErrorText } from "@bounda-dev/core/config";
 import { isRouteErrorResponse } from "react-router";
 
@@ -16,23 +16,13 @@ export interface HandleBoundaErrorFunction {
 
 export interface CreateHandleErrorArgs {
   readonly message: string;
-  readonly errorText: () => ErrorText | Promise<ErrorText>;
+  /**
+   * Synchronous: a Worker may cancel what is still pending once its response is sent, and React
+   * Router never waits for `handleError`.
+   */
+  readonly errorText: () => ErrorText;
   readonly logger: () => Logger | Promise<Logger>;
 }
-
-export interface ErrorTextOfEnvFunction {
-  (env: () => object): ErrorText | undefined;
-}
-
-// `BOUNDA_ERROR_TEXT` as the runtime reads it; a value it refuses is left to the runtime to report,
-// since the error being logged is likely that refusal.
-export const errorTextOfEnv: ErrorTextOfEnvFunction = (env) => {
-  try {
-    return errorTextFromEnv(env());
-  } catch {
-    return undefined;
-  }
-};
 
 export interface CreateHandleErrorFunction {
   (args: CreateHandleErrorArgs): HandleBoundaErrorFunction;
@@ -49,7 +39,7 @@ export const createHandleError: CreateHandleErrorFunction =
   async (error, { request }) => {
     if (request.signal.aborted) return;
     try {
-      const text = await errorText();
+      const text = errorText();
       (await logger()).error(message, {
         method: request.method,
         ...(text === "include" ? { path: new URL(request.url).pathname } : {}),

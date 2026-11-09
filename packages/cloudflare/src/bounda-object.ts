@@ -12,7 +12,6 @@ import {
   type DispatchOptions,
   type DispatchResult,
   errorFields,
-  errorTextFromEnv,
   type IdGenerator,
   type ListDeadLettersArgs,
   type Logger,
@@ -26,6 +25,7 @@ import {
   type StoredEvent,
   type SubscriberFailure,
   systemClock,
+  withErrorText,
 } from "@bounda-dev/core";
 import type { Config } from "@bounda-dev/core/config";
 import { durableObjectAdapter } from "./adapter.ts";
@@ -165,18 +165,6 @@ export interface ConfigForObjectFunction {
   (config: Config, storage: DurableSqlStorage): Config;
 }
 
-// `BOUNDA_ERROR_TEXT` in the object's environment, `.dev.vars` in development, wins over the
-// configuration, which is the same bundle in every environment.
-const withErrorTextOf = (config: Config, env: object): Config => {
-  const errorText = errorTextFromEnv(env);
-  return errorText === undefined
-    ? config
-    : {
-        ...config,
-        runtime: { ...config.runtime, telemetry: { ...config.runtime?.telemetry, errorText } },
-      };
-};
-
 export const configForObject: ConfigForObjectFunction = (config, storage) => {
   const own = (options: { readonly tablePrefix?: string }) =>
     durableObjectAdapter({ storage, options });
@@ -235,7 +223,9 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
       void ctx.blockConcurrencyWhile(async () => {
         this.#app = await createApp<R>({
           registry,
-          config: configForObject(withErrorTextOf(config, env), ctx.storage),
+          // The configuration is one bundle for every environment, so `.dev.vars` decides in
+          // development.
+          config: configForObject(withErrorText({ config, env }), ctx.storage),
           env,
           tenant: ctx.id.name,
           logger,

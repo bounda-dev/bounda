@@ -7,15 +7,12 @@ import {
   type Logger,
   type Registry,
   readYourWrites,
+  resolveErrorText,
 } from "@bounda-dev/core";
 import type { ErrorText } from "@bounda-dev/core/config";
 import { createContext, type MiddlewareFunction, type RouterContext } from "react-router";
 import { type ActorFunction, actAs } from "./actor.ts";
-import {
-  createHandleError,
-  errorTextOfEnv,
-  type HandleBoundaErrorFunction,
-} from "./handle-error.ts";
+import { createHandleError, type HandleBoundaErrorFunction } from "./handle-error.ts";
 import { withIdempotencyKey } from "./idempotency-key.ts";
 
 /**
@@ -208,7 +205,10 @@ export const createBounda: CreateBoundaFunction = <R extends Registry = AppRegis
 
   const handleError = createHandleError({
     message: "request failed",
-    errorText: () => slot.errorText ?? errorTextOfEnv(() => process.env) ?? errorText,
+    // Before any app has booted, what `boot()` would resolve without the configuration.
+    errorText: () =>
+      slot.errorText ??
+      resolveErrorText({ env: globalThis.process?.env, fallback: errorText, invalidEnv: "ignore" }),
     logger: () => {
       if (logger !== undefined) return logger;
       consoleLogger ??= import("@bounda-dev/core/node").then((node) => node.createConsoleLogger());

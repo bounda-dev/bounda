@@ -3,8 +3,9 @@ import {
   ERROR_TEXT_VARIABLE,
   type ErrorFields,
   errorFields,
-  errorTextFromEnv,
+  resolveErrorText,
   type SubscriberFailing,
+  withErrorText,
 } from "@bounda-dev/core";
 import type {
   Adapter,
@@ -56,15 +57,28 @@ describe("errorFields", () => {
     expectTypeOf<SubscriberFailing>().not.toHaveProperty("message");
   });
 
-  it("reads the rule of BOUNDA_ERROR_TEXT from any environment", () => {
+  it("resolves one rule from a host's override, any environment, the configuration and a fallback", () => {
     expectTypeOf(ERROR_TEXT_VARIABLE).toEqualTypeOf<"BOUNDA_ERROR_TEXT">();
-    expectTypeOf(errorTextFromEnv({ BOUNDA_ERROR_TEXT: "include" })).toEqualTypeOf<
-      ErrorText | undefined
-    >();
     const processEnv: Readonly<Record<string, string | undefined>> = {};
-    expectTypeOf(errorTextFromEnv(processEnv)).toEqualTypeOf<ErrorText | undefined>();
+    expectTypeOf(resolveErrorText({})).toEqualTypeOf<ErrorText>();
+    expectTypeOf(
+      resolveErrorText({
+        forced: undefined,
+        env: processEnv,
+        config: { storage: sqlite, ports },
+        fallback: "include",
+        invalidEnv: "ignore",
+      }),
+    ).toEqualTypeOf<ErrorText>();
+    expectTypeOf(
+      withErrorText({ config: { storage: sqlite, ports }, env: processEnv }),
+    ).toEqualTypeOf<Config>();
     // @ts-expect-error an environment is an object
-    errorTextFromEnv("include");
+    resolveErrorText({ env: "include" });
+    // @ts-expect-error a fallback is "omit" or "include"
+    resolveErrorText({ fallback: "all" });
+    // @ts-expect-error withErrorText needs the configuration it sets the rule in
+    withErrorText({ forced: "include" });
   });
 });
 

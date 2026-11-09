@@ -9,11 +9,7 @@ import {
 } from "react-router";
 import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { createBounda } from "./create-bounda.ts";
-import {
-  createHandleError,
-  errorTextOfEnv,
-  type HandleBoundaErrorFunction,
-} from "./handle-error.ts";
+import { createHandleError, type HandleBoundaErrorFunction } from "./handle-error.ts";
 
 const recording = () => {
   const lines: unknown[][] = [];
@@ -59,7 +55,7 @@ describe("createHandleError", () => {
     const included = recording();
     await createHandleError({
       message: "request failed",
-      errorText: async (): Promise<ErrorText> => "include",
+      errorText: () => "include",
       logger: async () => included.logger,
     })(quoting(), { request: request() });
     expect(included.lines).toEqual([
@@ -144,17 +140,6 @@ describe("createHandleError", () => {
         logger: () => Promise.reject(new Error("no logger")),
       })(quoting(), { request: request() }),
     ).resolves.toBeUndefined();
-  });
-
-  it("reads BOUNDA_ERROR_TEXT, leaving a value it refuses to the runtime", () => {
-    expect(errorTextOfEnv(() => ({ BOUNDA_ERROR_TEXT: "include" }))).toBe("include");
-    expect(errorTextOfEnv(() => ({}))).toBeUndefined();
-    expect(errorTextOfEnv(() => ({ BOUNDA_ERROR_TEXT: "loud" }))).toBeUndefined();
-    expect(
-      errorTextOfEnv(() => {
-        throw new ReferenceError("process is not defined");
-      }),
-    ).toBeUndefined();
   });
 
   it("is a handleError React Router accepts", () => {

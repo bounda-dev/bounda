@@ -115,6 +115,17 @@ other value fails the boot with `ConfigurationError`. Projects from `create-boun
 set it in `.dev.vars`, which `wrangler dev` and `vite dev` read and a deployment never sees; the
 constant `ERROR_TEXT_VARIABLE` from `@bounda-dev/core` names it.
 
+Every host resolves the rule with the same precedence: its own override, then `BOUNDA_ERROR_TEXT`,
+then the configuration, then the host's own default (the dev server's `"include"`), then
+`"omit"`. A host of your own resolves it the same way with `resolveErrorText` from
+`@bounda-dev/core`, and `withErrorText` returns the configuration with it applied:
+
+```ts
+import { withErrorText } from "@bounda-dev/core";
+
+const app = await createApp({ registry, config: withErrorText({ config, env: process.env }) });
+```
+
 ## How a command loaded its aggregate
 
 A `bounda.command` span that loaded its aggregate says how, once it ends, whatever the outcome:

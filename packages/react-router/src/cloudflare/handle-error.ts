@@ -1,18 +1,14 @@
 import { env } from "cloudflare:workers";
 import { workersLogger } from "@bounda-dev/cloudflare";
-import type { Logger } from "@bounda-dev/core";
+import { type Logger, resolveErrorText } from "@bounda-dev/core";
 import type { Config } from "@bounda-dev/core/config";
-import {
-  createHandleError,
-  errorTextOfEnv,
-  type HandleBoundaErrorFunction,
-} from "../handle-error.ts";
+import { createHandleError, type HandleBoundaErrorFunction } from "../handle-error.ts";
 
 export interface CloudflareHandleErrorArgs {
   /**
-   * The text is omitted when it rejects.
+   * The configuration the Worker holds, `undefined` while it has imported none.
    */
-  readonly config: () => Promise<Config | undefined>;
+  readonly config: () => Config | undefined;
   readonly logger?: Logger | undefined;
 }
 
@@ -28,9 +24,6 @@ export const cloudflareHandleError: CloudflareHandleErrorFunction = ({
 }) =>
   createHandleError({
     message: "bounda request failed",
-    errorText: async () =>
-      errorTextOfEnv(() => env) ??
-      (await config().catch(() => undefined))?.runtime?.telemetry?.errorText ??
-      "omit",
+    errorText: () => resolveErrorText({ env, config: config(), invalidEnv: "ignore" }),
     logger: () => logger,
   });

@@ -6,14 +6,15 @@ import {
   type DeadLetterKind,
   type DeadLetterStatus,
   errorFields,
-  errorTextFromEnv,
   type ListDeadLettersArgs,
   type Logger,
   MAX_ACTOR_LENGTH,
   migrateTables,
   type Registry,
   rebuildReadModel,
+  resolveErrorText,
   type SubscriberFailure,
+  withErrorText,
 } from "@bounda-dev/core";
 import type { Config, ErrorText } from "@bounda-dev/core/config";
 import { boot, createConsoleLogger, loadProject } from "@bounda-dev/core/node";
@@ -97,22 +98,12 @@ const runGenerate = async (
 
 const logTo = (stderr: Output): Logger => createConsoleLogger({ stream: stderr });
 
-// The flag wins; then `BOUNDA_ERROR_TEXT`, which `load` has checked once `.env` is loaded.
-const forcedErrorText = (options: ProjectOptions): ErrorText | undefined =>
-  options.errorText ? "include" : errorTextFromEnv(process.env);
-
-const errorTextOf = (options: ProjectOptions, config: Config): ErrorText | undefined =>
-  forcedErrorText(options) ?? config.runtime?.telemetry?.errorText;
-
-const withErrorText = (config: Config, options: ProjectOptions): Config => {
-  const errorText = forcedErrorText(options);
-  return errorText === undefined
-    ? config
-    : {
-        ...config,
-        runtime: { ...config.runtime, telemetry: { ...config.runtime?.telemetry, errorText } },
-      };
-};
+// `process.env` is read once `load` has loaded `.env` and checked `BOUNDA_ERROR_TEXT`.
+const errorTextArgs = (options: ProjectOptions, config: Config) => ({
+  forced: options.errorText ? ("include" as const) : undefined,
+  env: process.env,
+  config,
+});
 
 const rootOf = (options: ProjectOptions, cwd: string): string => resolve(cwd, options.root ?? ".");
 
@@ -131,7 +122,7 @@ const load = async (
       registryPath: options.registry,
       logger,
     });
-    errorTextFromEnv(process.env);
+    resolveErrorText({ env: process.env });
     return project;
   } catch (error) {
     line(stderr, `error: ${error instanceof Error ? error.message : String(error)}`);
@@ -144,11 +135,7 @@ const ERROR_TEXT_HINT =
 
 // A handler's error may quote personal data, and stderr often ends in a log: its message is
 // printed only as the runtime would log it.
-const failed = (
-  stderr: Output,
-  error: unknown,
-  errorText: ErrorText | undefined,
-): typeof EXIT_FAILURE => {
+const failed = (stderr: Output, error: unknown, errorText: ErrorText): typeof EXIT_FAILURE => {
   const { errorName, errorCode, errorMessage } = errorFields({ error, errorText });
   line(
     stderr,
@@ -172,7 +159,7 @@ const runRebuild = async (
   try {
     const result = await rebuildReadModel({
       ...project,
-      config: withErrorText(project.config, options),
+      config: withErrorText(errorTextArgs(options, project.config)),
       env: process.env,
       name: readModel,
       logger,
@@ -184,7 +171,7 @@ const runRebuild = async (
     );
     return EXIT_OK;
   } catch (error) {
-    return failed(stderr, error, errorTextOf(options, project.config));
+    return failed(stderr, error, resolveErrorText(errorTextArgs(options, project.config)));
   }
 };
 
@@ -231,7 +218,7 @@ const withApp = async <T>(
     });
     return await work(app);
   } catch (error) {
-    return failed(stderr, error, errorTextOf(options, project.config));
+    return failed(stderr, error, resolveErrorText(errorTextArgs(options, project.config)));
   } finally {
     await app?.stop();
   }
@@ -369,7 +356,8 @@ interface StatusOptions extends ActingOptions {
   readonly json: boolean;
 }
 
-// The text of each failure is opened only when asked for, through the call the access log records.
+// The text of each failure is opened only under the app's rule for error text, `--error-text`
+// included, through the call the access log records.
 const runStatus = (
   options: StatusOptions,
   cwd: string,
@@ -378,9 +366,10 @@ const runStatus = (
 ): Promise<number> =>
   withApp(options, cwd, stderr, async (app) => {
     const status = await app.status();
-    const opened = options.errorText
-      ? await actingAs(app, options).subscriberFailures.list()
-      : undefined;
+    const opened =
+      app.config.runtime.telemetry.errorText === "include"
+        ? await actingAs(app, options).subscriberFailures.list()
+        : undefined;
     if (options.json) {
       line(
         stdout,
@@ -437,6 +426,7 @@ const runMigrate = async (
       registry: NO_REGISTRY,
       logger,
     }));
+    resolveErrorText({ env: process.env });
   } catch (error) {
     line(stderr, `error: ${error instanceof Error ? error.message : String(error)}`);
     return EXIT_FAILURE;
@@ -445,7 +435,7 @@ const runMigrate = async (
     line(stdout, `migrated\n${formatSchema(await migrateTables({ config }))}`);
     return EXIT_OK;
   } catch (error) {
-    return failed(stderr, error, errorTextOf(options, config));
+    return failed(stderr, error, resolveErrorText(errorTextArgs(options, config)));
   }
 };
 
@@ -646,6 +636,6 @@ export const runCli: RunCliFunction = async ({ argv, cwd, stdout, stderr, signal
     if (error instanceof CommanderError) {
       return error.exitCode === 0 ? EXIT_OK : EXIT_CONVENTION;
     }
-    return failed(stderr, error, undefined);
+    return failed(stderr, error, resolveErrorText({ env: process.env, invalidEnv: "ignore" }));
   }
 };

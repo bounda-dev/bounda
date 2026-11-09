@@ -21,7 +21,8 @@ export type { CreateHostArgs, CreateHostFunction } from "./args.ts";
  * `createBounda` of `@bounda-dev/react-router/cloudflare`, with the project's configuration and
  * the `tenant` of its `app/tenant.ts`, both imported on the first request, acting as the `actor`
  * of its `app/actor.ts`, when it has one; its `handleError` follows `BOUNDA_ERROR_TEXT` in the
- * Worker's `env`, or else the configuration's `runtime.telemetry.errorText`. Not meant to be called
+ * Worker's `env`, or else the configuration's `runtime.telemetry.errorText` once a request has
+ * imported it. Not meant to be called
  * by hand. Throws `ConfigurationError` for a `consistency` it does not know; the first request
  * rejects with one without `app/tenant.ts`, or as `createBounda` does.
  */
@@ -32,6 +33,9 @@ export const createHost: CreateHostFunction = <R extends Registry = AppRegistry>
   consistency,
 }: CreateHostArgs<R>): Bounda<R> => {
   checkConsistency(consistency);
+  // What `handleError` reads: it cannot wait for an import, which the Worker may cancel once the
+  // response is sent, so until the first request has imported it only the `env` decides.
+  let imported: Config | undefined;
   return serve<R>(
     async () => {
       if (importTenant === undefined) {
@@ -50,6 +54,7 @@ export const createHost: CreateHostFunction = <R extends Registry = AppRegistry>
           "app/tenant.ts does not export tenant, a function of the request that names its store",
         );
       }
+      imported = config as Config;
       return cloudflareClients<R>({
         env,
         config: config as Config,
@@ -57,9 +62,7 @@ export const createHost: CreateHostFunction = <R extends Registry = AppRegistry>
         consistency,
       });
     },
-    cloudflareHandleError({
-      config: async () => (await importConfig()).default as Config | undefined,
-    }),
+    cloudflareHandleError({ config: () => imported }),
     importActor === undefined ? undefined : actorOfModule(importActor),
   );
 };

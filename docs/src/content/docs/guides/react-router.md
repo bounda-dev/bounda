@@ -142,7 +142,8 @@ unwraps what React Router throws itself, such as no route matching, to the error
 it writes to the console as `boot()` does, and follows the app's configuration once it has booted:
 the dev server's `"include"` before that, `"omit"` in a build. On Cloudflare it writes JSON lines,
 as the Durable Object does, and follows `BOUNDA_ERROR_TEXT` in the Worker's `env`, or else the
-configuration.
+configuration once a request has imported it: it never waits for an import, which the Worker could
+cancel once the response is sent.
 
 `create-bounda` writes the whole file, React Router's default entry for the runtime with these two
 changes: in an existing project, `react-router reveal entry.server` writes the default into `app/`

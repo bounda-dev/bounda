@@ -844,7 +844,7 @@ describe("BOUNDA_ERROR_TEXT", () => {
   // An object built in the context of an empty one, so it reads the environment the test hands it.
   const failingAlarmWith = async (
     variables: Readonly<Record<string, string>>,
-    runtime: { readonly telemetry?: { readonly errorText: "omit" } } = {
+    runtime: { readonly telemetry?: { readonly errorText: "omit" | "include" } } = {
       telemetry: { errorText: "omit" },
     },
   ) =>
@@ -878,6 +878,16 @@ describe("BOUNDA_ERROR_TEXT", () => {
     expect(await failingAlarmWith({})).toEqual([
       "bounda rebuilds could not be listed",
       { errorName: "Error" },
+    ]);
+    expect(
+      await failingAlarmWith(
+        { BOUNDA_ERROR_TEXT: "omit" },
+        { telemetry: { errorText: "include" } },
+      ),
+    ).toEqual(["bounda rebuilds could not be listed", { errorName: "Error" }]);
+    expect(await failingAlarmWith({}, { telemetry: { errorText: "include" } })).toMatchObject([
+      "bounda rebuilds could not be listed",
+      { errorMessage: expect.stringContaining("no such table") },
     ]);
     expect(await failingAlarmWith({ BOUNDA_ERROR_TEXT: "include" }, {})).toMatchObject([
       "bounda rebuilds could not be listed",

@@ -8,7 +8,7 @@ import { ConfigurationError } from "../contracts/errors.ts";
 import type { IdGenerator } from "../contracts/ids.ts";
 import type { Logger } from "../contracts/logger.ts";
 import { type BoundaApp, createApp } from "../kernel/app.ts";
-import { errorTextFromEnv } from "../kernel/shared/error-text-env.ts";
+import { withErrorText } from "../kernel/shared/error-text.ts";
 import { guardedLogger } from "../kernel/shared/guarded-logger.ts";
 import type { Registry } from "../modules/registry.ts";
 import type { AppRegistry } from "../register/index.ts";
@@ -222,20 +222,10 @@ export const boot: BootFunction = async <R extends Registry = AppRegistry>({
     logger,
   });
 
-  // Read once `.env` is loaded, which may set it.
-  const forcedErrorText = errorText ?? errorTextFromEnv(process.env);
   const app = await createApp<R>({
     registry: project.registry,
-    config:
-      forcedErrorText === undefined
-        ? project.config
-        : {
-            ...project.config,
-            runtime: {
-              ...project.config.runtime,
-              telemetry: { ...project.config.runtime?.telemetry, errorText: forcedErrorText },
-            },
-          },
+    // `process.env` is read once `.env` is loaded, which may set `BOUNDA_ERROR_TEXT`.
+    config: withErrorText({ config: project.config, forced: errorText, env: process.env }),
     logger: rawLogger,
     env: process.env,
     ...(ids === undefined ? {} : { ids }),
