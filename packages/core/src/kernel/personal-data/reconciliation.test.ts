@@ -769,24 +769,36 @@ describe("forgetAgain", () => {
   });
 
   const ledgered = async () => {
-    const storage = await memory().createStorage();
+    const base = await memory().createStorage();
+    let transactions = 0;
+    const beforeTransaction: (() => Promise<void>)[] = [];
+    const storage: Storage = {
+      ...base,
+      transact: async (work) => {
+        transactions += 1;
+        await beforeTransaction.shift()?.();
+        return base.transact(work);
+      },
+    };
     const recorded: ForgetLedgerEntry[] = [];
     const ids = createSequentialIdGenerator();
     const clock = createFixedClock(NOW);
     let down = false;
     const intentions = createForgetIntentions({
-      ledger: boundForgetLedger({
-        ledger: {
-          append: async (entries) => {
-            if (down) throw new Error("ledger is down");
-            recorded.push(...entries);
+      ledger: {
+        store: boundForgetLedger({
+          ledger: {
+            append: async (entries) => {
+              if (down) throw new Error("ledger is down");
+              recorded.push(...entries);
+            },
+            read: async () => [],
           },
-          read: async () => [],
-        },
-        timeoutMs: 1_000,
-        clock,
-      }),
-      strict: true,
+          timeoutMs: 1_000,
+          clock,
+        }),
+        strict: true,
+      },
       ids,
       clock,
       logger: silentLogger,
@@ -806,6 +818,11 @@ describe("forgetAgain", () => {
       storage,
       recorded,
       run,
+      intentions,
+      ids,
+      clock,
+      transactions: () => transactions,
+      beforeTransaction: (step: () => Promise<void>) => beforeTransaction.push(step),
       fail: () => {
         down = true;
       },
@@ -828,12 +845,12 @@ describe("forgetAgain", () => {
     await keyed(storage, ["c-1"]);
     expect(await run({ personId: "c-2" })).toBeNull();
     expect(await run({ personId: "c-1", eventId: "elsewhere" })).toMatchObject({
-      event: { id: "id-1", payload: { reason: "requested", fingerprints: ["f-c-1"] } },
+      event: { id: "id-2", payload: { reason: "requested", fingerprints: ["f-c-1"] } },
     });
     expect(recorded).toEqual([
       {
         personId: "c-1",
-        eventId: "id-1",
+        eventId: "id-2",
         forgottenAt: NOW.toISOString(),
         reason: "requested",
         fingerprints: ["f-c-1"],
@@ -861,5 +878,94 @@ describe("forgetAgain", () => {
     await keyed(storage, ["c-1"]);
     expect(await run({ ...entry("c-1", "e-1", at(3)), fingerprints: ["f-c-1"] })).toBeNull();
     expect(await storage.personalKeys.get("c-1")).not.toBeNull();
+  });
+
+  it("leaves a key the entry does not name without a transaction", async () => {
+    const { storage, run, transactions } = await ledgered();
+    await keyed(storage, ["c-1"]);
+    const keying = transactions();
+    expect(await run({ ...entry("c-1", "e-1", at(3)), fingerprints: ["f-other"] })).toBeNull();
+    expect(await run({ ...entry("c-1", "e-1", at(3)), fingerprints: [] })).toBeNull();
+    expect(transactions()).toBe(keying);
+  });
+
+  it("leaves an entry naming no keys whose forgetting the store holds, whatever key the person holds", async () => {
+    const { storage, run } = await ledgered();
+    await keyed(storage, ["c-1"]);
+    const legacy = entry("c-1", "e-1", at(3));
+    expect(await run(legacy)).not.toBeNull();
+    await keyed(storage, ["c-1"]);
+    expect(await run(legacy)).toBeNull();
+    expect(await storage.personalKeys.get("c-1")).not.toBeNull();
+  });
+
+  it("takes an intention of its own for an entry missing its id, its time or its reason", async () => {
+    const { storage, recorded, run } = await ledgered();
+    await keyed(storage, ["c-1", "c-2", "c-3"]);
+    const { forgottenAt, eventId } = entry("c-1", "e-1", at(3));
+    await run({ personId: "c-1", eventId, reason: "requested" });
+    await run({ personId: "c-2", forgottenAt, reason: "requested" });
+    await run({ personId: "c-3", eventId: "e-3", forgottenAt });
+    expect(
+      recorded.map(({ personId, eventId: id, forgottenAt: at, reason }) => [
+        personId,
+        id,
+        at,
+        reason,
+      ]),
+    ).toEqual([
+      ["c-1", "id-2", NOW.toISOString(), "requested"],
+      ["c-2", "id-4", NOW.toISOString(), "requested"],
+      ["c-3", "id-6", NOW.toISOString(), "requested"],
+    ]);
+  });
+
+  it("takes a new intention for a bare id when the person is given a key between the intention and the commit", async () => {
+    const { storage, recorded, run, beforeTransaction } = await ledgered();
+    await keyed(storage, ["c-1"]);
+    beforeTransaction(async () => {
+      await storage.personalKeys.remove("c-1");
+      await storage.personalKeys.add("c-1", { key: "k-2", fingerprint: "f-2", kid: null });
+    });
+    expect(await run({ personId: "c-1" })).toMatchObject({
+      event: { id: "id-3", payload: { fingerprints: ["f-2"] } },
+    });
+    expect(recorded.map(({ eventId, fingerprints }) => [eventId, fingerprints])).toEqual([
+      ["id-2", ["f-c-1"]],
+      ["id-3", ["f-2"]],
+    ]);
+  });
+
+  it("records nothing as it reconciles: the entries are the ledger's own", async () => {
+    const { storage, recorded, intentions, ids, clock } = await ledgered();
+    await keyed(storage, ["c-1"]);
+    const reconciliation = createForgetLedgerReconciliation({
+      ledger: recordingLedger([{ ...entry("c-1", "e-1", at(3)), fingerprints: ["f-c-1"] }]).ledger,
+      intentions,
+      retentionDue: NEVER_DUE,
+      storage,
+      ids,
+      clock,
+      logger: silentLogger,
+      concurrencyRetries: 3,
+      reconcileEveryMs: EVERY,
+      keepForMs: null,
+    });
+    expect(await reconciliation.reconcile(NOW)).toBe(1);
+    expect(recorded).toEqual([]);
+  });
+
+  it("never commits again a forgetting the retention made without a retention", async () => {
+    expect(await NEVER_DUE(await memory().createStorage(), "c-1", NOW)).toBe(false);
+  });
+
+  it("forgets nobody whose key went between its check and its transaction", async () => {
+    const { storage, run, beforeTransaction } = await ledgered();
+    await keyed(storage, ["c-1"]);
+    beforeTransaction(async () => {
+      await storage.personalKeys.remove("c-1");
+    });
+    expect(await run({ ...entry("c-1", "e-1", at(3)), fingerprints: ["f-c-1"] })).toBeNull();
+    expect(await storage.eventStore.lastPosition()).toBe(0);
   });
 });

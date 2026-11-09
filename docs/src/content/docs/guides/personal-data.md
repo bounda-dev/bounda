@@ -873,8 +873,9 @@ Every object keeps its entries under its own name, so an object reached through 
 name fails to start; `createWorker` names each by its tenant. KV may take up to a minute to list a key it
 just wrote, so an object that starts reads the ledger once more a minute later, and wakes for it.
 Anything else is a ledger of your own through `defineForgetLedger`, which receives the host's
-environment, the tenant and `keepForMs` when the app starts: its `read` returns entries in the
-order of their time, then of their event's id, and `byForgetLedgerOrder` from
+environment, the tenant and `keepForMs` when the app starts: it keeps every field of an entry, the
+reason and the fingerprints included, which the reconciliation decides by; its `read` returns
+entries in the order of their time, then of their event's id, and `byForgetLedgerOrder` from
 `@bounda-dev/core/adapter` sorts them so; its optional `prune` removes the entries older than a
 time; `forgetLedgerContract` from `@bounda-dev/core/adapter/testing` is the test it has to pass.
 

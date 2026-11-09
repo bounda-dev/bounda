@@ -69,6 +69,8 @@ describe("readForgotten", () => {
         reason: "restored",
         fingerprints: [1],
       }),
+      event(1_009, "bounda", "c-4", "PersonalDataForgotten", undefined, null),
+      event(1_010, "bounda", "c-5", "PersonalDataForgotten", undefined, "text"),
     );
     const { stream, reads } = streamOf([
       event(0, "bounda", "c-0", "PersonalDataForgotten"),
@@ -95,6 +97,12 @@ describe("readForgotten", () => {
         forgottenAt: "2026-11-01T00:00:00.000Z",
         reason: "requested",
       },
+      ...["c-4", "c-5"].map((personId, index) => ({
+        personId,
+        eventId: `e-${1_009 + index}`,
+        forgottenAt: "2026-11-01T00:00:00.000Z",
+        reason: "requested",
+      })),
     ]);
     expect(reads).toEqual([
       { after: 2, limit: 1_000 },

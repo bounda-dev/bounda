@@ -778,17 +778,19 @@ describe("the retention and the forget ledger", () => {
   const recordingIntentions = (ids: IdGenerator, clock: FixedClock) => {
     const recorded: ForgetLedgerEntry[] = [];
     const intentions = createForgetIntentions({
-      ledger: boundForgetLedger({
-        ledger: {
-          append: async (entries) => {
-            recorded.push(...entries);
+      ledger: {
+        store: boundForgetLedger({
+          ledger: {
+            append: async (entries) => {
+              recorded.push(...entries);
+            },
+            read: async () => [],
           },
-          read: async () => [],
-        },
-        timeoutMs: 1_000,
-        clock,
-      }),
-      strict: true,
+          timeoutMs: 1_000,
+          clock,
+        }),
+        strict: true,
+      },
       ids,
       clock,
       logger: silentLogger,
@@ -850,5 +852,131 @@ describe("the retention and the forget ledger", () => {
     expect(await isDue("c-3")).toBe(false);
     await storage.persons.record({ person: "c-4", position: 99, forgottenAt: day(30) });
     expect(await isDue("c-4")).toBe(false);
+  });
+
+  // A sweep through a store that runs `meanwhile` once, between the list and the person's forget,
+  // or before the forget's transaction.
+  const racing = async (
+    when: "listed" | "transaction",
+    meanwhile: (storage: Storage) => Promise<void>,
+  ) => {
+    const setup = await setUp();
+    const { storage, ids, clock, logger } = setup;
+    let pending: ((storage: Storage) => Promise<void>) | undefined = meanwhile;
+    const once = async () => {
+      const step = pending;
+      pending = undefined;
+      await step?.(storage);
+    };
+    const raced: Storage = {
+      ...storage,
+      persons: {
+        ...storage.persons,
+        listIdle: async (args) => {
+          const listed = await storage.persons.listIdle(args);
+          if (when === "listed" && listed.length > 0) await once();
+          return listed;
+        },
+      },
+      transact: async (work) => {
+        if (when === "transaction") await once();
+        return storage.transact(work);
+      },
+    };
+    const { intentions, recorded } = recordingIntentions(ids, clock);
+    const sweep = createRetentionSweep({
+      storage: raced,
+      intentions,
+      retentionMs: 30 * DAY,
+      ids,
+      clock,
+      logger,
+      concurrencyRetries: 1,
+      batchSize: 2,
+    });
+    await storage.personalKeys.add("c-1", testPersonalKey("1"));
+    await setup.touch("c-1");
+    await setup.record();
+    setup.advance(31);
+    return { ...setup, sweep, recorded };
+  };
+
+  it("records no intention for a person restricted between the list and their forget", async () => {
+    const { sweep, clock, recorded, forgottenFor } = await racing("listed", (storage) =>
+      storage.persons.restrict("c-1", new Date(day(31))).then(() => undefined),
+    );
+    expect(await sweep.sweep(clock.now())).toBe(0);
+    expect(recorded).toEqual([]);
+    expect(await forgottenFor()).toEqual([]);
+  });
+
+  it("forgets nobody whose transaction finds them restricted after the intention, nor given a key since, and holds them", async () => {
+    const restricted = await racing("transaction", (storage) =>
+      storage.persons.restrict("c-1", new Date(day(31))).then(() => undefined),
+    );
+    expect(await restricted.sweep.sweep(restricted.clock.now())).toBe(0);
+    expect(restricted.recorded).toHaveLength(1);
+    expect(await restricted.forgottenFor()).toEqual([]);
+
+    const rekeyed = await racing("transaction", async (storage) => {
+      await storage.personalKeys.remove("c-1");
+      await storage.personalKeys.add("c-1", testPersonalKey("2"));
+    });
+    expect(await rekeyed.sweep.sweep(rekeyed.clock.now())).toBe(0);
+    expect(rekeyed.entries.filter(({ level }) => level === "error")).toEqual([]);
+    expect(await rekeyed.forgottenFor()).toEqual([]);
+    expect(await rekeyed.storage.personalKeys.get("c-1")).toEqual(testPersonalKey("2"));
+    const [row] = await rekeyed.storage.persons.listIdle({ limit: 1 });
+    expect(row?.hold).not.toBeNull();
+    expect(await rekeyed.sweep.sweep(rekeyed.clock.now())).toBe(0);
+  });
+
+  it("leaves a person a reconciliation forgot under the intention's id meanwhile", async () => {
+    let intended = "";
+    const { sweep, clock, recorded, forgottenFor, storage } = await racing(
+      "transaction",
+      async (store) => {
+        intended = recorded[0]?.eventId ?? "";
+        await store.eventStore.append({
+          aggregateType: "bounda",
+          aggregateId: "c-1",
+          expectedVersion: 0,
+          events: [
+            {
+              ...forgotten(99, "c-1"),
+              aggregateId: "c-1",
+              id: intended,
+              payload: { personId: "c-1", reason: "retention" },
+            },
+          ],
+        });
+      },
+    );
+    expect(await sweep.sweep(clock.now())).toBe(0);
+    expect((await forgottenFor()).map(([person]) => person)).toEqual(["c-1"]);
+    expect(intended).not.toBe("");
+    expect(await storage.personalKeys.get("c-1")).not.toBeNull();
+  });
+
+  it("says a person whose row never saw them active is not due", async () => {
+    const { storage, clock } = await setUp();
+    await storage.persons.record({ person: "c-5", position: 1, forgottenAt: null });
+    const due = retentionDueOf({
+      retentionMs: DAY,
+      batchSize: 2,
+      checkpoints: storage.checkpointStore,
+    });
+    expect(await due(storage, "c-5", new Date(clock.now().getTime() + 2 * DAY))).toBe(false);
+  });
+
+  it("records no intention for a person active since their row was recorded", async () => {
+    const { sweep, clock, recorded, forgottenFor, touch } = await racing(
+      "listed",
+      async () => undefined,
+    );
+    await touch("c-1");
+    expect(await sweep.sweep(clock.now())).toBe(0);
+    expect(recorded).toEqual([]);
+    expect(await forgottenFor()).toEqual([]);
   });
 });

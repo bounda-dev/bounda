@@ -496,4 +496,4 @@ export interface WithoutLedgerArgs {
  * The intentions of an app without a forget ledger: ids and times, nothing recorded.
  */
 export const withoutLedger = ({ ids, clock }: WithoutLedgerArgs): ForgetIntentions =>
-  createForgetIntentions({ ledger: null, strict: false, ids, clock, logger: silentLogger });
+  createForgetIntentions({ ledger: null, ids, clock, logger: silentLogger });

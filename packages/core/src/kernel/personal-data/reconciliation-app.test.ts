@@ -661,11 +661,19 @@ describe("the forget ledger", () => {
     const ledgerAdapter = memory();
     const { app, register, forgotten } = await start({ storage, forgetLedger: ledgerAdapter });
     await register("c-1");
+    await register("c-2");
     await app.forgetAgain([{ personId: "c-1" }]);
     expect(await forgotten()).toEqual([["c-1", "requested"]]);
     expect(
       (await (await opened(ledgerAdapter)).read({ limit: 10 })).map(({ personId }) => personId),
     ).toEqual(["c-1"]);
+    const elsewhere = entry("c-2", "from-elsewhere", LOST);
+    await app.forgetAgain([elsewhere]);
+    expect(await (await opened(ledgerAdapter)).read({ limit: 10 })).toContainEqual(elsewhere);
+    expect(await forgotten()).toEqual([
+      ["c-1", "requested"],
+      ["c-2", "requested"],
+    ]);
   });
 
   it("records what the retention forgets before it commits, and the stream copies it", async () => {
@@ -1248,9 +1256,14 @@ describe("the intention a forgetting records first", () => {
   it("commits again a forgetting the retention made only while the retention would still forget the person", async () => {
     const storage = memory();
     const ledgerAdapter = memory();
-    const config = (retention: "1h" | "2h") => ({
+    const config = (retention?: "1h" | "2h") => ({
       storage,
-      runtime: { personalData: { retention, forgetLedger: { store: ledgerAdapter } } },
+      runtime: {
+        personalData: {
+          ...(retention === undefined ? {} : { retention }),
+          forgetLedger: { store: ledgerAdapter },
+        },
+      },
     });
     const clock = createFixedClock(START);
     const first = await createApp({ registry, config: config("1h"), clock });
@@ -1276,6 +1289,13 @@ describe("the intention a forgetting records first", () => {
       ),
     ).toEqual([]);
     await later.stop();
+    const without = await createApp({ registry, config: config(), clock });
+    expect(
+      (await without.events.read({ limit: 100 })).filter(
+        (event) => event.type === "PersonalDataForgotten",
+      ),
+    ).toEqual([]);
+    await without.stop();
     const due = await createApp({ registry, config: config("1h"), clock });
     stops.push(() => due.stop());
     expect(

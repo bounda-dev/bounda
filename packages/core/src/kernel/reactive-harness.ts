@@ -105,7 +105,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     logger,
   });
   const policies = buildPolicies({ registry, aggregates });
-  const intentions = createForgetIntentions({ ledger: null, strict: false, ids, clock, logger });
+  const intentions = createForgetIntentions({ ledger: null, ids, clock, logger });
   const policyExecutor = createPolicyExecutor({
     aggregates,
     pipeline,

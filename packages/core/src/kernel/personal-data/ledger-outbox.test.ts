@@ -212,7 +212,6 @@ describe("a forget ledger's source", () => {
       await (await adapter.createForgetLedger({ tenant: "t-1" })).read({ limit: 1 }),
     ).toHaveLength(1);
     expect(await (await adapter.createForgetLedger({})).read({ limit: 1 })).toEqual([]);
-    expect(await openForgetLedger({ source: null, storage: memory(), env })).toBeNull();
   });
 
   it("refuses an adapter that points at the storage's own database", async () => {

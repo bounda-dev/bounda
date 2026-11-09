@@ -180,14 +180,15 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
 }) => {
   // Resolves `undone` for a person whose row is behind, or who was given a key since the
   // intention, who is then left for a later pass, and `skipped` for one restricted, or forgotten by
-  // another instance, since the list was read. The row is read once before the intention, so a
-  // person plainly skipped leaves none; an intention left by a transaction that skips is committed
-  // again only if the retention would still forget the person.
+  // another instance, since the list was read. Both are decided once before the intention, so a
+  // person plainly left leaves none, and again in the transaction; an intention it then leaves is
+  // committed again only if the retention would still forget the person.
   const forget = async (
     personId: string,
     through: number,
   ): Promise<"forgotten" | "skipped" | "undone"> => {
     if (!isIdle(await storage.persons.get(personId))) return "skipped";
+    if (!(await rowIsCurrent(storage.eventStore, personId, through, batchSize))) return "undone";
     const intention = await intentions.intend({
       personId,
       reason: "retention",

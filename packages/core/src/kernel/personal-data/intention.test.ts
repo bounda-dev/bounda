@@ -21,8 +21,7 @@ const setUp = async ({
   const storage = await memory().createStorage();
   const { logger, entries: logs } = createRecordingLogger();
   const intentions = createForgetIntentions({
-    ledger,
-    strict,
+    ledger: ledger === null ? null : { store: ledger, strict },
     ids: createSequentialIdGenerator(),
     clock: createFixedClock(NOW),
     logger,

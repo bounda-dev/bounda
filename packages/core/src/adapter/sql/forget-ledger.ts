@@ -68,8 +68,7 @@ const entryOf = (row: Record<string, unknown>): ForgetLedgerEntry => {
     forgottenAt: String(row.forgotten_at),
     reason: row.reason === "retention" ? "retention" : "requested",
   };
-  const fingerprints: unknown =
-    typeof row.fingerprints === "string" ? JSON.parse(row.fingerprints) : null;
+  const fingerprints: unknown = JSON.parse(String(row.fingerprints ?? null));
   return Array.isArray(fingerprints) ? { ...entry, fingerprints: fingerprints.map(String) } : entry;
 };
 

@@ -12,7 +12,7 @@ import {
   parseDuration,
   rebuildReadModel,
 } from "@bounda-dev/core";
-import type { Adapter, AdapterDefinition, Storage } from "@bounda-dev/core/adapter";
+import { type AdapterDefinition, isAdapter, type Storage } from "@bounda-dev/core/adapter";
 import type { Config, ErrorText } from "@bounda-dev/core/config";
 import { boot, createConsoleLogger, loadProject } from "@bounda-dev/core/node";
 import { Command, CommanderError, InvalidArgumentError, Option } from "commander";
@@ -319,9 +319,6 @@ interface ForgottenOptions extends ProjectOptions {
   readonly since: Since;
 }
 
-const hasFactories = (definition: AdapterDefinition): definition is Adapter =>
-  typeof Reflect.get(definition, "createStorage") === "function";
-
 // Reads the event store alone, without starting the app: no ports, read models or forget ledger,
 // so a strict ledger that is down does not keep it from listing what the database holds.
 const runForgotten = async (
@@ -333,7 +330,7 @@ const runForgotten = async (
   const project = await load(options, cwd, logTo(stderr), stderr);
   if (project === undefined) return EXIT_FAILURE;
   const definition: AdapterDefinition = project.config.storage;
-  if (!hasFactories(definition)) {
+  if (!isAdapter(definition)) {
     line(
       stderr,
       `error: storage "${definition.name}" is a definition without factories. Import the adapter package's factory.`,

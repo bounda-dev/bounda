@@ -67,12 +67,12 @@ export const isForgetLedgerSource: IsForgetLedgerSourceFunction = (
 };
 
 export interface OpenForgetLedgerArgs extends CreateForgetLedgerFromEnvArgs {
-  readonly source: ForgetLedgerSource | null;
+  readonly source: ForgetLedgerSource;
   readonly storage: AdapterDefinition;
 }
 
 export interface OpenForgetLedgerFunction {
-  (args: OpenForgetLedgerArgs): Promise<ForgetLedger | null>;
+  (args: OpenForgetLedgerArgs): Promise<ForgetLedger>;
 }
 
 // The same adapter, or one of the same kind with the same options: a database a restore rolls back
@@ -93,7 +93,6 @@ export const openForgetLedger: OpenForgetLedgerFunction = async ({
   tenant,
   keepForMs,
 }) => {
-  if (source === null) return null;
   if (source.kind === "bounda-adapter" && sharesStorage(source, storage)) {
     throw new ConfigurationError(
       "runtime.personalData.forgetLedger.store points at the storage's own database, which a restore rolls back with it: give it another database",

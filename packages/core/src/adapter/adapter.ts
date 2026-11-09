@@ -217,6 +217,10 @@ export interface IsAdapterFunction {
   (value: unknown): value is Adapter;
 }
 
+/**
+ * Whether a value is an adapter with its factories, as `sqlite(...)` returns, rather than a bare
+ * definition: what opens a project's storage outside the app, as the CLI does.
+ */
 export const isAdapter: IsAdapterFunction = (value): value is Adapter =>
   typeof value === "object" &&
   value !== null &&

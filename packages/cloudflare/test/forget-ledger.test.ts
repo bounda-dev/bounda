@@ -332,6 +332,7 @@ describe("expiring a KV forget ledger", () => {
           { name: "due", metadata: at(2), expiration: (NOW + 33 * DAY) / 1000 },
           { name: "soonest", metadata: soonest },
           { name: "stray" },
+          { name: "empty", metadata: null },
           { name: "unreadable", metadata: { forgottenAt: "not a time" } },
           { name: "untimed", metadata: { forgottenAt: 3 } },
           { name: "text", metadata: "kept" },

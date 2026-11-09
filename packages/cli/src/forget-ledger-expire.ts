@@ -8,9 +8,7 @@ import type { KvLedgerKey } from "@bounda-dev/cloudflare/forget-ledger";
 
 const run = promisify(execFile);
 
-/**
- * Runs wrangler with the arguments given and resolves what it printed to stdout.
- */
+// Resolves what wrangler printed to stdout.
 export interface Wrangler {
   (args: readonly string[]): Promise<string>;
 }
@@ -39,10 +37,8 @@ const installedIn = (root: string, name: string): string | undefined => {
   }
 };
 
-/**
- * The project's own wrangler, run through Node rather than a shell, so its `.cmd` shim on Windows
- * is not needed. Wrangler's stderr, where it reports progress, is left out.
- */
+// Through Node rather than a shell, so the `.cmd` shim it has on Windows is not needed; its stderr,
+// where it reports progress, is left out.
 export const wranglerIn: WranglerInFunction = (root) => {
   let bin: string | undefined;
   return async (args) => {
@@ -61,9 +57,6 @@ export const wranglerIn: WranglerInFunction = (root) => {
   };
 };
 
-/**
- * Where wrangler finds the namespace: the deployed one, or the local state `wrangler dev` keeps.
- */
 export interface WranglerTarget {
   readonly local: boolean;
   readonly env?: string | undefined;
@@ -71,9 +64,7 @@ export interface WranglerTarget {
   readonly persistTo?: string | undefined;
 }
 
-/**
- * What `@bounda-dev/cloudflare/forget-ledger` gives this command, which owns the keys' layout.
- */
+// The KV ledger's own package lays its keys out, so the plan comes from it.
 export type KvLedgerModule = Pick<
   typeof import("@bounda-dev/cloudflare/forget-ledger"),
   "KV_FORGET_LEDGER_ROOT" | "planKvForgetLedgerExpiry"
@@ -103,11 +94,6 @@ const isListedKey = (value: unknown): value is KvLedgerKey =>
   typeof Reflect.get(value, "name") === "string" &&
   ["number", "undefined"].includes(typeof Reflect.get(value, "expiration"));
 
-/**
- * Lists every object's entries in the namespace, and writes again, through wrangler's bulk
- * commands, those `planKvForgetLedgerExpiry` gives an expiration, removing those already past
- * `keepFor`.
- */
 export const expireKvLedger: ExpireKvLedgerFunction = async ({
   wrangler,
   ledger,

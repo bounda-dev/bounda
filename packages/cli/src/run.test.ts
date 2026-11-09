@@ -731,6 +731,45 @@ describe("bounda forgotten and bounda forget", () => {
     );
   });
 
+  it("fails a listing whose project cannot load, or whose storage cannot open, and closes what opened", async () => {
+    const missing = await cli(
+      ["forgotten", "--since", "0", "--config", "missing.config.ts"],
+      fixture,
+    );
+    expect(missing.code).toBe(EXIT_FAILURE);
+    expect(missing.stdout).toBe("");
+    const root = await list();
+    await writeFile(
+      join(root, "registry.ts"),
+      "export const registry = { aggregates: {}, readModels: {} };\n",
+    );
+    const adapter = (open: string) =>
+      `import { writeFileSync } from "node:fs";\nexport default { storage: { kind: "bounda-adapter", name: "broken", options: {}, createReadModel: async () => undefined, rebuildReadModel: async () => undefined, ${open} } };\n`;
+    await writeFile(
+      join(root, "down.config.ts"),
+      adapter(`createStorage: async () => { throw new Error("database is down"); }`),
+    );
+    const down = await cli(
+      ["forgotten", "--since", "0", "--config", "down.config.ts", "--registry", "registry.ts"],
+      root,
+    );
+    expect(down.code).toBe(EXIT_FAILURE);
+    expect(besidesLogs(down.stderr)).toMatch(/^error: Error; /);
+    await writeFile(
+      join(root, "failing.config.ts"),
+      adapter(
+        `createStorage: async () => ({ eventStore: { readAll: async () => { throw new Error("read failed"); } }, close: async () => writeFileSync(${JSON.stringify(join(root, "closed"))}, "") })`,
+      ),
+    );
+    const failing = await cli(
+      ["forgotten", "--since", "0", "--config", "failing.config.ts", "--registry", "registry.ts"],
+      root,
+    );
+    expect(failing.code).toBe(EXIT_FAILURE);
+    expect(besidesLogs(failing.stderr)).toMatch(/^error: Error; /);
+    await expect(stat(join(root, "closed"))).resolves.toBeDefined();
+  });
+
   it("says a storage without its factories cannot be listed", async () => {
     const root = await list();
     await writeFile(
@@ -906,6 +945,21 @@ describe("bounda forget-ledger expire", () => {
   });
 
   it("documents itself in its help", async () => {
+    const parent = await runCli({
+      argv: ["forget-ledger", "--help"],
+      cwd: "/project",
+      stdout: capture(),
+      stderr: capture(),
+    });
+    expect(parent).toBe(EXIT_OK);
+    const group = capture();
+    await runCli({
+      argv: ["forget-ledger", "--help"],
+      cwd: "/project",
+      stdout: group,
+      stderr: capture(),
+    });
+    expect(group.text()).toContain("look after a forget ledger outside the app");
     const help = (await expire(["--help"])).stdout.replace(/\s+/g, " ");
     for (const text of [
       "give every entry of a Workers KV forget ledger the expiration keepFor sets, those written before it was set included",
@@ -916,9 +970,13 @@ describe("bounda forget-ledger expire", () => {
       "--local",
       "the local state of wrangler dev instead of the deployed namespace",
       "--env <name>",
+      "the wrangler environment",
       "--wrangler-config <path>",
+      "the wrangler configuration file",
       "--persist-to <dir>",
+      "with --local, where wrangler dev keeps its state",
       "--root <dir>",
+      "the project's root directory, where wrangler is installed",
     ]) {
       expect(help).toContain(text);
     }

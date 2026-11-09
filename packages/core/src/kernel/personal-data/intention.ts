@@ -49,8 +49,10 @@ export interface CreateForgetIntentionsArgs {
   /**
    * `null` without a ledger: nothing is recorded, and no key is read for it.
    */
-  readonly ledger: BoundedForgetLedger | null;
-  readonly strict: boolean;
+  readonly ledger: {
+    readonly store: BoundedForgetLedger;
+    readonly strict: boolean;
+  } | null;
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly logger: Logger;
@@ -68,15 +70,16 @@ export interface CreateForgetIntentionsFunction {
  */
 export const createForgetIntentions: CreateForgetIntentionsFunction = ({
   ledger,
-  strict,
   ids,
   clock,
   logger,
 }) => {
   const record = async (entry: ForgetLedgerEntry): Promise<void> => {
-    if (ledger === null || (!strict && ledger.late())) return;
+    if (ledger === null) return;
+    const { store, strict } = ledger;
+    if (!strict && store.late()) return;
     try {
-      await ledger.append([entry]);
+      await store.append([entry]);
     } catch (error) {
       if (strict) throw new ForgetLedgerUnavailableError(error);
       logger.warn(

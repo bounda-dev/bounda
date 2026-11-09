@@ -68,18 +68,20 @@ const withLedger = async () => {
     ids,
     clock: harness.clock,
     intentions: createForgetIntentions({
-      ledger: boundForgetLedger({
-        ledger: {
-          append: async (appended) => {
-            recorded.push(...appended);
-            keysAtRecord.push(await harness.storage.personalKeys.get("c-1"));
+      ledger: {
+        store: boundForgetLedger({
+          ledger: {
+            append: async (appended) => {
+              recorded.push(...appended);
+              keysAtRecord.push(await harness.storage.personalKeys.get("c-1"));
+            },
+            read: async () => [],
           },
-          read: async () => [],
-        },
-        timeoutMs: 1_000,
-        clock: harness.clock,
-      }),
-      strict: true,
+          timeoutMs: 1_000,
+          clock: harness.clock,
+        }),
+        strict: true,
+      },
       ids,
       clock: harness.clock,
       logger,
@@ -434,7 +436,11 @@ describe("createReactionCommands", () => {
     expect(recorded.map(({ fingerprints }) => fingerprints)).toEqual([[]]);
     expect(await harness.storage.personalKeys.get("c-1")).toBeNull();
     const [forgotten] = await forgottenEvents(harness.storage);
-    expect(forgotten?.payload).toMatchObject({ fingerprints: ["f-2"] });
+    expect(forgotten).toMatchObject({
+      id: recorded[0]?.eventId,
+      timestamp: recorded[0]?.forgottenAt,
+      payload: { reason: "requested", fingerprints: ["f-2"] },
+    });
   });
 
   it("answers nothing more for a forgetting a reconciliation committed under the intention's id", async () => {

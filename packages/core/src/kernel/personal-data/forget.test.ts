@@ -15,7 +15,7 @@ import { ConcurrencyError, ValidationError } from "../../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { memory } from "../../memory/index.ts";
 import { createRecordingLogger, withoutLedger } from "../test-support.ts";
-import { forgetIntended, forgetPersonalData } from "./forget.ts";
+import { forgetIntended, forgetPersonalData, forgetWithin, STALE_INTENTION } from "./forget.ts";
 import { boundForgetLedger } from "./forget-ledger.ts";
 import { createForgetIntentions } from "./intention.ts";
 
@@ -202,17 +202,19 @@ describe("forgetIntended", () => {
     const recorded: ForgetLedgerEntry[] = [];
     const clock = createFixedClock();
     const intentions = createForgetIntentions({
-      ledger: boundForgetLedger({
-        ledger: {
-          append: async (entries) => {
-            recorded.push(...entries);
+      ledger: {
+        store: boundForgetLedger({
+          ledger: {
+            append: async (entries) => {
+              recorded.push(...entries);
+            },
+            read: async () => [],
           },
-          read: async () => [],
-        },
-        timeoutMs: 1_000,
-        clock,
-      }),
-      strict: true,
+          timeoutMs: 1_000,
+          clock,
+        }),
+        strict: true,
+      },
       ids,
       clock,
       logger: createRecordingLogger().logger,
@@ -324,5 +326,45 @@ describe("forgetIntended", () => {
     expect(dispatch).toMatchObject({ eventIds: ["id-1"], version: 1, position: 1 });
     expect(await storage.eventStore.lastPosition()).toBe(1);
     expect(logs).toEqual([]);
+  });
+
+  it("reads the held event and checks the key only when its caller has not", async () => {
+    const storage = await memory().createStorage();
+    await storage.personalKeys.add("c-1", testPersonalKey("1"));
+    let reads = 0;
+    const forget = (checked: boolean, fingerprints: readonly string[]) =>
+      storage.transact((transaction) => {
+        const { readOne } = transaction.eventStore;
+        return forgetWithin({
+          transaction: {
+            ...transaction,
+            eventStore: {
+              ...transaction.eventStore,
+              readOne: (args) => {
+                reads += 1;
+                return readOne.call(transaction.eventStore, args);
+              },
+            },
+          },
+          ids: createSequentialIdGenerator(),
+          clock: createFixedClock(),
+          personId: "c-1",
+          intention: {
+            eventId: `e-${checked}`,
+            forgottenAt: "t",
+            reason: "requested",
+            fingerprints,
+          },
+          context: testContext,
+          checked,
+        });
+      });
+    expect(await forget(false, ["f-other"])).toBe(STALE_INTENTION);
+    expect(reads).toBe(1);
+    expect(await forget(true, ["f-other"])).toMatchObject({
+      hadKey: true,
+      event: { id: "e-true" },
+    });
+    expect(reads).toBe(1);
   });
 });

@@ -24,6 +24,11 @@ export interface ForgetWithinArgs {
   readonly personId: string;
   readonly intention: ForgetIntention;
   readonly context: CausationContext;
+  /**
+   * The caller found already, in this transaction, the intention's event not held and the
+   * person's key named by it.
+   */
+  readonly checked?: boolean;
 }
 
 export interface Forgotten {
@@ -65,9 +70,10 @@ export const forgetWithin: ForgetWithinFunction = async ({
   personId,
   intention,
   context,
+  checked = false,
 }) => {
   const { fingerprints } = intention;
-  if (fingerprints !== undefined) {
+  if (fingerprints !== undefined && !checked) {
     const held = await transaction.eventStore.readOne({
       aggregateType: BOUNDA_AGGREGATE,
       aggregateId: personId,
@@ -76,7 +82,12 @@ export const forgetWithin: ForgetWithinFunction = async ({
     if (held !== null) return { held };
   }
   const key = await transaction.personalKeys.get(personId);
-  if (key !== null && fingerprints !== undefined && !fingerprints.includes(key.fingerprint)) {
+  if (
+    !checked &&
+    key !== null &&
+    fingerprints !== undefined &&
+    !fingerprints.includes(key.fingerprint)
+  ) {
     return STALE_INTENTION;
   }
   // The key goes first: a snapshot written beside the transaction then either waits for it and

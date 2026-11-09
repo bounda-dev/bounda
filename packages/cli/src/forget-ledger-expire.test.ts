@@ -1,6 +1,7 @@
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import * as ledger from "@bounda-dev/cloudflare/forget-ledger";
 import { afterAll, describe, expect, it } from "vitest";
 import { expireKvLedger, type Wrangler, wranglerIn } from "./forget-ledger-expire.ts";
@@ -51,6 +52,8 @@ describe("expiring a KV forget ledger through wrangler", () => {
       now: NOW,
     });
     expect(expired).toEqual({ expired: 2, removed: 1 });
+    // The files wrangler read are gone with their directory.
+    for (const args of calls.slice(1)) expect(existsSync(dirname(args[3] ?? ""))).toBe(false);
     expect(calls.map((args) => args.slice(0, 3))).toEqual([
       ["kv", "key", "list"],
       ["kv", "bulk", "put"],
@@ -120,7 +123,7 @@ describe("expiring a KV forget ledger through wrangler", () => {
   });
 
   it("refuses a listing that is not a list of keys, changing nothing", async () => {
-    for (const listed of [{}, [{ name: 3 }], [{ name: "k", expiration: "soon" }], [null]]) {
+    for (const listed of [{}, [{ name: 3 }], [{ name: "k", expiration: "soon" }], [null], ["k"]]) {
       const { wrangler, calls } = fakeWrangler(listed);
       await expect(
         expireKvLedger({

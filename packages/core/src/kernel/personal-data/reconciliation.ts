@@ -146,39 +146,40 @@ export const forgetAgain: ForgetAgainFunction = async ({
     return reason !== "retention" || retentionDue(stores, personId, clock.now());
   };
   if (!(await isDue(storage, fingerprints))) return null;
-  let intention: ForgetIntention;
-  if (eventId !== undefined && forgottenAt !== undefined && reason !== undefined) {
+  const whole = eventId !== undefined && forgottenAt !== undefined && reason !== undefined;
+  if (whole && record) {
     const recorded = { personId, eventId, forgottenAt, reason };
-    if (record) {
-      await intentions.record(
-        fingerprints === undefined ? recorded : { ...recorded, fingerprints },
-      );
-    }
-    intention = { eventId, forgottenAt, reason, fingerprints };
-  } else {
-    intention = await intentions.intend({
-      personId,
-      reason: reason ?? "requested",
-      keys: storage.personalKeys,
-    });
+    await intentions.record(fingerprints === undefined ? recorded : { ...recorded, fingerprints });
   }
   const correlationId = ids.next();
-  return transactRetrying({
-    storage,
-    concurrencyRetries,
-    work: async (transaction) => {
-      if (!(await isDue(transaction, intention.fingerprints ?? fingerprints))) return null;
-      const outcome = await forgetWithin({
-        transaction,
-        ids,
-        clock,
-        personId,
-        intention,
-        context: startedBy(correlationId, actor),
-      });
-      return outcome === STALE_INTENTION || "held" in outcome ? null : outcome;
-    },
-  });
+  // A whole entry is due only while the person holds a key it names, so it is never stale; an
+  // intention of its own takes another that names a key given meanwhile, as `forget` does.
+  for (;;) {
+    const intention: ForgetIntention = whole
+      ? { eventId, forgottenAt, reason, fingerprints }
+      : await intentions.intend({
+          personId,
+          reason: reason ?? "requested",
+          keys: storage.personalKeys,
+        });
+    const outcome = await transactRetrying({
+      storage,
+      concurrencyRetries,
+      work: async (transaction) =>
+        (await isDue(transaction, fingerprints))
+          ? forgetWithin({
+              transaction,
+              ids,
+              clock,
+              personId,
+              intention,
+              context: startedBy(correlationId, actor),
+              checked: whole,
+            })
+          : null,
+    });
+    if (outcome !== STALE_INTENTION) return outcome === null || "held" in outcome ? null : outcome;
+  }
 };
 
 export interface ReconciliationFailed {
@@ -307,7 +308,8 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
       for (const entry of page) {
         const time = Date.parse(entry.forgottenAt);
         if (time + FORGET_LEDGER_GRACE_MS > at) {
-          youngest = Math.max(youngest ?? time, time);
+          // Entries come in the order of their time: the last one left is the youngest.
+          youngest = time;
           continue;
         }
         const again = await forgetAgain({
