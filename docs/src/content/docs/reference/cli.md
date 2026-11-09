@@ -288,8 +288,9 @@ dead letter retention: 30d, next purge 2026-11-20T08:00:00.000Z
   [retention](/guides/personal-data/#inactivity) and the [purge of resolved dead
   letters](/guides/dead-letters/#keeping-resolved-letters), each `not configured` when it is off.
 
-`--error-text` also prints, under each failure, the text it keeps, encrypted under the person the
-event names: it is read through `app.subscriberFailures.list()`, which records it in the
+Under the rule of [error text](#error-text) set to `"include"`, by `--error-text`,
+`BOUNDA_ERROR_TEXT=include` or the configuration, it also prints, under each failure, the text it
+keeps, encrypted under the person the event names: it is read through `app.subscriberFailures.list()`, which records it in the
 [access log](/guides/personal-data/#who-opened-what) with the persons and `--actor`. A failure whose
 person was forgotten says its text went with them.
 

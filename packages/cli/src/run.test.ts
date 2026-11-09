@@ -866,6 +866,28 @@ describe("bounda status", () => {
     ]);
   });
 
+  it.each([
+    ["include", [], true],
+    ["omit", [], false],
+    ["omit", ["--error-text"], true],
+  ] as const)(
+    "opens the texts of the failures as BOUNDA_ERROR_TEXT %s says, under %j",
+    async (variable, flags, opened) => {
+      await fail();
+      try {
+        process.env.BOUNDA_ERROR_TEXT = variable;
+        const result = await cli(["status", ...failing, ...flags], fixture);
+        expect(result.code).toBe(EXIT_OK);
+        expect(result.stdout.includes("cannot total ana@example.com")).toBe(opened);
+        expect(logged(result.stderr, "info", "personal data accessed")).toHaveLength(
+          opened ? 1 : 0,
+        );
+      } finally {
+        delete process.env.BOUNDA_ERROR_TEXT;
+      }
+    },
+  );
+
   it("prints the status as JSON with --json, with the texts only when asked for", async () => {
     await fail();
     const quiet = await cli(["status", ...failing, "--json"], fixture);
