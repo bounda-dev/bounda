@@ -1,4 +1,5 @@
 import type { ReadClient, Table } from "../../adapter/storage/table.ts";
+import type { ErrorText } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
@@ -10,7 +11,6 @@ import {
 } from "../dispatch/delivery.ts";
 import type { ProjectionRuntime, ReadModelRuntime } from "../read-model/build-read-models.ts";
 import { qualifiedEventType } from "../shared/qualified-event.ts";
-import { errorDetails } from "../shared/retry.ts";
 import { ATTRIBUTES, actorAttribute, traced } from "../telemetry.ts";
 
 export interface ProjectionTarget {
@@ -24,6 +24,7 @@ export interface ProjectBatchArgs {
   readonly table: Table<Record<string, unknown>>;
   readonly client: ReadClient<Record<string, unknown>>;
   readonly logger: Logger;
+  readonly errorText: ErrorText;
   /**
    * Stop after `maxMs` on `clock`, once the event in hand is projected.
    */
@@ -49,6 +50,7 @@ export const projectBatch: ProjectBatchFunction = async ({
   table,
   client,
   logger,
+  errorText,
   budget: { clock, maxMs },
 }) => {
   const started = clock.now().getTime();
@@ -70,6 +72,7 @@ export const projectBatch: ProjectBatchFunction = async ({
             [ATTRIBUTES.correlationId]: event.metadata.correlationId,
             ...actorAttribute(event.metadata.actor),
           },
+          errorText,
           run: async () => {
             await projection.project({ event, table, client });
           },
@@ -80,7 +83,7 @@ export const projectBatch: ProjectBatchFunction = async ({
           projection: projection.key,
           eventId: event.id,
           eventType: event.type,
-          ...errorDetails(error),
+          error,
         });
         throw new PartialBatchError(done, error);
       }
@@ -98,6 +101,7 @@ interface ProjectionClaim extends CheckpointClaim {
 export interface CreateProjectionSubscriberArgs {
   readonly readModel: ReadModelRuntime;
   readonly logger: Logger;
+  readonly errorText: ErrorText;
   readonly budget: ProjectionBudget;
 }
 
@@ -120,6 +124,7 @@ export const projectionSubscriberName: ProjectionSubscriberNameFunction = (readM
 export const createProjectionSubscriber: CreateProjectionSubscriberFunction = ({
   readModel,
   logger,
+  errorText,
   budget,
 }) => {
   const name = projectionSubscriberName(readModel.name);
@@ -142,8 +147,9 @@ export const createProjectionSubscriber: CreateProjectionSubscriberFunction = ({
           }),
       }),
     process: (events, { table, client }) =>
-      projectBatch({ readModel, events, table, client, logger, budget }),
+      projectBatch({ readModel, events, table, client, logger, errorText, budget }),
     logger,
+    errorText,
   });
   return {
     ...subscriber,

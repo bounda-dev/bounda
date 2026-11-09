@@ -1,11 +1,11 @@
 import type { Storage } from "../../adapter/adapter.ts";
 import type { Hold } from "../../adapter/storage/hold.ts";
 import { isReleasedBy } from "../../adapter/storage/hold.ts";
+import type { ErrorText } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { ProcessesRuntime } from "../process/build-processes.ts";
-import { errorDetails } from "../shared/retry.ts";
 import { ATTRIBUTES, traced } from "../telemetry.ts";
 import { createPause, holdAfter } from "./hold.ts";
 import {
@@ -93,6 +93,7 @@ export interface CreatePersonalDataBackfillArgs {
   readonly recordsActivity: boolean;
   readonly clock: Clock;
   readonly logger: Logger;
+  readonly errorText: ErrorText;
 }
 
 export interface CreatePersonalDataBackfillFunction {
@@ -135,6 +136,7 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
   recordsActivity,
   clock,
   logger,
+  errorText,
 }) => {
   const { checkpointStore } = storage;
   const rows = rowsOf(marks);
@@ -281,6 +283,7 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
     const last = events.at(-1)?.position;
     if (last === undefined) return 0;
     const sealed = await traced({
+      errorText,
       name: "bounda.backfill",
       attributes: {
         [ATTRIBUTES.afterPosition]: position,
@@ -389,13 +392,12 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
         pause.resume();
         return done;
       } catch (error) {
-        logger.error(
-          "personal data written before its marks could not be sealed",
-          errorDetails(error),
-        );
+        logger.error("personal data written before its marks could not be sealed", {
+          error,
+        });
         await hold(at).catch((holdError: unknown) => {
           pause.pause(at);
-          logger.error("personal data backfill could not be held", errorDetails(holdError));
+          logger.error("personal data backfill could not be held", { error: holdError });
         });
         return 0;
       }
@@ -417,7 +419,7 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
       lease = null;
       const lapsed = Math.min(held, clock.now().getTime());
       await checkpointStore.compareAndSet(rows.lease, held, lapsed).catch((error: unknown) => {
-        logger.error("personal data backfill could not give its lease back", errorDetails(error));
+        logger.error("personal data backfill could not give its lease back", { error });
       });
     },
   };

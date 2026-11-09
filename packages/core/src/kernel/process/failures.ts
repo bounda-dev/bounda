@@ -59,7 +59,7 @@ export interface ProcessFailures {
   /**
    * Counts and logs `letter` once the unit that filed it committed.
    */
-  filed(process: ProcessRuntime, letter: NewDeadLetter): void;
+  filed(process: ProcessRuntime, letter: NewDeadLetter, error: unknown): void;
 }
 
 export interface CreateProcessFailuresArgs {
@@ -110,13 +110,15 @@ export const createProcessFailures: CreateProcessFailuresFunction = ({
       lastFailedAt: now,
     };
   },
-  filed: (process, letter) => {
+  filed: (process, letter, error) => {
     deadLettered(letter);
     logger.warn("process dead-lettered", {
       process: process.name,
       eventId: letter.eventId,
+      letterId: letter.id,
       errorType: letter.errorType,
       attempts: letter.attempts,
+      error,
     });
   },
 });

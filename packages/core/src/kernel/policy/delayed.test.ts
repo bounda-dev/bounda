@@ -179,7 +179,7 @@ describe("delayed policies", () => {
 
   it("dead-letter a run that fails for good as the policy's, which a retry runs again", async () => {
     const telemetry = installFakeTelemetry();
-    const { logger, entries } = createRecordingLogger();
+    const { logger, entries } = createRecordingLogger("omit");
     const { harness, placed } = await setUp({}, logger);
     failures = { left: 1, error: () => new ValidationError("mailbox closed", []) };
     await harness.dispatcher.runUntilIdle();
@@ -204,6 +204,9 @@ describe("delayed policies", () => {
       fields: {
         policy: "order.remindOnOrderPlaced",
         eventId: placed?.id,
+        letterId: "id-3",
+        errorName: "ValidationError",
+        errorCode: "VALIDATION_FAILED",
         errorType: "terminal",
         attempts: 1,
       },
@@ -231,6 +234,7 @@ describe("delayed policies", () => {
       processes: harness.processes,
       clock: harness.clock,
       logger: harness.logger,
+      errorText: "omit",
     });
     await deadLetters.retry(letter?.id ?? "");
     expect(runs).toHaveLength(1);

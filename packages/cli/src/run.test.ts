@@ -5,6 +5,7 @@ import { basename, join, resolve } from "node:path";
 import { createApp, silentLogger } from "@bounda-dev/core";
 import { loadProject } from "@bounda-dev/core/node";
 import { afterAll, describe, expect, it, vi } from "vitest";
+import type { registry as failingRegistry } from "./fixtures/rebuild-project/.bounda/failing-registry.ts";
 import type { registry as fixtureRegistry } from "./fixtures/rebuild-project/.bounda/registry.ts";
 import { EXIT_CONVENTION, EXIT_FAILURE, EXIT_OK, runCli } from "./run.ts";
 
@@ -367,7 +368,10 @@ describe("bounda rebuild", () => {
     );
     expect(help.stdout).toContain("<read-model>");
     expect(help.stdout).toContain("the read model's key in the registry, e.g. orderSummary");
-    for (const option of ["--root <dir>", "--config <file>", "--registry <file>"]) {
+    expect(help.stdout.replace(/\s+/g, " ")).toContain(
+      "--error-text print the message of the error a command fails on, and log the text of errors: either may quote personal data",
+    );
+    for (const option of ["--root <dir>", "--config <file>", "--registry <file>", "--error-text"]) {
       expect(help.stdout).toContain(option);
     }
     expect(help.stdout).toMatch(/\(default:\s+"bounda\.config\.ts"\)/);
@@ -375,6 +379,38 @@ describe("bounda rebuild", () => {
     expect(help.stdout.replace(/\s+/g, " ")).toContain(
       "--actor <id> the id of who runs the command, named in the events it writes, its log lines and the access log",
     );
+  });
+
+  it("prints and logs no text of a projection's error unless told to", async () => {
+    const project = await loadProject<typeof failingRegistry>({
+      root: fixture,
+      registryPath: ".bounda/failing-registry.ts",
+      logger: silentLogger,
+    });
+    const app = await createApp({ ...project, logger: silentLogger });
+    await app.commands.increment({ counterId: `c-${Date.now()}` });
+    await app.stop();
+    const args = ["rebuild", "failingTotals", "--registry", ".bounda/failing-registry.ts"];
+    const quiet = await cli(args, fixture);
+    expect(quiet.code).toBe(EXIT_FAILURE);
+    expect(quiet.stderr).not.toContain("ana@example.com");
+    expect(quiet.stderr).toContain(
+      "error: Error; its message may quote personal data: run again with --error-text to print it\n",
+    );
+    const told = await cli([...args, "--error-text"], fixture);
+    expect(told.code).toBe(EXIT_FAILURE);
+    expect(told.stderr).toContain("error: cannot total ana@example.com\n");
+    expect(told.stderr).toContain('"errorMessage":"cannot total ana@example.com"');
+  });
+
+  it("logs the text of errors while the app runs only with --error-text", async () => {
+    const args = ["dead-letters", "list", "--registry", ".bounda/failing-registry.ts"];
+    const quiet = await cli(args, fixture);
+    expect(quiet.code).toBe(EXIT_OK);
+    expect(quiet.stderr).toContain('probe {"cause":{"errorName":"Error"}}');
+    expect(quiet.stderr).not.toContain("ana@example.com");
+    const told = await cli([...args, "--error-text"], fixture);
+    expect(told.stderr).toContain('"errorMessage":"probed ana@example.com"');
   });
 
   it("exits 2 with the reason when the read model or the project is not there", async () => {
@@ -386,6 +422,12 @@ describe("bounda rebuild", () => {
     const missing = await cli(["rebuild", "counterTotals", "--registry", "missing.ts"], fixture);
     expect(missing.code).toBe(EXIT_FAILURE);
     expect(missing.stderr).toMatch(/^error: Cannot find the registry \(export "registry"\) at /);
+    expect(missing.stderr.trimEnd().split("\n")).toHaveLength(1);
+    const unbooted = await cli(["dead-letters", "list", "--registry", "missing.ts"], fixture);
+    expect(unbooted.code).toBe(EXIT_FAILURE);
+    expect(unbooted.stderr).toMatch(
+      /^error: Cannot find the registry \(export "registry"\) at [^\n]*\n$/,
+    );
     const noArgument = await cli(["rebuild"], fixture);
     expect(noArgument.code).toBe(EXIT_CONVENTION);
   });
@@ -520,7 +562,13 @@ describe("bounda dead-letters", () => {
     const id = await deadLetter();
     const retry = await cli(["dead-letters", "retry", id], fixture);
     expect(retry.code).toBe(EXIT_FAILURE);
-    expect(besidesLogs(retry.stderr)).toBe("error: alerts are down\n");
+    expect(besidesLogs(retry.stderr)).toBe(
+      "error: ValidationError (VALIDATION_FAILED); its message may quote personal data: run again with --error-text to print it\n",
+    );
+    expect(retry.stderr).not.toContain("alerts are down");
+    const told = await cli(["dead-letters", "retry", id, "--error-text"], fixture);
+    expect(told.code).toBe(EXIT_FAILURE);
+    expect(besidesLogs(told.stderr)).toBe("error: alerts are down\n");
 
     const discard = await cli(["dead-letters", "discard", id], fixture);
     expect(besidesLogs(discard.stderr)).toBe("");

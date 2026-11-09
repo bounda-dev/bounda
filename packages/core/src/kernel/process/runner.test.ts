@@ -569,7 +569,7 @@ describe("process runner", () => {
 
   it("dead-letters a retriable failure once the configured attempts are used up", async () => {
     reset("flaky", 5);
-    const { logger, entries } = createRecordingLogger();
+    const { logger, entries } = createRecordingLogger("omit");
     const harness = await createReactiveHarness({
       registry,
       logger,
@@ -588,7 +588,12 @@ describe("process runner", () => {
       {
         level: "warn",
         message: "process handler failed; will retry",
-        fields: { process: "order.orderPayment", eventId: expect.any(String), attempts: 1 },
+        fields: {
+          process: "order.orderPayment",
+          eventId: expect.any(String),
+          attempts: 1,
+          errorName: "Error",
+        },
       },
     ]);
 
@@ -615,6 +620,8 @@ describe("process runner", () => {
       fields: {
         process: "order.orderPayment",
         eventId: expect.any(String),
+        letterId: "id-6",
+        errorName: "Error",
         errorType: "retriable_exhausted",
         attempts: 2,
       },
@@ -695,7 +702,7 @@ describe("process runner", () => {
 
   it("holds and redelivers when another instance moved the process stream first", async () => {
     reset("ok");
-    const { logger, entries } = createRecordingLogger();
+    const { logger, entries } = createRecordingLogger("omit");
     const harness = await createReactiveHarness({
       registry,
       logger,
@@ -753,7 +760,7 @@ describe("process runner", () => {
 
   it("lets storage failures reach the dispatcher", async () => {
     reset("ok");
-    const { logger, entries } = createRecordingLogger();
+    const { logger, entries } = createRecordingLogger("omit");
     const harness = await createReactiveHarness({ registry, logger });
     const original = harness.storage.eventStore.load.bind(harness.storage.eventStore);
     harness.storage.eventStore.load = async (args) => {
@@ -771,8 +778,7 @@ describe("process runner", () => {
           subscriber: "processes",
           afterPosition: 0,
           failedPosition: 1,
-          message: "db down",
-          stack: expect.any(String),
+          errorName: "Error",
         },
       },
     ]);
@@ -1410,7 +1416,7 @@ describe("processes that listen to other aggregates", () => {
 
   it("dead-letter an event whose correlate throws or returns no id, and keep going", async () => {
     seen.length = 0;
-    const { logger, entries } = createRecordingLogger();
+    const { logger, entries } = createRecordingLogger("omit");
     const harness = await createReactiveHarness({
       logger,
       registry: withCorrelate({

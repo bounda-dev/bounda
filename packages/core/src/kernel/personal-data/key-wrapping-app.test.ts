@@ -10,6 +10,7 @@ import type { EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { createTestApp } from "../../testing/index.ts";
 import { type BoundaApp, createApp } from "../app.ts";
+import { errorFields } from "../shared/error-fields.ts";
 import { fingerprintOf, fromBase64, toBase64 } from "./crypto.ts";
 import { buildKeyWrapper, defineCryptoKeyWrapper, defineKeyWrapper } from "./key-wrapper.ts";
 import { masterKey } from "./master-key.ts";
@@ -280,11 +281,16 @@ describe("personal keys wrapped under a master key", () => {
     await wrong.stop();
 
     const none = await start({ adapter });
-    await expect(none.exportPersonalData("c-1")).rejects.toThrow(
+    const unwrappable = await none.exportPersonalData("c-1").catch((error: unknown) => error);
+    expect(unwrappable).toEqual(
       new ConfigurationError(
         `A personal key is wrapped under ${kid}, and runtime.personalData.keyWrapper is not set`,
       ),
     );
+    // Written from the key's id alone, so the logs carry it even without error text.
+    expect(errorFields({ error: unwrappable })).toMatchObject({
+      errorMessage: `A personal key is wrapped under ${kid}, and runtime.personalData.keyWrapper is not set`,
+    });
     await none.stop();
   });
 

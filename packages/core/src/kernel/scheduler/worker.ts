@@ -32,13 +32,7 @@ import { PROCESS_DEADLINE_COMMAND, type ProcessDeadlinePayload } from "../proces
 import type { ProcessDeadlines } from "../process/deliver-deadline.ts";
 import { PROCESSES_SUBSCRIBER } from "../process/runner.ts";
 import { createMutex } from "../shared/mutex.ts";
-import {
-  classifyFailure,
-  errorDetails,
-  errorIdentity,
-  errorLabel,
-  retryDelayMs,
-} from "../shared/retry.ts";
+import { classifyFailure, errorIdentity, errorLabel, retryDelayMs } from "../shared/retry.ts";
 import {
   appendSystemEvent,
   SCHEDULED_COMMAND_FAILED_EVENT,
@@ -203,7 +197,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       const purged = await storage.idempotencyStore.purge({ now });
       if (purged > 0) logger.debug("expired idempotency keys purged", { purged });
     } catch (error) {
-      logger.error("expired idempotency keys could not be purged", errorDetails(error));
+      logger.error("expired idempotency keys could not be purged", { error });
     }
   };
 
@@ -345,22 +339,26 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     };
   };
 
-  const dropped = (entry: ScheduledCommand, letter: NewDeadLetter): void => {
+  const dropped = (entry: ScheduledCommand, letter: NewDeadLetter, error: unknown): void => {
     deadLettered(letter);
     if (letter.kind === "policy") {
       logger.warn("policy dead-lettered", {
         policy: letter.handler,
         eventId: letter.eventId,
+        letterId: letter.id,
         errorType: letter.errorType,
         attempts: letter.attempts,
+        error,
       });
       return;
     }
     logger.warn("scheduled command dropped", {
       command: entry.command.type,
       dedupeKey: entry.dedupeKey,
+      letterId: letter.id,
       reason: letter.errorType,
       attempts: letter.attempts,
+      error,
     });
   };
 
@@ -388,7 +386,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       logger.error("restricted dead letters could not be retried; retry them by hand", {
         personId: entry.command.aggregateId,
         attempts,
-        ...errorDetails(error),
+        error,
       });
       return;
     }
@@ -399,7 +397,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       await unit.deadLetterStore.add(letter);
       await unit.scheduler.fail({ claim: entry, error: errorLabel(letter) });
     });
-    dropped(entry, letter);
+    dropped(entry, letter, error);
   };
 
   const run = (
@@ -408,6 +406,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     event: StoredEvent | undefined,
   ): Promise<void> =>
     traced({
+      errorText: config.runtime.telemetry.errorText,
       name: `bounda.scheduled ${entry.command.type}`,
       attributes: {
         [ATTRIBUTES.commandType]: entry.command.type,
@@ -496,6 +495,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
           command: entry.command.type,
           attempts,
           retryAt: retryAt.toISOString(),
+          error,
         });
         return;
       }
@@ -568,7 +568,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
           logger.error("scheduled command could not be settled; its lease will lapse", {
             command: entry.command.type,
             dedupeKey: entry.dedupeKey,
-            ...errorDetails(error instanceof RenewFailed ? error.cause : error),
+            error: error instanceof RenewFailed ? error.cause : error,
           });
         }
       }
@@ -589,7 +589,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     if (!running) return;
     cancelWait = clock.after(config.runtime.dispatcher.pollIntervalMs, async () => {
       await runOnce().catch((error: unknown) =>
-        logger.error("scheduled command worker failed", errorDetails(error)),
+        logger.error("scheduled command worker failed", { error }),
       );
       schedule();
     });

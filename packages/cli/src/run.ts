@@ -5,11 +5,13 @@ import {
   checkActor,
   type DeadLetterKind,
   type DeadLetterStatus,
+  errorFields,
   type ListDeadLettersArgs,
   type Logger,
   MAX_ACTOR_LENGTH,
   rebuildReadModel,
 } from "@bounda-dev/core";
+import type { Config, ErrorText } from "@bounda-dev/core/config";
 import { boot, createConsoleLogger, loadProject } from "@bounda-dev/core/node";
 import { Command, CommanderError, InvalidArgumentError, Option } from "commander";
 import { formatLetter, formatRetried } from "./dead-letter-output.ts";
@@ -90,6 +92,64 @@ const runGenerate = async (
 
 const logTo = (stderr: Output): Logger => createConsoleLogger({ stream: stderr });
 
+// The flag wins; without it, what the configuration sets.
+const errorTextOf = (options: ProjectOptions, config: Config): ErrorText | undefined =>
+  options.errorText ? "include" : config.runtime?.telemetry?.errorText;
+
+const withErrorText = (config: Config, options: ProjectOptions): Config =>
+  options.errorText
+    ? {
+        ...config,
+        runtime: {
+          ...config.runtime,
+          telemetry: { ...config.runtime?.telemetry, errorText: "include" },
+        },
+      }
+    : config;
+
+const rootOf = (options: ProjectOptions, cwd: string): string => resolve(cwd, options.root ?? ".");
+
+// What fails while the project's modules load tells of files and exports, never of data a handler
+// read, so it is printed in full.
+const load = async (
+  options: ProjectOptions,
+  cwd: string,
+  logger: Logger,
+  stderr: Output,
+): Promise<Awaited<ReturnType<typeof loadProject>> | undefined> => {
+  try {
+    return await loadProject({
+      root: rootOf(options, cwd),
+      configPath: options.config,
+      registryPath: options.registry,
+      logger,
+    });
+  } catch (error) {
+    line(stderr, `error: ${error instanceof Error ? error.message : String(error)}`);
+    return undefined;
+  }
+};
+
+const ERROR_TEXT_HINT =
+  "its message may quote personal data: run again with --error-text to print it";
+
+// A handler's error may quote personal data, and stderr often ends in a log: its message is
+// printed only as the runtime would log it.
+const failed = (
+  stderr: Output,
+  error: unknown,
+  errorText: ErrorText | undefined,
+): typeof EXIT_FAILURE => {
+  const { errorName, errorCode, errorMessage } = errorFields({ error, errorText });
+  line(
+    stderr,
+    errorMessage === undefined
+      ? `error: ${errorName}${errorCode === undefined ? "" : ` (${errorCode})`}; ${ERROR_TEXT_HINT}`
+      : `error: ${errorMessage}`,
+  );
+  return EXIT_FAILURE;
+};
+
 const runRebuild = async (
   readModel: string,
   options: ActingOptions,
@@ -97,17 +157,13 @@ const runRebuild = async (
   stdout: Output,
   stderr: Output,
 ): Promise<number> => {
-  const root = resolve(cwd, options.root ?? ".");
   const logger = logTo(stderr);
+  const project = await load(options, cwd, logger, stderr);
+  if (project === undefined) return EXIT_FAILURE;
   try {
-    const project = await loadProject({
-      root,
-      configPath: options.config,
-      registryPath: options.registry,
-      logger,
-    });
     const result = await rebuildReadModel({
       ...project,
+      config: withErrorText(project.config, options),
       env: process.env,
       name: readModel,
       logger,
@@ -119,8 +175,7 @@ const runRebuild = async (
     );
     return EXIT_OK;
   } catch (error) {
-    line(stderr, `error: ${error instanceof Error ? error.message : String(error)}`);
-    return EXIT_FAILURE;
+    return failed(stderr, error, errorTextOf(options, project.config));
   }
 };
 
@@ -128,6 +183,7 @@ interface ProjectOptions {
   readonly root?: string;
   readonly config: string;
   readonly registry: string;
+  readonly errorText: boolean;
 }
 
 interface ActingOptions extends ProjectOptions {
@@ -150,20 +206,23 @@ const withApp = async <T>(
   stderr: Output,
   work: (app: App) => Promise<T>,
 ): Promise<T | typeof EXIT_FAILURE> => {
-  const root = resolve(cwd, options.root ?? ".");
+  const logger = logTo(stderr);
+  const project = await load(options, cwd, logger, stderr);
+  if (project === undefined) return EXIT_FAILURE;
   let app: App | undefined;
   try {
     app = await boot({
-      root,
-      configPath: options.config,
-      registryPath: options.registry,
+      root: rootOf(options, cwd),
+      config: project.config,
+      ...(options.errorText ? { errorText: "include" as const } : {}),
+      registry: project.registry,
+      loadEnv: false,
       signals: false,
-      logger: logTo(stderr),
+      logger,
     });
     return await work(app);
   } catch (error) {
-    line(stderr, `error: ${error instanceof Error ? error.message : String(error)}`);
-    return EXIT_FAILURE;
+    return failed(stderr, error, errorTextOf(options, project.config));
   } finally {
     await app?.stop();
   }
@@ -276,6 +335,7 @@ const runForget = async (
   try {
     entries = parseForgetList(await readFile(resolve(cwd, options.from), "utf8"));
   } catch (error) {
+    // Its own file, read and parsed here: what fails names the path or the line, never a value.
     line(
       stderr,
       `error: ${options.from}: ${error instanceof Error ? error.message : String(error)}`,
@@ -312,7 +372,12 @@ const projectOptions = <T extends Command>(command: T): T =>
   command
     .option("--root <dir>", "project root (default: current directory)")
     .option("--config <file>", "configuration module under the root", "bounda.config.ts")
-    .option("--registry <file>", "generated registry module under the root", ".bounda/registry.ts");
+    .option("--registry <file>", "generated registry module under the root", ".bounda/registry.ts")
+    .option(
+      "--error-text",
+      "print the message of the error a command fails on, and log the text of errors: either may quote personal data",
+      false,
+    );
 
 const actingOptions = <T extends Command>(command: T): T =>
   projectOptions(command).option(
@@ -456,7 +521,6 @@ export const runCli: RunCliFunction = async ({ argv, cwd, stdout, stderr, signal
     if (error instanceof CommanderError) {
       return error.exitCode === 0 ? EXIT_OK : EXIT_CONVENTION;
     }
-    line(stderr, `error: ${error instanceof Error ? error.message : String(error)}`);
-    return EXIT_FAILURE;
+    return failed(stderr, error, undefined);
   }
 };

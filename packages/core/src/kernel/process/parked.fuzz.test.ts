@@ -134,6 +134,7 @@ const run = async (seed: number): Promise<void> => {
     processes: harness.processes,
     clock: harness.clock,
     logger: harness.logger,
+    errorText: "omit",
   });
   const add = harness.storage.deadLetterStore.add;
   let storeFailures = 0;

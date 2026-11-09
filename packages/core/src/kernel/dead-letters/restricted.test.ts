@@ -39,7 +39,7 @@ const refused = (
 });
 
 const setup = async (config?: Parameters<typeof createReactiveHarness>[0]["config"]) => {
-  const { logger, entries } = createRecordingLogger();
+  const { logger, entries } = createRecordingLogger("omit");
   const harness = await createReactiveHarness({
     registry: orderRegistry,
     logger,
@@ -126,6 +126,7 @@ describe("the retry of a restricted person's dead letters", () => {
           personId: "c-1",
           errorName: "DeadLetterNotRetriableError",
           errorCode: "DEAD_LETTER_NOT_RETRIABLE",
+          errorMessage: 'Policy "order.gone" is no longer in the registry',
         },
       },
       {
@@ -231,7 +232,7 @@ describe("the retry of a restricted person's dead letters", () => {
     expect(entries).toContainEqual({
       level: "error",
       message: "restricted dead letters could not be retried; retry them by hand",
-      fields: expect.objectContaining({ personId: "c-1", attempts: 1, message: "down" }),
+      fields: expect.objectContaining({ personId: "c-1", attempts: 1, errorName: "Error" }),
     });
   });
 

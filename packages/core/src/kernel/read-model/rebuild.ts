@@ -21,6 +21,7 @@ import {
 import { projectBatch, projectionSubscriberName } from "../projection/runner.ts";
 import { actedBy } from "../shared/causation.ts";
 import { guardedLogger } from "../shared/guarded-logger.ts";
+import { runtimeText } from "../shared/runtime-text.ts";
 import { adapterForReadModel, compileProjections } from "./build-read-models.ts";
 import { fingerprintReadModel } from "./fingerprint.ts";
 
@@ -138,16 +139,19 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
 }) => {
   if (actor !== undefined) checkActor(actor);
   validateRegistry(registry);
-  const logger = guardedLogger(rawLogger);
   if (maxEvents !== undefined && !(maxEvents >= 1)) {
     throw new ConfigurationError(`maxEvents must be at least 1, got ${maxEvents}`);
   }
   const config = resolveConfig(rawConfig);
+  const { errorText } = config.runtime.telemetry;
+  const logger = guardedLogger(rawLogger, errorText);
   checkConfigNames({ registry, config });
   const entry = registry.readModels[name];
   if (entry === undefined) {
-    throw new ConfigurationError(
-      `Unknown read model "${name}". The registry has: ${Object.keys(registry.readModels).join(", ") || "none"}`,
+    throw runtimeText(
+      new ConfigurationError(
+        `Unknown read model "${name}". The registry has: ${Object.keys(registry.readModels).join(", ") || "none"}`,
+      ),
     );
   }
   if (!isAdapter(config.storage)) {
@@ -200,6 +204,7 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
             table,
             client,
             logger,
+            errorText,
             budget: { clock: systemClock, maxMs: config.runtime.dispatcher.projectionBatchTimeMs },
           });
           await checkpointStore.set(progress, batch[projected - 1]?.position ?? position);

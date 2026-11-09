@@ -3,7 +3,7 @@ import type { Storage } from "../adapter/adapter.ts";
 import type { PersonalKeyStore, StoredPersonalKey } from "../adapter/storage/personal-key-store.ts";
 import { selectImplementations } from "../config/ports.ts";
 import { resolveConfig } from "../config/schema.ts";
-import type { Config, PortsConfig, ResolvedConfig } from "../config/types.ts";
+import type { Config, ErrorText, PortsConfig, ResolvedConfig } from "../config/types.ts";
 import { type Clock, createFixedClock, type FixedClock } from "../contracts/clock.ts";
 import type { CommandRejection } from "../contracts/command.ts";
 import { createSequentialIdGenerator } from "../contracts/ids.ts";
@@ -29,6 +29,7 @@ import {
 } from "./personal-data/crypto.ts";
 import { createPersonalKeyWrapping, type PersonalKeys } from "./personal-data/wrapped-keys.ts";
 import { createPorts, type ModulePorts } from "./ports/ports.ts";
+import { guardedLogger } from "./shared/guarded-logger.ts";
 
 interface OrderState {
   readonly status: "new" | "placed" | "paid";
@@ -255,13 +256,14 @@ export interface RecordingLogger {
 }
 
 export interface CreateRecordingLoggerFunction {
-  (): RecordingLogger;
+  (errorText?: ErrorText): RecordingLogger;
 }
 
 /**
- * A logger that keeps every line, for tests that assert on what the kernel reports.
+ * A logger that keeps every line, for tests that assert on what the kernel reports. Errors are
+ * logged as the runtime logs them, with their text unless `errorText` is `"omit"`.
  */
-export const createRecordingLogger: CreateRecordingLoggerFunction = () => {
+export const createRecordingLogger: CreateRecordingLoggerFunction = (errorText = "include") => {
   const entries: LogEntry[] = [];
   const record =
     (level: LogEntry["level"]) =>
@@ -269,12 +271,15 @@ export const createRecordingLogger: CreateRecordingLoggerFunction = () => {
       entries.push(fields === undefined ? { level, message } : { level, message, fields });
     };
   return {
-    logger: {
-      debug: record("debug"),
-      info: record("info"),
-      warn: record("warn"),
-      error: record("error"),
-    },
+    logger: guardedLogger(
+      {
+        debug: record("debug"),
+        info: record("info"),
+        warn: record("warn"),
+        error: record("error"),
+      },
+      errorText,
+    ),
     entries,
   };
 };

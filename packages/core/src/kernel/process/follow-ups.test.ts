@@ -154,6 +154,7 @@ const setUp = async (
     processes: harness.processes,
     clock: harness.clock,
     logger: harness.logger,
+    errorText: "omit",
   });
   const place = (orderId: string) =>
     harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId, total: 10 } });

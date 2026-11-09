@@ -184,7 +184,7 @@ describe("createPorts", () => {
         fields: expect.objectContaining({
           module: "order",
           port: "mailer",
-          message: "mailer is stuck",
+          errorMessage: "mailer is stuck",
         }),
       }),
     ]);

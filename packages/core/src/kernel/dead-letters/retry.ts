@@ -17,6 +17,7 @@ import type { PolicyExecutor } from "../policy/executor.ts";
 import type { ProcessDeadLetters } from "../process/dead-letter-retry.ts";
 import { PROCESS_DEADLINE_COMMAND } from "../process/deadlines.ts";
 import { startedBy } from "../shared/causation.ts";
+import { runtimeText } from "../shared/runtime-text.ts";
 import { commitWork, type UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 
 /**
@@ -89,8 +90,10 @@ export const createDeadLetterRetry: CreateDeadLetterRetryFunction = ({
       eventId: letter.eventId,
     });
     if (event === null) {
-      throw new NotFoundError(
-        `Event ${letter.eventId} of ${letter.aggregateType}:${letter.aggregateId} not found`,
+      throw runtimeText(
+        new NotFoundError(
+          `Event ${letter.eventId} of ${letter.aggregateType}:${letter.aggregateId} not found`,
+        ),
       );
     }
     return event;
@@ -103,14 +106,16 @@ export const createDeadLetterRetry: CreateDeadLetterRetryFunction = ({
   ): Promise<void> => {
     const policy = policies.byName[letter.handler];
     if (policy === undefined) {
-      throw new DeadLetterNotRetriableError(
-        `Policy "${letter.handler}" is no longer in the registry`,
+      throw runtimeText(
+        new DeadLetterNotRetriableError(`Policy "${letter.handler}" is no longer in the registry`),
       );
     }
     const event = await eventOf(letter);
     if (event.aggregateType !== policy.source || !policy.on.includes(event.type)) {
-      throw new DeadLetterNotRetriableError(
-        `Policy "${policy.name}" no longer handles ${event.aggregateType}.${event.type}`,
+      throw runtimeText(
+        new DeadLetterNotRetriableError(
+          `Policy "${policy.name}" no longer handles ${event.aggregateType}.${event.type}`,
+        ),
       );
     }
     await settled(letter, (unit) =>
@@ -130,8 +135,10 @@ export const createDeadLetterRetry: CreateDeadLetterRetryFunction = ({
     actor: string | undefined,
   ): Promise<void> => {
     if (aggregates.commandsByType[letter.eventType] === undefined) {
-      throw new DeadLetterNotRetriableError(
-        `Command "${letter.eventType}" is no longer in the registry`,
+      throw runtimeText(
+        new DeadLetterNotRetriableError(
+          `Command "${letter.eventType}" is no longer in the registry`,
+        ),
       );
     }
     const { payload, forgotten } = await openCommandPayload({
@@ -139,8 +146,10 @@ export const createDeadLetterRetry: CreateDeadLetterRetryFunction = ({
       keys: storage.personalKeys,
     });
     if (forgotten) {
-      throw new DeadLetterNotRetriableError(
-        `Command "${letter.eventType}" holds personal data of a person forgotten since`,
+      throw runtimeText(
+        new DeadLetterNotRetriableError(
+          `Command "${letter.eventType}" holds personal data of a person forgotten since`,
+        ),
       );
     }
     const context = { ...startedBy(ids.next(), actor), causationId: letter.id };
@@ -189,8 +198,10 @@ export const createDeadLetterRetry: CreateDeadLetterRetryFunction = ({
         return false;
       default:
         // Stores cast the stored kind, so a row no release writes still reaches here.
-        throw new DeadLetterNotRetriableError(
-          `Dead letter "${letter.id}" has an unknown kind "${String(letter.kind satisfies never)}"`,
+        throw runtimeText(
+          new DeadLetterNotRetriableError(
+            `Dead letter "${letter.id}" has an unknown kind "${String(letter.kind satisfies never)}"`,
+          ),
         );
     }
   };

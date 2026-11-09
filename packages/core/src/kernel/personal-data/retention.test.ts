@@ -480,7 +480,7 @@ describe("createRetentionSweep", () => {
     expect(entries).toContainEqual({
       level: "error",
       message: "person past the retention could not be forgotten",
-      fields: expect.objectContaining({ personId: "c-1", message: "disk full" }),
+      fields: expect.objectContaining({ personId: "c-1", errorMessage: "disk full" }),
     });
     await record();
     expect(await sweep.nextDueAt()).toEqual(new Date(clock.now().getTime() + HOLD_MS));
@@ -550,7 +550,7 @@ describe("createRetentionSweep", () => {
     expect(entries).toContainEqual({
       level: "error",
       message: "persons past the retention could not be listed",
-      fields: expect.objectContaining({ message: "connection reset" }),
+      fields: expect.objectContaining({ errorMessage: "connection reset" }),
     });
     expect(await sweep.sweep(clock.now())).toBe(0);
     clock.set(new Date(clock.now().getTime() + HOLD_MS));
@@ -653,7 +653,7 @@ describe("createRetentionSweep", () => {
     expect(entries).toContainEqual({
       level: "error",
       message: "person past the retention could not be held",
-      fields: expect.objectContaining({ personId: "c-3", message: "read-only" }),
+      fields: expect.objectContaining({ personId: "c-3", errorMessage: "read-only" }),
     });
     expect((await storage.persons.get("c-3"))?.hold).toBeNull();
     expect(await sweep.nextDueAt()).toEqual(new Date(clock.now().getTime() + HOLD_MS));

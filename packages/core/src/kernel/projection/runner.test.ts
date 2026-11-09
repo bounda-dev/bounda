@@ -163,8 +163,9 @@ describe("projection subscriber", () => {
         projection: "order.anyChange",
         eventId: expect.any(String),
         eventType: "OrderPaid",
-        message: "transient",
-        stack: expect.stringContaining("transient"),
+        errorName: "Error",
+        errorMessage: "transient",
+        errorStack: expect.stringContaining("transient"),
       },
     });
     expect(entries).toContainEqual({

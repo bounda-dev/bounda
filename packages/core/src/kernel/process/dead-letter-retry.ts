@@ -8,6 +8,7 @@ import {
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
+import { runtimeText } from "../shared/runtime-text.ts";
 import type { ProcessesRuntime, ProcessRuntime } from "./build-processes.ts";
 import type { DeadlineStep } from "./deadline-step.ts";
 import { PROCESS_DEADLINE_COMMAND, reachedKey } from "./deadlines.ts";
@@ -98,14 +99,18 @@ const failedOnAnotherStep = (
   process: ProcessRuntime,
   instanceId: string,
 ): DeadLetterNotRetriableError =>
-  new DeadLetterNotRetriableError(
-    `Process "${process.name}" is failed on another step for ${instanceId}; retry the dead letter of that failure first`,
+  runtimeText(
+    new DeadLetterNotRetriableError(
+      `Process "${process.name}" is failed on another step for ${instanceId}; retry the dead letter of that failure first`,
+    ),
   );
 
 const registered = (processes: ProcessesRuntime, name: string): ProcessRuntime => {
   const process = processes.byName[name];
   if (process === undefined) {
-    throw new DeadLetterNotRetriableError(`Process "${name}" is no longer in the registry`);
+    throw runtimeText(
+      new DeadLetterNotRetriableError(`Process "${name}" is no longer in the registry`),
+    );
   }
   return process;
 };
@@ -139,11 +144,15 @@ export const createProcessRetry: CreateProcessRetryFunction = ({
     const handler = handlerOf(process, event);
     const followUp = instance !== null && pendingFollowUp(instance, event);
     if (handler === undefined && !failedHere && !followUp) {
-      throw new DeadLetterNotRetriableError(`Process "${name}" no longer handles ${event.type}`);
+      throw runtimeText(
+        new DeadLetterNotRetriableError(`Process "${name}" no longer handles ${event.type}`),
+      );
     }
     if (instanceId === null || instance === null || !instance.exists) {
-      throw new NotFoundError(
-        `Process "${name}" has no instance for ${event.aggregateType}:${event.aggregateId}`,
+      throw runtimeText(
+        new NotFoundError(
+          `Process "${name}" has no instance for ${event.aggregateType}:${event.aggregateId}`,
+        ),
       );
     }
     if (instance.status === "failed" && !failedHere) throw failedOnAnotherStep(process, instanceId);
@@ -211,8 +220,10 @@ export const createProcessRetry: CreateProcessRetryFunction = ({
       throw failedOnAnotherStep(process, payload.aggregateId);
     }
     if (instance.status !== "failed" || failed === undefined) {
-      throw new NotFoundError(
-        `Process "${process.name}" has no failed deadline for ${payload.aggregateId}`,
+      throw runtimeText(
+        new NotFoundError(
+          `Process "${process.name}" has no failed deadline for ${payload.aggregateId}`,
+        ),
       );
     }
     await units.commit(async (unit, within) => {

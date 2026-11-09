@@ -202,6 +202,7 @@ describe("bounda() Vite plugin", () => {
         "",
         "export const { bounda, boundaMiddleware, dispose } = createHost({",
         '  root: "/project",',
+        '  errorText: "include",',
         "  registry,",
         '  importConfig: () => import("/project/bounda.config.ts"),',
         '  importTenant: Object.values(import.meta.glob("/app/tenant.ts"))[0],',
@@ -223,6 +224,7 @@ describe("bounda() Vite plugin", () => {
       'createHost({\n  registry,\n  importConfig: () => import("/project/bounda.config.ts"),',
     );
     expect(code).not.toContain("root:");
+    expect(code).not.toContain("errorText");
   });
 
   it("passes the consistency option through", () => {

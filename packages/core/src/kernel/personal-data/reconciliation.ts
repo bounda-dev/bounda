@@ -10,7 +10,6 @@ import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { BOUNDA_AGGREGATE } from "../../modules/bounda-events.ts";
 import { startedBy } from "../shared/causation.ts";
-import { errorDetails } from "../shared/retry.ts";
 import { type Forgotten, forgetWithin, logForgotten } from "./forget.ts";
 import { holdAfter } from "./hold.ts";
 import { checkPersonId, transactRetrying } from "./transact.ts";
@@ -282,10 +281,10 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
       done = false;
       logger.error(
         "forget ledger could not be reconciled; persons a restored backup brought back are not forgotten yet",
-        errorDetails(error),
+        { error },
       );
       await hold(at).catch((holdError: unknown) =>
-        logger.error("forget ledger's reconciliation could not be held", errorDetails(holdError)),
+        logger.error("forget ledger's reconciliation could not be held", { error: holdError }),
       );
       return { failed: error };
     }
@@ -296,10 +295,10 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
     settled = true;
     periodicAt = at + reconcileEveryMs;
     await release().catch((error: unknown) =>
-      logger.error("forget ledger's reconciliation hold could not be cleared", errorDetails(error)),
+      logger.error("forget ledger's reconciliation hold could not be cleared", { error }),
     );
     await advance(FORGET_LEDGER_LAST_RUN, at).catch((error: unknown) =>
-      logger.error("forget ledger's last reconciliation could not be kept", errorDetails(error)),
+      logger.error("forget ledger's last reconciliation could not be kept", { error }),
     );
     return forgotten;
   };
@@ -309,7 +308,7 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
     try {
       await ledger.prune({ before: new Date(at - keepForMs).toISOString() });
     } catch (error) {
-      logger.error("forget ledger could not be pruned", errorDetails(error));
+      logger.error("forget ledger could not be pruned", { error });
     }
   };
 

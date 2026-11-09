@@ -95,6 +95,57 @@ describe("boot", () => {
     await app.stop();
   });
 
+  it.each([
+    [undefined, undefined, { errorName: "Error" }],
+    ["include", "omit", { errorName: "Error", errorMessage: "ana@example.com" }],
+    ["include", undefined, { errorName: "Error", errorMessage: "ana@example.com" }],
+    [undefined, "include", { errorName: "Error", errorMessage: "ana@example.com" }],
+  ] as const)(
+    "logs error text as errorText %s says over the configuration's %s",
+    async (errorText, configured, logged) => {
+      const fields: unknown[] = [];
+      const withPort = {
+        ...registry,
+        aggregates: {
+          counter: {
+            ...registry.aggregates.counter,
+            ports: {
+              probe: {
+                noisy: {
+                  create: ({ logger }: CreateArgs) => {
+                    logger.warn("probe", { cause: new Error("ana@example.com") });
+                    return {};
+                  },
+                },
+              },
+            },
+          },
+        },
+      } satisfies Registry;
+      const app = await boot({
+        root,
+        signals: false,
+        registry: withPort,
+        config: {
+          storage: memory(),
+          ...(configured === undefined
+            ? {}
+            : { runtime: { telemetry: { errorText: configured } } }),
+        },
+        logger: { ...silentLogger, warn: (_message, entry) => void fields.push(entry) },
+        ...(errorText === undefined ? {} : { errorText }),
+      });
+      expect(fields).toEqual([
+        {
+          cause: !("errorMessage" in logged)
+            ? logged
+            : { ...logged, errorStack: expect.stringContaining("ana@example.com") },
+        },
+      ]);
+      await app.stop();
+    },
+  );
+
   it("hands process.env, with .env loaded, to the implementations' create", async () => {
     let marker: string | undefined;
     const withPort = {

@@ -260,7 +260,7 @@ describe("policy subscriber", () => {
 
   it("dead-letters a terminal failure at once, under the letter's own id, and moves on", async () => {
     reset("domain");
-    const { logger, entries } = createRecordingLogger();
+    const { logger, entries } = createRecordingLogger("omit");
     const harness = await createReactiveHarness({ registry, logger });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
     await harness.dispatcher.runUntilIdle();
@@ -292,8 +292,11 @@ describe("policy subscriber", () => {
         fields: {
           policy: "order.payOnOrderPlaced",
           eventId: placed?.id,
+          letterId: expect.any(String),
           errorType: "terminal",
           attempts: 1,
+          errorName: "ValidationError",
+          errorCode: "VALIDATION_FAILED",
         },
       },
     ]);
@@ -541,7 +544,7 @@ describe("policy subscriber", () => {
 
   it("claims each run with a lease of twice the handler timeout and reports retries", async () => {
     reset("flaky", 1);
-    const { logger, entries } = createRecordingLogger();
+    const { logger, entries } = createRecordingLogger("omit");
     const harness = await createReactiveHarness({
       registry,
       logger,
@@ -566,7 +569,12 @@ describe("policy subscriber", () => {
       {
         level: "warn",
         message: "policy failed; will retry",
-        fields: { policy: "order.payOnOrderPlaced", eventId: expect.any(String), attempts: 1 },
+        fields: {
+          policy: "order.payOnOrderPlaced",
+          eventId: expect.any(String),
+          attempts: 1,
+          errorName: "Error",
+        },
       },
     ]);
   });
@@ -699,7 +707,7 @@ describe("the commands of a policy run", () => {
     ).events.map((event) => event.type);
 
   it("go on past a rejection the handler does not look at, which is logged", async () => {
-    const { logger, entries } = createRecordingLogger();
+    const { logger, entries } = createRecordingLogger("omit");
     const harness = await createReactiveHarness({
       registry: withHandler(async ({ event, commands }) => {
         await commands.placeOrder?.({ orderId: event.aggregateId, total: 1 });
@@ -770,7 +778,7 @@ describe("the commands of a policy run", () => {
   });
 
   it("refuse one dispatched from a timer once the run has finished, logged, without an unhandled rejection", async () => {
-    const { logger, entries } = createRecordingLogger();
+    const { logger, entries } = createRecordingLogger("omit");
     const unhandled: unknown[] = [];
     const record = (reason: unknown): void => {
       unhandled.push(reason);

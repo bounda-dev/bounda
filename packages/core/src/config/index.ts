@@ -31,6 +31,7 @@ export type {
   Config,
   DeadLettersConfig,
   DispatcherConfig,
+  ErrorText,
   ForgetLedgerConfig,
   PersonalDataConfig,
   PoliciesConfig,
@@ -44,4 +45,5 @@ export type {
   RuntimeConfig,
   RuntimeRole,
   SnapshotConfig,
+  TelemetryConfig,
 } from "./types.ts";

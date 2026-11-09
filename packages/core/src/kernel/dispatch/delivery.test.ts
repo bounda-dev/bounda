@@ -77,6 +77,7 @@ describe("createCheckpointedSubscriber", () => {
         return 2;
       },
       logger: silentLogger,
+      errorText: "omit",
     });
     expect((await subscriber.deliver({ read, wait: true })).outcome).toBe("advanced");
     expect(await subscriber.position()).toBe(2);
@@ -103,6 +104,7 @@ describe("createCheckpointedSubscriber", () => {
         return events.length;
       },
       logger: silentLogger,
+      errorText: "omit",
     });
     const telemetry = installFakeTelemetry();
     try {
@@ -132,6 +134,7 @@ describe("createCheckpointedSubscriber", () => {
         return next;
       },
       logger,
+      errorText: "omit",
     });
     expect((await subscriber.deliver({ read, wait: true })).outcome).toBe("held");
     expect((await subscriber.deliver({ read, wait: true })).outcome).toBe("failed");
@@ -145,8 +148,9 @@ describe("createCheckpointedSubscriber", () => {
           subscriber: "undone",
           afterPosition: 0,
           failedPosition: 1,
-          message: "boom",
-          stack: expect.stringContaining("boom"),
+          errorName: "Error",
+          errorMessage: "boom",
+          errorStack: expect.stringContaining("boom"),
         },
       },
     ]);
@@ -170,6 +174,7 @@ describe("createCheckpointedSubscriber", () => {
         return events.length;
       },
       logger,
+      errorText: "omit",
     });
     expect((await subscriber.deliver({ read, wait: true })).outcome).toBe("moved");
     expect(processed).toBe(0);
@@ -202,10 +207,11 @@ describe("createCheckpointedSubscriber", () => {
         return events.length;
       },
       logger,
+      errorText: "omit",
     });
     expect(await subscriber.deliver({ read, wait: true })).toEqual({
       outcome: "failed",
-      failure: { position: 3, eventId: "order-1-3", eventType: "OrderPlaced", message: "poison" },
+      failure: { position: 3, eventId: "order-1-3", eventType: "OrderPlaced", errorName: "Error" },
     });
     expect(seen).toEqual([
       [1, 2, 3, 4],
@@ -221,8 +227,9 @@ describe("createCheckpointedSubscriber", () => {
           subscriber: "poisoned",
           afterPosition: 0,
           failedPosition: 3,
-          message: "poison",
-          stack: expect.stringContaining("poison"),
+          errorName: "Error",
+          errorMessage: "poison",
+          errorStack: expect.stringContaining("poison"),
         },
       },
       {
@@ -247,6 +254,7 @@ describe("createCheckpointedSubscriber", () => {
         throw new Error("database gone");
       },
       logger,
+      errorText: "omit",
     });
     expect((await subscriber.deliver({ read, wait: true })).outcome).toBe("failed");
     expect(await subscriber.position()).toBe(0);
@@ -254,7 +262,10 @@ describe("createCheckpointedSubscriber", () => {
       ["error", "subscriber failed; batch will be redelivered"],
       ["error", "subscriber could not apply the events before the one that failed"],
     ]);
-    expect(entries[1]?.fields).toMatchObject({ subscriber: "shaky", message: "database gone" });
+    expect(entries[1]?.fields).toMatchObject({
+      subscriber: "shaky",
+      errorMessage: "database gone",
+    });
   });
 
   it("gives up on the events before the failure when another holder took the claim meanwhile", async () => {
@@ -271,6 +282,7 @@ describe("createCheckpointedSubscriber", () => {
         throw new PartialBatchError(2, new Error("poison"));
       },
       logger,
+      errorText: "omit",
     });
     expect((await subscriber.deliver({ read, wait: false })).outcome).toBe("failed");
     expect(transactions.waits).toEqual([false, false]);
@@ -294,6 +306,7 @@ describe("createCheckpointedSubscriber", () => {
         throw new PartialBatchError(2, new Error("poison"));
       },
       logger,
+      errorText: "omit",
     });
     expect((await subscriber.deliver({ read, wait: true })).outcome).toBe("failed");
     expect(await subscriber.position()).toBe(3);
@@ -325,6 +338,7 @@ describe("createCheckpointedSubscriber", () => {
         throw new PartialBatchError(0, "not an error");
       },
       logger: silentLogger,
+      errorText: "omit",
     });
     expect(await subscriber.deliver({ read, wait: true })).toEqual({
       outcome: "failed",
@@ -332,7 +346,7 @@ describe("createCheckpointedSubscriber", () => {
         position: 1,
         eventId: "order-1-1",
         eventType: "OrderPlaced",
-        message: "not an error",
+        errorName: "string",
       },
     });
     expect(transactions.waits).toEqual([true]);
@@ -348,6 +362,7 @@ describe("createCheckpointedSubscriber", () => {
       claim,
       process: async (events) => events.length,
       logger: silentLogger,
+      errorText: "omit",
     });
     expect((await subscriber.deliver({ read, wait: true })).outcome).toBe("idle");
     expect(transactions.waits).toEqual([]);
@@ -367,6 +382,7 @@ describe("the dispatcher with a checkpointed subscriber", () => {
       claim,
       process: async (events) => events.length,
       logger: silentLogger,
+      errorText: "omit",
     });
     const clock = createFixedClock();
     const dispatcher = createDispatcher({
@@ -386,6 +402,7 @@ describe("the dispatcher with a checkpointed subscriber", () => {
       batchSize: 10,
       pollIntervalMs: 100,
       logger: silentLogger,
+      errorText: "omit",
     });
     dispatcher.start();
     await advanceUntilWaiting(clock, 100);

@@ -1,5 +1,6 @@
 import { ConfigurationError } from "../../contracts/errors.ts";
 import type { AppEnv } from "../../register/index.ts";
+import { runtimeText } from "../shared/runtime-text.ts";
 import { fromBase64, PERSONAL_KEY_ALGORITHM, PERSONAL_KEY_USAGES, toBase64 } from "./crypto.ts";
 import {
   type CryptoKeyWrapper,
@@ -38,14 +39,18 @@ export interface MasterKeyFunction {
 const read = (env: AppEnv, name: string): string => {
   const value: unknown = Reflect.get(env, name);
   if (typeof value !== "string" || value.trim() === "") {
-    throw new ConfigurationError(
-      `The environment variable ${name}, which runtime.personalData.keyWrapper names as a master key, is not set. Generate one with: ${GENERATE_MASTER_KEY_COMMAND}`,
+    throw runtimeText(
+      new ConfigurationError(
+        `The environment variable ${name}, which runtime.personalData.keyWrapper names as a master key, is not set. Generate one with: ${GENERATE_MASTER_KEY_COMMAND}`,
+      ),
     );
   }
   const text = value.trim();
   if (!MASTER_KEY.test(text)) {
-    throw new ConfigurationError(
-      `The environment variable ${name} does not hold a master key: it must be 32 random bytes in base64, 44 characters. Generate one with: ${GENERATE_MASTER_KEY_COMMAND}`,
+    throw runtimeText(
+      new ConfigurationError(
+        `The environment variable ${name} does not hold a master key: it must be 32 random bytes in base64, 44 characters. Generate one with: ${GENERATE_MASTER_KEY_COMMAND}`,
+      ),
     );
   }
   return text;
@@ -122,14 +127,16 @@ export const masterKey: MasterKeyFunction = ({ from, previous = [] }) =>
       unwrap: async ({ kid, wrapped, extractable }) => {
         const wrapping = byKid.get(kid);
         if (wrapping === undefined) {
-          throw new ConfigurationError(`No master key configured has the id ${kid}`);
+          throw runtimeText(new ConfigurationError(`No master key configured has the id ${kid}`));
         }
         try {
           return await unwrapUnder(wrapping, wrapped, extractable);
         } catch (error) {
-          throw new ConfigurationError(
-            `A personal key does not unwrap under the master key ${kid}: the key was altered in the store`,
-            { cause: error },
+          throw runtimeText(
+            new ConfigurationError(
+              `A personal key does not unwrap under the master key ${kid}: the key was altered in the store`,
+              { cause: error },
+            ),
           );
         }
       },

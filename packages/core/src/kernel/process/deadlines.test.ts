@@ -568,6 +568,7 @@ describe("process deadlines", () => {
       processes: harness.processes,
       clock: harness.clock,
       logger: harness.logger,
+      errorText: "omit",
     });
     await deadLetters.retry(letter?.id ?? "");
     expect(keys).toHaveLength(3);
@@ -707,7 +708,7 @@ describe("process deadlines", () => {
     reset();
     reminding = "flaky";
     failuresLeft = 99;
-    const { logger, entries } = createRecordingLogger();
+    const { logger, entries } = createRecordingLogger("omit");
     const harness = await createReactiveHarness({
       registry,
       logger,
@@ -742,6 +743,8 @@ describe("process deadlines", () => {
       fields: {
         process: "order.reminders",
         eventId: "deadline:nextReminder",
+        letterId: expect.any(String),
+        errorName: "Error",
         errorType: "retriable_exhausted",
         attempts: 2,
       },
@@ -755,7 +758,7 @@ describe("process deadlines", () => {
     reset();
     reminding = mode;
     failuresLeft = 99;
-    const { logger, entries } = createRecordingLogger();
+    const { logger, entries } = createRecordingLogger("omit");
     const harness = await createReactiveHarness({
       registry,
       logger,
@@ -1207,7 +1210,7 @@ describe("deadline entries under races and partial failures", () => {
   const setUpSteps = async () => {
     steps.length = 0;
     secondFails = false;
-    const { logger, entries } = createRecordingLogger();
+    const { logger, entries } = createRecordingLogger("omit");
     const harness = await createReactiveHarness({ registry: stepsRegistry, logger });
     return { harness, entries };
   };
@@ -1306,7 +1309,7 @@ describe("deadline entries under races and partial failures", () => {
         aggregateId: "o-1",
         status: "started",
         thrownBy: null,
-        error: "database blip",
+        errorName: "Error",
       },
     });
   });
@@ -1392,7 +1395,7 @@ describe("deadline entries under races and partial failures", () => {
       fields: expect.objectContaining({
         command: "bounda.ProcessDeadline",
         dedupeKey: "process-deadline:order.steps:o-1",
-        message: "scheduler on fire",
+        errorName: "Error",
       }),
     });
   });

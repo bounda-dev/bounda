@@ -7,11 +7,11 @@ import {
   DEFAULT_CATCH_UP_POLL_MS,
   DEFAULT_CATCH_UP_TIMEOUT_MS,
 } from "../../config/defaults.ts";
+import type { ErrorText } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { createMutex } from "../shared/mutex.ts";
 import { qualifiedEventType } from "../shared/qualified-event.ts";
-import { errorDetails } from "../shared/retry.ts";
 import {
   type CheckpointedSubscriber,
   checkpointedByStore,
@@ -58,7 +58,18 @@ export interface SubscriberFailing {
   readonly position: number;
   readonly eventId: string;
   readonly eventType: string;
-  readonly message: string;
+  /**
+   * The last error's class.
+   */
+  readonly errorName: string;
+  /**
+   * The last error's `code`, when it is a `BoundaError`.
+   */
+  readonly errorCode?: string;
+  /**
+   * The last error's message, only with `runtime.telemetry.errorText: "include"`.
+   */
+  readonly errorMessage?: string;
   readonly attempts: number;
   readonly since: string;
   readonly retryAt: string;
@@ -119,6 +130,7 @@ export interface CreateDispatcherArgs {
   readonly notifier?: EventNotifier;
   readonly clock: Clock;
   readonly logger: Logger;
+  readonly errorText: ErrorText;
 }
 
 export interface DispatcherBackoff {
@@ -156,6 +168,7 @@ export const createDispatcher: CreateDispatcherFunction = ({
   notifier,
   clock,
   logger,
+  errorText,
 }) => {
   const mutex = createMutex();
   let cancelWait: (() => void) | undefined;
@@ -167,7 +180,7 @@ export const createDispatcher: CreateDispatcherFunction = ({
   const delivering: readonly CheckpointedSubscriber[] = subscribers.map((subscriber) =>
     "deliver" in subscriber
       ? subscriber
-      : checkpointedByStore({ subscriber, checkpointStore, logger }),
+      : checkpointedByStore({ subscriber, checkpointStore, logger, errorText }),
   );
   const read = (afterPosition: number) => eventStore.readAll({ afterPosition, limit: batchSize });
   const moving = new Set<DeliveryOutcome>(["advanced", "moved"]);
@@ -227,7 +240,7 @@ export const createDispatcher: CreateDispatcherFunction = ({
     } catch (error) {
       logger.error("read model catch-up failed", {
         subscriber: subscriber.name,
-        ...errorDetails(error),
+        error,
       });
       return false;
     }
@@ -251,7 +264,7 @@ export const createDispatcher: CreateDispatcherFunction = ({
     try {
       advanced = await mutex.run(() => pass(false, true));
     } catch (error) {
-      logger.error("dispatcher pass failed", errorDetails(error));
+      logger.error("dispatcher pass failed", { error });
     }
     idle = notifier !== undefined && !advanced;
     // `stop()` only drains the passes queued when it was called: one started now would outlive it.
@@ -291,9 +304,7 @@ export const createDispatcher: CreateDispatcherFunction = ({
       idle = false;
       if (notifier !== undefined) {
         unsubscribe = notifier.subscribe(wake).catch((error: unknown) => {
-          logger.error("dispatcher could not subscribe to notifications; polling", {
-            ...errorDetails(error),
-          });
+          logger.error("dispatcher could not subscribe to notifications; polling", { error });
           return undefined;
         });
       }

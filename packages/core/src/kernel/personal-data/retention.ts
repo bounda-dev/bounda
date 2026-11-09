@@ -12,7 +12,6 @@ import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { BOUNDA_AGGREGATE, PERSONAL_DATA_FORGOTTEN_EVENT } from "../../modules/bounda-events.ts";
 import type { Subscriber } from "../dispatch/delivery.ts";
-import { errorDetails } from "../shared/retry.ts";
 import { forgetWithin, logForgotten } from "./forget.ts";
 import { createPause, holdAfter } from "./hold.ts";
 import { transactRetrying } from "./transact.ts";
@@ -198,7 +197,7 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
     } catch (error) {
       logger.error("person past the retention could not be held", {
         personId: person.person,
-        ...errorDetails(error),
+        error,
       });
       return false;
     }
@@ -217,7 +216,7 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
     } catch (error) {
       logger.error("person past the retention could not be forgotten", {
         personId: person.person,
-        ...errorDetails(error),
+        error,
       });
       return { forgotten: false, kept: await hold(person, at, true) };
     }
@@ -259,7 +258,7 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
         return await sweep(now);
       } catch (error) {
         pause.pause(at);
-        logger.error("persons past the retention could not be listed", errorDetails(error));
+        logger.error("persons past the retention could not be listed", { error });
         return 0;
       }
     },

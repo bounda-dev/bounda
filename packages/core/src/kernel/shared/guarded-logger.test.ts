@@ -1,8 +1,94 @@
 import { describe, expect, it, onTestFinished } from "vitest";
+import { ValidationError } from "../../contracts/errors.ts";
 import type { LogFields, Logger } from "../../contracts/logger.ts";
 import { guardedLogger } from "./guarded-logger.ts";
 
 describe("guardedLogger", () => {
+  it("passes instances other than plain objects as they are, and stops at a cycle", () => {
+    const logged: (LogFields | undefined)[] = [];
+    const record = (_message: string, fields?: LogFields): void => {
+      logged.push(fields);
+    };
+    const at = new Date("2026-01-01T00:00:00Z");
+    const bare = Object.assign(Object.create(null) as Record<string, unknown>, {
+      cause: new Error("ana@example.com"),
+    });
+    const cyclic: Record<string, unknown> = { cause: new Error("ana@example.com") };
+    cyclic.self = cyclic;
+    const looped: unknown[] = [new Error("ana@example.com")];
+    looped.push(looped);
+    guardedLogger({ debug: record, info: record, warn: record, error: record }, "omit").info("x", {
+      at,
+      bare,
+      cyclic,
+      looped,
+    });
+    const [fields] = logged;
+    expect(fields?.at).toBe(at);
+    expect(fields?.bare).toEqual({ cause: { errorName: "Error" } });
+    expect(fields?.cyclic).toMatchObject({ cause: { errorName: "Error" } });
+    expect((fields?.looped as readonly unknown[] | undefined)?.[0]).toEqual({ errorName: "Error" });
+  });
+
+  it("reduces an error wherever it sits in the fields, and reads `error` as what was thrown only for the runtime", () => {
+    const logged: (LogFields | undefined)[] = [];
+    const record = (_message: string, fields?: LogFields): void => {
+      logged.push(fields);
+    };
+    const sink = { debug: record, info: record, warn: record, error: record };
+    const quoting = new Error("ana@example.com");
+    guardedLogger(sink, "omit").warn("x", {
+      error: "ana@example.com",
+      failures: [quoting, { cause: quoting }],
+    });
+    guardedLogger(sink, "omit", { thrownAsError: false }).warn("x", {
+      error: "timeout after 5s",
+      cause: quoting,
+    });
+    expect(logged).toEqual([
+      {
+        errorName: "string",
+        failures: [{ errorName: "Error" }, { cause: { errorName: "Error" } }],
+      },
+      { error: "timeout after 5s", cause: { errorName: "Error" } },
+    ]);
+  });
+
+  it("logs what was thrown as its class and code, and its text only when told to", () => {
+    const logged: (LogFields | undefined)[] = [];
+    const record = (_message: string, fields?: LogFields): void => {
+      logged.push(fields);
+    };
+    const quoting = new ValidationError("ana@example.com is taken", []);
+    for (const errorText of ["omit", "include"] as const) {
+      const logger = guardedLogger(
+        { debug: record, info: record, warn: record, error: record },
+        errorText,
+      );
+      logger.error("failed", { eventId: "e-1", error: quoting, cause: new TypeError("x of ana") });
+    }
+    expect(logged).toEqual([
+      {
+        eventId: "e-1",
+        errorName: "ValidationError",
+        errorCode: "VALIDATION_FAILED",
+        cause: { errorName: "TypeError" },
+      },
+      {
+        eventId: "e-1",
+        errorName: "ValidationError",
+        errorCode: "VALIDATION_FAILED",
+        errorMessage: "ana@example.com is taken",
+        errorStack: expect.stringContaining("ana@example.com is taken"),
+        cause: {
+          errorName: "TypeError",
+          errorMessage: "x of ana",
+          errorStack: expect.stringContaining("x of ana"),
+        },
+      },
+    ]);
+  });
+
   it("passes every level through to the logger, called as its method", () => {
     const lines: string[] = [];
     class PrefixLogger implements Logger {
@@ -20,7 +106,7 @@ describe("guardedLogger", () => {
         lines.push(`${this.prefix} error ${message}`);
       }
     }
-    const logger = guardedLogger(new PrefixLogger());
+    const logger = guardedLogger(new PrefixLogger(), "omit");
 
     logger.debug("a");
     logger.info("b", { id: 1 });
@@ -35,7 +121,10 @@ describe("guardedLogger", () => {
     const record = (...args: unknown[]): void => {
       calls.push(args);
     };
-    const logger = guardedLogger({ debug: record, info: record, warn: record, error: record });
+    const logger = guardedLogger(
+      { debug: record, info: record, warn: record, error: record },
+      "omit",
+    );
 
     logger.info("sent");
     logger.info("sent", { to: "ada" });
@@ -55,7 +144,10 @@ describe("guardedLogger", () => {
     const failing = async (): Promise<void> => {
       throw new Error("sink is down");
     };
-    const logger = guardedLogger({ debug: failing, info: failing, warn: failing, error: failing });
+    const logger = guardedLogger(
+      { debug: failing, info: failing, warn: failing, error: failing },
+      "omit",
+    );
 
     logger.info("a");
     logger.error("b");
@@ -68,7 +160,10 @@ describe("guardedLogger", () => {
     const failing = (): void => {
       throw new Error("disk full");
     };
-    const logger = guardedLogger({ debug: failing, info: failing, warn: failing, error: failing });
+    const logger = guardedLogger(
+      { debug: failing, info: failing, warn: failing, error: failing },
+      "omit",
+    );
 
     expect(() => {
       logger.debug("a");

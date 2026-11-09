@@ -327,7 +327,9 @@ describe("command pipeline", () => {
         fields: {
           type: "CloseOrder",
           rejected: "NotOpen",
-          error: { message: "no items", stack: expect.any(String) },
+          errorName: "TypeError",
+          errorMessage: "no items",
+          errorStack: expect.any(String),
         },
       },
       {

@@ -149,6 +149,7 @@ const runtime = z.strictObject({
     })
     .optional(),
   deadLetters: z.strictObject({ retention: timeout.optional() }).optional(),
+  telemetry: z.strictObject({ errorText: z.enum(["omit", "include"]).optional() }).optional(),
   overrides: z.record(z.string(), overrides).optional(),
 });
 
@@ -300,6 +301,7 @@ export const resolveConfig: ResolveConfigFunction = (config) => {
       deadLetters: {
         retentionMs: parsed.runtime?.deadLetters?.retention ?? null,
       },
+      telemetry: { errorText: parsed.runtime?.telemetry?.errorText ?? "omit" },
       overrides: resolvedOverrides,
     },
     ports: parsed.ports ?? {},

@@ -64,6 +64,12 @@ export type {
   ReadYourWritesFunction,
 } from "./kernel/read-your-writes.ts";
 export { checkConsistency, readYourWrites } from "./kernel/read-your-writes.ts";
+export type {
+  ErrorFields,
+  ErrorFieldsArgs,
+  ErrorFieldsFunction,
+} from "./kernel/shared/error-fields.ts";
+export { errorFields } from "./kernel/shared/error-fields.ts";
 export type { IdempotencyKeyForFunction } from "./kernel/shared/idempotency-key.ts";
 export { idempotencyKeyFor } from "./kernel/shared/idempotency-key.ts";
 export * from "./modules/index.ts";

@@ -358,7 +358,7 @@ describe("the forget ledger", () => {
     expect(logs).toContainEqual([
       "error",
       "forget ledger could not be reconciled; persons a restored backup brought back are not forgotten yet",
-      expect.objectContaining({ message: "ledger is down" }),
+      expect.objectContaining({ errorName: "Error" }),
     ]);
     expect(await app.nextDueAt()).toEqual(new Date(START.getTime() + HOLD_MS));
     expect(await app.runUntilIdle()).toMatchObject({ idle: true });
@@ -546,7 +546,7 @@ describe("the forget ledger", () => {
     expect(logs).toContainEqual([
       "warn",
       "forget ledger did not take the forgetting; the stream copies it",
-      expect.objectContaining({ forgotten: 1, message: "ledger is down" }),
+      expect.objectContaining({ forgotten: 1, errorName: "Error" }),
     ]);
     await app.runUntilIdle({ maxPasses: 1 });
     expect(refusals).toBe(0);
@@ -788,7 +788,7 @@ describe("the forget ledger", () => {
     expect(logs).toContainEqual([
       "error",
       "forget ledger could not be pruned",
-      expect.objectContaining({ message: "ledger is read-only" }),
+      expect.objectContaining({ errorName: "Error" }),
     ]);
     expect(await app.getLag()).toMatchObject({ forgetLedger: { reconciled: true } });
   });

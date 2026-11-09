@@ -158,6 +158,7 @@ const setUp = async () => {
     processes: harness.processes,
     clock: harness.clock,
     logger,
+    errorText: "omit",
   });
   return { harness, deadLetters, entries };
 };
@@ -285,6 +286,7 @@ describe("deadLetters", () => {
       processes: harness.processes,
       clock: harness.clock,
       logger,
+      errorText: "omit",
     });
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
     await harness.dispatcher.runUntilIdle();
@@ -594,6 +596,7 @@ describe("deadLetters", () => {
       processes: harness.processes,
       clock: harness.clock,
       logger,
+      errorText: "omit",
     });
     const startedAt = harness.clock.now().getTime();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
@@ -656,6 +659,7 @@ describe("deadLetters", () => {
       processes: harness.processes,
       clock: harness.clock,
       logger: harness.logger,
+      errorText: "omit",
     });
     const startedAt = harness.clock.now().getTime();
     await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });

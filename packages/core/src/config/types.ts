@@ -216,6 +216,25 @@ export interface DeadLettersConfig {
 }
 
 /**
+ * Whether the runtime's logs and spans carry the text of an error: `"omit"` keeps its class name
+ * and its `code` only; `"include"` adds its message and its stack.
+ */
+export type ErrorText = "omit" | "include";
+
+/**
+ * Runtime settings for what the logs and spans carry.
+ */
+export interface TelemetryConfig {
+  /**
+   * Defaults to `"omit"`: an error's message may quote a handler's input, personal data
+   * included, and logs and traces keep it in the clear, where `forget` never reaches. A dead
+   * letter keeps the text sealed under the person, and its id is in the log line that filed it.
+   * `createTestApp` and the dev server of `@bounda-dev/react-router` default to `"include"`.
+   */
+  readonly errorText?: ErrorText;
+}
+
+/**
  * The `backoff` of the dispatcher's settings.
  */
 export interface BackoffConfig {
@@ -287,6 +306,7 @@ export interface RuntimeConfig {
   readonly dispatcher?: DispatcherConfig;
   readonly personalData?: PersonalDataConfig;
   readonly deadLetters?: DeadLettersConfig;
+  readonly telemetry?: TelemetryConfig;
   readonly overrides?: Readonly<Record<string, AggregateOverrides>>;
 }
 
@@ -398,6 +418,7 @@ export interface ResolvedConfig {
        */
       readonly retentionMs: number | null;
     };
+    readonly telemetry: { readonly errorText: ErrorText };
     readonly overrides: Readonly<Record<string, ResolvedAggregateRuntime>>;
   };
   readonly ports: PortsConfig;

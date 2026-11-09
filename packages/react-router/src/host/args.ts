@@ -1,4 +1,5 @@
 import type { AppRegistry, Consistency, Registry } from "@bounda-dev/core";
+import type { ErrorText } from "@bounda-dev/core/config";
 import type { ImportModuleFunction } from "@bounda-dev/core/node";
 import type { Bounda } from "../create-bounda.ts";
 
@@ -24,6 +25,12 @@ export interface CreateHostArgs<R extends Registry = AppRegistry> {
    */
   readonly importActor?: ImportModuleFunction | undefined;
   readonly consistency: Consistency;
+  /**
+   * What `runtime.telemetry.errorText` is when the configuration sets none: the dev server passes
+   * `"include"`. Only the Node host applies it: on Cloudflare the app runs in its Durable Object,
+   * under the configuration `createBoundaObject` takes.
+   */
+  readonly errorText?: ErrorText;
 }
 
 export interface CreateHostFunction {

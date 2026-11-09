@@ -199,7 +199,7 @@ describe("createSnapshotSubscriber", () => {
           aggregateType: "ticker",
           aggregateId: "1",
           version: 1,
-          message: "Cannot stringify arbitrary non-POJOs",
+          errorMessage: "Cannot stringify arbitrary non-POJOs",
         }),
       },
     ]);

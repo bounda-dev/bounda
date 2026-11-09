@@ -112,7 +112,7 @@ const setup = async () => {
   const recording = installFakeTelemetry();
   telemetry = recording;
   const storage = await memory().createStorage();
-  const { logger, entries } = createRecordingLogger();
+  const { logger, entries } = createRecordingLogger("omit");
   const clock = createFixedClock(new Date("2026-03-04T05:06:07.000Z"));
   const failures = createProcessFailures({
     aggregates,
@@ -254,7 +254,7 @@ describe("letterOf", () => {
 describe("filed", () => {
   it("counts the letter and warns, once its unit committed", async () => {
     const { failures, entries, telemetry } = await setup();
-    failures.filed(orderPayment, letter);
+    failures.filed(orderPayment, letter, new Error("mailer down"));
     expect(telemetry.counts).toEqual([
       {
         metric: "bounda.dead_letters",
@@ -270,7 +270,14 @@ describe("filed", () => {
       {
         level: "warn",
         message: "process dead-lettered",
-        fields: { process: "orderPayment", eventId: "e-1", errorType: "terminal", attempts: 1 },
+        fields: {
+          process: "orderPayment",
+          eventId: "e-1",
+          letterId: "letter-1",
+          errorName: "Error",
+          errorType: "terminal",
+          attempts: 1,
+        },
       },
     ]);
   });

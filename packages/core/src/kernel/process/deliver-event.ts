@@ -200,14 +200,15 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
           ),
         );
       },
-      gaveUp: () => {
-        if (letter !== undefined) failures.filed(process, letter);
+      gaveUp: (_attempts, _errorType, error) => {
+        if (letter !== undefined) failures.filed(process, letter, error);
       },
-      willRetry: (attempts) => {
+      willRetry: (attempts, error) => {
         logger.warn("process handler failed; will retry", {
           process: process.name,
           eventId: event.id,
           attempts,
+          error,
         });
       },
     });
@@ -244,7 +245,7 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
       if (failure instanceof ClaimLostError) return "hold";
       throw failure;
     }
-    failures.filed(process, letter);
+    failures.filed(process, letter, error);
     return "done";
   };
 

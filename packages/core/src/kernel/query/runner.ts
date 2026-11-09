@@ -1,9 +1,11 @@
+import type { ErrorText } from "../../config/types.ts";
 import { NotFoundError } from "../../contracts/errors.ts";
 import { validatePayload } from "../command/validate.ts";
 import { type RecordAccess, recorded } from "../personal-data/access.ts";
 import type { ModulePorts } from "../ports/ports.ts";
 import type { ReadModelRuntime, ReadModelsRuntime } from "../read-model/build-read-models.ts";
 import { isRecord } from "../shared/merge-fields.ts";
+import { runtimeText } from "../shared/runtime-text.ts";
 import { withPorts } from "../shared/with-ports.ts";
 import { ATTRIBUTES, actorAttribute, traced } from "../telemetry.ts";
 import { checkPayloadFields, type QueriesRuntime } from "./build-queries.ts";
@@ -38,6 +40,7 @@ export interface CreateQueryRunnerArgs {
    */
   readonly ports: ModulePorts;
   readonly recordAccess: RecordAccess;
+  readonly errorText: ErrorText;
 }
 
 export interface CreateQueryRunnerFunction {
@@ -58,16 +61,19 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
   readModels,
   ports,
   recordAccess,
+  errorText,
 }) => {
   const runAs = async (
     { type, payload, actor }: RunQueryArgs,
     nested: QueriesFacadeRuntime,
   ): Promise<unknown> => {
     const query = queries.byType[type];
-    if (query === undefined) throw new NotFoundError(`Unknown query "${type}"`);
+    if (query === undefined) throw runtimeText(new NotFoundError(`Unknown query "${type}"`));
     const readModel = readModels.byName[query.readModel];
-    if (readModel === undefined) throw new NotFoundError(`Unknown read model "${query.readModel}"`);
+    if (readModel === undefined)
+      throw runtimeText(new NotFoundError(`Unknown read model "${query.readModel}"`));
     return traced({
+      errorText,
       name: `bounda.query ${type}`,
       attributes: {
         [ATTRIBUTES.queryType]: type,

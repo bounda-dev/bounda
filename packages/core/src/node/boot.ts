@@ -2,7 +2,7 @@
 import { access } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { Config } from "../config/types.ts";
+import type { Config, ErrorText } from "../config/types.ts";
 import type { Clock } from "../contracts/clock.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
 import type { IdGenerator } from "../contracts/ids.ts";
@@ -58,6 +58,10 @@ export interface BootArgs<R extends Registry = AppRegistry> {
    * Defaults to `createConsoleLogger()`.
    */
   readonly logger?: Logger;
+  /**
+   * Overrides `runtime.telemetry.errorText` for this app, as `bounda --error-text` does.
+   */
+  readonly errorText?: ErrorText;
   /**
    * Defaults to UUID v7 ids.
    */
@@ -159,7 +163,7 @@ export const loadProject: LoadProjectFunction = async <R extends Registry = AppR
   loadEnv = true,
   logger = createConsoleLogger(),
 }: LoadProjectArgs<R> = {}): Promise<LoadedProject<R>> => {
-  if (loadEnv) loadEnvFile(root, guardedLogger(logger));
+  if (loadEnv) loadEnvFile(root, guardedLogger(logger, "omit"));
   const configFile = resolve(root, configPath);
   const registryFile = resolve(root, registryPath);
   return {
@@ -198,10 +202,12 @@ export const boot: BootFunction = async <R extends Registry = AppRegistry>({
   loadEnv = true,
   signals = true,
   logger: rawLogger = createConsoleLogger(),
+  errorText,
   ids,
   clock,
 }: BootArgs<R> = {}): Promise<BoundaApp<R>> => {
-  const logger = guardedLogger(rawLogger);
+  // What boot logs itself carries no error; the app logs under the rule its configuration sets.
+  const logger = guardedLogger(rawLogger, "omit");
   const project = await loadProject<R>({
     root,
     configPath,
@@ -215,8 +221,17 @@ export const boot: BootFunction = async <R extends Registry = AppRegistry>({
 
   const app = await createApp<R>({
     registry: project.registry,
-    config: project.config,
-    logger,
+    config:
+      errorText === undefined
+        ? project.config
+        : {
+            ...project.config,
+            runtime: {
+              ...project.config.runtime,
+              telemetry: { ...project.config.runtime?.telemetry, errorText },
+            },
+          },
+    logger: rawLogger,
     env: process.env,
     ...(ids === undefined ? {} : { ids }),
     ...(clock === undefined ? {} : { clock }),

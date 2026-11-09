@@ -10,6 +10,7 @@ import {
   type DeadLetter,
   type DispatchOptions,
   type DispatchResult,
+  errorFields,
   type IdGenerator,
   type ListDeadLettersArgs,
   type Logger,
@@ -181,9 +182,6 @@ const ownFunction = <F extends (...args: never[]) => unknown>(
   return typeof member === "function" ? (member as F) : undefined;
 };
 
-const errorMessage = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error);
-
 /**
  * Builds the Durable Object class that runs one Bounda store: the app's events, ledgers and read
  * models in the object's SQLite, with no background loop. A command updates the read models
@@ -201,8 +199,9 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
   logger = workersLogger,
   ids,
   clock = systemClock,
-}: CreateBoundaObjectArgs<R>): BoundaObjectClass =>
-  class BoundaObject extends DurableObject implements BoundaObjectMethods {
+}: CreateBoundaObjectArgs<R>): BoundaObjectClass => {
+  const errorText = config.runtime?.telemetry?.errorText;
+  return class BoundaObject extends DurableObject implements BoundaObjectMethods {
     #app: BoundaApp<R> | undefined;
 
     constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
@@ -276,7 +275,7 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
           failed = true;
           logger.error("bounda rebuild slice failed", {
             readModel: name,
-            message: errorMessage(error),
+            ...errorFields({ error, errorText }),
           });
         }
       }
@@ -402,17 +401,24 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
         rebuildFailed = await this.#continueRebuilds();
       } catch (error) {
         rebuildFailed = true;
-        logger.error("bounda rebuilds could not be listed", { message: errorMessage(error) });
+        logger.error("bounda rebuilds could not be listed", {
+          ...errorFields({ error, errorText }),
+        });
       }
       try {
         ({ idle } = await this.#ready().runUntilIdle({ maxPasses: passesPerAlarm }));
       } catch (error) {
-        logger.error("bounda alarm failed; it will be retried", { message: errorMessage(error) });
+        logger.error("bounda alarm failed; it will be retried", {
+          ...errorFields({ error, errorText }),
+        });
       }
       try {
         await this.#rearm(true, idle, rebuildFailed);
       } catch (error) {
-        logger.error("bounda alarm could not re-arm", { message: errorMessage(error) });
+        logger.error("bounda alarm could not re-arm", {
+          ...errorFields({ error, errorText }),
+        });
       }
     }
   };
+};

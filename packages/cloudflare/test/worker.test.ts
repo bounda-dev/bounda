@@ -148,39 +148,65 @@ describe("createWorker", () => {
     expect(errors).toEqual([["bounda worker has no such binding", { binding: "MISSING" }]]);
   });
 
-  it("answers a 500 and logs it when tenantOf throws", async () => {
-    const errors: unknown[][] = [];
-    const logger: Logger = {
-      debug: () => undefined,
-      info: () => undefined,
-      warn: () => undefined,
-      error: (...entry) => void errors.push(entry),
-    };
-    const worker = createWorker({
-      config: { storage: cloudflare({ binding: "SPY" }) },
-      tenantOf: () => {
-        throw new Error("no session");
-      },
-      logger,
-    });
-    const response = await worker.fetch?.(
-      new Request("https://bounda.test/queries/getOrder", {
-        method: "POST",
-        body: JSON.stringify({ orderId: "o-1" }),
-      }) as Request<unknown, IncomingRequestCfProperties>,
-      {
-        SPY: { idFromName: () => "id", get: () => recordingStub().stub },
-      } as unknown as Cloudflare.Env,
-      createExecutionContext(),
-    );
-    expect(response?.status).toBe(500);
-    expect(await response?.json()).toEqual({
-      error: { code: "INTERNAL", message: "Internal error" },
-    });
-    expect(errors).toEqual([
-      ["bounda worker request failed", { path: "/queries/getOrder", message: "no session" }],
-    ]);
-  });
+  it.each([
+    ["omits", undefined, { errorName: "Error" }],
+    ["omits by default", "unset" as const, { errorName: "Error" }],
+    [
+      "includes",
+      "include" as const,
+      { errorName: "Error", errorMessage: "no session for ana@example.com" },
+    ],
+  ])(
+    "answers a 500 when tenantOf throws, and %s the error's text in the log as the configuration says",
+    async (_, errorText, logged) => {
+      const errors: unknown[][] = [];
+      const logger: Logger = {
+        debug: () => undefined,
+        info: () => undefined,
+        warn: () => undefined,
+        error: (...entry) => void errors.push(entry),
+      };
+      const worker = createWorker({
+        config: {
+          storage: cloudflare({ binding: "SPY" }),
+          ...(errorText === undefined
+            ? {}
+            : {
+                runtime:
+                  errorText === "unset" ? { role: "web" as const } : { telemetry: { errorText } },
+              }),
+        },
+        tenantOf: () => {
+          throw new Error("no session for ana@example.com");
+        },
+        logger,
+      });
+      const response = await worker.fetch?.(
+        new Request("https://bounda.test/queries/getOrder", {
+          method: "POST",
+          body: JSON.stringify({ orderId: "o-1" }),
+        }) as Request<unknown, IncomingRequestCfProperties>,
+        {
+          SPY: { idFromName: () => "id", get: () => recordingStub().stub },
+        } as unknown as Cloudflare.Env,
+        createExecutionContext(),
+      );
+      expect(response?.status).toBe(500);
+      expect(await response?.json()).toEqual({
+        error: { code: "INTERNAL", message: "Internal error" },
+      });
+      expect(errors).toEqual([
+        [
+          "bounda worker request failed",
+          {
+            path: "/queries/getOrder",
+            ...logged,
+            ...(errorText === "include" ? { errorStack: expect.any(String) } : {}),
+          },
+        ],
+      ]);
+    },
+  );
 
   it("answers a 500 and logs it, without the value, when actorOf names no valid actor", async () => {
     const errors: unknown[][] = [];

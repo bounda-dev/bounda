@@ -1,8 +1,9 @@
 import type { Span } from "@opentelemetry/api";
 import type { CheckpointStore } from "../../adapter/storage/checkpoint-store.ts";
+import type { ErrorText } from "../../config/types.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
-import { errorDetails } from "../shared/retry.ts";
+import { type ErrorFields, errorFields } from "../shared/error-fields.ts";
 import { ATTRIBUTES, traced } from "../telemetry.ts";
 
 /**
@@ -41,12 +42,16 @@ export type DeliveryOutcome = "idle" | "busy" | "advanced" | "held" | "moved" | 
 /**
  * Points at the batch's first event when the subscriber could not tell which one failed.
  */
-export interface DeliveryFailure {
+export interface DeliveryFailure extends Omit<ErrorFields, "errorStack"> {
   readonly position: number;
   readonly eventId: string;
   readonly eventType: string;
-  readonly message: string;
 }
+
+const withoutStack = ({
+  errorStack: _stack,
+  ...fields
+}: ErrorFields): Omit<ErrorFields, "errorStack"> => fields;
 
 export type Delivery =
   | { readonly outcome: Exclude<DeliveryOutcome, "failed"> }
@@ -110,6 +115,7 @@ export interface CreateCheckpointedSubscriberArgs<Claim extends CheckpointClaim>
   readonly claim: ClaimFunction<Claim>;
   readonly process: (events: readonly StoredEvent[], claim: Claim, span: Span) => Promise<number>;
   readonly logger: Logger;
+  readonly errorText: ErrorText;
 }
 
 export interface CreateCheckpointedSubscriberFunction {
@@ -139,6 +145,7 @@ export const createCheckpointedSubscriber: CreateCheckpointedSubscriberFunction 
   claim,
   process,
   logger,
+  errorText,
 }) => {
   const commit = (
     afterPosition: number,
@@ -181,7 +188,7 @@ export const createCheckpointedSubscriber: CreateCheckpointedSubscriberFunction 
       logger.error("subscriber could not apply the events before the one that failed", {
         subscriber: name,
         afterPosition,
-        ...errorDetails(error),
+        error,
       });
     }
   };
@@ -201,12 +208,11 @@ export const createCheckpointedSubscriber: CreateCheckpointedSubscriberFunction 
       const done = error instanceof PartialBatchError ? error.done : 0;
       const cause = error instanceof PartialBatchError ? error.cause : error;
       const failed = events[done] ?? first;
-      const details = errorDetails(cause);
       logger.error("subscriber failed; batch will be redelivered", {
         subscriber: name,
         afterPosition,
         failedPosition: failed.position,
-        ...details,
+        error: cause,
       });
       if (done > 0) await salvage(afterPosition, events.slice(0, done), wait, span);
       return {
@@ -215,7 +221,7 @@ export const createCheckpointedSubscriber: CreateCheckpointedSubscriberFunction 
           position: failed.position,
           eventId: failed.id,
           eventType: failed.type,
-          message: details.message,
+          ...withoutStack(errorFields({ error: cause, errorText })),
         },
       };
     }
@@ -238,6 +244,7 @@ export const createCheckpointedSubscriber: CreateCheckpointedSubscriberFunction 
           [ATTRIBUTES.afterPosition]: afterPosition,
           [ATTRIBUTES.eventCount]: events.length,
         },
+        errorText,
         run: async (span) => {
           const delivery = await attempt(afterPosition, events, first, wait, span);
           if (delivery.outcome === "moved") {
@@ -259,6 +266,7 @@ export interface CheckpointedByStoreArgs {
   readonly subscriber: Subscriber;
   readonly checkpointStore: CheckpointStore;
   readonly logger: Logger;
+  readonly errorText: ErrorText;
 }
 
 export interface CheckpointedByStoreFunction {
@@ -273,6 +281,7 @@ export const checkpointedByStore: CheckpointedByStoreFunction = ({
   subscriber,
   checkpointStore,
   logger,
+  errorText,
 }) =>
   createCheckpointedSubscriber({
     name: subscriber.name,
@@ -288,4 +297,5 @@ export const checkpointedByStore: CheckpointedByStoreFunction = ({
     }),
     process: (events, _claim, span) => subscriber.process(events, span),
     logger,
+    errorText,
   });

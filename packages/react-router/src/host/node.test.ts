@@ -54,6 +54,56 @@ describe("createHost in Node", () => {
     expect(await booted[0]?.importConfig?.()).toEqual({ default: config });
   });
 
+  it("defaults the configuration's errorText to what it is given, never over one the configuration sets", async () => {
+    const storage = { kind: "bounda-adapter", name: "sqlite", options: {} };
+    host = createHost({
+      registry,
+      importConfig: async () => ({ default: { storage, runtime: { role: "web" } } }),
+      consistency: "eventual",
+      errorText: "include",
+    });
+    await served(host);
+    expect(await booted[0]?.importConfig?.()).toEqual({
+      default: { storage, runtime: { role: "web", telemetry: { errorText: "include" } } },
+    });
+    await host.dispose();
+    booted.length = 0;
+    host = createHost({
+      registry,
+      importConfig: async () => ({
+        default: { storage, runtime: { telemetry: { errorText: "omit" } } },
+      }),
+      consistency: "eventual",
+      errorText: "include",
+    });
+    await served(host);
+    expect(await booted[0]?.importConfig?.()).toEqual({
+      default: { storage, runtime: { telemetry: { errorText: "omit" } } },
+    });
+    await host.dispose();
+    booted.length = 0;
+    host = createHost({
+      registry,
+      importConfig: async () => ({ default: { storage } }),
+      consistency: "eventual",
+      errorText: "include",
+    });
+    await served(host);
+    expect(await booted[0]?.importConfig?.()).toEqual({
+      default: { storage, runtime: { telemetry: { errorText: "include" } } },
+    });
+    await host.dispose();
+    booted.length = 0;
+    host = createHost({
+      registry,
+      importConfig: async () => ({}),
+      consistency: "eventual",
+      errorText: "include",
+    });
+    await served(host);
+    expect(await booted[0]?.importConfig?.()).toEqual({});
+  });
+
   it("leaves the root to boot without one", async () => {
     host = createHost({ registry, importConfig: async () => ({}), consistency: "eventual" });
     await served(host);

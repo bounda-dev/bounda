@@ -163,11 +163,14 @@ processes again sees it advance at once.
 ```ts
 const { subscribers } = await app.getLag();
 // { subscriber: "projection:orderSummary", position: 41, lag: 12,
-//   failing: { position: 42, eventId: "…", eventType: "OrderPaid", message: "…",
+//   failing: { position: 42, eventId: "…", eventType: "OrderPaid", errorName: "TypeError",
 //              attempts: 5, since: "2026-09-24T09:00:00.000Z", retryAt: "…" } }
 ```
 
-`failing` is what this process saw: another instance that never tried that read model reports no
+`failing` names the error by its class and, for one of Bounda's, its `errorCode`; its message,
+which may quote what the projection read, is in `errorMessage` only with
+[`runtime.telemetry.errorText: "include"`](/reference/observability/#error-text). It is what this
+process saw: another instance that never tried that read model reports no
 failure while its lag still grows. Alert on the lag, which every instance reads from the
 database; read `failing`, and the `subscriber failed` log line that names the event, to find out
 why. The event itself, payload included, is one read of the global stream away:

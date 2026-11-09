@@ -36,8 +36,10 @@ Everything is reported under the scope `@bounda-dev/core`. Spans:
 
 `bounda.actor` is there only when [someone acts](/concepts/ids-causation-and-correlation/#who-acts):
 a client bound with `as`, and what follows from it. A handler, a query or an operation that throws
-marks its span as an error with the message and records the exception. A command's rejection is an
-answer, not an error: its span keeps an unset status.
+marks its span as an error, sets `error.type` to the error's class and adds an `exception` event
+with `exception.type` and, for a `BoundaError`, `bounda.error.code`; what it says of the error's
+text is [below](#error-text). A command's rejection is an answer, not an error: its span keeps an
+unset status.
 
 One request is not one trace. A policy runs in a later dispatcher pass, in whatever process picks
 it up, so the command's span and the policy's span are separate traces. What ties them together is
@@ -60,6 +62,39 @@ failing subscriber is stuck on (see
 [A projection that keeps failing](/guides/deployment/#a-projection-that-keeps-failing)). A
 `mismatch` on `bounda.snapshots` is worth one too: a snapshot folded to a state the stream does not
 give, so an `evolve` of that aggregate depends on something other than the events.
+
+## Error text
+
+The message of an error a handler throws may quote what it read, a person's email included, and a
+tracing backend or a log pipeline keeps it in the clear, where `forget` never reaches. So by
+default no span and no log line of the runtime carries the text of an error:
+
+- a failed span's status says `ValidationError (VALIDATION_FAILED)`, its class and code, and its
+  `exception` event has neither `exception.message` nor `exception.stacktrace`;
+- a log line names the error with `errorName` and, for a `BoundaError`, `errorCode`, next to the
+  ids of what failed: the event, the command, the subscriber;
+- `app.getLag()` says what a failing subscriber is stuck on with `errorName` and `errorCode`.
+
+An error whose message Bounda writes from names and ids alone, such as `ConcurrencyError`,
+`ClaimLostError`, `HandlerTimeoutError` or a dead letter not found, keeps its message, never its
+stack. To find out what a reaction failed on, follow the log line that filed its dead letter:
+`policy dead-lettered`, `process dead-lettered` and `scheduled command dropped` carry `letterId`,
+and `app.deadLetters.get(letterId)` opens the text the letter keeps encrypted under the person
+(see [what a letter holds](/guides/dead-letters/#what-a-letter-holds)). Your own logger calls
+around the app, in a request handler, can follow the same rule with `errorFields`:
+
+```ts
+import { errorFields } from "@bounda-dev/core";
+
+logger.error("request failed", { path, ...errorFields({ error }) });
+```
+
+[`runtime.telemetry.errorText: "include"`](/reference/configuration/#telemetry) adds the message
+and the stack everywhere: `errorMessage` and `errorStack` in log lines, `exception.message` and
+`exception.stacktrace` on spans, the message as a failed span's status and `errorMessage` in the
+lag. It is for development: `createTestApp` and the dev server of `@bounda-dev/react-router`
+default to it unless the configuration says otherwise, `bounda --error-text` turns it on for one
+command, and the logger handed to port implementations follows it too.
 
 ## How a command loaded its aggregate
 

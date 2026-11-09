@@ -125,7 +125,7 @@ describe("the retention of dead letters", () => {
       expect.objectContaining({
         level: "error",
         message: "resolved dead letters could not be purged",
-        fields: expect.objectContaining({ message: "database is down" }),
+        fields: expect.objectContaining({ errorMessage: "database is down" }),
       }),
     );
     expect(await retention.nextDueAt()).toEqual(new Date(due.getTime() + HOLD_MS));

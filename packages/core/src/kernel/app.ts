@@ -415,7 +415,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
   validateRegistry(registry);
   const config = resolveConfig(rawConfig);
   checkConfigNames({ registry, config });
-  const logger = guardedLogger(rawLogger);
+  const { errorText } = config.runtime.telemetry;
+  const logger = guardedLogger(rawLogger, errorText);
   if (!isAdapter(config.storage)) {
     throw new ConfigurationError(
       `storage "${config.storage.name}" is a definition without factories. Import the adapter package's factory.`,
@@ -433,7 +434,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     registry,
     env,
     tenant,
-    logger,
+    logger: guardedLogger(rawLogger, errorText, { thrownAsError: false }),
     clock,
     ...(test === undefined ? { config: config.ports } : { test }),
   });
@@ -509,6 +510,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       readModels,
       ports: ports.byReadModel,
       recordAccess,
+      errorText,
     });
     const processes = createProcessRunner({
       processes: processDefinitions,
@@ -626,6 +628,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             recordsActivity: retention !== undefined,
             clock,
             logger,
+            errorText,
           });
     const dispatcher = createDispatcher({
       eventStore: storage.eventStore,
@@ -635,6 +638,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           createProjectionSubscriber({
             readModel,
             logger,
+            errorText,
             budget: { clock, maxMs: config.runtime.dispatcher.projectionBatchTimeMs },
           }),
         ),
@@ -664,6 +668,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       ...(storage.notifier === undefined ? {} : { notifier: storage.notifier }),
       clock,
       logger,
+      errorText,
     });
     const worker = createScheduledCommandWorker({
       storage,
@@ -823,17 +828,20 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           processes,
           clock,
           logger,
+          errorText,
           actor,
           recordAccess,
         }),
         rebuildReadModel: (name) =>
           tracedOperation({
+            errorText,
             operation: "rebuildReadModel",
             actor,
             run: () => rebuild(name, actor === undefined ? {} : { actor }),
           }),
         forget: (personId) =>
           tracedOperation({
+            errorText,
             operation: "forget",
             actor,
             run: () =>
@@ -849,12 +857,14 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           }),
         exportPersonalData: (personId) =>
           tracedOperation({
+            errorText,
             operation: "exportPersonalData",
             actor,
             run: () => exportAs(personId),
           }),
         restrict: (personId) =>
           tracedOperation({
+            errorText,
             operation: "restrict",
             actor,
             run: () =>
@@ -870,6 +880,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           }),
         unrestrict: (personId) =>
           tracedOperation({
+            errorText,
             operation: "unrestrict",
             actor,
             run: () =>

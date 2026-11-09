@@ -11,7 +11,7 @@ const failure: DeliveryFailure = {
   position: 1,
   eventId: "order-1-1",
   eventType: "OrderPlaced",
-  message: "boom",
+  errorName: "Error",
 };
 const failed: Delivery = { outcome: "failed", failure };
 
@@ -47,6 +47,7 @@ const setUp = async (subscribers: readonly (Subscriber | CheckpointedSubscriber)
     pollIntervalMs: 100,
     backoff: { baseDelayMs: 1_000, maxDelayMs: 4_000 },
     logger: silentLogger,
+    errorText: "omit",
   });
   return { eventStore, checkpointStore, clock, dispatcher };
 };
@@ -158,6 +159,7 @@ describe("the dispatcher's backoff", () => {
       batchSize: 10,
       pollIntervalMs: 100,
       logger: silentLogger,
+      errorText: "omit",
     });
     const delays: number[] = [];
     for (let attempt = 0; attempt < 7; attempt += 1) {
@@ -210,6 +212,7 @@ describe("the dispatcher's backoff", () => {
       backoff: { baseDelayMs: 1_000, maxDelayMs: 4_000 },
       ...(notifier === undefined ? {} : { notifier }),
       logger: silentLogger,
+      errorText: "omit",
     });
     dispatcher.start();
     await advanceUntilWaiting(clock, 100);

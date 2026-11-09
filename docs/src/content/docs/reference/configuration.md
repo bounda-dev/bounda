@@ -155,6 +155,17 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
   whose letter was discarded stays given up after the letter is gone. It is app-wide. See
   [keeping resolved letters](/guides/dead-letters/#keeping-resolved-letters).
 
+### Telemetry
+
+- **`telemetry.errorText`**, `"omit"` by default. Whether the runtime's log lines and spans carry
+  the text of an error. With `"omit"` they carry its class and its `code` alone: the message of an
+  error a handler throws may quote personal data it read, and logs and traces keep it in the clear,
+  where `forget` never reaches. Errors whose message Bounda writes from names and ids alone, such
+  as `ConcurrencyError` or a dead letter not found, keep it. `"include"` adds the message and the
+  stack of every error, for development; `createTestApp` and the dev server of
+  `@bounda-dev/react-router` default to it, and `bounda --error-text` turns it on for one command.
+  See [error text](/reference/observability/#error-text).
+
 ### Per aggregate
 
 - **`overrides`**, default `{}`. Settings for one aggregate, by aggregate name: `commands.timeout`,

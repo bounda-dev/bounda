@@ -3,7 +3,6 @@ import type { PersonalKeyRow, PersonalKeyStore } from "../../adapter/storage/per
 import type { Clock } from "../../contracts/clock.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { digest } from "../read-model/fingerprint.ts";
-import { errorDetails } from "../shared/retry.ts";
 import { createPause, holdAfter } from "./hold.ts";
 import type { CryptoKeyWrapper } from "./key-wrapper.ts";
 import type { PersonalKeyWrapping } from "./wrapped-keys.ts";
@@ -134,7 +133,7 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
       logger.error("personal key could not be rewrapped", {
         personId: row.person,
         kid: row.key.kid,
-        ...errorDetails(error),
+        error,
       });
     }
     try {
@@ -144,7 +143,7 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
       logger.error("personal key could not be held", {
         personId: row.person,
         kid: row.key.kid,
-        ...errorDetails(error),
+        error,
       });
       return { rewrapped: false, kept: false };
     }
@@ -201,7 +200,7 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
         return await sweep(now);
       } catch (error) {
         pause.pause(at);
-        logger.error("personal keys to rewrap could not be listed", errorDetails(error));
+        logger.error("personal keys to rewrap could not be listed", { error });
         return 0;
       }
     },

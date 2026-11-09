@@ -3,6 +3,7 @@ import type {
   ListDeadLettersArgs,
   StoredDeadLetter,
 } from "../../adapter/storage/dead-letter-store.ts";
+import type { ErrorText } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import { DeadLetterSettledError, NotFoundError } from "../../contracts/errors.ts";
 import type { Logger } from "../../contracts/logger.ts";
@@ -13,6 +14,7 @@ import { openTextWith } from "../personal-data/errors.ts";
 import type { ProcessDeadLetters } from "../process/dead-letter-retry.ts";
 import { actedBy } from "../shared/causation.ts";
 import { thrownValue } from "../shared/retry.ts";
+import { runtimeText } from "../shared/runtime-text.ts";
 import { tracedOperation } from "../telemetry.ts";
 import type { DeadLetterRetry } from "./retry.ts";
 
@@ -65,6 +67,7 @@ export interface CreateDeadLettersArgs {
   readonly processes: Pick<ProcessDeadLetters, "parkedBehind" | "stillParked">;
   readonly clock: Clock;
   readonly logger: Logger;
+  readonly errorText: ErrorText;
   /**
    * Who retries and discards, for the client bound to them.
    */
@@ -88,12 +91,13 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
   processes,
   clock,
   logger,
+  errorText,
   actor,
   recordAccess,
 }) => {
   const failedLetter = async (id: string): Promise<StoredDeadLetter> => {
     const letter = await storage.deadLetterStore.get(id);
-    if (letter === null) throw new NotFoundError(`Dead letter "${id}" not found`);
+    if (letter === null) throw runtimeText(new NotFoundError(`Dead letter "${id}" not found`));
     if (letter.status !== "failed") {
       throw new DeadLetterSettledError({ id, status: letter.status });
     }
@@ -215,7 +219,12 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
       call: (...args: Args) => Promise<Result>,
     ) =>
     (...args: Args): Promise<Result> =>
-      tracedOperation({ operation: `deadLetters.${name}`, actor, run: () => call(...args) });
+      tracedOperation({
+        operation: `deadLetters.${name}`,
+        actor,
+        errorText,
+        run: () => call(...args),
+      });
   return {
     list: withSpan("list", calls.list),
     count: withSpan("count", calls.count),

@@ -4,7 +4,6 @@ import type { Clock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { BOUNDA_AGGREGATE, PERSONAL_DATA_FORGOTTEN_EVENT } from "../../modules/bounda-events.ts";
-import { errorDetails } from "../shared/retry.ts";
 import { FORGET_LEDGER_WAIT_MS, waitForLedger } from "./forget-ledger.ts";
 
 export interface IsForgettingFunction {
@@ -115,7 +114,7 @@ export const withLedgerAppend: WithLedgerAppendFunction = ({
         } else if (outcome !== undefined) {
           logger.warn("forget ledger did not take the forgetting; the stream copies it", {
             forgotten: entries.length,
-            ...errorDetails(outcome.error),
+            error: outcome.error,
           });
         }
       }

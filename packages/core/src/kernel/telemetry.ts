@@ -7,7 +7,9 @@ import {
   trace,
 } from "@opentelemetry/api";
 import type { DeadLetterErrorType, DeadLetterKind } from "../adapter/storage/dead-letter-store.ts";
-import { errorDetails } from "./shared/retry.ts";
+import type { ErrorText } from "../config/types.ts";
+import { errorFields } from "./shared/error-fields.ts";
+import { errorLabel } from "./shared/retry.ts";
 
 /**
  * The instrumentation scope every span and metric of the runtime is reported under.
@@ -47,6 +49,7 @@ export const ATTRIBUTES: {
   readonly foldEvents: "bounda.fold.events";
   readonly queryType: "bounda.query.type";
   readonly operation: "bounda.operation";
+  readonly errorCode: "bounda.error.code";
 } = {
   correlationId: "bounda.correlation_id",
   causationId: "bounda.causation_id",
@@ -75,6 +78,7 @@ export const ATTRIBUTES: {
   foldEvents: "bounda.fold.events",
   queryType: "bounda.query.type",
   operation: "bounda.operation",
+  errorCode: "bounda.error.code",
 };
 
 export interface ActorAttributeFunction {
@@ -99,6 +103,7 @@ export const SPAN_EVENTS: {
 export interface TracedArgs<T> {
   readonly name: string;
   readonly attributes?: Attributes;
+  readonly errorText: ErrorText;
   readonly run: (span: Span) => Promise<T>;
 }
 
@@ -106,11 +111,35 @@ export interface TracedFunction {
   <T>(args: TracedArgs<T>): Promise<T>;
 }
 
+// OpenTelemetry's semantic conventions for errors. `recordException` is not used: it takes the
+// message and the stack whenever the error has them, and a `code` over the class as the type.
+const ERROR_TYPE = "error.type";
+const EXCEPTION_EVENT = "exception";
+const EXCEPTION_TYPE = "exception.type";
+const EXCEPTION_MESSAGE = "exception.message";
+const EXCEPTION_STACKTRACE = "exception.stacktrace";
+
+const recordError = (span: Span, error: unknown, errorText: ErrorText): void => {
+  const fields = errorFields({ error, errorText });
+  const { errorName, errorCode, errorMessage, errorStack } = fields;
+  span.setAttribute(ERROR_TYPE, errorName);
+  span.addEvent(EXCEPTION_EVENT, {
+    [EXCEPTION_TYPE]: errorName,
+    ...(errorCode === undefined ? {} : { [ATTRIBUTES.errorCode]: errorCode }),
+    ...(errorMessage === undefined ? {} : { [EXCEPTION_MESSAGE]: errorMessage }),
+    ...(errorStack === undefined ? {} : { [EXCEPTION_STACKTRACE]: errorStack }),
+  });
+  span.setStatus({
+    code: SpanStatusCode.ERROR,
+    message: errorMessage ?? errorLabel(fields),
+  });
+};
+
 /**
  * The span ends even when `run` rejects. Without an OpenTelemetry SDK registered this costs a
  * no-op span from the API and nothing else.
  */
-export const traced: TracedFunction = <T>({ name, attributes, run }: TracedArgs<T>) =>
+export const traced: TracedFunction = <T>({ name, attributes, errorText, run }: TracedArgs<T>) =>
   tracer().startActiveSpan(
     name,
     attributes === undefined ? {} : { attributes },
@@ -118,8 +147,7 @@ export const traced: TracedFunction = <T>({ name, attributes, run }: TracedArgs<
       try {
         return await run(span);
       } catch (error) {
-        span.recordException(error instanceof Error ? error : new Error(String(error)));
-        span.setStatus({ code: SpanStatusCode.ERROR, message: errorDetails(error).message });
+        recordError(span, error, errorText);
         throw error;
       } finally {
         span.end();
@@ -131,6 +159,7 @@ export interface TracedOperationArgs<T> {
   // As the client names it: `forget`, `deadLetters.retry`.
   readonly operation: string;
   readonly actor: string | undefined;
+  readonly errorText: ErrorText;
   readonly run: () => Promise<T>;
 }
 
@@ -141,10 +170,11 @@ export interface TracedOperationFunction {
 /**
  * The span of a client operation that is neither a command nor a query.
  */
-export const tracedOperation: TracedOperationFunction = ({ operation, actor, run }) =>
+export const tracedOperation: TracedOperationFunction = ({ operation, actor, errorText, run }) =>
   traced({
     name: `bounda.operation ${operation}`,
     attributes: { [ATTRIBUTES.operation]: operation, ...actorAttribute(actor) },
+    errorText,
     run: () => run(),
   });
 

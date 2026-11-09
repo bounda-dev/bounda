@@ -98,6 +98,7 @@ const walker = ({ storage, marks = "m1", batchSize = 10, logger = silentLogger }
     recordsActivity: false,
     clock,
     logger,
+    errorText: "omit",
   });
   return { backfill, clock };
 };
@@ -468,7 +469,7 @@ describe("the backfill's walk", () => {
     expect(logs).toContainEqual([
       "error",
       "personal data written before its marks could not be sealed",
-      expect.objectContaining({ message: "store is down" }),
+      expect.objectContaining({ error: expect.objectContaining({ message: "store is down" }) }),
     ]);
     expect(await rows(base)).toMatchObject({
       "m1:attempts": 1,
@@ -529,9 +530,13 @@ describe("the backfill's walk", () => {
     const { logs, logger } = recording();
     const { backfill } = walker({ storage, logger });
     expect(await backfill.sweep(START)).toBe(0);
-    expect(logs.map(([, message]) => message)).toEqual([
-      "personal data written before its marks could not be sealed",
-      "personal data backfill could not be held",
+    expect(logs).toEqual([
+      [
+        "error",
+        "personal data written before its marks could not be sealed",
+        { error: expect.any(Error) },
+      ],
+      ["error", "personal data backfill could not be held", { error: expect.any(Error) }],
     ]);
     broken = false;
     expect(await backfill.sweep(new Date(START.getTime() + 1))).toBe(0);
@@ -571,7 +576,7 @@ describe("the backfill's walk", () => {
     expect(logs).toContainEqual([
       "error",
       "personal data backfill could not give its lease back",
-      expect.objectContaining({ message: "cannot write" }),
+      expect.objectContaining({ error: expect.objectContaining({ message: "cannot write" }) }),
     ]);
   });
 

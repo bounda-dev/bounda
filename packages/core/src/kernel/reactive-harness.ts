@@ -161,6 +161,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
           createProjectionSubscriber({
             readModel,
             logger,
+            errorText: config.runtime.telemetry.errorText,
             budget: { clock, maxMs: config.runtime.dispatcher.projectionBatchTimeMs },
           }),
         ),
@@ -181,6 +182,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
       backoff: config.runtime.dispatcher.backoff,
       clock,
       logger,
+      errorText: config.runtime.telemetry.errorText,
     });
   return {
     storage,

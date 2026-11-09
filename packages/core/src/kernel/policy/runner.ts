@@ -37,6 +37,9 @@ export interface CreatePolicySubscriberFunction {
   (args: CreatePolicySubscriberArgs): Subscriber;
 }
 
+const letterIdOf = (policy: PolicyRuntime, event: StoredEvent): string =>
+  deriveDeadLetterId({ kind: "policy", handler: policy.name, subject: event.id });
+
 /**
  * One subscriber for every policy. A policy that holds an event, for a pending retry or a claim
  * another instance has, is handed none of its later events of the batch; other policies carry on.
@@ -59,7 +62,7 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
     attempts: number,
     errorType: DeadLetterErrorType,
   ): Promise<void> => {
-    const id = deriveDeadLetterId({ kind: "policy", handler: policy.name, subject: event.id });
+    const id = letterIdOf(policy, event);
     const person = restrictedPersonOf(error) ?? personOfEvent({ aggregates, event });
     const now = clock.now().toISOString();
     await unit.deadLetterStore.add({
@@ -84,13 +87,16 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
     event: StoredEvent,
     attempts: number,
     errorType: DeadLetterErrorType,
+    error: unknown,
   ): void => {
     deadLettered({ kind: "policy", handler: policy.name, errorType });
     logger.warn("policy dead-lettered", {
       policy: policy.name,
       eventId: event.id,
+      letterId: letterIdOf(policy, event),
       errorType,
       attempts,
+      error,
     });
   };
 
@@ -121,12 +127,13 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
       },
       giveUp: (unit, error, attempts, errorType) =>
         deadLetter(unit, policy, event, error, attempts, errorType),
-      gaveUp: (attempts, errorType) => gaveUp(policy, event, attempts, errorType),
-      willRetry: (attempts) => {
+      gaveUp: (attempts, errorType, error) => gaveUp(policy, event, attempts, errorType, error),
+      willRetry: (attempts, error) => {
         logger.warn("policy failed; will retry", {
           policy: policy.name,
           eventId: event.id,
           attempts,
+          error,
         });
       },
     });

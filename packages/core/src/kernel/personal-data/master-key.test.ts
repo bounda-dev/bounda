@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConfigurationError } from "../../contracts/errors.ts";
+import { errorFields } from "../shared/error-fields.ts";
 import { fingerprintOf, generateWrappableKey } from "./crypto.ts";
 import { buildKeyWrapper, type CryptoKeyWrapper } from "./key-wrapper.ts";
 import { GENERATE_MASTER_KEY_COMMAND, masterKey } from "./master-key.ts";
@@ -160,6 +161,7 @@ describe("masterKey", () => {
       expect(error.message).toContain("BOUNDA_MASTER_KEY");
       expect(error.message).toContain("is not set");
       expect(error.message).toContain(GENERATE_MASTER_KEY_COMMAND);
+      expect(errorFields({ error }).errorMessage).toBe(error.message);
     }
     const previous = await failure(create({ BOUNDA_MASTER_KEY: randomKey() }, ["MISSING_KEY"]));
     expect(previous.message).toContain("MISSING_KEY");
