@@ -9,6 +9,7 @@ export default defineConfig({
   },
   test: {
     name: "react-router",
+    setupFiles: [join(import.meta.dirname, "../../vitest.trace.ts")],
     include: ["src/**/*.test.ts"],
   },
 });

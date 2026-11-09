@@ -95,6 +95,9 @@ jobs:
     if: needs.changes.outputs.packages != '[]'
     runs-on: windows-latest
     timeout-minutes: 30
+    env:
+      # A worker that dies in native code, as libSQL can there, names the test it was running.
+      BOUNDA_TEST_TRACE: "1"
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
@@ -112,7 +115,7 @@ jobs:
         run: pnpm --filter @bounda-dev/core test
       - name: sqlite
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        run: pnpm --filter @bounda-dev/sqlite exec vitest run --exclude src/libsql-server.test.ts
+        run: pnpm --filter @bounda-dev/sqlite exec vitest run --exclude src/libsql-server.test.ts --reporter=verbose
       - name: cli
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: pnpm --filter @bounda-dev/cli test
