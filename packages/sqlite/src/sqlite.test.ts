@@ -25,6 +25,7 @@ import {
   readModelTransactionContract,
   schedulerContract,
   snapshotStoreContract,
+  storageSchemaContract,
   storageTransactionContract,
   tableContract,
   viewContract,
@@ -116,6 +117,7 @@ describe("sqlite adapter on a file", () => {
 
   // The storages a test leaves open are closed before the directory goes, so their files can go.
   const leftOpen: Storage[] = [];
+  const afterAllClose: Client[] = [];
   const openFile = async (path = freshPath()): Promise<Storage> => {
     const storage = await openStorage(sqlite({ path }));
     leftOpen.push(storage);
@@ -128,6 +130,7 @@ describe("sqlite adapter on a file", () => {
 
   afterAll(async () => {
     await Promise.all(leftOpen.map((storage) => storage.close()));
+    for (const client of afterAllClose) client.close();
     // libSQL lets go of a file that saw a write transaction only once its statements are garbage
     // collected, and Windows cannot delete a file still open: there, those stay behind in the
     // temporary directory.
@@ -138,6 +141,24 @@ describe("sqlite adapter on a file", () => {
 
   eventStoreContract({ create: openFile });
   schedulerContract({ create: async () => (await openFile()).scheduler });
+  storageSchemaContract({
+    create: async () => {
+      const path = freshPath();
+      const client = createClient({ url: `file:${path}` });
+      afterAllClose.push(client);
+      return {
+        adapter: sqlite({ path }),
+        prefix: "bounda_",
+        execute: async (statement) => {
+          const result = await client.execute(statement);
+          return result.rows.map((row) =>
+            Object.fromEntries(result.columns.map((column, index) => [column, row[index] ?? null])),
+          );
+        },
+      };
+    },
+    dialect: "sqlite",
+  });
   readModelRebuildContract({ create: async () => sqlite({ path: freshPath() }) });
   readModelTransactionContract({
     create: async () => sqlite({ path: freshPath() }),
@@ -276,6 +297,63 @@ describe("sqlite adapter on a file", () => {
     }
   });
 
+  it("migrates a new file once when processes open it at the same moment", async () => {
+    const connections = 6;
+    const path = freshPath();
+    const worker = `
+      const { workerData, parentPort } = require("node:worker_threads");
+      import(workerData.module).then(async ({ sqlite }) => {
+        parentPort.postMessage("loaded");
+        Atomics.wait(new Int32Array(workerData.gate), 0, 0);
+        try {
+          await (await sqlite({ path: workerData.path }).createStorage()).close();
+          parentPort.postMessage("opened");
+        } catch (error) {
+          parentPort.postMessage(String(error));
+        }
+      });`;
+    const gate = new SharedArrayBuffer(4);
+    const workers = Array.from(
+      { length: connections },
+      () =>
+        new Worker(worker, {
+          eval: true,
+          workerData: { module: new URL("./index.ts", import.meta.url).href, path, gate },
+        }),
+    );
+    const outcomes = workers.map(
+      (each) =>
+        new Promise<string>((resolve) => {
+          each.on("message", (message: string) => {
+            if (message !== "loaded") resolve(message);
+          });
+          each.on("error", (error) => resolve(String(error)));
+        }),
+    );
+    await Promise.all(
+      workers.map(
+        (each) =>
+          new Promise<void>((resolve) => {
+            each.once("message", () => resolve());
+            each.once("error", () => resolve());
+          }),
+      ),
+    );
+    Atomics.store(new Int32Array(gate), 0, 1);
+    Atomics.notify(new Int32Array(gate), 0);
+    expect(await Promise.all(outcomes)).toEqual(Array(connections).fill("opened"));
+    await Promise.all(workers.map((each) => each.terminate()));
+    const client = createClient({ url: `file:${path}` });
+    const { rows } = await client.execute(
+      'SELECT "scope", "version" FROM "bounda_migrations" ORDER BY "scope", "version"',
+    );
+    client.close();
+    expect(rows.map((row) => [row.scope, Number(row.version)])).toEqual([
+      ["checkpoints", 1],
+      ["storage", 1],
+    ]);
+  });
+
   it("creates the directory of a file that does not exist yet", async () => {
     const adapter = sqlite({ path: join(directory, "nested", "deeper", "app.db") });
     const storage = await adapter.createStorage();
@@ -310,6 +388,7 @@ describe("sqlite adapter on a file", () => {
       "app_events",
       "app_idempotency_keys",
       "app_inbox",
+      "app_migrations",
       "app_person_rows",
       "app_personal_keys",
       "app_persons",

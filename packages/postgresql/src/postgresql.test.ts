@@ -27,6 +27,7 @@ import {
   readModelTransactionContract,
   schedulerContract,
   snapshotStoreContract,
+  storageSchemaContract,
   storageTransactionContract,
   tableContract,
   viewContract,
@@ -38,6 +39,7 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import { createPostgresqlDatabase } from "./database.ts";
 import { createPostgresqlEventStore } from "./event-store.ts";
 import { type PostgresqlAdapter, type PostgresqlOptions, postgresql } from "./index.ts";
+import { migratePostgresql, postgresqlCheckpointsScope } from "./migrations.ts";
 import { resolvePostgresqlOptions } from "./options.ts";
 
 const reuseContainer = process.env.BOUNDA_PG_REUSE === "1";
@@ -95,6 +97,20 @@ afterAll(async () => {
 });
 
 describe.skipIf(container === null)("postgresql adapter", () => {
+  storageSchemaContract({
+    create: async () => {
+      const adapter = fresh();
+      const { tablePrefix: prefix } = resolvePostgresqlOptions(adapter.options);
+      const client = postgres(url, { max: 1, onnotice: () => undefined });
+      closers.push(() => client.end({ timeout: 5 }));
+      return {
+        adapter,
+        prefix,
+        execute: async (statement) => [...(await client.unsafe(statement))],
+      };
+    },
+    dialect: "postgresql",
+  });
   eventStoreContract({ create: openStorage });
   checkpointStoreContract({ create: async () => (await openStorage()).checkpointStore });
   inboxLedgerContract({ create: async () => (await openStorage()).inboxLedger });
@@ -275,12 +291,13 @@ describe.skipIf(container === null)("postgresql adapter", () => {
     expect(indexes).toHaveLength(1);
   });
 
-  it("creates the checkpoints table again when a read model's table is there but it is not", async () => {
+  it("creates the checkpoints table of a read model's database from before the tables were versioned", async () => {
     const adapter = fresh();
     const fields = { id: f.string().primaryKey() };
     const first = await openReadModel(adapter, "places", fields);
     const raw = first.client.raw as Sql;
     await raw.unsafe(`DROP TABLE "t${run}_${prefixes}_checkpoints"`);
+    await raw.unsafe(`DROP TABLE "t${run}_${prefixes}_migrations"`);
     const again = await openReadModel(adapter, "places", fields);
     expect(await again.checkpointStore.get("projection:places")).toBe(0);
   });
@@ -304,6 +321,42 @@ describe.skipIf(container === null)("postgresql adapter", () => {
     }
   });
 
+  it("opens a storage and a read model of a schema at the latest version without taking its lock", async () => {
+    const schema = `current_${run}`;
+    const adapter = fresh({ schema });
+    await openStorage(adapter);
+    await openReadModel(adapter, "orderSummary", contractFields);
+    const holder = postgres(url, { max: 1, onnotice: () => undefined });
+    try {
+      await holder`SELECT pg_advisory_lock(hashtext(${`bounda:${schema}:schema`}))`;
+      expect(await (await openStorage(adapter)).eventStore.lastPosition()).toBe(0);
+      await openReadModel(adapter, "orderSummary", contractFields);
+      await holder`SELECT pg_advisory_unlock(hashtext(${`bounda:${schema}:schema`}))`;
+    } finally {
+      await holder.end({ timeout: 5 });
+    }
+  });
+
+  it("migrates a schema with no versions table yet, and rethrows any other failure to read it", async () => {
+    const client = postgres(url, { max: 1, onnotice: () => undefined });
+    closers.push(() => client.end({ timeout: 5 }));
+    const db = createPostgresqlDatabase(client);
+    const failing = { ...db, all: () => Promise.reject(new Error("connection lost")) };
+    await expect(
+      migratePostgresql({ db: failing, schema: "public", prefix: `m${run}_`, scopes: [] }),
+    ).rejects.toThrow("connection lost");
+    const prefix = `m${run}_`;
+    await migratePostgresql({
+      db,
+      schema: "public",
+      prefix,
+      scopes: [postgresqlCheckpointsScope(`"${prefix}checkpoints"`)],
+    });
+    expect(await db.all(`SELECT "scope", "version" FROM "${prefix}migrations"`, [])).toEqual([
+      { scope: "checkpoints", version: 1 },
+    ]);
+  });
+
   it("creates the forget ledger's table in its schema once, and takes no lock once it is there", async () => {
     const schema = `ledger_${run}`;
     const adapter = fresh({ schema });
@@ -313,8 +366,9 @@ describe.skipIf(container === null)("postgresql adapter", () => {
     const holder = postgres(url, { max: 1, onnotice: () => undefined });
     try {
       const tables = await holder`SELECT tablename FROM pg_tables WHERE schemaname = ${schema}`;
-      expect(tables.map(({ tablename }) => tablename)).toEqual([
+      expect(tables.map(({ tablename }) => tablename).sort()).toEqual([
         `t${run}_${prefixes}_forget_ledger`,
+        `t${run}_${prefixes}_migrations`,
       ]);
       await holder`SELECT pg_advisory_lock(hashtext(${`bounda:${schema}:schema`}))`;
       const second = await adapter.createForgetLedger({});
@@ -534,6 +588,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
       "events",
       "idempotency_keys",
       "inbox",
+      "migrations",
       "personal_keys",
       "persons",
       "rm_order_summary",

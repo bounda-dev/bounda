@@ -29,3 +29,15 @@ export interface DecodeErrorTextFunction {
 
 export const decodeErrorText: DecodeErrorTextFunction = (column) =>
   JSON.parse(String(column)) as string | SealedValue;
+
+export interface ResolvedAtOfEarlierLettersFunction {
+  (table: string): string;
+}
+
+/**
+ * For a table that has just gained `resolved_at`: when a letter left `failed` was not kept, so it
+ * takes its last failure, the latest time known before then, and the retention never keeps it
+ * past its term.
+ */
+export const resolvedAtOfEarlierLetters: ResolvedAtOfEarlierLettersFunction = (table) =>
+  `UPDATE ${table} SET "resolved_at" = "last_failed_at" WHERE "status" <> 'failed'`;

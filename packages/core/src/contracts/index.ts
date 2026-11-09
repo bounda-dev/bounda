@@ -43,6 +43,8 @@ export {
   type Rejection,
   ScheduledClaimLostError,
   SnapshotError,
+  StorageSchemaTooNewError,
+  type StorageSchemaTooNewErrorArgs,
   ValidationError,
   type ValidationIssue,
 } from "./errors.ts";

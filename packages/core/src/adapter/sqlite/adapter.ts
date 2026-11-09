@@ -7,7 +7,7 @@ import type {
 import { createSqlCheckpointStore } from "../sql/checkpoint-store.ts";
 import type { SqlDatabase, SqlTransaction } from "../sql/database.ts";
 import { sqliteDialect } from "../sql/dialect.ts";
-import { createSqlForgetLedger, forgetLedgerStatements } from "../sql/forget-ledger.ts";
+import { createSqlForgetLedger } from "../sql/forget-ledger.ts";
 import { quoteIdentifier, storageTableNameFor } from "../sql/identifiers.ts";
 import { createSqlPersonStore } from "../sql/person-store.ts";
 import { createSqlPersonalKeyStore } from "../sql/personal-key-store.ts";
@@ -15,9 +15,15 @@ import { createSqliteDeadLetterStore } from "./dead-letter-store.ts";
 import { createSqliteEventStore } from "./event-store.ts";
 import { createSqliteIdempotencyStore } from "./idempotency-store.ts";
 import { createSqliteInboxLedger } from "./inbox-ledger.ts";
+import {
+  migrateSqlite,
+  sqliteCheckpointsScope,
+  sqliteForgetLedgerScope,
+  sqliteStorageScope,
+} from "./migrations.ts";
 import { openSqliteReadModel, rebuildSqliteReadModel } from "./read-model.ts";
 import { createSqliteScheduler } from "./scheduler.ts";
-import { ensureStorageSchema, storageTablesFor } from "./schema.ts";
+import { storageTablesFor } from "./schema.ts";
 import { createSqliteSnapshotStore } from "./snapshot-store.ts";
 
 /**
@@ -28,6 +34,11 @@ import { createSqliteSnapshotStore } from "./snapshot-store.ts";
 export interface SqliteConnection<Raw = unknown> {
   readonly db: SqlDatabase;
   readonly raw: Raw;
+  /**
+   * Whether an error is the driver's `SQLITE_BUSY`, so a migration waits for another process's
+   * instead of failing. Leave it out when this connection is the database's only writer.
+   */
+  readonly isBusy?: (error: unknown) => boolean;
 }
 
 export interface CreateSqliteAdapterArgs<Name extends string, Options, Raw> {
@@ -86,9 +97,14 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
     name,
     options,
     createStorage: () =>
-      using(async ({ db }) => {
+      using(async ({ db, isBusy }) => {
         const tables = storageTablesFor(tablePrefix);
-        await ensureStorageSchema({ db, tables });
+        await migrateSqlite({
+          db,
+          isBusy,
+          prefix: tablePrefix,
+          scopes: [sqliteStorageScope(tables), sqliteCheckpointsScope(tables.checkpoints)],
+        });
         const storesOver = (database: SqlDatabase): StorageTransaction => ({
           eventStore: createSqliteEventStore({
             db: database,
@@ -153,10 +169,11 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
       fields,
       logger,
     }: CreateReadModelArgs) =>
-      using(({ db, raw }) =>
+      using(({ db, raw, isBusy }) =>
         openSqliteReadModel<Row, Raw>({
           db,
           raw,
+          isBusy,
           tablePrefix,
           checkpoints: storageTablesFor(tablePrefix).checkpoints,
           name: readModel,
@@ -171,10 +188,11 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
       logger,
       progress,
     }: CreateReadModelRebuildArgs) =>
-      using(({ db, raw }) =>
+      using(({ db, raw, isBusy }) =>
         rebuildSqliteReadModel<Row, Raw>({
           db,
           raw,
+          isBusy,
           tablePrefix,
           checkpoints: storageTablesFor(tablePrefix).checkpoints,
           name: readModel,
@@ -188,17 +206,19 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
       const table = quoteIdentifier(
         storageTableNameFor({ prefix: tablePrefix, table: "forgetLedger" }),
       );
-      const { db } = acquire();
+      const { db, isBusy } = acquire();
       return createSqlForgetLedger({
         db,
         table,
         dialect: sqliteDialect,
         tenant,
-        ensureSchema: async () => {
-          for (const statement of forgetLedgerStatements(table, sqliteDialect)) {
-            await db.run(statement, []);
-          }
-        },
+        ensureSchema: () =>
+          migrateSqlite({
+            db,
+            isBusy,
+            prefix: tablePrefix,
+            scopes: [sqliteForgetLedgerScope(table)],
+          }),
         close: release,
       });
     },

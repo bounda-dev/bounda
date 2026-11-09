@@ -273,6 +273,34 @@ export class ForgetLedgerUnreconciledError extends BoundaError {
   }
 }
 
+export interface StorageSchemaTooNewErrorArgs {
+  readonly scope: string;
+  readonly version: number;
+  readonly supported: number;
+}
+
+/**
+ * Thrown when the app opens a database whose Bounda tables a newer version of Bounda migrated:
+ * `version` of `scope` is past `supported`, the newest this version knows. The app does not start,
+ * and nothing is written: Bounda never takes a schema back. Run the newer version, or restore a
+ * backup taken before it migrated.
+ */
+export class StorageSchemaTooNewError extends BoundaError {
+  readonly scope: string;
+  readonly version: number;
+  readonly supported: number;
+
+  constructor({ scope, version, supported }: StorageSchemaTooNewErrorArgs) {
+    super(
+      "STORAGE_SCHEMA_TOO_NEW",
+      `The Bounda tables of "${scope}" are at schema version ${version}, newer than the ${supported} this version of Bounda supports: a newer version migrated them, and Bounda never takes a schema back. Run that version or a later one, or restore a backup taken before the migration`,
+    );
+    this.scope = scope;
+    this.version = version;
+    this.supported = supported;
+  }
+}
+
 /**
  * Thrown when a command handler returns events that do not fit whether its aggregate exists: an
  * aggregate one of whose events exports `begin` starts with such an event, and an event that only

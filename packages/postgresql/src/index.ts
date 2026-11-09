@@ -9,7 +9,6 @@ import {
   createSqlForgetLedger,
   createSqlPersonalKeyStore,
   createSqlPersonStore,
-  forgetLedgerStatements,
   postgresqlDialect,
   type SqlTransaction,
 } from "@bounda-dev/core/adapter/sql";
@@ -20,10 +19,16 @@ import { createPostgresqlEventNotifier } from "./event-notifier.ts";
 import { createPostgresqlEventStore } from "./event-store.ts";
 import { createPostgresqlIdempotencyStore } from "./idempotency-store.ts";
 import { createPostgresqlInboxLedger } from "./inbox-ledger.ts";
+import {
+  migratePostgresql,
+  postgresqlCheckpointsScope,
+  postgresqlForgetLedgerScope,
+  postgresqlStorageScope,
+} from "./migrations.ts";
 import { type PostgresqlOptions, resolvePostgresqlOptions } from "./options.ts";
 import { openPostgresqlReadModel, rebuildPostgresqlReadModel } from "./read-model.ts";
 import { createPostgresqlScheduler } from "./scheduler.ts";
-import { ensureStorageSchema, inSchema, relationsExist, storageTablesFor } from "./schema.ts";
+import { storageTablesFor } from "./schema.ts";
 import { createPostgresqlSnapshotStore } from "./snapshot-store.ts";
 
 /**
@@ -97,7 +102,15 @@ export const postgresql: PostgresqlFunction = (options) => {
     options,
     createStorage: () =>
       using(async ({ db, sql }) => {
-        await ensureStorageSchema({ db, schema, tables });
+        await migratePostgresql({
+          db,
+          schema,
+          prefix: tablePrefix,
+          scopes: [
+            postgresqlStorageScope({ schema, tables }),
+            postgresqlCheckpointsScope(tables.checkpoints),
+          ],
+        });
         const storesOver = (database: PostgresqlDatabase): StorageTransaction => ({
           eventStore: createPostgresqlEventStore({
             db: database,
@@ -195,25 +208,18 @@ export const postgresql: PostgresqlFunction = (options) => {
       }),
     createForgetLedger: async ({ tenant }) => {
       const { db } = open();
-      const statements = forgetLedgerStatements(tables.forgetLedger, postgresqlDialect);
       return createSqlForgetLedger({
         db,
         table: tables.forgetLedger,
         dialect: postgresqlDialect,
         tenant,
-        ensureSchema: async () => {
-          const names = [tables.forgetLedger, tables.forgetLedgerOrder].map((name) =>
-            name.slice(1, -1),
-          );
-          if (await relationsExist({ db, schema, names })) return;
-          await inSchema({
+        ensureSchema: () =>
+          migratePostgresql({
             db,
             schema,
-            work: async (tx) => {
-              for (const statement of statements) await tx.run(statement, []);
-            },
-          });
-        },
+            prefix: tablePrefix,
+            scopes: [postgresqlForgetLedgerScope(tables.forgetLedger)],
+          }),
         close: release,
       });
     },

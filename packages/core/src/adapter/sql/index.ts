@@ -6,7 +6,12 @@ export type {
 } from "./checkpoint-store.ts";
 export { createSqlCheckpointStore } from "./checkpoint-store.ts";
 export type { SqlDatabase, SqlTransaction } from "./database.ts";
-export { byFirstFailure, decodeErrorText, encodeErrorText } from "./dead-letters.ts";
+export {
+  byFirstFailure,
+  decodeErrorText,
+  encodeErrorText,
+  resolvedAtOfEarlierLetters,
+} from "./dead-letters.ts";
 export { postgresqlDialect } from "./dialect.ts";
 export type { InsertEventsArgs, InsertEventsFunction, InsertStatement } from "./event-rows.ts";
 export { EVENTS_PER_INSERT, insertEventsStatements, positionsByVersion } from "./event-rows.ts";
@@ -22,6 +27,13 @@ export {
   storageTableNameFor,
   tableNameFor,
 } from "./identifiers.ts";
+export type {
+  MigrateSchemasArgs,
+  MigrateSchemasFunction,
+  SchemaMigration,
+  SchemaScope,
+} from "./migrations.ts";
+export { migrateSchemas, SCHEMA_SCOPES, schemaMigrationsTableFor } from "./migrations.ts";
 export type { CreateSqlPersonStoreArgs, CreateSqlPersonStoreFunction } from "./person-store.ts";
 export { createSqlPersonStore } from "./person-store.ts";
 export type {

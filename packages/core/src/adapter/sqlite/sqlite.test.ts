@@ -31,6 +31,7 @@ import {
   readModelTransactionContract,
   schedulerContract,
   snapshotStoreContract,
+  storageSchemaContract,
   storageTransactionContract,
   tableContract,
   viewContract,
@@ -45,12 +46,20 @@ const eventTables = { table, personalKeys, persons };
 const bind = (params: readonly unknown[]): SQLInputValue[] =>
   params.map((value) => (typeof value === "boolean" ? Number(value) : value)) as SQLInputValue[];
 
-const nodeSqlite = (db = new DatabaseSync(":memory:"), tablePrefix = "bounda_") => {
+const nodeSqlite = (
+  db = new DatabaseSync(":memory:"),
+  tablePrefix = "bounda_",
+  statements: string[] = [],
+) => {
   const executor: SqlExecutor = {
     run: async (sql, params) => {
+      statements.push(sql);
       db.prepare(sql).run(...bind(params));
     },
-    all: async (sql, params) => db.prepare(sql).all(...bind(params)) as Record<string, unknown>[],
+    all: async (sql, params) => {
+      statements.push(sql);
+      return db.prepare(sql).all(...bind(params)) as Record<string, unknown>[];
+    },
   };
   let queue: Promise<unknown> = Promise.resolve();
   const database: SqlDatabase = {
@@ -143,6 +152,17 @@ describe("the SQLite stores on node:sqlite", () => {
   readModelTransactionContract({
     create: async () => nodeSqlite().adapter,
     locking: "single-writer",
+  });
+  storageSchemaContract({
+    create: async () => {
+      const { adapter, db } = nodeSqlite();
+      return {
+        adapter,
+        prefix: "bounda_",
+        execute: async (statement) => db.prepare(statement).all() as Record<string, unknown>[],
+      };
+    },
+    dialect: "sqlite",
   });
 });
 
@@ -450,6 +470,23 @@ describe("createSqliteAdapter", () => {
     expect(uses()).toBe(0);
   });
 
+  it("opens the storage and a read model of a database at the latest version with one read each", async () => {
+    const db = new DatabaseSync(":memory:");
+    const open = { name: "orderSummary", fields: contractFields, logger: silentLogger };
+    await nodeSqlite(db).adapter.createStorage();
+    await nodeSqlite(db).adapter.createReadModel(open);
+    const statements: string[] = [];
+    const { adapter } = nodeSqlite(db, "bounda_", statements);
+    await adapter.createStorage();
+    expect(statements).toEqual([
+      'SELECT "scope", max("version") AS "version" FROM "bounda_migrations" GROUP BY "scope"',
+    ]);
+    statements.length = 0;
+    await adapter.createReadModel(open);
+    expect(statements.filter((sql) => sql.includes("bounda_migrations"))).toHaveLength(1);
+    expect(statements.filter((sql) => /^(CREATE|ALTER|INSERT|UPDATE|DROP)/.test(sql))).toEqual([]);
+  });
+
   it("hands queries the host's raw handle", async () => {
     const { adapter, db } = nodeSqlite();
     const readModel = await adapter.createReadModel({
@@ -482,6 +519,7 @@ describe("createSqliteAdapter", () => {
       "app_events",
       "app_idempotency_keys",
       "app_inbox",
+      "app_migrations",
       "app_person_rows",
       "app_personal_keys",
       "app_persons",
@@ -638,6 +676,6 @@ describe("the SQLite forget ledger", () => {
     const ledger = await adapter.createForgetLedger({ tenant: "t-1" });
     expect(tableNames(db, "app_")).toEqual([]);
     await ledger.read({ limit: 1 });
-    expect(tableNames(db, "app_")).toEqual(["app_forget_ledger"]);
+    expect(tableNames(db, "app_")).toEqual(["app_forget_ledger", "app_migrations"]);
   });
 });

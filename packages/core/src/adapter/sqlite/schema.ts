@@ -1,4 +1,3 @@
-import type { SqlDatabase } from "../sql/database.ts";
 import { quoteIdentifier, storageTableNameFor } from "../sql/index.ts";
 
 // Every name is already quoted.
@@ -95,6 +94,7 @@ export interface StorageSchemaStatementsFunction {
   (tables: StorageTables): readonly string[];
 }
 
+// The storage tables as the first migration leaves them; later migrations change them from there.
 // SQLite's single writer makes the `AUTOINCREMENT` order of `position` match commit order, so no
 // extra lock is needed.
 export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables) => [
@@ -112,7 +112,6 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     UNIQUE ("aggregate_type", "aggregate_id", "version")
   )`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.events, "person")} ON ${tables.events} ("person", "position")`,
-  checkpointTableStatement(tables.checkpoints),
   `CREATE TABLE IF NOT EXISTS ${tables.inbox} (
     "handler" TEXT NOT NULL,
     "event_id" TEXT NOT NULL,
@@ -223,15 +222,20 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
   ...personRowTriggers(tables, tables.deadLetters, PERSON_INDEXED.deadLetters),
 ];
 
-export interface EnsureStorageSchemaArgs {
-  readonly db: SqlDatabase;
-  readonly tables: StorageTables;
+export interface PersonRowsBackfillStatementsFunction {
+  (tables: StorageTables): readonly string[];
 }
 
-export interface EnsureStorageSchemaFunction {
-  (args: EnsureStorageSchemaArgs): Promise<void>;
-}
-
-export const ensureStorageSchema: EnsureStorageSchemaFunction = async ({ db, tables }) => {
-  for (const statement of storageSchemaStatements(tables)) await db.run(statement, []);
-};
+// The references of the rows written before their triggers existed.
+export const personRowsBackfillStatements: PersonRowsBackfillStatementsFunction = (tables) =>
+  (
+    [
+      [tables.snapshots, PERSON_INDEXED.snapshots],
+      [tables.idempotencyKeys, PERSON_INDEXED.idempotencyKeys],
+      [tables.scheduledCommands, PERSON_INDEXED.scheduledCommands],
+      [tables.deadLetters, PERSON_INDEXED.deadLetters],
+    ] as const
+  ).map(
+    ([table, indexed]) =>
+      `INSERT OR IGNORE INTO ${tables.personRows} ("person", "store", "row") SELECT json_extract("named"."value", '$.person'), '${indexed.store}', ${rowOf('"stored"', indexed)} FROM ${table} AS "stored", json_each("stored"."persons") AS "named"`,
+  );
