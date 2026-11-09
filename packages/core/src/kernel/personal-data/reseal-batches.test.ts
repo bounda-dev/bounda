@@ -49,6 +49,11 @@ const aggregates = {
   },
   commandsByType: {
     RemindCustomer: { command: { personal: { person: null, fields: ["email"], categories: {} } } },
+    NameCustomer: {
+      command: {
+        personal: { person: null, fields: ["nickname"], categories: { nickname: "profile" } },
+      },
+    },
     ShipOrder: {
       command: { personal: { person: "customerId", fields: ["address"], categories: {} } },
     },
@@ -259,6 +264,15 @@ describe("resealing a field moved to another category", () => {
       persons: [{ person: "c-1", fingerprint: stored.fingerprint }],
       now,
     });
+    const extra = await storage.personalKeys.add("c-1", "extra", await newStoredKey());
+    await storage.idempotencyStore.put({
+      key: "k-2",
+      fingerprint: "fp",
+      outcome: { rejected: "Taken", message: "taken", code: "TAKEN" } as never,
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      persons: [{ person: "c-1", fingerprint: extra.fingerprint }],
+      now,
+    });
     expect((await reseal.events(await all(storage))).resealed).toBe(1);
     const [profiled] = await all(storage);
     expect(fieldOf(profiled?.payload, "nickname")).toMatchObject({
@@ -266,6 +280,38 @@ describe("resealing a field moved to another category", () => {
     });
     expect(await opened(fieldOf(profiled?.payload, "nickname"))).toBe("Ada");
     expect(await storage.idempotencyStore.get({ key: "k-1", now })).toBeNull();
+    expect((await storage.idempotencyStore.get({ key: "k-2", now }))?.key).toBe("k-2");
+  });
+
+  it("names a resealed command's person under the key it moved to, keeping who else it named", async () => {
+    const { storage, reseal, opened } = await setup();
+    const stored = await storage.personalKeys.add("c-1", "default", await newStoredKey());
+    const nickname = await seal({
+      key: await openedKey(stored),
+      person: "c-1",
+      category: "default",
+      value: "Ada",
+    });
+    await storage.scheduler.schedule({
+      dedupeKey: "a",
+      command: { type: "NameCustomer", aggregateId: "c-1", payload: { nickname } },
+      executeAt: new Date("2026-02-01T00:00:00.000Z"),
+      context: { correlationId: "c", causationId: "c", depth: 0 },
+      persons: [
+        { person: "c-1", fingerprint: stored.fingerprint },
+        { person: "c-2", fingerprint: "f-other" },
+        { person: "c-1", fingerprint: null },
+      ],
+    });
+    expect((await reseal.commands(await storage.scheduler.list())).resealed).toBe(1);
+    const [entry] = await storage.scheduler.list();
+    const profile = await storage.personalKeys.get("c-1", "profile");
+    expect(entry?.persons).toEqual([
+      { person: "c-2", fingerprint: "f-other" },
+      { person: "c-1", fingerprint: null },
+      { person: "c-1", fingerprint: profile?.fingerprint },
+    ]);
+    expect(await opened(fieldOf(entry?.command.payload, "nickname"))).toBe("Ada");
   });
 
   it("leaves a value no key opens any more as it is", async () => {
