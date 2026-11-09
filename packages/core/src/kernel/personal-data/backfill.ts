@@ -255,7 +255,9 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
     for (const { subscriber, position } of await checkpointStore.list()) {
       if (!subscriber.startsWith(BACKFILL_PREFIX)) continue;
       const [owner = "", name] = subscriber.slice(BACKFILL_PREFIX.length).split(":");
-      if (owner !== marks && name === "started" && position > started) return true;
+      // Marks started at the same moment are ordered by name, so only one of them walks again.
+      const later = position > started || (position === started && owner > marks);
+      if (owner !== marks && name === "started" && later) return true;
     }
     return false;
   };

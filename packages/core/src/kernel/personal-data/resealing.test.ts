@@ -67,14 +67,13 @@ const byField: PersonalMarks = { person: "customerId", fields: ["address"], cate
 const sealedWith = async <Value>(plan: ResealPlanOf<Value>) => {
   if (plan === null || plan === "unsealable") throw new Error(`no plan: ${String(plan)}`);
   const key = await openedKey(await newStoredKey());
+  const opened = await plan.opened(async () => null);
+  if (opened === null) throw new Error("nothing to seal");
   return {
     person: plan.person,
-    categories: plan.categories,
+    categories: opened.categories,
     key,
-    value: await plan.seal(
-      () => key,
-      async () => null,
-    ),
+    value: await opened.seal(() => key),
   };
 };
 
@@ -183,15 +182,16 @@ describe("planEventReseal", () => {
       processes,
     });
     if (planned === null || planned === "unsealable") throw new Error("no plan");
-    expect(planned.categories).toEqual(["default", "profile"]);
+    const opened = await planned.opened(async () => null);
+    expect(opened?.categories).toEqual(["default", "profile"]);
     const keys = {
       default: await openedKey(await newStoredKey()),
       profile: await openedKey(await newStoredKey()),
     };
-    const value = (await planned.seal(
-      (category) => keys[category as keyof typeof keys],
-      async () => null,
-    )) as Record<string, { $personal: { category?: string; key: string } }>;
+    const value = (await opened?.seal((category) => keys[category as keyof typeof keys])) as Record<
+      string,
+      { $personal: { category?: string; key: string } }
+    >;
     expect(value.email?.$personal).not.toHaveProperty("category");
     expect(value.email?.$personal.key).toBe(keys.default.fingerprint);
     expect(value.phone?.$personal).toMatchObject({

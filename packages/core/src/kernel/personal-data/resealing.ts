@@ -287,13 +287,21 @@ export const createResealKeys: CreateResealKeysFunction = ({ transaction, keys }
  */
 export interface ResealPlan<Value> {
   readonly person: string;
-  readonly categories: readonly string[];
   /**
-   * The fingerprints of the keys values are moved from, sealed under a category their field is no
-   * longer in.
+   * Opens the values sealed under a category their field is no longer in; `null` when nothing is
+   * left to write, as when no key opens any of them and the record names its person already.
    */
+  opened(open: OpenSealed): Promise<OpenedReseal<Value> | null>;
+}
+
+/**
+ * A plan once what it moves is opened: the categories of the values it seals, the fingerprints of
+ * the keys the opened values leave, and the record as it reads once they are sealed.
+ */
+export interface OpenedReseal<Value> {
+  readonly categories: readonly string[];
   readonly movedFrom: readonly string[];
-  seal(keyOf: (category: string) => PersonalKey, open: OpenSealed): Promise<Value>;
+  seal(keyOf: (category: string) => PersonalKey): Promise<Value>;
 }
 
 /**
@@ -350,24 +358,31 @@ const movedFields = (
         );
       });
 
-const movedFrom = (
-  fields: Readonly<Record<string, unknown>>,
-  moved: readonly string[],
-): readonly string[] => [
-  ...new Set(moved.map((field) => (fields[field] as SealedValue).$personal.key)),
-];
+interface Opened {
+  readonly fields: Readonly<Record<string, unknown>>;
+  // The fields that hold a value in the clear now: those that did, and the moved ones opened.
+  readonly pending: readonly string[];
+  readonly movedFrom: readonly string[];
+}
 
 const openMoved = async (
   fields: Readonly<Record<string, unknown>>,
+  clear: readonly string[],
   moved: readonly string[],
   open: OpenSealed,
-): Promise<Record<string, unknown>> => {
+): Promise<Opened> => {
   const opened: Record<string, unknown> = { ...fields };
+  const pending = [...clear];
+  const from = new Set<string>();
   for (const field of moved) {
-    const value = await open(fields[field] as SealedValue);
-    if (value !== null) opened[field] = value.value;
+    const sealed = fields[field] as SealedValue;
+    const value = await open(sealed);
+    if (value === null) continue;
+    opened[field] = value.value;
+    pending.push(field);
+    from.add(sealed.$personal.key);
   }
-  return opened;
+  return { fields: opened, pending, movedFrom: [...from] };
 };
 
 export interface PlanPayloadResealArgs {
@@ -397,13 +412,17 @@ export const planPayloadReseal: PlanPayloadResealFunction = ({ marks, payload, a
   const moved = movedFields(marks, payload, person);
   if (clear.length === 0 && moved.length === 0) return null;
   if (person === null) return "unsealable";
-  const pending = [...clear, ...moved];
   return {
     person,
-    categories: categoriesOf(marks, pending),
-    movedFrom: movedFrom(payload, moved),
-    seal: async (keyOf, open) =>
-      sealFields(await openMoved(payload, moved, open), marks, pending, person, keyOf),
+    opened: async (open) => {
+      const { fields, pending, movedFrom } = await openMoved(payload, clear, moved, open);
+      if (pending.length === 0) return null;
+      return {
+        categories: categoriesOf(marks, pending),
+        movedFrom,
+        seal: (keyOf) => sealFields(fields, marks, pending, person, keyOf),
+      };
+    },
   };
 };
 
@@ -440,12 +459,17 @@ const planned = <Value>(
   if (person === null || (event.person !== null && event.person !== person)) {
     return clear.length === 0 ? null : "unsealable";
   }
-  const pending = [...clear, ...moved];
   return {
     person,
-    categories: categoriesOf(marks, pending),
-    movedFrom: movedFrom(fields, moved),
-    seal: async (keyOf, open) => seal(person, await openMoved(fields, moved, open), pending, keyOf),
+    opened: async (open) => {
+      const opened = await openMoved(fields, clear, moved, open);
+      if (opened.pending.length === 0 && event.person !== null) return null;
+      return {
+        categories: categoriesOf(marks, opened.pending),
+        movedFrom: opened.movedFrom,
+        seal: (keyOf) => seal(person, opened.fields, opened.pending, keyOf),
+      };
+    },
   };
 };
 

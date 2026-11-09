@@ -244,15 +244,18 @@ export const createResealBatches: CreateResealBatchesFunction = ({
       const discardedTypes = new Set<string>();
       const resealed = [];
       const streams = new Map<string, StoredEvent>();
-      const moved = new Set(items.flatMap(({ plan }) => plan.movedFrom));
+      const moved = new Set<string>();
       for (const { event, plan } of items) {
-        const chosen = await chosenFor(plan.categories, (category) =>
+        const opened = await plan.opened(keys.open);
+        if (opened === null) continue;
+        for (const fingerprint of opened.movedFrom) moved.add(fingerprint);
+        const chosen = await chosenFor(opened.categories, (category) =>
           keys.event(plan.person, category, event.position),
         );
         if (chosen.discarded) discardedTypes.add(qualified(event));
         resealed.push({
           position: event.position,
-          payload: await plan.seal(keyOfChosen(chosen), keys.open),
+          payload: await opened.seal(keyOfChosen(chosen)),
           person: plan.person,
           discarded: chosen.discarded,
         });
@@ -301,20 +304,24 @@ export const createResealBatches: CreateResealBatchesFunction = ({
     }
     const sealed = await perPerson(owned, async (items, transaction, keys) => {
       let discarded = 0;
+      let resealed = 0;
       for (const { entry, plan } of items) {
-        const chosen = await chosenFor(plan.categories, (category) =>
+        const opened = await plan.opened(keys.open);
+        if (opened === null) continue;
+        const chosen = await chosenFor(opened.categories, (category) =>
           keys.payload(plan.person, category, null),
         );
         if (chosen.discarded) discarded += 1;
-        const payload = await plan.seal(keyOfChosen(chosen), keys.open);
+        const payload = await opened.seal(keyOfChosen(chosen));
         await transaction.scheduler.reseal({
           dedupeKey: entry.dedupeKey,
           from: entry.command.payload,
           payload,
-          persons: personsAfter(entry.persons, plan.person, payload, plan.movedFrom),
+          persons: personsAfter(entry.persons, plan.person, payload, opened.movedFrom),
         });
+        resealed += 1;
       }
-      return { ...NOTHING_SEALED, resealed: items.length, discarded };
+      return { ...NOTHING_SEALED, resealed, discarded };
     });
     return addSealed(
       sealed,
@@ -370,12 +377,15 @@ export const createResealBatches: CreateResealBatchesFunction = ({
     let { person, errorMessage, errorStack, payload: stored, persons } = letter;
     let discarded = false;
     if (payload !== null) {
-      const chosen = await chosenFor(payload.categories, (category) =>
-        keys.payload(payload.person, category, letter.firstFailedAt),
-      );
-      discarded ||= chosen.discarded;
-      stored = await payload.seal(keyOfChosen(chosen), keys.open);
-      persons = personsAfter(persons, payload.person, stored, payload.movedFrom);
+      const opened = await payload.opened(keys.open);
+      if (opened !== null) {
+        const chosen = await chosenFor(opened.categories, (category) =>
+          keys.payload(payload.person, category, letter.firstFailedAt),
+        );
+        discarded ||= chosen.discarded;
+        stored = await opened.seal(keyOfChosen(chosen));
+        persons = personsAfter(persons, payload.person, stored, opened.movedFrom);
+      }
     }
     if (text) {
       const { keys: under, discarded: thrownAway } = await keys.errorText(

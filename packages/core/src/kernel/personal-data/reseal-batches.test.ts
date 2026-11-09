@@ -278,6 +278,9 @@ describe("resealing a field moved to another category", () => {
     await reseal.events(await all(storage));
     const [profiled] = await all(storage);
     expect(fieldOf(profiled?.payload, "nickname")).toEqual(nickname);
+    expect((await storage.personalKeys.list("c-1")).map(({ category }) => category)).toEqual([
+      "default",
+    ]);
   });
 });
 
