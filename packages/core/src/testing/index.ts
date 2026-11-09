@@ -172,7 +172,13 @@ export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
     },
   });
   let stopped = false;
-  const apps = { witness, adapters, ledgers, stopped: () => stopped };
+  const apps = {
+    witness,
+    adapters,
+    ledgers,
+    stopped: () => stopped,
+    errorTextChosen: config.runtime?.telemetry?.errorText !== undefined,
+  };
   const tested: BoundaApp<R> = {
     ...app,
     runUntilIdle: async (options) => {

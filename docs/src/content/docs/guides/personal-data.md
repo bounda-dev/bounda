@@ -1010,7 +1010,10 @@ a dead letter, a cancelled command's included, and each value a read model kept 
 something, read as stored, never through the APIs that open fields: every table of the storage
 and of each read model's adapter, unmarked columns and JSON documents included, so a projection
 that copied the email into a column it did not mark is found; the forget ledger; and every entry
-the app logged through the test app's `logger`. A person given a key again after the forgetting
+the app logged through the test app's `logger`. A test app logs the text of errors so a failing
+test says what failed, which an app outside a test does not do by default (see
+[`runtime.telemetry.errorText`](/reference/observability/#error-text)): that text, in logs and
+spans, is searched only when the test's `config` sets `errorText` itself. A person given a key again after the forgetting
 keeps what they gave since: only what was sealed under the keys they lost is looked for.
 
 When it finds a value, it rejects with `NotForgottenError`, whose message lists each place and

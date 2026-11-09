@@ -14,6 +14,7 @@ export type InspectedStore =
   | "snapshots"
   | "personRows"
   | "forgetLedger"
+  | "migrations"
   | "readModel";
 
 /**
@@ -31,6 +32,7 @@ export const STORAGE_STORES: readonly Exclude<InspectedStore, "readModel">[] = [
   "snapshots",
   "personRows",
   "forgetLedger",
+  "migrations",
 ];
 
 /**

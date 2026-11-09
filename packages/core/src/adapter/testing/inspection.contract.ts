@@ -93,6 +93,10 @@ export const inspectionContract: InspectionContractFunction = ({ create }) => {
         }
         if (name !== "bounda_personal_keys") expect(table.opaque, name).toEqual([]);
       }
+      // A versioned database keeps its schema's versions too, and names them.
+      const versions = tables.find(({ name }) => name === "bounda_migrations");
+      if (versions !== undefined) expect(versions.store).toBe("migrations");
+      expect(tables.filter(({ store }) => store === null)).toEqual([]);
       const events = tableOf(tables, "bounda_events");
       expect(events.key).toEqual(["position"]);
       expect(events.rows).toHaveLength(1);

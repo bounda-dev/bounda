@@ -6,10 +6,10 @@ import type {
   Storage,
   StorageTransaction,
 } from "../adapter/adapter.ts";
-import type { PersonalEnvelope, StoredPersonalKey } from "../adapter/storage/personal-key-store.ts";
+import type { PersonalEnvelope } from "../adapter/storage/personal-key-store.ts";
 import type { Table } from "../adapter/storage/table.ts";
 import type { LogFields, Logger } from "../contracts/logger.ts";
-import { isSealed } from "../kernel/personal-data/crypto.ts";
+import { isSealed, type PersonalKey } from "../kernel/personal-data/crypto.ts";
 import type { PersonalDataWitness } from "../kernel/personal-data/witness.ts";
 import { BOUNDA_AGGREGATE, PERSONAL_DATA_FORGOTTEN_EVENT } from "../modules/bounda-events.ts";
 import type { FieldsRecord } from "../modules/view.ts";
@@ -58,7 +58,7 @@ export interface TestWitness {
 
 export interface SealedFor {
   readonly envelope: PersonalEnvelope;
-  readonly key: StoredPersonalKey | null;
+  readonly key: PersonalKey | null;
 }
 
 /**
@@ -87,7 +87,7 @@ export const testWitnessOf: TestWitnessOfFunction = (adapter) => {
 };
 
 const createTestWitness = (): TestWitness => {
-  const keys = new Map<string, Map<string, StoredPersonalKey>>();
+  const keys = new Map<string, Map<string, PersonalKey>>();
   const envelopes = new Map<string, Map<string, PersonalEnvelope>>();
   const kept = new Map<string, KeptValue[]>();
   const forgettings = new Map<string, number>();
@@ -225,7 +225,7 @@ const createTestWitness = (): TestWitness => {
 
   return {
     onPersonalKey: (person, key) => {
-      const held = keys.get(person) ?? new Map<string, StoredPersonalKey>();
+      const held = keys.get(person) ?? new Map<string, PersonalKey>();
       held.set(key.fingerprint, key);
       keys.set(person, held);
     },

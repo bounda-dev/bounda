@@ -54,6 +54,7 @@ describe("storeOfTable", () => {
     expect(storeOfTable({ prefix: "app_", name: "app_events" })).toBe("events");
     expect(storeOfTable({ prefix: "app_", name: "app_person_rows" })).toBe("personRows");
     expect(storeOfTable({ prefix: "app_", name: "app_forget_ledger" })).toBe("forgetLedger");
+    expect(storeOfTable({ prefix: "app_", name: "app_migrations" })).toBe("migrations");
     expect(storeOfTable({ prefix: "app_", name: "app_rm_orders" })).toBe("readModel");
     expect(storeOfTable({ prefix: "app_", name: "app_rm_orders__rebuild" })).toBe("readModel");
     expect(storeOfTable({ prefix: "app_", name: "app_rm_personal_keys" })).toBe("readModel");

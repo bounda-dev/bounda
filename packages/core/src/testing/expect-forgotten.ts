@@ -2,7 +2,7 @@ import { type Adapter, isAdapter } from "../adapter/adapter.ts";
 import type { ForgetLedger, ForgetLedgerEntry } from "../adapter/storage/forget-ledger.ts";
 import type { InspectedStore, InspectedTable } from "../adapter/storage/inspection.ts";
 import type { BoundaClient } from "../kernel/app.ts";
-import { importPersonalKey, unseal } from "../kernel/personal-data/crypto.ts";
+import { unseal } from "../kernel/personal-data/crypto.ts";
 import type { PersonalDataExport } from "../kernel/personal-data/export.ts";
 import { type Leaf, leavesIn, matches, needlesOf } from "./search.ts";
 import type { TelemetryRecording } from "./telemetry.ts";
@@ -106,6 +106,12 @@ interface TestApps {
    */
   readonly stopped: () => boolean;
   /**
+   * Whether the test's configuration chose `runtime.telemetry.errorText`. When it did not, the
+   * text of errors in logs and spans is there only because a test app includes it, and an app
+   * outside a test does not write it, so it is not searched.
+   */
+  readonly errorTextChosen: boolean;
+  /**
    * The forget ledger this app opened, which closes with it.
    */
   readonly ledgers: readonly ForgetLedger[];
@@ -175,6 +181,11 @@ const pathOf = (path: readonly string[]): string =>
     "",
   );
 
+// Where the runtime writes the text of an error: the fields of a log entry, and the attributes of a
+// span's exception event under OpenTelemetry's conventions, besides the span's status message.
+const LOG_ERROR_TEXT = new Set(["errorMessage", "errorStack"]);
+const SPAN_ERROR_TEXT = new Set(["exception.message", "exception.stacktrace"]);
+
 const LOGS_ADVICE =
   "A log entry quotes the value, and a log cannot be forgotten: log ids, never the data itself.";
 
@@ -208,9 +219,7 @@ const opened = async (witness: TestWitness, personId: string, held: string | nul
         `expectForgotten saw a value of "${personId}" sealed under a key the test app never held; report this as a bug in Bounda`,
       );
     }
-    values.push(
-      await unseal({ key: await importPersonalKey(key), sealed: { $personal: envelope } }),
-    );
+    values.push(await unseal({ key, sealed: { $personal: envelope } }));
   }
   return values;
 };
@@ -285,7 +294,9 @@ export const expectForgotten: ExpectForgottenFunction = async (target, personId,
       places.push({
         store: "logs",
         row: `entry ${index + 1} (${entry.level} "${entry.message}")`,
-        leaves: leavesIn({ message: entry.message, fields: entry.fields ?? {} }),
+        leaves: leavesIn({ message: entry.message, fields: entry.fields ?? {} }).filter(
+          (leaf) => apps.errorTextChosen || !LOG_ERROR_TEXT.has(leaf.path[1] ?? ""),
+        ),
         advice: LOGS_ADVICE,
       });
     });
@@ -300,11 +311,14 @@ export const expectForgotten: ExpectForgottenFunction = async (target, personId,
       }
     }
   }
+  const errorTextSearched = apps?.errorTextChosen ?? true;
   options.telemetry?.spans.forEach((span, index) => {
     places.push({
       store: "spans",
       row: `span ${index + 1} ("${span.name}")`,
-      leaves: leavesIn(span),
+      leaves: leavesIn(span).filter(
+        (leaf) => errorTextSearched || !(leaf.path[0] === "status" && leaf.path[1] === "message"),
+      ),
       advice: SPANS_ADVICE,
     });
   });
@@ -312,7 +326,9 @@ export const expectForgotten: ExpectForgottenFunction = async (target, personId,
     places.push({
       store: "span events",
       row: `event ${index + 1} ("${event.name}" of "${event.span}")`,
-      leaves: leavesIn(event),
+      leaves: leavesIn(event).filter(
+        (leaf) => errorTextSearched || !SPAN_ERROR_TEXT.has(leaf.path[1] ?? ""),
+      ),
       advice: SPANS_ADVICE,
     });
   });

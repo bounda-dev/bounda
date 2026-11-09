@@ -554,6 +554,67 @@ describe("expectForgotten", () => {
     await app.stop();
   });
 
+  it("leaves out the text of errors a test app logs only because it is a test app, unless the test chose it", async () => {
+    const refusing = {
+      ...chatty,
+      aggregates: {
+        customer: {
+          ...chatty.aggregates.customer,
+          ports: {
+            mailer: {
+              refusing: {
+                create: (): Mailer => ({
+                  welcome: async (email) => {
+                    throw new Error(`no mailbox for ${email}`);
+                  },
+                }),
+              },
+            },
+          },
+        },
+      },
+    } as const satisfies Registry;
+    const run = async (config: { runtime?: { telemetry?: { errorText: "include" } } }) => {
+      const telemetry = recordTelemetry();
+      try {
+        const { app } = await createTestApp({
+          registry: refusing,
+          ports: { customer: { mailer: "refusing" } },
+          config: {
+            ...config,
+            runtime: { ...config.runtime, policies: { retry: { strategy: "none" } } },
+          },
+        });
+        await app.commands.registerCustomer(ana);
+        await app.runUntilIdle();
+        await app.forget("c-1");
+        await app.runUntilIdle();
+        const outcome = await expectForgotten(app, "c-1", { telemetry }).catch(
+          (error: unknown) => error as NotForgottenError,
+        );
+        await app.stop();
+        return outcome;
+      } finally {
+        telemetry.stop();
+      }
+    };
+    expect(await run({})).toBeUndefined();
+    const chosen = await run({ runtime: { telemetry: { errorText: "include" } } });
+    expect(chosen).toBeInstanceOf(NotForgottenError);
+    const where = (chosen as NotForgottenError).found.map(
+      ({ store, field }) => `${store} ${field}`,
+    );
+    expect(where).toEqual(
+      expect.arrayContaining([
+        "logs fields.errorMessage",
+        "logs fields.errorStack",
+        "spans status.message",
+        "span events attributes.exception.message",
+        "span events attributes.exception.stacktrace",
+      ]),
+    );
+  });
+
   it("refuses anything that is neither a test app nor an adapter", async () => {
     const error = await rejection(expectForgotten({ forget: async () => ({}) } as never, "c-1"));
     expect(error).toBeInstanceOf(TypeError);
@@ -803,7 +864,13 @@ describe("expectForgotten", () => {
       context: { correlationId: "c", causationId: "c" } as never,
     });
     const app = { forget: async () => ({}) } as never;
-    registerTestApp(app, { witness, adapters: [adapter], ledgers: [], stopped: () => false });
+    registerTestApp(app, {
+      witness,
+      adapters: [adapter],
+      ledgers: [],
+      stopped: () => false,
+      errorTextChosen: false,
+    });
     expect(((await rejection(expectForgotten(app, "c-1"))) as Error).message).toBe(
       'expectForgotten saw a value of "c-1" sealed under a key the test app never held; report this as a bug in Bounda',
     );
