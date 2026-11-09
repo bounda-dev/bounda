@@ -322,8 +322,8 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
             transaction.personalKeys.find(due.person, due.fingerprint),
           ]);
           return (row?.restrictedSince ?? null) !== null ||
-            key?.retainedSince === null ||
             key === null ||
+            key.retainedSince === null ||
             legal.includes(key.category)
             ? "skipped"
             : "go";

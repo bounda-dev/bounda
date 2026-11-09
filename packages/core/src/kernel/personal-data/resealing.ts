@@ -114,7 +114,7 @@ export interface ResealKeys {
   /**
    * Opens a value sealed under a key the person still holds, in force or kept, to seal it anew.
    */
-  open: OpenSealed;
+  open: OpenSealedFunction;
 }
 
 export interface CreateResealKeysArgs {
@@ -291,7 +291,7 @@ export interface ResealPlan<Value> {
    * Opens the values sealed under a category their field is no longer in; `null` when nothing is
    * left to write, as when no key opens any of them and the record names its person already.
    */
-  opened(open: OpenSealed): Promise<OpenedReseal<Value> | null>;
+  opened(open: OpenSealedFunction): Promise<OpenedReseal<Value> | null>;
 }
 
 /**
@@ -307,7 +307,9 @@ export interface OpenedReseal<Value> {
 /**
  * Opens a sealed value, `null` when no key the person holds opens it any more.
  */
-export type OpenSealed = (sealed: SealedValue) => Promise<{ readonly value: unknown } | null>;
+export interface OpenSealedFunction {
+  (sealed: SealedValue): Promise<{ readonly value: unknown } | null>;
+}
 
 /**
  * `null` for a record with nothing to reseal; `unsealable` for one holding personal values in the
@@ -369,7 +371,7 @@ const openMoved = async (
   fields: Readonly<Record<string, unknown>>,
   clear: readonly string[],
   moved: readonly string[],
-  open: OpenSealed,
+  open: OpenSealedFunction,
 ): Promise<Opened> => {
   const opened: Record<string, unknown> = { ...fields };
   const pending = [...clear];
